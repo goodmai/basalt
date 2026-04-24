@@ -25,14 +25,17 @@ public struct GenerationRequest: Codable, Sendable {
         guard !prompt.isEmpty else {
             throw .invalidRequestStructure(details: "prompt must not be empty")
         }
+        
         let maxT = maxTokens ?? defaultMaxTokens
-        guard maxT > 0 && maxT <= 65_536 else {
+        guard 1...65_536 ~= maxT else {
             throw .contextLengthExceeded(maxTokens: 65_536, requested: maxT)
         }
+        
         let temp = temperature ?? 0.7
-        guard temp >= 0.0 && temp <= 2.0 else {
+        guard 0.0...2.0 ~= temp else {
             throw .invalidRequestStructure(details: "temperature must be in [0.0, 2.0]")
         }
+        
         return GenerationRequest(prompt: prompt, maxTokens: maxT, temperature: temp, topP: topP ?? 0.9)
     }
 }
