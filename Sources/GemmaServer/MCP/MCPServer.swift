@@ -79,10 +79,16 @@ public final class MCPServer: Sendable {
         return e
     }()
     private let decoder = JSONDecoder()
+    private let writer: @Sendable (String) -> Void
 
-    public init(orchestrator: ModelOrchestratorActor, modelId: String? = nil) {
+    public init(
+        orchestrator: ModelOrchestratorActor,
+        modelId: String? = nil,
+        writer: @Sendable @escaping (String) -> Void = { print($0); fflush(stdout) }
+    ) {
         self.orchestrator = orchestrator
         self.modelId = modelId
+        self.writer = writer
     }
 
     // MARK: — Run loop
@@ -96,7 +102,7 @@ public final class MCPServer: Sendable {
 
     // MARK: — Dispatch
 
-    private func dispatch(_ line: String) async {
+    internal func dispatch(_ line: String) async {
         guard let data = line.data(using: .utf8),
               let msg = try? decoder.decode(RawMessage.self, from: data)
         else {
@@ -104,78 +110,110 @@ public final class MCPServer: Sendable {
             return
         }
 
-        switch msg.method {
-        case "initialize":
-            handleInitialize(id: msg.id)
-        case "notifications/initialized", "initialized":
-            break   // no-op notification
-        case "tools/list":
-            handleToolsList(id: msg.id)
-        case "tools/call":
-            await handleToolsCall(id: msg.id, params: msg.params)
-        default:
-            if let method = msg.method {
-                writeError(id: msg.id, code: -32601, message: "Method not found: \(method)")
+        enum MCPMethod: String {
+            case initialize
+            case notificationInitialized = "notifications/initialized"
+            case initialized // legacy
+            case toolsList = "tools/list"
+            case toolsCall = "tools/call"
+        }
+
+        guard let methodRaw = msg.method,
+              let method = MCPMethod(rawValue: methodRaw) else {
+            if let m = msg.method {
+                writeError(id: msg.id, code: -32601, message: "Method not found: \(m)")
             }
+            return
+        }
+
+        switch method {
+        case .initialize:
+            handleInitialize(id: msg.id)
+        case .notificationInitialized, .initialized:
+            break
+        case .toolsList:
+            handleToolsList(id: msg.id)
+        case .toolsCall:
+            await handleToolsCall(id: msg.id, params: msg.params)
         }
     }
 
     // MARK: — MCP handlers
 
     private func handleInitialize(id: JSONRPCId?) {
-        let result: [String: Any] = [
-            "protocolVersion": "2024-11-05",
-            "capabilities": ["tools": [:]],
-            "serverInfo": [
-                "name": "GemmaServer",
-                "version": HealthResponse.version
-            ]
-        ]
+        struct InitializeResult: Encodable {
+            let protocolVersion: String
+            let capabilities: [String: [String: AnyCodable]]
+            let serverInfo: ServerInfo
+            struct ServerInfo: Encodable {
+                let name: String
+                let version: String
+            }
+        }
+        
+        let result = InitializeResult(
+            protocolVersion: "2024-11-05",
+            capabilities: ["tools": [:]],
+            serverInfo: .init(name: "GemmaServer", version: HealthResponse.version)
+        )
         writeResult(id: id, result: result)
     }
 
     private func handleToolsList(id: JSONRPCId?) {
-        let tools: [[String: Any]] = [
-            [
-                "name": "gemma_generate",
-                "description": "Generate text using the locally-running Gemma model via MLX.",
-                "inputSchema": [
+        struct Tool: Encodable {
+            let name: String
+            let description: String
+            let inputSchema: AnyCodable
+        }
+        struct ToolsListResult: Encodable {
+            let tools: [Tool]
+        }
+        
+        let tools: [Tool] = [
+            Tool(
+                name: "gemma_generate",
+                description: "Generate text using the locally-running Gemma model via MLX.",
+                inputSchema: AnyCodable([
                     "type": "object",
                     "required": ["prompt"],
                     "properties": [
                         "prompt":      ["type": "string",  "description": "Input prompt"],
-                        "maxTokens":   ["type": "integer", "description": "Max tokens to generate (default 1024)"],
+                        "maxTokens":   ["type": "integer", "description": "Max tokens to generate (default 65536)"],
                         "temperature": ["type": "number",  "description": "Sampling temperature 0–2 (default 0.7)"],
                         "topP":        ["type": "number",  "description": "Nucleus sampling p (default 0.9)"]
                     ]
-                ]
-            ],
-            [
-                "name": "gemma_status",
-                "description": "Returns the health and readiness status of the inference engine.",
-                "inputSchema": ["type": "object", "properties": [:]]
-            ]
+                ])
+            ),
+            Tool(
+                name: "gemma_status",
+                description: "Returns the health and readiness status of the inference engine.",
+                inputSchema: AnyCodable(["type": "object", "properties": [:]])
+            )
         ]
-        writeResult(id: id, result: ["tools": tools])
+        writeResult(id: id, result: ToolsListResult(tools: tools))
     }
 
     private func handleToolsCall(id: JSONRPCId?, params: AnyCodable?) async {
-        guard let name = params?.value(forKey: "name") as? String else {
+        guard let p = params?.rawValue as? [String: Any],
+              let name = p["name"] as? String else {
             writeError(id: id, code: -32602, message: "Missing tool name")
             return
         }
 
+        let arguments = p["arguments"] as? [String: Any]
+
         switch name {
         case "gemma_generate":
-            await callGenerate(id: id, args: params?.value(forKey: "arguments") as? [String: Any])
+            await callGenerate(id: id, args: arguments)
         case "gemma_status":
             let health = await orchestrator.healthSnapshot(modelId: modelId)
-            writeResult(id: id, result: [
+            let result = [
                 "content": [[
                     "type": "text",
                     "text": "status=\(health.status) ready=\(health.isReady) version=\(health.version)"
                 ]]
-            ])
+            ]
+            writeResult(id: id, result: result)
         default:
             writeError(id: id, code: -32601, message: "Unknown tool: \(name)")
         }
@@ -186,25 +224,36 @@ public final class MCPServer: Sendable {
             writeError(id: id, code: -32602, message: "Missing required argument: prompt")
             return
         }
+        
         let request = GenerationRequest(
             prompt: prompt,
-            maxTokens:   args?["maxTokens"]   as? Int    ?? 1024,
-            temperature: args?["temperature"] as? Double ?? 0.7,
-            topP:        args?["topP"]        as? Double ?? 0.9
+            maxTokens:   args?["maxTokens"]   as? Int,
+            temperature: args?["temperature"] as? Double,
+            topP:        args?["topP"]        as? Double
         )
+        
         do {
             let response = try await orchestrator.generate(request: request)
-            writeResult(id: id, result: [
-                "content": [[
-                    "type": "text",
-                    "text": response.generatedText
-                ]],
-                "_meta": [
-                    "tokensPerSecond": response.tokensPerSecond,
-                    "completionTokens": response.completionTokens,
-                    "finishReason": response.finishReason.rawValue
-                ]
-            ])
+            
+            struct GenerateResult: Encodable {
+                let content: [[String: String]]
+                let _meta: Meta
+                struct Meta: Encodable {
+                    let tokensPerSecond: Double
+                    let completionTokens: Int
+                    let finishReason: String
+                }
+            }
+            
+            let result = GenerateResult(
+                content: [["type": "text", "text": response.generatedText]],
+                _meta: .init(
+                    tokensPerSecond: response.tokensPerSecond,
+                    completionTokens: response.completionTokens,
+                    finishReason: response.finishReason.rawValue
+                )
+            )
+            writeResult(id: id, result: result)
         } catch {
             writeError(id: id, code: errorCode(for: error), message: error.localizedDescription)
         }
@@ -212,10 +261,20 @@ public final class MCPServer: Sendable {
 
     // MARK: — Wire
 
-    private func writeResult(id: JSONRPCId?, result: [String: Any]) {
-        var obj: [String: Any] = ["jsonrpc": "2.0", "result": result]
-        if let id { obj["id"] = encodeId(id) }
-        writeLine(obj)
+    private func writeResult<T: Encodable>(id: JSONRPCId?, result: T) {
+        do {
+            let resData = try encoder.encode(result)
+            let resJson = try JSONSerialization.jsonObject(with: resData)
+            
+            var obj: [String: Any] = [
+                "jsonrpc": "2.0",
+                "result": resJson
+            ]
+            if let id { obj["id"] = encodeId(id) }
+            writeLine(obj)
+        } catch {
+            writeError(id: id, code: -32603, message: "Internal error: \(error.localizedDescription)")
+        }
     }
 
     private func writeError(id: JSONRPCId?, code: Int, message: String) {
@@ -231,9 +290,7 @@ public final class MCPServer: Sendable {
         guard let data = try? JSONSerialization.data(withJSONObject: obj),
               let line = String(data: data, encoding: .utf8)
         else { return }
-        // stdout must be written atomically per message
-        print(line)
-        fflush(stdout)
+        writer(line)
     }
 
     private func encodeId(_ id: JSONRPCId) -> Any {
