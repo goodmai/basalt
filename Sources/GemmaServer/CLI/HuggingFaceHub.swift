@@ -112,25 +112,34 @@ actor HuggingFaceHub {
         guard let url = components.url else {
             throw HFError.invalidURL
         }
+        
         let (data, response) = try await session.data(from: url)
-        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
-            throw HFError.apiError(code: (response as? HTTPURLResponse)?.statusCode ?? -1)
+        
+        switch (response as? HTTPURLResponse)?.statusCode {
+        case 200:
+            var models = try JSONDecoder().decode([HFModelInfo].self, from: data)
+            if let quant {
+                models = models.filter { $0.quantization.lowercased() == quant.lowercased() }
+            }
+            return models
+        case let code?:
+            throw HFError.apiError(code: code)
+        case .none:
+            throw HFError.apiError(code: -1)
         }
-        var models = try JSONDecoder().decode([HFModelInfo].self, from: data)
-        if let quant {
-            models = models.filter { $0.quantization.lowercased() == quant.lowercased() }
-        }
-        return models
     }
 
     /// Detailed info for a single repo including file list.
     func modelDetails(repoId: String) async throws -> HFModelDetails {
         let url = URL(string: "\(apiURL)/models/\(repoId)")!
         let (data, response) = try await session.data(from: url)
-        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+        
+        switch (response as? HTTPURLResponse)?.statusCode {
+        case 200:
+            return try JSONDecoder().decode(HFModelDetails.self, from: data)
+        default:
             throw HFError.modelNotFound(repoId)
         }
-        return try JSONDecoder().decode(HFModelDetails.self, from: data)
     }
 
     // MARK: — Download
@@ -201,60 +210,85 @@ actor HuggingFaceHub {
         let parent = destination.deletingLastPathComponent()
         try fileManager.createDirectory(at: parent, withIntermediateDirectories: true)
 
-        var existingSize: Int64 = 0
+        let existingSize: Int64
         if fileManager.fileExists(atPath: destination.path) {
             let attrs = try fileManager.attributesOfItem(atPath: destination.path)
             existingSize = attrs[.size] as? Int64 ?? 0
-        }
-
-        // Get remote file size and check if we need to resume
-        var request = URLRequest(url: url)
-        request.httpMethod = "HEAD"
-        if let token { request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
-        
-        let (_, headResponse) = try await session.data(for: request)
-        let totalSize = headResponse.expectedContentLength
-        
-        // If file is already fully downloaded, skip
-        if existingSize > 0 && totalSize > 0 && existingSize == totalSize {
-            onProgress(filename, totalSize, totalSize)
-            return
-        }
-
-        // Prepare download request
-        var downloadRequest = URLRequest(url: url)
-        if let token { downloadRequest.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
-        
-        // Resume if possible
-        if existingSize > 0 && existingSize < totalSize {
-            downloadRequest.setValue("bytes=\(existingSize)-", forHTTPHeaderField: "Range")
-        } else if existingSize >= totalSize && totalSize > 0 {
-            // Something is wrong with the file, start over
-            try? fileManager.removeItem(at: destination)
+        } else {
             existingSize = 0
         }
 
-        // Use data task for streaming to avoid loading into memory
-        let (stream, response) = try await session.bytes(for: downloadRequest)
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw HFError.downloadFailed(filename)
+        // Get remote file size
+        var headRequest = URLRequest(url: url)
+        headRequest.httpMethod = "HEAD"
+        if let token { headRequest.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
+        
+        let (_, headResponse) = try await session.data(for: headRequest)
+        let totalSize = headResponse.expectedContentLength
+        
+        // Use pattern matching to decide next action based on file state
+        enum DownloadAction {
+            case skip
+            case resume(from: Int64)
+            case startNew
         }
         
-        // 200 = full file, 206 = partial content
-        let isResume = httpResponse.statusCode == 206
-        let actualTotal = isResume ? (existingSize + httpResponse.expectedContentLength) : httpResponse.expectedContentLength
-        
-        let handle: FileHandle
-        if isResume {
-            handle = try FileHandle(forWritingTo: destination)
-            try handle.seekToEnd()
-        } else {
+        let action: DownloadAction = switch (existingSize, totalSize) {
+        case (let s, let t) where s > 0 && t > 0 && s == t:
+            .skip
+        case (let s, let t) where s > 0 && s < t:
+            .resume(from: s)
+        default:
+            .startNew
+        }
+
+        switch action {
+        case .skip:
+            onProgress(filename, totalSize, totalSize)
+            return
+            
+        case .resume(let offset):
+            var req = URLRequest(url: url)
+            if let token { req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
+            req.setValue("bytes=\(offset)-", forHTTPHeaderField: "Range")
+            
+            let (stream, response) = try await session.bytes(for: req)
+            guard let http = response as? HTTPURLResponse, http.statusCode == 206 else {
+                // If 206 fails, fallback to startNew
+                try await downloadFileWithResume(url: url, destination: destination, filename: filename, token: token, onProgress: onProgress)
+                return
+            }
+            try await saveStream(stream, to: destination, isResume: true, existingSize: offset, totalSize: offset + http.expectedContentLength, filename: filename, onProgress: onProgress)
+            
+        case .startNew:
             if fileManager.fileExists(atPath: destination.path) {
                 try fileManager.removeItem(at: destination)
             }
-            fileManager.createFile(atPath: destination.path, contents: nil)
-            handle = try FileHandle(forWritingTo: destination)
+            var req = URLRequest(url: url)
+            if let token { req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
+            
+            let (stream, response) = try await session.bytes(for: req)
+            guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+                throw HFError.downloadFailed(filename)
+            }
+            try await saveStream(stream, to: destination, isResume: false, existingSize: 0, totalSize: http.expectedContentLength, filename: filename, onProgress: onProgress)
         }
+    }
+
+    private func saveStream(
+        _ stream: URLSession.AsyncBytes,
+        to destination: URL,
+        isResume: Bool,
+        existingSize: Int64,
+        totalSize: Int64,
+        filename: String,
+        onProgress: @Sendable @escaping (String, Int64, Int64) -> Void
+    ) async throws {
+        if !isResume {
+            FileManager.default.createFile(atPath: destination.path, contents: nil)
+        }
+        let handle = isResume ? try FileHandle(forWritingTo: destination) : try FileHandle(forWritingTo: destination)
+        if isResume { try handle.seekToEnd() }
         
         defer { try? handle.close() }
 
@@ -268,13 +302,13 @@ actor HuggingFaceHub {
                 try handle.write(contentsOf: buffer)
                 downloaded += Int64(buffer.count)
                 buffer.removeAll(keepingCapacity: true)
-                onProgress(filename, downloaded, actualTotal)
+                onProgress(filename, downloaded, totalSize)
             }
         }
         if !buffer.isEmpty {
             try handle.write(contentsOf: buffer)
             downloaded += Int64(buffer.count)
-            onProgress(filename, downloaded, actualTotal)
+            onProgress(filename, downloaded, totalSize)
         }
     }
 }
