@@ -45,7 +45,7 @@ struct ServeCommand: AsyncParsableCommand {
     // MARK: — Run
 
     mutating func run() async throws {
-        let resolvedPath = try resolveModelPath()
+        let resolvedPath = try await resolveModelPath()
 
         let config = ServerConfig(
             modelPath: resolvedPath,
@@ -92,7 +92,7 @@ struct ServeCommand: AsyncParsableCommand {
 
     // MARK: — Path resolution
 
-    private func resolveModelPath() throws -> String {
+    private func resolveModelPath() async throws -> String {
         // Explicit local path wins
         if let explicit = modelPath {
             return explicit
@@ -105,15 +105,25 @@ struct ServeCommand: AsyncParsableCommand {
                 if FileManager.default.fileExists(atPath: cached.path) {
                     return cached.path
                 }
-                // Not cached — guide the user
-                fputs("""
-                \(red("Model not in local cache:")) \(modelId)
-                Download it first:
-
-                  \(dim("GemmaServer models download \(modelId)"))
-
-                """, stderr)
-                throw ExitCode.failure
+                
+                // Not cached — download it automatically
+                log("Model not in local cache: \(bold(modelId)). Downloading...")
+                let hub = HuggingFaceHub()
+                do {
+                    nonisolated(unsafe) var lastFile = ""
+                    let dest = try await hub.download(repoId: modelId, token: nil) { filename, downloaded, total in
+                        if filename != lastFile {
+                            if !lastFile.isEmpty { print() }   // newline after previous file
+                            lastFile = filename
+                        }
+                        printFileProgress(filename: filename, downloaded: downloaded, total: total)
+                    }
+                    print("\n")
+                    return dest.path
+                } catch {
+                    log("\(red("Failed to download model:")) \(error.localizedDescription)")
+                    throw ExitCode.failure
+                }
             }
             // Treated as a local path
             return modelId

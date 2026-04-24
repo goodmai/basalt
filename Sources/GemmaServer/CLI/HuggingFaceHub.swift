@@ -85,8 +85,8 @@ actor HuggingFaceHub {
     private let baseURL = "https://huggingface.co"
     private let apiURL  = "https://huggingface.co/api"
 
-    init() {
-        let config = URLSessionConfiguration.default
+    init(configuration: URLSessionConfiguration = .default) {
+        let config = configuration
         config.timeoutIntervalForRequest  = 30
         config.timeoutIntervalForResource = 3600   // 1h for large downloads
         session = URLSession(configuration: config)
