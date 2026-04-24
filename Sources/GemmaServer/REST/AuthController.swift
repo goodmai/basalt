@@ -12,7 +12,7 @@ struct AuthController: Sendable {
     // MARK: — POST /api/v1/auth/login
     
     @Sendable
-    func login(request: Request, context: some RequestContext) async throws -> Response {
+    func login(request: Request, context: GemmaRequestContext) async throws -> Response {
         let dto: LoginRequestDTO
         do {
             let buffer = try await request.body.collect(upTo: 1024 * 1024)
@@ -33,7 +33,7 @@ struct AuthController: Sendable {
     // MARK: — POST /api/v1/auth/logout
     
     @Sendable
-    func logout(request: Request, context: some RequestContext) async throws -> Response {
+    func logout(request: Request, context: GemmaRequestContext) async throws -> Response {
         guard let authHeader = request.headers[.authorization],
               authHeader.hasPrefix("Bearer ") else {
             return errorResponse(status: .unauthorized, message: "Missing or invalid Authorization header", code: 401)

@@ -1,5 +1,6 @@
 import Foundation
 import Hummingbird
+import HummingbirdAuth
 
 // MARK: — Route handlers for REST / A2A interface
 
@@ -11,7 +12,10 @@ struct GenerateController: Sendable {
     // MARK: — POST /api/v1/generate
 
     @Sendable
-    func generate(request: Request, context: some RequestContext) async throws -> Response {
+    func generate(request: Request, context: GemmaRequestContext) async throws -> Response {
+        // Require authentication
+        _ = try context.requireIdentity()
+
         let dto: GenerationRequest
         do {
             let buffer = try await request.body.collect(upTo: 1024 * 1024)
@@ -36,7 +40,7 @@ struct GenerateController: Sendable {
     // MARK: — GET /api/v1/health
 
     @Sendable
-    func health(request: Request, context: some RequestContext) async throws -> Response {
+    func health(request: Request, context: GemmaRequestContext) async throws -> Response {
         let snapshot = await orchestrator.healthSnapshot(modelId: modelId)
         return try jsonResponse(status: .ok, body: snapshot)
     }

@@ -37,19 +37,24 @@ struct RESTServer: Sendable {
 
     // MARK: — Router
 
-    private func buildRouter(generateController: GenerateController, authController: AuthController) -> Router<BasicRequestContext> {
-        let router = Router(context: BasicRequestContext.self)
+    private func buildRouter(generateController: GenerateController, authController: AuthController) -> Router<GemmaRequestContext> {
+        let router = Router(context: GemmaRequestContext.self)
         
         router.add(middleware: LogRequestsMiddleware(.info))
 
-        // v1 API — Hummingbird 2.x RouterGroup (non-closure form)
+        // Public routes
         let v1 = router.group("/api/v1")
-        v1.post("/generate", use: generateController.generate)
-        v1.get("/health",    use: generateController.health)
+        v1.get("/health", use: generateController.health)
         
         let auth = v1.group("/auth")
         auth.post("/login", use: authController.login)
-        auth.post("/logout", use: authController.logout)
+        
+        // Protected routes
+        let protected = v1.group()
+        protected.add(middleware: JWTAuthenticator(authService: authController.authService))
+        
+        protected.post("/generate", use: generateController.generate)
+        protected.post("/auth/logout", use: authController.logout)
 
         // Root health — convenient for load balancers
         router.get("/") { _, _ -> Response in

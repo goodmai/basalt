@@ -1,5 +1,11 @@
 .DS_Store
-/.build
+.build
+/auth.sqlite3
+/test_*.sqlite3
+/server.log
+/*.metallib
+/test_mlx.swift
+/test_json.swift
 /Packages
 xcuserdata/
 DerivedData/
