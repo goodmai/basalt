@@ -48,7 +48,15 @@ public struct GenerationResponse: Codable, Sendable {
     public let completionTokens: Int
     public let tokensPerSecond: Double
     public let generationTime: Double
+    public let timeToFirstToken: Double
+    public let memory: MemoryUsage
     public let finishReason: FinishReason
+
+    public struct MemoryUsage: Codable, Sendable {
+        public let peakBytes: Int
+        public let activeBytes: Int
+        public let cacheBytes: Int
+    }
 
     public enum FinishReason: String, Codable, Sendable {
         case stop

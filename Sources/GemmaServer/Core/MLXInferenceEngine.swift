@@ -76,6 +76,7 @@ public actor MLXInferenceEngine: InferenceEngine {
 
             let clock = ContinuousClock()
             let startTime = clock.now
+            var firstTokenTime: ContinuousClock.Instant?
 
             // generate() возвращает AsyncStream<Generation> (v3.31.3 API)
             let stream = try await container.generate(input: lmInput, parameters: params)
@@ -84,6 +85,10 @@ public actor MLXInferenceEngine: InferenceEngine {
             var completionInfo: GenerateCompletionInfo?
 
             for await generation in stream {
+                if firstTokenTime == nil {
+                    firstTokenTime = clock.now
+                }
+                
                 switch generation {
                 case .chunk(let text):
                     outputText += text
@@ -94,8 +99,13 @@ public actor MLXInferenceEngine: InferenceEngine {
                 }
             }
 
-            let duration = clock.now - startTime
-            let generationTime = Double(duration.components.seconds) + Double(duration.components.attoseconds) / 1e18
+            let totalDuration = clock.now - startTime
+            let generationTime = Double(totalDuration.components.seconds) + Double(totalDuration.components.attoseconds) / 1e18
+            
+            let ttftDuration = (firstTokenTime ?? clock.now) - startTime
+            let timeToFirstToken = Double(ttftDuration.components.seconds) + Double(ttftDuration.components.attoseconds) / 1e18
+
+            let mem = Memory.snapshot()
 
             return GenerationResponse(
                 generatedText: outputText,
@@ -103,6 +113,12 @@ public actor MLXInferenceEngine: InferenceEngine {
                 completionTokens: completionInfo?.generationTokenCount ?? 0,
                 tokensPerSecond: completionInfo?.tokensPerSecond ?? 0,
                 generationTime: generationTime,
+                timeToFirstToken: timeToFirstToken,
+                memory: .init(
+                    peakBytes: mem.peakMemory,
+                    activeBytes: mem.activeMemory,
+                    cacheBytes: mem.cacheMemory
+                ),
                 finishReason: .stop
             )
         } catch let err as GemmaServerError {

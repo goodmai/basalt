@@ -30,6 +30,8 @@ struct OrchestratorTests {
         #expect(response.generatedText == "Mock response")
         #expect(response.tokensPerSecond > 0)
         #expect(response.generationTime > 0)
+        #expect(response.timeToFirstToken > 0)
+        #expect(response.memory.peakBytes > 0)
     }
 
     // MARK: — load failure

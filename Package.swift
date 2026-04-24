@@ -65,5 +65,16 @@ let package = Package(
                 .swiftLanguageMode(.v6),
             ]
         ),
+        .executableTarget(
+            name: "PerformanceBenchmark",
+            dependencies: [
+                "GemmaServerCore",
+                .product(name: "ArgumentParser", package: "swift-argument-parser"),
+            ],
+            path: "Sources/PerformanceBenchmark",
+            swiftSettings: [
+                .swiftLanguageMode(.v6),
+            ]
+        ),
     ]
 )

@@ -67,6 +67,8 @@ struct GenerationResponseCodableTests {
             completionTokens: 10,
             tokensPerSecond: 24.5,
             generationTime: 0.408,
+            timeToFirstToken: 0.1,
+            memory: .init(peakBytes: 2048, activeBytes: 1024, cacheBytes: 512),
             finishReason: .stop
         )
         let data = try encoder.encode(original)
@@ -77,6 +79,8 @@ struct GenerationResponseCodableTests {
         #expect(decoded.completionTokens == original.completionTokens)
         #expect(decoded.tokensPerSecond == original.tokensPerSecond)
         #expect(decoded.generationTime  == original.generationTime)
+        #expect(decoded.timeToFirstToken == original.timeToFirstToken)
+        #expect(decoded.memory.peakBytes == original.memory.peakBytes)
         #expect(decoded.finishReason    == original.finishReason)
     }
 
@@ -84,7 +88,10 @@ struct GenerationResponseCodableTests {
     func finishReasonLength() throws {
         let resp = GenerationResponse(
             generatedText: "", promptTokens: 0, completionTokens: 1024,
-            tokensPerSecond: 10, generationTime: 102.4, finishReason: .length
+            tokensPerSecond: 10, generationTime: 102.4, 
+            timeToFirstToken: 0.05, 
+            memory: .init(peakBytes: 0, activeBytes: 0, cacheBytes: 0),
+            finishReason: .length
         )
         let data  = try encoder.encode(resp)
         let dec   = try decoder.decode(GenerationResponse.self, from: data)

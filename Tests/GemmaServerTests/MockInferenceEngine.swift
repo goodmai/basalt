@@ -28,11 +28,18 @@ actor MockInferenceEngine: InferenceEngine {
         let clock = ContinuousClock()
         let start = clock.now
         
-        // simulate some generation time
-        try? await Task.sleep(for: .milliseconds(10))
+        // simulate TTFT
+        try? await Task.sleep(for: .milliseconds(5))
+        let firstTokenTime = clock.now
         
-        let duration = clock.now - start
-        let genTime = Double(duration.components.seconds) + Double(duration.components.attoseconds) / 1e18
+        // simulate total generation time
+        try? await Task.sleep(for: .milliseconds(5))
+        
+        let totalDuration = clock.now - start
+        let genTime = Double(totalDuration.components.seconds) + Double(totalDuration.components.attoseconds) / 1e18
+        
+        let ttftDuration = firstTokenTime - start
+        let ttft = Double(ttftDuration.components.seconds) + Double(ttftDuration.components.attoseconds) / 1e18
         
         return GenerationResponse(
             generatedText: mockText,
@@ -40,6 +47,8 @@ actor MockInferenceEngine: InferenceEngine {
             completionTokens: 10,
             tokensPerSecond: 10.0 / genTime,
             generationTime: genTime,
+            timeToFirstToken: ttft,
+            memory: .init(peakBytes: 1024, activeBytes: 512, cacheBytes: 256),
             finishReason: .stop
         )
     }
