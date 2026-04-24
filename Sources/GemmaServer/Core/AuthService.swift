@@ -1,6 +1,7 @@
 import Foundation
 import SQLite
 import JWTKit
+import Crypto
 
 /// Легковесная база данных (SQLite) и сервис аутентификации (JWT)
 public actor AuthService {
@@ -11,7 +12,7 @@ public actor AuthService {
     private static let users = Table("users")
     private static let id = Expression<Int64>("id")
     private static let username = Expression<String>("username")
-    private static let password = Expression<String>("password") // Для демо - plain text
+    private static let password = Expression<String>("password") // Hashed
     
     private static let blocklist = Table("blocklist")
     private static let tokenCol = Expression<String>("token")
@@ -34,7 +35,8 @@ public actor AuthService {
         
         // Создание дефолтного пользователя, если база пустая
         if try connection.scalar(Self.users.count) == 0 {
-            try connection.run(Self.users.insert(Self.username <- "admin", Self.password <- "admin"))
+            let hashed = Self.hashPassword("admin")
+            try connection.run(Self.users.insert(Self.username <- "admin", Self.password <- hashed))
         }
         
         self.db = connection
@@ -57,7 +59,8 @@ public actor AuthService {
     // MARK: — Login
     
     public func login(user: String, pass: String) throws -> String {
-        let query = Self.users.filter(Self.username == user && Self.password == pass)
+        let hashed = Self.hashPassword(pass)
+        let query = Self.users.filter(Self.username == user && Self.password == hashed)
         guard try db.scalar(query.count) > 0 else {
             throw GemmaServerError.invalidRequestStructure(details: "Invalid username or password")
         }
@@ -67,6 +70,15 @@ public actor AuthService {
             exp: ExpirationClaim(value: Date().addingTimeInterval(24 * 3600)) // 24 часа
         )
         return try signers.sign(payload)
+    }
+    
+    // MARK: — Private Helpers
+    
+    private static func hashPassword(_ pass: String) -> String {
+        let salt = "gemma-internal-static-salt"
+        let input = pass + salt
+        let digest = SHA256.hash(data: Data(input.utf8))
+        return digest.compactMap { String(format: "%02x", $0) }.joined()
     }
     
     // MARK: — Logout

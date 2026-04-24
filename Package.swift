@@ -15,6 +15,7 @@ let package = Package(
         .package(url: "https://github.com/huggingface/swift-transformers",  from: "1.3.0"),
         .package(url: "https://github.com/stephencelis/SQLite.swift.git", from: "0.15.3"),
         .package(url: "https://github.com/vapor/jwt-kit.git", from: "4.13.0"),
+        .package(url: "https://github.com/apple/swift-crypto.git", from: "3.0.0"),
     ],
     targets: [
 
@@ -33,6 +34,7 @@ let package = Package(
                 .product(name: "Tokenizers",    package: "swift-transformers"),
                 .product(name: "SQLite",        package: "SQLite.swift"),
                 .product(name: "JWTKit",        package: "jwt-kit"),
+                .product(name: "Crypto",        package: "swift-crypto"),
             ],
             path: "Sources/GemmaServer",
             swiftSettings: [
