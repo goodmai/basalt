@@ -90,4 +90,59 @@ struct MCPServerTests {
         #expect(output.count == 1)
         #expect(output[0].contains("status=initializing")) // because it's not loaded in mock yet
     }
+
+    // MARK: — Fuzzing / Error cases (Task 4.1)
+
+    @Test("Invalid JSON returns parse error")
+    func testInvalidJSON() async throws {
+        let capturer = OutputCapturer()
+        let server = MCPServer(orchestrator: ModelOrchestratorActor(engine: MockInferenceEngine())) { line in
+            Task { await capturer.capture(line) }
+        }
+        
+        await server.dispatch("not a json")
+        try? await Task.sleep(for: .milliseconds(50))
+        
+        let output = await capturer.lines
+        #expect(output.count == 1)
+        #expect(output[0].contains("-32700")) // Parse error code
+    }
+
+    @Test("Unknown method returns method not found")
+    func testUnknownMethod() async throws {
+        let capturer = OutputCapturer()
+        let server = MCPServer(orchestrator: ModelOrchestratorActor(engine: MockInferenceEngine())) { line in
+            Task { await capturer.capture(line) }
+        }
+        
+        await server.dispatch("""
+        {"jsonrpc": "2.0", "id": 99, "method": "unknown/method", "params": {}}
+        """)
+        try? await Task.sleep(for: .milliseconds(50))
+        
+        let output = await capturer.lines
+        #expect(output.count == 1)
+        #expect(output[0].contains("-32601")) // Method not found
+    }
+
+    @Test("Missing tool name returns error")
+    func testMissingToolName() async throws {
+        let capturer = OutputCapturer()
+        let server = MCPServer(orchestrator: ModelOrchestratorActor(engine: MockInferenceEngine())) { line in
+            Task { await capturer.capture(line) }
+        }
+        
+        await server.dispatch("""
+        {"jsonrpc": "2.0", "id": 100, "method": "tools/call", "params": {"arguments": {}}}
+        """)
+        try? await Task.sleep(for: .milliseconds(50))
+        
+        let output = await capturer.lines
+        #expect(output[0].contains("-32602")) // Invalid params
+    }
+
+    private actor OutputCapturer {
+        var lines: [String] = []
+        func capture(_ line: String) { lines.append(line) }
+    }
 }

@@ -121,6 +121,27 @@ struct OrchestratorTests {
         #expect(results.count == 3)
         #expect(results.allSatisfy { $0.generatedText == "Mock response" })
     }
+
+    @Test("intensive concurrency (Task 4.2): 50 parallel requests")
+    func intensiveConcurrency() async throws {
+        let engine = MockInferenceEngine()
+        let orch = ModelOrchestratorActor(engine: engine)
+        try await orch.loadModel(path: "model")
+        
+        try await withThrowingTaskGroup(of: GenerationResponse.self) { group in
+            for i in 1...50 {
+                group.addTask {
+                    try await orch.generate(request: .init(prompt: "Prompt \(i)"))
+                }
+            }
+            
+            var count = 0
+            for try await _ in group {
+                count += 1
+            }
+            #expect(count == 50)
+        }
+    }
 }
 
 // MARK: — Helpers
