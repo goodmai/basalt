@@ -12,7 +12,7 @@ struct RESTServer: Sendable {
     let config: ServerConfig
 
     func run() async throws {
-        let authService = try AuthService(dbPath: "auth.sqlite3")
+        let authService = try AuthService(dbPath: config.dbPath, jwtSecret: config.jwtSecret)
         
         let generateController = GenerateController(
             orchestrator: orchestrator,

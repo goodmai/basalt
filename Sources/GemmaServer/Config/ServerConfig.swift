@@ -8,6 +8,8 @@ public struct ServerConfig: Sendable {
     public let host: String
     public let maxConcurrentRequests: Int
     public let maxTokens: Int
+    public let jwtSecret: String
+    public let dbPath: String
     public let logLevel: LogLevel
 
     public enum LogLevel: String, Sendable, ExpressibleByArgument {
@@ -20,6 +22,8 @@ public struct ServerConfig: Sendable {
         host: String = "127.0.0.1",
         maxConcurrentRequests: Int = 4,
         maxTokens: Int = 65536,
+        jwtSecret: String = "gemma-super-secret-key",
+        dbPath: String = "auth.sqlite3",
         logLevel: LogLevel = .info
     ) {
         self.modelPath = modelPath
@@ -27,6 +31,8 @@ public struct ServerConfig: Sendable {
         self.host = host
         self.maxConcurrentRequests = maxConcurrentRequests
         self.maxTokens = maxTokens
+        self.jwtSecret = jwtSecret
+        self.dbPath = dbPath
         self.logLevel = logLevel
     }
 }
@@ -38,6 +44,8 @@ extension ServerConfig {
         restPort: 8080,
         host: "127.0.0.1",
         maxTokens: 65536,
+        jwtSecret: "dev-secret",
+        dbPath: "auth.sqlite3",
         logLevel: .debug
     )
 }

@@ -39,6 +39,12 @@ struct ServeCommand: AsyncParsableCommand {
     @Option(name: .customLong("max-tokens"), help: "Default maximum tokens to generate (e.g. 65536, max 65536)")
     var maxTokens: Int = 65536
 
+    @Option(name: .customLong("jwt-secret"), help: "Secret for JWT signing (env: GEMMA_JWT_SECRET)")
+    var jwtSecret: String?
+
+    @Option(name: .customLong("db-path"), help: "Path to SQLite database for auth (env: GEMMA_DB_PATH)")
+    var dbPath: String?
+
     @Option(name: .long, help: "Log level: debug | info | warn | error")
     var logLevel: ServerConfig.LogLevel = .info
 
@@ -52,6 +58,8 @@ struct ServeCommand: AsyncParsableCommand {
             restPort: port,
             host: host,
             maxTokens: maxTokens,
+            jwtSecret: jwtSecret ?? ProcessInfo.processInfo.environment["GEMMA_JWT_SECRET"] ?? "gemma-super-secret-key",
+            dbPath: dbPath ?? ProcessInfo.processInfo.environment["GEMMA_DB_PATH"] ?? "auth.sqlite3",
             logLevel: logLevel
         )
 
