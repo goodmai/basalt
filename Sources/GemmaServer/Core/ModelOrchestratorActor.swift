@@ -43,6 +43,13 @@ public actor ModelOrchestratorActor {
         return response
     }
 
+    public func generateStream(request: GenerationRequest) async throws(GemmaServerError) -> AsyncStream<StreamChunk> {
+        let validated = try request.validated(defaultMaxTokens: maxTokens)
+        requestCount += 1
+        // We don't easily track totalTokensGenerated for streams here unless we wrap the stream
+        return try await engine.generateStream(request: validated)
+    }
+
     /// Состояние для /health эндпоинта и MCP tool: gemma_status.
     public func healthSnapshot(modelId: String?) async -> HealthResponse {
         let ready = await engine.isLoaded

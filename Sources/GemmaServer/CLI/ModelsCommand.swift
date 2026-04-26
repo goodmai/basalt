@@ -319,6 +319,8 @@ func dim(_ s: String)    -> String { "\u{1B}[2m\(s)\u{1B}[0m" }
 func green(_ s: String)  -> String { "\u{1B}[32m\(s)\u{1B}[0m" }
 func red(_ s: String)    -> String { "\u{1B}[31m\(s)\u{1B}[0m" }
 func yellow(_ s: String) -> String { "\u{1B}[33m\(s)\u{1B}[0m" }
+func blue(_ s: String)   -> String { "\u{1B}[34m\(s)\u{1B}[0m" }
+func cyan(_ s: String)   -> String { "\u{1B}[36m\(s)\u{1B}[0m" }
 
 func padded(_ s: String, _ width: Int) -> String {
     s.count >= width ? String(s.prefix(width)) : s + String(repeating: " ", count: width - s.count)

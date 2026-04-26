@@ -42,6 +42,11 @@ public struct GenerationRequest: Codable, Sendable {
 
 // MARK: — Response DTOs
 
+public enum StreamChunk: Sendable {
+    case text(String)
+    case metadata(GenerationResponse)
+}
+
 public struct GenerationResponse: Codable, Sendable {
     public let generatedText: String
     public let promptTokens: Int

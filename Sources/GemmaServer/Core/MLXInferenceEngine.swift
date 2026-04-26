@@ -10,6 +10,7 @@ import Tokenizers
 public protocol InferenceEngine: Sendable {
     func load(modelPath: String) async throws(GemmaServerError)
     func generate(request: GenerationRequest) async throws(GemmaServerError) -> GenerationResponse
+    func generateStream(request: GenerationRequest) async throws(GemmaServerError) -> AsyncStream<StreamChunk>
     /// async getter — compatible with actor-isolated implementations.
     var isLoaded: Bool { get async }
 }
@@ -57,6 +58,37 @@ public actor MLXInferenceEngine: InferenceEngine {
     // MARK: — Generate
 
     public func generate(request: GenerationRequest) async throws(GemmaServerError) -> GenerationResponse {
+        let stream = try await generateStream(request: request)
+        var fullText = ""
+        var finalResponse: GenerationResponse?
+        
+        for await chunk in stream {
+            switch chunk {
+            case .text(let t):
+                fullText += t
+            case .metadata(let m):
+                finalResponse = m
+            }
+        }
+        
+        guard let finalResponse else {
+            throw .inferenceHardwareFailure(reason: "Stream finished without metadata")
+        }
+        
+        // Return response with full text
+        return GenerationResponse(
+            generatedText: fullText,
+            promptTokens: finalResponse.promptTokens,
+            completionTokens: finalResponse.completionTokens,
+            tokensPerSecond: finalResponse.tokensPerSecond,
+            generationTime: finalResponse.generationTime,
+            timeToFirstToken: finalResponse.timeToFirstToken,
+            memory: finalResponse.memory,
+            finishReason: finalResponse.finishReason
+        )
+    }
+
+    public func generateStream(request: GenerationRequest) async throws(GemmaServerError) -> AsyncStream<StreamChunk> {
         guard let container else {
             throw .inferenceHardwareFailure(reason: "MLX engine not initialized — call load() first")
         }
@@ -67,60 +99,73 @@ public actor MLXInferenceEngine: InferenceEngine {
             topP: Float(request.topP ?? 0.9)
         )
 
-        // Используем chat-формат чтобы применить chat template модели корректно
         let userInput = UserInput(chat: [.user(request.prompt)])
 
         do {
-            // prepare() конвертирует UserInput → LMInput через processor модели
             let lmInput = try await container.prepare(input: userInput)
-
+            let mlxStream = try await container.generate(input: lmInput, parameters: params)
+            
+            var iterator = mlxStream.makeAsyncIterator()
             let clock = ContinuousClock()
             let startTime = clock.now
             var firstTokenTime: ContinuousClock.Instant?
+            var lastInfo: GenerateCompletionInfo?
+            var finished = false
+            var sentMetadata = false
 
-            // generate() возвращает AsyncStream<Generation> (v3.31.3 API)
-            let stream = try await container.generate(input: lmInput, parameters: params)
-
-            var outputText = ""
-            var completionInfo: GenerateCompletionInfo?
-
-            for await generation in stream {
-                if firstTokenTime == nil {
-                    firstTokenTime = clock.now
+            return AsyncStream<StreamChunk> {
+                if sentMetadata { return nil }
+                
+                while !finished {
+                    do {
+                        if let generation = try await iterator.next() {
+                            if firstTokenTime == nil {
+                                firstTokenTime = clock.now
+                            }
+                            
+                            switch generation {
+                            case .chunk(let text):
+                                return .text(text)
+                            case .info(let info):
+                                lastInfo = info
+                                continue
+                            case .toolCall:
+                                continue
+                            }
+                        } else {
+                            finished = true
+                        }
+                    } catch {
+                        finished = true
+                    }
                 }
                 
-                switch generation {
-                case .chunk(let text):
-                    outputText += text
-                case .info(let info):
-                    completionInfo = info
-                case .toolCall:
-                    break   // не используем tool calling в этом пути
-                }
+                // End of stream - send metadata
+                sentMetadata = true
+                let totalDuration = clock.now - startTime
+                let generationTime = Double(totalDuration.components.seconds) + Double(totalDuration.components.attoseconds) / 1e18
+                
+                let ttftDuration = (firstTokenTime ?? clock.now) - startTime
+                let timeToFirstToken = Double(ttftDuration.components.seconds) + Double(ttftDuration.components.attoseconds) / 1e18
+
+                let mem = Memory.snapshot()
+
+                let metadata = GenerationResponse(
+                    generatedText: "", 
+                    promptTokens: lastInfo?.promptTokenCount ?? 0,
+                    completionTokens: lastInfo?.generationTokenCount ?? 0,
+                    tokensPerSecond: lastInfo?.tokensPerSecond ?? 0,
+                    generationTime: generationTime,
+                    timeToFirstToken: timeToFirstToken,
+                    memory: .init(
+                        peakBytes: mem.peakMemory,
+                        activeBytes: mem.activeMemory,
+                        cacheBytes: mem.cacheMemory
+                    ),
+                    finishReason: .stop
+                )
+                return .metadata(metadata)
             }
-
-            let totalDuration = clock.now - startTime
-            let generationTime = Double(totalDuration.components.seconds) + Double(totalDuration.components.attoseconds) / 1e18
-            
-            let ttftDuration = (firstTokenTime ?? clock.now) - startTime
-            let timeToFirstToken = Double(ttftDuration.components.seconds) + Double(ttftDuration.components.attoseconds) / 1e18
-
-            let mem = Memory.snapshot()
-
-            return GenerationResponse(
-                generatedText: outputText,
-                promptTokens: completionInfo?.promptTokenCount ?? 0,
-                completionTokens: completionInfo?.generationTokenCount ?? 0,
-                tokensPerSecond: completionInfo?.tokensPerSecond ?? 0,
-                generationTime: generationTime,
-                timeToFirstToken: timeToFirstToken,
-                memory: .init(
-                    peakBytes: mem.peakMemory,
-                    activeBytes: mem.activeMemory,
-                    cacheBytes: mem.cacheMemory
-                ),
-                finishReason: .stop
-            )
         } catch let err as GemmaServerError {
             throw err
         } catch {

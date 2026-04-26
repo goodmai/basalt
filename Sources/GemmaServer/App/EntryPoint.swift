@@ -29,6 +29,7 @@ public struct GemmaServerCLI: AsyncParsableCommand {
         subcommands: [
             ServeCommand.self,
             ModelsCommand.self,
+            ChatCommand.self,
         ],
         defaultSubcommand: ServeCommand.self
     )

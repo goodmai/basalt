@@ -80,6 +80,16 @@ swift run GemmaServer serve --model mlx-community/gemma-4-e4b-it-4bit --rest
 
 ---
 
+## Interactive Chat
+
+You can chat with the model directly in your terminal:
+
+```bash
+swift run GemmaServer chat --model mlx-community/gemma-4-e4b-it-4bit
+```
+
+---
+
 ## REST API
 
 Base URL: `http://127.0.0.1:8080`
