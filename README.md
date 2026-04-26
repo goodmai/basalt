@@ -22,7 +22,7 @@ Dual interface: **MCP** (stdio) for IDE integration + **REST/A2A** (HTTP) for ag
 | **macOS** | 15+ (Sequoia) |
 | **Xcode** | 16+ / Swift 6 |
 | **Hardware** | Apple Silicon (M1–M4), Unified Memory |
-| **Disk** | 2–20 GB depending on model |
+| **Disk** | 2–30 GB depending on model |
 
 ---
 
@@ -56,48 +56,26 @@ Fetching mlx-community/gemma-4* from Hugging Face…
   ────────────────────────────────────────────────────────────────────
   mlx-community/gemma-4-e2b-it-4bit               4bit    2B       228k
   mlx-community/gemma-4-e4b-it-4bit               4bit    4B        46k
-  mlx-community/gemma-4-26b-a4b-it-4bit           4bit    26B      101k
   mlx-community/gemma-4-31b-it-4bit               4bit    31B       64k
-```
-
-Filter by quantization:
-```bash
-swift run GemmaServer models list --quant 8bit
-swift run GemmaServer models list --search gemma-3
 ```
 
 ### 2. Download a model
 
-**Interactive picker** (recommended for first use):
+**Interactive picker** (features fast multi-threaded download):
 ```bash
 swift run GemmaServer models download
 ```
 
 **Direct download:**
 ```bash
-swift run GemmaServer models download mlx-community/gemma-4-e2b-it-4bit
-```
-
-Models go to `~/.cache/huggingface/hub/` — same cache as Python `transformers`.
-
-Check what's already downloaded:
-```bash
-swift run GemmaServer models cache
+swift run GemmaServer models download mlx-community/gemma-4-e4b-it-4bit
 ```
 
 ### 3. Start the server
 
 ```bash
-# Both interfaces (MCP + REST) — default
-swift run GemmaServer serve --model mlx-community/gemma-4-e2b-it-4bit
-
-# REST only (for curl / agent-to-agent)
-swift run GemmaServer serve --model mlx-community/gemma-4-e2b-it-4bit --rest
-
-# MCP only (for Cursor / Claude Desktop)
-swift run GemmaServer serve --model mlx-community/gemma-4-e2b-it-4bit --mcp
-
-> **Note:** The `--mcp` flag enables the Model Context Protocol via standard input/output using JSON-RPC 2.0. **You cannot chat with this interface by typing plain text (e.g., "hello").** If you type raw text, you will get a `"Parse error"`. This interface is meant to be consumed programmatically by IDEs like Cursor or Claude Desktop. To interact with the model manually, use the REST API (`curl`).
+# Start with the balanced 4B model (REST + MCP)
+swift run GemmaServer serve --model mlx-community/gemma-4-e4b-it-4bit --rest
 ```
 
 ---
@@ -106,25 +84,37 @@ swift run GemmaServer serve --model mlx-community/gemma-4-e2b-it-4bit --mcp
 
 Base URL: `http://127.0.0.1:8080`
 
+### POST /api/v1/auth/login
+
+```bash
+curl -s http://localhost:8080/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username": "admin", "password": "admin"}'
+```
+
+**Response:**
+```json
+{ "token": "eyJ0eXAiOiJKV1QiLCJhbGci..." }
+```
+
 ### POST /api/v1/generate
 
 ```bash
 curl -s http://localhost:8080/api/v1/generate \
+  -H "Authorization: Bearer <TOKEN>" \
   -H "Content-Type: application/json" \
   -d '{
     "prompt": "Explain quantum entanglement in one paragraph.",
-    "maxTokens": 256,
-    "temperature": 0.7,
-    "topP": 0.9
+    "maxTokens": 256
   }' | python3 -m json.tool
 ```
 
-**Request:**
+**Request Fields:**
 
 | Field | Type | Default | Description |
 |---|---|---|---|
 | `prompt` | string | required | Input text |
-| `maxTokens` | int | 1024 | Max tokens to generate |
+| `maxTokens` | int | 65536 | Max tokens to generate |
 | `temperature` | float | 0.7 | Sampling temperature (0–2) |
 | `topP` | float | 0.9 | Nucleus sampling p |
 
@@ -136,120 +126,59 @@ curl -s http://localhost:8080/api/v1/generate \
   "promptTokens": 12,
   "completionTokens": 87,
   "tokensPerSecond": 24.5,
+  "generationTime": 3.55,
+  "timeToFirstToken": 0.15,
+  "memory": {
+    "peakBytes": 2708605545,
+    "activeBytes": 2639005122,
+    "cacheBytes": 142525990
+  },
   "finishReason": "stop"
-}
-```
-
-### GET /api/v1/health
-
-```bash
-curl -s http://localhost:8080/api/v1/health | python3 -m json.tool
-```
-
-```json
-{
-  "status": "ok",
-  "modelId": "gemma-4-e2b-it-4bit",
-  "isReady": true,
-  "version": "0.1.0"
 }
 ```
 
 ---
 
-## MCP Integration
+## Models & Performance
 
-Add to `~/.cursor/mcp.json` (Cursor) or `claude_desktop_config.json` (Claude Desktop):
+Benchmarked on Apple Silicon (Unified Memory):
+
+| Model | Size | RAM Usage | TTFT | Avg TPS | Command |
+|---|---|---|---|---|---|
+| **Gemma 4 2B** | 2B | ~2.7 GB | 0.16s | 60.4 | `--model mlx-community/gemma-4-e2b-it-4bit` |
+| **Gemma 4 4B** | 4B | ~4.3 GB | 0.09s | 51.8 | `--model mlx-community/gemma-4-e4b-it-4bit` |
+| **Gemma 4 31B** | 31B | **~17.3 GB** | **10.2s** | 13.5 | `--model mlx-community/gemma-4-31b-it-4bit` |
+
+---
+
+## MCP Integration (Cursor / Claude)
+
+Add to your MCP config:
 
 ```json
 {
   "mcpServers": {
-    "gemma-local": {
+    "gemma": {
       "command": "swift",
       "args": [
         "run", "--package-path", "/path/to/GemmaServer",
-        "GemmaServer", "serve",
-        "--model", "mlx-community/gemma-4-e2b-it-4bit",
-        "--mcp"
+        "GemmaServer", "serve", "--model", "mlx-community/gemma-4-e4b-it-4bit", "--mcp"
       ]
     }
   }
 }
 ```
 
-**Available MCP tools:**
-
-| Tool | Description |
-|---|---|
-| `gemma_generate` | Generate text from a prompt |
-| `gemma_status` | Check model readiness and version |
-
----
-
-## Models
-
-Recommended models by RAM:
-
-| RAM | Model | Command |
-|---|---|---|
-| 8 GB | `gemma-4-e2b-it-4bit` | `--model mlx-community/gemma-4-e2b-it-4bit` |
-| 16 GB | `gemma-4-e4b-it-4bit` | `--model mlx-community/gemma-4-e4b-it-4bit` |
-| 32 GB | `gemma-4-26b-a4b-it-4bit` | `--model mlx-community/gemma-4-26b-a4b-it-4bit` |
-| 64 GB+ | `gemma-4-31b-it-4bit` | `--model mlx-community/gemma-4-31b-it-4bit` |
-
----
-
-## Architecture
-
-```
-Sources/
-├── GemmaServer/          # Library (GemmaServerCore)
-│   ├── App/
-│   │   └── EntryPoint.swift        # Root AsyncParsableCommand
-│   ├── Config/
-│   │   └── ServerConfig.swift      # CLI options
-│   ├── Core/
-│   │   ├── GemmaServerError.swift  # Typed throws — E = E_io ∪ E_memory ∪ E_inference
-│   │   ├── DTOs.swift              # GenerationRequest / Response (Sendable, Codable)
-│   │   ├── ModelOrchestratorActor.swift  # Single queue for both transports
-│   │   └── MLXInferenceEngine.swift      # Real MLXLLM inference (actor-isolated)
-│   ├── MCP/
-│   │   └── MCPServer.swift         # JSON-RPC 2.0 over newline-delimited stdio
-│   ├── REST/
-│   │   ├── RESTServer.swift        # Hummingbird 2.x HTTP server
-│   │   └── GenerateController.swift
-│   └── CLI/
-│       ├── HuggingFaceHub.swift    # HF Hub API + downloader (URLSession)
-│       ├── ModelsCommand.swift     # list / download / info / cache
-│       └── ServeCommand.swift      # serve subcommand
-└── GemmaServerBin/       # Executable (thin wrapper)
-    └── main.swift                  # GemmaServerCLI.main()
-
-Tests/
-└── GemmaServerTests/     # Swift Testing — 34 tests
-    ├── MockInferenceEngine.swift
-    ├── DTOTests.swift
-    ├── ErrorTests.swift
-    ├── ModelCacheTests.swift
-    └── OrchestratorTests.swift
-```
-
-**Stability invariant:** λ_mcp + λ_rest < μ_inference  
-Swift `actor` guarantees FIFO serialization without explicit locks.
-
 ---
 
 ## Development
 
 ```bash
-# Run tests
+# Run tests (51 tests)
 swift test
 
-# Build release binary
-swift build -c release
-
-# Watch logs (MCP and REST log to stderr)
-swift run GemmaServer serve --model mlx-community/gemma-4-e2b-it-4bit 2>&1 | tee server.log
+# Performance Benchmark CLI
+swift run PerformanceBenchmark --model mlx-community/gemma-4-e4b-it-4bit
 ```
 
 ---
@@ -259,14 +188,10 @@ swift run GemmaServer serve --model mlx-community/gemma-4-e2b-it-4bit 2>&1 | tee
 | Package | Version | Purpose |
 |---|---|---|
 | `ml-explore/mlx-swift` | 0.31.3 | MLX core + Metal ops |
-| `ml-explore/mlx-swift-lm` | 3.31.3 | MLXLLM — Gemma 4 model loading + inference |
-| `huggingface/swift-transformers` | 1.3.0 | Tokenizers for model loading |
-| `hummingbird-project/hummingbird` | 2.22.0 | HTTP server (REST/A2A) |
-| `apple/swift-argument-parser` | 1.7.1 | CLI subcommands |
-| `stephencelis/SQLite.swift` | 0.15.3 | Local SQLite database for auth |
+| `ml-explore/mlx-swift-lm` | 3.31.3 | MLXLLM inference engine |
+| `hummingbird-project/hummingbird` | 2.6.0 | HTTP server (REST/A2A) |
+| `hummingbird-project/hummingbird-auth` | 2.0.0 | Authentication middleware |
+| `stephencelis/SQLite.swift` | 0.16.0 | Local SQLite database for auth |
 | `vapor/jwt-kit` | 4.13.0 | JWT generation and verification |
-s |
-| `ml-explore/mlx-swift-lm` | 3.31.3 | MLXLLM — Gemma 4 model loading + inference |
-| `huggingface/swift-transformers` | 1.3.0 | Tokenizers for model loading |
-| `hummingbird-project/hummingbird` | 2.22.0 | HTTP server (REST/A2A) |
-| `apple/swift-argument-parser` | 1.7.1 | CLI subcommands |
+| `apple/swift-crypto` | 3.0.0 | Password hashing |
+| `apple/swift-argument-parser` | 1.5.0 | CLI subcommands |
