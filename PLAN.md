@@ -52,6 +52,10 @@
 
 **v0.3.0** (Target: 2026-06-15) — Documentation & Model Ecosystem
 - Epic 4: Documentation Website (3 features)
+- Epic 3: Onboarding & Benchmarking (3 features)
+  - Interactive onboarding flow
+  - SWE benchmark suite
+  - Scheduled benchmark execution
   - Documentation framework setup
   - Automated documentation deployment
   - Documentation quality checks
@@ -65,8 +69,20 @@
   - Rich terminal output
 - Target Commits: +25 commits
 
-**v0.4.0** (Target: 2026-07-15) — Plugin Marketplace
-- Epic 6: MCP Plugin Marketplace (3 features)
+**v0.4.0** (Target: 2026-07-15) — Automation & Remote Control
+- Epic 11: Scheduled Tasks & Multi-Agent Orchestration (3 features)
+  - Task scheduler & cron system
+  - Multi-agent orchestration (Gemini, Claude, Copilot, etc.)
+  - Agent collaboration & consensus
+- Epic 12: Telegram Bot Integration (3 features)
+  - Telegram bot setup & authentication
+  - Remote session management
+  - Inline queries & notifications
+- Target Commits: +35 commits
+
+
+**v0.5.0** (Target: 2026-08-15) — Plugin Marketplace
+- Epic 9: MCP Plugin Marketplace (3 features)
   - MCP server discovery
   - Agent capability analysis
   - Marketplace UI
@@ -102,8 +118,17 @@
 - 🔄 Privacy compliance audit
 - 🔄 Homebrew installation
 
-**Planned Features:** 16
+**Planned Features:** 25
 - 📋 Documentation framework setup
+- 📋 Interactive onboarding flow
+- 📋 SWE benchmark suite (5 tasks)
+- 📋 Scheduled benchmark execution
+- 📋 Task scheduler & cron system
+- 📋 Multi-agent orchestration
+- 📋 Agent collaboration & consensus
+- 📋 Telegram bot setup
+- 📋 Remote session management
+- 📋 Inline queries & notifications
 - 📋 Automated documentation deployment
 - 📋 Documentation quality checks
 - 📋 Model validation
@@ -120,7 +145,7 @@
 - 📋 Multi-model serving
 - 📋 Quantization experiments
 
-**Total Features:** 29 (7 completed, 6 in progress, 16 planned)
+**Total Features:** 38 (7 completed, 6 in progress, 25 planned)
 
 ### Commit Counter
 
@@ -288,10 +313,362 @@ func calculateMaxTokens(availableRAM: Int64, modelSizeMB: Int) -> Int {
 
 ---
 
-## Epic 5: Model Compatibility & Testing 🧪 (IN PROGRESS)
+## Epic 6: Model Compatibility & Testing 🧪 (IN PROGRESS)
 ---
 
 ## Epic 4: Documentation Website & Deployment 📚
+---
+
+## Epic 3: Onboarding & Automated Benchmarking 🚀
+
+**Business Value:** First-run experience that automatically profiles hardware and recommends optimal models, reducing setup friction and ensuring best performance.
+
+**User Stories:**
+- As a new user, I want the app to guide me through initial setup
+- As a developer, I need to know which models will run well on my hardware
+- As a user, I want to benchmark models overnight without blocking my work
+- As a team lead, I need performance data to choose the right model for deployment
+
+### 3.1 Interactive Onboarding Flow
+**Status:** Not started  
+**Priority:** HIGH (for v0.3.0)  
+**Effort:** 1 week
+
+**Business Value:** Guided onboarding reduces time-to-first-inference from 30 minutes to 5 minutes.
+
+**Acceptance Criteria:**
+- [ ] Detect first launch (no config file exists)
+- [ ] System resource detection (RAM, GPU, CPU cores, disk space)
+- [ ] Interactive dialog with 3 options: Start Now, Skip, Schedule Tonight
+- [ ] Model recommendation based on available RAM
+- [ ] Download recommended model with progress bar
+- [ ] Run first inference test
+- [ ] Save onboarding completion state
+
+**System Resource Detection:**
+```swift
+actor SystemProfiler {
+    struct SystemResources: Codable, Sendable {
+        let totalRAM: Int64          // bytes
+        let availableRAM: Int64      // bytes
+        let cpuCores: Int
+        let gpuName: String
+        let gpuMemory: Int64         // bytes
+        let diskSpace: Int64         // bytes available
+        let osVersion: String
+        let chipModel: String        // M1, M2, M3, M4
+    }
+    
+    func detectResources() async -> SystemResources {
+        // Use sysctl, Metal API, FileManager
+        let totalRAM = ProcessInfo.processInfo.physicalMemory
+        let cpuCores = ProcessInfo.processInfo.processorCount
+        
+        // Metal GPU detection
+        let device = MTLCreateSystemDefaultDevice()
+        let gpuName = device?.name ?? "Unknown"
+        let gpuMemory = device?.recommendedMaxWorkingSetSize ?? 0
+        
+        // Disk space
+        let fileURL = URL(fileURLWithPath: NSHomeDirectory())
+        let values = try? fileURL.resourceValues(forKeys: [.volumeAvailableCapacityKey])
+        let diskSpace = values?.volumeAvailableCapacity ?? 0
+        
+        return SystemResources(
+            totalRAM: Int64(totalRAM),
+            availableRAM: getAvailableRAM(),
+            cpuCores: cpuCores,
+            gpuName: gpuName,
+            gpuMemory: Int64(gpuMemory),
+            diskSpace: Int64(diskSpace),
+            osVersion: ProcessInfo.processInfo.operatingSystemVersionString,
+            chipModel: detectChipModel()
+        )
+    }
+    
+    func recommendModel(resources: SystemResources) -> String {
+        let ramGB = resources.totalRAM / 1_073_741_824
+        
+        return switch ramGB {
+        case 0..<8:   "mlx-community/Qwen3.5-4B-4bit"      // 2.3 GB RAM
+        case 8..<16:  "mlx-community/Qwen3.5-9B-OptiQ-4bit" // 5.8 GB RAM
+        case 16..<32: "mlx-community/Qwen3.6-27B-4bit"     // 14.5 GB RAM
+        default:      "mlx-community/Qwen3.6-27B-4bit"     // Best quality
+        }
+    }
+}
+```
+
+**Interactive Dialog:**
+```swift
+actor OnboardingFlow {
+    func run() async throws {
+        print("🚀 Welcome to GemmaServer!")
+        print("\nDetecting system resources...")
+        
+        let profiler = SystemProfiler()
+        let resources = await profiler.detectResources()
+        
+        print("\n📊 System Profile:")
+        print("  RAM:  \(resources.totalRAM / 1_073_741_824) GB")
+        print("  GPU:  \(resources.gpuName)")
+        print("  CPU:  \(resources.cpuCores) cores")
+        print("  Chip: \(resources.chipModel)")
+        
+        let recommended = await profiler.recommendModel(resources: resources)
+        print("\n✨ Recommended model: \(recommended)")
+        print("   Expected performance: ~\(estimateTPS(model: recommended)) TPS")
+        
+        print("\n🎯 Benchmark Options:")
+        print("  1. Start benchmark now (~15 minutes)")
+        print("  2. Skip benchmark (use defaults)")
+        print("  3. Schedule for tonight (22:00)")
+        print("\nChoice (1/2/3): ", terminator: "")
+        
+        guard let choice = readLine() else { return }
+        
+        switch choice {
+        case "1":
+            try await runBenchmarkNow(model: recommended)
+        case "2":
+            print("⏭️  Skipping benchmark. Using default settings.")
+            try await downloadAndTest(model: recommended)
+        case "3":
+            try await scheduleBenchmark(model: recommended, time: "22:00")
+        default:
+            print("Invalid choice. Defaulting to skip.")
+            try await downloadAndTest(model: recommended)
+        }
+    }
+}
+```
+
+**Workflow:**
+1. TDD: Write tests for SystemProfiler
+2. Implement: Resource detection
+3. Implement: Interactive dialog
+4. Test: Run on different hardware (M1, M2, M3, M4)
+5. Commit: `feat: Add interactive onboarding with system profiling`
+
+---
+
+### 3.2 SWE Benchmark Suite (5 Real Tasks)
+**Status:** Not started  
+**Priority:** HIGH  
+**Effort:** 1 week
+
+**Business Value:** Real-world task benchmarks provide actionable performance data, not just synthetic metrics.
+
+**Acceptance Criteria:**
+- [ ] 5 real software engineering tasks
+- [ ] Time-based evaluation (not just TPS)
+- [ ] Quality scoring (correctness, completeness)
+- [ ] Performance report with recommendations
+- [ ] Export results to JSON
+
+**5 SWE Benchmark Tasks:**
+
+**Task 1: Code Generation (Simple)**
+```
+Prompt: "Write a Swift function to calculate Fibonacci numbers recursively."
+Expected: Working Swift code with proper syntax
+Time Budget: 10 seconds
+Quality Metrics: Compiles, correct algorithm, handles edge cases
+```
+
+**Task 2: Code Refactoring**
+```
+Prompt: "Refactor this code to use async/await instead of callbacks: [code snippet]"
+Expected: Correct async/await transformation
+Time Budget: 15 seconds
+Quality Metrics: Maintains functionality, proper error handling, Swift 6 compliant
+```
+
+**Task 3: Bug Fix**
+```
+Prompt: "Fix the race condition in this actor: [code snippet]"
+Expected: Identifies issue, provides correct fix
+Time Budget: 20 seconds
+Quality Metrics: Correct diagnosis, working fix, explanation
+```
+
+**Task 4: API Design**
+```
+Prompt: "Design a REST API for a todo list app with CRUD operations."
+Expected: Complete API spec with endpoints, methods, payloads
+Time Budget: 30 seconds
+Quality Metrics: RESTful design, proper HTTP methods, error handling
+```
+
+**Task 5: Architecture Review**
+```
+Prompt: "Review this system architecture and suggest improvements: [diagram]"
+Expected: Identifies bottlenecks, suggests optimizations
+Time Budget: 45 seconds
+Quality Metrics: Actionable suggestions, considers scalability, security
+```
+
+**Benchmark Implementation:**
+```swift
+actor SWEBenchmark {
+    struct Task: Codable, Sendable {
+        let id: String
+        let name: String
+        let prompt: String
+        let timeBudget: TimeInterval
+        let expectedKeywords: [String]
+    }
+    
+    struct Result: Codable, Sendable {
+        let taskId: String
+        let timeElapsed: TimeInterval
+        let tokensGenerated: Int
+        let qualityScore: Double  // 0.0-1.0
+        let passed: Bool
+    }
+    
+    let tasks: [Task] = [
+        Task(id: "code_gen", name: "Code Generation", 
+             prompt: "Write a Swift function to calculate Fibonacci...",
+             timeBudget: 10.0,
+             expectedKeywords: ["func", "fibonacci", "return"]),
+        // ... 4 more tasks
+    ]
+    
+    func runBenchmark(orchestrator: ModelOrchestratorActor) async throws -> [Result] {
+        var results: [Result] = []
+        
+        for task in tasks {
+            print("Running: \(task.name)...")
+            let start = ContinuousClock.now
+            
+            let response = try await orchestrator.generate(
+                request: .init(prompt: task.prompt, maxTokens: 500)
+            )
+            
+            let elapsed = start.duration(to: .now).inSeconds
+            let quality = evaluateQuality(
+                response: response.generatedText,
+                expected: task.expectedKeywords
+            )
+            
+            results.append(Result(
+                taskId: task.id,
+                timeElapsed: elapsed,
+                tokensGenerated: response.completionTokens,
+                qualityScore: quality,
+                passed: elapsed <= task.timeBudget && quality >= 0.7
+            ))
+        }
+        
+        return results
+    }
+    
+    func generateReport(results: [Result]) -> String {
+        let passed = results.filter(\.passed).count
+        let avgTime = results.map(\.timeElapsed).reduce(0, +) / Double(results.count)
+        let avgQuality = results.map(\.qualityScore).reduce(0, +) / Double(results.count)
+        
+        return """
+        📊 SWE Benchmark Report
+        
+        Tasks Passed: \(passed)/\(results.count)
+        Avg Time:     \(String(format: "%.1f", avgTime))s
+        Avg Quality:  \(String(format: "%.0f", avgQuality * 100))%
+        
+        Recommendation: \(getRecommendation(avgTime: avgTime, avgQuality: avgQuality))
+        """
+    }
+}
+```
+
+**Workflow:**
+1. Design: Define 5 real SWE tasks
+2. Implement: SWEBenchmark actor
+3. Implement: Quality evaluation logic
+4. Test: Run on all verified models
+5. Commit: `feat: Add SWE benchmark suite with 5 real tasks`
+
+---
+
+### 3.3 Scheduled Benchmark Execution
+**Status:** Not started  
+**Priority:** MEDIUM  
+**Effort:** 3 days
+
+**Business Value:** Overnight benchmarking doesn't interrupt user's work.
+
+**Acceptance Criteria:**
+- [ ] Schedule benchmark for specific time (e.g., 22:00)
+- [ ] Run benchmark in background
+- [ ] Send notification when complete
+- [ ] Save results to file
+- [ ] Resume if interrupted
+
+**Technical Design:**
+```swift
+actor BenchmarkScheduler {
+    func schedule(time: String, model: String) async throws {
+        let components = time.split(separator: ":")
+        guard components.count == 2,
+              let hour = Int(components[0]),
+              let minute = Int(components[1]) else {
+            throw SchedulerError.invalidTime
+        }
+        
+        var dateComponents = Calendar.current.dateComponents([.year, .month, .day], from: Date())
+        dateComponents.hour = hour
+        dateComponents.minute = minute
+        
+        guard let scheduledDate = Calendar.current.date(from: dateComponents) else {
+            throw SchedulerError.invalidDate
+        }
+        
+        // If time already passed today, schedule for tomorrow
+        let targetDate = scheduledDate < Date() 
+            ? Calendar.current.date(byAdding: .day, value: 1, to: scheduledDate)!
+            : scheduledDate
+        
+        print("✅ Benchmark scheduled for \(targetDate)")
+        
+        // Use Timer or DispatchQueue.asyncAfter
+        let delay = targetDate.timeIntervalSinceNow
+        Task {
+            try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            try await runScheduledBenchmark(model: model)
+        }
+    }
+    
+    func runScheduledBenchmark(model: String) async throws {
+        print("🌙 Starting scheduled benchmark...")
+        
+        let orchestrator = ModelOrchestratorActor(engine: MLXInferenceEngine())
+        try await orchestrator.loadModel(path: ModelCache.cacheDir(for: model).path)
+        
+        let benchmark = SWEBenchmark()
+        let results = try await benchmark.runBenchmark(orchestrator: orchestrator)
+        
+        // Save results
+        let report = benchmark.generateReport(results: results)
+        let url = URL(fileURLWithPath: "benchmark_results_\(Date().ISO8601Format()).json")
+        try JSONEncoder().encode(results).write(to: url)
+        
+        // Send notification
+        sendNotification(title: "Benchmark Complete", body: report)
+        
+        print("✅ Benchmark complete. Results saved to \(url.path)")
+    }
+}
+```
+
+**Workflow:**
+1. Implement: BenchmarkScheduler actor
+2. Implement: macOS notification support
+3. Test: Schedule for 1 minute in future
+4. Test: Resume after app restart
+5. Commit: `feat: Add scheduled benchmark execution`
+
+---
 
 **Business Value:** Professional documentation website increases adoption, reduces support burden, and establishes credibility.
 
@@ -519,7 +896,7 @@ jobs:
 
 ---
 
-## Epic 6: Developer Experience & CLI Enhancements 🎨
+## Epic 7: Developer Experience & CLI Enhancements 🎨
 
 **Business Value:** Reduce friction for new users, improve discoverability, make the CLI feel polished.
 
@@ -654,7 +1031,7 @@ func interactiveModelPicker() async throws -> String {
 
 ---
 
-## Epic 7: Security & Dependency Audit 🔒
+## Epic 8: Security & Dependency Audit 🔒
 
 **Business Value:** Ensure GemmaServer is secure, compliant, and free from known vulnerabilities. Protect user data and prevent supply chain attacks.
 
@@ -963,7 +1340,7 @@ User Input (prompt) → ModelOrchestrator → MLX Inference → Response
 
 ---
 
-## Epic 8: MCP Plugin Marketplace & Agent Integration 🔌
+## Epic 9: MCP Plugin Marketplace & Agent Integration 🔌
 
 **Business Value:** Enable GemmaServer to discover and integrate with MCP servers, creating an ecosystem of AI agents that can collaborate through standardized protocols.
 
@@ -1136,7 +1513,7 @@ actor AgentCapabilityAnalyzer {
 
 ---
 
-## Epic 9: Apple App Store Distribution 🍎
+## Epic 10: Apple App Store Distribution 🍎
 
 **Business Value:** Reach mainstream users through official Apple distribution, establish GemmaServer as a trusted local AI platform.
 
@@ -1296,6 +1673,652 @@ spctl --assess --verbose=4 --type execute GemmaServer.app
 ---
 
 ## Epic 10: Advanced Features (Future)
+## Epic 11: Scheduled Tasks & Multi-Agent Orchestration ⏰
+
+**Business Value:** Automated task execution with multiple AI agents (Gemini, Gemma, Qwen, Ollama, Copilot, Claude) enables complex workflows and 24/7 operation.
+
+**User Stories:**
+- As a developer, I want to schedule code reviews to run nightly
+- As a team, we need different AI agents for different tasks (code vs docs vs architecture)
+- As a user, I want agents to collaborate on complex tasks
+- As an ops engineer, I need automated monitoring and reporting
+
+### 11.1 Task Scheduler & Cron System
+**Status:** Not started  
+**Priority:** HIGH (for v0.4.0)  
+**Effort:** 2 weeks
+
+**Business Value:** Automated task execution reduces manual work and enables 24/7 AI assistance.
+
+**Acceptance Criteria:**
+- [ ] Cron-style task scheduling
+- [ ] Task templates (code review, documentation, testing)
+- [ ] Task history and logs
+- [ ] Retry logic for failed tasks
+- [ ] Email/Slack notifications on completion
+
+**Technical Design:**
+```swift
+actor TaskScheduler {
+    struct ScheduledTask: Codable, Sendable {
+        let id: UUID
+        let name: String
+        let cronExpression: String  // "0 2 * * *" = 2 AM daily
+        let agentType: AgentType
+        let prompt: String
+        let enabled: Bool
+        let lastRun: Date?
+        let nextRun: Date?
+    }
+    
+    enum AgentType: String, Codable, Sendable {
+        case gemma = "local-gemma"
+        case qwen = "local-qwen"
+        case ollama = "ollama-api"
+        case gemini = "google-gemini"
+        case claude = "anthropic-claude"
+        case copilot = "github-copilot"
+    }
+    
+    private var tasks: [UUID: ScheduledTask] = [:]
+    private var timers: [UUID: Task<Void, Never>] = [:]
+    
+    func schedule(task: ScheduledTask) async throws {
+        tasks[task.id] = task
+        
+        // Parse cron expression and calculate next run
+        let nextRun = try calculateNextRun(cron: task.cronExpression)
+        
+        // Schedule task
+        let timer = Task {
+            while !Task.isCancelled {
+                let delay = nextRun.timeIntervalSinceNow
+                if delay > 0 {
+                    try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                }
+                
+                if task.enabled {
+                    await executeTask(task)
+                }
+                
+                // Calculate next run
+                let next = try? calculateNextRun(cron: task.cronExpression)
+                guard let next else { break }
+            }
+        }
+        
+        timers[task.id] = timer
+    }
+    
+    func executeTask(_ task: ScheduledTask) async {
+        print("⏰ Executing scheduled task: \(task.name)")
+        
+        do {
+            let agent = try await createAgent(type: task.agentType)
+            let result = try await agent.execute(prompt: task.prompt)
+            
+            // Save result
+            try await saveTaskResult(taskId: task.id, result: result)
+            
+            // Send notification
+            await sendNotification(
+                title: "Task Complete: \(task.name)",
+                body: "Result: \(result.summary)"
+            )
+        } catch {
+            print("❌ Task failed: \(error)")
+            await sendNotification(
+                title: "Task Failed: \(task.name)",
+                body: "Error: \(error.localizedDescription)"
+            )
+        }
+    }
+}
+```
+
+**Cron Expression Parser:**
+```swift
+struct CronParser {
+    // Format: minute hour day month weekday
+    // Example: "0 2 * * *" = 2 AM every day
+    
+    func parse(_ expression: String) throws -> CronSchedule {
+        let parts = expression.split(separator: " ")
+        guard parts.count == 5 else {
+            throw CronError.invalidFormat
+        }
+        
+        return CronSchedule(
+            minute: try parseField(String(parts[0]), range: 0...59),
+            hour: try parseField(String(parts[1]), range: 0...23),
+            day: try parseField(String(parts[2]), range: 1...31),
+            month: try parseField(String(parts[3]), range: 1...12),
+            weekday: try parseField(String(parts[4]), range: 0...6)
+        )
+    }
+    
+    func calculateNextRun(from date: Date, schedule: CronSchedule) -> Date {
+        // Calculate next matching date/time
+        var components = Calendar.current.dateComponents([.year, .month, .day, .hour, .minute], from: date)
+        
+        // Increment and find next match
+        // ... implementation
+        
+        return Calendar.current.date(from: components)!
+    }
+}
+```
+
+**Workflow:**
+1. Implement: CronParser and TaskScheduler
+2. Add: Task persistence (SQLite)
+3. Implement: Task execution engine
+4. Test: Schedule tasks for various times
+5. Commit: `feat: Add cron-style task scheduler`
+
+---
+
+### 11.2 Multi-Agent Orchestration
+**Status:** Not started  
+**Priority:** HIGH  
+**Effort:** 2 weeks
+
+**Business Value:** Different AI agents excel at different tasks. Orchestration enables best-of-breed approach.
+
+**Acceptance Criteria:**
+- [ ] Support 6 agent types (Gemma, Qwen, Ollama, Gemini, Claude, Copilot)
+- [ ] Agent selection based on task type
+- [ ] Sub-agent delegation (agent can call other agents)
+- [ ] Agent collaboration (multiple agents on one task)
+- [ ] Cost tracking (API calls for cloud agents)
+
+**Agent Registry:**
+```swift
+actor AgentRegistry {
+    enum AgentCapability {
+        case codeGeneration
+        case codeReview
+        case documentation
+        case architecture
+        case testing
+        case debugging
+    }
+    
+    struct AgentProfile {
+        let type: AgentType
+        let capabilities: [AgentCapability]
+        let costPerToken: Double?  // nil for local
+        let maxTokens: Int
+        let avgResponseTime: TimeInterval
+    }
+    
+    let profiles: [AgentType: AgentProfile] = [
+        .gemma: AgentProfile(
+            type: .gemma,
+            capabilities: [.codeGeneration, .codeReview, .documentation],
+            costPerToken: nil,
+            maxTokens: 128_000,
+            avgResponseTime: 2.0
+        ),
+        .claude: AgentProfile(
+            type: .claude,
+            capabilities: [.codeGeneration, .codeReview, .architecture, .documentation],
+            costPerToken: 0.000015,  // $15 per 1M tokens
+            maxTokens: 200_000,
+            avgResponseTime: 5.0
+        ),
+        .gemini: AgentProfile(
+            type: .gemini,
+            capabilities: [.codeGeneration, .testing, .debugging],
+            costPerToken: 0.000001,  // $1 per 1M tokens
+            maxTokens: 1_000_000,
+            avgResponseTime: 3.0
+        ),
+        // ... other agents
+    ]
+    
+    func selectAgent(for capability: AgentCapability, preferLocal: Bool = true) -> AgentType {
+        let candidates = profiles.filter { $0.value.capabilities.contains(capability) }
+        
+        if preferLocal {
+            // Prefer local agents (Gemma, Qwen)
+            return candidates.first { $0.value.costPerToken == nil }?.key ?? .gemma
+        } else {
+            // Prefer fastest agent
+            return candidates.min { $0.value.avgResponseTime < $1.value.avgResponseTime }?.key ?? .claude
+        }
+    }
+}
+```
+
+**Agent Orchestrator:**
+```swift
+actor AgentOrchestrator {
+    struct Task {
+        let description: String
+        let capability: AgentCapability
+        let maxCost: Double?  // Budget limit
+        let deadline: Date?
+    }
+    
+    struct TaskResult {
+        let agentUsed: AgentType
+        let output: String
+        let tokensUsed: Int
+        let cost: Double
+        let duration: TimeInterval
+    }
+    
+    func execute(task: Task) async throws -> TaskResult {
+        // Select best agent
+        let registry = AgentRegistry()
+        let agentType = await registry.selectAgent(
+            for: task.capability,
+            preferLocal: task.maxCost == nil || task.maxCost! < 0.01
+        )
+        
+        // Create agent
+        let agent = try await createAgent(type: agentType)
+        
+        // Execute
+        let start = ContinuousClock.now
+        let result = try await agent.execute(prompt: task.description)
+        let duration = start.duration(to: .now).inSeconds
+        
+        // Calculate cost
+        let profile = await registry.profiles[agentType]!
+        let cost = Double(result.tokensUsed) * (profile.costPerToken ?? 0.0)
+        
+        return TaskResult(
+            agentUsed: agentType,
+            output: result.text,
+            tokensUsed: result.tokensUsed,
+            cost: cost,
+            duration: duration
+        )
+    }
+    
+    // Sub-agent delegation
+    func executeWithSubAgents(mainTask: Task, subTasks: [Task]) async throws -> [TaskResult] {
+        // Execute sub-tasks in parallel
+        try await withThrowingTaskGroup(of: TaskResult.self) { group in
+            for subTask in subTasks {
+                group.addTask {
+                    try await self.execute(task: subTask)
+                }
+            }
+            
+            var results: [TaskResult] = []
+            for try await result in group {
+                results.append(result)
+            }
+            return results
+        }
+    }
+}
+```
+
+**Example: Code Review with Multiple Agents:**
+```swift
+// Main task: Code review
+let mainTask = Task(
+    description: "Review this PR for bugs and style issues",
+    capability: .codeReview,
+    maxCost: 0.10,
+    deadline: Date().addingTimeInterval(300)  // 5 minutes
+)
+
+// Sub-tasks
+let subTasks = [
+    Task(description: "Check for security vulnerabilities", capability: .debugging),
+    Task(description: "Verify test coverage", capability: .testing),
+    Task(description: "Review architecture changes", capability: .architecture)
+]
+
+let orchestrator = AgentOrchestrator()
+let results = try await orchestrator.executeWithSubAgents(
+    mainTask: mainTask,
+    subTasks: subTasks
+)
+
+// Aggregate results
+let summary = aggregateResults(results)
+```
+
+**Workflow:**
+1. Implement: AgentRegistry with profiles
+2. Implement: Agent adapters (Gemini API, Claude API, etc.)
+3. Implement: AgentOrchestrator
+4. Test: Execute tasks with different agents
+5. Commit: `feat: Add multi-agent orchestration system`
+
+---
+
+### 11.3 Agent Collaboration & Consensus
+**Status:** Not started  
+**Priority:** MEDIUM  
+**Effort:** 1 week
+
+**Business Value:** Multiple agents can validate each other's work, reducing errors.
+
+**Acceptance Criteria:**
+- [ ] Multiple agents work on same task
+- [ ] Consensus mechanism (voting, averaging)
+- [ ] Conflict resolution
+- [ ] Quality scoring
+
+**Consensus Mechanism:**
+```swift
+actor ConsensusEngine {
+    func executeWithConsensus(
+        task: String,
+        agents: [AgentType],
+        consensusThreshold: Double = 0.7
+    ) async throws -> String {
+        // Execute task with multiple agents
+        let results = try await withThrowingTaskGroup(of: (AgentType, String).self) { group in
+            for agent in agents {
+                group.addTask {
+                    let a = try await createAgent(type: agent)
+                    let result = try await a.execute(prompt: task)
+                    return (agent, result.text)
+                }
+            }
+            
+            var outputs: [(AgentType, String)] = []
+            for try await result in group {
+                outputs.append(result)
+            }
+            return outputs
+        }
+        
+        // Calculate similarity between outputs
+        let similarities = calculateSimilarities(results.map(\.1))
+        
+        // Find consensus
+        if similarities.max()! >= consensusThreshold {
+            // High agreement - return most common answer
+            return findMostCommon(results.map(\.1))
+        } else {
+            // Low agreement - ask meta-agent to resolve
+            return try await resolveConflict(results: results)
+        }
+    }
+    
+    func resolveConflict(results: [(AgentType, String)]) async throws -> String {
+        let metaPrompt = """
+        Multiple AI agents provided different answers to the same question.
+        Please analyze and provide the best answer:
+        
+        \(results.enumerated().map { "Agent \($0.offset + 1): \($0.element.1)" }.joined(separator: "\n\n"))
+        """
+        
+        let metaAgent = try await createAgent(type: .claude)  // Use most capable
+        let resolution = try await metaAgent.execute(prompt: metaPrompt)
+        return resolution.text
+    }
+}
+```
+
+**Workflow:**
+1. Implement: ConsensusEngine
+2. Implement: Similarity calculation
+3. Test: Run same task with 3 agents
+4. Commit: `feat: Add agent collaboration and consensus`
+
+---
+
+## Epic 12: Telegram Bot Integration 📱
+
+**Business Value:** Remote control of GemmaServer via Telegram enables mobile access and team collaboration.
+
+**User Stories:**
+- As a user, I want to start inference from my phone
+- As a team, we need a shared Telegram bot for AI access
+- As a developer, I want to monitor server status remotely
+- As an admin, I need to manage scheduled tasks from mobile
+
+### 12.1 Telegram Bot Setup & Authentication
+**Status:** Not started  
+**Priority:** MEDIUM (for v0.4.0)  
+**Effort:** 1 week
+
+**Business Value:** Mobile access to local AI without exposing REST API to internet.
+
+**Acceptance Criteria:**
+- [ ] Telegram bot registration
+- [ ] User authentication (whitelist)
+- [ ] Session management
+- [ ] Command routing
+- [ ] Rate limiting per user
+
+**Technical Design:**
+```swift
+import TelegramBotSDK
+
+actor TelegramBotServer {
+    let bot: TelegramBot
+    let orchestrator: ModelOrchestratorActor
+    let allowedUsers: Set<Int64>  // Telegram user IDs
+    
+    init(token: String, orchestrator: ModelOrchestratorActor, allowedUsers: Set<Int64>) {
+        self.bot = TelegramBot(token: token)
+        self.orchestrator = orchestrator
+        self.allowedUsers = allowedUsers
+    }
+    
+    func start() async {
+        // Register command handlers
+        bot.onCommand("/start") { [weak self] update in
+            await self?.handleStart(update)
+        }
+        
+        bot.onCommand("/status") { [weak self] update in
+            await self?.handleStatus(update)
+        }
+        
+        bot.onCommand("/generate") { [weak self] update in
+            await self?.handleGenerate(update)
+        }
+        
+        bot.onCommand("/models") { [weak self] update in
+            await self?.handleModels(update)
+        }
+        
+        bot.onCommand("/schedule") { [weak self] update in
+            await self?.handleSchedule(update)
+        }
+        
+        // Start polling
+        try await bot.run()
+    }
+    
+    func handleStart(_ update: Update) async {
+        guard let userId = update.message?.from?.id,
+              allowedUsers.contains(userId) else {
+            await bot.sendMessage(
+                chatId: update.message!.chat.id,
+                text: "❌ Unauthorized. Contact admin to get access."
+            )
+            return
+        }
+        
+        await bot.sendMessage(
+            chatId: update.message!.chat.id,
+            text: """
+            🤖 GemmaServer Bot
+            
+            Available commands:
+            /status - Server status
+            /generate <prompt> - Generate text
+            /models - List models
+            /schedule - Manage scheduled tasks
+            /help - Show help
+            """
+        )
+    }
+    
+    func handleGenerate(_ update: Update) async {
+        guard let userId = update.message?.from?.id,
+              allowedUsers.contains(userId) else {
+            return
+        }
+        
+        guard let text = update.message?.text,
+              let prompt = text.split(separator: " ", maxSplits: 1).last else {
+            await bot.sendMessage(
+                chatId: update.message!.chat.id,
+                text: "Usage: /generate <your prompt>"
+            )
+            return
+        }
+        
+        // Send "typing" indicator
+        await bot.sendChatAction(chatId: update.message!.chat.id, action: .typing)
+        
+        do {
+            let request = GenerationRequest(prompt: String(prompt), maxTokens: 500)
+            let response = try await orchestrator.generate(request: request)
+            
+            await bot.sendMessage(
+                chatId: update.message!.chat.id,
+                text: """
+                ✨ Generated:
+                
+                \(response.generatedText)
+                
+                📊 Stats: \(response.tokensPerSecond) TPS, \(response.completionTokens) tokens
+                """
+            )
+        } catch {
+            await bot.sendMessage(
+                chatId: update.message!.chat.id,
+                text: "❌ Error: \(error.localizedDescription)"
+            )
+        }
+    }
+}
+```
+
+**Configuration:**
+```swift
+// Config file: ~/.gemmaserver/telegram.json
+struct TelegramConfig: Codable {
+    let botToken: String
+    let allowedUsers: [Int64]
+    let rateLimit: Int  // requests per minute
+}
+```
+
+**Workflow:**
+1. Register: Create Telegram bot via @BotFather
+2. Implement: TelegramBotServer actor
+3. Implement: Command handlers
+4. Test: Send commands from Telegram app
+5. Commit: `feat: Add Telegram bot integration`
+
+---
+
+### 12.2 Remote Session Management
+**Status:** Not started  
+**Priority:** MEDIUM  
+**Effort:** 5 days
+
+**Business Value:** Monitor and control GemmaServer from anywhere.
+
+**Acceptance Criteria:**
+- [ ] View server status (uptime, memory, active sessions)
+- [ ] Start/stop inference sessions
+- [ ] View scheduled tasks
+- [ ] Cancel running tasks
+- [ ] View logs
+
+**Commands:**
+```
+/status - Show server status
+/sessions - List active sessions
+/tasks - List scheduled tasks
+/cancel <task_id> - Cancel task
+/logs - View recent logs
+/restart - Restart server
+```
+
+**Status Command:**
+```swift
+func handleStatus(_ update: Update) async {
+    let uptime = Date().timeIntervalSince(serverStartTime)
+    let memory = Memory.snapshot()
+    let activeSessions = await orchestrator.getActiveSessions()
+    
+    await bot.sendMessage(
+        chatId: update.message!.chat.id,
+        text: """
+        📊 Server Status
+        
+        Uptime: \(formatDuration(uptime))
+        Memory: \(memory.activeBytes / 1_048_576) MB
+        Active Sessions: \(activeSessions.count)
+        Model: \(currentModel ?? "None")
+        
+        Status: ✅ Running
+        """
+    )
+}
+```
+
+**Workflow:**
+1. Implement: Status monitoring
+2. Implement: Session management commands
+3. Implement: Task management commands
+4. Test: Control server from Telegram
+5. Commit: `feat: Add remote session management via Telegram`
+
+---
+
+### 12.3 Inline Queries & Notifications
+**Status:** Not started  
+**Priority:** LOW  
+**Effort:** 3 days
+
+**Business Value:** Quick access to AI without opening chat.
+
+**Acceptance Criteria:**
+- [ ] Inline queries (@bot <prompt>)
+- [ ] Push notifications for task completion
+- [ ] Keyboard shortcuts
+- [ ] Rich formatting (Markdown)
+
+**Inline Query Handler:**
+```swift
+bot.onInlineQuery { [weak self] query in
+    guard let self = self else { return }
+    
+    let prompt = query.query
+    guard !prompt.isEmpty else { return }
+    
+    // Generate quick response
+    let request = GenerationRequest(prompt: prompt, maxTokens: 200)
+    let response = try? await self.orchestrator.generate(request: request)
+    
+    let result = InlineQueryResultArticle(
+        id: UUID().uuidString,
+        title: "Generate with GemmaServer",
+        inputMessageContent: InputTextMessageContent(
+            messageText: response?.generatedText ?? "Error generating response"
+        )
+    )
+    
+    await bot.answerInlineQuery(inlineQueryId: query.id, results: [result])
+}
+```
+
+**Workflow:**
+1. Implement: Inline query handler
+2. Implement: Push notifications
+3. Test: Use inline queries
+4. Commit: `feat: Add inline queries and notifications`
+
+---
 
 ### 7.1 Streaming REST API
 **Business Value:** Real-time token streaming for web UIs  
