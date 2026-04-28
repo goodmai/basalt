@@ -21,7 +21,7 @@ public actor RateLimiter {
         clientRequests = clientRequests.filter { $0 > windowStart }
         
         guard clientRequests.count < maxRequests else {
-            throw GemmaServerError.rateLimitExceeded
+            throw GemmaServerError.rateLimitExceeded(retryAfter: nil)
         }
         
         clientRequests.append(now)

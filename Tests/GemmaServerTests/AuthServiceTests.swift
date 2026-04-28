@@ -11,13 +11,14 @@ struct AuthServiceTests {
         // Clean up before test
         try? FileManager.default.removeItem(atPath: dbPath)
         
-        let auth = try AuthService(dbPath: dbPath)
+        let auth = try AuthService(dbPath: dbPath, jwtSecret: "test-secret")
+        try await auth.createUser(username: "admin123", password: "admin123")
         
-        let token = try await auth.login(user: "admin", pass: "admin")
+        let token = try await auth.login(user: "admin123", pass: "admin123")
         #expect(!token.isEmpty)
         
         let user = try await auth.verify(token: token)
-        #expect(user == "admin")
+        #expect(user == "admin123")
         
         // Clean up
         try? FileManager.default.removeItem(atPath: dbPath)
@@ -28,10 +29,11 @@ struct AuthServiceTests {
         let dbPath = "test_auth_fail.sqlite3"
         try? FileManager.default.removeItem(atPath: dbPath)
         
-        let auth = try AuthService(dbPath: dbPath)
+        let auth = try AuthService(dbPath: dbPath, jwtSecret: "test-secret")
+        try await auth.createUser(username: "admin123", password: "admin123")
         
         await #expect(throws: GemmaServerError.self) {
-            try await auth.login(user: "admin", pass: "wrong")
+            try await auth.login(user: "admin123", pass: "wrong")
         }
         
         try? FileManager.default.removeItem(atPath: dbPath)
@@ -42,8 +44,9 @@ struct AuthServiceTests {
         let dbPath = "test_auth_logout.sqlite3"
         try? FileManager.default.removeItem(atPath: dbPath)
         
-        let auth = try AuthService(dbPath: dbPath)
-        let token = try await auth.login(user: "admin", pass: "admin")
+        let auth = try AuthService(dbPath: dbPath, jwtSecret: "test-secret")
+        try await auth.createUser(username: "admin123", password: "admin123")
+        let token = try await auth.login(user: "admin123", pass: "admin123")
         
         try await auth.logout(token: token)
         
@@ -61,15 +64,16 @@ struct AuthServiceTests {
         let dbPath = "test_auth_concurrent.sqlite3"
         try? FileManager.default.removeItem(atPath: dbPath)
         
-        let auth = try AuthService(dbPath: dbPath)
+        let auth = try AuthService(dbPath: dbPath, jwtSecret: "test-secret")
+        try await auth.createUser(username: "admin123", password: "admin123")
         
         // Create multiple sessions concurrently
         try await withThrowingTaskGroup(of: String.self) { group in
             for _ in 1...10 {
                 group.addTask {
-                    let token = try await auth.login(user: "admin", pass: "admin")
+                    let token = try await auth.login(user: "admin123", pass: "admin123")
                     let user = try await auth.verify(token: token)
-                    #expect(user == "admin")
+                    #expect(user == "admin123")
                     return token
                 }
             }
@@ -93,12 +97,13 @@ struct AuthServiceTests {
         let dbPath = "test_auth_concurrent_logout.sqlite3"
         try? FileManager.default.removeItem(atPath: dbPath)
         
-        let auth = try AuthService(dbPath: dbPath)
+        let auth = try AuthService(dbPath: dbPath, jwtSecret: "test-secret")
+        try await auth.createUser(username: "admin123", password: "admin123")
         
         // Create multiple sessions
         var tokens: [String] = []
         for _ in 1...10 {
-            let token = try await auth.login(user: "admin", pass: "admin")
+            let token = try await auth.login(user: "admin123", pass: "admin123")
             tokens.append(token)
         }
         

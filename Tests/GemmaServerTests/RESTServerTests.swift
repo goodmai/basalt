@@ -14,10 +14,12 @@ struct RESTServerTests {
 
     // MARK: — Test Fixtures
 
-    private func makeTestAuthService() throws -> AuthService {
+    private func makeTestAuthService() async throws -> AuthService {
         let tempDir = FileManager.default.temporaryDirectory
         let dbPath = tempDir.appendingPathComponent("test_\(UUID().uuidString).db").path
-        return try AuthService(dbPath: dbPath, jwtSecret: "test-secret-key-12345")
+        let auth = try AuthService(dbPath: dbPath, jwtSecret: "test-secret-key-12345")
+        try await auth.createUser(username: "admin123", password: "admin123")
+        return auth
     }
 
     private func makeTestOrchestrator() -> ModelOrchestratorActor {
@@ -25,7 +27,7 @@ struct RESTServerTests {
         return ModelOrchestratorActor(engine: engine)
     }
 
-    private func makeContext(authenticated: Bool = false, username: String = "admin") -> GemmaRequestContext {
+    private func makeContext(authenticated: Bool = false, username: String = "admin123") -> GemmaRequestContext {
         var context = GemmaRequestContext(source: .init(channel: EmbeddedChannel(), logger: Logger(label: "test")))
         if authenticated {
             context.identity = User(username: username)
@@ -37,10 +39,10 @@ struct RESTServerTests {
 
     @Test("AuthService login returns JWT token for valid credentials")
     func testLoginWithValidCredentials() async throws {
-        let authService = try makeTestAuthService()
+        let authService = try await makeTestAuthService()
 
         // Use default admin user
-        let token = try await authService.login(user: "admin", pass: "admin")
+        let token = try await authService.login(user: "admin123", pass: "admin123")
 
         #expect(!token.isEmpty)
         #expect(token.count > 20) // JWT tokens are long
@@ -50,16 +52,16 @@ struct RESTServerTests {
 
     @Test("AuthService login throws for invalid password")
     func testLoginWithInvalidPassword() async throws {
-        let authService = try makeTestAuthService()
+        let authService = try await makeTestAuthService()
 
         await #expect(throws: GemmaServerError.self) {
-            _ = try await authService.login(user: "admin", pass: "wrongpassword")
+            _ = try await authService.login(user: "admin123", pass: "wrongpassword")
         }
     }
 
     @Test("AuthService login throws for non-existent user")
     func testLoginWithNonExistentUser() async throws {
-        let authService = try makeTestAuthService()
+        let authService = try await makeTestAuthService()
 
         await #expect(throws: GemmaServerError.self) {
             _ = try await authService.login(user: "nonexistent", pass: "anypassword")
@@ -142,7 +144,7 @@ struct RESTServerTests {
 
     @Test("JWTAuthenticator returns nil for invalid token")
     func testJWTAuthenticatorWithInvalidToken() async throws {
-        let authService = try makeTestAuthService()
+        let authService = try await makeTestAuthService()
         let authenticator = JWTAuthenticator(authService: authService)
 
         // Create request without Authorization header - authenticator will return nil
@@ -159,7 +161,7 @@ struct RESTServerTests {
 
     @Test("JWTAuthenticator returns nil for missing Authorization header")
     func testJWTAuthenticatorWithoutHeader() async throws {
-        let authService = try makeTestAuthService()
+        let authService = try await makeTestAuthService()
         let authenticator = JWTAuthenticator(authService: authService)
 
         let request = Request(
@@ -175,14 +177,14 @@ struct RESTServerTests {
 
     @Test("JWTAuthenticator returns user for valid token")
     func testJWTAuthenticatorWithValidToken() async throws {
-        let authService = try makeTestAuthService()
+        let authService = try await makeTestAuthService()
 
-        let token = try await authService.login(user: "admin", pass: "admin")
+        let token = try await authService.login(user: "admin123", pass: "admin123")
 
         // Verify token directly via AuthService instead of through authenticator
         let username = try await authService.verify(token: token)
 
-        #expect(username == "admin")
+        #expect(username == "admin123")
     }
 
     // MARK: — Additional Tests
@@ -207,9 +209,9 @@ struct RESTServerTests {
 
     @Test("AuthService logout revokes token")
     func testLogout() async throws {
-        let authService = try makeTestAuthService()
+        let authService = try await makeTestAuthService()
 
-        let token = try await authService.login(user: "admin", pass: "admin")
+        let token = try await authService.login(user: "admin123", pass: "admin123")
 
         // Logout
         try await authService.logout(token: token)
@@ -222,17 +224,17 @@ struct RESTServerTests {
 
     @Test("AuthService verify returns username for valid token")
     func testVerifyValidToken() async throws {
-        let authService = try makeTestAuthService()
+        let authService = try await makeTestAuthService()
 
-        let token = try await authService.login(user: "admin", pass: "admin")
+        let token = try await authService.login(user: "admin123", pass: "admin123")
         let username = try await authService.verify(token: token)
 
-        #expect(username == "admin")
+        #expect(username == "admin123")
     }
 
     @Test("AuthService verify throws for invalid token")
     func testVerifyInvalidToken() async throws {
-        let authService = try makeTestAuthService()
+        let authService = try await makeTestAuthService()
 
         let invalidToken = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.invalid.signature"
 
