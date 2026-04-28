@@ -13,6 +13,20 @@ actor MockInferenceEngine: InferenceEngine {
     var generateError: GemmaServerError = .inferenceHardwareFailure(reason: "mock failure")
     var mockText = "Mock response"
     var mockTPS  = 42.0
+    var artificialDelay: TimeInterval = 0.0 // Artificial delay in seconds for testing timeouts
+    
+    // Setter methods for actor-safe configuration
+    func setArtificialDelay(_ delay: TimeInterval) {
+        self.artificialDelay = delay
+    }
+    
+    func setShouldFailOnGenerate(_ shouldFail: Bool) {
+        self.shouldFailOnGenerate = shouldFail
+    }
+    
+    func setShouldFailOnLoad(_ shouldFail: Bool) {
+        self.shouldFailOnLoad = shouldFail
+    }
 
     func load(modelPath: String) async throws(GemmaServerError) {
         if shouldFailOnLoad { throw loadError }
@@ -38,6 +52,11 @@ actor MockInferenceEngine: InferenceEngine {
             Task {
                 let clock = ContinuousClock()
                 let start = clock.now
+                
+                // Apply artificial delay if configured
+                if artificialDelay > 0 {
+                    try? await Task.sleep(for: .seconds(artificialDelay))
+                }
                 
                 // simulate TTFT
                 try? await Task.sleep(for: .milliseconds(5))

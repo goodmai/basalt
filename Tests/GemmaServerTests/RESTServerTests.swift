@@ -264,4 +264,69 @@ struct RESTServerTests {
         // Should return error status
         #expect(response.status.code >= 400)
     }
+    
+    // MARK: — TC-2.1.2.3: Error propagation (actor → HTTP 500)
+    
+    @Test("Error from actor propagates to HTTP error response")
+    func testActorErrorPropagation() async throws {
+        // Use real engine that will fail on generate
+        let failingEngine = MockInferenceEngine()
+        await failingEngine.setShouldFailOnGenerate(true)
+        
+        let orchestrator = ModelOrchestratorActor(engine: failingEngine)
+        try await orchestrator.loadModel(path: "test-model")
+        
+        let controller = GenerateController(orchestrator: orchestrator, modelId: "test-model")
+        
+        let genRequest = GenerationRequest(prompt: "Hello", maxTokens: 10)
+        let data = try JSONEncoder().encode(genRequest)
+        var buffer = ByteBuffer()
+        buffer.writeBytes(data)
+        
+        let request = Request(
+            head: .init(method: .post, scheme: "http", authority: "localhost", path: "/api/v1/generate"),
+            body: .init(buffer: buffer)
+        )
+        
+        let context = makeContext(authenticated: true)
+        let response = try await controller.generate(request: request, context: context)
+        
+        // Should return 500-level error
+        #expect(response.status.code >= 500)
+    }
+    
+    // MARK: — TC-2.1.2.4: Timeout handling (long-running inference)
+    
+    @Test("Long-running inference completes without timeout")
+    func testLongRunningInference() async throws {
+        // Use engine with delay
+        let slowEngine = MockInferenceEngine()
+        await slowEngine.setArtificialDelay(2.0) // 2 second delay
+        
+        let orchestrator = ModelOrchestratorActor(engine: slowEngine)
+        try await orchestrator.loadModel(path: "test-model")
+        
+        let controller = GenerateController(orchestrator: orchestrator, modelId: "test-model")
+        
+        let genRequest = GenerationRequest(prompt: "Hello", maxTokens: 10)
+        let data = try JSONEncoder().encode(genRequest)
+        var buffer = ByteBuffer()
+        buffer.writeBytes(data)
+        
+        let request = Request(
+            head: .init(method: .post, scheme: "http", authority: "localhost", path: "/api/v1/generate"),
+            body: .init(buffer: buffer)
+        )
+        
+        let context = makeContext(authenticated: true)
+        
+        // Measure that it takes ~2 seconds
+        let start = ContinuousClock.now
+        let response = try await controller.generate(request: request, context: context)
+        let duration = start.duration(to: .now)
+        
+        #expect(response.status == .ok)
+        #expect(duration >= Duration.seconds(2))
+        #expect(duration < Duration.seconds(5)) // Should not timeout
+    }
 }

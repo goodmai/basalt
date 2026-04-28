@@ -24,7 +24,7 @@ public struct ServerConfig: Sendable {
         host: String = "127.0.0.1",
         maxConcurrentRequests: Int = 4,
         maxTokens: Int = 65536,
-        jwtSecret: String = "gemma-super-secret-key",
+        jwtSecret: String = UUID().uuidString,
         dbPath: String = "auth.sqlite3",
         logLevel: LogLevel = .info
     ) {

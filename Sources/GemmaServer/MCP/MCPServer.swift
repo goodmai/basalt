@@ -307,6 +307,7 @@ public final class MCPServer: Sendable {
         case .invalidRequestStructure:  return -32602
         case .contextLengthExceeded:    return -32004
         case .weightsCorrupted:         return -32005
+        case .rateLimitExceeded:        return -32006
         }
     }
 }

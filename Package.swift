@@ -37,6 +37,7 @@ let package = Package(
                 .product(name: "SQLite",        package: "SQLite.swift"),
                 .product(name: "JWTKit",        package: "jwt-kit"),
                 .product(name: "Crypto",        package: "swift-crypto"),
+                .product(name: "HummingbirdBcrypt", package: "hummingbird-auth"),
             ],
             path: "Sources/GemmaServer",
             swiftSettings: [

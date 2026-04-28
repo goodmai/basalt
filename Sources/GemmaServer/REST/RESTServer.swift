@@ -19,8 +19,9 @@ struct RESTServer: Sendable {
             modelId: config.modelId ?? config.modelPath.split(separator: "/").last.map(String.init)
         )
         let authController = AuthController(authService: authService)
+        let rateLimiter = RateLimiter(maxRequests: 50, window: 60)
 
-        let router = buildRouter(generateController: generateController, authController: authController)
+        let router = buildRouter(generateController: generateController, authController: authController, rateLimiter: rateLimiter)
 
         var logger = Logger(label: "GemmaServer")
         logger.logLevel = .info
@@ -37,7 +38,7 @@ struct RESTServer: Sendable {
 
     // MARK: — Router
 
-    private func buildRouter(generateController: GenerateController, authController: AuthController) -> Router<GemmaRequestContext> {
+    private func buildRouter(generateController: GenerateController, authController: AuthController, rateLimiter: RateLimiter) -> Router<GemmaRequestContext> {
         let router = Router(context: GemmaRequestContext.self)
         
         router.add(middleware: LogRequestsMiddleware(.info))
@@ -52,6 +53,7 @@ struct RESTServer: Sendable {
         // Protected routes
         let protected = v1.group()
         protected.add(middleware: JWTAuthenticator(authService: authController.authService))
+        protected.add(middleware: RateLimitMiddleware(rateLimiter: rateLimiter))
         
         protected.post("/generate", use: generateController.generate)
         protected.post("/auth/logout", use: authController.logout)

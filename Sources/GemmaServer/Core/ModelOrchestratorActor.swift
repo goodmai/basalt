@@ -48,10 +48,11 @@ public actor ModelOrchestratorActor {
     /// — никаких дополнительных локов не требуется.
     public func generate(request: GenerationRequest) async throws(GemmaServerError) -> GenerationResponse {
         let maxT = calculateDynamicMaxTokens()
-        let validated = try request.validated(defaultMaxTokens: maxT)
+        var validated = try request.validated(defaultMaxTokens: maxT)
         
         if let requested = request.maxTokens, requested > maxT {
             logger.warning("Requested tokens (\(requested)) exceed dynamic budget (\(maxT)). Capped to prevent OOM.")
+            validated = GenerationRequest(prompt: validated.prompt, maxTokens: maxT, temperature: validated.temperature)
         }
         
         requestCount += 1
@@ -62,10 +63,11 @@ public actor ModelOrchestratorActor {
 
     public func generateStream(request: GenerationRequest) async throws(GemmaServerError) -> AsyncStream<StreamChunk> {
         let maxT = calculateDynamicMaxTokens()
-        let validated = try request.validated(defaultMaxTokens: maxT)
+        var validated = try request.validated(defaultMaxTokens: maxT)
         
         if let requested = request.maxTokens, requested > maxT {
             logger.warning("Requested tokens (\(requested)) exceed dynamic budget (\(maxT)). Capped to prevent OOM.")
+            validated = GenerationRequest(prompt: validated.prompt, maxTokens: maxT, temperature: validated.temperature)
         }
         
         requestCount += 1

@@ -53,13 +53,20 @@ struct ServeCommand: AsyncParsableCommand {
     mutating func run() async throws {
         let resolvedPath = try await resolveModelPath()
 
+        let secretFromEnv = ProcessInfo.processInfo.environment["GEMMA_JWT_SECRET"]
+        let finalSecret = jwtSecret ?? secretFromEnv ?? UUID().uuidString
+        
+        if jwtSecret == nil && secretFromEnv == nil {
+            log("\(yellow("[warn]")) No GEMMA_JWT_SECRET provided. Using a random secret for this session. Sessions will be invalidated on restart.")
+        }
+
         let config = ServerConfig(
             modelPath: resolvedPath,
             modelId: model ?? modelPath,
             restPort: port,
             host: host,
             maxTokens: maxTokens,
-            jwtSecret: jwtSecret ?? ProcessInfo.processInfo.environment["GEMMA_JWT_SECRET"] ?? "gemma-super-secret-key",
+            jwtSecret: finalSecret,
             dbPath: dbPath ?? ProcessInfo.processInfo.environment["GEMMA_DB_PATH"] ?? "auth.sqlite3",
             logLevel: logLevel
         )

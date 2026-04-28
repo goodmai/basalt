@@ -14,6 +14,7 @@ public enum GemmaServerError: Error, Sendable, LocalizedError {
     // MARK: — Protocol / Request
     case invalidRequestStructure(details: String)
     case contextLengthExceeded(maxTokens: Int, requested: Int)
+    case rateLimitExceeded
 
     // MARK: — LocalizedError
     public var errorDescription: String? {
@@ -30,6 +31,8 @@ public enum GemmaServerError: Error, Sendable, LocalizedError {
             return "Invalid request: \(details)"
         case .contextLengthExceeded(let max, let req):
             return "Context too long: max \(max) tokens, requested \(req)."
+        case .rateLimitExceeded:
+            return "Rate limit exceeded. Try again later."
         }
     }
 
@@ -42,6 +45,7 @@ public enum GemmaServerError: Error, Sendable, LocalizedError {
         case .inferenceHardwareFailure: return 503
         case .invalidRequestStructure:  return 400
         case .contextLengthExceeded:    return 413  // Payload Too Large
+        case .rateLimitExceeded:        return 429  // Too Many Requests
         }
     }
 }
