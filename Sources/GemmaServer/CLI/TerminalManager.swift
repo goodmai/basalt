@@ -12,6 +12,9 @@ public enum TerminalEvent: Sendable {
     case EOF
 }
 
+/// Epic 16.10: Async Spinner System
+/// Manages terminal interaction and provides a rich UI with an async spinner,
+/// process phases (enum), and context statistics (files, MCP, skills).
 public actor TerminalManager {
     private var originalTermios: termios
     private var isRawMode = false
@@ -20,28 +23,24 @@ public actor TerminalManager {
     private var promptText: String = "Gemma > "
     private var isBusy: Bool = false
     
+    // Spinner state
+    private var loadingState: LoadingState? = nil
+    private var contextStats: ContextStats? = nil
+    private var spinnerFrame: Int = 0
+    private let spinnerFrames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+    private var spinnerTimer: Task<Void, Never>? = nil
+    
     public init() {
         self.originalTermios = termios()
         tcgetattr(STDIN_FILENO, &originalTermios)
     }
     
-    deinit {
-        // Can't easily disable raw mode in deinit of actor, but we provide a cleanup method
-    }
-    
     public func enableRawMode() {
         guard !isRawMode else { return }
         var raw = originalTermios
-        
-        // Disable ECHO, ICANON, ISIG (to catch Ctrl+C manually)
         raw.c_lflag &= ~tcflag_t(ECHO | ICANON | ISIG)
-        // Disable IXON (Ctrl+S/Ctrl+Q)
         raw.c_iflag &= ~tcflag_t(IXON | ICRNL)
         
-        // We keep OPOST enabled so \n translates to \r\n on output
-        // raw.c_oflag &= ~tcflag_t(OPOST)
-        
-        // VMIN = 1, VTIME = 0 (blocking read until 1 byte)
         #if canImport(Darwin)
         raw.c_cc.16 = 1 // VMIN
         raw.c_cc.17 = 0 // VTIME
@@ -56,6 +55,7 @@ public actor TerminalManager {
     
     public func disableRawMode() {
         guard isRawMode else { return }
+        stopSpinner()
         tcsetattr(STDIN_FILENO, TCSAFLUSH, &originalTermios)
         isRawMode = false
     }
@@ -66,19 +66,91 @@ public actor TerminalManager {
         refreshLine()
     }
     
+    /// Epic 16.10: Start showing a spinner with state and stats above the input line
+    public func startSpinner(state: LoadingState, stats: ContextStats? = nil) {
+        self.loadingState = state
+        self.contextStats = stats
+        self.spinnerFrame = 0
+        
+        // Start a background task for animation
+        spinnerTimer?.cancel()
+        spinnerTimer = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 80_000_000) // 80ms
+                await self?.advanceSpinner()
+            }
+        }
+        refreshLine()
+    }
+    
+    /// Epic 16.10: Update the current state or stats while spinner is running
+    public func updateSpinner(state: LoadingState? = nil, stats: ContextStats? = nil) {
+        if let state = state {
+            self.loadingState = state
+        }
+        if let stats = stats {
+            self.contextStats = stats
+        }
+        refreshLine()
+    }
+    
+    /// Epic 16.10: Stop the spinner and clear its line
+    public func stopSpinner() {
+        spinnerTimer?.cancel()
+        spinnerTimer = nil
+        
+        if loadingState != nil {
+            // Move up, clear line, move back down
+            fputs("\u{1B}[1A\r\u{1B}[2K\u{1B}[1B", stdout)
+            self.loadingState = nil
+            self.contextStats = nil
+            refreshLine()
+        }
+    }
+    
+    private func advanceSpinner() {
+        spinnerFrame = (spinnerFrame + 1) % spinnerFrames.count
+        refreshLine()
+    }
+    
     public func printOutput(_ text: String) {
-        // Move cursor to beginning of line, clear line
+        // If spinner is active, clear it first
+        if loadingState != nil {
+            fputs("\u{1B}[1A\r\u{1B}[2K\u{1B}[1B", stdout)
+        }
+        
         fputs("\r\u{1B}[2K", stdout)
-        // Print output
         fputs(text, stdout)
         fflush(stdout)
-        // Redraw prompt and buffer
         refreshLine()
     }
     
     private func refreshLine() {
+        // 1. If we have a loading state, render it above with stats
+        if let state = loadingState {
+            let frame = spinnerFrames[spinnerFrame]
+            let coloredFrame = TerminalUI.info(frame)
+            let coloredMessage = TerminalUI.bold(state.description)
+            
+            var statsString = ""
+            if let stats = contextStats, stats.hasContext {
+                var parts: [String] = []
+                if stats.files > 0 { parts.append("Files: \(stats.files)") }
+                if stats.systemPrompts > 0 { parts.append("Sys: \(stats.systemPrompts)") }
+                if stats.mcpServers > 0 { parts.append("MCP: \(stats.mcpServers)") }
+                if stats.skills > 0 { parts.append("Skills: \(stats.skills)") }
+                
+                let joined = parts.joined(separator: " | ")
+                statsString = TerminalUI.dim(" [\(joined)]")
+            }
+            
+            // Move up, clear line, print spinner + state + stats, move down
+            fputs("\u{1B}[1A\r\u{1B}[2K\(coloredFrame) \(coloredMessage)\(statsString)\n", stdout)
+        }
+        
+        // 2. Render the prompt and buffer
         fputs("\r\u{1B}[2K", stdout)
-        let colorPrompt = isBusy ? "\u{1B}[33m\(promptText)\u{1B}[0m" : "\u{1B}[32m\(promptText)\u{1B}[0m"
+        let colorPrompt = isBusy ? TerminalUI.warning(promptText) : TerminalUI.success(promptText)
         fputs("\(colorPrompt)\(inputBuffer)", stdout)
         fflush(stdout)
     }
@@ -99,29 +171,29 @@ public actor TerminalManager {
                     }
                     
                     let byte = data[0]
-                    
-                    // Handle Ctrl+C (End of Text)
                     if byte == 3 {
                         continuation.yield(.interrupt)
                         continue
                     }
                     
-                    // Handle Enter (CR or LF)
                     if byte == 10 || byte == 13 {
                         let currentBuffer = await self.inputBuffer
+                        fputs("\n", stdout)
+                        
+                        // Clear spinner space if active
+                        if await self.loadingState != nil {
+                            fputs("\u{1B}[1A\r\u{1B}[2K\u{1B}[1B", stdout)
+                        }
+                        
                         if !currentBuffer.isEmpty {
-                            // Print newline to move past the prompt
-                            fputs("\n", stdout)
                             continuation.yield(.lineSubmitted(currentBuffer))
                             await self.clearBuffer()
                         } else {
-                            fputs("\n", stdout)
                             await self.refreshLine()
                         }
                         continue
                     }
                     
-                    // Handle Tab
                     if byte == 9 {
                         let currentBuffer = await self.inputBuffer
                         if !currentBuffer.isEmpty {
@@ -132,7 +204,6 @@ public actor TerminalManager {
                         continue
                     }
                     
-                    // Handle Backspace (127 or 8)
                     if byte == 127 || byte == 8 {
                         let currentBuffer = await self.inputBuffer
                         if !currentBuffer.isEmpty {
@@ -142,21 +213,18 @@ public actor TerminalManager {
                         continue
                     }
                     
-                    // Ignore simple ANSI escape sequences for now (arrows)
                     if byte == 27 {
                         escapeSequence = true
                         continue
                     }
                     
                     if escapeSequence {
-                        // Very naive escape sequence handling: skip until a letter
                         if (byte >= 64 && byte <= 126) {
                             escapeSequence = false
                         }
                         continue
                     }
                     
-                    // Standard printable character
                     if let str = String(data: data, encoding: .utf8) {
                         await self.appendCharacter(str)
                         await self.refreshLine()

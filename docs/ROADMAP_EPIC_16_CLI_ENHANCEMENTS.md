@@ -953,6 +953,28 @@ public struct OutputFormatter {
 
 ---
 
+### Epic 16.10: Async Spinner System ⭐⭐⭐
+**Effort:** 3 days  
+**Priority:** HIGH
+
+#### Tasks
+- **16.10.1**: Implement `Spinner` component with multiple animation styles (dots, line, pulse)
+- **16.10.2**: Support colorful frames using `TerminalUI`
+- **16.10.3**: Integrate with `TerminalManager` to render spinner *above* the active input line
+- **16.10.4**: Implement thread-safe start/stop mechanism for async inference
+
+#### User Stories
+- **US-16.10.1**: As a user, I want to see a visual indicator when the model is "thinking" or processing tokens
+- **US-16.10.2**: As a developer, I want a simple API to show/hide spinners during long-running tasks
+
+#### Acceptance Criteria
+- [ ] Smooth animation (at least 10 FPS)
+- [ ] No flickering or double-rendering
+- [ ] Automatically disappears when process finishes
+- [ ] Works correctly in raw terminal mode
+
+---
+
 ## Implementation Roadmap
 
 ### Phase 1: Foundation (Weeks 1-2)

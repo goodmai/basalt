@@ -1,5 +1,5 @@
 import Foundation
-import Rainbow
+@preconcurrency import Rainbow
 
 #if canImport(Darwin)
 import Darwin
@@ -17,6 +17,17 @@ public enum TerminalUI: Sendable {
     /// Auto-detected based on TTY and environment variables
     /// Note: Using nonisolated(unsafe) for test compatibility
     public nonisolated(unsafe) static var colorsEnabled: Bool = {
+        let enabled = detectColorSupport()
+        // Synchronize with Rainbow
+        Rainbow.enabled = enabled
+        return enabled
+    }() {
+        didSet {
+            Rainbow.enabled = colorsEnabled
+        }
+    }
+    
+    private static func detectColorSupport() -> Bool {
         // Check NO_COLOR environment variable (https://no-color.org/)
         if ProcessInfo.processInfo.environment["NO_COLOR"] != nil {
             return false
@@ -33,7 +44,7 @@ public enum TerminalUI: Sendable {
         #else
         return false
         #endif
-    }()
+    }
     
     // MARK: - TTY Detection
     

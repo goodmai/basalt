@@ -92,8 +92,9 @@ struct TableRendererTests {
         )
         
         // ASCII style uses -, +, |
-        #expect(output.contains("-"))
-        #expect(output.contains("|"))
+        #expect(output.contains("+---"))
+        #expect(output.contains("| A |"))
+        #expect(output.contains("| 1 |"))
     }
     
     @Test("Render table with Unicode style")
@@ -108,10 +109,9 @@ struct TableRendererTests {
         )
         
         // Unicode style uses box-drawing characters
-        // Just verify it renders something
-        #expect(!output.isEmpty)
-        #expect(output.contains("A"))
-        #expect(output.contains("B"))
+        #expect(output.contains("╭───"))
+        #expect(output.contains("│ A │"))
+        #expect(output.contains("╰───"))
     }
     
     @Test("Render table with minimal style")

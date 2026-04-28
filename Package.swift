@@ -20,6 +20,8 @@ let package = Package(
         // Epic 16: CLI Enhancements
         .package(url: "https://github.com/onevcat/Rainbow.git", from: "4.0.0"),
         .package(url: "https://github.com/vapor/console-kit.git", from: "4.0.0"),
+        .package(url: "https://github.com/apple/swift-markdown.git", from: "0.5.0"),
+        .package(url: "https://github.com/JohnSundell/Splash.git", from: "0.16.0"),
     ],
     targets: [
 
@@ -43,6 +45,8 @@ let package = Package(
                 .product(name: "HummingbirdBcrypt", package: "hummingbird-auth"),
                 .product(name: "Rainbow",       package: "Rainbow"),
                 .product(name: "ConsoleKit",    package: "console-kit"),
+                .product(name: "Markdown",      package: "swift-markdown"),
+                .product(name: "Splash",        package: "Splash"),
             ],
             path: "Sources/GemmaServer",
             swiftSettings: [

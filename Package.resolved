@@ -1,5 +1,5 @@
 {
-  "originHash" : "2c5bc23225c7abd6e19a8aa64b2becc316da7689949f51d0330607c785d6bd84",
+  "originHash" : "5e4109b6cb71b0a64edc0e4c15e7c6020f9441b8935c3dccabbe8b80deafbb51",
   "pins" : [
     {
       "identity" : "async-http-client",
@@ -83,6 +83,15 @@
       }
     },
     {
+      "identity" : "splash",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/JohnSundell/Splash.git",
+      "state" : {
+        "revision" : "7f4df436eb78fe64fe2c32c58006e9949fa28ad8",
+        "version" : "0.16.0"
+      }
+    },
+    {
       "identity" : "sqlite.swift",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/stephencelis/SQLite.swift.git",
@@ -143,6 +152,15 @@
       "state" : {
         "revision" : "5aa1c0d1bc204908df47c2075bdbb39573d05e8d",
         "version" : "1.19.0"
+      }
+    },
+    {
+      "identity" : "swift-cmark",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/swiftlang/swift-cmark.git",
+      "state" : {
+        "revision" : "5d9bdaa4228b381639fff09403e39a04926e2dbe",
+        "version" : "0.7.1"
       }
     },
     {
@@ -233,6 +251,15 @@
       "state" : {
         "revision" : "5073617dac96330a486245e4c0179cb0a6fd2256",
         "version" : "1.12.0"
+      }
+    },
+    {
+      "identity" : "swift-markdown",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/apple/swift-markdown.git",
+      "state" : {
+        "revision" : "7d9a5ce307528578dfa777d505496bd5f544ad94",
+        "version" : "0.7.3"
       }
     },
     {

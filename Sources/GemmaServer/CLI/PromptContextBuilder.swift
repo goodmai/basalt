@@ -1,7 +1,18 @@
 import Foundation
 
 public struct PromptContextBuilder: Sendable {
-    
+    /// Epic 16.12: Extract file references from prompt without reading them
+    public static func extractFileReferences(from prompt: String) -> [String] {
+        guard let regex = try? NSRegularExpression(pattern: "(?<!\\\\)@([\\w\\.\\-\\/]+)") else { return [] }
+        let matches = regex.matches(in: prompt, range: NSRange(prompt.startIndex..., in: prompt))
+        return matches.compactMap { match in
+            if let range = Range(match.range(at: 1), in: prompt) {
+                return String(prompt[range])
+            }
+            return nil
+        }
+    }
+
     /// Parses a prompt string for `@filepath` syntax, reads the files, and appends them to the prompt.
     public static func build(prompt: String) async throws -> String {
         var finalPrompt = prompt
@@ -12,7 +23,7 @@ public struct PromptContextBuilder: Sendable {
         
         var filesToInject: [String] = []
         
-        for match in matches.reversed() { // Reverse to not mess up indices if we were replacing
+        for match in matches.reversed() { 
             if let range = Range(match.range(at: 1), in: prompt) {
                 let filePath = String(prompt[range])
                 filesToInject.append(filePath)
@@ -28,7 +39,6 @@ public struct PromptContextBuilder: Sendable {
                     throw GemmaServerError.invalidRequestStructure(details: "File not found: \(filePath)")
                 }
                 
-                // Read file, limit size to prevent blowing up the context accidentally
                 let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
                 let size = attributes[.size] as? UInt64 ?? 0
                 
@@ -42,7 +52,6 @@ public struct PromptContextBuilder: Sendable {
             finalPrompt += appendedContext
         }
         
-        // Remove escape characters from \@
         finalPrompt = finalPrompt.replacingOccurrences(of: "\\@", with: "@")
         
         return finalPrompt

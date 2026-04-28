@@ -1,5 +1,6 @@
 import Testing
 import Foundation
+@preconcurrency import Rainbow
 @testable import GemmaServerCore
 
 /// Epic 16.1: Rich Terminal UI Foundation - Unit Tests
@@ -34,15 +35,21 @@ struct TerminalUITests {
     
     @Test("success() returns a string")
     func testSuccessReturnsString() {
+        setenv("FORCE_COLOR", "1", 1)
+        defer { unsetenv("FORCE_COLOR") }
+        TerminalUI.colorsEnabled = true
         let output = TerminalUI.success("OK")
         #expect(!output.isEmpty)
-        #expect(output.count >= 2) // At least "OK"
+        #expect(output.contains("OK"))
+        
+        
     }
     
     @Test("success() returns plain text when colors disabled")
     func testSuccessWithoutColors() {
         // Given: Colors disabled
         TerminalUI.colorsEnabled = false
+        // Note: TerminalUI.colorsEnabled should set Rainbow.enabled = false
         
         // When: Format success message
         let output = TerminalUI.success("OK")
@@ -54,6 +61,7 @@ struct TerminalUITests {
     
     @Test("error() returns a string")
     func testErrorReturnsString() {
+        TerminalUI.colorsEnabled = true
         let output = TerminalUI.error("Failed")
         #expect(!output.isEmpty)
         #expect(output.count >= "Failed".count)
@@ -69,24 +77,28 @@ struct TerminalUITests {
     
     @Test("warning() returns a string")
     func testWarningReturnsString() {
+        TerminalUI.colorsEnabled = true
         let output = TerminalUI.warning("Caution")
         #expect(!output.isEmpty)
     }
     
     @Test("info() returns a string")
     func testInfoReturnsString() {
+        TerminalUI.colorsEnabled = true
         let output = TerminalUI.info("Info")
         #expect(!output.isEmpty)
     }
     
     @Test("dim() returns a string")
     func testDimReturnsString() {
+        TerminalUI.colorsEnabled = true
         let output = TerminalUI.dim("Subtle")
         #expect(!output.isEmpty)
     }
     
     @Test("code() returns a string with content")
     func testCodeReturnsString() {
+        TerminalUI.colorsEnabled = true
         let output = TerminalUI.code("print()")
         #expect(!output.isEmpty)
         #expect(output.contains("print()"))
