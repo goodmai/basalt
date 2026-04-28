@@ -92,13 +92,18 @@
 **v0.5.0** (Target: 2026-08-15) — Cloud Integration & Hybrid Inference
 - Epic 14: Cloud Model Integration (OpenRouter API) (6 features)
   - [x] OpenRouter API client with authentication
-  - [ ] Fetch available models dynamically (`GET /api/v1/models`)
+  - [x] Fetch available models dynamically (`GET /api/v1/models`)
   - [x] Model router with auto-fallback (local → cloud)
-  - [ ] Advanced OpenRouter fallbacks (using `models` array) and provider preferences
+  - [x] Advanced OpenRouter fallbacks (using `models` array) and provider preferences
   - [x] Cost tracking and budget limits
   - [x] Streaming support for cloud models
-  - CLI configuration and testing
-  - Documentation and examples
+  - [ ] CLI configuration and testing
+  - [ ] Documentation and examples
+- Epic 15: Interactive Non-Blocking CLI Prompt (4 features)
+  - [ ] Non-blocking I/O and concurrent terminal management
+  - [ ] Request queueing and graceful cancellation (Ctrl+C)
+  - [ ] `@` File references (context injection)
+  - [ ] UI enhancements, dynamic prompts, and hints
 - Epic 9: MCP Plugin Marketplace (3 features)
   - MCP server discovery
   - Agent capability analysis

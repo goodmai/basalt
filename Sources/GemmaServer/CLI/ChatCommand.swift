@@ -21,6 +21,9 @@ struct ChatCommand: AsyncParsableCommand {
     @Option(name: .customLong("max-tokens"), help: "Default maximum tokens to generate (default 65536)")
     var maxTokens: Int = 65536
 
+    @Option(name: .shortAndLong, help: "Initial prompt to execute immediately and exit (non-interactive mode)")
+    var prompt: String?
+
     @Option(name: .long, help: "Log level: debug | info | warn | error")
     var logLevel: ServerConfig.LogLevel = .info
 
@@ -36,35 +39,21 @@ struct ChatCommand: AsyncParsableCommand {
         log("Loading model from \(bold(resolvedPath))…")
         do {
             try await orchestrator.loadModel(path: resolvedPath)
-            log("Model ready. Type 'exit' or 'quit' to stop.")
         } catch {
             log("\(red("Failed to load model:")) \(error.localizedDescription)")
             throw ExitCode.failure
         }
 
-        print("\n--- Gemma Chat ---")
-        
-        while true {
-            print("\(green("User:")) ", terminator: "")
-            fflush(stdout)
-            
-            guard let line = readLine(), !line.isEmpty else { continue }
-            
-            if line.lowercased() == "exit" || line.lowercased() == "quit" {
-                break
-            }
-            
-            print("\(blue("Gemma:")) ", terminator: "")
-            fflush(stdout)
-            
-            let request = GenerationRequest(prompt: line, maxTokens: maxTokens)
+        if let initialPrompt = prompt {
+            // Non-interactive mode
+            let finalPrompt = try await PromptContextBuilder.build(prompt: initialPrompt)
+            let request = GenerationRequest(prompt: finalPrompt, maxTokens: maxTokens)
             
             do {
                 let stream = try await orchestrator.generateStream(request: request)
-                
                 var stats: GenerationResponse?
                 
-                for await chunk in stream {
+                for try await chunk in stream {
                     switch chunk {
                     case .text(let t):
                         print(t, terminator: "")
@@ -74,15 +63,26 @@ struct ChatCommand: AsyncParsableCommand {
                     }
                 }
                 print("\n")
-                
                 if let stats = stats {
-                    log(dim("Tokens: \(stats.promptTokens) in / \(stats.completionTokens) out | TPS: \(String(format: "%.2f", stats.tokensPerSecond)) | TTFT: \(String(format: "%.3fs", stats.timeToFirstToken)) | Memory: \(stats.memory.activeBytes / 1024 / 1024)MB"))
+                    log(dim("Tokens: \(stats.promptTokens) in / \(stats.completionTokens) out | TPS: \(String(format: "%.2f", stats.tokensPerSecond)) | TTFT: \(String(format: "%.3fs", stats.timeToFirstToken))"))
                 }
-                print("")
             } catch {
                 log("\(red("Error:")) \(error.localizedDescription)")
+                throw ExitCode.failure
             }
+            return
         }
+
+        log("Model ready. Type 'exit' or 'quit' to stop.")
+        print("\n--- Gemma Chat ---")
+        
+        let controller = ChatController(orchestrator: orchestrator, maxTokens: maxTokens)
+        await controller.start()
+        
+        // Ensure raw mode is cleanly disabled when returning to bash
+        let terminal = TerminalManager()
+        await terminal.disableRawMode()
+        print("Goodbye!")
     }
 
     // MARK: — Path resolution
