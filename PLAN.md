@@ -374,7 +374,316 @@ func interactiveModelPicker() async throws -> String {
 
 ---
 
-## Epic 5: MCP Plugin Marketplace & Agent Integration 🔌
+## Epic 5: Security & Dependency Audit 🔒
+
+**Business Value:** Ensure GemmaServer is secure, compliant, and free from known vulnerabilities. Protect user data and prevent supply chain attacks.
+
+**User Stories:**
+- As a user, I want assurance that my data never leaves my machine
+- As a security engineer, I need to verify no dependencies have known CVEs
+- As a compliance officer, I need audit logs of all data access
+- As a developer, I want automated security checks in CI/CD
+
+### 5.1 Dependency Security Audit
+**Status:** Not started  
+**Priority:** CRITICAL (before v1.0.0)  
+**Effort:** 1 week
+
+**Business Value:** Prevent supply chain attacks and known vulnerabilities from entering production.
+
+**Acceptance Criteria:**
+- [ ] Audit all Swift Package Manager dependencies
+- [ ] Check for known CVEs in all dependencies
+- [ ] Verify dependency signatures and checksums
+- [ ] Document security posture of each dependency
+- [ ] Set up automated dependency scanning in CI
+- [ ] Create dependency update policy
+
+**Dependencies to Audit:**
+```
+ml-explore/mlx-swift (0.31.3)
+ml-explore/mlx-swift-lm (3.31.3)
+hummingbird-project/hummingbird (2.6.0)
+hummingbird-project/hummingbird-auth (2.0.0)
+stephencelis/SQLite.swift (0.16.0)
+vapor/jwt-kit (4.13.0)
+apple/swift-crypto (3.0.0)
+apple/swift-argument-parser (1.5.0)
+```
+
+**Technical Design:**
+```bash
+# Automated dependency audit script
+#!/bin/bash
+
+# 1. Generate dependency graph
+swift package show-dependencies --format json > deps.json
+
+# 2. Check each dependency against CVE databases
+for dep in $(jq -r '.dependencies[].name' deps.json); do
+    # Check GitHub Security Advisories
+    gh api "/repos/$dep/vulnerability-alerts"
+    
+    # Check OSV (Open Source Vulnerabilities)
+    curl "https://api.osv.dev/v1/query" -d "{\"package\": {\"name\": \"$dep\"}}"
+done
+
+# 3. Verify package checksums
+swift package compute-checksum Package.resolved
+
+# 4. Generate audit report
+echo "Dependency Audit Report - $(date)" > audit_report.md
+```
+
+**Audit Checklist:**
+- [ ] No dependencies with HIGH/CRITICAL CVEs
+- [ ] All dependencies from trusted sources (Apple, verified orgs)
+- [ ] No transitive dependencies with known issues
+- [ ] All dependencies actively maintained (commits in last 6 months)
+- [ ] License compatibility verified (MIT, Apache 2.0, BSD)
+- [ ] No dependencies with telemetry or phone-home behavior
+
+**Workflow:**
+1. Run: `swift package show-dependencies` — map full dependency tree
+2. Audit: Check each dependency against CVE databases
+3. Document: Create `SECURITY.md` with findings
+4. Fix: Update or replace vulnerable dependencies
+5. Automate: Add to CI/CD pipeline
+6. Commit: `security: Complete dependency audit and update vulnerable packages`
+
+---
+
+### 5.2 CWE Security Audit (Common Weakness Enumeration)
+**Status:** Not started  
+**Priority:** CRITICAL (before v1.0.0)  
+**Effort:** 2 weeks
+
+**Business Value:** Identify and fix common security weaknesses before they become exploits.
+
+**User Stories:**
+- As a security researcher, I want to verify GemmaServer follows secure coding practices
+- As a user, I need confidence that my API keys and data are protected
+- As a pentester, I want to see evidence of security testing
+
+**CWE Categories to Audit:**
+
+**1. CWE-20: Improper Input Validation**
+- [ ] Validate all user inputs (prompts, maxTokens, temperature)
+- [ ] Sanitize file paths to prevent directory traversal
+- [ ] Validate model IDs to prevent command injection
+- [ ] Check JWT token format before parsing
+
+```swift
+// ✅ GOOD: Input validation
+func generate(request: GenerationRequest) async throws {
+    guard !request.prompt.isEmpty else {
+        throw .invalidInput("prompt cannot be empty")
+    }
+    guard (1...65_536).contains(request.maxTokens) else {
+        throw .invalidInput("maxTokens must be 1-65536")
+    }
+    guard (0.0...2.0).contains(request.temperature) else {
+        throw .invalidInput("temperature must be 0.0-2.0")
+    }
+}
+```
+
+**2. CWE-89: SQL Injection**
+- [ ] Use parameterized queries for all SQLite operations
+- [ ] Never concatenate user input into SQL strings
+- [ ] Audit all database queries in auth module
+
+```swift
+// ✅ GOOD: Parameterized query
+let stmt = try db.prepare("SELECT * FROM users WHERE username = ?")
+let user = try stmt.run(username)
+
+// ❌ BAD: SQL injection vulnerable
+let query = "SELECT * FROM users WHERE username = '\(username)'"
+```
+
+**3. CWE-79: Cross-Site Scripting (XSS)**
+- [ ] Sanitize all output in REST API responses
+- [ ] Escape HTML/JavaScript in error messages
+- [ ] Use Content-Security-Policy headers
+
+**4. CWE-200: Information Exposure**
+- [ ] Never log passwords, API keys, or tokens
+- [ ] Redact sensitive data in error messages
+- [ ] Remove stack traces from production responses
+- [ ] Audit all logger.error() calls
+
+```swift
+// ✅ GOOD: Redacted logging
+logger.error("Authentication failed", metadata: [
+    "username": "\(username)",
+    "reason": "invalid_credentials"
+    // ❌ DON'T log: "password": "\(password)"
+])
+```
+
+**5. CWE-259: Hard-coded Credentials**
+- [ ] No hard-coded passwords in source code
+- [ ] No default API keys
+- [ ] Force password change on first login
+- [ ] Audit for "admin"/"password" defaults
+
+**6. CWE-311: Missing Encryption**
+- [ ] Passwords hashed with bcrypt/Argon2 (not SHA256)
+- [ ] JWT tokens signed with strong keys (256-bit minimum)
+- [ ] HTTPS enforced for REST API (no HTTP fallback)
+- [ ] Sensitive data encrypted at rest
+
+```swift
+// ✅ GOOD: Strong password hashing
+import Crypto
+
+func hashPassword(_ password: String) -> String {
+    let salt = Data(UUID().uuidString.utf8)
+    let hash = SHA256.hash(data: Data(password.utf8) + salt)
+    return "\(salt.base64EncodedString()):\(hash.hexString)"
+}
+
+// TODO: Upgrade to Argon2 for production
+```
+
+**7. CWE-327: Weak Cryptography**
+- [ ] No MD5 or SHA1 for security purposes
+- [ ] Use SHA256+ for hashing
+- [ ] Use AES-256 for encryption
+- [ ] JWT signed with HS256 or RS256 (not none)
+
+**8. CWE-352: Cross-Site Request Forgery (CSRF)**
+- [ ] CSRF tokens for state-changing operations
+- [ ] Validate Origin/Referer headers
+- [ ] SameSite cookie attribute
+
+**9. CWE-400: Uncontrolled Resource Consumption**
+- [ ] Rate limiting on API endpoints
+- [ ] Max request size limits
+- [ ] Timeout for long-running operations
+- [ ] Memory limits for model loading
+
+```swift
+// ✅ GOOD: Rate limiting
+actor RateLimiter {
+    private var requests: [String: [Date]] = [:]
+    
+    func checkLimit(clientId: String, maxRequests: Int, window: TimeInterval) throws {
+        let now = Date()
+        let windowStart = now.addingTimeInterval(-window)
+        
+        requests[clientId] = (requests[clientId] ?? [])
+            .filter { $0 > windowStart }
+        
+        guard requests[clientId]!.count < maxRequests else {
+            throw .rateLimitExceeded
+        }
+        
+        requests[clientId]!.append(now)
+    }
+}
+```
+
+**10. CWE-502: Deserialization of Untrusted Data**
+- [ ] Validate JSON structure before decoding
+- [ ] Use Codable (type-safe) instead of JSONSerialization
+- [ ] Never deserialize arbitrary objects
+
+**Technical Design:**
+```swift
+// Security audit checklist implementation
+struct SecurityAudit {
+    func auditInputValidation() async throws -> [Finding]
+    func auditSQLInjection() async throws -> [Finding]
+    func auditInformationExposure() async throws -> [Finding]
+    func auditCryptography() async throws -> [Finding]
+    func auditResourceLimits() async throws -> [Finding]
+    
+    struct Finding {
+        let cwe: String
+        let severity: Severity
+        let location: String
+        let description: String
+        let remediation: String
+    }
+    
+    enum Severity {
+        case critical, high, medium, low, info
+    }
+}
+```
+
+**Test Plan:**
+1. Static analysis: Run SwiftLint security rules
+2. Manual code review: Audit all security-sensitive code
+3. Penetration testing: Attempt common exploits
+4. Fuzzing: Test with malformed inputs
+5. Dependency scan: Check for vulnerable libraries
+
+**Workflow:**
+1. Audit: Review all code against CWE checklist
+2. Document: Create `SECURITY.md` with findings
+3. Fix: Address all CRITICAL and HIGH findings
+4. Test: Verify fixes with security tests
+5. Automate: Add security checks to CI/CD
+6. Commit: `security: Complete CWE audit and fix vulnerabilities`
+
+---
+
+### 5.3 Data Privacy & Compliance Audit
+**Status:** Not started  
+**Priority:** HIGH (before App Store)  
+**Effort:** 1 week
+
+**Business Value:** Ensure user data never leaves the device, comply with privacy regulations (GDPR, CCPA).
+
+**Acceptance Criteria:**
+- [ ] Audit all network calls — verify no telemetry
+- [ ] Document data flows (what data goes where)
+- [ ] Verify models run 100% locally (no cloud API calls)
+- [ ] Create privacy policy
+- [ ] Add privacy manifest (Apple requirement)
+
+**Data Flow Audit:**
+```
+User Input (prompt) → ModelOrchestrator → MLX Inference → Response
+                                ↓
+                         Local cache only
+                         NO network calls
+```
+
+**Network Call Audit:**
+- [ ] HuggingFace downloads: Only for model files (user-initiated)
+- [ ] No analytics/telemetry
+- [ ] No crash reporting to external services
+- [ ] No update checks (user-initiated only)
+
+**Privacy Manifest (Apple App Store requirement):**
+```json
+{
+  "NSPrivacyTracking": false,
+  "NSPrivacyTrackingDomains": [],
+  "NSPrivacyCollectedDataTypes": [],
+  "NSPrivacyAccessedAPITypes": [
+    {
+      "NSPrivacyAccessedAPIType": "NSPrivacyAccessedAPICategoryFileTimestamp",
+      "NSPrivacyAccessedAPITypeReasons": ["C617.1"]
+    }
+  ]
+}
+```
+
+**Workflow:**
+1. Audit: Review all URLSession calls
+2. Document: Create data flow diagram
+3. Test: Network monitoring during inference
+4. Legal: Draft privacy policy
+5. Commit: `docs: Add privacy policy and data flow documentation`
+
+---
+
+## Epic 6: MCP Plugin Marketplace & Agent Integration 🔌
 
 **Business Value:** Enable GemmaServer to discover and integrate with MCP servers, creating an ecosystem of AI agents that can collaborate through standardized protocols.
 
@@ -444,7 +753,7 @@ actor MCPRegistry {
 ---
 
 ### 5.2 Agent Capability Analysis (agents.md, gemini.md, claude-skill.md)
-**Status:** Not started  
+**Status:** COMPLETED  
 **Priority:** HIGH  
 **Effort:** 1-2 weeks
 
@@ -456,12 +765,11 @@ actor MCPRegistry {
 - As a user, I want seamless integration between Claude Desktop, Gemini, and custom agents
 
 **Acceptance Criteria:**
-- [ ] Parser for `agents.md` (Anthropic format)
-- [ ] Parser for `gemini.md` (Google format)
-- [ ] Parser for `claude-skill.md` (custom skill definitions)
-- [ ] Extract: tool names, descriptions, parameters, return types
-- [ ] CLI command: `gemma agents analyze <file>` — show parsed capabilities
-- [ ] Auto-register tools in MCP server on startup
+- [x] Parser for `agents.md` (Anthropic format)
+- [x] Parser for `gemini.md` (Google format)
+- [x] Parser for `claude-skill.md` (custom skill definitions)
+- [x] Extract: tool names, descriptions, parameters, return types
+- [x] CLI command: `gemma agents analyze <file>` — show parsed capabilities- [ ] Auto-register tools in MCP server on startup
 
 **Technical Design:**
 ```swift
@@ -548,7 +856,7 @@ actor AgentCapabilityAnalyzer {
 
 ---
 
-## Epic 6: Apple App Store Distribution 🍎
+## Epic 7: Apple App Store Distribution 🍎
 
 **Business Value:** Reach mainstream users through official Apple distribution, establish GemmaServer as a trusted local AI platform.
 
@@ -707,7 +1015,7 @@ spctl --assess --verbose=4 --type execute GemmaServer.app
 
 ---
 
-## Epic 7: Advanced Features (Future)
+## Epic 8: Advanced Features (Future)
 
 ### 7.1 Streaming REST API
 **Business Value:** Real-time token streaming for web UIs  
@@ -740,33 +1048,116 @@ spctl --assess --verbose=4 --type execute GemmaServer.app
 
 ## Development Workflow (Standard Operating Procedure)
 
+### Testing Philosophy
+
+**TDD (Test-Driven Development):**
+- Write tests BEFORE implementation
+- Red → Green → Refactor cycle
+- Tests define the contract/interface
+- Use for: Business logic, algorithms, data transformations
+
+**BDD (Behavior-Driven Development):**
+- Write tests in Given-When-Then format
+- Focus on user behavior and outcomes
+- Use for: API endpoints, user workflows, integration scenarios
+
+**Test Coverage Requirements:**
+- **100% unit test coverage** for all business logic
+- **90%+ integration test coverage** for API endpoints
+- **80%+ E2E test coverage** for critical user flows
+- Exceptions: UI code, generated code, trivial getters/setters
+
+**Coverage Enforcement:**
+```bash
+# Generate coverage report
+swift test --enable-code-coverage
+
+# Extract coverage percentage
+xcrun llvm-cov report \
+  .build/debug/GemmaServerPackageTests.xctest/Contents/MacOS/GemmaServerPackageTests \
+  -instr-profile .build/debug/codecov/default.profdata \
+  -use-color
+
+# Fail CI if coverage < 100% for core modules
+if [ $COVERAGE -lt 100 ]; then
+  echo "ERROR: Unit test coverage is $COVERAGE%, required 100%"
+  exit 1
+fi
+```
+
 ### For Each Task:
 
 **1. TDD Phase (30 min - 1 hour)**
-- Write failing test using Swift Testing
+- **Write failing test FIRST** using Swift Testing
 - Define interface (protocol/actor methods)
 - Use mocks for external dependencies
-- Run: `swift test` → verify test fails
+- Run: `swift test` → verify test fails (RED)
+- **Goal: 100% coverage of new code**
+
+```swift
+// Example: TDD for new feature
+@Test("calculateMaxTokens returns correct limit for 16GB RAM")
+func testCalculateMaxTokens_16GB() {
+    let config = ServerConfig(availableRAM: 16_000_000_000, modelSizeMB: 4_000)
+    let maxTokens = config.calculateMaxTokens()
+    
+    // Expected: (16GB * 0.8 - 4GB) / 2 bytes per token
+    // = (12.8GB - 4GB) / 2 = 4.4GB / 2 = ~2.2B tokens
+    // Capped at 128k
+    #expect(maxTokens == 128_000)
+}
+
+// Run test → FAILS (method doesn't exist yet)
+// Now implement calculateMaxTokens() to make it pass
+```
 
 **2. Implementation Phase (2-4 hours)**
 - Write minimal code to pass test
 - Follow Swift 6 concurrency rules
 - Use pattern matching over if-else
-- Run: `swift test` → verify test passes
+- Run: `swift test` → verify test passes (GREEN)
+- **Verify: Coverage remains 100%**
 
-**3. Integration Testing (1-2 hours)**
+**3. Refactor Phase (30 min - 1 hour)**
+- Improve code quality without changing behavior
+- Extract duplicated code
+- Simplify complex logic
+- Run: `swift test` → all tests still pass (GREEN)
+- **Verify: Coverage still 100%**
+
+**4. BDD Integration Testing (1-2 hours)**
+- Write Given-When-Then scenarios
 - Test actor interactions
 - Test concurrent access (50+ parallel requests)
 - Test error propagation
 - Run: `swift test` → all tests pass
 
-**4. Profiling & Benchmarking (30 min - 1 hour)**
+```swift
+// Example: BDD for API endpoint
+@Test("POST /api/v1/generate returns response for valid request")
+func testGenerateEndpoint_ValidRequest() async throws {
+    // GIVEN: Server is running with loaded model
+    let server = try await startTestServer()
+    try await server.loadModel(path: testModelPath)
+    
+    // WHEN: Client sends valid generate request
+    let request = GenerationRequest(prompt: "Hello", maxTokens: 100)
+    let response = try await server.generate(request: request)
+    
+    // THEN: Response contains generated text and metrics
+    #expect(!response.generatedText.isEmpty)
+    #expect(response.tokensPerSecond > 0)
+    #expect(response.promptTokens > 0)
+}
+```
+
+**5. Profiling & Benchmarking (30 min - 1 hour)**
 - Run `PerformanceBenchmark` before/after
 - Measure TPS, TTFT, memory
 - Compare: regression? → revert
 - Document results in commit message
 
-**5. Debug & Fix (as needed)**
+**6. Debug & Fix (as needed)**
 - Use structured logging (not print)
 - Check actor isolation
 - Verify Sendable conformance
@@ -809,6 +1200,8 @@ Co-Authored-By: Claude Sonnet 4 <noreply@anthropic.com>"
 - [ ] Homebrew installation
 - [ ] 10+ verified models
 - [x] CI/CD pipeline
+- [ ] Dependency security audit completed
+- [ ] CWE security audit completed
 
 **v1.0.0 (Production):**
 - [ ] 99.9% uptime (no crashes)
@@ -817,4 +1210,7 @@ Co-Authored-By: Claude Sonnet 4 <noreply@anthropic.com>"
 - [ ] 1000+ GitHub stars
 - [ ] Live on Mac App Store
 - [ ] MCP plugin marketplace with 10+ servers
-- [ ] Agent capability discovery from .md files
+- [x] Agent capability discovery from .md files
+- [ ] Zero known HIGH/CRITICAL security vulnerabilities
+- [ ] Privacy audit completed and documented
+- [ ] GDPR/CCPA compliant

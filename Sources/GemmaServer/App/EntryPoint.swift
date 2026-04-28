@@ -20,6 +20,7 @@ public struct GemmaServerCLI: AsyncParsableCommand {
           GemmaServer models download mlx-community/…             Download specific model
           GemmaServer serve --model mlx-community/…               Start inference server
           GemmaServer chat  --model mlx-community/…               Interactive chat
+          GemmaServer agents analyze agents.md                    Analyze agent capabilities
 
         RECOMMENDED MODELS (by RAM)
           mlx-community/gemma-4-e2b-it-4bit               Gemma 4 2B   ~2.7 GB
@@ -41,6 +42,7 @@ public struct GemmaServerCLI: AsyncParsableCommand {
             ServeCommand.self,
             ModelsCommand.self,
             ChatCommand.self,
+            AgentsCommand.self,
         ],
         defaultSubcommand: ServeCommand.self
     )
