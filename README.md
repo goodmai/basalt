@@ -598,3 +598,18 @@ See [PLAN.md](PLAN.md) for product roadmap and epic breakdown.
 | `vapor/jwt-kit` | 4.13.0 | JWT generation and verification |
 | `apple/swift-crypto` | 3.0.0 | Password hashing |
 | `apple/swift-argument-parser` | 1.5.0 | CLI subcommands |
+
+---
+
+## FAQ
+
+### Q: MLX error: Failed to load the default metallib. library not found...
+If you see an error like this when starting the server or running `swift test`:
+```
+MLX error: Failed to load the default metallib. library not found library not found library not found library not found  at /path/to/.build/checkouts/mlx-swift/Source/Cmlx/mlx-c/mlx/c/stream.cpp:115
+```
+**A:** This happens because the pre-compiled Metal shader library (`default.metallib`) is missing or was cleaned up. You can easily fix this by regenerating it. Run the following command from the root of the project:
+```bash
+./build_metal.sh
+```
+This script compiles all Metal kernels and copies the generated `default.metallib` into your project root and `.build/debug/` directory, satisfying MLX Swift's requirements.
