@@ -1,0 +1,117 @@
+name: Security Audit
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  schedule:
+    # Run weekly security audit every Monday at 9 AM
+    - cron: '0 9 * * 1'
+  workflow_dispatch: # Manual trigger
+
+jobs:
+  security-audit:
+    name: Security & Dependency Audit
+    runs-on: macos-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup Swift
+        uses: swift-actions/setup-swift@v2
+        with:
+          swift-version: '6.0'
+      
+      - name: Install dependencies
+        run: |
+          brew install jq
+      
+      - name: Run Security Audit Script
+        run: |
+          chmod +x scripts/security_audit.sh
+          chmod +x osv_check.sh
+          ./scripts/security_audit.sh
+      
+      - name: Run Dependency Vulnerability Scan
+        run: |
+          echo "Running OSV vulnerability scan..."
+          ./osv_check.sh
+      
+      - name: Check for hardcoded secrets
+        run: |
+          echo "Scanning for hardcoded secrets..."
+          if grep -r "password.*=.*\".*\"" Sources/ --include="*.swift" | grep -v "// " | grep -v "Bearer\|Authorization"; then
+            echo "❌ Found potential hardcoded secrets"
+            exit 1
+          fi
+          echo "✅ No hardcoded secrets found"
+      
+      - name: Check for SQL injection vulnerabilities
+        run: |
+          echo "Checking for SQL injection..."
+          if grep -r "SELECT.*\\$\|INSERT.*\\$" Sources/ --include="*.swift" | grep -v "//"; then
+            echo "❌ Found potential SQL injection"
+            exit 1
+          fi
+          echo "✅ No SQL injection vulnerabilities"
+      
+      - name: Generate Security Report
+        if: always()
+        run: |
+          echo "# Security Audit Report" > security-report.md
+          echo "" >> security-report.md
+          echo "**Date:** $(date)" >> security-report.md
+          echo "**Commit:** ${{ github.sha }}" >> security-report.md
+          echo "" >> security-report.md
+          echo "## Dependencies" >> security-report.md
+          swift package show-dependencies >> security-report.md
+          echo "" >> security-report.md
+          echo "## OSV Scan Results" >> security-report.md
+          ./osv_check.sh >> security-report.md || true
+      
+      - name: Upload Security Report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-audit-report
+          path: security-report.md
+          retention-days: 30
+      
+      - name: Comment PR with Security Status
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: '✅ Security audit passed! No vulnerabilities detected.'
+            })
+
+  codeql-analysis:
+    name: CodeQL Security Analysis
+    runs-on: macos-latest
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: swift
+      
+      - name: Build project
+        run: swift build
+      
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:swift"

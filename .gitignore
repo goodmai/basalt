@@ -28,6 +28,23 @@ logs/
 *.swp
 *~
 
+# AI assistant files
+.claude/
+.gemini.md
+
+# Test files
+test_*.swift
+gemma
+
+# Compiled Metal libraries
+*.metallib
+
+# Working notes/plans
+PLAN.md
+TEST.md
+REVIEW.md
+WRAPPER_INFO.md
+
 # Model cache (optional)
 # ~/.cache/huggingface/
 

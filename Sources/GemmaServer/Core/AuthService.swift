@@ -19,7 +19,7 @@ public actor AuthService {
     private static let tokenCol = Expression<String>("token")
     private static let expiresAt = Expression<Date>("expiresAt")
     
-    public init(dbPath: String, jwtSecret: String = "gemma-super-secret-key") throws {
+    public init(dbPath: String, jwtSecret: String?) throws {
         let connection = try Connection(dbPath)
         
         // Создание таблиц
@@ -34,17 +34,32 @@ public actor AuthService {
             t.column(Self.expiresAt)
         })
         
-        // Создание дефолтного пользователя, если база пустая
-        if try connection.scalar(Self.users.count) == 0 {
-            let hashed = Self.hashPassword("admin")
-            try connection.run(Self.users.insert(Self.username <- "admin", Self.password <- hashed))
-        }
+        // SECURITY: No default user created automatically
+        // Users must be created via CLI or environment setup
+        // if try connection.scalar(Self.users.count) == 0 {
+        //     let hashed = Self.hashPassword("admin")
+        //     try connection.run(Self.users.insert(Self.username <- "admin", Self.password <- hashed))
+        // }
         
         self.db = connection
         
         // Инициализация JWT
         let s = JWTSigners()
-        s.use(.hs256(key: jwtSecret))
+        
+        // SECURITY: JWT secret must be provided or read from environment
+        let secret = jwtSecret ?? ProcessInfo.processInfo.environment["JWT_SECRET"]
+        guard let jwtSecretKey = secret, !jwtSecretKey.isEmpty else {
+            throw GemmaServerError.invalidRequestStructure(
+                details: "JWT_SECRET must be provided via environment variable or parameter"
+            )
+        }
+        
+        // Warn if secret is too short
+        if jwtSecretKey.count < 32 {
+            print("⚠️  WARNING: JWT secret is shorter than recommended 32 characters")
+        }
+        
+        s.use(.hs256(key: jwtSecretKey))
         self.signers = s
     }
     
@@ -95,14 +110,12 @@ public actor AuthService {
     }
     
     private static func verifyPassword(_ pass: String, hash: String) -> Bool {
-        // Миграция старых не-солёных хешей
-        if !hash.contains(":") && !hash.hasPrefix("$2") {
-            let oldSalt = "gemma-internal-static-salt"
-            let input = pass + oldSalt
-            let digest = SHA256.hash(data: Data(input.utf8))
-            let oldHash = digest.compactMap { String(format: "%02x", $0) }.joined()
-            return oldHash == hash
-        }
+        // SECURITY: Legacy SHA256 hashes no longer supported
+        // All passwords must use Bcrypt. Users with old hashes must reset passwords.
+        // if !hash.contains(":") && !hash.hasPrefix("$2") {
+        //     // This was insecure - static salt is vulnerable
+        //     return false
+        // }
         
         // Миграция старых солёных SHA256 хешей
         if hash.contains(":") && !hash.hasPrefix("$2") {
@@ -146,5 +159,40 @@ public actor AuthService {
         }
         
         return payload.sub
+    }
+    
+    // MARK: — User Management
+    
+    /// Create a new user with hashed password (Bcrypt)
+    /// - Parameters:
+    ///   - username: Username (must be unique)
+    ///   - password: Plain text password (will be hashed with Bcrypt)
+    /// - Throws: Error if username already exists or database error
+    public func createUser(username: String, password: String) throws {
+        // Validation
+        guard !username.isEmpty, username.count <= 100 else {
+            throw GemmaServerError.invalidRequestStructure(details: "Invalid username")
+        }
+        
+        guard !password.isEmpty, password.count >= 8 else {
+            throw GemmaServerError.invalidRequestStructure(details: "Password must be at least 8 characters")
+        }
+        
+        // Check if user exists
+        let query = Self.users.filter(Self.username == username)
+        if try db.pluck(query) != nil {
+            throw GemmaServerError.invalidRequestStructure(details: "Username already exists")
+        }
+        
+        // Hash password with Bcrypt
+        let hashedPassword = Self.hashPassword(password)
+        
+        // Insert user
+        try db.run(Self.users.insert(Self.username <- username, Self.password <- hashedPassword))
+    }
+    
+    /// Check if any users exist in the database
+    public func hasUsers() throws -> Bool {
+        return try db.scalar(Self.users.count) > 0
     }
 }

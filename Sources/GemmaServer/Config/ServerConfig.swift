@@ -9,7 +9,7 @@ public struct ServerConfig: Sendable {
     public let host: String
     public let maxConcurrentRequests: Int
     public let maxTokens: Int
-    public let jwtSecret: String
+    public let jwtSecret: String?  // SECURITY: Optional, must be provided via env or CLI
     public let dbPath: String
     public let logLevel: LogLevel
 
@@ -24,7 +24,7 @@ public struct ServerConfig: Sendable {
         host: String = "127.0.0.1",
         maxConcurrentRequests: Int = 4,
         maxTokens: Int = 65536,
-        jwtSecret: String = UUID().uuidString,
+        jwtSecret: String? = nil,  // SECURITY: No default value
         dbPath: String = "auth.sqlite3",
         logLevel: LogLevel = .info
     ) {
@@ -42,12 +42,13 @@ public struct ServerConfig: Sendable {
 
 extension ServerConfig {
     /// Конфигурация по умолчанию для разработки.
+    /// SECURITY WARNING: Only use for local development, never in production!
     public static let development = ServerConfig(
         modelPath: "./models/gemma-3-1b-instruct",
         restPort: 8080,
         host: "127.0.0.1",
         maxTokens: 65536,
-        jwtSecret: "dev-secret",
+        jwtSecret: "dev-secret-DO-NOT-USE-IN-PRODUCTION",  // 32+ chars
         dbPath: "auth.sqlite3",
         logLevel: .debug
     )
