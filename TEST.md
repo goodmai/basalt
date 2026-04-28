@@ -88,12 +88,12 @@ TOTAL                     93.75%      51/51
     - TC-1.2.2.4: Missing required parameters ✅
     - TC-1.2.2.5: Streaming response handling ✅
 
-- [ ] **Task 1.2.3**: Add tests for ContextDegradationProfiler
+- [x] **Task 1.2.3**: Add tests for ContextDegradationProfiler
   - Test Cases:
-    - TC-1.2.3.1: Profile with valid context sizes
-    - TC-1.2.3.2: Export results to JSON
-    - TC-1.2.3.3: Handle OOM gracefully
-    - TC-1.2.3.4: Calculate TPS degradation curve
+    - TC-1.2.3.1: Profile with valid context sizes ✅
+    - TC-1.2.3.2: Export results to JSON ✅
+    - TC-1.2.3.3: Handle OOM gracefully ✅
+    - TC-1.2.3.4: Calculate TPS degradation curve ✅
 
 - [ ] **Task 1.2.4**: Add tests for TokenBudgetCalculator
   - Test Cases:
