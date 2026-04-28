@@ -85,3 +85,4 @@ docs-static/
 
 # Temporary files
 /tmp/
+.opencli/
