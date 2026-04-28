@@ -2,60 +2,136 @@ import Foundation
 import ArgumentParser
 import GemmaServerCore
 
+@available(macOS 10.15, *)
+@main
 struct Benchmark: AsyncParsableCommand {
-    @Option(name: .shortAndLong, help: "Model path")
+    static let configuration = CommandConfiguration(
+        abstract: "Benchmark GemmaServer inference (TPS, TTFT, latency, memory)"
+    )
+
+    @Option(name: .shortAndLong, help: "Model path or HF repo ID (must be in local cache)")
     var model: String
 
-    @Option(name: .shortAndLong, help: "Number of iterations")
+    @Option(name: .shortAndLong, help: "Number of timed iterations (warmup is always 1)")
     var iterations: Int = 5
 
-    @Option(name: .shortAndLong, help: "Prompt to use")
+    @Option(name: .shortAndLong, help: "Prompt to use for every iteration")
     var prompt: String = "Explain the importance of open source models."
 
-    @Option(name: .shortAndLong, help: "Max tokens to generate")
+    @Option(name: .shortAndLong, help: "Max tokens to generate per iteration")
     var tokens: Int = 100
 
+    @Flag(help: "Skip the warmup iteration")
+    var noWarmup: Bool = false
+
+    @Flag(name: .customLong("degradation-test"), help: "Run context degradation benchmark (1k -> 128k) and output to JSON")
+    var degradationTest: Bool = false
+
     func run() async throws {
-        print("🚀 Starting benchmark for model: \(model)")
-        
-        let engine = MLXInferenceEngine()
-        let orchestrator = ModelOrchestratorActor(engine: engine)
-        
-        print("⏳ Loading model...")
-        try await orchestrator.loadModel(path: model)
-        print("✅ Model loaded.\n")
-        
-        var totalTPS: Double = 0
-        var totalTTFT: Double = 0
-        var totalGenTime: Double = 0
-        
-        for i in 1...iterations {
-            print("Iteration \(i)/\(iterations)... ", terminator: "")
-            fflush(stdout)
-            
-            let request = GenerationRequest(prompt: prompt, maxTokens: tokens)
-            let response = try await orchestrator.generate(request: request)
-            
-            totalTPS += response.tokensPerSecond
-            totalTTFT += response.timeToFirstToken
-            totalGenTime += response.generationTime
-            
-            print(String(format: "TPS: %.2f | TTFT: %.3fs | Total: %.2fs", 
-                         response.tokensPerSecond, 
-                         response.timeToFirstToken, 
-                         response.generationTime))
+        let resolvedPath = resolveModelPath()
+        print("Benchmark — model: \(model)")
+        if resolvedPath != model {
+            print("  path: \(resolvedPath)")
         }
+        print("  iterations: \(iterations)  tokens: \(tokens)  warmup: \(!noWarmup)\n")
+
+        let engine = MLXInferenceEngine()
+        let orchestrator = ModelOrchestratorActor(engine: engine, maxTokens: tokens)
+
+        print("Loading model…", terminator: ""); fflush(stdout)
+        try await orchestrator.loadModel(path: resolvedPath)
+        print(" done\n")
+
+        if degradationTest {
+            try await runDegradationTest(orchestrator: orchestrator)
+            return
+        }
+
+        // Warmup (excluded from stats)
+        if !noWarmup {
+            print("Warmup… ", terminator: ""); fflush(stdout)
+            let req = GenerationRequest(prompt: prompt, maxTokens: tokens)
+            _ = try await orchestrator.generate(request: req)
+            print("done\n")
+        }
+
+        var tpsSamples:      [Double] = []
+        var ttftSamples:     [Double] = []
+        var genTimeSamples:  [Double] = []
+
+        print("  #     TPS         TTFT (s)    Time (s)")
+        print("  " + String(repeating: "─", count: 42))
+
+        for i in 1...iterations {
+            let req = GenerationRequest(prompt: prompt, maxTokens: tokens)
+            let r   = try await orchestrator.generate(request: req)
+
+            tpsSamples.append(r.tokensPerSecond)
+            ttftSamples.append(r.timeToFirstToken)
+            genTimeSamples.append(r.generationTime)
+
+            print(String(format: "  %-4d  %-10.2f  %-10.3f  %-10.2f",
+                         i, r.tokensPerSecond, r.timeToFirstToken, r.generationTime))
+        }
+
+        print()
+        printStats(label: "TPS",          samples: tpsSamples,     unit: "tok/s")
+        printStats(label: "TTFT",         samples: ttftSamples,     unit: "s")
+        printStats(label: "GenTime",      samples: genTimeSamples,  unit: "s")
+
+        // Memory from last run
+        let req = GenerationRequest(prompt: prompt, maxTokens: tokens)
+        let last = try await orchestrator.generate(request: req)
+        let memMB = last.memory.activeBytes / 1_048_576
+        print(String(format: "\n  Memory (active): %d MB", memMB))
+    }
+
+    private func runDegradationTest(orchestrator: ModelOrchestratorActor) async throws {
+        let profiler = ContextDegradationProfiler(orchestrator: orchestrator)
+        let sizes = [1024, 4096, 8192, 16384, 32768, 65536, 131072]
         
-        let avgTPS = totalTPS / Double(iterations)
-        let avgTTFT = totalTTFT / Double(iterations)
-        let avgGenTime = totalGenTime / Double(iterations)
+        print("Running degradation benchmark with context sizes: \(sizes)")
+        let report = try await profiler.runBenchmark(contextSizes: sizes, tokensToGenerate: tokens, iterations: iterations)
         
-        print("\n📊 Results (Average over \(iterations) iterations):")
-        print(String(format: "  Average TPS:  %.2f tokens/s", avgTPS))
-        print(String(format: "  Average TTFT: %.3f s", avgTTFT))
-        print(String(format: "  Average Time: %.2f s", avgGenTime))
-        print("")
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .prettyPrinted
+        let data = try encoder.encode(report)
+        let url = URL(fileURLWithPath: "context_latency.json")
+        try data.write(to: url)
+        
+        print("\nDegradation report saved to context_latency.json")
+        
+        print("  Context   TPS       TTFT      Memory (MB)")
+        print("  " + String(repeating: "─", count: 42))
+        for p in report.dataPoints {
+            print(String(format: "  %-8d  %-8.2f  %-8.3f  %-8d", p.contextSize, p.avgTPS, p.avgTTFT, p.memoryActiveMB))
+        }
+    }
+
+    private func printStats(label: String, samples: [Double], unit: String) {
+        guard !samples.isEmpty else { return }
+        let n    = Double(samples.count)
+        let mean = samples.reduce(0, +) / n
+        let minV = samples.min()!
+        let maxV = samples.max()!
+        let variance = samples.map { ($0 - mean) * ($0 - mean) }.reduce(0, +) / n
+        let stdDev = sqrt(variance)
+
+        let paddedLabel = label.padding(toLength: 10, withPad: " ", startingAt: 0)
+        let stats = String(format: "avg=%-8.3f  min=%-8.3f  max=%-8.3f  σ=%-8.3f", mean, minV, maxV, stdDev)
+        print("  \(paddedLabel)  \(stats)  \(unit)")
+    }
+
+    private func resolveModelPath() -> String {
+        if model.hasPrefix("/") || model.hasPrefix(".") {
+            return model
+        }
+        if model.contains("/") {
+            let cached = ModelCache.cacheDir(for: model)
+            if FileManager.default.fileExists(atPath: cached.path) {
+                return cached.path
+            }
+        }
+        return model
     }
 }
-
-Benchmark.main()
