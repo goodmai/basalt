@@ -1,18 +1,70 @@
+# Build artifacts
+.build/
+*.xcodeproj
+*.xcworkspace
+.swiftpm/
+
+# Dependencies
+Packages/
+.package.resolved
+
+# IDE
+.vscode/
+.idea/
+
+# macOS
 .DS_Store
-.build
-/auth.sqlite3
-/test_*.sqlite3
-/server.log
-/*.metallib
-/test_mlx.swift
-/test_json.swift
-/Packages
-xcuserdata/
-DerivedData/
-.swiftpm/configuration/registries.json
-.swiftpm/xcode/package.xcworkspace/contents.xcworkspacedata
-.netrc
-# Model weights — often multi-GB, store externally
-*.safetensors
-*.gguf
-models/
+
+# Logs
+*.log
+logs/
+
+# Test artifacts
+.coverage
+*.profdata
+
+# Temporary files
+*.tmp
+*.swp
+*~
+
+# Model cache (optional)
+# ~/.cache/huggingface/
+
+# Benchmark results
+benchmark_*.json
+context_latency.json
+res_*.json
+
+# Server artifacts
+server_*.log
+
+# Scripts
+run_*.sh
+
+# Archive directory (task history, plans, reviews)
+.archive/
+archive/
+.history/
+history/
+
+# Sensitive data
+*.env
+.env.*
+secrets/
+credentials/
+telegram.json
+api_keys.json
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Documentation build artifacts
+docs-output/
+docs-static/
+.docc/
+
+# Temporary files
+/tmp/
