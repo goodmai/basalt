@@ -53,4 +53,74 @@ struct AuthServiceTests {
         
         try? FileManager.default.removeItem(atPath: dbPath)
     }
+    
+    // MARK: — TC-2.3.1.4: Concurrent session operations
+    
+    @Test("Concurrent logins and verifications work correctly")
+    func testConcurrentSessions() async throws {
+        let dbPath = "test_auth_concurrent.sqlite3"
+        try? FileManager.default.removeItem(atPath: dbPath)
+        
+        let auth = try AuthService(dbPath: dbPath)
+        
+        // Create multiple sessions concurrently
+        try await withThrowingTaskGroup(of: String.self) { group in
+            for _ in 1...10 {
+                group.addTask {
+                    let token = try await auth.login(user: "admin", pass: "admin")
+                    let user = try await auth.verify(token: token)
+                    #expect(user == "admin")
+                    return token
+                }
+            }
+            
+            // Collect all tokens
+            var tokens: [String] = []
+            for try await token in group {
+                tokens.append(token)
+            }
+            
+            // All tokens should be unique
+            let uniqueTokens = Set(tokens)
+            #expect(uniqueTokens.count == tokens.count)
+        }
+        
+        try? FileManager.default.removeItem(atPath: dbPath)
+    }
+    
+    @Test("Concurrent logout operations are safe")
+    func testConcurrentLogouts() async throws {
+        let dbPath = "test_auth_concurrent_logout.sqlite3"
+        try? FileManager.default.removeItem(atPath: dbPath)
+        
+        let auth = try AuthService(dbPath: dbPath)
+        
+        // Create multiple sessions
+        var tokens: [String] = []
+        for _ in 1...10 {
+            let token = try await auth.login(user: "admin", pass: "admin")
+            tokens.append(token)
+        }
+        
+        // Logout all concurrently
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            for token in tokens {
+                group.addTask {
+                    try await auth.logout(token: token)
+                }
+            }
+            
+            // Wait for all logouts to complete
+            for try await _ in group {}
+        }
+        
+        // Verify all tokens are revoked
+        for token in tokens {
+            await #expect(throws: GemmaServerError.self) {
+                try await auth.verify(token: token)
+            }
+        }
+        
+        try? FileManager.default.removeItem(atPath: dbPath)
+    }
 }
