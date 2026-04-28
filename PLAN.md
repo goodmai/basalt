@@ -50,12 +50,16 @@
 - Target Commits: +20 commits
 - Target Test Coverage: 100% unit coverage
 
-**v0.3.0** (Target: 2026-06-15) — Model Ecosystem
-- Epic 3: Model Compatibility (3 features)
+**v0.3.0** (Target: 2026-06-15) — Documentation & Model Ecosystem
+- Epic 4: Documentation Website (3 features)
+  - Documentation framework setup
+  - Automated documentation deployment
+  - Documentation quality checks
+- Epic 5: Model Compatibility (3 features)
   - Model compatibility matrix
   - Automated model testing
   - Model validation
-- Epic 4: Developer Experience (3 features)
+- Epic 6: Developer Experience (3 features)
   - Homebrew installation
   - Interactive model selection
   - Rich terminal output
@@ -98,7 +102,10 @@
 - 🔄 Privacy compliance audit
 - 🔄 Homebrew installation
 
-**Planned Features:** 13
+**Planned Features:** 16
+- 📋 Documentation framework setup
+- 📋 Automated documentation deployment
+- 📋 Documentation quality checks
 - 📋 Model validation
 - 📋 Interactive model selection
 - 📋 Rich terminal output
@@ -113,7 +120,7 @@
 - 📋 Multi-model serving
 - 📋 Quantization experiments
 
-**Total Features:** 26 (7 completed, 6 in progress, 13 planned)
+**Total Features:** 29 (7 completed, 6 in progress, 16 planned)
 
 ### Commit Counter
 
@@ -281,7 +288,153 @@ func calculateMaxTokens(availableRAM: Int64, modelSizeMB: Int) -> Int {
 
 ---
 
-## Epic 3: Model Compatibility & Testing 🧪 (IN PROGRESS)
+## Epic 5: Model Compatibility & Testing 🧪 (IN PROGRESS)
+---
+
+## Epic 4: Documentation Website & Deployment 📚
+
+**Business Value:** Professional documentation website increases adoption, reduces support burden, and establishes credibility.
+
+**User Stories:**
+- As a new user, I want comprehensive documentation to get started quickly
+- As a developer, I need API reference docs with code examples
+- As a contributor, I want to understand the architecture before contributing
+- As a team lead, I need to share documentation links with my team
+
+### 4.1 Documentation Framework Setup
+**Status:** Not started  
+**Priority:** HIGH (for v0.3.0)  
+**Effort:** 1 week
+
+**Business Value:** Automated documentation generation from code comments reduces maintenance burden.
+
+**Acceptance Criteria:**
+- [ ] Choose documentation framework (Swift-DocC, Publish, or Jazzy)
+- [ ] Set up documentation structure
+- [ ] Configure automated doc generation from source code
+- [ ] Add code examples and tutorials
+- [ ] Set up local preview server
+
+**Framework Options:**
+
+**Option 1: Swift-DocC (Recommended)**
+- **Pros:** Official Apple tool, Xcode integration, modern design, symbol linking
+- **Cons:** Requires Xcode, macOS-only build
+- **Use case:** API reference, tutorials, articles
+```bash
+# Generate DocC archive
+swift package generate-documentation --target GemmaServer
+
+# Preview locally
+swift package --disable-sandbox preview-documentation --target GemmaServer
+```
+
+**Option 2: Publish by John Sundell**
+- **Pros:** Pure Swift, flexible, Markdown-based, custom themes
+- **Cons:** Manual setup, less automated than DocC
+- **Use case:** Blog-style docs, custom layouts
+
+**Option 3: Jazzy**
+- **Pros:** Mature, Apple-style docs, SourceKitten integration
+- **Cons:** Ruby dependency, less modern than DocC
+- **Use case:** API reference only
+
+**Recommended: Swift-DocC + GitHub Pages**
+
+**Documentation Structure:**
+1. **Getting Started** - Installation, Quick start, First inference
+2. **Guides** - CLI commands, REST API, MCP integration, Model selection
+3. **Tutorials** - Building chatbot, Claude Desktop integration, Performance optimization
+4. **API Reference** - Auto-generated from code comments
+5. **Architecture** - System design, Actor concurrency, Performance, Security
+
+**Workflow:**
+1. Choose: Swift-DocC as framework
+2. Setup: Create `.docc` bundle
+3. Write: Documentation articles and tutorials
+4. Generate: Build documentation archive
+5. Commit: `feat: Add Swift-DocC documentation structure`
+
+---
+
+### 4.2 Automated Documentation Deployment
+**Status:** Not started  
+**Priority:** HIGH  
+**Effort:** 3-5 days
+
+**Business Value:** Automated deployment ensures docs are always up-to-date with latest code.
+
+**Acceptance Criteria:**
+- [ ] GitHub Actions workflow for doc generation
+- [ ] Deploy to GitHub Pages on main branch push
+- [ ] Custom domain setup (docs.gemmaserver.dev)
+- [ ] HTTPS enabled
+- [ ] Search functionality
+- [ ] Version selector (v0.1.0, v0.2.0, latest)
+
+**GitHub Actions Workflow:**
+```yaml
+name: Documentation
+on:
+  push:
+    branches: [main]
+    paths: ['Sources/**', 'docs/**']
+
+jobs:
+  build-and-deploy:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Generate Documentation
+        run: swift package generate-documentation --target GemmaServer
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v3
+```
+
+**Workflow:**
+1. Setup: GitHub Pages in repository settings
+2. Configure: Custom domain DNS
+3. Implement: GitHub Actions workflow
+4. Test: Deploy to staging branch first
+5. Deploy: Enable for main branch
+6. Commit: `feat: Add automated documentation deployment`
+
+---
+
+### 4.3 Documentation Quality & Maintenance
+**Status:** Not started  
+**Priority:** MEDIUM  
+**Effort:** Ongoing
+
+**Business Value:** High-quality docs reduce support requests and improve user satisfaction.
+
+**Acceptance Criteria:**
+- [ ] 100% public API documented
+- [ ] All code examples tested in CI
+- [ ] Documentation coverage report
+- [ ] Broken link checker
+- [ ] Spelling/grammar checker
+- [ ] Documentation review process
+
+**Documentation Coverage Tool:**
+```bash
+#!/bin/bash
+# scripts/check-doc-coverage.sh
+PUBLIC_SYMBOLS=$(swift-symbolgraph-extract -module-name GemmaServer)
+DOCUMENTED=$(grep -r "///" Sources/ | wc -l)
+COVERAGE=$((DOCUMENTED * 100 / PUBLIC_SYMBOLS))
+echo "Documentation Coverage: ${COVERAGE}%"
+[ $COVERAGE -lt 100 ] && exit 1
+```
+
+**Workflow:**
+1. Implement: Documentation coverage checker
+2. Add: Code example tests
+3. Setup: Broken link checker
+4. Create: Documentation review template
+5. Commit: `feat: Add documentation quality checks`
+
+---
 
 **Business Value:** Ensure broad model support, document working configurations, provide clear error messages for incompatible models.
 
@@ -366,7 +519,7 @@ jobs:
 
 ---
 
-## Epic 4: Developer Experience & CLI Enhancements 🎨
+## Epic 6: Developer Experience & CLI Enhancements 🎨
 
 **Business Value:** Reduce friction for new users, improve discoverability, make the CLI feel polished.
 
@@ -501,7 +654,7 @@ func interactiveModelPicker() async throws -> String {
 
 ---
 
-## Epic 5: Security & Dependency Audit 🔒
+## Epic 7: Security & Dependency Audit 🔒
 
 **Business Value:** Ensure GemmaServer is secure, compliant, and free from known vulnerabilities. Protect user data and prevent supply chain attacks.
 
@@ -810,7 +963,7 @@ User Input (prompt) → ModelOrchestrator → MLX Inference → Response
 
 ---
 
-## Epic 6: MCP Plugin Marketplace & Agent Integration 🔌
+## Epic 8: MCP Plugin Marketplace & Agent Integration 🔌
 
 **Business Value:** Enable GemmaServer to discover and integrate with MCP servers, creating an ecosystem of AI agents that can collaborate through standardized protocols.
 
@@ -983,7 +1136,7 @@ actor AgentCapabilityAnalyzer {
 
 ---
 
-## Epic 7: Apple App Store Distribution 🍎
+## Epic 9: Apple App Store Distribution 🍎
 
 **Business Value:** Reach mainstream users through official Apple distribution, establish GemmaServer as a trusted local AI platform.
 
@@ -1142,7 +1295,7 @@ spctl --assess --verbose=4 --type execute GemmaServer.app
 
 ---
 
-## Epic 8: Advanced Features (Future)
+## Epic 10: Advanced Features (Future)
 
 ### 7.1 Streaming REST API
 **Business Value:** Real-time token streaming for web UIs  
