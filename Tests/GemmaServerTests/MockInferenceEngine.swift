@@ -39,7 +39,10 @@ actor MockInferenceEngine: InferenceEngine {
         for await chunk in stream {
             if case .metadata(let m) = chunk { metadata = m }
         }
-        return metadata!
+        guard let metadata else {
+            throw .inferenceHardwareFailure(reason: "No metadata received from stream")
+        }
+        return metadata
     }
 
     func generateStream(request: GenerationRequest) async throws(GemmaServerError) -> AsyncStream<StreamChunk> {

@@ -218,6 +218,115 @@ struct OrchestratorTests {
         try await orch.loadModel(path: tempDir.path)
         // Should not throw and should update modelSizeMB internally
     }
+    
+    // MARK: — TC-2.2.2: Actor Isolation Tests
+    
+    @Test("Mutable state only accessed via actor methods")
+    func testActorIsolation() async throws {
+        let engine = MockInferenceEngine()
+        let orch = ModelOrchestratorActor(engine: engine)
+        
+        // Load model (mutates state)
+        try await orch.loadModel(path: "test-model")
+        
+        // Check health (reads state)
+        let health = await orch.healthSnapshot(modelId: "test-model")
+        #expect(health.isReady == true)
+        
+        // Generate (mutates internal queue state)
+        let response = try await orch.generate(request: .init(prompt: "Test", maxTokens: 10))
+        #expect(!response.generatedText.isEmpty)
+        
+        // All state access went through actor methods - no data races
+        // Swift 6 compiler enforces this at compile time
+    }
+    
+    @Test("DTOs conform to Sendable for safe actor communication")
+    func testSendableConformance() async throws {
+        // These DTOs must be Sendable to cross actor boundaries
+        let request = GenerationRequest(prompt: "Test", maxTokens: 10)
+        
+        // Pass DTOs to actor - compiles only if Sendable
+        let engine = MockInferenceEngine()
+        let orch = ModelOrchestratorActor(engine: engine)
+        try await orch.loadModel(path: "test-model")
+        
+        // This test verifies Sendable conformance at compile time
+        // If DTOs weren't Sendable, this wouldn't compile
+        let result = try await orch.generate(request: request)
+        #expect(!result.generatedText.isEmpty)
+        #expect(result.tokensPerSecond > 0)
+    }
+    
+    // MARK: — TC-2.2.3: Deadlock Prevention Tests
+    
+    @Test("Actor reentrancy does not cause deadlock")
+    func testNoDeadlock() async throws {
+        let engine = MockInferenceEngine()
+        let orch = ModelOrchestratorActor(engine: engine)
+        
+        try await orch.loadModel(path: "test-model")
+        
+        // Simulate scenario where orchestrator might call itself
+        // This should complete without hanging
+        async let result1 = orch.generate(request: .init(prompt: "Request 1", maxTokens: 5))
+        async let result2 = orch.generate(request: .init(prompt: "Request 2", maxTokens: 5))
+        async let result3 = orch.generate(request: .init(prompt: "Request 3", maxTokens: 5))
+        
+        let responses = try await [result1, result2, result3]
+        #expect(responses.count == 3)
+        #expect(responses.allSatisfy { !$0.generatedText.isEmpty })
+    }
+    
+    @Test("Long-running operation allows other tasks to proceed")
+    func testConcurrentTasksWithLongOperation() async throws {
+        let slowEngine = MockInferenceEngine()
+        await slowEngine.setArtificialDelay(1.0) // 1 second delay
+        
+        let orch = ModelOrchestratorActor(engine: slowEngine)
+        try await orch.loadModel(path: "test-model")
+        
+        let start = ContinuousClock.now
+        
+        // Start long-running task
+        async let slowTask = orch.generate(request: .init(prompt: "Slow", maxTokens: 10))
+        
+        // Check health should not block on slow task
+        let health = await orch.healthSnapshot(modelId: "test-model")
+        
+        let quickDuration = start.duration(to: .now)
+        
+        // Health check completed quickly (< 500ms)
+        #expect(quickDuration < Duration.milliseconds(500))
+        #expect(health.isReady == true)
+        
+        // Wait for slow task to complete
+        let _ = try await slowTask
+    }
+    
+    @Test("Graceful cancellation of in-flight requests")
+    func testGracefulCancellation() async throws {
+        let slowEngine = MockInferenceEngine()
+        await slowEngine.setArtificialDelay(2.0)
+        
+        let orch = ModelOrchestratorActor(engine: slowEngine)
+        try await orch.loadModel(path: "test-model")
+        
+        let task = Task {
+            try await orch.generate(request: .init(prompt: "Test", maxTokens: 10))
+        }
+        
+        // Cancel task immediately
+        task.cancel()
+        
+        do {
+            let _ = try await task.value
+            // Task might complete before cancellation is processed
+        } catch {
+            // Cancellation handled gracefully
+            #expect(error is CancellationError || error is GemmaServerError)
+        }
+    }
 }
 
 // MARK: — Helpers

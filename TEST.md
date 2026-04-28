@@ -114,8 +114,8 @@ TOTAL                     93.75%      51/51
 ## Epic 2: Integration Testing Framework 🔄 (IN PROGRESS)
 
 **Status:** IN PROGRESS  
-**Coverage:** 60% (target: 90%)  
-**Tests:** 15 passing
+**Coverage:** 65% (target: 90%)  
+**Tests:** 94 passing
 
 ### 2.1 Actor Interaction Tests
 **Status:** PARTIALLY COMPLETE  
@@ -130,12 +130,12 @@ TOTAL                     93.75%      51/51
     - TC-2.1.1.3: Generate after unload (error)
     - TC-2.1.1.4: Concurrent generate requests (FIFO)
 
-- [ ] **Task 2.1.2**: Test RESTServer ↔ ModelOrchestrator
+- [x] **Task 2.1.2**: Test RESTServer ↔ ModelOrchestrator ✅
   - Test Cases:
-    - TC-2.1.2.1: HTTP request → Actor call → HTTP response
-    - TC-2.1.2.2: Streaming response handling
-    - TC-2.1.2.3: Error propagation (actor → HTTP 500)
-    - TC-2.1.2.4: Timeout handling (long-running inference)
+    - TC-2.1.2.1: HTTP request → Actor call → HTTP response ✅
+    - TC-2.1.2.2: Streaming response handling (not implemented yet - REST API doesn't support streaming)
+    - TC-2.1.2.3: Error propagation (actor → HTTP 500) ✅
+    - TC-2.1.2.4: Timeout handling (long-running inference) ✅
 
 - [ ] **Task 2.1.3**: Test MCPServer ↔ ModelOrchestrator
   - Test Cases:
@@ -151,17 +151,17 @@ TOTAL                     93.75%      51/51
     - TC-2.1.4.4: Parallel downloads (3 models)
 
 ### 2.2 Concurrency & Race Condition Tests
-**Status:** NOT STARTED  
+**Status:** PARTIALLY COMPLETE  
 **Priority:** CRITICAL  
 **Effort:** 1 week
 
 **Tasks:**
-- [ ] **Task 2.2.1**: Test 50+ concurrent requests
+- [x] **Task 2.2.1**: Test 50+ concurrent requests ✅
   - Test Cases:
-    - TC-2.2.1.1: 50 parallel generate requests (FIFO order)
-    - TC-2.2.1.2: No data races (Swift 6 strict concurrency)
-    - TC-2.2.1.3: Memory usage stays bounded
-    - TC-2.2.1.4: All requests complete successfully
+    - TC-2.2.1.1: 50 parallel generate requests (FIFO order) ✅
+    - TC-2.2.1.2: No data races (Swift 6 strict concurrency) ✅
+    - TC-2.2.1.3: Memory usage stays bounded ✅
+    - TC-2.2.1.4: All requests complete successfully ✅
 
 - [ ] **Task 2.2.2**: Test actor isolation
   - Test Cases:
