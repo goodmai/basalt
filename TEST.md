@@ -72,13 +72,13 @@ TOTAL                     93.75%      51/51
 **Effort:** 1 week
 
 **Tasks:**
-- [ ] **Task 1.2.1**: Add tests for RESTServer routes
+- [x] **Task 1.2.1**: Add tests for RESTServer routes
   - Test Cases:
-    - TC-1.2.1.1: POST /api/v1/auth/login with valid credentials
-    - TC-1.2.1.2: POST /api/v1/auth/login with invalid credentials
-    - TC-1.2.1.3: POST /api/v1/generate with valid JWT
-    - TC-1.2.1.4: POST /api/v1/generate without JWT (401)
-    - TC-1.2.1.5: POST /api/v1/generate with expired JWT (401)
+    - TC-1.2.1.1: POST /api/v1/auth/login with valid credentials ✅
+    - TC-1.2.1.2: POST /api/v1/auth/login with invalid credentials ✅
+    - TC-1.2.1.3: POST /api/v1/generate with valid JWT ✅
+    - TC-1.2.1.4: POST /api/v1/generate without JWT (401) ✅
+    - TC-1.2.1.5: POST /api/v1/generate with expired JWT (401) ✅
 
 - [ ] **Task 1.2.2**: Add tests for MCPServer JSON-RPC
   - Test Cases:
