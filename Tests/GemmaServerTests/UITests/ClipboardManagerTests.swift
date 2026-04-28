@@ -12,7 +12,8 @@ struct ClipboardManagerTests {
     @Test("Detect available clipboard tool on macOS")
     func testDetectClipboardToolMacOS() async {
         #if os(macOS)
-        let tool = await ClipboardManager.detectClipboardTool()
+        let manager = ClipboardManager()
+        let tool = await manager.detectClipboardTool()
         
         // macOS should have pbcopy/pbpaste
         #expect(tool == .pbcopy || tool == .none)
@@ -22,7 +23,8 @@ struct ClipboardManagerTests {
     @Test("Detect available clipboard tool on Linux")
     func testDetectClipboardToolLinux() async {
         #if os(Linux)
-        let tool = await ClipboardManager.detectClipboardTool()
+        let manager = ClipboardManager()
+        let tool = await manager.detectClipboardTool()
         
         // Linux might have xclip, xsel, or none
         #expect(tool == .xclip || tool == .xsel || tool == .none)
