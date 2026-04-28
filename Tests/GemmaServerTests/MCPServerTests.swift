@@ -131,14 +131,40 @@ struct MCPServerTests {
         let server = MCPServer(orchestrator: ModelOrchestratorActor(engine: MockInferenceEngine())) { line in
             Task { await capturer.capture(line) }
         }
-        
+
         await server.dispatch("""
         {"jsonrpc": "2.0", "id": 100, "method": "tools/call", "params": {"arguments": {}}}
         """)
         try? await Task.sleep(for: .milliseconds(50))
-        
+
         let output = await capturer.lines
         #expect(output[0].contains("-32602")) // Invalid params
+    }
+
+    // MARK: — TC-1.2.2.5: Streaming response handling
+
+    @Test("tools/call (gemma_generate) handles streaming responses")
+    func testStreamingResponse() async throws {
+        let engine = MockInferenceEngine()
+        let orch = ModelOrchestratorActor(engine: engine)
+        try await orch.loadModel(path: "test-model")
+
+        let capturer = OutputCapturer()
+        let server = MCPServer(orchestrator: orch) { line in
+            Task { await capturer.capture(line) }
+        }
+
+        let request = """
+        {"jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {"name": "gemma_generate", "arguments": {"prompt": "Hello", "maxTokens": 10}}}
+        """
+
+        await server.dispatch(request)
+        try? await Task.sleep(for: .milliseconds(100))
+
+        let output = await capturer.lines
+        #expect(output.count >= 1)
+        #expect(output[0].contains("\"result\""))
+        #expect(output[0].contains("content"))
     }
 
     private actor OutputCapturer {

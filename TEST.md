@@ -80,13 +80,13 @@ TOTAL                     93.75%      51/51
     - TC-1.2.1.4: POST /api/v1/generate without JWT (401) ✅
     - TC-1.2.1.5: POST /api/v1/generate with expired JWT (401) ✅
 
-- [ ] **Task 1.2.2**: Add tests for MCPServer JSON-RPC
+- [x] **Task 1.2.2**: Add tests for MCPServer JSON-RPC
   - Test Cases:
-    - TC-1.2.2.1: Valid JSON-RPC request
-    - TC-1.2.2.2: Invalid JSON-RPC format
-    - TC-1.2.2.3: Unknown method
-    - TC-1.2.2.4: Missing required parameters
-    - TC-1.2.2.5: Streaming response handling
+    - TC-1.2.2.1: Valid JSON-RPC request ✅
+    - TC-1.2.2.2: Invalid JSON-RPC format ✅
+    - TC-1.2.2.3: Unknown method ✅
+    - TC-1.2.2.4: Missing required parameters ✅
+    - TC-1.2.2.5: Streaming response handling ✅
 
 - [ ] **Task 1.2.3**: Add tests for ContextDegradationProfiler
   - Test Cases:
