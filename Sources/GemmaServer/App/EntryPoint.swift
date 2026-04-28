@@ -13,6 +13,7 @@ public struct GemmaServerCLI: AsyncParsableCommand {
         abstract: "Local Gemma 4 inference — dual-interface server (MCP + REST/A2A)",
         discussion: """
         QUICK START
+          GemmaServer onboard                                      🆕 First-time setup wizard
           GemmaServer models list                                  List Gemma 4 models
           GemmaServer models list --search Qwen3                   List Qwen3 models
           GemmaServer models list --search Qwen2.5-Coder           List Qwen Coder models
@@ -39,6 +40,7 @@ public struct GemmaServerCLI: AsyncParsableCommand {
         """,
         version: HealthResponse.version,
         subcommands: [
+            OnboardCommand.self,
             ServeCommand.self,
             ModelsCommand.self,
             ChatCommand.self,
