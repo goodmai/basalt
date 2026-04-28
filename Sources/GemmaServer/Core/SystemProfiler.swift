@@ -3,7 +3,7 @@
 // STATUS: IN_PROGRESS
 // LAST_MODIFIED: 2025-04-28
 // TODO: Add Metal GPU detection
-// TODO: Add chip model detection (M1/M2/M3/M4)
+// TODO: Add chip model detection (M1/M2/M3/M4/M5)
 
 import Foundation
 import Metal
@@ -21,7 +21,7 @@ public actor SystemProfiler {
         public let gpuMemory: Int64          // bytes
         public let diskSpace: Int64          // bytes available
         public let osVersion: String
-        public let chipModel: String         // M1, M2, M3, M4
+        public let chipModel: String         // M1, M2, M3, M4, M5
         
         /// Human-readable RAM in GB
         public var totalRAMGB: Int {
@@ -183,7 +183,7 @@ public actor SystemProfiler {
         }
     }
     
-    /// Detect Apple Silicon chip model (M1/M2/M3/M4)
+    /// Detect Apple Silicon chip model (M1/M2/M3/M4/M5)
     private func detectChipModel() -> String {
         var sysinfo = utsname()
         uname(&sysinfo)
@@ -211,7 +211,7 @@ public actor SystemProfiler {
             String(validatingUTF8: buffer.baseAddress!) ?? "Unknown"
         }
         
-        // Detect M-series chips
+        // Detect M-series chips (including future M5)
         if brandString.contains("Apple M1") {
             return "M1"
         } else if brandString.contains("Apple M2") {
@@ -220,6 +220,11 @@ public actor SystemProfiler {
             return "M3"
         } else if brandString.contains("Apple M4") {
             return "M4"
+        } else if brandString.contains("Apple M5") {
+            return "M5"
+        } else if brandString.contains("Apple M") {
+            // Future M-series (M6, M7, etc.)
+            return "Apple Silicon (M-series)"
         } else if machineString.contains("arm64") {
             return "Apple Silicon"
         } else {
