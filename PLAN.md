@@ -374,9 +374,342 @@ func interactiveModelPicker() async throws -> String {
 
 ---
 
-## Epic 5: Advanced Features (Future)
+## Epic 5: MCP Plugin Marketplace & Agent Integration 🔌
 
-### 5.1 Streaming REST API
+**Business Value:** Enable GemmaServer to discover and integrate with MCP servers, creating an ecosystem of AI agents that can collaborate through standardized protocols.
+
+**User Stories:**
+- As a developer, I want to browse and install MCP servers from a marketplace
+- As an agent builder, I want GemmaServer to auto-discover agent capabilities from `.md` files
+- As a team, we need agents to communicate through standardized MCP protocol
+- As a user, I want to connect Claude Desktop, Gemini agents, and custom skills seamlessly
+
+### 5.1 MCP Server Discovery & Registry
+**Status:** Not started  
+**Priority:** HIGH (for ecosystem growth)  
+**Effort:** 2-3 weeks
+
+**Business Value:** Centralized registry of MCP servers enables discoverability and reduces integration friction.
+
+**Acceptance Criteria:**
+- [ ] Local registry: `~/.gemmaserver/mcp-registry.json`
+- [ ] CLI command: `gemma mcp list` — show installed servers
+- [ ] CLI command: `gemma mcp search <query>` — search public registry
+- [ ] CLI command: `gemma mcp install <name>` — install from registry
+- [ ] Auto-discovery: scan `~/.config/mcp/` for existing servers
+- [ ] Parse MCP server manifests (JSON schema)
+
+**Technical Design:**
+```swift
+struct MCPServerManifest: Codable, Sendable {
+    let name: String
+    let version: String
+    let description: String
+    let command: String
+    let args: [String]
+    let capabilities: [String]  // ["tools", "resources", "prompts"]
+    let author: String?
+    let repository: String?
+}
+
+actor MCPRegistry {
+    private var servers: [String: MCPServerManifest] = [:]
+    
+    func register(manifest: MCPServerManifest) async throws {
+        servers[manifest.name] = manifest
+        try await persist()
+    }
+    
+    func search(query: String) async -> [MCPServerManifest] {
+        servers.values.filter { 
+            $0.name.localizedCaseInsensitiveContains(query) ||
+            $0.description.localizedCaseInsensitiveContains(query)
+        }
+    }
+}
+```
+
+**Test Plan:**
+1. Unit test: Register, search, uninstall operations
+2. Integration test: Install real MCP server (e.g., filesystem, brave-search)
+3. E2E test: GemmaServer connects to installed MCP server
+
+**Workflow:**
+1. TDD: Write test for `MCPRegistry` actor
+2. Implement: Registry with JSON persistence
+3. CLI: Add `mcp` subcommand group
+4. Integration: Test with real MCP servers
+5. Commit: `feat: Add MCP server registry and discovery`
+
+---
+
+### 5.2 Agent Capability Analysis (agents.md, gemini.md, claude-skill.md)
+**Status:** Not started  
+**Priority:** HIGH  
+**Effort:** 1-2 weeks
+
+**Business Value:** Automatically extract agent capabilities from documentation files, enabling dynamic tool routing and agent collaboration.
+
+**User Stories:**
+- As a developer, I want GemmaServer to read `agents.md` and understand available tools
+- As an agent, I need to discover what other agents can do without manual configuration
+- As a user, I want seamless integration between Claude Desktop, Gemini, and custom agents
+
+**Acceptance Criteria:**
+- [ ] Parser for `agents.md` (Anthropic format)
+- [ ] Parser for `gemini.md` (Google format)
+- [ ] Parser for `claude-skill.md` (custom skill definitions)
+- [ ] Extract: tool names, descriptions, parameters, return types
+- [ ] CLI command: `gemma agents analyze <file>` — show parsed capabilities
+- [ ] Auto-register tools in MCP server on startup
+
+**Technical Design:**
+```swift
+struct AgentCapability: Codable, Sendable {
+    let name: String
+    let description: String
+    let parameters: [Parameter]
+    let returnType: String?
+    let source: CapabilitySource
+    
+    enum CapabilitySource: String, Codable {
+        case agentsMd = "agents.md"
+        case geminiMd = "gemini.md"
+        case claudeSkill = "claude-skill.md"
+    }
+}
+
+actor AgentCapabilityAnalyzer {
+    func parse(file: URL) async throws -> [AgentCapability] {
+        let content = try String(contentsOf: file)
+        let format = detectFormat(content)
+        
+        return switch format {
+        case .agentsMd:   try parseAgentsMd(content)
+        case .geminiMd:   try parseGeminiMd(content)
+        case .claudeSkill: try parseClaudeSkill(content)
+        }
+    }
+    
+    private func parseAgentsMd(_ content: String) throws -> [AgentCapability] {
+        // Parse Anthropic agents.md format:
+        // ## Tool: <name>
+        // Description: ...
+        // Parameters: ...
+    }
+}
+```
+
+**Test Plan:**
+1. Unit test: Parse sample `agents.md`, `gemini.md`, `claude-skill.md`
+2. Integration test: Load capabilities into MCP server
+3. E2E test: Agent calls tool discovered from `.md` file
+
+**Workflow:**
+1. TDD: Write tests with sample `.md` files
+2. Implement: Markdown parser with regex/swift-markdown
+3. CLI: Add `agents analyze` command
+4. Integration: Auto-load on server startup
+5. Commit: `feat: Add agent capability analysis from .md files`
+
+---
+
+### 5.3 MCP Plugin Marketplace UI
+**Status:** Not started  
+**Priority:** MEDIUM  
+**Effort:** 3-4 weeks
+
+**Business Value:** Web-based marketplace for browsing, installing, and managing MCP servers.
+
+**User Stories:**
+- As a user, I want a visual interface to browse available MCP servers
+- As a developer, I want to publish my MCP server to the marketplace
+- As a team, we need to share private MCP servers within our organization
+
+**Acceptance Criteria:**
+- [ ] Web UI: Browse marketplace (React/SwiftUI)
+- [ ] Search, filter by category (filesystem, web, database, AI)
+- [ ] Install button → downloads and registers MCP server
+- [ ] Show installed servers with status (running/stopped)
+- [ ] Start/stop/restart controls
+- [ ] Logs viewer for each MCP server
+
+**Technical Design:**
+- Frontend: SwiftUI app (macOS) or React web app
+- Backend: REST API endpoints for marketplace operations
+- Database: SQLite for installed servers, status, logs
+
+**Workflow:**
+1. Design: Mockup UI in Figma
+2. Backend: REST API for marketplace CRUD
+3. Frontend: SwiftUI/React implementation
+4. Integration: Connect to MCP registry
+5. Commit: `feat: Add MCP plugin marketplace UI`
+
+---
+
+## Epic 6: Apple App Store Distribution 🍎
+
+**Business Value:** Reach mainstream users through official Apple distribution, establish GemmaServer as a trusted local AI platform.
+
+**User Stories:**
+- As a non-technical user, I want to install GemmaServer from the Mac App Store
+- As a developer, I want automatic updates through App Store
+- As Apple, we need apps to follow sandboxing and entitlements guidelines
+
+### 6.1 App Store Preparation
+**Status:** Not started  
+**Priority:** HIGH (for v1.0.0 release)  
+**Effort:** 2-3 weeks
+
+**Business Value:** App Store distribution increases trust, discoverability, and user base by 10-100x.
+
+**Acceptance Criteria:**
+- [ ] Create Apple Developer account ($99/year)
+- [ ] App Store Connect: Create app listing
+- [ ] App icon (1024x1024) in all required sizes
+- [ ] Screenshots (macOS 13+, 14+, 15+)
+- [ ] Privacy policy (data collection, model usage)
+- [ ] Terms of service
+- [ ] App description, keywords, category (Developer Tools)
+
+**Workflow:**
+1. Register: Apple Developer Program
+2. Design: App icon + screenshots
+3. Legal: Privacy policy + ToS
+4. Submit: App Store Connect listing
+5. Commit: `docs: Add App Store assets and legal docs`
+
+---
+
+### 6.2 Sandboxing & Entitlements
+**Status:** Not started  
+**Priority:** HIGH  
+**Effort:** 1-2 weeks
+
+**Business Value:** App Store requires sandboxing for security. Proper entitlements enable network, file access, and GPU usage.
+
+**Acceptance Criteria:**
+- [ ] Enable App Sandbox in Xcode
+- [ ] Entitlements: `com.apple.security.network.server` (REST API)
+- [ ] Entitlements: `com.apple.security.network.client` (HuggingFace downloads)
+- [ ] Entitlements: `com.apple.security.files.user-selected.read-write` (model cache)
+- [ ] Entitlements: `com.apple.security.device.metal` (GPU access)
+- [ ] Test: All features work in sandboxed environment
+- [ ] Hardened Runtime enabled
+
+**Technical Design:**
+```xml
+<!-- GemmaServer.entitlements -->
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>com.apple.security.app-sandbox</key>
+    <true/>
+    <key>com.apple.security.network.server</key>
+    <true/>
+    <key>com.apple.security.network.client</key>
+    <true/>
+    <key>com.apple.security.files.user-selected.read-write</key>
+    <true/>
+    <key>com.apple.security.device.metal</key>
+    <true/>
+</dict>
+</plist>
+```
+
+**Test Plan:**
+1. Unit test: All tests pass with sandbox enabled
+2. Integration test: Download model in sandbox
+3. E2E test: Serve inference in sandbox
+4. Manual test: Submit to App Store Review (TestFlight)
+
+**Workflow:**
+1. Enable: App Sandbox in Xcode project
+2. Add: Required entitlements
+3. Test: Full workflow in sandbox
+4. Fix: Any sandbox violations
+5. Commit: `feat: Add App Sandbox and entitlements for App Store`
+
+---
+
+### 6.3 Code Signing & Notarization
+**Status:** Not started  
+**Priority:** HIGH  
+**Effort:** 3-5 days
+
+**Business Value:** Code signing proves authenticity, notarization ensures malware-free distribution.
+
+**Acceptance Criteria:**
+- [ ] Developer ID Application certificate
+- [ ] Sign all binaries with `codesign`
+- [ ] Notarize app bundle with Apple
+- [ ] Staple notarization ticket to app
+- [ ] Verify: `spctl --assess --verbose` passes
+
+**Technical Design:**
+```bash
+# Sign app bundle
+codesign --deep --force --verify --verbose \
+  --sign "Developer ID Application: Your Name (TEAM_ID)" \
+  --options runtime \
+  --entitlements GemmaServer.entitlements \
+  GemmaServer.app
+
+# Create ZIP for notarization
+ditto -c -k --keepParent GemmaServer.app GemmaServer.zip
+
+# Submit for notarization
+xcrun notarytool submit GemmaServer.zip \
+  --apple-id "your@email.com" \
+  --team-id "TEAM_ID" \
+  --password "app-specific-password" \
+  --wait
+
+# Staple ticket
+xcrun stapler staple GemmaServer.app
+
+# Verify
+spctl --assess --verbose=4 --type execute GemmaServer.app
+```
+
+**Workflow:**
+1. Generate: Developer ID certificate
+2. Sign: All binaries
+3. Notarize: Submit to Apple
+4. Staple: Attach ticket
+5. Commit: `chore: Add code signing and notarization`
+
+---
+
+### 6.4 App Store Submission & Review
+**Status:** Not started  
+**Priority:** HIGH  
+**Effort:** 1-2 weeks (including review time)
+
+**Business Value:** Final step to reach mainstream users.
+
+**Acceptance Criteria:**
+- [ ] Build archive in Xcode (Product → Archive)
+- [ ] Upload to App Store Connect
+- [ ] Fill out App Store Review Information
+- [ ] Submit for review
+- [ ] Respond to reviewer feedback (if any)
+- [ ] App approved and live on App Store
+
+**Workflow:**
+1. Archive: Build release in Xcode
+2. Upload: App Store Connect
+3. Submit: For review
+4. Monitor: Review status
+5. Celebrate: App goes live 🎉
+
+---
+
+## Epic 7: Advanced Features (Future)
+
+### 7.1 Streaming REST API
 **Business Value:** Real-time token streaming for web UIs  
 **Effort:** 1 week  
 **Priority:** MEDIUM
@@ -385,7 +718,7 @@ func interactiveModelPicker() async throws -> String {
 - [ ] Chunked transfer encoding
 - [ ] Client example (JavaScript fetch)
 
-### 5.2 Multi-Model Serving
+### 7.2 Multi-Model Serving
 **Business Value:** Switch models without restarting server  
 **Effort:** 2 weeks  
 **Priority:** LOW
@@ -394,7 +727,7 @@ func interactiveModelPicker() async throws -> String {
 - [ ] Request header: `X-Model-ID: qwen3.5-4b`
 - [ ] LRU cache for model eviction
 
-### 5.3 Quantization Experiments
+### 7.3 Quantization Experiments
 **Business Value:** Research-grade quantization benchmarks  
 **Effort:** 1 month (research project)  
 **Priority:** LOW
@@ -482,3 +815,6 @@ Co-Authored-By: Claude Sonnet 4 <noreply@anthropic.com>"
 - [ ] <100ms TTFT for 4B models
 - [ ] Support all major model families (Gemma, Qwen, Llama, Mistral)
 - [ ] 1000+ GitHub stars
+- [ ] Live on Mac App Store
+- [ ] MCP plugin marketplace with 10+ servers
+- [ ] Agent capability discovery from .md files
