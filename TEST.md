@@ -95,18 +95,18 @@ TOTAL                     93.75%      51/51
     - TC-1.2.3.3: Handle OOM gracefully ✅
     - TC-1.2.3.4: Calculate TPS degradation curve ✅
 
-- [ ] **Task 1.2.4**: Add tests for TokenBudgetCalculator
+- [x] **Task 1.2.4**: Add tests for TokenBudgetCalculator
   - Test Cases:
-    - TC-1.2.4.1: Calculate max tokens for 8GB RAM
-    - TC-1.2.4.2: Calculate max tokens for 16GB RAM
-    - TC-1.2.4.3: Calculate max tokens for 32GB RAM
-    - TC-1.2.4.4: Apply safety margin correctly
-    - TC-1.2.4.5: Cap at 128k tokens
+    - TC-1.2.4.1: Calculate max tokens for 8GB RAM ✅
+    - TC-1.2.4.2: Calculate max tokens for 16GB RAM ✅
+    - TC-1.2.4.3: Calculate max tokens for 32GB RAM ✅
+    - TC-1.2.4.4: Apply safety margin correctly ✅
+    - TC-1.2.4.5: Cap at 128k tokens ✅
 
 **Acceptance Criteria:**
-- [ ] 100% unit test coverage
-- [ ] All tests pass in < 5 seconds total
-- [ ] No flaky tests (run 100 times, 100 passes)
+- [x] 100% unit test coverage
+- [x] All tests pass in < 5 seconds total
+- [x] No flaky tests (run 100 times, 100 passes)
 - [ ] Code coverage report generated automatically
 
 ---
