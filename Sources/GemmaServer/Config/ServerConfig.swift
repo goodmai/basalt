@@ -48,7 +48,7 @@ extension ServerConfig {
         restPort: 8080,
         host: "127.0.0.1",
         maxTokens: 65536,
-        jwtSecret: "dev-secret-DO-NOT-USE-IN-PRODUCTION",  // 32+ chars
+        jwtSecret: "dev-secret-DO-NOT-USE-IN-PRODUCTION-dev-secret-DO-NOT-USE-IN-PRODUCTION",  // 64+ chars
         dbPath: "auth.sqlite3",
         logLevel: .debug
     )

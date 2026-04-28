@@ -17,7 +17,7 @@ struct RESTServerTests {
     private func makeTestAuthService() async throws -> AuthService {
         let tempDir = FileManager.default.temporaryDirectory
         let dbPath = tempDir.appendingPathComponent("test_\(UUID().uuidString).db").path
-        let auth = try AuthService(dbPath: dbPath, jwtSecret: "test-secret-key-12345")
+        let auth = try AuthService(dbPath: dbPath, jwtSecret: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
         try await auth.createUser(username: "admin123", password: "admin123")
         return auth
     }

@@ -17,10 +17,10 @@ struct ConfigTests {
     func testCustom() {
         let config = ServerConfig(
             modelPath: "path",
-            jwtSecret: "custom-secret",
+            jwtSecret: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
             dbPath: "custom.db"
         )
-        #expect(config.jwtSecret == "custom-secret")
+        #expect(config.jwtSecret == "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
         #expect(config.dbPath == "custom.db")
     }
 }

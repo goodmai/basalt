@@ -11,7 +11,7 @@ struct AuthServiceTests {
         // Clean up before test
         try? FileManager.default.removeItem(atPath: dbPath)
         
-        let auth = try AuthService(dbPath: dbPath, jwtSecret: "test-secret")
+        let auth = try AuthService(dbPath: dbPath, jwtSecret: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
         try await auth.createUser(username: "admin123", password: "admin123")
         
         let token = try await auth.login(user: "admin123", pass: "admin123")
@@ -29,7 +29,7 @@ struct AuthServiceTests {
         let dbPath = "test_auth_fail.sqlite3"
         try? FileManager.default.removeItem(atPath: dbPath)
         
-        let auth = try AuthService(dbPath: dbPath, jwtSecret: "test-secret")
+        let auth = try AuthService(dbPath: dbPath, jwtSecret: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
         try await auth.createUser(username: "admin123", password: "admin123")
         
         await #expect(throws: GemmaServerError.self) {
@@ -44,7 +44,7 @@ struct AuthServiceTests {
         let dbPath = "test_auth_logout.sqlite3"
         try? FileManager.default.removeItem(atPath: dbPath)
         
-        let auth = try AuthService(dbPath: dbPath, jwtSecret: "test-secret")
+        let auth = try AuthService(dbPath: dbPath, jwtSecret: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
         try await auth.createUser(username: "admin123", password: "admin123")
         let token = try await auth.login(user: "admin123", pass: "admin123")
         
@@ -64,7 +64,7 @@ struct AuthServiceTests {
         let dbPath = "test_auth_concurrent.sqlite3"
         try? FileManager.default.removeItem(atPath: dbPath)
         
-        let auth = try AuthService(dbPath: dbPath, jwtSecret: "test-secret")
+        let auth = try AuthService(dbPath: dbPath, jwtSecret: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
         try await auth.createUser(username: "admin123", password: "admin123")
         
         // Create multiple sessions concurrently
@@ -97,7 +97,7 @@ struct AuthServiceTests {
         let dbPath = "test_auth_concurrent_logout.sqlite3"
         try? FileManager.default.removeItem(atPath: dbPath)
         
-        let auth = try AuthService(dbPath: dbPath, jwtSecret: "test-secret")
+        let auth = try AuthService(dbPath: dbPath, jwtSecret: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
         try await auth.createUser(username: "admin123", password: "admin123")
         
         // Create multiple sessions
