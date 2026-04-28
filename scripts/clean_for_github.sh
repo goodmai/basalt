@@ -85,6 +85,14 @@ declare -a collected=()
 add_if_exists() {
   local p="$1"
   [[ -e "$p" ]] || return 0
+
+  if [[ "$INCLUDE_LOCAL" == false ]]; then
+    case "$p" in
+      "$REPO_ROOT/.archive"|"$REPO_ROOT/.archive/"*|"$REPO_ROOT/.claude"|"$REPO_ROOT/.claude/"*|"$REPO_ROOT/.gemini.md")
+        return 0
+        ;;
+    esac
+  fi
   collected+=("$p")
 }
 
@@ -119,12 +127,18 @@ if [[ "$INCLUDE_LOCAL" == true ]]; then
 fi
 shopt -u nullglob dotglob
 
-declare -A seen=()
 declare -a unique_collected=()
 for p in "${collected[@]}"; do
-  [[ -n "${seen[$p]+x}" ]] && continue
-  seen["$p"]=1
-  unique_collected+=("$p")
+  already_added=false
+  for up in "${unique_collected[@]-}"; do
+    if [[ "$up" == "$p" ]]; then
+      already_added=true
+      break
+    fi
+  done
+  if [[ "$already_added" == false ]]; then
+    unique_collected+=("$p")
+  fi
 done
 
 is_tracked_file() {

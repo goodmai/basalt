@@ -90,6 +90,35 @@ jobs:
         run: ./scripts/update_version.sh
 ```
 
+## Pre-publish Cleanup
+
+### `clean_for_github.sh`
+
+Removes local build/runtime artifacts before publishing to GitHub.
+
+**Usage:**  
+```bash
+# Dry-run (default)
+./scripts/clean_for_github.sh --dry-run
+
+# Apply cleanup
+./scripts/clean_for_github.sh --apply
+
+# Apply cleanup + local-only artifacts
+./scripts/clean_for_github.sh --apply --include-local
+```
+
+**Cleanup scope (default):**
+- `.build/`, `.swiftpm/`, `logs/`, docs build directories
+- generated artifacts (`*.log`, `*.tmp`, `*.profdata`, `default.metallib`)
+- local runtime DBs (`*.db`, `*.sqlite`, `*.sqlite3`, `auth.sqlite3`)
+
+**Optional scope with `--include-local`:**
+- `.archive/`, `.claude/`, `.gemini.md`
+- root helper files like `test_*.swift`
+
+The script skips files/directories tracked by git to avoid deleting committed project content.
+
 ## Future Scripts
 
 ### `run_tests.sh` (Planned)

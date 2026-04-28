@@ -546,6 +546,33 @@ Sources/
 └── GemmaServerTests/         # Test suite (101 tests)
 ```
 
+### Top-level Directories (Purpose)
+
+- `Sources/` — production Swift code (CLI, Core, REST, MCP, benchmark entrypoints)
+- `Tests/` — automated unit and integration tests
+- `scripts/` — operational scripts (versioning, security audit, cleanup, archiving)
+- `docs/` — architecture and supporting project documentation
+- `.github/` — CI workflows and GitHub metadata
+- `Formula/` — Homebrew packaging artifacts
+- `.build/`, `.swiftpm/` — local build/package artifacts (not for release commits)
+
+### Pre-publish Cleanup (GitHub)
+
+Before pushing/releasing, clean local build/runtime artifacts:
+
+```bash
+# 1) Preview what will be removed
+./scripts/clean_for_github.sh --dry-run
+
+# 2) Apply cleanup for build/runtime artifacts
+./scripts/clean_for_github.sh --apply
+
+# 3) Optional: also remove local-only helper artifacts
+./scripts/clean_for_github.sh --apply --include-local
+```
+
+`--include-local` additionally targets local working artifacts such as `.archive/`, `.claude/`, `.gemini.md`, and root-level `test_*.swift` files.
+
 ### Contributing
 
 1. **TDD Workflow** - Write tests first
