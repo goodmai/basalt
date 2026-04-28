@@ -1,5 +1,5 @@
 {
-  "originHash" : "a14e2325a336874ef6fca4dab2aa922cfac4f5fef8fd7296464b128644ae1a8a",
+  "originHash" : "2c5bc23225c7abd6e19a8aa64b2becc316da7689949f51d0330607c785d6bd84",
   "pins" : [
     {
       "identity" : "async-http-client",
@@ -8,6 +8,15 @@
       "state" : {
         "revision" : "3a5b74a58782c3b4c1f0bc75e9b67b10c2494e8f",
         "version" : "1.33.1"
+      }
+    },
+    {
+      "identity" : "console-kit",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/vapor/console-kit.git",
+      "state" : {
+        "revision" : "32ad16dfc7677b927b225595ed18f3debb32f577",
+        "version" : "4.16.0"
       }
     },
     {

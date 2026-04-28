@@ -19,6 +19,7 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-crypto.git", from: "3.0.0"),
         // Epic 16: CLI Enhancements
         .package(url: "https://github.com/onevcat/Rainbow.git", from: "4.0.0"),
+        .package(url: "https://github.com/vapor/console-kit.git", from: "4.0.0"),
     ],
     targets: [
 
@@ -41,6 +42,7 @@ let package = Package(
                 .product(name: "Crypto",        package: "swift-crypto"),
                 .product(name: "HummingbirdBcrypt", package: "hummingbird-auth"),
                 .product(name: "Rainbow",       package: "Rainbow"),
+                .product(name: "ConsoleKit",    package: "console-kit"),
             ],
             path: "Sources/GemmaServer",
             swiftSettings: [
