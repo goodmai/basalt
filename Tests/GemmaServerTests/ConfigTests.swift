@@ -8,7 +8,7 @@ struct ConfigTests {
     @Test("ServerConfig picks up defaults")
     func testDefaults() {
         let config = ServerConfig(modelPath: "path")
-        #expect(config.jwtSecret == "gemma-super-secret-key")
+        #expect(!config.jwtSecret.isEmpty) // Default is UUID().uuidString
         #expect(config.dbPath == "auth.sqlite3")
         #expect(config.maxTokens == 65536)
     }
