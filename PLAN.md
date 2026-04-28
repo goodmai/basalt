@@ -292,7 +292,7 @@ end
 ---
 
 ### 4.2 Interactive Model Selection
-**Status:** Not started  
+**Status:** COMPLETED  
 **Priority:** MEDIUM  
 **Effort:** 2 days
 
@@ -303,10 +303,10 @@ end
 - As a user, I want to see RAM requirements before selecting a model
 
 **Acceptance Criteria:**
-- [ ] `gemma chat` without `--model` shows interactive menu
-- [ ] Menu displays: model name, size, RAM, TPS, download status
-- [ ] Arrow keys to navigate, Enter to select
-- [ ] Auto-download if model not cached
+- [x] `gemma chat` without `--model` shows interactive menu
+- [x] Menu displays: model name, size, RAM, TPS, download status
+- [x] Arrow keys to navigate, Enter to select
+- [x] Auto-download if model not cached
 
 **Technical Design:**
 ```swift

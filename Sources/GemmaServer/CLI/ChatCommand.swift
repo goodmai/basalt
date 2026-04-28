@@ -95,40 +95,78 @@ struct ChatCommand: AsyncParsableCommand {
 
         // Check if --model is provided
         if let modelId = model {
-            // HF-style repo ID (contains "/")
-            if modelId.contains("/") {
-                let cached = ModelCache.cacheDir(for: modelId)
-                if FileManager.default.fileExists(atPath: cached.path) {
-                    return cached.path
-                }
-                
-                // Not cached — download it automatically
-                log("Model not in local cache: \(bold(modelId)). Downloading...")
-                let hub = HuggingFaceHub()
-                do {
-                    nonisolated(unsafe) var lastFile = ""
-                    let dest = try await hub.download(repoId: modelId, token: nil) { filename, downloaded, total in
-                        if filename != lastFile {
-                            if !lastFile.isEmpty { print() }   // newline after previous file
-                            lastFile = filename
-                        }
-                        printFileProgress(filename: filename, downloaded: downloaded, total: total)
-                    }
-                    print("\n")
-                    return dest.path
-                } catch {
-                    log("\(red("Failed to download model:")) \(error.localizedDescription)")
-                    throw ExitCode.failure
-                }
-            }
-            // Treated as a local path
-            return modelId
+            return try await resolveAndDownloadIfNeeded(modelId: modelId)
         }
 
-        // Default from config
-        let dev = ServerConfig.development.modelPath
-        log("No model specified — using default path: \(dim(dev))")
-        return dev
+        // Epic 4.2: Interactive Model Selection if no model is provided
+        do {
+            let selectedModelId = try await interactiveModelPicker()
+            return try await resolveAndDownloadIfNeeded(modelId: selectedModelId)
+        } catch {
+            log("Interactive picker failed: \(error.localizedDescription)")
+            log("Falling back to default config path.")
+            return ServerConfig.development.modelPath
+        }
+    }
+    
+    private func resolveAndDownloadIfNeeded(modelId: String) async throws -> String {
+        // HF-style repo ID (contains "/")
+        if modelId.contains("/") {
+            let cached = ModelCache.cacheDir(for: modelId)
+            if FileManager.default.fileExists(atPath: cached.path) {
+                return cached.path
+            }
+            
+            // Not cached — download it automatically
+            log("Model not in local cache: \(bold(modelId)). Downloading...")
+            let hub = HuggingFaceHub()
+            do {
+                nonisolated(unsafe) var lastFile = ""
+                let dest = try await hub.download(repoId: modelId, token: nil) { filename, downloaded, total in
+                    if filename != lastFile {
+                        if !lastFile.isEmpty { print() }   // newline after previous file
+                        lastFile = filename
+                    }
+                    printFileProgress(filename: filename, downloaded: downloaded, total: total)
+                }
+                print("\n")
+                return dest.path
+            } catch {
+                log("\(red("Failed to download model:")) \(error.localizedDescription)")
+                throw ExitCode.failure
+            }
+        }
+        // Treated as a local path
+        return modelId
+    }
+
+    private func interactiveModelPicker() async throws -> String {
+        let models = [
+            ("Qwen3.5 4B", "2.3 GB RAM, 92 TPS", "mlx-community/Qwen3.5-4B-4bit"),
+            ("Qwen3.5 9B OptiQ", "5.8 GB RAM, 37 TPS", "mlx-community/Qwen3.5-9B-OptiQ-4bit"),
+            ("Qwen Coder 7B", "4.1 GB RAM, 60 TPS", "mlx-community/Qwen2.5-Coder-7B-Instruct-4bit"),
+            ("Qwen3.6 27B", "14.5 GB RAM, 11 TPS", "mlx-community/Qwen3.6-27B-4bit"),
+            ("Gemma 4 2B", "2.7 GB RAM, 60 TPS", "mlx-community/gemma-4-e2b-it-4bit")
+        ]
+        
+        print("\n\(bold("Welcome to GemmaServer CLI"))")
+        print("Select a recommended model to chat with:\n")
+        
+        for (i, (name, specs, repoId)) in models.enumerated() {
+            let cached = ModelCache.isDownloaded(repoId: repoId) ? "✓" : " "
+            print("  \(i+1). [\(cached)] \(bold(name)) — \(dim(specs))")
+        }
+        
+        print("\nEnter number (1-\(models.count)): ", terminator: "")
+        fflush(stdout)
+        
+        guard let input = readLine(), let idx = Int(input), (1...models.count).contains(idx) else {
+            throw ValidationError("Invalid selection. Please run again and select a valid number.")
+        }
+        
+        let selectedModel = models[idx - 1]
+        print("\nSelected: \(green(selectedModel.0))\n")
+        return selectedModel.2
     }
 
     private func log(_ msg: String) {
