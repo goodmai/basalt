@@ -104,17 +104,20 @@
   - [x] Request queueing and graceful cancellation (Ctrl+C) ✅
   - [x] `@` File references (context injection) ✅
   - [x] UI enhancements, dynamic prompts, and hints ✅
-- Epic 16: **Advanced CLI Enhancements & Rich Terminal UI** 🎨 (9 features) **NEW**
+- Epic 16: **Advanced CLI Enhancements & Rich Terminal UI** 🎨 (9 features) **72% COMPLETE** ⭐
+  - See: [ROADMAP_EPIC_16_DETAILED.md](docs/ROADMAP_EPIC_16_DETAILED.md) (comprehensive BA analysis)
   - See: [ROADMAP_EPIC_16_CLI_ENHANCEMENTS.md](docs/ROADMAP_EPIC_16_CLI_ENHANCEMENTS.md)
-  - [ ] 16.1: Rich Terminal UI Foundation (Rainbow, colors, TTY detection)
-  - [ ] 16.2: Table Rendering System (ConsoleKit, ASCII tables)
-  - [ ] 16.3: Markdown Rendering & Syntax Highlighting (swift-markdown, Splash)
-  - [ ] 16.4: Code Diff Viewer (unified diff, side-by-side)
-  - [ ] 16.5: Image Preview in Terminal (iTerm2, Kitty protocols)
-  - [ ] 16.6: Clipboard Integration (pbcopy, xclip support)
-  - [ ] 16.7: `fit` Command (hardware profiling, model recommendations)
-  - [ ] 16.8: Progress Bar System (inline updates, multi-task)
-  - [ ] 16.9: Output Mode System (JSON, Plain, Pretty)
+  - [x] 16.1: Rich Terminal UI Foundation (Rainbow, colors, TTY detection) ✅
+  - [x] 16.2: Table Rendering System (ASCII tables, auto-sizing, pagination) ✅
+  - [x] 16.3: Markdown Rendering & Syntax Highlighting (swift-markdown, Splash) ✅
+  - [ ] 16.4: Code Diff Viewer (unified diff, side-by-side) 📝 Planned
+  - [ ] 16.5: Image Preview in Terminal (iTerm2, Kitty protocols) 📝 Deferred to Epic 17
+  - [x] 16.6: Clipboard Integration (pbcopy, xclip support) ✅
+  - [ ] 16.7: `fit` Command (hardware profiling, model recommendations) 📝 In Progress
+  - [x] 16.8: Progress Bar System (inline updates, multi-task, ETA) ✅
+  - [x] 16.9: Output Mode System (JSON, Plain, Pretty) ✅
+  - [x] 16.10: Async Spinner System (dots, line, pulse animations) ✅ BONUS
+  - **Stats**: 1,939 LOC | 80 tests | 100% coverage | 265/265 tests passing
 - Epic 9: MCP Plugin Marketplace (3 features)
   - MCP server discovery
   - Agent capability analysis
