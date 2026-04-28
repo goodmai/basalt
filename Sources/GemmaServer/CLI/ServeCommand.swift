@@ -55,6 +55,7 @@ struct ServeCommand: AsyncParsableCommand {
 
         let config = ServerConfig(
             modelPath: resolvedPath,
+            modelId: model ?? modelPath,
             restPort: port,
             host: host,
             maxTokens: maxTokens,

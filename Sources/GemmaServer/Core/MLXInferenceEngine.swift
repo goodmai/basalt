@@ -5,6 +5,12 @@ import MLXLMCommon
 import MLXHuggingFace
 import Tokenizers
 
+private extension Duration {
+    var inSeconds: Double {
+        Double(components.seconds) + Double(components.attoseconds) / 1e18
+    }
+}
+
 // MARK: — Protocol
 
 public protocol InferenceEngine: Sendable {
@@ -59,25 +65,24 @@ public actor MLXInferenceEngine: InferenceEngine {
 
     public func generate(request: GenerationRequest) async throws(GemmaServerError) -> GenerationResponse {
         let stream = try await generateStream(request: request)
-        var fullText = ""
+        var chunks: [String] = []
         var finalResponse: GenerationResponse?
-        
+
         for await chunk in stream {
             switch chunk {
             case .text(let t):
-                fullText += t
+                chunks.append(t)
             case .metadata(let m):
                 finalResponse = m
             }
         }
-        
+
         guard let finalResponse else {
             throw .inferenceHardwareFailure(reason: "Stream finished without metadata")
         }
-        
-        // Return response with full text
+
         return GenerationResponse(
-            generatedText: fullText,
+            generatedText: chunks.joined(),
             promptTokens: finalResponse.promptTokens,
             completionTokens: finalResponse.completionTokens,
             tokensPerSecond: finalResponse.tokensPerSecond,
@@ -142,11 +147,8 @@ public actor MLXInferenceEngine: InferenceEngine {
                 
                 // End of stream - send metadata
                 sentMetadata = true
-                let totalDuration = clock.now - startTime
-                let generationTime = Double(totalDuration.components.seconds) + Double(totalDuration.components.attoseconds) / 1e18
-                
-                let ttftDuration = (firstTokenTime ?? clock.now) - startTime
-                let timeToFirstToken = Double(ttftDuration.components.seconds) + Double(ttftDuration.components.attoseconds) / 1e18
+                let generationTime = (clock.now - startTime).inSeconds
+                let timeToFirstToken = ((firstTokenTime ?? clock.now) - startTime).inSeconds
 
                 let mem = Memory.snapshot()
 

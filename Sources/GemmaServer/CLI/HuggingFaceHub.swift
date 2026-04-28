@@ -58,19 +58,33 @@ struct HFSibling: Codable, Sendable {
 
 // MARK: — Cache
 
-struct ModelCache: Sendable {
-    static let root: URL = {
+public struct ModelCache: Sendable {
+    public static let root: URL = {
         let home = FileManager.default.homeDirectoryForCurrentUser
         return home.appendingPathComponent(".cache/huggingface/hub")
     }()
 
-    /// Converts "mlx-community/gemma-4-e2b-it-4bit" → models--mlx-community--gemma-4-e2b-it-4bit
-    static func cacheDir(for repoId: String) -> URL {
+    /// Resolves the snapshot directory for a repo ID.
+    /// Supports both:
+    ///  - Standard HF hub layout: refs/main → snapshots/{hash}
+    ///  - GemmaServer downloader layout: snapshots/main (direct)
+    public static func cacheDir(for repoId: String) -> URL {
         let sanitized = repoId.replacingOccurrences(of: "/", with: "--")
-        return root.appendingPathComponent("models--\(sanitized)/snapshots/main")
+        let modelRoot = root.appendingPathComponent("models--\(sanitized)")
+
+        // Prefer standard HF hub layout: read refs/main → snapshot hash
+        let refsMain = modelRoot.appendingPathComponent("refs/main")
+        if let hash = try? String(contentsOf: refsMain, encoding: .utf8)
+                            .trimmingCharacters(in: .whitespacesAndNewlines),
+           !hash.isEmpty {
+            return modelRoot.appendingPathComponent("snapshots/\(hash)")
+        }
+
+        // Fallback: GemmaServer downloader writes directly to snapshots/main
+        return modelRoot.appendingPathComponent("snapshots/main")
     }
 
-    static func isDownloaded(repoId: String) -> Bool {
+    public static func isDownloaded(repoId: String) -> Bool {
         let dir = cacheDir(for: repoId)
         let marker = dir.appendingPathComponent("config.json")
         return FileManager.default.fileExists(atPath: marker.path)
@@ -94,15 +108,16 @@ actor HuggingFaceHub {
 
     // MARK: — Listing
 
-    /// Lists mlx-community Gemma 4 models sorted by downloads.
-    func listGemmaModels(
+    /// Lists MLX community models sorted by downloads.
+    func listModels(
+        author: String = "mlx-community",
         search: String = "gemma-4",
         quant: String? = nil,
         limit: Int = 20
     ) async throws -> [HFModelInfo] {
         var components = URLComponents(string: "\(apiURL)/models")!
         components.queryItems = [
-            .init(name: "author",    value: "mlx-community"),
+            .init(name: "author",    value: author),
             .init(name: "search",    value: search),
             .init(name: "sort",      value: "downloads"),
             .init(name: "direction", value: "-1"),
@@ -112,9 +127,9 @@ actor HuggingFaceHub {
         guard let url = components.url else {
             throw HFError.invalidURL
         }
-        
+
         let (data, response) = try await session.data(from: url)
-        
+
         switch (response as? HTTPURLResponse)?.statusCode {
         case 200:
             var models = try JSONDecoder().decode([HFModelInfo].self, from: data)

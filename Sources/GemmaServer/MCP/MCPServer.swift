@@ -263,42 +263,40 @@ public final class MCPServer: Sendable {
 
     private func writeResult<T: Encodable>(id: JSONRPCId?, result: T) {
         do {
-            let resData = try encoder.encode(result)
-            let resJson = try JSONSerialization.jsonObject(with: resData)
-            
-            var obj: [String: Any] = [
-                "jsonrpc": "2.0",
-                "result": resJson
-            ]
-            if let id { obj["id"] = encodeId(id) }
-            writeLine(obj)
+            let data = try encoder.encode(result)
+            guard let resStr = String(data: data, encoding: .utf8) else {
+                writeError(id: id, code: -32603, message: "Internal: UTF-8 conversion failed")
+                return
+            }
+            writer(buildEnvelope(id: id, field: "result", valueJSON: resStr))
         } catch {
-            writeError(id: id, code: -32603, message: "Internal error: \(error.localizedDescription)")
+            writeError(id: id, code: -32603, message: "Internal: \(error.localizedDescription)")
         }
     }
 
     private func writeError(id: JSONRPCId?, code: Int, message: String) {
-        var obj: [String: Any] = [
-            "jsonrpc": "2.0",
-            "error": ["code": code, "message": message]
-        ]
-        if let id { obj["id"] = encodeId(id) }
-        writeLine(obj)
+        let msgJSON = jsonEncodeString(message)
+        writer(buildEnvelope(id: id, field: "error", valueJSON: "{\"code\":\(code),\"message\":\(msgJSON)}"))
     }
 
-    private func writeLine(_ obj: [String: Any]) {
-        guard let data = try? JSONSerialization.data(withJSONObject: obj),
-              let line = String(data: data, encoding: .utf8)
-        else { return }
-        writer(line)
+    private func buildEnvelope(id: JSONRPCId?, field: String, valueJSON: String) -> String {
+        var s = "{\"jsonrpc\":\"2.0\""
+        if let id { s += ",\"id\":\(encodeIdJSON(id))" }
+        s += ",\"\(field)\":\(valueJSON)}"
+        return s
     }
 
-    private func encodeId(_ id: JSONRPCId) -> Any {
+    private func encodeIdJSON(_ id: JSONRPCId) -> String {
         switch id {
-        case .string(let s): return s
-        case .int(let i):    return i
-        case .null:          return NSNull()
+        case .int(let i):    return "\(i)"
+        case .null:          return "null"
+        case .string(let s): return jsonEncodeString(s)
         }
+    }
+
+    private func jsonEncodeString(_ s: String) -> String {
+        if let d = try? encoder.encode(s), let str = String(data: d, encoding: .utf8) { return str }
+        return "\"\""
     }
 
     private func errorCode(for error: GemmaServerError) -> Int {

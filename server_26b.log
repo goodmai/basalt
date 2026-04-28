@@ -1,0 +1,11 @@
+[0/1] Planning build
+Building for debugging...
+[0/3] Write swift-version--58304C5D6DBC2206.txt
+Build of product 'GemmaServer' complete! (3.64s)
+[serve] Loading model from [1m/Users/alexeiboklag/.cache/huggingface/hub/models--mlx-community--gemma-4-26b-a4b-4bit/snapshots/main[0m…
+[serve] Model ready.
+[serve] REST (A2A)  → http://127.0.0.1:8080
+[REST] REST (A2A) listening on http://127.0.0.1:8080
+2026-04-24T19:35:34+0200 info GemmaServer: [HummingbirdCore] Server started and listening on 127.0.0.1:8080
+2026-04-24T19:35:57+0200 info GemmaServer: hb.request.id=1edc12ec7a347e5728dd98e2a82c9097 hb.request.method=POST hb.request.path=/api/v1/auth/login [Hummingbird] Request
+2026-04-24T19:35:57+0200 info GemmaServer: hb.request.id=1edc12ec7a347e5728dd98e2a82c9098 hb.request.method=POST hb.request.path=/api/v1/generate [Hummingbird] Request

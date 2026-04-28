@@ -151,13 +151,33 @@ curl -s http://localhost:8080/api/v1/generate \
 
 ## Models & Performance
 
-Benchmarked on Apple Silicon (Unified Memory):
+**Tested on Apple Silicon M-series (24 GB Unified Memory)**
 
-| Model | Size | RAM Usage | TTFT | Avg TPS | Command |
-|---|---|---|---|---|---|
-| **Gemma 4 2B** | 2B | ~2.7 GB | 0.16s | 60.4 | `--model mlx-community/gemma-4-e2b-it-4bit` |
-| **Gemma 4 4B** | 4B | ~4.3 GB | 0.09s | 51.8 | `--model mlx-community/gemma-4-e4b-it-4bit` |
-| **Gemma 4 31B** | 31B | **~17.3 GB** | **10.2s** | 13.5 | `--model mlx-community/gemma-4-31b-it-4bit` |
+All models below are verified working with GemmaServer. Performance metrics: TPS (tokens/sec), TTFT (time to first token), RAM (active memory during inference).
+
+### Recommended Models (by use case)
+
+| Use Case | Model | Size | RAM | TPS | TTFT | Model ID |
+|---|---|---|---|---|---|---|
+| **Fastest** | Qwen3.5 4B | 4B | 2.3 GB | 92.0 | 0.053s | `mlx-community/Qwen3.5-4B-4bit` |
+| **Balanced** | Qwen3.5 9B OptiQ | 9B | 5.8 GB | 36.9 | 0.212s | `mlx-community/Qwen3.5-9B-OptiQ-4bit` |
+| **Code** | Qwen2.5-Coder 7B | 7B | 4.1 GB | 59.8 | 0.094s | `mlx-community/Qwen2.5-Coder-7B-Instruct-4bit` |
+| **Flagship** | Qwen3.6 27B | 27B | 14.5 GB | 10.8 | 1.959s | `mlx-community/Qwen3.6-27B-4bit` |
+
+### All Verified Models
+
+#### Gemma 4 (Google)
+- `mlx-community/gemma-4-e2b-it-4bit` — 2B, ~2.7 GB RAM
+- `mlx-community/gemma-4-e4b-it-4bit` — 4B, ~4.3 GB RAM  
+- `mlx-community/gemma-4-31b-it-4bit` — 31B, ~17 GB RAM
+
+#### Qwen3.5 / Qwen3.6 (Alibaba, April 2026)
+- `mlx-community/Qwen3.5-4B-4bit` — 4B, 2.3 GB, **92 TPS** ⚡
+- `mlx-community/Qwen3.5-9B-OptiQ-4bit` — 9B, 5.8 GB, 37 TPS (best quantization)
+- `mlx-community/Qwen3.6-27B-4bit` — 27B, 14.5 GB, 11 TPS (newest flagship)
+
+#### Qwen2.5-Coder (code generation)
+- `mlx-community/Qwen2.5-Coder-7B-Instruct-4bit` — 7B, 4.1 GB, **60 TPS** 💻
 
 ---
 

@@ -7,7 +7,7 @@ import ArgumentParser
 struct ModelsCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "models",
-        abstract: "Browse, download and manage Gemma 4 MLX models",
+        abstract: "Browse, download and manage MLX models (Gemma, Qwen, …)",
         subcommands: [
             ListSubcommand.self,
             DownloadSubcommand.self,
@@ -24,11 +24,14 @@ struct ModelsCommand: AsyncParsableCommand {
 struct ListSubcommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "list",
-        abstract: "List available Gemma 4 models on mlx-community"
+        abstract: "List available MLX models on Hugging Face (Gemma, Qwen, …)"
     )
 
-    @Option(name: .shortAndLong, help: "Filter by search term (default: gemma-4)")
+    @Option(name: .shortAndLong, help: "Search term  (e.g. gemma-4 | Qwen3 | Qwen2.5-Coder)")
     var search: String = "gemma-4"
+
+    @Option(name: .long, help: "HuggingFace author / org (default: mlx-community)")
+    var author: String = "mlx-community"
 
     @Option(name: .shortAndLong, help: "Filter by quantization: 4bit | 8bit | bf16")
     var quant: String? = nil
@@ -38,11 +41,11 @@ struct ListSubcommand: AsyncParsableCommand {
 
     mutating func run() async throws {
         let hub = HuggingFaceHub()
-        printFetching(search: search, quant: quant)
+        printFetching(author: author, search: search, quant: quant)
 
         let models: [HFModelInfo]
         do {
-            models = try await hub.listGemmaModels(search: search, quant: quant, limit: limit)
+            models = try await hub.listModels(author: author, search: search, quant: quant, limit: limit)
         } catch {
             printError(error.localizedDescription)
             throw ExitCode.failure
@@ -75,6 +78,9 @@ struct DownloadSubcommand: AsyncParsableCommand {
 
     @Option(name: .shortAndLong, help: "Filter picker by quantization: 4bit | 8bit | bf16")
     var quant: String? = nil
+
+    @Option(name: .shortAndLong, help: "Search term for interactive picker (e.g. Qwen3 | Qwen2.5-Coder | gemma-4)")
+    var search: String = "gemma-4"
 
     mutating func run() async throws {
         let hub = HuggingFaceHub()
@@ -126,8 +132,8 @@ struct DownloadSubcommand: AsyncParsableCommand {
     // MARK: — Interactive picker
 
     private func interactivePicker(hub: HuggingFaceHub) async throws -> String? {
-        printFetching(search: "gemma-4", quant: quant)
-        let models = try await hub.listGemmaModels(quant: quant, limit: 20)
+        printFetching(author: "mlx-community", search: search, quant: quant)
+        let models = try await hub.listModels(search: search, quant: quant, limit: 20)
         guard !models.isEmpty else {
             print("No models found.")
             return nil
@@ -247,9 +253,9 @@ struct CacheSubcommand: AsyncParsableCommand {
 
 // MARK: — Shared formatting helpers
 
-func printFetching(search: String, quant: String?) {
+func printFetching(author: String = "mlx-community", search: String, quant: String?) {
     let qualifier = quant.map { " [\($0)]" } ?? ""
-    print("\nFetching \(bold("mlx-community/\(search)*"))\(qualifier) from Hugging Face…\n")
+    print("\nFetching \(bold("\(author)/\(search)*"))\(qualifier) from Hugging Face…\n")
 }
 
 func printModelTable(_ models: [HFModelInfo], numbered: Bool = false) {

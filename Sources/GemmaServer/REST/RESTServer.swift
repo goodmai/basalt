@@ -16,7 +16,7 @@ struct RESTServer: Sendable {
         
         let generateController = GenerateController(
             orchestrator: orchestrator,
-            modelId: config.modelPath.split(separator: "/").last.map(String.init)
+            modelId: config.modelId ?? config.modelPath.split(separator: "/").last.map(String.init)
         )
         let authController = AuthController(authService: authService)
 

@@ -4,6 +4,7 @@ import ArgumentParser
 /// Конфигурация сервера — парсится из CLI аргументов.
 public struct ServerConfig: Sendable {
     public let modelPath: String
+    public let modelId: String?   // original repo ID for display (e.g. "mlx-community/Qwen3-6B-4bit")
     public let restPort: Int
     public let host: String
     public let maxConcurrentRequests: Int
@@ -18,6 +19,7 @@ public struct ServerConfig: Sendable {
 
     public init(
         modelPath: String,
+        modelId: String? = nil,
         restPort: Int = 8080,
         host: String = "127.0.0.1",
         maxConcurrentRequests: Int = 4,
@@ -27,6 +29,7 @@ public struct ServerConfig: Sendable {
         logLevel: LogLevel = .info
     ) {
         self.modelPath = modelPath
+        self.modelId = modelId
         self.restPort = restPort
         self.host = host
         self.maxConcurrentRequests = maxConcurrentRequests
