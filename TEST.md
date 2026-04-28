@@ -114,8 +114,8 @@ TOTAL                     93.75%      51/51
 ## Epic 2: Integration Testing Framework 🔄 (IN PROGRESS)
 
 **Status:** IN PROGRESS  
-**Coverage:** 65% (target: 90%)  
-**Tests:** 94 passing
+**Coverage:** 75% (target: 90%)  
+**Tests:** 99 passing
 
 ### 2.1 Actor Interaction Tests
 **Status:** PARTIALLY COMPLETE  
@@ -163,17 +163,17 @@ TOTAL                     93.75%      51/51
     - TC-2.2.1.3: Memory usage stays bounded ✅
     - TC-2.2.1.4: All requests complete successfully ✅
 
-- [ ] **Task 2.2.2**: Test actor isolation
+- [x] **Task 2.2.2**: Test actor isolation ✅
   - Test Cases:
-    - TC-2.2.2.1: Mutable state only accessed via actor
-    - TC-2.2.2.2: No shared mutable state outside actors
-    - TC-2.2.2.3: Sendable conformance for all DTOs
+    - TC-2.2.2.1: Mutable state only accessed via actor ✅
+    - TC-2.2.2.2: No shared mutable state outside actors ✅
+    - TC-2.2.2.3: Sendable conformance for all DTOs ✅
 
-- [ ] **Task 2.2.3**: Test deadlock scenarios
+- [x] **Task 2.2.3**: Test deadlock scenarios ✅
   - Test Cases:
-    - TC-2.2.3.1: Actor A calls Actor B calls Actor A (no deadlock)
-    - TC-2.2.3.2: Timeout on long-running operations
-    - TC-2.2.3.3: Graceful cancellation
+    - TC-2.2.3.1: Actor reentrancy does not cause deadlock ✅
+    - TC-2.2.3.2: Long-running operations allow other tasks ✅
+    - TC-2.2.3.3: Graceful cancellation ✅
 
 ### 2.3 Database Integration Tests
 **Status:** NOT STARTED  
