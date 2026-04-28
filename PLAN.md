@@ -91,8 +91,10 @@
 
 **v0.5.0** (Target: 2026-08-15) — Cloud Integration & Hybrid Inference
 - Epic 14: Cloud Model Integration (OpenRouter API) (6 features)
-  - OpenRouter API client with authentication
-  - Model router with auto-fallback (local → cloud)
+  - [x] OpenRouter API client with authentication
+  - [ ] Fetch available models dynamically (`GET /api/v1/models`)
+  - [x] Model router with auto-fallback (local → cloud)
+  - [ ] Advanced OpenRouter fallbacks (using `models` array) and provider preferences
   - Cost tracking and budget limits
   - Streaming support for cloud models
   - CLI configuration and testing

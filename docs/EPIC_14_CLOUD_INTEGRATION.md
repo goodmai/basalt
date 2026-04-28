@@ -66,6 +66,7 @@ Enable hybrid inference architecture combining local MLX models with cloud model
 - Request/response DTOs (OpenAI-compatible)
 - Rate limiting and quota tracking
 - Error mapping to GemmaServerError
+- **Dynamic Model Fetching (`GET /api/v1/models`)** to sync available models and exact pricing structure
 
 **Files:**
 - `Sources/GemmaServer/Cloud/OpenRouterClient.swift`
@@ -74,14 +75,10 @@ Enable hybrid inference architecture combining local MLX models with cloud model
 **Key Features:**
 ```swift
 actor OpenRouterClient {
-    struct Config {
-        let apiKey: String
-        let baseURL: URL
-        let timeout: TimeInterval
-        let maxRetries: Int
-    }
+    struct Config { ... }
     
     func chat(request: ChatRequest) async throws -> ChatResponse
+    func getModels() async throws -> [OpenRouterModel]
     func getMetrics() -> (requests: Int, errors: Int)
 }
 ```
@@ -92,6 +89,7 @@ actor OpenRouterClient {
 - ✅ Retry logic on failures
 - ✅ Timeout handling
 - ✅ Error mapping (401, 429, 500)
+- ⏳ Model fetching and pricing parsing
 
 ---
 
@@ -103,7 +101,8 @@ actor OpenRouterClient {
 - Model registry (local + cloud)
 - Routing strategies: Auto, Local-only, Cloud-only, Hybrid
 - Automatic fallback on OOM
-- Cost estimation before cloud calls
+- **Advanced OpenRouter Routing**: utilizing `models` array for auto-failover and `provider` preferences
+- Cost estimation before cloud calls (using fetched pricing data)
 
 **Files:**
 - `Sources/GemmaServer/Cloud/ModelRouter.swift`

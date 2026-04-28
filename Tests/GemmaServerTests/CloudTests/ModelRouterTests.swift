@@ -49,9 +49,9 @@ struct ModelRouterTests {
         
         let decision = try await router.makeRoutingDecision(modelId: "gpt-4")
         
-        if case .cloud(let provider, let id) = decision {
+        if case .cloud(let provider, let models) = decision {
             #expect(provider == .openrouter)
-            #expect(id == "openai/gpt-4-turbo")
+            #expect(models.first == "openai/gpt-4-turbo")
         } else {
             Issue.record("Expected cloud decision")
         }
@@ -76,9 +76,9 @@ struct ModelRouterTests {
         
         let decision = try await router.makeRoutingDecision(modelId: "claude-3.5")
         
-        if case .cloud(let provider, let id) = decision {
+        if case .cloud(let provider, let models) = decision {
             #expect(provider == .openrouter)
-            #expect(id == "anthropic/claude-3.5-sonnet")
+            #expect(models.first == "anthropic/claude-3.5-sonnet")
         } else {
             Issue.record("Expected cloud decision")
         }
@@ -90,8 +90,8 @@ struct ModelRouterTests {
         
         let decision = try await router.makeRoutingDecision(modelId: "unknown-model-xyz")
         
-        if case .cloud(_, let id) = decision {
-            #expect(id == "unknown-model-xyz")
+        if case .cloud(_, let models) = decision {
+            #expect(models.first == "unknown-model-xyz")
         } else {
             Issue.record("Expected cloud decision")
         }
@@ -116,9 +116,9 @@ struct ModelRouterTests {
         
         let decision = try await router.makeRoutingDecision(modelId: "large-local")
         
-        if case .cloud(let provider, let id) = decision {
+        if case .cloud(let provider, let models) = decision {
             #expect(provider == .openrouter)
-            #expect(id == "large-local") // Fallback uses same ID unless mapped
+            #expect(models.first == "large-local") // Fallback uses same ID unless mapped
         } else {
             Issue.record("Expected cloud fallback decision due to OOM")
         }

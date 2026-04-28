@@ -29,11 +29,28 @@ public actor OpenRouterClient: Sendable {
     // MARK: - DTOs (OpenAI-compatible)
     
     public struct ChatRequest: Codable, Sendable {
-        public let model: String
+        public let model: String?
+        public let models: [String]? // For OpenRouter auto-fallbacks
         public let messages: [Message]
         public let temperature: Double?
         public let maxTokens: Int?
         public let stream: Bool?
+        public let provider: ProviderPreferences?
+        
+        public struct ProviderPreferences: Codable, Sendable {
+            public let order: [String]?
+            public let allowFallbacks: Bool?
+            
+            public enum CodingKeys: String, CodingKey {
+                case order
+                case allowFallbacks = "allow_fallbacks"
+            }
+            
+            public init(order: [String]? = nil, allowFallbacks: Bool? = nil) {
+                self.order = order
+                self.allowFallbacks = allowFallbacks
+            }
+        }
         
         public struct Message: Codable, Sendable {
             public let role: String  // "system", "user", "assistant"
@@ -47,19 +64,54 @@ public actor OpenRouterClient: Sendable {
         
         public enum CodingKeys: String, CodingKey {
             case model
+            case models
             case messages
             case temperature
             case maxTokens = "max_tokens"
             case stream
+            case provider
         }
         
-        public init(model: String, messages: [Message], temperature: Double? = nil, maxTokens: Int? = nil, stream: Bool? = nil) {
+        public init(
+            model: String? = nil,
+            models: [String]? = nil,
+            messages: [Message],
+            temperature: Double? = nil,
+            maxTokens: Int? = nil,
+            stream: Bool? = nil,
+            provider: ProviderPreferences? = nil
+        ) {
             self.model = model
+            self.models = models
             self.messages = messages
             self.temperature = temperature
             self.maxTokens = maxTokens
             self.stream = stream
+            self.provider = provider
         }
+    }
+    
+    public struct OpenRouterModel: Codable, Sendable {
+        public let id: String
+        public let name: String
+        public let contextLength: Int
+        public let pricing: Pricing
+        
+        public struct Pricing: Codable, Sendable {
+            public let prompt: String
+            public let completion: String
+        }
+        
+        public enum CodingKeys: String, CodingKey {
+            case id
+            case name
+            case contextLength = "context_length"
+            case pricing
+        }
+    }
+    
+    public struct ModelsResponse: Codable, Sendable {
+        public let data: [OpenRouterModel]
     }
     
     public struct ChatResponse: Codable, Sendable {
@@ -206,6 +258,52 @@ public actor OpenRouterClient: Sendable {
         throw lastError ?? GemmaServerError.modelInferenceError(
             details: "OpenRouter API request failed after \(config.maxRetries) attempts"
         )
+    }
+    
+    public func getModels() async throws -> [OpenRouterModel] {
+        let url = config.baseURL.appendingPathComponent("models")
+        var httpRequest = URLRequest(url: url)
+        httpRequest.httpMethod = "GET"
+        // Optional attribution headers, no API key strictly needed for getting models but good practice
+        httpRequest.setValue("Bearer \(config.apiKey)", forHTTPHeaderField: "Authorization")
+        httpRequest.setValue("GemmaServer/0.2.0", forHTTPHeaderField: "HTTP-Referer")
+        httpRequest.setValue("GemmaServer", forHTTPHeaderField: "X-Title")
+        
+        var lastError: Error?
+        for attempt in 0..<config.maxRetries {
+            do {
+                let (data, response) = try await session.data(for: httpRequest)
+                
+                guard let httpResponse = response as? HTTPURLResponse else {
+                    throw GemmaServerError.invalidRequestStructure(details: "Invalid response type")
+                }
+                
+                guard (200...299).contains(httpResponse.statusCode) else {
+                    let errorBody = String(data: data, encoding: .utf8) ?? "Unknown error"
+                    if attempt < config.maxRetries - 1 {
+                        let delay = pow(2.0, Double(attempt))
+                        try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                        continue
+                    }
+                    throw GemmaServerError.modelInferenceError(details: "Failed to fetch models: HTTP \(httpResponse.statusCode) - \(errorBody)")
+                }
+                
+                let decoder = JSONDecoder()
+                let modelsResponse = try decoder.decode(ModelsResponse.self, from: data)
+                return modelsResponse.data
+                
+            } catch let error as GemmaServerError {
+                lastError = error
+            } catch {
+                lastError = error
+                if attempt < config.maxRetries - 1 {
+                    let delay = pow(2.0, Double(attempt))
+                    try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                }
+            }
+        }
+        
+        throw lastError ?? GemmaServerError.modelInferenceError(details: "Failed to fetch models after retries")
     }
     
     // MARK: - Metrics

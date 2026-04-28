@@ -11,7 +11,7 @@ public actor ModelRouter: Sendable {
     
     public enum ModelLocation: Sendable {
         case local(path: String)
-        case cloud(provider: CloudProvider, modelId: String)
+        case cloud(provider: CloudProvider, models: [String])
         
         public enum CloudProvider: String, Sendable {
             case openrouter
@@ -63,6 +63,35 @@ public actor ModelRouter: Sendable {
     
     // MARK: - Public API
     
+    /// Fetches models from OpenRouter and updates the local registry with exact pricing and context windows
+    public func syncCloudModels() async throws {
+        guard let client = cloudClient else { return }
+        
+        let fetchedModels = try await client.getModels()
+        
+        for model in fetchedModels {
+            let promptPrice = Double(model.pricing.prompt) ?? 0.0
+            let completionPrice = Double(model.pricing.completion) ?? 0.0
+            
+            // Average cost per 1M tokens as a unified simplified metric, 
+            // though actual billing splits it.
+            let avgCostPer1M = (promptPrice + completionPrice) / 2.0 * 1_000_000.0
+            
+            let info = ModelInfo(
+                id: model.id,
+                displayName: model.name,
+                location: .cloud(provider: .openrouter, models: [model.id]),
+                contextWindow: model.contextLength,
+                estimatedRAM: nil,
+                costPer1MTokens: avgCostPer1M > 0 ? avgCostPer1M : nil
+            )
+            
+            modelRegistry[model.id] = info
+        }
+        
+        log("Synced \(fetchedModels.count) models from OpenRouter")
+    }
+    
     /// Route request to appropriate model (local or cloud)
     public func route(request: GenerationRequest, preferredModel: String?) async throws -> GenerationResponse {
         let modelId = preferredModel ?? "auto"
@@ -76,7 +105,7 @@ public actor ModelRouter: Sendable {
         case .local(let path):
             return try await routeToLocal(path: path, request: request)
             
-        case .cloud(_, let cloudModelId):
+        case .cloud(_, let cloudModels):
             guard let client = cloudClient else {
                 throw GemmaServerError.invalidRequestStructure(
                     details: "Cloud models not configured. Set OPENROUTER_API_KEY"
@@ -84,7 +113,7 @@ public actor ModelRouter: Sendable {
             }
             return try await routeToCloud(
                 client: client,
-                modelId: cloudModelId,
+                models: cloudModels,
                 request: request
             )
         }
@@ -110,15 +139,15 @@ public actor ModelRouter: Sendable {
         
         // Strategy: Cloud-only
         if strategy == .cloudOnly {
-            let cloudModel = mapToCloudModel(modelId)
-            return .cloud(provider: .openrouter, modelId: cloudModel)
+            let cloudModels = mapToCloudModels(modelId)
+            return .cloud(provider: .openrouter, models: cloudModels)
         }
         
         // Strategy: Auto or Hybrid
         // Check if model explicitly cloud-only
         if isCloudOnlyModel(modelId) {
-            let cloudModel = mapToCloudModel(modelId)
-            return .cloud(provider: .openrouter, modelId: cloudModel)
+            let cloudModels = mapToCloudModels(modelId)
+            return .cloud(provider: .openrouter, models: cloudModels)
         }
         
         // Check if local model available and sufficient RAM
@@ -137,8 +166,8 @@ public actor ModelRouter: Sendable {
             // Insufficient RAM → fallback to cloud
             if strategy == .auto, cloudClient != nil {
                 log("⚠️ Insufficient RAM for local model, falling back to cloud")
-                let cloudModel = mapToCloudModel(modelId)
-                return .cloud(provider: .openrouter, modelId: cloudModel)
+                let cloudModels = mapToCloudModels(modelId)
+                return .cloud(provider: .openrouter, models: cloudModels)
             }
             
             // No cloud fallback available
@@ -150,8 +179,8 @@ public actor ModelRouter: Sendable {
         
         // Unknown model → try cloud
         if cloudClient != nil {
-            let cloudModel = mapToCloudModel(modelId)
-            return .cloud(provider: .openrouter, modelId: cloudModel)
+            let cloudModels = mapToCloudModels(modelId)
+            return .cloud(provider: .openrouter, models: cloudModels)
         }
         
         throw GemmaServerError.invalidRequestStructure(
@@ -160,21 +189,27 @@ public actor ModelRouter: Sendable {
     }
     
     public func estimateCost(model: String, promptTokens: Int, completionTokens: Int) -> Double {
-        let mappedId = mapToCloudModel(model)
+        // Use the first mapped model for cost estimation
+        let mappedId = mapToCloudModels(model).first ?? model
         
-        // OpenRouter pricing (approximate)
+        // 1. Try to find precise cost from synced registry
+        if let info = modelRegistry[mappedId], let cost = info.costPer1MTokens {
+            return (Double(promptTokens + completionTokens) / 1_000_000.0) * cost
+        }
+        
+        // 2. OpenRouter fallback pricing (approximate)
         let pricing: [String: (input: Double, output: Double)] = [
-            "openai/gpt-4-turbo": (0.01, 0.03),        // per 1K tokens
-            "anthropic/claude-3.5-sonnet": (0.003, 0.015),
-            "google/gemini-pro-1.5": (0.00125, 0.005)
+            "openai/gpt-4-turbo": (10.0, 30.0),        // per 1M tokens
+            "anthropic/claude-3.5-sonnet": (3.0, 15.0),
+            "google/gemini-pro-1.5": (1.25, 5.0)
         ]
         
         guard let price = pricing[mappedId] else {
             return 0.0 // Unknown model
         }
         
-        let inputCost = Double(promptTokens) / 1000.0 * price.input
-        let outputCost = Double(completionTokens) / 1000.0 * price.output
+        let inputCost = Double(promptTokens) / 1_000_000.0 * price.input
+        let outputCost = Double(completionTokens) / 1_000_000.0 * price.output
         
         return inputCost + outputCost
     }
@@ -188,19 +223,34 @@ public actor ModelRouter: Sendable {
     
     private func routeToCloud(
         client: OpenRouterClient,
-        modelId: String,
+        models: [String],
         request: GenerationRequest
     ) async throws -> GenerationResponse {
         
-        let chatRequest = OpenRouterClient.ChatRequest(
-            model: modelId,
-            messages: [
-                .init(role: "user", content: request.prompt)
-            ],
-            temperature: request.temperature,
-            maxTokens: request.maxTokens,
-            stream: false
-        )
+        let chatRequest: OpenRouterClient.ChatRequest
+        
+        if models.count == 1 {
+            chatRequest = OpenRouterClient.ChatRequest(
+                model: models[0],
+                messages: [
+                    .init(role: "user", content: request.prompt)
+                ],
+                temperature: request.temperature,
+                maxTokens: request.maxTokens,
+                stream: false
+            )
+        } else {
+            chatRequest = OpenRouterClient.ChatRequest(
+                models: models,
+                messages: [
+                    .init(role: "user", content: request.prompt)
+                ],
+                temperature: request.temperature,
+                maxTokens: request.maxTokens,
+                stream: false,
+                provider: .init(allowFallbacks: true)
+            )
+        }
         
         let startTime = ContinuousClock.now
         let chatResponse = try await client.chat(request: chatRequest)
@@ -238,18 +288,18 @@ public actor ModelRouter: Sendable {
         return cloudPrefixes.contains { modelId.hasPrefix($0) }
     }
     
-    private func mapToCloudModel(_ modelId: String) -> String {
-        let mapping: [String: String] = [
-            "gpt-4": "openai/gpt-4-turbo",
-            "gpt-4o": "openai/gpt-4o",
-            "claude": "anthropic/claude-3.5-sonnet",
-            "claude-3.5": "anthropic/claude-3.5-sonnet",
-            "gemini": "google/gemini-pro-1.5",
-            "o1": "openai/o1-preview",
-            "o3": "openai/o3-mini"
+    private func mapToCloudModels(_ modelId: String) -> [String] {
+        let mapping: [String: [String]] = [
+            "gpt-4": ["openai/gpt-4-turbo", "openai/gpt-4"],
+            "gpt-4o": ["openai/gpt-4o", "openai/gpt-4o-2024-08-06"],
+            "claude": ["anthropic/claude-3.5-sonnet", "anthropic/claude-3-opus"],
+            "claude-3.5": ["anthropic/claude-3.5-sonnet", "anthropic/claude-3-opus"],
+            "gemini": ["google/gemini-pro-1.5"],
+            "o1": ["openai/o1-preview"],
+            "o3": ["openai/o3-mini"]
         ]
         
-        return mapping[modelId] ?? modelId
+        return mapping[modelId] ?? [modelId]
     }
     
     private static func defaultModels() -> [String: ModelInfo] {
@@ -258,7 +308,7 @@ public actor ModelRouter: Sendable {
         registry["gpt-4"] = ModelInfo(
             id: "gpt-4",
             displayName: "GPT-4 Turbo",
-            location: .cloud(provider: .openrouter, modelId: "openai/gpt-4-turbo"),
+            location: .cloud(provider: .openrouter, models: ["openai/gpt-4-turbo", "openai/gpt-4"]),
             contextWindow: 128_000,
             estimatedRAM: nil,
             costPer1MTokens: 10.0
@@ -267,7 +317,7 @@ public actor ModelRouter: Sendable {
         registry["claude-3.5"] = ModelInfo(
             id: "claude-3.5",
             displayName: "Claude 3.5 Sonnet",
-            location: .cloud(provider: .openrouter, modelId: "anthropic/claude-3.5-sonnet"),
+            location: .cloud(provider: .openrouter, models: ["anthropic/claude-3.5-sonnet"]),
             contextWindow: 200_000,
             estimatedRAM: nil,
             costPer1MTokens: 3.0
