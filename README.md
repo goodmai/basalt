@@ -35,7 +35,22 @@ Local LLM inference server for Apple Silicon with dual interface architecture.
 
 ## Quick Install
 
-**Option 1: Automated setup (recommended)**
+**Option 1: Wrapper script with defaults (recommended)**
+```bash
+git clone https://github.com/your-org/GemmaServer
+cd GemmaServer
+swift build -c release
+
+# Add alias to your shell (automatically uses gemma-4-31b-it-4bit by default)
+echo "alias gemma='$(pwd)/gemma'" >> ~/.zshrc
+source ~/.zshrc
+
+# Now just run:
+gemma              # Starts chat with 31B model automatically!
+gemma --help       # See all options
+```
+
+**Option 2: Automated setup**
 ```bash
 git clone https://github.com/your-org/GemmaServer
 cd GemmaServer
@@ -43,14 +58,14 @@ cd GemmaServer
 # Choose: 1) Install to /usr/local/bin, or 2) Add alias to shell
 ```
 
-**Option 2: Manual build**
+**Option 3: Manual build**
 ```bash
 git clone https://github.com/your-org/GemmaServer
 cd GemmaServer
 swift build -c release
 
 # Then choose one:
-# A) System-wide install (recommended)
+# A) System-wide install
 sudo cp .build/release/GemmaServer /usr/local/bin/gemma
 
 # B) Add alias (add to ~/.zshrc or ~/.bashrc)
@@ -60,13 +75,14 @@ alias gemma='swift run --package-path /path/to/GemmaServer GemmaServer'
 export PATH="$PATH:/path/to/GemmaServer/.build/release"
 ```
 
-**Option 3: Run directly with Swift (no installation)**
+**Option 4: Run directly with Swift (no installation)**
 ```bash
 # No installation needed - just run from source
 swift run GemmaServer --help
+swift run GemmaServer chat --model mlx-community/gemma-4-31b-it-4bit
 ```
 
-**Option 4: Homebrew (coming in v0.2.0)**
+**Option 5: Homebrew (coming in v0.2.0)**
 ```bash
 brew tap your-org/gemma
 brew install gemma
@@ -79,11 +95,12 @@ brew install gemma
 ### 1. Check available commands
 
 ```bash
-# If you installed to /usr/local/bin:
-gemma --help
+# If you installed wrapper script:
+gemma              # Launches chat with 31B model by default!
+gemma --help       # See all options
 
 # Or run directly:
-swift run GemmaServer --help
+.build/release/GemmaServer --help
 ```
 
 **Available commands:**
@@ -98,39 +115,55 @@ OPTIONS:
 
 SUBCOMMANDS:
   serve                   Start MCP or REST server
-  chat                    Interactive chat (coming soon)
-  models                  Model management (coming soon)
+  chat                    Interactive chat (default when no args)
+  models                  Model management
   benchmark               Run performance benchmarks
+  agents                  Analyze agent capabilities
 ```
 
-### 2. Start the server (MCP mode)
+### 2. Default usage (wrapper script)
+
+```bash
+# Just run gemma - auto-starts chat with gemma-4-31b-it-4bit
+gemma
+
+# This is equivalent to:
+gemma chat --model mlx-community/gemma-4-31b-it-4bit
+```
+
+### 3. Start the server (MCP mode)
 
 ```bash
 # Run MCP server on stdio (for Cursor/Claude Desktop)
-gemma serve --model mlx-community/Qwen3.5-4B-4bit --mcp
-
-# Or with Swift:
-swift run GemmaServer serve --model mlx-community/Qwen3.5-4B-4bit --mcp
+gemma serve --model mlx-community/gemma-4-31b-it-4bit --mcp
 ```
 
-### 3. Start the server (REST mode)
+### 4. Start the server (REST mode)
 
 ```bash
 # Run REST API on http://localhost:8080
-gemma serve --model mlx-community/Qwen3.5-4B-4bit --rest
-
-# Or with Swift:
-swift run GemmaServer serve --model mlx-community/Qwen3.5-4B-4bit --rest
+gemma serve --model mlx-community/gemma-4-31b-it-4bit --rest
 ```
 
-### 4. Run benchmarks
+### 5. Use different models
+
+```bash
+# Fast 4B model
+gemma chat --model mlx-community/Qwen3.5-4B-4bit
+
+# Balanced 9B model
+gemma chat --model mlx-community/Qwen3.5-9B-OptiQ-4bit
+
+# Flagship 27B model
+gemma chat --model mlx-community/Qwen3.6-27B-4bit
+```
+
+### 6. Run benchmarks
 
 ```bash
 # Benchmark a model
-swift run PerformanceBenchmark --model mlx-community/Qwen3.5-4B-4bit --iterations 10
-
-# Context degradation profiling
-gemma serve --model mlx-community/Qwen3.5-4B-4bit --profile-context
+gemma serve --model mlx-community/Qwen3.5-4B-4bit --rest &
+swift run PerformanceBenchmark --model mlx-community/Qwen3.5-4B-4bit
 ```
 
 ---
