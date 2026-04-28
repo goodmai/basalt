@@ -42,9 +42,48 @@ public struct GenerationRequest: Codable, Sendable {
 
 // MARK: — Response DTOs
 
-public enum StreamChunk: Sendable {
+public enum StreamChunk: Sendable, Codable {
     case text(String)
     case metadata(GenerationResponse)
+    
+    enum CodingKeys: String, CodingKey {
+        case type
+        case text
+        case metadata
+    }
+    
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let type = try container.decode(String.self, forKey: .type)
+        
+        switch type {
+        case "text":
+            let text = try container.decode(String.self, forKey: .text)
+            self = .text(text)
+        case "metadata":
+            let metadata = try container.decode(GenerationResponse.self, forKey: .metadata)
+            self = .metadata(metadata)
+        default:
+            throw DecodingError.dataCorruptedError(
+                forKey: .type,
+                in: container,
+                debugDescription: "Unknown StreamChunk type: \(type)"
+            )
+        }
+    }
+    
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        
+        switch self {
+        case .text(let text):
+            try container.encode("text", forKey: .type)
+            try container.encode(text, forKey: .text)
+        case .metadata(let metadata):
+            try container.encode("metadata", forKey: .type)
+            try container.encode(metadata, forKey: .metadata)
+        }
+    }
 }
 
 public struct GenerationResponse: Codable, Sendable {

@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GemmaServer Streaming Example</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+        }
+        .subtitle {
+            color: #666;
+            margin-bottom: 30px;
+        }
+        textarea {
+            width: 100%;
+            min-height: 100px;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-size: 14px;
+            font-family: inherit;
+            resize: vertical;
+        }
+        button {
+            background: #007AFF;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 5px;
+            font-size: 16px;
+            cursor: pointer;
+            margin-top: 10px;
+        }
+        button:hover {
+            background: #0056b3;
+        }
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        .output {
+            margin-top: 20px;
+            padding: 15px;
+            background: #f9f9f9;
+            border-radius: 5px;
+            min-height: 200px;
+            white-space: pre-wrap;
+            font-family: 'Monaco', 'Menlo', monospace;
+            font-size: 13px;
+        }
+        .status {
+            margin-top: 10px;
+            color: #666;
+            font-size: 14px;
+        }
+        .metadata {
+            margin-top: 15px;
+            padding: 10px;
+            background: #e3f2fd;
+            border-radius: 5px;
+            font-size: 13px;
+        }
+        .error {
+            background: #ffebee;
+            color: #c62828;
+            padding: 10px;
+            border-radius: 5px;
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🚀 GemmaServer Streaming Demo</h1>
+        <p class="subtitle">Real-time token streaming with Server-Sent Events (SSE)</p>
+        
+        <div>
+            <label for="token"><strong>JWT Token:</strong></label>
+            <input type="password" id="token" placeholder="Paste your JWT token here" style="width: 100%; padding: 8px; margin: 5px 0; border: 1px solid #ddd; border-radius: 4px;">
+        </div>
+        
+        <div style="margin-top: 15px;">
+            <label for="prompt"><strong>Prompt:</strong></label>
+            <textarea id="prompt" placeholder="Enter your prompt here...">Write a haiku about programming in Swift.</textarea>
+        </div>
+        
+        <button id="generateBtn" onclick="generateStream()">Generate (Streaming)</button>
+        <button onclick="generateNonStreaming()" style="background: #34c759;">Generate (Non-Streaming)</button>
+        
+        <div class="status" id="status"></div>
+        
+        <div class="output" id="output"></div>
+        
+        <div id="metadata" class="metadata" style="display: none;"></div>
+        
+        <div id="error" class="error" style="display: none;"></div>
+    </div>
+
+    <script>
+        const API_BASE = 'http://localhost:8080/api/v1';
+        
+        async function getToken() {
+            const token = document.getElementById('token').value.trim();
+            if (!token) {
+                showError('Please enter a JWT token');
+                return null;
+            }
+            return token;
+        }
+        
+        async function generateStream() {
+            const token = await getToken();
+            if (!token) return;
+            
+            const prompt = document.getElementById('prompt').value;
+            const outputEl = document.getElementById('output');
+            const statusEl = document.getElementById('status');
+            const metadataEl = document.getElementById('metadata');
+            const errorEl = document.getElementById('error');
+            const btn = document.getElementById('generateBtn');
+            
+            // Reset UI
+            outputEl.textContent = '';
+            metadataEl.style.display = 'none';
+            errorEl.style.display = 'none';
+            btn.disabled = true;
+            statusEl.textContent = '⏳ Connecting...';
+            
+            try {
+                const response = await fetch(`${API_BASE}/generate/stream`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${token}`
+                    },
+                    body: JSON.stringify({
+                        prompt: prompt,
+                        maxTokens: 100,
+                        temperature: 0.7
+                    })
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                
+                statusEl.textContent = '✨ Streaming...';
+                
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                let buffer = '';
+                
+                while (true) {
+                    const { done, value } = await reader.read();
+                    
+                    if (done) {
+                        statusEl.textContent = '✅ Done!';
+                        btn.disabled = false;
+                        break;
+                    }
+                    
+                    // Decode chunk
+                    buffer += decoder.decode(value, { stream: true });
+                    
+                    // Process complete SSE messages
+                    const lines = buffer.split('\\n\\n');
+                    buffer = lines.pop() || ''; // Keep incomplete message in buffer
+                    
+                    for (const line of lines) {
+                        if (line.startsWith('data: ')) {
+                            const data = line.substring(6);
+                            
+                            if (data === '[DONE]') {
+                                continue;
+                            }
+                            
+                            try {
+                                const chunk = JSON.parse(data);
+                                
+                                if (chunk.type === 'text') {
+                                    outputEl.textContent += chunk.text;
+                                } else if (chunk.type === 'metadata') {
+                                    const meta = chunk.metadata;
+                                    metadataEl.innerHTML = `
+                                        <strong>Generation Metrics:</strong><br>
+                                        • Tokens: ${meta.promptTokens} prompt + ${meta.completionTokens} completion<br>
+                                        • Speed: ${meta.tokensPerSecond.toFixed(2)} tokens/second<br>
+                                        • Time: ${meta.generationTime.toFixed(2)}s total, ${meta.timeToFirstToken.toFixed(2)}s TTFT<br>
+                                        • Memory: ${(meta.memory.peakBytes / 1024 / 1024 / 1024).toFixed(2)} GB peak<br>
+                                        • Finish: ${meta.finishReason}
+                                    `;
+                                    metadataEl.style.display = 'block';
+                                }
+                            } catch (e) {
+                                console.error('Failed to parse chunk:', e, data);
+                            }
+                        } else if (line.startsWith('event: error')) {
+                            const errorData = lines[lines.indexOf(line) + 1]?.substring(6);
+                            if (errorData) {
+                                try {
+                                    const errorObj = JSON.parse(errorData);
+                                    showError(errorObj.error);
+                                } catch (e) {
+                                    showError('Unknown error occurred');
+                                }
+                            }
+                        }
+                    }
+                }
+            } catch (error) {
+                statusEl.textContent = '❌ Error';
+                showError(error.message);
+                btn.disabled = false;
+            }
+        }
+        
+        async function generateNonStreaming() {
+            const token = await getToken();
+            if (!token) return;
+            
+            const prompt = document.getElementById('prompt').value;
+            const outputEl = document.getElementById('output');
+            const statusEl = document.getElementById('status');
+            const metadataEl = document.getElementById('metadata');
+            const errorEl = document.getElementById('error');
+            
+            outputEl.textContent = '';
+            metadataEl.style.display = 'none';
+            errorEl.style.display = 'none';
+            statusEl.textContent = '⏳ Generating...';
+            
+            try {
+                const response = await fetch(`${API_BASE}/generate`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${token}`
+                    },
+                    body: JSON.stringify({
+                        prompt: prompt,
+                        maxTokens: 100,
+                        temperature: 0.7
+                    })
+                });
+                
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.error || `HTTP ${response.status}`);
+                }
+                
+                const result = await response.json();
+                outputEl.textContent = result.generatedText;
+                
+                metadataEl.innerHTML = `
+                    <strong>Generation Metrics:</strong><br>
+                    • Tokens: ${result.promptTokens} prompt + ${result.completionTokens} completion<br>
+                    • Speed: ${result.tokensPerSecond.toFixed(2)} tokens/second<br>
+                    • Time: ${result.generationTime.toFixed(2)}s total, ${result.timeToFirstToken.toFixed(2)}s TTFT<br>
+                    • Memory: ${(result.memory.peakBytes / 1024 / 1024 / 1024).toFixed(2)} GB peak<br>
+                    • Finish: ${result.finishReason}
+                `;
+                metadataEl.style.display = 'block';
+                statusEl.textContent = '✅ Done!';
+            } catch (error) {
+                statusEl.textContent = '❌ Error';
+                showError(error.message);
+            }
+        }
+        
+        function showError(message) {
+            const errorEl = document.getElementById('error');
+            errorEl.textContent = '❌ ' + message;
+            errorEl.style.display = 'block';
+        }
+        
+        // Auto-load token from localStorage
+        window.addEventListener('load', () => {
+            const savedToken = localStorage.getItem('gemma_jwt_token');
+            if (savedToken) {
+                document.getElementById('token').value = savedToken;
+            }
+        });
+        
+        // Save token to localStorage
+        document.getElementById('token').addEventListener('change', (e) => {
+            localStorage.setItem('gemma_jwt_token', e.target.value);
+        });
+    </script>
+</body>
+</html>

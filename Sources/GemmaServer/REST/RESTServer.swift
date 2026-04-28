@@ -56,6 +56,7 @@ struct RESTServer: Sendable {
         protected.add(middleware: RateLimitMiddleware(rateLimiter: rateLimiter))
         
         protected.post("/generate", use: generateController.generate)
+        protected.post("/generate/stream", use: generateController.generateStream)
         protected.post("/auth/logout", use: authController.logout)
 
         // Root health — convenient for load balancers
