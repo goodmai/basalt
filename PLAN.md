@@ -11,6 +11,133 @@
 
 ---
 
+## Version History & Semantic Versioning
+
+**Versioning Strategy:** [Semantic Versioning 2.0.0](https://semver.org/)
+- **MAJOR.MINOR.PATCH** (e.g., 1.2.3)
+- **MAJOR**: Breaking changes, incompatible API changes
+- **MINOR**: New features, backward-compatible functionality
+- **PATCH**: Bug fixes, backward-compatible fixes
+
+**Version Increment Rules:**
+- **Epic completion** → MINOR version bump (new feature set)
+- **Breaking change** → MAJOR version bump (API incompatibility)
+- **Bug fix commit** → PATCH version bump (fix: prefix)
+- **Feature commit** → MINOR version bump (feat: prefix)
+- **Docs/chore commit** → No version bump
+
+### Version Changelog
+
+**v0.1.0** (2026-04-15) — Initial Release
+- Epic 1: Production-Ready Inference Server ✅
+- Features: 5 major features
+  - Dual interface (MCP + REST)
+  - JWT authentication
+  - Performance benchmarking
+  - Multi-model support (4 models)
+  - Performance optimizations
+- Commits: 15 commits
+- Test Coverage: 51/51 tests passing
+
+**v0.2.0** (Target: 2026-05-15) — Context & Security
+- Epic 2: Context Window Profiling ✅ (2 features)
+  - Context degradation profiler
+  - Dynamic token budgeting
+- Epic 5: Security Audit (3 features planned)
+  - Dependency security audit
+  - CWE security audit
+  - Privacy compliance audit
+- Target Commits: +20 commits
+- Target Test Coverage: 100% unit coverage
+
+**v0.3.0** (Target: 2026-06-15) — Model Ecosystem
+- Epic 3: Model Compatibility (3 features)
+  - Model compatibility matrix
+  - Automated model testing
+  - Model validation
+- Epic 4: Developer Experience (3 features)
+  - Homebrew installation
+  - Interactive model selection
+  - Rich terminal output
+- Target Commits: +25 commits
+
+**v0.4.0** (Target: 2026-07-15) — Plugin Marketplace
+- Epic 6: MCP Plugin Marketplace (3 features)
+  - MCP server discovery
+  - Agent capability analysis
+  - Marketplace UI
+- Target Commits: +30 commits
+
+**v1.0.0** (Target: 2026-09-01) — Production Release
+- Epic 7: App Store Distribution (4 features)
+  - App Store preparation
+  - Sandboxing & entitlements
+  - Code signing & notarization
+  - App Store submission
+- All epics completed
+- Zero HIGH/CRITICAL vulnerabilities
+- 100% unit test coverage
+- Target Total Commits: 100+
+
+### Feature Counter
+
+**Completed Features:** 7
+- ✅ Dual interface architecture
+- ✅ JWT authentication
+- ✅ Performance benchmarking
+- ✅ Multi-model support
+- ✅ Performance optimizations
+- ✅ Context degradation profiler
+- ✅ Dynamic token budgeting
+
+**In Progress Features:** 6
+- 🔄 Model compatibility matrix
+- 🔄 Automated model testing
+- 🔄 Dependency security audit
+- 🔄 CWE security audit
+- 🔄 Privacy compliance audit
+- 🔄 Homebrew installation
+
+**Planned Features:** 13
+- 📋 Model validation
+- 📋 Interactive model selection
+- 📋 Rich terminal output
+- 📋 MCP server discovery
+- 📋 Agent capability analysis
+- 📋 Marketplace UI
+- 📋 App Store preparation
+- 📋 Sandboxing & entitlements
+- 📋 Code signing & notarization
+- 📋 App Store submission
+- 📋 Streaming REST API
+- 📋 Multi-model serving
+- 📋 Quantization experiments
+
+**Total Features:** 26 (7 completed, 6 in progress, 13 planned)
+
+### Commit Counter
+
+**Total Commits:** 20 (as of 2026-04-28)
+
+**By Type:**
+- `feat:` 12 commits (60%) → MINOR version bumps
+- `fix:` 2 commits (10%) → PATCH version bumps
+- `docs:` 4 commits (20%) → No version bump
+- `chore:` 1 commit (5%) → No version bump
+- `security:` 1 commit (5%) → MINOR version bump
+
+**By Epic:**
+- Epic 1: 15 commits
+- Epic 2: 3 commits
+- Epic 5: 2 commits
+
+**Next Version Calculation:**
+- Current: v0.1.0
+- Completed features since v0.1.0: 2 (context profiler, token budgeting)
+- Next version: v0.2.0 (when Epic 2 + Epic 5 security audit complete)
+
+---
+
 ## Epic 1: Production-Ready Inference Server ✅ (COMPLETED)
 
 **Business Value:** Stable, performant dual-interface server (MCP + REST) with authentication, supporting multiple model families.
@@ -1183,6 +1310,44 @@ Co-Authored-By: Claude Sonnet 4 <noreply@anthropic.com>"
 - Mark task as `[x]` completed
 - Add notes if scope changed
 - Update Epic status (IN PROGRESS → COMPLETED)
+- **Update version counters** (see Version Tracking section)
+
+**8. Version Tracking**
+```bash
+# After each commit, update version counters in PLAN.md
+
+# Count commits by type
+git log --oneline --grep="^feat:" | wc -l  # MINOR bumps
+git log --oneline --grep="^fix:" | wc -l   # PATCH bumps
+git log --oneline --grep="^BREAKING:" | wc -l  # MAJOR bumps
+
+# Count completed features (tasks marked [x] in PLAN.md)
+grep -c "\[x\]" PLAN.md
+
+# Calculate next version
+# If MAJOR changes: increment MAJOR, reset MINOR and PATCH
+# If MINOR changes (feat:): increment MINOR, reset PATCH
+# If PATCH changes (fix:): increment PATCH
+
+# Update PLAN.md Version History section
+# Update Feature Counter
+# Update Commit Counter
+```
+
+**Version Bump Decision Tree:**
+```
+Commit message starts with:
+├─ "BREAKING:" or "feat!:" → MAJOR bump (e.g., 1.0.0 → 2.0.0)
+├─ "feat:" → MINOR bump (e.g., 0.1.0 → 0.2.0)
+├─ "fix:" → PATCH bump (e.g., 0.1.0 → 0.1.1)
+└─ "docs:", "chore:", "test:" → No bump
+
+Epic completed:
+└─ MINOR bump (e.g., 0.1.0 → 0.2.0)
+
+Breaking API change:
+└─ MAJOR bump (e.g., 0.9.0 → 1.0.0)
+```
 
 ---
 
