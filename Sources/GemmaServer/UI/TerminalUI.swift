@@ -9,26 +9,55 @@ import Glibc
 
 /// Epic 16.1: Rich Terminal UI Foundation
 /// Provides colored and styled terminal output using Rainbow library
+///
+/// Thread Safety: Uses actor for state management in Swift 6
 public enum TerminalUI: Sendable {
     
-    // MARK: - Configuration
+    // MARK: - Configuration Actor
     
-    /// Global flag to enable/disable colors
-    /// Auto-detected based on TTY and environment variables
-    /// Note: Using nonisolated(unsafe) for test compatibility
-    public nonisolated(unsafe) static var colorsEnabled: Bool = {
-        let enabled = detectColorSupport()
-        // Synchronize with Rainbow
-        Rainbow.enabled = enabled
-        return enabled
-    }() {
-        didSet {
-            Rainbow.enabled = colorsEnabled
+    /// Thread-safe configuration manager
+    public actor Configuration {
+        public static let shared = Configuration()
+        
+        private var _colorsEnabled: Bool
+        
+        private init() {
+            self._colorsEnabled = Self.detectColorSupport()
+            // Note: Rainbow.enabled is set via environment variables (FORCE_COLOR)
+        }
+        
+        public var colorsEnabled: Bool {
+            get { _colorsEnabled }
+        }
+        
+        public func setColorsEnabled(_ enabled: Bool) {
+            _colorsEnabled = enabled
+        }
+        
+        private static func detectColorSupport() -> Bool {
+            // Check NO_COLOR environment variable (https://no-color.org/)
+            if ProcessInfo.processInfo.environment["NO_COLOR"] != nil {
+                return false
+            }
+            
+            // Check FORCE_COLOR environment variable
+            if ProcessInfo.processInfo.environment["FORCE_COLOR"] != nil {
+                return true
+            }
+            
+            // Auto-detect TTY
+            #if canImport(Darwin)
+            return isatty(fileno(stdout)) == 1
+            #else
+            return false
+            #endif
         }
     }
     
-    private static func detectColorSupport() -> Bool {
-        // Check NO_COLOR environment variable (https://no-color.org/)
+    /// Legacy synchronous accessor for backwards compatibility
+    /// Note: In production, prefer using Configuration.shared async/await
+    public nonisolated(unsafe) static var colorsEnabled: Bool = {
+        // Check NO_COLOR environment variable
         if ProcessInfo.processInfo.environment["NO_COLOR"] != nil {
             return false
         }
@@ -44,7 +73,7 @@ public enum TerminalUI: Sendable {
         #else
         return false
         #endif
-    }
+    }()
     
     // MARK: - TTY Detection
     

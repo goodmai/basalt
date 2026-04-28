@@ -1,8 +1,8 @@
 import Foundation
 
-/// Epic 16.10: Async Spinner System
-/// Provides an animated spinner for terminal output
-public final class Spinner: @unchecked Sendable {
+/// Epic 16.8: Progress indication for long-running operations
+/// Thread-safe spinner implementation using actor model
+public actor Spinner {
     
     public enum Style: Sendable {
         case dots      // ⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏
@@ -19,12 +19,12 @@ public final class Spinner: @unchecked Sendable {
             }
         }
         
-        var interval: TimeInterval {
+        var interval: Duration {
             switch self {
-            case .dots:   return 0.08
-            case .line:   return 0.1
-            case .pulse:  return 0.12
-            case .bounce: return 0.15
+            case .dots:   return .milliseconds(80)
+            case .line:   return .milliseconds(100)
+            case .pulse:  return .milliseconds(120)
+            case .bounce: return .milliseconds(150)
             }
         }
     }
@@ -33,8 +33,7 @@ public final class Spinner: @unchecked Sendable {
     private let message: String
     private var isRunning = false
     private var currentFrame = 0
-    private var timer: Timer?
-    private let queue = DispatchQueue(label: "com.gemmaserver.spinner")
+    private var animationTask: Task<Void, Never>?
     
     public init(style: Style = .dots, message: String = "") {
         self.style = style
@@ -43,38 +42,35 @@ public final class Spinner: @unchecked Sendable {
     
     /// Start the animation
     public func start() {
-        queue.async {
-            guard !self.isRunning else { return }
-            self.isRunning = true
-            
-            // Hide cursor
-            fputs("\u{1B}[?25l", stderr)
-            
-            self.timer = Timer.scheduledTimer(withTimeInterval: self.style.interval, repeats: true) { [weak self] _ in
-                self?.render()
+        guard !isRunning else { return }
+        isRunning = true
+        currentFrame = 0
+        
+        // Hide cursor
+        fputs("\u{1B}[?25l", stderr)
+        fflush(stderr)
+        
+        animationTask = Task { [weak self] in
+            while let self = self, await self.isRunning {
+                await self.render()
+                try? await Task.sleep(for: self.style.interval)
             }
-            
-            RunLoop.current.add(self.timer!, forMode: .common)
-            RunLoop.current.run()
         }
     }
     
     /// Stop the animation and clean up
     public func stop(finalMessage: String? = nil) {
-        queue.async {
-            guard self.isRunning else { return }
-            self.isRunning = false
-            self.timer?.invalidate()
-            self.timer = nil
-            
-            // Clear line and show cursor
-            fputs("\r\u{1B}[K", stderr)
-            if let msg = finalMessage {
-                fputs("\(msg)\n", stderr)
-            }
-            fputs("\u{1B}[?25h", stderr)
-            fflush(stderr)
+        isRunning = false
+        animationTask?.cancel()
+        animationTask = nil
+        
+        // Clear line and show cursor
+        fputs("\r\u{1B}[K", stderr)
+        if let msg = finalMessage {
+            fputs("\(msg)\n", stderr)
         }
+        fputs("\u{1B}[?25h", stderr)
+        fflush(stderr)
     }
     
     private func render() {
@@ -88,5 +84,12 @@ public final class Spinner: @unchecked Sendable {
         fflush(stderr)
         
         currentFrame = (currentFrame + 1) % style.frames.count
+    }
+    
+    deinit {
+        // Ensure cleanup
+        isRunning = false
+        fputs("\u{1B}[?25h", stderr)
+        fflush(stderr)
     }
 }
