@@ -108,4 +108,13 @@ struct GenerationResponseCodableTests {
         #expect(dec.temperature == req.temperature)
         #expect(dec.topP        == req.topP)
     }
+
+    @Test("ErrorResponse Codable round-trip")
+    func errorResponseRoundTrip() throws {
+        let error = ErrorResponse(error: "Test Error", code: 404)
+        let data = try encoder.encode(error)
+        let dec = try decoder.decode(ErrorResponse.self, from: data)
+        #expect(dec.error == "Test Error")
+        #expect(dec.code == 404)
+    }
 }

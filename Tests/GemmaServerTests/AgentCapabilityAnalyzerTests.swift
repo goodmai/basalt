@@ -92,4 +92,28 @@ final class AgentCapabilityAnalyzerTests: XCTestCase {
         XCTAssertEqual(caps[0].description, "Guide for creating effective skills.")
         XCTAssertNil(caps[0].returnType)
     }
+
+    func testParseClaudeSkill() async throws {
+        let tempDir = FileManager.default.temporaryDirectory
+        let claudeURL = tempDir.appendingPathComponent("claude-skill.md")
+        try! "placeholder".write(to: claudeURL, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: claudeURL) }
+        
+        let analyzer = AgentCapabilityAnalyzer()
+        let caps = try await analyzer.parse(file: claudeURL)
+        
+        XCTAssertTrue(caps.isEmpty)
+    }
+
+    func testParseUnknown() async throws {
+        let tempDir = FileManager.default.temporaryDirectory
+        let unknownURL = tempDir.appendingPathComponent("unknown.md")
+        try! "placeholder".write(to: unknownURL, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: unknownURL) }
+        
+        let analyzer = AgentCapabilityAnalyzer()
+        let caps = try await analyzer.parse(file: unknownURL)
+        
+        XCTAssertTrue(caps.isEmpty)
+    }
 }

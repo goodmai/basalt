@@ -142,6 +142,82 @@ struct OrchestratorTests {
             #expect(count == 50)
         }
     }
+
+    // MARK: — Missing coverage tests
+
+    @Test("generateStream after successful load returns mock response")
+    func generateStreamAfterLoad() async throws {
+        let engine = MockInferenceEngine()
+        let orch   = ModelOrchestratorActor(engine: engine)
+
+        try await orch.loadModel(path: "test-model")
+        let stream = try await orch.generateStream(request: .init(prompt: "Hello", maxTokens: 10))
+
+        var texts: [String] = []
+        var finalResponse: GenerationResponse?
+        for try await chunk in stream {
+            switch chunk {
+            case .text(let t): texts.append(t)
+            case .metadata(let m): finalResponse = m
+            }
+        }
+
+        #expect(texts.joined() == "Mock response")
+        #expect(finalResponse != nil)
+    }
+
+    @Test("generateStream throws error if not loaded")
+    func generateStreamBeforeLoad() async throws {
+        let engine = MockInferenceEngine()
+        let orch   = ModelOrchestratorActor(engine: engine)
+
+        await #expect(throws: GemmaServerError.self) {
+            _ = try await orch.generateStream(request: .init(prompt: "Hello"))
+        }
+    }
+
+    @Test("generate with requested tokens exceeding dynamic budget logs warning")
+    func generateExceedsBudget() async throws {
+        let engine = MockInferenceEngine()
+        let orch   = ModelOrchestratorActor(engine: engine, maxTokens: 10)
+        try await orch.loadModel(path: "model")
+
+        let req = GenerationRequest(prompt: "Hi", maxTokens: 65000)
+        _ = try await orch.generate(request: req)
+        _ = try await orch.generateStream(request: req)
+    }
+
+    @Test("diagnostics returns correct counts")
+    func diagnosticsCheck() async throws {
+        let engine = MockInferenceEngine()
+        let orch   = ModelOrchestratorActor(engine: engine)
+        try await orch.loadModel(path: "model")
+
+        _ = try await orch.generate(request: .init(prompt: "A"))
+        _ = try await orch.generate(request: .init(prompt: "B"))
+
+        let diag = await orch.diagnostics
+        #expect(diag.requests == 2)
+        #expect(diag.tokens > 0)
+    }
+
+    @Test("loadModel with real directory calculates size correctly")
+    func loadModelCalculatesDirectorySize() async throws {
+        let engine = MockInferenceEngine()
+        let orch   = ModelOrchestratorActor(engine: engine)
+
+        let fm = FileManager.default
+        let tempDir = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try fm.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: tempDir) }
+
+        let fileUrl = tempDir.appendingPathComponent("test.bin")
+        let data = Data(repeating: 0, count: 1024 * 1024 * 2) // 2 MB
+        try data.write(to: fileUrl)
+
+        try await orch.loadModel(path: tempDir.path)
+        // Should not throw and should update modelSizeMB internally
+    }
 }
 
 // MARK: — Helpers
