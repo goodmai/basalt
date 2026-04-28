@@ -28,15 +28,23 @@ Dual interface: **MCP** (stdio) for IDE integration + **REST/A2A** (HTTP) for ag
 
 ## Install
 
+**Option 1: Homebrew (Recommended)**
+```bash
+brew tap your-org/gemma
+brew install gemma
+```
+
+**Option 2: Install Script**
+```bash
+curl -fsSL https://raw.githubusercontent.com/your-org/GemmaServer/main/install.sh | bash
+```
+
+**Option 3: Build from source**
 ```bash
 git clone https://github.com/your-org/GemmaServer
 cd GemmaServer
 swift build -c release
-```
-
-Optional — install to PATH:
-```bash
-cp .build/release/GemmaServer /usr/local/bin/
+sudo cp .build/release/GemmaServer /usr/local/bin/gemma
 ```
 
 ---

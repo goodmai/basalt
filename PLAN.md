@@ -376,15 +376,15 @@ jobs:
 - As a power user, I want to alias `gemma chat` to my preferred model
 
 ### 4.1 Installation & Distribution
-**Status:** Not started  
+**Status:** COMPLETED  
 **Priority:** HIGH (for v0.2.0 release)  
 **Effort:** 1 week
 
 **Acceptance Criteria:**
-- [ ] Homebrew tap: `brew tap your-org/gemma && brew install gemma`
-- [ ] Binary releases on GitHub (macOS arm64)
-- [ ] Installation script: `curl -fsSL install.sh | bash`
-- [ ] Verify: `gemma --version` works after install
+- [x] Homebrew tap: `brew tap your-org/gemma && brew install gemma`
+- [x] Binary releases on GitHub (macOS arm64)
+- [x] Installation script: `curl -fsSL install.sh | bash`
+- [x] Verify: `gemma --version` works after install
 
 **Technical Design:**
 ```ruby
@@ -820,7 +820,7 @@ User Input (prompt) → ModelOrchestrator → MLX Inference → Response
 - As a team, we need agents to communicate through standardized MCP protocol
 - As a user, I want to connect Claude Desktop, Gemini agents, and custom skills seamlessly
 
-### 5.1 MCP Server Discovery & Registry
+### 6.1 MCP Server Discovery & Registry
 **Status:** Not started  
 **Priority:** HIGH (for ecosystem growth)  
 **Effort:** 2-3 weeks
@@ -879,7 +879,7 @@ actor MCPRegistry {
 
 ---
 
-### 5.2 Agent Capability Analysis (agents.md, gemini.md, claude-skill.md)
+### 6.2 Agent Capability Analysis (agents.md, gemini.md, claude-skill.md)
 **Status:** COMPLETED  
 **Priority:** HIGH  
 **Effort:** 1-2 weeks
@@ -949,7 +949,7 @@ actor AgentCapabilityAnalyzer {
 
 ---
 
-### 5.3 MCP Plugin Marketplace UI
+### 6.3 MCP Plugin Marketplace UI
 **Status:** Not started  
 **Priority:** MEDIUM  
 **Effort:** 3-4 weeks
@@ -1363,7 +1363,7 @@ Breaking API change:
 **v0.2.0 (Next Release):**
 - [x] Context degradation profiler
 - [x] Dynamic token budgeting
-- [ ] Homebrew installation
+- [x] Homebrew installation
 - [ ] 10+ verified models
 - [x] CI/CD pipeline
 - [ ] Dependency security audit completed
