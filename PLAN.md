@@ -78,15 +78,20 @@
   - Telegram bot setup & authentication
   - Remote session management
   - Inline queries & notifications
-- Target Commits: +35 commits
+- Epic 13: Session Analytics (1 feature)
+  - Session analytics & beautiful exit summary (/quit)
+- Target Commits: +40 commits
 
 
-**v0.5.0** (Target: 2026-08-15) — Plugin Marketplace
+**v0.5.0** (Target: 2026-08-15) — Plugin Marketplace & Billing
 - Epic 9: MCP Plugin Marketplace (3 features)
   - MCP server discovery
   - Agent capability analysis
   - Marketplace UI
-- Target Commits: +30 commits
+- Epic 13: Usage Billing (2 features)
+  - Usage tracking & billing integration
+  - Analytics dashboard
+- Target Commits: +35 commits
 
 **v1.0.0** (Target: 2026-09-01) — Production Release
 - Epic 7: App Store Distribution (4 features)
@@ -118,7 +123,7 @@
 - 🔄 Privacy compliance audit
 - 🔄 Homebrew installation
 
-**Planned Features:** 25
+**Planned Features:** 28
 - 📋 Documentation framework setup
 - 📋 Interactive onboarding flow
 - 📋 SWE benchmark suite (5 tasks)
@@ -129,6 +134,9 @@
 - 📋 Telegram bot setup
 - 📋 Remote session management
 - 📋 Inline queries & notifications
+- 📋 Session analytics & exit summary (/quit) 🆕
+- 📋 Usage tracking & billing integration 🆕
+- 📋 Analytics dashboard 🆕
 - 📋 Automated documentation deployment
 - 📋 Documentation quality checks
 - 📋 Model validation
@@ -145,7 +153,7 @@
 - 📋 Multi-model serving
 - 📋 Quantization experiments
 
-**Total Features:** 38 (7 completed, 6 in progress, 25 planned)
+**Total Features:** 41 (7 completed, 6 in progress, 28 planned)
 
 ### Commit Counter
 
@@ -2524,6 +2532,356 @@ Epic completed:
 Breaking API change:
 └─ MAJOR bump (e.g., 0.9.0 → 1.0.0)
 ```
+
+---
+
+## Epic 13: Session Analytics & Usage Billing 💰
+
+**Business Value:** Track usage, provide analytics, and enable usage-based billing for team deployments and commercial use.
+
+**User Stories:**
+- As a user, I want to see statistics about my inference sessions when I quit
+- As a team lead, I need to track API usage across team members
+- As a developer, I want to understand my token consumption patterns
+- As a business, we need usage-based billing for enterprise customers
+
+### 13.1 Session Analytics & Exit Summary
+**Status:** Not started  
+**Priority:** HIGH (for v0.4.0)  
+**Effort:** 1 week
+
+**Business Value:** Beautiful session summary on exit provides transparency and builds trust with users.
+
+**Acceptance Criteria:**
+- [ ] Track session metrics (start time, duration, requests, tokens)
+- [ ] Beautiful ASCII art summary on `/quit` or SIGINT
+- [ ] Display key statistics:
+  - Session ID and duration (wall time vs active time)
+  - Total requests and success rate
+  - Token usage (input, output, total)
+  - Model switches and cache hits
+  - Performance metrics (avg TPS, TTFT)
+  - Memory usage (peak, average)
+- [ ] Color-coded output (green for good, yellow for warnings, red for errors)
+- [ ] Export session summary to JSON
+
+**Technical Design:**
+```swift
+actor SessionAnalytics {
+    struct SessionMetrics: Codable, Sendable {
+        let sessionId: UUID
+        let startTime: Date
+        let endTime: Date?
+        
+        var wallTime: TimeInterval { 
+            (endTime ?? Date()).timeIntervalSince(startTime) 
+        }
+        
+        var requests: [RequestMetric] = []
+        var modelSwitches: Int = 0
+        var cacheHits: Int = 0
+        var cacheSize: Int64 = 0
+        
+        var totalInputTokens: Int {
+            requests.map(\.inputTokens).reduce(0, +)
+        }
+        
+        var totalOutputTokens: Int {
+            requests.map(\.outputTokens).reduce(0, +)
+        }
+        
+        var successRate: Double {
+            guard !requests.isEmpty else { return 0 }
+            let successful = requests.filter(\.success).count
+            return Double(successful) / Double(requests.count) * 100
+        }
+        
+        var avgTPS: Double {
+            guard !requests.isEmpty else { return 0 }
+            let totalTPS = requests.map(\.tokensPerSecond).reduce(0, +)
+            return totalTPS / Double(requests.count)
+        }
+        
+        var avgTTFT: Double {
+            guard !requests.isEmpty else { return 0 }
+            let totalTTFT = requests.map(\.timeToFirstToken).reduce(0, +)
+            return totalTTFT / Double(requests.count)
+        }
+    }
+    
+    struct RequestMetric: Codable, Sendable {
+        let timestamp: Date
+        let duration: TimeInterval
+        let inputTokens: Int
+        let outputTokens: Int
+        let tokensPerSecond: Double
+        let timeToFirstToken: Double
+        let success: Bool
+        let error: String?
+    }
+    
+    private var metrics = SessionMetrics(
+        sessionId: UUID(),
+        startTime: Date(),
+        endTime: nil
+    )
+    
+    func recordRequest(
+        inputTokens: Int,
+        outputTokens: Int,
+        tps: Double,
+        ttft: Double,
+        duration: TimeInterval,
+        success: Bool,
+        error: String? = nil
+    ) {
+        let request = RequestMetric(
+            timestamp: Date(),
+            duration: duration,
+            inputTokens: inputTokens,
+            outputTokens: outputTokens,
+            tokensPerSecond: tps,
+            timeToFirstToken: ttft,
+            success: success,
+            error: error
+        )
+        metrics.requests.append(request)
+    }
+    
+    func recordModelSwitch() {
+        metrics.modelSwitches += 1
+    }
+    
+    func recordCacheHit() {
+        metrics.cacheHits += 1
+    }
+    
+    func generateExitSummary() -> String {
+        metrics.endTime = Date()
+        
+        let wallTime = formatDuration(metrics.wallTime)
+        let successRate = String(format: "%.1f%%", metrics.successRate)
+        let avgTPS = String(format: "%.1f", metrics.avgTPS)
+        let avgTTFT = String(format: "%.3f", metrics.avgTTFT)
+        
+        return """
+        ╭──────────────────────────────────────────────────────────────────────────────╮
+        │                                                                              │
+        │  GemmaServer powering down. Goodbye! 👋                                      │
+        │                                                                              │
+        │  Interaction Summary                                                         │
+        │  Session ID:                 \(metrics.sessionId.uuidString.prefix(36))            │
+        │  Inference Requests:         \(String(format: "%3d", metrics.requests.count)) ( ✓ \(metrics.requests.filter(\.success).count) ✗ \(metrics.requests.filter { !$0.success }.count) )                               │
+        │  Success Rate:               \(successRate.padding(toLength: 6, withPad: " ", startingAt: 0))                                           │
+        │  Model Switches:             \(metrics.modelSwitches)                                                │
+        │  Cache Hits:                 \(metrics.cacheHits)                                                │
+        │                                                                              │
+        │  Performance                                                                 │
+        │  Wall Time:                  \(wallTime.padding(toLength: 10, withPad: " ", startingAt: 0))                                      │
+        │  Avg Tokens/sec:             \(avgTPS) TPS                                          │
+        │  Avg Time to First Token:    \(avgTTFT)s                                           │
+        │                                                                              │
+        │  Token Usage                                                                 │
+        │  Input Tokens:               \(String(format: "%,d", metrics.totalInputTokens).padding(toLength: 12, withPad: " ", startingAt: 0))                                    │
+        │  Output Tokens:              \(String(format: "%,d", metrics.totalOutputTokens).padding(toLength: 12, withPad: " ", startingAt: 0))                                    │
+        │  Total Tokens:               \(String(format: "%,d", metrics.totalInputTokens + metrics.totalOutputTokens).padding(toLength: 12, withPad: " ", startingAt: 0))                                    │
+        │                                                                              │
+        │  💡 Tip: Run `gemma stats --session \(metrics.sessionId)` to see detailed breakdown   │
+        │                                                                              │
+        ╰──────────────────────────────────────────────────────────────────────────────╯
+        """
+    }
+    
+    func exportToJSON() throws -> Data {
+        metrics.endTime = Date()
+        return try JSONEncoder().encode(metrics)
+    }
+}
+
+func formatDuration(_ seconds: TimeInterval) -> String {
+    let hours = Int(seconds) / 3600
+    let minutes = (Int(seconds) % 3600) / 60
+    let secs = Int(seconds) % 60
+    
+    if hours > 0 {
+        return "\(hours)h \(minutes)m \(secs)s"
+    } else if minutes > 0 {
+        return "\(minutes)m \(secs)s"
+    } else {
+        return "\(secs)s"
+    }
+}
+```
+
+**Integration Points:**
+```swift
+// In ServeCommand.swift
+class ServeCommand {
+    let analytics = SessionAnalytics()
+    
+    func run() async throws {
+        // Setup signal handlers for graceful shutdown
+        signal(SIGINT) { _ in
+            Task {
+                await handleShutdown()
+            }
+        }
+        
+        // ... normal server operations
+    }
+    
+    func handleShutdown() async {
+        let summary = await analytics.generateExitSummary()
+        print(summary)
+        
+        // Save to file
+        if let data = try? await analytics.exportToJSON() {
+            let url = URL(fileURLWithPath: "~/.gemmaserver/sessions/\(Date().ISO8601Format()).json")
+            try? data.write(to: url)
+        }
+        
+        exit(0)
+    }
+}
+
+// In ModelOrchestratorActor.swift
+func generate(request: GenerationRequest) async throws -> GenerationResponse {
+    let start = ContinuousClock.now
+    
+    do {
+        let response = try await engine.generate(request: request)
+        let duration = start.duration(to: .now).inSeconds
+        
+        await analytics.recordRequest(
+            inputTokens: response.promptTokens,
+            outputTokens: response.completionTokens,
+            tps: response.tokensPerSecond,
+            ttft: response.timeToFirstToken,
+            duration: duration,
+            success: true
+        )
+        
+        return response
+    } catch {
+        await analytics.recordRequest(
+            inputTokens: 0,
+            outputTokens: 0,
+            tps: 0,
+            ttft: 0,
+            duration: start.duration(to: .now).inSeconds,
+            success: false,
+            error: error.localizedDescription
+        )
+        throw error
+    }
+}
+```
+
+**Workflow:**
+1. Implement: SessionAnalytics actor
+2. Integrate: Hook into ServeCommand shutdown
+3. Test: Verify exit summary displays correctly
+4. Polish: Add color coding with ANSI escape codes
+5. Commit: `feat: Add session analytics and beautiful exit summary`
+
+---
+
+### 13.2 Usage Tracking & Billing Integration
+**Status:** Not started  
+**Priority:** MEDIUM (for v0.5.0)  
+**Effort:** 2 weeks
+
+**Business Value:** Enable usage-based billing for enterprise customers and SaaS deployments.
+
+**Acceptance Criteria:**
+- [ ] Track usage per user/API key
+- [ ] Billable metrics: tokens, requests, compute time
+- [ ] Export to billing systems (Stripe, Chargebee)
+- [ ] Usage quotas and rate limiting per user
+- [ ] Billing dashboard API endpoints
+- [ ] Monthly usage reports
+
+**Technical Design:**
+```swift
+actor UsageTracker {
+    struct UserUsage: Codable {
+        let userId: String
+        var totalInputTokens: Int = 0
+        var totalOutputTokens: Int = 0
+        var totalRequests: Int = 0
+        var totalComputeSeconds: Double = 0
+        var billingPeriodStart: Date
+        var billingPeriodEnd: Date
+        
+        var estimatedCost: Double {
+            // Example pricing: $0.001 per 1K tokens
+            let tokenCost = Double(totalInputTokens + totalOutputTokens) / 1000.0 * 0.001
+            // Example compute: $0.01 per minute
+            let computeCost = (totalComputeSeconds / 60.0) * 0.01
+            return tokenCost + computeCost
+        }
+    }
+    
+    private var usage: [String: UserUsage] = [:]
+    
+    func recordUsage(userId: String, inputTokens: Int, outputTokens: Int, computeSeconds: Double) {
+        var userUsage = usage[userId] ?? UserUsage(
+            userId: userId,
+            billingPeriodStart: Date(),
+            billingPeriodEnd: Calendar.current.date(byAdding: .month, value: 1, to: Date())!
+        )
+        
+        userUsage.totalInputTokens += inputTokens
+        userUsage.totalOutputTokens += outputTokens
+        userUsage.totalRequests += 1
+        userUsage.totalComputeSeconds += computeSeconds
+        
+        usage[userId] = userUsage
+    }
+    
+    func exportStripeInvoice(userId: String) throws -> StripeInvoice {
+        guard let userUsage = usage[userId] else {
+            throw BillingError.userNotFound
+        }
+        
+        return StripeInvoice(
+            customerId: userId,
+            amount: Int(userUsage.estimatedCost * 100), // cents
+            description: "GemmaServer Usage - \(userUsage.totalRequests) requests, \(userUsage.totalInputTokens + userUsage.totalOutputTokens) tokens"
+        )
+    }
+}
+```
+
+**Workflow:**
+1. Design: Usage tracking schema
+2. Implement: UsageTracker actor
+3. Integrate: Billing system APIs
+4. Test: Verify accurate tracking
+5. Commit: `feat: Add usage tracking and billing integration`
+
+---
+
+### 13.3 Analytics Dashboard
+**Status:** Not started  
+**Priority:** LOW  
+**Effort:** 1 week
+
+**Business Value:** Visualize usage patterns and optimize costs.
+
+**Acceptance Criteria:**
+- [ ] Web dashboard showing usage trends
+- [ ] Charts: tokens over time, requests per hour, cost breakdown
+- [ ] Filter by user, date range, model
+- [ ] Export reports to CSV/PDF
+- [ ] Real-time usage monitoring
+
+**Workflow:**
+1. Design: Dashboard mockups
+2. Implement: REST API endpoints for analytics
+3. Frontend: SwiftUI or React dashboard
+4. Deploy: Serve dashboard from GemmaServer
+5. Commit: `feat: Add usage analytics dashboard`
 
 ---
 
