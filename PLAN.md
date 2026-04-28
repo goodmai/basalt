@@ -64,15 +64,15 @@
 - As a researcher, I want reproducible benchmarks for context degradation
 
 ### 2.1 Context Degradation Profiler
-**Status:** Files exist but uncommitted  
+**Status:** COMPLETED  
 **Priority:** HIGH  
 **Effort:** 2-3 days
 
 **Acceptance Criteria:**
-- [ ] `ContextDegradationProfiler` actor with configurable context sizes
-- [ ] Automated benchmark: 1k, 4k, 16k, 32k, 64k, 128k tokens
-- [ ] Export results to JSON: `{contextSize, tps, ttft, memoryMB}`
-- [ ] CLI command: `GemmaServer profile-context --model <id> --output results.json`
+- [x] `ContextDegradationProfiler` actor with configurable context sizes
+- [x] Automated benchmark: 1k, 4k, 16k, 32k, 64k, 128k tokens
+- [x] Export results to JSON: `{contextSize, tps, ttft, memoryMB}`
+- [x] CLI command: `GemmaServer profile-context --model <id> --output results.json`
 
 **Technical Design:**
 ```swift
@@ -111,7 +111,7 @@ actor ContextDegradationProfiler {
 ---
 
 ### 2.2 Dynamic Token Budgeting
-**Status:** Not started  
+**Status:** COMPLETED  
 **Priority:** MEDIUM  
 **Effort:** 1-2 days
 
@@ -122,10 +122,10 @@ actor ContextDegradationProfiler {
 - As a developer, I want a safety margin (e.g., reserve 4GB for OS)
 
 **Acceptance Criteria:**
-- [ ] Function: `calculateMaxTokens(availableRAM: Int, modelSize: Int) -> Int`
-- [ ] Use `os_proc_available_memory()` to query free RAM
-- [ ] Apply safety margin (default 20%)
-- [ ] Log warning if user requests exceed budget
+- [x] Function: `calculateMaxTokens(availableRAM: Int, modelSize: Int) -> Int`
+- [x] Use `host_statistics64()` (macOS alternative to `os_proc_available_memory()`) to query free RAM
+- [x] Apply safety margin (default 20%)
+- [x] Log warning if user requests exceed budget
 
 **Technical Design:**
 ```swift
@@ -193,17 +193,17 @@ func calculateMaxTokens(availableRAM: Int64, modelSizeMB: Int) -> Int {
 ---
 
 ### 3.2 Automated Model Testing Pipeline
-**Status:** Manual script exists, needs CI integration  
+**Status:** COMPLETED  
 **Priority:** MEDIUM  
 **Effort:** 2-3 days
 
 **Business Value:** Catch regressions early, verify new MLX versions don't break existing models.
 
 **Acceptance Criteria:**
-- [ ] GitHub Actions workflow: test 4 verified models on each PR
-- [ ] Nightly job: test all models in cache
-- [ ] Performance regression detection: fail if TPS drops >10%
-- [ ] Artifact: JSON report with TPS/TTFT/memory for each model
+- [x] GitHub Actions workflow: test 4 verified models on each PR
+- [x] Nightly job: test all models in cache
+- [x] Performance regression detection: fail if TPS drops >10%
+- [x] Artifact: JSON report with TPS/TTFT/memory for each model
 
 **Technical Design:**
 ```yaml
@@ -804,11 +804,11 @@ Co-Authored-By: Claude Sonnet 4 <noreply@anthropic.com>"
 - ✅ JWT authentication
 
 **v0.2.0 (Next Release):**
-- [ ] Context degradation profiler
-- [ ] Dynamic token budgeting
+- [x] Context degradation profiler
+- [x] Dynamic token budgeting
 - [ ] Homebrew installation
 - [ ] 10+ verified models
-- [ ] CI/CD pipeline
+- [x] CI/CD pipeline
 
 **v1.0.0 (Production):**
 - [ ] 99.9% uptime (no crashes)

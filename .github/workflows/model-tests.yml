@@ -1,0 +1,51 @@
+name: Model Compatibility Tests
+
+on:
+  pull_request:
+    branches: [ main ]
+  schedule:
+    - cron: '0 2 * * *' # Run nightly at 2 AM
+  workflow_dispatch: # Allow manual trigger
+
+jobs:
+  test-models:
+    name: Test Inference & Benchmarks
+    runs-on: macos-14 # M1/M2 runners are required for MLX
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        
+      - name: Setup Swift
+        uses: swift-actions/setup-swift@v2
+        with:
+          swift-version: "6.0"
+          
+      - name: Cache HuggingFace Models
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface/hub
+          key: hf-models-${{ hashFiles('**/Package.resolved') }}
+          restore-keys: |
+            hf-models-
+            
+      - name: Build tests
+        run: swift build --build-tests
+        
+      - name: Run unit tests
+        run: swift test
+        
+      - name: Download test model (Qwen3.5 4B)
+        run: |
+          swift run GemmaServer models download mlx-community/Qwen3.5-4B-4bit
+          
+      - name: Run Performance Benchmark
+        run: |
+          swift run -c release PerformanceBenchmark --model mlx-community/Qwen3.5-4B-4bit --iterations 5 --tokens 50 --degradation-test
+          
+      - name: Upload Benchmark Results
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results
+          path: context_latency.json
+          retention-days: 30

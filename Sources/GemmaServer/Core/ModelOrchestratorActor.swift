@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 // MARK: — Orchestrator
 
@@ -17,6 +18,9 @@ public actor ModelOrchestratorActor {
     private let maxTokens: Int
     private var requestCount: Int = 0
     private var totalTokensGenerated: Int = 0
+    private var modelSizeMB: Int = 4000 // default fallback
+
+    private let logger = Logger(subsystem: "com.gemmaserver.core", category: "ModelOrchestrator")
 
     // MARK: — Init
 
@@ -29,6 +33,13 @@ public actor ModelOrchestratorActor {
 
     /// Загружает модель из указанного пути.
     public func loadModel(path: String) async throws(GemmaServerError) {
+        // Calculate model size for token budgeting
+        let size = try? calculateDirectorySize(url: URL(fileURLWithPath: path))
+        if let size {
+            self.modelSizeMB = Int(size / 1_048_576)
+            logger.info("Model size calculated: \(self.modelSizeMB) MB")
+        }
+        
         try await engine.load(modelPath: path)
     }
 
@@ -36,7 +47,13 @@ public actor ModelOrchestratorActor {
     /// Swift actor гарантирует что вызовы выстраиваются в очередь (FIFO)
     /// — никаких дополнительных локов не требуется.
     public func generate(request: GenerationRequest) async throws(GemmaServerError) -> GenerationResponse {
-        let validated = try request.validated(defaultMaxTokens: maxTokens)
+        let maxT = calculateDynamicMaxTokens()
+        let validated = try request.validated(defaultMaxTokens: maxT)
+        
+        if let requested = request.maxTokens, requested > maxT {
+            logger.warning("Requested tokens (\(requested)) exceed dynamic budget (\(maxT)). Capped to prevent OOM.")
+        }
+        
         requestCount += 1
         let response = try await engine.generate(request: validated)
         totalTokensGenerated += response.completionTokens
@@ -44,7 +61,13 @@ public actor ModelOrchestratorActor {
     }
 
     public func generateStream(request: GenerationRequest) async throws(GemmaServerError) -> AsyncStream<StreamChunk> {
-        let validated = try request.validated(defaultMaxTokens: maxTokens)
+        let maxT = calculateDynamicMaxTokens()
+        let validated = try request.validated(defaultMaxTokens: maxT)
+        
+        if let requested = request.maxTokens, requested > maxT {
+            logger.warning("Requested tokens (\(requested)) exceed dynamic budget (\(maxT)). Capped to prevent OOM.")
+        }
+        
         requestCount += 1
         // We don't easily track totalTokensGenerated for streams here unless we wrap the stream
         return try await engine.generateStream(request: validated)
@@ -64,5 +87,27 @@ public actor ModelOrchestratorActor {
     // Diagnostics — только для логирования, не экспортируется.
     var diagnostics: (requests: Int, tokens: Int) {
         (requestCount, totalTokensGenerated)
+    }
+    
+    // MARK: — Private Helpers
+    
+    private func calculateDynamicMaxTokens() -> Int {
+        let dynamicMax = TokenBudgetCalculator.calculateMaxTokensForSystem(modelSizeMB: modelSizeMB)
+        return min(maxTokens, dynamicMax)
+    }
+    
+    private func calculateDirectorySize(url: URL) throws -> UInt64 {
+        var size: UInt64 = 0
+        guard let enumerator = FileManager.default.enumerator(at: url, includingPropertiesForKeys: [.fileSizeKey]) else {
+            return size
+        }
+        
+        for case let fileURL as URL in enumerator {
+            let resourceValues = try fileURL.resourceValues(forKeys: [.fileSizeKey])
+            if let fileSize = resourceValues.fileSize {
+                size += UInt64(fileSize)
+            }
+        }
+        return size
     }
 }
