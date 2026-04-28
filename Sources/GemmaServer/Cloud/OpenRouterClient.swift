@@ -1,6 +1,6 @@
 import Foundation
 
-/// OpenRouter API client for cloud model inference
+/// OpenRouter API client for cloud model inference (Refactored to use CloudAPIClient)
 public actor OpenRouterClient: Sendable {
     
     // MARK: - Configuration
@@ -150,10 +150,7 @@ public actor OpenRouterClient: Sendable {
     
     // MARK: - Properties
     
-    private let config: Config
-    private let session: URLSession
-    private var requestCount: Int = 0
-    private var errorCount: Int = 0
+    private let apiClient: CloudAPIClient
     
     // MARK: - Initialization
     
@@ -164,159 +161,48 @@ public actor OpenRouterClient: Sendable {
             )
         }
         
-        self.config = config
+        let apiConfig = CloudAPIConfig(
+            apiKey: config.apiKey,
+            baseURL: config.baseURL,
+            timeout: config.timeout,
+            maxRetries: config.maxRetries,
+            extraHeaders: [
+                "HTTP-Referer": "GemmaServer/0.2.0",
+                "X-Title": "GemmaServer"
+            ]
+        )
         
-        let configuration = URLSessionConfiguration.default
-        configuration.timeoutIntervalForRequest = config.timeout
-        configuration.timeoutIntervalForResource = config.timeout * 2
-        self.session = URLSession(configuration: configuration)
+        self.apiClient = CloudAPIClient(config: apiConfig)
     }
     
     // MARK: - API Methods
     
     /// Generate completion from cloud model
     public func chat(request: ChatRequest) async throws -> ChatResponse {
-        let url = config.baseURL.appendingPathComponent("chat/completions")
-        
-        var httpRequest = URLRequest(url: url)
-        httpRequest.httpMethod = "POST"
-        httpRequest.setValue("Bearer \(config.apiKey)", forHTTPHeaderField: "Authorization")
-        httpRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        httpRequest.setValue("GemmaServer/0.2.0", forHTTPHeaderField: "HTTP-Referer")
-        httpRequest.setValue("GemmaServer", forHTTPHeaderField: "X-Title")
-        
         let encoder = JSONEncoder()
-        httpRequest.httpBody = try encoder.encode(request)
+        let body = try encoder.encode(request)
         
-        // Retry logic with exponential backoff
-        var lastError: Error?
-        for attempt in 0..<config.maxRetries {
-            do {
-                let (data, response) = try await session.data(for: httpRequest)
-                
-                guard let httpResponse = response as? HTTPURLResponse else {
-                    throw GemmaServerError.invalidRequestStructure(details: "Invalid response type")
-                }
-                
-                // Handle HTTP errors
-                guard (200...299).contains(httpResponse.statusCode) else {
-                    let errorBody = String(data: data, encoding: .utf8) ?? "Unknown error"
-                    
-                    switch httpResponse.statusCode {
-                    case 401:
-                        throw GemmaServerError.authenticationFailed(
-                            details: "Invalid OpenRouter API key"
-                        )
-                    case 429:
-                        let retryAfter = httpResponse.value(forHTTPHeaderField: "Retry-After")
-                        throw GemmaServerError.rateLimitExceeded(
-                            retryAfter: retryAfter
-                        )
-                    case 500...599:
-                        // Retry on server errors
-                        if attempt < config.maxRetries - 1 {
-                            let delay = pow(2.0, Double(attempt)) // Exponential backoff
-                            try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
-                            continue
-                        }
-                        throw GemmaServerError.modelInferenceError(
-                            details: "OpenRouter API error: \(errorBody)"
-                        )
-                    default:
-                        throw GemmaServerError.invalidRequestStructure(
-                            details: "HTTP \(httpResponse.statusCode): \(errorBody)"
-                        )
-                    }
-                }
-                
-                // Parse response
-                let decoder = JSONDecoder()
-                let chatResponse = try decoder.decode(ChatResponse.self, from: data)
-                
-                recordSuccess()
-                return chatResponse
-                
-            } catch let error as GemmaServerError {
-                // Do not retry these errors
-                if case .modelInferenceError = error {
-                    // Handled above in 500-599
-                } else {
-                    recordError()
-                    throw error
-                }
-                lastError = error
-            } catch {
-                lastError = error
-                if attempt < config.maxRetries - 1 {
-                    let delay = pow(2.0, Double(attempt))
-                    try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
-                }
-            }
-        }
-        
-        recordError()
-        throw lastError ?? GemmaServerError.modelInferenceError(
-            details: "OpenRouter API request failed after \(config.maxRetries) attempts"
+        return try await apiClient.performRequest(
+            endpoint: "chat/completions",
+            method: "POST",
+            body: body,
+            responseType: ChatResponse.self
         )
     }
     
+    /// Fetch available models from OpenRouter
     public func getModels() async throws -> [OpenRouterModel] {
-        let url = config.baseURL.appendingPathComponent("models")
-        var httpRequest = URLRequest(url: url)
-        httpRequest.httpMethod = "GET"
-        // Optional attribution headers, no API key strictly needed for getting models but good practice
-        httpRequest.setValue("Bearer \(config.apiKey)", forHTTPHeaderField: "Authorization")
-        httpRequest.setValue("GemmaServer/0.2.0", forHTTPHeaderField: "HTTP-Referer")
-        httpRequest.setValue("GemmaServer", forHTTPHeaderField: "X-Title")
-        
-        var lastError: Error?
-        for attempt in 0..<config.maxRetries {
-            do {
-                let (data, response) = try await session.data(for: httpRequest)
-                
-                guard let httpResponse = response as? HTTPURLResponse else {
-                    throw GemmaServerError.invalidRequestStructure(details: "Invalid response type")
-                }
-                
-                guard (200...299).contains(httpResponse.statusCode) else {
-                    let errorBody = String(data: data, encoding: .utf8) ?? "Unknown error"
-                    if attempt < config.maxRetries - 1 {
-                        let delay = pow(2.0, Double(attempt))
-                        try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
-                        continue
-                    }
-                    throw GemmaServerError.modelInferenceError(details: "Failed to fetch models: HTTP \(httpResponse.statusCode) - \(errorBody)")
-                }
-                
-                let decoder = JSONDecoder()
-                let modelsResponse = try decoder.decode(ModelsResponse.self, from: data)
-                return modelsResponse.data
-                
-            } catch let error as GemmaServerError {
-                lastError = error
-            } catch {
-                lastError = error
-                if attempt < config.maxRetries - 1 {
-                    let delay = pow(2.0, Double(attempt))
-                    try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
-                }
-            }
-        }
-        
-        throw lastError ?? GemmaServerError.modelInferenceError(details: "Failed to fetch models after retries")
+        let response = try await apiClient.performRequest(
+            endpoint: "models",
+            method: "GET",
+            responseType: ModelsResponse.self
+        )
+        return response.data
     }
     
     // MARK: - Metrics
     
-    private func recordSuccess() {
-        requestCount += 1
-    }
-    
-    private func recordError() {
-        errorCount += 1
-    }
-    
-    public func getMetrics() -> (requests: Int, errors: Int) {
-        return (requestCount, errorCount)
+    public func getMetrics() async -> (requests: Int, errors: Int) {
+        return await apiClient.getMetrics()
     }
 }

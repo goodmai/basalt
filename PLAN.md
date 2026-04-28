@@ -95,7 +95,7 @@
   - [ ] Fetch available models dynamically (`GET /api/v1/models`)
   - [x] Model router with auto-fallback (local → cloud)
   - [ ] Advanced OpenRouter fallbacks (using `models` array) and provider preferences
-  - Cost tracking and budget limits
+  - [x] Cost tracking and budget limits
   - Streaming support for cloud models
   - CLI configuration and testing
   - Documentation and examples

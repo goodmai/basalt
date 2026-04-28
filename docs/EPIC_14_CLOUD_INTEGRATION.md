@@ -156,17 +156,18 @@ actor ModelRouter {
 
 ### 14.3 Cost Tracking & Budget Limits
 **Effort:** 3 days | **Priority:** MEDIUM
+**Status:** Completed
 
 **Deliverables:**
 - `CostTracker` actor for usage monitoring
 - Daily/monthly budget enforcement
 - Cost warnings at 80% consumption
 - Per-model cost breakdown
-- Export to CSV/JSON
+- Export to JSON
 
 **Files:**
 - `Sources/GemmaServer/Cloud/CostTracker.swift`
-- `~/.gemmaserver/cloud/usage.json`
+- `Tests/GemmaServerTests/CloudTests/CostTrackerTests.swift`
 
 **Budget Protection:**
 ```swift
