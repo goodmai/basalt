@@ -119,6 +119,34 @@ public actor ModelRouter: Sendable {
         }
     }
     
+    /// Route stream request to appropriate model (local or cloud)
+    public func routeStream(request: GenerationRequest, preferredModel: String?) async throws -> AsyncStream<StreamChunk> {
+        let modelId = preferredModel ?? "auto"
+        
+        let decision = try await makeRoutingDecision(
+            modelId: modelId
+        )
+        
+        switch decision {
+        case .local(let path):
+            // Fallback for local models
+            _ = path // local models have their own orchestrator stream logic, but we route it
+            return try await localOrchestrator.generateStream(request: request)
+            
+        case .cloud(_, let cloudModels):
+            guard let client = cloudClient else {
+                throw GemmaServerError.invalidRequestStructure(
+                    details: "Cloud models not configured. Set OPENROUTER_API_KEY"
+                )
+            }
+            return try await routeToCloudStream(
+                client: client,
+                models: cloudModels,
+                request: request
+            )
+        }
+    }
+    
     // For tests and routing
     public func registerLocalModel(id: String, estimatedRAM: Int64) {
         modelRegistry[id] = ModelInfo(
@@ -281,6 +309,76 @@ public actor ModelRouter: Sendable {
             memory: .init(peakBytes: 0, activeBytes: 0, cacheBytes: 0),
             finishReason: choice.finishReason == "length" ? .length : .stop
         )
+    }
+    
+    private func routeToCloudStream(
+        client: OpenRouterClient,
+        models: [String],
+        request: GenerationRequest
+    ) async throws -> AsyncStream<StreamChunk> {
+        
+        let chatRequest: OpenRouterClient.ChatRequest
+        
+        if models.count == 1 {
+            chatRequest = OpenRouterClient.ChatRequest(
+                model: models[0],
+                messages: [
+                    .init(role: "user", content: request.prompt)
+                ],
+                temperature: request.temperature,
+                maxTokens: request.maxTokens,
+                stream: true
+            )
+        } else {
+            chatRequest = OpenRouterClient.ChatRequest(
+                models: models,
+                messages: [
+                    .init(role: "user", content: request.prompt)
+                ],
+                temperature: request.temperature,
+                maxTokens: request.maxTokens,
+                stream: true,
+                provider: .init(allowFallbacks: true)
+            )
+        }
+        
+        let startTime = ContinuousClock.now
+        let sourceStream = try await client.chatStream(request: chatRequest)
+        
+        return AsyncStream { continuation in
+            Task {
+                do {
+                    for try await response in sourceStream {
+                        guard let choice = response.choices.first else { continue }
+                        
+                        if let text = choice.delta.content {
+                            continuation.yield(.text(text))
+                        }
+                        
+                        if let reason = choice.finishReason, reason != "null" {
+                            let duration = startTime.duration(to: ContinuousClock.now).components.seconds
+                            let durationSeconds = Double(duration) > 0 ? Double(duration) : 0.001
+                            
+                            let metadata = GenerationResponse(
+                                generatedText: "", // Final metadata chunk doesn't carry text
+                                promptTokens: response.usage?.promptTokens ?? 0,
+                                completionTokens: response.usage?.completionTokens ?? 0,
+                                tokensPerSecond: Double(response.usage?.completionTokens ?? 0) / durationSeconds,
+                                generationTime: durationSeconds,
+                                timeToFirstToken: 0.0,
+                                memory: .init(peakBytes: 0, activeBytes: 0, cacheBytes: 0),
+                                finishReason: reason == "length" ? .length : .stop
+                            )
+                            continuation.yield(.metadata(metadata))
+                            break
+                        }
+                    }
+                    continuation.finish()
+                } catch {
+                    continuation.finish()
+                }
+            }
+        }
     }
     
     private func isCloudOnlyModel(_ modelId: String) -> Bool {

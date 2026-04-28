@@ -119,6 +119,67 @@ public actor CloudAPIClient: Sendable {
         )
     }
 
+    /// Performs an HTTP request for Server-Sent Events (SSE) and yields decoded objects
+    public func performStreamingRequest<T: Decodable & Sendable>(
+        endpoint: String,
+        method: String = "POST",
+        body: Data? = nil,
+        responseType: T.Type
+    ) async throws -> AsyncThrowingStream<T, Error> {
+        let url = config.baseURL.appendingPathComponent(endpoint)
+        var request = URLRequest(url: url)
+        request.httpMethod = method
+        request.setValue("Bearer \(config.apiKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+        
+        for (key, value) in config.extraHeaders {
+            request.setValue(value, forHTTPHeaderField: key)
+        }
+        
+        if let body = body {
+            request.httpBody = body
+        }
+        
+        let (result, response) = try await session.bytes(for: request)
+        
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw GemmaServerError.invalidRequestStructure(details: "Invalid response type")
+        }
+        
+        guard (200...299).contains(httpResponse.statusCode) else {
+            // If it's not 200 OK, the body might contain the JSON error.
+            // For streams, we won't retry on the fly, just throw the error.
+            self.errorCount += 1
+            throw GemmaServerError.modelInferenceError(details: "Streaming API error (HTTP \(httpResponse.statusCode))")
+        }
+        
+        self.requestCount += 1
+        
+        return AsyncThrowingStream { continuation in
+            Task {
+                do {
+                    let decoder = JSONDecoder()
+                    for try await line in result.lines {
+                        guard line.hasPrefix("data: ") else { continue }
+                        let dataString = line.dropFirst("data: ".count).trimmingCharacters(in: .whitespaces)
+                        if dataString == "[DONE]" {
+                            continuation.finish()
+                            return
+                        }
+                        
+                        guard let data = dataString.data(using: .utf8) else { continue }
+                        let decoded = try decoder.decode(T.self, from: data)
+                        continuation.yield(decoded)
+                    }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+        }
+    }
+
     public func getMetrics() -> (requests: Int, errors: Int) {
         return (requestCount, errorCount)
     }

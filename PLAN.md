@@ -96,7 +96,7 @@
   - [x] Model router with auto-fallback (local → cloud)
   - [ ] Advanced OpenRouter fallbacks (using `models` array) and provider preferences
   - [x] Cost tracking and budget limits
-  - Streaming support for cloud models
+  - [x] Streaming support for cloud models
   - CLI configuration and testing
   - Documentation and examples
 - Epic 9: MCP Plugin Marketplace (3 features)

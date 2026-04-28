@@ -202,10 +202,11 @@ actor CostTracker {
 
 ### 14.4 Streaming Support for Cloud Models
 **Effort:** 1 week | **Priority:** MEDIUM
+**Status:** Completed
 
 **Deliverables:**
-- SSE streaming from OpenRouter
-- Unified `AsyncStream<StreamChunk>` interface
+- SSE streaming from OpenRouter via `performStreamingRequest`
+- Unified `AsyncStream<StreamChunk>` interface in `ModelRouter`
 - Error handling mid-stream
 - Cancel support (abort generation)
 
