@@ -628,6 +628,11 @@ enum FitLevel {
 
 ## 📚 References
 
+### Cloud Documentation
+- [OpenRouter Setup](cloud/OPENROUTER_SETUP.md)
+- [Cost Optimization](cloud/COST_OPTIMIZATION.md)
+- [Model Comparison](cloud/MODEL_COMPARISON.md)
+
 ### OpenCLI Learnings
 - **FitCommand pattern**: [.opencli/Sources/opencli/CLI/FitCommand.swift]
 - **Hardware profiling**: [.opencli/Sources/OpenCLIKernel/Hardware/Profiler.swift]
