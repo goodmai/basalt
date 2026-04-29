@@ -109,6 +109,27 @@ public struct RainbowChatView: View {
     }
 }
 
+public class RainbowMTKView: MTKView {
+    var state: RainbowUIState?
+    
+    public override func scrollWheel(with event: NSEvent) {
+        guard let state = state else { return }
+        Task { @MainActor in
+            // Basic scroll handling
+            state.scrollOffset -= event.scrollingDeltaY
+            if state.scrollOffset < 0 {
+                state.scrollOffset = 0
+            }
+        }
+    }
+    
+    // Accessibility boilerplate can be added here
+    public override func accessibilityChildren() -> [Any]? {
+        // Will be populated with accessibility markers from state/renderer
+        return nil
+    }
+}
+
 public struct MetalViewRepresentable: NSViewRepresentable {
     @ObservedObject var state: RainbowUIState
     
@@ -116,8 +137,9 @@ public struct MetalViewRepresentable: NSViewRepresentable {
         self.state = state
     }
     
-    public func makeNSView(context: Context) -> MTKView {
-        let mtkView = MTKView()
+    public func makeNSView(context: Context) -> RainbowMTKView {
+        let mtkView = RainbowMTKView()
+        mtkView.state = state
         
         if let defaultDevice = MTLCreateSystemDefaultDevice() {
             mtkView.device = defaultDevice
@@ -131,8 +153,9 @@ public struct MetalViewRepresentable: NSViewRepresentable {
         return mtkView
     }
     
-    public func updateNSView(_ nsView: MTKView, context: Context) {
+    public func updateNSView(_ nsView: RainbowMTKView, context: Context) {
         context.coordinator.uiState = state
+        nsView.state = state
     }
     
     public func makeCoordinator() -> RainbowRenderer {

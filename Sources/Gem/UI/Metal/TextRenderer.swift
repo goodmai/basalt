@@ -25,14 +25,13 @@ public class TextRenderer {
     ]
     private var vertexBuffer: MTLBuffer!
     
-    public init(device: MTLDevice, commandQueue: MTLCommandQueue) {
+    public init(device: MTLDevice, commandQueue: MTLCommandQueue, library: MTLLibrary) {
         self.device = device
         self.commandQueue = commandQueue
-        setupMetal()
+        setupMetal(library: library)
     }
     
-    private func setupMetal() {
-        guard let library = try? device.makeDefaultLibrary(bundle: Bundle.module) else { return }
+    private func setupMetal(library: MTLLibrary) {
         
         let vertexFunction = library.makeFunction(name: "vertex_text")
         let fragmentFunction = library.makeFunction(name: "fragment_text")
@@ -69,7 +68,7 @@ public class TextRenderer {
         samplerState = device.makeSamplerState(descriptor: samplerDescriptor)
     }
     
-    public func createTexture(from text: String, font: NSFont, color: NSColor) -> (MTLTexture?, CGSize) {
+    public func createTexture(from text: String, font: NSFont, color: NSColor, backgroundColor: NSColor = .clear) -> (MTLTexture?, CGSize) {
         let attributes: [NSAttributedString.Key: Any] = [
             .font: font,
             .foregroundColor: color
@@ -88,8 +87,12 @@ public class TextRenderer {
             return (nil, size)
         }
         
-        // Clear background
+        // Fill background
         context.clear(CGRect(x: 0, y: 0, width: width, height: height))
+        if backgroundColor != .clear {
+            context.setFillColor(backgroundColor.cgColor)
+            context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        }
         
         // Draw text
         context.textMatrix = .identity

@@ -45,15 +45,15 @@ public class RainbowRenderer: NSObject, MTKViewDelegate {
         
         self.commandQueue = device.makeCommandQueue()
         
-        // Load default library
-        guard let library = try? device.makeDefaultLibrary(bundle: Bundle.module) else {
+        // Load Metal library — compile from bundled .metal source
+        guard let library = Self.loadMetalLibrary(device: device) else {
             print("Failed to load metal library")
             return
         }
         
         // Setup text renderer
         if let commandQueue = commandQueue {
-            self.textRenderer = TextRenderer(device: device, commandQueue: commandQueue)
+            self.textRenderer = TextRenderer(device: device, commandQueue: commandQueue, library: library)
         }
         
         let vertexFunction = library.makeFunction(name: "vertex_main")
@@ -88,12 +88,12 @@ public class RainbowRenderer: NSObject, MTKViewDelegate {
     
     // MARK: - Texture caching
     
-    private func getOrCreateTexture(key: String, text: String, font: NSFont, color: NSColor) -> (MTLTexture, CGSize)? {
+    private func getOrCreateTexture(key: String, text: String, font: NSFont, color: NSColor, backgroundColor: NSColor = .clear) -> (MTLTexture, CGSize)? {
         if let cached = cachedTextures[key] {
             return cached
         }
         guard let textRenderer = textRenderer else { return nil }
-        let (tex, size) = textRenderer.createTexture(from: text, font: font, color: color)
+        let (tex, size) = textRenderer.createTexture(from: text, font: font, color: color, backgroundColor: backgroundColor)
         guard let texture = tex else { return nil }
         
         // Evict old entries if cache is too big
@@ -185,7 +185,7 @@ public class RainbowRenderer: NSObject, MTKViewDelegate {
         }
         
         // 3. Draw Chat Messages
-        var yOffset = headerHeight + padding
+        var yOffset = headerHeight + padding - CGFloat(uiState.scrollOffset)
         let maxWidth = resolution.width - 2 * padding
         
         for (_, message) in uiState.messages.enumerated() {
@@ -208,15 +208,51 @@ public class RainbowRenderer: NSObject, MTKViewDelegate {
                 font = smallFont
             }
             
-            // Word-wrap the text into lines
+            // Split by newlines and handle code blocks/diffs
             let fullText = prefix + message.text
-            let lines = wordWrap(fullText, font: font, maxWidth: maxWidth)
+            let rawLines = fullText.components(separatedBy: .newlines)
+            var linesToRender: [(text: String, font: NSFont, color: NSColor, bg: NSColor)] = []
             
-            for (lineIndex, line) in lines.enumerated() {
-                let cacheKey = "msg_\(message.id)_\(lineIndex)_\(line.hashValue)"
-                if let (tex, size) = getOrCreateTexture(key: cacheKey, text: line, font: font, color: color) {
+            var inCodeBlock = false
+            for rawLine in rawLines {
+                if rawLine.hasPrefix("```") {
+                    inCodeBlock.toggle()
+                    linesToRender.append((text: rawLine, font: smallFont, color: NSColor(white: 0.7, alpha: 1.0), bg: NSColor(white: 0.15, alpha: 1.0)))
+                    continue
+                }
+                
+                let lineFont = inCodeBlock ? smallFont : font
+                let bg: NSColor
+                let fg: NSColor
+                
+                if inCodeBlock {
+                    bg = NSColor(white: 0.15, alpha: 1.0)
+                    fg = NSColor(calibratedRed: 0.8, green: 0.9, blue: 0.8, alpha: 1.0)
+                } else if message.role == .assistant && rawLine.hasPrefix("+") { // diff added
+                    bg = NSColor(calibratedRed: 0.1, green: 0.4, blue: 0.1, alpha: 0.5)
+                    fg = NSColor.white
+                } else if message.role == .assistant && rawLine.hasPrefix("-") { // diff removed
+                    bg = NSColor(calibratedRed: 0.4, green: 0.1, blue: 0.1, alpha: 0.5)
+                    fg = NSColor.white
+                } else {
+                    bg = .clear
+                    fg = color
+                }
+                
+                let wrapped = wordWrap(rawLine, font: lineFont, maxWidth: maxWidth)
+                for w in wrapped {
+                    linesToRender.append((text: w, font: lineFont, color: fg, bg: bg))
+                }
+            }
+            
+            for (lineIndex, lineData) in linesToRender.enumerated() {
+                let cacheKey = "msg_\(message.id)_\(lineIndex)_\(lineData.text.hashValue)_\(lineData.bg.hash)"
+                if let (tex, size) = getOrCreateTexture(key: cacheKey, text: lineData.text, font: lineData.font, color: lineData.color, backgroundColor: lineData.bg) {
                     let pos = CGPoint(x: padding, y: yOffset)
-                    textRenderer.draw(texture: tex, size: size, position: pos, resolution: resolution, encoder: renderEncoder)
+                    // Only draw if within visible area (below header)
+                    if yOffset + size.height > headerHeight {
+                        textRenderer.draw(texture: tex, size: size, position: pos, resolution: resolution, encoder: renderEncoder)
+                    }
                     yOffset += size.height + 2 * scale
                 }
             }
@@ -301,5 +337,56 @@ public class RainbowRenderer: NSObject, MTKViewDelegate {
         }
         
         return lines.isEmpty ? [text] : lines
+    }
+    
+    // MARK: - Metal Library Loading
+    
+    private static func loadMetalLibrary(device: MTLDevice) -> MTLLibrary? {
+        // Strategy 1: Try loading from Bundle.module (compiled metallib)
+        if let lib = try? device.makeDefaultLibrary(bundle: Bundle.module) {
+            return lib
+        }
+        
+        // Strategy 2: Try the default library (if shaders are in default.metallib)
+        if let lib = device.makeDefaultLibrary() {
+            // Verify our functions exist
+            if lib.makeFunction(name: "vertex_main") != nil {
+                return lib
+            }
+        }
+        
+        // Strategy 3: Compile from .metal source bundled as resource
+        if let metalURL = Bundle.module.url(forResource: "RainbowShaders", withExtension: "metal") {
+            do {
+                let source = try String(contentsOf: metalURL, encoding: .utf8)
+                let lib = try device.makeLibrary(source: source, options: nil)
+                return lib
+            } catch {
+                print("Failed to compile Metal shader from source: \(error)")
+            }
+        }
+        
+        // Strategy 4: Look for .metal file relative to executable
+        let execDir = Bundle.main.bundlePath
+        let possiblePaths = [
+            "\(execDir)/../Sources/Gem/UI/Metal/RainbowShaders.metal",
+            "\(execDir)/../../Sources/Gem/UI/Metal/RainbowShaders.metal",
+            "Sources/Gem/UI/Metal/RainbowShaders.metal"
+        ]
+        
+        for path in possiblePaths {
+            if FileManager.default.fileExists(atPath: path) {
+                do {
+                    let source = try String(contentsOfFile: path, encoding: .utf8)
+                    let lib = try device.makeLibrary(source: source, options: nil)
+                    return lib
+                } catch {
+                    print("Failed to compile Metal shader from \(path): \(error)")
+                }
+            }
+        }
+        
+        print("Could not find Metal shaders in any known location")
+        return nil
     }
 }
