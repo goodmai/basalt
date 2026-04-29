@@ -1,4 +1,4 @@
-# GemmaServer Product Roadmap & Architecture Plan
+# Gem Product Roadmap & Architecture Plan
 
 **Product Vision:** Production-grade local LLM inference server for Apple Silicon, optimized for developer workflows and agent-to-agent communication.
 
@@ -277,7 +277,7 @@
 - [x] `ContextDegradationProfiler` actor with configurable context sizes
 - [x] Automated benchmark: 1k, 4k, 16k, 32k, 64k, 128k tokens
 - [x] Export results to JSON: `{contextSize, tps, ttft, memoryMB}`
-- [x] CLI command: `GemmaServer profile-context --model <id> --output results.json`
+- [x] CLI command: `Gem profile-context --model <id> --output results.json`
 
 **Technical Design:**
 ```swift
@@ -401,13 +401,13 @@ func calculateMaxTokens(availableRAM: Int64, modelSizeMB: Int) -> Int {
   - 16-32GB: Qwen 2.5 7B (~5.8 GB)
   - 32-64GB: Qwen 2.5 14B (~9.5 GB)
   - 64GB+: Qwen 2.5 32B (~19 GB)
-* ✅ State persistence to ~/.gemmaserver/onboarding.json
+* ✅ State persistence to ~/.gem/onboarding.json
 
 **CLI Commands:**
 ```bash
-GemmaServer onboard                # Full interactive setup
-GemmaServer onboard --profile-only # System info only
-GemmaServer onboard --reset        # Re-run setup
+Gem onboard                # Full interactive setup
+Gem onboard --profile-only # System info only
+Gem onboard --reset        # Re-run setup
         let availableRAM: Int64      // bytes
         let cpuCores: Int
         let gpuName: String
@@ -461,7 +461,7 @@ GemmaServer onboard --reset        # Re-run setup
 ```swift
 actor OnboardingFlow {
     func run() async throws {
-        print("🚀 Welcome to GemmaServer!")
+        print("🚀 Welcome to Gem!")
         print("\nDetecting system resources...")
         
         let profiler = SystemProfiler()
@@ -758,10 +758,10 @@ actor BenchmarkScheduler {
 - **Use case:** API reference, tutorials, articles
 ```bash
 # Generate DocC archive
-swift package generate-documentation --target GemmaServer
+swift package generate-documentation --target Gem
 
 # Preview locally
-swift package --disable-sandbox preview-documentation --target GemmaServer
+swift package --disable-sandbox preview-documentation --target Gem
 ```
 
 **Option 2: Publish by John Sundell**
@@ -802,7 +802,7 @@ swift package --disable-sandbox preview-documentation --target GemmaServer
 **Acceptance Criteria:**
 - [ ] GitHub Actions workflow for doc generation
 - [ ] Deploy to GitHub Pages on main branch push
-- [ ] Custom domain setup (docs.gemmaserver.dev)
+- [ ] Custom domain setup (docs.gem.dev)
 - [ ] HTTPS enabled
 - [ ] Search functionality
 - [ ] Version selector (v0.1.0, v0.2.0, latest)
@@ -821,7 +821,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Generate Documentation
-        run: swift package generate-documentation --target GemmaServer
+        run: swift package generate-documentation --target Gem
       - name: Deploy to GitHub Pages
         uses: peaceiris/actions-gh-pages@v3
 ```
@@ -855,7 +855,7 @@ jobs:
 ```bash
 #!/bin/bash
 # scripts/check-doc-coverage.sh
-PUBLIC_SYMBOLS=$(swift-symbolgraph-extract -module-name GemmaServer)
+PUBLIC_SYMBOLS=$(swift-symbolgraph-extract -module-name Gem)
 DOCUMENTED=$(grep -r "///" Sources/ | wc -l)
 COVERAGE=$((DOCUMENTED * 100 / PUBLIC_SYMBOLS))
 echo "Documentation Coverage: ${COVERAGE}%"
@@ -932,7 +932,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Download test models
         run: |
-          swift run GemmaServer models download mlx-community/Qwen3.5-4B-4bit
+          swift run Gem models download mlx-community/Qwen3.5-4B-4bit
       - name: Run tests
         run: swift test
       - name: Benchmark
@@ -979,8 +979,8 @@ jobs:
 # Formula/gemma.rb
 class Gemma < Formula
   desc "Local LLM inference server for Apple Silicon"
-  homepage "https://github.com/your-org/GemmaServer"
-  url "https://github.com/your-org/GemmaServer/archive/v0.2.0.tar.gz"
+  homepage "https://github.com/your-org/Gem"
+  url "https://github.com/your-org/Gem/archive/v0.2.0.tar.gz"
   sha256 "..."
   
   depends_on :macos
@@ -988,7 +988,7 @@ class Gemma < Formula
   
   def install
     system "swift", "build", "-c", "release"
-    bin.install ".build/release/GemmaServer" => "gemma"
+    bin.install ".build/release/Gem" => "gemma"
   end
   
   test do
@@ -1091,7 +1091,7 @@ func interactiveModelPicker() async throws -> String {
 
 ## Epic 8: Security & Dependency Audit 🔒 ✅ (COMPLETED)
 
-**Business Value:** Ensure GemmaServer is secure, compliant, and free from known vulnerabilities. Protect user data and prevent supply chain attacks.
+**Business Value:** Ensure Gem is secure, compliant, and free from known vulnerabilities. Protect user data and prevent supply chain attacks.
 
 **Completion Date:** April 28, 2025  
 **Security Score:** 10/10 🏆  
@@ -1170,7 +1170,7 @@ apple/swift-argument-parser (1.7.1) ✅
 **Business Value:** Identify and fix common security weaknesses before they become exploits.
 
 **User Stories:**
-- As a security researcher, I want to verify GemmaServer follows secure coding practices ✅
+- As a security researcher, I want to verify Gem follows secure coding practices ✅
 - As a user, I need confidence that my API keys and data are protected ✅
 - As a pentester, I want to see evidence of security testing ✅
 
@@ -1442,11 +1442,11 @@ User Input (prompt) → ModelOrchestrator → MLX Inference → Response
 
 ## Epic 9: MCP Plugin Marketplace & Agent Integration 🔌
 
-**Business Value:** Enable GemmaServer to discover and integrate with MCP servers, creating an ecosystem of AI agents that can collaborate through standardized protocols.
+**Business Value:** Enable Gem to discover and integrate with MCP servers, creating an ecosystem of AI agents that can collaborate through standardized protocols.
 
 **User Stories:**
 - As a developer, I want to browse and install MCP servers from a marketplace
-- As an agent builder, I want GemmaServer to auto-discover agent capabilities from `.md` files
+- As an agent builder, I want Gem to auto-discover agent capabilities from `.md` files
 - As a team, we need agents to communicate through standardized MCP protocol
 - As a user, I want to connect Claude Desktop, Gemini agents, and custom skills seamlessly
 
@@ -1458,7 +1458,7 @@ User Input (prompt) → ModelOrchestrator → MLX Inference → Response
 **Business Value:** Centralized registry of MCP servers enables discoverability and reduces integration friction.
 
 **Acceptance Criteria:**
-- [ ] Local registry: `~/.gemmaserver/mcp-registry.json`
+- [ ] Local registry: `~/.gem/mcp-registry.json`
 - [ ] CLI command: `gemma mcp list` — show installed servers
 - [ ] CLI command: `gemma mcp search <query>` — search public registry
 - [ ] CLI command: `gemma mcp install <name>` — install from registry
@@ -1498,7 +1498,7 @@ actor MCPRegistry {
 **Test Plan:**
 1. Unit test: Register, search, uninstall operations
 2. Integration test: Install real MCP server (e.g., filesystem, brave-search)
-3. E2E test: GemmaServer connects to installed MCP server
+3. E2E test: Gem connects to installed MCP server
 
 **Workflow:**
 1. TDD: Write test for `MCPRegistry` actor
@@ -1517,7 +1517,7 @@ actor MCPRegistry {
 **Business Value:** Automatically extract agent capabilities from documentation files, enabling dynamic tool routing and agent collaboration.
 
 **User Stories:**
-- As a developer, I want GemmaServer to read `agents.md` and understand available tools
+- As a developer, I want Gem to read `agents.md` and understand available tools
 - As an agent, I need to discover what other agents can do without manual configuration
 - As a user, I want seamless integration between Claude Desktop, Gemini, and custom agents
 
@@ -1615,10 +1615,10 @@ actor AgentCapabilityAnalyzer {
 
 ## Epic 10: Apple App Store Distribution 🍎
 
-**Business Value:** Reach mainstream users through official Apple distribution, establish GemmaServer as a trusted local AI platform.
+**Business Value:** Reach mainstream users through official Apple distribution, establish Gem as a trusted local AI platform.
 
 **User Stories:**
-- As a non-technical user, I want to install GemmaServer from the Mac App Store
+- As a non-technical user, I want to install Gem from the Mac App Store
 - As a developer, I want automatic updates through App Store
 - As Apple, we need apps to follow sandboxing and entitlements guidelines
 
@@ -1665,7 +1665,7 @@ actor AgentCapabilityAnalyzer {
 
 **Technical Design:**
 ```xml
-<!-- GemmaServer.entitlements -->
+<!-- Gem.entitlements -->
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -1719,24 +1719,24 @@ actor AgentCapabilityAnalyzer {
 codesign --deep --force --verify --verbose \
   --sign "Developer ID Application: Your Name (TEAM_ID)" \
   --options runtime \
-  --entitlements GemmaServer.entitlements \
-  GemmaServer.app
+  --entitlements Gem.entitlements \
+  Gem.app
 
 # Create ZIP for notarization
-ditto -c -k --keepParent GemmaServer.app GemmaServer.zip
+ditto -c -k --keepParent Gem.app Gem.zip
 
 # Submit for notarization
-xcrun notarytool submit GemmaServer.zip \
+xcrun notarytool submit Gem.zip \
   --apple-id "your@email.com" \
   --team-id "TEAM_ID" \
   --password "app-specific-password" \
   --wait
 
 # Staple ticket
-xcrun stapler staple GemmaServer.app
+xcrun stapler staple Gem.app
 
 # Verify
-spctl --assess --verbose=4 --type execute GemmaServer.app
+spctl --assess --verbose=4 --type execute Gem.app
 ```
 
 **Workflow:**
@@ -2170,7 +2170,7 @@ actor ConsensusEngine {
 
 ## Epic 12: Telegram Bot Integration 📱
 
-**Business Value:** Remote control of GemmaServer via Telegram enables mobile access and team collaboration.
+**Business Value:** Remote control of Gem via Telegram enables mobile access and team collaboration.
 
 **User Stories:**
 - As a user, I want to start inference from my phone
@@ -2246,7 +2246,7 @@ actor TelegramBotServer {
         await bot.sendMessage(
             chatId: update.message!.chat.id,
             text: """
-            🤖 GemmaServer Bot
+            🤖 Gem Bot
             
             Available commands:
             /status - Server status
@@ -2302,7 +2302,7 @@ actor TelegramBotServer {
 
 **Configuration:**
 ```swift
-// Config file: ~/.gemmaserver/telegram.json
+// Config file: ~/.gem/telegram.json
 struct TelegramConfig: Codable {
     let botToken: String
     let allowedUsers: [Int64]
@@ -2324,7 +2324,7 @@ struct TelegramConfig: Codable {
 **Priority:** MEDIUM  
 **Effort:** 5 days
 
-**Business Value:** Monitor and control GemmaServer from anywhere.
+**Business Value:** Monitor and control Gem from anywhere.
 
 **Acceptance Criteria:**
 - [ ] View server status (uptime, memory, active sessions)
@@ -2402,7 +2402,7 @@ bot.onInlineQuery { [weak self] query in
     
     let result = InlineQueryResultArticle(
         id: UUID().uuidString,
-        title: "Generate with GemmaServer",
+        title: "Generate with Gem",
         inputMessageContent: InputTextMessageContent(
             messageText: response?.generatedText ?? "Error generating response"
         )
@@ -2497,7 +2497,7 @@ swift test --enable-code-coverage
 
 # Extract coverage percentage
 xcrun llvm-cov report \
-  .build/debug/GemmaServerPackageTests.xctest/Contents/MacOS/GemmaServerPackageTests \
+  .build/debug/GemPackageTests.xctest/Contents/MacOS/GemPackageTests \
   -instr-profile .build/debug/codecov/default.profdata \
   -use-color
 
@@ -2779,7 +2779,7 @@ actor SessionAnalytics {
         return """
         ╭──────────────────────────────────────────────────────────────────────────────╮
         │                                                                              │
-        │  GemmaServer powering down. Goodbye! 👋                                      │
+        │  Gem powering down. Goodbye! 👋                                      │
         │                                                                              │
         │  Interaction Summary                                                         │
         │  Session ID:                 \(metrics.sessionId.uuidString.prefix(36))            │
@@ -2848,7 +2848,7 @@ class ServeCommand {
         
         // Save to file
         if let data = try? await analytics.exportToJSON() {
-            let url = URL(fileURLWithPath: "~/.gemmaserver/sessions/\(Date().ISO8601Format()).json")
+            let url = URL(fileURLWithPath: "~/.gem/sessions/\(Date().ISO8601Format()).json")
             try? data.write(to: url)
         }
         
@@ -2959,7 +2959,7 @@ actor UsageTracker {
         return StripeInvoice(
             customerId: userId,
             amount: Int(userUsage.estimatedCost * 100), // cents
-            description: "GemmaServer Usage - \(userUsage.totalRequests) requests, \(userUsage.totalInputTokens + userUsage.totalOutputTokens) tokens"
+            description: "Gem Usage - \(userUsage.totalRequests) requests, \(userUsage.totalInputTokens + userUsage.totalOutputTokens) tokens"
         )
     }
 }
@@ -2992,7 +2992,7 @@ actor UsageTracker {
 1. Design: Dashboard mockups
 2. Implement: REST API endpoints for analytics
 3. Frontend: SwiftUI or React dashboard
-4. Deploy: Serve dashboard from GemmaServer
+4. Deploy: Serve dashboard from Gem
 5. Commit: `feat: Add usage analytics dashboard`
 
 ---
@@ -3063,13 +3063,13 @@ actor UsageTracker {
 - [ ] Request/response DTOs compatible with OpenRouter spec
 - [ ] Retry logic with exponential backoff
 - [ ] Rate limiting and quota tracking
-- [ ] Error mapping (API errors → GemmaServerError)
+- [ ] Error mapping (API errors → GemError)
 - [ ] Request/response logging (with PII redaction)
 - [ ] Timeout configuration (default: 60s)
 
 **Technical Design:**
 ```swift
-// Sources/GemmaServer/Cloud/OpenRouterClient.swift
+// Sources/Gem/Cloud/OpenRouterClient.swift
 
 import Foundation
 #if canImport(FoundationNetworking)
@@ -3163,7 +3163,7 @@ actor OpenRouterClient: Sendable {
     
     init(config: Config = .default) throws {
         guard !config.apiKey.isEmpty else {
-            throw GemmaServerError.invalidRequestStructure(
+            throw GemError.invalidRequestStructure(
                 details: "OPENROUTER_API_KEY not set. Get your key at https://openrouter.ai/keys"
             )
         }
@@ -3186,8 +3186,8 @@ actor OpenRouterClient: Sendable {
         httpRequest.httpMethod = "POST"
         httpRequest.setValue("Bearer \(config.apiKey)", forHTTPHeaderField: "Authorization")
         httpRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        httpRequest.setValue("GemmaServer/0.2.0", forHTTPHeaderField: "HTTP-Referer")
-        httpRequest.setValue("GemmaServer", forHTTPHeaderField: "X-Title")
+        httpRequest.setValue("Gem/0.2.0", forHTTPHeaderField: "HTTP-Referer")
+        httpRequest.setValue("Gem", forHTTPHeaderField: "X-Title")
         
         let encoder = JSONEncoder()
         encoder.keyEncodingStrategy = .convertToSnakeCase
@@ -3200,7 +3200,7 @@ actor OpenRouterClient: Sendable {
                 let (data, response) = try await session.data(for: httpRequest)
                 
                 guard let httpResponse = response as? HTTPURLResponse else {
-                    throw GemmaServerError.invalidRequestStructure(details: "Invalid response type")
+                    throw GemError.invalidRequestStructure(details: "Invalid response type")
                 }
                 
                 // Handle HTTP errors
@@ -3209,11 +3209,11 @@ actor OpenRouterClient: Sendable {
                     
                     switch httpResponse.statusCode {
                     case 401:
-                        throw GemmaServerError.authenticationFailed(
+                        throw GemError.authenticationFailed(
                             details: "Invalid OpenRouter API key"
                         )
                     case 429:
-                        throw GemmaServerError.rateLimitExceeded(
+                        throw GemError.rateLimitExceeded(
                             retryAfter: httpResponse.value(forHTTPHeaderField: "Retry-After")
                         )
                     case 500...599:
@@ -3223,11 +3223,11 @@ actor OpenRouterClient: Sendable {
                             try await Task.sleep(for: .seconds(delay))
                             continue
                         }
-                        throw GemmaServerError.modelInferenceError(
+                        throw GemError.modelInferenceError(
                             details: "OpenRouter API error: \(errorBody)"
                         )
                     default:
-                        throw GemmaServerError.invalidRequestStructure(
+                        throw GemError.invalidRequestStructure(
                             details: "HTTP \(httpResponse.statusCode): \(errorBody)"
                         )
                     }
@@ -3241,7 +3241,7 @@ actor OpenRouterClient: Sendable {
                 await recordSuccess()
                 return chatResponse
                 
-            } catch let error as GemmaServerError {
+            } catch let error as GemError {
                 throw error
             } catch {
                 lastError = error
@@ -3253,7 +3253,7 @@ actor OpenRouterClient: Sendable {
         }
         
         await recordError()
-        throw lastError ?? GemmaServerError.modelInferenceError(
+        throw lastError ?? GemError.modelInferenceError(
             details: "OpenRouter API request failed after \(config.maxRetries) attempts"
         )
     }
@@ -3305,7 +3305,7 @@ actor OpenRouterClient: Sendable {
 
 **Technical Design:**
 ```swift
-// Sources/GemmaServer/Cloud/ModelRouter.swift
+// Sources/Gem/Cloud/ModelRouter.swift
 
 actor ModelRouter: Sendable {
     
@@ -3370,7 +3370,7 @@ actor ModelRouter: Sendable {
             
         case .cloud(let provider, let cloudModelId):
             guard let client = cloudClient else {
-                throw GemmaServerError.invalidRequestStructure(
+                throw GemError.invalidRequestStructure(
                     details: "Cloud models not configured. Set OPENROUTER_API_KEY"
                 )
             }
@@ -3425,7 +3425,7 @@ actor ModelRouter: Sendable {
             }
             
             // No cloud fallback available
-            throw GemmaServerError.insufficientMemory(
+            throw GemError.insufficientMemory(
                 required: requiredRAM,
                 available: Int(availableRAM / 1_024 / 1_024)
             )
@@ -3437,7 +3437,7 @@ actor ModelRouter: Sendable {
             return .cloud(provider: .openrouter, modelId: cloudModel)
         }
         
-        throw GemmaServerError.invalidRequestStructure(
+        throw GemError.invalidRequestStructure(
             details: "Model '\(modelId)' not found in local or cloud registry"
         )
     }
@@ -3452,7 +3452,7 @@ actor ModelRouter: Sendable {
         modelId: String,
         request: GenerationRequest
     ) async throws -> GenerationResponse {
-        // Convert GemmaServer request to OpenRouter format
+        // Convert Gem request to OpenRouter format
         let chatRequest = OpenRouterClient.ChatRequest(
             model: modelId,
             messages: [
@@ -3469,9 +3469,9 @@ actor ModelRouter: Sendable {
         
         let duration = startTime.duration(to: endTime).components.seconds
         
-        // Convert OpenRouter response back to GemmaServer format
+        // Convert OpenRouter response back to Gem format
         guard let choice = chatResponse.choices.first else {
-            throw GemmaServerError.modelInferenceError(
+            throw GemError.modelInferenceError(
                 details: "No response from cloud model"
             )
         }
@@ -3607,7 +3607,7 @@ actor CostTracker: Sendable {
         
         // Check budget before charging
         if dailyUsage.totalCost + cost > budget.dailyLimit {
-            throw GemmaServerError.budgetExceeded(
+            throw GemError.budgetExceeded(
                 limit: budget.dailyLimit,
                 current: dailyUsage.totalCost
             )
@@ -3674,29 +3674,29 @@ actor CostTracker: Sendable {
 **Business Value:** Easy configuration and testing of cloud integration.
 
 **Acceptance Criteria:**
-- [ ] `GemmaServer cloud configure` - setup API key
-- [ ] `GemmaServer cloud test` - verify connection
-- [ ] `GemmaServer cloud models` - list available models
-- [ ] `GemmaServer cloud cost` - show usage/cost
+- [ ] `Gem cloud configure` - setup API key
+- [ ] `Gem cloud test` - verify connection
+- [ ] `Gem cloud models` - list available models
+- [ ] `Gem cloud cost` - show usage/cost
 - [ ] Environment variable: `OPENROUTER_API_KEY`
-- [ ] Config file: `~/.gemmaserver/cloud.json`
+- [ ] Config file: `~/.gem/cloud.json`
 
 ```bash
 # Setup
 export OPENROUTER_API_KEY="sk-or-v1-..."
-GemmaServer cloud configure --budget-daily 10.00 --budget-monthly 100.00
+Gem cloud configure --budget-daily 10.00 --budget-monthly 100.00
 
 # Test connection
-GemmaServer cloud test
+Gem cloud test
 
 # List available models
-GemmaServer cloud models --filter frontier
+Gem cloud models --filter frontier
 
 # Generate with cloud model
-GemmaServer chat --model gpt-4 --prompt "Explain quantum computing"
+Gem chat --model gpt-4 --prompt "Explain quantum computing"
 
 # Check costs
-GemmaServer cloud cost --period today
+Gem cloud cost --period today
 ```
 
 ---
@@ -3736,3 +3736,52 @@ GemmaServer cloud cost --period today
 - Cost control: Hard limits enforced in code
 - Privacy: Local-first default, explicit opt-in for cloud
 - Reliability: Retry logic + fallback to local
+
+---
+
+## Epic 17: CI/CD Packaging & Swift Migration 📦
+
+**Business Value:** Provide seamless and reliable distribution for Apple Silicon users (Homebrew, DMG) by utilizing automated GitHub Actions infrastructure and migrating legacy operational bash scripts to Swift for maintainability.
+
+**User Stories:**
+- As a macOS user, I want to easily install the `gem` CLI via Homebrew or a standalone DMG without manually building from source.
+- As a maintainer, I want CI/CD pipelines to automatically build, test, and release artifacts using high-performance Apple Silicon infrastructure.
+- As a developer, I want all operational scripts written in Swift rather than Bash to minimize context switching and improve type-safe tooling.
+
+**Strategic Rationale:**
+- **Performance & Compatibility:** Swift 6 / Xcode 16 requires significant CPU/RAM. Transitioning to `macos-14` (Apple Silicon) runners dramatically reduces build times (up to 2-3x faster than Intel) while ensuring native optimization.
+- **Cost-Efficiency:** Apple Silicon runners execute faster, offsetting the higher cost-per-minute multiplier compared to Linux.
+- **Maintainability:** Replacing `*.sh` scripts with Swift scripting improves code reuse and predictability.
+
+### 17.1 GitHub Actions Migration to Apple Silicon (macos-14)
+**Status:** COMPLETED  
+**Priority:** HIGH  
+
+**Acceptance Criteria:**
+ - [x] Migrate all GitHub Actions workflows to `macos-14` runners to utilize Apple Silicon (M1).
+ - [x] Validate Xcode 16 and Swift 6 compatibility within the `macos-14` image.
+ - [x] Verify `default.metallib` artifact is consistently generated and **always available** across workflows, ensuring MLX tests do not fail due to missing shaders.
+ - [x] Implement robust caching for Homebrew and Swift dependencies to reduce pipeline duration.
+
+### 17.2 DMG & Homebrew Packaging Automation
+**Status:** COMPLETED  
+**Priority:** HIGH  
+
+**Acceptance Criteria:**
+ - [x] Implement an automated step in GitHub Actions to build a macOS `.dmg` archive.
+ - [x] Create a Homebrew tap (`Formula/gem.rb`) and automate its update on release.
+ - [x] Ensure binaries are correctly signed (ad-hoc or official Apple Developer ID if available) before packaging.
+ - [x] Automatically attach DMG and sha256 checksums to GitHub Releases.
+
+### 17.3 Swift Migration for Maintenance Scripts
+**Status:** COMPLETED  
+**Priority:** MEDIUM  
+
+**Acceptance Criteria:**
+ - [x] Rewrite `build_metal.sh` as a Swift script, ensuring `default.metallib` is properly generated and placed.
+ - [x] Rewrite `setup.sh` and `install.sh` into a unified Swift CLI installer or Swift package plugin.
+ - [x] Rewrite `clean_for_github.sh` into a Swift utility to ensure precise control over artifact cleanup.
+ - [x] Update `Package.swift` or documentation to reference the new Swift-based tooling.
+
+**Special Note on Artifact Cleanup:**
+The cleanup script (previously `clean_for_github.sh`) must be meticulously reviewed and updated. It is critical that the compiled `metals` artifact (`default.metallib`) is **never erroneously deleted** before packaging or testing phases. The artifact must always be available for the MLX engine to function correctly.

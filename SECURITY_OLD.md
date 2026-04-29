@@ -2,11 +2,11 @@
 
 ## Dependency Audit
 
-An automated Open Source Vulnerability (OSV) check was performed on the `GemmaServer` dependencies. 
+An automated Open Source Vulnerability (OSV) check was performed on the `Gem` dependencies. 
 
 ### Findings
 - **swift-crypto**: A HIGH severity vulnerability (CVE-2026-28815) affects `swift-crypto` versions 4.0.0 through 4.3.0. The vulnerability involves an out-of-bounds read in the C decapsulation path for X-Wing HPKE encapsulated keys.
-- **Remediation**: GemmaServer specifies `.package(url: "https://github.com/apple/swift-crypto.git", from: "3.0.0")` in `Package.swift`. This restricts the package to the `3.x` branch, avoiding the vulnerable `4.x` versions. No changes to the dependency tree were strictly necessary, but maintaining this constraint ensures security.
+- **Remediation**: Gem specifies `.package(url: "https://github.com/apple/swift-crypto.git", from: "3.0.0")` in `Package.swift`. This restricts the package to the `3.x` branch, avoiding the vulnerable `4.x` versions. No changes to the dependency tree were strictly necessary, but maintaining this constraint ensures security.
 
 ## CWE Security Audit
 
@@ -32,4 +32,4 @@ The following Common Weakness Enumeration (CWE) categories were audited and addr
 
 ## Data Privacy
 - **Status**: Verified.
-- **Details**: GemmaServer performs 100% of its inference locally on-device. No telemetry, analytics, or background data collection is performed. Network requests are exclusively restricted to downloading model weights from the Hugging Face Hub (user-initiated). See `docs/PRIVACY_POLICY.md` and `PrivacyInfo.xcprivacy` for explicit privacy declarations.
+- **Details**: Gem performs 100% of its inference locally on-device. No telemetry, analytics, or background data collection is performed. Network requests are exclusively restricted to downloading model weights from the Hugging Face Hub (user-initiated). See `docs/PRIVACY_POLICY.md` and `PrivacyInfo.xcprivacy` for explicit privacy declarations.

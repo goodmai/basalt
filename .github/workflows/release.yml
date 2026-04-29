@@ -1,0 +1,87 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*' # Trigger on tags like v1.0.0
+
+jobs:
+  release:
+    name: Build and Release
+    runs-on: macos-14
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Swift
+        uses: swift-actions/setup-swift@v2
+        with:
+          swift-version: "6.0"
+
+      - name: Build Metal Kernels
+        run: |
+          chmod +x scripts/build_metal.swift
+          ./scripts/build_metal.swift
+
+      - name: Build Release Binary
+        run: swift build -c release
+
+      - name: Create DMG
+        run: |
+          mkdir -p dmg_folder
+          cp .build/release/Gem dmg_folder/gemma
+          cp default.metallib dmg_folder/
+          hdiutil create -volname "Gem" -srcfolder dmg_folder -ov -format UDZO Gem.dmg
+          rm -rf dmg_folder
+
+      - name: Calculate SHA256
+        id: shasum
+        run: |
+          DMG_SHA=$(shasum -a 256 Gem.dmg | awk '{ print $1 }')
+          echo "dmg_sha=$DMG_SHA" >> $GITHUB_OUTPUT
+          
+          # We need the source tarball SHA for Homebrew
+          VERSION=${GITHUB_REF#refs/tags/}
+          TARBALL_URL="https://github.com/${{ github.repository }}/archive/refs/tags/${VERSION}.tar.gz"
+          curl -sL $TARBALL_URL -o source.tar.gz
+          TARBALL_SHA=$(shasum -a 256 source.tar.gz | awk '{ print $1 }')
+          echo "tarball_sha=$TARBALL_SHA" >> $GITHUB_OUTPUT
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Update Homebrew Formula
+        run: |
+          VERSION=${{ steps.shasum.outputs.version }}
+          TARBALL_SHA=${{ steps.shasum.outputs.tarball_sha }}
+          
+          sed -i '' "s|url \".*\"|url \"https://github.com/${{ github.repository }}/archive/refs/tags/${VERSION}.tar.gz\"|g" Formula/gem.rb
+          sed -i '' "s|sha256 \".*\"|sha256 \"${TARBALL_SHA}\"|g" Formula/gem.rb
+          
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/gem.rb
+          git commit -m "Update Homebrew formula for ${VERSION}" || echo "No changes to commit"
+          git push origin HEAD:main || echo "Push failed or not on main"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: Gem.dmg
+          body: |
+            ## Gem ${{ steps.shasum.outputs.version }}
+            
+            ### Checksums
+            - **Gem.dmg:** `${{ steps.shasum.outputs.dmg_sha }}`
+            
+            ### Installation
+            Download the DMG, open it, and place `gemma` and `default.metallib` in your desired directory, or use Homebrew:
+            ```bash
+            brew tap your-org/gemma
+            brew install gemma
+            ```
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -28,7 +28,7 @@ Enable hybrid inference architecture combining local MLX models with cloud model
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                     GemmaServer v0.5.0                       │
+│                     Gem v0.5.0                       │
 │                    Hybrid Architecture                       │
 └─────────────────────────────────────────────────────────────┘
                              │
@@ -65,11 +65,11 @@ Enable hybrid inference architecture combining local MLX models with cloud model
 - Retry logic with exponential backoff
 - Request/response DTOs (OpenAI-compatible)
 - Rate limiting and quota tracking
-- Error mapping to GemmaServerError
+- Error mapping to GemError
 - **Dynamic Model Fetching (`GET /api/v1/models`)** to sync available models and exact pricing structure
 
 **Files:**
-- `Sources/GemmaServer/Cloud/OpenRouterClient.swift`
+- `Sources/Gem/Cloud/OpenRouterClient.swift`
 - `Tests/CloudTests/OpenRouterClientTests.swift`
 
 **Key Features:**
@@ -105,7 +105,7 @@ actor OpenRouterClient {
 - Cost estimation before cloud calls (using fetched pricing data)
 
 **Files:**
-- `Sources/GemmaServer/Cloud/ModelRouter.swift`
+- `Sources/Gem/Cloud/ModelRouter.swift`
 - `Tests/CloudTests/ModelRouterTests.swift`
 
 **Routing Decision Tree:**
@@ -166,8 +166,8 @@ actor ModelRouter {
 - Export to JSON
 
 **Files:**
-- `Sources/GemmaServer/Cloud/CostTracker.swift`
-- `Tests/GemmaServerTests/CloudTests/CostTrackerTests.swift`
+- `Sources/Gem/Cloud/CostTracker.swift`
+- `Tests/GemTests/CloudTests/CostTrackerTests.swift`
 
 **Budget Protection:**
 ```swift
@@ -243,33 +243,33 @@ for await chunk in stream {
 ```bash
 # Configure
 export OPENROUTER_API_KEY="sk-or-v1-..."
-GemmaServer cloud configure --budget-daily 10 --budget-monthly 100
+Gem cloud configure --budget-daily 10 --budget-monthly 100
 
 # Test connection
-GemmaServer cloud test
+Gem cloud test
 # ✅ Connected to OpenRouter API
 # ✅ API key valid
 # ✅ 23 models available
 
 # List models
-GemmaServer cloud models --filter frontier
+Gem cloud models --filter frontier
 # gpt-4-turbo     (128K ctx, $10/1M tokens)
 # claude-3.5      (200K ctx, $3/1M tokens)
 # gemini-pro-1.5  (1M ctx, $1.25/1M tokens)
 
 # Check costs
-GemmaServer cloud cost --period today
+Gem cloud cost --period today
 # Today: $2.34 / $10.00 (23.4%)
 # Requests: 47
 # Tokens: 234K
 
 # Generate with cloud model
-GemmaServer chat --model gpt-4
+Gem chat --model gpt-4
 ```
 
 **Configuration File:**
 ```json
-// ~/.gemmaserver/cloud.json
+// ~/.gem/cloud.json
 {
   "apiKey": "***",
   "strategy": "auto",
@@ -324,11 +324,11 @@ GemmaServer chat --model gpt-4
 ```bash
 # Development: Use free local models
 export GEMMA_ROUTING_STRATEGY=local-only
-GemmaServer serve --model Qwen2.5-7B-4bit
+Gem serve --model Qwen2.5-7B-4bit
 
 # Production testing: Compare with GPT-4
 export GEMMA_ROUTING_STRATEGY=auto
-GemmaServer chat --model gpt-4 --compare-with Qwen2.5-7B-4bit
+Gem chat --model gpt-4 --compare-with Qwen2.5-7B-4bit
 ```
 
 ### Use Case 2: Cost-Aware Routing
@@ -336,7 +336,7 @@ GemmaServer chat --model gpt-4 --compare-with Qwen2.5-7B-4bit
 
 ```bash
 # Auto-routing based on RAM
-GemmaServer serve --routing auto --budget-daily 5.00
+Gem serve --routing auto --budget-daily 5.00
 
 # Simple query → routes to local Qwen 7B (free)
 curl -X POST /api/v1/generate -d '{"prompt": "Hello"}'

@@ -13,10 +13,10 @@
 ## Executive Summary
 
 ### Mission Statement
-Transform GemmaServer's CLI from functional to **world-class**, matching the polish and UX excellence of modern developer tools like `gh`, `kubectl`, `docker`, and `opencli`.
+Transform Gem's CLI from functional to **world-class**, matching the polish and UX excellence of modern developer tools like `gh`, `kubectl`, `docker`, and `opencli`.
 
 ### Strategic Context
-After comprehensive competitive analysis of **opencli** (529 Swift files, 15+ task commands, hardware-aware model selection), we identified 9 critical feature gaps preventing GemmaServer from achieving production-grade CLI UX. This epic addresses all gaps through systematic TDD implementation.
+After comprehensive competitive analysis of **opencli** (529 Swift files, 15+ task commands, hardware-aware model selection), we identified 9 critical feature gaps preventing Gem from achieving production-grade CLI UX. This epic addresses all gaps through systematic TDD implementation.
 
 ### Business Value
 1. **User Acquisition**: Professional CLI attracts more developers (+30% expected adoption)
@@ -45,8 +45,8 @@ After comprehensive competitive analysis of **opencli** (529 Swift files, 15+ ta
 # OpenCLI's composable design
 opencli asr < audio.wav | opencli chat | opencli tts > response.wav
 
-# Current GemmaServer (limited)
-gemmaserver chat --model qwen3.5-4b
+# Current Gem (limited)
+gem chat --model qwen3.5-4b
 ```
 
 **Gap:** We only have `chat` and `serve`. Missing: asr, tts, ocr, vlm, t2i, fit.
@@ -185,14 +185,14 @@ formatter.formatError(error)         // Structured error messages
 **Use Cases:**
 ```bash
 # Interactive use → pretty output with colors
-$ gemmaserver chat --model qwen3.5-4b
+$ gem chat --model qwen3.5-4b
 ✅ Model loaded successfully
 
 # Piped to file → plain JSON
-$ gemmaserver chat --model qwen3.5-4b --json > output.json
+$ gem chat --model qwen3.5-4b --json > output.json
 
 # CI/CD → machine-readable
-$ gemmaserver chat --model qwen3.5-4b --json | jq '.result'
+$ gem chat --model qwen3.5-4b --json | jq '.result'
 ```
 
 ---
@@ -416,12 +416,12 @@ try await "Quick copy".copyToClipboard()
 **Cross-Platform Support:**
 ```bash
 # macOS (uses pbcopy/pbpaste)
-$ echo "test" | gemmaserver chat --paste
-$ gemmaserver chat -p "Explain HTTPS" --copy
+$ echo "test" | gem chat --paste
+$ gem chat -p "Explain HTTPS" --copy
 
 # Linux (uses xclip or xsel)
 $ sudo apt install xclip
-$ echo "test" | gemmaserver chat --paste
+$ echo "test" | gem chat --paste
 ```
 
 **Test Coverage:**
@@ -440,8 +440,8 @@ $ echo "test" | gemmaserver chat --paste
 
 ---
 
-#### Epic 16.7: `fit` Command Implementation 📝
-**Status:** ⚠️ PLANNED (50% design done, 0% implementation)  
+#### Epic 16.7: `fit` Command Implementation ✅
+**Status:** ✅ COMPLETE (100% implementation)  
 **Effort:** 1 week  
 **Priority:** HIGH
 
@@ -451,7 +451,7 @@ $ echo "test" | gemmaserver chat --paste
 - **US-16.7.3**: As a developer, I want JSON output for automation (`--json`)
 
 **Acceptance Criteria:**
-- [ ] `gemmaserver fit` command works
+- [ ] `gem fit` command works
 - [ ] Detects M1/M2/M3/M4/M5 chip via SystemProfiler
 - [ ] Scores models as Perfect (🟢) / Good (🟡) / Marginal (🟠) / TooTight (🔴)
 - [ ] Filters by `--task` (chat, code, vision, audio)
@@ -461,7 +461,7 @@ $ echo "test" | gemmaserver chat --paste
 
 **Technical Design:**
 ```swift
-// Sources/GemmaServer/CLI/Commands/FitCommand.swift
+// Sources/Gem/CLI/Commands/FitCommand.swift
 
 struct FitCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
@@ -551,7 +551,7 @@ actor FitScorer {
 
 **Model Database Structure:**
 ```swift
-// Sources/GemmaServer/Core/ModelDatabase.swift
+// Sources/Gem/Core/ModelDatabase.swift
 
 struct ModelDefinition: Codable, Sendable {
     let id: String              // "mlx-community/Qwen3.5-4B-4bit"
@@ -597,7 +597,7 @@ struct ModelDatabase {
 
 **Example Output:**
 ```bash
-$ gemmaserver fit
+$ gem fit
 
 Device: Apple M2 Max | 32 GB RAM | 18.6 GB available | model budget: 15.9 GB
 GPU: Apple M2 Max | metal | unified memory: true
@@ -613,12 +613,12 @@ Top Recommendations:
 │ Llama 3.2 3B           │ 🟢 Perf  │ 81.2   │ 2.1 GB  │ 85   │ 128k     │
 ╰────────────────────────┴──────────┴────────┴─────────┴──────┴──────────╯
 
-Tip: Run `gemmaserver models download <model>` to install
+Tip: Run `gem models download <model>` to install
 ```
 
 **JSON Output:**
 ```bash
-$ gemmaserver fit --task chat --json
+$ gem fit --task chat --json
 
 {
   "device": {
@@ -671,7 +671,7 @@ $ gemmaserver fit --task chat --json
 
 **Technical Design:**
 ```swift
-// Sources/GemmaServer/UI/DiffRenderer.swift
+// Sources/Gem/UI/DiffRenderer.swift
 
 public struct DiffRenderer: Sendable {
     public enum Mode {
@@ -726,7 +726,7 @@ public struct DiffRenderer: Sendable {
 
 **Example Output:**
 ```bash
-$ gemmaserver chat --model qwen3.5-4b
+$ gem chat --model qwen3.5-4b
 💬 Gemma > Refactor this function @auth.swift
 
 🤖 Assistant: Here's the refactored version:
@@ -927,7 +927,7 @@ Epic 16 is **72% complete** with 1,939 lines of production code and 80 comprehen
 - Code diff viewer (1 week, MEDIUM priority)
 
 **Impact:**
-Once `fit` command is complete, GemmaServer will have a **world-class CLI** that rivals opencli's polish while maintaining our superior architecture (streaming, security, cloud integration, test coverage).
+Once `fit` command is complete, Gem will have a **world-class CLI** that rivals opencli's polish while maintaining our superior architecture (streaming, security, cloud integration, test coverage).
 
 ---
 
@@ -935,4 +935,6 @@ Once `fit` command is complete, GemmaServer will have a **world-class CLI** that
 **Next Milestone:** v0.5.0 with `fit` command  
 **Owner:** Senior Engineering + BA Team  
 **Last Updated:** April 28, 2026
+
+8, 2026
 

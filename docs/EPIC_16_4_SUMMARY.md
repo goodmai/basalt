@@ -228,7 +228,7 @@ let rendered = DiffRenderer.render(diff, colorize: false)
 
 ## 🎯 Comparison to OpenCLI
 
-| Feature | OpenCLI | GemmaServer |
+| Feature | OpenCLI | Gem |
 |---------|---------|-------------|
 | Diff Viewer | ❌ Not implemented | ✅ **Full implementation** |
 | Inline Mode | ❌ | ✅ With colors |
@@ -237,7 +237,7 @@ let rendered = DiffRenderer.render(diff, colorize: false)
 | Test Coverage | ⚠️ Minimal | ✅ 100% (16 tests) |
 | Performance | N/A | ✅ < 1ms per render |
 
-**Competitive Advantage:** GemmaServer now has a **unique feature** not found in opencli.
+**Competitive Advantage:** Gem now has a **unique feature** not found in opencli.
 
 ---
 

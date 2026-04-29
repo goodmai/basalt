@@ -1,4 +1,4 @@
-# GemmaServer Roadmap — Epic 16 Deep Dive
+# Gem Roadmap — Epic 16 Deep Dive
 ## Advanced CLI Enhancements & Rich Terminal UI 🎨
 
 **Created:** April 28, 2026  
@@ -11,7 +11,7 @@
 ## 📊 Executive Summary
 
 ### Mission
-Transform GemmaServer CLI from functional to **world-class**, matching the polish of `gh`, `kubectl`, and **opencli**.
+Transform Gem CLI from functional to **world-class**, matching the polish of `gh`, `kubectl`, and **opencli**.
 
 ### Current Progress
 - ✅ **Completed**: 9/11 features (82%)
@@ -38,7 +38,7 @@ Transform GemmaServer CLI from functional to **world-class**, matching the polis
 
 ### Feature Gap Analysis
 
-| Feature Category | OpenCLI | GemmaServer | Epic | Status |
+| Feature Category | OpenCLI | Gem | Epic | Status |
 |------------------|---------|-------------|------|--------|
 | **Hardware Profiling** | ✅ M1-M5 detection, GPU profiling | ✅ M-series detection (16.7) | Epic 16 | 🔄 In Progress |
 | **Fit Scoring** | ✅ 4-tier ranking, memory estimation | 🔄 Implementation started | Epic 16.7 | 🔄 In Progress |
@@ -194,7 +194,7 @@ print(rendered)
 **Technical Design:**
 
 ```swift
-// Sources/GemmaServer/UI/DiffRenderer.swift
+// Sources/Gem/UI/DiffRenderer.swift
 
 public struct DiffRenderer: Sendable {
     public enum Mode {
@@ -252,7 +252,7 @@ private struct DiffParser: Sendable {
 **Example Output (Inline Mode):**
 
 ```bash
-$ gemmaserver chat --model qwen3.5-4b
+$ gem chat --model qwen3.5-4b
 💬 You > Refactor the authentication function @auth.swift
 
 🤖 Assistant: Here's the refactored version:
@@ -282,7 +282,7 @@ $ gemmaserver chat --model qwen3.5-4b
 **Example Output (Side-by-Side Mode):**
 
 ```bash
-$ gemmaserver chat --diff-mode side-by-side
+$ gem chat --diff-mode side-by-side
 
 ╭───────────────────────────────┬───────────────────────────────╮
 │ Before (auth.swift)           │ After (auth.swift)            │
@@ -303,7 +303,7 @@ $ gemmaserver chat --diff-mode side-by-side
 **Test Cases:**
 
 ```swift
-// Tests/GemmaServerTests/UI/DiffRendererTests.swift
+// Tests/GemTests/UI/DiffRendererTests.swift
 
 func testParseUnifiedDiff() async throws {
     let diff = """
@@ -599,7 +599,7 @@ enum FitLevel {
 **Deliverables:**
 - ✅ 600 LOC
 - ✅ 25 tests passing
-- ✅ `gemmaserver fit --json` working
+- ✅ `gem fit --json` working
 - ✅ Beautiful table output
 
 ---
@@ -634,9 +634,9 @@ enum FitLevel {
 - **Resource matching**: [.opencli/Sources/OpenCLIKernel/Hardware/ResourceMatcher.swift]
 
 ### Our Implementation
-- **Diff Renderer**: [Sources/GemmaServer/UI/DiffRenderer.swift] (to be created)
-- **Fit Command**: [Sources/GemmaServer/CLI/FitCommand.swift] (exists, needs completion)
-- **Model Fit Analyzer**: [Sources/GemmaServer/Core/ModelFitAnalyzer.swift] (exists)
+- **Diff Renderer**: [Sources/Gem/UI/DiffRenderer.swift] (to be created)
+- **Fit Command**: [Sources/Gem/CLI/FitCommand.swift] (exists, needs completion)
+- **Model Fit Analyzer**: [Sources/Gem/Core/ModelFitAnalyzer.swift] (exists)
 
 ---
 

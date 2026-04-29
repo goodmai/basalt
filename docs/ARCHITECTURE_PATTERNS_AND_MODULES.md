@@ -15,7 +15,7 @@
 
 ## 3) Ключевые паттерны
 ### 3.1 Actor-based orchestrator (Single Source of Truth)
-**Где:** `Sources/GemmaServer/Core/ModelOrchestratorActor.swift`
+**Где:** `Sources/Gem/Core/ModelOrchestratorActor.swift`
 **Суть:** единая actor-точка входа для генерации, сериализация запросов (FIFO), защита от race conditions.
 **Зачем:** безопасная конкурентность при одновременных вызовах из MCP и REST.
 
@@ -25,45 +25,45 @@
 **Зачем:** упрощает тестирование и замену движка инференса.
 
 ### 3.3 Dual-transport facade
-**Где:** `Sources/GemmaServer/REST/*`, `Sources/GemmaServer/MCP/*`, `Sources/GemmaServer/CLI/ServeCommand.swift`
+**Где:** `Sources/Gem/REST/*`, `Sources/Gem/MCP/*`, `Sources/Gem/CLI/ServeCommand.swift`
 **Суть:** два внешних интерфейса поверх одного ядра доменной логики.
 **Зачем:** единое поведение модели при разных способах доступа.
 
 ### 3.4 Middleware pipeline (REST)
-**Где:** `Sources/GemmaServer/REST/RESTServer.swift`, `Sources/GemmaServer/REST/Middleware/*`
+**Где:** `Sources/Gem/REST/RESTServer.swift`, `Sources/Gem/REST/Middleware/*`
 **Суть:** composable цепочка middleware (логирование, JWT, rate limit).
 **Зачем:** отделение кросс-срезовых concerns от контроллеров.
 
 ### 3.5 Command pattern (CLI)
-**Где:** `Sources/GemmaServer/CLI/*Command.swift`
+**Где:** `Sources/Gem/CLI/*Command.swift`
 **Суть:** каждая CLI-команда инкапсулирует сценарий запуска/управления.
 **Зачем:** расширяемый CLI с независимыми subcommands.
 
 ## 4) Карта модулей и назначение
-### 4.1 `Sources/GemmaServer/App`
+### 4.1 `Sources/Gem/App`
 - Точка входа приложения.
 - Инициализация верхнего уровня.
 
-### 4.2 `Sources/GemmaServer/CLI`
+### 4.2 `Sources/Gem/CLI`
 - Парсинг аргументов и запуск сценариев (`serve`, `chat`, `models`, `agents`, onboarding).
 - Разрешение пути модели, конфигурирование режима работы.
 
-### 4.3 `Sources/GemmaServer/Config`
+### 4.3 `Sources/Gem/Config`
 - Типобезопасная конфигурация сервера (порт, host, токены, секреты и пр.).
 
-### 4.4 `Sources/GemmaServer/Core`
+### 4.4 `Sources/Gem/Core`
 - Основная доменная логика.
 - Оркестрация инференса, валидация запросов, budgeting, профилирование/анализ.
 
-### 4.5 `Sources/GemmaServer/REST`
+### 4.5 `Sources/Gem/REST`
 - HTTP API, контроллеры, middleware, маршрутизация.
 - Адаптация HTTP-запросов в вызовы оркестратора.
 
-### 4.6 `Sources/GemmaServer/MCP`
+### 4.6 `Sources/Gem/MCP`
 - MCP сервер по stdio (JSON-RPC).
 - Экспонирование tools (`gemma_generate`, `gemma_status`) поверх оркестратора.
 
-### 4.7 `Sources/GemmaServerBin`
+### 4.7 `Sources/GemBin`
 - Бинарный entrypoint (thin launcher / packaging layer).
 
 ### 4.8 `Sources/PerformanceBenchmark`

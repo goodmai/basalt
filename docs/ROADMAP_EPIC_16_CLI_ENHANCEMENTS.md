@@ -10,7 +10,7 @@
 
 ## Table of Contents
 1. [Executive Summary](#executive-summary)
-2. [Competitive Analysis: OpenCLI vs GemmaServer](#competitive-analysis)
+2. [Competitive Analysis: OpenCLI vs Gem](#competitive-analysis)
 3. [Gap Analysis & Feature Extraction](#gap-analysis)
 4. [Epic Breakdown](#epic-breakdown)
 5. [Implementation Roadmap](#implementation-roadmap)
@@ -21,7 +21,7 @@
 ## Executive Summary
 
 ### Business Rationale
-GemmaServer currently has a functional CLI with basic interactivity (Epic 15), but lacks the **polished, professional terminal UI** that modern CLI tools (like `gh`, `kubectl`, `docker`) provide. After analyzing the competitive landscape (opencli, gemini-cli), we've identified **6 major feature gaps** that prevent GemmaServer from achieving production-grade UX.
+Gem currently has a functional CLI with basic interactivity (Epic 15), but lacks the **polished, professional terminal UI** that modern CLI tools (like `gh`, `kubectl`, `docker`) provide. After analyzing the competitive landscape (opencli, gemini-cli), we've identified **6 major feature gaps** that prevent Gem from achieving production-grade UX.
 
 ### Strategic Goals
 1. **Visual Excellence**: Rich colors, tables, diff views, markdown rendering, progress bars
@@ -33,7 +33,7 @@ GemmaServer currently has a functional CLI with basic interactivity (Epic 15), b
 
 ---
 
-## Competitive Analysis: OpenCLI vs GemmaServer
+## Competitive Analysis: OpenCLI vs Gem
 
 ### OpenCLI Strengths (Features We Should Adopt)
 
@@ -47,13 +47,13 @@ opencli ocr image.png          # OCR
 opencli t2i "sunset"           # Text-to-Image
 ```
 
-**GemmaServer:**
+**Gem:**
 ```bash
 # Generic chat interface only
-gemmaserver chat --model qwen3.5-4b
+gem chat --model qwen3.5-4b
 ```
 
-**Gap:** OpenCLI has **15+ specialized task commands** (asr, tts, vad, sts, ocr, vlm, t2i, i2i, t2v, i2v, t2m, sr, rmbg, embedding, rerank, chat). GemmaServer only has `chat` and `serve`.
+**Gap:** OpenCLI has **15+ specialized task commands** (asr, tts, vad, sts, ocr, vlm, t2i, i2i, t2v, i2v, t2m, sr, rmbg, embedding, rerank, chat). Gem only has `chat` and `serve`.
 
 **Business Value:** Task-first commands make the CLI **discoverable** and **composable** via Unix pipes.
 
@@ -86,7 +86,7 @@ chat     Qwen3 Chat 1.7B         Marginal  82.5   GPU      4bit   1.5/4.6GB   no
 - **Rich Tables**: ASCII tables with proper column alignment
 - **Color-Coded Output**: Green (Perfect), Yellow (Good), Orange (Marginal), Red (Too Tight)
 
-**GemmaServer:** Has basic `onboard` command with hardware detection, but **no fit scoring** or **model ranking**.
+**Gem:** Has basic `onboard` command with hardware detection, but **no fit scoring** or **model ranking**.
 
 ---
 
@@ -113,7 +113,7 @@ enum OutputMode {
 - If `stdout` is a pipe → `.plain` (no colors)
 - Explicit `--json` flag → `.json`
 
-**GemmaServer:** Only plain text output, no JSON mode, no pretty mode.
+**Gem:** Only plain text output, no JSON mode, no pretty mode.
 
 ---
 
@@ -133,7 +133,7 @@ class PercentProgressReporter {
 - Percentage + visual bar
 - Conditional rendering (only on TTY stderr)
 
-**GemmaServer:** Basic file download progress, no unified progress system.
+**Gem:** Basic file download progress, no unified progress system.
 
 ---
 
@@ -152,7 +152,7 @@ OpenCLILLM/           # LLM tasks (Chat, Embedding, Rerank)
 OpenCLIServe/         # HTTP/MCP server
 ```
 
-**GemmaServer:** Monolithic `Sources/GemmaServer/` with less clear separation.
+**Gem:** Monolithic `Sources/Gem/` with less clear separation.
 
 ---
 
@@ -162,21 +162,21 @@ OpenCLIServe/         # HTTP/MCP server
 - `gh pr view --json | pbcopy` → Copies JSON to clipboard
 - `git log --oneline | head -5 | pbcopy` → Copies commits
 
-**GemmaServer:** No clipboard support.
+**Gem:** No clipboard support.
 
 ---
 
 ### OpenCLI Weaknesses (Areas We Already Excel)
 
-| Feature | OpenCLI | GemmaServer | Winner |
+| Feature | OpenCLI | Gem | Winner |
 |---------|---------|-------------|--------|
-| Interactive Chat | ❌ Basic | ✅ Advanced (TerminalManager, non-blocking) | GemmaServer |
-| Streaming Support | ⚠️ Limited | ✅ Full SSE + AsyncStream | GemmaServer |
-| Authentication | ❌ None | ✅ JWT + Bcrypt + RBAC | GemmaServer |
-| Cloud Integration | ❌ None | ✅ OpenRouter + Hybrid Routing | GemmaServer |
-| Security Audit | ❌ None | ✅ 10/10 Score | GemmaServer |
-| Test Coverage | ⚠️ Basic | ✅ 101 tests, 100% coverage | GemmaServer |
-| Documentation | ⚠️ Minimal | ✅ PLAN.md, SECURITY.md, Epic docs | GemmaServer |
+| Interactive Chat | ❌ Basic | ✅ Advanced (TerminalManager, non-blocking) | Gem |
+| Streaming Support | ⚠️ Limited | ✅ Full SSE + AsyncStream | Gem |
+| Authentication | ❌ None | ✅ JWT + Bcrypt + RBAC | Gem |
+| Cloud Integration | ❌ None | ✅ OpenRouter + Hybrid Routing | Gem |
+| Security Audit | ❌ None | ✅ 10/10 Score | Gem |
+| Test Coverage | ⚠️ Basic | ✅ 101 tests, 100% coverage | Gem |
+| Documentation | ⚠️ Minimal | ✅ PLAN.md, SECURITY.md, Epic docs | Gem |
 
 ---
 
@@ -237,7 +237,7 @@ OpenCLIServe/         # HTTP/MCP server
 
 #### Technical Design
 ```swift
-// Sources/GemmaServer/UI/TerminalUI.swift
+// Sources/Gem/UI/TerminalUI.swift
 import Rainbow
 
 public enum TerminalUI {
@@ -294,7 +294,7 @@ func testColorsDisabled() {
 
 #### Example Output
 ```bash
-$ gemmaserver chat --model qwen3.5-4b
+$ gem chat --model qwen3.5-4b
 ✅ Model loaded successfully (2.3 GB)
 💬 Gemma > Hello
 🤖 Assistant: Hi! How can I help you today?
@@ -328,7 +328,7 @@ $ gemmaserver chat --model qwen3.5-4b
 
 #### Technical Design
 ```swift
-// Sources/GemmaServer/UI/TableRenderer.swift
+// Sources/Gem/UI/TableRenderer.swift
 import ConsoleKit
 
 public struct TableRenderer {
@@ -388,7 +388,7 @@ public enum TableStyle {
 
 #### Example Output
 ```bash
-$ gemmaserver models list --format table
+$ gem models list --format table
 
 ╭─────────────────────────────────┬──────────┬─────────┬──────────╮
 │ Model                           │ Size     │ TPS     │ Status   │
@@ -427,7 +427,7 @@ $ gemmaserver models list --format table
 
 #### Technical Design
 ```swift
-// Sources/GemmaServer/UI/MarkdownRenderer.swift
+// Sources/Gem/UI/MarkdownRenderer.swift
 import Markdown
 import Splash
 
@@ -474,7 +474,7 @@ struct TerminalVisitor: MarkupVisitor {
 
 #### Example Output
 ```bash
-$ gemmaserver chat --model qwen3.5-4b
+$ gem chat --model qwen3.5-4b
 💬 Gemma > Explain recursion in Swift
 
 🤖 Assistant:
@@ -519,7 +519,7 @@ func factorial(_ n: Int) -> Int {
 
 #### Technical Design
 ```swift
-// Sources/GemmaServer/UI/DiffRenderer.swift
+// Sources/Gem/UI/DiffRenderer.swift
 
 public struct DiffRenderer {
     public static func render(_ diff: String, mode: DiffMode = .inline) -> String {
@@ -552,7 +552,7 @@ public enum DiffMode {
 
 #### Example Output
 ```bash
-$ gemmaserver chat --model qwen3.5-4b
+$ gem chat --model qwen3.5-4b
 💬 Gemma > Refactor this function @auth.swift
 
 🤖 Assistant: Here's the refactored version:
@@ -594,7 +594,7 @@ $ gemmaserver chat --model qwen3.5-4b
 
 #### Technical Design
 ```swift
-// Sources/GemmaServer/UI/ImageRenderer.swift
+// Sources/Gem/UI/ImageRenderer.swift
 
 public struct ImageRenderer {
     public static func render(_ imageURL: URL) -> String {
@@ -652,7 +652,7 @@ public struct ImageRenderer {
 
 #### Technical Design
 ```swift
-// Sources/GemmaServer/UI/ClipboardManager.swift
+// Sources/Gem/UI/ClipboardManager.swift
 
 public struct ClipboardManager {
     public static func copy(_ text: String) throws {
@@ -706,11 +706,11 @@ public struct ClipboardManager {
 #### Example Usage
 ```bash
 # Copy AI response to clipboard
-$ gemmaserver chat --model qwen3.5-4b -p "Explain HTTPS" --copy
+$ gem chat --model qwen3.5-4b -p "Explain HTTPS" --copy
 ✅ Response copied to clipboard
 
 # Paste code from clipboard into prompt
-$ gemmaserver chat --model qwen3.5-4b -p "Refactor this:" --paste
+$ gem chat --model qwen3.5-4b -p "Refactor this:" --paste
 ```
 
 ---
@@ -732,7 +732,7 @@ $ gemmaserver chat --model qwen3.5-4b -p "Refactor this:" --paste
 - **US-16.7.3**: As a developer, I want JSON output for automation
 
 #### Acceptance Criteria
-- [ ] `gemmaserver fit` command works
+- [ ] `gem fit` command works
 - [ ] Detects M1/M2/M3/M4/M5 chip
 - [ ] Scores models as Perfect/Good/Marginal/TooTight
 - [ ] Filters by `--modality` and `--task`
@@ -740,7 +740,7 @@ $ gemmaserver chat --model qwen3.5-4b -p "Refactor this:" --paste
 
 #### Technical Design
 ```swift
-// Sources/GemmaServer/CLI/FitCommand.swift
+// Sources/Gem/CLI/FitCommand.swift
 
 struct FitCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
@@ -829,7 +829,7 @@ enum FitLevel: String, Codable {
 
 #### Example Output
 ```bash
-$ gemmaserver fit
+$ gem fit
 
 Device: Apple M2 Max | 32 GB RAM | 64 GB Unified Memory
 
@@ -842,7 +842,7 @@ Top Recommendations:
 │ Qwen2.5-Coder-7B-4bit      │ 🟢 Perfect  │ 89.1   │ 4 GB    │ 60 TPS   │
 ╰────────────────────────────┴─────────────┴────────┴─────────┴──────────╯
 
-Run `gemmaserver models download <model>` to install.
+Run `gem models download <model>` to install.
 ```
 
 ---
@@ -859,7 +859,7 @@ Run `gemmaserver models download <model>` to install.
 
 #### Technical Design
 ```swift
-// Sources/GemmaServer/UI/ProgressBar.swift
+// Sources/Gem/UI/ProgressBar.swift
 
 public struct ProgressBar {
     private let total: Int
@@ -904,7 +904,7 @@ public struct ProgressBar {
 
 #### Technical Design
 ```swift
-// Sources/GemmaServer/CLI/OutputMode.swift
+// Sources/Gem/CLI/OutputMode.swift
 
 public enum OutputMode: String, Sendable {
     case json

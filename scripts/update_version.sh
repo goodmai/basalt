@@ -1,5 +1,5 @@
 #!/bin/bash
-# GemmaServer Version Counter & Updater
+# Gem Version Counter & Updater
 # Automatically calculates next version based on commit history and epic completion
 
 set -e
@@ -11,7 +11,7 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-echo -e "${BLUE}=== GemmaServer Version Counter ===${NC}\n"
+echo -e "${BLUE}=== Gem Version Counter ===${NC}\n"
 
 # Get current version from PLAN.md
 CURRENT_VERSION=$(grep "Current Status:" PLAN.md | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' || echo "v0.1.0")

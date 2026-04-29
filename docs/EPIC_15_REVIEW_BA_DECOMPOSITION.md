@@ -174,7 +174,7 @@ func testFileInjection() async throws {
 func testMissingFile() async {
     let prompt = "Check @nonexistent.txt"
     
-    await #expect(throws: GemmaServerError.self) {
+    await #expect(throws: GemError.self) {
         try await PromptContextBuilder.build(prompt: prompt)
     }
 }
@@ -192,7 +192,7 @@ func testEscapedAt() async throws {
 
 ### US-15.4: Non-Interactive Mode for Automation
 **As a** CI/CD engineer  
-**I want to** run `gemmaserver chat -p "prompt" --json`  
+**I want to** run `gem chat -p "prompt" --json`  
 **So that** I can automate LLM tasks in scripts
 
 **Acceptance Criteria:**
@@ -205,14 +205,14 @@ func testEscapedAt() async throws {
 **Examples:**
 ```bash
 # One-shot generation
-$ gemmaserver chat --model qwen3.5-4b -p "Explain HTTPS"
+$ gem chat --model qwen3.5-4b -p "Explain HTTPS"
 HTTPS is a protocol for secure communication...
 
 # With file injection
-$ gemmaserver chat -p "Summarize @README.md" > summary.txt
+$ gem chat -p "Summarize @README.md" > summary.txt
 
 # JSON output for parsing
-$ gemmaserver chat -p "List 3 keywords" --json | jq '.choices[0].text'
+$ gem chat -p "List 3 keywords" --json | jq '.choices[0].text'
 ```
 
 **Test Cases:**
@@ -345,7 +345,7 @@ orchestrator.generate(request: finalPrompt)
 
 ## Implementation Details
 
-### File: `Sources/GemmaServer/CLI/TerminalManager.swift`
+### File: `Sources/Gem/CLI/TerminalManager.swift`
 
 **Key Responsibilities:**
 1. Enable/disable raw terminal mode via `termios`
@@ -459,7 +459,7 @@ private func refreshLine() {
 
 ---
 
-### File: `Sources/GemmaServer/CLI/ChatController.swift`
+### File: `Sources/Gem/CLI/ChatController.swift`
 
 **Key Responsibilities:**
 1. Manage message queue (FIFO)
@@ -583,7 +583,7 @@ func start() async {
 
 ---
 
-### File: `Sources/GemmaServer/CLI/PromptContextBuilder.swift`
+### File: `Sources/Gem/CLI/PromptContextBuilder.swift`
 
 **Key Responsibilities:**
 1. Parse `@filepath` syntax using regex
@@ -619,7 +619,7 @@ public static func build(prompt: String) async throws -> String {
             
             // Validate existence
             guard FileManager.default.fileExists(atPath: url.path) else {
-                throw GemmaServerError.invalidRequestStructure(details: "File not found: \(filePath)")
+                throw GemError.invalidRequestStructure(details: "File not found: \(filePath)")
             }
             
             // Check file size (1MB limit)
@@ -627,7 +627,7 @@ public static func build(prompt: String) async throws -> String {
             let size = attributes[.size] as? UInt64 ?? 0
             
             if size > 1024 * 1024 {
-                throw GemmaServerError.invalidRequestStructure(details: "File too large to inject (>1MB): \(filePath)")
+                throw GemError.invalidRequestStructure(details: "File too large to inject (>1MB): \(filePath)")
             }
             
             // Read and append
@@ -648,7 +648,7 @@ public static func build(prompt: String) async throws -> String {
 
 ## Test Coverage
 
-### File: `Tests/GemmaServerTests/CLITests/PromptContextBuilderTests.swift`
+### File: `Tests/GemTests/CLITests/PromptContextBuilderTests.swift`
 
 **Test Cases (6 total):**
 
@@ -698,7 +698,7 @@ func testMultipleReferences() async throws {
 func testMissingFile() async {
     let prompt = "Check @/nonexistent/file.txt"
     
-    await #expect(throws: GemmaServerError.self) {
+    await #expect(throws: GemError.self) {
         try await PromptContextBuilder.build(prompt: prompt)
     }
 }
@@ -713,7 +713,7 @@ func testLargeFile() async throws {
     
     let prompt = "Load @\(tempFile.path)"
     
-    await #expect(throws: GemmaServerError.self) {
+    await #expect(throws: GemError.self) {
         try await PromptContextBuilder.build(prompt: prompt)
     }
 }
@@ -759,7 +759,7 @@ func testEscapedAt() async throws {
 **Issue:** Users expect Up/Down arrows to recall previous commands (like Bash)
 
 **Decomposition:**
-- **Task 15.2.1**: Create `CommandHistory` actor with persistent storage (~/.gemmaserver/history.txt)
+- **Task 15.2.1**: Create `CommandHistory` actor with persistent storage (~/.gem/history.txt)
 - **Task 15.2.2**: Implement Up/Down arrow navigation
 - **Task 15.2.3**: Add Ctrl+R for reverse search
 - **Task 15.2.4**: Limit history to 1000 entries
@@ -890,7 +890,7 @@ Gemma > Compare @diff:v1.swift:v2.swift
 
 ### Example 1: Basic Chat
 ```bash
-$ gemmaserver chat --model qwen3.5-4b
+$ gem chat --model qwen3.5-4b
 Loading model from /Users/.cache/huggingface/hub/qwen3.5-4b...
 Model ready. Type 'exit' or 'quit' to stop.
 
@@ -921,7 +921,7 @@ actor JWTService {
 
 ### Example 3: Non-Interactive Mode
 ```bash
-$ gemmaserver chat --model qwen3.5-4b -p "List 5 Swift best practices"
+$ gem chat --model qwen3.5-4b -p "List 5 Swift best practices"
 1. Use Swift 6 strict concurrency
 2. Prefer value types (struct) over reference types (class)
 3. Use protocol-oriented programming

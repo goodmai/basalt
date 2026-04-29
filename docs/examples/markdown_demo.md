@@ -59,7 +59,7 @@ This is **bold**, this is *italic*, and this is `inline code`.
 
 ```json
 {
-    "name": "GemmaServer",
+    "name": "Gem",
     "version": "0.6.0",
     "features": [
         "Terminal UI",

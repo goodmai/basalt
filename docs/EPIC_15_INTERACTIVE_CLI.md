@@ -21,7 +21,7 @@ Implement a highly interactive, non-blocking command-line interface inspired by 
   - **Scenario:** The user triggers a long-running task or generation. Realizing a mistake, the user presses `Ctrl+C`. The active generation is aborted immediately, the stream stops, and the prompt returns to a ready state without crashing the server.
 - **UC3: Context Injection via `@` References**
   - **Actor:** Developer
-  - **Scenario:** The user types `Explain the logic in @Sources/GemmaServer/Core/AuthService.swift`. The CLI intercepts the `@` symbol, resolves the file path, reads its contents, and silently injects it into the LLM context before routing the request.
+  - **Scenario:** The user types `Explain the logic in @Sources/Gem/Core/AuthService.swift`. The CLI intercepts the `@` symbol, resolves the file path, reads its contents, and silently injects it into the LLM context before routing the request.
 - **UC4: Auto-Execution (CLI Flags)**
   - **Actor:** CI/CD Pipeline / Script
   - **Scenario:** The server is launched with a direct prompt flag (e.g., `gemini -p "Summarize @README.md"`). The CLI executes the prompt immediately, streams the result, and exits.

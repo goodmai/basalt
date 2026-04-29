@@ -13,7 +13,7 @@ on:
 jobs:
   security-audit:
     name: Security & Dependency Audit
-    runs-on: macos-latest
+    runs-on: macos-14
     
     steps:
       - name: Checkout code
@@ -93,7 +93,7 @@ jobs:
 
   codeql-analysis:
     name: CodeQL Security Analysis
-    runs-on: macos-latest
+    runs-on: macos-14
     permissions:
       actions: read
       contents: read

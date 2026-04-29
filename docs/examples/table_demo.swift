@@ -111,7 +111,7 @@ print("│ Qwen2.5-Coder-7B-4bit      │ 🟢 Perfect  │ 89.1   │ 4 GB    �
 print("│ Llama-3.1-70B-4bit         │ 🔴 TooTight │ 45.2   │ 35 GB   │ 3 TPS    │")
 print("╰────────────────────────────┴─────────────┴────────┴─────────┴──────────╯\n")
 
-print(TerminalUI.dim("Run `gemmaserver models download <model>` to install.\n"))
+print(TerminalUI.dim("Run `gem models download <model>` to install.\n"))
 
 // MARK: - Summary
 
@@ -130,7 +130,7 @@ Features Demonstrated:
 • Special characters (✓, ✗, 🟢, 🟡, 🔴)
 • Alternating row colors (dimmed)
 
-Usage in GemmaServer:
+Usage in Gem:
   TableRenderer.render(headers: headers, rows: rows, style: .unicode)
   TableBuilder().addHeader("Name").addRow(["Value"]).build()
 

@@ -2,7 +2,7 @@
 
 **Date:** April 28, 2026  
 **Analyst:** BA Team  
-**Project:** GemmaServer v0.5.0 → v0.6.0  
+**Project:** Gem v0.5.0 → v0.6.0  
 **Commit:** `c733fbc`
 
 ---
@@ -12,7 +12,7 @@
 Проведен тщательный Business Analysis Epic 16 с полной декомпозицией требований на основе:
 1. ✅ Анализа текущего состояния Epic 15 (завершен в коммите `3f96103`)
 2. ✅ Конкурентного анализа OpenCLI (клонирован в `.opencli/`, добавлен в `.gitignore`)
-3. ✅ Извлечения 9 критических feature gaps между GemmaServer и лучшими практиками CLI
+3. ✅ Извлечения 9 критических feature gaps между Gem и лучшими практиками CLI
 
 ---
 
@@ -43,7 +43,7 @@
 **Ключевые Находки:**
 
 #### Сильные стороны OpenCLI (что взять)
-| Feature | OpenCLI | GemmaServer | Epic для внедрения |
+| Feature | OpenCLI | Gem | Epic для внедрения |
 |---------|---------|-------------|---------------------|
 | **Task-First Commands** | ✅ 15+ commands (asr, tts, ocr, t2i) | ❌ Only `chat` | Epic 17 (Future) |
 | **`fit` Command** | ✅ Hardware profiling + model scoring | ❌ Basic onboard | **Epic 16.7** |
@@ -52,7 +52,7 @@
 | **Progress Bars** | ✅ Inline `[████░] 80%` | ⚠️ Basic | **Epic 16.8** |
 
 #### Слабые стороны OpenCLI (где мы лучше)
-| Feature | OpenCLI | GemmaServer | Наше Преимущество |
+| Feature | OpenCLI | Gem | Наше Преимущество |
 |---------|---------|-------------|-------------------|
 | Interactive Chat | ❌ Basic | ✅ Non-blocking, queueing | Epic 15 ✅ |
 | Streaming | ⚠️ Limited | ✅ Full SSE + AsyncStream | Epic 7.1 ✅ |
@@ -153,7 +153,7 @@
   - Table output with recommendations
 - **Example:**
 ```bash
-$ gemmaserver fit
+$ gem fit
 
 Device: Apple M2 Max | 32 GB RAM
 
@@ -275,7 +275,7 @@ dependencies: [
 
 ### Следующий спринт
 1. [ ] Start Epic 16.1 (Rainbow integration)
-2. [ ] Создать `Sources/GemmaServer/UI/TerminalUI.swift`
+2. [ ] Создать `Sources/Gem/UI/TerminalUI.swift`
 3. [ ] Написать unit tests для color helpers
 4. [ ] Update ChatCommand для использования TerminalUI
 

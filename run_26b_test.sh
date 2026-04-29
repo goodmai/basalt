@@ -1,6 +1,6 @@
 #!/bin/bash
 MODEL="mlx-community/gemma-4-26b-a4b-4bit"
-swift run GemmaServer serve --model "$MODEL" --rest > server_26b.log 2>&1 &
+swift run Gem serve --model "$MODEL" --rest > server_26b.log 2>&1 &
 SERVER_PID=$!
 echo "Waiting for 26B model to load..."
 # Heavy model, wait up to 120s

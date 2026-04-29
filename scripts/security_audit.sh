@@ -1,10 +1,10 @@
 #!/bin/bash
-# Security Audit Script for GemmaServer
+# Security Audit Script for Gem
 # Part of Epic 8: Security & Dependency Audit
 
 set -e
 
-echo "🔒 GemmaServer Security Audit"
+echo "🔒 Gem Security Audit"
 echo "=============================="
 echo ""
 

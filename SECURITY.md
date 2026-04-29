@@ -83,7 +83,7 @@ Security vulnerabilities should be reported privately.
 
 ### 📩 Alternative: Email
 
-**Email:** security@gemmaserver.dev  
+**Email:** security@gem.dev  
 **PGP Key:** [To be published]
 
 ### ⏱️ Response Timeline
@@ -161,11 +161,11 @@ Never use default secrets in production:
 export JWT_SECRET=$(openssl rand -base64 32)
 
 # Run server with secret
-./GemmaServer serve --model ./models/gemma --jwt-secret "$JWT_SECRET"
+./Gem serve --model ./models/gemma --jwt-secret "$JWT_SECRET"
 
 # Or via environment
 export JWT_SECRET="your-super-secret-key-at-least-32-chars"
-./GemmaServer serve --model ./models/gemma
+./Gem serve --model ./models/gemma
 ```
 
 #### 2. Enable HTTPS with Reverse Proxy
@@ -203,7 +203,7 @@ api.example.com {
 
 ```bash
 # Listen only on localhost (most secure)
-./GemmaServer serve --host 127.0.0.1 --port 8080
+./Gem serve --host 127.0.0.1 --port 8080
 
 # Or use firewall to restrict access
 sudo ufw allow from 192.168.1.0/24 to any port 8080
@@ -214,7 +214,7 @@ sudo ufw allow from 192.168.1.0/24 to any port 8080
 ```bash
 # After first run, create admin user with strong password
 # Password must be 8+ characters
-./GemmaServer create-user --username admin --password "MyStr0ng!P@ssw0rd"
+./Gem create-user --username admin --password "MyStr0ng!P@ssw0rd"
 ```
 
 #### 5. Keep Dependencies Updated
@@ -429,10 +429,10 @@ Common Weakness Enumeration (CWE) security audit:
 
 ## Security Contacts
 
-- **Security Issues:** security@gemmaserver.dev
+- **Security Issues:** security@gem.dev
 - **Bug Bounty:** Not yet established
 - **GitHub Security:** [Report vulnerability](https://github.com/YOUR_ORG/mlx/security/advisories)
-- **Mastodon:** @gemmaserver@fosstodon.org
+- **Mastodon:** @gem@fosstodon.org
 
 ---
 

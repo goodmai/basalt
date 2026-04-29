@@ -2,7 +2,7 @@
 import PackageDescription
 
 let package = Package(
-    name: "GemmaServer",
+    name: "Gem",
     platforms: [
         .macOS(.v15)
     ],
@@ -27,7 +27,7 @@ let package = Package(
 
         // ── Library (all logic, importable by tests) ─────────────────────────
         .target(
-            name: "GemmaServerCore",
+            name: "GemCore",
             dependencies: [
                 .product(name: "MLX",           package: "mlx-swift"),
                 .product(name: "MLXNN",         package: "mlx-swift"),
@@ -48,7 +48,7 @@ let package = Package(
                 .product(name: "Markdown",      package: "swift-markdown"),
                 .product(name: "Splash",        package: "Splash"),
             ],
-            path: "Sources/GemmaServer",
+            path: "Sources/Gem",
             swiftSettings: [
                 .swiftLanguageMode(.v6),
             ]
@@ -56,9 +56,9 @@ let package = Package(
 
         // ── Executable (thin wrapper — just calls library main) ───────────────
         .executableTarget(
-            name: "GemmaServer",
-            dependencies: ["GemmaServerCore"],
-            path: "Sources/GemmaServerBin",
+            name: "Gem",
+            dependencies: ["GemCore"],
+            path: "Sources/GemBin",
             swiftSettings: [
                 .swiftLanguageMode(.v6),
             ]
@@ -66,11 +66,11 @@ let package = Package(
 
         // ── Tests ─────────────────────────────────────────────────────────────
         .testTarget(
-            name: "GemmaServerTests",
+            name: "GemTests",
             dependencies: [
-                "GemmaServerCore",
+                "GemCore",
             ],
-            path: "Tests/GemmaServerTests",
+            path: "Tests/GemTests",
             swiftSettings: [
                 .swiftLanguageMode(.v6),
             ]
@@ -78,7 +78,7 @@ let package = Package(
         .executableTarget(
             name: "PerformanceBenchmark",
             dependencies: [
-                "GemmaServerCore",
+                "GemCore",
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
             ],
             path: "Sources/PerformanceBenchmark",

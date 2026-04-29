@@ -1,4 +1,4 @@
-# Security Audit Report - GemmaServer
+# Security Audit Report - Gem
 
 **Date:** April 28, 2025  
 **Auditor:** Security Team  
@@ -9,7 +9,7 @@
 
 ## Executive Summary
 
-This security audit was performed on GemmaServer to ensure compliance with industry security standards and identify potential vulnerabilities before v1.0.0 release. The audit covered:
+This security audit was performed on Gem to ensure compliance with industry security standards and identify potential vulnerabilities before v1.0.0 release. The audit covered:
 
 1. **Dependency Security Audit** - All Swift Package Manager dependencies checked against CVE databases
 2. **CWE Security Audit** - Common Weakness Enumeration analysis of codebase
@@ -78,7 +78,7 @@ This security audit was performed on GemmaServer to ensure compliance with indus
 **Description:**  
 X-Wing HPKE Decapsulation Accepts Malformed Ciphertext Length - Out-of-bounds read in X-Wing KEM decapsulation when processing attacker-controlled encapsulated keys.
 
-**Impact on GemmaServer:** NONE  
+**Impact on Gem:** NONE  
 - We use swift-crypto 3.15.1 (pinned in Package.resolved)
 - Vulnerability only affects 4.0.0+ versions
 - X-Wing KEM not used in authentication flow
@@ -172,7 +172,7 @@ try db.run(
 
 #### Findings:
 
-- GemmaServer is a pure REST API (no web UI)
+- Gem is a pure REST API (no web UI)
 - All responses are JSON-encoded
 - No HTML/JavaScript rendering
 - Content-Type headers properly set to `application/json`
@@ -344,7 +344,7 @@ app.group("api")
 
 **Status:** ✅ N/A - No XML processing
 
-GemmaServer does not process XML. All API communication uses JSON.
+Gem does not process XML. All API communication uses JSON.
 
 ---
 
@@ -553,7 +553,7 @@ echo "✅ Security checks passed"
 
 **Rating:** 🟢 GOOD (8.5/10)
 
-GemmaServer demonstrates strong security practices:
+Gem demonstrates strong security practices:
 - ✅ No critical vulnerabilities in dependencies
 - ✅ Type-safe Swift 6 with strict concurrency
 - ✅ Proper input validation and parameterized queries
@@ -573,7 +573,7 @@ GemmaServer demonstrates strong security practices:
 
 ### 8.3 Sign-off
 
-This security audit confirms that GemmaServer is ready for v1.0.0 release with the implementation of critical recommendations (RBAC, rate limiting).
+This security audit confirms that Gem is ready for v1.0.0 release with the implementation of critical recommendations (RBAC, rate limiting).
 
 **Audited by:** Security Team  
 **Date:** April 28, 2025  
@@ -602,7 +602,7 @@ grep -rE "\b([0-9]{1,3}\.){3}[0-9]{1,3}\b" Sources/
 
 ## Appendix B: Security Contacts
 
-- Security Issues: security@gemmaserver.dev
+- Security Issues: security@gem.dev
 - Bug Bounty: (Not yet established)
 - PGP Key: (To be published)
 

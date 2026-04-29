@@ -1,5 +1,5 @@
 import Foundation
-import GemmaServerCore
+import GemCore
 
 /// Example demonstrating Epic 16.4: Code Diff Viewer
 /// Shows how to render unified diffs with inline and side-by-side modes
@@ -65,10 +65,10 @@ print("\nExample 4: Real-World Git Diff (with git headers)")
 print("─────────────────────────────────────────────────────────\n")
 
 let gitDiff = """
-diff --git a/Sources/GemmaServer/Core/AuthService.swift b/Sources/GemmaServer/Core/AuthService.swift
+diff --git a/Sources/Gem/Core/AuthService.swift b/Sources/Gem/Core/AuthService.swift
 index 1234567..abcdefg 100644
---- a/Sources/GemmaServer/Core/AuthService.swift
-+++ b/Sources/GemmaServer/Core/AuthService.swift
+--- a/Sources/Gem/Core/AuthService.swift
++++ b/Sources/Gem/Core/AuthService.swift
 @@ -24,10 +24,7 @@ actor AuthService {
      func login(username: String, password: String) async throws -> String {
          guard let user = try await database.fetchUser(username) else {

@@ -1,12 +1,12 @@
 import Foundation
 import ArgumentParser
-import GemmaServerCore
+import GemCore
 
 @available(macOS 10.15, *)
 @main
 struct Benchmark: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
-        abstract: "Benchmark GemmaServer inference (TPS, TTFT, latency, memory)"
+        abstract: "Benchmark Gem inference (TPS, TTFT, latency, memory)"
     )
 
     @Option(name: .shortAndLong, help: "Model path or HF repo ID (must be in local cache)")

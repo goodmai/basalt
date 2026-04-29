@@ -1,9 +1,9 @@
 #!/bin/bash
 MODEL="mlx-community/gemma-4-e4b-it-4bit"
 echo "Downloading 4B model..."
-swift run GemmaServer models download "$MODEL"
+swift run Gem models download "$MODEL"
 
-swift run GemmaServer serve --model "$MODEL" --rest > server_4b.log 2>&1 &
+swift run Gem serve --model "$MODEL" --rest > server_4b.log 2>&1 &
 SERVER_PID=$!
 echo "Waiting for 4B model to load..."
 for i in {1..60}; do

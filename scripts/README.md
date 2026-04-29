@@ -1,4 +1,4 @@
-# GemmaServer Scripts
+# Gem Scripts
 
 Automation scripts for development workflow.
 
@@ -29,7 +29,7 @@ Automatically calculates the next version based on commit history and epic compl
 
 **Example Output:**
 ```
-=== GemmaServer Version Counter ===
+=== Gem Version Counter ===
 
 Current Version: v0.1.0
   MAJOR: 0

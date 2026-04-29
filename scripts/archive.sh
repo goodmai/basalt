@@ -1,5 +1,5 @@
 #!/bin/bash
-# Archive Manager for GemmaServer
+# Archive Manager for Gem
 # Archives completed tasks, plans, and reviews to .archive/ directory
 
 set -e
@@ -14,7 +14,7 @@ BLUE='\033[0;34m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
-echo -e "${BLUE}=== GemmaServer Archive Manager ===${NC}\n"
+echo -e "${BLUE}=== Gem Archive Manager ===${NC}\n"
 
 # Create archive directory structure
 mkdir -p "${ARCHIVE_DIR}/plans"
@@ -96,7 +96,7 @@ generate_index() {
     echo -e "${BLUE}Generating archive index...${NC}"
 
     cat > "${ARCHIVE_DIR}/INDEX.md" << INDEXEOF
-# GemmaServer Archive Index
+# Gem Archive Index
 
 Generated: $(date)
 
