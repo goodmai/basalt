@@ -49,11 +49,14 @@ struct ChatCommand: AsyncParsableCommand {
 
         if ui {
             log("Launching Rainbow Metal GUI...")
-            // We use MainActor logic implicitly via SwiftUI & AppKit
-            let state = await MainActor.run { RainbowUIState() }
-            // Todo: Link the orchestrator to the state manager!
+            let modelDisplayName = resolvedPath.components(separatedBy: "/").last ?? resolvedPath
+            let state = await MainActor.run { 
+                let s = RainbowUIState()
+                s.modelName = modelDisplayName
+                return s
+            }
             await MainActor.run {
-                launchRainbowUI(state: state)
+                launchRainbowUI(state: state, orchestrator: orchestrator, maxTokens: maxTokens)
             }
             return
         }

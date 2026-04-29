@@ -1,7 +1,115 @@
 import MetalKit
 import SwiftUI
 
-public struct RainbowChatView: NSViewRepresentable {
+public struct RainbowChatView: View {
+    @ObservedObject var state: RainbowUIState
+    var orchestrator: ModelOrchestratorActor?
+    var maxTokens: Int
+    
+    public init(state: RainbowUIState, orchestrator: ModelOrchestratorActor? = nil, maxTokens: Int = 65536) {
+        self.state = state
+        self.orchestrator = orchestrator
+        self.maxTokens = maxTokens
+    }
+    
+    public var body: some View {
+        ZStack(alignment: .bottomLeading) {
+            MetalViewRepresentable(state: state)
+                .edgesIgnoringSafeArea(.all)
+                .accessibilityIdentifier("RainbowMetalBackground")
+            
+            // Transparent text field to capture keyboard input
+            TextField("", text: $state.inputText)
+                .textFieldStyle(PlainTextFieldStyle())
+                .foregroundColor(.clear)
+                .background(Color.clear)
+                .accentColor(.clear)
+                .opacity(0.01)
+                .frame(height: 30)
+                .padding(.bottom, 10)
+                .padding(.horizontal, 16)
+                .accessibilityIdentifier("RainbowInputField")
+                .onSubmit {
+                    submitMessage()
+                }
+        }
+        .onAppear {
+            state.setMode(.idle)
+        }
+        .frame(minWidth: 600, minHeight: 400)
+    }
+    
+    private func submitMessage() {
+        let text = state.inputText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        
+        state.addUserMessage(text)
+        state.inputText = ""
+        state.setMode(.processing)
+        
+        guard let orchestrator = orchestrator else {
+            // Demo mode — no orchestrator connected
+            Task {
+                try? await Task.sleep(nanoseconds: 1_500_000_000)
+                await MainActor.run {
+                    state.addAssistantMessage("🌈 Rainbow UI demo — orchestrator not connected. Your message: \"\(text)\"")
+                    state.setMode(.finished)
+                }
+                try? await Task.sleep(nanoseconds: 3_000_000_000)
+                await MainActor.run {
+                    state.setMode(.idle)
+                }
+            }
+            return
+        }
+        
+        // Real inference
+        Task {
+            do {
+                let request = GenerationRequest(prompt: text, maxTokens: maxTokens)
+                let stream = try await orchestrator.generateStream(request: request)
+                
+                await MainActor.run {
+                    state.setMode(.streaming)
+                    state.addAssistantMessage("")
+                }
+                
+                var tps: Double = 0
+                for try await chunk in stream {
+                    switch chunk {
+                    case .text(let t):
+                        await MainActor.run {
+                            state.appendToLastAssistant(t)
+                        }
+                    case .metadata(let m):
+                        tps = m.tokensPerSecond
+                    }
+                }
+                
+                await MainActor.run {
+                    state.tokensPerSecond = tps
+                    state.setMode(.finished)
+                }
+                
+                try? await Task.sleep(nanoseconds: 3_000_000_000)
+                await MainActor.run {
+                    state.setMode(.idle)
+                }
+            } catch {
+                await MainActor.run {
+                    state.addAssistantMessage("Error: \(error.localizedDescription)")
+                    state.setMode(.error)
+                }
+                try? await Task.sleep(nanoseconds: 3_000_000_000)
+                await MainActor.run {
+                    state.setMode(.idle)
+                }
+            }
+        }
+    }
+}
+
+public struct MetalViewRepresentable: NSViewRepresentable {
     @ObservedObject var state: RainbowUIState
     
     public init(state: RainbowUIState) {
