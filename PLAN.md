@@ -113,7 +113,7 @@
   - [x] 16.4: Code Diff Viewer (unified diff, side-by-side, clipboard) ✅ **JUST COMPLETED**
   - [ ] 16.5: Image Preview in Terminal (iTerm2, Kitty protocols) ⏸️ Deferred to Epic 17
   - [x] 16.6: Clipboard Integration (pbcopy/pbpaste, macOS-first) ✅
-  - [ ] 16.7: `fit` Command (M1-M5 detection, model recommendations, fit scoring) 🚧 IN PROGRESS (60%)
+  - [x] 16.7: `fit` Command (M1-M5 detection, model recommendations, fit scoring) ✅ COMPLETED
   - [x] 16.8: Progress Bar System (inline updates, multi-task, ETA) ✅
   - [x] 16.9: Output Mode System (JSON, Plain, Pretty) ✅
   - [x] 16.10: Async Spinner System (dots, line, pulse animations) ✅ BONUS
