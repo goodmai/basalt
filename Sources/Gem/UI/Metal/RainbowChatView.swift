@@ -123,10 +123,43 @@ public class RainbowMTKView: MTKView {
         }
     }
     
-    // Accessibility boilerplate can be added here
+    // Accessibility tree generation for Agent testing
+    public override func accessibilityRole() -> NSAccessibility.Role? {
+        return .group
+    }
+    
+    public override func accessibilityLabel() -> String? {
+        return "Chat History"
+    }
+    
     public override func accessibilityChildren() -> [Any]? {
-        // Will be populated with accessibility markers from state/renderer
-        return nil
+        guard let state = state else { return nil }
+        
+        var children: [NSAccessibilityElement] = []
+        
+        // 1. Header Marker
+        let header = NSAccessibilityElement()
+        header.setAccessibilityRole(.staticText)
+        header.setAccessibilityValue("Header: Gemm • \(state.modelName) - Status: \(state.currentMode)")
+        // Normally we'd set bounds here (accessibilityFrame)
+        children.append(header)
+        
+        // 2. Message Markers
+        for msg in state.messages {
+            let msgElement = NSAccessibilityElement()
+            msgElement.setAccessibilityRole(.staticText)
+            let rolePrefix = msg.role == .user ? "User: " : "Assistant: "
+            msgElement.setAccessibilityValue(rolePrefix + msg.text)
+            children.append(msgElement)
+        }
+        
+        // 3. Footer Marker
+        let footer = NSAccessibilityElement()
+        footer.setAccessibilityRole(.staticText)
+        footer.setAccessibilityValue("Input field. Current text: \(state.inputText)")
+        children.append(footer)
+        
+        return children
     }
 }
 
