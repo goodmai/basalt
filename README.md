@@ -1,11 +1,12 @@
-# GemmaServer
+# Gem (formerly GemmaServer)
 
 Local LLM inference server for Apple Silicon with dual interface architecture.  
+**Note:** The binary and the program itself are now called `gem` instead of `GemmaServer`.
 **MCP** (stdio) for IDE integration + **REST** (HTTP) for agent-to-agent communication.
 
 ```
 ┌─────────────────────────────────────────────────────┐
-│                   GemmaServer                       │
+│                   Gem                       │
 │                                                     │
 │   MCP stdio ──┐                                     │
 │               ├──► ModelOrchestratorActor ──► MLX  │
@@ -37,8 +38,8 @@ Local LLM inference server for Apple Silicon with dual interface architecture.
 
 **Option 1: Wrapper script with defaults (recommended)**
 ```bash
-git clone https://github.com/your-org/GemmaServer
-cd GemmaServer
+git clone https://github.com/your-org/Gem
+cd Gem
 swift build -c release
 
 # Add alias to your shell (automatically uses gemma-4-31b-it-4bit by default)
@@ -52,34 +53,34 @@ gemma --help       # See all options
 
 **Option 2: Automated setup**
 ```bash
-git clone https://github.com/your-org/GemmaServer
-cd GemmaServer
-./setup.sh
+git clone https://github.com/your-org/Gem
+cd Gem
+./scripts/installer.swift setup
 # Choose: 1) Install to /usr/local/bin, or 2) Add alias to shell
 ```
 
 **Option 3: Manual build**
 ```bash
-git clone https://github.com/your-org/GemmaServer
-cd GemmaServer
+git clone https://github.com/your-org/Gem
+cd Gem
 swift build -c release
 
 # Then choose one:
 # A) System-wide install
-sudo cp .build/release/GemmaServer /usr/local/bin/gemma
+sudo cp .build/release/Gem /usr/local/bin/gemma
 
 # B) Add alias (add to ~/.zshrc or ~/.bashrc)
-alias gemma='swift run --package-path /path/to/GemmaServer GemmaServer'
+alias gemma='swift run --package-path /path/to/Gem Gem'
 
 # C) Add to PATH
-export PATH="$PATH:/path/to/GemmaServer/.build/release"
+export PATH="$PATH:/path/to/Gem/.build/release"
 ```
 
 **Option 4: Run directly with Swift (no installation)**
 ```bash
 # No installation needed - just run from source
-swift run GemmaServer --help
-swift run GemmaServer chat --model mlx-community/gemma-4-31b-it-4bit
+swift run Gem --help
+swift run Gem chat --model mlx-community/gemma-4-31b-it-4bit
 ```
 
 **Option 5: Homebrew (coming in v0.2.0)**
@@ -100,7 +101,7 @@ gemma              # Launches chat with 31B model by default!
 gemma --help       # See all options
 
 # Or run directly:
-.build/release/GemmaServer --help
+.build/release/Gem --help
 ```
 
 **Available commands:**
@@ -246,7 +247,7 @@ curl -s http://localhost:8080/api/v1/generate \
 
 **Tested on Apple Silicon M-series (16-24 GB Unified Memory)**
 
-All models below are verified working with GemmaServer. Performance metrics: TPS (tokens/sec), TTFT (time to first token), RAM (active memory during inference).
+All models below are verified working with Gem. Performance metrics: TPS (tokens/sec), TTFT (time to first token), RAM (active memory during inference).
 
 ### ⚡ Recommended Models (by use case)
 
@@ -262,7 +263,7 @@ All models below are verified working with GemmaServer. Performance metrics: TPS
 **Models are cached in:** `~/.cache/huggingface/hub/`
 
 ```bash
-# GemmaServer automatically resolves models from cache
+# Gem automatically resolves models from cache
 # Just specify the model ID and it will find it
 
 # Example: Start server with cached model
@@ -302,20 +303,20 @@ git clone https://huggingface.co/mlx-community/Qwen3.5-4B-4bit \
 
 **Problem:** Running `gemma` in terminal does nothing.
 
-**Solution:** The binary is called `GemmaServer`, not `gemma`. You have three options:
+**Solution:** The binary is called `Gem`, not `gemma`. You have three options:
 
 ```bash
 # Option 1: Create an alias (add to ~/.zshrc or ~/.bashrc)
-alias gemma="swift run GemmaServer"
+alias gemma="swift run Gem"
 
 # Option 2: Copy to system PATH
-sudo cp .build/release/GemmaServer /usr/local/bin/gemma
+sudo cp .build/release/Gem /usr/local/bin/gemma
 
 # Option 3: Run with full path
-.build/release/GemmaServer --help
+.build/release/Gem --help
 
 # Option 4: Use swift run (no installation needed)
-swift run GemmaServer --help
+swift run Gem --help
 ```
 
 ### Model not found
@@ -444,7 +445,7 @@ Add to your MCP config (`~/.cursor/mcp.json` or similar):
       "args": [
         "run",
         "--package-path", "/Users/yourname/projects/mlx",
-        "GemmaServer",
+        "Gem",
         "serve",
         "--model", "mlx-community/Qwen3.5-4B-4bit",
         "--mcp"
@@ -465,7 +466,7 @@ Add to your MCP config (`~/.cursor/mcp.json` or similar):
 
 ### Running Tests
 
-GemmaServer has comprehensive test coverage with TDD approach:
+Gem has comprehensive test coverage with TDD approach:
 
 ```bash
 # Run all tests (101 tests, ~3 seconds)
@@ -520,7 +521,7 @@ swift run PerformanceBenchmark \
 
 ```
 Sources/
-├── GemmaServer/              # Main CLI executable
+├── Gem/              # Main CLI executable
 │   ├── CLI/                  # Command-line interface
 │   │   ├── ServeCommand.swift
 │   │   ├── ChatCommand.swift
@@ -529,7 +530,7 @@ Sources/
 │   │   ├── ModelOrchestratorActor.swift
 │   │   ├── MLXInferenceEngine.swift
 │   │   ├── AuthService.swift
-│   │   └── GemmaServerError.swift
+│   │   └── GemError.swift
 │   ├── REST/                 # REST API server
 │   │   ├── RESTServer.swift
 │   │   ├── Controllers/
@@ -543,7 +544,7 @@ Sources/
 │       ├── HuggingFaceHub.swift
 │       └── TokenBudgetCalculator.swift
 ├── PerformanceBenchmark/     # Benchmark tool
-└── GemmaServerTests/         # Test suite (101 tests)
+└── GemTests/         # Test suite (101 tests)
 ```
 
 ### Top-level Directories (Purpose)
@@ -555,6 +556,15 @@ Sources/
 - `.github/` — CI workflows and GitHub metadata
 - `Formula/` — Homebrew packaging artifacts
 - `.build/`, `.swiftpm/` — local build/package artifacts (not for release commits)
+
+### Operational Scripts
+
+The `scripts/` directory contains useful utilities built with Swift. They are covered by the automated test suite to ensure reliability. 
+All scripts support `--help` for usage details, `--dry-run` to test safely, and `--verbose` for debug logging.
+
+- `./scripts/build_metal.swift`: Compiles custom Metal shaders.
+- `./scripts/clean_for_github.swift`: Cleans temporary/local artifacts.
+- `./scripts/installer.swift`: Automates local installation. Supports `--non-interactive` to skip user prompts in CI environments.
 
 ### Pre-publish Cleanup (GitHub)
 
@@ -610,6 +620,6 @@ MLX error: Failed to load the default metallib. library not found library not fo
 ```
 **A:** This happens because the pre-compiled Metal shader library (`default.metallib`) is missing or was cleaned up. You can easily fix this by regenerating it. Run the following command from the root of the project:
 ```bash
-./build_metal.sh
+./scripts/build_metal.swift
 ```
 This script compiles all Metal kernels and copies the generated `default.metallib` into your project root and `.build/debug/` directory, satisfying MLX Swift's requirements.
