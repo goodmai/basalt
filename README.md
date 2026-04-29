@@ -1,12 +1,12 @@
-# Gem (formerly GemmaServer)
+# Gemm
 
 Local LLM inference server for Apple Silicon with dual interface architecture.  
-**Note:** The binary and the program itself are now called `gem` instead of `GemmaServer`.
+**Note:** The binary and the program itself are now called `gemm` instead of `gem` to avoid conflict with RubyGems.
 **MCP** (stdio) for IDE integration + **REST** (HTTP) for agent-to-agent communication.
 
 ```
 ┌─────────────────────────────────────────────────────┐
-│                   Gem                       │
+│                  Gemm                       │
 │                                                     │
 │   MCP stdio ──┐                                     │
 │               ├──► ModelOrchestratorActor ──► MLX  │
@@ -38,55 +38,55 @@ Local LLM inference server for Apple Silicon with dual interface architecture.
 
 **Option 1: Wrapper script with defaults (recommended)**
 ```bash
-git clone https://github.com/your-org/Gem
-cd Gem
+git clone https://github.com/your-org/Gemm
+cd Gemm
 swift build -c release
 
 # Add alias to your shell (automatically uses gemma-4-31b-it-4bit by default)
-echo "alias gemma='$(pwd)/gemma'" >> ~/.zshrc
+echo "alias gemm='$(pwd)/gemm'" >> ~/.zshrc
 source ~/.zshrc
 
 # Now just run:
-gemma              # Starts chat with 31B model automatically!
-gemma --help       # See all options
+gemm              # Starts chat with 31B model automatically!
+gemm --help       # See all options
 ```
 
 **Option 2: Automated setup**
 ```bash
-git clone https://github.com/your-org/Gem
-cd Gem
+git clone https://github.com/your-org/Gemm
+cd Gemm
 ./scripts/installer.swift setup
 # Choose: 1) Install to /usr/local/bin, or 2) Add alias to shell
 ```
 
 **Option 3: Manual build**
 ```bash
-git clone https://github.com/your-org/Gem
-cd Gem
+git clone https://github.com/your-org/Gemm
+cd Gemm
 swift build -c release
 
 # Then choose one:
 # A) System-wide install
-sudo cp .build/release/Gem /usr/local/bin/gemma
+sudo cp .build/release/Gemm /usr/local/bin/gemm
 
 # B) Add alias (add to ~/.zshrc or ~/.bashrc)
-alias gemma='swift run --package-path /path/to/Gem Gem'
+alias gemm='swift run --package-path /path/to/Gemm Gemm'
 
 # C) Add to PATH
-export PATH="$PATH:/path/to/Gem/.build/release"
+export PATH="$PATH:/path/to/Gemm/.build/release"
 ```
 
 **Option 4: Run directly with Swift (no installation)**
 ```bash
 # No installation needed - just run from source
-swift run Gem --help
-swift run Gem chat --model mlx-community/gemma-4-31b-it-4bit
+swift run Gemm --help
+swift run Gemm chat --model mlx-community/gemma-4-31b-it-4bit
 ```
 
 **Option 5: Homebrew (coming in v0.2.0)**
 ```bash
-brew tap your-org/gemma
-brew install gemma
+brew tap your-org/gemm
+brew install gemm
 ```
 
 ---
@@ -97,18 +97,18 @@ brew install gemma
 
 ```bash
 # If you installed wrapper script:
-gemma              # Launches chat with 31B model by default!
-gemma --help       # See all options
+gemm              # Launches chat with 31B model by default!
+gemm --help       # See all options
 
 # Or run directly:
-.build/release/Gem --help
+.build/release/Gemm --help
 ```
 
 **Available commands:**
 ```
 OVERVIEW: Local LLM inference server for Apple Silicon
 
-USAGE: gemma-server <subcommand>
+USAGE: gemm <subcommand>
 
 OPTIONS:
   --version               Show the version.
@@ -125,45 +125,45 @@ SUBCOMMANDS:
 ### 2. Default usage (wrapper script)
 
 ```bash
-# Just run gemma - auto-starts chat with gemma-4-31b-it-4bit
-gemma
+# Just run gemm - auto-starts chat with gemma-4-31b-it-4bit
+gemm
 
 # This is equivalent to:
-gemma chat --model mlx-community/gemma-4-31b-it-4bit
+gemm chat --model mlx-community/gemma-4-31b-it-4bit
 ```
 
 ### 3. Start the server (MCP mode)
 
 ```bash
 # Run MCP server on stdio (for Cursor/Claude Desktop)
-gemma serve --model mlx-community/gemma-4-31b-it-4bit --mcp
+gemm serve --model mlx-community/gemma-4-31b-it-4bit --mcp
 ```
 
 ### 4. Start the server (REST mode)
 
 ```bash
 # Run REST API on http://localhost:8080
-gemma serve --model mlx-community/gemma-4-31b-it-4bit --rest
+gemm serve --model mlx-community/gemma-4-31b-it-4bit --rest
 ```
 
 ### 5. Use different models
 
 ```bash
 # Fast 4B model
-gemma chat --model mlx-community/Qwen3.5-4B-4bit
+gemm chat --model mlx-community/Qwen3.5-4B-4bit
 
 # Balanced 9B model
-gemma chat --model mlx-community/Qwen3.5-9B-OptiQ-4bit
+gemm chat --model mlx-community/Qwen3.5-9B-OptiQ-4bit
 
 # Flagship 27B model
-gemma chat --model mlx-community/Qwen3.6-27B-4bit
+gemm chat --model mlx-community/Qwen3.6-27B-4bit
 ```
 
 ### 6. Run benchmarks
 
 ```bash
 # Benchmark a model
-gemma serve --model mlx-community/Qwen3.5-4B-4bit --rest &
+gemm serve --model mlx-community/Qwen3.5-4B-4bit --rest &
 swift run PerformanceBenchmark --model mlx-community/Qwen3.5-4B-4bit
 ```
 
@@ -247,7 +247,7 @@ curl -s http://localhost:8080/api/v1/generate \
 
 **Tested on Apple Silicon M-series (16-24 GB Unified Memory)**
 
-All models below are verified working with Gem. Performance metrics: TPS (tokens/sec), TTFT (time to first token), RAM (active memory during inference).
+All models below are verified working with Gemm. Performance metrics: TPS (tokens/sec), TTFT (time to first token), RAM (active memory during inference).
 
 ### ⚡ Recommended Models (by use case)
 
@@ -263,11 +263,11 @@ All models below are verified working with Gem. Performance metrics: TPS (tokens
 **Models are cached in:** `~/.cache/huggingface/hub/`
 
 ```bash
-# Gem automatically resolves models from cache
+# Gemm automatically resolves models from cache
 # Just specify the model ID and it will find it
 
 # Example: Start server with cached model
-gemma serve --model mlx-community/Qwen3.5-4B-4bit --rest
+gemm serve --model mlx-community/Qwen3.5-4B-4bit --rest
 
 # If model not found, download manually:
 # Method 1: HuggingFace CLI
@@ -289,34 +289,35 @@ git clone https://huggingface.co/mlx-community/Qwen3.5-4B-4bit \
 - ✅ `mlx-community/Qwen2.5-Coder-7B-Instruct-4bit` — 7B, 4.1 GB, **60 TPS** 💻
 
 #### Gemma 4 (Google) - Original models
-- ⚠️ `mlx-community/gemma-4-e2b-it-4bit` — 2B, ~2.7 GB RAM (requires MoE weight fixes)
-- ⚠️ `mlx-community/gemma-4-e4b-it-4bit` — 4B, ~4.3 GB RAM (requires MoE weight fixes)
-- ⚠️ `mlx-community/gemma-4-31b-it-4bit` — 31B, ~17 GB RAM (requires MoE weight fixes)
+- ✅ `mlx-community/gemma-4-e2b-it-4bit` — 2B, ~2.7 GB RAM 
+- ✅ `mlx-community/gemma-4-e4b-it-4bit` — 4B, ~4.3 GB RAM 
+- ✅ `mlx-community/gemma-4-26b-a4b-it-4bit` — 26B, ~14.5 GB RAM (MoE experts skipped for stability)
+- ✅ `mlx-community/gemma-4-31b-it-4bit` — 31B, ~17 GB RAM (Full support, broadcast_shapes resolved)
 
-> **Note:** Gemma 4 models have MoE (Mixture of Experts) architecture that requires special weight handling. Qwen models are recommended for production use.
+> **Note:** Gemma 4 31B is fully supported. For the 26B MoE model, specific MoE keys are bypassed to allow loading on current hardware, running as a dense model fallback.
 
 ---
 
 ## Troubleshooting
 
-### Command not found: `gemma`
+### Command not found: `gemm`
 
-**Problem:** Running `gemma` in terminal does nothing.
+**Problem:** Running `gemm` in terminal does nothing.
 
-**Solution:** The binary is called `Gem`, not `gemma`. You have three options:
+**Solution:** The binary is called `Gemm`. You have three options:
 
 ```bash
 # Option 1: Create an alias (add to ~/.zshrc or ~/.bashrc)
-alias gemma="swift run Gem"
+alias gemm="swift run Gemm"
 
 # Option 2: Copy to system PATH
-sudo cp .build/release/Gem /usr/local/bin/gemma
+sudo cp .build/release/Gemm /usr/local/bin/gemm
 
 # Option 3: Run with full path
-.build/release/Gem --help
+.build/release/Gemm --help
 
 # Option 4: Use swift run (no installation needed)
-swift run Gem --help
+swift run Gemm --help
 ```
 
 ### Model not found
@@ -345,13 +346,13 @@ git clone https://huggingface.co/mlx-community/Qwen3.5-4B-4bit \
 
 ```bash
 # For 8GB RAM - use 4B model
-gemma serve --model mlx-community/Qwen3.5-4B-4bit
+gemm serve --model mlx-community/Qwen3.5-4B-4bit
 
 # For 16GB RAM - use 9B model
-gemma serve --model mlx-community/Qwen3.5-9B-OptiQ-4bit
+gemm serve --model mlx-community/Qwen3.5-9B-OptiQ-4bit
 
 # For 24GB+ RAM - use 27B model
-gemma serve --model mlx-community/Qwen3.6-27B-4bit
+gemm serve --model mlx-community/Qwen3.6-27B-4bit
 ```
 
 **Token budgeting is automatic:**
@@ -412,7 +413,7 @@ lsof -i :8080
 kill -9 <PID>
 
 # Or use a different port
-gemma serve --model <model> --rest --port 8081
+gemm serve --model <model> --rest --port 8081
 ```
 
 ---
@@ -424,8 +425,8 @@ Add to your MCP config (`~/.cursor/mcp.json` or similar):
 ```json
 {
   "mcpServers": {
-    "gemma": {
-      "command": "/usr/local/bin/gemma",
+    "gemm": {
+      "command": "/usr/local/bin/gemm",
       "args": [
         "serve",
         "--model", "mlx-community/Qwen3.5-4B-4bit",
@@ -440,12 +441,12 @@ Add to your MCP config (`~/.cursor/mcp.json` or similar):
 ```json
 {
   "mcpServers": {
-    "gemma": {
+    "gemm": {
       "command": "swift",
       "args": [
         "run",
         "--package-path", "/Users/yourname/projects/mlx",
-        "Gem",
+        "Gemm",
         "serve",
         "--model", "mlx-community/Qwen3.5-4B-4bit",
         "--mcp"
@@ -456,9 +457,9 @@ Add to your MCP config (`~/.cursor/mcp.json` or similar):
 ```
 
 **Available MCP Tools:**
-- `gemma_status` - Get server health and model info
-- `gemma_generate` - Generate text with streaming support
-- `gemma_list_tools` - List available tools
+- `gemm_status` - Get server health and model info
+- `gemm_generate` - Generate text with streaming support
+- `gemm_list_tools` - List available tools
 
 ---
 
@@ -466,7 +467,7 @@ Add to your MCP config (`~/.cursor/mcp.json` or similar):
 
 ### Running Tests
 
-Gem has comprehensive test coverage with TDD approach:
+Gemm has comprehensive test coverage with TDD approach:
 
 ```bash
 # Run all tests (101 tests, ~3 seconds)
@@ -521,7 +522,7 @@ swift run PerformanceBenchmark \
 
 ```
 Sources/
-├── Gem/              # Main CLI executable
+├── Gem/              # Main logic library
 │   ├── CLI/                  # Command-line interface
 │   │   ├── ServeCommand.swift
 │   │   ├── ChatCommand.swift
@@ -543,6 +544,7 @@ Sources/
 │       ├── ModelCache.swift
 │       ├── HuggingFaceHub.swift
 │       └── TokenBudgetCalculator.swift
+├── GemBin/           # Thin executable wrapper (Gemm)
 ├── PerformanceBenchmark/     # Benchmark tool
 └── GemTests/         # Test suite (101 tests)
 ```

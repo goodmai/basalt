@@ -49,6 +49,9 @@ let package = Package(
                 .product(name: "Splash",        package: "Splash"),
             ],
             path: "Sources/Gem",
+            resources: [
+                .process("UI/Metal/RainbowShaders.metal")
+            ],
             swiftSettings: [
                 .swiftLanguageMode(.v6),
             ]
@@ -56,7 +59,7 @@ let package = Package(
 
         // ── Executable (thin wrapper — just calls library main) ───────────────
         .executableTarget(
-            name: "Gem",
+            name: "Gemm",
             dependencies: ["GemCore"],
             path: "Sources/GemBin",
             swiftSettings: [

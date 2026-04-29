@@ -188,6 +188,19 @@ public final class MCPServer: Sendable {
                 name: "gemma_status",
                 description: "Returns the health and readiness status of the inference engine.",
                 inputSchema: AnyCodable(["type": "object", "properties": [:]])
+            ),
+            Tool(
+                name: "playwright_screenshot",
+                description: "Capture a screenshot of a website using Playwright.",
+                inputSchema: AnyCodable([
+                    "type": "object",
+                    "required": ["url"],
+                    "properties": [
+                        "url": ["type": "string", "description": "URL to capture"],
+                        "width": ["type": "integer", "description": "Viewport width (default 1280)"],
+                        "height": ["type": "integer", "description": "Viewport height (default 720)"]
+                    ]
+                ])
             )
         ]
         writeResult(id: id, result: ToolsListResult(tools: tools))
@@ -214,8 +227,76 @@ public final class MCPServer: Sendable {
                 ]]
             ]
             writeResult(id: id, result: result)
+        case "playwright_screenshot":
+            await callPlaywrightScreenshot(id: id, args: arguments)
         default:
             writeError(id: id, code: -32601, message: "Unknown tool: \(name)")
+        }
+    }
+
+    private func callPlaywrightScreenshot(id: JSONRPCId?, args: [String: Any]?) async {
+        guard let url = args?["url"] as? String else {
+            writeError(id: id, code: -32602, message: "Missing required argument: url")
+            return
+        }
+
+        let width = args?["width"] as? Int ?? 1280
+        let height = args?["height"] as? Int ?? 720
+        let screenshotPath = NSTemporaryDirectory() + "screenshot_\(Date().timeIntervalSince1970).png"
+
+        let pyScript = """
+        import asyncio
+        from playwright.async_api import async_playwright
+        import sys
+
+        async func main():
+            async with async_playwright() as p:
+                browser = await p.chromium.launch()
+                page = await browser.new_page(viewport={'width': \(width), 'height': \(height)})
+                await page.goto('\(url)')
+                await page.screenshot(path='\(screenshotPath)')
+                await browser.close()
+                print('Screenshot saved to \(screenshotPath)')
+
+        if __name__ == '__main__':
+            try:
+                asyncio.run(main())
+            except Exception as e:
+                print(f'Error: {e}', file=sys.stderr)
+                sys.exit(1)
+        """
+
+        let scriptPath = NSTemporaryDirectory() + "screenshot_script.py"
+        try? pyScript.write(toFile: scriptPath, atomically: true, encoding: .utf8)
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+        process.arguments = [scriptPath]
+        
+        let pipe = Pipe()
+        let errorPipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = errorPipe
+
+        do {
+            try process.run()
+            process.waitUntilExit()
+            
+            if process.terminationStatus == 0 {
+                let result = [
+                    "content": [[
+                        "type": "text",
+                        "text": "Screenshot captured successfully: \(screenshotPath)"
+                    ]]
+                ]
+                writeResult(id: id, result: result)
+            } else {
+                let errData = errorPipe.fileHandleForReading.readDataToEndOfFile()
+                let errMsg = String(data: errData, encoding: .utf8) ?? "Unknown error"
+                writeError(id: id, code: -32008, message: "Playwright failed: \(errMsg)")
+            }
+        } catch {
+            writeError(id: id, code: -32008, message: "Failed to run Playwright: \(error.localizedDescription)")
         }
     }
 

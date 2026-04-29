@@ -7,14 +7,12 @@ import Glibc
 
 public enum TerminalEvent: Sendable {
     case lineSubmitted(String)
-    case lineQueued(String)
     case interrupt
+    case exit
     case EOF
 }
 
-/// Epic 16.10: Async Spinner System
-/// Manages terminal interaction and provides a rich UI with an async spinner,
-/// process phases (enum), and context statistics (files, MCP, skills).
+/// Epic 17: Stable Layout Implementation
 public actor TerminalManager {
     private var originalTermios: termios
     private var isRawMode = false
@@ -22,233 +20,232 @@ public actor TerminalManager {
     private var inputBuffer: String = ""
     private var promptText: String = "Gemma > "
     private var isBusy: Bool = false
+    private var debugInfo: String = "Ready"
     
-    // Spinner state
-    private var loadingState: LoadingState? = nil
-    private var contextStats: ContextStats? = nil
-    private var spinnerFrame: Int = 0
-    private let spinnerFrames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
-    private var spinnerTimer: Task<Void, Never>? = nil
+    private var workspacePath: String = FileManager.default.currentDirectoryPath
+    private var gitBranch: String = "main"
+    private var chipModel: String = "Apple Silicon"
+    private var currentModel: String = "None"
     
     public init() {
         self.originalTermios = termios()
         tcgetattr(STDIN_FILENO, &originalTermios)
+        
+        Task {
+            let resources = await SystemProfiler().detectResources()
+            await self.updateInfo(chip: resources.chipModel)
+        }
     }
     
+    public func updateInfo(chip: String? = nil, model: String? = nil, debug: String? = nil) {
+        if let c = chip { self.chipModel = c }
+        if let m = model { self.currentModel = m }
+        if let d = debug { self.debugInfo = d }
+        
+        // Refresh git only if it's the first time or every few updates
+        // to avoid too many process spawns.
+        Task {
+            await refreshGitAsync()
+        }
+        
+        if isRawMode { refreshLine() }
+    }
+    
+    private func refreshGitAsync() async {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+        process.arguments = ["branch", "--show-current"]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        
+        do {
+            try process.run()
+            let data = try pipe.fileHandleForReading.readToEnd()
+            if let b = data.flatMap({ String(data: $0, encoding: .utf8) })?
+                .trimmingCharacters(in: .whitespacesAndNewlines), !b.isEmpty {
+                if self.gitBranch != b {
+                    self.gitBranch = b
+                    // Trigger a refresh only if branch changed
+                    if isRawMode { refreshLine() }
+                }
+            }
+        } catch {}
+    }
+    
+    private func refreshGit() {
+        // Obsolete synchronous version, replaced by refreshGitAsync
+    }
+
     public func enableRawMode() {
         guard !isRawMode else { return }
         var raw = originalTermios
         raw.c_lflag &= ~tcflag_t(ECHO | ICANON | ISIG)
         raw.c_iflag &= ~tcflag_t(IXON | ICRNL)
-        
         #if canImport(Darwin)
-        raw.c_cc.16 = 1 // VMIN
-        raw.c_cc.17 = 0 // VTIME
+        raw.c_cc.16 = 1; raw.c_cc.17 = 0
         #else
-        raw.c_cc.6 = 1 // VMIN
-        raw.c_cc.5 = 0 // VTIME
+        raw.c_cc.6 = 1; raw.c_cc.5 = 0
         #endif
-        
         tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw)
         isRawMode = true
+        
+        // Ensure space at the bottom. We might need more if prompt wraps.
+        fputs("\n\n\n\n\n", stdout)
+        refreshLine()
     }
-    
+
     public func disableRawMode() {
         guard isRawMode else { return }
-        stopSpinner()
+        // Move to the very bottom and clear the UI
+        fputs("\r", stdout)
+        let linesToClear = calculateTotalFooterLines()
+        for _ in 0..<linesToClear {
+            fputs("\u{1B}[K\n", stdout)
+        }
+        fputs("\u{1B}[\(linesToClear)A", stdout)
         tcsetattr(STDIN_FILENO, TCSAFLUSH, &originalTermios)
         isRawMode = false
     }
-    
+
+    private func calculateTotalFooterLines() -> Int {
+        let width = getTerminalWidth()
+        let promptLen = isBusy ? 15 : 8
+        let inputLines = (promptLen + inputBuffer.count + width - 1) / width
+        return 4 + max(1, inputLines)
+    }
+
     public func setBusy(_ busy: Bool) {
         self.isBusy = busy
         self.promptText = busy ? "Gemma (busy) > " : "Gemma > "
         refreshLine()
     }
     
-    /// Epic 16.10: Start showing a spinner with state and stats above the input line
-    public func startSpinner(state: LoadingState, stats: ContextStats? = nil) {
-        self.loadingState = state
-        self.contextStats = stats
-        self.spinnerFrame = 0
-        
-        // Start a background task for animation
-        spinnerTimer?.cancel()
-        spinnerTimer = Task { [weak self] in
-            while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 80_000_000) // 80ms
-                await self?.advanceSpinner()
-            }
-        }
-        refreshLine()
-    }
-    
-    /// Epic 16.10: Update the current state or stats while spinner is running
-    public func updateSpinner(state: LoadingState? = nil, stats: ContextStats? = nil) {
-        if let state = state {
-            self.loadingState = state
-        }
-        if let stats = stats {
-            self.contextStats = stats
-        }
-        refreshLine()
-    }
-    
-    /// Epic 16.10: Stop the spinner and clear its line
-    public func stopSpinner() {
-        spinnerTimer?.cancel()
-        spinnerTimer = nil
-        
-        if loadingState != nil {
-            // Move up, clear line, move back down
-            fputs("\u{1B}[1A\r\u{1B}[2K\u{1B}[1B", stdout)
-            self.loadingState = nil
-            self.contextStats = nil
-            refreshLine()
-        }
-    }
-    
-    private func advanceSpinner() {
-        spinnerFrame = (spinnerFrame + 1) % spinnerFrames.count
-        refreshLine()
-    }
-    
     public func printOutput(_ text: String) {
-        // If spinner is active, clear it first
-        if loadingState != nil {
-            fputs("\u{1B}[1A\r\u{1B}[2K\u{1B}[1B", stdout)
-        }
-        
-        fputs("\r\u{1B}[2K", stdout)
+        let linesToMove = calculateTotalFooterLines()
+        // 1. Move up to start of footer
+        fputs("\u{1B}[\(linesToMove)A\r", stdout)
+        // 2. Clear from current cursor to bottom
+        fputs("\u{1B}[J", stdout)
+        // 3. Print the text
         fputs(text, stdout)
         fflush(stdout)
-        refreshLine()
+        // 4. Redraw footer
+        renderFooter()
+    }
+    
+    private func renderFooter() {
+        let width = getTerminalWidth()
+        let divider = TerminalUI.dim(String(repeating: "─", count: width))
+        
+        let shortPath = workspacePath.replacingOccurrences(of: NSHomeDirectory(), with: "~")
+        let colorPrompt = isBusy ? TerminalUI.warning(promptText) : TerminalUI.success(promptText)
+        
+        // Construct the block
+        var ui = "\r"
+        ui += "\(divider)\n"
+        ui += "\u{1B}[2K \(TerminalUI.dim("info:")) \(debugInfo)\n"
+        ui += "\u{1B}[2K\(colorPrompt)\(inputBuffer)\n"
+        ui += "\u{1B}[2K \(TerminalUI.dim("workspace:")) \(shortPath)    \(TerminalUI.dim("branch:")) \(TerminalUI.success(gitBranch))\n"
+        ui += "\u{1B}[2K \(TerminalUI.dim("chip:")) \(TerminalUI.info(chipModel))    \(TerminalUI.dim("model:")) \(TerminalUI.code(currentModel))"
+        
+        fputs(ui, stdout)
+        
+        // Position cursor back to prompt line
+        // L5=0A, L4=1A, L3(prompt)=2A
+        fputs("\u{1B}[2A\r", stdout)
+        
+        let promptLen = isBusy ? 15 : 8
+        let totalInputLen = promptLen + inputBuffer.count
+        let cursorX = totalInputLen % width
+        if cursorX > 0 {
+            fputs("\u{1B}[\(cursorX)C", stdout)
+        }
+        
+        fflush(stdout)
     }
     
     private func refreshLine() {
-        // 1. If we have a loading state, render it above with stats
-        if let state = loadingState {
-            let frame = spinnerFrames[spinnerFrame]
-            let coloredFrame = TerminalUI.info(frame)
-            let coloredMessage = TerminalUI.bold(state.description)
-            
-            var statsString = ""
-            if let stats = contextStats, stats.hasContext {
-                var parts: [String] = []
-                if stats.files > 0 { parts.append("Files: \(stats.files)") }
-                if stats.systemPrompts > 0 { parts.append("Sys: \(stats.systemPrompts)") }
-                if stats.mcpServers > 0 { parts.append("MCP: \(stats.mcpServers)") }
-                if stats.skills > 0 { parts.append("Skills: \(stats.skills)") }
-                
-                let joined = parts.joined(separator: " | ")
-                statsString = TerminalUI.dim(" [\(joined)]")
-            }
-            
-            // Move up, clear line, print spinner + state + stats, move down
-            fputs("\u{1B}[1A\r\u{1B}[2K\(coloredFrame) \(coloredMessage)\(statsString)\n", stdout)
-        }
-        
-        // 2. Render the prompt and buffer
-        fputs("\r\u{1B}[2K", stdout)
-        let colorPrompt = isBusy ? TerminalUI.warning(promptText) : TerminalUI.success(promptText)
-        fputs("\(colorPrompt)\(inputBuffer)", stdout)
-        fflush(stdout)
+        let linesToMove = calculateTotalFooterLines()
+        fputs("\u{1B}[\(linesToMove)A\r", stdout)
+        renderFooter()
     }
     
-    public func readEvents() -> AsyncStream<TerminalEvent> {
+    private func getTerminalWidth() -> Int {
+        var w = winsize()
+        if ioctl(STDOUT_FILENO, TIOCGWINSZ, &w) == 0 { return Int(w.ws_col) }
+        return 80
+    }
+    
+    nonisolated public func readEvents() -> AsyncStream<TerminalEvent> {
         return AsyncStream { continuation in
-            Task {
+            Task.detached {
                 await self.enableRawMode()
-                await self.refreshLine()
-                
                 let handle = FileHandle.standardInput
-                var escapeSequence = false
+                var utf8Buffer = Data()
                 
-                while true {
+                while !Task.isCancelled {
                     guard let data = try? handle.read(upToCount: 1), !data.isEmpty else {
-                        continuation.yield(.EOF)
-                        break
+                        continuation.yield(.EOF); break
+                    }
+                    let byte = data[0]
+                    
+                    if byte == 3 {
+                        if await self.isBusy { continuation.yield(.interrupt) }
+                        else { continuation.yield(.exit) }
+                        utf8Buffer.removeAll(); continue
                     }
                     
-                    let byte = data[0]
-                    if byte == 3 {
+                    if byte == 27 {
+                        // Check for Esc vs Arrow sequence
+                        // We use a small hack: arrows are ESC+[+A/B/C/D
+                        // If we only get 27, it's Esc.
                         continuation.yield(.interrupt)
-                        continue
+                        utf8Buffer.removeAll(); continue
                     }
                     
                     if byte == 10 || byte == 13 {
                         let currentBuffer = await self.inputBuffer
-                        fputs("\n", stdout)
-                        
-                        // Clear spinner space if active
-                        if await self.loadingState != nil {
-                            fputs("\u{1B}[1A\r\u{1B}[2K\u{1B}[1B", stdout)
-                        }
-                        
                         if !currentBuffer.isEmpty {
+                            // Before submitting, we need to finalize the input line in history
+                            // by moving the "Output Area" down.
+                            await self.finalizeInputLine()
                             continuation.yield(.lineSubmitted(currentBuffer))
                             await self.clearBuffer()
                         } else {
                             await self.refreshLine()
                         }
-                        continue
-                    }
-                    
-                    if byte == 9 {
-                        let currentBuffer = await self.inputBuffer
-                        if !currentBuffer.isEmpty {
-                            fputs("\n", stdout)
-                            continuation.yield(.lineQueued(currentBuffer))
-                            await self.clearBuffer()
-                        }
-                        continue
+                        utf8Buffer.removeAll(); continue
                     }
                     
                     if byte == 127 || byte == 8 {
-                        let currentBuffer = await self.inputBuffer
-                        if !currentBuffer.isEmpty {
-                            await self.removeLastCharacter()
-                            await self.refreshLine()
-                        }
-                        continue
+                        await self.removeLastCharacter()
+                        await self.refreshLine()
+                        utf8Buffer.removeAll(); continue
                     }
                     
-                    if byte == 27 {
-                        escapeSequence = true
-                        continue
-                    }
-                    
-                    if escapeSequence {
-                        if (byte >= 64 && byte <= 126) {
-                            escapeSequence = false
-                        }
-                        continue
-                    }
-                    
-                    if let str = String(data: data, encoding: .utf8) {
+                    utf8Buffer.append(byte)
+                    if let str = String(data: utf8Buffer, encoding: .utf8) {
                         await self.appendCharacter(str)
                         await self.refreshLine()
+                        utf8Buffer.removeAll()
                     }
                 }
-                
                 await self.disableRawMode()
                 continuation.finish()
             }
         }
     }
     
-    private func appendCharacter(_ char: String) {
-        inputBuffer.append(char)
+    private func finalizeInputLine() {
+        // Move to prompt line, print the prompt + buffer as permanent history, move down
+        fputs("\u{1B}[2A\r", stdout) // Move up 2 lines (to prompt line)
+        let colorPrompt = isBusy ? TerminalUI.warning(promptText) : TerminalUI.success(promptText)
+        fputs("\(colorPrompt)\(inputBuffer)\n\n\n\n\n", stdout) 
+        fflush(stdout)
     }
     
-    private func removeLastCharacter() {
-        if !inputBuffer.isEmpty {
-            inputBuffer.removeLast()
-        }
-    }
-    
-    private func clearBuffer() {
-        inputBuffer = ""
-        refreshLine()
-    }
+    private func appendCharacter(_ char: String) { inputBuffer.append(char) }
+    private func removeLastCharacter() { if !inputBuffer.isEmpty { inputBuffer.removeLast() } }
+    private func clearBuffer() { inputBuffer = ""; refreshLine() }
+    private var _isBusy: Bool { isBusy }
 }

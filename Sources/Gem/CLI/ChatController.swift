@@ -22,6 +22,10 @@ actor ChatController {
             await processQueue()
         }
         
+        // Setup initial model info
+        let modelInfo = await orchestrator.modelInfo
+        await terminal.updateInfo(model: modelInfo)
+        
         for await event in await terminal.readEvents() {
             guard isRunning else { break }
             
@@ -32,27 +36,20 @@ actor ChatController {
                     activeTask?.cancel()
                     break
                 }
-                if activeTask != nil {
-                    messageQueue.append(line)
-                    await terminal.printOutput(TerminalUI.dim("[Queued]\n"))
-                } else {
-                    messageQueue.append(line)
-                }
-                
-            case .lineQueued(let line):
                 messageQueue.append(line)
-                await terminal.printOutput(TerminalUI.dim("[Queued]\n"))
                 
             case .interrupt:
                 if let task = activeTask {
                     task.cancel()
                     activeTask = nil
                     await terminal.setBusy(false)
-                    await terminal.stopSpinner()
-                } else {
-                    isRunning = false
-                    break
+                    await terminal.updateInfo(debug: TerminalUI.dim("Interrupted"))
                 }
+                
+            case .exit:
+                isRunning = false
+                activeTask?.cancel()
+                break
                 
             case .EOF:
                 isRunning = false
@@ -70,63 +67,36 @@ actor ChatController {
                 let task = Task {
                     await terminal.setBusy(true)
                     
-                    // 1. Collect Context Stats
-                    let files = PromptContextBuilder.extractFileReferences(from: prompt)
-                    var stats = ContextStats(
-                        files: files.count,
-                        systemPrompts: 1, // Default system prompt
-                        mcpServers: 0,    // Placeholder
-                        skills: 0         // Placeholder
-                    )
-                    
-                    // 2. Start Spinner with Initial State
-                    await terminal.startSpinner(state: stats.files > 0 ? .readingFiles : .thinking, stats: stats)
-                    
                     do {
-                        // 3. Process Context (Reading Files)
                         let finalPrompt = try await PromptContextBuilder.build(prompt: prompt)
-                        
-                        // Update state to thinking after files are read
-                        await terminal.updateSpinner(state: .thinking)
+                        await terminal.updateInfo(debug: "Thinking...")
                         
                         let request = GenerationRequest(prompt: finalPrompt, maxTokens: maxTokens)
                         let stream = try await orchestrator.generateStream(request: request)
                         
-                        // Move to new line and print speaker label
-                        await terminal.printOutput(TerminalUI.info("Gemma:") + " ")
+                        await terminal.printOutput("\n" + TerminalUI.info("Gemma:") + " ")
                         
                         var statsResponse: GenerationResponse?
-                        var receivedFirstToken = false
                         
                         for try await chunk in stream {
                             if Task.isCancelled {
-                                await terminal.printOutput("\n" + TerminalUI.dim("[Cancelled]") + "\n")
+                                await terminal.printOutput(TerminalUI.dim("[Interrupted]"))
                                 break
                             }
                             
                             switch chunk {
                             case .text(let t):
-                                if !receivedFirstToken {
-                                    // Switch to generating state briefly or stop
-                                    await terminal.updateSpinner(state: .generating)
-                                    try? await Task.sleep(nanoseconds: 100_000_000) // Small visual feedback
-                                    await terminal.stopSpinner()
-                                    receivedFirstToken = true
-                                }
                                 await terminal.printOutput(t)
                             case .metadata(let m):
                                 statsResponse = m
+                                let statsLine = "TPS: \(String(format: "%.1f", m.tokensPerSecond)) | In: \(m.promptTokens) | Out: \(m.completionTokens) | RAM: \(m.memory.activeBytes / 1024 / 1024)MB"
+                                await terminal.updateInfo(debug: statsLine)
                             }
                         }
                         
-                        await terminal.printOutput("\n\n")
-                        if let statsResponse = statsResponse, !Task.isCancelled {
-                            let statsString = TerminalUI.dim("Tokens: \(statsResponse.promptTokens) in / \(statsResponse.completionTokens) out | TPS: \(String(format: "%.2f", statsResponse.tokensPerSecond)) | TTFT: \(String(format: "%.3fs", statsResponse.timeToFirstToken)) | Memory: \(statsResponse.memory.activeBytes / 1024 / 1024)MB")
-                            await terminal.printOutput(statsString + "\n")
-                        }
+                        await terminal.printOutput("\n")
                     } catch {
-                        await terminal.stopSpinner()
-                        await terminal.printOutput(TerminalUI.error("Error:") + " \(error.localizedDescription)\n")
+                        await terminal.updateInfo(debug: TerminalUI.error("Error: \(error.localizedDescription)"))
                     }
                     
                     if !Task.isCancelled {
@@ -137,13 +107,12 @@ actor ChatController {
                 self.activeTask = task
             }
             
-            try? await Task.sleep(nanoseconds: 50_000_000) // 50ms polling
+            try? await Task.sleep(nanoseconds: 50_000_000)
         }
     }
     
     private func clearActiveTask() async {
         self.activeTask = nil
-        await terminal.stopSpinner()
         await terminal.setBusy(false)
     }
 }

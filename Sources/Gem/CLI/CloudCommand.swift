@@ -99,7 +99,7 @@ public struct CloudCommand: AsyncParsableCommand {
         public init() {}
         public mutating func run() async throws {
             guard let config = CloudCommand.loadConfig() else {
-                print("Cloud config not found. Run 'Gem cloud configure' first.")
+                print("Cloud config not found. Run 'gemm cloud configure' first.")
                 return
             }
             
@@ -137,7 +137,7 @@ public struct CloudCommand: AsyncParsableCommand {
         public init() {}
         public mutating func run() async throws {
             guard let config = CloudCommand.loadConfig() else {
-                print("Cloud config not found. Run 'Gem cloud configure' first.")
+                print("Cloud config not found. Run 'gemm cloud configure' first.")
                 return
             }
             
@@ -170,7 +170,7 @@ public struct CloudCommand: AsyncParsableCommand {
         public init() {}
         public mutating func run() async throws {
             guard let config = CloudCommand.loadConfig() else {
-                print("Cloud config not found. Run 'Gem cloud configure' first.")
+                print("Cloud config not found. Run 'gemm cloud configure' first.")
                 return
             }
             

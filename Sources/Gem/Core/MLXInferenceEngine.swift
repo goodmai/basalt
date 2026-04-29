@@ -110,63 +110,58 @@ public actor MLXInferenceEngine: InferenceEngine {
             let lmInput = try await container.prepare(input: userInput)
             let mlxStream = try await container.generate(input: lmInput, parameters: params)
             
-            var iterator = mlxStream.makeAsyncIterator()
-            let clock = ContinuousClock()
-            let startTime = clock.now
-            var firstTokenTime: ContinuousClock.Instant?
-            var lastInfo: GenerateCompletionInfo?
-            var finished = false
-            var sentMetadata = false
+            return AsyncStream<StreamChunk> { continuation in
+                let task = Task {
+                    let clock = ContinuousClock()
+                    let startTime = clock.now
+                    var firstTokenTime: ContinuousClock.Instant?
+                    var lastInfo: GenerateCompletionInfo?
+                    
+                    for await generation in mlxStream {
+                        if Task.isCancelled { break }
 
-            return AsyncStream<StreamChunk> {
-                if sentMetadata { return nil }
-                
-                while !finished {
-                    do {
-                        if let generation = try await iterator.next() {
-                            if firstTokenTime == nil {
-                                firstTokenTime = clock.now
-                            }
-                            
-                            switch generation {
-                            case .chunk(let text):
-                                return .text(text)
-                            case .info(let info):
-                                lastInfo = info
-                                continue
-                            case .toolCall:
-                                continue
-                            }
-                        } else {
-                            finished = true
+                        if firstTokenTime == nil {
+                            firstTokenTime = clock.now
                         }
-                    } catch {
-                        finished = true
+                        
+                        switch generation {
+                        case .chunk(let text):
+                            continuation.yield(.text(text))
+                        case .info(let info):
+                            lastInfo = info
+                        case .toolCall:
+                            break
+                        }
                     }
+                    
+                    // End of stream - send metadata
+                    if !Task.isCancelled {
+                        let generationTime = (clock.now - startTime).inSeconds
+                        let timeToFirstToken = ((firstTokenTime ?? clock.now) - startTime).inSeconds
+                        let mem = Memory.snapshot()
+
+                        let metadata = GenerationResponse(
+                            generatedText: "", 
+                            promptTokens: lastInfo?.promptTokenCount ?? 0,
+                            completionTokens: lastInfo?.generationTokenCount ?? 0,
+                            tokensPerSecond: lastInfo?.tokensPerSecond ?? 0,
+                            generationTime: generationTime,
+                            timeToFirstToken: timeToFirstToken,
+                            memory: .init(
+                                peakBytes: mem.peakMemory,
+                                activeBytes: mem.activeMemory,
+                                cacheBytes: mem.cacheMemory
+                            ),
+                            finishReason: .stop
+                        )
+                        continuation.yield(.metadata(metadata))
+                    }
+                    continuation.finish()
                 }
-                
-                // End of stream - send metadata
-                sentMetadata = true
-                let generationTime = (clock.now - startTime).inSeconds
-                let timeToFirstToken = ((firstTokenTime ?? clock.now) - startTime).inSeconds
 
-                let mem = Memory.snapshot()
-
-                let metadata = GenerationResponse(
-                    generatedText: "", 
-                    promptTokens: lastInfo?.promptTokenCount ?? 0,
-                    completionTokens: lastInfo?.generationTokenCount ?? 0,
-                    tokensPerSecond: lastInfo?.tokensPerSecond ?? 0,
-                    generationTime: generationTime,
-                    timeToFirstToken: timeToFirstToken,
-                    memory: .init(
-                        peakBytes: mem.peakMemory,
-                        activeBytes: mem.activeMemory,
-                        cacheBytes: mem.cacheMemory
-                    ),
-                    finishReason: .stop
-                )
-                return .metadata(metadata)
+                continuation.onTermination = { _ in
+                    task.cancel()
+                }
             }
         } catch let err as GemError {
             throw err

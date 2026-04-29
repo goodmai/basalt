@@ -109,11 +109,11 @@ struct FitCommand: AsyncParsableCommand {
                 return
             }
             displayTable(Array(recommendations))
-            
+
             print()
-            print(TerminalUI.dim("Tip: Run `gem models download <model>` to install"))
-        }
-    }
+            print(TerminalUI.dim("Tip: Run `gemm models download <model>` to install"))
+            }
+            }
     
     private func displayHardwareInfo(_ resources: SystemProfiler.SystemResources) {
         let budget = Double(resources.availableRAM) * 0.85 / 1073741824.0

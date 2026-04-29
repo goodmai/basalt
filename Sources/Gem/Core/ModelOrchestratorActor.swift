@@ -22,6 +22,8 @@ public actor ModelOrchestratorActor {
 
     private let logger = Logger(subsystem: "com.gem.core", category: "ModelOrchestrator")
 
+    private var currentModelPath: String = ""
+
     // MARK: — Init
 
     public init(engine: any InferenceEngine, maxTokens: Int = 4096) {
@@ -33,6 +35,7 @@ public actor ModelOrchestratorActor {
 
     /// Загружает модель из указанного пути.
     public func loadModel(path: String) async throws(GemError) {
+        self.currentModelPath = path
         // Calculate model size for token budgeting
         let size = try? calculateDirectorySize(url: URL(fileURLWithPath: path))
         if let size {
@@ -41,6 +44,10 @@ public actor ModelOrchestratorActor {
         }
         
         try await engine.load(modelPath: path)
+    }
+
+    public var modelInfo: String {
+        URL(fileURLWithPath: currentModelPath).lastPathComponent
     }
 
     /// Генерирует текст. Единственная точка входа для обоих транспортов.

@@ -9,20 +9,20 @@ import ArgumentParser
 public struct GemCLI: AsyncParsableCommand {
     public init() {}
     public static let configuration = CommandConfiguration(
-        commandName: "Gem",
+        commandName: "gemm",
         abstract: "Local Gemma 4 inference — dual-interface server (MCP + REST/A2A)",
         discussion: """
         QUICK START
-          Gem onboard                                      🆕 First-time setup wizard
-          Gem fit                                          🔍 Hardware analysis & model recommendations
-          Gem models list                                  List Gemma 4 models
-          Gem models list --search Qwen3                   List Qwen3 models
-          Gem models list --search Qwen2.5-Coder           List Qwen Coder models
-          Gem models download                              Interactive picker
-          Gem models download mlx-community/…             Download specific model
-          Gem serve --model mlx-community/…               Start inference server
-          Gem chat  --model mlx-community/…               Interactive chat
-          Gem agents analyze agents.md                    Analyze agent capabilities
+          gemm onboard                                      🆕 First-time setup wizard
+          gemm fit                                          🔍 Hardware analysis & model recommendations
+          gemm models list                                  List Gemma 4 models
+          gemm models list --search Qwen3                   List Qwen3 models
+          gemm models list --search Qwen2.5-Coder           List Qwen Coder models
+          gemm models download                              Interactive picker
+          gemm models download mlx-community/…             Download specific model
+          gemm serve --model mlx-community/…               Start inference server
+          gemm chat  --model mlx-community/…               Interactive chat
+          gemm agents analyze agents.md                    Analyze agent capabilities
 
         RECOMMENDED MODELS (by RAM)
           mlx-community/gemma-4-e2b-it-4bit               Gemma 4 2B   ~2.7 GB
@@ -49,6 +49,6 @@ public struct GemCLI: AsyncParsableCommand {
             AgentsCommand.self,
             CloudCommand.self,
         ],
-        defaultSubcommand: ServeCommand.self
+        defaultSubcommand: ChatCommand.self
     )
 }

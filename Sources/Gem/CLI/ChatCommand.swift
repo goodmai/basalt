@@ -26,6 +26,9 @@ struct ChatCommand: AsyncParsableCommand {
 
     @Option(name: .long, help: "Log level: debug | info | warn | error")
     var logLevel: ServerConfig.LogLevel = .info
+    
+    @Flag(name: .long, help: "Launch the experimental Rainbow Metal GUI")
+    var ui: Bool = false
 
     // MARK: — Run
 
@@ -42,6 +45,17 @@ struct ChatCommand: AsyncParsableCommand {
         } catch {
             log("\(red("Failed to load model:")) \(error.localizedDescription)")
             throw ExitCode.failure
+        }
+
+        if ui {
+            log("Launching Rainbow Metal GUI...")
+            // We use MainActor logic implicitly via SwiftUI & AppKit
+            let state = await MainActor.run { RainbowUIState() }
+            // Todo: Link the orchestrator to the state manager!
+            await MainActor.run {
+                launchRainbowUI(state: state)
+            }
+            return
         }
 
         if let initialPrompt = prompt {
@@ -149,7 +163,7 @@ struct ChatCommand: AsyncParsableCommand {
             ("Gemma 4 2B", "2.7 GB RAM, 60 TPS", "mlx-community/gemma-4-e2b-it-4bit")
         ]
         
-        print("\n\(bold("Welcome to Gem CLI"))")
+        print("\n\(bold("Welcome to Gemm CLI"))")
         print("Select a recommended model to chat with:\n")
         
         for (i, (name, specs, repoId)) in models.enumerated() {

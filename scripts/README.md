@@ -1,4 +1,4 @@
-# Gem Scripts
+# Gemm Scripts
 
 Automation scripts for development workflow.
 
@@ -29,7 +29,7 @@ Automatically calculates the next version based on commit history and epic compl
 
 **Example Output:**
 ```
-=== Gem Version Counter ===
+=== Gemm Version Counter ===
 
 Current Version: v0.1.0
   MAJOR: 0

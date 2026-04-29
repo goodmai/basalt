@@ -1,0 +1,3325 @@
+[chat] Loading model from [1m/Users/alexeiboklag/.cache/huggingface/hub/models--mlx-community--Qwen3.5-4B-4bit/snapshots/main[0m…
+[chat] Model ready. Type 'exit' or 'quit' to stop.
+
+--- Gemma Chat ---
+
+
+
+
+
+[5A────────────────────────────────────────────────────────────────────────────────
+[2K info: Ready
+[2KGemma > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[8C[5A────────────────────────────────────────────────────────────────────────────────
+[2K info: Ready
+[2KGemma > П
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[9C[5A────────────────────────────────────────────────────────────────────────────────
+[2K info: Ready
+[2KGemma > Пр
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[10C[5A────────────────────────────────────────────────────────────────────────────────
+[2K info: Ready
+[2KGemma > При
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[11C[5A────────────────────────────────────────────────────────────────────────────────
+[2K info: Ready
+[2KGemma > Прив
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[12C[5A────────────────────────────────────────────────────────────────────────────────
+[2K info: Ready
+[2KGemma > Приве
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[13C[5A────────────────────────────────────────────────────────────────────────────────
+[2K info: Ready
+[2KGemma > Привет
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[14C[5A────────────────────────────────────────────────────────────────────────────────
+[2K info: Ready
+[2KGemma > Привет,
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A────────────────────────────────────────────────────────────────────────────────
+[2K info: Ready
+[2KGemma > Привет, 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[16C[5A────────────────────────────────────────────────────────────────────────────────
+[2K info: Ready
+[2KGemma > Привет, к
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[17C[5A────────────────────────────────────────────────────────────────────────────────
+[2K info: Ready
+[2KGemma > Привет, ка
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[18C[5A────────────────────────────────────────────────────────────────────────────────
+[2K info: Ready
+[2KGemma > Привет, как
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[19C[5A────────────────────────────────────────────────────────────────────────────────
+[2K info: Ready
+[2KGemma > Привет, как 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[20C[5A────────────────────────────────────────────────────────────────────────────────
+[2K info: Ready
+[2KGemma > Привет, как д
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[21C[5A────────────────────────────────────────────────────────────────────────────────
+[2K info: Ready
+[2KGemma > Привет, как де
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[22C[5A────────────────────────────────────────────────────────────────────────────────
+[2K info: Ready
+[2KGemma > Привет, как дел
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[23C[5A────────────────────────────────────────────────────────────────────────────────
+[2K info: Ready
+[2KGemma > Привет, как дела
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[24C[5A────────────────────────────────────────────────────────────────────────────────
+[2K info: Ready
+[2KGemma > Привет, как дела?
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[25C[2AGemma > Привет, как дела?
+
+
+
+
+[5A────────────────────────────────────────────────────────────────────────────────
+[2K info: Ready
+[2KGemma > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[8C[5A────────────────────────────────────────────────────────────────────────────────
+[2K info: Ready
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J
+Gemma: ────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[JThinking────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J Process────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J:────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J
+
+────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J1────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J.────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J ────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J **────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[JAn────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[Jalyze────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J the────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J Input────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J:**────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J
+────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J   ────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J *────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J  ────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J Language────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J:────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J Russian────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J ("────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[JПр────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[Jив────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[Jет────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J,────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J как────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J дела────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J?"────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J -────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J "────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[JHello────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J,────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J how────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J are────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J you────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J?────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J")────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J
+────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J   ────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J *────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J  ────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J Intent────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J:────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J G────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[Jreeting────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J /────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J Casual────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J conversation────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J starter────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J.────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J
+────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J   ────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J *────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J  ────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J Persona────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J:────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J AI────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J assistant────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J.────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J
+
+────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J2────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J.────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J ────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J **────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[JD────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[Jetermine────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J the────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J appropriate────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J response────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J:**────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J
+────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J   ────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J *────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J  ────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J Ack────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[Jnowledge────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J the────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J greeting────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J.────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J
+────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J   ────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J *────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J  ────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J State────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J my────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J status────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J (────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[Jas────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J an────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J AI────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J,────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J I────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J don────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J't────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J have────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J feelings────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J,────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J but────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J I────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J can────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J express────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J functionality────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J).────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J
+────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J   ────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J *────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J  ────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J Offer────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J assistance────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J.────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J
+────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J   ────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J *────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J  ────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J Keep────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J the────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J tone────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J friendly────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J and────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J polite────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J.────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J
+
+────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J3────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J.────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J ────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J **────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[JDraft────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[Jing────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J the────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J response────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J (────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[Jinternal────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J mon────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[Jologue────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J/tr────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[Jial────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J):**────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J
+────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J   ────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J *────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J  ────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J *────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[JOption────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J ────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J1────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J (────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[JToo────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J robotic────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J):────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J*────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J Я────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J искус────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[Jственный────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J ин────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[Jтел────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[Jлект────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J.────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J У────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J меня────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J нет────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J чув────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[Jств────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J.────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J Чем────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J я────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J могу────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J помочь────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J?────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J
+────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J   ────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J *────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J  ────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J *────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[JOption────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J ────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J2────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J (────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[JFriendly────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J):────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J*────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J Привет────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J!────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J Всё────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J отлично────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J,────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J спасибо────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J.────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J У────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J тебя────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J как────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J?────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J Чем────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J могу────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J помочь────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J?────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J
+────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J   ────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J *────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J  ────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J *────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[JOption────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J ────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J3────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J (────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[JBal────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[Janced────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J):────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J*────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J Привет────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J!────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J У────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J меня────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J всё────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J отлично────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J,────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J спасибо────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J за────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J вопрос────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J.────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J Как────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J тво────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[Jи────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J дела────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J?────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J Чем────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J я────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J могу────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J тебя────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J помочь────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J сегодня────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J?────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J
+
+────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J4────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J.────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J ────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J **────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[JSelect────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[Jing────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J the────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J best────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J option────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J:**────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J Option────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J ────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J3────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J is────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J good────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J,────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J but────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J let────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J's────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J make────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J it────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J warm────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J and────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J natural────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J in────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J Russian────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J.────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J
+
+────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J5────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J.────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J ────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J **────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[JRef────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[Jining────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J the────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J Russian────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J:**────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J
+────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J   ────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J *────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J  ────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J "────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[JПр────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[Jив────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[Jет────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J!────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J Все────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J у────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J меня────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J отлично────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J,────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J спасибо────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J!"────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J (────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[JHello────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J!────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J Everything────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J is────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J great────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J with────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J me────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J,────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J thanks────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J!)────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J
+────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J   ────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J *────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J  ────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J "────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[JУ────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J тебя────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J как────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J дела────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J?────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J Чем────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J я────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J могу────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J помочь────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J?"────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J (────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[JHow────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J are────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J you────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J?────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J How────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J can────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J I────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J help────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J?)────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J
+
+────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J6────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J.────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J ────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J **────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[JFinal────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J Polish────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J:**────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J
+────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J   ────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J *────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J  ────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J "────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[JПр────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[Jив────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[Jет────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J!────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J Всё────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J отлично────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J,────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J спасибо────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J,────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J что────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J спрос────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[Jил────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J/────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[Jа────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J.────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J 😊────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J У────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J тебя────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J как────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J дела────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J?────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J Чем────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J я────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J могу────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J тебе────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J помочь────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J сегодня────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J?"────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J (────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[JAdded────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J a────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J bit────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J of────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J warmth────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J and────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J an────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J emoji────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J).────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J
+
+────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J7────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J.────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J ────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J **────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[JOutput────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J Generation────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J:**────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J (────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[JMatches────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J the────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J drafted────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J response────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J).────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J
+────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J   ────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J *────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J  ────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J Wait────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J,────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J I────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J should────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J check────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J if────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J there────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J are────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J any────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J specific────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J constraints────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J.────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J No────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J.────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J
+────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J   ────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J *────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J  ────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J Keep────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J it────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J concise────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J but────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J friendly────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J.────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J
+
+────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J8────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J.────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J ────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J **────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[JFinal────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J Decision────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J:**────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J
+────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J   ────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J "────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[JПр────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[Jив────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[Jет────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J!────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J У────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J меня────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J всё────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J отлично────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J,────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J спасибо────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J!────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J 😊────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J У────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J тебя────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J как────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J дела────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J?────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J Чем────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J я────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J могу────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J помочь────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J сегодня────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J?"────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J
+
+────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J   ────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J *────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[JSelf────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J-C────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[Jor────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[Jrection────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J:*────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J Since────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J I────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J am────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J an────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J AI────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J,────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J "────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[Jhow────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J are────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J you────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J"────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J is────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J a────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J bit────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J of────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J a────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J clich────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[Jé────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J,────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J but────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J it────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J's────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J the────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J right────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J social────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J norm────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J.────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J I────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J should────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J respond────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J politely────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J.────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J
+
+────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J   ────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J *────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[JRe────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[Jvised────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J:*────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J "────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[JПр────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[Jив────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[Jет────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J!────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J Всё────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J отлично────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J,────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J спасибо────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J за────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J вопрос────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J.────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J У────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J тебя────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J как────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J дела────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J?────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J Чем────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J я────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J могу────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J быть────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J полезен────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J сегодня────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J?"────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J
+
+────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J   ────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J *────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[JLet────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J's────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J go────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J with────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J a────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J friendly────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J version────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J:*────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J
+────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J   ────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J "────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[JПр────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[Jив────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[Jет────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J!────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J У────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J меня────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J всё────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J отлично────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J,────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J спасибо────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J.────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J 😊────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J У────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J тебя────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J как────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J дела────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J?────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J Чем────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J я────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J могу────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J помочь────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J тебе────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J сегодня────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J?"────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J
+
+────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J   ────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J *(────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[JWait────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J,────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J I────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J should────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J keep────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J it────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J simple────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J.────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J)*────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J
+
+────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J   ────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J *────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[JFinal────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J Plan────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J:*────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J
+────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J   ────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J ────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J1────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J.────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J G────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[Jreeting────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J back────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J.────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J
+────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J   ────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J ────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J2────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J.────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J Pol────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[Jite────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J status────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J update────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J.────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J
+────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J   ────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J ────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J3────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J.────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J Offer────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J help────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J.────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J
+
+────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J   ────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J *────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[JDraft────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J:*────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J Привет────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J!────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J У────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J меня────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J всё────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J отлично────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J,────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J спасибо────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J.────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J У────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J тебя────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J как────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J дела────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J?────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J Чем────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J я────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J могу────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J помочь────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J?────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J
+
+────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J   ────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J *────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[JAdding────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J emoji────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J for────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J warmth────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J:*────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J Привет────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J!────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J У────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J меня────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J всё────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J отлично────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J,────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J спасибо────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J.────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J 😊────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J У────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J тебя────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J как────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J дела────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J?────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J Чем────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J я────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J могу────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J помочь────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J сегодня────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J?────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J
+
+────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J   ────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J *────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[JWait────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J,────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J one────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J more────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J thing────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J:*────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J The────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J user────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J asked────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J "────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[JКак────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J дела────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J?"────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J (────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[JHow────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J are────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J you────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J?).────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J I────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J should────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J answer────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J that────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J part────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J.────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J
+
+────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J   ────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J *────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[JFinal────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J Version────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J:*────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J Привет────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J!────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J У────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J меня────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J всё────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J отлично────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J,────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J спасибо────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J.────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J 😊────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J У────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J тебя────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J как────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J дела────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J?────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J Чем────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J я────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J могу────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J помочь────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J сегодня────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J?────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J
+
+────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J   ────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J *(────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[JWait────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J,────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J let────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J's────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J make────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J sure────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J the────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J grammar────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J is────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J correct────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J.────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J "────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[JКак────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J дела────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J?"────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J is────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J informal────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J.────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J "────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[JКак────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J дела────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J?"────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J ->────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J "────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[JУ────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J меня────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J всё────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J отлично────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J".────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J)*────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J
+
+────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J   ────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J *────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[JOkay────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J,────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J ready────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J to────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J output────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J.*────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J
+────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J</think>────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J
+
+────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[JПр────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[Jив────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[Jет────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J!────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J У────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J меня────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J всё────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J отлично────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J,────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J спасибо────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J за────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J вопрос────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J.────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J 😊────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J
+
+────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[JУ────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J тебя────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J как────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J дела────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J?────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J Чем────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J я────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J могу────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J помочь────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J тебе────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J сегодня────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J?────────────────────────────────────────────────────────────────────────────────
+[2K info: Thinking...
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A────────────────────────────────────────────────────────────────────────────────
+[2K info: TPS: 83.0 | In: 17 | Out: 786 | RAM: 2312MB
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A[J
+────────────────────────────────────────────────────────────────────────────────
+[2K info: TPS: 83.0 | In: 17 | Out: 786 | RAM: 2312MB
+[2KGemma (busy) > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[15C[5A────────────────────────────────────────────────────────────────────────────────
+[2K info: TPS: 83.0 | In: 17 | Out: 786 | RAM: 2312MB
+[2KGemma > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[8C[5A────────────────────────────────────────────────────────────────────────────────
+[2K info: TPS: 83.0 | In: 17 | Out: 786 | RAM: 2312MB
+[2KGemma > e
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[9C[5A────────────────────────────────────────────────────────────────────────────────
+[2K info: TPS: 83.0 | In: 17 | Out: 786 | RAM: 2312MB
+[2KGemma > ex
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[10C[5A────────────────────────────────────────────────────────────────────────────────
+[2K info: TPS: 83.0 | In: 17 | Out: 786 | RAM: 2312MB
+[2KGemma > exi
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[11C[5A────────────────────────────────────────────────────────────────────────────────
+[2K info: TPS: 83.0 | In: 17 | Out: 786 | RAM: 2312MB
+[2KGemma > exit
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[12C[2AGemma > exit
+
+
+
+
+[5A────────────────────────────────────────────────────────────────────────────────
+[2K info: TPS: 83.0 | In: 17 | Out: 786 | RAM: 2312MB
+[2KGemma > 
+[2K workspace: ~/projects/mlx    branch: main
+[2K chip: M4    model: `main`[2A[8C
