@@ -24,6 +24,11 @@ public class RainbowRenderer: NSObject, MTKViewDelegate {
     ]
     private var vertexBuffer: MTLBuffer?
     
+    private var textRenderer: TextRenderer?
+    private var placeholderTexture: MTLTexture?
+    private var placeholderSize: CGSize = .zero
+    private var lastPlaceholder: String = ""
+    
     public init(state: RainbowUIState) {
         self.uiState = state
         self.startTime = CFAbsoluteTimeGetCurrent()
@@ -41,6 +46,11 @@ public class RainbowRenderer: NSObject, MTKViewDelegate {
         guard let library = try? device.makeDefaultLibrary(bundle: Bundle.module) else {
             print("Failed to load metal library")
             return
+        }
+        
+        // Setup text renderer
+        if let commandQueue = commandQueue {
+            self.textRenderer = TextRenderer(device: device, commandQueue: commandQueue)
         }
         
         let vertexFunction = library.makeFunction(name: "vertex_main")
@@ -96,12 +106,32 @@ public class RainbowRenderer: NSObject, MTKViewDelegate {
             mode: Int32(uiState.currentMode.rawValue)
         )
         
+        // 1. Draw Rainbow Background Quad
         renderEncoder.setRenderPipelineState(pipelineState)
         renderEncoder.setVertexBuffer(vertexBuffer, offset: 0, index: 0)
         renderEncoder.setVertexBytes(&uniforms, length: MemoryLayout<Uniforms>.size, index: 1)
         renderEncoder.setFragmentBytes(&uniforms, length: MemoryLayout<Uniforms>.size, index: 0)
         
         renderEncoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
+        
+        // 2. Update and Draw Text
+        if let textRenderer = textRenderer {
+            let currentHint = "❯ " + uiState.placeholderHint
+            if currentHint != lastPlaceholder || placeholderTexture == nil {
+                let font = NSFont.monospacedSystemFont(ofSize: 24, weight: .regular)
+                let (tex, size) = textRenderer.createTexture(from: currentHint, font: font, color: NSColor.white)
+                placeholderTexture = tex
+                placeholderSize = size
+                lastPlaceholder = currentHint
+            }
+            
+            if let tex = placeholderTexture {
+                // Draw at bottom left
+                let position = CGPoint(x: 20, y: view.drawableSize.height - placeholderSize.height - 20)
+                textRenderer.draw(texture: tex, size: placeholderSize, position: position, resolution: view.drawableSize, encoder: renderEncoder)
+            }
+        }
+        
         renderEncoder.endEncoding()
         
         commandBuffer.present(drawable)

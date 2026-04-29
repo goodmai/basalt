@@ -62,3 +62,35 @@ fragment float4 fragment_rainbow(VertexOut in [[stage_in]],
     float3 rgb = hsl2rgb(hue, 0.8, 0.15); // Dark rainbow background
     return float4(rgb, 1.0);
 }
+
+struct TextUniforms {
+    float2 resolution;
+    float2 offset;
+    float2 size;
+    float4 textColor;
+};
+
+vertex VertexOut vertex_text(VertexIn in [[stage_in]],
+                             constant TextUniforms &uniforms [[buffer(1)]]) {
+    VertexOut out;
+    
+    // Scale and translate
+    float2 pixelPosition = (in.position * uniforms.size) + uniforms.offset;
+    
+    // Convert to Normalized Device Coordinates (NDC)
+    // NDC is -1 to 1, with y pointing up in Metal (or down depending on projection, we'll map top-left to -1, 1)
+    // Wait, typical 2D maps 0,0 to top left.
+    // Let's assume standard Metal where (-1,-1) is bottom-left, (1,1) is top-right.
+    float x = (pixelPosition.x / uniforms.resolution.x) * 2.0 - 1.0;
+    float y = 1.0 - (pixelPosition.y / uniforms.resolution.y) * 2.0; // Invert Y
+    
+    out.position = float4(x, y, 0.0, 1.0);
+    out.uv = in.uv;
+    return out;
+}
+
+fragment float4 fragment_text(VertexOut in [[stage_in]],
+                              texture2d<float> texture [[texture(0)]],
+                              sampler textureSampler [[sampler(0)]]) {
+    return texture.sample(textureSampler, in.uv);
+}
