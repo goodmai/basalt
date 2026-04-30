@@ -77,12 +77,7 @@ public struct RainbowChatView: View {
         }
         
         guard let currentOrchestrator = orchestrator else {
-            // Mock mode
-            Task {
-                await state.coordinator.submit(state: RenderState(content: "🌈 MVI Demo — orchestrator not connected. Your message: \"\(text)\"", isGenerating: true))
-                try? await Task.sleep(nanoseconds: 3_000_000_000)
-                await state.coordinator.submit(state: RenderState(content: "", isGenerating: false))
-            }
+            state.messages.append(ChatMessage(role: .system, text: "Orchestrator is not connected. Cannot process input."))
             return
         }
         

@@ -28,8 +28,8 @@ final class RainbowE2ETests: XCTestCase {
 
         let app = XCUIApplication(url: executableURL)
         
-        // We pass the required arguments to trigger the Metal UI in agent test mode
-        app.launchArguments = ["chat", "--ui", "--agent-test"]
+        // We pass the required arguments to trigger the Metal UI with real inference
+        app.launchArguments = ["chat", "--agent-real"]
         app.launchEnvironment = ["GEMMA_JWT_SECRET": "test-secret"]
         app.launch()
         
@@ -72,7 +72,7 @@ final class RainbowE2ETests: XCTestCase {
         app.typeKey(.return, modifierFlags: [])
         
         let assistantMessage2 = metalView.staticTexts.matching(NSPredicate(format: "value BEGINSWITH 'Assistant:'")).firstMatch
-        XCTAssertTrue(assistantMessage2.waitForExistence(timeout: 10.0), "Wait for response before exporting")
+        XCTAssertTrue(assistantMessage2.waitForExistence(timeout: 60.0), "Wait for response before exporting")
         
         inputField.tap()
         inputField.typeText("/export")
