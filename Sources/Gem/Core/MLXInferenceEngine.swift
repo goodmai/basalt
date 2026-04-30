@@ -137,7 +137,6 @@ public actor MLXInferenceEngine: InferenceEngine {
                         
                         switch generation {
                         case .chunk(let text):
-                            self.logger.trace("Yielding chunk \(tokenCount): '\(text.replacingOccurrences(of: "\n", with: "\\n"))'")
                             continuation.yield(.text(text))
                         case .info(let info):
                             self.logger.debug("Received info struct! Token count: \(info.generationTokenCount)")

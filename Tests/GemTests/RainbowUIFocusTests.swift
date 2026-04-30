@@ -176,7 +176,7 @@ struct RainbowUIInputBugTests {
             #expect(handled, "Coordinator must handle insertNewline")
         }
 
-        #expect(state.messages.count == 1, "Must have 1 message after submit, got \(state.messages.count)")
+        #expect(state.messages.count == 2, "Must have 2 messages after submit (user + system error), got \(state.messages.count)")
         #expect(state.inputText == "", "inputText must be cleared after submit")
     }
 

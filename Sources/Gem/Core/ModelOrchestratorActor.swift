@@ -70,7 +70,7 @@ public actor ModelOrchestratorActor {
     }
 
     public func generateStream(request: GenerationRequest) async throws(GemError) -> AsyncStream<StreamChunk> {
-        logger.trace("Incoming generateStream request: \(request.prompt.prefix(50))...")
+        logger.trace("Incoming generateStream request...")
         let maxT = calculateDynamicMaxTokens()
         var validated = try request.validated(defaultMaxTokens: maxT)
         
@@ -82,22 +82,75 @@ public actor ModelOrchestratorActor {
         requestCount += 1
         
         let stream = try await engine.generateStream(request: validated)
-        logger.debug("engine.generateStream returned successfully! Returning stream to caller.")
         
         return AsyncStream<StreamChunk> { continuation in
             let task = Task.detached {
-                self.logger.debug("Orchestrator forwarding stream chunks...")
-                var count = 0
+                var inThinkBlock = false
+                var buffer = ""
+                var jsonBatch = ""
+                var lastBatchTime = Date()
+                
                 for await chunk in stream {
-                    count += 1
-                    continuation.yield(chunk)
+                    switch chunk {
+                    case .text(let t):
+                        buffer += t
+                        
+                        // State machine to strip reasoning blocks
+                        if !inThinkBlock {
+                            if let startRange = buffer.range(of: "<think>") ?? buffer.range(of: "Thinking Process:\n") {
+                                let before = String(buffer[..<startRange.lowerBound])
+                                if !before.isEmpty {
+                                    jsonBatch += before
+                                }
+                                inThinkBlock = true
+                                buffer = String(buffer[startRange.upperBound...])
+                            }
+                        }
+                        
+                        if inThinkBlock {
+                            if let endRange = buffer.range(of: "</think>") {
+                                inThinkBlock = false
+                                buffer = String(buffer[endRange.upperBound...])
+                            } else {
+                                // Still inside think block, clear buffer except for the last 20 chars to catch split tags
+                                if buffer.count > 20 {
+                                    buffer = String(buffer.suffix(20))
+                                }
+                                continue // Skip yielding
+                            }
+                        }
+                        
+                        // If not in think block, yield safely
+                        if !inThinkBlock {
+                            let safeIndex = max(0, buffer.count - 20)
+                            if safeIndex > 0 {
+                                let safeString = String(buffer.prefix(safeIndex))
+                                jsonBatch += safeString
+                                buffer = String(buffer.suffix(buffer.count - safeIndex))
+                            }
+                        }
+                        
+                        // Batching: yield every 50ms or 10 characters to reduce UI updates
+                        if !jsonBatch.isEmpty && (Date().timeIntervalSince(lastBatchTime) > 0.05 || jsonBatch.count > 10) {
+                            continuation.yield(.text(jsonBatch))
+                            jsonBatch = ""
+                            lastBatchTime = Date()
+                        }
+                        
+                    case .metadata(let m):
+                        if !inThinkBlock {
+                            let finalStr = jsonBatch + buffer
+                            if !finalStr.isEmpty {
+                                continuation.yield(.text(finalStr))
+                            }
+                        }
+                        continuation.yield(.metadata(m))
+                    }
                 }
-                self.logger.debug("Orchestrator finished forwarding stream! Total chunks: \(count)")
                 continuation.finish()
             }
             
             continuation.onTermination = { _ in
-                self.logger.debug("Orchestrator continuation.onTermination triggered!")
                 task.cancel()
             }
         }
