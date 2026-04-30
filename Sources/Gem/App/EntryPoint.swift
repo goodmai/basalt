@@ -48,6 +48,7 @@ public struct GemCLI: AsyncParsableCommand {
             ChatCommand.self,
             AgentsCommand.self,
             CloudCommand.self,
+            UICommand.self,
         ],
         defaultSubcommand: ChatCommand.self
     )
