@@ -26,18 +26,12 @@ struct ChatCommand: AsyncParsableCommand {
 
     @Option(name: .long, help: "Log level: debug | info | warn | error")
     var logLevel: ServerConfig.LogLevel = .info
-    
-    @Flag(name: .long, help: "Launch the experimental Rainbow Metal GUI")
-    var ui: Bool = false
-    
-    @Flag(name: .customLong("agent-real"), help: "Run agentic test suite with REAL inference")
-    var agentReal: Bool = false
 
     // MARK: — Run
     private static let logger = GemLogger(module: "ChatCommand")
 
     mutating func run() async throws {
-        Self.logger.trace("ChatCommand started. Options: ui=\(ui), agentReal=\(agentReal)")
+        Self.logger.trace("ChatCommand started.")
         
         let resolvedPath = try await resolveModelPath()
 
@@ -51,35 +45,6 @@ struct ChatCommand: AsyncParsableCommand {
         } catch {
             log("\(red("Failed to load model:")) \(error.localizedDescription)")
             throw ExitCode.failure
-        }
-
-        if agentReal {
-            log("Launching REAL agentic test suite...")
-            let state = await MainActor.run { 
-                let s = RainbowUIState()
-                s.modelName = resolvedPath.components(separatedBy: "/").last ?? resolvedPath
-                s.isAgentMode = true
-                return s
-            }
-            
-            await MainActor.run {
-                launchRainbowUI(state: state, orchestrator: orchestrator, maxTokens: maxTokens)
-            }
-            return
-        }
-
-        if ui {
-            log("Launching Rainbow Metal GUI...")
-            let modelDisplayName = resolvedPath.components(separatedBy: "/").last ?? resolvedPath
-            let state = await MainActor.run { 
-                let s = RainbowUIState()
-                s.modelName = modelDisplayName
-                return s
-            }
-            await MainActor.run {
-                launchRainbowUI(state: state, orchestrator: orchestrator, maxTokens: maxTokens)
-            }
-            return
         }
 
         if let initialPrompt = prompt {

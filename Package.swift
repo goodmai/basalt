@@ -49,9 +49,6 @@ let package = Package(
                 .product(name: "Splash",        package: "Splash"),
             ],
             path: "Sources/Gem",
-            resources: [
-                .process("UI/Metal/RainbowShaders.metal")
-            ],
             swiftSettings: [
                 .swiftLanguageMode(.v6),
             ]
@@ -74,16 +71,6 @@ let package = Package(
                 "GemCore",
             ],
             path: "Tests/GemTests",
-            swiftSettings: [
-                .swiftLanguageMode(.v6),
-            ]
-        ),
-        .testTarget(
-            name: "GemUITests",
-            dependencies: [
-                // "GemCore" not strictly needed since we are executing the binary, but keep it if desired
-            ],
-            path: "Tests/GemUITests",
             swiftSettings: [
                 .swiftLanguageMode(.v6),
             ]

@@ -118,7 +118,6 @@ public actor MLXInferenceEngine: InferenceEngine {
                     self.logger.debug("Inside Task.detached, starting generation loop...")
                     let clock = ContinuousClock()
                     let startTime = clock.now
-                    var firstTokenTime: ContinuousClock.Instant?
                     var lastInfo: GenerateCompletionInfo?
                     var tokenCount = 0
                     
@@ -126,11 +125,6 @@ public actor MLXInferenceEngine: InferenceEngine {
                         if Task.isCancelled { 
                             self.logger.debug("Task is cancelled! Breaking loop.")
                             break 
-                        }
-
-                        if firstTokenTime == nil {
-                            firstTokenTime = clock.now
-                            self.logger.trace("First token received")
                         }
                         
                         tokenCount += 1
@@ -152,7 +146,7 @@ public actor MLXInferenceEngine: InferenceEngine {
                     // End of stream - send metadata
                     if !Task.isCancelled {
                         let generationTime = (clock.now - startTime).inSeconds
-                        let timeToFirstToken = ((firstTokenTime ?? clock.now) - startTime).inSeconds
+                        let timeToFirstToken = 0.0
                         let mem = Memory.snapshot()
 
                         let metadata = GenerationResponse(
