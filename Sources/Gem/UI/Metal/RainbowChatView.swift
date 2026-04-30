@@ -47,6 +47,14 @@ public struct RainbowChatView: View {
             return
         }
 
+        if rawText.lowercased() == "/export" {
+            if let path = state.exportHistory() {
+                state.messages.append(ChatMessage(role: .system, text: "Chat exported to \(path)"))
+            }
+            state.inputText = ""
+            return
+        }
+
         if rawText.hasPrefix("/screenshot ") {            let path = rawText.dropFirst("/screenshot ".count)
             let url = URL(fileURLWithPath: String(path))
             state.captureScreenshotURL = url

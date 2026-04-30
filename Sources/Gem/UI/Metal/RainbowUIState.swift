@@ -95,6 +95,31 @@ public class RainbowUIState: ObservableObject, RenderPipeline {
         }
     }
     
+    public func exportHistory() -> String? {
+        guard !messages.isEmpty else { return nil }
+        
+        var md = "# Chat Export\n\n"
+        for msg in messages {
+            let roleStr = msg.role == .user ? "**User**" : "**Assistant**"
+            md += "\(roleStr):\n\(msg.text)\n\n"
+        }
+        
+        let fileManager = FileManager.default
+        let desktop = fileManager.urls(for: .desktopDirectory, in: .userDomainMask).first!
+        let formatter = ISO8601DateFormatter()
+        let filename = "chat_export_\(formatter.string(from: Date())).md"
+        let fileURL = desktop.appendingPathComponent(filename)
+        
+        do {
+            try md.write(to: fileURL, atomically: true, encoding: .utf8)
+            logger.info("Chat exported to \(fileURL.path)")
+            return fileURL.path
+        } catch {
+            logger.error("Failed to export chat: \(error.localizedDescription)")
+            return nil
+        }
+    }
+
     public func clearHistory() {
         messages.removeAll()
         inputText = ""

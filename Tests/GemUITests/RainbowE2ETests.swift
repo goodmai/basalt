@@ -66,6 +66,21 @@ final class RainbowE2ETests: XCTestCase {
         // The mode should switch to finished/idle (we can't read mode directly unless it's exposed in accessibility, 
         // but we know the shortcut is registered).
         
+        // Test /export command
+        inputField.tap()
+        inputField.typeText("Save me")
+        app.typeKey(.return, modifierFlags: [])
+        
+        let assistantMessage2 = metalView.staticTexts.matching(NSPredicate(format: "value BEGINSWITH 'Assistant:'")).firstMatch
+        XCTAssertTrue(assistantMessage2.waitForExistence(timeout: 10.0), "Wait for response before exporting")
+        
+        inputField.tap()
+        inputField.typeText("/export")
+        app.typeKey(.return, modifierFlags: [])
+        
+        let systemMessage = metalView.staticTexts.matching(NSPredicate(format: "value BEGINSWITH 'ℹ Chat exported'")).firstMatch
+        XCTAssertTrue(systemMessage.waitForExistence(timeout: 5.0), "System export message should appear")
+        
         // Test /clear command
         inputField.tap()
         inputField.typeText("/clear")

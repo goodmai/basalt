@@ -44,6 +44,13 @@ actor ChatController {
                     continue
                 }
                 
+                if trimmed.lowercased() == "/color" || trimmed.lowercased() == "/theme" {
+                    TerminalUI.colorsEnabled.toggle()
+                    let state = TerminalUI.colorsEnabled ? "enabled" : "disabled"
+                    await terminal.updateInfo(debug: TerminalUI.info("Colors are now \(state)."))
+                    continue
+                }
+                
                 messageQueue.append(line)
                 
             case .interrupt:

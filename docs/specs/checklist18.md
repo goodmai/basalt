@@ -4,7 +4,7 @@
 | :--- | :--- | :---: | :--- | :--- |
 | 18.1 | Инструмент SyntheticOutputTool | ❌ Planned | TableRenderer.swift, MarkdownRenderer.swift, DiffRenderer.swift, TerminalUI.swift | Принудительная генерация строго структурированных данных (JSON/XML). 2 |
 | 18.2 | Форматирование вывода (/output-style) | ❌ Planned | TableRenderer.swift, MarkdownRenderer.swift, DiffRenderer.swift, TerminalUI.swift | Выбор форматов представления (таблицы, списки, plain text). 2 |
-| 18.3 | Управление темами (/theme, /color) | ❌ Planned | TableRenderer.swift, MarkdownRenderer.swift, DiffRenderer.swift, TerminalUI.swift | Переключение визуальных стилей и отключение ANSI-цветов терминала. 2 |
+| 18.3 | Управление темами (/theme, /color) | ✅ Done | TableRenderer.swift, MarkdownRenderer.swift, DiffRenderer.swift, TerminalUI.swift | Переключение визуальных стилей и отключение ANSI-цветов терминала. 2 |
 | 18.4 | Пайплайн результатов (Piping) | ❌ Planned | TableRenderer.swift, MarkdownRenderer.swift, DiffRenderer.swift, TerminalUI.swift | Поддержка передачи вывода утилиты в стандартный поток ОС (\` |
 | 18.5 | Экспорт в HTML | ❌ Planned | TableRenderer.swift, MarkdownRenderer.swift, DiffRenderer.swift, TerminalUI.swift | Генерация форматированных HTML-страниц с результатами работы агента. 3 |
 | 18.6 | Адаптивный рендеринг таблиц | ❌ Planned | TableRenderer.swift, MarkdownRenderer.swift, DiffRenderer.swift, TerminalUI.swift | Автоматическое сжатие столбцов Markdown-таблиц под ширину окна (TTY). |
