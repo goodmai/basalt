@@ -154,16 +154,21 @@ public class RainbowUIState: ObservableObject, RenderPipeline {
             if currentMode != .streaming && currentMode != .processing {
                 setMode(.streaming)
             }
-            // In a full implementation, RenderState would contain the full chat history or the delta.
-            // For now we assume RenderState.content is the current active assistant response.
-            // If the last message isn't assistant, add it.
             guard let lastIndex = messages.indices.last, messages[lastIndex].role == .assistant else {
                 addAssistantMessage(state.content)
                 return
             }
-            // If content is empty or we are resetting, just replace it
             messages[lastIndex].text = state.content
         } else {
+            // Even if finished, ensure the final text is applied
+            if !state.content.isEmpty {
+                if let lastIndex = messages.indices.last, messages[lastIndex].role == .assistant {
+                    messages[lastIndex].text = state.content
+                } else {
+                    addAssistantMessage(state.content)
+                }
+            }
+            
             if currentMode == .streaming || currentMode == .processing {
                 setMode(.finished)
             }
