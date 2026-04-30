@@ -20,6 +20,8 @@ Local LLM inference server for Apple Silicon with dual interface architecture.
 - ✅ **Session Analytics** - Beautiful exit summary (Epic 13)
 - ✅ **Swift 6** - Strict concurrency, actor isolation
 - ✅ **4 verified models** - Gemma 4, Qwen3.5/3.6, Qwen2.5-Coder
+- ✅ **MCP & REST** - Full agentic tool support ([Docs](docs/EPIC_19_API_DOCS.md))
+- ✅ **Rainbow UI** - High-performance Metal GPU interface
 
 ---
 
@@ -555,6 +557,7 @@ Sources/
 - `Tests/` — automated unit and integration tests
 - `scripts/` — operational scripts (versioning, security audit, cleanup, archiving)
 - `docs/` — architecture and supporting project documentation
+- `logs/`, `images/`, `reports/` — automatically generated artifacts (logs, screenshots/videos, HTML reports). These can be safely cleaned up using the cleanup script.
 - `.github/` — CI workflows and GitHub metadata
 - `Formula/` — Homebrew packaging artifacts
 - `.build/`, `.swiftpm/` — local build/package artifacts (not for release commits)
@@ -566,6 +569,7 @@ All scripts support `--help` for usage details, `--dry-run` to test safely, and 
 
 - `./scripts/build_metal.swift`: Compiles custom Metal shaders.
 - `./scripts/clean_for_github.swift`: Cleans temporary/local artifacts.
+- `./scripts/cleanup.swift`: Cleans up `logs/`, `images/`, and `reports/` older than 24 hours. Intended to be run at the end of the day or via a scheduled cron job.
 - `./scripts/installer.swift`: Automates local installation. Supports `--non-interactive` to skip user prompts in CI environments.
 
 ### Pre-publish Cleanup (GitHub)
@@ -625,3 +629,14 @@ MLX error: Failed to load the default metallib. library not found library not fo
 ./scripts/build_metal.swift
 ```
 This script compiles all Metal kernels and copies the generated `default.metallib` into your project root and `.build/debug/` directory, satisfying MLX Swift's requirements.
+
+---
+
+## Maintenance
+
+### Daily Cleanup
+To keep your workspace clean, use the provided daily cleanup script:
+```bash
+./scripts/cleanup_daily.swift
+```
+This removes all temporary files from `logs/`, `images/`, and `reports/`.

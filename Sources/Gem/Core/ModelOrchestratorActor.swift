@@ -20,7 +20,7 @@ public actor ModelOrchestratorActor {
     private var totalTokensGenerated: Int = 0
     private var modelSizeMB: Int = 4000 // default fallback
 
-    private let logger = Logger(subsystem: "com.gem.core", category: "ModelOrchestrator")
+    private let logger = GemLogger(module: "ModelOrchestrator")
 
     private var currentModelPath: String = ""
 
@@ -54,11 +54,12 @@ public actor ModelOrchestratorActor {
     /// Swift actor гарантирует что вызовы выстраиваются в очередь (FIFO)
     /// — никаких дополнительных локов не требуется.
     public func generate(request: GenerationRequest) async throws(GemError) -> GenerationResponse {
+        logger.trace("Incoming generate request: \(request.prompt.prefix(50))...")
         let maxT = calculateDynamicMaxTokens()
         var validated = try request.validated(defaultMaxTokens: maxT)
         
         if let requested = request.maxTokens, requested > maxT {
-            logger.warning("Requested tokens (\(requested)) exceed dynamic budget (\(maxT)). Capped to prevent OOM.")
+            logger.warn("Requested tokens (\(requested)) exceed dynamic budget (\(maxT)). Capped to prevent OOM.")
             validated = GenerationRequest(prompt: validated.prompt, maxTokens: maxT, temperature: validated.temperature)
         }
         
@@ -69,17 +70,37 @@ public actor ModelOrchestratorActor {
     }
 
     public func generateStream(request: GenerationRequest) async throws(GemError) -> AsyncStream<StreamChunk> {
+        logger.trace("Incoming generateStream request: \(request.prompt.prefix(50))...")
         let maxT = calculateDynamicMaxTokens()
         var validated = try request.validated(defaultMaxTokens: maxT)
         
         if let requested = request.maxTokens, requested > maxT {
-            logger.warning("Requested tokens (\(requested)) exceed dynamic budget (\(maxT)). Capped to prevent OOM.")
+            logger.warn("Requested tokens (\(requested)) exceed dynamic budget (\(maxT)). Capped to prevent OOM.")
             validated = GenerationRequest(prompt: validated.prompt, maxTokens: maxT, temperature: validated.temperature)
         }
         
         requestCount += 1
-        // We don't easily track totalTokensGenerated for streams here unless we wrap the stream
-        return try await engine.generateStream(request: validated)
+        
+        let stream = try await engine.generateStream(request: validated)
+        logger.debug("engine.generateStream returned successfully! Returning stream to caller.")
+        
+        return AsyncStream<StreamChunk> { continuation in
+            let task = Task.detached {
+                self.logger.debug("Orchestrator forwarding stream chunks...")
+                var count = 0
+                for await chunk in stream {
+                    count += 1
+                    continuation.yield(chunk)
+                }
+                self.logger.debug("Orchestrator finished forwarding stream! Total chunks: \(count)")
+                continuation.finish()
+            }
+            
+            continuation.onTermination = { _ in
+                self.logger.debug("Orchestrator continuation.onTermination triggered!")
+                task.cancel()
+            }
+        }
     }
 
     /// Состояние для /health эндпоинта и MCP tool: gemma_status.

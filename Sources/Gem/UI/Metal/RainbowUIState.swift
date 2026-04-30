@@ -21,7 +21,7 @@ public struct ChatMessage: Identifiable, Sendable {
 }
 
 @MainActor
-public class RainbowUIState: ObservableObject {
+public class RainbowUIState: ObservableObject, RenderPipeline {
     public enum Mode: Int, Sendable {
         case idle = 0
         case processing = 1
@@ -41,12 +41,45 @@ public class RainbowUIState: ObservableObject {
     /// State transition log for agentic testing
     @Published public var stateLog: [(Date, Mode, Mode)] = []
     
-    public init() {}
+    /// Trigger for screenshot capture
+    @Published public var captureScreenshotURL: URL?
+    
+    /// Flag for automated agentic testing
+    public var isAgentMode: Bool = false
+    
+    /// MVI Event Coordinator
+    public let coordinator: RenderCoordinator
+    
+    /// Reference to the active generation task for cancellation
+    public var activeGenerationTask: Task<Void, Never>?
+    
+    private let logger = GemLogger(module: "RainbowUIState")
+    
+    public init() {
+        self.coordinator = RenderCoordinator()
+        logger.debug("Initialized RainbowUIState")
+        
+        Task {
+            await coordinator.setRenderer(self)
+        }
+    }
+    
+    public func cancelGeneration() {
+        if let task = activeGenerationTask {
+            logger.info("MVI Intent: Cancelling active generation task")
+            task.cancel()
+            activeGenerationTask = nil
+            setMode(.finished)
+        }
+    }
     
     public func setMode(_ mode: Mode) {
         let previous = currentMode
         self.currentMode = mode
         stateLog.append((Date(), previous, mode))
+        
+        logger.info("State transition: \(previous) -> \(mode)")
+        logger.trace("Detailed state update: from=\(previous) to=\(mode), stack=\(Thread.callStackSymbols.prefix(3))")
         
         switch mode {
         case .idle:
@@ -62,12 +95,21 @@ public class RainbowUIState: ObservableObject {
         }
     }
     
+    public func clearHistory() {
+        messages.removeAll()
+        inputText = ""
+        currentMode = .idle
+        logger.info("Chat history cleared via /clear")
+    }
+
     public func addUserMessage(_ text: String) {
         messages.append(ChatMessage(role: .user, text: text))
+        logger.info("User Message added: \(text)")
     }
     
     public func addAssistantMessage(_ text: String) {
         messages.append(ChatMessage(role: .assistant, text: text))
+        logger.info("Assistant Message added: \(text)")
     }
     
     public func appendToLastAssistant(_ chunk: String) {
@@ -77,6 +119,30 @@ public class RainbowUIState: ObservableObject {
             return
         }
         messages[lastIndex].text += chunk
+    }
+    
+    // MARK: - MVI RenderPipeline
+    public func submit(state: RenderState) {
+        // Here we map the MVI RenderState to the UI's View State
+        // For example, update the current streaming message content:
+        if state.isGenerating {
+            if currentMode != .streaming && currentMode != .processing {
+                setMode(.streaming)
+            }
+            // In a full implementation, RenderState would contain the full chat history or the delta.
+            // For now we assume RenderState.content is the current active assistant response.
+            // If the last message isn't assistant, add it.
+            guard let lastIndex = messages.indices.last, messages[lastIndex].role == .assistant else {
+                addAssistantMessage(state.content)
+                return
+            }
+            // If content is empty or we are resetting, just replace it
+            messages[lastIndex].text = state.content
+        } else {
+            if currentMode == .streaming || currentMode == .processing {
+                setMode(.finished)
+            }
+        }
     }
     
     /// Export state log for agentic testing verification

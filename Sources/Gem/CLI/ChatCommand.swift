@@ -29,10 +29,63 @@ struct ChatCommand: AsyncParsableCommand {
     
     @Flag(name: .long, help: "Launch the experimental Rainbow Metal GUI")
     var ui: Bool = false
+    
+    @Flag(name: .customLong("agent-test"), help: "Run automated UI test and capture screenshot")
+    var agentTest: Bool = false
+
+    @Option(name: .customLong("agent-case"), help: "Run specific agentic test case (Arithmetic, Algebra, Translation)")
+    var agentCase: String?
+
+    @Flag(name: .customLong("agent-real"), help: "Run agentic test suite with REAL inference")
+    var agentReal: Bool = false
 
     // MARK: — Run
+    private static let logger = GemLogger(module: "ChatCommand")
 
     mutating func run() async throws {
+        Self.logger.trace("ChatCommand started. Options: ui=\(ui), agentTest=\(agentTest), agentReal=\(agentReal)")
+        if let testCase = agentCase {
+            log("Running agentic test case: \(testCase)...")
+            let fm = FileManager.default
+            let imagesDir = URL(fileURLWithPath: fm.currentDirectoryPath).appendingPathComponent("images")
+            try? fm.createDirectory(at: imagesDir, withIntermediateDirectories: true)
+            
+            let prompt: String
+            let response: String
+            
+            switch testCase.lowercased() {
+            case "arithmetic":
+                prompt = "Calculate 123 * 456 + 789 / 3"
+                response = "Result is 56351"
+            case "algebra":
+                prompt = "Solve for x: 2x + 5 = 15. Show steps."
+                response = "```\n2x = 10\nx = 5\n```"
+            case "translation":
+                prompt = "Translate 'The quick brown fox jumps over the lazy dog' to Russian."
+                response = "Быстрая коричневая лиса прыгает через ленивую собаку."
+            default:
+                log("Unknown test case: \(testCase)")
+                return
+            }
+            
+            let state = await MainActor.run { 
+                let s = RainbowUIState()
+                s.modelName = "Agent \(testCase) Model"
+                s.addUserMessage(prompt)
+                s.addAssistantMessage(response)
+                s.captureScreenshotURL = imagesDir.appendingPathComponent("test_\(testCase.lowercased()).png")
+                return s
+            }
+            
+            await MainActor.run {
+                Task.detached {
+                    try? await Task.sleep(nanoseconds: 2_000_000_000)
+                    Darwin.exit(0)
+                }
+                launchRainbowUI(state: state, orchestrator: nil, maxTokens: maxTokens)
+            }
+        }
+        
         let resolvedPath = try await resolveModelPath()
 
         // Shared inference engine + orchestrator
@@ -45,6 +98,21 @@ struct ChatCommand: AsyncParsableCommand {
         } catch {
             log("\(red("Failed to load model:")) \(error.localizedDescription)")
             throw ExitCode.failure
+        }
+
+        if agentReal {
+            log("Launching REAL agentic test suite...")
+            let state = await MainActor.run { 
+                let s = RainbowUIState()
+                s.modelName = resolvedPath.components(separatedBy: "/").last ?? resolvedPath
+                s.isAgentMode = true
+                return s
+            }
+            
+            await MainActor.run {
+                launchRainbowUI(state: state, orchestrator: orchestrator, maxTokens: maxTokens)
+            }
+            return
         }
 
         if ui {

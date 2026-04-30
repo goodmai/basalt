@@ -78,6 +78,16 @@ let package = Package(
                 .swiftLanguageMode(.v6),
             ]
         ),
+        .testTarget(
+            name: "GemUITests",
+            dependencies: [
+                // "GemCore" not strictly needed since we are executing the binary, but keep it if desired
+            ],
+            path: "Tests/GemUITests",
+            swiftSettings: [
+                .swiftLanguageMode(.v6),
+            ]
+        ),
         .executableTarget(
             name: "PerformanceBenchmark",
             dependencies: [

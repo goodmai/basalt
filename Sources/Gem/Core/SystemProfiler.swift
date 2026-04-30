@@ -190,7 +190,7 @@ public actor SystemProfiler {
         
         let machine = withUnsafePointer(to: &sysinfo.machine) {
             $0.withMemoryRebound(to: CChar.self, capacity: 1) {
-                String(validatingUTF8: $0)
+                String(validatingCString: $0)
             }
         }
         
@@ -208,7 +208,7 @@ public actor SystemProfiler {
         
         // Convert to String, handling null termination
         let brandString = cpuBrand.withUnsafeBufferPointer { buffer in
-            String(validatingUTF8: buffer.baseAddress!) ?? "Unknown"
+            String(validatingCString: buffer.baseAddress!) ?? "Unknown"
         }
         
         // Detect M-series chips (including future M5)

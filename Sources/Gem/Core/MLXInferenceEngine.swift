@@ -28,12 +28,14 @@ public protocol InferenceEngine: Sendable {
 public actor MLXInferenceEngine: InferenceEngine {
 
     private var container: ModelContainer?
+    private let logger = GemLogger(module: "MLXInferenceEngine")
 
     public init() {}
 
     // MARK: — Load
 
     public func load(modelPath: String) async throws(GemError) {
+        logger.trace("Loading model from path: \(modelPath)")
         // ServeCommand всегда передаёт абсолютный локальный путь после разрешения кэша.
         // Если путь не начинается с "/" — это нераспознанный формат.
         guard modelPath.hasPrefix("/") || modelPath.hasPrefix(".") else {
@@ -108,31 +110,45 @@ public actor MLXInferenceEngine: InferenceEngine {
 
         do {
             let lmInput = try await container.prepare(input: userInput)
+            logger.trace("Input prepared. Starting MLX generation...")
             let mlxStream = try await container.generate(input: lmInput, parameters: params)
             
             return AsyncStream<StreamChunk> { continuation in
-                let task = Task {
+                let task = Task.detached {
+                    self.logger.debug("Inside Task.detached, starting generation loop...")
                     let clock = ContinuousClock()
                     let startTime = clock.now
                     var firstTokenTime: ContinuousClock.Instant?
                     var lastInfo: GenerateCompletionInfo?
+                    var tokenCount = 0
                     
                     for await generation in mlxStream {
-                        if Task.isCancelled { break }
+                        if Task.isCancelled { 
+                            self.logger.debug("Task is cancelled! Breaking loop.")
+                            break 
+                        }
 
                         if firstTokenTime == nil {
                             firstTokenTime = clock.now
+                            self.logger.trace("First token received")
                         }
+                        
+                        tokenCount += 1
                         
                         switch generation {
                         case .chunk(let text):
+                            self.logger.trace("Yielding chunk \(tokenCount): '\(text.replacingOccurrences(of: "\n", with: "\\n"))'")
                             continuation.yield(.text(text))
                         case .info(let info):
+                            self.logger.debug("Received info struct! Token count: \(info.generationTokenCount)")
                             lastInfo = info
                         case .toolCall:
+                            self.logger.debug("Received toolCall, breaking?")
                             break
                         }
                     }
+                    
+                    self.logger.debug("mlxStream loop finished! Total tokens yielded: \(tokenCount)")
                     
                     // End of stream - send metadata
                     if !Task.isCancelled {

@@ -1,12 +1,15 @@
 import MetalKit
 import AppKit
+import Combine
 
+@MainActor
 public class RainbowRenderer: NSObject, MTKViewDelegate {
     public var uiState: RainbowUIState
+    public var cancellable: AnyCancellable?
     
     private var device: MTLDevice?
     private var commandQueue: MTLCommandQueue?
-    private var pipelineState: MTLRenderPipelineState?
+    public var pipelineState: MTLRenderPipelineState?
     private var startTime: CFAbsoluteTime
     
     // Shader uniforms matching Metal struct
@@ -32,36 +35,37 @@ public class RainbowRenderer: NSObject, MTKViewDelegate {
     private var cachedTextures: [String: (MTLTexture, CGSize)] = [:]
     private var maxCacheSize = 100
     
+    private let logger = GemLogger(module: "RainbowRenderer")
+    private var frameCount: Int = 0
+    
     public init(state: RainbowUIState) {
         self.uiState = state
         self.startTime = CFAbsoluteTimeGetCurrent()
         super.init()
-        self.setupMetal()
+        logger.debug("RainbowRenderer initialized (waiting for Metal device)")
     }
     
-    private func setupMetal() {
-        self.device = MTLCreateSystemDefaultDevice()
-        guard let device = device else { return }
+    private func setupMetal(device: MTLDevice) {
+        self.device = device
+        logger.info("Setting up Metal with device: \(device.name)")
         
         self.commandQueue = device.makeCommandQueue()
         
         // Load Metal library — compile from bundled .metal source
         guard let library = Self.loadMetalLibrary(device: device) else {
-            print("Failed to load metal library")
+            fputs("[Metal] ERROR: Failed to load metal library\n", stderr)
             return
         }
         
         // Setup text renderer
         if let commandQueue = commandQueue {
             self.textRenderer = TextRenderer(device: device, commandQueue: commandQueue, library: library)
+            fputs("[Metal] TextRenderer ready\n", stderr)
         }
         
-        let vertexFunction = library.makeFunction(name: "vertex_main")
-        let fragmentFunction = library.makeFunction(name: "fragment_rainbow")
-        
         let pipelineDescriptor = MTLRenderPipelineDescriptor()
-        pipelineDescriptor.vertexFunction = vertexFunction
-        pipelineDescriptor.fragmentFunction = fragmentFunction
+        pipelineDescriptor.vertexFunction = library.makeFunction(name: "vertex_main")
+        pipelineDescriptor.fragmentFunction = library.makeFunction(name: "fragment_rainbow")
         pipelineDescriptor.colorAttachments[0].pixelFormat = .bgra8Unorm
         
         // Vertex descriptor
@@ -79,8 +83,9 @@ public class RainbowRenderer: NSObject, MTKViewDelegate {
         
         do {
             pipelineState = try device.makeRenderPipelineState(descriptor: pipelineDescriptor)
+            fputs("[Metal] Pipeline state created successfully\n", stderr)
         } catch {
-            print("Failed to create pipeline state: \(error)")
+            fputs("[Metal] ERROR: Failed to create pipeline state: \(error)\n", stderr)
         }
         
         vertexBuffer = device.makeBuffer(bytes: vertices, length: vertices.count * MemoryLayout<Float>.size, options: .storageModeShared)
@@ -117,41 +122,58 @@ public class RainbowRenderer: NSObject, MTKViewDelegate {
     }
     
     public func draw(in view: MTKView) {
-        guard let drawable = view.currentDrawable,
-              let renderPassDescriptor = view.currentRenderPassDescriptor,
-              let pipelineState = pipelineState,
-              let commandQueue = commandQueue,
-              let commandBuffer = commandQueue.makeCommandBuffer(),
-              let renderEncoder = commandBuffer.makeRenderCommandEncoder(descriptor: renderPassDescriptor),
-              let vertexBuffer = vertexBuffer else {
-            return
+        if pipelineState == nil, let device = view.device {
+            setupMetal(device: device)
         }
         
-        let currentTime = Float(CFAbsoluteTimeGetCurrent() - startTime)
-        let resolution = view.drawableSize
+        // Heartbeat log every 60 frames
+        frameCount += 1
+        if frameCount % 60 == 0 {
+            fputs("[Metal] Draw heartbeat frame \(frameCount)\n", stderr)
+        }
         
+        guard let drawable = view.currentDrawable,
+              let descriptor = view.currentRenderPassDescriptor else { return }
+        
+        guard let commandBuffer = commandQueue?.makeCommandBuffer(),
+              let renderEncoder = commandBuffer.makeRenderCommandEncoder(descriptor: descriptor) else { return }
+        
+        self.performDraw(in: renderEncoder, viewportSize: view.drawableSize)
+        renderEncoder.endEncoding()
+        
+        // Capture screenshot if requested
+        self.captureScreenshotIfNeeded(from: drawable.texture)
+        
+        commandBuffer.present(drawable)
+        commandBuffer.commit()
+    }
+    
+    /// Internal drawing logic shared between on-screen and off-screen rendering
+    private func performDraw(in renderEncoder: MTLRenderCommandEncoder, viewportSize: CGSize) {
+        guard let pipelineState = pipelineState, let vertexBuffer = vertexBuffer else { return }
+        
+        let currentTime = Float(CFAbsoluteTimeGetCurrent() - startTime)
         var uniforms = Uniforms(
             time: currentTime,
-            resolution: SIMD2<Float>(Float(resolution.width), Float(resolution.height)),
+            resolution: SIMD2<Float>(Float(viewportSize.width), Float(viewportSize.height)),
             mode: Int32(uiState.currentMode.rawValue)
         )
         
-        // 1. Draw Rainbow Background
         renderEncoder.setRenderPipelineState(pipelineState)
         renderEncoder.setVertexBuffer(vertexBuffer, offset: 0, index: 0)
         renderEncoder.setVertexBytes(&uniforms, length: MemoryLayout<Uniforms>.size, index: 1)
         renderEncoder.setFragmentBytes(&uniforms, length: MemoryLayout<Uniforms>.size, index: 0)
         renderEncoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
         
-        guard let textRenderer = textRenderer else {
-            renderEncoder.endEncoding()
-            commandBuffer.present(drawable)
-            commandBuffer.commit()
-            return
-        }
+        guard let textRenderer = textRenderer else { return }
+        // Render UI overlay (messages, input, etc)
+        renderUI(in: renderEncoder, textRenderer: textRenderer, viewportSize: viewportSize)
+    }
         
+    /// Render UI overlay (messages, input, etc)
+    private func renderUI(in renderEncoder: MTLRenderCommandEncoder, textRenderer: TextRenderer, viewportSize: CGSize) {
         // Layout constants (in pixels at drawable scale)
-        let scale = view.window?.backingScaleFactor ?? 2.0
+        let scale: CGFloat = 2.0 // Assume Retina for headless/default
         let headerHeight: CGFloat = 44 * scale
         let footerHeight: CGFloat = 56 * scale
         let padding: CGFloat = 16 * scale
@@ -166,7 +188,7 @@ public class RainbowRenderer: NSObject, MTKViewDelegate {
         let headerText = "🌈 Gemm  •  \(uiState.modelName)"
         if let (tex, size) = getOrCreateTexture(key: "header_\(headerText)", text: headerText, font: headerFont, color: .white) {
             let pos = CGPoint(x: padding, y: padding)
-            textRenderer.draw(texture: tex, size: size, position: pos, resolution: resolution, encoder: renderEncoder)
+            textRenderer.draw(texture: tex, size: size, position: pos, resolution: viewportSize, encoder: renderEncoder)
         }
         
         // Mode indicator on the right
@@ -180,13 +202,18 @@ public class RainbowRenderer: NSObject, MTKViewDelegate {
         case .finished: modeText = "✓ FINISHED";   modeColor = NSColor(calibratedRed: 0.3, green: 0.9, blue: 0.4, alpha: 1.0)
         }
         if let (tex, size) = getOrCreateTexture(key: "mode_\(modeText)", text: modeText, font: smallFont, color: modeColor) {
-            let pos = CGPoint(x: resolution.width - size.width - padding, y: padding + 4 * scale)
-            textRenderer.draw(texture: tex, size: size, position: pos, resolution: resolution, encoder: renderEncoder)
+            let pos = CGPoint(x: viewportSize.width - size.width - padding, y: padding + 4 * scale)
+            textRenderer.draw(texture: tex, size: size, position: pos, resolution: viewportSize, encoder: renderEncoder)
         }
         
         // 3. Draw Chat Messages
         var yOffset = headerHeight + padding - CGFloat(uiState.scrollOffset)
-        let maxWidth = resolution.width - 2 * padding
+        let maxWidth = viewportSize.width - 2 * padding
+        
+        // Diagnostic: log message count periodically
+        if frameCount % 120 == 1 {
+            fputs("[Metal] renderUI: messages.count=\(uiState.messages.count), mode=\(uiState.currentMode), yOffset=\(yOffset)\n", stderr)
+        }
         
         for (_, message) in uiState.messages.enumerated() {
             let prefix: String
@@ -196,15 +223,15 @@ public class RainbowRenderer: NSObject, MTKViewDelegate {
             switch message.role {
             case .user:
                 prefix = "❯ "
-                color = NSColor(calibratedRed: 0.6, green: 0.8, blue: 1.0, alpha: 1.0)
+                color = .white
                 font = bodyFont
             case .assistant:
                 prefix = "⟫ "
-                color = NSColor(calibratedRed: 0.9, green: 0.9, blue: 0.95, alpha: 1.0)
+                color = .white
                 font = bodyFont
             case .system:
                 prefix = "ℹ "
-                color = NSColor(calibratedRed: 0.5, green: 0.5, blue: 0.6, alpha: 1.0)
+                color = NSColor(white: 0.7, alpha: 1.0)
                 font = smallFont
             }
             
@@ -234,6 +261,20 @@ public class RainbowRenderer: NSObject, MTKViewDelegate {
                 } else if message.role == .assistant && rawLine.hasPrefix("-") { // diff removed
                     bg = NSColor(calibratedRed: 0.4, green: 0.1, blue: 0.1, alpha: 0.5)
                     fg = NSColor.white
+                } else if rawLine.hasPrefix("![") && rawLine.contains("](") && rawLine.hasSuffix(")") {
+                    // Simple markdown image parsing: ![alt](path)
+                    if let start = rawLine.firstIndex(of: "("), let end = rawLine.lastIndex(of: ")") {
+                        let path = String(rawLine[rawLine.index(after: start)..<end])
+                        if let imgTex = loadTexture(from: path) {
+                            let imgSize = CGSize(width: CGFloat(imgTex.width) / scale, height: CGFloat(imgTex.height) / scale)
+                            let pos = CGPoint(x: padding, y: yOffset)
+                            if yOffset + imgSize.height > headerHeight {
+                                textRenderer.draw(texture: imgTex, size: imgSize, position: pos, resolution: viewportSize, encoder: renderEncoder)
+                            }
+                            yOffset += imgSize.height + 2 * scale
+                        }
+                    }
+                    continue
                 } else {
                     bg = .clear
                     fg = color
@@ -246,32 +287,54 @@ public class RainbowRenderer: NSObject, MTKViewDelegate {
             }
             
             for (lineIndex, lineData) in linesToRender.enumerated() {
+                let textHeight = (lineData.text as NSString).size(withAttributes: [.font: lineData.font]).height
+                let estimatedHeight = textHeight > 0 ? textHeight : lineData.font.boundingRectForFont.height
+                
+                if yOffset > viewportSize.height - footerHeight - padding {
+                    yOffset += estimatedHeight + 2 * scale
+                    continue
+                }
+
                 let cacheKey = "msg_\(message.id)_\(lineIndex)_\(lineData.text.hashValue)_\(lineData.bg.hash)"
+                
+                let isLastAssistantStreaming = (uiState.currentMode == .streaming || uiState.currentMode == .processing) && 
+                                               message.role == .assistant && 
+                                               message.id == uiState.messages.last?.id
+
+                if isLastAssistantStreaming {
+                    invalidateCache(for: cacheKey)
+                }
+
                 if let (tex, size) = getOrCreateTexture(key: cacheKey, text: lineData.text, font: lineData.font, color: lineData.color, backgroundColor: lineData.bg) {
                     let pos = CGPoint(x: padding, y: yOffset)
                     // Only draw if within visible area (below header)
                     if yOffset + size.height > headerHeight {
-                        textRenderer.draw(texture: tex, size: size, position: pos, resolution: resolution, encoder: renderEncoder)
+                        textRenderer.draw(texture: tex, size: size, position: pos, resolution: viewportSize, encoder: renderEncoder)
                     }
                     yOffset += size.height + 2 * scale
+                } else {
+                    yOffset += estimatedHeight + 2 * scale
                 }
             }
             yOffset += 8 * scale // gap between messages
-            
-            // Stop drawing if we've gone past the footer area
-            if yOffset > resolution.height - footerHeight - padding {
-                break
+        }
+        
+        let maxVisibleY = viewportSize.height - footerHeight - padding
+        if yOffset > maxVisibleY && (uiState.currentMode == .streaming || uiState.currentMode == .processing) {
+            let overflow = yOffset - maxVisibleY
+            DispatchQueue.main.async {
+                self.uiState.scrollOffset += overflow
             }
         }
         
         // 4. Draw Footer (input prompt)
-        let footerY = resolution.height - footerHeight
+        let footerY = viewportSize.height - footerHeight
         
         // Divider line (thin text-based)
         let divider = String(repeating: "─", count: 60)
         if let (tex, size) = getOrCreateTexture(key: "divider", text: divider, font: smallFont, color: NSColor(white: 0.4, alpha: 1.0)) {
             let pos = CGPoint(x: padding, y: footerY)
-            textRenderer.draw(texture: tex, size: size, position: pos, resolution: resolution, encoder: renderEncoder)
+            textRenderer.draw(texture: tex, size: size, position: pos, resolution: viewportSize, encoder: renderEncoder)
         }
         
         // Input text or placeholder
@@ -289,21 +352,18 @@ public class RainbowRenderer: NSObject, MTKViewDelegate {
         invalidateCache(for: "input_field")
         if let (tex, size) = getOrCreateTexture(key: "input_field", text: inputDisplay, font: bodyFont, color: inputColor) {
             let pos = CGPoint(x: padding, y: footerY + 18 * scale)
-            textRenderer.draw(texture: tex, size: size, position: pos, resolution: resolution, encoder: renderEncoder)
+            textRenderer.draw(texture: tex, size: size, position: pos, resolution: viewportSize, encoder: renderEncoder)
         }
         
         // TPS indicator
         if uiState.tokensPerSecond > 0 {
             let tpsText = String(format: "%.1f tok/s", uiState.tokensPerSecond)
             if let (tex, size) = getOrCreateTexture(key: "tps_\(tpsText)", text: tpsText, font: smallFont, color: NSColor(white: 0.5, alpha: 1.0)) {
-                let pos = CGPoint(x: resolution.width - size.width - padding, y: footerY + 20 * scale)
-                textRenderer.draw(texture: tex, size: size, position: pos, resolution: resolution, encoder: renderEncoder)
+                let pos = CGPoint(x: viewportSize.width - size.width - padding, y: footerY + 20 * scale)
+                textRenderer.draw(texture: tex, size: size, position: pos, resolution: viewportSize, encoder: renderEncoder)
             }
         }
         
-        renderEncoder.endEncoding()
-        commandBuffer.present(drawable)
-        commandBuffer.commit()
     }
     
     // MARK: - Word wrapping
@@ -341,52 +401,173 @@ public class RainbowRenderer: NSObject, MTKViewDelegate {
     
     // MARK: - Metal Library Loading
     
-    private static func loadMetalLibrary(device: MTLDevice) -> MTLLibrary? {
-        // Strategy 1: Try loading from Bundle.module (compiled metallib)
+    public static func loadMetalLibrary(device: MTLDevice) -> MTLLibrary? {
+        let logger = GemLogger(module: "MetalLoader")
+        
+        // 1. Try Bundle.module (compiled .metallib)
         if let lib = try? device.makeDefaultLibrary(bundle: Bundle.module) {
+            logger.debug("Loaded Metal library from Bundle.module")
             return lib
         }
         
-        // Strategy 2: Try the default library (if shaders are in default.metallib)
+        // 2. Try default library (if linked)
         if let lib = device.makeDefaultLibrary() {
-            // Verify our functions exist
-            if lib.makeFunction(name: "vertex_main") != nil {
-                return lib
-            }
+            logger.debug("Loaded Metal library from default device library")
+            return lib
         }
-        
-        // Strategy 3: Compile from .metal source bundled as resource
-        if let metalURL = Bundle.module.url(forResource: "RainbowShaders", withExtension: "metal") {
-            do {
-                let source = try String(contentsOf: metalURL, encoding: .utf8)
-                let lib = try device.makeLibrary(source: source, options: nil)
-                return lib
-            } catch {
-                print("Failed to compile Metal shader from source: \(error)")
-            }
-        }
-        
-        // Strategy 4: Look for .metal file relative to executable
-        let execDir = Bundle.main.bundlePath
-        let possiblePaths = [
-            "\(execDir)/../Sources/Gem/UI/Metal/RainbowShaders.metal",
-            "\(execDir)/../../Sources/Gem/UI/Metal/RainbowShaders.metal",
-            "Sources/Gem/UI/Metal/RainbowShaders.metal"
+
+        // 3. Search for .metal source files in development environment
+        let fm = FileManager.default
+        let currentDir = URL(fileURLWithPath: fm.currentDirectoryPath)
+        let searchPaths = [
+            currentDir.appendingPathComponent("Sources/Gem/UI/Metal/RainbowShaders.metal"),
+            currentDir.appendingPathComponent("RainbowShaders.metal"),
+            currentDir.appendingPathComponent("GemCore_GemCore.bundle/RainbowShaders.metal"),
+            URL(fileURLWithPath: Bundle.main.bundlePath).appendingPathComponent("RainbowShaders.metal")
         ]
         
-        for path in possiblePaths {
-            if FileManager.default.fileExists(atPath: path) {
+        for url in searchPaths {
+            if fm.fileExists(atPath: url.path) {
                 do {
-                    let source = try String(contentsOfFile: path, encoding: .utf8)
+                    let source = try String(contentsOf: url, encoding: .utf8)
                     let lib = try device.makeLibrary(source: source, options: nil)
+                    logger.info("Successfully compiled Metal shaders from: \(url.path)")
                     return lib
                 } catch {
-                    print("Failed to compile Metal shader from \(path): \(error)")
+                    logger.error("Found .metal at \(url.path) but compilation failed: \(error)")
                 }
             }
         }
         
-        print("Could not find Metal shaders in any known location")
+        logger.error("CRITICAL: Metal shaders not found. Checked: \(searchPaths.map { $0.path }.joined(separator: ", "))")
         return nil
+    }
+    
+    // MARK: - Image Loading
+    
+    private lazy var textureLoader: MTKTextureLoader? = {
+        guard let device = self.device else { return nil }
+        return MTKTextureLoader(device: device)
+    }()
+    
+    private var loadedImages: [String: MTLTexture] = [:]
+    
+    private func loadTexture(from path: String) -> MTLTexture? {
+        if let tex = loadedImages[path] { return tex }
+        
+        let url: URL
+        if path.hasPrefix("file://") {
+            url = URL(string: path)!
+        } else {
+            url = URL(fileURLWithPath: path)
+        }
+        
+        guard let loader = textureLoader else { return nil }
+        let options: [MTKTextureLoader.Option: Any] = [
+            .generateMipmaps: false,
+            .SRGB: false
+        ]
+        
+        do {
+            let texture = try loader.newTexture(URL: url, options: options)
+            loadedImages[path] = texture
+            return texture
+        } catch {
+            print("Failed to load image at \(path): \(error)")
+            return nil
+        }
+    }
+    
+    // MARK: - Public API
+    
+    /// Capture a screenshot to a file, even in headless mode
+    public func captureScreenshot(to url: URL, width: Int = 1280, height: Int = 720) {
+        logger.trace("Manual screenshot requested: \(url.path)")
+        
+        if pipelineState == nil {
+            if let defaultDevice = MTLCreateSystemDefaultDevice() {
+                setupMetal(device: defaultDevice)
+            }
+        }
+        
+        guard let device = device, let commandQueue = commandQueue else {
+            logger.error("Metal not initialized for screenshot and failed to create default device")
+            return
+        }
+        
+        let descriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .bgra8Unorm, width: width, height: height, mipmapped: false)
+        descriptor.usage = [.renderTarget, .shaderRead]
+        descriptor.storageMode = .shared
+        
+        guard let texture = device.makeTexture(descriptor: descriptor) else {
+            logger.error("Failed to create offscreen texture")
+            return
+        }
+        
+        let renderPassDescriptor = MTLRenderPassDescriptor()
+        renderPassDescriptor.colorAttachments[0].texture = texture
+        renderPassDescriptor.colorAttachments[0].loadAction = .clear
+        renderPassDescriptor.colorAttachments[0].clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 1)
+        renderPassDescriptor.colorAttachments[0].storeAction = .store
+        
+        guard let commandBuffer = commandQueue.makeCommandBuffer(),
+              let renderEncoder = commandBuffer.makeRenderCommandEncoder(descriptor: renderPassDescriptor) else {
+            logger.error("Failed to create command buffer or encoder")
+            return
+        }
+        
+        self.performDraw(in: renderEncoder, viewportSize: CGSize(width: width, height: height))
+        renderEncoder.endEncoding()
+        commandBuffer.commit()
+        commandBuffer.waitUntilCompleted()
+        
+        self.activeScreenshotURL = url
+        self.captureScreenshotIfNeeded(from: texture)
+    }
+    
+    // MARK: - Screenshot Capture
+    
+    public var activeScreenshotURL: URL?
+    
+    // Capture screenshot is called right before present
+    private func captureScreenshotIfNeeded(from texture: MTLTexture) {
+        guard let url = activeScreenshotURL else { return }
+        logger.trace("Screenshot capture process started for: \(url.lastPathComponent)")
+        self.activeScreenshotURL = nil // Only capture once per request
+        
+        let width = texture.width
+        let height = texture.height
+        let rowBytes = width * 4
+        var rawData = [UInt8](repeating: 0, count: rowBytes * height)
+        let region = MTLRegionMake2D(0, 0, width, height)
+        texture.getBytes(&rawData, bytesPerRow: rowBytes, from: region, mipmapLevel: 0)
+        
+        // bgra8Unorm -> CGImage
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        let bitmapInfo = CGBitmapInfo.byteOrder32Little.rawValue | CGImageAlphaInfo.premultipliedFirst.rawValue
+        
+        guard let context = CGContext(data: &rawData, width: width, height: height, bitsPerComponent: 8, bytesPerRow: rowBytes, space: colorSpace, bitmapInfo: bitmapInfo) else {
+            logger.error("Failed to create CGContext for screenshot")
+            return
+        }
+        guard let cgImage = context.makeImage() else {
+            logger.error("Failed to make CGImage for screenshot")
+            return
+        }
+        
+        logger.trace("CGImage created successfully. Converting to PNG...")
+        let nsImage = NSImage(cgImage: cgImage, size: NSSize(width: width, height: height))
+        if let tiffData = nsImage.tiffRepresentation,
+           let bitmap = NSBitmapImageRep(data: tiffData),
+           let pngData = bitmap.representation(using: .png, properties: [:]) {
+            do {
+                try pngData.write(to: url)
+                logger.info("Screenshot successfully saved to \(url.path)")
+            } catch {
+                logger.error("Failed to write PNG data to disk: \(error.localizedDescription)")
+            }
+        } else {
+            logger.error("Failed to create PNG representation for screenshot")
+        }
     }
 }

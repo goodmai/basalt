@@ -8,11 +8,13 @@ struct GenerateController: Sendable {
 
     let orchestrator: ModelOrchestratorActor
     let modelId: String?
+    private let logger = GemLogger(module: "GenerateController")
 
     // MARK: — POST /api/v1/generate
 
     @Sendable
     func generate(request: Request, context: GemmaRequestContext) async throws -> Response {
+        logger.trace("Handling POST /api/v1/generate")
         // Require authentication
         _ = try context.requireIdentity()
 
@@ -41,6 +43,7 @@ struct GenerateController: Sendable {
     
     @Sendable
     func generateStream(request: Request, context: GemmaRequestContext) async throws -> Response {
+        logger.trace("Handling POST /api/v1/generate/stream")
         // Require authentication
         _ = try context.requireIdentity()
         

@@ -14,6 +14,15 @@ struct RESTServer: Sendable {
     func run() async throws {
         let authService = try AuthService(dbPath: config.dbPath, jwtSecret: config.jwtSecret)
         
+        // Seed admin user from environment if database is empty
+        if let adminUser = ProcessInfo.processInfo.environment["GEMM_ADMIN_USER"],
+           let adminPass = ProcessInfo.processInfo.environment["GEMM_ADMIN_PASSWORD"] {
+            if try await !authService.hasUsers() {
+                try await authService.createUser(username: adminUser, password: adminPass)
+                log("Admin user '\(adminUser)' created from environment.")
+            }
+        }
+        
         let generateController = GenerateController(
             orchestrator: orchestrator,
             modelId: config.modelId ?? config.modelPath.split(separator: "/").last.map(String.init)

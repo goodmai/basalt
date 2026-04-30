@@ -59,7 +59,12 @@ public class TextRenderer {
         
         pipelineDescriptor.vertexDescriptor = vertexDescriptor
         
-        pipelineState = try? device.makeRenderPipelineState(descriptor: pipelineDescriptor)
+        do {
+            pipelineState = try device.makeRenderPipelineState(descriptor: pipelineDescriptor)
+        } catch {
+            let logger = GemLogger(module: "TextRenderer")
+            logger.error("Failed to create TextRenderer pipeline: \(error.localizedDescription)")
+        }
         vertexBuffer = device.makeBuffer(bytes: vertices, length: vertices.count * MemoryLayout<Float>.size, options: .storageModeShared)
         
         let samplerDescriptor = MTLSamplerDescriptor()

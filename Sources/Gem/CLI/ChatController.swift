@@ -26,16 +26,24 @@ actor ChatController {
         let modelInfo = await orchestrator.modelInfo
         await terminal.updateInfo(model: modelInfo)
         
-        for await event in await terminal.readEvents() {
+        for try await event in terminal.readEvents() {
             guard isRunning else { break }
             
             switch event {
             case .lineSubmitted(let line):
-                if line.lowercased() == "exit" || line.lowercased() == "quit" {
+                let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+                if trimmed.lowercased() == "exit" || trimmed.lowercased() == "quit" {
                     isRunning = false
                     activeTask?.cancel()
                     break
                 }
+                
+                if trimmed.lowercased() == "/clear" {
+                    messageQueue.removeAll()
+                    await terminal.updateInfo(debug: TerminalUI.info("Chat history cleared."))
+                    continue
+                }
+                
                 messageQueue.append(line)
                 
             case .interrupt:
@@ -76,8 +84,6 @@ actor ChatController {
                         
                         await terminal.printOutput("\n" + TerminalUI.info("Gemma:") + " ")
                         
-                        var statsResponse: GenerationResponse?
-                        
                         for try await chunk in stream {
                             if Task.isCancelled {
                                 await terminal.printOutput(TerminalUI.dim("[Interrupted]"))
@@ -88,7 +94,6 @@ actor ChatController {
                             case .text(let t):
                                 await terminal.printOutput(t)
                             case .metadata(let m):
-                                statsResponse = m
                                 let statsLine = "TPS: \(String(format: "%.1f", m.tokensPerSecond)) | In: \(m.promptTokens) | Out: \(m.completionTokens) | RAM: \(m.memory.activeBytes / 1024 / 1024)MB"
                                 await terminal.updateInfo(debug: statsLine)
                             }

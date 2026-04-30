@@ -8,6 +8,7 @@ import HummingbirdBcrypt
 public actor AuthService {
     private let db: Connection
     private let signers: JWTSigners
+    private let logger = GemLogger(module: "AuthService")
     
     // Таблицы
     private static let users = Table("users")
@@ -75,6 +76,7 @@ public actor AuthService {
     // MARK: — Login
     
     public func login(user: String, pass: String) throws -> String {
+        logger.trace("Login attempt for user: \(user)")
         let query = Self.users.filter(Self.username == user)
         guard let row = try db.pluck(query) else {
             throw GemError.invalidRequestStructure(details: "Invalid username or password")
@@ -151,6 +153,7 @@ public actor AuthService {
     // MARK: — Verify
     
     public func verify(token: String) throws -> String {
+        logger.trace("Verifying JWT token...")
         let payload = try signers.verify(token, as: SessionToken.self)
         
         // Проверка в блок-листе

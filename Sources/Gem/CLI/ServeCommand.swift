@@ -49,8 +49,10 @@ struct ServeCommand: AsyncParsableCommand {
     var logLevel: ServerConfig.LogLevel = .info
 
     // MARK: — Run
+    private static let logger = GemLogger(module: "ServeCommand")
 
     mutating func run() async throws {
+        Self.logger.trace("ServeCommand started. Options: mcp=\(mcp), rest=\(rest), port=\(port)")
         let resolvedPath = try await resolveModelPath()
 
         let secretFromEnv = ProcessInfo.processInfo.environment["GEMMA_JWT_SECRET"]

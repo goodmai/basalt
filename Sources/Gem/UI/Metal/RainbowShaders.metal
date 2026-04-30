@@ -59,7 +59,7 @@ fragment float4 fragment_rainbow(VertexOut in [[stage_in]],
     }
     
     float hue = fract(in.uv.x * 2.0 + uniforms.time * speed);
-    float3 rgb = hsl2rgb(hue, 0.8, 0.15); // Dark rainbow background
+    float3 rgb = hsl2rgb(hue, 0.8, 0.1); // Dark rainbow background (terminal style)
     return float4(rgb, 1.0);
 }
 

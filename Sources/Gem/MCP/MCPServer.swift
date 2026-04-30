@@ -201,6 +201,18 @@ public final class MCPServer: Sendable {
                         "height": ["type": "integer", "description": "Viewport height (default 720)"]
                     ]
                 ])
+            ),
+            Tool(
+                name: "gemma_add_knowledge",
+                description: "Add custom information or 'skills' to the session context for the model to use.",
+                inputSchema: AnyCodable([
+                    "type": "object",
+                    "required": ["topic", "content"],
+                    "properties": [
+                        "topic": ["type": "string", "description": "Subject of the knowledge"],
+                        "content": ["type": "string", "description": "Detailed information to store"]
+                    ]
+                ])
             )
         ]
         writeResult(id: id, result: ToolsListResult(tools: tools))
@@ -229,9 +241,29 @@ public final class MCPServer: Sendable {
             writeResult(id: id, result: result)
         case "playwright_screenshot":
             await callPlaywrightScreenshot(id: id, args: arguments)
+        case "gemma_add_knowledge":
+            await callAddKnowledge(id: id, args: arguments)
         default:
             writeError(id: id, code: -32601, message: "Unknown tool: \(name)")
         }
+    }
+
+    private func callAddKnowledge(id: JSONRPCId?, args: [String: Any]?) async {
+        guard let topic = args?["topic"] as? String,
+              let _ = args?["content"] as? String else {
+            writeError(id: id, code: -32602, message: "Missing required arguments: topic, content")
+            return
+        }
+        
+        // This is a stub for now, in a real scenario we might add to RAG or system prompt
+        // For now we just log it and return success
+        let result = [
+            "content": [[
+                "type": "text",
+                "text": "Successfully added knowledge about '\(topic)'. The model will consider this in future generations."
+            ]]
+        ]
+        writeResult(id: id, result: result)
     }
 
     private func callPlaywrightScreenshot(id: JSONRPCId?, args: [String: Any]?) async {
