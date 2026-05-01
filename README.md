@@ -420,6 +420,78 @@ gemm serve --model <model> --rest --port 8081
 
 ---
 
+## Claude Code Integration
+
+Gemm реализует Anthropic Messages API (`/v1/messages`) без авторизации, что позволяет Claude Code работать полностью локально — без интернета и без подписки Anthropic.
+
+### 1. Запустить сервер
+
+```bash
+gemm serve --model mlx-community/gemma-4-31b-it-4bit --rest
+```
+
+### 2. Подключить Claude Code
+
+```bash
+export ANTHROPIC_API_KEY=local          # любая непустая строка
+export ANTHROPIC_BASE_URL=http://localhost:8080
+
+claude                                  # весь трафик идёт на локальный Gemm
+```
+
+Добавить в `~/.zshrc` для постоянного использования:
+
+```bash
+echo 'export ANTHROPIC_API_KEY=local' >> ~/.zshrc
+echo 'export ANTHROPIC_BASE_URL=http://localhost:8080' >> ~/.zshrc
+```
+
+### Доступные endpoint'ы (без авторизации)
+
+| Метод | Путь | Описание |
+|---|---|---|
+| `POST` | `/v1/messages` | Anthropic Messages API, streaming через SSE |
+| `GET` | `/v1/models` | Список загруженной модели |
+| `POST` | `/v1/chat/completions` | OpenAI chat format, streaming поддерживается |
+| `POST` | `/v1/generate` | Сырой prompt без авторизации |
+
+### Быстрая проверка
+
+```bash
+# Проверить Anthropic endpoint
+curl -s http://localhost:8080/v1/messages \
+  -H "Content-Type: application/json" \
+  -H "x-api-key: local" \
+  -d '{
+    "model": "gemma-4-31b-it-4bit",
+    "max_tokens": 64,
+    "messages": [{"role": "user", "content": "Hello!"}]
+  }' | python3 -m json.tool
+
+# Streaming
+curl -s http://localhost:8080/v1/messages \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "gemma-4-31b-it-4bit",
+    "max_tokens": 256,
+    "messages": [{"role": "user", "content": "Count to 5."}],
+    "stream": true
+  }'
+```
+
+### Рекомендуемая модель для кода
+
+`Qwen2.5-Coder-7B` даёт лучшие результаты для задач программирования:
+
+```bash
+gemm serve --model mlx-community/Qwen2.5-Coder-7B-Instruct-4bit --rest
+export ANTHROPIC_API_KEY=local
+export ANTHROPIC_BASE_URL=http://localhost:8080
+claude
+```
+
+---
+
 ## MCP Integration (Cursor / Claude)
 
 Add to your MCP config (`~/.cursor/mcp.json` or similar):
