@@ -3,13 +3,10 @@ import os
 
 // MARK: — Orchestrator
 
-/// Единственный «источник истины» для обоих транспортов (MCP + REST).
+/// Single source of truth for both transports (MCP + REST).
 ///
-/// Гарантирует FIFO-обслуживание: Swift actors сериализуют доступ
-/// автоматически, исключая race conditions между MCP и REST клиентами.
-///
-/// Теорема устойчивости: λ_mcp + λ_rest < μ_inference
-/// гарантирует что очередь не накапливается (система устойчива).
+/// Swift actor serialises all access (FIFO) — no explicit locking needed.
+/// λ_mcp + λ_rest < μ_inference guarantees the queue stays bounded.
 public actor ModelOrchestratorActor {
 
     // MARK: — State
@@ -18,11 +15,17 @@ public actor ModelOrchestratorActor {
     private let maxTokens: Int
     private var requestCount: Int = 0
     private var totalTokensGenerated: Int = 0
-    private var modelSizeMB: Int = 4000 // default fallback
+    private var modelSizeMB: Int = 4000
+    private let generationTimeoutSeconds: UInt64 = 300  // 5 minutes
 
     private let logger = GemLogger(module: "ModelOrchestrator")
 
+    /// Filesystem path of the loaded model.
     private var currentModelPath: String = ""
+
+    /// HuggingFace repo ID of the loaded model, e.g. "mlx-community/Qwen3.5-4B-4bit".
+    /// Empty string means nothing has been loaded yet.
+    public private(set) var currentModelId: String = ""
 
     // MARK: — Init
 
@@ -31,166 +34,298 @@ public actor ModelOrchestratorActor {
         self.maxTokens = maxTokens
     }
 
-    // MARK: — Public API (typed throws — Swift 6)
+    // MARK: — Model loading
 
-    /// Загружает модель из указанного пути.
+    /// Load a model from a filesystem path.
+    /// After loading, call `setModelId(_:)` to record the HuggingFace repo ID.
     public func loadModel(path: String) async throws(GemError) {
         self.currentModelPath = path
-        // Calculate model size for token budgeting
         let size = try? calculateDirectorySize(url: URL(fileURLWithPath: path))
         if let size {
             self.modelSizeMB = Int(size / 1_048_576)
-            logger.info("Model size calculated: \(self.modelSizeMB) MB")
+            logger.info("Model size: \(self.modelSizeMB) MB")
         }
-        
         try await engine.load(modelPath: path)
     }
 
+    /// Record the HuggingFace repo ID that was just loaded.
+    /// Call this once after `loadModel` completes.
+    public func setModelId(_ id: String) {
+        self.currentModelId = id
+    }
+
+    // MARK: — Model switching
+
+    /// Hot-swap the loaded model. Resolves `modelId` from the local HuggingFace cache.
+    /// Throws `.modelNotCached` if the model hasn't been downloaded yet.
+    /// Because this is an actor method it serialises with all in-flight generate calls —
+    /// any concurrent request will queue and run after the switch completes.
+    public func switchModel(to modelId: String) async throws(GemError) {
+        guard modelId != currentModelId else {
+            logger.trace("switchModel: already loaded '\(modelId)'")
+            return
+        }
+
+        let path = ModelCache.cacheDir(for: modelId).path
+        guard FileManager.default.fileExists(atPath: path) else {
+            logger.error("switchModel: model not in cache: \(modelId)")
+            throw GemError.modelNotCached(identifier: modelId)
+        }
+
+        logger.info("Switching model: '\(currentModelId)' → '\(modelId)'")
+        try await loadModel(path: path)
+        self.currentModelId = modelId
+        logger.info("Model switch complete: '\(modelId)'")
+    }
+
+    /// Info string for logging / health checks.
     public var modelInfo: String {
-        URL(fileURLWithPath: currentModelPath).lastPathComponent
+        currentModelId.isEmpty
+            ? URL(fileURLWithPath: currentModelPath).lastPathComponent
+            : currentModelId
     }
 
-    /// Генерирует текст. Единственная точка входа для обоих транспортов.
-    /// Swift actor гарантирует что вызовы выстраиваются в очередь (FIFO)
-    /// — никаких дополнительных локов не требуется.
-    public func generate(request: GenerationRequest) async throws(GemError) -> GenerationResponse {
-        logger.trace("Incoming generate request: \(request.prompt.prefix(50))...")
-        let maxT = calculateDynamicMaxTokens()
-        var validated = try request.validated(defaultMaxTokens: maxT)
-        
-        if let requested = request.maxTokens, requested > maxT {
-            logger.warn("Requested tokens (\(requested)) exceed dynamic budget (\(maxT)). Capped to prevent OOM.")
-            validated = GenerationRequest(prompt: validated.prompt, maxTokens: maxT, temperature: validated.temperature)
-        }
-        
+    // MARK: — Generate (non-streaming)
+
+    /// Generate a completion. If `modelId` differs from the currently loaded model,
+    /// the model is switched automatically before generation.
+    public func generate(
+        request: GenerationRequest,
+        modelId: String? = nil
+    ) async throws(GemError) -> GenerationResponse {
+        try await autoSwitch(to: modelId)
+
+        logger.trace("generate: \(request.prompt.prefix(60))…")
+        let validated = try capped(request)
         requestCount += 1
-        let response = try await engine.generate(request: validated)
-        totalTokensGenerated += response.completionTokens
-        return response
+
+        do {
+            let response = try await withTimeout(seconds: generationTimeoutSeconds) {
+                try await self.engine.generate(request: validated)
+            }
+            totalTokensGenerated += response.completionTokens
+            return response
+        } catch let error as GemError {
+            throw error
+        } catch {
+            throw GemError.inferenceError("Generation error: \(error)")
+        }
     }
 
-    public func generateStream(request: GenerationRequest) async throws(GemError) -> AsyncStream<StreamChunk> {
-        logger.trace("Incoming generateStream request...")
-        let maxT = calculateDynamicMaxTokens()
-        var validated = try request.validated(defaultMaxTokens: maxT)
-        
-        if let requested = request.maxTokens, requested > maxT {
-            logger.warn("Requested tokens (\(requested)) exceed dynamic budget (\(maxT)). Capped to prevent OOM.")
-            validated = GenerationRequest(prompt: validated.prompt, maxTokens: maxT, temperature: validated.temperature)
-        }
-        
+    // MARK: — Generate (streaming)
+
+    /// Returns a filtered AsyncStream. Strips `<think>…</think>` blocks.
+    /// If `modelId` differs from the currently loaded model, switches first.
+    public func generateStream(
+        request: GenerationRequest,
+        modelId: String? = nil
+    ) async throws(GemError) -> AsyncStream<StreamChunk> {
+        try await autoSwitch(to: modelId)
+
+        logger.trace("generateStream start")
+        let validated = try capped(request)
         requestCount += 1
-        
-        let stream = try await engine.generateStream(request: validated)
-        
+
+        let stream: AsyncStream<StreamChunk>
+        do {
+            stream = try await withTimeout(seconds: generationTimeoutSeconds) {
+                try await self.engine.generateStream(request: validated)
+            }
+        } catch let error as GemError {
+            throw error
+        } catch {
+            throw GemError.inferenceError("Stream setup error: \(error)")
+        }
+
         return AsyncStream<StreamChunk> { continuation in
             let task = Task.detached {
                 var inThinkBlock = false
-                var buffer = ""
-                var jsonBatch = ""
-                var lastBatchTime = Date()
-                
+                var buffer      = ""
+                var jsonBatch   = ""
+                var lastFlush   = Date()
+
                 for await chunk in stream {
                     switch chunk {
                     case .text(let t):
                         buffer += t
-                        
-                        // State machine to strip reasoning blocks
+
+                        // Strip <think>…</think> reasoning blocks
                         if !inThinkBlock {
-                            if let startRange = buffer.range(of: "<think>") ?? buffer.range(of: "Thinking Process:\n") {
-                                let before = String(buffer[..<startRange.lowerBound])
-                                if !before.isEmpty {
-                                    jsonBatch += before
+                            let markers = ["<think>", "Thinking Process:\n"]
+                            for marker in markers {
+                                if let r = buffer.range(of: marker) {
+                                    jsonBatch += String(buffer[..<r.lowerBound])
+                                    inThinkBlock = true
+                                    buffer = String(buffer[r.upperBound...])
+                                    break
                                 }
-                                inThinkBlock = true
-                                buffer = String(buffer[startRange.upperBound...])
                             }
                         }
-                        
+
                         if inThinkBlock {
-                            if let endRange = buffer.range(of: "</think>") {
+                            if let r = buffer.range(of: "</think>") {
                                 inThinkBlock = false
-                                buffer = String(buffer[endRange.upperBound...])
+                                buffer = String(buffer[r.upperBound...])
                             } else {
-                                // Still inside think block, clear buffer except for the last 20 chars to catch split tags
-                                if buffer.count > 20 {
-                                    buffer = String(buffer.suffix(20))
-                                }
-                                continue // Skip yielding
+                                if buffer.count > 20 { buffer = String(buffer.suffix(20)) }
+                                continue
                             }
                         }
-                        
-                        // If not in think block, yield safely
+
+                        // Safe-tail: keep last 20 chars in buffer in case a tag spans chunks
                         if !inThinkBlock {
-                            let safeIndex = max(0, buffer.count - 20)
-                            if safeIndex > 0 {
-                                let safeString = String(buffer.prefix(safeIndex))
-                                jsonBatch += safeString
-                                buffer = String(buffer.suffix(buffer.count - safeIndex))
+                            let safe = max(0, buffer.count - 20)
+                            if safe > 0 {
+                                jsonBatch += String(buffer.prefix(safe))
+                                buffer = String(buffer.suffix(20))
                             }
                         }
-                        
-                        // Batching: yield every 50ms or 10 characters to reduce UI updates
-                        if !jsonBatch.isEmpty && (Date().timeIntervalSince(lastBatchTime) > 0.05 || jsonBatch.count > 10) {
+
+                        // Flush every 50 ms or every 10 characters
+                        let now = Date()
+                        if !jsonBatch.isEmpty &&
+                           (now.timeIntervalSince(lastFlush) > 0.05 || jsonBatch.count > 10) {
                             continuation.yield(.text(jsonBatch))
                             jsonBatch = ""
-                            lastBatchTime = Date()
+                            lastFlush = now
                         }
-                        
+
                     case .metadata(let m):
-                        if !inThinkBlock {
-                            let finalStr = jsonBatch + buffer
-                            if !finalStr.isEmpty {
-                                continuation.yield(.text(finalStr))
-                            }
-                        }
+                        // Flush remaining buffer
+                        let final = jsonBatch + buffer
+                        if !final.isEmpty { continuation.yield(.text(final)) }
                         continuation.yield(.metadata(m))
                     }
                 }
                 continuation.finish()
             }
-            
-            continuation.onTermination = { _ in
-                task.cancel()
-            }
+            continuation.onTermination = { _ in task.cancel() }
         }
     }
 
-    /// Состояние для /health эндпоинта и MCP tool: gemma_status.
+    // MARK: — Health
+
     public func healthSnapshot(modelId: String?) async -> HealthResponse {
         let ready = await engine.isLoaded
         return HealthResponse(
             status: ready ? "ok" : "initializing",
-            modelId: modelId,
+            modelId: modelId ?? (currentModelId.isEmpty ? nil : currentModelId),
             isReady: ready,
             version: HealthResponse.version
         )
     }
 
-    // Diagnostics — только для логирования, не экспортируется.
+    // MARK: — Model catalogue
+
+    /// Returns all models currently in the local HuggingFace cache.
+    public func cachedModels() -> [CachedModelInfo] {
+        let root = ModelCache.root
+        guard let entries = try? FileManager.default.contentsOfDirectory(atPath: root.path) else {
+            return []
+        }
+
+        return entries
+            .filter { $0.hasPrefix("models--") }
+            .sorted()
+            .compactMap { dir -> CachedModelInfo? in
+                let repoId = dir
+                    .replacingOccurrences(of: "models--", with: "")
+                    .replacingOccurrences(of: "--", with: "/")
+                let url  = root.appendingPathComponent(dir)
+                let size = directorySize(at: url)
+                return CachedModelInfo(
+                    id: repoId,
+                    sizeBytes: size,
+                    isLoaded: repoId == currentModelId
+                )
+            }
+    }
+
+    // MARK: — Diagnostics
+
     var diagnostics: (requests: Int, tokens: Int) {
         (requestCount, totalTokensGenerated)
     }
-    
-    // MARK: — Private Helpers
-    
-    private func calculateDynamicMaxTokens() -> Int {
-        let dynamicMax = TokenBudgetCalculator.calculateMaxTokensForSystem(modelSizeMB: modelSizeMB)
-        return min(maxTokens, dynamicMax)
+
+    // MARK: — Private helpers
+
+    /// Switch model if the requested ID differs from the loaded one.
+    /// Ignores nil, empty, and generic placeholder IDs like "gemm".
+    private func autoSwitch(to modelId: String?) async throws(GemError) {
+        guard let id = modelId,
+              !id.isEmpty,
+              id != "gemm",
+              id != currentModelId else { return }
+        try await switchModel(to: id)
     }
-    
-    private func calculateDirectorySize(url: URL) throws -> UInt64 {
-        var size: UInt64 = 0
-        guard let enumerator = FileManager.default.enumerator(at: url, includingPropertiesForKeys: [.fileSizeKey]) else {
-            return size
+
+    private func capped(_ request: GenerationRequest) throws(GemError) -> GenerationRequest {
+        let maxT = calculateDynamicMaxTokens()
+        var v = try request.validated(defaultMaxTokens: maxT)
+        if let req = request.maxTokens, req > maxT {
+            logger.warn("Token request (\(req)) > budget (\(maxT)). Capping.")
+            v = GenerationRequest(prompt: v.prompt, maxTokens: maxT, temperature: v.temperature)
         }
-        
-        for case let fileURL as URL in enumerator {
-            let resourceValues = try fileURL.resourceValues(forKeys: [.fileSizeKey])
-            if let fileSize = resourceValues.fileSize {
-                size += UInt64(fileSize)
+        return v
+    }
+
+    private func calculateDynamicMaxTokens() -> Int {
+        min(maxTokens, TokenBudgetCalculator.calculateMaxTokensForSystem(modelSizeMB: modelSizeMB))
+    }
+
+    private func calculateDirectorySize(url: URL) throws -> UInt64 {
+        var total: UInt64 = 0
+        guard let e = FileManager.default.enumerator(at: url,
+                        includingPropertiesForKeys: [.fileSizeKey]) else { return 0 }
+        for case let f as URL in e {
+            if let s = try? f.resourceValues(forKeys: [.fileSizeKey]).fileSize {
+                total += UInt64(s)
             }
         }
-        return size
+        return total
+    }
+
+    private func directorySize(at url: URL) -> Int64 {
+        guard let e = FileManager.default.enumerator(at: url,
+                        includingPropertiesForKeys: [.fileSizeKey]) else { return 0 }
+        var total: Int64 = 0
+        for case let f as URL in e {
+            total += (try? f.resourceValues(forKeys: [.fileSizeKey]).fileSize)
+                        .map { Int64($0) } ?? 0
+        }
+        return total
+    }
+
+    private func withTimeout<T: Sendable>(
+        seconds: UInt64,
+        operation: @escaping @Sendable () async throws -> T
+    ) async throws -> T {
+        let ns = seconds * 1_000_000_000
+        return try await withThrowingTaskGroup(of: T.self) { group in
+            group.addTask { try await operation() }
+            group.addTask {
+                try await Task.sleep(nanoseconds: ns)
+                throw GemError.inferenceError("Timeout after \(seconds)s")
+            }
+            let result = try await group.next()!
+            group.cancelAll()
+            return result
+        }
+    }
+}
+
+// MARK: — CachedModelInfo DTO
+
+public struct CachedModelInfo: Sendable {
+    public let id: String
+    public let sizeBytes: Int64
+    public let isLoaded: Bool
+
+    public var sizeFormatted: String {
+        switch sizeBytes {
+        case 0..<1_048_576:    return String(format: "%.1f KB", Double(sizeBytes) / 1_024)
+        case 0..<1_073_741_824: return String(format: "%.1f MB", Double(sizeBytes) / 1_048_576)
+        default:               return String(format: "%.2f GB", Double(sizeBytes) / 1_073_741_824)
+        }
     }
 }

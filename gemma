@@ -1,0 +1,197 @@
+#!/usr/bin/env bash
+# Gemma — launcher: build → start server → wait for model → run claude → cleanup
+#
+# Usage:
+#   ./Gemma [--model <hf-repo-id>] [--port <port>] [--no-build] [-- <claude args>...]
+#
+# Examples:
+#   ./Gemma
+#   ./Gemma --model mlx-community/gemma-4-e4b-it-4bit
+#   ./Gemma --model mlx-community/gemma-4-31b-it-4bit --port 8081
+#   ./Gemma --no-build -- --model haiku
+#
+# Server log (persistent):  tail -f ~/.gemm/server.log
+
+set -euo pipefail
+
+# ── Defaults ─────────────────────────────────────────────────────────────────
+MODEL="mlx-community/Qwen3.5-4B-4bit"
+PORT=8080
+BUILD=true
+CLAUDE_ARGS=()
+
+# ── Argument parsing ──────────────────────────────────────────────────────────
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --model)    MODEL="$2";   shift 2 ;;
+    --port)     PORT="$2";    shift 2 ;;
+    --no-build) BUILD=false;  shift   ;;
+    --)         shift; CLAUDE_ARGS=("$@"); break ;;
+    *) printf 'Unknown argument: %s\n' "$1" >&2; exit 1 ;;
+  esac
+done
+
+# ── Paths ─────────────────────────────────────────────────────────────────────
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BINARY="$SCRIPT_DIR/.build/release/gemm"
+GEM_DIR="$HOME/.gemm"
+PID_FILE="$GEM_DIR/server.pid"
+LOG_FILE="$GEM_DIR/server.log"
+mkdir -p "$GEM_DIR"
+
+# ── Logging ───────────────────────────────────────────────────────────────────
+log() { printf '\033[2m[%s]\033[0m %s\n' "$(date +%H:%M:%S)" "$*" >&2; }
+info(){ printf '\033[1;36m[%s]\033[0m %s\n' "$(date +%H:%M:%S)" "$*" >&2; }
+ok()  { printf '\033[1;32m[%s] %s\033[0m\n' "$(date +%H:%M:%S)" "$*" >&2; }
+err() { printf '\033[1;31m[%s] ERROR: %s\033[0m\n' "$(date +%H:%M:%S)" "$*" >&2; }
+
+# ── Kill stale server ─────────────────────────────────────────────────────────
+if [[ -f "$PID_FILE" ]]; then
+  STALE_PID=$(cat "$PID_FILE")
+  if kill -0 "$STALE_PID" 2>/dev/null; then
+    log "Stopping stale server (PID $STALE_PID)…"
+    kill "$STALE_PID" 2>/dev/null || true
+    sleep 2
+    kill -9 "$STALE_PID" 2>/dev/null || true
+  fi
+  rm -f "$PID_FILE"
+fi
+
+# ── Build ─────────────────────────────────────────────────────────────────────
+# Always rebuild by default — Swift incremental compilation skips unchanged files.
+# Use --no-build only if you're certain nothing changed.
+if $BUILD; then
+  info "Building gemm (incremental)…"
+  cd "$SCRIPT_DIR"
+  swift build -c release 2>&1 | tail -5   # show last 5 lines of build output
+  ok "Build done ✓"
+else
+  [[ -f "$BINARY" ]] || { err "Binary not found and --no-build set. Run without --no-build first."; exit 1; }
+  log "Skipping build (--no-build)."
+fi
+
+# ── Summary ───────────────────────────────────────────────────────────────────
+printf '\n'
+info "Model : $MODEL"
+info "Port  : $PORT"
+info "Log   : tail -f $LOG_FILE"
+printf '\n'
+
+# ── Start server (nohup — fully detached, output → log file) ─────────────────
+printf '\n── Gemma session %s ──\n' "$(date)" >> "$LOG_FILE"
+
+nohup "$BINARY" serve \
+  --model "$MODEL"    \
+  --port  "$PORT"     \
+  --rest              \
+  >> "$LOG_FILE" 2>&1 &
+
+SERVER_PID=$!
+echo "$SERVER_PID" > "$PID_FILE"
+log "Server started (PID $SERVER_PID)"
+
+# ── Cleanup trap ──────────────────────────────────────────────────────────────
+# Fires on EXIT (normal, Ctrl-C, error) — kills server and removes PID file.
+TAIL_PID=""
+cleanup() {
+  # Stop log tailing if still running
+  [[ -n "$TAIL_PID" ]] && kill "$TAIL_PID" 2>/dev/null || true
+
+  if kill -0 "$SERVER_PID" 2>/dev/null; then
+    log "Stopping Gemm server (PID $SERVER_PID)…"
+    kill "$SERVER_PID" 2>/dev/null || true
+    for _ in $(seq 1 50); do
+      kill -0 "$SERVER_PID" 2>/dev/null || break
+      sleep 0.1
+    done
+    kill -9 "$SERVER_PID" 2>/dev/null || true
+    log "Server stopped."
+  fi
+  rm -f "$PID_FILE"
+}
+trap cleanup EXIT
+
+# ── Live log tailing during startup ──────────────────────────────────────────
+# Shows server output (model loading, GPU allocation) in the terminal while we
+# wait for readiness. Stopped automatically once the server is ready.
+log "Waiting for server (model loading may take 10–60 s)…"
+tail -F "$LOG_FILE" 2>/dev/null &
+TAIL_PID=$!
+
+HEALTH_URL="http://localhost:$PORT/v1/models"
+READY=false
+for i in $(seq 1 120); do
+  if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+    err "Server process died during startup. Check: tail -f $LOG_FILE"
+    exit 1
+  fi
+  if curl -sf "$HEALTH_URL" > /dev/null 2>&1; then
+    READY=true
+    break
+  fi
+  sleep 1
+done
+
+# Stop tailing — we're about to hand the terminal to claude
+kill "$TAIL_PID" 2>/dev/null || true
+TAIL_PID=""
+
+if ! $READY; then
+  err "Server not ready after 120 s. Check: tail -f $LOG_FILE"
+  exit 1
+fi
+
+printf '\n'
+ok "Server ready ✓  (PID $SERVER_PID)"
+
+# ── Env vars for Claude ───────────────────────────────────────────────────────
+# IMPORTANT: Use 127.0.0.1 (IPv4), NOT localhost!
+# Claude Code (Node.js 18+) resolves 'localhost' to ::1 (IPv6) first,
+# but Hummingbird binds only to 127.0.0.1 — causing ConnectionRefused.
+export ANTHROPIC_BASE_URL="http://127.0.0.1:$PORT"
+export ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-local}"   # Claude Code requires this header
+
+printf '\n'
+info "┌─────────────────────────────────────────────────────┐"
+info "│  Gemm → Claude Code proxy active                    │"
+info "├─────────────────────────────────────────────────────┤"
+info "│  ANTHROPIC_BASE_URL = $ANTHROPIC_BASE_URL"
+info "│  ANTHROPIC_API_KEY  = ${ANTHROPIC_API_KEY:0:6}…"
+info "│  Model              = $MODEL"
+info "└─────────────────────────────────────────────────────┘"
+printf '\n'
+
+# ── Pre-flight: verify /v1/messages endpoint is reachable ─────────────────────
+log "Pre-flight: testing POST /v1/messages…"
+PREFLIGHT_HTTP=$(curl -so /dev/null -w "%{http_code}" \
+  -X POST "http://127.0.0.1:$PORT/v1/messages" \
+  -H "Content-Type: application/json" \
+  -H "x-api-key: local" \
+  -d '{"model":"test","messages":[{"role":"user","content":"ping"}],"max_tokens":1,"stream":false}' \
+  2>/dev/null || echo "000")
+
+if [[ "$PREFLIGHT_HTTP" == "000" ]]; then
+  err "Pre-flight FAILED — server not reachable on 127.0.0.1:$PORT"
+  err "Check: tail -f $LOG_FILE"
+  exit 1
+elif [[ "$PREFLIGHT_HTTP" =~ ^[2] ]]; then
+  ok "Pre-flight passed ✓  (HTTP $PREFLIGHT_HTTP)"
+else
+  # 4xx is OK — means the endpoint exists and parsed the request
+  ok "Pre-flight passed ✓  (HTTP $PREFLIGHT_HTTP — endpoint reachable)"
+fi
+
+printf '\n'
+info "Launching: claude ${CLAUDE_ARGS[*]:-}"
+printf '\n'
+
+# Claude Code expects discovery ID format for local models
+MODEL_DISCOVERY_ID="claude-local/${MODEL//\//--}"
+
+# Inline settings payload to override any ~/.claude/settings.json
+CLAUDE_SETTINGS="{\"model\": \"$MODEL_DISCOVERY_ID\", \"env\": { \"ANTHROPIC_BASE_URL\": \"$ANTHROPIC_BASE_URL\", \"ANTHROPIC_API_KEY\": \"$ANTHROPIC_API_KEY\" }}"
+
+# ── Run Claude (foreground — full TTY via bash process group management) ──────
+claude "${CLAUDE_ARGS[@]:-}" --settings "$CLAUDE_SETTINGS"
+
+# EXIT trap fires here → server is killed.
