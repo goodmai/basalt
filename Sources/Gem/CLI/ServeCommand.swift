@@ -159,9 +159,28 @@ struct ServeCommand: AsyncParsableCommand {
         guard modelId.contains("/") else { return modelId }  // treat as local path
 
         let snapshot = ModelCache.cacheDir(for: modelId)
-        let target = quant.map { snapshot.appendingPathComponent($0) } ?? snapshot
-        if FileManager.default.fileExists(atPath: target.appendingPathComponent("config.json").path) {
-            return target.path
+
+        // If quant is explicit, use it
+        if let quantFolder = quant {
+            let target = snapshot.appendingPathComponent(quantFolder)
+            if FileManager.default.fileExists(atPath: target.appendingPathComponent("config.json").path) {
+                return target.path
+            }
+        }
+
+        // If no quant specified, try root first, then search common quant folders
+        if FileManager.default.fileExists(atPath: snapshot.appendingPathComponent("config.json").path) {
+            return snapshot.path
+        }
+
+        // Auto-detect available quant folder if root config.json doesn't exist
+        let commonQuantFolders = ["2bit", "4bit", "8bit", "6bit", "bf16", "fp16"]
+        for folder in commonQuantFolders {
+            let target = snapshot.appendingPathComponent(folder)
+            if FileManager.default.fileExists(atPath: target.appendingPathComponent("config.json").path) {
+                log("Auto-detected quantization: \(dim(folder))")
+                return target.path
+            }
         }
 
         log("Model not in local cache: \(bold(modelId))\(quant.map { " [\($0)]" } ?? ""). Downloading…")
