@@ -174,10 +174,16 @@ struct ServeCommand: AsyncParsableCommand {
         }
 
         // Auto-detect available quant folder if root config.json doesn't exist
-        let commonQuantFolders = ["2bit", "4bit", "8bit", "6bit", "bf16", "fp16"]
+        // Try folders in preferred order; skip if config.json fails JSON parsing
+        let commonQuantFolders = ["4bit", "8bit", "6bit", "2bit", "bf16", "fp16"]
         for folder in commonQuantFolders {
             let target = snapshot.appendingPathComponent(folder)
-            if FileManager.default.fileExists(atPath: target.appendingPathComponent("config.json").path) {
+            let configPath = target.appendingPathComponent("config.json")
+            guard FileManager.default.fileExists(atPath: configPath.path) else { continue }
+
+            // Minimal validation: config.json should be decodable JSON
+            if let data = try? Data(contentsOf: configPath),
+               (try? JSONSerialization.jsonObject(with: data)) != nil {
                 log("Auto-detected quantization: \(dim(folder))")
                 return target.path
             }
