@@ -18,6 +18,14 @@ public enum GemError: Error, Sendable, LocalizedError {
     case authenticationFailed(details: String)
     case modelInferenceError(details: String)
 
+    // MARK: — Model lifecycle
+    /// Timeout or cancellation during a generate call.
+    case inferenceError(String)
+    /// Requested model is not in the local HuggingFace cache.
+    case modelNotCached(identifier: String)
+    /// Model switch is in progress — used for 503 responses.
+    case modelSwitching(from: String, to: String)
+
     // MARK: — LocalizedError
     public var errorDescription: String? {
         switch self {
@@ -39,6 +47,12 @@ public enum GemError: Error, Sendable, LocalizedError {
             return "Authentication failed: \(details)"
         case .modelInferenceError(let details):
             return "Model inference error: \(details)"
+        case .inferenceError(let msg):
+            return "Inference error: \(msg)"
+        case .modelNotCached(let id):
+            return "Model '\(id)' is not in the local cache. Run: gemm models download \(id)"
+        case .modelSwitching(let from, let to):
+            return "Switching model from '\(from)' to '\(to)'. Retry in a few seconds."
         }
     }
 
@@ -54,6 +68,9 @@ public enum GemError: Error, Sendable, LocalizedError {
         case .rateLimitExceeded:        return 429  // Too Many Requests
         case .authenticationFailed:     return 401
         case .modelInferenceError:      return 502  // Bad Gateway
+        case .inferenceError:           return 500
+        case .modelNotCached:           return 404
+        case .modelSwitching:           return 503  // Service Unavailable — retry
         }
     }
 }

@@ -38,13 +38,16 @@ let kernelDir = ".build/checkouts/mlx-swift/Source/Cmlx/mlx/mlx/backend/metal/ke
 let genKernelDir = ".build/checkouts/mlx-swift/Source/Cmlx/mlx-generated/metal"
 let outputDir = ".build/debug"
 let tempDir = ".build/metal_temp"
+let metalLibPath = "\(outputDir)/default.metallib"
 
 let fm = FileManager.default
 
-try? fm.createDirectory(atPath: tempDir, withIntermediateDirectories: true)
-try? fm.createDirectory(atPath: outputDir, withIntermediateDirectories: true)
+// MARK: — Check if metallib is up to date
 
-log("Compiling Metal kernels...", level: .info)
+func getModificationDate(of path: String) -> Date? {
+    guard let attrs = try? fm.attributesOfItem(atPath: path) else { return nil }
+    return attrs[.modificationDate] as? Date
+}
 
 func findMetalFiles(in directory: String) -> [String] {
     var files: [String] = []
@@ -61,6 +64,26 @@ var metalFiles = findMetalFiles(in: kernelDir)
 if fm.fileExists(atPath: genKernelDir) {
     metalFiles.append(contentsOf: findMetalFiles(in: genKernelDir))
 }
+
+// Check if metallib exists and is newer than all .metal files
+if fm.fileExists(atPath: metalLibPath),
+   let metalLibDate = getModificationDate(of: metalLibPath) {
+    let allSourcesNewer = metalFiles.allSatisfy { metalFile in
+        if let metalDate = getModificationDate(of: metalFile) {
+            return metalDate < metalLibDate
+        }
+        return true
+    }
+    if allSourcesNewer {
+        log("Metal shaders up to date, skipping rebuild", level: .info)
+        exit(0)
+    }
+}
+
+try? fm.createDirectory(atPath: tempDir, withIntermediateDirectories: true)
+try? fm.createDirectory(atPath: outputDir, withIntermediateDirectories: true)
+
+log("Compiling Metal kernels...", level: .info)
 
 @discardableResult
 func run(_ args: [String]) -> Int32 {

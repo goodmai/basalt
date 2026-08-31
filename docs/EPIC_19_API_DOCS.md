@@ -69,8 +69,9 @@
 ## 3. CLI Команды и Режимы
 
 ### 3.1 Модели (Models)
-- `Gemm models download <repo_id>`: Загрузка модели из HuggingFace.
-- `Gemm models list`: Список локально доступных моделей.
+- `Gemm models list`: Список доступных моделей на Hugging Face (по умолчанию от `mlx-community`).
+- `Gemm models download <repo_id>`: Загрузка модели из Hugging Face.
+- `Gemm models cache`: Список локально скачанных моделей.
 
 ### 3.2 Чат (Chat)
 - `Gemm chat --model <id>`: CLI интерактивный чат.

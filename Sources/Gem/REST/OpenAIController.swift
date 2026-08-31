@@ -3,27 +3,61 @@ import Hummingbird
 
 // MARK: — OpenAI-compatible endpoints (no auth required)
 //
-// Enables integration with Claude Code and other OpenAI-compatible clients:
-//
+// Usage with Claude Code:
 //   export OPENAI_API_KEY=local
 //   export OPENAI_BASE_URL=http://localhost:8080
 //   claude --model openai/gemma-4-31b-it-4bit
 //
 // Routes (all public, no JWT):
 //   GET  /v1/models
-//   POST /v1/chat/completions       — OpenAI chat format, streaming supported
-//   POST /v1/generate               — simplified raw prompt, no auth
+//   POST /v1/chat/completions   — OpenAI chat format, streaming supported
+//   POST /v1/generate           — raw prompt, no auth
 
 struct OpenAIController: Sendable {
 
     let orchestrator: ModelOrchestratorActor
     let modelId: String
 
-    // MARK: — OpenAI DTOs
+    // MARK: — DTOs
+
+    /// content can be a plain string OR an array of typed blocks (Claude Code sends arrays)
+    enum MessageContent: Codable, Sendable {
+        case text(String)
+        case blocks([ContentBlock])
+
+        struct ContentBlock: Codable, Sendable {
+            let type: String
+            let text: String?
+        }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.singleValueContainer()
+            if let str = try? c.decode(String.self) {
+                self = .text(str)
+            } else {
+                self = .blocks((try? c.decode([ContentBlock].self)) ?? [])
+            }
+        }
+
+        func encode(to encoder: Encoder) throws {
+            var c = encoder.singleValueContainer()
+            switch self {
+            case .text(let s):   try c.encode(s)
+            case .blocks(let b): try c.encode(b)
+            }
+        }
+
+        var textValue: String {
+            switch self {
+            case .text(let s):   return s
+            case .blocks(let b): return b.compactMap(\.text).joined(separator: "\n")
+            }
+        }
+    }
 
     struct ChatMessage: Codable, Sendable {
         let role: String
-        let content: String
+        let content: MessageContent?   // null when tool_calls are present
     }
 
     struct ChatCompletionRequest: Codable, Sendable {
@@ -53,7 +87,6 @@ struct OpenAIController: Sendable {
             let index: Int
             let message: ChatMessage
             let finishReason: String
-
             enum CodingKeys: String, CodingKey {
                 case index, message
                 case finishReason = "finish_reason"
@@ -64,7 +97,6 @@ struct OpenAIController: Sendable {
             let promptTokens: Int
             let completionTokens: Int
             let totalTokens: Int
-
             enum CodingKeys: String, CodingKey {
                 case promptTokens = "prompt_tokens"
                 case completionTokens = "completion_tokens"
@@ -76,38 +108,43 @@ struct OpenAIController: Sendable {
     // MARK: — GET /v1/models
 
     @Sendable
-    func listModels(request: Request, context: GemmaRequestContext) async throws -> Response {
+    func listModels(request: Request, context: BasicRequestContext) async throws -> Response {
         let snapshot = await orchestrator.healthSnapshot(modelId: modelId)
-        let data: [[String: Any]] = [
-            [
+        let body: [String: Any] = [
+            "object": "list",
+            "data": [[
                 "id": snapshot.modelId ?? modelId,
                 "object": "model",
                 "created": Int(Date().timeIntervalSince1970),
                 "owned_by": "gemm"
-            ]
+            ] as [String: Any]]
         ]
-        let body: [String: Any] = ["object": "list", "data": data]
-        let json = try JSONSerialization.data(withJSONObject: body)
-        var buf = ByteBuffer()
-        buf.writeBytes(json)
-        return Response(status: .ok, headers: [.contentType: "application/json"], body: ResponseBody(byteBuffer: buf))
+        return makeJSONResponse(body)
     }
 
     // MARK: — POST /v1/chat/completions
 
     @Sendable
-    func chatCompletions(request: Request, context: GemmaRequestContext) async throws -> Response {
+    func chatCompletions(request: Request, context: BasicRequestContext) async throws -> Response {
+        let buffer = try await request.body.collect(upTo: 4 * 1024 * 1024)
+        let data = Data(buffer.readableBytesView)
+
+        // Save raw body for diagnosis; visible at /tmp/gemm_openai_request.json
+        let rawString = String(data: data, encoding: .utf8) ?? "<non-utf8>"
+        try? rawString.write(toFile: "/tmp/gemm_openai_request.json", atomically: true, encoding: .utf8)
+
         let dto: ChatCompletionRequest
         do {
-            let buffer = try await request.body.collect(upTo: 4 * 1024 * 1024)
-            let data = Data(buffer.readableBytesView)
             dto = try JSONDecoder().decode(ChatCompletionRequest.self, from: data)
         } catch {
-            return errorResponse(status: .badRequest, message: "Invalid JSON: \(error.localizedDescription)", code: 400)
+            fputs("🔴 [OpenAI] decode error: \(error)\nBody: \(rawString.prefix(300))\n", stderr)
+            return makeErrorResponse(status: .badRequest,
+                                     message: "Cannot decode request: \(error.localizedDescription)",
+                                     code: 400)
         }
 
         guard !dto.messages.isEmpty else {
-            return errorResponse(status: .badRequest, message: "messages must not be empty", code: 400)
+            return makeErrorResponse(status: .badRequest, message: "messages must not be empty", code: 400)
         }
 
         let prompt = messagesToPrompt(dto.messages)
@@ -117,183 +154,174 @@ struct OpenAIController: Sendable {
             temperature: dto.temperature ?? 0.7,
             topP: dto.topP ?? 0.9
         )
+        let requestedModel = dto.model.map { ModelsController.hfRepoId(from: $0) }  // strip claude-local/ prefix if present
 
         if dto.stream == true {
-            return streamChatResponse(genRequest: genRequest, modelId: dto.model ?? modelId)
+            return streamResponse(genRequest: genRequest, model: dto.model ?? modelId, requestedModel: requestedModel)
         }
 
         do {
-            let result = try await orchestrator.generate(request: genRequest)
+            let result = try await orchestrator.generate(request: genRequest, modelId: requestedModel)
             let response = ChatCompletionResponse(
                 id: "chatcmpl-\(UUID().uuidString)",
                 object: "chat.completion",
                 created: Int(Date().timeIntervalSince1970),
                 model: dto.model ?? modelId,
-                choices: [
-                    .init(
-                        index: 0,
-                        message: ChatMessage(role: "assistant", content: result.generatedText),
-                        finishReason: result.finishReason == .stop ? "stop" : "length"
-                    )
-                ],
+                choices: [.init(
+                    index: 0,
+                    message: ChatMessage(role: "assistant", content: .text(result.generatedText)),
+                    finishReason: result.finishReason == .stop ? "stop" : "length"
+                )],
                 usage: .init(
                     promptTokens: result.promptTokens,
                     completionTokens: result.completionTokens,
                     totalTokens: result.promptTokens + result.completionTokens
                 )
             )
-            return try jsonResponse(status: .ok, body: response)
-        } catch let err as GemError {
-            return errorResponse(
-                status: HTTPResponse.Status(code: err.httpStatus),
-                message: err.errorDescription ?? err.localizedDescription,
-                code: err.httpStatus
-            )
+            let encoded = try JSONEncoder().encode(response)
+            return makeDataResponse(encoded)
+        } catch {
+            return makeErrorResponse(status: .internalServerError,
+                                     message: error.localizedDescription, code: 500)
         }
     }
 
     // MARK: — POST /v1/generate (no auth, raw prompt)
 
     @Sendable
-    func generateNoAuth(request: Request, context: GemmaRequestContext) async throws -> Response {
-        let dto: GenerationRequest
+    func generateNoAuth(request: Request, context: BasicRequestContext) async throws -> Response {
+        let buffer = try await request.body.collect(upTo: 4 * 1024 * 1024)
+        let data = Data(buffer.readableBytesView)
         do {
-            let buffer = try await request.body.collect(upTo: 4 * 1024 * 1024)
-            let data = Data(buffer.readableBytesView)
-            dto = try JSONDecoder().decode(GenerationRequest.self, from: data)
-        } catch {
-            return errorResponse(status: .badRequest, message: "Invalid JSON: \(error.localizedDescription)", code: 400)
-        }
-
-        do {
+            let dto = try JSONDecoder().decode(GenerationRequest.self, from: data)
             let result = try await orchestrator.generate(request: dto)
-            return try jsonResponse(status: .ok, body: result)
-        } catch let err as GemError {
-            return errorResponse(
-                status: HTTPResponse.Status(code: err.httpStatus),
-                message: err.errorDescription ?? err.localizedDescription,
-                code: err.httpStatus
-            )
+            let encoded = try JSONEncoder().encode(result)
+            return makeDataResponse(encoded)
+        } catch {
+            return makeErrorResponse(status: .badRequest,
+                                     message: error.localizedDescription, code: 400)
         }
     }
 
     // MARK: — Streaming
 
-    private func streamChatResponse(genRequest: GenerationRequest, modelId: String) -> Response {
-        let headers: HTTPFields = [
-            .contentType: "text/event-stream",
-            .cacheControl: "no-cache",
-            .connection: "keep-alive"
-        ]
-        let body = ResponseBody(asyncSequence: sseStream(genRequest: genRequest, modelId: modelId))
-        return Response(status: .ok, headers: headers, body: body)
+    private func streamResponse(genRequest: GenerationRequest, model: String, requestedModel: String? = nil) -> Response {
+        Response(
+            status: .ok,
+            headers: [
+                .contentType: "text/event-stream",
+                .cacheControl: "no-cache",
+                .connection: "keep-alive"
+            ],
+            body: ResponseBody(asyncSequence: sseStream(genRequest: genRequest, model: model, requestedModel: requestedModel))
+        )
     }
 
-    private func sseStream(genRequest: GenerationRequest, modelId: String) -> AsyncStream<ByteBuffer> {
+    private func sseStream(genRequest: GenerationRequest, model: String, requestedModel: String? = nil) -> AsyncStream<ByteBuffer> {
         AsyncStream { continuation in
             Task {
+                let id = "chatcmpl-\(UUID().uuidString)"
+                let created = Int(Date().timeIntervalSince1970)
                 do {
-                    let stream = try await orchestrator.generateStream(request: genRequest)
-                    let id = "chatcmpl-\(UUID().uuidString)"
-                    let created = Int(Date().timeIntervalSince1970)
-
+                    let stream = try await orchestrator.generateStream(request: genRequest, modelId: requestedModel)
                     for await chunk in stream {
-                        if case .text(let text) = chunk {
+                        switch chunk {
+                        case .text(let text):
                             let delta: [String: Any] = [
-                                "id": id,
-                                "object": "chat.completion.chunk",
-                                "created": created,
-                                "model": modelId,
-                                "choices": [
-                                    [
-                                        "index": 0,
-                                        "delta": ["role": "assistant", "content": text],
-                                        "finish_reason": NSNull()
-                                    ]
-                                ]
+                                "id": id, "object": "chat.completion.chunk",
+                                "created": created, "model": model,
+                                "choices": [["index": 0,
+                                             "delta": ["role": "assistant", "content": text] as [String: Any],
+                                             "finish_reason": NSNull()] as [String: Any]]
                             ]
-                            if let data = try? JSONSerialization.data(withJSONObject: delta),
-                               let json = String(data: data, encoding: .utf8) {
-                                var buf = ByteBuffer()
-                                buf.writeString("data: \(json)\n\n")
+                            if let json = try? JSONSerialization.data(withJSONObject: delta),
+                               let str = String(data: json, encoding: .utf8) {
+                                var buf = ByteBuffer(); buf.writeString("data: \(str)\n\n")
                                 continuation.yield(buf)
                             }
+                        case .reasoning(let reasoning):
+                            let delta: [String: Any] = [
+                                "id": id, "object": "chat.completion.chunk",
+                                "created": created, "model": model,
+                                "choices": [["index": 0,
+                                             "delta": ["role": "assistant", "reasoning": reasoning] as [String: Any],
+                                             "finish_reason": NSNull()] as [String: Any]]
+                            ]
+                            if let json = try? JSONSerialization.data(withJSONObject: delta),
+                               let str = String(data: json, encoding: .utf8) {
+                                var buf = ByteBuffer(); buf.writeString("data: \(str)\n\n")
+                                continuation.yield(buf)
+                            }
+                        case .metadata:
+                            break
                         }
                     }
-
-                    // Final chunk
                     let done: [String: Any] = [
-                        "id": id,
-                        "object": "chat.completion.chunk",
-                        "created": created,
-                        "model": modelId,
-                        "choices": [["index": 0, "delta": [:] as [String: Any], "finish_reason": "stop"]]
+                        "id": id, "object": "chat.completion.chunk",
+                        "created": created, "model": model,
+                        "choices": [["index": 0, "delta": [:] as [String: Any], "finish_reason": "stop"] as [String: Any]]
                     ]
-                    if let data = try? JSONSerialization.data(withJSONObject: done),
-                       let json = String(data: data, encoding: .utf8) {
-                        var buf = ByteBuffer()
-                        buf.writeString("data: \(json)\n\n")
+                    if let json = try? JSONSerialization.data(withJSONObject: done),
+                       let str = String(data: json, encoding: .utf8) {
+                        var buf = ByteBuffer(); buf.writeString("data: \(str)\n\n")
                         continuation.yield(buf)
                     }
-
-                    var doneBuf = ByteBuffer()
-                    doneBuf.writeString("data: [DONE]\n\n")
-                    continuation.yield(doneBuf)
-                    continuation.finish()
-
+                    var done2 = ByteBuffer(); done2.writeString("data: [DONE]\n\n")
+                    continuation.yield(done2)
                 } catch {
                     var buf = ByteBuffer()
-                    buf.writeString("event: error\ndata: {\"error\": \"\(error.localizedDescription)\"}\n\n")
+                    buf.writeString("event: error\ndata: {\"error\":\"\(error.localizedDescription)\"}\n\n")
                     continuation.yield(buf)
-                    continuation.finish()
                 }
+                continuation.finish()
             }
         }
     }
 
-    // MARK: — Prompt formatting
+    // MARK: — Prompt
 
-    /// Converts OpenAI messages array to a flat prompt string.
-    /// The MLX engine wraps it in UserInput(chat: [.user(prompt)]) and
-    /// applies the model's own chat template on top, so we just concatenate
-    /// the conversation turns in a readable format.
     private func messagesToPrompt(_ messages: [ChatMessage]) -> String {
-        var parts: [String] = []
+        var result = "<bos>"
         for msg in messages {
+            guard let text = msg.content?.textValue, !text.isEmpty else { continue }
             switch msg.role {
             case "system":
-                parts.append("[System]: \(msg.content)")
+                result += "<|turn>system\n\(text)<turn|>\n"
             case "user":
-                parts.append("[User]: \(msg.content)")
+                result += "<|turn>user\n\(text)<turn|>\n"
             case "assistant":
-                parts.append("[Assistant]: \(msg.content)")
+                result += "<|turn>model\n\(text)<turn|>\n"
             default:
-                parts.append(msg.content)
+                result += "<|turn>\(msg.role)\n\(text)<turn|>\n"
             }
         }
-        return parts.joined(separator: "\n\n")
+        result += "<|turn>model\n<|channel>thought\n"
+        return result
     }
 
     // MARK: — Helpers
 
-    private func jsonResponse<T: Encodable>(status: HTTPResponse.Status, body: T) throws -> Response {
-        let data = try JSONEncoder().encode(body)
-        var buf = ByteBuffer()
-        buf.writeBytes(data)
-        return Response(status: status, headers: [.contentType: "application/json"], body: ResponseBody(byteBuffer: buf))
+    private func makeJSONResponse(_ body: [String: Any]) -> Response {
+        let data = (try? JSONSerialization.data(withJSONObject: body)) ?? Data()
+        return makeDataResponse(data)
     }
 
-    private func errorResponse(status: HTTPResponse.Status, message: String, code: Int) -> Response {
-        let envelope = ErrorResponse(error: message, code: code)
-        let data = (try? JSONEncoder().encode(envelope)) ?? Data()
-        var buf = ByteBuffer()
-        buf.writeBytes(data)
-        return Response(status: status, headers: [.contentType: "application/json"], body: ResponseBody(byteBuffer: buf))
+    private func makeDataResponse(_ data: Data) -> Response {
+        var buf = ByteBuffer(); buf.writeBytes(data)
+        return Response(status: .ok, headers: [.contentType: "application/json"],
+                        body: ResponseBody(byteBuffer: buf))
+    }
+
+    private func makeErrorResponse(status: HTTPResponse.Status, message: String, code: Int) -> Response {
+        let body: [String: Any] = ["type": "error",
+                                   "error": ["type": "invalid_request_error", "message": message] as [String: Any]]
+        let data = (try? JSONSerialization.data(withJSONObject: body)) ?? Data()
+        var buf = ByteBuffer(); buf.writeBytes(data)
+        return Response(status: status, headers: [.contentType: "application/json"],
+                        body: ResponseBody(byteBuffer: buf))
     }
 }
 
 private extension HTTPResponse.Status {
-    init(code: Int) {
-        self = HTTPResponse.Status(code: code, reasonPhrase: "")
-    }
+    init(code: Int) { self = HTTPResponse.Status(code: code, reasonPhrase: "") }
 }

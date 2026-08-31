@@ -13,6 +13,7 @@ struct ModelsCommand: AsyncParsableCommand {
             DownloadSubcommand.self,
             InfoSubcommand.self,
             CacheSubcommand.self,
+            CheckSubcommand.self,
         ],
         defaultSubcommand: ListSubcommand.self
     )
@@ -28,7 +29,7 @@ struct ListSubcommand: AsyncParsableCommand {
     )
 
     @Option(name: .shortAndLong, help: "Search term  (e.g. gemma-4 | Qwen3 | Qwen2.5-Coder)")
-    var search: String = "gemma-4"
+    var search: String = ""
 
     @Option(name: .long, help: "HuggingFace author / org (default: mlx-community)")
     var author: String = "mlx-community"
@@ -73,14 +74,17 @@ struct DownloadSubcommand: AsyncParsableCommand {
     @Argument(help: "Model repo ID, e.g. mlx-community/gemma-4-e2b-it-4bit (optional — shows picker)")
     var modelId: String? = nil
 
+    @Option(name: .long, help: "HuggingFace author / org (default: mlx-community)")
+    var author: String = "mlx-community"
+
     @Option(name: .long, help: "HuggingFace token for private/gated models")
     var token: String? = nil
 
-    @Option(name: .shortAndLong, help: "Filter picker by quantization: 4bit | 8bit | bf16")
+    @Option(name: .shortAndLong, help: "Filter picker by quantization: 4bit | 8bit | bf16 | nvfp4 | dq")
     var quant: String? = nil
 
-    @Option(name: .shortAndLong, help: "Search term for interactive picker (e.g. Qwen3 | Qwen2.5-Coder | gemma-4)")
-    var search: String = "gemma-4"
+    @Option(name: .shortAndLong, help: "Search term for interactive picker (e.g. Qwen3 | Qwen2.5-Coder | gemma-4 | Huihui | PRISM)")
+    var search: String = ""
 
     mutating func run() async throws {
         let hub = HuggingFaceHub()
@@ -132,8 +136,8 @@ struct DownloadSubcommand: AsyncParsableCommand {
     // MARK: — Interactive picker
 
     private func interactivePicker(hub: HuggingFaceHub) async throws -> String? {
-        printFetching(author: "mlx-community", search: search, quant: quant)
-        let models = try await hub.listModels(search: search, quant: quant, limit: 20)
+        printFetching(author: author, search: search, quant: quant)
+        let models = try await hub.listModels(author: author, search: search, quant: quant, limit: 20)
         guard !models.isEmpty else {
             print("No models found.")
             return nil
@@ -260,18 +264,19 @@ func printFetching(author: String = "mlx-community", search: String, quant: Stri
 
 func printModelTable(_ models: [HFModelInfo], numbered: Bool = false) {
     let numWidth = numbered ? 4 : 0
-    let idWidth = 46
+    let idWidth = 48
+    let quantWidth = 8
 
     // Header
     let numCol    = numbered ? padded("#",       numWidth) + "  " : ""
     let cached    = "★"
-    print("  \(numCol)\(padded("MODEL",         idWidth))  \(padded("QUANT", 6))  \(padded("PARAMS", 7))  \(padded("↓", 7))  \(cached)")
-    print("  " + String(repeating: "─", count: idWidth + numWidth + 30))
+    print("  \(numCol)\(padded("MODEL",         idWidth))  \(padded("QUANT", quantWidth))  \(padded("PARAMS", 7))  \(padded("↓", 7))  \(cached)")
+    print("  " + String(repeating: "─", count: idWidth + numWidth + 32))
 
     for (idx, m) in models.enumerated() {
         let num     = numbered ? padded("\(idx + 1)", numWidth - 1) + "  " : ""
         let isCached = ModelCache.isDownloaded(repoId: m.id) ? green("★") : " "
-        let row = "  \(num)\(padded(m.id, idWidth))  \(padded(m.quantization, 6))  \(padded(m.parameterSize, 7))  \(padded(m.formattedDownloads, 7))  \(isCached)"
+        let row = "  \(num)\(padded(m.id, idWidth))  \(padded(m.quantization, quantWidth))  \(padded(m.parameterSize, 7))  \(padded(m.formattedDownloads, 7))  \(isCached)"
         print(row)
     }
 }
@@ -340,3 +345,46 @@ func formatBytes(_ bytes: Int64) -> String {
     default:                           return String(format: "%.2f GB", Double(bytes) / 1_073_741_824)
     }
 }
+
+// MARK: — models check / dry-run
+
+@available(macOS 10.15, macCatalyst 13, iOS 13, tvOS 13, watchOS 6, *)
+struct CheckSubcommand: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "check",
+        abstract: "Dry-run memory feasibility evaluation for a model",
+        aliases: ["dry-run", "eval"]
+    )
+
+    @Argument(help: "Model repo ID, e.g. AutisticAF/Huihui-Qwen3.8-27B-abliterated-mlx-4Bit")
+    var modelId: String
+
+    mutating func run() async throws {
+        let evaluator = MemoryEvaluator()
+        print("\n🔍 Evaluating memory feasibility for \(bold(modelId))…\n")
+        let assessment = await evaluator.evaluate(modelId: modelId)
+
+        print("  Model:           \(assessment.modelName) (\(assessment.modelId))")
+        print("  Required RAM:    \(assessment.requiredRAMFormatted)")
+        print("  Available RAM:   \(assessment.availableRAMFormatted)")
+        print("  Physical RAM:    \(assessment.totalRAMFormatted)")
+        print("  Fit Level:       \(assessment.fitLevel.emoji) \(assessment.fitLevel.rawValue)")
+        print("  Context Budget:  \(assessment.maxContextBudgetTokens) tokens")
+        print()
+
+        if let warning = assessment.warning {
+            print(red("  \(warning)"))
+        }
+        if let rec = assessment.recommendation {
+            print(yellow("  💡 Recommendation: \(rec)"))
+        }
+
+        if assessment.fitsInMemory {
+            print(green("  ✓ Feasible: Model fits within system memory budget."))
+        } else {
+            print(red("  ❌ Insufficient Memory: Model exceeds available memory!"))
+        }
+        print()
+    }
+}
+

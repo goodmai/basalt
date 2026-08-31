@@ -61,6 +61,9 @@ struct ChatCommand: AsyncParsableCommand {
                     case .text(let t):
                         print(t, terminator: "")
                         fflush(stdout)
+                    case .reasoning(let r):
+                        print(r, terminator: "")
+                        fflush(stdout)
                     case .metadata(let m):
                         stats = m
                     }
@@ -107,8 +110,8 @@ struct ChatCommand: AsyncParsableCommand {
             return try await resolveAndDownloadIfNeeded(modelId: selectedModelId)
         } catch {
             log("Interactive picker failed: \(error.localizedDescription)")
-            log("Falling back to default config path.")
-            return ServerConfig.development.modelPath
+            log("Falling back to default: AutisticAF/Huihui-Qwen3.8-27B-abliterated-mlx-4Bit")
+            return try await resolveAndDownloadIfNeeded(modelId: "AutisticAF/Huihui-Qwen3.8-27B-abliterated-mlx-4Bit")
         }
     }
     
@@ -145,9 +148,11 @@ struct ChatCommand: AsyncParsableCommand {
 
     private func interactiveModelPicker() async throws -> String {
         let models = [
+            ("★ Huihui Qwen3.8 27B 4bit", "15.2 GB RAM, 12 TPS — default", "AutisticAF/Huihui-Qwen3.8-27B-abliterated-mlx-4Bit"),
             ("Qwen3.5 4B", "2.3 GB RAM, 92 TPS", "mlx-community/Qwen3.5-4B-4bit"),
             ("Qwen3.5 9B OptiQ", "5.8 GB RAM, 37 TPS", "mlx-community/Qwen3.5-9B-OptiQ-4bit"),
             ("Qwen Coder 7B", "4.1 GB RAM, 60 TPS", "mlx-community/Qwen2.5-Coder-7B-Instruct-4bit"),
+            ("MYTHOS 26B MoE DQ", "14.5 GB RAM, 14 TPS", "Ex0bit/MYTHOS-26B-A4B-PRISM-PRO-DQ-MLX"),
             ("Qwen3.6 27B", "14.5 GB RAM, 11 TPS", "mlx-community/Qwen3.6-27B-4bit"),
             ("Gemma 4 2B", "2.7 GB RAM, 60 TPS", "mlx-community/gemma-4-e2b-it-4bit")
         ]

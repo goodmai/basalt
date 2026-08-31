@@ -3,36 +3,37 @@ import os
 
 public struct TokenBudgetCalculator: Sendable {
     
+    /// Upper limit for context window / token budget
+    public static let upperCapTokens: Int = 128_000
+    
     /// Calculates the maximum number of tokens that can be generated based on available RAM and model size.
+    /// Dynamic RAM check ensures launch feasibility without exceeding memory limits.
     ///
     /// - Parameters:
-    ///   - availableRAM: Free RAM in bytes
+    ///   - availableRAM: Free + Inactive RAM in bytes
     ///   - modelSizeMB: Size of the model in MB
-    /// - Returns: Maximum token count (capped at 128_000, fallback to 1024 if tight)
+    /// - Returns: Maximum feasible token count (dynamically measured, upper cap 128,000)
     public static func calculateMaxTokens(availableRAM: Int64, modelSizeMB: Int) -> Int {
-        let safetyMargin = 0.8 // Reserve 20% for OS and other apps
+        guard availableRAM > 0 else { return 512 }
+        
+        let safetyMargin = 0.80
         let usableRAM = Int64(Double(availableRAM) * safetyMargin)
         let modelSizeBytes = Int64(modelSizeMB) * 1024 * 1024
-        
         let availableForContext = usableRAM - modelSizeBytes
         
         if availableForContext <= 0 {
-            // Not enough RAM for the model + 20% OS buffer.
-            // Fallback to a very small context window to prevent immediate OOM
-            return 1024
+            // Memory is tight, reserve minimum 512 tokens
+            return 512
         }
         
-        // Rough estimate: 1 token ≈ 2 bytes in KV cache (FP16)
         let bytesPerToken: Int64 = 2
-        let maxTokens = Int(availableForContext / bytesPerToken)
-        
-        return min(maxTokens, 128_000) // Cap at 128k
+        let feasibleTokens = Int(availableForContext / bytesPerToken)
+        let calculated = max(feasibleTokens, 512)
+        return min(calculated, upperCapTokens)
     }
     
     /// Calculates the maximum number of tokens using the system's current available memory.
     public static func calculateMaxTokensForSystem(modelSizeMB: Int) -> Int {
-        // Since os_proc_available_memory is not available on macOS,
-        // we use host_statistics64 to calculate free + inactive + speculative memory
         let availableRAM = getAvailableSystemMemory()
         return calculateMaxTokens(availableRAM: availableRAM, modelSizeMB: modelSizeMB)
     }
@@ -48,12 +49,10 @@ public struct TokenBudgetCalculator: Sendable {
         }
         
         if result == KERN_SUCCESS {
-            // Free + Inactive represents available memory for new allocations
             let pageSize = UInt64(getpagesize())
             let availablePages = UInt64(stats.free_count) + UInt64(stats.inactive_count)
             return Int64(availablePages * pageSize)
         } else {
-            // Fallback to total physical memory / 2 if statistics fail
             return Int64(ProcessInfo.processInfo.physicalMemory / 2)
         }
     }

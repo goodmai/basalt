@@ -7,14 +7,14 @@ import ArgumentParser
 struct ServeCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "serve",
-        abstract: "Start the Gemma inference server (MCP stdio + REST)"
+        abstract: "Start the Gemm inference server (REST + optional MCP stdio)"
     )
 
     // MARK: — Arguments
 
     @Option(
         name: .customLong("model"),
-        help: "Model repo ID (e.g. mlx-community/gemma-4-e2b-it-4bit) or local path"
+        help: "Model repo ID (e.g. mlx-community/gemma-4-e4b-it-4bit) or local path"
     )
     var model: String?
 
@@ -24,72 +24,113 @@ struct ServeCommand: AsyncParsableCommand {
     )
     var modelPath: String?
 
-    @Option(name: .shortAndLong, help: "REST API port")
+    @Option(
+        name: .customLong("quant"),
+        help: "Quantization subfolder inside the repo (e.g. 2bit | 4bit) — for repos shipping several variants"
+    )
+    var quant: String?
+
+    @Option(
+        name: .customLong("reasoning-effort"),
+        help: "Chat-template reasoning budget for models that expose one (Qwen3.8: xhigh | medium | low)"
+    )
+    var reasoningEffort: String?
+
+    @Option(name: .shortAndLong, help: "REST API port (default: 8080)")
     var port: Int = 8080
 
-    @Option(name: .long, help: "Bind address for REST")
+    @Option(name: .long, help: "Bind address (default: 127.0.0.1)")
     var host: String = "127.0.0.1"
 
-    @Flag(help: "Start MCP stdio transport only (no REST)")
-    var mcp: Bool = false
-
-    @Flag(help: "Start REST server only (no MCP)")
-    var rest: Bool = false
-
-    @Option(name: .customLong("max-tokens"), help: "Default maximum tokens to generate (e.g. 65536, max 65536)")
+    @Option(name: .customLong("max-tokens"), help: "Default maximum tokens to generate (default: 65536, range: 2048-128000)")
     var maxTokens: Int = 65536
 
-    @Option(name: .customLong("jwt-secret"), help: "Secret for JWT signing (env: GEMMA_JWT_SECRET)")
-    var jwtSecret: String?
+    @Flag(help: "Start MCP stdio transport in addition to REST")
+    var mcp: Bool = false
 
-    @Option(name: .customLong("db-path"), help: "Path to SQLite database for auth (env: GEMMA_DB_PATH)")
-    var dbPath: String?
+    @Flag(help: "Start REST only, suppress MCP stdio")
+    var rest: Bool = false
 
-    @Option(name: .long, help: "Log level: debug | info | warn | error")
+    @Flag(name: .customLong("dry-run"), help: "Perform a dry-run memory feasibility assessment and exit without starting the server")
+    var dryRun: Bool = false
+
+    @Option(name: .long, help: "Log level: debug | info | warn | error (default: info)")
     var logLevel: ServerConfig.LogLevel = .info
 
     // MARK: — Run
+
     private static let logger = GemLogger(module: "ServeCommand")
+    private static let defaultModel = "AutisticAF/Huihui-Qwen3.8-27B-abliterated-mlx-4Bit"
 
     mutating func run() async throws {
-        Self.logger.trace("ServeCommand started. Options: mcp=\(mcp), rest=\(rest), port=\(port)")
-        let resolvedPath = try await resolveModelPath()
+        let targetModel = model ?? modelPath ?? Self.defaultModel
 
-        let secretFromEnv = ProcessInfo.processInfo.environment["GEMMA_JWT_SECRET"]
-        let finalSecret = jwtSecret ?? secretFromEnv ?? UUID().uuidString
-        
-        if jwtSecret == nil && secretFromEnv == nil {
-            log("\(yellow("[warn]")) No GEMMA_JWT_SECRET provided. Using a random secret for this session. Sessions will be invalidated on restart.")
+        if dryRun {
+            let evaluator = MemoryEvaluator()
+            log("🔍 Performing dry-run memory assessment for \(bold(targetModel))…")
+            let assessment = await evaluator.evaluate(modelId: targetModel)
+
+            fputs("\n  Model:           \(assessment.modelName) (\(assessment.modelId))\n", stderr)
+            fputs("  Required RAM:    \(assessment.requiredRAMFormatted)\n", stderr)
+            fputs("  Available RAM:   \(assessment.availableRAMFormatted)\n", stderr)
+            fputs("  Physical RAM:    \(assessment.totalRAMFormatted)\n", stderr)
+            fputs("  Fit Level:       \(assessment.fitLevel.emoji) \(assessment.fitLevel.rawValue)\n", stderr)
+            fputs("  Context Budget:  \(assessment.maxContextBudgetTokens) tokens\n\n", stderr)
+
+            if let warning = assessment.warning {
+                fputs(red("  \(warning)") + "\n", stderr)
+            }
+            if let rec = assessment.recommendation {
+                fputs(yellow("  💡 Recommendation: \(rec)") + "\n", stderr)
+            }
+
+            if assessment.fitsInMemory {
+                fputs(green("  ✓ Dry-run passed: Model fits in memory budget.\n\n"), stderr)
+            } else {
+                fputs(red("  ❌ Dry-run warning: Model exceeds available RAM!\n\n"), stderr)
+            }
+            return
         }
+
+        let resolvedPath = try await resolveModelPath()
 
         let config = ServerConfig(
             modelPath: resolvedPath,
-            modelId: model ?? modelPath,
-            restPort: port,
-            host: host,
+            modelId:   model ?? modelPath,
+            restPort:  port,
+            host:      host,
             maxTokens: maxTokens,
-            jwtSecret: finalSecret,
-            dbPath: dbPath ?? ProcessInfo.processInfo.environment["GEMMA_DB_PATH"] ?? "auth.sqlite3",
-            logLevel: logLevel
+            logLevel:  logLevel
         )
 
+        // Apply log level from config
+        switch config.logLevel {
+        case .debug: GemLogger.globalLevel = .debug
+        case .info:  GemLogger.globalLevel = .info
+        case .warn:  GemLogger.globalLevel = .warn
+        case .error: GemLogger.globalLevel = .error
+        }
+
         // Shared inference engine + orchestrator
-        let engine = MLXInferenceEngine()
+        let engine       = MLXInferenceEngine(reasoningEffort: reasoningEffort)
         let orchestrator = ModelOrchestratorActor(engine: engine, maxTokens: config.maxTokens)
 
         log("Loading model from \(bold(resolvedPath))…")
         do {
             try await orchestrator.loadModel(path: resolvedPath)
+            await orchestrator.setModelId(model ?? modelPath ?? resolvedPath)
             log("Model ready.")
         } catch {
             log("\(yellow("[warn]")) \(error.localizedDescription) — running in stub mode.")
         }
 
-        let startMCP  = mcp || (!mcp && !rest)
-        let startREST = rest || (!mcp && !rest)
+        // Default: REST only. MCP stdio can be added with --mcp.
+        // When --mcp is set without --rest, MCP still starts alongside REST.
+        let startREST = !mcp || rest || (!mcp && !rest)
+        let startMCP  = mcp
 
-        if startREST { log("REST (A2A)  → http://\(host):\(port)") }
-        if startMCP  { log("MCP (stdio) → JSON-RPC 2.0 on stdin/stdout") }
+        if startREST { log("REST → http://\(host):\(port)") }
+        if startMCP  { log("MCP → JSON-RPC 2.0 on stdin/stdout") }
 
         try await withThrowingTaskGroup(of: Void.self) { group in
             if startREST {
@@ -111,46 +152,35 @@ struct ServeCommand: AsyncParsableCommand {
     // MARK: — Path resolution
 
     private func resolveModelPath() async throws -> String {
-        // Explicit local path wins
-        if let explicit = modelPath {
-            return explicit
+        if let explicit = modelPath { return explicit }
+
+        let modelId = model ?? Self.defaultModel
+        if model == nil { log("No model specified — using default: \(dim(modelId))") }
+        guard modelId.contains("/") else { return modelId }  // treat as local path
+
+        let snapshot = ModelCache.cacheDir(for: modelId)
+        let target = quant.map { snapshot.appendingPathComponent($0) } ?? snapshot
+        if FileManager.default.fileExists(atPath: target.appendingPathComponent("config.json").path) {
+            return target.path
         }
 
-        if let modelId = model {
-            // HF-style repo ID (contains "/")
-            if modelId.contains("/") {
-                let cached = ModelCache.cacheDir(for: modelId)
-                if FileManager.default.fileExists(atPath: cached.path) {
-                    return cached.path
+        log("Model not in local cache: \(bold(modelId))\(quant.map { " [\($0)]" } ?? ""). Downloading…")
+        let hub = HuggingFaceHub()
+        do {
+            nonisolated(unsafe) var lastFile = ""
+            let dest = try await hub.download(repoId: modelId, subfolder: quant, token: nil) { filename, downloaded, total in
+                if filename != lastFile {
+                    if !lastFile.isEmpty { print() }
+                    lastFile = filename
                 }
-                
-                // Not cached — download it automatically
-                log("Model not in local cache: \(bold(modelId)). Downloading...")
-                let hub = HuggingFaceHub()
-                do {
-                    nonisolated(unsafe) var lastFile = ""
-                    let dest = try await hub.download(repoId: modelId, token: nil) { filename, downloaded, total in
-                        if filename != lastFile {
-                            if !lastFile.isEmpty { print() }   // newline after previous file
-                            lastFile = filename
-                        }
-                        printFileProgress(filename: filename, downloaded: downloaded, total: total)
-                    }
-                    print("\n")
-                    return dest.path
-                } catch {
-                    log("\(red("Failed to download model:")) \(error.localizedDescription)")
-                    throw ExitCode.failure
-                }
+                printFileProgress(filename: filename, downloaded: downloaded, total: total)
             }
-            // Treated as a local path
-            return modelId
+            print("\n")
+            return dest.path
+        } catch {
+            log("\(red("Download failed:")) \(error.localizedDescription)")
+            throw ExitCode.failure
         }
-
-        // No model specified — try default dev path
-        let dev = ServerConfig.development.modelPath
-        log("No model specified — using default path: \(dim(dev))")
-        return dev
     }
 
     private func log(_ msg: String) {

@@ -29,9 +29,9 @@ struct GenerationRequestValidationTests {
         }
     }
 
-    @Test("maxTokens > 65536 throws contextLengthExceeded")
+    @Test("maxTokens > 131072 throws contextLengthExceeded")
     func tooManyTokens() {
-        let req = GenerationRequest(prompt: "Hello", maxTokens: 100_000)
+        let req = GenerationRequest(prompt: "Hello", maxTokens: 200_000)
         #expect(throws: GemError.self) {
             try req.validated()
         }

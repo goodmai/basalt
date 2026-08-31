@@ -92,6 +92,74 @@ public struct ModelDatabase: Sendable {
             contextWindow: 128000,
             quantization: "4-bit",
             quality: 0.81
+        ),
+        // Huihui AI Models
+        ModelDefinition(
+            id: "huihui-ai/Huihui-Qwen3.8-27B-abliterated",
+            name: "Huihui Qwen 3.8 27B Abliterated (Base FP16)",
+            family: .qwen,
+            task: .chat,
+            modality: .text,
+            ramMB: 54000,
+            contextWindow: 262144,
+            quantization: "bfloat16",
+            quality: 0.95
+        ),
+        ModelDefinition(
+            id: "AutisticAF/Huihui-Qwen3.8-27B-abliterated-mlx-4Bit",
+            name: "Huihui Qwen 3.8 27B Abliterated (MLX 4-bit)",
+            family: .qwen,
+            task: .chat,
+            modality: .text,
+            ramMB: 15200,
+            contextWindow: 262144,
+            quantization: "4-bit",
+            quality: 0.94
+        ),
+        // Ex0bit Models
+        ModelDefinition(
+            id: "Ex0bit/MYTHOS-26B-A4B-PRISM-PRO-DQ-MLX",
+            name: "MYTHOS 26B A4B PRISM PRO DQ (MLX)",
+            family: .gemma,
+            task: .chat,
+            modality: .text,
+            ramMB: 14500,
+            contextWindow: 262144,
+            quantization: "Dynamic Quant (DQ)",
+            quality: 0.93
+        ),
+        ModelDefinition(
+            id: "Ex0bit/Qwen3.6-35B-A3B-PRISM-MLX-NVFP4",
+            name: "Qwen 3.6 35B A3B PRISM (MLX NVFP4)",
+            family: .qwen,
+            task: .chat,
+            modality: .text,
+            ramMB: 20500,
+            contextWindow: 131072,
+            quantization: "NVFP4",
+            quality: 0.94
+        ),
+        ModelDefinition(
+            id: "Ex0bit/MiniMax-SLURPY-DQ-MLX",
+            name: "MiniMax SLURPY DQ MLX",
+            family: .qwen,
+            task: .chat,
+            modality: .text,
+            ramMB: 72000,
+            contextWindow: 131072,
+            quantization: "Dynamic Quant (DQ)",
+            quality: 0.92
+        ),
+        ModelDefinition(
+            id: "Ex0bit/Elbaz-Olmo-3-7B-Instruct-abliterated",
+            name: "Elbaz OLMo 3 7B Instruct Abliterated",
+            family: .llama,
+            task: .chat,
+            modality: .text,
+            ramMB: 4500,
+            contextWindow: 65536,
+            quantization: "4-bit",
+            quality: 0.88
         )
     ]
 }

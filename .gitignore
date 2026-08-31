@@ -52,12 +52,23 @@ WRAPPER_INFO.md
 benchmark_*.json
 context_latency.json
 res_*.json
+arc_benchmark_results_*.json
+arc_benchmark_results_*.md
 
 # Server artifacts
 server_*.log
 
 # Scripts
 run_*.sh
+
+# Node.js files (not applicable to Swift project)
+package.json
+package-lock.json
+
+# One-off utility scripts
+rename.py
+rename_script.py
+gen_checklists.py
 
 # Archive directory (task history, plans, reviews)
 .archive/
@@ -77,6 +88,7 @@ api_keys.json
 *.db
 *.sqlite
 *.sqlite3
+auth.sqlite3
 
 # Documentation build artifacts
 docs-output/

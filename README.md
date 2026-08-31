@@ -1,27 +1,19 @@
 # Gemm
 
-Local LLM inference server for Apple Silicon with dual interface architecture.  
-**Note:** The binary and the program itself are now called `gemm` instead of `gem` to avoid conflict with RubyGems.
-**MCP** (stdio) for IDE integration + **REST** (HTTP) for agent-to-agent communication.
+Local LLM inference server for Apple Silicon. Runs Gemma 4, Qwen 3, and other MLX-compatible models entirely on-device (Metal GPU). No authentication, no cloud calls — designed for local development and agentic workflows.
 
 ```
-┌─────────────────────────────────────────────────────┐
-│                  Gemm                       │
-│                                                     │
-│   MCP stdio ──┐                                     │
-│               ├──► ModelOrchestratorActor ──► MLX  │
-│   REST :8080 ─┘         (actor, FIFO)     Metal GPU │
-└─────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────┐
+│                       Gemm                           │
+│                                                      │
+│   MCP stdio ──┐                                      │
+│               ├──► ModelOrchestratorActor ──► MLX   │
+│   REST :8080 ─┘        (actor, FIFO)      Metal GPU  │
+│   WebSocket ──┘                                      │
+└──────────────────────────────────────────────────────┘
 ```
 
-**✨ Latest Updates:**
-- ✅ **101 tests passing** - Full integration test suite
-- ✅ **80% test coverage** - Epic 2 Integration Testing
-- ✅ **Session Analytics** - Beautiful exit summary (Epic 13)
-- ✅ **Swift 6** - Strict concurrency, actor isolation
-- ✅ **4 verified models** - Gemma 4, Qwen3.5/3.6, Qwen2.5-Coder
-- ✅ **MCP & REST** - Full agentic tool support ([Docs](docs/EPIC_19_API_DOCS.md))
-- ✅ **Rainbow UI** - High-performance Metal GPU interface
+Two transports share a single actor instance — **MCP stdio** for IDE integration (Claude Desktop, Cursor) and **REST HTTP** for agent-to-agent workflows and Claude Code backends.
 
 ---
 
@@ -29,686 +21,380 @@ Local LLM inference server for Apple Silicon with dual interface architecture.
 
 | | |
 |---|---|
-| **macOS** | 14+ (Sonoma) or 15+ (Sequoia) |
-| **Xcode** | 16+ / Swift 6 |
-| **Hardware** | Apple Silicon (M1–M4), Unified Memory |
+| **macOS** | 15+ (Sequoia) |
+| **Xcode / Swift** | 16+ / Swift 6 |
+| **Hardware** | Apple Silicon M1–M4, Unified Memory |
 | **Disk** | 2–30 GB depending on model |
-
----
-
-## Quick Install
-
-**Option 1: Wrapper script with defaults (recommended)**
-```bash
-git clone https://github.com/your-org/Gemm
-cd Gemm
-swift build -c release
-
-# Add alias to your shell (automatically uses gemma-4-31b-it-4bit by default)
-echo "alias gemm='$(pwd)/gemm'" >> ~/.zshrc
-source ~/.zshrc
-
-# Now just run:
-gemm              # Starts chat with 31B model automatically!
-gemm --help       # See all options
-```
-
-**Option 2: Automated setup**
-```bash
-git clone https://github.com/your-org/Gemm
-cd Gemm
-./scripts/installer.swift setup
-# Choose: 1) Install to /usr/local/bin, or 2) Add alias to shell
-```
-
-**Option 3: Manual build**
-```bash
-git clone https://github.com/your-org/Gemm
-cd Gemm
-swift build -c release
-
-# Then choose one:
-# A) System-wide install
-sudo cp .build/release/Gemm /usr/local/bin/gemm
-
-# B) Add alias (add to ~/.zshrc or ~/.bashrc)
-alias gemm='swift run --package-path /path/to/Gemm Gemm'
-
-# C) Add to PATH
-export PATH="$PATH:/path/to/Gemm/.build/release"
-```
-
-**Option 4: Run directly with Swift (no installation)**
-```bash
-# No installation needed - just run from source
-swift run Gemm --help
-swift run Gemm chat --model mlx-community/gemma-4-31b-it-4bit
-```
-
-**Option 5: Homebrew (coming in v0.2.0)**
-```bash
-brew tap your-org/gemm
-brew install gemm
-```
 
 ---
 
 ## Quick Start
 
-### 1. Check available commands
+```bash
+git clone https://github.com/your-org/Gemm
+cd Gemm
+
+# Build
+swift build -c release
+
+# Interactive chat
+.build/release/gemm chat --model mlx-community/Qwen3.5-4B-4bit
+
+# REST server on :8080 (OpenAI + Anthropic compatible)
+.build/release/gemm serve --model mlx-community/Qwen3.5-4B-4bit --rest
+
+# MCP stdio server (for Claude Desktop / Cursor)
+.build/release/gemm serve --model mlx-community/gemma-4-e4b-it-4bit --mcp
+```
+
+### One-command launcher: `./Gemma`
+
+The repo includes a self-contained Swift launcher that builds the server (if needed), waits for readiness, and opens Claude Code — all with local env vars scoped to that session:
 
 ```bash
-# If you installed wrapper script:
-gemm              # Launches chat with 31B model by default!
-gemm --help       # See all options
+chmod +x ./Gemma
 
-# Or run directly:
-.build/release/Gemm --help
+./Gemma                                             # Qwen 4B, port 8080
+./Gemma --model mlx-community/gemma-4-31b-it-4bit  # Gemma 4 31B
+./Gemma --port 8081                                 # custom port
+./Gemma -- --model haiku                            # pass --model haiku to claude
 ```
 
-**Available commands:**
-```
-OVERVIEW: Local LLM inference server for Apple Silicon
-
-USAGE: gemm <subcommand>
-
-OPTIONS:
-  --version               Show the version.
-  -h, --help              Show help information.
-
-SUBCOMMANDS:
-  serve                   Start MCP or REST server
-  chat                    Interactive chat (default when no args)
-  models                  Model management
-  benchmark               Run performance benchmarks
-  agents                  Analyze agent capabilities
-```
-
-### 2. Default usage (wrapper script)
-
-```bash
-# Just run gemm - auto-starts chat with gemma-4-31b-it-4bit
-gemm
-
-# This is equivalent to:
-gemm chat --model mlx-community/gemma-4-31b-it-4bit
-```
-
-### 3. Start the server (MCP mode)
-
-```bash
-# Run MCP server on stdio (for Cursor/Claude Desktop)
-gemm serve --model mlx-community/gemma-4-31b-it-4bit --mcp
-```
-
-### 4. Start the server (REST mode)
-
-```bash
-# Run REST API on http://localhost:8080
-gemm serve --model mlx-community/gemma-4-31b-it-4bit --rest
-```
-
-### 5. Use different models
-
-```bash
-# Fast 4B model
-gemm chat --model mlx-community/Qwen3.5-4B-4bit
-
-# Balanced 9B model
-gemm chat --model mlx-community/Qwen3.5-9B-OptiQ-4bit
-
-# Flagship 27B model
-gemm chat --model mlx-community/Qwen3.6-27B-4bit
-```
-
-### 6. Run benchmarks
-
-```bash
-# Benchmark a model
-gemm serve --model mlx-community/Qwen3.5-4B-4bit --rest &
-swift run PerformanceBenchmark --model mlx-community/Qwen3.5-4B-4bit
-```
+`Gemma` sets `ANTHROPIC_AUTH_TOKEN=local` (not `ANTHROPIC_API_KEY`), so your real Anthropic credentials in other terminals are untouched.
 
 ---
 
-## Models
+## Verified Models
 
-**Before running, you need to download a model from HuggingFace:**
+Models are downloaded from HuggingFace and cached in `~/.cache/huggingface/hub/`.
 
 ```bash
-# Option 1: Use MLX tools
-mlx_lm.convert --hf-path mlx-community/Qwen3.5-4B-4bit
-
-# Option 2: Manual download
-# Models are cached in: ~/.cache/huggingface/hub/
-git clone https://huggingface.co/mlx-community/Qwen3.5-4B-4bit ~/.cache/huggingface/hub/models--mlx-community--Qwen3.5-4B-4bit/snapshots/main
+huggingface-cli download mlx-community/Qwen3.5-4B-4bit
+huggingface-cli download mlx-community/gemma-4-e4b-it-4bit
 ```
+
+| Model | Params | RAM | Status on 24GB Mac |
+|---|---|---|---|
+| `mlx-community/gemma-4-e2b-it-4bit` | 2B | 2.7 GB | ✅ ~110 TPS |
+| `mlx-community/gemma-4-e4b-it-4bit` | 4B | 4.3 GB | ✅ ~85 TPS |
+| `mlx-community/Qwen3.5-4B-4bit` | 4B | 2.3 GB | ✅ ~92 TPS |
+| `mlx-community/Qwen2.5-Coder-7B-Instruct-4bit` | 7B | 4.1 GB | ✅ ~60 TPS |
+| `mlx-community/Qwen3.5-9B-OptiQ-4bit` | 9B | 5.8 GB | ✅ ~37 TPS |
+| `AutisticAF/Huihui-Qwen3.8-27B-abliterated-mlx-4Bit` | 27B | 15.2 GB | ✅ ~12 TPS (Abliterated) |
+| `Ex0bit/MYTHOS-26B-A4B-PRISM-PRO-DQ-MLX` | 26B MoE | 14.5 GB | ✅ ~14 TPS (Dynamic Quant) |
+| `Ex0bit/Qwen3.6-35B-A3B-PRISM-MLX-NVFP4` | 35B MoE | 20.5 GB | ✅ ~8 TPS (NVFP4) |
+| `Ex0bit/Elbaz-Olmo-3-7B-Instruct-abliterated` | 7B | 4.5 GB | ✅ ~55 TPS |
+| `huihui-ai/Huihui-Qwen3.8-27B-abliterated` (Base BF16) | 27B | ~54 GB | ❌ Needs 64GB+ (Use 4-bit MLX version on 24GB) |
+| `mlx-community/gemma-4-26b-a4b-it-4bit` | 26B MoE | 14.5 GB | ❌ Gibberish output |
+| `mlx-community/Qwen3.6-27B-4bit` | 27B | 14.5 GB | ❌ Gibberish output |
+| `mlx-community/gemma-4-31b-it-4bit` | 31B | 17 GB | ❌ OOM (Needs 32GB+) |
+
+> **Note on 24GB RAM Macs:** 
+> - Unquantized 27B/35B models (~54 GB weights) exceed physical memory. Use MLX 4-bit / Dynamic Quant (DQ) quantized weights (e.g. `AutisticAF/Huihui-Qwen3.8-27B-abliterated-mlx-4Bit`, `Ex0bit/MYTHOS-26B-A4B-PRISM-PRO-DQ-MLX`) which comfortably fit in ~15 GB RAM.
+> - Models > 10GB constrain KV-cache size under heavy multi-turn contexts. Gemm's `TokenBudgetCalculator` automatically calculates and caps context budget based on free system RAM.
 
 ---
 
 ## REST API
 
-Base URL: `http://127.0.0.1:8080`
+Base URL: `http://127.0.0.1:8080` — **no authentication required**.
 
-### POST /api/v1/auth/login
+### Model management
 
 ```bash
-curl -s http://localhost:8080/api/v1/auth/login \
+# List all locally cached models (OpenAI-compatible format)
+curl http://localhost:8080/v1/models
+
+# Currently loaded model + readiness status
+curl http://localhost:8080/v1/models/current
+
+# Hot-swap to a different model at runtime (blocks until loaded)
+curl -s http://localhost:8080/v1/models/load \
   -H "Content-Type: application/json" \
-  -d '{"username": "admin", "password": "admin"}'
+  -d '{"model": "mlx-community/gemma-4-31b-it-4bit"}'
 ```
 
-**Response:**
-```json
-{ "token": "eyJ0eXAiOiJKV1QiLCJhbGci..." }
-```
+`GET /v1/models` returns IDs prefixed with `claude-local/` so Claude Code's automatic model picker adds them. The `display_name` field carries the original HuggingFace repo ID.
 
-### POST /api/v1/generate
+### Raw generation
 
 ```bash
 curl -s http://localhost:8080/api/v1/generate \
-  -H "Authorization: Bearer <TOKEN>" \
   -H "Content-Type: application/json" \
-  -d '{
-    "prompt": "Explain quantum entanglement in one paragraph.",
-    "maxTokens": 256
-  }' | python3 -m json.tool
+  -d '{"prompt": "Explain quantum entanglement.", "maxTokens": 256}'
 ```
-
-**Request Fields:**
 
 | Field | Type | Default | Description |
 |---|---|---|---|
 | `prompt` | string | required | Input text |
-| `maxTokens` | int | 65536 | Max tokens to generate |
+| `maxTokens` | int | 8192 | Max tokens to generate |
 | `temperature` | float | 0.7 | Sampling temperature (0–2) |
-| `topP` | float | 0.9 | Nucleus sampling p |
+| `topP` | float | 0.9 | Nucleus sampling |
 
-**Response:**
-
-```json
-{
-  "generatedText": "Quantum entanglement is a phenomenon...",
-  "promptTokens": 12,
-  "completionTokens": 87,
-  "tokensPerSecond": 24.5,
-  "generationTime": 3.55,
-  "timeToFirstToken": 0.15,
-  "memory": {
-    "peakBytes": 2708605545,
-    "activeBytes": 2639005122,
-    "cacheBytes": 142525990
-  },
-  "finishReason": "stop"
-}
-```
-
----
-
-## Models & Performance
-
-**Tested on Apple Silicon M-series (16-24 GB Unified Memory)**
-
-All models below are verified working with Gemm. Performance metrics: TPS (tokens/sec), TTFT (time to first token), RAM (active memory during inference).
-
-### ⚡ Recommended Models (by use case)
-
-| Use Case | Model | Size | RAM | TPS | TTFT | Model ID |
-|---|---|---|---|---|---|---|
-| **Fastest** 🚀 | Qwen3.5 4B | 4B | 2.3 GB | 92.0 | 0.053s | `mlx-community/Qwen3.5-4B-4bit` |
-| **Balanced** ⚖️ | Qwen3.5 9B OptiQ | 9B | 5.8 GB | 36.9 | 0.212s | `mlx-community/Qwen3.5-9B-OptiQ-4bit` |
-| **Code** 💻 | Qwen2.5-Coder 7B | 7B | 4.1 GB | 59.8 | 0.094s | `mlx-community/Qwen2.5-Coder-7B-Instruct-4bit` |
-| **Flagship** 🏆 | Qwen3.6 27B | 27B | 14.5 GB | 10.8 | 1.959s | `mlx-community/Qwen3.6-27B-4bit` |
-
-### 📦 Model Download
-
-**Models are cached in:** `~/.cache/huggingface/hub/`
+### OpenAI-compatible
 
 ```bash
-# Gemm automatically resolves models from cache
-# Just specify the model ID and it will find it
-
-# Example: Start server with cached model
-gemm serve --model mlx-community/Qwen3.5-4B-4bit --rest
-
-# If model not found, download manually:
-# Method 1: HuggingFace CLI
-huggingface-cli download mlx-community/Qwen3.5-4B-4bit
-
-# Method 2: Git clone
-git clone https://huggingface.co/mlx-community/Qwen3.5-4B-4bit \
-  ~/.cache/huggingface/hub/models--mlx-community--Qwen3.5-4B-4bit/snapshots/main
+curl -s http://localhost:8080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "gemm",
+    "messages": [{"role": "user", "content": "Hello"}],
+    "stream": true
+  }'
 ```
 
-### 🧪 All Verified Models
+Supports streaming SSE, system prompts, and multi-turn conversation. Sending a HuggingFace model ID in the `"model"` field triggers a hot-swap automatically.
 
-#### Qwen3.5 / Qwen3.6 (Alibaba, April 2026) - **Recommended**
-- ✅ `mlx-community/Qwen3.5-4B-4bit` — 4B, 2.3 GB, **92 TPS** ⚡ Best speed
-- ✅ `mlx-community/Qwen3.5-9B-OptiQ-4bit` — 9B, 5.8 GB, 37 TPS (best quantization)
-- ✅ `mlx-community/Qwen3.6-27B-4bit` — 27B, 14.5 GB, 11 TPS (newest flagship)
-
-#### Qwen2.5-Coder (code generation)
-- ✅ `mlx-community/Qwen2.5-Coder-7B-Instruct-4bit` — 7B, 4.1 GB, **60 TPS** 💻
-
-#### Gemma 4 (Google) - Original models
-- ✅ `mlx-community/gemma-4-e2b-it-4bit` — 2B, ~2.7 GB RAM 
-- ✅ `mlx-community/gemma-4-e4b-it-4bit` — 4B, ~4.3 GB RAM 
-- ✅ `mlx-community/gemma-4-26b-a4b-it-4bit` — 26B, ~14.5 GB RAM (MoE experts skipped for stability)
-- ✅ `mlx-community/gemma-4-31b-it-4bit` — 31B, ~17 GB RAM (Full support, broadcast_shapes resolved)
-
-> **Note:** Gemma 4 31B is fully supported. For the 26B MoE model, specific MoE keys are bypassed to allow loading on current hardware, running as a dense model fallback.
-
----
-
-## Troubleshooting
-
-### Command not found: `gemm`
-
-**Problem:** Running `gemm` in terminal does nothing.
-
-**Solution:** The binary is called `Gemm`. You have three options:
+### Anthropic-compatible
 
 ```bash
-# Option 1: Create an alias (add to ~/.zshrc or ~/.bashrc)
-alias gemm="swift run Gemm"
-
-# Option 2: Copy to system PATH
-sudo cp .build/release/Gemm /usr/local/bin/gemm
-
-# Option 3: Run with full path
-.build/release/Gemm --help
-
-# Option 4: Use swift run (no installation needed)
-swift run Gemm --help
+curl -s http://localhost:8080/v1/messages \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "gemm",
+    "max_tokens": 1024,
+    "messages": [{"role": "user", "content": "Hello"}]
+  }'
 ```
 
-### Model not found
+Implements the full Anthropic SSE event sequence (`message_start`, `content_block_start`, `content_block_delta`, `message_stop`). Accepts plain-string and block-array content formats.
 
-**Problem:** `Error: Model not found at path...`
+### WebSocket streaming
 
-**Solution:** Download the model first:
-
-```bash
-# Check where models are cached
-ls -la ~/.cache/huggingface/hub/
-
-# Download model
-huggingface-cli download mlx-community/Qwen3.5-4B-4bit
-
-# Or use git
-git clone https://huggingface.co/mlx-community/Qwen3.5-4B-4bit \
-  ~/.cache/huggingface/hub/models--mlx-community--Qwen3.5-4B-4bit/snapshots/main
+```js
+const ws = new WebSocket("ws://localhost:8080/ws/generate");
+ws.send(JSON.stringify({ prompt: "Hello", maxTokens: 512 }));
+ws.onmessage = e => console.log(JSON.parse(e.data));
 ```
 
-### Out of Memory errors
+### Swagger UI
 
-**Problem:** Server crashes with OOM (Out of Memory)
-
-**Solution:** Use a smaller model or configure dynamic token budgeting:
-
-```bash
-# For 8GB RAM - use 4B model
-gemm serve --model mlx-community/Qwen3.5-4B-4bit
-
-# For 16GB RAM - use 9B model
-gemm serve --model mlx-community/Qwen3.5-9B-OptiQ-4bit
-
-# For 24GB+ RAM - use 27B model
-gemm serve --model mlx-community/Qwen3.6-27B-4bit
-```
-
-**Token budgeting is automatic:**
-- 8GB RAM → max ~65k tokens
-- 16GB RAM → max ~128k tokens
-- 32GB+ RAM → max 128k tokens (capped)
-
-### Slow performance
-
-**Problem:** Low TPS (tokens per second)
-
-**Checklist:**
-- ✅ Are you using the release build? `swift build -c release`
-- ✅ Is Metal GPU acceleration enabled? (automatic on Apple Silicon)
-- ✅ Is the model quantized (4bit)? Check model name ends with `-4bit`
-- ✅ Do you have enough RAM? See model requirements above
-- ✅ Close other heavy apps (Chrome, Docker, etc.)
-
-**Benchmark your hardware:**
-```bash
-swift run PerformanceBenchmark --model mlx-community/Qwen3.5-4B-4bit
-```
-
-Expected TPS on M-series:
-- M1/M2: 70-90 TPS (4B model)
-- M3/M4: 90-110 TPS (4B model)
-
-### Build failures
-
-**Problem:** Swift build errors
-
-**Solution:**
-```bash
-# Clean build
-swift package clean
-rm -rf .build
-
-# Update dependencies
-swift package update
-
-# Rebuild
-swift build -c release
-
-# If still failing, check Swift version
-swift --version  # Should be 6.0+
-```
-
-### Port already in use
-
-**Problem:** `Error: Address already in use (port 8080)`
-
-**Solution:**
-```bash
-# Find process using port 8080
-lsof -i :8080
-
-# Kill the process
-kill -9 <PID>
-
-# Or use a different port
-gemm serve --model <model> --rest --port 8081
-```
+Visit `http://localhost:8080/swagger` for interactive API docs.
 
 ---
 
 ## Claude Code Integration
 
-Gemm реализует Anthropic Messages API (`/v1/messages`) без авторизации, что позволяет Claude Code работать полностью локально — без интернета и без подписки Anthropic.
-
-### 1. Запустить сервер
+### Option A — environment variables (per terminal session)
 
 ```bash
-gemm serve --model mlx-community/gemma-4-31b-it-4bit --rest
-```
+# Start Gemm
+.build/release/gemm serve --model mlx-community/Qwen3.5-4B-4bit --rest
 
-### 2. Подключить Claude Code
-
-```bash
-export ANTHROPIC_API_KEY=local          # любая непустая строка
-export ANTHROPIC_BASE_URL=http://localhost:8080
-
-claude                                  # весь трафик идёт на локальный Gemm
-```
-
-Добавить в `~/.zshrc` для постоянного использования:
-
-```bash
-echo 'export ANTHROPIC_API_KEY=local' >> ~/.zshrc
-echo 'export ANTHROPIC_BASE_URL=http://localhost:8080' >> ~/.zshrc
-```
-
-### Доступные endpoint'ы (без авторизации)
-
-| Метод | Путь | Описание |
-|---|---|---|
-| `POST` | `/v1/messages` | Anthropic Messages API, streaming через SSE |
-| `GET` | `/v1/models` | Список загруженной модели |
-| `POST` | `/v1/chat/completions` | OpenAI chat format, streaming поддерживается |
-| `POST` | `/v1/generate` | Сырой prompt без авторизации |
-
-### Быстрая проверка
-
-```bash
-# Проверить Anthropic endpoint
-curl -s http://localhost:8080/v1/messages \
-  -H "Content-Type: application/json" \
-  -H "x-api-key: local" \
-  -d '{
-    "model": "gemma-4-31b-it-4bit",
-    "max_tokens": 64,
-    "messages": [{"role": "user", "content": "Hello!"}]
-  }' | python3 -m json.tool
-
-# Streaming
-curl -s http://localhost:8080/v1/messages \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "gemma-4-31b-it-4bit",
-    "max_tokens": 256,
-    "messages": [{"role": "user", "content": "Count to 5."}],
-    "stream": true
-  }'
-```
-
-### Рекомендуемая модель для кода
-
-`Qwen2.5-Coder-7B` даёт лучшие результаты для задач программирования:
-
-```bash
-gemm serve --model mlx-community/Qwen2.5-Coder-7B-Instruct-4bit --rest
-export ANTHROPIC_API_KEY=local
-export ANTHROPIC_BASE_URL=http://localhost:8080
+# In another terminal — scope vars only to this claude process
+ANTHROPIC_BASE_URL=http://localhost:8080 \
+ANTHROPIC_AUTH_TOKEN=local \
 claude
 ```
 
+`ANTHROPIC_AUTH_TOKEN` sends as `Authorization: Bearer local` (not `x-api-key`), so your real `ANTHROPIC_API_KEY` is never touched.
+
+### Option B — shell function (add to `~/.zshrc`)
+
+```bash
+function gemm-claude() {
+  ANTHROPIC_BASE_URL=http://localhost:8080          \
+  ANTHROPIC_AUTH_TOKEN=local                        \
+  ANTHROPIC_DEFAULT_HAIKU_MODEL=mlx-community/gemma-4-e4b-it-4bit    \
+  ANTHROPIC_DEFAULT_SONNET_MODEL=mlx-community/Qwen3.5-4B-4bit       \
+  ANTHROPIC_DEFAULT_OPUS_MODEL=mlx-community/gemma-4-31b-it-4bit     \
+  claude "$@"
+}
+
+gemm-claude                   # sonnet alias → Qwen 4B
+gemm-claude --model haiku     # haiku alias → Gemma 4B (fastest)
+gemm-claude --model opus      # opus alias → Gemma 31B (strongest)
+```
+
+### Option C — `./Gemma` launcher
+
+Starts the server and Claude Code in one command (see Quick Start above).
+
+### Model discovery
+
+Claude Code (v2.1.126+) queries `GET /v1/models` at startup and adds returned models to the `/model` picker — but only if the ID starts with `claude` or `anthropic`. Gemm returns IDs in `claude-local/<hf-id>` form so discovery works automatically.
+
 ---
 
-## MCP Integration (Cursor / Claude)
+## OpenCode Integration
 
-Add to your MCP config (`~/.cursor/mcp.json` or similar):
+[OpenCode](https://github.com/opencode-ai/opencode) is a terminal-native AI coding agent. Gemm provides a native OpenAI-compatible API (`/v1/chat/completions`, `/v1/models`) and Anthropic-compatible API that connects directly to OpenCode without cloud dependencies or API keys.
+
+### 1. Start Gemm Server
+
+Start Gemm with your desired local model (e.g. Huihui Qwen3.8 Abliterated, Ex0bit MYTHOS 26B, or Qwen3.5 4B):
+
+```bash
+# High capability (Abliterated / MoE)
+.build/release/gemm serve --model AutisticAF/Huihui-Qwen3.8-27B-abliterated-mlx-4Bit --rest
+
+# Or fast coding model
+.build/release/gemm serve --model mlx-community/Qwen2.5-Coder-7B-Instruct-4bit --rest
+```
+
+### 2. Connect OpenCode
+
+#### Option A — Terminal Environment Variables
+
+```bash
+# In your project folder:
+OPENAI_BASE_URL=http://localhost:8080/v1 \
+OPENAI_API_KEY=local \
+OPENAI_MODEL=gemm \
+opencode
+```
+
+#### Option B — OpenCode Configuration File (`~/.config/opencode/config.json` or `opencode.json`)
+
+```json
+{
+  "provider": "openai",
+  "base_url": "http://localhost:8080/v1",
+  "api_key": "local",
+  "model": "gemm",
+  "temperature": 0.7,
+  "max_tokens": 16384
+}
+```
+
+#### Option C — Shell Alias (add to `~/.zshrc`)
+
+```bash
+function gemm-opencode() {
+  OPENAI_BASE_URL=http://localhost:8080/v1 \
+  OPENAI_API_KEY=local \
+  OPENAI_MODEL=gemm \
+  opencode "$@"
+}
+```
+
+---
+
+## Downloading Models (mlx-community, huihui-ai, Ex0bit)
+
+Gemm can browse, inspect, and download models from any creator or organization on Hugging Face:
+
+```bash
+# List models by author
+gemm models list --author Ex0bit
+gemm models list --author huihui-ai
+gemm models list --author mlx-community
+
+# Search with filters
+gemm models list --author Ex0bit --search PRISM
+gemm models list --search Huihui-Qwen3.8
+
+# Download specific models
+gemm models download AutisticAF/Huihui-Qwen3.8-27B-abliterated-mlx-4Bit
+gemm models download Ex0bit/MYTHOS-26B-A4B-PRISM-PRO-DQ-MLX
+gemm models download Ex0bit/Qwen3.6-35B-A3B-PRISM-MLX-NVFP4
+
+# Interactive picker with custom author
+gemm models download --author Ex0bit
+```
+
+---
+
+## MCP Integration (Claude Desktop / Cursor)
+
+Add to your MCP config (`~/.config/claude/claude_desktop_config.json`):
 
 ```json
 {
   "mcpServers": {
     "gemm": {
-      "command": "/usr/local/bin/gemm",
-      "args": [
-        "serve",
-        "--model", "mlx-community/Qwen3.5-4B-4bit",
-        "--mcp"
-      ]
+      "command": "/path/to/.build/release/gemm",
+      "args": ["serve", "--model", "mlx-community/Qwen3.5-4B-4bit", "--mcp"]
     }
   }
 }
 ```
 
-**Or with swift run:**
-```json
-{
-  "mcpServers": {
-    "gemm": {
-      "command": "swift",
-      "args": [
-        "run",
-        "--package-path", "/Users/yourname/projects/mlx",
-        "Gemm",
-        "serve",
-        "--model", "mlx-community/Qwen3.5-4B-4bit",
-        "--mcp"
-      ]
-    }
-  }
-}
-```
+Available MCP tools:
 
-**Available MCP Tools:**
-- `gemm_status` - Get server health and model info
-- `gemm_generate` - Generate text with streaming support
-- `gemm_list_tools` - List available tools
+| Tool | Description |
+|---|---|
+| `gemma_generate` | Generate text — `prompt`, `maxTokens`, `temperature`, `topP` |
+| `gemma_status` | Returns server readiness, version, and current model |
+| `playwright_screenshot` | Capture a webpage screenshot via Playwright |
+| `gemma_add_knowledge` | Inject custom context into the session |
 
 ---
 
-## Development
-
-### Running Tests
-
-Gemm has comprehensive test coverage with TDD approach:
-
-```bash
-# Run all tests (101 tests, ~3 seconds)
-swift test
-
-# Run specific test suite
-swift test --filter OrchestratorTests
-swift test --filter RESTServerTests
-swift test --filter AuthServiceTests
-
-# Run with coverage
-swift test --enable-code-coverage
-```
-
-**Current Test Stats:**
-- ✅ **101 tests** passing
-- ✅ **80% integration coverage** (Epic 2)
-- ✅ **100% unit coverage** for core modules
-- ✅ **3.2s** total test duration
-- ✅ **Swift 6 strict concurrency** - no data races
-
-**Test Suites:**
-- Unit Tests: ModelOrchestrator, InferenceEngine, AuthService
-- Integration Tests: REST API, MCP Server, Concurrent operations
-- Actor Isolation: Deadlock prevention, reentrancy handling
-- Database: SQLite session store with concurrent access
-
-### Performance Benchmarking
-
-```bash
-# Run standard benchmark
-swift run PerformanceBenchmark \
-  --model mlx-community/Qwen3.5-4B-4bit \
-  --iterations 10 \
-  --tokens 100
-
-# Context degradation profiling
-swift run PerformanceBenchmark \
-  --model mlx-community/Qwen3.5-4B-4bit \
-  --profile-context \
-  --output degradation.json
-```
-
-**Benchmark Metrics:**
-- TPS (Tokens Per Second)
-- TTFT (Time To First Token)
-- Memory usage (peak, active, cache)
-- Context degradation (1k → 128k tokens)
-- Statistical analysis (avg, min, max, σ)
-
-### Project Structure
+## Project Structure
 
 ```
 Sources/
-├── Gem/              # Main logic library
-│   ├── CLI/                  # Command-line interface
-│   │   ├── ServeCommand.swift
-│   │   ├── ChatCommand.swift
-│   │   └── ModelsCommand.swift
-│   ├── Core/                 # Business logic
-│   │   ├── ModelOrchestratorActor.swift
-│   │   ├── MLXInferenceEngine.swift
-│   │   ├── AuthService.swift
-│   │   └── GemError.swift
-│   ├── REST/                 # REST API server
-│   │   ├── RESTServer.swift
-│   │   ├── Controllers/
-│   │   └── Middleware/
-│   ├── MCP/                  # MCP stdio server
-│   │   └── MCPServer.swift
-│   ├── Config/               # Configuration
-│   │   └── ServerConfig.swift
-│   └── Utils/                # Utilities
-│       ├── ModelCache.swift
-│       ├── HuggingFaceHub.swift
-│       └── TokenBudgetCalculator.swift
-├── GemBin/           # Thin executable wrapper (Gemm)
-├── PerformanceBenchmark/     # Benchmark tool
-└── GemTests/         # Test suite (101 tests)
+  Gem/                      — GemCore library (all logic, importable by tests)
+    App/                    — Entry point: CLI root command + routing
+    CLI/                    — Subcommands: chat, serve, models, fit, cloud, onboard
+    Cloud/                  — OpenRouter / cloud model fallback (CostTracker, ModelRouter)
+    Config/                 — ServerConfig value type
+    Core/                   — Inference engine, orchestrator, DTOs, errors, utilities
+    MCP/                    — MCP JSON-RPC 2.0 stdio server
+    REST/                   — Hummingbird 2.x HTTP server
+      Middleware/            — (stubs — auth/JWT removed)
+    UI/                     — Terminal UI: Markdown, spinner, progress bar, diff, table
+  GemBin/                   — Thin executable wrapper: calls GemCore.GemCLI.main()
+  PerformanceBenchmark/     — Standalone benchmark CLI target
+
+Tests/
+  GemTests/                 — Unit + integration tests
+    CLITests/               — FitCommand, PromptContextBuilder
+    CloudTests/             — CostTracker, ModelRouter, OpenRouterClient
+    UI/                     — DiffRenderer
+    UITests/                — Clipboard, Markdown, ProgressBar, Spinner, Table, TerminalUI
+    MockInferenceEngine.swift — Controllable mock for orchestrator tests
+
+Gemma                       — Executable Swift launcher (build + serve + claude)
+scripts/                    — Build and maintenance Swift scripts
+docs/                       — Extended documentation
 ```
 
-### Top-level Directories (Purpose)
+### Source file count (by module)
 
-- `Sources/` — production Swift code (CLI, Core, REST, MCP, benchmark entrypoints)
-- `Tests/` — automated unit and integration tests
-- `scripts/` — operational scripts (versioning, security audit, cleanup, archiving)
-- `docs/` — architecture and supporting project documentation
-- `logs/`, `images/`, `reports/` — automatically generated artifacts (logs, screenshots/videos, HTML reports). These can be safely cleaned up using the cleanup script.
-- `.github/` — CI workflows and GitHub metadata
-- `Formula/` — Homebrew packaging artifacts
-- `.build/`, `.swiftpm/` — local build/package artifacts (not for release commits)
-
-### Operational Scripts
-
-The `scripts/` directory contains useful utilities built with Swift. They are covered by the automated test suite to ensure reliability. 
-All scripts support `--help` for usage details, `--dry-run` to test safely, and `--verbose` for debug logging.
-
-- `./scripts/build_metal.swift`: Compiles custom Metal shaders.
-- `./scripts/clean_for_github.swift`: Cleans temporary/local artifacts.
-- `./scripts/cleanup.swift`: Cleans up `logs/`, `images/`, and `reports/` older than 24 hours. Intended to be run at the end of the day or via a scheduled cron job.
-- `./scripts/installer.swift`: Automates local installation. Supports `--non-interactive` to skip user prompts in CI environments.
-
-### Pre-publish Cleanup (GitHub)
-
-Before pushing/releasing, clean local build/runtime artifacts:
-
-```bash
-# 1) Preview what will be removed
-./scripts/clean_for_github.sh --dry-run
-
-# 2) Apply cleanup for build/runtime artifacts
-./scripts/clean_for_github.sh --apply
-
-# 3) Optional: also remove local-only helper artifacts
-./scripts/clean_for_github.sh --apply --include-local
-```
-
-`--include-local` additionally targets local working artifacts such as `.archive/`, `.claude/`, `.gemini.md`, and root-level `test_*.swift` files.
-
-### Contributing
-
-1. **TDD Workflow** - Write tests first
-2. **Swift 6** - Use strict concurrency
-3. **Actor Isolation** - All mutable state in actors
-4. **Type Safety** - Leverage Swift's type system
-5. **Test Coverage** - Maintain 100% for new code
-
-See [TEST.md](TEST.md) for detailed testing roadmap.  
-See [PLAN.md](PLAN.md) for product roadmap and epic breakdown.
-
----
-
-## Dependencies
-
-| Package | Version | Purpose |
+| Module | Files | Role |
 |---|---|---|
-| `ml-explore/mlx-swift` | 0.31.3 | MLX core + Metal ops |
-| `ml-explore/mlx-swift-lm` | 3.31.3 | MLXLLM inference engine |
-| `hummingbird-project/hummingbird` | 2.6.0 | HTTP server (REST/A2A) |
-| `hummingbird-project/hummingbird-auth` | 2.0.0 | Authentication middleware |
-| `stephencelis/SQLite.swift` | 0.16.0 | Local SQLite database for auth |
-| `vapor/jwt-kit` | 4.13.0 | JWT generation and verification |
-| `apple/swift-crypto` | 3.0.0 | Password hashing |
-| `apple/swift-argument-parser` | 1.5.0 | CLI subcommands |
+| `App/` | 1 | CLI entry point |
+| `CLI/` | 10 | Subcommands |
+| `Cloud/` | 4 | Cloud routing + cost tracking |
+| `Config/` | 1 | Server configuration |
+| `Core/` | 13 | Inference engine, orchestrator, DTOs, errors |
+| `MCP/` | 1 | MCP stdio server |
+| `REST/` | 7 | HTTP controllers + WebSocket |
+| `UI/` | 9 | Terminal rendering |
+| `GemBin/` | 1 | Executable wrapper |
+| `PerformanceBenchmark/` | 1 | Benchmark CLI |
+| **Total** | **48** | |
+
+*(4 stubs with `// removed` content remain in `REST/Middleware/` and `UI/SwiftUI/` — they are empty placeholders kept for git history continuity.)*
 
 ---
 
-## FAQ
+## Architecture Notes
 
-### Q: MLX error: Failed to load the default metallib. library not found...
-If you see an error like this when starting the server or running `swift test`:
-```
-MLX error: Failed to load the default metallib. library not found library not found library not found library not found  at /path/to/.build/checkouts/mlx-swift/Source/Cmlx/mlx-c/mlx/c/stream.cpp:115
-```
-**A:** This happens because the pre-compiled Metal shader library (`default.metallib`) is missing or was cleaned up. You can easily fix this by regenerating it. Run the following command from the root of the project:
-```bash
-./scripts/build_metal.swift
-```
-This script compiles all Metal kernels and copies the generated `default.metallib` into your project root and `.build/debug/` directory, satisfying MLX Swift's requirements.
+**Dynamic Quantization & MoE** — `MLXInferenceEngine` automatically parses `config.json` to detect 2/3/4/8-bit quantization and dynamically switches between Dense and Sparse MoE (Mixture of Experts) architectures (e.g. using highly optimized `SwitchGLU` Metal kernels).
+
+**Actor isolation** — `ModelOrchestratorActor` is a Swift 6 actor. All inference calls are serialised (FIFO) without explicit locking. Both MCP and REST share one actor instance.
+
+**Model hot-swap** — `switchModel(to:)` resolves the HuggingFace repo ID from the local cache, unloads the current model (`container = nil` + `MLX.GPU.clearCache()`), then loads the new weights. The actor ensures in-flight requests finish before the swap begins.
+
+**Timeout protection** — every `generate` and `generateStream` call is wrapped in a 5-minute timeout with cooperative Task cancellation, preventing model hangs from blocking the server indefinitely.
+
+**Streaming** — Hummingbird 2's `AsyncStream<ByteBuffer>` response body is used for both SSE formats: OpenAI (`data: {...}`) and Anthropic (`event: content_block_delta`).
+
+**Think-block stripping** — `generateStream` runs a state machine to suppress `<think>...</think>` reasoning blocks before forwarding tokens to clients.
+
+**ID translation** — `ModelsController` translates between HuggingFace repo IDs (`mlx-community/Qwen3.5-4B-4bit`) and the `claude-local/mlx-community--Qwen3.5-4B-4bit` form required by Claude Code's model discovery filter. Both forms are accepted in API requests.
 
 ---
 
-## Maintenance
+## Maintenance Scripts
 
-### Daily Cleanup
-To keep your workspace clean, use the provided daily cleanup script:
-```bash
-./scripts/cleanup_daily.swift
-```
-This removes all temporary files from `logs/`, `images/`, and `reports/`.
+| Script | Purpose |
+|---|---|
+| `scripts/build_metal.swift` | Compile Metal GPU kernels (skips if up to date) |
+| `scripts/cleanup.swift` | Clean build artifacts and temp files |
+| `scripts/cleanup_daily.swift` | Rotate logs and old benchmarks |
+| `scripts/archive.sh` | Archive logs/reports/screenshots |
+| `scripts/clean_for_github.swift` | Remove secrets and heavy binaries before push |

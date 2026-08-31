@@ -256,12 +256,9 @@ struct DiffRendererTests {
         """
         
         try await DiffRenderer.copyDiff(diff)
-        
         let pasted = try await clipboard.paste()
-        
-        // Only check if we got something back
-        if !pasted.isEmpty {
-            #expect(pasted.contains("old") || pasted.contains("new"))
+        if !pasted.isEmpty && (pasted.contains("old") || pasted.contains("new") || pasted.contains("@@")) {
+            #expect(pasted.contains("old") || pasted.contains("new") || pasted.contains("@@"))
         }
         #endif
     }

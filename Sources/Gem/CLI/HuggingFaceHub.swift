@@ -17,16 +17,36 @@ struct HFModelInfo: Codable, Sendable {
     var org: String  { id.components(separatedBy: "/").first ?? id }
     var name: String { id.components(separatedBy: "/").last  ?? id }
 
-    // Extracts "4bit" / "8bit" / "bf16" from the model name
+    // Extracts "4bit" / "8bit" / "nvfp4" / "dq" / "fp8" / "bf16" from the model name
     var quantization: String {
-        let parts = name.lowercased().components(separatedBy: "-")
-        return parts.last(where: { $0.hasSuffix("bit") || $0 == "bf16" }) ?? "unknown"
+        let lower = name.lowercased()
+        let parts = lower.components(separatedBy: CharacterSet(charactersIn: "-_."))
+        
+        if parts.contains("nvfp4") || lower.contains("nvfp4") { return "nvfp4" }
+        if parts.contains("dq") || lower.contains("-dq") || lower.contains("_dq") { return "dq" }
+        if parts.contains("fp8") || lower.contains("fp8") { return "fp8" }
+        if parts.contains("bf16") || lower.contains("bf16") { return "bf16" }
+        if parts.contains("fp16") || lower.contains("fp16") { return "fp16" }
+        if lower.contains("oq4e") { return "oq4e" }
+        if lower.contains("oq6e") { return "oq6e" }
+        if lower.contains("oq8e") { return "oq8e" }
+        
+        if let bitTag = parts.last(where: { $0.hasSuffix("bit") }) {
+            return bitTag
+        }
+        if let qTag = parts.first(where: { $0.hasPrefix("q") && $0.count <= 6 && $0 != "qwen" && $0 != "qwen2" && $0 != "qwen3" }) {
+            return qTag
+        }
+        return "unknown"
     }
 
-    // Approximate parameter count from name: e2b→2B, 31b→31B
+    // Approximate parameter count from name: e2b→2B, 31b→31B, 27b→27B, 35b→35B
     var parameterSize: String {
-        let parts = name.lowercased().components(separatedBy: "-")
-        if let sizeTag = parts.first(where: { $0.count <= 4 && $0.contains("b") && $0 != "it" }) {
+        let lower = name.lowercased()
+        let parts = lower.components(separatedBy: CharacterSet(charactersIn: "-_."))
+        if let sizeTag = parts.first(where: {
+            $0.count <= 6 && $0.hasSuffix("b") && $0 != "it" && $0 != "hub" && $0 != "web" && $0 != "bit" && !$0.hasSuffix("bit")
+        }) {
             let digits = sizeTag.filter { $0.isNumber || $0 == "." }
             if !digits.isEmpty { return "\(digits)B" }
         }
@@ -111,7 +131,7 @@ actor HuggingFaceHub {
     /// Lists MLX community models sorted by downloads.
     func listModels(
         author: String = "mlx-community",
-        search: String = "gemma-4",
+        search: String = "",
         quant: String? = nil,
         limit: Int = 20
     ) async throws -> [HFModelInfo] {
@@ -160,8 +180,11 @@ actor HuggingFaceHub {
     // MARK: — Download
 
     /// Downloads all files for a model repo into the HF cache.
+    /// `subfolder` restricts the download to one directory inside the repo
+    /// (e.g. "2bit" for repos that ship several quantizations side by side).
     func download(
         repoId: String,
+        subfolder: String? = nil,
         token: String? = nil,
         onFile: @Sendable @escaping (String, Int64, Int64) -> Void
     ) async throws -> URL {
@@ -172,7 +195,12 @@ actor HuggingFaceHub {
         try FileManager.default.createDirectory(at: destDir, withIntermediateDirectories: true)
 
         let filesToDownload = siblings.map(\.rfilename).filter { name in
-            !name.hasSuffix(".gguf")
+            guard !name.hasSuffix(".gguf") else { return false }
+            guard let subfolder else { return true }
+            return name.hasPrefix("\(subfolder)/")
+        }
+        guard !filesToDownload.isEmpty else {
+            throw HFError.modelNotFound(subfolder.map { "\(repoId)/\($0)" } ?? repoId)
         }
 
         try await withThrowingTaskGroup(of: Void.self) { group in
@@ -208,7 +236,7 @@ actor HuggingFaceHub {
             }
             for try await _ in group {}
         }
-        return destDir
+        return subfolder.map { destDir.appendingPathComponent($0) } ?? destDir
     }
 
     // MARK: — Private

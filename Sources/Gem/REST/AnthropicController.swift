@@ -63,10 +63,40 @@ struct AnthropicController: Sendable {
         }
     }
 
+    /// system can be a plain string OR an array of content blocks (beta API format)
+    enum SystemPrompt: Codable, Sendable {
+        case text(String)
+        case blocks([ContentBlock])
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.singleValueContainer()
+            if let str = try? c.decode(String.self) {
+                self = .text(str)
+            } else {
+                self = .blocks((try? c.decode([ContentBlock].self)) ?? [])
+            }
+        }
+
+        func encode(to encoder: Encoder) throws {
+            var c = encoder.singleValueContainer()
+            switch self {
+            case .text(let s):   try c.encode(s)
+            case .blocks(let b): try c.encode(b)
+            }
+        }
+
+        var textValue: String {
+            switch self {
+            case .text(let s):   return s
+            case .blocks(let b): return b.compactMap(\.text).joined(separator: "\n")
+            }
+        }
+    }
+
     struct MessagesRequest: Codable, Sendable {
         let model: String?
         let messages: [Message]
-        let system: String?
+        let system: SystemPrompt?
         let maxTokens: Int?
         let temperature: Double?
         let topP: Double?
@@ -109,17 +139,22 @@ struct AnthropicController: Sendable {
     // MARK: — POST /v1/messages
 
     @Sendable
-    func messages(request: Request, context: GemmaRequestContext) async throws -> Response {
+    func messages(request: Request, context: BasicRequestContext) async throws -> Response {
         // Accept any Authorization header (or none) — no validation in local mode
         let dto: MessagesRequest
         do {
             let buffer = try await request.body.collect(upTo: 4 * 1024 * 1024)
             let data = Data(buffer.readableBytesView)
-            dto = try JSONDecoder().decode(MessagesRequest.self, from: data)
-        } catch {
-            return errorResponse(status: .badRequest,
-                                 message: "Invalid JSON: \(error.localizedDescription)",
-                                 type: "invalid_request_error")
+            let raw = String(data: data, encoding: .utf8) ?? "<non-utf8>"
+            try? raw.write(toFile: "/tmp/gemm_anthropic_request.json", atomically: true, encoding: .utf8)
+            do {
+                dto = try JSONDecoder().decode(MessagesRequest.self, from: data)
+            } catch {
+                fputs("🔴 [Anthropic] decode error: \(error)\nBody: \(raw.prefix(400))\n", stderr)
+                return errorResponse(status: .badRequest,
+                                     message: "Decode error: \(error.localizedDescription)",
+                                     type: "invalid_request_error")
+            }
         }
 
         guard !dto.messages.isEmpty else {
@@ -136,12 +171,14 @@ struct AnthropicController: Sendable {
             topP: dto.topP ?? 0.9
         )
 
+        let requestedModel = dto.model.map { ModelsController.hfRepoId(from: $0) }  // strip claude-local/ prefix if present
+
         if dto.stream == true {
-            return streamMessagesResponse(genRequest: genRequest, model: dto.model ?? modelId)
+            return streamMessagesResponse(genRequest: genRequest, model: dto.model ?? modelId, requestedModel: requestedModel)
         }
 
         do {
-            let result = try await orchestrator.generate(request: genRequest)
+            let result = try await orchestrator.generate(request: genRequest, modelId: requestedModel)
             let response = MessagesResponse(
                 id: "msg_\(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(24))",
                 type: "message",
@@ -165,17 +202,17 @@ struct AnthropicController: Sendable {
 
     // MARK: — Streaming (Anthropic SSE format)
 
-    private func streamMessagesResponse(genRequest: GenerationRequest, model: String) -> Response {
+    private func streamMessagesResponse(genRequest: GenerationRequest, model: String, requestedModel: String? = nil) -> Response {
         let headers: HTTPFields = [
             .contentType: "text/event-stream",
             .cacheControl: "no-cache",
             .connection: "keep-alive"
         ]
-        let body = ResponseBody(asyncSequence: anthropicSSEStream(genRequest: genRequest, model: model))
+        let body = ResponseBody(asyncSequence: anthropicSSEStream(genRequest: genRequest, model: model, requestedModel: requestedModel))
         return Response(status: .ok, headers: headers, body: body)
     }
 
-    private func anthropicSSEStream(genRequest: GenerationRequest, model: String) -> AsyncStream<ByteBuffer> {
+    private func anthropicSSEStream(genRequest: GenerationRequest, model: String, requestedModel: String? = nil) -> AsyncStream<ByteBuffer> {
         AsyncStream { continuation in
             Task {
                 let msgId = "msg_\(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(24))"
@@ -216,7 +253,7 @@ struct AnthropicController: Sendable {
                 var outputTokens = 0
 
                 do {
-                    let stream = try await orchestrator.generateStream(request: genRequest)
+                    let stream = try await orchestrator.generateStream(request: genRequest, modelId: requestedModel)
                     for await chunk in stream {
                         if case .text(let text) = chunk {
                             outputTokens += 1
@@ -258,11 +295,12 @@ struct AnthropicController: Sendable {
     /// Converts Anthropic messages + system prompt into a flat string.
     /// MLX engine wraps it in UserInput(chat: [.user(prompt)]) and applies
     /// the model's own chat template on top.
-    private func buildPrompt(system: String?, messages: [Message]) -> String {
+    private func buildPrompt(system: SystemPrompt?, messages: [Message]) -> String {
         var parts: [String] = []
 
-        if let system, !system.isEmpty {
-            parts.append("[System]: \(system)")
+        if let system {
+            let text = system.textValue
+            if !text.isEmpty { parts.append("[System]: \(text)") }
         }
 
         for msg in messages {

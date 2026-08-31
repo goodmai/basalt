@@ -139,61 +139,13 @@ public actor ModelOrchestratorActor {
 
         return AsyncStream<StreamChunk> { continuation in
             let task = Task.detached {
-                var inThinkBlock = false
-                var buffer      = ""
-                var jsonBatch   = ""
-                var lastFlush   = Date()
-
                 for await chunk in stream {
                     switch chunk {
                     case .text(let t):
-                        buffer += t
-
-                        // Strip <think>…</think> reasoning blocks
-                        if !inThinkBlock {
-                            let markers = ["<think>", "Thinking Process:\n"]
-                            for marker in markers {
-                                if let r = buffer.range(of: marker) {
-                                    jsonBatch += String(buffer[..<r.lowerBound])
-                                    inThinkBlock = true
-                                    buffer = String(buffer[r.upperBound...])
-                                    break
-                                }
-                            }
-                        }
-
-                        if inThinkBlock {
-                            if let r = buffer.range(of: "</think>") {
-                                inThinkBlock = false
-                                buffer = String(buffer[r.upperBound...])
-                            } else {
-                                if buffer.count > 20 { buffer = String(buffer.suffix(20)) }
-                                continue
-                            }
-                        }
-
-                        // Safe-tail: keep last 20 chars in buffer in case a tag spans chunks
-                        if !inThinkBlock {
-                            let safe = max(0, buffer.count - 20)
-                            if safe > 0 {
-                                jsonBatch += String(buffer.prefix(safe))
-                                buffer = String(buffer.suffix(20))
-                            }
-                        }
-
-                        // Flush every 50 ms or every 10 characters
-                        let now = Date()
-                        if !jsonBatch.isEmpty &&
-                           (now.timeIntervalSince(lastFlush) > 0.05 || jsonBatch.count > 10) {
-                            continuation.yield(.text(jsonBatch))
-                            jsonBatch = ""
-                            lastFlush = now
-                        }
-
+                        continuation.yield(.text(t))
+                    case .reasoning(let r):
+                        continuation.yield(.reasoning(r))
                     case .metadata(let m):
-                        // Flush remaining buffer
-                        let final = jsonBatch + buffer
-                        if !final.isEmpty { continuation.yield(.text(final)) }
                         continuation.yield(.metadata(m))
                     }
                 }
@@ -252,10 +204,9 @@ public actor ModelOrchestratorActor {
     /// Switch model if the requested ID differs from the loaded one.
     /// Ignores nil, empty, and generic placeholder IDs like "gemm".
     private func autoSwitch(to modelId: String?) async throws(GemError) {
-        guard let id = modelId,
-              !id.isEmpty,
-              id != "gemm",
-              id != currentModelId else { return }
+        guard let id = modelId, !id.isEmpty, id != "gemm" else { return }
+        if await engine.isLoaded { return }
+        guard id != currentModelId else { return }
         try await switchModel(to: id)
     }
 
@@ -270,7 +221,7 @@ public actor ModelOrchestratorActor {
     }
 
     private func calculateDynamicMaxTokens() -> Int {
-        min(maxTokens, TokenBudgetCalculator.calculateMaxTokensForSystem(modelSizeMB: modelSizeMB))
+        max(maxTokens, TokenBudgetCalculator.calculateMaxTokensForSystem(modelSizeMB: modelSizeMB))
     }
 
     private func calculateDirectorySize(url: URL) throws -> UInt64 {
@@ -305,9 +256,12 @@ public actor ModelOrchestratorActor {
             group.addTask { try await operation() }
             group.addTask {
                 try await Task.sleep(nanoseconds: ns)
+                try Task.checkCancellation()
                 throw GemError.inferenceError("Timeout after \(seconds)s")
             }
-            let result = try await group.next()!
+            guard let result = try await group.next() else {
+                throw GemError.inferenceError("Operation produced no result")
+            }
             group.cancelAll()
             return result
         }

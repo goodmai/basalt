@@ -1,81 +1,90 @@
-# План разработки Gem CLI (PLAN.md)
+# Gemm — Development Plan
 
-**Продукт:** Сервер инференса LLM для Apple Silicon и мультиагентный роутер.
-**Текущая версия:** v0.5.0-beta
-**Статус:** Активная разработка (Epic 16, 18, 24)
-
----
-
-## Бэклог предстоящих эпиков
-
-### Эпик 18: Rainbow AI Chat UI (Metal Interface) 🌈
-*Детальная спецификация: [docs/EPIC_18_RAINBOW_UI.md](docs/EPIC_18_RAINBOW_UI.md)*
-- [ ] **Metal Renderer**: Высокопроизводительный кастомный UI на базе Metal без UIKit.
-- [ ] **Rainbow Aesthetics**: Анимированные переливы фона, плейсхолдеров и текста.
-- [ ] **Agentic Testing**: Внедрение невидимых маркеров Accessibility для автоматизированного тестирования.
-- [ ] **Rich Rendering**: Отрисовка картинок, блоков кода и diff'ов внутри Metal-конвейера.
-
-### Багфикс Эпик: Rainbow UI Input Fixes 🐛
-- [x] **Нативный NSTextField**: SwiftUI TextField заменен на `NSViewRepresentable` обертку (`NativeInputField`), что решает проблемы с `makeFirstResponder` и отсутствием поля ввода (field editor) в иерархии AppKit.
-- [x] **Фриз первой буквы в интерфейсе чата**: При отправке сообщения (нажатие Enter) строка `@Binding var text` очищалась, но активный `fieldEditor` сохранял "фантомный" введенный символ. Исправлено принудительной очисткой активного `fieldEditor.string` в `updateNSView`.
-- [x] **Нет респонса при стриминге (MainThread starvation)**: `MTKView` обновлялся с помощью кастомного GCD-таймера 60 раз в секунду, который полностью блокировал `DispatchQueue.main` и мешал обработке MLX токенов в `MainActor.run`. Исправлено переводом `MTKView` на нативный цикл (CADisplayLink) и явным вызовом `setNeedsDisplay` при обновлении стейта.
-- [x] **Зависание процесса (Невозможно завершить задачу Gemm)**: Приложение не закрывалось при закрытии окна крестиком (`cmd+w`). В `RainbowAppDelegate` добавлен метод `applicationShouldTerminateAfterLastWindowClosed`, возвращающий `true`.
-- [x] **TDD Покрытие**: Написан набор тестов (`RainbowUIFocusTests` и `RainbowUIGenerationTests`), проверяющих фокус, ввод кириллицы и транзиции состояний генерации.
-
-### Эпик 20: MVI Event-Driven Architecture & UI Bugfixes 🚀
-*Детальная спецификация: [docs/EPIC_20_MVI_EVENT_DRIVEN_ARCHITECTURE.md](docs/EPIC_20_MVI_EVENT_DRIVEN_ARCHITECTURE.md)*
-- [ ] **MVI Architecture**: Разделение на `LLMEnginePort`, `RenderState`, `TokenEvent`.
-- [ ] **Event Bus & Shortcuts**: Перехват и обработка событий ввода (`Ctrl+C`, `Ctrl+D`, `Shift+Tab`, `/btw`).
-- [ ] **Throttling & Performance**: Рендер с ограничением 30 FPS без MainThread starvation.
-- [ ] **UI Rendering Events**: Корректный перенос введенного сообщения в лог чата и отрисовка картинок/diff'ов/tool calls.
-
-### Эпик: OpenClaw Integration — Мультимодальный Роутер 🦾
-*Детальная спецификация: [docs/EPIC_OPENCLAW.md](docs/EPIC_OPENCLAW.md)*
-*Чеклист функций: [docs/specs/CHECKLIST_OPENCLAW.md](docs/specs/CHECKLIST_OPENCLAW.md)*
-- [ ] **OpenClaw Router**: Команда `gem openclaw` для диспетчеризации агентов.
-- [ ] **Audio Pipeline**: Интеграция Whisper (ASR) и TTS для голосового управления.
-- [ ] **Vision & OCR**: Обработка изображений и видео через VLM модели.
-- [ ] **A2A Protocol**: Механизмы поставки данных внешним агентам.
-
-### Эпик: Emoji as Code & Реактивный фидбек ✨
-*Спецификация: [docs/specs/EMOJI_AS_CODE.md](docs/specs/EMOJI_AS_CODE.md)*
-- [ ] **Emoji Standard**: Реализация системы визуальных префиксов на основе Gitmoji.
-- [ ] **Status Animation**: Анимированные эмодзи для длительных процессов.
-- [ ] **Emoji Fallback**: Механизм переключения на текст для не-TTY окружений.
-
-### Эпик: Продвинутые операции с файлами (Clusters 3, 4)
-- [ ] **FileEditTool**: Частичная модификация строк без перезаписи файла.
-- [ ] **GlobTool**: Расширенный поиск по маскам.
-- [ ] **File Locking**: Механизм предотвращения гонок при записи.
-
-### Эпик: Когнитивная память и RAG (Cluster 12)
-- [ ] **MEMORY.md**: Механизм "память как подсказка" на уровне проекта.
-- [ ] **Vector RAG**: Локальный поиск по кодовой базе.
+**Product:** Local LLM inference server for Apple Silicon, designed as a drop-in backend for agentic workflows (Claude Code, MCP, REST).  
+**Current version:** v0.7.0  
+**Status:** Active development
 
 ---
 
-## План релизов
+## Completed
 
-### v0.6.0 (июнь 2026)
-- Реализация OpenClaw Router (базовая команда).
-- Внедрение Emoji as Code.
-- Продвинутые инструменты редактирования файлов.
-
-### v0.7.0 (июль 2026)
-- Аудио-пайплайн (Whisper + TTS).
-- IDE Bridge для VS Code и Zed.
-
-### v1.0.0 (сентябрь 2026)
-- Полная мультимодальность (Vision + Video).
-- Безопасность (Sandboxing, Permissions).
-- Публикация в Mac App Store.
+- [x] MLX inference engine with Gemma 4 and Qwen 3.x support (Apple Silicon Metal GPU)
+- [x] Swift 6 strict concurrency — `ModelOrchestratorActor` with FIFO actor serialisation
+- [x] 5-minute generation timeout with cooperative Task cancellation
+- [x] MCP stdio server (JSON-RPC 2.0) — `gemma_generate`, `gemma_status`, `playwright_screenshot`, `gemma_add_knowledge`
+- [x] REST server (Hummingbird 2.x) — all endpoints public, no auth required
+- [x] OpenAI-compatible `/v1/chat/completions` with SSE streaming
+- [x] Anthropic-compatible `/v1/messages` with full SSE event sequence
+- [x] WebSocket `/ws/generate` streaming
+- [x] Think-block stripping (`<think>...</think>`) in stream output
+- [x] Smart Metal shader build script — skips if `default.metallib` is newer than sources
+- [x] Dynamic token budget calculation based on available RAM
+- [x] Rainbow terminal UI (Markdown, spinner, progress bar, diff renderer, table)
+- [x] Benchmark suite (`PerformanceBenchmark` target) with SQLite result store
+- [x] **Model hot-swap** — `POST /v1/models/load` switches model at runtime; actor serialises with in-flight requests
+- [x] **Proper model unload** — `MLX.GPU.clearCache()` called before loading new model; prevents dual-model peak RAM spike
+- [x] **Model listing** — `GET /v1/models` scans HF cache, returns size + load status; `GET /v1/models/current`
+- [x] **Claude Code model discovery** — `/v1/models` returns `claude-local/<id>` prefix so models appear in `/model` picker
+- [x] **ID translation** — `ModelsController.hfRepoId(from:)` / `claudeLocalId(from:)` handle both ID forms end-to-end
+- [x] **`claude-local/` prefix stripping in controllers** — `AnthropicController` and `OpenAIController` strip prefix before passing to orchestrator
+- [x] **`./Gemma` launcher script** — builds server, waits for readiness, launches Claude Code with local env vars
+- [x] Auth/JWT removed — server is fully public (local-only by design)
+- [x] Dead test files stubbed out (`AuthServiceTests`, `RESTServerTests`, `MetalE2ETests`)
 
 ---
 
-## Метрики успеха
-- **Покрытие тестами:** > 95% для всех новых инструментов.
-- **Производительность:** TTFT < 100мс для локальных моделей 4B.
-- **Безопасность:** 0 критических уязвимостей.
+## Near-term (v0.7.1)
+
+- [ ] **Context window management** — auto-truncate conversation history when approaching context limit to prevent silent truncation errors
+- [ ] **Tool use / function calling** — pass `tools` array through in Anthropic and OpenAI formats; return `tool_use` content blocks
+- [ ] **`gemm models download`** — download a model from HuggingFace directly from the CLI with progress bar
+- [ ] **Delete `// removed` stubs** — `AuthService.swift`, `AuthController.swift`, `JWTAuthenticator.swift`, `RateLimitMiddleware.swift`, `UI/SwiftUI/*.swift` after git history is cleaned; remove empty `Middleware/` directory
+- [ ] **`UICommand` cleanup** — either implement the web UI command or remove it from the CLI entirely
 
 ---
-*Архив выполненных задач: [PLAN_OLD.md](PLAN_OLD.md)*
+
+## Medium-term (v0.8.0)
+
+- [ ] **Structured output** — JSON schema enforcement via constrained decoding
+- [ ] **Embeddings endpoint** — `POST /v1/embeddings` for RAG use cases
+- [ ] **Session logging** — optional request/response logging with configurable rotation
+- [ ] **Multi-model routing** — keep multiple models warm and route by request header or URL prefix
+- [ ] **Homebrew tap** — `brew install gemm`
+
+---
+
+## Architecture Decisions
+
+**No authentication** — local server for personal development. Auth adds attack surface with no benefit on loopback.
+
+**Single actor, two transports** — `ModelOrchestratorActor` is shared between MCP and REST. Swift actor guarantees FIFO without explicit locking.
+
+**Model unload before load** — when hot-swapping, `container = nil` + `MLX.GPU.clearCache()` frees the old model before the new one allocates GPU memory. Without this, both models exist simultaneously (peak = A + B RAM) which causes OOM on constrained hardware.
+
+**Hummingbird 2.x not Vapor** — lighter, Swift 6 native, better `AsyncStream` support.
+
+**MLX not llama.cpp** — Apple Silicon Metal GPU path is significantly faster than CPU paths on macOS.
+
+**Prompt templating** — a flat `[System]/[User]/[Assistant]` string is sent to `UserInput(chat:)`, letting the MLX chat template apply model-specific formatting (Gemma instruction tuning, Qwen ChatML, etc.). Stop tokens are model-defined by the template. Investigate passing structured message arrays directly to `MLXLLM` to avoid double-wrapping.
+
+**ID strategy** — HuggingFace repo IDs (`org/name`) are the canonical form inside the server. The `claude-local/org--name` form exists only at the `/v1/models` API boundary for Claude Code compatibility. All controllers call `ModelsController.hfRepoId(from:)` to normalise before hitting the orchestrator.
+
+---
+
+## Known Issues
+
+- Gemma 4 26B MoE (`gemma-4-26b-a4b-it-4bit`) loads in dense-fallback mode — MoE expert routing weights are currently bypassed for compatibility with the MLX-LM loader
+- Think-block stripping uses a rolling buffer which can split tags across chunk boundaries; a proper state machine with unbounded accumulation would be more robust
+- `UICommand` is a no-op stub left from an earlier SwiftUI phase; will be removed or repurposed
+
+---
+
+## Infrastructure
+
+| Directory | Purpose |
+|---|---|
+| `logs/` | Runtime logs — gitignored, rotated by `cleanup_daily.swift` |
+| `reports/` | Benchmark JSON reports — gitignored |
+| `screenshots/` | Test captures — gitignored |
+| `scripts/` | Build and maintenance Swift scripts |
+| `docs/` | Extended API and architecture documentation |

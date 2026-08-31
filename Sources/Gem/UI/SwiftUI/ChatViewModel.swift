@@ -38,6 +38,8 @@ class ChatViewModel {
                     switch chunk {
                     case .text(let t):
                         messages[assistantIndex].text += t
+                    case .reasoning(let r):
+                        messages[assistantIndex].text += r
                     case .metadata(let m):
                         statsTokensPerSecond = m.tokensPerSecond
                         statsGenerationTime = m.generationTime

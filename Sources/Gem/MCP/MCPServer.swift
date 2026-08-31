@@ -423,6 +423,9 @@ public final class MCPServer: Sendable {
         case .rateLimitExceeded:        return -32006
         case .authenticationFailed:     return -32007
         case .modelInferenceError:      return -32008
+        case .inferenceError:           return -32009
+        case .modelNotCached:           return -32010
+        case .modelSwitching:           return -32011
         }
     }
 }

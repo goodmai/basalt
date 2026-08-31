@@ -13,7 +13,7 @@ public enum GemLogLevel: Int, Comparable, Sendable {
 }
 
 public struct GemLogger: Sendable {
-    public static nonisolated(unsafe) var globalLevel: GemLogLevel = .trace
+    public static nonisolated(unsafe) var globalLevel: GemLogLevel = .info
     
     public let module: String
     
@@ -56,11 +56,8 @@ public struct GemLogger: Sendable {
         let filename = (file as NSString).lastPathComponent
         let formatted = "\(dateStr) \(levelStr) [\(module)] \(filename):\(line) - \(message)"
         
-        if level == .error || level == .warn {
-            fputs(formatted + "\n", stderr)
-        } else {
-            print(formatted)
-        }
+        // Always write to stderr — stdout is reserved for MCP JSON-RPC in stdio mode
+        fputs(formatted + "\n", stderr)
         
         if let url = GemLogger.logFileURL {
             let logData = (formatted + "\n").data(using: .utf8)

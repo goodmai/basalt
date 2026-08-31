@@ -100,6 +100,8 @@ actor ChatController {
                             switch chunk {
                             case .text(let t):
                                 await terminal.printOutput(t)
+                            case .reasoning(let r):
+                                await terminal.printOutput(r)
                             case .metadata(let m):
                                 let statsLine = "TPS: \(String(format: "%.1f", m.tokensPerSecond)) | In: \(m.promptTokens) | Out: \(m.completionTokens) | RAM: \(m.memory.activeBytes / 1024 / 1024)MB"
                                 await terminal.updateInfo(debug: statsLine)
