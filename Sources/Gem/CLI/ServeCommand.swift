@@ -32,7 +32,7 @@ struct ServeCommand: AsyncParsableCommand {
 
     @Option(
         name: .customLong("reasoning-effort"),
-        help: "Chat-template reasoning budget for models that expose one (Qwen3.8: xhigh | medium | low)"
+        help: "Chat-template reasoning budget (Qwen3.8: xhigh | medium | low), or `none` to disable thinking entirely"
     )
     var reasoningEffort: String?
 

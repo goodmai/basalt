@@ -247,8 +247,9 @@ public actor MLXInferenceEngine: InferenceEngine {
             throw .inferenceHardwareFailure(reason: "MLX engine not initialized — call load() first")
         }
 
+        let requestedMaxTokens = request.maxTokens ?? 1024
         let params = GenerateParameters(
-            maxTokens: request.maxTokens ?? 1024,
+            maxTokens: requestedMaxTokens,
             temperature: Float(request.temperature ?? 0.7),
             topP: Float(request.topP ?? 0.9)
         )
@@ -257,9 +258,23 @@ public actor MLXInferenceEngine: InferenceEngine {
         if request.prompt.contains("<|turn|>") || request.prompt.contains("<|channel|>") {
             userInput = UserInput(prompt: request.prompt)
         } else {
+            // Qwen3.x templates open a `<think>` block on every turn and default
+            // reasoning_effort to `xhigh`, so an unqualified request spends its whole
+            // token budget reasoning and gets cut off mid-answer. `none` reaches the
+            // template's harder switch, which emits an already-closed think block and
+            // makes the model answer directly.
+            var context: [String: any Sendable] = [:]
+            switch reasoningEffort {
+            case "none":
+                context["enable_thinking"] = false
+            case .some(let effort):
+                context["reasoning_effort"] = effort
+            case nil:
+                break
+            }
             userInput = UserInput(
                 chat: [.user(request.prompt)],
-                additionalContext: reasoningEffort.map { ["reasoning_effort": $0] }
+                additionalContext: context.isEmpty ? nil : context
             )
         }
 
@@ -382,7 +397,11 @@ public actor MLXInferenceEngine: InferenceEngine {
                                 activeBytes: mem.activeMemory,
                                 cacheBytes: mem.cacheMemory
                             ),
-                            finishReason: .stop
+                            // Was hardcoded to .stop, so a generation cut off at the
+                            // token ceiling reported a clean finish and truncation went
+                            // unnoticed by every caller.
+                            finishReason: (lastInfo?.generationTokenCount ?? 0) >= requestedMaxTokens
+                                ? .length : .stop
                         )
                         continuation.yield(.metadata(metadata))
                     }

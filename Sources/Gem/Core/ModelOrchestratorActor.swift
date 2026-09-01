@@ -16,6 +16,8 @@ public actor ModelOrchestratorActor {
     private var requestCount: Int = 0
     private var totalTokensGenerated: Int = 0
     private var modelSizeMB: Int = 4000
+    /// Floor for the generation watchdog. The real budget scales with the token
+    /// count — see `timeout(for:)`.
     private let generationTimeoutSeconds: UInt64 = 300  // 5 minutes
 
     private let logger = GemLogger(module: "ModelOrchestrator")
@@ -100,7 +102,7 @@ public actor ModelOrchestratorActor {
         requestCount += 1
 
         do {
-            let response = try await withTimeout(seconds: generationTimeoutSeconds) {
+            let response = try await withTimeout(seconds: timeout(for: validated)) {
                 try await self.engine.generate(request: validated)
             }
             totalTokensGenerated += response.completionTokens
@@ -128,7 +130,7 @@ public actor ModelOrchestratorActor {
 
         let stream: AsyncStream<StreamChunk>
         do {
-            stream = try await withTimeout(seconds: generationTimeoutSeconds) {
+            stream = try await withTimeout(seconds: timeout(for: validated)) {
                 try await self.engine.generateStream(request: validated)
             }
         } catch let error as GemError {
@@ -208,6 +210,15 @@ public actor ModelOrchestratorActor {
         if await engine.isLoaded { return }
         guard id != currentModelId else { return }
         try await switchModel(to: id)
+    }
+
+    /// Watchdog budget for a request. A flat cap makes large `maxTokens` requests
+    /// impossible to satisfy: a 27B model emitting ~15 tok/s needs well over an hour
+    /// for 64k tokens and would always be killed mid-generation. Scale with the
+    /// request at a deliberately pessimistic 10 tok/s, keeping the flat value as a floor.
+    private func timeout(for request: GenerationRequest) -> UInt64 {
+        let tokens = UInt64(max(0, request.maxTokens ?? 0))
+        return max(generationTimeoutSeconds, tokens / 10)
     }
 
     private func capped(_ request: GenerationRequest) throws(GemError) -> GenerationRequest {
