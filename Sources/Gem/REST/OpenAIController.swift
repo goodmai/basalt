@@ -280,23 +280,25 @@ struct OpenAIController: Sendable {
 
     // MARK: — Prompt
 
+    /// Flattens the conversation to plain text and lets the tokenizer's own chat
+    /// template wrap it (see MLXInferenceEngine.generateStream).
+    ///
+    /// Do NOT hand-roll `<|turn>` / `<|channel>thought` markers here: a prompt ending
+    /// in a thought marker puts the engine's stream parser into thinking mode for the
+    /// whole generation, so every token lands in the reasoning channel and
+    /// `generatedText` comes back empty. Mirrors AnthropicController.buildPrompt.
     private func messagesToPrompt(_ messages: [ChatMessage]) -> String {
-        var result = "<bos>"
+        var parts: [String] = []
         for msg in messages {
             guard let text = msg.content?.textValue, !text.isEmpty else { continue }
             switch msg.role {
-            case "system":
-                result += "<|turn>system\n\(text)<turn|>\n"
-            case "user":
-                result += "<|turn>user\n\(text)<turn|>\n"
-            case "assistant":
-                result += "<|turn>model\n\(text)<turn|>\n"
-            default:
-                result += "<|turn>\(msg.role)\n\(text)<turn|>\n"
+            case "system":    parts.append("[System]: \(text)")
+            case "user":      parts.append("[User]: \(text)")
+            case "assistant": parts.append("[Assistant]: \(text)")
+            default:          parts.append(text)
             }
         }
-        result += "<|turn>model\n<|channel>thought\n"
-        return result
+        return parts.joined(separator: "\n\n")
     }
 
     // MARK: — Helpers
