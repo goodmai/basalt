@@ -127,14 +127,8 @@ struct ChatCommand: AsyncParsableCommand {
             log("Model not in local cache: \(bold(modelId)). Downloading...")
             let hub = HuggingFaceHub()
             do {
-                nonisolated(unsafe) var lastFile = ""
-                let dest = try await hub.download(repoId: modelId, token: nil) { filename, downloaded, total in
-                    if filename != lastFile {
-                        if !lastFile.isEmpty { print() }   // newline after previous file
-                        lastFile = filename
-                    }
-                    printFileProgress(filename: filename, downloaded: downloaded, total: total)
-                }
+                let dest = try await hub.download(repoId: modelId, token: nil,
+                                                  onFile: DownloadProgressReporter().callAsFunction)
                 print("\n")
                 return dest.path
             } catch {

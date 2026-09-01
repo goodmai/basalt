@@ -170,14 +170,8 @@ struct ServeCommand: AsyncParsableCommand {
         log("Model not in local cache: \(bold(modelId))\(quant.map { " [\($0)]" } ?? ""). Downloading…")
         let hub = HuggingFaceHub()
         do {
-            nonisolated(unsafe) var lastFile = ""
-            let dest = try await hub.download(repoId: modelId, subfolder: quant, token: nil) { filename, downloaded, total in
-                if filename != lastFile {
-                    if !lastFile.isEmpty { print() }
-                    lastFile = filename
-                }
-                printFileProgress(filename: filename, downloaded: downloaded, total: total)
-            }
+            let dest = try await hub.download(repoId: modelId, subfolder: quant, token: nil,
+                                              onFile: DownloadProgressReporter().callAsFunction)
             print("\n")
             return dest.path
         } catch {

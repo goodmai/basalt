@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 import MLX
 import MLXLLM
 // Registers MLXVLM's factory trampoline (Gemma 4, Qwen3.5-VL, …). The registry
@@ -42,12 +43,18 @@ public actor MLXInferenceEngine: InferenceEngine {
         self.reasoningEffort = reasoningEffort
     }
 
-    nonisolated(unsafe) private static var aliasesRegistered = false
+    /// `registerAliases` is a static method, so it is *not* actor-isolated and two
+    /// concurrent loads could both observe `false` and register twice. Claim the
+    /// flag atomically instead of check-then-set on a bare Bool.
+    private static let aliasesRegistered = Mutex<Bool>(false)
 
     /// Register architecture aliases (Qwen 3.8, Qwen 3.6, MiniMax M2) in LLMTypeRegistry.
     public static func registerAliases() async {
-        guard !aliasesRegistered else { return }
-        aliasesRegistered = true
+        let alreadyDone = aliasesRegistered.withLock { done -> Bool in
+            defer { done = true }
+            return done
+        }
+        guard !alreadyDone else { return }
 
         await LLMTypeRegistry.shared.registerModelType("qwen3_8") { data in
             let config = try JSONDecoder.json5().decode(MLXLLM.Qwen35Configuration.self, from: data)
@@ -296,6 +303,10 @@ public actor MLXInferenceEngine: InferenceEngine {
                     let startTime = clock.now
                     var lastInfo: GenerateCompletionInfo?
                     var tokenCount = 0
+                    // Stamped on the first emitted chunk. Was hardcoded to 0, so every
+                    // benchmark reported TTFT 0.000 with zero variance — a constant
+                    // masquerading as a measurement, hiding all prefill cost.
+                    var firstTokenAt: ContinuousClock.Instant?
                     
                     var buffer = ""
                     var isThinking = promptEndsWithThinking
@@ -366,6 +377,7 @@ public actor MLXInferenceEngine: InferenceEngine {
                         
                         switch generation {
                         case .chunk(let text):
+                            if firstTokenAt == nil { firstTokenAt = clock.now }
                             buffer.append(text)
                             processBuffer(final: false)
                         case .info(let info):
@@ -381,7 +393,7 @@ public actor MLXInferenceEngine: InferenceEngine {
                     // End of stream - send metadata
                     if !Task.isCancelled {
                         let generationTime = (clock.now - startTime).inSeconds
-                        let timeToFirstToken = 0.0
+                        let timeToFirstToken = firstTokenAt.map { ($0 - startTime).inSeconds } ?? 0
                         let mem = Memory.snapshot()
 
                         let metadata = GenerationResponse(

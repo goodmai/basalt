@@ -57,7 +57,12 @@ struct DryRunAndMemoryIntegrationTests {
         // Olmo 3 7B Instruct (4.5 GB)
         let olmo = await evaluator.evaluate(modelId: "Ex0bit/Elbaz-Olmo-3-7B-Instruct-abliterated")
         #expect(olmo.requiredRAMBytes < 6_000_000_000)
-        #expect(olmo.fitsInMemory == true)
+        // fitsInMemory is a function of RAM free right now, so assert it only when
+        // there is headroom. Unguarded, this failed purely because another process
+        // held 13 GB — a machine-state failure that looks like a code regression.
+        if olmo.availableRAMBytes > 8_000_000_000 {
+            #expect(olmo.fitsInMemory == true)
+        }
 
         // MiniMax 72GB MoE
         let minimax = await evaluator.evaluate(modelId: "Ex0bit/MiniMax-SLURPY-DQ-MLX")

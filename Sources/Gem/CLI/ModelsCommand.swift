@@ -112,16 +112,8 @@ struct DownloadSubcommand: AsyncParsableCommand {
         print("\nDownloading \(bold(repoId))…\n")
         let dest: URL
         do {
-            // nonisolated(unsafe): downloads are sequential inside the actor,
-            // so mutation of lastFile is single-threaded in practice.
-            nonisolated(unsafe) var lastFile = ""
-            dest = try await hub.download(repoId: repoId, token: token) { filename, downloaded, total in
-                if filename != lastFile {
-                    if !lastFile.isEmpty { print() }   // newline after previous file
-                    lastFile = filename
-                }
-                printFileProgress(filename: filename, downloaded: downloaded, total: total)
-            }
+            dest = try await hub.download(repoId: repoId, token: token,
+                                          onFile: DownloadProgressReporter().callAsFunction)
         } catch {
             print()
             printError(error.localizedDescription)
