@@ -297,9 +297,12 @@ actor HuggingFaceHub {
             
             let (stream, response) = try await session.bytes(for: req)
             guard let http = response as? HTTPURLResponse, http.statusCode == 206 else {
-                // If 206 fails, fallback to startNew
-                try await downloadFileWithResume(url: url, destination: destination, filename: filename, token: token, onProgress: onProgress)
-                return
+                // Server ignored the Range header, so the body is the whole file:
+                // appending it would duplicate the bytes we already hold. Drop the
+                // partial and fail — the caller's retry then takes the .startNew path.
+                // (Recursing here instead would re-derive the same .resume action and spin.)
+                try? fileManager.removeItem(at: destination)
+                throw HFError.downloadFailed(filename)
             }
             try await saveStream(stream, to: destination, isResume: true, existingSize: offset, totalSize: offset + http.expectedContentLength, filename: filename, onProgress: onProgress)
             
@@ -315,6 +318,19 @@ actor HuggingFaceHub {
                 throw HFError.downloadFailed(filename)
             }
             try await saveStream(stream, to: destination, isResume: false, existingSize: 0, totalSize: http.expectedContentLength, filename: filename, onProgress: onProgress)
+        }
+
+        // An interrupted transfer leaves a short file that the next attempt would
+        // .resume — appending onto bytes it cannot verify. That is how a retried
+        // config.json ended up holding several concatenated copies of itself.
+        // Leave only files that match the advertised size; anything else is dropped
+        // so the retry restarts from scratch.
+        guard totalSize > 0 else { return }
+        let attrs = try? fileManager.attributesOfItem(atPath: destination.path)
+        let finalSize = (attrs?[.size] as? Int64) ?? 0
+        if finalSize != totalSize {
+            try? fileManager.removeItem(at: destination)
+            throw HFError.downloadFailed(filename)
         }
     }
 

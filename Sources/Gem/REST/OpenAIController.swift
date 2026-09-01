@@ -181,6 +181,7 @@ struct OpenAIController: Sendable {
             let encoded = try JSONEncoder().encode(response)
             return makeDataResponse(encoded)
         } catch {
+            fputs("🔴 [OpenAI] generate failed: \(error)\n", stderr)
             return makeErrorResponse(status: .internalServerError,
                                      message: error.localizedDescription, code: 500)
         }

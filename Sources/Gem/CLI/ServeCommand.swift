@@ -160,32 +160,29 @@ struct ServeCommand: AsyncParsableCommand {
 
         let snapshot = ModelCache.cacheDir(for: modelId)
 
-        // If quant is explicit, use it
+        func usableConfig(in dir: URL) -> Bool {
+            let configPath = dir.appendingPathComponent("config.json")
+            guard let data = try? Data(contentsOf: configPath) else { return false }
+            return (try? JSONSerialization.jsonObject(with: data)) != nil
+        }
+
+        // An explicit --quant is a request for that specific variant. If it is not
+        // cached, download it — never silently serve a different quantization,
+        // which would misreport what the user is actually running.
         if let quantFolder = quant {
             let target = snapshot.appendingPathComponent(quantFolder)
-            if FileManager.default.fileExists(atPath: target.appendingPathComponent("config.json").path) {
-                return target.path
-            }
-        }
+            if usableConfig(in: target) { return target.path }
+        } else {
+            if usableConfig(in: snapshot) { return snapshot.path }
 
-        // If no quant specified, try root first, then search common quant folders
-        if FileManager.default.fileExists(atPath: snapshot.appendingPathComponent("config.json").path) {
-            return snapshot.path
-        }
-
-        // Auto-detect available quant folder if root config.json doesn't exist
-        // Try folders in preferred order; skip if config.json fails JSON parsing
-        let commonQuantFolders = ["4bit", "8bit", "6bit", "2bit", "bf16", "fp16"]
-        for folder in commonQuantFolders {
-            let target = snapshot.appendingPathComponent(folder)
-            let configPath = target.appendingPathComponent("config.json")
-            guard FileManager.default.fileExists(atPath: configPath.path) else { continue }
-
-            // Minimal validation: config.json should be decodable JSON
-            if let data = try? Data(contentsOf: configPath),
-               (try? JSONSerialization.jsonObject(with: data)) != nil {
-                log("Auto-detected quantization: \(dim(folder))")
-                return target.path
+            // Repos that ship only per-quant subfolders have no config.json at the
+            // root; pick the first variant that is actually present and parseable.
+            for folder in ["4bit", "8bit", "6bit", "2bit", "bf16", "fp16"] {
+                let target = snapshot.appendingPathComponent(folder)
+                if usableConfig(in: target) {
+                    log("Auto-detected quantization: \(dim(folder))")
+                    return target.path
+                }
             }
         }
 
