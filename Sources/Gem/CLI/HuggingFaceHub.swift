@@ -162,7 +162,12 @@ actor HuggingFaceHub {
     init(configuration: URLSessionConfiguration = .default) {
         let config = configuration
         config.timeoutIntervalForRequest  = 30
-        config.timeoutIntervalForResource = 3600   // 1h for large downloads
+        // Wall-clock budget for one file, not for the whole transfer. A 5 GB shard
+        // on a slow link needs hours, so the old 1h ceiling killed every large
+        // model deterministically once it had run long enough — a 19 GB repo
+        // aborted at "The request timed out" with four shards still partial.
+        // The 30s request timeout above is what actually catches a dead connection.
+        config.timeoutIntervalForResource = 24 * 3600
         session = URLSession(configuration: config)
     }
 

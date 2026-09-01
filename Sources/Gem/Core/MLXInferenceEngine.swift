@@ -39,8 +39,35 @@ public actor MLXInferenceEngine: InferenceEngine {
     /// can spend the whole token budget thinking and never emit an answer.
     private let reasoningEffort: String?
 
-    public init(reasoningEffort: String? = nil) {
+    /// Bits for KV-cache quantization (4 or 8). nil keeps the cache in full
+    /// precision. The cache grows linearly with context, so on long prompts it
+    /// competes with the weights for unified memory.
+    private let kvBits: Int?
+
+    /// Token index at which the quantized cache kicks in. Quantizing from token 0
+    /// costs accuracy on short prompts for no memory benefit.
+    private let quantizedKVStart: Int
+
+    /// Multiplicative penalty on recently emitted tokens. Left nil, nothing damps
+    /// a degenerate loop: a 2-bit model answered "127 + 458" by repeating the
+    /// question until it hit the ceiling.
+    private let repetitionPenalty: Float?
+
+    /// MLX buffer-cache ceiling in bytes. nil leaves MLX's own default.
+    private let gpuCacheLimit: Int?
+
+    public init(
+        reasoningEffort: String? = nil,
+        gpuCacheLimit: Int? = 512 << 20,
+        kvBits: Int? = nil,
+        quantizedKVStart: Int = 512,
+        repetitionPenalty: Float? = nil
+    ) {
         self.reasoningEffort = reasoningEffort
+        self.gpuCacheLimit = gpuCacheLimit
+        self.kvBits = kvBits
+        self.quantizedKVStart = quantizedKVStart
+        self.repetitionPenalty = repetitionPenalty
     }
 
     /// `registerAliases` is a static method, so it is *not* actor-isolated and two
@@ -128,7 +155,7 @@ public actor MLXInferenceEngine: InferenceEngine {
             // Unbounded buffer cache competes with model weights for unified memory
             // and pushes large models (27B @ 4-bit ≈ 16 GB) into swap on 24 GB Macs.
             // ponytail: fixed 512 MB cap; make it a --gpu-cache flag if a workload needs more.
-            Memory.cacheLimit = 512 << 20
+            if let gpuCacheLimit { Memory.cacheLimit = gpuCacheLimit }
 
             struct TokenizerBridge: MLXLMCommon.Tokenizer {
                 private let upstream: any Tokenizers.Tokenizer
@@ -255,11 +282,14 @@ public actor MLXInferenceEngine: InferenceEngine {
         }
 
         let requestedMaxTokens = request.maxTokens ?? 1024
-        let params = GenerateParameters(
+        var params = GenerateParameters(
             maxTokens: requestedMaxTokens,
             temperature: Float(request.temperature ?? 0.7),
             topP: Float(request.topP ?? 0.9)
         )
+        params.kvBits = kvBits
+        params.quantizedKVStart = quantizedKVStart
+        params.repetitionPenalty = repetitionPenalty
 
         let userInput: UserInput
         if request.prompt.contains("<|turn|>") || request.prompt.contains("<|channel|>") {

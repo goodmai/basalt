@@ -101,13 +101,15 @@ struct DownloadSubcommand: AsyncParsableCommand {
             repoId = selected
         }
 
-        // Check if already cached
-        if ModelCache.isDownloaded(repoId: repoId) {
-            let path = ModelCache.cacheDir(for: repoId).path
-            print("Already downloaded: \(path)")
-            printRunHint(repoId: repoId)
-            return
-        }
+        // Deliberately not short-circuiting on ModelCache.isDownloaded here.
+        //
+        // That check only looks for config.json, so a repo whose weight shards were
+        // left half-written by an interrupted transfer reported "Already downloaded"
+        // and could never finish — which is how several models ended up cached as
+        // 2 MB stubs that failed much later, at load time.
+        //
+        // download() already decides per file: complete files are skipped after a
+        // HEAD, partial ones resume. Letting it run is cheap and self-healing.
 
         print("\nDownloading \(bold(repoId))…\n")
         let dest: URL

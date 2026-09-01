@@ -28,6 +28,15 @@ struct Benchmark: AsyncParsableCommand {
             help: "Reasoning budget (xhigh | medium | low), or `none`. Qwen defaults to xhigh, which spends the whole budget thinking and distorts throughput numbers.")
     var reasoningEffort: String?
 
+    @Option(name: .customLong("gpu-cache-mb"), help: "MLX buffer cache ceiling in MB; 0 means leave MLX's default uncapped")
+    var gpuCacheMB: Int?
+
+    @Option(name: .customLong("kv-bits"), help: "Quantize the KV cache to 4 or 8 bits (default: full precision)")
+    var kvBits: Int?
+
+    @Option(name: .customLong("repetition-penalty"), help: "Penalty on recently emitted tokens, e.g. 1.1 (default: off)")
+    var repetitionPenalty: Float?
+
     @Flag(help: "Skip the warmup iteration")
     var noWarmup: Bool = false
 
@@ -42,7 +51,11 @@ struct Benchmark: AsyncParsableCommand {
         }
         print("  iterations: \(iterations)  tokens: \(tokens)  warmup: \(!noWarmup)\n")
 
-        let engine = MLXInferenceEngine(reasoningEffort: reasoningEffort)
+        let engine = MLXInferenceEngine(
+            reasoningEffort: reasoningEffort,
+            gpuCacheLimit: gpuCacheMB.map { $0 == 0 ? nil : $0 << 20 } ?? (512 << 20),
+            kvBits: kvBits,
+            repetitionPenalty: repetitionPenalty)
         let orchestrator = ModelOrchestratorActor(engine: engine, maxTokens: tokens)
 
         print("Loading model…", terminator: ""); fflush(stdout)
