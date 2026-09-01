@@ -21,6 +21,13 @@ struct Benchmark: AsyncParsableCommand {
     @Option(name: .shortAndLong, help: "Max tokens to generate per iteration")
     var tokens: Int = 100
 
+    @Option(name: .customLong("quant"), help: "Quantization subfolder inside the repo (e.g. 4bit) — for repos shipping several variants")
+    var quant: String?
+
+    @Option(name: .customLong("reasoning-effort"),
+            help: "Reasoning budget (xhigh | medium | low), or `none`. Qwen defaults to xhigh, which spends the whole budget thinking and distorts throughput numbers.")
+    var reasoningEffort: String?
+
     @Flag(help: "Skip the warmup iteration")
     var noWarmup: Bool = false
 
@@ -35,7 +42,7 @@ struct Benchmark: AsyncParsableCommand {
         }
         print("  iterations: \(iterations)  tokens: \(tokens)  warmup: \(!noWarmup)\n")
 
-        let engine = MLXInferenceEngine()
+        let engine = MLXInferenceEngine(reasoningEffort: reasoningEffort)
         let orchestrator = ModelOrchestratorActor(engine: engine, maxTokens: tokens)
 
         print("Loading model…", terminator: ""); fflush(stdout)
@@ -123,15 +130,7 @@ struct Benchmark: AsyncParsableCommand {
     }
 
     private func resolveModelPath() -> String {
-        if model.hasPrefix("/") || model.hasPrefix(".") {
-            return model
-        }
-        if model.contains("/") {
-            let cached = ModelCache.cacheDir(for: model)
-            if FileManager.default.fileExists(atPath: cached.path) {
-                return cached.path
-            }
-        }
-        return model
+        // Shared with `serve` so both agree on which weights are loaded.
+        ModelCache.resolve(repoId: model, quant: quant)?.path ?? model
     }
 }

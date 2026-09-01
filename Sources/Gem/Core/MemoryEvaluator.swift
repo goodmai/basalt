@@ -250,12 +250,10 @@ public actor MemoryEvaluator {
         )
     }
 
+    /// Follows symlinks: the HuggingFace cache keeps weights in `blobs/` and
+    /// fills `snapshots/` with links, so measuring the links reported a 16 GB
+    /// model as a few megabytes and the fit assessment always said "fits".
     private func directorySize(at url: URL) -> Int64 {
-        guard let enumerator = FileManager.default.enumerator(at: url, includingPropertiesForKeys: [.fileSizeKey]) else { return 0 }
-        var total: Int64 = 0
-        for case let fileURL as URL in enumerator {
-            total += (try? fileURL.resourceValues(forKeys: [.fileSizeKey]).fileSize).map { Int64($0) } ?? 0
-        }
-        return total
+        ModelOrchestratorActor.resolvedDirectorySize(at: url)
     }
 }

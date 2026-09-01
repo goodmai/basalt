@@ -109,6 +109,46 @@ public struct ModelCache: Sendable {
         let marker = dir.appendingPathComponent("config.json")
         return FileManager.default.fileExists(atPath: marker.path)
     }
+
+    /// True when the directory holds a config.json that actually parses.
+    ///
+    /// Existence alone is not enough: an interrupted download leaves a truncated
+    /// or duplicated config that only fails much later, deep inside model loading.
+    public static func hasUsableConfig(at dir: URL) -> Bool {
+        let path = dir.appendingPathComponent("config.json")
+        guard let data = try? Data(contentsOf: path) else { return false }
+        return (try? JSONSerialization.jsonObject(with: data)) != nil
+    }
+
+    /// Resolves a repo ID (plus optional quantization subfolder) to a loadable
+    /// directory, or nil when nothing usable is cached.
+    ///
+    /// Shared by `serve` and the benchmark so they cannot disagree about which
+    /// weights are being run — the benchmark previously returned the snapshot
+    /// root, which for a repo shipping only per-quant subfolders contains no
+    /// config.json at all, making those models unbenchmarkable.
+    ///
+    /// An explicit `quant` is never silently substituted: reporting numbers for
+    /// 8-bit when 4-bit was requested would be worse than reporting nothing.
+    public static func resolve(repoId: String, quant: String? = nil) -> URL? {
+        if repoId.hasPrefix("/") || repoId.hasPrefix(".") {
+            return URL(fileURLWithPath: repoId)
+        }
+        guard repoId.contains("/") else { return nil }
+
+        let snapshot = cacheDir(for: repoId)
+        if let quant {
+            let target = snapshot.appendingPathComponent(quant)
+            return hasUsableConfig(at: target) ? target : nil
+        }
+        if hasUsableConfig(at: snapshot) { return snapshot }
+
+        for folder in ["4bit", "8bit", "6bit", "2bit", "bf16", "fp16"] {
+            let target = snapshot.appendingPathComponent(folder)
+            if hasUsableConfig(at: target) { return target }
+        }
+        return nil
+    }
 }
 
 // MARK: — Hub

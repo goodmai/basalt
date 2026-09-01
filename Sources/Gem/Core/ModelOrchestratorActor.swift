@@ -236,26 +236,31 @@ public actor ModelOrchestratorActor {
     }
 
     private func calculateDirectorySize(url: URL) throws -> UInt64 {
-        var total: UInt64 = 0
+        UInt64(max(0, Self.resolvedDirectorySize(at: url)))
+    }
+
+    /// Sums file sizes, following symlinks.
+    ///
+    /// The standard HuggingFace cache stores weights in `blobs/` and fills
+    /// `snapshots/` with symlinks, so measuring the link itself reports a few
+    /// bytes per shard: a 16 GB model came out as 6 MB, and every downstream
+    /// memory estimate and token budget was computed from that.
+    static func resolvedDirectorySize(at url: URL) -> Int64 {
         guard let e = FileManager.default.enumerator(at: url,
-                        includingPropertiesForKeys: [.fileSizeKey]) else { return 0 }
+                        includingPropertiesForKeys: [.fileSizeKey],
+                        options: []) else { return 0 }
+        var total: Int64 = 0
         for case let f as URL in e {
-            if let s = try? f.resourceValues(forKeys: [.fileSizeKey]).fileSize {
-                total += UInt64(s)
+            let target = f.resolvingSymlinksInPath()
+            if let s = try? target.resourceValues(forKeys: [.fileSizeKey]).fileSize {
+                total += Int64(s)
             }
         }
         return total
     }
 
     private func directorySize(at url: URL) -> Int64 {
-        guard let e = FileManager.default.enumerator(at: url,
-                        includingPropertiesForKeys: [.fileSizeKey]) else { return 0 }
-        var total: Int64 = 0
-        for case let f as URL in e {
-            total += (try? f.resourceValues(forKeys: [.fileSizeKey]).fileSize)
-                        .map { Int64($0) } ?? 0
-        }
-        return total
+        Self.resolvedDirectorySize(at: url)
     }
 
     private func withTimeout<T: Sendable>(
