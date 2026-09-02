@@ -46,14 +46,16 @@ jobs:
           path: default.metallib
           key: metallib-${{ hashFiles('Package.resolved') }}
 
+      # Before the kernels: build_metal reads the .metal sources out of
+      # .build/checkouts, which only exists once SwiftPM has resolved.
+      - name: Build
+        run: swift build
+
       - name: Compile MLX Metal kernels
         # --skip-unsupported: the runner's SDK is a release behind the one MLX
         # targets, and a couple of kernels include headers only the newer one
         # has. The library still loads, which is all the suite needs.
         run: ./scripts/build_metal.swift --skip-unsupported
-
-      - name: Build
-        run: swift build
 
       - name: Test
         run: swift test

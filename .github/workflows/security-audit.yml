@@ -19,6 +19,9 @@ jobs:
     name: Security & Dependency Audit
     runs-on: macos-15
     timeout-minutes: 20
+    permissions:
+      contents: read
+      pull-requests: write   # the last step comments on the PR
     
     steps:
       - name: Checkout code
@@ -76,8 +79,14 @@ jobs:
           path: security-report.md
           retention-days: 30
       
+      # Needs pull-requests: write, which the job did not have — every PR run
+      # ended on a 403 here while pushes to main were green. A fork's token
+      # stays read-only whatever the permissions block says, so skip those
+      # rather than fail on them.
       - name: Comment PR with Security Status
-        if: github.event_name == 'pull_request'
+        if: >-
+          github.event_name == 'pull_request' &&
+          github.event.pull_request.head.repo.full_name == github.repository
         uses: actions/github-script@v9
         with:
           script: |
