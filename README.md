@@ -49,7 +49,25 @@ brew tap goodmai/basalt https://github.com/goodmai/basalt
 brew install goodmai/basalt/gemm
 ```
 
-The formula builds from source — Xcode 16+ is required, and the first build takes a few minutes.
+The tap needs the explicit URL because the repository is not named
+`homebrew-basalt`. There is no bottle: the formula builds from source, so Xcode
+16+ must be installed (the command line tools alone are not enough — the Metal
+compiler ships with Xcode).
+
+The build does two things, and both matter:
+
+1. `swift build -c release` — the server itself.
+2. `scripts/build_metal.swift` — compiles MLX's Metal kernels and puts
+   `mlx.metallib` next to the binary in `libexec`. A SwiftPM build of mlx-swift
+   ships no metallib, and MLX's fallback lookup is relative to the working
+   directory, so without this step `gemm` only runs from the directory holding
+   the library. Expect this step to dominate the install time.
+
+```bash
+brew install --HEAD goodmai/basalt/gemm   # build main instead of the last tag
+brew upgrade goodmai/basalt/gemm
+brew uninstall gemm && brew untap goodmai/basalt
+```
 
 ### Build from source
 
@@ -90,6 +108,48 @@ chmod +x ./Gemma
 ```
 
 `Gemma` pins `ANTHROPIC_API_KEY=local` rather than inheriting it, so a real key is never forwarded to the local server or written into the `--settings` payload. Other terminals are untouched.
+
+---
+
+## Commands
+
+`gemm` with no subcommand starts `chat`.
+
+| Command | What it does |
+|---|---|
+| `gemm onboard` | first-run wizard: picks a model for your machine and downloads it |
+| `gemm fit` | reads the hardware and ranks the model catalogue against it |
+| `gemm chat --model <id>` | interactive terminal chat |
+| `gemm serve --model <id> --rest` | REST server on :8080 (OpenAI + Anthropic compatible) |
+| `gemm serve --model <id> --mcp` | MCP stdio server for Claude Desktop / Cursor |
+| `gemm models list --author <org>` | browse a HuggingFace author's models |
+| `gemm models download <repo-id>` | download into the shared HF cache |
+| `gemm models info <repo-id>` | size, quantization, context window |
+| `gemm models cache` | what is on disk, and how much of it |
+| `gemm models check` | verify a cached model is complete and loadable |
+| `gemm cloud configure` | OpenRouter fallback for what does not fit locally |
+| `gemm cloud cost` | spend so far on the cloud fallback |
+
+Inside `gemm chat`:
+
+| Input | Effect |
+|---|---|
+| `/clear` | wipe the conversation and the screen |
+| `/color`, `/theme` | cycle the terminal colour theme |
+| `exit`, `quit` | leave (no slash) |
+
+The flags worth knowing on `serve`:
+
+| Flag | Why you would reach for it |
+|---|---|
+| `--reasoning-effort none` | stop a reasoning model from spending the whole budget inside `<think>` |
+| `--reasoning-effort xhigh\|medium\|low` | Qwen-family thinking budget |
+| `--quant 4bit` | pick a quantization subfolder in repos that ship several |
+| `--kv-bits 4\|8` | quantize the KV cache — buys context on a memory-tight machine |
+| `--min-p`, `--top-k`, `--seed` | sampling; `--seed` makes a non-greedy run reproducible |
+| `--max-tokens` | default generation ceiling (2048–128000) |
+| `--dry-run` | memory feasibility check, then exit without loading |
+| `--port`, `--host` | default 127.0.0.1:8080 |
 
 ---
 
@@ -517,6 +577,31 @@ python3 benchmarks/arc-agi/arc_agi_benchmark.py --engine mlx --split training --
 ```
 
 Adding a model to the table is one run of each — PRs with new rows are welcome.
+
+---
+
+## Dependencies
+
+Everything is a SwiftPM package; there is no CocoaPods, no Node, no Python at
+runtime. `Package.resolved` pins the exact revisions.
+
+| Package | Used for |
+|---|---|
+| [mlx-swift](https://github.com/ml-explore/mlx-swift) | the array/NN layer on Metal |
+| [mlx-swift-lm](https://github.com/ml-explore/mlx-swift-lm) | model architectures and loading — `MLXLLM`, `MLXVLM`, `MLXLMCommon` |
+| [swift-transformers](https://github.com/huggingface/swift-transformers) | tokenizers and chat templates |
+| [hummingbird](https://github.com/hummingbird-project/hummingbird) | the HTTP server |
+| [swift-argument-parser](https://github.com/apple/swift-argument-parser) | the CLI |
+| [Rainbow](https://github.com/onevcat/Rainbow), [console-kit](https://github.com/vapor/console-kit) | terminal colour and layout |
+| [swift-markdown](https://github.com/apple/swift-markdown), [Splash](https://github.com/JohnSundell/Splash) | Markdown rendering and syntax highlighting in the terminal |
+
+`MLXVLM` is not optional: Gemma 4 and the Ornith checkpoints declare
+`*ForConditionalGeneration`, and those architectures are registered there rather
+than in `MLXLLM`.
+
+Updates arrive as Dependabot PRs — weekly for SwiftPM, monthly for the GitHub
+Actions. mlx-swift moves fast and a model architecture is often one release
+away, which is the reason for the weekly cadence.
 
 ---
 
