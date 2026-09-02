@@ -32,6 +32,19 @@ jobs:
       - name: Build
         run: swift build -c release
 
+      # MLX aborts the whole test process when it cannot find a metallib, and a
+      # SwiftPM build produces none — so the kernels have to exist before the
+      # suite runs. Cached on Package.resolved: it only changes when mlx-swift
+      # does, and compiling the kernels is the slowest thing in this workflow.
+      - name: Cache MLX metallib
+        uses: actions/cache@v4
+        with:
+          path: default.metallib
+          key: metallib-${{ hashFiles('Package.resolved') }}
+
+      - name: Compile MLX Metal kernels
+        run: ./scripts/build_metal.swift   # no-op when the cache restored it
+
       - name: Test
         run: swift test
 
