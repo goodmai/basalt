@@ -49,8 +49,16 @@ jobs:
           echo "**Date:** $(date)" >> security-report.md
           echo "**Commit:** ${{ github.sha }}" >> security-report.md
           echo "" >> security-report.md
+          echo "## Toolchain" >> security-report.md
+          swift --version >> security-report.md 2>&1 || true
+          echo "" >> security-report.md
           echo "## Dependencies" >> security-report.md
-          swift package show-dependencies >> security-report.md
+          # Degrades instead of failing the job: the runner's toolchain is older
+          # than mlx-swift's manifest declares (tools 6.3), so resolution can
+          # fail here even though the release workflow builds fine. A report
+          # that cannot draw a dependency tree is still a report.
+          swift package show-dependencies >> security-report.md 2>&1 \
+            || echo "(dependency tree unavailable: $(swift --version 2>&1 | head -1))" >> security-report.md
           echo "" >> security-report.md
           echo "## OSV Scan Results" >> security-report.md
           ./osv_check.sh >> security-report.md || true
