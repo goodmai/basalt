@@ -80,6 +80,24 @@ def solve_biquadratic_complex(a, b, c):
 ```
 """
 
+# The complex rung wants a second function too; this fixture has both.
+BIQUAD_FULL = BIQUAD_GOOD + """
+```python
+import cmath
+
+def solve_biquadratic_complex(a, b, c):
+    disc = cmath.sqrt(b * b - 4 * a * c)
+    out = []
+    for y in ((-b + disc) / (2 * a), (-b - disc) / (2 * a)):
+        r = cmath.sqrt(y)
+        out += [r, -r]
+    return out
+
+def verify_solution(a, b, c, x, tol=1e-10):
+    return abs(a * x ** 4 + b * x ** 2 + c) < tol
+```
+"""
+
 checks = [
     ("algebra accepts the answer",        ladder.check_algebra("Therefore x = 5."),            True),
     ("algebra rejects a wrong answer",    ladder.check_algebra("Therefore x = 7."),            False),
@@ -88,7 +106,10 @@ checks = [
     ("translation wants all three",       ladder.check_translation("French: … German: … Spanish: …"), True),
     ("translation catches a missing one", ladder.check_translation("French: … German: …"),     False),
     ("pump catches the mm/m bug",         ladder.check_pump(PUMP_WRONG_UNITS),                 False),
-    ("biquadratic accepts a correct one", ladder.check_biquadratic(BIQUAD_GOOD),               True),
+    ("biquad-real accepts a correct one", ladder.check_biquad_real(BIQUAD_GOOD),               True),
+    ("biquad-complex wants verify_solution", ladder.check_biquad_complex(BIQUAD_GOOD),          False),
+    ("biquad-complex accepts the full one", ladder.check_biquad_complex(BIQUAD_FULL),           True),
+    ("lunar needs exhaust_velocity",      ladder.check_lunar("I would use a Hohmann transfer."), False),
     ("fourier needs a code block",        ladder.check_fourier("I would use numpy."),          False),
 ]
 

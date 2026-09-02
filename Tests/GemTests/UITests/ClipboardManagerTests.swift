@@ -33,7 +33,7 @@ struct ClipboardManagerTests {
     
     // MARK: - Copy Tests
     
-    @Test("Copy simple text to clipboard")
+    @Test("Copy simple text to clipboard", .enabled(if: !ClipboardManager.isRunningInCI(), "no pasteboard in a CI session"))
     func testCopySimpleText() async throws {
         let manager = ClipboardManager()
         let text = "Hello, Clipboard!"
@@ -50,7 +50,7 @@ struct ClipboardManagerTests {
         }
     }
     
-    @Test("Copy multiline text to clipboard")
+    @Test("Copy multiline text to clipboard", .enabled(if: !ClipboardManager.isRunningInCI(), "no pasteboard in a CI session"))
     func testCopyMultilineText() async throws {
         let manager = ClipboardManager()
         let text = """
@@ -67,7 +67,7 @@ struct ClipboardManagerTests {
         }
     }
     
-    @Test("Copy Unicode text to clipboard")
+    @Test("Copy Unicode text to clipboard", .enabled(if: !ClipboardManager.isRunningInCI(), "no pasteboard in a CI session"))
     func testCopyUnicodeText() async throws {
         let manager = ClipboardManager()
         let text = "Hello 🌍 Мир 世界"
@@ -80,7 +80,7 @@ struct ClipboardManagerTests {
         }
     }
     
-    @Test("Copy empty string to clipboard")
+    @Test("Copy empty string to clipboard", .enabled(if: !ClipboardManager.isRunningInCI(), "no pasteboard in a CI session"))
     func testCopyEmptyString() async throws {
         let manager = ClipboardManager()
         
@@ -94,7 +94,7 @@ struct ClipboardManagerTests {
     
     // MARK: - Paste Tests
     
-    @Test("Paste text from clipboard")
+    @Test("Paste text from clipboard", .enabled(if: !ClipboardManager.isRunningInCI(), "no pasteboard in a CI session"))
     func testPasteText() async throws {
         let manager = ClipboardManager()
         
@@ -110,7 +110,7 @@ struct ClipboardManagerTests {
     
     // MARK: - Round-trip Tests
     
-    @Test("Copy then paste round-trip", .disabled("Requires clipboard access"))
+    @Test("Copy then paste round-trip", .disabled("Races other tests over the shared pasteboard"))
     func testRoundTrip() async throws {
         let manager = ClipboardManager()
         let originalText = "Test round-trip"
@@ -128,7 +128,7 @@ struct ClipboardManagerTests {
     
     // MARK: - Error Handling Tests
     
-    @Test("Handle missing clipboard tool gracefully")
+    @Test("Handle missing clipboard tool gracefully", .enabled(if: !ClipboardManager.isRunningInCI(), "no pasteboard in a CI session"))
     func testMissingToolError() async {
         let manager = ClipboardManager()
         
@@ -183,7 +183,7 @@ struct ClipboardManagerTests {
 @Suite("ClipboardManager Integration Tests - Epic 16.6")
 struct ClipboardManagerIntegrationTests {
     
-    @Test("Copy AI response to clipboard", .disabled("Requires clipboard"))
+    @Test("Copy AI response to clipboard", .disabled("Races other tests over the shared pasteboard"))
     func testCopyAIResponse() async throws {
         let manager = ClipboardManager()
         let aiResponse = """
@@ -203,7 +203,7 @@ struct ClipboardManagerIntegrationTests {
         #expect(pasted.contains("fibonacci"))
     }
     
-    @Test("Copy large text to clipboard", .disabled("Requires clipboard"))
+    @Test("Copy large text to clipboard", .disabled("Races other tests over the shared pasteboard"))
     func testCopyLargeText() async throws {
         let manager = ClipboardManager()
         let largeText = String(repeating: "Lorem ipsum dolor sit amet. ", count: 1000)
@@ -218,7 +218,7 @@ struct ClipboardManagerIntegrationTests {
 @Suite("ClipboardExtensions Tests - Epic 16.6")
 struct ClipboardExtensionsTests {
     
-    @Test("String extension - copy to clipboard")
+    @Test("String extension - copy to clipboard", .enabled(if: !ClipboardManager.isRunningInCI(), "no pasteboard in a CI session"))
     func testStringCopyExtension() async throws {
         let text = "Test extension"
         

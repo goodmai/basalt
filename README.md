@@ -437,19 +437,27 @@ docs/                       — Extended documentation
 Two harnesses, both pointed at a running server, both reporting numbers you can
 reproduce on your own machine.
 
-**The ladder** — `benchmarks/ladder/run.py`. Six tasks: three that any instruct
-model should clear, three that need an actual derivation. Nothing is graded on
-how the answer reads: the model's own code is executed against inputs the prompt
-never showed it, so a plausible-looking wrong answer still fails.
+**The ladder to the moon** — `benchmarks/ladder/run.py`. Five rungs, each
+strictly harder than the one below it, ending in a full Earth-to-Moon mission.
+Nothing is graded on how the answer reads: the model's own code is executed
+against inputs the prompt never showed it, so a plausible-looking wrong answer
+still fails.
 
-| # | Task | What it actually tests |
+| Rung | Task | What it actually tests |
 |---|---|---|
-| 1 | Algebra | `3x + 7 = 22` — sanity check |
-| 2 | Fibonacci | memoised recursion, verified at n = 10, 20, 30 |
-| 3 | Translation | three target languages present |
-| 4 | Fourier | numeric integration, checked on sawtooth, square wave, cosine |
-| 5 | Pump head | units (mm vs m, L/s vs m³/s) + Colebrook, which has no closed form |
-| 6 | Biquadratic | real and complex roots, duplicates collapsed |
+| 1 | Biquadratic, real roots | closed form plus the edge cases: none, repeated, zero |
+| 2 | Biquadratic, complex roots | branch handling — all four roots, with multiplicity |
+| 3 | Fourier coefficients | numeric integration, checked on sawtooth, square wave, cosine |
+| 4 | Pump head | units (mm vs m, L/s vs m³/s) + Colebrook, which has no closed form |
+| 5 | **Earth → Moon mission** | exhaust velocity from `sqrt(2ηQ)`, Tsiolkovsky per stage, four-body propagation, lunar braking, soft landing — every constant is in the prompt, nothing recallable from a textbook |
+
+The top rung is scored on six invariants rather than one answer, so a model that
+gets the energetics right but never propagates the trajectory still shows a
+number. Its prompt lives in `benchmarks/ladder/lunar_prompt.md`; the reference
+values in `lunar_task.md` are never shown to the model.
+
+`--warmup` prepends three cheap smoke tests (algebra, Fibonacci, translation)
+that any instruct model should clear. They are not part of the ladder score.
 
 **ARC-AGI** — `benchmarks/arc-agi/arc_agi_benchmark.py`, official pass@2 rules.
 The corpus is not vendored; fetch it into `benchmarks/arc-agi/dataset/` first
@@ -461,21 +469,28 @@ Measured on an M-series Mac with 24 GB unified memory. `thinking` is the chat
 template's `<think>` block: on by default for reasoning models, disabled with
 `--reasoning-effort none`.
 
-| Model | Ladder 1–3 | Ladder 4–6 | ARC-AGI mini | tok/s |
-|---|---|---|---|---|
-| `ornith-ai/Ornith-1.5-9B-MLX-4bit` (thinking off) | 3/3 | 0/3 | 0/3 ¹ | ~45 |
-| `ornith-ai/Ornith-1.5-9B-MLX-4bit` (thinking on) | 2/3 | 0/3 | not run | ~43 |
+| Model | Warm-up | Ladder | Top rung | ARC-AGI mini | tok/s |
+|---|---|---|---|---|---|
+| `ornith-ai/Ornith-1.5-9B-MLX-4bit` (thinking off) | 3/3 | 1/4 ² | not run | 0/3 ¹ | ~45 |
+| `ornith-ai/Ornith-1.5-9B-MLX-4bit` (thinking on) | 2/3 | 0/4 ² | not run | not run | ~43 |
 
-Ornith 9B, task by task, thinking off:
+Ornith 9B rung by rung, thinking off:
 
-| Task | Result | Detail |
+| Rung | Result | Detail |
 |---|---|---|
-| Algebra | ✅ | 163 tok, 4 s |
-| Fibonacci | ✅ | 757 tok, 16 s |
-| Translation | ✅ | 303 tok, 7 s — German idiomatic, French paraphrased rather than translated |
-| Fourier | ❌ | `a0 = 10.86` for `f(x) = x`, want 0 — the integration is wrong, not the formula |
-| Pump head | ❌ | `v = 0.0298` m/s, want 1.79 — never converted mm to m |
-| Biquadratic | ❌ | real roots correct; `x⁴ + 1` returns 2 complex roots instead of 4 |
+| 1 · biquadratic real | ✅ | roots correct, including the repeated and empty cases |
+| 2 · biquadratic complex | ❌ | `x⁴ + 1` returns 2 roots instead of 4 |
+| 3 · Fourier | ❌ | `a0 = 10.86` for `f(x) = x`, want 0 — the integration is wrong, not the formula |
+| 4 · pump head | ❌ | `v = 0.0298` m/s, want 1.79 — never converted mm to m |
+| 5 · lunar mission | — | not run |
+
+Warm-up, thinking off: algebra ✅ (163 tok, 4 s), Fibonacci ✅ (757 tok, 16 s),
+translation ✅ (303 tok, 7 s — German idiomatic, French paraphrased rather than
+translated).
+
+² Rungs 1 and 2 were measured before the ladder was split into separate
+prompts: one prompt asked for both functions, the real half was correct and the
+complex half was not. Rung 5 has not been run against this model yet.
 
 ¹ The ARC-AGI column is a partial run: three training tasks (`007bbfb7`,
 `00d62c1b`, `017c7c7b`), none solved at pass@2, 330 s total. It was stopped
@@ -497,7 +512,7 @@ why the table above reports the two modes separately.
 ```bash
 gemm serve --model ornith-ai/Ornith-1.5-9B-MLX-4bit --rest --reasoning-effort none &
 
-python3 benchmarks/ladder/run.py --port 8080 --json ladder.json
+python3 benchmarks/ladder/run.py --port 8080 --warmup --json ladder.json
 python3 benchmarks/arc-agi/arc_agi_benchmark.py --engine mlx --split training --limit 5
 ```
 

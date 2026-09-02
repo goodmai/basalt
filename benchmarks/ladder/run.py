@@ -1,13 +1,24 @@
 #!/usr/bin/env python3
-"""The ladder: six tasks against a running `gemm serve --rest`.
+"""The ladder to the moon: five rungs against a running `gemm serve --rest`.
 
-Three quick ones that any instruct model should clear, then three that separate
-models which can carry a multi-step derivation from models that only look like
-they can. Every task is checked by running the model's own code against cases it
-never saw, so a lucky-looking answer still fails.
+Each rung is strictly harder than the one below it, and the top rung is a full
+Earth-to-Moon mission — launch, four-body transfer, braking, soft landing —
+with every constant given in the prompt so nothing can be recalled from a
+textbook. Nothing is graded on how the answer reads: the model's own code is
+executed against inputs the prompt never showed it.
+
+    1. biquadratic, real roots          closed form, edge cases
+    2. biquadratic, complex roots       branch handling, 4 roots with multiplicity
+    3. Fourier coefficients             numeric integration to 1e-4
+    4. pump head                        units + Colebrook, which has no closed form
+    5. Earth -> Moon mission            energy-derived exhaust velocity, Tsiolkovsky,
+                                        four-body propagation, braking, soft landing
 
     gemm serve --model <id> --rest &
     python3 benchmarks/ladder/run.py --port 8080
+
+`--warmup` prepends three cheap smoke tests (algebra, Fibonacci, translation)
+that any instruct model should clear; they are not part of the ladder score.
 
 For reasoning models whose template opens <think> on every turn, start the
 server with `--reasoning-effort none`: otherwise they routinely spend the whole
@@ -15,6 +26,7 @@ token budget thinking and never emit an answer, which shows up here as
 finish=length.
 """
 import argparse, json, math, re, time
+from pathlib import Path
 from urllib.request import Request, urlopen
 
 # ── the ladder ───────────────────────────────────────────────────────────────
@@ -73,13 +85,31 @@ Note the units of each argument. Use only the standard library, and make the
 friction factor accurate to 1e-8. Return ONLY one ```python code block, no
 explanation."""
 
-BIQUADRATIC = """Write two Python functions:
+BIQUAD_REAL = """Write a Python function:
 
-    solve_biquadratic_real(a, b, c)    -> sorted list of the real roots of a*x^4 + b*x^2 + c = 0
-    solve_biquadratic_complex(a, b, c) -> list of all 4 complex roots (with multiplicity)
+    solve_biquadratic_real(a, b, c)
 
-Use only the standard library (math / cmath). Duplicate real roots must not be
-repeated in the real list. Return ONLY one ```python code block, no explanation."""
+returning the sorted list of the distinct real roots of a*x^4 + b*x^2 + c = 0.
+An equation with no real roots returns an empty list, and a repeated root is
+listed once. Use only the standard library.
+
+Return ONLY one ```python code block, no explanation."""
+
+BIQUAD_COMPLEX = """Write two Python functions:
+
+    solve_biquadratic_complex(a, b, c) -> list of all 4 complex roots of
+                                          a*x^4 + b*x^2 + c = 0, with multiplicity
+    verify_solution(a, b, c, x, tol=1e-10) -> True when x satisfies the equation
+
+Use only the standard library (math / cmath). All four roots must be returned
+even when they coincide.
+
+Return ONLY one ```python code block, no explanation."""
+
+# The top rung is long enough to live in its own file, and its reference values
+# are deliberately kept out of the prompt (see lunar_task.md).
+LUNAR = (Path(__file__).with_name("lunar_prompt.md")
+         .read_text(encoding="utf-8").split("---", 1)[1].strip())
 
 # ── validators ───────────────────────────────────────────────────────────────
 #
@@ -235,40 +265,109 @@ def check_pump(text):
         return False, f"call failed: {type(e).__name__}: {e}"
 
 
-def check_biquadratic(text):
+def check_biquad_real(text):
     env = next(environments(text, "def solve_biquadratic_real"), None)
     if env is None:
         return False, "no code block that defines solve_biquadratic_real"
-    fr, fc = env.get("solve_biquadratic_real"), env.get("solve_biquadratic_complex")
-    if not fr or not fc:
-        return False, "one of the two functions is missing"
+    fr = env["solve_biquadratic_real"]
     try:
         for (a, b, c), want in [((1, -5, 4), [-2, -1, 1, 2]),
                                 ((1, -10, 9), [-3, -1, 1, 3]),
                                 ((1, 0, 1), []),                        # no real roots
-                                ((1, -4, 4), [-(2 ** 0.5), 2 ** 0.5])]:  # double root y=2
+                                ((1, -4, 4), [-(2 ** 0.5), 2 ** 0.5]),  # double root y=2
+                                ((1, -1, 0), [-1, 0, 1])]:              # root at zero
             got = sorted(float(x) for x in fr(a, b, c))
             if len(got) != len(want) or any(abs(g - w) > 1e-9 for g, w in zip(got, want)):
                 return False, f"real({a},{b},{c}) = {got}, want {want}"
-        for a, b, c in [(1, 0, 1), (1, -5, 4), (1, 2, -3)]:
+        return True, "5/5 cases incl. empty, repeated and zero roots"
+    except Exception as e:
+        return False, f"call failed: {type(e).__name__}: {e}"
+
+
+def check_biquad_complex(text):
+    env = next(environments(text, "def solve_biquadratic_complex"), None)
+    if env is None:
+        return False, "no code block that defines solve_biquadratic_complex"
+    fc, verify = env["solve_biquadratic_complex"], env.get("verify_solution")
+    if not verify:
+        return False, "verify_solution is missing"
+    try:
+        for a, b, c in [(1, 0, 1), (1, -5, 4), (1, 2, -3), (1, -4, 4)]:
             roots = list(fc(a, b, c))
             if len(roots) != 4:
                 return False, f"complex({a},{b},{c}) returned {len(roots)} roots, want 4"
             for x in roots:
                 if abs(a * x ** 4 + b * x ** 2 + c) > 1e-9:
                     return False, f"complex root {x} leaves a residual"
-        return True, "4 real cases + 3 complex cases, residual < 1e-9"
+                if not verify(a, b, c, x):
+                    return False, f"verify_solution rejects its own root {x}"
+        return True, "4 cases x 4 roots, residual < 1e-9, verify_solution agrees"
     except Exception as e:
         return False, f"call failed: {type(e).__name__}: {e}"
 
 
-TASKS = [
+def check_lunar(text):
+    """Scores invariants rather than a single answer — partial credit is the point.
+
+    Reference values come from lunar_task.md and are never shown to the model:
+    exhaust velocity from sqrt(2*eta*Q), stage delta-v from Tsiolkovsky.
+    """
+    env = next(environments(text, "def exhaust_velocity"), None)
+    if env is None:
+        return False, "no code block that defines exhaust_velocity"
+
+    scored, notes = 0, []
+
+    ev = env.get("exhaust_velocity")
+    try:
+        got = [ev(10.3e6, 0.55), ev(13.4e6, 0.60), ev(13.4e6, 0.58)]
+        want = [3366.0, 4010.0, 3942.6]
+        if all(abs(g - w) < 5 for g, w in zip(got, want)):
+            scored += 1
+            notes.append("v_e ok")
+        else:
+            notes.append(f"v_e = {got[0]:.0f}/{got[1]:.0f}/{got[2]:.0f}, want 3366/4010/3943")
+    except Exception as e:
+        notes.append(f"v_e call failed: {type(e).__name__}")
+
+    sd = env.get("stage_delta_v")
+    if not sd:
+        notes.append("stage_delta_v missing")
+    else:
+        try:
+            got = [sd(900000.0, 700000.0, 3366.0), sd(140000.0, 110000.0, 4010.0),
+                   sd(18000.0, 11000.0, 3942.6)]
+            want = [5063, 6177, 3724]
+            if all(abs(g - w) / w < 1e-3 for g, w in zip(got, want)):
+                scored += 1
+                notes.append(f"Tsiolkovsky ok (sum {sum(got):.0f})")
+            else:
+                notes.append(f"delta-v = {got[0]:.0f}/{got[1]:.0f}/{got[2]:.0f}, want 5063/6177/3724")
+        except Exception as e:
+            notes.append(f"stage_delta_v call failed: {type(e).__name__}")
+
+    for name in ("launch_to_leo", "propagate", "lunar_braking", "soft_landing"):
+        if callable(env.get(name)):
+            scored += 1
+        else:
+            notes.append(f"{name} missing")
+
+    # Both numeric invariants plus all four mission stages, or it did not fly.
+    return scored == 6, f"{scored}/6 invariants — " + "; ".join(notes[:4] or ["all present"])
+
+
+RUNGS = [
+    ("biquad-real",    BIQUAD_REAL,    check_biquad_real),
+    ("biquad-complex", BIQUAD_COMPLEX, check_biquad_complex),
+    ("fourier",        FOURIER,        check_fourier),
+    ("pump",           PUMP,           check_pump),
+    ("lunar",          LUNAR,          check_lunar),
+]
+
+WARMUP = [
     ("algebra",     ALGEBRA,     check_algebra),
     ("fibonacci",   FIBONACCI,   check_fibonacci),
     ("translation", TRANSLATION, check_translation),
-    ("fourier",     FOURIER,     check_fourier),
-    ("pump",        PUMP,        check_pump),
-    ("biquadratic", BIQUADRATIC, check_biquadratic),
 ]
 
 # ── runner ───────────────────────────────────────────────────────────────────
@@ -289,14 +388,17 @@ def main():
     p = argparse.ArgumentParser(description="Run the ladder against a local gemm server")
     # 127.0.0.1, not localhost: the server binds IPv4 only.
     p.add_argument("--port", type=int, default=8080)
-    p.add_argument("--max-tokens", type=int, default=8000)
+    p.add_argument("--max-tokens", type=int, default=16000)
     p.add_argument("--timeout", type=int, default=1800)
     p.add_argument("--only", nargs="+", help="run a subset by name")
+    p.add_argument("--warmup", action="store_true",
+                   help="also run the three cheap smoke tests, before the ladder")
     p.add_argument("--json", help="write the results to this file")
     args = p.parse_args()
 
     base = f"http://127.0.0.1:{args.port}"
-    tasks = [t for t in TASKS if not args.only or t[0] in args.only]
+    tasks = (WARMUP if args.warmup else []) + RUNGS
+    tasks = [t for t in tasks if not args.only or t[0] in args.only]
     rows = []
     for name, prompt, check in tasks:
         t0 = time.time()
@@ -311,10 +413,13 @@ def main():
         print(f"{'':12} [{tok} tok, finish={finish}, {dt:.0f}s, {tok/dt if dt else 0:.1f} tps]",
               flush=True)
 
-    passed = sum(r["passed"] for r in rows)
-    print(f"\n{passed}/{len(rows)} passed")
+    rungs = [r for r in rows if r["task"] not in {w[0] for w in WARMUP}]
+    print(f"\nladder: {sum(r['passed'] for r in rungs)}/{len(rungs)} rungs"
+          + (f", warmup: {sum(r['passed'] for r in rows if r not in rungs)}/{len(rows) - len(rungs)}"
+             if len(rows) != len(rungs) else ""))
     if args.json:
-        json.dump({"passed": passed, "total": len(rows), "tasks": rows},
+        json.dump({"rungs_passed": sum(r["passed"] for r in rungs),
+                   "rungs_total": len(rungs), "tasks": rows},
                   open(args.json, "w"), indent=2)
 
 
