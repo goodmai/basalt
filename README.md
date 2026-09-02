@@ -35,6 +35,7 @@ Two transports share a single actor instance — **MCP stdio** for IDE integrati
 |---|---|
 | **macOS** | 15+ (Sequoia) |
 | **Xcode / Swift** | 16+ / Swift 6 |
+| **Metal toolchain** | `xcodebuild -downloadComponent MetalToolchain` — Xcode 26 ships the Metal compiler separately, and MLX's kernels cannot be built without it |
 | **Hardware** | Apple Silicon M1–M4, Unified Memory |
 | **Disk** | 2–30 GB depending on model |
 
@@ -51,8 +52,15 @@ brew install goodmai/basalt/gemm
 
 The tap needs the explicit URL because the repository is not named
 `homebrew-basalt`. There is no bottle: the formula builds from source, so Xcode
-16+ must be installed (the command line tools alone are not enough — the Metal
-compiler ships with Xcode).
+16+ must be installed, along with the Metal toolchain — on Xcode 26 that is a
+separate download:
+
+```bash
+xcodebuild -downloadComponent MetalToolchain
+```
+
+The formula checks for it before building and stops with that command if it is
+missing, rather than burying you in per-kernel compiler errors.
 
 The build does two things, and both matter:
 

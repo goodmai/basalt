@@ -35,6 +35,7 @@
 |---|---|
 | **macOS** | 15+ (Sequoia) |
 | **Xcode / Swift** | 16+ / Swift 6 |
+| **Metal toolchain** | `xcodebuild -downloadComponent MetalToolchain` — в Xcode 26 компилятор Metal ставится отдельно, без него ядра MLX не собрать |
 | **Железо** | Apple Silicon M1–M4, Unified Memory |
 | **Диск** | 2–30 ГБ в зависимости от модели |
 
@@ -51,8 +52,14 @@ brew install goodmai/basalt/gemm
 
 URL в `tap` указывается явно, потому что репозиторий называется не
 `homebrew-basalt`. Бутылки нет: формула собирает из исходников, поэтому нужен
-установленный Xcode 16+ (одних command line tools мало — компилятор Metal идёт
-в составе Xcode).
+Xcode 16+ и Metal toolchain — в Xcode 26 он качается отдельно:
+
+```bash
+xcodebuild -downloadComponent MetalToolchain
+```
+
+Формула проверяет его наличие до сборки и останавливается с этой командой, а не
+заваливает вас ошибками компиляции по каждому ядру.
 
 Сборка делает две вещи, и важны обе:
 

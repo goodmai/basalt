@@ -83,6 +83,25 @@ if fm.fileExists(atPath: metalLibPath),
 try? fm.createDirectory(atPath: tempDir, withIntermediateDirectories: true)
 try? fm.createDirectory(atPath: outputDir, withIntermediateDirectories: true)
 
+// Xcode 26 ships the Metal compiler as a downloadable component. Without it
+// every kernel fails with the same opaque error, so say it once, up front.
+let probe = Process()
+probe.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
+probe.arguments = ["metal", "--version"]
+probe.standardOutput = FileHandle.nullDevice
+probe.standardError = FileHandle.nullDevice
+try? probe.run()
+probe.waitUntilExit()
+if probe.terminationStatus != 0 {
+    log("""
+        Metal toolchain not installed — MLX's kernels cannot be compiled.
+        Install it once, then re-run this script:
+
+          xcodebuild -downloadComponent MetalToolchain
+        """, level: .error)
+    exit(1)
+}
+
 log("Compiling Metal kernels...", level: .info)
 
 @discardableResult
