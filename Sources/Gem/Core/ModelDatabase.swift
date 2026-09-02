@@ -150,6 +150,30 @@ public struct ModelDatabase: Sendable {
             quantization: "Dynamic Quant (DQ)",
             quality: 0.92
         ),
+        // Ornith 1.5 — qwen3_5 / qwen3_5_moe architecture, so the existing
+        // QwenProfile and the upstream mlx-swift-lm registration cover them.
+        ModelDefinition(
+            id: "ornith-ai/Ornith-1.5-9B-MLX-4bit",
+            name: "Ornith 1.5 9B (MLX 4-bit)",
+            family: .qwen,
+            task: .code,
+            modality: .text,
+            ramMB: 5800,
+            contextWindow: 262144,
+            quantization: "4-bit",
+            quality: 0.91
+        ),
+        ModelDefinition(
+            id: "ornith-ai/Ornith-1.5-35B-A3B-MLX-4bit",
+            name: "Ornith 1.5 35B A3B MoE (MLX 4-bit)",
+            family: .qwen,
+            task: .code,
+            modality: .text,
+            ramMB: 21000,
+            contextWindow: 262144,
+            quantization: "4-bit",
+            quality: 0.95
+        ),
         ModelDefinition(
             id: "Ex0bit/Elbaz-Olmo-3-7B-Instruct-abliterated",
             name: "Elbaz OLMo 3 7B Instruct Abliterated",

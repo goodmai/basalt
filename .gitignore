@@ -34,7 +34,6 @@ logs/
 
 # Test files
 test_*.swift
-gemma
 
 # Compiled Metal libraries
 *.metallib
@@ -98,3 +97,35 @@ docs-static/
 # Temporary files
 /tmp/
 .opencli/
+
+# ── Open-source hygiene (added at v0.1.0) ───────────────────────────────────
+# Assistant/tooling config — local to a contributor's machine
+GEMINI.md
+.gemini/
+CLAUDE.md
+Swift-Agent-Skills/
+
+# Internal planning docs and generated checklists
+docs/EPIC_*.md
+docs/ROADMAP_EPIC_*.md
+docs/BA_SUMMARY_*.md
+docs/BUG_EPIC.md
+docs/GEMMA_FIX_EPIC.md
+docs/specs/checklist*.md
+PROTOCOL_TEST.md
+
+# Third-party ARC-AGI corpus — fetched, not vendored (see benchmarks/arc-agi/ARC_AGI.md)
+benchmarks/arc-agi/dataset/
+__pycache__/
+*.pyc
+
+# Benchmark outputs
+results/
+
+# Scratch scripts and one-off experiments
+Gemma4Modelfile
+*_temp.swift
+gemma.swift
+osv_check.sh
+test_server.py
+test_large_models.sh

@@ -149,7 +149,10 @@ ok "Server ready ✓  (PID $SERVER_PID)"
 # Claude Code (Node.js 18+) resolves 'localhost' to ::1 (IPv6) first,
 # but Hummingbird binds only to 127.0.0.1 — causing ConnectionRefused.
 export ANTHROPIC_BASE_URL="http://127.0.0.1:$PORT"
-export ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-local}"   # Claude Code requires this header
+# Deliberately NOT inherited from the environment: the base URL points at a
+# local server, so a real key would be handed to it — and it also lands in the
+# --settings payload below. Always the placeholder.
+export ANTHROPIC_API_KEY="local"                         # Claude Code requires this header
 
 printf '\n'
 info "┌─────────────────────────────────────────────────────┐"

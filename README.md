@@ -1,5 +1,11 @@
 # Gemm
 
+[English](README.md) · [Русский](README.ru.md)
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-black.svg)](LICENSE)
+[![Platform](https://img.shields.io/badge/platform-macOS%2015%2B%20·%20Apple%20Silicon-black.svg)](#requirements)
+[![Swift 6](https://img.shields.io/badge/Swift-6-black.svg)](Package.swift)
+
 Local LLM inference server for Apple Silicon. Runs Gemma 4, Qwen 3, and other MLX-compatible models entirely on-device (Metal GPU). No authentication, no cloud calls — designed for local development and agentic workflows.
 
 ```
@@ -30,12 +36,29 @@ Two transports share a single actor instance — **MCP stdio** for IDE integrati
 
 ## Quick Start
 
+### Install with Homebrew
+
 ```bash
-git clone https://github.com/your-org/Gemm
-cd Gemm
+brew tap goodmai/basalt https://github.com/goodmai/basalt
+brew install goodmai/basalt/gemm
+```
+
+The formula builds from source — Xcode 16+ is required, and the first build takes a few minutes.
+
+### Build from source
+
+```bash
+git clone https://github.com/goodmai/basalt
+cd basalt
 
 # Build
 swift build -c release
+
+# Compile the MLX Metal kernels. Required once per checkout: a SwiftPM build of
+# mlx-swift ships no metallib, and without it the first inference call fails
+# with "Failed to load the default metallib". The script places it next to the
+# built binary, so the binary works from any directory.
+./scripts/build_metal.swift
 
 # Interactive chat
 .build/release/gemm chat --model mlx-community/Qwen3.5-4B-4bit
@@ -60,7 +83,7 @@ chmod +x ./Gemma
 ./Gemma -- --model haiku                            # pass --model haiku to claude
 ```
 
-`Gemma` sets `ANTHROPIC_AUTH_TOKEN=local` (not `ANTHROPIC_API_KEY`), so your real Anthropic credentials in other terminals are untouched.
+`Gemma` pins `ANTHROPIC_API_KEY=local` rather than inheriting it, so a real key is never forwarded to the local server or written into the `--settings` payload. Other terminals are untouched.
 
 ---
 
@@ -84,6 +107,8 @@ huggingface-cli download mlx-community/gemma-4-e4b-it-4bit
 | `Ex0bit/MYTHOS-26B-A4B-PRISM-PRO-DQ-MLX` | 26B MoE | 14.5 GB | ✅ ~14 TPS (Dynamic Quant) |
 | `Ex0bit/Qwen3.6-35B-A3B-PRISM-MLX-NVFP4` | 35B MoE | 20.5 GB | ✅ ~8 TPS (NVFP4) |
 | `Ex0bit/Elbaz-Olmo-3-7B-Instruct-abliterated` | 7B | 4.5 GB | ✅ ~55 TPS |
+| `ornith-ai/Ornith-1.5-9B-MLX-4bit` | 9B | 5.8 GB | ✅ ~45 TPS (reasoning — see note) |
+| `ornith-ai/Ornith-1.5-35B-A3B-MLX-4bit` | 35B MoE | 21 GB | ✅ untested above 24 GB |
 | `huihui-ai/Huihui-Qwen3.8-27B-abliterated` (Base BF16) | 27B | ~54 GB | ❌ Needs 64GB+ (Use 4-bit MLX version on 24GB) |
 | `mlx-community/gemma-4-26b-a4b-it-4bit` | 26B MoE | 14.5 GB | ❌ Gibberish output |
 | `mlx-community/Qwen3.6-27B-4bit` | 27B | 14.5 GB | ❌ Gibberish output |
@@ -398,3 +423,26 @@ docs/                       — Extended documentation
 | `scripts/cleanup_daily.swift` | Rotate logs and old benchmarks |
 | `scripts/archive.sh` | Archive logs/reports/screenshots |
 | `scripts/clean_for_github.swift` | Remove secrets and heavy binaries before push |
+
+---
+
+## Contributing
+
+Issues and pull requests are welcome. Before opening a PR:
+
+```bash
+swift build          # must compile
+swift test           # must stay green
+```
+
+Never commit credentials, tokens, or `*.sqlite3` state — `.gitignore` blocks the
+usual suspects, and the release workflow runs a secret scan over the tree.
+
+---
+
+## License
+
+[MIT](LICENSE) © 2026 goodmai
+
+Model weights are **not** covered by this license — each model on HuggingFace
+carries its own terms.

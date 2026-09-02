@@ -36,6 +36,21 @@ struct ServeCommand: AsyncParsableCommand {
     )
     var reasoningEffort: String?
 
+    @Option(name: .customLong("top-k"), help: "Keep only the k most likely tokens (unset disables)")
+    var topK: Int?
+
+    @Option(name: .customLong("min-p"), help: "Drop tokens below this fraction of the top token's probability")
+    var minP: Float?
+
+    @Option(name: .customLong("seed"), help: "Seed the sampler so a non-greedy run is reproducible")
+    var seed: UInt64?
+
+    @Option(name: .customLong("kv-bits"), help: "Quantize the KV cache to 4 or 8 bits (default: full precision)")
+    var kvBits: Int?
+
+    @Option(name: .customLong("repetition-penalty"), help: "Penalty on recently emitted tokens, e.g. 1.1 (default: off)")
+    var repetitionPenalty: Float?
+
     @Option(name: .shortAndLong, help: "REST API port (default: 8080)")
     var port: Int = 8080
 
@@ -112,7 +127,14 @@ struct ServeCommand: AsyncParsableCommand {
         }
 
         // Shared inference engine + orchestrator
-        let engine       = MLXInferenceEngine(reasoningEffort: reasoningEffort)
+        let engine       = MLXInferenceEngine(
+            reasoningEffort: reasoningEffort,
+            kvBits: kvBits,
+            repetitionPenalty: repetitionPenalty,
+            topK: topK,
+            minP: minP,
+            seed: seed
+        )
         let orchestrator = ModelOrchestratorActor(engine: engine, maxTokens: config.maxTokens)
 
         log("Loading model from \(bold(resolvedPath))…")

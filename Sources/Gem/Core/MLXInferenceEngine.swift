@@ -32,6 +32,10 @@ public protocol InferenceEngine: Sendable {
 public actor MLXInferenceEngine: InferenceEngine {
 
     private var container: ModelContainer?
+
+    /// Resolved from the loaded model's config.json. Supplies per-family sampling
+    /// defaults that the caller did not override.
+    private var profile: any ModelProfile = GenericProfile()
     private let logger = GemLogger(module: "MLXInferenceEngine")
 
     /// Chat-template knob for models with a reasoning budget (Qwen3.8: xhigh | medium | low).
@@ -53,6 +57,18 @@ public actor MLXInferenceEngine: InferenceEngine {
     /// question until it hit the ceiling.
     private let repetitionPenalty: Float?
 
+    /// Truncates the sampling tail. `topK` keeps the k most likely tokens; `minP`
+    /// drops anything below a fraction of the top token's probability. Both are
+    /// stricter than top-p on a peaked distribution, which is what a recalled
+    /// constant looks like: at temperature 0.7 a model wrote 2.5 where the
+    /// Colebrook relation needs 2.51 — a value you cannot approximate.
+    private let topK: Int?
+    private let minP: Float?
+
+    /// Seeds the sampler so a non-greedy run can be repeated. Without it, two
+    /// identical requests give different answers and a single run is not evidence.
+    private let seed: UInt64?
+
     /// MLX buffer-cache ceiling in bytes. nil leaves MLX's own default.
     private let gpuCacheLimit: Int?
 
@@ -61,13 +77,19 @@ public actor MLXInferenceEngine: InferenceEngine {
         gpuCacheLimit: Int? = 512 << 20,
         kvBits: Int? = nil,
         quantizedKVStart: Int = 512,
-        repetitionPenalty: Float? = nil
+        repetitionPenalty: Float? = nil,
+        topK: Int? = nil,
+        minP: Float? = nil,
+        seed: UInt64? = nil
     ) {
         self.reasoningEffort = reasoningEffort
         self.gpuCacheLimit = gpuCacheLimit
         self.kvBits = kvBits
         self.quantizedKVStart = quantizedKVStart
         self.repetitionPenalty = repetitionPenalty
+        self.topK = topK
+        self.minP = minP
+        self.seed = seed
     }
 
     /// `registerAliases` is a static method, so it is *not* actor-isolated and two
@@ -198,6 +220,7 @@ public actor MLXInferenceEngine: InferenceEngine {
                 from: directory,
                 using: DefaultTokenizerLoader()
             )
+            profile = ModelProfileRegistry.profile(forModelAt: modelPath)
             
             // Dynamic config inspection
             let configURL = directory.appendingPathComponent("config.json")
@@ -290,6 +313,11 @@ public actor MLXInferenceEngine: InferenceEngine {
         params.kvBits = kvBits
         params.quantizedKVStart = quantizedKVStart
         params.repetitionPenalty = repetitionPenalty
+        if let topK { params.topK = topK }
+        // An explicit --min-p always wins; otherwise fall back to whatever the
+        // family was measured to need.
+        if let effectiveMinP = minP ?? profile.defaultMinP { params.minP = effectiveMinP }
+        params.seed = seed
 
         let userInput: UserInput
         if request.prompt.contains("<|turn|>") || request.prompt.contains("<|channel|>") {

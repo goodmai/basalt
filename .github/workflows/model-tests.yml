@@ -1,11 +1,9 @@
 name: Model Compatibility Tests
 
+# Manual only: each run downloads multi-GB weights from HuggingFace, which is
+# not something to do nightly on hosted runners.
 on:
-  pull_request:
-    branches: [ main ]
-  schedule:
-    - cron: '0 2 * * *' # Run nightly at 2 AM
-  workflow_dispatch: # Allow manual trigger
+  workflow_dispatch:
 
 jobs:
   test-models:

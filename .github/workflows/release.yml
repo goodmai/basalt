@@ -3,12 +3,12 @@ name: Release
 on:
   push:
     tags:
-      - 'v*' # Trigger on tags like v1.0.0
+      - 'v*'
 
 jobs:
   release:
     name: Build and Release
-    runs-on: macos-14
+    runs-on: macos-15
     permissions:
       contents: write
 
@@ -18,70 +18,59 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Setup Swift
-        uses: swift-actions/setup-swift@v2
-        with:
-          swift-version: "6.0"
-
-      - name: Build Metal Kernels
+      # A tagged commit is what the world downloads — refuse to publish one that
+      # carries a credential. Same pattern set as the pre-publish sweep.
+      - name: Secret scan
         run: |
-          chmod +x scripts/build_metal.swift
-          ./scripts/build_metal.swift
+          PAT='sk-ant-[A-Za-z0-9_-]{20}|sk-[A-Za-z0-9]{32}|gh[pousr]_[A-Za-z0-9]{30}|github_pat_[A-Za-z0-9_]{30}|hf_[A-Za-z0-9]{30}|AKIA[0-9A-Z]{16}|xox[baprs]-[A-Za-z0-9-]{20}|BEGIN (RSA|OPENSSH|EC|PRIVATE) PRIVATE KEY'
+          if git grep -IlE "$PAT" -- . ; then
+            echo "::error::possible credential in tracked files — release aborted"
+            exit 1
+          fi
+          echo "clean"
 
-      - name: Build Release Binary
+      - name: Build
         run: swift build -c release
 
-      - name: Create DMG
-        run: |
-          mkdir -p dmg_folder
-          cp .build/release/Gem dmg_folder/gemma
-          cp default.metallib dmg_folder/
-          hdiutil create -volname "Gem" -srcfolder dmg_folder -ov -format UDZO Gem.dmg
-          rm -rf dmg_folder
+      - name: Test
+        run: swift test
 
-      - name: Calculate SHA256
-        id: shasum
+      # No prebuilt binary is published: the binary alone is useless without the
+      # Metal library beside it, and a 130 MB metallib in every release is not
+      # worth it when the formula builds from source anyway.
+      - name: Hash the source tarball
+        id: pkg
         run: |
-          DMG_SHA=$(shasum -a 256 Gem.dmg | awk '{ print $1 }')
-          echo "dmg_sha=$DMG_SHA" >> $GITHUB_OUTPUT
-          
-          # We need the source tarball SHA for Homebrew
           VERSION=${GITHUB_REF#refs/tags/}
-          TARBALL_URL="https://github.com/${{ github.repository }}/archive/refs/tags/${VERSION}.tar.gz"
-          curl -sL $TARBALL_URL -o source.tar.gz
-          TARBALL_SHA=$(shasum -a 256 source.tar.gz | awk '{ print $1 }')
-          echo "tarball_sha=$TARBALL_SHA" >> $GITHUB_OUTPUT
           echo "version=$VERSION" >> $GITHUB_OUTPUT
+          curl -sL "https://github.com/${{ github.repository }}/archive/refs/tags/${VERSION}.tar.gz" -o source.tar.gz
+          echo "tarball_sha=$(shasum -a 256 source.tar.gz | awk '{print $1}')" >> $GITHUB_OUTPUT
 
-      - name: Update Homebrew Formula
+      - name: Point the Homebrew formula at this tag
         run: |
-          VERSION=${{ steps.shasum.outputs.version }}
-          TARBALL_SHA=${{ steps.shasum.outputs.tarball_sha }}
-          
-          sed -i '' "s|url \".*\"|url \"https://github.com/${{ github.repository }}/archive/refs/tags/${VERSION}.tar.gz\"|g" Formula/gem.rb
-          sed -i '' "s|sha256 \".*\"|sha256 \"${TARBALL_SHA}\"|g" Formula/gem.rb
-          
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add Formula/gem.rb
-          git commit -m "Update Homebrew formula for ${VERSION}" || echo "No changes to commit"
-          git push origin HEAD:main || echo "Push failed or not on main"
+          VERSION=${{ steps.pkg.outputs.version }}
+          sed -i '' "s|url \".*\"|url \"https://github.com/${{ github.repository }}/archive/refs/tags/${VERSION}.tar.gz\"|" Formula/gemm.rb
+          sed -i '' "s|sha256 \".*\"|sha256 \"${{ steps.pkg.outputs.tarball_sha }}\"|" Formula/gemm.rb
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/gemm.rb
+          git commit -m "chore: point formula at ${VERSION}" || echo "formula already current"
+          git push origin HEAD:main || echo "push skipped"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: Gem.dmg
+          generate_release_notes: true
           body: |
-            ## Gem ${{ steps.shasum.outputs.version }}
-            
-            ### Checksums
-            - **Gem.dmg:** `${{ steps.shasum.outputs.dmg_sha }}`
-            
-            ### Installation
-            Download the DMG, open it, and place `gemma` and `default.metallib` in your desired directory, or use Homebrew:
+            ## Gemm ${{ steps.pkg.outputs.version }}
+
             ```bash
-            brew tap your-org/gemma
-            brew install gemma
+            brew tap goodmai/basalt https://github.com/${{ github.repository }}
+            brew install goodmai/basalt/gemm
             ```
+
+            Builds from source: Xcode 16+, Apple Silicon, macOS 15+.
+
+            **Source tarball SHA256**: `${{ steps.pkg.outputs.tarball_sha }}`
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

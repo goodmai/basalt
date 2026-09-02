@@ -1,5 +1,0 @@
-FROM gemma4:26b
-PARAMETER num_ctx 65536
-PARAMETER temperature 0.3
-PARAMETER top_p 0.9
-SYSTEM "You are an expert software engineer specialized in blockchain and system architecture."

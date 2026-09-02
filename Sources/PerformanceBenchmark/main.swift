@@ -31,6 +31,15 @@ struct Benchmark: AsyncParsableCommand {
     @Option(name: .customLong("gpu-cache-mb"), help: "MLX buffer cache ceiling in MB; 0 means leave MLX's default uncapped")
     var gpuCacheMB: Int?
 
+    @Option(name: .customLong("top-k"), help: "Keep only the k most likely tokens (0/unset disables)")
+    var topK: Int?
+
+    @Option(name: .customLong("min-p"), help: "Drop tokens below this fraction of the top token's probability")
+    var minP: Float?
+
+    @Option(name: .customLong("seed"), help: "Seed the sampler so a non-greedy run is reproducible")
+    var seed: UInt64?
+
     @Option(name: .customLong("kv-bits"), help: "Quantize the KV cache to 4 or 8 bits (default: full precision)")
     var kvBits: Int?
 
@@ -55,7 +64,8 @@ struct Benchmark: AsyncParsableCommand {
             reasoningEffort: reasoningEffort,
             gpuCacheLimit: gpuCacheMB.map { $0 == 0 ? nil : $0 << 20 } ?? (512 << 20),
             kvBits: kvBits,
-            repetitionPenalty: repetitionPenalty)
+            repetitionPenalty: repetitionPenalty,
+            topK: topK, minP: minP, seed: seed)
         let orchestrator = ModelOrchestratorActor(engine: engine, maxTokens: tokens)
 
         print("Loading model…", terminator: ""); fflush(stdout)

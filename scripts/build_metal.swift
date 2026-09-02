@@ -128,8 +128,20 @@ if status != 0 {
     exit(status)
 }
 
+// Two placements, because MLX has two ways of finding this file. The copy at
+// the repo root is the last resort in its search order and only works when the
+// process CWD happens to be the repo. The `mlx.metallib` copies sit next to the
+// built binaries, which is the FIRST thing MLX looks for and the only one that
+// survives `brew install` or running the binary from anywhere else.
 try? fm.removeItem(atPath: "default.metallib")
 try? fm.copyItem(atPath: "\(outputDir)/default.metallib", toPath: "default.metallib")
 
-log("Successfully built \(outputDir)/default.metallib and copied to root", level: .info)
+for buildDir in [".build/debug", ".build/release"] where fm.fileExists(atPath: buildDir) {
+    let colocated = "\(buildDir)/mlx.metallib"
+    try? fm.removeItem(atPath: colocated)
+    try? fm.copyItem(atPath: "\(outputDir)/default.metallib", toPath: colocated)
+    log("Placed \(colocated)", level: .debug)
+}
+
+log("Successfully built \(outputDir)/default.metallib, copied to root and next to the binaries", level: .info)
 try? fm.removeItem(atPath: tempDir)

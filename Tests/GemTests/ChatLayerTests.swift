@@ -110,3 +110,21 @@ struct StopReasonTests {
         #expect(ChatResult.Stop.endTurn.openAIFinishReason == "stop")
     }
 }
+
+@Suite("Ornith 1.5")
+struct OrnithModelTests {
+    /// Ornith ships as `qwen3_5` / `qwen3_5_moe`, so it must land on QwenProfile —
+    /// its template takes the same `enable_thinking` knob and opens `<think>` itself.
+    @Test("Ornith model types route to the Qwen profile")
+    func testProfileRouting() {
+        #expect(ModelProfileRegistry.profile(forModelType: "qwen3_5") is QwenProfile)
+        #expect(ModelProfileRegistry.profile(forModelType: "qwen3_5_moe") is QwenProfile)
+    }
+
+    @Test("Catalog carries both Ornith 4-bit builds")
+    func testCatalogEntries() {
+        let ids = ModelDatabase.allModels.map(\.id)
+        #expect(ids.contains("ornith-ai/Ornith-1.5-9B-MLX-4bit"))
+        #expect(ids.contains("ornith-ai/Ornith-1.5-35B-A3B-MLX-4bit"))
+    }
+}

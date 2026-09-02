@@ -148,6 +148,8 @@ struct ChatCommand: AsyncParsableCommand {
             ("Qwen Coder 7B", "4.1 GB RAM, 60 TPS", "mlx-community/Qwen2.5-Coder-7B-Instruct-4bit"),
             ("MYTHOS 26B MoE DQ", "14.5 GB RAM, 14 TPS", "Ex0bit/MYTHOS-26B-A4B-PRISM-PRO-DQ-MLX"),
             ("Qwen3.6 27B", "14.5 GB RAM, 11 TPS", "mlx-community/Qwen3.6-27B-4bit"),
+            ("Ornith 1.5 9B", "5.8 GB RAM, coding/agent", "ornith-ai/Ornith-1.5-9B-MLX-4bit"),
+            ("Ornith 1.5 35B A3B MoE", "21 GB RAM, coding/agent", "ornith-ai/Ornith-1.5-35B-A3B-MLX-4bit"),
             ("Gemma 4 2B", "2.7 GB RAM, 60 TPS", "mlx-community/gemma-4-e2b-it-4bit")
         ]
         
