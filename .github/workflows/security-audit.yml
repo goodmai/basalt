@@ -19,11 +19,9 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
       
-      - name: Setup Swift
-        uses: swift-actions/setup-swift@v2
-        with:
-          swift-version: '6.0'
-      
+      # No setup-swift: it pins an older toolchain than mlx-swift-lm's manifest
+      # requires (tools 6.1), and every `swift package` call then fails to
+      # resolve. The runner's own Xcode toolchain is newer and works.
       - name: Install dependencies
         run: |
           brew install jq

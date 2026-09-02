@@ -126,6 +126,5 @@ results/
 Gemma4Modelfile
 *_temp.swift
 gemma.swift
-osv_check.sh
 test_server.py
 test_large_models.sh
