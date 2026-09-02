@@ -37,24 +37,10 @@ jobs:
           echo "Running OSV vulnerability scan..."
           ./osv_check.sh
       
-      - name: Check for hardcoded secrets
-        run: |
-          echo "Scanning for hardcoded secrets..."
-          if grep -r "password.*=.*\".*\"" Sources/ --include="*.swift" | grep -v "// " | grep -v "Bearer\|Authorization"; then
-            echo "❌ Found potential hardcoded secrets"
-            exit 1
-          fi
-          echo "✅ No hardcoded secrets found"
-      
-      - name: Check for SQL injection vulnerabilities
-        run: |
-          echo "Checking for SQL injection..."
-          if grep -r "SELECT.*\\$\|INSERT.*\\$" Sources/ --include="*.swift" | grep -v "//"; then
-            echo "❌ Found potential SQL injection"
-            exit 1
-          fi
-          echo "✅ No SQL injection vulnerabilities"
-      
+      # The hardcoded-secret and SQL-injection greps that used to live here are
+      # gone: scripts/security_audit.sh runs both, and keeping a second, weaker
+      # copy in YAML meant fixing the pattern in one place and not the other.
+
       - name: Generate Security Report
         if: always()
         run: |
@@ -91,6 +77,13 @@ jobs:
 
   codeql-analysis:
     name: CodeQL Security Analysis
+    # Manual only. CodeQL ships its own Swift toolchain — 6.1.0 in action 2.26.4
+    # — and mlx-swift's manifest declares tools 6.3.0, so the extractor's build
+    # step cannot resolve the package at all. It is not the runner: the release
+    # workflow builds the same commit on the same image. Re-enable on push once
+    # the extractor catches up; until then a job that is red on every commit
+    # only teaches people to ignore the red.
+    if: github.event_name == 'workflow_dispatch'
     runs-on: macos-15
     permissions:
       actions: read

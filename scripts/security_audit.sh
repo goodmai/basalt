@@ -18,7 +18,17 @@ ISSUES_FOUND=0
 
 # 1. Check for hardcoded secrets
 echo "1️⃣  Checking for hardcoded secrets..."
-if grep -r "password\|secret\|api_key\|token" Sources/ --include="*.swift" | grep -v "// " | grep -E "(=\"|= \")[^\"]{8,}\"" | grep -v "Bearer\|Authorization\|Content-Type\|jwt\|bcrypt\|SHA256"; then
+# Look for credential *values*, not identifiers containing "token": the old
+# pattern matched every `case maxTokens = "max_tokens"` in a CodingKeys enum and
+# so failed on every run, which is the fastest way to teach people to ignore a
+# security check. Two things are worth flagging — a literal that looks like a
+# real key, and a credential-ish name assigned a long literal (never a `case`,
+# which is JSON field mapping).
+CRED_VALUE='sk-ant-[A-Za-z0-9_-]{20}|sk-[A-Za-z0-9]{32}|gh[pousr]_[A-Za-z0-9]{30}|github_pat_[A-Za-z0-9_]{30}|hf_[A-Za-z0-9]{30}|AKIA[0-9A-Z]{16}|xox[baprs]-[A-Za-z0-9-]{20}|-----BEGIN (RSA|OPENSSH|EC|PRIVATE) PRIVATE KEY'
+CRED_ASSIGN='(let|var)[[:space:]]+[A-Za-z_]*([Pp]assword|[Ss]ecret|[Aa]pi[Kk]ey|[Aa]uth[Tt]oken)[A-Za-z_]*[[:space:]]*(:[^=]*)?=[[:space:]]*"[^"]{12,}"'
+
+if grep -rInE "$CRED_VALUE" Sources/ --include="*.swift" ||
+   grep -rInE "$CRED_ASSIGN" Sources/ --include="*.swift" | grep -v "^[^:]*:[0-9]*: *case "; then
     echo -e "${RED}❌ FAIL: Potential hardcoded secrets found${NC}"
     ISSUES_FOUND=$((ISSUES_FOUND + 1))
 else
