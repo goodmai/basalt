@@ -27,15 +27,24 @@ public struct GemLogger: Sendable {
         return df
     }()
     
+    /// `~/.gemm/logs/app.log` — not `./logs`.
+    ///
+    /// An installed binary is run from wherever the user happens to be: that
+    /// either litters their directory or, somewhere read-only like `/`, fails
+    /// and prints a Cocoa error on every start. The launcher already keeps its
+    /// server log in `~/.gemm`, so this is the same place.
     private static let logFileURL: URL? = {
         let fm = FileManager.default
-        let currentDir = URL(fileURLWithPath: fm.currentDirectoryPath)
-        let logsDir = currentDir.appendingPathComponent("logs")
+        let logsDir = fm.homeDirectoryForCurrentUser
+            .appendingPathComponent(".gemm")
+            .appendingPathComponent("logs")
         do {
             try fm.createDirectory(at: logsDir, withIntermediateDirectories: true)
             return logsDir.appendingPathComponent("app.log")
         } catch {
-            print("Failed to create logs directory: \(error)")
+            // File logging is a convenience; stderr already has everything.
+            FileHandle.standardError.write(
+                Data("[log] cannot use \(logsDir.path): \(error.localizedDescription)\n".utf8))
             return nil
         }
     }()
