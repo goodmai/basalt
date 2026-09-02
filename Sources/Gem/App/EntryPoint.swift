@@ -33,6 +33,32 @@ public struct GemCLI: AsyncParsableCommand {
           mlx-community/Qwen3.6-35B-A3B-4bit              Qwen3.6 MoE  ~21 GB   ★ efficient
           Ex0bit/Qwen3.6-35B-A3B-PRISM-MLX-NVFP4          Qwen3.6 35B  ~20.5 GB ★ NVFP4 MoE
 
+        DENSE & ABLITERATED — one invocation, plus the flag each family needs
+          gemm serve --rest --model <id>   …and whatever the right column says
+            mlx-community/gemma-4-e4b-it-4bit        Gemma 4 4B, nothing extra
+            mlx-community/gemma-4-12b-it-4bit        Gemma 4 12B, nothing extra
+            divinetribe/gemma-4-12B-it-abliterated-4bit-mlx-text  abliterated
+            AutisticAF/Huihui-Qwen3.8-27B-abliterated-mlx-4Bit    abliterated
+            PocketAiHub/Qwen3.8-27B-Abliterated-MLX  --quant 4bit (2/4/6bit)
+            ornith-ai/Ornith-1.5-9B-MLX-4bit         --reasoning-effort none
+            ornith-ai/Ornith-1.5-35B-A3B-MLX-4bit    --reasoning-effort none
+            mlx-community/Ornith-1.5-9B-OptiQ-4bit   mixed 8/4-bit, same flag
+          Ornith and Qwen3.x are reasoning models: without --reasoning-effort none
+          they can spend the whole token budget inside <think> and never answer.
+          Tight on memory? --kv-bits 4 buys context, --dry-run checks it first.
+        
+        POINTING TOOLS AT IT  (127.0.0.1, not localhost — the server is IPv4 only)
+          OpenCode:
+            export OPENAI_BASE_URL=http://127.0.0.1:8080/v1
+            export OPENAI_API_KEY=local OPENAI_MODEL=gemm
+            opencode
+          Claude Code:
+            export ANTHROPIC_BASE_URL=http://127.0.0.1:8080
+            export ANTHROPIC_AUTH_TOKEN=local
+            claude
+          Anything OpenAI-compatible:
+            base URL http://127.0.0.1:8080/v1, any key, model "gemm"
+
         INTERFACES
           MCP  (stdio)   — Cursor, Claude Desktop, any MCP-compatible IDE
           REST (HTTP)    — Agent-to-Agent (A2A) calls, curl, microservices
