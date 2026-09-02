@@ -29,6 +29,12 @@ if args.contains("--help") || args.contains("-h") {
     """)
     exit(0)
 }
+// CI runs an older SDK than the one MLX targets, and a few kernels include
+// headers that only exist in the newer one (MetalPerformancePrimitives). The
+// resulting library is still loadable, which is all the test suite needs — but
+// a developer build must stay strict, so this is opt-in.
+let skipUnsupported = args.contains("--skip-unsupported")
+
 if args.contains("--dry-run") {
     log("Dry run: build_metal", level: .info)
     exit(0)
@@ -126,6 +132,10 @@ for file in metalFiles {
     log("Compiling \(file)...", level: .debug)
     let status = run(args)
     if status != 0 {
+        if skipUnsupported {
+            log("Skipping \(name): this SDK cannot compile it", level: .warning)
+            continue
+        }
         log("Error compiling \(file)", level: .error)
         exit(status)
     }

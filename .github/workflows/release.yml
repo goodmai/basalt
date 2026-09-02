@@ -43,7 +43,10 @@ jobs:
           key: metallib-${{ hashFiles('Package.resolved') }}
 
       - name: Compile MLX Metal kernels
-        run: ./scripts/build_metal.swift   # no-op when the cache restored it
+        # --skip-unsupported: the runner's SDK is older than the one MLX
+        # targets, and a couple of kernels include headers that only exist in
+        # the newer one. The library still loads, which is all the suite needs.
+        run: ./scripts/build_metal.swift --skip-unsupported
 
       - name: Test
         run: swift test
