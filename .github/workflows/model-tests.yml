@@ -12,7 +12,7 @@ concurrency:
 jobs:
   test-models:
     name: Test Inference & Benchmarks
-    runs-on: macos-15 # M1/M2 runners are required for MLX
+    runs-on: macos-26 # M1/M2 runners are required for MLX
     # It downloads multi-GB weights; without a ceiling a stalled fetch holds a
     # runner for six hours.
     timeout-minutes: 90

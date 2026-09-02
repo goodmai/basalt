@@ -17,7 +17,7 @@ concurrency:
 jobs:
   security-audit:
     name: Security & Dependency Audit
-    runs-on: macos-15
+    runs-on: macos-26
     timeout-minutes: 20
     permissions:
       contents: read
@@ -106,7 +106,7 @@ jobs:
     # the extractor catches up; until then a job that is red on every commit
     # only teaches people to ignore the red.
     if: github.event_name == 'workflow_dispatch'
-    runs-on: macos-15
+    runs-on: macos-26
     # It burned 56 minutes before failing once. If it cannot finish in an hour
     # it is not going to.
     timeout-minutes: 60
