@@ -6,7 +6,17 @@
 
 ## 1. Обзор датасета ARC-AGI-1
 
-Локальная база задач ARC-AGI-1 расположена по адресу:
+Корпус в репозиторий не вендорится — он чужой и весит 5 МБ в 800 файлах.
+Положите его сами:
+
+```bash
+git clone --depth 1 https://github.com/fchollet/ARC-AGI /tmp/arc-agi
+mkdir -p benchmarks/arc-agi/dataset
+cp -R /tmp/arc-agi/data/training benchmarks/arc-agi/dataset/training
+cp -R /tmp/arc-agi/data/evaluation benchmarks/arc-agi/dataset/evaluation
+```
+
+Локальная база задач ARC-AGI-1 после этого лежит по адресу:
 `benchmarks/arc-agi/dataset/` (относительно корня репозитория)
 
 Общий объем составляет **800 задач**:

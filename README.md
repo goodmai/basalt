@@ -2,9 +2,15 @@
 
 [English](README.md) · [Русский](README.ru.md)
 
+[![Release](https://github.com/goodmai/basalt/actions/workflows/release.yml/badge.svg)](https://github.com/goodmai/basalt/actions/workflows/release.yml)
+[![Security Audit](https://github.com/goodmai/basalt/actions/workflows/security-audit.yml/badge.svg)](https://github.com/goodmai/basalt/actions/workflows/security-audit.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-black.svg)](LICENSE)
+
 [![Platform](https://img.shields.io/badge/platform-macOS%2015%2B%20·%20Apple%20Silicon-black.svg)](#requirements)
 [![Swift 6](https://img.shields.io/badge/Swift-6-black.svg)](Package.swift)
+[![Homebrew](https://img.shields.io/badge/brew-goodmai%2Fbasalt%2Fgemm-black.svg)](#install-with-homebrew)
+[![Ladder](https://img.shields.io/badge/ladder-6%20tasks-black.svg)](#benchmarks)
+[![ARC-AGI](https://img.shields.io/badge/ARC--AGI-pass%402-black.svg)](#benchmarks)
 
 Local LLM inference server for Apple Silicon. Runs Gemma 4, Qwen 3, and other MLX-compatible models entirely on-device (Metal GPU). No authentication, no cloud calls — designed for local development and agentic workflows.
 
@@ -423,6 +429,79 @@ docs/                       — Extended documentation
 | `scripts/cleanup_daily.swift` | Rotate logs and old benchmarks |
 | `scripts/archive.sh` | Archive logs/reports/screenshots |
 | `scripts/clean_for_github.swift` | Remove secrets and heavy binaries before push |
+
+---
+
+## Benchmarks
+
+Two harnesses, both pointed at a running server, both reporting numbers you can
+reproduce on your own machine.
+
+**The ladder** — `benchmarks/ladder/run.py`. Six tasks: three that any instruct
+model should clear, three that need an actual derivation. Nothing is graded on
+how the answer reads: the model's own code is executed against inputs the prompt
+never showed it, so a plausible-looking wrong answer still fails.
+
+| # | Task | What it actually tests |
+|---|---|---|
+| 1 | Algebra | `3x + 7 = 22` — sanity check |
+| 2 | Fibonacci | memoised recursion, verified at n = 10, 20, 30 |
+| 3 | Translation | three target languages present |
+| 4 | Fourier | numeric integration, checked on sawtooth, square wave, cosine |
+| 5 | Pump head | units (mm vs m, L/s vs m³/s) + Colebrook, which has no closed form |
+| 6 | Biquadratic | real and complex roots, duplicates collapsed |
+
+**ARC-AGI** — `benchmarks/arc-agi/arc_agi_benchmark.py`, official pass@2 rules.
+The corpus is not vendored; fetch it into `benchmarks/arc-agi/dataset/` first
+(see `benchmarks/arc-agi/ARC_AGI.md`).
+
+### Results
+
+Measured on an M-series Mac with 24 GB unified memory. `thinking` is the chat
+template's `<think>` block: on by default for reasoning models, disabled with
+`--reasoning-effort none`.
+
+| Model | Ladder 1–3 | Ladder 4–6 | ARC-AGI mini | tok/s |
+|---|---|---|---|---|
+| `ornith-ai/Ornith-1.5-9B-MLX-4bit` (thinking off) | 3/3 | 0/3 | 0/3 ¹ | ~45 |
+| `ornith-ai/Ornith-1.5-9B-MLX-4bit` (thinking on) | 2/3 | 0/3 | not run | ~43 |
+
+Ornith 9B, task by task, thinking off:
+
+| Task | Result | Detail |
+|---|---|---|
+| Algebra | ✅ | 163 tok, 4 s |
+| Fibonacci | ✅ | 757 tok, 16 s |
+| Translation | ✅ | 303 tok, 7 s — German idiomatic, French paraphrased rather than translated |
+| Fourier | ❌ | `a0 = 10.86` for `f(x) = x`, want 0 — the integration is wrong, not the formula |
+| Pump head | ❌ | `v = 0.0298` m/s, want 1.79 — never converted mm to m |
+| Biquadratic | ❌ | real roots correct; `x⁴ + 1` returns 2 complex roots instead of 4 |
+
+¹ The ARC-AGI column is a partial run: three training tasks (`007bbfb7`,
+`00d62c1b`, `017c7c7b`), none solved at pass@2, 330 s total. It was stopped
+before the remaining two, so treat it as a smoke test rather than a score.
+
+The validators are themselves checked, without a model or a GPU:
+
+```bash
+python3 benchmarks/ladder/selfcheck.py    # 9 assertions, both directions
+```
+
+With thinking **on**, all three hard tasks and the translation ended in
+`finish_reason: length` — the budget went into the `<think>` block and no answer
+was ever emitted. That is a budget failure, not a capability ceiling, which is
+why the table above reports the two modes separately.
+
+### Reproduce
+
+```bash
+gemm serve --model ornith-ai/Ornith-1.5-9B-MLX-4bit --rest --reasoning-effort none &
+
+python3 benchmarks/ladder/run.py --port 8080 --json ladder.json
+python3 benchmarks/arc-agi/arc_agi_benchmark.py --engine mlx --split training --limit 5
+```
+
+Adding a model to the table is one run of each — PRs with new rows are welcome.
 
 ---
 

@@ -2,9 +2,15 @@
 
 [English](README.md) · [Русский](README.ru.md)
 
+[![Release](https://github.com/goodmai/basalt/actions/workflows/release.yml/badge.svg)](https://github.com/goodmai/basalt/actions/workflows/release.yml)
+[![Security Audit](https://github.com/goodmai/basalt/actions/workflows/security-audit.yml/badge.svg)](https://github.com/goodmai/basalt/actions/workflows/security-audit.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-black.svg)](LICENSE)
+
 [![Platform](https://img.shields.io/badge/platform-macOS%2015%2B%20·%20Apple%20Silicon-black.svg)](#требования)
 [![Swift 6](https://img.shields.io/badge/Swift-6-black.svg)](Package.swift)
+[![Homebrew](https://img.shields.io/badge/brew-goodmai%2Fbasalt%2Fgemm-black.svg)](#установка-через-homebrew)
+[![Ladder](https://img.shields.io/badge/лестница-6%20задач-black.svg)](#бенчмарки)
+[![ARC-AGI](https://img.shields.io/badge/ARC--AGI-pass%402-black.svg)](#бенчмарки)
 
 Локальный сервер инференса LLM для Apple Silicon. Запускает Gemma 4, Qwen 3, Ornith 1.5 и другие MLX-совместимые модели целиком на устройстве (Metal GPU). Без аутентификации и без обращений в облако — рассчитан на локальную разработку и агентные сценарии.
 
@@ -376,6 +382,80 @@ docs/                       — расширенная документация
 **Вырезание think-блоков** — в потоковом пути `generateStream` работает конечный автомат, который подавляет `<think>…</think>` до отправки клиенту. В непотоковом пути (`"stream": false`) фильтра нет — размышления приходят внутри `content`.
 
 **Трансляция ID** — `ModelsController` переводит между HuggingFace ID (`mlx-community/Qwen3.5-4B-4bit`) и формой `claude-local/mlx-community--Qwen3.5-4B-4bit`, которую требует фильтр обнаружения моделей в Claude Code. В запросах принимаются обе формы.
+
+---
+
+## Бенчмарки
+
+Два стенда, оба работают против запущенного сервера и дают числа, которые можно
+воспроизвести у себя.
+
+**Лестница** — `benchmarks/ladder/run.py`. Шесть задач: три должна брать любая
+instruct-модель, три требуют настоящего вывода. Оценивается не то, как ответ
+выглядит: код модели исполняется на входах, которых не было в промпте, поэтому
+правдоподобный, но неверный ответ всё равно падает.
+
+| № | Задача | Что реально проверяется |
+|---|---|---|
+| 1 | Алгебра | `3x + 7 = 22` — проверка живости |
+| 2 | Фибоначчи | рекурсия с мемоизацией, сверка на n = 10, 20, 30 |
+| 3 | Перевод | присутствуют все три языка |
+| 4 | Фурье | численное интегрирование: пила, меандр, косинус |
+| 5 | Напор насоса | единицы (мм против м, л/с против м³/с) + Colebrook без замкнутой формы |
+| 6 | Биквадрат | вещественные и комплексные корни, дубликаты схлопнуты |
+
+**ARC-AGI** — `benchmarks/arc-agi/arc_agi_benchmark.py`, официальные правила
+pass@2. Корпус не вендорится: сначала положите его в
+`benchmarks/arc-agi/dataset/` (см. `benchmarks/arc-agi/ARC_AGI.md`).
+
+### Результаты
+
+Замеры на Mac с 24 ГБ unified memory. `thinking` — это блок `<think>` из шаблона
+чата: у reasoning-моделей включён по умолчанию, отключается флагом
+`--reasoning-effort none`.
+
+| Модель | Лестница 1–3 | Лестница 4–6 | ARC-AGI mini | tok/s |
+|---|---|---|---|---|
+| `ornith-ai/Ornith-1.5-9B-MLX-4bit` (thinking выкл) | 3/3 | 0/3 | 0/3 ¹ | ~45 |
+| `ornith-ai/Ornith-1.5-9B-MLX-4bit` (thinking вкл) | 2/3 | 0/3 | не запускалось | ~43 |
+
+Ornith 9B по задачам, thinking выключен:
+
+| Задача | Итог | Детали |
+|---|---|---|
+| Алгебра | ✅ | 163 tok, 4 с |
+| Фибоначчи | ✅ | 757 tok, 16 с |
+| Перевод | ✅ | 303 tok, 7 с — немецкий идиоматичный, французский пересказан, а не переведён |
+| Фурье | ❌ | `a0 = 10.86` для `f(x) = x` вместо 0 — неверно считает интеграл, формула при этом правильная |
+| Напор насоса | ❌ | `v = 0.0298` м/с вместо 1.79 — не перевёл мм в метры |
+| Биквадрат | ❌ | вещественные корни верны; для `x⁴ + 1` вернула 2 комплексных корня вместо 4 |
+
+¹ Колонка ARC-AGI — неполный прогон: три задачи из training (`007bbfb7`,
+`00d62c1b`, `017c7c7b`), ни одна не решена по pass@2, 330 с суммарно. Оставшиеся
+две не запускались, так что это дымовой тест, а не оценка.
+
+Сами валидаторы тоже проверяются — без модели и GPU:
+
+```bash
+python3 benchmarks/ladder/selfcheck.py    # 9 проверок в обе стороны
+```
+
+С **включённым** thinking все три тяжёлые задачи и перевод закончились
+`finish_reason: length` — бюджет ушёл в блок `<think>`, до ответа дело не дошло.
+Это отказ по бюджету, а не потолок способностей, поэтому в таблице два режима
+разведены.
+
+### Как воспроизвести
+
+```bash
+gemm serve --model ornith-ai/Ornith-1.5-9B-MLX-4bit --rest --reasoning-effort none &
+
+python3 benchmarks/ladder/run.py --port 8080 --json ladder.json
+python3 benchmarks/arc-agi/arc_agi_benchmark.py --engine mlx --split training --limit 5
+```
+
+Добавить модель в таблицу — это один прогон каждого стенда. PR с новыми
+строками приветствуются.
 
 ---
 
