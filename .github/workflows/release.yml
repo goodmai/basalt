@@ -37,7 +37,7 @@ jobs:
       # suite runs. Cached on Package.resolved: it only changes when mlx-swift
       # does, and compiling the kernels is the slowest thing in this workflow.
       - name: Cache MLX metallib
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: default.metallib
           key: metallib-${{ hashFiles('Package.resolved') }}
