@@ -29,6 +29,18 @@ jobs:
 
       # Compiling mlx-swift from scratch is the bulk of every run. Keyed on
       # Package.resolved: it only changes when a dependency does.
+      # The image ships several Xcodes and its default is not always the newest:
+      # this job drew Swift 6.1.0, which cannot even parse mlx-swift's manifest
+      # (tools 6.3.0), while the release workflow drew a newer one the same day
+      # and built fine. Pick explicitly and print what we got.
+      - name: Select the newest Xcode
+        run: |
+          ls -d /Applications/Xcode*.app
+          XC=$(ls -d /Applications/Xcode*.app | sort -V | tail -1)
+          sudo xcode-select -s "$XC"
+          echo "selected $XC"
+          swift --version
+
       - name: Cache SwiftPM build
         uses: actions/cache@v6
         with:
