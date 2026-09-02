@@ -71,6 +71,16 @@ if fm.fileExists(atPath: genKernelDir) {
     metalFiles.append(contentsOf: findMetalFiles(in: genKernelDir))
 }
 
+// Nothing to compile means the dependency was never checked out, not that the
+// work is done. Left unsaid, this reaches `metallib` as an empty argument list
+// and fails there as "no input files", which names neither cause nor fix.
+if metalFiles.isEmpty {
+    log("No .metal sources under \(kernelDir) — run `swift build` first, "
+        + "SwiftPM has to check mlx-swift out before its kernels can be compiled.",
+        level: .error)
+    exit(1)
+}
+
 // Check if metallib exists and is newer than all .metal files
 if fm.fileExists(atPath: metalLibPath),
    let metalLibDate = getModificationDate(of: metalLibPath) {

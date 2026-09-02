@@ -5,10 +5,17 @@ on:
     tags:
       - 'v*'
 
+# Re-cutting a tag queues a second run; let it wait rather than cancel, since a
+# half-finished release leaves the formula pointing at a sha nobody computed.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   release:
     name: Build and Release
-    runs-on: macos-15
+    runs-on: macos-26
+    timeout-minutes: 60
     permissions:
       contents: write
 
@@ -28,6 +35,40 @@ jobs:
             exit 1
           fi
           echo "clean"
+
+      # The image ships several Xcodes and its default is not always the newest:
+      # this job drew Swift 6.1.0, which cannot even parse mlx-swift's manifest
+      # (tools 6.3.0), while the release workflow drew a newer one the same day
+      # and built fine. Pick explicitly and print what we got.
+      - name: Select the newest Xcode
+        run: |
+          ls -d /Applications/Xcode*.app
+          XC=$(ls -d /Applications/Xcode*.app | sort -V | tail -1)
+          sudo xcode-select -s "$XC"
+          echo "selected $XC"
+          swift --version
+
+      # The version the binary reports and the tag being released are written
+      # in two different places and nothing has ever compared them. They agreed
+      # at v0.1.0 by luck.
+      - name: Tag matches the version in the source
+        run: |
+          TAG=${GITHUB_REF#refs/tags/v}
+          SRC=$(grep -oE 'static let version = "[^"]+"' Sources/Gem/Core/DTOs.swift | grep -oE '"[^"]+"' | tr -d '"')
+          if [ "$TAG" != "$SRC" ]; then
+            echo "::error::tag v$TAG does not match HealthResponse.version ($SRC) in Sources/Gem/Core/DTOs.swift"
+            exit 1
+          fi
+          echo "v$TAG matches the source"
+
+      - name: Cache SwiftPM build
+        uses: actions/cache@v6
+        with:
+          path: |
+            .build
+            ~/Library/Caches/org.swift.swiftpm
+          key: swiftpm-release-${{ runner.os }}-${{ hashFiles('Package.resolved') }}
+          restore-keys: swiftpm-release-${{ runner.os }}-
 
       - name: Build
         run: swift build -c release
@@ -72,6 +113,18 @@ jobs:
           git add Formula/gemm.rb
           git commit -m "chore: point formula at ${VERSION}" || echo "formula already current"
           git push origin HEAD:main || echo "push skipped"
+
+      # The formula is the thing users install. Read back what the previous step
+      # pushed and check it against the sha computed here — a placeholder sat in
+      # this field for hours once, and only a human noticed.
+      - name: Verify the pushed formula
+        run: |
+          PUSHED=$(git show origin/main:Formula/gemm.rb 2>/dev/null | grep -oE 'sha256 "[a-f0-9]{64}"' | grep -oE '[a-f0-9]{64}' || true)
+          if [ "$PUSHED" != "${{ steps.pkg.outputs.tarball_sha }}" ]; then
+            echo "::error::Formula/gemm.rb on main carries sha256 '$PUSHED', expected ${{ steps.pkg.outputs.tarball_sha }}"
+            exit 1
+          fi
+          echo "formula points at this tag's tarball"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3
