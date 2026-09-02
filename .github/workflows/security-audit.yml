@@ -10,10 +10,15 @@ on:
     - cron: '0 9 * * 1'
   workflow_dispatch: # Manual trigger
 
+concurrency:
+  group: audit-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   security-audit:
     name: Security & Dependency Audit
     runs-on: macos-15
+    timeout-minutes: 20
     
     steps:
       - name: Checkout code
@@ -93,6 +98,9 @@ jobs:
     # only teaches people to ignore the red.
     if: github.event_name == 'workflow_dispatch'
     runs-on: macos-15
+    # It burned 56 minutes before failing once. If it cannot finish in an hour
+    # it is not going to.
+    timeout-minutes: 60
     permissions:
       actions: read
       contents: read

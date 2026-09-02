@@ -1,0 +1,85 @@
+name: CI
+
+# Everything here used to run only on a tag, inside the release workflow. That
+# is how v0.1.0 had to be re-cut three times in one afternoon: clipboard tests
+# that cannot pass on a headless runner, a test process MLX aborts when it finds
+# no metallib, and a kernel this runner's SDK cannot compile. All three were
+# ordinary push-time failures wearing a release-time costume.
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+# A second push to the same branch makes the first one irrelevant.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-test:
+    name: Build and test
+    runs-on: macos-15
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Compiling mlx-swift from scratch is the bulk of every run. Keyed on
+      # Package.resolved: it only changes when a dependency does.
+      - name: Cache SwiftPM build
+        uses: actions/cache@v6
+        with:
+          path: |
+            .build
+            ~/Library/Caches/org.swift.swiftpm
+          key: swiftpm-${{ runner.os }}-${{ hashFiles('Package.resolved') }}
+          restore-keys: swiftpm-${{ runner.os }}-
+
+      # MLX aborts the whole test process when it cannot find a metallib, and a
+      # SwiftPM build produces none.
+      - name: Cache MLX metallib
+        uses: actions/cache@v6
+        with:
+          path: default.metallib
+          key: metallib-${{ hashFiles('Package.resolved') }}
+
+      - name: Compile MLX Metal kernels
+        # --skip-unsupported: the runner's SDK is a release behind the one MLX
+        # targets, and a couple of kernels include headers only the newer one
+        # has. The library still loads, which is all the suite needs.
+        run: ./scripts/build_metal.swift --skip-unsupported
+
+      - name: Build
+        run: swift build
+
+      - name: Test
+        run: swift test
+
+      # The graders of the benchmark harness, checked without a model or a GPU.
+      # It has already caught one real defect: check_fibonacci read the last code
+      # block, and models routinely close with an abbreviated snippet.
+      - name: Ladder self-check
+        run: python3 benchmarks/ladder/selfcheck.py
+
+  formula:
+    name: Homebrew formula
+    runs-on: macos-15
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Style
+        run: brew style Formula/gemm.rb
+
+      # `brew audit` only accepts a formula *name*, so the checkout is tapped as
+      # itself — that audits this commit's formula rather than the one already
+      # published on main.
+      - name: Audit
+        run: |
+          brew tap goodmai/basalt "$GITHUB_WORKSPACE"
+          brew audit --strict --formula goodmai/basalt/gemm
