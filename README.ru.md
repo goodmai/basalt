@@ -30,6 +30,9 @@
 Два транспорта работают через один экземпляр актора — **MCP stdio** для интеграции с IDE (Claude Desktop, Cursor) и **REST HTTP** для агентных сценариев и в роли бэкенда Claude Code.
 
 
+<p align="center"><img src="images/models-hive.svg" alt="Открытые модели, которые запускает basalt: Qwen, Gemma, Ornith, gpt-oss, DeepSeek, Llama" width="240"></p>
+<p align="center"><sub>Запускает open-weight модели на Apple Silicon. Проверено здесь: Gemma, Qwen, Ornith (см. <a href="#проверенные-модели">таблицу</a>); gpt-oss, DeepSeek и Llama совместимы с MLX, но здесь пока не прогонялись. Логотипы принадлежат их владельцам и показаны только для обозначения совместимости. Модели Anthropic закрытые, поэтому их в сотах нет; поддерживается именно <i>API</i> Anthropic, чтобы Claude Code работал с локальной моделью.</sub></p>
+
 ## Зачем basalt
 
 - **Один сервер, три протокола.** REST отвечает по OpenAI *и* Anthropic (`/v1/messages`), MCP stdio подключается к Claude Desktop и Cursor, WebSocket стримит токены. Все они делят один актор модели — ничего не грузится дважды.
