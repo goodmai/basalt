@@ -27,6 +27,17 @@ jobs:
       - name: Build tests
         run: swift build --build-tests
         
+      # MLX aborts the whole test process when it cannot find a metallib, and a
+      # SwiftPM build produces none. Same two steps as the release workflow.
+      - name: Cache MLX metallib
+        uses: actions/cache@v6
+        with:
+          path: default.metallib
+          key: metallib-${{ hashFiles('Package.resolved') }}
+
+      - name: Compile MLX Metal kernels
+        run: ./scripts/build_metal.swift --skip-unsupported
+
       - name: Run unit tests
         run: swift test
         
