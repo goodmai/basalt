@@ -1,4 +1,8 @@
-# Gemm
+# basalt — turn your Mac into a local LLM server. Point Claude Code at it.
+
+> Gemma 4, Qwen 3 and any MLX model on your Apple Silicon GPU, behind the **OpenAI API, the Anthropic API and MCP**. One Swift binary. No Python at runtime. No cloud. No API bill.
+>
+> *The CLI and the Homebrew formula are called `gemm`; the repository is `basalt`.*
 
 [English](README.md) · [Русский](README.ru.md)
 
@@ -12,8 +16,6 @@
 [![Ladder](https://img.shields.io/badge/ladder-6%20tasks-black.svg)](#benchmarks)
 [![ARC-AGI](https://img.shields.io/badge/ARC--AGI-pass%402-black.svg)](#benchmarks)
 
-Local LLM inference server for Apple Silicon. Runs Gemma 4, Qwen 3, and other MLX-compatible models entirely on-device (Metal GPU). No authentication, no cloud calls — designed for local development and agentic workflows.
-
 ```
 ┌──────────────────────────────────────────────────────┐
 │                       Gemm                           │
@@ -26,6 +28,32 @@ Local LLM inference server for Apple Silicon. Runs Gemma 4, Qwen 3, and other ML
 ```
 
 Two transports share a single actor instance — **MCP stdio** for IDE integration (Claude Desktop, Cursor) and **REST HTTP** for agent-to-agent workflows and Claude Code backends.
+
+
+## Why basalt
+
+- **One server, three protocols.** REST speaks OpenAI *and* Anthropic (`/v1/messages`), MCP stdio plugs into Claude Desktop and Cursor, WebSocket streams tokens. They share a single model actor, so nothing loads twice.
+- **Claude Code on a local model in two lines.** Set `ANTHROPIC_BASE_URL` and run `claude` — your real API key is never touched. See [Claude Code Integration](#claude-code-integration).
+- **Fast on a laptop.** On a 24 GB Mac: ~110 tok/s on Gemma 4 E2B, ~92 tok/s on Qwen3.5-4B, ~37 tok/s on a 9B, ~12 tok/s on a 27B ([full table](#verified-models)).
+- **Pure Swift.** SwiftPM only — no Node, no Python, no Docker at runtime. Metal kernels compiled once, `mlx.metallib` shipped next to the binary.
+- **Honest numbers.** The model table lists what *broke* too (gibberish output, OOM). The benchmark ladder executes the model's own code against inputs the prompt never showed, so a plausible-looking wrong answer still fails ([Benchmarks](#benchmarks)).
+
+## 60-second demo
+
+```bash
+brew tap goodmai/basalt https://github.com/goodmai/basalt
+brew install goodmai/basalt/gemm          # builds from source, needs Xcode 16+
+
+gemm onboard                              # picks a model that fits your Mac and downloads it
+gemm serve --model mlx-community/Qwen3.5-4B-4bit --rest
+
+# in another terminal: Claude Code, backed by your own GPU
+ANTHROPIC_BASE_URL=http://localhost:8080 ANTHROPIC_AUTH_TOKEN=local claude
+```
+
+Local 4B–9B models are not a drop-in replacement for a frontier model — they are for private, offline, zero-cost agentic work and for tinkering. `gemm fit` tells you what your machine can actually run.
+
+**Star it** if you want more MLX-native tooling in Swift, and open an issue with your Mac and your tok/s — [PRs adding a row to the benchmark table](#benchmarks) are welcome.
 
 ---
 
