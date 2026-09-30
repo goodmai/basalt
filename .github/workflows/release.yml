@@ -65,11 +65,11 @@ jobs:
       - name: Point the Homebrew formula at this tag
         run: |
           VERSION=${{ steps.pkg.outputs.version }}
-          sed -i '' "s|url \".*\"|url \"https://github.com/${{ github.repository }}/archive/refs/tags/${VERSION}.tar.gz\"|" Formula/gemm.rb
-          sed -i '' "s|sha256 \".*\"|sha256 \"${{ steps.pkg.outputs.tarball_sha }}\"|" Formula/gemm.rb
+          sed -i '' "s|url \".*\"|url \"https://github.com/${{ github.repository }}/archive/refs/tags/${VERSION}.tar.gz\"|" Formula/basalt.rb
+          sed -i '' "s|sha256 \".*\"|sha256 \"${{ steps.pkg.outputs.tarball_sha }}\"|" Formula/basalt.rb
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add Formula/gemm.rb
+          git add Formula/basalt.rb
           git commit -m "chore: point formula at ${VERSION}" || echo "formula already current"
           git push origin HEAD:main || echo "push skipped"
 
@@ -78,11 +78,11 @@ jobs:
         with:
           generate_release_notes: true
           body: |
-            ## Gemm ${{ steps.pkg.outputs.version }}
+            ## Basalt ${{ steps.pkg.outputs.version }}
 
             ```bash
             brew tap goodmai/basalt https://github.com/${{ github.repository }}
-            brew install goodmai/basalt/gemm
+            brew install goodmai/basalt/basalt
             ```
 
             Builds from source: Xcode 16+, Apple Silicon, macOS 15+.

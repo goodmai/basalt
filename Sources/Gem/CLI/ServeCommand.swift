@@ -7,7 +7,7 @@ import ArgumentParser
 struct ServeCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "serve",
-        abstract: "Start the Gemm inference server (REST + optional MCP stdio)"
+        abstract: "Start the Basalt inference server (REST + optional MCP stdio)"
     )
 
     // MARK: — Arguments

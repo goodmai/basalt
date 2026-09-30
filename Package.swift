@@ -50,7 +50,7 @@ let package = Package(
 
         // ── Executable (thin wrapper — just calls library main) ───────────────
         .executableTarget(
-            name: "Gemm",
+            name: "Basalt",
             dependencies: ["GemCore"],
             path: "Sources/GemBin",
             swiftSettings: [

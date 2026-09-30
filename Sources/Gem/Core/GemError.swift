@@ -50,7 +50,7 @@ public enum GemError: Error, Sendable, LocalizedError {
         case .inferenceError(let msg):
             return "Inference error: \(msg)"
         case .modelNotCached(let id):
-            return "Model '\(id)' is not in the local cache. Run: gemm models download \(id)"
+            return "Model '\(id)' is not in the local cache. Run: basalt models download \(id)"
         case .modelSwitching(let from, let to):
             return "Switching model from '\(from)' to '\(to)'. Retry in a few seconds."
         }

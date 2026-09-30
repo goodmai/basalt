@@ -1,4 +1,4 @@
-class Gemm < Formula
+class Basalt < Formula
   desc "Local LLM inference server for Apple Silicon (MLX, MCP + REST)"
   homepage "https://github.com/goodmai/basalt"
   url "https://github.com/goodmai/basalt/archive/refs/tags/v0.1.0.tar.gz"
@@ -29,12 +29,12 @@ class Gemm < Formula
     # "Failed to load the default metallib".
     system "./scripts/build_metal.swift"
 
-    libexec.install ".build/release/Gemm" => "gemm"
+    libexec.install ".build/release/Basalt" => "basalt"
     libexec.install ".build/release/mlx.metallib"
-    (bin/"gemm").write_env_script libexec/"gemm", {}
+    (bin/"basalt").write_env_script libexec/"basalt", {}
   end
 
   test do
-    assert_match "gemm", shell_output("#{bin}/gemm --help")
+    assert_match "basalt", shell_output("#{bin}/basalt --help")
   end
 end

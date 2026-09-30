@@ -128,3 +128,6 @@ Gemma4Modelfile
 gemma.swift
 test_server.py
 test_large_models.sh
+
+# Local marketing drafts, never committed
+posts/

@@ -12,26 +12,26 @@ import json, urllib.request, re, time, sys, os, argparse, glob
 from pathlib import Path
 
 # ─── Конфигурация движков ────────────────────────────────────────────────────
-# `gemm serve` ignores the request's model field once a model is loaded, so the
+# `basalt serve` ignores the request's model field once a model is loaded, so the
 # engine only needs to name the port the server is listening on.
 ENGINES = {
     "ollama": {
         "url":   "http://127.0.0.1:11434/api/chat",
-        "model": "gemm",
+        "model": "basalt",
         "type":  "ollama",     # Ollama chat API format
         "label": "Ollama Metal (GGUF)",
     },
     "mlx": {
         "url":   "http://127.0.0.1:8080/v1/chat/completions",
-        "model": "gemm",
+        "model": "basalt",
         "type":  "openai",     # OpenAI-compatible (mlx_lm.server)
-        "label": "Native Swift MLX gemm (port 8080)",
+        "label": "Native Swift MLX basalt (port 8080)",
     },
     "swift_mlx": {
         "url":   "http://127.0.0.1:8081/v1/chat/completions",
-        "model": "gemm",
-        "type":  "openai",     # Custom Native Swift MLX server (gemm)
-        "label": "Native Swift MLX gemm (port 8081)",
+        "model": "basalt",
+        "type":  "openai",     # Custom Native Swift MLX server (basalt)
+        "label": "Native Swift MLX basalt (port 8081)",
     },
 }
 

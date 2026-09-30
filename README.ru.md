@@ -1,8 +1,8 @@
+<p align="center"><img src="images/logo.svg" alt="basalt logo" width="128"></p>
+
 # basalt — превратите Mac в локальный LLM-сервер. Подключите к нему Claude Code.
 
 > Gemma 4, Qwen 3 и любые MLX-модели на GPU Apple Silicon — через **OpenAI API, Anthropic API и MCP**. Один Swift-бинарник. Без Python в рантайме. Без облака. Без счетов за API.
->
-> *CLI и Homebrew-формула называются `gemm`, репозиторий — `basalt`.*
 
 [English](README.md) · [Русский](README.ru.md)
 
@@ -12,13 +12,13 @@
 
 [![Platform](https://img.shields.io/badge/platform-macOS%2015%2B%20·%20Apple%20Silicon-black.svg)](#требования)
 [![Swift 6](https://img.shields.io/badge/Swift-6-black.svg)](Package.swift)
-[![Homebrew](https://img.shields.io/badge/brew-goodmai%2Fbasalt%2Fgemm-black.svg)](#установка-через-homebrew)
+[![Homebrew](https://img.shields.io/badge/brew-goodmai%2Fbasalt%2Fbasalt-black.svg)](#установка-через-homebrew)
 [![Ladder](https://img.shields.io/badge/лестница-6%20задач-black.svg)](#бенчмарки)
 [![ARC-AGI](https://img.shields.io/badge/ARC--AGI-pass%402-black.svg)](#бенчмарки)
 
 ```
 ┌──────────────────────────────────────────────────────┐
-│                       Gemm                           │
+│                       Basalt                           │
 │                                                      │
 │   MCP stdio ──┐                                      │
 │               ├──► ModelOrchestratorActor ──► MLX   │
@@ -29,6 +29,9 @@
 
 Два транспорта работают через один экземпляр актора — **MCP stdio** для интеграции с IDE (Claude Desktop, Cursor) и **REST HTTP** для агентных сценариев и в роли бэкенда Claude Code.
 
+
+<p align="center"><img src="images/models-hive.svg" alt="Открытые модели, которые запускает basalt: Qwen, Gemma, Ornith, gpt-oss, DeepSeek, Llama" width="240"></p>
+<p align="center"><sub>Запускает open-weight модели на Apple Silicon. Проверено здесь: Gemma, Qwen, Ornith (см. <a href="#проверенные-модели">таблицу</a>); gpt-oss, DeepSeek и Llama совместимы с MLX, но здесь пока не прогонялись. Логотипы принадлежат их владельцам и показаны только для обозначения совместимости. Модели Anthropic закрытые, поэтому их в сотах нет; поддерживается именно <i>API</i> Anthropic, чтобы Claude Code работал с локальной моделью.</sub></p>
 
 ## Зачем basalt
 
@@ -42,16 +45,16 @@
 
 ```bash
 brew tap goodmai/basalt https://github.com/goodmai/basalt
-brew install goodmai/basalt/gemm          # сборка из исходников, нужен Xcode 16+
+brew install goodmai/basalt/basalt          # сборка из исходников, нужен Xcode 16+
 
-gemm onboard                              # подберёт модель под ваш Mac и скачает её
-gemm serve --model mlx-community/Qwen3.5-4B-4bit --rest
+basalt onboard                              # подберёт модель под ваш Mac и скачает её
+basalt serve --model mlx-community/Qwen3.5-4B-4bit --rest
 
 # в другом терминале: Claude Code на вашем собственном GPU
 ANTHROPIC_BASE_URL=http://localhost:8080 ANTHROPIC_AUTH_TOKEN=local claude
 ```
 
-Локальные модели 4B–9B — не замена топовым облачным: они для приватной, офлайн и бесплатной агентной работы и экспериментов. `gemm fit` покажет, что реально потянет ваша машина.
+Локальные модели 4B–9B — не замена топовым облачным: они для приватной, офлайн и бесплатной агентной работы и экспериментов. `basalt fit` покажет, что реально потянет ваша машина.
 
 **Поставьте звезду**, если хотите больше MLX-инструментов на Swift, и напишите в issue свой Mac и ток/с — PR со строкой в таблицу бенчмарков приветствуются.
 
@@ -75,7 +78,7 @@ ANTHROPIC_BASE_URL=http://localhost:8080 ANTHROPIC_AUTH_TOKEN=local claude
 
 ```bash
 brew tap goodmai/basalt https://github.com/goodmai/basalt
-brew install goodmai/basalt/gemm
+brew install goodmai/basalt/basalt
 ```
 
 URL в `tap` указывается явно, потому что репозиторий называется не
@@ -95,13 +98,13 @@ xcodebuild -downloadComponent MetalToolchain
 2. `scripts/build_metal.swift` — компилирует Metal-ядра MLX и кладёт
    `mlx.metallib` рядом с бинарём в `libexec`. SwiftPM-сборка mlx-swift не
    содержит metallib, а запасной путь поиска у MLX считается от рабочей
-   директории — без этого шага `gemm` работает только из папки, где лежит
+   директории — без этого шага `basalt` работает только из папки, где лежит
    библиотека. Этот шаг и занимает основное время установки.
 
 ```bash
-brew install --HEAD goodmai/basalt/gemm   # собрать main, а не последний тег
-brew upgrade goodmai/basalt/gemm
-brew uninstall gemm && brew untap goodmai/basalt
+brew install --HEAD goodmai/basalt/basalt   # собрать main, а не последний тег
+brew upgrade goodmai/basalt/basalt
+brew uninstall basalt && brew untap goodmai/basalt
 ```
 
 ### Сборка из исходников
@@ -120,52 +123,52 @@ swift build -c release
 ./scripts/build_metal.swift
 
 # Интерактивный чат
-.build/release/gemm chat --model mlx-community/Qwen3.5-4B-4bit
+.build/release/basalt chat --model mlx-community/Qwen3.5-4B-4bit
 
 # REST-сервер на :8080 (совместим с OpenAI и Anthropic)
-.build/release/gemm serve --model mlx-community/Qwen3.5-4B-4bit --rest
+.build/release/basalt serve --model mlx-community/Qwen3.5-4B-4bit --rest
 
 # MCP stdio сервер (для Claude Desktop / Cursor)
-.build/release/gemm serve --model mlx-community/gemma-4-e4b-it-4bit --mcp
+.build/release/basalt serve --model mlx-community/gemma-4-e4b-it-4bit --mcp
 ```
 
-### Лаунчер одной командой: `./Gemma`
+### Лаунчер одной командой: `./basalt-claude`
 
 В репозитории лежит самодостаточный launcher: он собирает сервер (если нужно), ждёт готовности модели и открывает Claude Code — все переменные окружения живут только внутри этой сессии:
 
 ```bash
-chmod +x ./Gemma
+chmod +x ./basalt-claude
 
-./Gemma                                             # Qwen 4B, порт 8080
-./Gemma --model mlx-community/gemma-4-31b-it-4bit  # Gemma 4 31B
-./Gemma --port 8081                                 # свой порт
-./Gemma -- --model haiku                            # передать --model haiku в claude
+./basalt-claude                                             # Qwen 4B, порт 8080
+./basalt-claude --model mlx-community/gemma-4-31b-it-4bit  # Gemma 4 31B
+./basalt-claude --port 8081                                 # свой порт
+./basalt-claude -- --model haiku                            # передать --model haiku в claude
 ```
 
-`Gemma` жёстко ставит `ANTHROPIC_API_KEY=local`, а не наследует переменную, — так настоящий ключ никогда не уходит на локальный сервер и не попадает в payload `--settings`. Другие терминалы не затрагиваются.
+`basalt-claude` жёстко ставит `ANTHROPIC_API_KEY=local`, а не наследует переменную, — так настоящий ключ никогда не уходит на локальный сервер и не попадает в payload `--settings`. Другие терминалы не затрагиваются.
 
 ---
 
 ## Команды
 
-`gemm` без подкоманды запускает `chat`.
+`basalt` без подкоманды запускает `chat`.
 
 | Команда | Что делает |
 |---|---|
-| `gemm onboard` | мастер первого запуска: подбирает модель под машину и качает её |
-| `gemm fit` | читает железо и ранжирует каталог моделей под него |
-| `gemm chat --model <id>` | интерактивный чат в терминале |
-| `gemm serve --model <id> --rest` | REST-сервер на :8080 (совместим с OpenAI и Anthropic) |
-| `gemm serve --model <id> --mcp` | MCP stdio сервер для Claude Desktop / Cursor |
-| `gemm models list --author <org>` | посмотреть модели автора на HuggingFace |
-| `gemm models download <repo-id>` | скачать в общий кэш HF |
-| `gemm models info <repo-id>` | размер, квантизация, окно контекста |
-| `gemm models cache` | что лежит на диске и сколько занимает |
-| `gemm models check` | проверить, что модель скачана полностью и грузится |
-| `gemm cloud configure` | облачный фолбэк OpenRouter для того, что не влезает локально |
-| `gemm cloud cost` | сколько уже потрачено на облако |
+| `basalt onboard` | мастер первого запуска: подбирает модель под машину и качает её |
+| `basalt fit` | читает железо и ранжирует каталог моделей под него |
+| `basalt chat --model <id>` | интерактивный чат в терминале |
+| `basalt serve --model <id> --rest` | REST-сервер на :8080 (совместим с OpenAI и Anthropic) |
+| `basalt serve --model <id> --mcp` | MCP stdio сервер для Claude Desktop / Cursor |
+| `basalt models list --author <org>` | посмотреть модели автора на HuggingFace |
+| `basalt models download <repo-id>` | скачать в общий кэш HF |
+| `basalt models info <repo-id>` | размер, квантизация, окно контекста |
+| `basalt models cache` | что лежит на диске и сколько занимает |
+| `basalt models check` | проверить, что модель скачана полностью и грузится |
+| `basalt cloud configure` | облачный фолбэк OpenRouter для того, что не влезает локально |
+| `basalt cloud cost` | сколько уже потрачено на облако |
 
-Внутри `gemm chat`:
+Внутри `basalt chat`:
 
 | Ввод | Действие |
 |---|---|
@@ -193,8 +196,8 @@ chmod +x ./Gemma
 Модели скачиваются с HuggingFace и кэшируются в `~/.cache/huggingface/hub/`.
 
 ```bash
-gemm models download mlx-community/Qwen3.5-4B-4bit
-gemm models download ornith-ai/Ornith-1.5-9B-MLX-4bit
+basalt models download mlx-community/Qwen3.5-4B-4bit
+basalt models download ornith-ai/Ornith-1.5-9B-MLX-4bit
 ```
 
 | Модель | Параметры | RAM | Статус на Mac с 24 ГБ |
@@ -266,7 +269,7 @@ curl -s http://127.0.0.1:8080/api/v1/generate \
 curl -s http://127.0.0.1:8080/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "gemm",
+    "model": "basalt",
     "messages": [{"role": "user", "content": "Привет"}],
     "stream": true
   }'
@@ -280,7 +283,7 @@ curl -s http://127.0.0.1:8080/v1/chat/completions \
 curl -s http://127.0.0.1:8080/v1/messages \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "gemm",
+    "model": "basalt",
     "max_tokens": 1024,
     "messages": [{"role": "user", "content": "Привет"}]
   }'
@@ -307,8 +310,8 @@ ws.onmessage = e => console.log(JSON.parse(e.data));
 ### Вариант A — переменные окружения (на сессию терминала)
 
 ```bash
-# Запускаем Gemm
-.build/release/gemm serve --model mlx-community/Qwen3.5-4B-4bit --rest
+# Запускаем Basalt
+.build/release/basalt serve --model mlx-community/Qwen3.5-4B-4bit --rest
 
 # В другом терминале — переменные видит только этот процесс claude
 ANTHROPIC_BASE_URL=http://127.0.0.1:8080 \
@@ -321,7 +324,7 @@ claude
 ### Вариант B — функция в `~/.zshrc`
 
 ```bash
-function gemm-claude() {
+function claude-local() {
   ANTHROPIC_BASE_URL=http://127.0.0.1:8080          \
   ANTHROPIC_AUTH_TOKEN=local                        \
   ANTHROPIC_DEFAULT_HAIKU_MODEL=mlx-community/gemma-4-e4b-it-4bit    \
@@ -330,33 +333,33 @@ function gemm-claude() {
   claude "$@"
 }
 
-gemm-claude                   # алиас sonnet → Qwen 4B
-gemm-claude --model haiku     # алиас haiku → Gemma 4B (самая быстрая)
-gemm-claude --model opus      # алиас opus → Gemma 31B (самая сильная)
+basalt-claude                   # алиас sonnet → Qwen 4B
+claude-local --model haiku     # алиас haiku → Gemma 4B (самая быстрая)
+claude-local --model opus      # алиас opus → Gemma 31B (самая сильная)
 ```
 
-### Вариант C — лаунчер `./Gemma`
+### Вариант C — лаунчер `./basalt-claude`
 
 Поднимает сервер и Claude Code одной командой (см. «Быстрый старт»).
 
 ### Обнаружение моделей
 
-Claude Code (v2.1.126+) при старте дёргает `GET /v1/models` и добавляет модели в пикер `/model` — но только если ID начинается с `claude` или `anthropic`. Gemm отдаёт их в форме `claude-local/<hf-id>`, поэтому всё подхватывается само.
+Claude Code (v2.1.126+) при старте дёргает `GET /v1/models` и добавляет модели в пикер `/model` — но только если ID начинается с `claude` или `anthropic`. Basalt отдаёт их в форме `claude-local/<hf-id>`, поэтому всё подхватывается само.
 
 ---
 
 ## Интеграция с OpenCode
 
-[OpenCode](https://github.com/opencode-ai/opencode) — терминальный агент для кода. Gemm отдаёт нативно совместимый OpenAI API (`/v1/chat/completions`, `/v1/models`), так что подключается напрямую, без облака и ключей.
+[OpenCode](https://github.com/opencode-ai/opencode) — терминальный агент для кода. Basalt отдаёт нативно совместимый OpenAI API (`/v1/chat/completions`, `/v1/models`), так что подключается напрямую, без облака и ключей.
 
-### 1. Запустить Gemm
+### 1. Запустить Basalt
 
 ```bash
 # Крупная модель (abliterated / MoE)
-.build/release/gemm serve --model AutisticAF/Huihui-Qwen3.8-27B-abliterated-mlx-4Bit --rest
+.build/release/basalt serve --model AutisticAF/Huihui-Qwen3.8-27B-abliterated-mlx-4Bit --rest
 
 # Или быстрая кодовая
-.build/release/gemm serve --model mlx-community/Qwen2.5-Coder-7B-Instruct-4bit --rest
+.build/release/basalt serve --model mlx-community/Qwen2.5-Coder-7B-Instruct-4bit --rest
 ```
 
 ### 2. Подключить OpenCode
@@ -366,7 +369,7 @@ Claude Code (v2.1.126+) при старте дёргает `GET /v1/models` и �
 ```bash
 OPENAI_BASE_URL=http://127.0.0.1:8080/v1 \
 OPENAI_API_KEY=local \
-OPENAI_MODEL=gemm \
+OPENAI_MODEL=basalt \
 opencode
 ```
 
@@ -377,7 +380,7 @@ opencode
   "provider": "openai",
   "base_url": "http://127.0.0.1:8080/v1",
   "api_key": "local",
-  "model": "gemm",
+  "model": "basalt",
   "temperature": 0.7,
   "max_tokens": 16384
 }
@@ -387,23 +390,23 @@ opencode
 
 ## Скачивание моделей
 
-Gemm умеет искать, показывать и скачивать модели любого автора на Hugging Face:
+Basalt умеет искать, показывать и скачивать модели любого автора на Hugging Face:
 
 ```bash
 # Список моделей по автору
-gemm models list --author ornith-ai
-gemm models list --author Ex0bit
-gemm models list --author mlx-community
+basalt models list --author ornith-ai
+basalt models list --author Ex0bit
+basalt models list --author mlx-community
 
 # Поиск с фильтром
-gemm models list --author Ex0bit --search PRISM
+basalt models list --author Ex0bit --search PRISM
 
 # Скачать конкретную модель
-gemm models download ornith-ai/Ornith-1.5-9B-MLX-4bit
-gemm models download AutisticAF/Huihui-Qwen3.8-27B-abliterated-mlx-4Bit
+basalt models download ornith-ai/Ornith-1.5-9B-MLX-4bit
+basalt models download AutisticAF/Huihui-Qwen3.8-27B-abliterated-mlx-4Bit
 
 # Интерактивный выбор по автору
-gemm models download --author Ex0bit
+basalt models download --author Ex0bit
 ```
 
 ---
@@ -415,8 +418,8 @@ gemm models download --author Ex0bit
 ```json
 {
   "mcpServers": {
-    "gemm": {
-      "command": "/path/to/gemm",
+    "basalt": {
+      "command": "/path/to/basalt",
       "args": ["serve", "--model", "mlx-community/Qwen3.5-4B-4bit", "--mcp"]
     }
   }
@@ -452,7 +455,7 @@ Sources/
   PerformanceBenchmark/     — отдельный CLI для бенчмарков
 
 Tests/GemTests/             — юнит- и интеграционные тесты
-Formula/gemm.rb             — формула Homebrew
+Formula/basalt.rb             — формула Homebrew
 Gemma                       — лаунчер (сборка + сервер + claude)
 scripts/                    — скрипты сборки и обслуживания
 docs/                       — расширенная документация
@@ -558,7 +561,7 @@ python3 benchmarks/ladder/selfcheck.py    # 9 проверок в обе сто�
 ### Как воспроизвести
 
 ```bash
-gemm serve --model ornith-ai/Ornith-1.5-9B-MLX-4bit --rest --reasoning-effort none &
+basalt serve --model ornith-ai/Ornith-1.5-9B-MLX-4bit --rest --reasoning-effort none &
 
 python3 benchmarks/ladder/run.py --port 8080 --warmup --json ladder.json
 python3 benchmarks/arc-agi/arc_agi_benchmark.py --engine mlx --split training --limit 5

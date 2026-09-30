@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The ladder to the moon: five rungs against a running `gemm serve --rest`.
+"""The ladder to the moon: five rungs against a running `basalt serve --rest`.
 
 Each rung is strictly harder than the one below it, and the top rung is a full
 Earth-to-Moon mission — launch, four-body transfer, braking, soft landing —
@@ -14,7 +14,7 @@ executed against inputs the prompt never showed it.
     5. Earth -> Moon mission            energy-derived exhaust velocity, Tsiolkovsky,
                                         four-body propagation, braking, soft landing
 
-    gemm serve --model <id> --rest &
+    basalt serve --model <id> --rest &
     python3 benchmarks/ladder/run.py --port 8080
 
 `--warmup` prepends three cheap smoke tests (algebra, Fibonacci, translation)
@@ -374,7 +374,7 @@ WARMUP = [
 
 
 def ask(base, prompt, max_tokens, timeout):
-    body = {"model": "gemm", "stream": False, "max_tokens": max_tokens,
+    body = {"model": "basalt", "stream": False, "max_tokens": max_tokens,
             "temperature": 0.2, "messages": [{"role": "user", "content": prompt}]}
     req = Request(f"{base}/v1/chat/completions", data=json.dumps(body).encode(),
                   headers={"Content-Type": "application/json"})
@@ -385,7 +385,7 @@ def ask(base, prompt, max_tokens, timeout):
 
 
 def main():
-    p = argparse.ArgumentParser(description="Run the ladder against a local gemm server")
+    p = argparse.ArgumentParser(description="Run the ladder against a local basalt server")
     # 127.0.0.1, not localhost: the server binds IPv4 only.
     p.add_argument("--port", type=int, default=8080)
     p.add_argument("--max-tokens", type=int, default=16000)

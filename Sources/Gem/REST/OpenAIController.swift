@@ -116,7 +116,7 @@ struct OpenAIController: Sendable {
                 "id": snapshot.modelId ?? modelId,
                 "object": "model",
                 "created": Int(Date().timeIntervalSince1970),
-                "owned_by": "gemm"
+                "owned_by": "basalt"
             ] as [String: Any]]
         ]
         return makeJSONResponse(body)
@@ -129,9 +129,9 @@ struct OpenAIController: Sendable {
         let buffer = try await request.body.collect(upTo: 4 * 1024 * 1024)
         let data = Data(buffer.readableBytesView)
 
-        // Save raw body for diagnosis; visible at /tmp/gemm_openai_request.json
+        // Save raw body for diagnosis; visible at /tmp/basalt_openai_request.json
         let rawString = String(data: data, encoding: .utf8) ?? "<non-utf8>"
-        try? rawString.write(toFile: "/tmp/gemm_openai_request.json", atomically: true, encoding: .utf8)
+        try? rawString.write(toFile: "/tmp/basalt_openai_request.json", atomically: true, encoding: .utf8)
 
         let dto: ChatCompletionRequest
         do {

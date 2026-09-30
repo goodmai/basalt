@@ -50,10 +50,10 @@ struct OnboardCommand: AsyncParsableCommand {
             print("✅ Onboarding already completed!")
             print("")
             print("To re-run onboarding, use:")
-            print("  gemm onboard --reset")
+            print("  basalt onboard --reset")
             print("")
             print("To see system profile:")
-            print("  gemm onboard --profile-only")
+            print("  basalt onboard --profile-only")
             print("")
             return
         }
