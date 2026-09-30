@@ -9,19 +9,19 @@ import ArgumentParser
 public struct GemCLI: AsyncParsableCommand {
     public init() {}
     public static let configuration = CommandConfiguration(
-        commandName: "gemm",
+        commandName: "basalt",
         abstract: "Local Gemma 4 inference — dual-interface server (MCP + REST/A2A)",
         discussion: """
         QUICK START
-          gemm onboard                                      🆕 First-time setup wizard
-          gemm fit                                          🔍 Hardware analysis & model recommendations
-          gemm models list                                  List popular MLX models
-          gemm models list --search Qwen3                   List Qwen3 models
-          gemm models list --search Qwen2.5-Coder           List Qwen Coder models
-          gemm models download                              Interactive picker
-          gemm models download mlx-community/…             Download specific model
-          gemm serve --model mlx-community/…               Start inference server
-          gemm chat  --model mlx-community/…               Interactive chat
+          basalt onboard                                      🆕 First-time setup wizard
+          basalt fit                                          🔍 Hardware analysis & model recommendations
+          basalt models list                                  List popular MLX models
+          basalt models list --search Qwen3                   List Qwen3 models
+          basalt models list --search Qwen2.5-Coder           List Qwen Coder models
+          basalt models download                              Interactive picker
+          basalt models download mlx-community/…             Download specific model
+          basalt serve --model mlx-community/…               Start inference server
+          basalt chat  --model mlx-community/…               Interactive chat
         RECOMMENDED MODELS (by RAM)
           mlx-community/gemma-4-e2b-it-4bit               Gemma 4 2B   ~2.7 GB
           mlx-community/Qwen3.5-4B-4bit                   Qwen3.5 4B   ~3.0 GB
@@ -34,7 +34,7 @@ public struct GemCLI: AsyncParsableCommand {
           Ex0bit/Qwen3.6-35B-A3B-PRISM-MLX-NVFP4          Qwen3.6 35B  ~20.5 GB ★ NVFP4 MoE
 
         DENSE & ABLITERATED — one invocation, plus the flag each family needs
-          gemm serve --rest --model <id>   …and whatever the right column says
+          basalt serve --rest --model <id>   …and whatever the right column says
             mlx-community/gemma-4-e4b-it-4bit        Gemma 4 4B, nothing extra
             mlx-community/gemma-4-12b-it-4bit        Gemma 4 12B, nothing extra
             divinetribe/gemma-4-12B-it-abliterated-4bit-mlx-text  abliterated
@@ -50,14 +50,14 @@ public struct GemCLI: AsyncParsableCommand {
         POINTING TOOLS AT IT  (127.0.0.1, not localhost — the server is IPv4 only)
           OpenCode:
             export OPENAI_BASE_URL=http://127.0.0.1:8080/v1
-            export OPENAI_API_KEY=local OPENAI_MODEL=gemm
+            export OPENAI_API_KEY=local OPENAI_MODEL=basalt
             opencode
           Claude Code:
             export ANTHROPIC_BASE_URL=http://127.0.0.1:8080
             export ANTHROPIC_AUTH_TOKEN=local
             claude
           Anything OpenAI-compatible:
-            base URL http://127.0.0.1:8080/v1, any key, model "gemm"
+            base URL http://127.0.0.1:8080/v1, any key, model "basalt"
 
         INTERFACES
           MCP  (stdio)   — Cursor, Claude Desktop, any MCP-compatible IDE

@@ -12,7 +12,7 @@ struct RESTServer: Sendable {
     let config: ServerConfig
 
     func run() async throws {
-        let defaultId = config.modelId ?? config.modelPath.split(separator: "/").last.map(String.init) ?? "gemm"
+        let defaultId = config.modelId ?? config.modelPath.split(separator: "/").last.map(String.init) ?? "basalt"
 
         let generateController  = GenerateController(orchestrator: orchestrator, modelId: defaultId)
         let openAIController    = OpenAIController(orchestrator: orchestrator, modelId: defaultId)
@@ -83,7 +83,7 @@ struct RESTServer: Sendable {
             <head>
               <meta charset="utf-8" />
               <meta name="viewport" content="width=device-width, initial-scale=1" />
-              <title>Gemm API</title>
+              <title>Basalt API</title>
               <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5.11.0/swagger-ui.css" />
             </head>
             <body>
@@ -106,7 +106,7 @@ struct RESTServer: Sendable {
             let spec = """
             {
               "openapi": "3.0.0",
-              "info": { "title": "Gemm REST API", "version": "1.0.0",
+              "info": { "title": "Basalt REST API", "version": "1.0.0",
                         "description": "Local LLM inference — no auth required" },
               "paths": {
                 "/api/v1/health":          { "get":  { "summary": "Health check" } },
@@ -128,7 +128,7 @@ struct RESTServer: Sendable {
         // Root — useful for health checks / load balancers
         router.get("/") { _, _ -> Response in
             var b = ByteBuffer()
-            b.writeString("Gemm \(HealthResponse.version) — http://localhost:\(config.restPort)/swagger")
+            b.writeString("Basalt \(HealthResponse.version) — http://localhost:\(config.restPort)/swagger")
             return Response(status: .ok, headers: [.contentType: "text/plain"], body: ResponseBody(byteBuffer: b))
         }
 

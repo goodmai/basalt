@@ -111,7 +111,7 @@ struct FitCommand: AsyncParsableCommand {
             displayTable(Array(recommendations))
 
             print()
-            print(TerminalUI.dim("Tip: Run `gemm models download <model>` to install"))
+            print(TerminalUI.dim("Tip: Run `basalt models download <model>` to install"))
             }
             }
     
