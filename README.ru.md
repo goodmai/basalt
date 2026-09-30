@@ -1,3 +1,5 @@
+<p align="center"><img src="images/logo.svg" alt="basalt logo" width="128"></p>
+
 # basalt — превратите Mac в локальный LLM-сервер. Подключите к нему Claude Code.
 
 > Gemma 4, Qwen 3 и любые MLX-модели на GPU Apple Silicon — через **OpenAI API, Anthropic API и MCP**. Один Swift-бинарник. Без Python в рантайме. Без облака. Без счетов за API.

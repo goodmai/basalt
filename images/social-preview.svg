@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 640" width="1280" height="640">
+  <defs>
+    <linearGradient id="hotSide" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ff7a2f"/><stop offset="1" stop-color="#c2380f"/></linearGradient>
+    <linearGradient id="hotTop" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffc27a"/><stop offset="1" stop-color="#ff6a2b"/></linearGradient>
+  </defs>
+  <defs><linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#0d1117"/><stop offset="1" stop-color="#161b24"/></linearGradient>
+  <radialGradient id="glow" cx="0.5" cy="0.5" r="0.5"><stop offset="0" stop-color="#ff6a2b" stop-opacity="0.22"/><stop offset="1" stop-color="#ff6a2b" stop-opacity="0"/></radialGradient></defs>
+  <rect width="1280" height="640" fill="url(#bg)"/>
+  <circle cx="330" cy="320" r="330" fill="url(#glow)"/>
+  <g transform="translate(330 320) scale(1.9)">
+    <polygon points="39.84,23.00 0.00,46.00 -39.84,23.00 -39.84,-23.00 -0.00,-46.00 39.84,-23.00" fill="url(#hotSide)"/>
+    <polygon points="29.48,13.02 0.00,30.04 -29.48,13.02 -29.48,-21.02 -0.00,-38.04 29.48,-21.02" fill="url(#hotTop)"/>
+    <polygon points="128.17,23.00 88.33,46.00 48.50,23.00 48.50,-23.00 88.33,-46.00 128.17,-23.00" fill="#2a3038"/>
+    <polygon points="117.81,13.02 88.33,30.04 58.86,13.02 58.86,-21.02 88.33,-38.04 117.81,-21.02" fill="#454d5a"/>
+    <polygon points="84.00,99.50 44.17,122.50 4.33,99.50 4.33,53.50 44.17,30.50 84.00,53.50" fill="#252a32"/>
+    <polygon points="73.65,89.52 44.17,106.54 14.69,89.52 14.69,55.48 44.17,38.46 73.65,55.48" fill="#3d4551"/>
+    <polygon points="-4.33,99.50 -44.17,122.50 -84.00,99.50 -84.00,53.50 -44.17,30.50 -4.33,53.50" fill="#2f353e"/>
+    <polygon points="-14.69,89.52 -44.17,106.54 -73.65,89.52 -73.65,55.48 -44.17,38.46 -14.69,55.48" fill="#4d5563"/>
+    <polygon points="-48.50,23.00 -88.33,46.00 -128.17,23.00 -128.17,-23.00 -88.33,-46.00 -48.50,-23.00" fill="#2a3038"/>
+    <polygon points="-58.86,13.02 -88.33,30.04 -117.81,13.02 -117.81,-21.02 -88.33,-38.04 -58.86,-21.02" fill="#454d5a"/>
+    <polygon points="-4.33,-53.50 -44.17,-30.50 -84.00,-53.50 -84.00,-99.50 -44.17,-122.50 -4.33,-99.50" fill="#252a32"/>
+    <polygon points="-14.69,-63.48 -44.17,-46.46 -73.65,-63.48 -73.65,-97.52 -44.17,-114.54 -14.69,-97.52" fill="#3d4551"/>
+    <polygon points="84.00,-53.50 44.17,-30.50 4.33,-53.50 4.33,-99.50 44.17,-122.50 84.00,-99.50" fill="#2f353e"/>
+    <polygon points="73.65,-63.48 44.17,-46.46 14.69,-63.48 14.69,-97.52 44.17,-114.54 73.65,-97.52" fill="#4d5563"/>
+  </g>
+  <g font-family="Noto Sans, DejaVu Sans, Helvetica, Arial, sans-serif" fill="#f0f3f6">
+    <text x="640" y="300" font-size="132" font-weight="700" letter-spacing="-3">basalt</text>
+    <text x="646" y="368" font-size="35" fill="#c9d1d9">Local LLM server for Apple Silicon</text>
+    <text x="646" y="424" font-size="30" fill="#8b949e">MLX on Metal  ·  OpenAI  ·  Anthropic  ·  MCP</text>
+    <text x="646" y="520" font-size="28" fill="#ff8a3d" font-weight="600">Point Claude Code at your own GPU.</text>
+    <text x="646" y="566" font-size="24" fill="#6e7681">pure Swift  ·  no Python  ·  no cloud  ·  MIT</text>
+  </g>
+</svg>

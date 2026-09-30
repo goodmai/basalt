@@ -1,3 +1,5 @@
+<p align="center"><img src="images/logo.svg" alt="basalt logo" width="128"></p>
+
 # basalt — turn your Mac into a local LLM server. Point Claude Code at it.
 
 > Gemma 4, Qwen 3 and any MLX model on your Apple Silicon GPU, behind the **OpenAI API, the Anthropic API and MCP**. One Swift binary. No Python at runtime. No cloud. No API bill.
