@@ -22,7 +22,7 @@ jobs:
     
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       
       # No setup-swift: it pins an older toolchain than mlx-swift-lm's manifest
       # requires (tools 6.1), and every `swift package` call then fails to
@@ -105,7 +105,7 @@ jobs:
     
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v3
