@@ -12,7 +12,7 @@ jobs:
     
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         
       # Same reason as the audit workflow: a pinned 6.0 toolchain cannot parse
       # mlx-swift-lm's manifest. Use the runner's Xcode.
