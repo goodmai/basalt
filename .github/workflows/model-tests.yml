@@ -7,7 +7,7 @@ on:
 
 concurrency:
   group: model-tests
-  # Queue a second dispatch instead of killing a run mid-download.
+  # A running dispatch is never killed mid-download; a newer dispatch replaces a still-pending one.
   cancel-in-progress: false
 
 jobs:

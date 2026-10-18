@@ -7,9 +7,10 @@ on:
 
 # One self-hosted runner: a second push to the same ref makes the queued run
 # irrelevant, so cancel it instead of letting it hold the machine.
+# On main the group is per commit, so every merge commit there keeps its own test result
+# (a shared group holds one pending run and a newer one would replace it).
 concurrency:
-  group: unit-tests-${{ github.ref }}
-  # Never on main: every merge commit there keeps its own test result.
+  group: unit-tests-${{ github.ref == 'refs/heads/main' && github.sha || github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:

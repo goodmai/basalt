@@ -5,7 +5,7 @@ on:
     tags:
       - 'v*'
 
-# Re-cutting a tag queues a second run; let it wait rather than cancel, since a
+# Re-cutting a tag never cancels a running release (a newer re-cut replaces a pending one), since a
 # half-finished release leaves the formula pointing at a sha nobody computed.
 concurrency:
   group: release-${{ github.ref }}

@@ -9,6 +9,9 @@ on:
     paths: [ 'Formula/**', '.github/workflows/formula.yml' ]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 concurrency:
   group: formula-${{ github.ref }}
   cancel-in-progress: true
