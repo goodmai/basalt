@@ -13,6 +13,18 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v7
 
+      - name: Select latest Xcode toolchain
+        run: |
+          echo "Available Xcode versions:"
+          ls -d /Applications/Xcode*.app 2>/dev/null || true
+          LATEST_XCODE=$(ls -d /Applications/Xcode*.app 2>/dev/null | sort -V | tail -n 1)
+          if [ -n "$LATEST_XCODE" ]; then
+            echo "Selecting $LATEST_XCODE"
+            sudo xcode-select -s "$LATEST_XCODE/Contents/Developer"
+          fi
+          echo "Active Swift version:"
+          swift --version
+
       - name: Build tests
         run: swift build --build-tests
 
