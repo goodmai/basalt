@@ -5,10 +5,17 @@ on:
     tags:
       - 'v*'
 
+# Re-cutting a tag queues a second run; let it wait rather than cancel, since a
+# half-finished release leaves the formula pointing at a sha nobody computed.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   release:
     name: Build and Release
     runs-on: macos-15
+    timeout-minutes: 60
     permissions:
       contents: write
 
@@ -28,6 +35,18 @@ jobs:
             exit 1
           fi
           echo "clean"
+
+      # The version the binary reports and the tag being released live in two
+      # different places and nothing compared them; they agreed at v0.1.0 by luck.
+      - name: Tag matches the version in the source
+        run: |
+          TAG=${GITHUB_REF#refs/tags/v}
+          SRC=$(grep -oE 'static let version = "[^"]+"' Sources/Gem/Core/DTOs.swift | grep -oE '"[^"]+"' | tr -d '"')
+          if [ "$TAG" != "$SRC" ]; then
+            echo "::error::tag v$TAG does not match HealthResponse.version ($SRC) in Sources/Gem/Core/DTOs.swift"
+            exit 1
+          fi
+          echo "v$TAG matches the source"
 
       - name: Build
         run: swift build -c release
@@ -72,6 +91,20 @@ jobs:
           git add Formula/basalt.rb
           git commit -m "chore: point formula at ${VERSION}" || echo "formula already current"
           git push origin HEAD:main || echo "push skipped"
+
+      # The formula is what users install. Read back what main now carries and
+      # compare it with the sha computed above: the push above may be skipped
+      # (e.g. refused by the branch ruleset), and a placeholder once sat in this
+      # field for hours with only a human noticing.
+      - name: Verify the pushed formula
+        run: |
+          git fetch -q origin main
+          PUSHED=$(git show origin/main:Formula/basalt.rb 2>/dev/null | grep -oE 'sha256 "[a-f0-9]{64}"' | grep -oE '[a-f0-9]{64}' || true)
+          if [ "$PUSHED" != "${{ steps.pkg.outputs.tarball_sha }}" ]; then
+            echo "::error::Formula/basalt.rb on main carries sha256 '$PUSHED', expected ${{ steps.pkg.outputs.tarball_sha }}"
+            exit 1
+          fi
+          echo "formula on main points at this tag's tarball"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3
