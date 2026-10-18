@@ -15,6 +15,37 @@ public enum ToolCallRepairer: Sendable {
     /// - Trailing commas before `}` or `]` (`{"a": 1,}` -> `{"a": 1}`)
     /// - Unclosed string literals (`{"name": "run_command`)
     /// - Unbalanced braces and brackets (appends missing `}` and `]`)
+    /// A tool call rebuilt from a call the model's tool-call parser rejected as malformed:
+    /// repairs the raw payload, then takes its `arguments` (or `parameters`) object, or the whole
+    /// object when it carries neither. nil when nothing safe can be rebuilt — no name, a truncated
+    /// payload (repairing half a call would invent the rest), or no JSON object at all.
+    public static func repairToolCall(name: String?, callID: String?, rawText: String, truncated: Bool) -> ToolCallOutput? {
+        guard let name, !name.isEmpty, !truncated,
+              let repaired = repairJSON(rawText),
+              let object = try? JSONSerialization.jsonObject(with: Data(repaired.utf8)) as? [String: Any] else {
+            return nil
+        }
+        let arguments: Any
+        if let nested = object["arguments"] ?? object["parameters"] {
+            // Some formats carry arguments as a JSON string inside the object.
+            if let text = nested as? String, let decoded = repairJSON(text).flatMap({
+                try? JSONSerialization.jsonObject(with: Data($0.utf8))
+            }) {
+                arguments = decoded
+            } else {
+                arguments = nested
+            }
+        } else {
+            arguments = object.filter { $0.key != "name" }
+        }
+        guard JSONSerialization.isValidJSONObject(arguments),
+              let data = try? JSONSerialization.data(withJSONObject: arguments, options: [.sortedKeys]),
+              let json = String(data: data, encoding: .utf8) else {
+            return nil
+        }
+        return ToolCallOutput(id: callID ?? "call_\(UUID().uuidString.prefix(24))", name: name, arguments: json)
+    }
+
     public static func repairJSON(_ raw: String) -> String? {
         var str = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         if str.isEmpty { return nil }
@@ -27,6 +58,12 @@ public enum ToolCallRepairer: Sendable {
             return nil
         }
         str = String(str[firstBrace...])
+
+        // Valid JSON needs no repair — and must not get one: the quote and literal rewrites below
+        // would corrupt string values that contain an apostrophe, "True" or a brace.
+        if (try? JSONSerialization.jsonObject(with: Data(str.utf8))) != nil {
+            return str
+        }
 
         // 3. Normalize Python/JS literals
         str = normalizeLiterals(str)

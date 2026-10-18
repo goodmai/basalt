@@ -494,9 +494,20 @@ public actor MLXInferenceEngine: InferenceEngine {
                             // Text held back for marker detection belongs before the call.
                             processBuffer(final: true)
                             continuation.yield(.toolCall(Self.toolCallOutput(call)))
-                        case .rejectedToolCall:
-                            // A call to a tool the request did not declare: nothing to route it to.
-                            GemLogger(module: "MLXInferenceEngine").warn("Model called an undeclared tool; dropped")
+                        case .rejectedToolCall(let rejection):
+                            processBuffer(final: true)
+                            // Quantized models often emit almost-JSON: repair a malformed call; any
+                            // other rejection becomes a visible note instead of a silently empty turn.
+                            if rejection.reason == .malformedSyntax,
+                               let call = ToolCallRepairer.repairToolCall(
+                                   name: rejection.toolName, callID: rejection.callID,
+                                   rawText: rejection.rawTextPreview, truncated: rejection.isPreviewTruncated) {
+                                continuation.yield(.toolCall(call))
+                            } else {
+                                let tool = rejection.toolName.map { " to \($0)" } ?? ""
+                                continuation.yield(.text("\n[tool call\(tool) rejected: \(rejection.reason.rawValue)]"))
+                                GemLogger(module: "MLXInferenceEngine").warn("Tool call\(tool) rejected: \(rejection.reason.rawValue)")
+                            }
                         @unknown default:
                             break
                         }

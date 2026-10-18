@@ -27,33 +27,12 @@ public actor ModelOrchestratorActor {
     /// Empty string means nothing has been loaded yet.
     public private(set) var currentModelId: String = ""
 
-    // MARK: — Working Session KV Cache State & Multi-Slot Cache
-    public let conversationCache: MultiSlotConversationCache
+    // MARK: — Working Session KV Cache State
     public private(set) var workingSessionId: String? = nil
     public private(set) var workingSessionPromptPrefix: String? = nil
 
     public func workingSessionState() -> (id: String?, prefix: String?) {
         (workingSessionId, workingSessionPromptPrefix)
-    }
-
-    public func getOrCreateConversationSlot(id: String, toolPrefix: String? = nil) async -> MultiSlotConversationCache.ConversationSlot {
-        await conversationCache.getOrCreateSlot(id: id, toolPrefix: toolPrefix)
-    }
-
-    public func parkConversation(id: String) async {
-        await conversationCache.parkSlot(id: id)
-    }
-
-    public func computePrefillDelta(slotId: String, prompt: String) async -> MultiSlotConversationCache.PrefillDelta {
-        await conversationCache.computePrefillDelta(slotId: slotId, newPrompt: prompt)
-    }
-
-    public func recordTurn(slotId: String, prompt: String, toolPrefix: String? = nil, completion: String = "") async {
-        await conversationCache.recordTurn(slotId: slotId, fullPrompt: prompt, toolPrefix: toolPrefix, completion: completion)
-    }
-
-    public func parkInactiveSlots(except activeId: String) async {
-        await conversationCache.parkInactiveSlots(except: activeId)
     }
 
     /// A working session lives while each prompt extends the previous one's first 128 chars;
@@ -75,7 +54,6 @@ public actor ModelOrchestratorActor {
     public init(engine: any InferenceEngine, maxTokens: Int = 4096, telemetry: TelemetryTracker = .shared) {
         self.engine = engine
         self.maxTokens = maxTokens
-        self.conversationCache = MultiSlotConversationCache(maxKVBufferTokens: 32768)
         self.telemetry = telemetry
     }
 

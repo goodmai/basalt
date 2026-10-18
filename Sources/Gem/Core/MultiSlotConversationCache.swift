@@ -1,9 +1,11 @@
 import Foundation
 
-/// Manages multiple conversation KV cache slots with parking support and prefix hash tree matching.
+/// Ledger of conversation slots for prefix KV-cache reuse: prefix hashing, parking at 1/8 of the
+/// buffer (tool prefix preserved) and the delta a new turn would need to prefill.
 ///
-/// Inactive conversations are "parked" and hold at most 1/8 of the KV buffer (preserving the tool prefix).
-/// On a new turn (such as intermediate tool calls or user follow-ups), only the delta prompt is prefilled.
+/// Not consulted by the engine yet: every request is still prefilled in full. Wiring a slot to the
+/// engine's `[KVCache]` (trim to the common prefix, prefill only the tail) is #56 — until then
+/// nothing may report tokens from this ledger as cached.
 public actor MultiSlotConversationCache {
 
     public struct ConversationSlot: Sendable, Identifiable {

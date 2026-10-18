@@ -94,11 +94,6 @@ struct AnthropicController: Sendable {
         }
     }
 
-    struct AnthropicTool: Codable, Sendable {
-        let name: String
-        let description: String?
-    }
-
     struct MessagesRequest: Codable, Sendable {
         let model: String?
         let messages: [Message]
@@ -109,10 +104,9 @@ struct AnthropicController: Sendable {
         let stream: Bool?
         let thinking: ThinkingConfig?
         let reasoningEffort: String?
-        let tools: [AnthropicTool]?
 
         enum CodingKeys: String, CodingKey {
-            case model, messages, system, temperature, stream, thinking, tools
+            case model, messages, system, temperature, stream, thinking
             case maxTokens = "max_tokens"
             case topP = "top_p"
             case reasoningEffort = "reasoning_effort"
@@ -142,12 +136,10 @@ struct AnthropicController: Sendable {
         struct Usage: Codable, Sendable {
             let inputTokens: Int
             let outputTokens: Int
-            let cacheReadInputTokens: Int?
 
             enum CodingKeys: String, CodingKey {
                 case inputTokens = "input_tokens"
                 case outputTokens = "output_tokens"
-                case cacheReadInputTokens = "cache_read_input_tokens"
             }
         }
 
@@ -197,60 +189,36 @@ struct AnthropicController: Sendable {
             effort = nil
         }
 
-        let explicitSessionId = (HTTPField.Name("x-session-id").flatMap { request.headers[$0] })
-            ?? (HTTPField.Name("x-conversation-id").flatMap { request.headers[$0] })
-        let sessionId = explicitSessionId ?? "session_\(UUID().uuidString.prefix(8))"
-
-        var prefillDelta: String? = nil
-        var cachedTokensEstimate: Int? = nil
-        if !service.isService {
-            await orchestrator.parkInactiveSlots(except: sessionId)
-            let delta = await orchestrator.computePrefillDelta(slotId: sessionId, prompt: service.prompt)
-            prefillDelta = delta.newPromptSuffix
-            cachedTokensEstimate = delta.cachedPromptTokens
-        }
-
         let genRequest = GenerationRequest(
             prompt: service.prompt,
             maxTokens: dto.maxTokens ?? 8192,
             temperature: dto.temperature ?? 0.7,
             topP: dto.topP ?? 0.9,
             reasoningEffort: effort,
-            isServiceRequest: service.isService,
-            prefillDelta: prefillDelta,
-            cachedTokensEstimate: cachedTokensEstimate
+            isServiceRequest: service.isService
         )
 
         let requestedModel = dto.model.map { ModelsController.hfRepoId(from: $0) }  // strip claude-local/ prefix if present
-        let hasTools = (dto.tools?.isEmpty == false)
 
         if dto.stream == true {
-            return streamMessagesResponse(genRequest: genRequest, model: dto.model ?? modelId, requestedModel: requestedModel, sessionId: service.isService ? nil : sessionId, prompt: service.prompt)
+            return streamMessagesResponse(genRequest: genRequest, model: dto.model ?? modelId, requestedModel: requestedModel)
         }
 
         do {
             let result = try await orchestrator.generate(request: genRequest, modelId: requestedModel)
-            if !service.isService {
-                await orchestrator.recordTurn(slotId: sessionId, prompt: service.prompt, completion: result.generatedText)
-            }
-            let outputText = hasTools ? (ToolCallRepairer.repairJSON(result.generatedText) ?? result.generatedText) : result.generatedText
             let response = MessagesResponse(
                 id: "msg_\(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(24))",
                 type: "message",
                 role: "assistant",
-                content: [ContentBlock(text: outputText)],
+                content: [ContentBlock(text: result.generatedText)],
                 model: dto.model ?? modelId,
                 stopReason: result.finishReason == .stop ? "end_turn" : "max_tokens",
                 stopSequence: nil,
                 usage: .init(inputTokens: result.promptTokens,
-                             outputTokens: result.completionTokens,
-                             cacheReadInputTokens: cachedTokensEstimate)
+                             outputTokens: result.completionTokens)
             )
-            let data = (try? JSONEncoder().encode(response)) ?? Data()
-            var buf = ByteBuffer()
-            buf.writeBytes(data)
-            return Response(status: .ok, headers: [.contentType: "application/json"], body: ResponseBody(byteBuffer: buf))
-        } catch let err {
+            return try jsonResponse(status: .ok, body: response)
+        } catch let err as GemError {
             return errorResponse(
                 status: HTTPResponse.Status(code: err.httpStatus),
                 message: err.errorDescription ?? err.localizedDescription,
@@ -261,35 +229,17 @@ struct AnthropicController: Sendable {
 
     // MARK: — Streaming (Anthropic SSE format)
 
-    private func streamMessagesResponse(
-        genRequest: GenerationRequest,
-        model: String,
-        requestedModel: String? = nil,
-        sessionId: String? = nil,
-        prompt: String? = nil
-    ) -> Response {
+    private func streamMessagesResponse(genRequest: GenerationRequest, model: String, requestedModel: String? = nil) -> Response {
         let headers: HTTPFields = [
             .contentType: "text/event-stream",
             .cacheControl: "no-cache",
             .connection: "keep-alive"
         ]
-        let body = ResponseBody(asyncSequence: anthropicSSEStream(
-            genRequest: genRequest,
-            model: model,
-            requestedModel: requestedModel,
-            sessionId: sessionId,
-            prompt: prompt
-        ))
+        let body = ResponseBody(asyncSequence: anthropicSSEStream(genRequest: genRequest, model: model, requestedModel: requestedModel))
         return Response(status: .ok, headers: headers, body: body)
     }
 
-    private func anthropicSSEStream(
-        genRequest: GenerationRequest,
-        model: String,
-        requestedModel: String? = nil,
-        sessionId: String? = nil,
-        prompt: String? = nil
-    ) -> AsyncStream<ByteBuffer> {
+    private func anthropicSSEStream(genRequest: GenerationRequest, model: String, requestedModel: String? = nil) -> AsyncStream<ByteBuffer> {
         AsyncStream { continuation in
             let task = Task {
                 let msgId = "msg_\(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(24))"
@@ -339,7 +289,6 @@ struct AnthropicController: Sendable {
                 }
 
                 var outputTokens = 0
-                var accumulatedText = ""
                 var final: GenerationResponse?
 
                 do {
@@ -350,7 +299,6 @@ struct AnthropicController: Sendable {
                             break
                         case .text(let text):
                             outputTokens += 1
-                            accumulatedText += text
                             open("text")
                             send("content_block_delta", [
                                 "type": "content_block_delta",
@@ -370,10 +318,6 @@ struct AnthropicController: Sendable {
                         case .metadata(let meta):
                             final = meta
                         }
-                    }
-
-                    if let sessionId, let prompt, !accumulatedText.isEmpty {
-                        await orchestrator.recordTurn(slotId: sessionId, prompt: prompt, completion: accumulatedText)
                     }
                 } catch {
                     let errPayload: [String: Any] = [
@@ -403,10 +347,7 @@ struct AnthropicController: Sendable {
                     // The engine's own counts when it reported them; chunk count otherwise.
                     "delta": ["stop_reason": final?.finishReason == .length ? "max_tokens" : "end_turn",
                               "stop_sequence": NSNull()],
-                    "usage": [
-                        "output_tokens": final?.completionTokens ?? outputTokens,
-                        "cache_read_input_tokens": genRequest.cachedTokensEstimate ?? 0
-                    ]
+                    "usage": ["output_tokens": final?.completionTokens ?? outputTokens]
                 ])
 
                 // message_stop

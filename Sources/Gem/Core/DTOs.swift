@@ -38,8 +38,6 @@ public struct GenerationRequest: Codable, Sendable {
     public let enableThinking: Bool?
     public let reasoningEffort: String?
     public let isServiceRequest: Bool?
-    public let prefillDelta: String?
-    public let cachedTokensEstimate: Int?
     /// Functions offered to the model; rendered into the chat template's tool section.
     public let tools: [ToolDefinition]?
 
@@ -51,8 +49,6 @@ public struct GenerationRequest: Codable, Sendable {
         enableThinking: Bool? = true,
         reasoningEffort: String? = nil,
         isServiceRequest: Bool? = false,
-        prefillDelta: String? = nil,
-        cachedTokensEstimate: Int? = nil,
         tools: [ToolDefinition]? = nil
     ) {
         self.prompt = prompt
@@ -62,8 +58,6 @@ public struct GenerationRequest: Codable, Sendable {
         self.enableThinking = enableThinking
         self.reasoningEffort = reasoningEffort
         self.isServiceRequest = isServiceRequest
-        self.prefillDelta = prefillDelta
-        self.cachedTokensEstimate = cachedTokensEstimate
         self.tools = tools
     }
 
@@ -78,8 +72,6 @@ public struct GenerationRequest: Codable, Sendable {
             enableThinking: enableThinking,
             reasoningEffort: reasoningEffort,
             isServiceRequest: isServiceRequest,
-            prefillDelta: prefillDelta,
-            cachedTokensEstimate: cachedTokensEstimate,
             tools: tools
         )
     }
@@ -107,8 +99,6 @@ public struct GenerationRequest: Codable, Sendable {
             enableThinking: enableThinking,
             reasoningEffort: reasoningEffort,
             isServiceRequest: isServiceRequest,
-            prefillDelta: prefillDelta,
-            cachedTokensEstimate: cachedTokensEstimate,
             tools: tools
         )
     }

@@ -48,6 +48,7 @@ public struct PromptContextBuilder: Sendable {
     }
 
     // MARK: — Tool-Prefix Compaction (Issue #26)
+    // Groundwork for slot-based prefix reuse (#56); no request path calls these yet.
 
     /// Extracts the immutable tool definitions / system prefix from a full prompt.
     public static func extractToolPrefix(from prompt: String) -> (toolPrefix: String, conversationalTail: String) {

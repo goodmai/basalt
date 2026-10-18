@@ -93,7 +93,7 @@ struct MultiSlotConversationCacheTests {
         #expect(parkedSlot?.prompt.contains("System: You have tool `run_command") == true)
     }
 
-    @Test("Intermediate tool call does not reset prefix cache (prefill only on delta)")
+    @Test("Slot ledger: an intermediate tool call needs only the delta (engine-side reuse is #56)")
     func intermediateToolCallIncrementalDelta() async {
         let cache = MultiSlotConversationCache(maxKVBufferTokens: 4096)
         let slotId = "session-coding-1"
@@ -137,6 +137,39 @@ struct MultiSlotConversationCacheTests {
 
 @Suite("Tool Call JSON Repair")
 struct ToolCallRepairerTests {
+
+    @Test("A rejected, malformed tool call is rebuilt with the declared name and repaired arguments")
+    func repairRejectedToolCall() throws {
+        let call = try #require(ToolCallRepairer.repairToolCall(
+            name: "shell", callID: "c7",
+            rawText: "{'name': 'shell', 'arguments': {'command': ['ls', '-la'], 'timeout_ms': 1000,}}",
+            truncated: false))
+        #expect(call.id == "c7")
+        #expect(call.name == "shell")
+        #expect(call.arguments == #"{"command":["ls","-la"],"timeout_ms":1000}"#)
+
+        // Arguments carried as a JSON string are decoded too; an object without them is the arguments.
+        let nested = try #require(ToolCallRepairer.repairToolCall(
+            name: "read", callID: nil, rawText: #"{"name": "read", "arguments": "{path: 'a.txt'}"}"#, truncated: false))
+        #expect(nested.arguments == #"{"path":"a.txt"}"#)
+        #expect(nested.id.hasPrefix("call_"))
+        let flat = try #require(ToolCallRepairer.repairToolCall(
+            name: "read", callID: "c1", rawText: "{path: 'b.txt'", truncated: false))
+        #expect(flat.arguments == #"{"path":"b.txt"}"#)
+    }
+
+    @Test("Valid JSON is returned untouched, apostrophes and literals inside strings included")
+    func validJSONIsNotRewritten() {
+        let valid = #"{"msg": "it's True that {x} is None"}"#
+        #expect(ToolCallRepairer.repairJSON(valid) == valid)
+    }
+
+    @Test("Nothing is invented: no name, a truncated payload or no JSON at all gives nil")
+    func repairRejectedToolCallRefuses() {
+        #expect(ToolCallRepairer.repairToolCall(name: nil, callID: nil, rawText: "{a: 1}", truncated: false) == nil)
+        #expect(ToolCallRepairer.repairToolCall(name: "x", callID: nil, rawText: "{a: 1}", truncated: true) == nil)
+        #expect(ToolCallRepairer.repairToolCall(name: "x", callID: nil, rawText: "no json here", truncated: false) == nil)
+    }
 
     @Test("Repairs JSON wrapped in markdown codeblocks")
     func repairsMarkdownFences() {

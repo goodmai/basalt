@@ -88,10 +88,9 @@ struct OpenAIController: Sendable {
         let topP: Double?
         let stream: Bool?
         let reasoningEffort: String?
-        let tools: [ResponseTool]?
 
         enum CodingKeys: String, CodingKey {
-            case model, messages, temperature, stream, tools
+            case model, messages, temperature, stream
             case maxTokens = "max_tokens"
             case topP = "top_p"
             case reasoningEffort = "reasoning_effort"
@@ -196,20 +195,11 @@ struct OpenAIController: Sendable {
             let inputTokens: Int
             let outputTokens: Int
             let totalTokens: Int
-            let inputTokensDetails: InputTokensDetails?
-
-            struct InputTokensDetails: Codable, Sendable {
-                let cachedTokens: Int
-                enum CodingKeys: String, CodingKey {
-                    case cachedTokens = "cached_tokens"
-                }
-            }
 
             enum CodingKeys: String, CodingKey {
                 case inputTokens = "input_tokens"
                 case outputTokens = "output_tokens"
                 case totalTokens = "total_tokens"
-                case inputTokensDetails = "input_tokens_details"
             }
         }
 
@@ -241,20 +231,10 @@ struct OpenAIController: Sendable {
             let promptTokens: Int
             let completionTokens: Int
             let totalTokens: Int
-            let promptTokensDetails: PromptTokensDetails?
-
-            struct PromptTokensDetails: Codable, Sendable {
-                let cachedTokens: Int
-                enum CodingKeys: String, CodingKey {
-                    case cachedTokens = "cached_tokens"
-                }
-            }
-
             enum CodingKeys: String, CodingKey {
                 case promptTokens = "prompt_tokens"
                 case completionTokens = "completion_tokens"
                 case totalTokens = "total_tokens"
-                case promptTokensDetails = "prompt_tokens_details"
             }
         }
     }
@@ -303,43 +283,22 @@ struct OpenAIController: Sendable {
 
         let prompt = messagesToPrompt(dto.messages)
         let service = ServiceRequestDetector.prepare(prompt: prompt, maxTokens: dto.maxTokens, headers: request.headers)
-
-        let explicitSessionId = (HTTPField.Name("x-session-id").flatMap { request.headers[$0] })
-            ?? (HTTPField.Name("x-conversation-id").flatMap { request.headers[$0] })
-        let sessionId = explicitSessionId ?? "session_\(UUID().uuidString.prefix(8))"
-
-        var prefillDelta: String? = nil
-        var cachedTokensEstimate: Int? = nil
-        if !service.isService {
-            await orchestrator.parkInactiveSlots(except: sessionId)
-            let delta = await orchestrator.computePrefillDelta(slotId: sessionId, prompt: service.prompt)
-            prefillDelta = delta.newPromptSuffix
-            cachedTokensEstimate = delta.cachedPromptTokens
-        }
-
         let genRequest = GenerationRequest(
             prompt: service.prompt,
             maxTokens: dto.maxTokens,
             temperature: dto.temperature ?? 0.7,
             topP: dto.topP ?? 0.9,
             reasoningEffort: dto.reasoningEffort,
-            isServiceRequest: service.isService,
-            prefillDelta: prefillDelta,
-            cachedTokensEstimate: cachedTokensEstimate
+            isServiceRequest: service.isService
         )
         let requestedModel = dto.model.map { ModelsController.hfRepoId(from: $0) }  // strip claude-local/ prefix if present
-        let hasTools = (dto.tools?.isEmpty == false)
 
         if dto.stream == true {
-            return streamResponse(genRequest: genRequest, model: dto.model ?? modelId, requestedModel: requestedModel, sessionId: service.isService ? nil : sessionId, prompt: service.prompt)
+            return streamResponse(genRequest: genRequest, model: dto.model ?? modelId, requestedModel: requestedModel)
         }
 
         do {
             let result = try await orchestrator.generate(request: genRequest, modelId: requestedModel)
-            if !service.isService {
-                await orchestrator.recordTurn(slotId: sessionId, prompt: service.prompt, completion: result.generatedText)
-            }
-            let outputText = hasTools ? (ToolCallRepairer.repairJSON(result.generatedText) ?? result.generatedText) : result.generatedText
             let response = ChatCompletionResponse(
                 id: "chatcmpl-\(UUID().uuidString)",
                 object: "chat.completion",
@@ -347,17 +306,16 @@ struct OpenAIController: Sendable {
                 model: dto.model ?? modelId,
                 choices: [.init(
                     index: 0,
-                    message: ChatMessage(role: "assistant", content: .text(outputText)),
+                    message: ChatMessage(role: "assistant", content: .text(result.generatedText)),
                     finishReason: result.finishReason == GenerationResponse.FinishReason.stop ? "stop" : "length"
                 )],
                 usage: .init(
                     promptTokens: result.promptTokens,
                     completionTokens: result.completionTokens,
-                    totalTokens: result.promptTokens + result.completionTokens,
-                    promptTokensDetails: cachedTokensEstimate != nil ? .init(cachedTokens: cachedTokensEstimate!) : nil
+                    totalTokens: result.promptTokens + result.completionTokens
                 )
             )
-            let encoded = (try? JSONEncoder().encode(response)) ?? Data()
+            let encoded = try JSONEncoder().encode(response)
             return makeDataResponse(encoded)
         } catch {
             fputs("🔴 [OpenAI] generate failed: \(error)\n", stderr)
@@ -403,19 +361,6 @@ struct OpenAIController: Sendable {
         let maxT = dto.maxOutputTokens ?? dto.maxTokens
         let service = ServiceRequestDetector.prepare(prompt: prompt, maxTokens: maxT, headers: request.headers)
 
-        let explicitSessionId = (HTTPField.Name("x-session-id").flatMap { request.headers[$0] })
-            ?? (HTTPField.Name("x-conversation-id").flatMap { request.headers[$0] })
-        let sessionId = explicitSessionId ?? "session_\(UUID().uuidString.prefix(8))"
-
-        var prefillDelta: String? = nil
-        var cachedTokensEstimate: Int? = nil
-        if !service.isService {
-            await orchestrator.parkInactiveSlots(except: sessionId)
-            let delta = await orchestrator.computePrefillDelta(slotId: sessionId, prompt: service.prompt)
-            prefillDelta = delta.newPromptSuffix
-            cachedTokensEstimate = delta.cachedPromptTokens
-        }
-
         let genRequest = GenerationRequest(
             prompt: service.prompt,
             maxTokens: maxT,
@@ -423,23 +368,16 @@ struct OpenAIController: Sendable {
             topP: dto.topP ?? 0.9,
             reasoningEffort: dto.effectiveReasoningEffort,
             isServiceRequest: service.isService,
-            prefillDelta: prefillDelta,
-            cachedTokensEstimate: cachedTokensEstimate,
             tools: Self.functionTools(fromRequestBody: data)
         )
         let requestedModel = dto.model.map { ModelsController.hfRepoId(from: $0) }
-        let hasTools = (dto.tools?.isEmpty == false) || (dto.additionalTools?.isEmpty == false)
 
         if dto.stream == true {
-            return streamResponses(genRequest: genRequest, model: dto.model ?? modelId, requestedModel: requestedModel, sessionId: service.isService ? nil : sessionId, prompt: service.prompt)
+            return streamResponses(genRequest: genRequest, model: dto.model ?? modelId, requestedModel: requestedModel)
         }
 
         do {
             let result = try await orchestrator.generate(request: genRequest, modelId: requestedModel)
-            if !service.isService {
-                await orchestrator.recordTurn(slotId: sessionId, prompt: service.prompt, completion: result.generatedText)
-            }
-            let outputText = hasTools ? (ToolCallRepairer.repairJSON(result.generatedText) ?? result.generatedText) : result.generatedText
             let response = ResponsesResponse(
                 id: "resp_\(UUID().uuidString)",
                 object: "response",
@@ -453,7 +391,7 @@ struct OpenAIController: Sendable {
                         type: "message",
                         status: "completed",
                         role: "assistant",
-                        content: [.init(type: "output_text", text: outputText)]
+                        content: [.init(type: "output_text", text: result.generatedText)]
                     )
                 ]) + (result.toolCalls ?? []).map { call in
                     .init(id: "fc_\(UUID().uuidString)", type: "function_call", status: "completed",
@@ -462,11 +400,10 @@ struct OpenAIController: Sendable {
                 usage: .init(
                     inputTokens: result.promptTokens,
                     outputTokens: result.completionTokens,
-                    totalTokens: result.promptTokens + result.completionTokens,
-                    inputTokensDetails: cachedTokensEstimate != nil ? .init(cachedTokens: cachedTokensEstimate!) : nil
+                    totalTokens: result.promptTokens + result.completionTokens
                 )
             )
-            let encoded = (try? JSONEncoder().encode(response)) ?? Data()
+            let encoded = try JSONEncoder().encode(response)
             return makeDataResponse(encoded)
         } catch {
             return makeErrorResponse(status: .internalServerError,
@@ -493,13 +430,7 @@ struct OpenAIController: Sendable {
 
     // MARK: — Streaming
 
-    private func streamResponse(
-        genRequest: GenerationRequest,
-        model: String,
-        requestedModel: String? = nil,
-        sessionId: String? = nil,
-        prompt: String? = nil
-    ) -> Response {
+    private func streamResponse(genRequest: GenerationRequest, model: String, requestedModel: String? = nil) -> Response {
         Response(
             status: .ok,
             headers: [
@@ -507,28 +438,15 @@ struct OpenAIController: Sendable {
                 .cacheControl: "no-cache",
                 .connection: "keep-alive"
             ],
-            body: ResponseBody(asyncSequence: sseStream(
-                genRequest: genRequest,
-                model: model,
-                requestedModel: requestedModel,
-                sessionId: sessionId,
-                prompt: prompt
-            ))
+            body: ResponseBody(asyncSequence: sseStream(genRequest: genRequest, model: model, requestedModel: requestedModel))
         )
     }
 
-    private func sseStream(
-        genRequest: GenerationRequest,
-        model: String,
-        requestedModel: String? = nil,
-        sessionId: String? = nil,
-        prompt: String? = nil
-    ) -> AsyncStream<ByteBuffer> {
+    private func sseStream(genRequest: GenerationRequest, model: String, requestedModel: String? = nil) -> AsyncStream<ByteBuffer> {
         AsyncStream { continuation in
             let task = Task {
                 let id = "chatcmpl-\(UUID().uuidString)"
                 let created = Int(Date().timeIntervalSince1970)
-                var accumulatedText = ""
                 do {
                     let stream = try await orchestrator.generateStream(request: genRequest, modelId: requestedModel)
                     for await chunk in stream {
@@ -536,7 +454,6 @@ struct OpenAIController: Sendable {
                         case .toolCall:  // this path declares no tools, so a call has no client to go to
                             break
                         case .text(let text):
-                            accumulatedText += text
                             let delta: [String: Any] = [
                                 "id": id, "object": "chat.completion.chunk",
                                 "created": created, "model": model,
@@ -565,9 +482,6 @@ struct OpenAIController: Sendable {
                         case .metadata:
                             break
                         }
-                    }
-                    if let sessionId, let prompt, !accumulatedText.isEmpty {
-                        await orchestrator.recordTurn(slotId: sessionId, prompt: prompt, completion: accumulatedText)
                     }
                     let done: [String: Any] = [
                         "id": id, "object": "chat.completion.chunk",
@@ -602,13 +516,7 @@ struct OpenAIController: Sendable {
         }
     }
 
-    private func streamResponses(
-        genRequest: GenerationRequest,
-        model: String,
-        requestedModel: String? = nil,
-        sessionId: String? = nil,
-        prompt: String? = nil
-    ) -> Response {
+    private func streamResponses(genRequest: GenerationRequest, model: String, requestedModel: String? = nil) -> Response {
         Response(
             status: .ok,
             headers: [
@@ -616,13 +524,7 @@ struct OpenAIController: Sendable {
                 .cacheControl: "no-cache",
                 .connection: "keep-alive"
             ],
-            body: ResponseBody(asyncSequence: sseResponsesStream(
-                genRequest: genRequest,
-                model: model,
-                requestedModel: requestedModel,
-                sessionId: sessionId,
-                prompt: prompt
-            ))
+            body: ResponseBody(asyncSequence: sseResponsesStream(genRequest: genRequest, model: model, requestedModel: requestedModel))
         )
     }
 
@@ -635,13 +537,7 @@ struct OpenAIController: Sendable {
     /// there; there is no `[DONE]` sentinel in this protocol. Streaming the reasoning also keeps
     /// the connection alive while a model thinks for minutes — Codex drops a stream that stays
     /// silent past its idle timeout.
-    private func sseResponsesStream(
-        genRequest: GenerationRequest,
-        model: String,
-        requestedModel: String? = nil,
-        sessionId: String? = nil,
-        prompt: String? = nil
-    ) -> AsyncStream<ByteBuffer> {
+    private func sseResponsesStream(genRequest: GenerationRequest, model: String, requestedModel: String? = nil) -> AsyncStream<ByteBuffer> {
         AsyncStream { continuation in
             let task = Task {
                 let id = "resp_\(UUID().uuidString)"
@@ -769,11 +665,6 @@ struct OpenAIController: Sendable {
                     }
                     if Task.isCancelled { continuation.finish(); return }
 
-                    // #53: the finished turn becomes the conversation slot's cached prefix.
-                    if let sessionId, let prompt, !text.isEmpty {
-                        await orchestrator.recordTurn(slotId: sessionId, prompt: prompt, completion: text)
-                    }
-
                     closeReasoning()
                     // A turn that only called tools carries no message; any other turn has one,
                     // even an empty one.
@@ -782,7 +673,7 @@ struct OpenAIController: Sendable {
                     }
                     closeMessage()
 
-                    let inTokens = final?.promptTokens ?? (genRequest.cachedTokensEstimate ?? 0)
+                    let inTokens = final?.promptTokens ?? 0
                     let outTokens = final?.completionTokens ?? 0
                     send("response.completed", ["response": responseObject(status: "completed", output: completed, extra: [
                         "usage": ["input_tokens": inTokens, "output_tokens": outTokens, "total_tokens": inTokens + outTokens]
