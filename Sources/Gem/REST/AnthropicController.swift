@@ -295,7 +295,7 @@ struct AnthropicController: Sendable {
                     let stream = try await orchestrator.generateStream(request: genRequest, modelId: requestedModel)
                     for await chunk in stream {
                         switch chunk {
-                        case .toolCall:  // this path offers the model no tools, so it cannot call one
+                        case .toolCall:  // this path declares no tools, so a call has no client to go to
                             break
                         case .text(let text):
                             outputTokens += 1

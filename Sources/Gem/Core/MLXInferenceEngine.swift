@@ -374,6 +374,7 @@ public actor MLXInferenceEngine: InferenceEngine {
         if let effectiveMinP = minP ?? profile.defaultMinP { params.minP = effectiveMinP }
         params.seed = seed
 
+        let toolSpecs = Self.toolSpecs(request.tools)
         let userInput: UserInput
         if request.prompt.contains("<|turn|>") || request.prompt.contains("<|channel|>") {
             userInput = UserInput(prompt: request.prompt)
@@ -385,7 +386,7 @@ public actor MLXInferenceEngine: InferenceEngine {
             )
             userInput = UserInput(
                 chat: [.user(request.prompt)],
-                tools: Self.toolSpecs(request.tools),
+                tools: toolSpecs,
                 additionalContext: context
             )
         }
@@ -393,7 +394,9 @@ public actor MLXInferenceEngine: InferenceEngine {
         do {
             let lmInput = try await container.prepare(input: userInput)
             logger.trace("Input prepared. Starting MLX generation...")
-            let mlxStream = try await container.generate(input: lmInput, parameters: params)
+            // The same specs go to the tool-call decoder: without them it has no schema, so
+            // every argument comes back as a string ("timeout_ms": "1000") and typed tools fail.
+            let mlxStream = try await container.generate(input: lmInput, parameters: params, tools: toolSpecs)
             
             let promptEndsWithThinking = request.prompt.hasSuffix("<|channel>thought\n")
                 || request.prompt.hasSuffix("<|channel>thought")
@@ -488,9 +491,12 @@ public actor MLXInferenceEngine: InferenceEngine {
                         case .info(let info):
                             lastInfo = info
                         case .toolCall(let call):
+                            // Text held back for marker detection belongs before the call.
+                            processBuffer(final: true)
                             continuation.yield(.toolCall(Self.toolCallOutput(call)))
                         case .rejectedToolCall:
-                            break
+                            // A call to a tool the request did not declare: nothing to route it to.
+                            GemLogger(module: "MLXInferenceEngine").warn("Model called an undeclared tool; dropped")
                         @unknown default:
                             break
                         }
