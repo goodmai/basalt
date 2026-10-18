@@ -46,7 +46,9 @@ public struct FitScore: Codable, Sendable {
     public let calibrationFactor: Double
     public let fourDimensionalScore: FourDimensionalScore?
     public let selectedQuantization: String
-    
+    /// Best grid width for this machine (see `ModelFitAnalyzer.evaluateQuantizations`), nil if none fits.
+    public let optimalQuantization: String?
+
     public init(
         modelName: String,
         fitLevel: FitLevel,
@@ -58,7 +60,8 @@ public struct FitScore: Codable, Sendable {
         measuredTPS: Double? = nil,
         calibrationFactor: Double = 1.0,
         fourDimensionalScore: FourDimensionalScore? = nil,
-        selectedQuantization: String = "4-bit"
+        selectedQuantization: String = "4-bit",
+        optimalQuantization: String? = nil
     ) {
         self.modelName = modelName
         self.fitLevel = fitLevel
@@ -71,6 +74,7 @@ public struct FitScore: Codable, Sendable {
         self.calibrationFactor = calibrationFactor
         self.fourDimensionalScore = fourDimensionalScore
         self.selectedQuantization = selectedQuantization
+        self.optimalQuantization = optimalQuantization
     }
 }
 
@@ -120,6 +124,10 @@ public actor FitScorer {
             fitLevel = .tooTight
         }
         
+        // q*(m): the highest-quality width of the 8/6/4/3/2 grid that fits 85% of available
+        // memory at L_min and decodes at ≥ TPS_min; nil when none does.
+        let grid = ModelFitAnalyzer.evaluateQuantizations(model: model, resources: profile, benchmarkProfile: benchmarkProfile)
+
         return FitScore(
             modelName: model.name,
             fitLevel: fitLevel,
@@ -131,7 +139,8 @@ public actor FitScorer {
             measuredTPS: measuredTPS,
             calibrationFactor: calibFactor,
             fourDimensionalScore: fourD,
-            selectedQuantization: model.quantization
+            selectedQuantization: model.quantization,
+            optimalQuantization: grid.optimal.fitsBudget ? grid.optimal.name : nil
         )
     }
     
@@ -169,30 +178,38 @@ public actor FitScorer {
         chip: String,
         gpuName: String
     ) -> (speedFit: Double, estimatedTPS: Int, isMeasured: Bool, measuredTPS: Double?, calibrationFactor: Double) {
-        let bw = Self.memoryBandwidthGBs(chip: chip, gpuName: gpuName)
-        let etaMetal = 0.70 // 70% Metal memory bandwidth efficiency for decode
-        let effectiveBW = bw * etaMetal
-        
-        let bits = Self.parseBits(from: model.quantization)
-        let activeWeightsGB = model.activeParameters * (bits / 8.0)
-        let kvReadGB = Self.kvCacheFootprintGB(params: model.totalParameters, contextTokens: model.contextWindow)
-        let bytesPerToken = max(0.1, activeWeightsGB + kvReadGB)
-        
-        let theoreticalTPS = effectiveBW / bytesPerToken
-        
-        if let measurement = benchmarkProfile.measurement(for: model.id, currentChip: chip) {
-            let measuredBits = measurement.quant.map { Self.parseBits(from: $0) } ?? bits
-            let ratio = bits > 0 ? (measuredBits / bits) : 1.0
-            let adjustedMeasuredTPS = measurement.measuredTPS * ratio
-            let calib = theoreticalTPS > 0 ? (adjustedMeasuredTPS / theoreticalTPS) : 1.0
-            let tps = max(1, Int(adjustedMeasuredTPS.rounded()))
-            let speedFit = min(1.0, Double(tps) / 100.0)
-            return (speedFit, tps, true, adjustedMeasuredTPS, calib)
-        } else {
-            let tps = max(1, Int(theoreticalTPS.rounded()))
-            let speedFit = min(1.0, theoreticalTPS / 100.0)
-            return (speedFit, tps, false, nil, 1.0)
+        let speed = Self.decodeSpeed(
+            model: model, bits: Self.parseBits(from: model.quantization), contextTokens: model.contextWindow,
+            chip: chip, gpuName: gpuName, profile: benchmarkProfile
+        )
+        let tps = max(1, Int(speed.tps.rounded()))
+        let speedFit = min(1.0, speed.tps / 100.0)
+        return (speedFit, tps, speed.measured, speed.measured ? speed.tps : nil, speed.calibrationFactor)
+    }
+
+    /// The one decode-speed model, shared by `fit` scoring and the quantization grid:
+    /// TPS = η_Metal · BW_mem / (P_active·b/8 + M_KV_read). A benchmark of this model on this chip
+    /// replaces the theory, rescaled from the bit width it was measured at (decode is bandwidth
+    /// bound, so TPS ∝ 1/bits); a measurement without a recorded quant is taken as the model's own.
+    public static func decodeSpeed(
+        model: ModelDefinition,
+        bits: Double,
+        contextTokens: Int,
+        chip: String,
+        gpuName: String,
+        profile: HardwareBenchmarkProfile
+    ) -> (tps: Double, measured: Bool, calibrationFactor: Double) {
+        let etaMetal = 0.70  // fraction of peak bandwidth Metal sustains during decode
+        let effectiveBW = memoryBandwidthGBs(chip: chip, gpuName: gpuName) * etaMetal
+        let kvReadGB = kvCacheFootprintGB(params: model.totalParameters, contextTokens: contextTokens)
+        let theoretical = effectiveBW / max(0.1, model.activeParameters * (bits / 8.0) + kvReadGB)
+
+        guard bits > 0, let m = profile.measurement(for: model.id, currentChip: chip) else {
+            return (theoretical, false, 1.0)
         }
+        let measuredBits = m.quant.map { parseBits(from: $0) } ?? parseBits(from: model.quantization)
+        let tps = m.measuredTPS * measuredBits / bits
+        return (tps, true, theoretical > 0 ? tps / theoretical : 1.0)
     }
     
     public static func kvCacheFootprintGB(params: Double, contextTokens: Int) -> Double {
@@ -207,31 +224,36 @@ public actor FitScorer {
         return max(64.0, gb * 1024.0)
     }
 
+    /// Peak unified-memory bandwidth (GB/s) by generation and tier, from Apple's published specs
+    /// (full-bin parts; binned Max/Pro parts are lower, which the benchmark calibration corrects).
+    /// M5 Pro/Max/Ultra are not published yet: the M4 tier values stand in as a floor.
     public static func memoryBandwidthGBs(chip: String, gpuName: String) -> Double {
         let combined = (chip + " " + gpuName).uppercased()
-        if combined.contains("ULTRA") { return 800.0 }
-        if combined.contains("MAX") { return 300.0 }
-        if combined.contains("PRO") { return 150.0 }
-        if combined.contains("M4") || combined.contains("M5") { return 120.0 }
-        if combined.contains("M3") { return 100.0 }
-        if combined.contains("M2") { return 100.0 }
-        if combined.contains("M1") { return 68.0 }
-        return 100.0
+        let table: [(gen: String, base: Double, pro: Double, max: Double, ultra: Double)] = [
+            ("M5", 153, 273, 546, 1092),
+            ("M4", 120, 273, 546, 1092),
+            ("M3", 100, 150, 400, 819),
+            ("M2", 100, 200, 400, 800),
+            ("M1", 68, 200, 400, 800),
+        ]
+        guard let row = table.first(where: { combined.contains($0.gen) }) else { return 100.0 }
+        if combined.contains("ULTRA") { return row.ultra }
+        if combined.contains("MAX") { return row.max }
+        if combined.contains("PRO") { return row.pro }
+        return row.base
     }
     
+    /// Bits per weight from a quantization label. An explicit "<n>-bit"/"<n>bit" wins, so digits
+    /// elsewhere in the label (a group size, a version) cannot be mistaken for the width.
     public static func parseBits(from quantization: String) -> Double {
         let q = quantization.lowercased()
-        if q.contains("16") || q.contains("bfloat16") || q.contains("fp16") { return 16.0 }
-        if q.contains("8") { return 8.0 }
-        if q.contains("6") { return 6.0 }
-        if q.contains("5") { return 5.0 }
-        if q.contains("4") { return 4.0 }
-        if q.contains("3") { return 3.0 }
-        if q.contains("2") { return 2.0 }
-        if let match = q.range(of: #"\b\d+(\.\d+)?\b"#, options: .regularExpression),
+        if let match = q.range(of: #"\d+(\.\d+)?(?=\s*-?\s*bits?\b)"#, options: .regularExpression),
            let val = Double(q[match]) {
             return val
         }
+        if q.contains("bf16") || q.contains("bfloat16") || q.contains("fp16") || q.contains("float16") { return 16.0 }
+        if q.contains("fp8") { return 8.0 }      // mxfp8
+        if q.contains("fp4") { return 4.0 }      // nvfp4, mxfp4
         return 4.0 // default 4-bit
     }
 }

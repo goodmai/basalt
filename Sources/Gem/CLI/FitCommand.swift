@@ -84,6 +84,7 @@ struct FitCommand: AsyncParsableCommand {
                 let measured: Bool
                 let calibration_factor: Double
                 let quantization: String
+                let optimal_quantization: String?
             }
             struct JsonOutput: Encodable {
                 let device: DeviceOutput
@@ -107,7 +108,8 @@ struct FitCommand: AsyncParsableCommand {
                         context_window: r.contextWindow,
                         measured: r.isMeasured,
                         calibration_factor: r.calibrationFactor,
-                        quantization: r.selectedQuantization
+                        quantization: r.selectedQuantization,
+                        optimal_quantization: r.optimalQuantization
                     )
                 }
             )
@@ -140,7 +142,7 @@ struct FitCommand: AsyncParsableCommand {
     private func displayTable(_ recommendations: [FitScore]) {
         print(TerminalUI.heading("Top Recommendations:"))
         
-        let headers = ["Model", "Fit", "Score", "RAM", "TPS", "Context"]
+        let headers = ["Model", "Fit", "Score", "RAM", "TPS", "Context", "Best q"]
         var rows: [[String]] = []
         
         for rec in recommendations {
@@ -156,7 +158,8 @@ struct FitCommand: AsyncParsableCommand {
                 score,
                 ram,
                 tps,
-                context
+                context,
+                rec.optimalQuantization ?? "—"
             ])
         }
         

@@ -101,6 +101,17 @@ public struct HardwareBenchmarkProfile: Codable, Sendable {
     }
 }
 
+public enum HardwareBenchmarkProfileError: Error, LocalizedError, Equatable {
+    case implausibleMeasurement(tps: Double)
+
+    public var errorDescription: String? {
+        switch self {
+        case .implausibleMeasurement(let tps):
+            return String(format: "measured %.2f tok/s — the run produced (almost) no tokens; not recorded", tps)
+        }
+    }
+}
+
 /// Thread-safe store for reading and writing the hardware benchmark profile
 public actor HardwareBenchmarkProfileStore {
     public static let shared = HardwareBenchmarkProfileStore()
@@ -112,6 +123,25 @@ public actor HardwareBenchmarkProfileStore {
 
     private let profilePath: String
     private var cachedProfile: HardwareBenchmarkProfile?
+
+    // One date strategy for both directions: a default decoder (deferredToDate) cannot read
+    // the ISO-8601 the encoder writes, and loadSync's try? would turn that into an empty profile.
+    static var decoder: JSONDecoder {
+        let d = JSONDecoder()
+        d.dateDecodingStrategy = .iso8601
+        return d
+    }
+
+    static var encoder: JSONEncoder {
+        let e = JSONEncoder()
+        e.outputFormatting = [.prettyPrinted, .sortedKeys]
+        e.dateEncodingStrategy = .iso8601
+        return e
+    }
+
+    /// Below this a run produced (almost) nothing — e.g. an immediate EOS — and calibrating
+    /// from it would show ~1 tok/s as "measured ✓".
+    public static let minimumMeasurableTPS = 1.0
 
     public init(customPath: String? = nil) {
         if let customPath = customPath {
@@ -127,7 +157,7 @@ public actor HardwareBenchmarkProfileStore {
         let url = URL(fileURLWithPath: actualPath)
         guard FileManager.default.fileExists(atPath: url.path),
               let data = try? Data(contentsOf: url),
-              let profile = try? JSONDecoder().decode(HardwareBenchmarkProfile.self, from: data) else {
+              let profile = try? Self.decoder.decode(HardwareBenchmarkProfile.self, from: data) else {
             return HardwareBenchmarkProfile()
         }
         return profile
@@ -143,6 +173,9 @@ public actor HardwareBenchmarkProfileStore {
     }
 
     public func record(_ measurement: BenchmarkMeasurement) throws {
+        guard measurement.measuredTPS >= Self.minimumMeasurableTPS else {
+            throw HardwareBenchmarkProfileError.implausibleMeasurement(tps: measurement.measuredTPS)
+        }
         var profile = load()
         profile.chipModel = measurement.chipModel
         profile.measurements[measurement.modelId] = measurement
@@ -155,11 +188,7 @@ public actor HardwareBenchmarkProfileStore {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         }
 
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        encoder.dateEncodingStrategy = .iso8601
-        let data = try encoder.encode(profile)
-        try data.write(to: url)
+        try Self.encoder.encode(profile).write(to: url, options: .atomic)
     }
 
     public func reset() {

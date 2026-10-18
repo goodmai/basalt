@@ -249,20 +249,11 @@ public actor SystemProfiler {
             String(validatingCString: buffer.baseAddress!) ?? "Unknown"
         }
         
-        // Detect M-series chips (including future M5)
-        if brandString.contains("Apple M1") {
-            return "M1"
-        } else if brandString.contains("Apple M2") {
-            return "M2"
-        } else if brandString.contains("Apple M3") {
-            return "M3"
-        } else if brandString.contains("Apple M4") {
-            return "M4"
-        } else if brandString.contains("Apple M5") {
-            return "M5"
-        } else if brandString.contains("Apple M") {
-            // Future M-series (M6, M7, etc.)
-            return "Apple Silicon (M-series)"
+        // M-series: keep the tier ("M2 Max", "M4 Pro", "M3 Ultra") — memory bandwidth and the
+        // benchmark calibration both depend on it, and every consumer matches with `contains`.
+        if let range = brandString.range(of: #"M\d+( (Pro|Max|Ultra))?"#, options: .regularExpression),
+           brandString.contains("Apple M") {
+            return String(brandString[range])
         } else if machineString.contains("arm64") {
             return "Apple Silicon"
         } else {
