@@ -44,14 +44,6 @@ public struct HardwareBenchmarkProfile: Codable, Sendable {
         self.lastUpdated = lastUpdated
     }
 
-    /// α_calib = 1.0 until the first benchmark, then TPS_measured / TPS_theoretical
-    public func calibrationFactor(for modelId: String, theoreticalTPS: Double, currentChip: String? = nil) -> Double {
-        guard theoreticalTPS > 0, let m = measurement(for: modelId, currentChip: currentChip) else {
-            return 1.0
-        }
-        return m.measuredTPS / theoreticalTPS
-    }
-
     /// Retrieve matching measurement by exact ID or clean repo basename match, validating chip compatibility
     public func measurement(for modelId: String, currentChip: String? = nil) -> BenchmarkMeasurement? {
         func chipMatches(_ m: BenchmarkMeasurement) -> Bool {
@@ -74,30 +66,21 @@ public struct HardwareBenchmarkProfile: Codable, Sendable {
             return false
         }
 
-        if let direct = measurements[modelId], chipMatches(direct) {
-            return direct
+        let normalize = { (id: String) in id.lowercased().trimmingCharacters(in: .whitespacesAndNewlines) }
+        let target = normalize(modelId)
+        let candidates = measurements.filter { chipMatches($0.value) }
+
+        // An exact id wins. Otherwise fall back to the repo basename ("org/repo" vs "repo",
+        // or the same repo under another org), but only when exactly one entry matches:
+        // with two, dictionary order would pick one at random — possibly another model's.
+        if let exact = candidates.first(where: { normalize($0.key) == target }) {
+            return exact.value
         }
-
-        let target = modelId.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
-        let targetBase = target.split(separator: "/").last.map(String.init) ?? target
-
-        for (key, m) in measurements {
-            guard chipMatches(m) else { continue }
-            let keyLower = key.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
-            let keyBase = keyLower.split(separator: "/").last.map(String.init) ?? keyLower
-
-            if keyLower == target {
-                return m
-            }
-            if !targetBase.isEmpty && keyBase == targetBase {
-                return m
-            }
-            // Slash boundary suffix match only (e.g. "org/repo" vs "repo")
-            if target.hasSuffix("/" + keyLower) || keyLower.hasSuffix("/" + target) {
-                return m
-            }
-        }
-        return nil
+        let base = { (id: String) in id.split(separator: "/").last.map(String.init) ?? id }
+        let targetBase = base(target)
+        guard !targetBase.isEmpty else { return nil }
+        let byBase = candidates.filter { base(normalize($0.key)) == targetBase }
+        return byBase.count == 1 ? byBase.first?.value : nil
     }
 }
 
@@ -151,16 +134,18 @@ public actor HardwareBenchmarkProfileStore {
         }
     }
 
-    /// Read profile synchronously without awaiting actor (useful during fast scoring)
+    /// The stored profile; an empty one when no file exists yet. Throws when a file exists but
+    /// cannot be read — the caller must not mistake that for "no measurements".
+    public static func loadChecked(path: String? = nil) throws -> HardwareBenchmarkProfile {
+        let url = URL(fileURLWithPath: path ?? defaultProfilePath)
+        guard FileManager.default.fileExists(atPath: url.path) else { return HardwareBenchmarkProfile() }
+        return try decoder.decode(HardwareBenchmarkProfile.self, from: Data(contentsOf: url))
+    }
+
+    /// Read profile synchronously without awaiting actor (useful during fast scoring).
+    /// Scoring degrades to the analytical model when the file is unreadable.
     public static func loadSync(path: String? = nil) -> HardwareBenchmarkProfile {
-        let actualPath = path ?? defaultProfilePath
-        let url = URL(fileURLWithPath: actualPath)
-        guard FileManager.default.fileExists(atPath: url.path),
-              let data = try? Data(contentsOf: url),
-              let profile = try? Self.decoder.decode(HardwareBenchmarkProfile.self, from: data) else {
-            return HardwareBenchmarkProfile()
-        }
-        return profile
+        (try? loadChecked(path: path)) ?? HardwareBenchmarkProfile()
     }
 
     public func load() -> HardwareBenchmarkProfile {
@@ -176,7 +161,9 @@ public actor HardwareBenchmarkProfileStore {
         guard measurement.measuredTPS >= Self.minimumMeasurableTPS else {
             throw HardwareBenchmarkProfileError.implausibleMeasurement(tps: measurement.measuredTPS)
         }
-        var profile = load()
+        // Not load(): a profile that exists but does not decode must stop the write, otherwise
+        // recording one measurement would silently replace every earlier one.
+        var profile = try cachedProfile ?? Self.loadChecked(path: profilePath)
         profile.chipModel = measurement.chipModel
         profile.measurements[measurement.modelId] = measurement
         profile.lastUpdated = Date()

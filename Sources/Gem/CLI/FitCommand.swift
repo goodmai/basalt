@@ -142,25 +142,13 @@ struct FitCommand: AsyncParsableCommand {
     private func displayTable(_ recommendations: [FitScore]) {
         print(TerminalUI.heading("Top Recommendations:"))
         
-        let headers = ["Model", "Fit", "Score", "RAM", "TPS", "Context", "Best q"]
+        // "Best width" is the grid width that would fit this machine — a target for picking a
+        // variant, not a claim that the repo publishes it.
+        let headers = ["Model", "Fit", "Score", "RAM", "TPS", "Context", "Best width"]
         var rows: [[String]] = []
         
         for rec in recommendations {
-            let fitIndicator = "\(rec.fitLevel.emoji) \(rec.fitLevel.rawValue.prefix(4))"
-            let score = String(format: "%.1f", rec.score)
-            let ram = formatRAM(rec.estimatedRAM)
-            let tps = rec.isMeasured ? "\(rec.estimatedTPS) measured ✓" : "\(rec.estimatedTPS)"
-            let context = "\(rec.contextWindow / 1000)k"
-            
-            rows.append([
-                rec.modelName,
-                fitIndicator,
-                score,
-                ram,
-                tps,
-                context,
-                rec.optimalQuantization ?? "—"
-            ])
+            rows.append(Self.tableRow(rec))
         }
         
         let table = TableRenderer.render(
@@ -173,7 +161,20 @@ struct FitCommand: AsyncParsableCommand {
         print(table)
     }
     
-    private func formatRAM(_ mb: Int64) -> String {
+    /// One table row; "measured ✓" marks a TPS that comes from a benchmark on this machine.
+    static func tableRow(_ rec: FitScore) -> [String] {
+        [
+            rec.modelName,
+            "\(rec.fitLevel.emoji) \(rec.fitLevel.rawValue.prefix(4))",
+            String(format: "%.1f", rec.score),
+            formatRAM(rec.estimatedRAM),
+            rec.isMeasured ? "\(rec.estimatedTPS) measured ✓" : "\(rec.estimatedTPS)",
+            "\(rec.contextWindow / 1000)k",
+            rec.optimalQuantization ?? "—"
+        ]
+    }
+
+    private static func formatRAM(_ mb: Int64) -> String {
         if mb < 1024 {
             return "\(mb) MB"
         } else {
