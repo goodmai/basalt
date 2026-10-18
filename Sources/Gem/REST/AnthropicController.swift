@@ -1,5 +1,6 @@
 import Foundation
 import Hummingbird
+import HTTPTypes
 
 // MARK: — Anthropic Messages API (no auth required)
 //
@@ -178,7 +179,8 @@ struct AnthropicController: Sendable {
 
         let prompt = buildPrompt(system: dto.system, messages: dto.messages)
         let isService = ServiceRequestDetector.isTitleOrServiceRequest(prompt: prompt, maxTokens: dto.maxTokens)
-        let finalPrompt = isService ? ServiceRequestDetector.compactTitlePrompt(prompt) : prompt
+        let optInCompact = request.headers.isFlagTrue("x-compact-prompt") || request.headers.isFlagTrue("x-service-request")
+        let finalPrompt = (isService && optInCompact) ? ServiceRequestDetector.compactTitlePrompt(prompt) : prompt
 
         let effort: String?
         if let re = dto.reasoningEffort {
@@ -302,9 +304,19 @@ struct AnthropicController: Sendable {
                         }
                     }
                 } catch {
-                    var buf = ByteBuffer()
-                    buf.writeString("event: error\ndata: {\"type\":\"error\",\"error\":{\"type\":\"api_error\",\"message\":\"\(error.localizedDescription)\"}}\n\n")
-                    continuation.yield(buf)
+                    let errPayload: [String: Any] = [
+                        "type": "error",
+                        "error": [
+                            "type": "api_error",
+                            "message": error.localizedDescription
+                        ]
+                    ]
+                    if let json = try? JSONSerialization.data(withJSONObject: errPayload),
+                       let str = String(data: json, encoding: .utf8) {
+                        var buf = ByteBuffer()
+                        buf.writeString("event: error\ndata: \(str)\n\n")
+                        continuation.yield(buf)
+                    }
                     continuation.finish()
                     return
                 }
@@ -377,5 +389,12 @@ struct AnthropicController: Sendable {
 private extension HTTPResponse.Status {
     init(code: Int) {
         self = HTTPResponse.Status(code: code, reasonPhrase: "")
+    }
+}
+
+private extension HTTPFields {
+    func isFlagTrue(_ name: String) -> Bool {
+        guard let fieldName = HTTPField.Name(name) else { return false }
+        return self[fieldName] == "true"
     }
 }

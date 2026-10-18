@@ -65,7 +65,7 @@ public enum ServiceRequestDetector: Sendable {
             "thread title", "conversation title", "generate a title",
             "short title", "title for this", "title of this", "summarize in 3-5 words",
             "title for this session", "suggest a title", "name this conversation",
-            "name this chat", "give this conversation a title", "title:"
+            "name this chat", "give this conversation a title"
         ]
         for kw in keywords {
             if p.contains(kw) { return true }

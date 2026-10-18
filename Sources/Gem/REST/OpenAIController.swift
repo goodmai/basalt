@@ -1,5 +1,6 @@
 import Foundation
 import Hummingbird
+import HTTPTypes
 
 // MARK: — OpenAI-compatible endpoints (no auth required)
 //
@@ -26,7 +27,7 @@ struct OpenAIController: Sendable {
         case blocks([ContentBlock])
 
         struct ContentBlock: Codable, Sendable {
-            let type: String
+            let type: String?
             let text: String?
         }
 
@@ -56,8 +57,15 @@ struct OpenAIController: Sendable {
     }
 
     struct ChatMessage: Codable, Sendable {
-        let role: String
+        let type: String?
+        let role: String?
         let content: MessageContent?   // null when tool_calls are present
+
+        init(type: String? = nil, role: String? = nil, content: MessageContent?) {
+            self.type = type
+            self.role = role
+            self.content = content
+        }
     }
 
     struct ChatCompletionRequest: Codable, Sendable {
@@ -108,11 +116,10 @@ struct OpenAIController: Sendable {
             let container = try decoder.singleValueContainer()
             if let str = try? container.decode(String.self) {
                 self = .text(str)
-            } else if let msgs = try? container.decode([ChatMessage].self) {
-                self = .messages(msgs)
-            } else {
-                self = .text("")
+                return
             }
+            let msgs = try container.decode([ChatMessage].self)
+            self = .messages(msgs)
         }
 
         func encode(to encoder: Encoder) throws {
@@ -244,7 +251,8 @@ struct OpenAIController: Sendable {
 
         let prompt = messagesToPrompt(dto.messages)
         let isService = ServiceRequestDetector.isTitleOrServiceRequest(prompt: prompt, maxTokens: dto.maxTokens)
-        let finalPrompt = isService ? ServiceRequestDetector.compactTitlePrompt(prompt) : prompt
+        let optInCompact = request.headers.isFlagTrue("x-compact-prompt") || request.headers.isFlagTrue("x-service-request")
+        let finalPrompt = (isService && optInCompact) ? ServiceRequestDetector.compactTitlePrompt(prompt) : prompt
         let genRequest = GenerationRequest(
             prompt: finalPrompt,
             maxTokens: dto.maxTokens,
@@ -269,7 +277,7 @@ struct OpenAIController: Sendable {
                 choices: [.init(
                     index: 0,
                     message: ChatMessage(role: "assistant", content: .text(result.generatedText)),
-                    finishReason: result.finishReason == .stop ? "stop" : "length"
+                    finishReason: result.finishReason == GenerationResponse.FinishReason.stop ? "stop" : "length"
                 )],
                 usage: .init(
                     promptTokens: result.promptTokens,
@@ -320,7 +328,8 @@ struct OpenAIController: Sendable {
 
         let maxT = dto.maxOutputTokens ?? dto.maxTokens
         let isService = ServiceRequestDetector.isTitleOrServiceRequest(prompt: prompt, maxTokens: maxT)
-        let finalPrompt = isService ? ServiceRequestDetector.compactTitlePrompt(prompt) : prompt
+        let optInCompact = request.headers.isFlagTrue("x-compact-prompt") || request.headers.isFlagTrue("x-service-request")
+        let finalPrompt = (isService && optInCompact) ? ServiceRequestDetector.compactTitlePrompt(prompt) : prompt
 
         let genRequest = GenerationRequest(
             prompt: finalPrompt,
@@ -450,9 +459,18 @@ struct OpenAIController: Sendable {
                     var done2 = ByteBuffer(); done2.writeString("data: [DONE]\n\n")
                     continuation.yield(done2)
                 } catch {
-                    var buf = ByteBuffer()
-                    buf.writeString("event: error\ndata: {\"error\":\"\(error.localizedDescription)\"}\n\n")
-                    continuation.yield(buf)
+                    let errPayload: [String: Any] = [
+                        "error": [
+                            "message": error.localizedDescription,
+                            "type": "server_error"
+                        ]
+                    ]
+                    if let json = try? JSONSerialization.data(withJSONObject: errPayload),
+                       let str = String(data: json, encoding: .utf8) {
+                        var buf = ByteBuffer()
+                        buf.writeString("event: error\ndata: \(str)\n\n")
+                        continuation.yield(buf)
+                    }
                 }
                 continuation.finish()
             }
@@ -475,8 +493,15 @@ struct OpenAIController: Sendable {
         AsyncStream { continuation in
             Task {
                 let id = "resp_\(UUID().uuidString)"
+                let itemId = "item_\(id)"
+                var seq = 0
+
                 func sendEvent(_ event: String, _ dataDict: [String: Any]) {
-                    if let json = try? JSONSerialization.data(withJSONObject: dataDict),
+                    var payload = dataDict
+                    payload["type"] = event
+                    payload["sequence_number"] = seq
+                    seq += 1
+                    if let json = try? JSONSerialization.data(withJSONObject: payload),
                        let str = String(data: json, encoding: .utf8) {
                         var buf = ByteBuffer()
                         buf.writeString("event: \(event)\ndata: \(str)\n\n")
@@ -486,16 +511,20 @@ struct OpenAIController: Sendable {
 
                 sendEvent("response.created", [
                     "id": id,
-                    "object": "response",
-                    "status": "in_progress",
-                    "model": model
+                    "response": [
+                        "id": id,
+                        "object": "response",
+                        "status": "in_progress",
+                        "model": model,
+                        "output": [] as [Any]
+                    ] as [String: Any]
                 ])
 
                 sendEvent("response.output_item.added", [
                     "id": id,
                     "output_index": 0,
                     "item": [
-                        "id": "item_\(id)",
+                        "id": itemId,
                         "type": "message",
                         "status": "in_progress",
                         "role": "assistant",
@@ -504,38 +533,108 @@ struct OpenAIController: Sendable {
                 ])
 
                 do {
+                    var accumulatedText = ""
+                    var finalResponse: GenerationResponse?
                     let stream = try await orchestrator.generateStream(request: genRequest, modelId: requestedModel)
                     for await chunk in stream {
                         switch chunk {
                         case .text(let text):
-                            sendEvent("response.text.delta", ["delta": text])
+                            accumulatedText += text
+                            sendEvent("response.output_text.delta", [
+                                "item_id": itemId,
+                                "output_index": 0,
+                                "content_index": 0,
+                                "delta": text
+                            ])
+                            sendEvent("response.text.delta", [
+                                "item_id": itemId,
+                                "output_index": 0,
+                                "delta": text
+                            ])
                         case .reasoning(let reasoning):
-                            sendEvent("response.reasoning.delta", ["delta": reasoning])
-                        case .metadata:
-                            break
+                            sendEvent("response.reasoning.delta", [
+                                "item_id": itemId,
+                                "output_index": 0,
+                                "delta": reasoning
+                            ])
+                        case .metadata(let meta):
+                            finalResponse = meta
                         }
                     }
 
                     sendEvent("response.output_item.done", [
                         "id": id,
                         "output_index": 0,
-                        "status": "completed"
+                        "status": "completed",
+                        "item": [
+                            "id": itemId,
+                            "type": "message",
+                            "status": "completed",
+                            "role": "assistant",
+                            "content": [
+                                [
+                                    "type": "text",
+                                    "text": accumulatedText
+                                ]
+                            ] as [Any]
+                        ] as [String: Any]
                     ])
+
+                    let inTokens = finalResponse?.promptTokens ?? 0
+                    let outTokens = finalResponse?.completionTokens ?? 0
+                    let usage: [String: Any] = [
+                        "input_tokens": inTokens,
+                        "output_tokens": outTokens,
+                        "total_tokens": inTokens + outTokens
+                    ]
+
+                    let completedResponse: [String: Any] = [
+                        "id": id,
+                        "object": "response",
+                        "status": "completed",
+                        "model": model,
+                        "output": [
+                            [
+                                "id": itemId,
+                                "type": "message",
+                                "status": "completed",
+                                "role": "assistant",
+                                "content": [
+                                    [
+                                        "type": "text",
+                                        "text": accumulatedText
+                                    ]
+                                ] as [Any]
+                            ] as [String: Any]
+                        ],
+                        "usage": usage
+                    ]
 
                     sendEvent("response.done", [
                         "id": id,
                         "object": "response",
                         "status": "completed",
-                        "model": model
+                        "model": model,
+                        "response": completedResponse,
+                        "usage": usage
                     ])
 
                     var doneBuf = ByteBuffer()
                     doneBuf.writeString("data: [DONE]\n\n")
                     continuation.yield(doneBuf)
                 } catch {
-                    var buf = ByteBuffer()
-                    buf.writeString("event: error\ndata: {\"error\":\"\(error.localizedDescription)\"}\n\n")
-                    continuation.yield(buf)
+                    let errPayload: [String: Any] = [
+                        "error": [
+                            "message": error.localizedDescription,
+                            "type": "server_error"
+                        ]
+                    ]
+                    if let json = try? JSONSerialization.data(withJSONObject: errPayload),
+                       let str = String(data: json, encoding: .utf8) {
+                        var buf = ByteBuffer()
+                        buf.writeString("event: error\ndata: \(str)\n\n")
+                        continuation.yield(buf)
+                    }
                 }
                 continuation.finish()
             }
@@ -555,11 +654,12 @@ struct OpenAIController: Sendable {
         var parts: [String] = []
         for msg in messages {
             guard let text = msg.content?.textValue, !text.isEmpty else { continue }
-            switch msg.role {
-            case "system":    parts.append("[System]: \(text)")
+            let role = msg.role ?? "user"
+            switch role {
+            case "system", "developer": parts.append("[System]: \(text)")
             case "user":      parts.append("[User]: \(text)")
             case "assistant": parts.append("[Assistant]: \(text)")
-            default:          parts.append(text)
+            default:          parts.append("[\(role.capitalized)]: \(text)")
             }
         }
         return parts.joined(separator: "\n\n")
@@ -590,4 +690,11 @@ struct OpenAIController: Sendable {
 
 private extension HTTPResponse.Status {
     init(code: Int) { self = HTTPResponse.Status(code: code, reasonPhrase: "") }
+}
+
+private extension HTTPFields {
+    func isFlagTrue(_ name: String) -> Bool {
+        guard let fieldName = HTTPField.Name(name) else { return false }
+        return self[fieldName] == "true"
+    }
 }

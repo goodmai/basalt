@@ -262,6 +262,39 @@ public actor MLXInferenceEngine: InferenceEngine {
         }
     }
 
+    // MARK: — Template Context
+    public static func buildTemplateContext(
+        request: GenerationRequest,
+        defaultReasoningEffort: String? = nil,
+        profile: (any ModelProfile)? = nil
+    ) -> [String: any Sendable]? {
+        let rawEffort = request.reasoningEffort ?? defaultReasoningEffort
+        let policy: ReasoningPolicy
+        if request.enableThinking == false || rawEffort == "none" || rawEffort == "off" || rawEffort == "false" {
+            policy = .disabled
+        } else if let effort = rawEffort {
+            policy = ReasoningPolicy(rawValue: effort) ?? .effort(effort)
+        } else {
+            policy = .modelDefault
+        }
+
+        if let profile {
+            let ctx = profile.templateContext(for: policy)
+            return ctx.isEmpty ? nil : ctx
+        }
+
+        var context: [String: any Sendable] = [:]
+        switch policy {
+        case .disabled:
+            context["enable_thinking"] = false
+        case .effort(let effort):
+            context["reasoning_effort"] = (effort.lowercased() == "high") ? "xhigh" : effort.lowercased()
+        case .modelDefault:
+            break
+        }
+        return context.isEmpty ? nil : context
+    }
+
     // MARK: — Generate
 
     public func generate(request: GenerationRequest) async throws(GemError) -> GenerationResponse {
@@ -323,23 +356,14 @@ public actor MLXInferenceEngine: InferenceEngine {
         if request.prompt.contains("<|turn|>") || request.prompt.contains("<|channel|>") {
             userInput = UserInput(prompt: request.prompt)
         } else {
-            // Qwen3.x templates open a `<think>` block on every turn and default
-            // reasoning_effort to `xhigh`, so an unqualified request spends its whole
-            // token budget reasoning and gets cut off mid-answer. `none` reaches the
-            // template's harder switch, which emits an already-closed think block and
-            // makes the model answer directly.
-            var context: [String: any Sendable] = [:]
-            switch reasoningEffort {
-            case "none":
-                context["enable_thinking"] = false
-            case .some(let effort):
-                context["reasoning_effort"] = effort
-            case nil:
-                break
-            }
+            let context = Self.buildTemplateContext(
+                request: request,
+                defaultReasoningEffort: reasoningEffort,
+                profile: profile
+            )
             userInput = UserInput(
                 chat: [.user(request.prompt)],
-                additionalContext: context.isEmpty ? nil : context
+                additionalContext: context
             )
         }
 

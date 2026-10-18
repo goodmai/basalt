@@ -368,6 +368,55 @@ struct OrchestratorTests {
         #expect(preservedSession.id == activeSession.id)
         #expect(preservedSession.prefix == activeSession.prefix)
     }
+
+    @Test("Follow-up user request with matching prompt prefix preserves working session")
+    func matchingPromptPrefixPreservesWorkingSession() async throws {
+        let engine = MockInferenceEngine()
+        let orch = ModelOrchestratorActor(engine: engine)
+        try await orch.loadModel(path: "test-model")
+
+        let basePrompt = "System: You are a coding assistant.\nUser: Write a Swift function."
+        _ = try await orch.generate(request: .init(prompt: basePrompt))
+        let firstSession = await orch.workingSessionState()
+        #expect(firstSession.id != nil)
+
+        // Turn 2 appends assistant response and new user question, keeping the initial prefix intact
+        let turn2Prompt = basePrompt + "\nAssistant: Here is the function...\nUser: Now optimize it."
+        _ = try await orch.generate(request: .init(prompt: turn2Prompt))
+        let secondSession = await orch.workingSessionState()
+        #expect(secondSession.id == firstSession.id)
+
+        // Unrelated request rotates the session
+        let unrelatedPrompt = "Something completely different without the same prefix."
+        _ = try await orch.generate(request: .init(prompt: unrelatedPrompt))
+        let thirdSession = await orch.workingSessionState()
+        #expect(thirdSession.id != firstSession.id)
+    }
+
+    @Test("capped preserves reasoningEffort, topP, enableThinking, isServiceRequest")
+    func cappedPreservesParameters() async throws {
+        let engine = MockInferenceEngine()
+        let orch = ModelOrchestratorActor(engine: engine, maxTokens: 100)
+        try await orch.loadModel(path: "test-model")
+
+        _ = try await orch.generate(request: .init(
+            prompt: "Prompt to cap",
+            maxTokens: 130_000,
+            temperature: 0.5,
+            topP: 0.8,
+            enableThinking: false,
+            reasoningEffort: "low",
+            isServiceRequest: false
+        ))
+
+        let lastReq = await engine.getLastRequest()
+        #expect((lastReq?.maxTokens ?? 0) <= 128_000)
+        #expect((lastReq?.maxTokens ?? 0) < 130_000)
+        #expect(lastReq?.temperature == 0.5)
+        #expect(lastReq?.topP == 0.8)
+        #expect(lastReq?.enableThinking == false)
+        #expect(lastReq?.reasoningEffort == "low")
+    }
 }
 
 // MARK: — Helpers

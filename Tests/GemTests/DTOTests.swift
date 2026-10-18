@@ -147,6 +147,15 @@ struct ServiceRequestDetectorTests {
         #expect(compacted.count < prompt.count)
         #expect(compacted.hasPrefix("Generate a short 3-5 word title for this discussion:\n"))
     }
+
+    @Test("Ignores bare title: and code prompts")
+    func ignoresBareTitleInCodePrompts() {
+        let htmlPrompt = "Can you help me write an HTML file with <title>My App</title>?"
+        #expect(!ServiceRequestDetector.isTitleOrServiceRequest(prompt: htmlPrompt, maxTokens: 1024))
+
+        let yamlPrompt = "apiVersion: v1\nmetadata:\n  title: Sample\n"
+        #expect(!ServiceRequestDetector.isTitleOrServiceRequest(prompt: yamlPrompt, maxTokens: 1024))
+    }
 }
 
 @Suite("Coding Agent Options & Responses DTOs")
@@ -200,6 +209,76 @@ struct CodingAgentDTOTests {
         } else {
             Issue.record("Expected text input")
         }
+    }
+
+    @Test("ResponsesRequest decodes input structured item array")
+    func responsesRequestDecodingStructuredItems() throws {
+        let json = """
+        {
+            "model": "qwen3-coder",
+            "input": [
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_text",
+                            "text": "Refactor this function"
+                        }
+                    ]
+                }
+            ],
+            "reasoning_effort": "low"
+        }
+        """.data(using: .utf8)!
+
+        let req = try JSONDecoder().decode(OpenAIController.ResponsesRequest.self, from: json)
+        #expect(req.model == "qwen3-coder")
+        #expect(req.reasoningEffort == "low")
+        guard case .messages(let msgs) = req.input, let first = msgs.first else {
+            Issue.record("Expected messages input")
+            return
+        }
+        #expect(first.role == "user")
+        #expect(first.content?.textValue == "Refactor this function")
+    }
+
+    @Test("ResponseInput throws decoding error for malformed input")
+    func responseInputThrowsOnMalformed() {
+        let invalidJson = """
+        {
+            "input": 12345
+        }
+        """.data(using: .utf8)!
+
+        #expect(throws: DecodingError.self) {
+            _ = try JSONDecoder().decode(OpenAIController.ResponsesRequest.self, from: invalidJson)
+        }
+    }
+
+    @Test("MLXInferenceEngine builds templateContext with request reasoningEffort")
+    func buildTemplateContextFromRequest() {
+        let qwen = QwenProfile()
+        let reqLow = GenerationRequest(prompt: "hello", reasoningEffort: "low")
+        let ctxLow = MLXInferenceEngine.buildTemplateContext(request: reqLow, profile: qwen)
+        #expect(ctxLow?["reasoning_effort"] as? String == "low")
+
+        let reqNone = GenerationRequest(prompt: "hello", reasoningEffort: "none")
+        let ctxNone = MLXInferenceEngine.buildTemplateContext(request: reqNone, profile: qwen)
+        #expect(ctxNone?["enable_thinking"] as? Bool == false)
+
+        let reqDisable = GenerationRequest(prompt: "hello", enableThinking: false)
+        let ctxDisable = MLXInferenceEngine.buildTemplateContext(request: reqDisable, profile: qwen)
+        #expect(ctxDisable?["enable_thinking"] as? Bool == false)
+
+        // Request-level effort overrides engine default
+        let reqHigh = GenerationRequest(prompt: "hello", reasoningEffort: "high")
+        let ctxOverride = MLXInferenceEngine.buildTemplateContext(
+            request: reqHigh,
+            defaultReasoningEffort: "low",
+            profile: qwen
+        )
+        #expect(ctxOverride?["reasoning_effort"] as? String == "xhigh")
     }
 }
 

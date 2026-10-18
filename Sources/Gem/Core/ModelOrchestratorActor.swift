@@ -110,8 +110,11 @@ public actor ModelOrchestratorActor {
         requestCount += 1
 
         if validated.isServiceRequest != true {
-            self.workingSessionId = "session_\(UUID().uuidString.prefix(8))"
-            self.workingSessionPromptPrefix = String(validated.prompt.prefix(128))
+            let prefix = String(validated.prompt.prefix(128))
+            if self.workingSessionId == nil || self.workingSessionPromptPrefix == nil || !validated.prompt.hasPrefix(self.workingSessionPromptPrefix!) {
+                self.workingSessionId = "session_\(UUID().uuidString.prefix(8))"
+                self.workingSessionPromptPrefix = prefix
+            }
         }
 
         do {
@@ -142,8 +145,11 @@ public actor ModelOrchestratorActor {
         requestCount += 1
 
         if validated.isServiceRequest != true {
-            self.workingSessionId = "session_\(UUID().uuidString.prefix(8))"
-            self.workingSessionPromptPrefix = String(validated.prompt.prefix(128))
+            let prefix = String(validated.prompt.prefix(128))
+            if self.workingSessionId == nil || self.workingSessionPromptPrefix == nil || !validated.prompt.hasPrefix(self.workingSessionPromptPrefix!) {
+                self.workingSessionId = "session_\(UUID().uuidString.prefix(8))"
+                self.workingSessionPromptPrefix = prefix
+            }
         }
 
         let stream: AsyncStream<StreamChunk>
@@ -244,7 +250,15 @@ public actor ModelOrchestratorActor {
         var v = try request.validated(defaultMaxTokens: maxT)
         if let req = request.maxTokens, req > maxT {
             logger.warn("Token request (\(req)) > budget (\(maxT)). Capping.")
-            v = GenerationRequest(prompt: v.prompt, maxTokens: maxT, temperature: v.temperature)
+            v = GenerationRequest(
+                prompt: v.prompt,
+                maxTokens: maxT,
+                temperature: v.temperature,
+                topP: v.topP,
+                enableThinking: v.enableThinking,
+                reasoningEffort: v.reasoningEffort,
+                isServiceRequest: v.isServiceRequest
+            )
         }
         return v
     }

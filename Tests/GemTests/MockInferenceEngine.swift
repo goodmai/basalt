@@ -14,10 +14,15 @@ actor MockInferenceEngine: InferenceEngine {
     var mockText = "Mock response"
     var mockTPS  = 42.0
     var artificialDelay: TimeInterval = 0.0 // Artificial delay in seconds for testing timeouts
+    var lastRequest: GenerationRequest?
     
     // Setter methods for actor-safe configuration
     func setArtificialDelay(_ delay: TimeInterval) {
         self.artificialDelay = delay
+    }
+    
+    func getLastRequest() -> GenerationRequest? {
+        self.lastRequest
     }
     
     func setShouldFailOnGenerate(_ shouldFail: Bool) {
@@ -34,6 +39,7 @@ actor MockInferenceEngine: InferenceEngine {
     }
 
     func generate(request: GenerationRequest) async throws(GemError) -> GenerationResponse {
+        self.lastRequest = request
         let stream = try await generateStream(request: request)
         var metadata: GenerationResponse?
         for await chunk in stream {
@@ -46,6 +52,7 @@ actor MockInferenceEngine: InferenceEngine {
     }
 
     func generateStream(request: GenerationRequest) async throws(GemError) -> AsyncStream<StreamChunk> {
+        self.lastRequest = request
         guard loaded else {
             throw .inferenceHardwareFailure(reason: "not loaded")
         }
