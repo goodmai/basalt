@@ -66,6 +66,7 @@ struct RESTServer: Sendable {
         // ── Native API ──────────────────────────────────────────────────────────
         let v1 = router.group("/api/v1")
         v1.get("/health",          use: generateController.health)
+        v1.get("/stats",           use: generateController.stats)
         v1.post("/generate",       use: generateController.generate)
         v1.post("/generate/stream", use: generateController.generateStream)
 
@@ -121,6 +122,7 @@ struct RESTServer: Sendable {
                 "/api/v1/generate":        { "post": { "summary": "Raw text generation" } },
                 "/api/v1/generate/stream": { "post": { "summary": "SSE streaming generation" } },
                 "/v1/models":              { "get":  { "summary": "List cached models (OpenAI format)" } },
+                "/api/v1/stats":           { "get":  { "summary": "Telemetry of the serving process (same snapshot as serve --stats and MCP status)" } },
                 "/v1/models/current":      { "get":  { "summary": "Currently loaded model + status" } },
                 "/v1/models/load":         { "post": { "summary": "Hot-swap model at runtime" } },
                 "/v1/chat/completions":    { "post": { "summary": "OpenAI-compatible chat completions" } },

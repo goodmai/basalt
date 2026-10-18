@@ -161,6 +161,7 @@ chmod +x ./basalt-claude
 | `basalt chat --model <id>` | interactive terminal chat |
 | `basalt serve --model <id> --rest` | REST server on :8080 (OpenAI + Anthropic compatible) |
 | `basalt serve --model <id> --mcp` | MCP stdio server for Claude Desktop / Cursor |
+| `basalt serve --model <id> --stats` | print telemetry to stderr every 5 s (`--stats-interval`); the same numbers at `GET /api/v1/stats` and in MCP `status` |
 | `basalt models list --author <org>` | browse a HuggingFace author's models |
 | `basalt models download <repo-id>` | download into the shared HF cache |
 | `basalt models info <repo-id>` | size, quantization, context window |

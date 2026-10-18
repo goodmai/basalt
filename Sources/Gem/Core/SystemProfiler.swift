@@ -178,6 +178,11 @@ public actor SystemProfiler {
         }
     }
     
+    /// Available RAM only — the cheap part of `detectResources()`, for periodic telemetry.
+    public func currentAvailableRAM() -> Int64 {
+        getAvailableRAM()
+    }
+
     // MARK: - Private Helpers
     
     /// Get available RAM using macOS APIs

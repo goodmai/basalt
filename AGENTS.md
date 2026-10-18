@@ -92,7 +92,7 @@ The server speaks JSON-RPC on stdin/stdout for as long as stdin is open. To stop
 
 | Tool Name | Arguments | Description |
 |-----------|-----------|-------------|
-| `status` | `{"modelId": "..."}` *(optional)* | Returns engine readiness, loaded model ID and token diagnostics. With `modelId`, `requestedModelLoaded` says whether that model is the one actually serving. |
+| `status` | `{"modelId": "..."}` *(optional)* | Returns engine readiness, loaded model ID and the serving telemetry (`telemetry`: tok/s, TTFT, RAM, MLX GPU memory, active/total requests — the same snapshot as `serve --stats` and `GET /api/v1/stats`; `diagnostics` repeats the request/token totals from it). With `modelId`, `requestedModelLoaded` says whether that model is the one actually serving. |
 | `check_hardware` | `{}` | Detects Apple Silicon chip, available Unified Memory, GPU and disk space as structured JSON. |
 | `inspect_model` | `{"modelId": "..."}` | Validates weight shard integrity and detects actual bit width for the target model. |
 | `switch_model` | `{"modelId": "..."}` | Hot-swaps the loaded model to a different model present in the local cache. |
