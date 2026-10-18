@@ -288,5 +288,41 @@ struct CodingAgentAPITests {
             }
         }
     }
-}
 
+    /// Output items of a streamed turn where the model says `before`, calls a tool, then emits `after`.
+    private func outputAroundToolCall(after: String) async throws -> [[String: Any]] {
+        let (app, engine) = try await app()
+        await engine.setMockToolCall(ToolCallOutput(id: "c1", name: "shell", arguments: "{}"), text: "Let me look.", after: after)
+        let request = body("{\"input\": \"x\", \"stream\": true, \(shellTool)}")
+        let raw: String = try await app.test(.router) { client in
+            try await client.execute(uri: "/v1/responses", method: .post, body: request) { res in
+                String(buffer: res.body)
+            }
+        }
+        let completed = events(ByteBuffer(string: raw)).last?.data?["response"] as? [String: Any]
+        return completed?["output"] as? [[String: Any]] ?? []
+    }
+
+    private func messageTexts(_ output: [[String: Any]]) -> [String] {
+        output.filter { $0["type"] as? String == "message" }
+            .compactMap { ($0["content"] as? [[String: Any]])?.first?["text"] as? String }
+    }
+
+    @Test("Text after a tool call is a new message with its own id, not a repeat of the first")
+    func textAfterToolCall() async throws {
+        let output = try await outputAroundToolCall(after: "Done.")
+        let types = output.map { $0["type"] as? String ?? "" }
+        #expect(types == ["message", "function_call", "message"])
+        #expect(messageTexts(output) == ["Let me look.", "Done."])
+        let ids = output.filter { $0["type"] as? String == "message" }.compactMap { $0["id"] as? String }
+        #expect(Set(ids).count == 2)
+    }
+
+    @Test("Whitespace the template leaves after a tool call does not become a message")
+    func whitespaceAfterToolCall() async throws {
+        let output = try await outputAroundToolCall(after: "\n")
+        let types = output.map { $0["type"] as? String ?? "" }
+        #expect(types == ["message", "function_call"])
+        #expect(messageTexts(output) == ["Let me look."])
+    }
+}

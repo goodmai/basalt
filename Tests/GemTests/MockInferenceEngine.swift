@@ -16,6 +16,7 @@ actor MockInferenceEngine: InferenceEngine {
     var artificialDelay: TimeInterval = 0.0 // Artificial delay in seconds for testing timeouts
     var mockReasoning: String? = nil        // yielded as a .reasoning chunk before the text
     var mockToolCall: ToolCallOutput? = nil // yielded as a .toolCall chunk after the text
+    var mockTextAfterToolCall: String? = nil
     var lastRequest: GenerationRequest?
     
     // Setter methods for actor-safe configuration
@@ -31,9 +32,10 @@ actor MockInferenceEngine: InferenceEngine {
         self.mockReasoning = reasoning
     }
 
-    func setMockToolCall(_ call: ToolCallOutput?, text: String = "Mock response") {
+    func setMockToolCall(_ call: ToolCallOutput?, text: String = "Mock response", after: String? = nil) {
         self.mockToolCall = call
         self.mockText = text
+        self.mockTextAfterToolCall = after
     }
 
     func setShouldFailOnGenerate(_ shouldFail: Bool) {
@@ -98,6 +100,7 @@ actor MockInferenceEngine: InferenceEngine {
                 if let reasoning = mockReasoning { continuation.yield(.reasoning(reasoning)) }
                 if !mockText.isEmpty { continuation.yield(.text(mockText)) }
                 if let call = mockToolCall { continuation.yield(.toolCall(call)) }
+                if let after = mockTextAfterToolCall { continuation.yield(.text(after)) }
                 
                 // simulate total generation time
                 try? await Task.sleep(for: .milliseconds(5))

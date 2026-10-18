@@ -533,7 +533,7 @@ struct OpenAIController: Sendable {
                     let stream = try await orchestrator.generateStream(request: genRequest, modelId: requestedModel)
                     for await chunk in stream {
                         switch chunk {
-                        case .toolCall:  // this path offers the model no tools, so it cannot call one
+                        case .toolCall:  // this path declares no tools, so a call has no client to go to
                             break
                         case .text(let text):
                             accumulatedText += text
@@ -645,7 +645,7 @@ struct OpenAIController: Sendable {
         AsyncStream { continuation in
             let task = Task {
                 let id = "resp_\(UUID().uuidString)"
-                let messageId = "msg_\(UUID().uuidString)"
+                var messageId = "msg_\(UUID().uuidString)"
                 let reasoningId = "rs_\(UUID().uuidString)"
                 let createdAt = Int(Date().timeIntervalSince1970)
                 var seq = 0
@@ -699,6 +699,9 @@ struct OpenAIController: Sendable {
                     send("response.output_item.done", ["output_index": index, "item": done])
                     completed.append(done)
                     messageIndex = nil
+                    // Text after a tool call is a new message: its own id, its own text.
+                    messageId = "msg_\(UUID().uuidString)"
+                    text = ""
                 }
                 func openMessage() -> Int {
                     if let index = messageIndex { return index }
@@ -735,6 +738,11 @@ struct OpenAIController: Sendable {
                     for await chunk in stream {
                         switch chunk {
                         case .text(let delta):
+                            // Whitespace the template leaves after a tool call is not an answer.
+                            if messageIndex == nil, completed.contains(where: { $0["type"] as? String == "function_call" }),
+                               delta.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                                continue
+                            }
                             let index = openMessage()
                             text += delta
                             send("response.output_text.delta", [

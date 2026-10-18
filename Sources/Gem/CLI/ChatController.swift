@@ -98,7 +98,7 @@ actor ChatController {
                             }
                             
                             switch chunk {
-                            case .toolCall:  // this path offers the model no tools, so it cannot call one
+                            case .toolCall:  // this path declares no tools, so a call has no client to go to
                                 break
                             case .text(let t):
                                 await terminal.printOutput(t)
