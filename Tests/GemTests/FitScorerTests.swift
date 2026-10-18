@@ -193,4 +193,140 @@ struct FitScorerTests {
         let qwenModels = ModelDatabase.models(for: .qwen)
         #expect(!qwenModels.isEmpty)
     }
+
+    @Test("Cross-model suffix collisions are rejected by measurement lookup")
+    func testNoCrossModelSuffixCollisions() {
+        let profile = HardwareBenchmarkProfile(
+            chipModel: "M2 Max",
+            measurements: [
+                "mlx-community/Qwen3.5-4B-4bit": BenchmarkMeasurement(
+                    modelId: "mlx-community/Qwen3.5-4B-4bit",
+                    chipModel: "M2 Max",
+                    measuredTPS: 100.0,
+                    measuredTTFT: 0.1,
+                    quant: "4-bit"
+                )
+            ]
+        )
+
+        // Exact repo matches
+        #expect(profile.measurement(for: "mlx-community/Qwen3.5-4B-4bit", currentChip: "M2 Max") != nil)
+        #expect(profile.measurement(for: "Qwen3.5-4B-4bit", currentChip: "M2 Max") != nil)
+
+        // Suffix matches without slash boundary must NOT match
+        #expect(profile.measurement(for: "mlx-community/DeepSeek-4B-4bit", currentChip: "M2 Max") == nil)
+        #expect(profile.measurement(for: "4bit", currentChip: "M2 Max") == nil)
+        #expect(profile.measurement(for: "B-4bit", currentChip: "M2 Max") == nil)
+    }
+
+    @Test("Chip model mismatch rejects calibration from another machine")
+    func testChipMismatchRejection() {
+        let profile = HardwareBenchmarkProfile(
+            chipModel: "Apple M1",
+            measurements: [
+                "mlx-community/Qwen3.5-4B-4bit": BenchmarkMeasurement(
+                    modelId: "mlx-community/Qwen3.5-4B-4bit",
+                    chipModel: "Apple M1",
+                    measuredTPS: 40.0,
+                    measuredTTFT: 0.2,
+                    quant: "4-bit"
+                )
+            ]
+        )
+
+        // Same chip family accepts
+        #expect(profile.measurement(for: "mlx-community/Qwen3.5-4B-4bit", currentChip: "Apple M1") != nil)
+
+        // Different chip family rejects
+        #expect(profile.measurement(for: "mlx-community/Qwen3.5-4B-4bit", currentChip: "Apple M3 Max") == nil)
+        #expect(profile.measurement(for: "mlx-community/Qwen3.5-4B-4bit", currentChip: "Apple M2 Pro") == nil)
+    }
+
+    @Test("Non-4-bit benchmark measurements rescale according to measurement.quant")
+    func testNon4BitRescaling() {
+        let resources = createMockResources(ramGB: 64, availableGB: 40, chip: "M2 Max")
+        let profile = HardwareBenchmarkProfile(
+            chipModel: "M2 Max",
+            measurements: [
+                "mlx-community/Qwen2.5-Coder-7B": BenchmarkMeasurement(
+                    modelId: "mlx-community/Qwen2.5-Coder-7B",
+                    chipModel: "M2 Max",
+                    measuredTPS: 50.0,
+                    measuredTTFT: 0.1,
+                    quant: "8-bit" // Measured at 8-bit!
+                )
+            ]
+        )
+
+        let model = ModelDefinition(
+            id: "mlx-community/Qwen2.5-Coder-7B",
+            name: "Qwen 7B",
+            family: .qwen,
+            task: .code,
+            modality: .text,
+            ramMB: 5000,
+            contextWindow: 32768,
+            quantization: "4-bit",
+            quality: 0.90,
+            totalParameters: 7.0,
+            activeParameters: 7.0
+        )
+
+        let result = ModelFitAnalyzer.evaluateQuantizations(
+            model: model,
+            resources: resources,
+            benchmarkProfile: profile
+        )
+
+        let opt8 = result.options.first { $0.bits == 8 }!
+        let opt4 = result.options.first { $0.bits == 4 }!
+
+        // Since measured was 8-bit at 50 TPS:
+        // 8-bit option should be ~50 TPS
+        // 4-bit option should be rescaled up to ~100 TPS (8 / 4 * 50 = 100), NOT halved!
+        #expect(opt8.estimatedTPS == 50)
+        #expect(opt4.estimatedTPS >= 95 && opt4.estimatedTPS <= 105)
+    }
+
+    @Test("No-qualifying-option path does not falsely mark optimal with fitsBudget=true")
+    func testNoQualifyingOptionFallback() {
+        // Only 1GB available RAM for a 70B model with min TPS 100
+        let resources = createMockResources(ramGB: 2, availableGB: 1, chip: "M1")
+        let hugeModel = ModelDefinition(
+            id: "huge/70B",
+            name: "Huge 70B",
+            family: .llama,
+            task: .chat,
+            modality: .text,
+            ramMB: 40000,
+            contextWindow: 4096,
+            quantization: "4-bit",
+            quality: 0.95,
+            totalParameters: 70.0,
+            activeParameters: 70.0
+        )
+
+        let result = ModelFitAnalyzer.evaluateQuantizations(
+            model: hugeModel,
+            resources: resources,
+            tpsMin: 100.0
+        )
+
+        // None of the options fit
+        #expect(result.options.allSatisfy { !$0.fitsBudget })
+        #expect(result.options.allSatisfy { !$0.isOptimal })
+        #expect(result.optimal.fitsBudget == false)
+    }
+
+    @Test("FitScorer.parseBits correctly parses 5-bit, DQ, and numeric strings")
+    func testParseBitsVariety() {
+        #expect(FitScorer.parseBits(from: "5-bit") == 5.0)
+        #expect(FitScorer.parseBits(from: "Q5_K_M") == 5.0)
+        #expect(FitScorer.parseBits(from: "DQ-4bit") == 4.0)
+        #expect(FitScorer.parseBits(from: "bfloat16") == 16.0)
+        #expect(FitScorer.parseBits(from: "fp16") == 16.0)
+        #expect(FitScorer.parseBits(from: "8-bit") == 8.0)
+        #expect(FitScorer.parseBits(from: "2-bit") == 2.0)
+        #expect(FitScorer.parseBits(from: "3-bit") == 3.0)
+    }
 }

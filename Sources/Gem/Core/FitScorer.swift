@@ -175,12 +175,12 @@ public actor FitScorer {
         
         let bits = Self.parseBits(from: model.quantization)
         let activeWeightsGB = model.activeParameters * (bits / 8.0)
-        let kvReadGB = 0.05 // Resident KV cache read per token
+        let kvReadGB = Self.kvCacheFootprintGB(params: model.totalParameters, contextTokens: model.contextWindow)
         let bytesPerToken = max(0.1, activeWeightsGB + kvReadGB)
         
         let theoreticalTPS = effectiveBW / bytesPerToken
         
-        if let measurement = benchmarkProfile.measurement(for: model.id) {
+        if let measurement = benchmarkProfile.measurement(for: model.id, currentChip: chip) {
             let calib = theoreticalTPS > 0 ? (measurement.measuredTPS / theoreticalTPS) : 1.0
             let tps = max(1, Int(measurement.measuredTPS.rounded()))
             let speedFit = min(1.0, Double(tps) / 100.0)
@@ -192,6 +192,18 @@ public actor FitScorer {
         }
     }
     
+    public static func kvCacheFootprintGB(params: Double, contextTokens: Int) -> Double {
+        let referenceTokens = min(Double(contextTokens), 4096.0)
+        let gbPer4k = (min(32.0, params) * 0.0015 + 0.01)
+        return max(0.01, (referenceTokens / 4096.0) * gbPer4k)
+    }
+
+    public static func kvCacheMemoryMB(params: Double, contextTokens: Int) -> Double {
+        let gbPer4k = (min(32.0, params) * 0.0015 + 0.01)
+        let gb = (Double(contextTokens) / 4096.0) * gbPer4k
+        return max(64.0, gb * 1024.0)
+    }
+
     public static func memoryBandwidthGBs(chip: String, gpuName: String) -> Double {
         let combined = (chip + " " + gpuName).uppercased()
         if combined.contains("ULTRA") { return 800.0 }
@@ -209,8 +221,14 @@ public actor FitScorer {
         if q.contains("16") || q.contains("bfloat16") || q.contains("fp16") { return 16.0 }
         if q.contains("8") { return 8.0 }
         if q.contains("6") { return 6.0 }
+        if q.contains("5") { return 5.0 }
+        if q.contains("4") { return 4.0 }
         if q.contains("3") { return 3.0 }
         if q.contains("2") { return 2.0 }
+        if let match = q.range(of: #"\b\d+(\.\d+)?\b"#, options: .regularExpression),
+           let val = Double(q[match]) {
+            return val
+        }
         return 4.0 // default 4-bit
     }
 }

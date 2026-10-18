@@ -45,25 +45,55 @@ public struct HardwareBenchmarkProfile: Codable, Sendable {
     }
 
     /// α_calib = 1.0 until the first benchmark, then TPS_measured / TPS_theoretical
-    public func calibrationFactor(for modelId: String, theoreticalTPS: Double) -> Double {
-        guard theoreticalTPS > 0, let m = measurement(for: modelId) else {
+    public func calibrationFactor(for modelId: String, theoreticalTPS: Double, currentChip: String? = nil) -> Double {
+        guard theoreticalTPS > 0, let m = measurement(for: modelId, currentChip: currentChip) else {
             return 1.0
         }
         return m.measuredTPS / theoreticalTPS
     }
 
-    /// Retrieve matching measurement by exact ID or suffix match
-    public func measurement(for modelId: String) -> BenchmarkMeasurement? {
-        if let direct = measurements[modelId] {
+    /// Retrieve matching measurement by exact ID or clean repo basename match, validating chip compatibility
+    public func measurement(for modelId: String, currentChip: String? = nil) -> BenchmarkMeasurement? {
+        func chipMatches(_ m: BenchmarkMeasurement) -> Bool {
+            guard let cur = currentChip?.trimmingCharacters(in: .whitespacesAndNewlines), !cur.isEmpty else {
+                return true
+            }
+            let curLower = cur.lowercased()
+            let mLower = m.chipModel.lowercased()
+            if curLower == mLower { return true }
+            for series in ["m1", "m2", "m3", "m4", "m5"] {
+                if curLower.contains(series) && mLower.contains(series) {
+                    for tier in ["ultra", "max", "pro"] {
+                        if curLower.contains(tier) != mLower.contains(tier) {
+                            return false
+                        }
+                    }
+                    return true
+                }
+            }
+            return false
+        }
+
+        if let direct = measurements[modelId], chipMatches(direct) {
             return direct
         }
-        // Match by case-insensitive or repository basename (e.g. "Qwen3.5-4B-4bit")
-        let target = modelId.lowercased()
+
+        let target = modelId.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
         let targetBase = target.split(separator: "/").last.map(String.init) ?? target
+
         for (key, m) in measurements {
-            let keyLower = key.lowercased()
+            guard chipMatches(m) else { continue }
+            let keyLower = key.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
             let keyBase = keyLower.split(separator: "/").last.map(String.init) ?? keyLower
-            if keyLower == target || keyBase == targetBase || target.hasSuffix(keyLower) || keyLower.hasSuffix(target) {
+
+            if keyLower == target {
+                return m
+            }
+            if !targetBase.isEmpty && keyBase == targetBase {
+                return m
+            }
+            // Slash boundary suffix match only (e.g. "org/repo" vs "repo")
+            if target.hasSuffix("/" + keyLower) || keyLower.hasSuffix("/" + target) {
                 return m
             }
         }

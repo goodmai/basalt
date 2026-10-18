@@ -130,8 +130,8 @@ public struct ModelFitAnalyzer: Sendable {
         let effectiveBW = bw * 0.70
         let profile = benchmarkProfile ?? HardwareBenchmarkProfileStore.loadSync()
         
-        // Approximate KV cache size in MB at L_min
-        let kvCacheMB = max(256.0, Double(lMin) / 4096.0 * (min(10.0, model.totalParameters) * 80.0 + 200.0))
+        // Approximate KV cache size in MB at L_min derived from geometry
+        let kvCacheMB = FitScorer.kvCacheMemoryMB(params: model.totalParameters, contextTokens: lMin)
         let overhead = 0.15 // 15% framework overhead
 
         var evaluated: [(bits: Int, name: String, footprintMB: Int, tps: Int, score: FourDimensionalScore, fits: Bool)] = []
@@ -142,13 +142,15 @@ public struct ModelFitAnalyzer: Sendable {
             
             // Speed modeling: active parameters determine bandwidth consumption per token
             let activeWeightsGB = model.activeParameters * (Double(q) / 8.0)
-            let bytesPerToken = max(0.1, activeWeightsGB + 0.05)
+            let kvReadGB = FitScorer.kvCacheFootprintGB(params: model.totalParameters, contextTokens: lMin)
+            let bytesPerToken = max(0.1, activeWeightsGB + kvReadGB)
             let theoreticalTPS = effectiveBW / bytesPerToken
             
             let tps: Int
-            if let m = profile.measurement(for: model.id) {
-                // Adjust measured TPS proportionally to bit width
-                let ratio = 4.0 / Double(q)
+            if let m = profile.measurement(for: model.id, currentChip: resources.chipModel) {
+                // Adjust measured TPS proportionally using the measurement's actual bit width
+                let measuredBits = m.quant.map { FitScorer.parseBits(from: $0) } ?? 4.0
+                let ratio = measuredBits / Double(q)
                 tps = max(1, Int((m.measuredTPS * ratio).rounded()))
             } else {
                 tps = max(1, Int(theoreticalTPS.rounded()))
@@ -187,7 +189,7 @@ public struct ModelFitAnalyzer: Sendable {
         
         // Pick optimal: highest S_Quality among those satisfying the constraints
         let qualifying = evaluated.filter { $0.fits }
-        let chosen = qualifying.max(by: { $0.score.quality < $1.score.quality }) ?? evaluated.last!
+        let chosen = qualifying.max(by: { $0.score.quality < $1.score.quality })
         
         var options: [QuantizationFitOption] = []
         for e in evaluated {
@@ -198,11 +200,12 @@ public struct ModelFitAnalyzer: Sendable {
                 estimatedTPS: e.tps,
                 score: e.score,
                 fitsBudget: e.fits,
-                isOptimal: e.bits == chosen.bits
+                isOptimal: chosen != nil && e.bits == chosen!.bits
             ))
         }
         
-        let optimal = options.first { $0.isOptimal } ?? options.first!
+        let fallback = options.last ?? QuantizationFitOption(bits: 2, name: "2-bit", footprintMB: 0, estimatedTPS: 0, score: FourDimensionalScore(quality: 0, speed: 0, fit: 0, context: 0), fitsBudget: false, isOptimal: false)
+        let optimal = options.first { $0.isOptimal } ?? fallback
         return (optimal: optimal, options: options)
     }
 

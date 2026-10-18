@@ -123,8 +123,9 @@ struct Benchmark: AsyncParsableCommand {
         let ttftMean = ttftSamples.isEmpty ? 0 : ttftSamples.reduce(0, +) / Double(ttftSamples.count)
         let chip = SystemProfiler.detectChipModel()
 
+        let normalizedModelId = ModelCache.canonicalRepoId(from: model)
         let measurement = BenchmarkMeasurement(
-            modelId: model,
+            modelId: normalizedModelId,
             chipModel: chip,
             measuredTPS: tpsMean,
             measuredTTFT: ttftMean,
