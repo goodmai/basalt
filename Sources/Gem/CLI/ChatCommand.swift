@@ -153,7 +153,7 @@ struct ChatCommand: AsyncParsableCommand {
             ("Gemma 4 2B", "2.7 GB RAM, 60 TPS", "mlx-community/gemma-4-e2b-it-4bit")
         ]
         
-        print("\n\(bold("Welcome to Gemm CLI"))")
+        print("\n\(bold("Welcome to Basalt CLI"))")
         print("Select a recommended model to chat with:\n")
         
         for (i, (name, specs, repoId)) in models.enumerated() {

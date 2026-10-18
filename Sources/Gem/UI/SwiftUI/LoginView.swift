@@ -17,7 +17,7 @@ struct LoginView: View {
                 .frame(width: 60, height: 60)
                 .foregroundColor(.accentColor)
             
-            Text("Gemm REST Client")
+            Text("Basalt REST Client")
                 .font(.largeTitle)
                 .bold()
             

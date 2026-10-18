@@ -1,6 +1,6 @@
 # ARC-AGI Benchmark Specification & Evaluation Protocol
 
-Документ описывает методологию, процедуры, метрики и практическое руководство по запуску бенчмарка **ARC-AGI** (Abstraction and Reasoning Corpus) для локальных моделей (Gemma 4 26B MoE) с использованием движка **Native Swift MLX (`gemm`)**.
+Документ описывает методологию, процедуры, метрики и практическое руководство по запуску бенчмарка **ARC-AGI** (Abstraction and Reasoning Corpus) для локальных моделей (Gemma 4 26B MoE) с использованием движка **Native Swift MLX (`basalt`)**.
 
 ---
 

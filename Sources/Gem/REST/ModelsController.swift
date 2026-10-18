@@ -11,7 +11,7 @@ import Hummingbird
 //
 // Recommended setup (add to ~/.zshrc):
 //
-//   function gemm-claude() {
+//   function basalt-claude() {
 //     ANTHROPIC_BASE_URL=http://localhost:8080       \
 //     ANTHROPIC_AUTH_TOKEN=local                    \
 //     ANTHROPIC_DEFAULT_HAIKU_MODEL=mlx-community/gemma-4-e4b-it-4bit    \
@@ -20,9 +20,9 @@ import Hummingbird
 //     claude "$@"
 //   }
 //
-//   gemm-claude                   # sonnet alias → Qwen 4B
-//   gemm-claude --model haiku     # haiku alias  → Gemma 4B (fastest)
-//   gemm-claude --model opus      # opus alias   → Gemma 31B (strongest)
+//   basalt-claude                   # sonnet alias → Qwen 4B
+//   basalt-claude --model haiku     # haiku alias  → Gemma 4B (fastest)
+//   basalt-claude --model opus      # opus alias   → Gemma 31B (strongest)
 //
 // Key: ANTHROPIC_AUTH_TOKEN avoids touching ANTHROPIC_API_KEY (different header).
 //
@@ -67,7 +67,7 @@ struct ModelsController: Sendable {
                 "display_name": hfId,
                 "object":       "model",
                 "created":      now,
-                "owned_by":     "gemm",
+                "owned_by":     "basalt",
                 "is_loaded":    true,
             ]]
         } else {
@@ -81,7 +81,7 @@ struct ModelsController: Sendable {
                     "display_name": m.id,
                     "object":       "model",
                     "created":      now,
-                    "owned_by":     "gemm",
+                    "owned_by":     "basalt",
                     "is_loaded":    m.isLoaded,
                     "size_bytes":   m.sizeBytes,
                     "size_human":   m.sizeFormatted,
@@ -107,7 +107,7 @@ struct ModelsController: Sendable {
             "display_name": hfId,
             "object":       "model",
             "created":      Int(Date().timeIntervalSince1970),
-            "owned_by":     "gemm",
+            "owned_by":     "basalt",
             "is_ready":     snapshot.isReady,
             "status":       snapshot.status,
             "size_bytes":   sizeInfo?.sizeBytes ?? 0,
@@ -154,7 +154,7 @@ struct ModelsController: Sendable {
             "display_name": loadedId,
             "object":   "model",
             "created":  Int(Date().timeIntervalSince1970),
-            "owned_by": "gemm",
+            "owned_by": "basalt",
             "status":   "loaded",
         ])
     }

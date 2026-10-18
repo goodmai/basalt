@@ -191,7 +191,7 @@ struct InfoSubcommand: AsyncParsableCommand {
         }
         print()
         if !cached {
-            print("  \(dim("gemm models download \(modelId)"))")
+            print("  \(dim("basalt models download \(modelId)"))")
         }
     }
 }
@@ -278,15 +278,15 @@ func printModelTable(_ models: [HFModelInfo], numbered: Bool = false) {
 func printHints(_ models: [HFModelInfo]) {
     guard let first = models.first else { return }
     print()
-    print(dim("  gemm models download \(first.id)"))
-    print(dim("  gemm models download          ← interactive picker"))
-    print(dim("  gemm serve --model \(first.id)"))
+    print(dim("  basalt models download \(first.id)"))
+    print(dim("  basalt models download          ← interactive picker"))
+    print(dim("  basalt serve --model \(first.id)"))
     print()
 }
 
 func printRunHint(repoId: String) {
     print()
-    print(dim("  gemm serve --model \(repoId)"))
+    print(dim("  basalt serve --model \(repoId)"))
     print()
 }
 

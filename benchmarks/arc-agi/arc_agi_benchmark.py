@@ -22,24 +22,24 @@ from pathlib import Path
 
 # ─── Default Configurations ──────────────────────────────────────────────────
 
-# `gemm serve` ignores the request's model field once a model is loaded, so the
+# `basalt serve` ignores the request's model field once a model is loaded, so the
 # engine only needs to name the port the server is listening on.
 DEFAULT_ENGINES = {
     "swift_mlx": {
         "url": "http://127.0.0.1:8081/v1/chat/completions",
-        "model": "gemm",
+        "model": "basalt",
         "type": "openai",
-        "label": "Native Swift MLX gemm (port 8081)",
+        "label": "Native Swift MLX basalt (port 8081)",
     },
     "mlx": {
         "url": "http://127.0.0.1:8080/v1/chat/completions",
-        "model": "gemm",
+        "model": "basalt",
         "type": "openai",
-        "label": "Native Swift MLX gemm (port 8080)",
+        "label": "Native Swift MLX basalt (port 8080)",
     },
     "ollama": {
         "url": "http://127.0.0.1:11434/api/chat",
-        "model": "gemm",
+        "model": "basalt",
         "type": "ollama",
         "label": "Ollama Server",
     },

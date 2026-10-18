@@ -35,7 +35,7 @@ class RestAppDelegate: NSObject, NSApplicationDelegate {
         window.setFrameAutosaveName("RestChatWindow")
         window.contentView = NSHostingView(rootView: contentView)
         window.makeKeyAndOrderFront(nil)
-        window.title = "Gemm REST Chat"
+        window.title = "Basalt REST Chat"
         
         NSApp.activate(ignoringOtherApps: true)
     }

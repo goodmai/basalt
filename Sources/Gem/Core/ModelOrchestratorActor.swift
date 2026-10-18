@@ -204,9 +204,9 @@ public actor ModelOrchestratorActor {
     // MARK: — Private helpers
 
     /// Switch model if the requested ID differs from the loaded one.
-    /// Ignores nil, empty, and generic placeholder IDs like "gemm".
+    /// Ignores nil, empty, and generic placeholder IDs like "basalt".
     private func autoSwitch(to modelId: String?) async throws(GemError) {
-        guard let id = modelId, !id.isEmpty, id != "gemm" else { return }
+        guard let id = modelId, !id.isEmpty, id != "basalt" else { return }
         if await engine.isLoaded { return }
         guard id != currentModelId else { return }
         try await switchModel(to: id)
