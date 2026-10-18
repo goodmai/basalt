@@ -114,18 +114,29 @@ struct TelemetryTests {
     @Test("A client that disconnects mid-stream releases its slot")
     func testDisconnectReleasesSlot() async throws {
         let tracker = TelemetryTracker()
-        let (orch, _) = try await loadedOrchestrator(tracker, delay: 1.0)
+        let (orch, _) = try await loadedOrchestrator(tracker, delay: 5.0)
 
+        /// Polls until `activeRequests` reaches `value` or two seconds pass (no fixed sleeps:
+        /// the suite runs in parallel and a fixed wait races the scheduler).
+        func waitForActive(_ value: Int) async -> Bool {
+            let deadline = ContinuousClock.now + .seconds(2)
+            while ContinuousClock.now < deadline {
+                if await tracker.snapshot().activeRequests == value { return true }
+                try? await Task.sleep(for: .milliseconds(5))
+            }
+            return false
+        }
+
+        // A consumer that stops iterating (e.g. ChatController's task being cancelled)
+        // cancels the orchestrator's stream through onTermination.
         let consumer = Task {
             let stream = try await orch.generateStream(request: GenerationRequest(prompt: "hi", maxTokens: 8))
             for await _ in stream {}
         }
-        try? await Task.sleep(for: .milliseconds(100))
-        #expect(await tracker.snapshot().activeRequests == 1)
-
-        consumer.cancel()  // what an HTTP disconnect does to the SSE body sequence
-        try? await Task.sleep(for: .milliseconds(100))
-        #expect(await tracker.snapshot().activeRequests == 0)
+        #expect(await waitForActive(1))
+        consumer.cancel()
+        #expect(await waitForActive(0))
+        #expect(await tracker.snapshot().totalRequests == 0)
     }
 
     @Test("GET /api/v1/stats serves the serving process's snapshot")

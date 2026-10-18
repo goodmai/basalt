@@ -188,18 +188,18 @@ struct OrchestratorTests {
         _ = try await orch.generateStream(request: req)
     }
 
-    @Test("diagnostics returns correct counts")
+    @Test("telemetry counts completed requests and their tokens")
     func diagnosticsCheck() async throws {
         let engine = MockInferenceEngine()
-        let orch   = ModelOrchestratorActor(engine: engine)
+        let orch   = ModelOrchestratorActor(engine: engine, telemetry: TelemetryTracker())
         try await orch.loadModel(path: "model")
 
         _ = try await orch.generate(request: .init(prompt: "A"))
         _ = try await orch.generate(request: .init(prompt: "B"))
 
-        let diag = await orch.diagnostics
-        #expect(diag.requests == 2)
-        #expect(diag.tokens > 0)
+        let snap = await orch.telemetrySnapshot()
+        #expect(snap.totalRequests == 2)
+        #expect(snap.totalTokensGenerated > 0)
     }
 
     @Test("loadModel with real directory calculates size correctly")

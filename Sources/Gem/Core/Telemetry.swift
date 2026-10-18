@@ -2,7 +2,7 @@ import Foundation
 
 // MARK: — Telemetry & Observability (Epic 16 / Issue #30)
 
-/// Real-time telemetry snapshot shared by `serve --stats`, `GET /api/v1/stats` (Monitor tab)
+/// Real-time telemetry snapshot shared by `serve --stats`, `GET /api/v1/stats`
 /// and MCP `status`. Every field has a producer on the serving path; metrics the engine cannot
 /// measure yet (KV size, parked conversations, speculative acceptance) are left out rather than
 /// reported as zeros.

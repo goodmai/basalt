@@ -13,8 +13,6 @@ public actor ModelOrchestratorActor {
 
     private let engine: any InferenceEngine
     private let maxTokens: Int
-    private var requestCount: Int = 0
-    private var totalTokensGenerated: Int = 0
     private var modelSizeMB: Int = 4000
     /// Floor for the generation watchdog. The real budget scales with the token
     /// count — see `timeout(for:)`.
@@ -106,14 +104,12 @@ public actor ModelOrchestratorActor {
 
         logger.trace("generate: \(request.prompt.prefix(60))…")
         let validated = try capped(request)
-        requestCount += 1
 
         await self.telemetry.requestStarted()
         do {
             let response = try await withTimeout(seconds: timeout(for: validated)) {
                 try await self.engine.generate(request: validated)
             }
-            totalTokensGenerated += response.completionTokens
             await self.telemetry.requestFinished(with: response)
             return response
         } catch let error as GemError {
@@ -137,7 +133,6 @@ public actor ModelOrchestratorActor {
 
         logger.trace("generateStream start")
         let validated = try capped(request)
-        requestCount += 1
 
         await self.telemetry.requestStarted()
         let stream: AsyncStream<StreamChunk>
@@ -219,12 +214,6 @@ public actor ModelOrchestratorActor {
                     isLoaded: repoId == currentModelId
                 )
             }
-    }
-
-    // MARK: — Diagnostics
-
-    var diagnostics: (requests: Int, tokens: Int) {
-        (requestCount, totalTokensGenerated)
     }
 
     // MARK: — Private helpers

@@ -125,7 +125,7 @@ struct GenerateController: Sendable {
         return try jsonResponse(status: .ok, body: snapshot)
     }
 
-    /// GET /api/v1/stats — the serving process's telemetry, for the Monitor tab and scripts.
+    /// GET /api/v1/stats — the serving process's telemetry (same snapshot as `serve --stats` and MCP status).
     @Sendable
     func stats(request: Request, context: BasicRequestContext) async throws -> Response {
         try jsonResponse(status: .ok, body: await orchestrator.telemetrySnapshot())
