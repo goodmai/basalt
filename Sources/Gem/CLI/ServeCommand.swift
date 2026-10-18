@@ -89,6 +89,12 @@ struct ServeCommand: AsyncParsableCommand {
     @Flag(name: .customLong("dry-run"), help: "Perform a dry-run memory feasibility assessment and exit without starting the server")
     var dryRun: Bool = false
 
+    @Flag(name: .customLong("stats"), help: "Periodically output inference telemetry (tok/s, TTFT, RAM, MLX GPU memory, active requests)")
+    var stats: Bool = false
+
+    @Option(name: .customLong("stats-interval"), help: "Interval in seconds between periodic telemetry stats outputs (default: 5)")
+    var statsInterval: Int = 5
+
     @Option(name: .long, help: "Log level: debug | info | warn | error (default: info)")
     var logLevel: ServerConfig.LogLevel = .info
 
@@ -208,6 +214,18 @@ struct ServeCommand: AsyncParsableCommand {
                     modelId: resolvedPath.split(separator: "/").last.map(String.init)
                 )
                 group.addTask { await mcpServer.run() }
+            }
+            if stats {
+                // Clamped to a day: Task.sleep would trap on an interval too large for UInt64 ns.
+                let interval = min(max(1, statsInterval), 86_400)
+                group.addTask {
+                    // Exit quietly on shutdown: a CancellationError from sleep must not surface
+                    // as the serve command's error once the group is cancelled.
+                    while (try? await Task.sleep(for: .seconds(interval))) != nil {
+                        let snapshot = await orchestrator.telemetrySnapshot()
+                        fputs("\(snapshot.formattedStatsLine)\n", stderr)
+                    }
+                }
             }
             try await group.next()
             group.cancelAll()
