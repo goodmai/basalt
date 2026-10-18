@@ -94,6 +94,11 @@ struct AnthropicController: Sendable {
         }
     }
 
+    struct AnthropicTool: Codable, Sendable {
+        let name: String
+        let description: String?
+    }
+
     struct MessagesRequest: Codable, Sendable {
         let model: String?
         let messages: [Message]
@@ -104,9 +109,10 @@ struct AnthropicController: Sendable {
         let stream: Bool?
         let thinking: ThinkingConfig?
         let reasoningEffort: String?
+        let tools: [AnthropicTool]?
 
         enum CodingKeys: String, CodingKey {
-            case model, messages, system, temperature, stream, thinking
+            case model, messages, system, temperature, stream, thinking, tools
             case maxTokens = "max_tokens"
             case topP = "top_p"
             case reasoningEffort = "reasoning_effort"
@@ -136,10 +142,12 @@ struct AnthropicController: Sendable {
         struct Usage: Codable, Sendable {
             let inputTokens: Int
             let outputTokens: Int
+            let cacheReadInputTokens: Int?
 
             enum CodingKeys: String, CodingKey {
                 case inputTokens = "input_tokens"
                 case outputTokens = "output_tokens"
+                case cacheReadInputTokens = "cache_read_input_tokens"
             }
         }
 
@@ -191,27 +199,35 @@ struct AnthropicController: Sendable {
             effort = nil
         }
 
+        let explicitSessionId = (HTTPField.Name("x-session-id").flatMap { request.headers[$0] })
+            ?? (HTTPField.Name("x-conversation-id").flatMap { request.headers[$0] })
+        let sessionId = explicitSessionId ?? "session_\(UUID().uuidString.prefix(8))"
+
+        var prefillDelta: String? = nil
+        var cachedTokensEstimate: Int? = nil
+        if !isService {
+            await orchestrator.parkInactiveSlots(except: sessionId)
+            let delta = await orchestrator.computePrefillDelta(slotId: sessionId, prompt: finalPrompt)
+            prefillDelta = delta.newPromptSuffix
+            cachedTokensEstimate = delta.cachedPromptTokens
+        }
+
         let genRequest = GenerationRequest(
             prompt: finalPrompt,
             maxTokens: dto.maxTokens ?? 8192,
             temperature: dto.temperature ?? 0.7,
             topP: dto.topP ?? 0.9,
             reasoningEffort: effort,
-            isServiceRequest: isService
+            isServiceRequest: isService,
+            prefillDelta: prefillDelta,
+            cachedTokensEstimate: cachedTokensEstimate
         )
 
-        let sessionId = (HTTPField.Name("x-session-id").flatMap { request.headers[$0] })
-            ?? (HTTPField.Name("x-conversation-id").flatMap { request.headers[$0] })
-            ?? "session_\(abs(prompt.prefix(100).hashValue))"
-
-        if !isService {
-            _ = await orchestrator.computePrefillDelta(slotId: sessionId, prompt: finalPrompt)
-        }
-
         let requestedModel = dto.model.map { ModelsController.hfRepoId(from: $0) }  // strip claude-local/ prefix if present
+        let hasTools = (dto.tools?.isEmpty == false)
 
         if dto.stream == true {
-            return streamMessagesResponse(genRequest: genRequest, model: dto.model ?? modelId, requestedModel: requestedModel)
+            return streamMessagesResponse(genRequest: genRequest, model: dto.model ?? modelId, requestedModel: requestedModel, sessionId: isService ? nil : sessionId, prompt: finalPrompt)
         }
 
         do {
@@ -219,32 +235,27 @@ struct AnthropicController: Sendable {
             if !isService {
                 await orchestrator.recordTurn(slotId: sessionId, prompt: finalPrompt, completion: result.generatedText)
             }
-            let repairedText = ToolCallRepairer.repairJSON(result.generatedText) ?? result.generatedText
+            let outputText = hasTools ? (ToolCallRepairer.repairJSON(result.generatedText) ?? result.generatedText) : result.generatedText
             let response = MessagesResponse(
                 id: "msg_\(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(24))",
                 type: "message",
                 role: "assistant",
-                content: [ContentBlock(text: repairedText)],
+                content: [ContentBlock(text: outputText)],
                 model: dto.model ?? modelId,
                 stopReason: result.finishReason == .stop ? "end_turn" : "max_tokens",
                 stopSequence: nil,
                 usage: .init(inputTokens: result.promptTokens,
-                             outputTokens: result.completionTokens)
+                             outputTokens: result.completionTokens,
+                             cacheReadInputTokens: cachedTokensEstimate)
             )
             let data = (try? JSONEncoder().encode(response)) ?? Data()
             var buf = ByteBuffer()
             buf.writeBytes(data)
             return Response(status: .ok, headers: [.contentType: "application/json"], body: ResponseBody(byteBuffer: buf))
-        } catch let err as GemError {
+        } catch let err {
             return errorResponse(
                 status: HTTPResponse.Status(code: err.httpStatus),
                 message: err.errorDescription ?? err.localizedDescription,
-                type: "api_error"
-            )
-        } catch {
-            return errorResponse(
-                status: .internalServerError,
-                message: error.localizedDescription,
                 type: "api_error"
             )
         }
@@ -252,17 +263,35 @@ struct AnthropicController: Sendable {
 
     // MARK: — Streaming (Anthropic SSE format)
 
-    private func streamMessagesResponse(genRequest: GenerationRequest, model: String, requestedModel: String? = nil) -> Response {
+    private func streamMessagesResponse(
+        genRequest: GenerationRequest,
+        model: String,
+        requestedModel: String? = nil,
+        sessionId: String? = nil,
+        prompt: String? = nil
+    ) -> Response {
         let headers: HTTPFields = [
             .contentType: "text/event-stream",
             .cacheControl: "no-cache",
             .connection: "keep-alive"
         ]
-        let body = ResponseBody(asyncSequence: anthropicSSEStream(genRequest: genRequest, model: model, requestedModel: requestedModel))
+        let body = ResponseBody(asyncSequence: anthropicSSEStream(
+            genRequest: genRequest,
+            model: model,
+            requestedModel: requestedModel,
+            sessionId: sessionId,
+            prompt: prompt
+        ))
         return Response(status: .ok, headers: headers, body: body)
     }
 
-    private func anthropicSSEStream(genRequest: GenerationRequest, model: String, requestedModel: String? = nil) -> AsyncStream<ByteBuffer> {
+    private func anthropicSSEStream(
+        genRequest: GenerationRequest,
+        model: String,
+        requestedModel: String? = nil,
+        sessionId: String? = nil,
+        prompt: String? = nil
+    ) -> AsyncStream<ByteBuffer> {
         AsyncStream { continuation in
             Task {
                 let msgId = "msg_\(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(24))"
@@ -301,6 +330,7 @@ struct AnthropicController: Sendable {
                 send("ping", ["type": "ping"])
 
                 var outputTokens = 0
+                var accumulatedText = ""
 
                 do {
                     let stream = try await orchestrator.generateStream(request: genRequest, modelId: requestedModel)
@@ -308,6 +338,7 @@ struct AnthropicController: Sendable {
                         switch chunk {
                         case .text(let text):
                             outputTokens += 1
+                            accumulatedText += text
                             send("content_block_delta", [
                                 "type": "content_block_delta",
                                 "index": 0,
@@ -323,6 +354,10 @@ struct AnthropicController: Sendable {
                         case .metadata:
                             break
                         }
+                    }
+
+                    if let sessionId, let prompt, !accumulatedText.isEmpty {
+                        await orchestrator.recordTurn(slotId: sessionId, prompt: prompt, completion: accumulatedText)
                     }
                 } catch {
                     let errPayload: [String: Any] = [
@@ -349,7 +384,10 @@ struct AnthropicController: Sendable {
                 send("message_delta", [
                     "type": "message_delta",
                     "delta": ["stop_reason": "end_turn", "stop_sequence": NSNull()],
-                    "usage": ["output_tokens": outputTokens]
+                    "usage": [
+                        "output_tokens": outputTokens,
+                        "cache_read_input_tokens": genRequest.cachedTokensEstimate ?? 0
+                    ]
                 ])
 
                 // message_stop

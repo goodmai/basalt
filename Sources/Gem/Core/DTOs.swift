@@ -11,6 +11,8 @@ public struct GenerationRequest: Codable, Sendable {
     public let enableThinking: Bool?
     public let reasoningEffort: String?
     public let isServiceRequest: Bool?
+    public let prefillDelta: String?
+    public let cachedTokensEstimate: Int?
 
     public init(
         prompt: String,
@@ -19,7 +21,9 @@ public struct GenerationRequest: Codable, Sendable {
         topP: Double? = 0.9,
         enableThinking: Bool? = true,
         reasoningEffort: String? = nil,
-        isServiceRequest: Bool? = false
+        isServiceRequest: Bool? = false,
+        prefillDelta: String? = nil,
+        cachedTokensEstimate: Int? = nil
     ) {
         self.prompt = prompt
         self.maxTokens = maxTokens
@@ -28,6 +32,8 @@ public struct GenerationRequest: Codable, Sendable {
         self.enableThinking = enableThinking
         self.reasoningEffort = reasoningEffort
         self.isServiceRequest = isServiceRequest
+        self.prefillDelta = prefillDelta
+        self.cachedTokensEstimate = cachedTokensEstimate
     }
 
     public func validated(defaultMaxTokens: Int = 4096) throws(GemError) -> GenerationRequest {
@@ -52,7 +58,9 @@ public struct GenerationRequest: Codable, Sendable {
             topP: topP ?? 0.9,
             enableThinking: enableThinking,
             reasoningEffort: reasoningEffort,
-            isServiceRequest: isServiceRequest
+            isServiceRequest: isServiceRequest,
+            prefillDelta: prefillDelta,
+            cachedTokensEstimate: cachedTokensEstimate
         )
     }
 }

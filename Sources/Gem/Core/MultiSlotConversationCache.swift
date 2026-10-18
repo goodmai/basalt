@@ -37,19 +37,25 @@ public actor MultiSlotConversationCache {
     }
 
     public struct PrefillDelta: Sendable {
+        public let cachedPrefix: String
         public let cachedPrefixLength: Int
         public let cachedTokensEstimate: Int
         public let deltaPrompt: String
         public let isIncremental: Bool
         public let slotId: String
 
+        public var newPromptSuffix: String { deltaPrompt }
+        public var cachedPromptTokens: Int { cachedTokensEstimate }
+
         public init(
+            cachedPrefix: String = "",
             cachedPrefixLength: Int,
             cachedTokensEstimate: Int,
             deltaPrompt: String,
             isIncremental: Bool,
             slotId: String
         ) {
+            self.cachedPrefix = cachedPrefix
             self.cachedPrefixLength = cachedPrefixLength
             self.cachedTokensEstimate = cachedTokensEstimate
             self.deltaPrompt = deltaPrompt
@@ -90,7 +96,7 @@ public actor MultiSlotConversationCache {
 
         // Enforce slot eviction if limit reached
         if slots.count >= maxSlots {
-            evictOldestParkedSlot()
+            evictOldestSlot(except: id)
         }
 
         let newSlot = ConversationSlot(
@@ -103,24 +109,19 @@ public actor MultiSlotConversationCache {
         return newSlot
     }
 
-    /// Parks an inactive slot: truncates prompt to fit within 1/8 KV buffer while preserving toolPrefix.
+    /// Parks an inactive slot: truncates prompt to fit within 1/8 KV buffer on clean token boundaries while preserving prefix.
     public func parkSlot(id: String) {
         guard var slot = slots[id] else { return }
         slot.isParked = true
 
         let limitChars = parkingBudgetTokens * 4
         if slot.prompt.count > limitChars {
-            let separator = "\n...\n"
-            if let toolPrefix = slot.toolPrefix, !toolPrefix.isEmpty {
-                // Preserve tool prefix at the head
-                let availableForContent = max(0, limitChars - separator.count)
-                let prefixLen = min(toolPrefix.count, availableForContent)
-                let remaining = availableForContent - prefixLen
-                let tail = remaining > 0 ? String(slot.prompt.suffix(remaining)) : ""
-                slot.prompt = String(toolPrefix.prefix(prefixLen)) + separator + tail
+            // Keep head prefix up to limit on a clean line/space boundary (no synthetic separators that invalidate KV matching)
+            let rawSub = slot.prompt.prefix(limitChars)
+            if let lastBoundary = rawSub.lastIndex(where: { $0.isNewline || $0.isWhitespace }) {
+                slot.prompt = String(slot.prompt[..<lastBoundary])
             } else {
-                // Keep head prefix up to limit
-                slot.prompt = String(slot.prompt.prefix(limitChars))
+                slot.prompt = String(rawSub)
             }
             slot.estimatedTokens = min(parkingBudgetTokens, slot.prompt.count / 4)
         }
@@ -149,13 +150,27 @@ public actor MultiSlotConversationCache {
         }
 
         // Find common prefix between cached prompt and new prompt
-        let commonPrefix = longestCommonPrefix(slot.prompt, newPrompt)
+        var commonPrefix = longestCommonPrefix(slot.prompt, newPrompt)
         
+        // Ensure boundary does not cut mid-word/mid-token
+        if commonPrefix.count >= 32 {
+            if commonPrefix.endIndex < newPrompt.endIndex && commonPrefix.endIndex < slot.prompt.endIndex {
+                let nextCharNew = newPrompt[commonPrefix.endIndex]
+                let lastChar = newPrompt[newPrompt.index(before: commonPrefix.endIndex)]
+                if !nextCharNew.isWhitespace && !nextCharNew.isPunctuation && !lastChar.isWhitespace {
+                    if let lastBoundary = commonPrefix.lastIndex(where: { $0.isWhitespace || $0.isNewline }) {
+                        commonPrefix = commonPrefix[...lastBoundary]
+                    }
+                }
+            }
+        }
+
         // Only treat as incremental cache hit if common prefix has significant length (>= 32 chars)
         if commonPrefix.count >= 32 {
             let delta = String(newPrompt[commonPrefix.endIndex...])
             let savedTokens = commonPrefix.count / 4
             return PrefillDelta(
+                cachedPrefix: String(commonPrefix),
                 cachedPrefixLength: commonPrefix.count,
                 cachedTokensEstimate: savedTokens,
                 deltaPrompt: delta,
@@ -165,6 +180,7 @@ public actor MultiSlotConversationCache {
         }
 
         return PrefillDelta(
+            cachedPrefix: "",
             cachedPrefixLength: 0,
             cachedTokensEstimate: 0,
             deltaPrompt: newPrompt,
@@ -216,8 +232,9 @@ public actor MultiSlotConversationCache {
         return a[..<idxA]
     }
 
-    private func evictOldestParkedSlot() {
-        let sorted = slots.values.sorted { $0.lastAccessTime < $1.lastAccessTime }
+    private func evictOldestSlot(except activeId: String? = nil) {
+        let candidates = slots.values.filter { $0.id != activeId }
+        let sorted = candidates.sorted { $0.lastAccessTime < $1.lastAccessTime }
         if let oldestParked = sorted.first(where: { $0.isParked }) {
             slots.removeValue(forKey: oldestParked.id)
         } else if let oldest = sorted.first {

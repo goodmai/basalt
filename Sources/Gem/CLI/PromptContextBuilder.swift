@@ -18,17 +18,7 @@ public struct PromptContextBuilder: Sendable {
         var finalPrompt = prompt
         var appendedContext = ""
         
-        let regex = try NSRegularExpression(pattern: "(?<!\\\\)@([\\w\\.\\-\\/]+)")
-        let matches = regex.matches(in: prompt, range: NSRange(prompt.startIndex..., in: prompt))
-        
-        var filesToInject: [String] = []
-        
-        for match in matches.reversed() { 
-            if let range = Range(match.range(at: 1), in: prompt) {
-                let filePath = String(prompt[range])
-                filesToInject.append(filePath)
-            }
-        }
+        let filesToInject = extractFileReferences(from: prompt)
         
         if !filesToInject.isEmpty {
             appendedContext += "\n\n--- Context Files ---\n"

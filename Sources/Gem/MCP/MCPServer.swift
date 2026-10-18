@@ -365,9 +365,8 @@ public final class MCPServer: Sendable {
                 }
             }
             
-            let repairedText = ToolCallRepairer.repairJSON(response.generatedText) ?? response.generatedText
             let result = GenerateResult(
-                content: [["type": "text", "text": repairedText]],
+                content: [["type": "text", "text": response.generatedText]],
                 _meta: .init(
                     tokensPerSecond: response.tokensPerSecond,
                     completionTokens: response.completionTokens,

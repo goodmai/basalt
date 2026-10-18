@@ -1,0 +1,26 @@
+name: Unit Tests
+
+on:
+  push:
+    branches: [ main, "feat/**" ]
+  pull_request:
+
+jobs:
+  test:
+    name: Swift Tests
+    runs-on: macos-15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Cache MLX metallib
+        uses: actions/cache@v6
+        with:
+          path: default.metallib
+          key: metallib-${{ hashFiles('Package.resolved') }}
+
+      - name: Compile MLX Metal kernels
+        run: ./scripts/build_metal.swift --skip-unsupported
+
+      - name: Run unit tests
+        run: swift test

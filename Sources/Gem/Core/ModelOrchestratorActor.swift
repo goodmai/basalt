@@ -54,12 +54,16 @@ public actor ModelOrchestratorActor {
         await conversationCache.recordTurn(slotId: slotId, fullPrompt: prompt, toolPrefix: toolPrefix, completion: completion)
     }
 
+    public func parkInactiveSlots(except activeId: String) async {
+        await conversationCache.parkInactiveSlots(except: activeId)
+    }
+
     // MARK: — Init
 
     public init(engine: any InferenceEngine, maxTokens: Int = 4096) {
         self.engine = engine
         self.maxTokens = maxTokens
-        self.conversationCache = MultiSlotConversationCache(maxKVBufferTokens: maxTokens)
+        self.conversationCache = MultiSlotConversationCache(maxKVBufferTokens: 32768)
     }
 
     // MARK: — Model loading

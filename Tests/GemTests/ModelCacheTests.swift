@@ -204,5 +204,64 @@ struct ToolCallRepairerTests {
         #expect(call?.name == "run_command")
         #expect(call?.arguments["cmd"] as? String == "make test")
     }
+
+    @Test("ToolCallRepairer on chatter with JSON strips preamble (demonstrating need for hasTools gating)")
+    func demonstratesPreambleStrippingOnChatter() {
+        let prose = "Here is an example config:\n{\"env\": \"production\"}"
+        let repaired = ToolCallRepairer.repairJSON(prose)
+        // Without hasTools gating, the preamble is stripped:
+        #expect(repaired?.starts(with: "Here is") == false)
+        #expect(repaired == "{\"env\": \"production\"}")
+    }
+
+    @Test("Parking preserves clean boundary without synthetic separators")
+    func cleanParkingBoundary() async {
+        let cache = MultiSlotConversationCache(maxKVBufferTokens: 1024) // budget = 128 tokens = 512 chars
+        let longPrompt = String(repeating: "Hello world and greetings to all agents. ", count: 20)
+        let slotId = "slot-long"
+        await cache.recordTurn(slotId: slotId, fullPrompt: longPrompt)
+
+        await cache.parkSlot(id: slotId)
+        let slot = await cache.slot(for: slotId)
+        #expect(slot?.isParked == true)
+        #expect(slot?.prompt.contains("\n...\n") == false)
+        #expect(slot!.prompt.count <= 512)
+        // Must end cleanly on a full word boundary, not mid-word
+        let words = ["Hello", "world", "and", "greetings", "to", "all", "agents."]
+        let lastWord = String(slot!.prompt.split(separator: " ").last ?? "")
+        #expect(words.contains(lastWord))
+    }
+
+    @Test("Eviction prioritizes parked slots over active unparked slots")
+    func evictionPrioritizesParkedSlots() async {
+        let cache = MultiSlotConversationCache(maxKVBufferTokens: 4096, maxSlots: 3)
+        await cache.recordTurn(slotId: "slot-active", fullPrompt: "Active prompt")
+        await cache.recordTurn(slotId: "slot-idle1", fullPrompt: "Idle prompt 1")
+        await cache.recordTurn(slotId: "slot-idle2", fullPrompt: "Idle prompt 2")
+
+        // Park inactive slots except slot-active
+        await cache.parkInactiveSlots(except: "slot-active")
+
+        // Adding a 4th slot should evict a parked idle slot, not slot-active
+        _ = await cache.getOrCreateSlot(id: "slot-new")
+        let active = await cache.slot(for: "slot-active")
+        let newSlot = await cache.slot(for: "slot-new")
+        #expect(active != nil)
+        #expect(newSlot != nil)
+    }
+
+    @Test("Mid-token prefill delta rolls back to clean word boundary")
+    func midTokenRollback() async {
+        let cache = MultiSlotConversationCache(maxKVBufferTokens: 4096)
+        let p1 = "The quick brown fox jumps over the lazy dog and runs to the forest."
+        let p2 = "The quick brown fox jumps over the lazy dog and runs to the foreign land."
+        await cache.recordTurn(slotId: "fox-slot", fullPrompt: p1)
+
+        let delta = await cache.computePrefillDelta(slotId: "fox-slot", newPrompt: p2)
+        #expect(delta.isIncremental == true)
+        // Common prefix ended at "The quick brown fox jumps over the lazy dog and runs to the fore"
+        // But "fore" is a mid-word split of "forest" vs "foreign", so it must roll back to "runs to the "
+        #expect(delta.cachedPrefix.hasSuffix("runs to the "))
+    }
 }
 
