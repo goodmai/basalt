@@ -6,6 +6,7 @@ import Security
 public enum ServerConfigError: Error, LocalizedError, Equatable {
     case missingApiKeyForNonLoopback(host: String)
     case invalidConfigFormat(String)
+    case randomGenerationFailed(status: Int32)
 
     public var errorDescription: String? {
         switch self {
@@ -13,6 +14,8 @@ public enum ServerConfigError: Error, LocalizedError, Equatable {
             return "Server is configured to bind to non-loopback address '\(host)', but no API key is provided. When binding externally, an API key is required to prevent open access."
         case .invalidConfigFormat(let details):
             return "Invalid configuration format: \(details)"
+        case .randomGenerationFailed(let status):
+            return "Secure random generator failed (OSStatus \(status)); refusing to issue a predictable API key."
         }
     }
 }
@@ -36,11 +39,6 @@ public struct ServerConfig: Sendable {
         "exe", "args", "port", "host", "api_key", "model", "model_path", "max_tokens", "log_level"
     ]
 
-    /// Recognized user sections that must be preserved during merges.
-    public static let userSections: Set<String> = [
-        "sampling", "mcp_servers", "cloud", "cors_origins"
-    ]
-
     /// Default path for the persistent JSON server configuration.
     public static var defaultConfigFileURL: URL {
         FileManager.default.homeDirectoryForCurrentUser
@@ -60,9 +58,12 @@ public struct ServerConfig: Sendable {
     }
 
     /// Generates a cryptographically strong pseudo-random token suitable for an API key.
-    public static func generateCryptographicallyStrongToken(prefix: String = "gem_") -> String {
+    public static func generateCryptographicallyStrongToken(prefix: String = "gem_") throws -> String {
         var bytes = [UInt8](repeating: 0, count: 32)
-        _ = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
+        let status = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
+        guard status == errSecSuccess else {
+            throw ServerConfigError.randomGenerationFailed(status: status)
+        }
         let hex = bytes.map { String(format: "%02x", $0) }.joined()
         return prefix + hex
     }
@@ -84,30 +85,37 @@ public struct ServerConfig: Sendable {
         self.maxTokens = maxTokens
         self.logLevel  = logLevel
 
-        let isLocal = Self.isLoopback(host: host)
-        let trimmedKey = apiKey?.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.apiKey = try Self.resolveApiKey(
+            host: host, apiKey: apiKey, autoGenerateKeyIfMissing: autoGenerateKeyIfMissing
+        ).key
+    }
 
-        if let key = trimmedKey, !key.isEmpty {
-            self.apiKey = key
-        } else if !isLocal {
-            if autoGenerateKeyIfMissing {
-                self.apiKey = Self.generateCryptographicallyStrongToken()
-            } else {
-                throw ServerConfigError.missingApiKeyForNonLoopback(host: host)
-            }
-        } else {
-            self.apiKey = nil
+    /// The one place the exposure rule lives: a non-loopback bind needs a non-empty key,
+    /// generated only on explicit opt-in. Callers can run it before expensive work.
+    public static func resolveApiKey(
+        host: String,
+        apiKey: String?,
+        autoGenerateKeyIfMissing: Bool
+    ) throws -> (key: String?, generated: Bool) {
+        if let key = apiKey?.trimmingCharacters(in: .whitespacesAndNewlines), !key.isEmpty {
+            return (key, false)
         }
+        if isLoopback(host: host) { return (nil, false) }
+        guard autoGenerateKeyIfMissing else {
+            throw ServerConfigError.missingApiKeyForNonLoopback(host: host)
+        }
+        return (try generateCryptographicallyStrongToken(), true)
     }
 
     // MARK: — JSON Configuration Management
 
     /// Non-destructively merges system updates into existing JSON data.
-    /// Only system keys are updated; user sections (sampling, mcp_servers, cloud, cors_origins)
-    /// and any custom user keys are preserved.
+    /// Only `systemKeys` are written: `systemUpdates` overwrite, `defaults` fill a key only when it
+    /// is absent (so a user-edited host/port survives a re-run). Every other key is left as is.
     public static func mergeConfiguration(
         existingData: Data?,
-        systemUpdates: [String: Any]
+        systemUpdates: [String: Any],
+        defaults: [String: Any] = [:]
     ) throws -> Data {
         var merged: [String: Any] = [:]
 
@@ -120,10 +128,11 @@ public struct ServerConfig: Sendable {
         }
 
         // Apply only system keys from systemUpdates
-        for (key, value) in systemUpdates {
-            if systemKeys.contains(key) {
-                merged[key] = value
-            }
+        for (key, value) in systemUpdates where systemKeys.contains(key) {
+            merged[key] = value
+        }
+        for (key, value) in defaults where systemKeys.contains(key) && merged[key] == nil {
+            merged[key] = value
         }
 
         return try JSONSerialization.data(withJSONObject: merged, options: [.prettyPrinted, .sortedKeys])
@@ -131,10 +140,12 @@ public struct ServerConfig: Sendable {
 
     /// Merges system updates into the configuration file at `url`.
     /// If the file already exists, creates a `.bak` backup copy before writing.
+    /// Both files are owner-only (0600): the config may carry `api_key`.
     @discardableResult
     public static func mergeAndSave(
         to url: URL,
         systemUpdates: [String: Any],
+        defaults: [String: Any] = [:],
         createBackup: Bool = true
     ) throws -> URL {
         let fileManager = FileManager.default
@@ -151,13 +162,15 @@ public struct ServerConfig: Sendable {
                 let backupURL = url.appendingPathExtension("bak")
                 try? fileManager.removeItem(at: backupURL)
                 try data.write(to: backupURL, options: .atomic)
+                try fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: backupURL.path)
             }
         } else {
             existingData = nil
         }
 
-        let mergedData = try mergeConfiguration(existingData: existingData, systemUpdates: systemUpdates)
+        let mergedData = try mergeConfiguration(existingData: existingData, systemUpdates: systemUpdates, defaults: defaults)
         try mergedData.write(to: url, options: .atomic)
+        try fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
         return url
     }
 

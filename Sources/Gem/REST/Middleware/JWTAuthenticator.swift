@@ -1,14 +1,24 @@
 import Foundation
 import Hummingbird
 import HTTPTypes
+import CryptoKit
 
 /// Middleware that enforces API key authentication for incoming REST requests
 /// when an API key is configured on the server.
 public struct APIKeyAuthenticator<Context: RequestContext>: RouterMiddleware {
     public let apiKey: String
+    private let apiKeyDigest: SHA256.Digest
 
     public init(apiKey: String) {
         self.apiKey = apiKey
+        self.apiKeyDigest = SHA256.hash(data: Data(apiKey.utf8))
+    }
+
+    /// Compares SHA-256 digests with a full XOR fold, so the time spent does not depend
+    /// on how many leading bytes of the candidate match the key.
+    func matches(_ candidate: String) -> Bool {
+        let digest = SHA256.hash(data: Data(candidate.utf8))
+        return zip(digest, apiKeyDigest).reduce(UInt8(0)) { $0 | ($1.0 ^ $1.1) } == 0
     }
 
     public func handle(
@@ -28,7 +38,7 @@ public struct APIKeyAuthenticator<Context: RequestContext>: RouterMiddleware {
             let parts = authHeader.split(separator: " ", maxSplits: 1)
             if parts.count == 2 && parts[0].lowercased() == "bearer" {
                 let token = String(parts[1])
-                if token == apiKey {
+                if matches(token) {
                     return try await next(request, context)
                 }
             }
@@ -37,7 +47,7 @@ public struct APIKeyAuthenticator<Context: RequestContext>: RouterMiddleware {
         // 2. Check x-api-key header
         if let headerName = HTTPField.Name("x-api-key"),
            let customKey = request.headers[values: headerName].first,
-           customKey == apiKey {
+           matches(customKey) {
             return try await next(request, context)
         }
 

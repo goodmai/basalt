@@ -167,16 +167,21 @@ public actor OnboardingFlow {
         let chosenModel = selectedModel ?? recommendation.modelId
         let serverConfigURL = URL(fileURLWithPath: serverConfigPath)
         let exe = ProcessInfo.processInfo.arguments.first ?? "gemm"
-        _ = try? ServerConfig.mergeAndSave(
-            to: serverConfigURL,
-            systemUpdates: [
-                "exe": exe,
-                "args": ["serve", "--model", chosenModel],
-                "port": 8080,
-                "host": "127.0.0.1"
-            ],
-            createBackup: true
-        )
+        do {
+            // host/port are defaults, not updates: a re-run must not undo a user's edit.
+            try ServerConfig.mergeAndSave(
+                to: serverConfigURL,
+                systemUpdates: [
+                    "exe": exe,
+                    "args": ["serve", "--model", chosenModel]
+                ],
+                defaults: ["port": 8080, "host": "127.0.0.1"],
+                createBackup: true
+            )
+        } catch {
+            print("⚠️  Could not update \(serverConfigURL.path): \(error.localizedDescription)")
+            print("   Onboarding state was saved; fix the file and re-run `onboard` to write the launch config.")
+        }
         
         print("")
         print("✅ Onboarding completed!")

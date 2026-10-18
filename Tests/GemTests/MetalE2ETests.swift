@@ -116,7 +116,7 @@ struct SamplerAndGreedyParityTests {
         #expect(ornith?.task == .code)
     }
 
-    @Test("Bit-exact reproducibility at temperature = 0 (two runs produce identical output)")
+    @Test("Orchestrator passes temperature = 0 requests through unchanged (mock engine)")
     func testGreedyParityAtZeroTemperature() async throws {
         let task = try GoldenTestVector.loadTask()
         let prompt = GoldenTestVector.formatPrompt(task: task)
@@ -148,6 +148,35 @@ struct SamplerAndGreedyParityTests {
         #expect(response1.completionTokens == response2.completionTokens)
         #expect(response1.promptTokens == response2.promptTokens)
         #expect(response1.finishReason == response2.finishReason)
+    }
+
+    /// The real-engine proof of the acceptance criterion "two runs at temperature = 0 produce
+    /// identical output". Opt-in: it loads the golden model (several GB) and runs on Metal, so it
+    /// needs BASALT_E2E=1 and the model in the local HF cache (or BASALT_E2E_MODEL_PATH).
+    static var goldenModelPath: String? {
+        let env = ProcessInfo.processInfo.environment
+        guard env["BASALT_E2E"] == "1" else { return nil }
+        if let path = env["BASALT_E2E_MODEL_PATH"] { return path }
+        return ModelCache.isDownloaded(repoId: GoldenTestVector.modelId)
+            ? ModelCache.cacheDir(for: GoldenTestVector.modelId).path : nil
+    }
+
+    @Test("MLX engine: two greedy runs on the golden vector are bit-identical",
+          .enabled(if: SamplerAndGreedyParityTests.goldenModelPath != nil,
+                   "set BASALT_E2E=1 and cache \(GoldenTestVector.modelId) or set BASALT_E2E_MODEL_PATH"))
+    func testRealEngineGreedyParity() async throws {
+        let path = try #require(Self.goldenModelPath)
+        let prompt = GoldenTestVector.formatPrompt(task: try GoldenTestVector.loadTask())
+        let orchestrator = ModelOrchestratorActor(engine: MLXInferenceEngine())
+        try await orchestrator.loadModel(path: path)
+
+        let request = GenerationRequest(prompt: prompt, maxTokens: 64, temperature: 0.0, topP: 1.0, enableThinking: false)
+        let first = try await orchestrator.generate(request: request)
+        let second = try await orchestrator.generate(request: request)
+
+        #expect(!first.generatedText.isEmpty)
+        #expect(first.generatedText == second.generatedText)
+        #expect(first.completionTokens == second.completionTokens)
     }
 
     @Test("Reference softmax parity: empirical sampling frequencies match theoretical distribution")
