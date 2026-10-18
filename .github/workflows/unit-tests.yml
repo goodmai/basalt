@@ -22,7 +22,22 @@ jobs:
             echo "Selecting $LATEST_XCODE"
             sudo xcode-select -s "$LATEST_XCODE/Contents/Developer"
           fi
-          echo "Active Swift version:"
+          echo "Xcode Swift version:"
+          swift --version
+
+      - name: Ensure Swift 6.3+ toolchain
+        run: |
+          SWIFT_VER=$(swift -version | head -n 1 | sed -E 's/.*Swift version ([0-9]+(\.[0-9]+)?).*/\1/')
+          echo "Current Swift version: $SWIFT_VER"
+          MAJOR=$(echo "$SWIFT_VER" | cut -d. -f1)
+          MINOR=$(echo "$SWIFT_VER" | cut -d. -f2)
+          if [ "$MAJOR" -lt 6 ] || ([ "$MAJOR" -eq 6 ] && [ "$MINOR" -lt 3 ]); then
+            echo "Xcode Swift ($SWIFT_VER) is below 6.3; installing Swift via Homebrew..."
+            brew install swift
+            echo "/opt/homebrew/opt/swift/bin" >> $GITHUB_PATH
+            export PATH="/opt/homebrew/opt/swift/bin:$PATH"
+          fi
+          echo "Active Swift for build:"
           swift --version
 
       - name: Build tests
