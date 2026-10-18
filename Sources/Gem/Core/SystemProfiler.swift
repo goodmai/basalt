@@ -39,6 +39,22 @@ public actor SystemProfiler {
         }
     }
     
+    /// Structured hardware report designed for automated agent diagnostics
+    public struct HardwareDiagnosticReport: Codable, Sendable {
+        public let chip: String
+        public let totalRAMGB: Int
+        public let availableRAMGB: Double
+        public let availableRAMBytes: Int64
+        public let totalRAMBytes: Int64
+        public let gpu: String
+        public let gpuMemoryGB: Int
+        public let cpuCores: Int
+        public let diskSpaceGB: Int
+        public let diskSpaceBytes: Int64
+        public let osVersion: String
+        public let compatible: Bool
+    }
+    
     /// Model recommendation based on hardware specs
     public struct ModelRecommendation: Sendable {
         public let modelId: String
@@ -85,6 +101,27 @@ public actor SystemProfiler {
             diskSpace: diskSpace,
             osVersion: osVersion,
             chipModel: chipModel
+        )
+    }
+
+    /// Generate a machine-readable hardware report for agents
+    public func generateReport() async -> HardwareDiagnosticReport {
+        let res = await detectResources()
+        let availGB = Double(res.availableRAM) / 1_073_741_824.0
+        let isCompatible = res.chipModel.contains("M") || res.chipModel.contains("Apple") || res.gpuName.contains("Apple")
+        return HardwareDiagnosticReport(
+            chip: res.chipModel,
+            totalRAMGB: res.totalRAMGB,
+            availableRAMGB: (availGB * 10).rounded() / 10,
+            availableRAMBytes: res.availableRAM,
+            totalRAMBytes: res.totalRAM,
+            gpu: res.gpuName,
+            gpuMemoryGB: res.gpuMemoryGB,
+            cpuCores: res.cpuCores,
+            diskSpaceGB: res.diskSpaceGB,
+            diskSpaceBytes: res.diskSpace,
+            osVersion: res.osVersion,
+            compatible: isCompatible
         )
     }
     

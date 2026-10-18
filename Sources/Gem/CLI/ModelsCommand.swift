@@ -14,6 +14,7 @@ struct ModelsCommand: AsyncParsableCommand {
             InfoSubcommand.self,
             CacheSubcommand.self,
             CheckSubcommand.self,
+            InspectSubcommand.self,
         ],
         defaultSubcommand: ListSubcommand.self
     )
@@ -346,18 +347,58 @@ func formatBytes(_ bytes: Int64) -> String {
 struct CheckSubcommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "check",
-        abstract: "Dry-run memory feasibility evaluation for a model",
+        abstract: "Dry-run memory feasibility evaluation for a model or system hardware check",
         aliases: ["dry-run", "eval"]
     )
 
-    @Argument(help: "Model repo ID, e.g. AutisticAF/Huihui-Qwen3.8-27B-abliterated-mlx-4Bit")
-    var modelId: String
+    @Argument(help: "Model repo ID, e.g. AutisticAF/Huihui-Qwen3.8-27B-abliterated-mlx-4Bit (optional if --system is used)")
+    var modelId: String? = nil
+
+    @Flag(name: .long, help: "Perform system hardware diagnostic check without downloading models")
+    var system: Bool = false
+
+    @Flag(name: .long, help: "Output in machine-readable JSON format")
+    var json: Bool = false
 
     mutating func run() async throws {
-        let evaluator = MemoryEvaluator()
-        print("\n🔍 Evaluating memory feasibility for \(bold(modelId))…\n")
-        let assessment = await evaluator.evaluate(modelId: modelId)
+        if system || modelId == nil {
+            let profiler = SystemProfiler()
+            let report = await profiler.generateReport()
+            if json || system {
+                let encoder = JSONEncoder()
+                encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+                if let data = try? encoder.encode(report), let str = String(data: data, encoding: .utf8) {
+                    print(str)
+                }
+            } else {
+                print("\n🖥️  System Hardware Diagnostics:\n")
+                print("  Chip:            \(bold(report.chip))")
+                print("  Total RAM:       \(report.totalRAMGB) GB")
+                print("  Available RAM:   \(report.availableRAMGB) GB")
+                print("  GPU:             \(report.gpu) (\(report.gpuMemoryGB) GB working set)")
+                print("  CPU Cores:       \(report.cpuCores)")
+                print("  Disk Space:      \(report.diskSpaceGB) GB free")
+                print("  OS Version:      \(report.osVersion)")
+                print("  Compatibility:   \(report.compatible ? green("✓ Apple Silicon / Metal supported") : yellow("⚠️ Limited support"))")
+                print()
+            }
+            return
+        }
 
+        guard let id = modelId else { return }
+        let evaluator = MemoryEvaluator()
+        let assessment = await evaluator.evaluate(modelId: id)
+
+        if json {
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            if let data = try? encoder.encode(assessment), let str = String(data: data, encoding: .utf8) {
+                print(str)
+            }
+            return
+        }
+
+        print("\n🔍 Evaluating memory feasibility for \(bold(id))…\n")
         print("  Model:           \(assessment.modelName) (\(assessment.modelId))")
         print("  Required RAM:    \(assessment.requiredRAMFormatted)")
         print("  Available RAM:   \(assessment.availableRAMFormatted)")
@@ -381,4 +422,67 @@ struct CheckSubcommand: AsyncParsableCommand {
         print()
     }
 }
+
+// MARK: — models inspect
+
+@available(macOS 10.15, macCatalyst 13, iOS 13, tvOS 13, watchOS 6, *)
+struct InspectSubcommand: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "inspect",
+        abstract: "Verify shard integrity and detect actual bit width of MLX/Safetensors weights"
+    )
+
+    @Argument(help: "Model repo ID or local path, e.g. ornith-ai/Ornith-1.5-9B-MLX-4bit")
+    var modelId: String
+
+    @Flag(name: .long, help: "Output in machine-readable JSON format")
+    var json: Bool = false
+
+    mutating func run() async throws {
+        let inspector = ModelInspector()
+        let report = await inspector.inspect(modelIdOrPath: modelId)
+
+        if json {
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            if let data = try? encoder.encode(report), let str = String(data: data, encoding: .utf8) {
+                print(str)
+            }
+        } else {
+            print("\n🔬 Weight Inspection for \(bold(report.modelId)):\n")
+            print("  Location:        \(report.path)")
+            print("  Intact:          \(report.intact ? green("✓ Yes") : red("❌ No"))")
+            print("  Total Shards:    \(report.totalShards)")
+            print("  Total Size:      \(report.totalSizeFormatted) (\(report.totalSizeBytes) bytes)")
+            print("  Detected Width:  \(cyan("\(report.detectedBitWidth)-bit")) (\(report.bitWidthDescription))")
+            if let mode = report.quantizationMode {
+                print("  Quant Mode:      \(mode)")
+            }
+            if let group = report.groupSize {
+                print("  Group Size:      \(group)")
+            }
+            print("  Tensor Dtypes:   \(report.tensorDtype)")
+            print()
+
+            if !report.shardFiles.isEmpty {
+                print("  Shards:")
+                for s in report.shardFiles {
+                    let status = s.valid ? green("✓") : red("✗")
+                    print("    \(status) \(padded(s.name, 45))  \(dim(s.sizeFormatted))")
+                }
+                print()
+            }
+
+            if !report.errors.isEmpty {
+                print(red("  Errors detected:"))
+                for e in report.errors {
+                    print(red("    • \(e)"))
+                }
+                print()
+                throw ExitCode.failure
+            }
+        }
+    }
+}
+
 
