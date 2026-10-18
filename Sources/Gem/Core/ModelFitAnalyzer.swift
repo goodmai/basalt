@@ -7,7 +7,7 @@ public struct ModelFitAnalyzer: Sendable {
     // MARK: - Fit Category
     
     /// How well a model fits on the hardware
-    public enum FitCategory: String, Sendable, Codable {
+    public enum FitCategory: String, Sendable {
         case perfect   = "Perfect"   // 85-100: Runs great, highly recommended
         case good      = "Good"      // 65-84: Runs well, recommended
         case tight     = "Tight"     // 45-64: Runs but may be slow
@@ -74,11 +74,6 @@ public struct ModelFitAnalyzer: Sendable {
         public let estimatedTPS: Int
         public let estimatedRAMUsage: Int  // MB
         public let recommendation: String
-        public let isMeasured: Bool
-        public let calibrationFactor: Double
-        public let fourDimensionalScore: FourDimensionalScore?
-        public let optimalQuantization: String?
-        public let quantizationOptions: [QuantizationFitOption]
         
         public init(
             modelId: String,
@@ -88,12 +83,7 @@ public struct ModelFitAnalyzer: Sendable {
             fitCategory: FitCategory,
             estimatedTPS: Int,
             estimatedRAMUsage: Int,
-            recommendation: String,
-            isMeasured: Bool = false,
-            calibrationFactor: Double = 1.0,
-            fourDimensionalScore: FourDimensionalScore? = nil,
-            optimalQuantization: String? = nil,
-            quantizationOptions: [QuantizationFitOption] = []
+            recommendation: String
         ) {
             self.modelId = modelId
             self.modelName = modelName
@@ -103,11 +93,6 @@ public struct ModelFitAnalyzer: Sendable {
             self.estimatedTPS = estimatedTPS
             self.estimatedRAMUsage = estimatedRAMUsage
             self.recommendation = recommendation
-            self.isMeasured = isMeasured
-            self.calibrationFactor = calibrationFactor
-            self.fourDimensionalScore = fourDimensionalScore
-            self.optimalQuantization = optimalQuantization
-            self.quantizationOptions = quantizationOptions
         }
     }
     

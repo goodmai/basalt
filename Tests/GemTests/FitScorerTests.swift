@@ -309,7 +309,8 @@ struct FitScorerTests {
         let result = ModelFitAnalyzer.evaluateQuantizations(
             model: hugeModel,
             resources: resources,
-            tpsMin: 100.0
+            tpsMin: 100.0,
+            benchmarkProfile: HardwareBenchmarkProfile()
         )
 
         // None of the options fit

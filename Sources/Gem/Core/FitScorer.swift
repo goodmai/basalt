@@ -212,15 +212,21 @@ public actor FitScorer {
         return (tps, true, theoretical > 0 ? tps / theoretical : 1.0)
     }
     
+    /// fp16 KV cache per 4k tokens, GB. Calibrated on GQA geometry (2·layers·kv_heads·head_dim·2 B):
+    /// Qwen2.5-7B ≈ 0.23 GB, Qwen3.x-27B ≈ 0.9 GB per 4k tokens → ≈ 0.034 GB per billion params.
+    /// ponytail: a parameter-count proxy, capped at 32B so a large MoE is not charged by its total;
+    /// read layers/kv_heads/head_dim from config.json when an exact figure matters.
+    static func kvGBPer4k(params: Double) -> Double {
+        min(32.0, params) * 0.034 + 0.01
+    }
+
     public static func kvCacheFootprintGB(params: Double, contextTokens: Int) -> Double {
         let referenceTokens = min(Double(contextTokens), 4096.0)
-        let gbPer4k = (min(32.0, params) * 0.0015 + 0.01)
-        return max(0.01, (referenceTokens / 4096.0) * gbPer4k)
+        return max(0.01, (referenceTokens / 4096.0) * kvGBPer4k(params: params))
     }
 
     public static func kvCacheMemoryMB(params: Double, contextTokens: Int) -> Double {
-        let gbPer4k = (min(32.0, params) * 0.0015 + 0.01)
-        let gb = (Double(contextTokens) / 4096.0) * gbPer4k
+        let gb = (Double(contextTokens) / 4096.0) * kvGBPer4k(params: params)
         return max(64.0, gb * 1024.0)
     }
 

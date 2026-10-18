@@ -57,29 +57,25 @@ public struct ModelDefinition: Codable, Sendable {
         self.activeParameters = activeParameters ?? Self.inferActiveParameters(id: id, name: name, total: total)
     }
 
-    private static func inferTotalParameters(id: String, name: String, ramMB: Int64) -> Double {
+    /// Parameter count (billions) read from the size token of an id like "Qwen3-30B-A3B-4bit":
+    /// a number followed by "b" that is not the start of "bit" and not preceded by "a" (that is
+    /// the active count). Falls back to a size estimate from the 4-bit footprint.
+    static func inferTotalParameters(id: String, name: String, ramMB: Int64) -> Double {
         let combined = (id + " " + name).lowercased()
-        if combined.contains("72b") { return 72.0 }
-        if combined.contains("35b") { return 35.0 }
-        if combined.contains("32b") { return 32.0 }
-        if combined.contains("27b") { return 27.0 }
-        if combined.contains("26b") { return 26.0 }
-        if combined.contains("14b") { return 14.0 }
-        if combined.contains("9b") { return 9.0 }
-        if combined.contains("7b") { return 7.0 }
-        if combined.contains("4b") { return 4.0 }
-        if combined.contains("3b") { return 3.0 }
-        if combined.contains("2b") { return 2.0 }
-        if combined.contains("0.5b") { return 0.5 }
+        if let r = combined.range(of: #"(?<![a-z\d.])\d+(\.\d+)?(?=b(?!it)(?![a-z]))"#, options: .regularExpression),
+           let value = Double(combined[r]) {
+            return value
+        }
         return max(1.0, Double(ramMB) / 600.0)
     }
 
-    private static func inferActiveParameters(id: String, name: String, total: Double) -> Double {
+    /// Active parameters of an MoE id ("…-A3B" → 3); the total for a dense model.
+    static func inferActiveParameters(id: String, name: String, total: Double) -> Double {
         let combined = (id + " " + name).lowercased()
-        if combined.contains("a4b") { return 4.0 }
-        if combined.contains("a3b") { return 3.0 }
-        if combined.contains("a2b") { return 2.0 }
-        if combined.contains("slurpy") { return 12.0 }
+        if let r = combined.range(of: #"(?<=[-_ ]a)\d+(\.\d+)?(?=b(?![a-z]))"#, options: .regularExpression),
+           let value = Double(combined[r]) {
+            return value
+        }
         return total
     }
 }
