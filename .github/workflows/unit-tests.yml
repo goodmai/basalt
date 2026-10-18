@@ -13,31 +13,14 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v7
 
-      - name: Select latest Xcode toolchain
+      - name: Configure Swift toolchain
         run: |
-          echo "Available Xcode versions:"
-          ls -d /Applications/Xcode*.app 2>/dev/null || true
           LATEST_XCODE=$(ls -d /Applications/Xcode*.app 2>/dev/null | sort -V | tail -n 1)
-          if [ -n "$LATEST_XCODE" ]; then
-            echo "Selecting $LATEST_XCODE"
-            sudo xcode-select -s "$LATEST_XCODE/Contents/Developer"
+          if [ -n "$LATEST_XCODE" ] && [ -d "$LATEST_XCODE/Contents/Developer" ]; then
+            echo "DEVELOPER_DIR=$LATEST_XCODE/Contents/Developer" >> $GITHUB_ENV
+            export DEVELOPER_DIR="$LATEST_XCODE/Contents/Developer"
           fi
-          echo "Xcode Swift version:"
-          swift --version
-
-      - name: Ensure Swift 6.3+ toolchain
-        run: |
-          SWIFT_VER=$(swift -version | head -n 1 | sed -E 's/.*Swift version ([0-9]+(\.[0-9]+)?).*/\1/')
-          echo "Current Swift version: $SWIFT_VER"
-          MAJOR=$(echo "$SWIFT_VER" | cut -d. -f1)
-          MINOR=$(echo "$SWIFT_VER" | cut -d. -f2)
-          if [ "$MAJOR" -lt 6 ] || ([ "$MAJOR" -eq 6 ] && [ "$MINOR" -lt 3 ]); then
-            echo "Xcode Swift ($SWIFT_VER) is below 6.3; installing Swift via Homebrew..."
-            brew install swift
-            echo "/opt/homebrew/opt/swift/bin" >> $GITHUB_PATH
-            export PATH="/opt/homebrew/opt/swift/bin:$PATH"
-          fi
-          echo "Active Swift for build:"
+          echo "Active Swift version:"
           swift --version
 
       - name: Build tests
