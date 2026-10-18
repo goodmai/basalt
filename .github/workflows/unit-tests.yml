@@ -5,8 +5,8 @@ on:
     branches: [ main, "feat/**" ]
   pull_request:
 
-# One self-hosted runner: a second push to the same ref makes the queued run
-# irrelevant, so cancel it instead of letting it hold the machine.
+# One self-hosted runner: a second push to the same ref makes the earlier run (queued or
+# running) irrelevant, so cancel it instead of letting it hold the machine.
 # On main the group is per commit, so every merge commit there keeps its own test result
 # (a shared group holds one pending run and a newer one would replace it).
 concurrency:

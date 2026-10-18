@@ -5,8 +5,8 @@ on:
     tags:
       - 'v*'
 
-# Re-cutting a tag never cancels a running release (a newer re-cut replaces a pending one), since a
-# half-finished release leaves the formula pointing at a sha nobody computed.
+# Re-cutting a tag never cancels a running release (a newer re-cut replaces a pending one):
+# a cancelled run can leave a tag that has no Release.
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
