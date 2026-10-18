@@ -165,7 +165,8 @@ chmod +x ./basalt-claude
 | `basalt models download <repo-id>` | download into the shared HF cache |
 | `basalt models info <repo-id>` | size, quantization, context window |
 | `basalt models cache` | what is on disk, and how much of it |
-| `basalt models check` | verify a cached model is complete and loadable |
+| `basalt models check <repo-id>` | will it fit in memory (non-zero exit when it does not) |
+| `basalt models inspect <repo-id>` | verify a cached model is complete and measure its real bit width |
 | `basalt cloud configure` | OpenRouter fallback for what does not fit locally |
 | `basalt cloud cost` | spend so far on the cloud fallback |
 

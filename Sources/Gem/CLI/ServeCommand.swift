@@ -51,11 +51,31 @@ struct ServeCommand: AsyncParsableCommand {
     @Option(name: .customLong("repetition-penalty"), help: "Penalty on recently emitted tokens, e.g. 1.1 (default: off)")
     var repetitionPenalty: Float?
 
+    // Optional so an explicit `--port 8080` can be told apart from "not passed":
+    // precedence is CLI > --config file > default.
     @Option(name: .shortAndLong, help: "REST API port (default: 8080)")
-    var port: Int = 8080
+    var port: Int?
 
     @Option(name: .long, help: "Bind address (default: 127.0.0.1)")
-    var host: String = "127.0.0.1"
+    var host: String?
+
+    @Option(
+        name: .customLong("api-key"),
+        help: "API key required for authenticating requests, mandatory when binding to a non-loopback address. Prefer the BASALT_API_KEY environment variable: argv is visible to every local user via ps."
+    )
+    var apiKey: String?
+
+    @Flag(
+        name: .customLong("auto-generate-key"),
+        help: "Automatically generate a cryptographically strong API key if none is provided on non-loopback bind (a new key on every start — pass a fixed key for clients that reconnect)"
+    )
+    var autoGenerateKey: Bool = false
+
+    @Option(
+        name: .customLong("config"),
+        help: "Path to JSON server configuration file (default: ~/.gem/config.json when it exists)"
+    )
+    var configFile: String?
 
     @Option(name: .customLong("max-tokens"), help: "Default maximum tokens to generate (default: 65536, range: 2048-128000)")
     var maxTokens: Int = 65536
@@ -107,15 +127,37 @@ struct ServeCommand: AsyncParsableCommand {
             return
         }
 
+        let network = try Self.resolveNetwork(
+            cliPort: port, cliHost: host,
+            cliApiKey: apiKey ?? ProcessInfo.processInfo.environment["BASALT_API_KEY"],
+            configFile: configFile ?? Self.defaultConfigFileIfPresent()
+        )
+        // Settle the exposure rule before resolveModelPath(), which may download gigabytes.
+        let access: (key: String?, generated: Bool)
+        do {
+            access = try ServerConfig.resolveApiKey(
+                host: network.host, apiKey: network.apiKey, autoGenerateKeyIfMissing: autoGenerateKey
+            )
+        } catch ServerConfigError.missingApiKeyForNonLoopback(let badHost) {
+            log("\(red("Security error:")) Refusing to start on non-loopback interface '\(badHost)' without an API key.")
+            log("Pass \(bold("--api-key <secret>")) or \(bold("--auto-generate-key")) to enable access.")
+            throw ValidationError("Refusing to start on non-loopback interface '\(badHost)' without an API key. Pass --api-key <secret> or --auto-generate-key to protect external access.")
+        }
+        if access.generated, let generated = access.key {
+            log("⚠️  Binding to non-loopback address '\(network.host)' without explicit key.")
+            log("🔑 Auto-generated API key: \(bold(generated))")
+        }
+
         let resolvedPath = try await resolveModelPath()
 
-        let config = ServerConfig(
+        let config = try ServerConfig(
             modelPath: resolvedPath,
             modelId:   model ?? modelPath,
-            restPort:  port,
-            host:      host,
+            restPort:  network.port,
+            host:      network.host,
             maxTokens: maxTokens,
-            logLevel:  logLevel
+            logLevel:  logLevel,
+            apiKey:    access.key
         )
 
         // Apply log level from config
@@ -140,7 +182,8 @@ struct ServeCommand: AsyncParsableCommand {
         log("Loading model from \(bold(resolvedPath))…")
         do {
             try await orchestrator.loadModel(path: resolvedPath)
-            await orchestrator.setModelId(model ?? modelPath ?? resolvedPath)
+            // The repo id, not the resolved path, so MCP status reports what an agent asked for.
+            await orchestrator.setModelId(model ?? modelPath ?? Self.defaultModel)
             log("Model ready.")
         } catch {
             log("\(yellow("[warn]")) \(error.localizedDescription) — running in stub mode.")
@@ -151,7 +194,7 @@ struct ServeCommand: AsyncParsableCommand {
         let startREST = !mcp || rest || (!mcp && !rest)
         let startMCP  = mcp
 
-        if startREST { log("REST → http://\(host):\(port)") }
+        if startREST { log("REST → http://\(config.host):\(config.restPort)") }
         if startMCP  { log("MCP → JSON-RPC 2.0 on stdin/stdout") }
 
         try await withThrowingTaskGroup(of: Void.self) { group in
@@ -169,6 +212,48 @@ struct ServeCommand: AsyncParsableCommand {
             try await group.next()
             group.cancelAll()
         }
+    }
+
+    // MARK: — Network resolution
+
+    /// ~/.gem/config.json is what `onboard` writes; serve reads it without --config so those values apply.
+    static func defaultConfigFileIfPresent() -> String? {
+        let url = ServerConfig.defaultConfigFileURL
+        return FileManager.default.fileExists(atPath: url.path) ? url.path : nil
+    }
+
+    /// Port, host and API key with precedence CLI > `--config` file > default.
+    /// An unreadable or malformed config file — or a value of the wrong type in it — is an error,
+    /// never a silent fallback to defaults.
+    static func resolveNetwork(
+        cliPort: Int?,
+        cliHost: String?,
+        cliApiKey: String?,
+        configFile: String?
+    ) throws -> (port: Int, host: String, apiKey: String?) {
+        var dict: [String: Any] = [:]
+        if let configFile {
+            let url = URL(fileURLWithPath: (configFile as NSString).expandingTildeInPath)
+            do {
+                dict = try ServerConfig.load(from: url)
+            } catch {
+                throw ValidationError("Cannot read server config \(url.path): \(error.localizedDescription)")
+            }
+        }
+        func value<T>(_ key: String, as _: T.Type) throws -> T? {
+            guard let raw = dict[key], !(raw is NSNull) else { return nil }
+            guard let typed = raw as? T else {
+                throw ValidationError("--config: \"\(key)\" must be \(T.self), got \(raw)")
+            }
+            return typed
+        }
+        // An empty --api-key / BASALT_API_KEY is "not set", so it cannot mask the config's key.
+        let cliKey = cliApiKey.flatMap { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 }
+        return (
+            port: try cliPort ?? value("port", as: Int.self) ?? 8080,
+            host: try cliHost ?? value("host", as: String.self) ?? "127.0.0.1",
+            apiKey: try cliKey ?? value("api_key", as: String.self)
+        )
     }
 
     // MARK: — Path resolution

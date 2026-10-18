@@ -21,7 +21,15 @@ struct FitCommand: AsyncParsableCommand {
     @Flag(help: "Show all models, not just top 10")
     var all = false
     
+    @Flag(name: .long, help: "Perform quick hardware diagnostic check and output machine-readable JSON without downloading or ranking models")
+    var check = false
+    
     mutating func run() async throws {
+        if check {
+            try printJSON(await SystemProfiler().generateReport())
+            return
+        }
+
         if !json {
             print(TerminalUI.info("🔍 Analyzing hardware..."))
             print()

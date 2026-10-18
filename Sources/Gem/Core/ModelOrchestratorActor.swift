@@ -68,7 +68,8 @@ public actor ModelOrchestratorActor {
             return
         }
 
-        let path = ModelCache.cacheDir(for: modelId).path
+        // Same resolution `serve` uses, so a repo with 4bit/8bit subfolders switches too.
+        let path = (ModelCache.resolve(repoId: modelId) ?? ModelCache.cacheDir(for: modelId)).path
         guard FileManager.default.fileExists(atPath: path) else {
             logger.error("switchModel: model not in cache: \(modelId)")
             throw GemError.modelNotCached(identifier: modelId)
