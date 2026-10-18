@@ -9,6 +9,10 @@ jobs:
   test:
     name: Swift Tests
     runs-on: [self-hosted, macOS, ARM64]
+    # The runner is the owner's own machine and the repository is public: a pull request from a
+    # fork would run its Package.swift, build plugins and tests there. Only pushes and pull
+    # requests from branches of this repository use it.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7

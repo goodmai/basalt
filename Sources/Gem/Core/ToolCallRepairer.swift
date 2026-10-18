@@ -4,6 +4,47 @@ import Foundation
 /// commonly produced by quantized (4-bit, 3-bit, 2-bit) models.
 public enum ToolCallRepairer: Sendable {
 
+
+    /// A tool call rebuilt from one the model's tool-call parser rejected as malformed. The payload
+    /// is the whole protocol span (e.g. `<tool_call>{…}</tool_call>`): it is cut after the last
+    /// closing brace, repaired, and read with the same schemas as `extractAndRepairToolCall`.
+    /// The name must be one the request declared — a repaired call skips the parser's own name
+    /// and schema checks. nil when nothing safe can be rebuilt: a truncated payload (repairing
+    /// half a call would invent the rest), no recognizable call, or an undeclared name.
+    public static func repairToolCall(
+        name parserName: String?,
+        callID: String?,
+        rawText: String,
+        truncated: Bool,
+        declaredTools: Set<String>
+    ) -> ToolCallOutput? {
+        guard !truncated else { return nil }
+        // Drop the closing protocol tag; with a closing brace present, also anything after it.
+        let untagged = rawText.replacingOccurrences(of: "</tool_call>", with: "")
+        let payload = untagged.lastIndex(of: "}").map { String(untagged[...$0]) } ?? untagged
+
+        let name: String
+        let arguments: [String: Any]
+        if let extracted = extractAndRepairToolCall(from: payload) {
+            name = parserName ?? extracted.name
+            arguments = extracted.arguments
+        } else if let parserName,
+                  let repaired = repairJSON(payload),
+                  let object = try? JSONSerialization.jsonObject(with: Data(repaired.utf8)) as? [String: Any] {
+            // The parser knew the name; the payload is the bare arguments object.
+            name = parserName
+            arguments = object
+        } else {
+            return nil
+        }
+        guard declaredTools.contains(name),
+              let data = try? JSONSerialization.data(withJSONObject: arguments, options: [.sortedKeys]),
+              let json = String(data: data, encoding: .utf8) else {
+            return nil
+        }
+        return ToolCallOutput(id: callID ?? "call_\(UUID().uuidString.prefix(24))", name: name, arguments: json)
+    }
+
     /// Repairs a potentially corrupted JSON string.
     ///
     /// Handles:
@@ -15,37 +56,6 @@ public enum ToolCallRepairer: Sendable {
     /// - Trailing commas before `}` or `]` (`{"a": 1,}` -> `{"a": 1}`)
     /// - Unclosed string literals (`{"name": "run_command`)
     /// - Unbalanced braces and brackets (appends missing `}` and `]`)
-    /// A tool call rebuilt from a call the model's tool-call parser rejected as malformed:
-    /// repairs the raw payload, then takes its `arguments` (or `parameters`) object, or the whole
-    /// object when it carries neither. nil when nothing safe can be rebuilt — no name, a truncated
-    /// payload (repairing half a call would invent the rest), or no JSON object at all.
-    public static func repairToolCall(name: String?, callID: String?, rawText: String, truncated: Bool) -> ToolCallOutput? {
-        guard let name, !name.isEmpty, !truncated,
-              let repaired = repairJSON(rawText),
-              let object = try? JSONSerialization.jsonObject(with: Data(repaired.utf8)) as? [String: Any] else {
-            return nil
-        }
-        let arguments: Any
-        if let nested = object["arguments"] ?? object["parameters"] {
-            // Some formats carry arguments as a JSON string inside the object.
-            if let text = nested as? String, let decoded = repairJSON(text).flatMap({
-                try? JSONSerialization.jsonObject(with: Data($0.utf8))
-            }) {
-                arguments = decoded
-            } else {
-                arguments = nested
-            }
-        } else {
-            arguments = object.filter { $0.key != "name" }
-        }
-        guard JSONSerialization.isValidJSONObject(arguments),
-              let data = try? JSONSerialization.data(withJSONObject: arguments, options: [.sortedKeys]),
-              let json = String(data: data, encoding: .utf8) else {
-            return nil
-        }
-        return ToolCallOutput(id: callID ?? "call_\(UUID().uuidString.prefix(24))", name: name, arguments: json)
-    }
-
     public static func repairJSON(_ raw: String) -> String? {
         var str = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         if str.isEmpty { return nil }

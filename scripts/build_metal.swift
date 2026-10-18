@@ -92,8 +92,10 @@ if fm.fileExists(atPath: metalLibPath),
 }
 
 if metalFiles.isEmpty {
-    log("No .metal files found to compile", level: .warning)
-    exit(0)
+    // Nothing to compile means mlx-swift was never checked out (run `swift build` first), not that
+    // the work is done: a green step here only moves the failure to MLX aborting the test run.
+    log("No .metal files found to compile — run `swift build` first", level: .error)
+    exit(1)
 }
 
 try? fm.createDirectory(atPath: tempDir, withIntermediateDirectories: true)
@@ -157,8 +159,8 @@ if let contents = try? fm.contentsOfDirectory(atPath: tempDir) {
 }
 
 if airFiles.isEmpty {
-    log("No .air files produced; skipping metallib creation", level: .warning)
-    exit(0)
+    log("No .air files produced — every kernel failed to compile", level: .error)
+    exit(1)
 }
 
 var metallibArgs = ["-sdk", "macosx", "metallib"]

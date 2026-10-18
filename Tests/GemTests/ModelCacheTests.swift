@@ -138,37 +138,55 @@ struct MultiSlotConversationCacheTests {
 @Suite("Tool Call JSON Repair")
 struct ToolCallRepairerTests {
 
-    @Test("A rejected, malformed tool call is rebuilt with the declared name and repaired arguments")
-    func repairRejectedToolCall() throws {
-        let call = try #require(ToolCallRepairer.repairToolCall(
-            name: "shell", callID: "c7",
-            rawText: "{'name': 'shell', 'arguments': {'command': ['ls', '-la'], 'timeout_ms': 1000,}}",
-            truncated: false))
-        #expect(call.id == "c7")
+    /// What the engine does with a rejected call — the shape mlx-swift-lm actually produces: the
+    /// whole protocol span as raw text and, for malformed syntax, no parsed name or call id.
+    private func resolve(_ raw: String, reason: String = "malformed_syntax", name: String? = nil,
+                         truncated: Bool = false, declared: Set<String> = ["shell", "read"]) -> StreamChunk {
+        MLXInferenceEngine.resolveRejectedToolCall(reason: reason, toolName: name, callID: nil,
+                                                   rawText: raw, truncated: truncated, declaredTools: declared)
+    }
+
+    @Test("A malformed call inside <tool_call> tags is repaired into a real call")
+    func repairTaggedMalformedCall() throws {
+        let chunk = resolve("<tool_call>{'name': 'shell', 'arguments': {'command': ['ls', '-la'], 'timeout_ms': 1000,}}</tool_call>")
+        guard case .toolCall(let call) = chunk else { Issue.record("expected a tool call, got \(chunk)"); return }
         #expect(call.name == "shell")
         #expect(call.arguments == #"{"command":["ls","-la"],"timeout_ms":1000}"#)
+        #expect(call.id.hasPrefix("call_"))
+    }
 
-        // Arguments carried as a JSON string are decoded too; an object without them is the arguments.
-        let nested = try #require(ToolCallRepairer.repairToolCall(
-            name: "read", callID: nil, rawText: #"{"name": "read", "arguments": "{path: 'a.txt'}"}"#, truncated: false))
-        #expect(nested.arguments == #"{"path":"a.txt"}"#)
-        #expect(nested.id.hasPrefix("call_"))
-        let flat = try #require(ToolCallRepairer.repairToolCall(
-            name: "read", callID: "c1", rawText: "{path: 'b.txt'", truncated: false))
-        #expect(flat.arguments == #"{"path":"b.txt"}"#)
+    @Test("Function-style and string-encoded arguments are read like the repairer's other schemas")
+    func repairOtherSchemas() throws {
+        guard case .toolCall(let fn) = resolve(#"{"function": {"name": "read", "arguments": "{path: 'a.txt'}"}}"#) else {
+            Issue.record("function schema"); return
+        }
+        #expect(fn.name == "read")
+        #expect(fn.arguments == #"{"path":"a.txt"}"#)
+
+        // The parser knew the name and the payload is the bare arguments object.
+        guard case .toolCall(let bare) = resolve("{path: 'b.txt'", name: "read") else { Issue.record("bare args"); return }
+        #expect(bare.arguments == #"{"path":"b.txt"}"#)
+    }
+
+    @Test("Nothing is invented: undeclared names, truncated payloads, non-objects and other reasons give a visible note")
+    func rejectedCallsBecomeNotes() {
+        let cases: [StreamChunk] = [
+            resolve("<tool_call>{'name': 'rm_rf', 'arguments': {}}</tool_call>"),            // undeclared tool
+            resolve("<tool_call>{'name': 'shell', 'arguments': {'a': 1}}", truncated: true), // truncated preview
+            resolve("<tool_call>{'name': 'shell', 'arguments': [1, 2]}</tool_call>"),        // arguments not an object
+            resolve("no json here"),
+            resolve(#"{"name": "shell", "arguments": {}}"#, reason: "invalid_arguments", name: "shell")
+        ]
+        for chunk in cases {
+            guard case .text(let note) = chunk else { Issue.record("expected a note, got \(chunk)"); continue }
+            #expect(note.contains("rejected"))
+        }
     }
 
     @Test("Valid JSON is returned untouched, apostrophes and literals inside strings included")
     func validJSONIsNotRewritten() {
         let valid = #"{"msg": "it's True that {x} is None"}"#
         #expect(ToolCallRepairer.repairJSON(valid) == valid)
-    }
-
-    @Test("Nothing is invented: no name, a truncated payload or no JSON at all gives nil")
-    func repairRejectedToolCallRefuses() {
-        #expect(ToolCallRepairer.repairToolCall(name: nil, callID: nil, rawText: "{a: 1}", truncated: false) == nil)
-        #expect(ToolCallRepairer.repairToolCall(name: "x", callID: nil, rawText: "{a: 1}", truncated: true) == nil)
-        #expect(ToolCallRepairer.repairToolCall(name: "x", callID: nil, rawText: "no json here", truncated: false) == nil)
     }
 
     @Test("Repairs JSON wrapped in markdown codeblocks")

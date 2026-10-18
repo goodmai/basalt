@@ -264,11 +264,13 @@ public final class MCPServer: Sendable {
 
         var arguments = p["arguments"] as? [String: Any]
         if arguments == nil, let rawArgs = p["arguments"] as? String {
-            if let repaired = ToolCallRepairer.repairJSON(rawArgs),
-               let data = repaired.data(using: .utf8),
-               let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                arguments = dict
+            guard let repaired = ToolCallRepairer.repairJSON(rawArgs),
+                  let dict = try? JSONSerialization.jsonObject(with: Data(repaired.utf8)) as? [String: Any] else {
+                // Running the tool without its arguments would be a guess; say what is wrong.
+                writeError(id: id, code: -32602, message: "Tool arguments are not a JSON object and could not be repaired")
+                return
             }
+            arguments = dict
         }
 
         switch name {

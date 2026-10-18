@@ -349,6 +349,22 @@ public actor MLXInferenceEngine: InferenceEngine {
         }
     }
 
+    /// What a rejected tool call becomes: quantized models often emit almost-JSON, so a malformed
+    /// call to a declared tool is repaired into a real call; anything else becomes a visible note
+    /// instead of a silently empty turn.
+    static func resolveRejectedToolCall(
+        reason: String, toolName: String?, callID: String?,
+        rawText: String, truncated: Bool, declaredTools: Set<String>
+    ) -> StreamChunk {
+        if reason == "malformed_syntax",
+           let call = ToolCallRepairer.repairToolCall(
+               name: toolName, callID: callID, rawText: rawText, truncated: truncated, declaredTools: declaredTools) {
+            return .toolCall(call)
+        }
+        let tool = toolName.map { " to \($0)" } ?? ""
+        return .text("\n[tool call\(tool) rejected: \(reason)]")
+    }
+
     static func toolCallOutput(_ call: ToolCall) -> ToolCallOutput {
         let arguments = (try? JSONEncoder().encode(call.function.arguments)).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
         return ToolCallOutput(id: "call_\(UUID().uuidString.prefix(24))", name: call.function.name, arguments: arguments)
@@ -375,6 +391,7 @@ public actor MLXInferenceEngine: InferenceEngine {
         params.seed = seed
 
         let toolSpecs = Self.toolSpecs(request.tools)
+        let declaredTools = Set(request.tools?.map(\.name) ?? [])
         let userInput: UserInput
         if request.prompt.contains("<|turn|>") || request.prompt.contains("<|channel|>") {
             userInput = UserInput(prompt: request.prompt)
@@ -496,18 +513,14 @@ public actor MLXInferenceEngine: InferenceEngine {
                             continuation.yield(.toolCall(Self.toolCallOutput(call)))
                         case .rejectedToolCall(let rejection):
                             processBuffer(final: true)
-                            // Quantized models often emit almost-JSON: repair a malformed call; any
-                            // other rejection becomes a visible note instead of a silently empty turn.
-                            if rejection.reason == .malformedSyntax,
-                               let call = ToolCallRepairer.repairToolCall(
-                                   name: rejection.toolName, callID: rejection.callID,
-                                   rawText: rejection.rawTextPreview, truncated: rejection.isPreviewTruncated) {
-                                continuation.yield(.toolCall(call))
-                            } else {
-                                let tool = rejection.toolName.map { " to \($0)" } ?? ""
-                                continuation.yield(.text("\n[tool call\(tool) rejected: \(rejection.reason.rawValue)]"))
-                                GemLogger(module: "MLXInferenceEngine").warn("Tool call\(tool) rejected: \(rejection.reason.rawValue)")
+                            let chunk = Self.resolveRejectedToolCall(
+                                reason: rejection.reason.rawValue, toolName: rejection.toolName,
+                                callID: rejection.callID, rawText: rejection.rawTextPreview,
+                                truncated: rejection.isPreviewTruncated, declaredTools: declaredTools)
+                            if case .text = chunk {
+                                GemLogger(module: "MLXInferenceEngine").warn("Tool call rejected: \(rejection.reason.rawValue)")
                             }
+                            continuation.yield(chunk)
                         @unknown default:
                             break
                         }
