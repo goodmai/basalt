@@ -200,6 +200,14 @@ struct AnthropicController: Sendable {
             isServiceRequest: isService
         )
 
+        let sessionId = (HTTPField.Name("x-session-id").flatMap { request.headers[$0] })
+            ?? (HTTPField.Name("x-conversation-id").flatMap { request.headers[$0] })
+            ?? "session_\(abs(prompt.prefix(100).hashValue))"
+
+        if !isService {
+            _ = await orchestrator.computePrefillDelta(slotId: sessionId, prompt: finalPrompt)
+        }
+
         let requestedModel = dto.model.map { ModelsController.hfRepoId(from: $0) }  // strip claude-local/ prefix if present
 
         if dto.stream == true {
@@ -208,22 +216,35 @@ struct AnthropicController: Sendable {
 
         do {
             let result = try await orchestrator.generate(request: genRequest, modelId: requestedModel)
+            if !isService {
+                await orchestrator.recordTurn(slotId: sessionId, prompt: finalPrompt, completion: result.generatedText)
+            }
+            let repairedText = ToolCallRepairer.repairJSON(result.generatedText) ?? result.generatedText
             let response = MessagesResponse(
                 id: "msg_\(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(24))",
                 type: "message",
                 role: "assistant",
-                content: [ContentBlock(text: result.generatedText)],
+                content: [ContentBlock(text: repairedText)],
                 model: dto.model ?? modelId,
                 stopReason: result.finishReason == .stop ? "end_turn" : "max_tokens",
                 stopSequence: nil,
                 usage: .init(inputTokens: result.promptTokens,
                              outputTokens: result.completionTokens)
             )
-            return try jsonResponse(status: .ok, body: response)
+            let data = (try? JSONEncoder().encode(response)) ?? Data()
+            var buf = ByteBuffer()
+            buf.writeBytes(data)
+            return Response(status: .ok, headers: [.contentType: "application/json"], body: ResponseBody(byteBuffer: buf))
         } catch let err as GemError {
             return errorResponse(
                 status: HTTPResponse.Status(code: err.httpStatus),
                 message: err.errorDescription ?? err.localizedDescription,
+                type: "api_error"
+            )
+        } catch {
+            return errorResponse(
+                status: .internalServerError,
+                message: error.localizedDescription,
                 type: "api_error"
             )
         }

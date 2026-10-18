@@ -225,7 +225,14 @@ public final class MCPServer: Sendable {
             return
         }
 
-        let arguments = p["arguments"] as? [String: Any]
+        var arguments = p["arguments"] as? [String: Any]
+        if arguments == nil, let rawArgs = p["arguments"] as? String {
+            if let repaired = ToolCallRepairer.repairJSON(rawArgs),
+               let data = repaired.data(using: .utf8),
+               let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                arguments = dict
+            }
+        }
 
         switch name {
         case "gemma_generate":
@@ -358,8 +365,9 @@ public final class MCPServer: Sendable {
                 }
             }
             
+            let repairedText = ToolCallRepairer.repairJSON(response.generatedText) ?? response.generatedText
             let result = GenerateResult(
-                content: [["type": "text", "text": response.generatedText]],
+                content: [["type": "text", "text": repairedText]],
                 _meta: .init(
                     tokensPerSecond: response.tokensPerSecond,
                     completionTokens: response.completionTokens,

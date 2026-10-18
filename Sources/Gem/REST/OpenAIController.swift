@@ -263,12 +263,24 @@ struct OpenAIController: Sendable {
         )
         let requestedModel = dto.model.map { ModelsController.hfRepoId(from: $0) }  // strip claude-local/ prefix if present
 
+        let sessionId = (HTTPField.Name("x-session-id").flatMap { request.headers[$0] })
+            ?? (HTTPField.Name("x-conversation-id").flatMap { request.headers[$0] })
+            ?? "session_\(abs(prompt.prefix(100).hashValue))"
+
+        if !isService {
+            _ = await orchestrator.computePrefillDelta(slotId: sessionId, prompt: finalPrompt)
+        }
+
         if dto.stream == true {
             return streamResponse(genRequest: genRequest, model: dto.model ?? modelId, requestedModel: requestedModel)
         }
 
         do {
             let result = try await orchestrator.generate(request: genRequest, modelId: requestedModel)
+            if !isService {
+                await orchestrator.recordTurn(slotId: sessionId, prompt: finalPrompt, completion: result.generatedText)
+            }
+            let repairedText = ToolCallRepairer.repairJSON(result.generatedText) ?? result.generatedText
             let response = ChatCompletionResponse(
                 id: "chatcmpl-\(UUID().uuidString)",
                 object: "chat.completion",
@@ -276,7 +288,7 @@ struct OpenAIController: Sendable {
                 model: dto.model ?? modelId,
                 choices: [.init(
                     index: 0,
-                    message: ChatMessage(role: "assistant", content: .text(result.generatedText)),
+                    message: ChatMessage(role: "assistant", content: .text(repairedText)),
                     finishReason: result.finishReason == GenerationResponse.FinishReason.stop ? "stop" : "length"
                 )],
                 usage: .init(
@@ -285,7 +297,7 @@ struct OpenAIController: Sendable {
                     totalTokens: result.promptTokens + result.completionTokens
                 )
             )
-            let encoded = try JSONEncoder().encode(response)
+            let encoded = (try? JSONEncoder().encode(response)) ?? Data()
             return makeDataResponse(encoded)
         } catch {
             fputs("🔴 [OpenAI] generate failed: \(error)\n", stderr)
@@ -340,6 +352,13 @@ struct OpenAIController: Sendable {
             isServiceRequest: isService
         )
         let requestedModel = dto.model.map { ModelsController.hfRepoId(from: $0) }
+        let sessionId = (HTTPField.Name("x-session-id").flatMap { request.headers[$0] })
+            ?? (HTTPField.Name("x-conversation-id").flatMap { request.headers[$0] })
+            ?? "session_\(abs(prompt.prefix(100).hashValue))"
+
+        if !isService {
+            _ = await orchestrator.computePrefillDelta(slotId: sessionId, prompt: finalPrompt)
+        }
 
         if dto.stream == true {
             return streamResponses(genRequest: genRequest, model: dto.model ?? modelId, requestedModel: requestedModel)
@@ -347,6 +366,10 @@ struct OpenAIController: Sendable {
 
         do {
             let result = try await orchestrator.generate(request: genRequest, modelId: requestedModel)
+            if !isService {
+                await orchestrator.recordTurn(slotId: sessionId, prompt: finalPrompt, completion: result.generatedText)
+            }
+            let repairedText = ToolCallRepairer.repairJSON(result.generatedText) ?? result.generatedText
             let response = ResponsesResponse(
                 id: "resp_\(UUID().uuidString)",
                 object: "response",
@@ -359,7 +382,7 @@ struct OpenAIController: Sendable {
                         type: "message",
                         status: "completed",
                         role: "assistant",
-                        content: [.init(type: "text", text: result.generatedText)]
+                        content: [.init(type: "text", text: repairedText)]
                     )
                 ],
                 usage: .init(
@@ -368,7 +391,7 @@ struct OpenAIController: Sendable {
                     totalTokens: result.promptTokens + result.completionTokens
                 )
             )
-            let encoded = try JSONEncoder().encode(response)
+            let encoded = (try? JSONEncoder().encode(response)) ?? Data()
             return makeDataResponse(encoded)
         } catch {
             return makeErrorResponse(status: .internalServerError,
