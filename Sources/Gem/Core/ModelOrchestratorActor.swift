@@ -31,9 +31,13 @@ public actor ModelOrchestratorActor {
 
     // MARK: — Init
 
-    public init(engine: any InferenceEngine, maxTokens: Int = 4096) {
+    /// The serving process's counters; injectable so tests do not share global state.
+    public let telemetry: TelemetryTracker
+
+    public init(engine: any InferenceEngine, maxTokens: Int = 4096, telemetry: TelemetryTracker = .shared) {
         self.engine = engine
         self.maxTokens = maxTokens
+        self.telemetry = telemetry
     }
 
     // MARK: — Model loading
@@ -47,7 +51,7 @@ public actor ModelOrchestratorActor {
             self.modelSizeMB = Int(size / 1_048_576)
             logger.info("Model size: \(self.modelSizeMB) MB")
         }
-        await TelemetryTracker.shared.setModelMemory(mb: self.modelSizeMB)
+        await self.telemetry.setModelMemory(mb: self.modelSizeMB)
         try await engine.load(modelPath: path)
     }
 
@@ -102,20 +106,20 @@ public actor ModelOrchestratorActor {
         let validated = try capped(request)
         requestCount += 1
 
+        await self.telemetry.requestStarted()
         do {
             let response = try await withTimeout(seconds: timeout(for: validated)) {
                 try await self.engine.generate(request: validated)
             }
             totalTokensGenerated += response.completionTokens
-            await TelemetryTracker.shared.recordGeneration(
-                tokens: response.completionTokens,
-                tokensPerSecond: response.tokensPerSecond,
-                timeToFirstToken: response.timeToFirstToken
-            )
+            await self.telemetry.requestFinished()
+            await self.telemetry.recordGeneration(response)
             return response
         } catch let error as GemError {
+            await self.telemetry.requestFinished()
             throw error
         } catch {
+            await self.telemetry.requestFinished()
             throw GemError.inferenceError("Generation error: \(error)")
         }
     }
@@ -134,17 +138,21 @@ public actor ModelOrchestratorActor {
         let validated = try capped(request)
         requestCount += 1
 
+        await self.telemetry.requestStarted()
         let stream: AsyncStream<StreamChunk>
         do {
             stream = try await withTimeout(seconds: timeout(for: validated)) {
                 try await self.engine.generateStream(request: validated)
             }
         } catch let error as GemError {
+            await self.telemetry.requestFinished()
             throw error
         } catch {
+            await self.telemetry.requestFinished()
             throw GemError.inferenceError("Stream setup error: \(error)")
         }
 
+        let telemetry = self.telemetry
         return AsyncStream<StreamChunk> { continuation in
             let task = Task.detached {
                 for await chunk in stream {
@@ -154,9 +162,13 @@ public actor ModelOrchestratorActor {
                     case .reasoning(let r):
                         continuation.yield(.reasoning(r))
                     case .metadata(let m):
+                        // Streaming is most of the REST traffic: count it like generate().
+                        await telemetry.recordGeneration(m)
                         continuation.yield(.metadata(m))
                     }
                 }
+                // Reached on completion and on cancellation (onTermination cancels this task).
+                await telemetry.requestFinished()
                 continuation.finish()
             }
             continuation.onTermination = { _ in task.cancel() }
@@ -178,7 +190,7 @@ public actor ModelOrchestratorActor {
     // MARK: — Telemetry
 
     public func telemetrySnapshot() async -> ServerTelemetrySnapshot {
-        await TelemetryTracker.shared.snapshot()
+        await telemetry.snapshot()
     }
 
     // MARK: — Model catalogue

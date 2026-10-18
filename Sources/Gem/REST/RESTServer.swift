@@ -67,6 +67,7 @@ struct RESTServer: Sendable {
         // ── Native API ──────────────────────────────────────────────────────────
         let v1 = router.group("/api/v1")
         v1.get("/health",          use: generateController.health)
+        v1.get("/stats",           use: generateController.stats)
         v1.post("/generate",       use: generateController.generate)
         v1.post("/generate/stream", use: generateController.generateStream)
 

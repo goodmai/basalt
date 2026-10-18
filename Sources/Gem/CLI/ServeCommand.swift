@@ -89,7 +89,7 @@ struct ServeCommand: AsyncParsableCommand {
     @Flag(name: .customLong("dry-run"), help: "Perform a dry-run memory feasibility assessment and exit without starting the server")
     var dryRun: Bool = false
 
-    @Flag(name: .customLong("stats"), help: "Periodically output inference telemetry metrics (tok/s, TTFT, memory, KV cache size, acceptance rate)")
+    @Flag(name: .customLong("stats"), help: "Periodically output inference telemetry (tok/s, TTFT, RAM, MLX GPU memory, active requests)")
     var stats: Bool = false
 
     @Option(name: .customLong("stats-interval"), help: "Interval in seconds between periodic telemetry stats outputs (default: 5)")
@@ -213,8 +213,9 @@ struct ServeCommand: AsyncParsableCommand {
             if stats {
                 let interval = max(1, statsInterval)
                 group.addTask {
-                    while !Task.isCancelled {
-                        try await Task.sleep(nanoseconds: UInt64(interval) * 1_000_000_000)
+                    // Exit quietly on shutdown: a CancellationError from sleep must not surface
+                    // as the serve command's error once the group is cancelled.
+                    while (try? await Task.sleep(nanoseconds: UInt64(interval) * 1_000_000_000)) != nil {
                         let snapshot = await orchestrator.telemetrySnapshot()
                         fputs("\(snapshot.formattedStatsLine)\n", stderr)
                     }

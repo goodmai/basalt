@@ -2,7 +2,10 @@ import Foundation
 
 // MARK: — Telemetry & Observability (Epic 16 / Issue #30)
 
-/// Real-time telemetry metrics snapshot for CLI (--stats), SwiftUI Monitor tab, and MCP status
+/// Real-time telemetry snapshot shared by `serve --stats`, `GET /api/v1/stats` (Monitor tab)
+/// and MCP `status`. Every field has a producer on the serving path; metrics the engine cannot
+/// measure yet (KV size, parked conversations, speculative acceptance) are left out rather than
+/// reported as zeros.
 public struct ServerTelemetrySnapshot: Codable, Sendable, Equatable {
     public let timestamp: Date
     public let tokensPerSecond: Double
@@ -10,10 +13,9 @@ public struct ServerTelemetrySnapshot: Codable, Sendable, Equatable {
     public let totalRequests: Int
     public let totalTokensGenerated: Int
     public let activeRequests: Int
-    public let parkedConversations: Int
-    public let kvCacheSizeBytes: Int64
-    public let kvCacheSizeFormatted: String
-    public let speculativeAcceptanceRate: Double?
+    /// MLX GPU memory after the last generation (weights + KV cache + activations).
+    public let gpuActiveBytes: Int64
+    public let gpuPeakBytes: Int64
     public let totalRAMGB: Int
     public let availableRAMGB: Double
     public let modelRAMMB: Int
@@ -27,10 +29,8 @@ public struct ServerTelemetrySnapshot: Codable, Sendable, Equatable {
         totalRequests: Int = 0,
         totalTokensGenerated: Int = 0,
         activeRequests: Int = 0,
-        parkedConversations: Int = 0,
-        kvCacheSizeBytes: Int64 = 0,
-        kvCacheSizeFormatted: String = "0 B",
-        speculativeAcceptanceRate: Double? = nil,
+        gpuActiveBytes: Int64 = 0,
+        gpuPeakBytes: Int64 = 0,
         totalRAMGB: Int = 0,
         availableRAMGB: Double = 0.0,
         modelRAMMB: Int = 0,
@@ -43,10 +43,8 @@ public struct ServerTelemetrySnapshot: Codable, Sendable, Equatable {
         self.totalRequests = totalRequests
         self.totalTokensGenerated = totalTokensGenerated
         self.activeRequests = activeRequests
-        self.parkedConversations = parkedConversations
-        self.kvCacheSizeBytes = kvCacheSizeBytes
-        self.kvCacheSizeFormatted = kvCacheSizeFormatted
-        self.speculativeAcceptanceRate = speculativeAcceptanceRate
+        self.gpuActiveBytes = gpuActiveBytes
+        self.gpuPeakBytes = gpuPeakBytes
         self.totalRAMGB = totalRAMGB
         self.availableRAMGB = availableRAMGB
         self.modelRAMMB = modelRAMMB
@@ -58,17 +56,11 @@ public struct ServerTelemetrySnapshot: Codable, Sendable, Equatable {
         let tps = String(format: "%.1f", tokensPerSecond)
         let ttft = String(format: "%.2f", timeToFirstToken)
         let ram = String(format: "%.1f", availableRAMGB)
-        let specStr: String
-        if let spec = speculativeAcceptanceRate {
-            specStr = String(format: " | Speculative: %.1f%%", spec * 100)
-        } else {
-            specStr = ""
-        }
-        return "[stats] \(tps) tok/s | TTFT: \(ttft)s | RAM avail: \(ram)/\(totalRAMGB) GB | Model: \(modelRAMMB) MB | KV: \(kvCacheSizeFormatted) | Parked: \(parkedConversations)\(specStr)"
+        return "[stats] \(tps) tok/s | TTFT: \(ttft)s | RAM avail: \(ram)/\(totalRAMGB) GB | Model: \(modelRAMMB) MB | GPU active: \(formatBytes(gpuActiveBytes)) (peak \(formatBytes(gpuPeakBytes))) | Active: \(activeRequests) | Requests: \(totalRequests)"
     }
 }
 
-/// Actor managing thread-safe telemetry metrics for the inference server
+/// Actor holding the serving process's telemetry counters.
 public actor TelemetryTracker {
     public static let shared = TelemetryTracker()
 
@@ -77,53 +69,39 @@ public actor TelemetryTracker {
     private var totalRequests: Int = 0
     private var totalTokens: Int = 0
     private var activeRequests: Int = 0
-    private var parkedConversations: Int = 0
-    private var kvCacheSizeBytes: Int64 = 0
-    private var speculativeAccepted: Int = 0
-    private var speculativeDrafted: Int = 0
+    private var gpuActiveBytes: Int64 = 0
+    private var gpuPeakBytes: Int64 = 0
     private var modelRAMMB: Int = 0
+    /// Chip, GPU and total RAM never change for the process: probed once, not on every tick.
+    private var hardware: SystemProfiler.SystemResources?
 
     public init() {}
 
-    public func recordGeneration(tokens: Int, tokensPerSecond: Double, timeToFirstToken: Double) {
+    public func recordGeneration(_ response: GenerationResponse) {
         totalRequests += 1
-        totalTokens += tokens
-        self.lastTokensPerSecond = tokensPerSecond
-        self.lastTTFT = timeToFirstToken
+        totalTokens += response.completionTokens
+        lastTokensPerSecond = response.tokensPerSecond
+        lastTTFT = response.timeToFirstToken
+        gpuActiveBytes = Int64(response.memory.activeBytes)
+        gpuPeakBytes = Int64(response.memory.peakBytes)
     }
 
     public func setModelMemory(mb: Int) {
-        self.modelRAMMB = mb
+        modelRAMMB = mb
     }
 
-    public func setActiveRequests(_ count: Int) {
-        self.activeRequests = max(0, count)
-    }
+    public func requestStarted() { activeRequests += 1 }
+    public func requestFinished() { activeRequests = max(0, activeRequests - 1) }
 
-    public func setParkedConversations(_ count: Int) {
-        self.parkedConversations = max(0, count)
-    }
-
-    public func setKVCacheSize(bytes: Int64) {
-        self.kvCacheSizeBytes = max(0, bytes)
-    }
-
-    public func recordSpeculative(drafted: Int, accepted: Int) {
-        self.speculativeDrafted += drafted
-        self.speculativeAccepted += accepted
-    }
-
-    public func snapshot(profiler: SystemProfiler? = nil) async -> ServerTelemetrySnapshot {
-        let p = profiler ?? SystemProfiler()
-        let res = await p.detectResources()
-        let availGB = Double(res.availableRAM) / 1_073_741_824.0
-
-        let acceptanceRate: Double?
-        if speculativeDrafted > 0 {
-            acceptanceRate = Double(speculativeAccepted) / Double(speculativeDrafted)
+    public func snapshot(profiler: SystemProfiler = SystemProfiler()) async -> ServerTelemetrySnapshot {
+        let hw: SystemProfiler.SystemResources
+        if let cached = hardware {
+            hw = cached
         } else {
-            acceptanceRate = nil
+            hw = await profiler.detectResources()
+            hardware = hw
         }
+        let availGB = Double(await profiler.currentAvailableRAM()) / 1_073_741_824.0
 
         return ServerTelemetrySnapshot(
             timestamp: Date(),
@@ -132,28 +110,13 @@ public actor TelemetryTracker {
             totalRequests: totalRequests,
             totalTokensGenerated: totalTokens,
             activeRequests: activeRequests,
-            parkedConversations: parkedConversations,
-            kvCacheSizeBytes: kvCacheSizeBytes,
-            kvCacheSizeFormatted: Self.formatBytes(kvCacheSizeBytes),
-            speculativeAcceptanceRate: acceptanceRate,
-            totalRAMGB: res.totalRAMGB,
+            gpuActiveBytes: gpuActiveBytes,
+            gpuPeakBytes: gpuPeakBytes,
+            totalRAMGB: hw.totalRAMGB,
             availableRAMGB: (availGB * 10).rounded() / 10,
             modelRAMMB: modelRAMMB,
-            chipModel: res.chipModel,
-            gpuName: res.gpuName
+            chipModel: hw.chipModel,
+            gpuName: hw.gpuName
         )
-    }
-
-    public static func formatBytes(_ bytes: Int64) -> String {
-        switch bytes {
-        case 0..<1024:
-            return "\(bytes) B"
-        case 0..<1_048_576:
-            return String(format: "%.1f KB", Double(bytes) / 1024.0)
-        case 0..<1_073_741_824:
-            return String(format: "%.1f MB", Double(bytes) / 1_048_576.0)
-        default:
-            return String(format: "%.2f GB", Double(bytes) / 1_073_741_824.0)
-        }
     }
 }

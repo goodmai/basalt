@@ -2,7 +2,9 @@ import SwiftUI
 
 @available(macOS 14.0, *)
 public struct MonitorView: View {
+    @Environment(AppState.self) private var appState
     @State private var snapshot: ServerTelemetrySnapshot?
+    @State private var loadError: String?
     @State private var isRefreshing: Bool = false
     private let timer = Timer.publish(every: 2.0, on: .main, in: .common).autoconnect()
 
@@ -52,9 +54,9 @@ public struct MonitorView: View {
                             systemImage: "stopwatch.fill"
                         )
                         metricCard(
-                            title: "KV Cache Size",
-                            value: s.kvCacheSizeFormatted,
-                            unit: "\(s.kvCacheSizeBytes) bytes",
+                            title: "MLX GPU Memory",
+                            value: formatBytes(s.gpuActiveBytes),
+                            unit: "active · peak \(formatBytes(s.gpuPeakBytes))",
                             color: .purple,
                             systemImage: "memorychip.fill"
                         )
@@ -108,14 +110,6 @@ public struct MonitorView: View {
                                     .font(.title3)
                                     .bold()
                             }
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text("Parked Conversations")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                                Text("\(s.parkedConversations)")
-                                    .font(.title3)
-                                    .bold()
-                            }
                         }
                         .padding(.top, 8)
                     }
@@ -131,15 +125,16 @@ public struct MonitorView: View {
                         HStack(spacing: 32) {
                             statItem(title: "Total Requests", value: "\(s.totalRequests)")
                             statItem(title: "Tokens Generated", value: "\(s.totalTokensGenerated)")
-                            if let spec = s.speculativeAcceptanceRate {
-                                statItem(title: "Speculative Acceptance", value: String(format: "%.1f%%", spec * 100))
-                            }
                         }
                     }
                     .padding()
                     .background(Color(NSColor.controlBackgroundColor))
                     .cornerRadius(10)
 
+                } else if let loadError {
+                    Text("Server telemetry unavailable: \(loadError)")
+                        .foregroundColor(.secondary)
+                        .frame(maxWidth: .infinity, minHeight: 200)
                 } else {
                     VStack(spacing: 12) {
                         ProgressView()
@@ -159,11 +154,18 @@ public struct MonitorView: View {
         }
     }
 
+    /// Polls the server over REST: the model and its counters live in the serving process,
+    /// not in this GUI client.
+    @MainActor
     private func refreshMetrics() async {
         isRefreshing = true
-        let snap = await TelemetryTracker.shared.snapshot()
-        self.snapshot = snap
-        isRefreshing = false
+        defer { isRefreshing = false }
+        do {
+            snapshot = try await appState.restClient.stats()
+            loadError = nil
+        } catch {
+            loadError = error.localizedDescription
+        }
     }
 
     private func metricCard(title: String, value: String, unit: String, color: Color, systemImage: String) -> some View {
