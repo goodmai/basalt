@@ -81,6 +81,10 @@ struct FitCommand: AsyncParsableCommand {
                 let ram_mb: Int64
                 let estimated_tps: Int
                 let context_window: Int
+                let measured: Bool
+                let calibration_factor: Double
+                let quantization: String
+                let optimal_quantization: String?
             }
             struct JsonOutput: Encodable {
                 let device: DeviceOutput
@@ -101,7 +105,11 @@ struct FitCommand: AsyncParsableCommand {
                         score: r.score,
                         ram_mb: r.estimatedRAM,
                         estimated_tps: r.estimatedTPS,
-                        context_window: r.contextWindow
+                        context_window: r.contextWindow,
+                        measured: r.isMeasured,
+                        calibration_factor: r.calibrationFactor,
+                        quantization: r.selectedQuantization,
+                        optimal_quantization: r.optimalQuantization
                     )
                 }
             )
@@ -134,24 +142,13 @@ struct FitCommand: AsyncParsableCommand {
     private func displayTable(_ recommendations: [FitScore]) {
         print(TerminalUI.heading("Top Recommendations:"))
         
-        let headers = ["Model", "Fit", "Score", "RAM", "TPS", "Context"]
+        // "Best width" is the grid width that would fit this machine — a target for picking a
+        // variant, not a claim that the repo publishes it.
+        let headers = ["Model", "Fit", "Score", "RAM", "TPS", "Context", "Best width"]
         var rows: [[String]] = []
         
         for rec in recommendations {
-            let fitIndicator = "\(rec.fitLevel.emoji) \(rec.fitLevel.rawValue.prefix(4))"
-            let score = String(format: "%.1f", rec.score)
-            let ram = formatRAM(rec.estimatedRAM)
-            let tps = "\(rec.estimatedTPS)"
-            let context = "\(rec.contextWindow / 1000)k"
-            
-            rows.append([
-                rec.modelName,
-                fitIndicator,
-                score,
-                ram,
-                tps,
-                context
-            ])
+            rows.append(Self.tableRow(rec))
         }
         
         let table = TableRenderer.render(
@@ -164,7 +161,20 @@ struct FitCommand: AsyncParsableCommand {
         print(table)
     }
     
-    private func formatRAM(_ mb: Int64) -> String {
+    /// One table row; "measured ✓" marks a TPS that comes from a benchmark on this machine.
+    static func tableRow(_ rec: FitScore) -> [String] {
+        [
+            rec.modelName,
+            "\(rec.fitLevel.emoji) \(rec.fitLevel.rawValue.prefix(4))",
+            String(format: "%.1f", rec.score),
+            formatRAM(rec.estimatedRAM),
+            rec.isMeasured ? "\(rec.estimatedTPS) measured ✓" : "\(rec.estimatedTPS)",
+            "\(rec.contextWindow / 1000)k",
+            rec.optimalQuantization ?? "—"
+        ]
+    }
+
+    private static func formatRAM(_ mb: Int64) -> String {
         if mb < 1024 {
             return "\(mb) MB"
         } else {

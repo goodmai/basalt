@@ -7,16 +7,18 @@ let package = Package(
         .macOS(.v15)
     ],
     dependencies: [
-        .package(url: "https://github.com/ml-explore/mlx-swift",     from: "0.20.0"),
-        .package(url: "https://github.com/ml-explore/mlx-swift-lm",  from: "3.31.4"),
-        .package(url: "https://github.com/hummingbird-project/hummingbird", from: "2.6.0"),
-        .package(url: "https://github.com/apple/swift-argument-parser",    from: "1.5.0"),
+        .package(url: "https://github.com/ml-explore/mlx-swift",     from: "0.32.3"),
+        .package(url: "https://github.com/ml-explore/mlx-swift-lm",  from: "3.32.3"),
+        // Capped below 2.28: it pulls swift-distributed-tracing 1.7.x, whose ServiceContextModule target
+        // collides with swift-service-context ("target names need to be unique"). Lift once that is resolved.
+        .package(url: "https://github.com/hummingbird-project/hummingbird", "2.27.0"..<"2.28.0"),
+        .package(url: "https://github.com/apple/swift-argument-parser",    from: "1.8.2"),
         // Provides the `Tokenizers` module used by MLXHuggingFace macros
-        .package(url: "https://github.com/huggingface/swift-transformers",  from: "1.3.3"),
+        .package(url: "https://github.com/huggingface/swift-transformers",  from: "1.3.5"),
         // Epic 16: CLI Enhancements
-        .package(url: "https://github.com/onevcat/Rainbow.git", from: "4.0.0"),
-        .package(url: "https://github.com/vapor/console-kit.git", from: "4.0.0"),
-        .package(url: "https://github.com/apple/swift-markdown.git", from: "0.5.0"),
+        .package(url: "https://github.com/onevcat/Rainbow.git", from: "4.2.2"),
+        .package(url: "https://github.com/vapor/console-kit.git", from: "4.16.1"),
+        .package(url: "https://github.com/apple/swift-markdown.git", from: "0.9.0"),
         .package(url: "https://github.com/JohnSundell/Splash.git", from: "0.16.0"),
     ],
     targets: [

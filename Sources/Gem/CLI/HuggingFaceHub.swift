@@ -104,6 +104,29 @@ public struct ModelCache: Sendable {
         return modelRoot.appendingPathComponent("snapshots/main")
     }
 
+    /// Strips local path prefixes, snapshot dirs, or claude-local/ prefixes to yield the canonical model repo ID
+    public static func canonicalRepoId(from raw: String) -> String {
+        let cleaned = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if cleaned.hasPrefix("claude-local/") {
+            return ModelsController.hfRepoId(from: cleaned)
+        }
+        if cleaned.contains("models--") {
+            let parts = cleaned.components(separatedBy: "models--")
+            if let last = parts.last?.components(separatedBy: "/").first {
+                return last.replacingOccurrences(of: "--", with: "/")
+            }
+        }
+        if cleaned.hasPrefix("/") || cleaned.hasPrefix("./") {
+            let url = URL(fileURLWithPath: cleaned)
+            let lastComponent = url.lastPathComponent
+            if lastComponent.contains("--") {
+                return lastComponent.replacingOccurrences(of: "models--", with: "").replacingOccurrences(of: "--", with: "/")
+            }
+            return lastComponent
+        }
+        return cleaned
+    }
+
     public static func isDownloaded(repoId: String) -> Bool {
         let dir = cacheDir(for: repoId)
         let marker = dir.appendingPathComponent("config.json")
