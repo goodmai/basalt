@@ -236,7 +236,7 @@ struct ServeCommand: AsyncParsableCommand {
             do {
                 dict = try ServerConfig.load(from: url)
             } catch {
-                throw ValidationError("Cannot read --config \(url.path): \(error.localizedDescription)")
+                throw ValidationError("Cannot read server config \(url.path): \(error.localizedDescription)")
             }
         }
         func value<T>(_ key: String, as _: T.Type) throws -> T? {
@@ -246,10 +246,12 @@ struct ServeCommand: AsyncParsableCommand {
             }
             return typed
         }
+        // An empty --api-key / BASALT_API_KEY is "not set", so it cannot mask the config's key.
+        let cliKey = cliApiKey.flatMap { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 }
         return (
             port: try cliPort ?? value("port", as: Int.self) ?? 8080,
             host: try cliHost ?? value("host", as: String.self) ?? "127.0.0.1",
-            apiKey: try cliApiKey ?? value("api_key", as: String.self)
+            apiKey: try cliKey ?? value("api_key", as: String.self)
         )
     }
 

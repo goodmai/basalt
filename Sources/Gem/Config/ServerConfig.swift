@@ -166,19 +166,24 @@ public struct ServerConfig: Sendable {
     }
 
     /// Atomic write whose file is 0600 from the moment it exists (no world-readable window):
-    /// the temp file is created owner-only, then swapped in by rename.
+    /// the temp file is opened O_EXCL with mode 0600, then swapped in by rename(2).
+    /// (FileManager.createFile and replaceItemAt both chmod after the data is on disk.)
     static func writeOwnerOnly(_ data: Data, to url: URL) throws {
-        let fileManager = FileManager.default
         let tmp = url.deletingLastPathComponent().appendingPathComponent(".\(url.lastPathComponent).\(UUID().uuidString).tmp")
-        guard fileManager.createFile(atPath: tmp.path, contents: data, attributes: [.posixPermissions: 0o600]) else {
-            throw CocoaError(.fileWriteUnknown, userInfo: [NSFilePathErrorKey: tmp.path])
+        func fail(_ code: Int32) -> POSIXError {
+            unlink(tmp.path)
+            return POSIXError(POSIXErrorCode(rawValue: code) ?? .EIO)
         }
-        // rename(2), not replaceItemAt: the latter copies the old file's permissions back.
-        guard rename(tmp.path, url.path) == 0 else {
+        let fd = open(tmp.path, O_CREAT | O_EXCL | O_WRONLY, 0o600)
+        guard fd >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+        let written = data.withUnsafeBytes { write(fd, $0.baseAddress, $0.count) }
+        guard written == data.count, fsync(fd) == 0 else {
             let code = errno
-            try? fileManager.removeItem(at: tmp)
-            throw POSIXError(POSIXErrorCode(rawValue: code) ?? .EIO)
+            close(fd)
+            throw fail(code)
         }
+        guard close(fd) == 0 else { throw fail(errno) }
+        guard rename(tmp.path, url.path) == 0 else { throw fail(errno) }
     }
 
     /// Loads the configuration dictionary from a given file URL.

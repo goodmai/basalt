@@ -474,6 +474,11 @@ struct ConfigTests {
         #expect(throws: (any Error).self) {
             _ = try ServeCommand.resolveNetwork(cliPort: nil, cliHost: nil, cliApiKey: nil, configFile: file.path)
         }
+        let (dir2, file2) = try tempConfig(#"{"api_key": "from-file"}"#)
+        defer { try? FileManager.default.removeItem(at: dir2) }
+        let blank = try ServeCommand.resolveNetwork(cliPort: nil, cliHost: nil, cliApiKey: "  ", configFile: file2.path)
+        #expect(blank.apiKey == "from-file", "an empty CLI/env key must not mask the config key")
+
         // An explicit CLI value never consults the bad field.
         let ok = try ServeCommand.resolveNetwork(cliPort: 8081, cliHost: nil, cliApiKey: nil, configFile: file.path)
         #expect(ok.port == 8081)
