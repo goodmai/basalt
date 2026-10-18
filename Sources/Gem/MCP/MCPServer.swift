@@ -299,7 +299,8 @@ public final class MCPServer: Sendable {
         let loaded = await orchestrator.currentModelId
         let requestedId = args?["modelId"] as? String
         let health = await orchestrator.healthSnapshot(modelId: loaded.isEmpty ? modelId : loaded)
-        let (requests, tokens) = await orchestrator.diagnostics
+        // One snapshot feeds both blocks, so diagnostics and telemetry cannot disagree
+        // (the orchestrator's own counters skip streaming tokens).
         let telemetry = await orchestrator.telemetrySnapshot()
         
         struct StatusOutput: Encodable {
@@ -325,7 +326,7 @@ public final class MCPServer: Sendable {
             loadedModel: loaded.isEmpty ? "none" : loaded,
             requestedModel: requestedId,
             requestedModelLoaded: requestedId.map { $0 == loaded },
-            diagnostics: .init(requestCount: requests, totalTokensGenerated: tokens),
+            diagnostics: .init(requestCount: telemetry.totalRequests, totalTokensGenerated: telemetry.totalTokensGenerated),
             telemetry: telemetry
         )
         
