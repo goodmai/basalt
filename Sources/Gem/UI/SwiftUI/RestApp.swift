@@ -77,15 +77,28 @@ class AppState {
 @available(macOS 14.0, *)
 struct ContentView: View {
     @Environment(AppState.self) private var appState
+    @State private var selectedTab: Int = 0
     
     var body: some View {
         Group {
             if appState.isAuthenticated {
-                ChatView()
+                TabView(selection: $selectedTab) {
+                    ChatView()
+                        .tabItem {
+                            Label("Chat", systemImage: "message")
+                        }
+                        .tag(0)
+
+                    MonitorView()
+                        .tabItem {
+                            Label("Monitor", systemImage: "gauge.with.dots.needle.bottom.50percent")
+                        }
+                        .tag(1)
+                }
             } else {
                 LoginView()
             }
         }
-        .frame(minWidth: 600, minHeight: 500)
+        .frame(minWidth: 750, minHeight: 550)
     }
 }

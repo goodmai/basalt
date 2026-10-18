@@ -47,6 +47,7 @@ public actor ModelOrchestratorActor {
             self.modelSizeMB = Int(size / 1_048_576)
             logger.info("Model size: \(self.modelSizeMB) MB")
         }
+        await TelemetryTracker.shared.setModelMemory(mb: self.modelSizeMB)
         try await engine.load(modelPath: path)
     }
 
@@ -106,6 +107,11 @@ public actor ModelOrchestratorActor {
                 try await self.engine.generate(request: validated)
             }
             totalTokensGenerated += response.completionTokens
+            await TelemetryTracker.shared.recordGeneration(
+                tokens: response.completionTokens,
+                tokensPerSecond: response.tokensPerSecond,
+                timeToFirstToken: response.timeToFirstToken
+            )
             return response
         } catch let error as GemError {
             throw error
@@ -167,6 +173,12 @@ public actor ModelOrchestratorActor {
             isReady: ready,
             version: HealthResponse.version
         )
+    }
+
+    // MARK: — Telemetry
+
+    public func telemetrySnapshot() async -> ServerTelemetrySnapshot {
+        await TelemetryTracker.shared.snapshot()
     }
 
     // MARK: — Model catalogue

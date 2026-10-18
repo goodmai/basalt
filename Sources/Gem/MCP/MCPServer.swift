@@ -298,6 +298,7 @@ public final class MCPServer: Sendable {
         let health = await orchestrator.healthSnapshot(modelId: requestedId)
         let (requests, tokens) = await orchestrator.diagnostics
         let loaded = await orchestrator.currentModelId
+        let telemetry = await orchestrator.telemetrySnapshot()
         
         struct StatusOutput: Encodable {
             let status: String
@@ -306,6 +307,7 @@ public final class MCPServer: Sendable {
             let loadedModel: String
             let requestedModel: String?
             let diagnostics: Diagnostics
+            let telemetry: ServerTelemetrySnapshot
             
             struct Diagnostics: Encodable {
                 let requestCount: Int
@@ -319,7 +321,8 @@ public final class MCPServer: Sendable {
             version: health.version,
             loadedModel: loaded.isEmpty ? "none" : loaded,
             requestedModel: requestedId,
-            diagnostics: .init(requestCount: requests, totalTokensGenerated: tokens)
+            diagnostics: .init(requestCount: requests, totalTokensGenerated: tokens),
+            telemetry: telemetry
         )
         
         let jsonStr = (try? String(data: encoder.encode(statusObj), encoding: .utf8)) ?? "{\"status\":\"\(health.status)\"}"

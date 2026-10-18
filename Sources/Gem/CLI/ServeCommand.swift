@@ -87,6 +87,12 @@ struct ServeCommand: AsyncParsableCommand {
     @Flag(name: .customLong("dry-run"), help: "Perform a dry-run memory feasibility assessment and exit without starting the server")
     var dryRun: Bool = false
 
+    @Flag(name: .customLong("stats"), help: "Periodically output inference telemetry metrics (tok/s, TTFT, memory, KV cache size, acceptance rate)")
+    var stats: Bool = false
+
+    @Option(name: .customLong("stats-interval"), help: "Interval in seconds between periodic telemetry stats outputs (default: 5)")
+    var statsInterval: Int = 5
+
     @Option(name: .long, help: "Log level: debug | info | warn | error (default: info)")
     var logLevel: ServerConfig.LogLevel = .info
 
@@ -223,6 +229,16 @@ struct ServeCommand: AsyncParsableCommand {
                     modelId: resolvedPath.split(separator: "/").last.map(String.init)
                 )
                 group.addTask { await mcpServer.run() }
+            }
+            if stats {
+                let interval = max(1, statsInterval)
+                group.addTask {
+                    while !Task.isCancelled {
+                        try await Task.sleep(nanoseconds: UInt64(interval) * 1_000_000_000)
+                        let snapshot = await orchestrator.telemetrySnapshot()
+                        fputs("\(snapshot.formattedStatsLine)\n", stderr)
+                    }
+                }
             }
             try await group.next()
             group.cancelAll()
