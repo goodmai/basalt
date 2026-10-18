@@ -61,6 +61,21 @@ public struct GenerationRequest: Codable, Sendable {
         self.tools = tools
     }
 
+    /// The same request with another token budget. Kept next to the stored properties so a new
+    /// field cannot be forgotten by a caller that rebuilds the request field by field.
+    public func withMaxTokens(_ maxTokens: Int) -> GenerationRequest {
+        GenerationRequest(
+            prompt: prompt,
+            maxTokens: maxTokens,
+            temperature: temperature,
+            topP: topP,
+            enableThinking: enableThinking,
+            reasoningEffort: reasoningEffort,
+            isServiceRequest: isServiceRequest,
+            tools: tools
+        )
+    }
+
     public func validated(defaultMaxTokens: Int = 4096) throws(GemError) -> GenerationRequest {
         guard !prompt.isEmpty else {
             throw .invalidRequestStructure(details: "prompt must not be empty")

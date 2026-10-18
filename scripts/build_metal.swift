@@ -71,6 +71,11 @@ if fm.fileExists(atPath: genKernelDir) {
     metalFiles.append(contentsOf: findMetalFiles(in: genKernelDir))
 }
 
+if !fm.fileExists(atPath: metalLibPath) && fm.fileExists(atPath: "default.metallib") {
+    try? fm.createDirectory(atPath: outputDir, withIntermediateDirectories: true)
+    try? fm.copyItem(atPath: "default.metallib", toPath: metalLibPath)
+}
+
 // Check if metallib exists and is newer than all .metal files
 if fm.fileExists(atPath: metalLibPath),
    let metalLibDate = getModificationDate(of: metalLibPath) {
@@ -80,10 +85,17 @@ if fm.fileExists(atPath: metalLibPath),
         }
         return true
     }
-    if allSourcesNewer {
+    if allSourcesNewer && !metalFiles.isEmpty {
         log("Metal shaders up to date, skipping rebuild", level: .info)
         exit(0)
     }
+}
+
+if metalFiles.isEmpty {
+    // Nothing to compile means mlx-swift was never checked out (run `swift build` first), not that
+    // the work is done: a green step here only moves the failure to MLX aborting the test run.
+    log("No .metal files found to compile — run `swift build` first", level: .error)
+    exit(1)
 }
 
 try? fm.createDirectory(atPath: tempDir, withIntermediateDirectories: true)
@@ -144,6 +156,11 @@ for file in metalFiles {
 var airFiles: [String] = []
 if let contents = try? fm.contentsOfDirectory(atPath: tempDir) {
     airFiles = contents.filter { $0.hasSuffix(".air") }.map { "\(tempDir)/\($0)" }
+}
+
+if airFiles.isEmpty {
+    log("No .air files produced — every kernel failed to compile", level: .error)
+    exit(1)
 }
 
 var metallibArgs = ["-sdk", "macosx", "metallib"]

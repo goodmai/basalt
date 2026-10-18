@@ -1,0 +1,44 @@
+name: Unit Tests
+
+on:
+  push:
+    branches: [ main, "feat/**" ]
+  pull_request:
+
+jobs:
+  test:
+    name: Swift Tests
+    runs-on: [self-hosted, macOS, ARM64]
+    # The runner is the owner's own machine and the repository is public. The real protection is
+    # the repository setting "require approval for all external contributors" (a fork PR could
+    # edit this file); this condition is a second layer that keeps fork PRs off the runner even
+    # once a run is approved.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Configure Swift toolchain
+        run: |
+          LATEST_XCODE=$(ls -d /Applications/Xcode*.app 2>/dev/null | sort -V | tail -n 1)
+          if [ -n "$LATEST_XCODE" ] && [ -d "$LATEST_XCODE/Contents/Developer" ]; then
+            echo "DEVELOPER_DIR=$LATEST_XCODE/Contents/Developer" >> $GITHUB_ENV
+            export DEVELOPER_DIR="$LATEST_XCODE/Contents/Developer"
+          fi
+          echo "Active Swift version:"
+          swift --version
+
+      - name: Build tests
+        run: swift build --build-tests
+
+      - name: Cache MLX metallib
+        uses: actions/cache@v6
+        with:
+          path: default.metallib
+          key: metallib-${{ hashFiles('Package.resolved') }}
+
+      - name: Compile MLX Metal kernels
+        run: ./scripts/build_metal.swift --skip-unsupported
+
+      - name: Run unit tests
+        run: swift test
