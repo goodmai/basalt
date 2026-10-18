@@ -46,7 +46,7 @@ for arg in arguments {
 }
 
 log("==============================================", level: .info)
-log("🚀 Installing Gemm for Apple Silicon...", level: .info)
+log("🚀 Installing Basalt for Apple Silicon...", level: .info)
 log("==============================================", level: .info)
 
 @discardableResult
@@ -71,13 +71,13 @@ func runCommand(_ command: String, args: [String]) -> (status: Int32, output: St
 
 let unameResult = runCommand("/usr/bin/uname", args: [])
 if unameResult.output != "Darwin" && !isDryRun {
-    log("❌ Error: Gemm requires macOS.", level: .error)
+    log("❌ Error: Basalt requires macOS.", level: .error)
     exit(1)
 }
 
 let archResult = runCommand("/usr/bin/uname", args: ["-m"])
 if archResult.output != "arm64" && !isDryRun {
-    log("❌ Error: Gemm requires Apple Silicon (M1/M2/M3/M4).", level: .error)
+    log("❌ Error: Basalt requires Apple Silicon (M1/M2/M3/M4).", level: .error)
     exit(1)
 }
 
@@ -94,7 +94,7 @@ if buildResult.status != 0 && !isDryRun {
     exit(1)
 }
 
-let binPath = ".build/release/Gemm"
+let binPath = ".build/release/Basalt"
 let fm = FileManager.default
 
 if !fm.fileExists(atPath: binPath) && !isDryRun {
@@ -124,11 +124,11 @@ if nonInteractive {
 
 switch choice {
 case "1":
-    log("🔑 Requesting sudo to install to /usr/local/bin/gemm...", level: .info)
+    log("🔑 Requesting sudo to install to /usr/local/bin/basalt...", level: .info)
     let _ = runCommand("/usr/bin/sudo", args: ["mkdir", "-p", "/usr/local/bin"])
-    let sudoResult2 = runCommand("/usr/bin/sudo", args: ["cp", binPath, "/usr/local/bin/gemm"])
+    let sudoResult2 = runCommand("/usr/bin/sudo", args: ["cp", binPath, "/usr/local/bin/basalt"])
     if sudoResult2.status == 0 {
-        log("✅ Installation complete! You can now run: gemm --help", level: .info)
+        log("✅ Installation complete! You can now run: basalt --help", level: .info)
     } else {
         log("❌ Error during installation.", level: .error)
     }
@@ -145,7 +145,7 @@ case "2":
     }
     
     let pwd = fm.currentDirectoryPath
-    let aliasStr = "\n# Gemm alias\nalias gemm='swift run --package-path \(pwd) Gemm'\n"
+    let aliasStr = "\n# Basalt alias\nalias basalt='swift run --package-path \(pwd) Basalt'\n"
     
     if !shellRC.isEmpty {
         if let data = aliasStr.data(using: .utf8),
@@ -160,10 +160,10 @@ case "2":
         }
     } else {
         log("❌ Could not detect shell config. Add this to your shell config:", level: .error)
-        log("alias gemm='swift run --package-path \(pwd) Gemm'", level: .info)
+        log("alias basalt='swift run --package-path \(pwd) Basalt'", level: .info)
     }
 case "3":
-    log("Skipped. Run with: swift run Gemm --help", level: .info)
+    log("Skipped. Run with: swift run Basalt --help", level: .info)
 default:
     log("Invalid choice. Exiting.", level: .warning)
 }
@@ -171,5 +171,5 @@ default:
 log("\n🎉 Setup complete!\n", level: .info)
 log("Next steps:", level: .info)
 log("1. Download a model: huggingface-cli download mlx-community/Qwen3.5-4B-4bit", level: .info)
-log("2. Start server: gemm serve --model mlx-community/Qwen3.5-4B-4bit --rest", level: .info)
+log("2. Start server: basalt serve --model mlx-community/Qwen3.5-4B-4bit --rest", level: .info)
 log("3. Test it: curl http://localhost:8080/api/v1/health", level: .info)

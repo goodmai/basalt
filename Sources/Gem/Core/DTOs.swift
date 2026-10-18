@@ -151,7 +151,7 @@ public struct HealthResponse: Codable, Sendable {
     public let isReady: Bool
     public let version: String
 
-    public static let version = "0.1.0"
+    public static let version = "0.2.0"
 }
 
 // MARK: — Error envelope (REST only)

@@ -11,7 +11,7 @@ struct ChatView: View {
         VStack(spacing: 0) {
             // Header
             HStack {
-                Text("Gemm REST Client")
+                Text("Basalt REST Client")
                     .font(.headline)
                 Spacer()
                 

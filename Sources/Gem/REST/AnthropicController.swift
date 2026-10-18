@@ -3,11 +3,11 @@ import Hummingbird
 
 // MARK: — Anthropic Messages API (no auth required)
 //
-// Implements POST /v1/messages so Claude Code can use Gemm as a drop-in backend:
+// Implements POST /v1/messages so Claude Code can use Basalt as a drop-in backend:
 //
 //   export ANTHROPIC_API_KEY=local        # any non-empty string
 //   export ANTHROPIC_BASE_URL=http://localhost:8080
-//   claude                                # routes all traffic to local Gemm server
+//   claude                                # routes all traffic to local Basalt server
 //
 // The server accepts any ANTHROPIC_API_KEY value and never validates it.
 
@@ -146,7 +146,7 @@ struct AnthropicController: Sendable {
             let buffer = try await request.body.collect(upTo: 4 * 1024 * 1024)
             let data = Data(buffer.readableBytesView)
             let raw = String(data: data, encoding: .utf8) ?? "<non-utf8>"
-            try? raw.write(toFile: "/tmp/gemm_anthropic_request.json", atomically: true, encoding: .utf8)
+            try? raw.write(toFile: "/tmp/basalt_anthropic_request.json", atomically: true, encoding: .utf8)
             do {
                 dto = try JSONDecoder().decode(MessagesRequest.self, from: data)
             } catch {
