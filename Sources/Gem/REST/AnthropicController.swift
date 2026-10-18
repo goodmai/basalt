@@ -1,5 +1,6 @@
 import Foundation
 import Hummingbird
+import HTTPTypes
 
 // MARK: — Anthropic Messages API (no auth required)
 //
@@ -101,11 +102,24 @@ struct AnthropicController: Sendable {
         let temperature: Double?
         let topP: Double?
         let stream: Bool?
+        let thinking: ThinkingConfig?
+        let reasoningEffort: String?
 
         enum CodingKeys: String, CodingKey {
-            case model, messages, system, temperature, stream
+            case model, messages, system, temperature, stream, thinking
             case maxTokens = "max_tokens"
             case topP = "top_p"
+            case reasoningEffort = "reasoning_effort"
+        }
+    }
+
+    struct ThinkingConfig: Codable, Sendable {
+        let type: String
+        let budgetTokens: Int?
+
+        enum CodingKeys: String, CodingKey {
+            case type
+            case budgetTokens = "budget_tokens"
         }
     }
 
@@ -164,11 +178,24 @@ struct AnthropicController: Sendable {
         }
 
         let prompt = buildPrompt(system: dto.system, messages: dto.messages)
+        let service = ServiceRequestDetector.prepare(prompt: prompt, maxTokens: dto.maxTokens, headers: request.headers)
+
+        let effort: String?
+        if let re = dto.reasoningEffort {
+            effort = re
+        } else if let th = dto.thinking {
+            effort = th.type == "disabled" ? "off" : (th.budgetTokens.map { $0 > 8000 ? "high" : ($0 > 2000 ? "medium" : "low") } ?? "medium")
+        } else {
+            effort = nil
+        }
+
         let genRequest = GenerationRequest(
-            prompt: prompt,
+            prompt: service.prompt,
             maxTokens: dto.maxTokens ?? 8192,
             temperature: dto.temperature ?? 0.7,
-            topP: dto.topP ?? 0.9
+            topP: dto.topP ?? 0.9,
+            reasoningEffort: effort,
+            isServiceRequest: service.isService
         )
 
         let requestedModel = dto.model.map { ModelsController.hfRepoId(from: $0) }  // strip claude-local/ prefix if present
@@ -214,7 +241,7 @@ struct AnthropicController: Sendable {
 
     private func anthropicSSEStream(genRequest: GenerationRequest, model: String, requestedModel: String? = nil) -> AsyncStream<ByteBuffer> {
         AsyncStream { continuation in
-            Task {
+            let task = Task {
                 let msgId = "msg_\(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(24))"
 
                 func send(_ event: String, _ data: [String: Any]) {
@@ -240,46 +267,87 @@ struct AnthropicController: Sendable {
                     ] as [String: Any]
                 ])
 
-                // content_block_start
-                send("content_block_start", [
-                    "type": "content_block_start",
-                    "index": 0,
-                    "content_block": ["type": "text", "text": ""]
-                ])
-
                 // ping
                 send("ping", ["type": "ping"])
 
+                // Content blocks per the Messages streaming spec: reasoning goes into its own
+                // `thinking` block, the answer into a `text` block after it — a thinking_delta
+                // inside a text block is something SDKs drop or reject.
+                var openBlock: (index: Int, type: String)?
+                var nextIndex = 0
+                func open(_ type: String) {
+                    if let current = openBlock {
+                        if current.type == type { return }
+                        send("content_block_stop", ["type": "content_block_stop", "index": current.index])
+                    }
+                    let block: [String: Any] = type == "thinking"
+                        ? ["type": "thinking", "thinking": "", "signature": ""]
+                        : ["type": "text", "text": ""]
+                    send("content_block_start", ["type": "content_block_start", "index": nextIndex, "content_block": block])
+                    openBlock = (nextIndex, type)
+                    nextIndex += 1
+                }
+
                 var outputTokens = 0
+                var final: GenerationResponse?
 
                 do {
                     let stream = try await orchestrator.generateStream(request: genRequest, modelId: requestedModel)
                     for await chunk in stream {
-                        if case .text(let text) = chunk {
+                        switch chunk {
+                        case .toolCall:  // this path declares no tools, so a call has no client to go to
+                            break
+                        case .text(let text):
                             outputTokens += 1
+                            open("text")
                             send("content_block_delta", [
                                 "type": "content_block_delta",
-                                "index": 0,
+                                "index": openBlock!.index,
                                 "delta": ["type": "text_delta", "text": text]
                             ])
+                        case .reasoning(let reasoning):
+                            outputTokens += 1
+                            // Reasoning after the answer started has no block to go to; drop it.
+                            guard openBlock?.type != "text" else { continue }
+                            open("thinking")
+                            send("content_block_delta", [
+                                "type": "content_block_delta",
+                                "index": openBlock!.index,
+                                "delta": ["type": "thinking_delta", "thinking": reasoning]
+                            ])
+                        case .metadata(let meta):
+                            final = meta
                         }
                     }
                 } catch {
-                    var buf = ByteBuffer()
-                    buf.writeString("event: error\ndata: {\"type\":\"error\",\"error\":{\"type\":\"api_error\",\"message\":\"\(error.localizedDescription)\"}}\n\n")
-                    continuation.yield(buf)
+                    let errPayload: [String: Any] = [
+                        "type": "error",
+                        "error": [
+                            "type": "api_error",
+                            "message": error.localizedDescription
+                        ]
+                    ]
+                    if let json = try? JSONSerialization.data(withJSONObject: errPayload),
+                       let str = String(data: json, encoding: .utf8) {
+                        var buf = ByteBuffer()
+                        buf.writeString("event: error\ndata: \(str)\n\n")
+                        continuation.yield(buf)
+                    }
                     continuation.finish()
                     return
                 }
 
-                // content_block_stop
-                send("content_block_stop", ["type": "content_block_stop", "index": 0])
+                // An empty answer still carries one (empty) text block.
+                open("text")
+                send("content_block_stop", ["type": "content_block_stop", "index": openBlock!.index])
 
                 // message_delta
                 send("message_delta", [
                     "type": "message_delta",
-                    "delta": ["stop_reason": "end_turn", "stop_sequence": NSNull()],
-                    "usage": ["output_tokens": outputTokens]
+                    // The engine's own counts when it reported them; chunk count otherwise.
+                    "delta": ["stop_reason": final?.finishReason == .length ? "max_tokens" : "end_turn",
+                              "stop_sequence": NSNull()],
+                    "usage": ["output_tokens": final?.completionTokens ?? outputTokens]
                 ])
 
                 // message_stop
@@ -287,6 +355,8 @@ struct AnthropicController: Sendable {
 
                 continuation.finish()
             }
+            // A client that disconnects cancels the generation instead of leaving it running.
+            continuation.onTermination = { _ in task.cancel() }
         }
     }
 
@@ -342,3 +412,4 @@ private extension HTTPResponse.Status {
         self = HTTPResponse.Status(code: code, reasonPhrase: "")
     }
 }
+

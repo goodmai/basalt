@@ -262,12 +262,29 @@ public actor MLXInferenceEngine: InferenceEngine {
         }
     }
 
+    // MARK: — Template Context
+    public static func buildTemplateContext(
+        request: GenerationRequest,
+        defaultReasoningEffort: String? = nil,
+        profile: (any ModelProfile)? = nil
+    ) -> [String: any Sendable]? {
+        // ReasoningPolicy(rawValue:) maps "off"/"none" to disabled; each profile maps level names
+        // onto its template (Qwen: "high" → "xhigh"), GenericProfile passes them through.
+        let policy: ReasoningPolicy = request.enableThinking == false
+            ? .disabled
+            : ReasoningPolicy(rawValue: request.reasoningEffort ?? defaultReasoningEffort) ?? .modelDefault
+
+        let context = (profile ?? GenericProfile()).templateContext(for: policy)
+        return context.isEmpty ? nil : context
+    }
+
     // MARK: — Generate
 
     public func generate(request: GenerationRequest) async throws(GemError) -> GenerationResponse {
         let stream = try await generateStream(request: request)
         var textChunks: [String] = []
         var reasoningChunks: [String] = []
+        var toolCalls: [ToolCallOutput] = []
         var finalResponse: GenerationResponse?
 
         for await chunk in stream {
@@ -278,6 +295,8 @@ public actor MLXInferenceEngine: InferenceEngine {
                 reasoningChunks.append(r)
             case .metadata(let m):
                 finalResponse = m
+            case .toolCall(let call):
+                toolCalls.append(call)
             }
         }
 
@@ -295,8 +314,44 @@ public actor MLXInferenceEngine: InferenceEngine {
             generationTime: finalResponse.generationTime,
             timeToFirstToken: finalResponse.timeToFirstToken,
             memory: finalResponse.memory,
-            finishReason: finalResponse.finishReason
+            finishReason: finalResponse.finishReason,
+            toolCalls: toolCalls.isEmpty ? nil : toolCalls
         )
+    }
+
+    // MARK: — Tools
+
+    /// OpenAI-style function specs for the chat template's tool section.
+    static func toolSpecs(_ tools: [ToolDefinition]?) -> [ToolSpec]? {
+        guard let tools, !tools.isEmpty else { return nil }
+        return tools.map { tool in
+            var function: [String: any Sendable] = ["name": tool.name]
+            if let description = tool.description { function["description"] = description }
+            if let json = tool.parametersJSON,
+               let schema = try? JSONSerialization.jsonObject(with: Data(json.utf8)) {
+                function["parameters"] = sendable(schema)
+            }
+            return ["type": "function", "function": function]
+        }
+    }
+
+    /// JSONSerialization output (NSDictionary/NSArray/NSNumber) as plain Sendable values the
+    /// Jinja renderer understands.
+    private static func sendable(_ value: Any) -> any Sendable {
+        switch value {
+        case let dict as [String: Any]: return dict.mapValues { sendable($0) }
+        case let array as [Any]:        return array.map { sendable($0) }
+        case let number as NSNumber:
+            if CFGetTypeID(number) == CFBooleanGetTypeID() { return number.boolValue }
+            return number.doubleValue.rounded() == number.doubleValue ? number.intValue : number.doubleValue
+        case let string as String:      return string
+        default:                        return String(describing: value)
+        }
+    }
+
+    static func toolCallOutput(_ call: ToolCall) -> ToolCallOutput {
+        let arguments = (try? JSONEncoder().encode(call.function.arguments)).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
+        return ToolCallOutput(id: "call_\(UUID().uuidString.prefix(24))", name: call.function.name, arguments: arguments)
     }
 
     public func generateStream(request: GenerationRequest) async throws(GemError) -> AsyncStream<StreamChunk> {
@@ -319,34 +374,29 @@ public actor MLXInferenceEngine: InferenceEngine {
         if let effectiveMinP = minP ?? profile.defaultMinP { params.minP = effectiveMinP }
         params.seed = seed
 
+        let toolSpecs = Self.toolSpecs(request.tools)
         let userInput: UserInput
         if request.prompt.contains("<|turn|>") || request.prompt.contains("<|channel|>") {
             userInput = UserInput(prompt: request.prompt)
         } else {
-            // Qwen3.x templates open a `<think>` block on every turn and default
-            // reasoning_effort to `xhigh`, so an unqualified request spends its whole
-            // token budget reasoning and gets cut off mid-answer. `none` reaches the
-            // template's harder switch, which emits an already-closed think block and
-            // makes the model answer directly.
-            var context: [String: any Sendable] = [:]
-            switch reasoningEffort {
-            case "none":
-                context["enable_thinking"] = false
-            case .some(let effort):
-                context["reasoning_effort"] = effort
-            case nil:
-                break
-            }
+            let context = Self.buildTemplateContext(
+                request: request,
+                defaultReasoningEffort: reasoningEffort,
+                profile: profile
+            )
             userInput = UserInput(
                 chat: [.user(request.prompt)],
-                additionalContext: context.isEmpty ? nil : context
+                tools: toolSpecs,
+                additionalContext: context
             )
         }
 
         do {
             let lmInput = try await container.prepare(input: userInput)
             logger.trace("Input prepared. Starting MLX generation...")
-            let mlxStream = try await container.generate(input: lmInput, parameters: params)
+            // The same specs go to the tool-call decoder: without them it has no schema, so
+            // every argument comes back as a string ("timeout_ms": "1000") and typed tools fail.
+            let mlxStream = try await container.generate(input: lmInput, parameters: params, tools: toolSpecs)
             
             let promptEndsWithThinking = request.prompt.hasSuffix("<|channel>thought\n")
                 || request.prompt.hasSuffix("<|channel>thought")
@@ -440,8 +490,13 @@ public actor MLXInferenceEngine: InferenceEngine {
                             processBuffer(final: false)
                         case .info(let info):
                             lastInfo = info
-                        case .toolCall, .rejectedToolCall:
-                            break
+                        case .toolCall(let call):
+                            // Text held back for marker detection belongs before the call.
+                            processBuffer(final: true)
+                            continuation.yield(.toolCall(Self.toolCallOutput(call)))
+                        case .rejectedToolCall:
+                            // A call to a tool the request did not declare: nothing to route it to.
+                            GemLogger(module: "MLXInferenceEngine").warn("Model called an undeclared tool; dropped")
                         @unknown default:
                             break
                         }

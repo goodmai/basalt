@@ -36,6 +36,8 @@ class ChatViewModel {
                 for try await chunk in stream {
                     if Task.isCancelled { break }
                     switch chunk {
+                    case .toolCall:  // this path declares no tools, so a call has no client to go to
+                        break
                     case .text(let t):
                         messages[assistantIndex].text += t
                     case .reasoning(let r):

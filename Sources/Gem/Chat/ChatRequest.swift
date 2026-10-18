@@ -49,7 +49,9 @@ public enum ReasoningPolicy: Sendable, Equatable {
         case nil:                     return nil
         case "none", "off", "false":  self = .disabled
         case "default", "auto":       self = .modelDefault
-        case .some(let value):        self = .effort(value)
+        // Levels pass through as named: each profile maps them onto its own template's
+        // vocabulary (Qwen spells the top level `xhigh`, gpt-oss spells it `high`).
+        case .some(let value):        self = .effort(value)  // already lowercased
         }
     }
 }

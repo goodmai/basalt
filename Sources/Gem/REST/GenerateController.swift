@@ -75,7 +75,7 @@ struct GenerateController: Sendable {
     
     private func sseStream(dto: GenerationRequest) -> AsyncStream<ByteBuffer> {
         AsyncStream { continuation in
-            Task {
+            let task = Task {
                 do {
                     let stream = try await orchestrator.generateStream(request: dto)
                     
@@ -95,14 +95,19 @@ struct GenerateController: Sendable {
                     continuation.finish()
                 } catch {
                     // Send error event
-                    var errorBuffer = ByteBuffer()
-                    let errorJSON = "{\"error\": \"\(error.localizedDescription)\"}"
-                    errorBuffer.writeString("event: error\n")
-                    errorBuffer.writeString("data: \(errorJSON)\n\n")
-                    continuation.yield(errorBuffer)
+                    let errPayload: [String: Any] = ["error": error.localizedDescription]
+                    if let json = try? JSONSerialization.data(withJSONObject: errPayload),
+                       let str = String(data: json, encoding: .utf8) {
+                        var errorBuffer = ByteBuffer()
+                        errorBuffer.writeString("event: error\n")
+                        errorBuffer.writeString("data: \(str)\n\n")
+                        continuation.yield(errorBuffer)
+                    }
                     continuation.finish()
                 }
             }
+            // A client that disconnects cancels the generation instead of leaving it running.
+            continuation.onTermination = { _ in task.cancel() }
         }
     }
     
