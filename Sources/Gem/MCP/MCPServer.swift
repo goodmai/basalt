@@ -263,6 +263,10 @@ public final class MCPServer: Sendable {
         }
 
         var arguments = p["arguments"] as? [String: Any]
+        if arguments == nil, let raw = p["arguments"], !(raw is NSNull), !(raw is String) {
+            writeError(id: id, code: -32602, message: "Tool arguments must be a JSON object")
+            return
+        }
         if arguments == nil, let rawArgs = p["arguments"] as? String {
             guard let repaired = ToolCallRepairer.repairJSON(rawArgs),
                   let dict = try? JSONSerialization.jsonObject(with: Data(repaired.utf8)) as? [String: Any] else {

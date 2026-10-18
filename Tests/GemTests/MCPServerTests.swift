@@ -145,6 +145,22 @@ struct MCPServerTests {
         #expect(status["requestedModelLoaded"] as? Bool == false)
     }
 
+    @Test("tools/call with arguments that are not an object, even after repair, is -32602")
+    func testToolsCallBadArguments() async throws {
+        let orch = ModelOrchestratorActor(engine: MockInferenceEngine())
+        for args in [#""not json at all""#, "[1, 2]", "42"] {
+            let capturer = OutputCapturer()
+            let server = MCPServer(orchestrator: orch) { line in
+                Task { await capturer.capture(line) }
+            }
+            await server.dispatch(#"{"jsonrpc": "2.0", "id": 5, "method": "tools/call", "params": {"name": "inspect_model", "arguments": "# + args + "}}")
+            try? await Task.sleep(for: .milliseconds(50))
+            let output = await capturer.lines
+            #expect(output.count == 1)
+            #expect(output.first?.contains("-32602") == true, "\(args): \(output)")
+        }
+    }
+
     @Test("tools/call (check_hardware) returns system profiler report")
     func testToolsCallCheckHardware() async throws {
         let engine = MockInferenceEngine()

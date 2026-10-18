@@ -155,6 +155,21 @@ struct ToolCallRepairerTests {
         #expect(call.id.hasPrefix("call_"))
     }
 
+    @Test("A brace inside an unclosed argument does not cut the rest of the argument off")
+    func repairKeepsArgumentTail() {
+        let chunk = resolve(#"<tool_call>{"name":"shell","arguments":{"command":"git log --format={h} -n 5</tool_call>"#)
+        guard case .toolCall(let call) = chunk else { Issue.record("expected a tool call, got \(chunk)"); return }
+        #expect(call.arguments == #"{"command":"git log --format={h} -n 5"}"#)
+    }
+
+    @Test("Mistral [TOOL_CALLS] payloads are repaired too")
+    func repairMistralPayload() {
+        guard case .toolCall(let call) = resolve("[TOOL_CALLS]read[ARGS]{path: 'c.txt'", name: "read") else {
+            Issue.record("mistral"); return
+        }
+        #expect(call.arguments == #"{"path":"c.txt"}"#)
+    }
+
     @Test("Function-style and string-encoded arguments are read like the repairer's other schemas")
     func repairOtherSchemas() throws {
         guard case .toolCall(let fn) = resolve(#"{"function": {"name": "read", "arguments": "{path: 'a.txt'}"}}"#) else {
