@@ -71,6 +71,11 @@ if fm.fileExists(atPath: genKernelDir) {
     metalFiles.append(contentsOf: findMetalFiles(in: genKernelDir))
 }
 
+if !fm.fileExists(atPath: metalLibPath) && fm.fileExists(atPath: "default.metallib") {
+    try? fm.createDirectory(atPath: outputDir, withIntermediateDirectories: true)
+    try? fm.copyItem(atPath: "default.metallib", toPath: metalLibPath)
+}
+
 // Check if metallib exists and is newer than all .metal files
 if fm.fileExists(atPath: metalLibPath),
    let metalLibDate = getModificationDate(of: metalLibPath) {
@@ -80,10 +85,15 @@ if fm.fileExists(atPath: metalLibPath),
         }
         return true
     }
-    if allSourcesNewer {
+    if allSourcesNewer && !metalFiles.isEmpty {
         log("Metal shaders up to date, skipping rebuild", level: .info)
         exit(0)
     }
+}
+
+if metalFiles.isEmpty {
+    log("No .metal files found to compile", level: .warning)
+    exit(0)
 }
 
 try? fm.createDirectory(atPath: tempDir, withIntermediateDirectories: true)
@@ -144,6 +154,11 @@ for file in metalFiles {
 var airFiles: [String] = []
 if let contents = try? fm.contentsOfDirectory(atPath: tempDir) {
     airFiles = contents.filter { $0.hasSuffix(".air") }.map { "\(tempDir)/\($0)" }
+}
+
+if airFiles.isEmpty {
+    log("No .air files produced; skipping metallib creation", level: .warning)
+    exit(0)
 }
 
 var metallibArgs = ["-sdk", "macosx", "metallib"]

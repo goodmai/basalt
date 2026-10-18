@@ -13,6 +13,9 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v7
 
+      - name: Build tests
+        run: swift build --build-tests
+
       - name: Cache MLX metallib
         uses: actions/cache@v6
         with:
