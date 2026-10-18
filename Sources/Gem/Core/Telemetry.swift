@@ -77,7 +77,7 @@ public actor TelemetryTracker {
 
     public init() {}
 
-    public func recordGeneration(_ response: GenerationResponse) {
+    private func recordGeneration(_ response: GenerationResponse) {
         totalRequests += 1
         totalTokens += response.completionTokens
         lastTokensPerSecond = response.tokensPerSecond
@@ -91,7 +91,13 @@ public actor TelemetryTracker {
     }
 
     public func requestStarted() { activeRequests += 1 }
-    public func requestFinished() { activeRequests = max(0, activeRequests - 1) }
+
+    /// Ends a request in one actor step: releases the active slot and, when the request
+    /// produced a result, records it — so no snapshot sees one change without the other.
+    public func requestFinished(with response: GenerationResponse? = nil) {
+        activeRequests = max(0, activeRequests - 1)
+        if let response { recordGeneration(response) }
+    }
 
     public func snapshot(profiler: SystemProfiler = SystemProfiler()) async -> ServerTelemetrySnapshot {
         let hw: SystemProfiler.SystemResources

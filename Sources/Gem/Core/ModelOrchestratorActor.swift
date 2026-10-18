@@ -51,8 +51,9 @@ public actor ModelOrchestratorActor {
             self.modelSizeMB = Int(size / 1_048_576)
             logger.info("Model size: \(self.modelSizeMB) MB")
         }
-        await self.telemetry.setModelMemory(mb: self.modelSizeMB)
         try await engine.load(modelPath: path)
+        // After the load: a failed load must not report the failed model's size.
+        await self.telemetry.setModelMemory(mb: self.modelSizeMB)
     }
 
     /// Record the HuggingFace repo ID that was just loaded.
@@ -113,8 +114,7 @@ public actor ModelOrchestratorActor {
                 try await self.engine.generate(request: validated)
             }
             totalTokensGenerated += response.completionTokens
-            await self.telemetry.requestFinished()
-            await self.telemetry.recordGeneration(response)
+            await self.telemetry.requestFinished(with: response)
             return response
         } catch let error as GemError {
             await self.telemetry.requestFinished()
@@ -156,6 +156,7 @@ public actor ModelOrchestratorActor {
         let telemetry = self.telemetry
         return AsyncStream<StreamChunk> { continuation in
             let task = Task.detached {
+                var result: GenerationResponse?
                 for await chunk in stream {
                     switch chunk {
                     case .text(let t):
@@ -163,13 +164,13 @@ public actor ModelOrchestratorActor {
                     case .reasoning(let r):
                         continuation.yield(.reasoning(r))
                     case .metadata(let m):
-                        // Streaming is most of the REST traffic: count it like generate().
-                        await telemetry.recordGeneration(m)
+                        result = m
                         continuation.yield(.metadata(m))
                     }
                 }
                 // Reached on completion and on cancellation (onTermination cancels this task).
-                await telemetry.requestFinished()
+                // Streaming is most of the REST traffic: it is counted like generate().
+                await telemetry.requestFinished(with: result)
                 continuation.finish()
             }
             continuation.onTermination = { _ in task.cancel() }

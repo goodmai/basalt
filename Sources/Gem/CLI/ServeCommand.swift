@@ -216,11 +216,12 @@ struct ServeCommand: AsyncParsableCommand {
                 group.addTask { await mcpServer.run() }
             }
             if stats {
-                let interval = max(1, statsInterval)
+                // Clamped to a day: Task.sleep would trap on an interval too large for UInt64 ns.
+                let interval = min(max(1, statsInterval), 86_400)
                 group.addTask {
                     // Exit quietly on shutdown: a CancellationError from sleep must not surface
                     // as the serve command's error once the group is cancelled.
-                    while (try? await Task.sleep(nanoseconds: UInt64(interval) * 1_000_000_000)) != nil {
+                    while (try? await Task.sleep(for: .seconds(interval))) != nil {
                         let snapshot = await orchestrator.telemetrySnapshot()
                         fputs("\(snapshot.formattedStatsLine)\n", stderr)
                     }

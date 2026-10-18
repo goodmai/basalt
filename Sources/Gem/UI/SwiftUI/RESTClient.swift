@@ -47,16 +47,6 @@ public actor RESTClient {
         }
     }
     
-    /// Telemetry of the server process (the GUI process has none of its own).
-    public func stats() async throws -> ServerTelemetrySnapshot {
-        guard let url = URL(string: "\(baseURL)/api/v1/stats") else { throw URLError(.badURL) }
-        var request = URLRequest(url: url)
-        if let token { request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
-        let (data, response) = try await urlSession.data(for: request)
-        guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw URLError(.badServerResponse) }
-        return try JSONDecoder().decode(ServerTelemetrySnapshot.self, from: data)
-    }
-
     public func generateStream(prompt: String, maxTokens: Int? = nil) -> AsyncThrowingStream<StreamChunk, Error> {
         return AsyncThrowingStream { continuation in
             Task {
