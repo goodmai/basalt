@@ -4,6 +4,7 @@ import Hummingbird
 import HTTPTypes
 import Logging
 import NIOCore
+import HummingbirdTesting
 @testable import GemCore
 
 @Suite("ServerConfig security and logic")
@@ -440,5 +441,69 @@ struct ConfigTests {
         #expect(!auth.matches("secret-key2"))
         #expect(!auth.matches("SECRET-KEY"))
         #expect(!auth.matches(""))
+    }
+
+    // MARK: — Review round 2 (#48): wiring, typed config values, launch args, backup order
+
+    @Test("The real router rejects a protected route without the key and serves it with one")
+    func testRouterPerimeterWiring() async throws {
+        let config = try ServerConfig(modelPath: "stub", host: "0.0.0.0", apiKey: "k-123")
+        let server = RESTServer(orchestrator: ModelOrchestratorActor(engine: MockInferenceEngine()), config: config)
+        let app = Application(router: server.makeRouter())
+        try await app.test(.router) { client in
+            try await client.execute(uri: "/v1/models", method: .get) { response in
+                #expect(response.status == .unauthorized)
+                #expect(response.headers[.wwwAuthenticate] == "Bearer")
+            }
+            try await client.execute(uri: "/v1/models", method: .get, headers: [.authorization: "Bearer k-123"]) { response in
+                #expect(response.status != .unauthorized)
+            }
+            try await client.execute(uri: "/v1/models", method: .get, headers: [.authorization: "Bearer k-12"]) { response in
+                #expect(response.status == .unauthorized)
+            }
+            try await client.execute(uri: "/api/v1/health", method: .get) { response in
+                #expect(response.status == .ok)
+            }
+        }
+    }
+
+    @Test("A config value of the wrong type is an error, not a silent default")
+    func testWrongTypeInConfigIsFatal() throws {
+        let (dir, file) = try tempConfig(#"{"port": "9000"}"#)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        #expect(throws: (any Error).self) {
+            _ = try ServeCommand.resolveNetwork(cliPort: nil, cliHost: nil, cliApiKey: nil, configFile: file.path)
+        }
+        let (dir2, file2) = try tempConfig(#"{"api_key": "from-file"}"#)
+        defer { try? FileManager.default.removeItem(at: dir2) }
+        let blank = try ServeCommand.resolveNetwork(cliPort: nil, cliHost: nil, cliApiKey: "  ", configFile: file2.path)
+        #expect(blank.apiKey == "from-file", "an empty CLI/env key must not mask the config key")
+
+        // An explicit CLI value never consults the bad field.
+        let ok = try ServeCommand.resolveNetwork(cliPort: 8081, cliHost: nil, cliApiKey: nil, configFile: file.path)
+        #expect(ok.port == 8081)
+    }
+
+    @Test("Onboarding launch args: only --model is replaced, user flags survive")
+    func testLaunchArgsPreserveUserFlags() {
+        #expect(OnboardingFlow.launchArgs(existing: nil, model: "m1") == ["serve", "--model", "m1"])
+        #expect(OnboardingFlow.launchArgs(existing: ["serve", "--model", "old", "--max-tokens", "8192"], model: "m2")
+                == ["serve", "--model", "m2", "--max-tokens", "8192"])
+        #expect(OnboardingFlow.launchArgs(existing: ["serve", "--host", "0.0.0.0"], model: "m3")
+                == ["serve", "--host", "0.0.0.0", "--model", "m3"])
+    }
+
+    @Test("A malformed config does not overwrite the last good backup")
+    func testMalformedConfigKeepsBackup() throws {
+        let (dir, file) = try tempConfig(#"{"port": 8080}"#)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try ServerConfig.mergeAndSave(to: file, systemUpdates: ["host": "127.0.0.1"], createBackup: true)
+        let goodBackup = try Data(contentsOf: URL(fileURLWithPath: file.path + ".bak"))
+
+        try Data("[broken".utf8).write(to: file)
+        #expect(throws: (any Error).self) {
+            try ServerConfig.mergeAndSave(to: file, systemUpdates: ["host": "127.0.0.1"], createBackup: true)
+        }
+        #expect(try Data(contentsOf: URL(fileURLWithPath: file.path + ".bak")) == goodBackup)
     }
 }

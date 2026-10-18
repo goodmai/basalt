@@ -57,7 +57,7 @@ public struct APIKeyAuthenticator<Context: RequestContext>: RouterMiddleware {
         buffer.writeString(json)
         return Response(
             status: .unauthorized,
-            headers: [.contentType: "application/json"],
+            headers: [.contentType: "application/json", .wwwAuthenticate: "Bearer"],
             body: ResponseBody(byteBuffer: buffer)
         )
     }
