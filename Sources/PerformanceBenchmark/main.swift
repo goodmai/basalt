@@ -137,6 +137,9 @@ struct Benchmark: AsyncParsableCommand {
             print("  Hardware profile updated: \(HardwareBenchmarkProfileStore.defaultProfilePath) (measured ✓)")
         } catch {
             print("  Hardware profile NOT updated: \(error.localizedDescription)")
+            if error is DecodingError {
+                print("  \(HardwareBenchmarkProfileStore.defaultProfilePath) is unreadable — move or delete it to start a fresh profile.")
+            }
         }
 
         if share {

@@ -152,7 +152,9 @@ public actor HardwareBenchmarkProfileStore {
         if let cached = cachedProfile {
             return cached
         }
-        let profile = Self.loadSync(path: profilePath)
+        // Cache only what was actually read: caching the empty fallback of an unreadable file
+        // would let the next record() write over it.
+        guard let profile = try? Self.loadChecked(path: profilePath) else { return HardwareBenchmarkProfile() }
         self.cachedProfile = profile
         return profile
     }
