@@ -35,8 +35,8 @@ public actor ModelInspector {
     }
 
     /// Inspect a model given either a HuggingFace repo ID or a local directory path.
-    public func inspect(modelIdOrPath: String) async -> Report {
-        let (dirURL, resolvedId) = resolveModelDirectory(modelIdOrPath: modelIdOrPath)
+    public func inspect(modelIdOrPath: String, quant: String? = nil) async -> Report {
+        let (dirURL, resolvedId) = resolveModelDirectory(modelIdOrPath: modelIdOrPath, quant: quant)
         
         guard let dirURL, FileManager.default.fileExists(atPath: dirURL.path) else {
             return Report(
@@ -161,14 +161,26 @@ public actor ModelInspector {
             }
             configDtype = configJSON["torch_dtype"] as? String
         }
+        // serve refuses a directory without a parseable config.json (ModelCache.resolve), so the
+        // inspector must not call such a model intact — e.g. a download cut off at config.json.
+        if !ModelCache.hasUsableConfig(at: dirURL) {
+            errors.append("config.json is missing or not valid JSON")
+        }
 
         // 4. Derive the bit width from the weights themselves. An MLX quantized layer stores
         // `X.weight` as uint32 words [out, in·bits/32] next to `X.scales` [out, in/group_size],
         // so bits = 32·weight[-1] / (scales[-1]·group_size). config.json is a claim checked
         // against that, not the answer.
         let primaryDtype = detectedDtypes.sorted().joined(separator: ", ")
+        // MLX's default group size depends on the mode: 16 for nvfp4, 32 for mxfp4/mxfp8, else 64.
+        let defaultGroupSize: Int
+        switch configMode?.lowercased() {
+        case "nvfp4": defaultGroupSize = 16
+        case "mxfp4", "mxfp8": defaultGroupSize = 32
+        default: defaultGroupSize = 64
+        }
         let measured = Self.quantizedBits(tensors: tensors) { layer in
-            layerGroupSizes[layer] ?? configGroupSize ?? 64
+            layerGroupSizes[layer] ?? configGroupSize ?? defaultGroupSize
         }
         let measuredBits = Set(measured.values).sorted()
         let measuredList = measuredBits.map(String.init).joined(separator: "/")
@@ -228,7 +240,7 @@ public actor ModelInspector {
 
     // MARK: — Helpers
 
-    private func resolveModelDirectory(modelIdOrPath: String) -> (URL?, String) {
+    private func resolveModelDirectory(modelIdOrPath: String, quant: String?) -> (URL?, String) {
         let expanded = (modelIdOrPath as NSString).expandingTildeInPath
         if FileManager.default.fileExists(atPath: expanded) {
             let url = URL(fileURLWithPath: expanded)
@@ -237,7 +249,8 @@ public actor ModelInspector {
 
         // Same resolution `serve` uses (refs/main → snapshot, then quant subfolders), so we
         // inspect the directory that will actually be loaded.
-        let dir = ModelCache.resolve(repoId: modelIdOrPath) ?? ModelCache.cacheDir(for: modelIdOrPath)
+        let dir = ModelCache.resolve(repoId: modelIdOrPath, quant: quant)
+            ?? ModelCache.cacheDir(for: modelIdOrPath).appendingPathComponent(quant ?? "")
         return (dir, modelIdOrPath)
     }
 

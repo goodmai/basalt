@@ -70,7 +70,7 @@ basalt models download ornith-ai/Ornith-1.5-9B-MLX-4bit
 
 ---
 
-## Step 3: Weight Shard Integrity & Bit Width Inspection (`--inspect`)
+## Step 3: Weight Shard Integrity & Bit Width Inspection (`models inspect`)
 
 After downloading, verify tensor shard integrity and the actual quantization bit width:
 
@@ -173,7 +173,7 @@ The project enforces strict reproducibility standards verified by test suites.
 ### Golden Test Vector
 - **Model**: `ornith-ai/Ornith-1.5-9B-MLX-4bit`
 - **Benchmark**: ARC-AGI Task 1 (`benchmarks/arc-agi/compare-tasks/task_1.json`)
-- **Reasoning Flag**: `--reasoning-effort none` (prevents infinite reasoning loops).
+- **Reasoning**: pass `--reasoning-effort none` to `basalt serve` (and to `PerformanceBenchmark`) so the golden prompt is answered without an unbounded reasoning block.
 
 ### Parity Invariant
 **Greedy Parity (`temperature = 0`)**: consecutive runs with `temperature = 0.0` must produce the exact same token sequence and generated text.

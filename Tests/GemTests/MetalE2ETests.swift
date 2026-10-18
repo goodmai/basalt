@@ -90,8 +90,8 @@ struct SamplerAndGreedyParityTests {
         let env = ProcessInfo.processInfo.environment
         guard env["BASALT_E2E"] == "1" else { return nil }
         if let path = env["BASALT_E2E_MODEL_PATH"] { return path }
-        return ModelCache.isDownloaded(repoId: GoldenTestVector.modelId)
-            ? ModelCache.cacheDir(for: GoldenTestVector.modelId).path : nil
+        // Same resolution serve uses, so a golden model kept in a quant subfolder is found too.
+        return ModelCache.resolve(repoId: GoldenTestVector.modelId)?.path
     }
 
     @Test("MLX engine: two greedy runs on the golden vector are bit-identical",

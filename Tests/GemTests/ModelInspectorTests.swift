@@ -28,10 +28,12 @@ struct ModelInspectorTests {
         return url
     }
 
-    private func modelDir(_ name: String = "model") throws -> URL {
+    /// A model directory with a minimal valid config.json (serve refuses a dir without one).
+    private func modelDir(_ name: String = "model", withConfig: Bool = true) throws -> URL {
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString).appendingPathComponent(name)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        if withConfig { try config(dir, "{}") }
         return dir
     }
 
@@ -56,6 +58,18 @@ struct ModelInspectorTests {
         let report = await ModelInspector().inspect(modelIdOrPath: dir.path)
         #expect(report.intact)
         #expect(report.errors.isEmpty)
+    }
+
+    @Test("Complete shards without a parseable config.json are not intact (serve could not load them)")
+    func missingConfig() async throws {
+        let dir = try modelDir(withConfig: false)
+        defer { cleanup(dir) }
+        try writeShard(dir.appendingPathComponent("model.safetensors"), [T(name: "w", dtype: "F16", shape: [2, 2])])
+        #expect(await ModelInspector().inspect(modelIdOrPath: dir.path).intact == false)
+        try Data("{\"model_type\":".utf8).write(to: dir.appendingPathComponent("config.json"))
+        let report = await ModelInspector().inspect(modelIdOrPath: dir.path)
+        #expect(!report.intact)
+        #expect(report.errors.contains { $0.contains("config.json") })
     }
 
     @Test("A truncated download keeps a valid header but is reported broken")

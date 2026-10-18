@@ -182,7 +182,8 @@ struct ServeCommand: AsyncParsableCommand {
         log("Loading model from \(bold(resolvedPath))…")
         do {
             try await orchestrator.loadModel(path: resolvedPath)
-            await orchestrator.setModelId(model ?? modelPath ?? resolvedPath)
+            // The repo id, not the resolved path, so MCP status reports what an agent asked for.
+            await orchestrator.setModelId(model ?? modelPath ?? Self.defaultModel)
             log("Model ready.")
         } catch {
             log("\(yellow("[warn]")) \(error.localizedDescription) — running in stub mode.")

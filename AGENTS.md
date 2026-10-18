@@ -57,7 +57,7 @@ basalt models check --system --json
 }
 ```
 
-### 2.2 Model Weight Shard & Bit Width Inspection (`--inspect`)
+### 2.2 Model Weight Shard & Bit Width Inspection (`models inspect`)
 Verify shard completeness, Safetensors headers, and actual quantization bit width:
 
 ```bash

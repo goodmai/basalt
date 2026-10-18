@@ -164,7 +164,8 @@ chmod +x ./basalt-claude
 | `basalt models download <repo-id>` | скачать в общий кэш HF |
 | `basalt models info <repo-id>` | размер, квантизация, окно контекста |
 | `basalt models cache` | что лежит на диске и сколько занимает |
-| `basalt models check` | проверить, что модель скачана полностью и грузится |
+| `basalt models check <repo-id>` | влезет ли модель в память (ненулевой код выхода, если нет) |
+| `basalt models inspect <repo-id>` | проверить, что модель скачана полностью, и измерить её реальную битность |
 | `basalt cloud configure` | облачный фолбэк OpenRouter для того, что не влезает локально |
 | `basalt cloud cost` | сколько уже потрачено на облако |
 
