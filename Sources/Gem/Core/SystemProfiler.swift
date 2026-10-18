@@ -184,7 +184,7 @@ public actor SystemProfiler {
     }
     
     /// Detect Apple Silicon chip model (M1/M2/M3/M4/M5)
-    private func detectChipModel() -> String {
+    public static func detectChipModel() -> String {
         var sysinfo = utsname()
         uname(&sysinfo)
         
@@ -230,5 +230,9 @@ public actor SystemProfiler {
         } else {
             return "Intel"
         }
+    }
+    
+    private func detectChipModel() -> String {
+        Self.detectChipModel()
     }
 }

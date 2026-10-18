@@ -73,6 +73,9 @@ struct FitCommand: AsyncParsableCommand {
                 let ram_mb: Int64
                 let estimated_tps: Int
                 let context_window: Int
+                let measured: Bool
+                let calibration_factor: Double
+                let quantization: String
             }
             struct JsonOutput: Encodable {
                 let device: DeviceOutput
@@ -93,7 +96,10 @@ struct FitCommand: AsyncParsableCommand {
                         score: r.score,
                         ram_mb: r.estimatedRAM,
                         estimated_tps: r.estimatedTPS,
-                        context_window: r.contextWindow
+                        context_window: r.contextWindow,
+                        measured: r.isMeasured,
+                        calibration_factor: r.calibrationFactor,
+                        quantization: r.selectedQuantization
                     )
                 }
             )
@@ -133,7 +139,7 @@ struct FitCommand: AsyncParsableCommand {
             let fitIndicator = "\(rec.fitLevel.emoji) \(rec.fitLevel.rawValue.prefix(4))"
             let score = String(format: "%.1f", rec.score)
             let ram = formatRAM(rec.estimatedRAM)
-            let tps = "\(rec.estimatedTPS)"
+            let tps = rec.isMeasured ? "\(rec.estimatedTPS) measured ✓" : "\(rec.estimatedTPS)"
             let context = "\(rec.contextWindow / 1000)k"
             
             rows.append([

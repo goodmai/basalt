@@ -1,0 +1,140 @@
+import Foundation
+
+// MARK: — Hardware Benchmark Profile & Calibration (Epic 16.7 / Issue #31)
+
+/// Record of an empirical benchmark measurement on this hardware
+public struct BenchmarkMeasurement: Codable, Sendable, Equatable {
+    public let modelId: String
+    public let chipModel: String
+    public let measuredTPS: Double
+    public let measuredTTFT: Double
+    public let timestamp: Date
+    public let quant: String?
+
+    public init(
+        modelId: String,
+        chipModel: String,
+        measuredTPS: Double,
+        measuredTTFT: Double,
+        timestamp: Date = Date(),
+        quant: String? = nil
+    ) {
+        self.modelId = modelId
+        self.chipModel = chipModel
+        self.measuredTPS = measuredTPS
+        self.measuredTTFT = measuredTTFT
+        self.timestamp = timestamp
+        self.quant = quant
+    }
+}
+
+/// Profile persisting real hardware performance measurements for self-calibration
+public struct HardwareBenchmarkProfile: Codable, Sendable {
+    public var chipModel: String
+    public var measurements: [String: BenchmarkMeasurement] // key: modelId or repo name
+    public var lastUpdated: Date
+
+    public init(
+        chipModel: String = "Apple Silicon",
+        measurements: [String: BenchmarkMeasurement] = [:],
+        lastUpdated: Date = Date()
+    ) {
+        self.chipModel = chipModel
+        self.measurements = measurements
+        self.lastUpdated = lastUpdated
+    }
+
+    /// α_calib = 1.0 until the first benchmark, then TPS_measured / TPS_theoretical
+    public func calibrationFactor(for modelId: String, theoreticalTPS: Double) -> Double {
+        guard theoreticalTPS > 0, let m = measurement(for: modelId) else {
+            return 1.0
+        }
+        return m.measuredTPS / theoreticalTPS
+    }
+
+    /// Retrieve matching measurement by exact ID or suffix match
+    public func measurement(for modelId: String) -> BenchmarkMeasurement? {
+        if let direct = measurements[modelId] {
+            return direct
+        }
+        // Match by case-insensitive or repository basename (e.g. "Qwen3.5-4B-4bit")
+        let target = modelId.lowercased()
+        let targetBase = target.split(separator: "/").last.map(String.init) ?? target
+        for (key, m) in measurements {
+            let keyLower = key.lowercased()
+            let keyBase = keyLower.split(separator: "/").last.map(String.init) ?? keyLower
+            if keyLower == target || keyBase == targetBase || target.hasSuffix(keyLower) || keyLower.hasSuffix(target) {
+                return m
+            }
+        }
+        return nil
+    }
+}
+
+/// Thread-safe store for reading and writing the hardware benchmark profile
+public actor HardwareBenchmarkProfileStore {
+    public static let shared = HardwareBenchmarkProfileStore()
+
+    public static var defaultProfilePath: String {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        return home.appendingPathComponent(".gem/hardware_profile.json").path
+    }
+
+    private let profilePath: String
+    private var cachedProfile: HardwareBenchmarkProfile?
+
+    public init(customPath: String? = nil) {
+        if let customPath = customPath {
+            self.profilePath = (customPath as NSString).expandingTildeInPath
+        } else {
+            self.profilePath = Self.defaultProfilePath
+        }
+    }
+
+    /// Read profile synchronously without awaiting actor (useful during fast scoring)
+    public static func loadSync(path: String? = nil) -> HardwareBenchmarkProfile {
+        let actualPath = path ?? defaultProfilePath
+        let url = URL(fileURLWithPath: actualPath)
+        guard FileManager.default.fileExists(atPath: url.path),
+              let data = try? Data(contentsOf: url),
+              let profile = try? JSONDecoder().decode(HardwareBenchmarkProfile.self, from: data) else {
+            return HardwareBenchmarkProfile()
+        }
+        return profile
+    }
+
+    public func load() -> HardwareBenchmarkProfile {
+        if let cached = cachedProfile {
+            return cached
+        }
+        let profile = Self.loadSync(path: profilePath)
+        self.cachedProfile = profile
+        return profile
+    }
+
+    public func record(_ measurement: BenchmarkMeasurement) throws {
+        var profile = load()
+        profile.chipModel = measurement.chipModel
+        profile.measurements[measurement.modelId] = measurement
+        profile.lastUpdated = Date()
+        self.cachedProfile = profile
+
+        let url = URL(fileURLWithPath: profilePath)
+        let directory = url.deletingLastPathComponent()
+        if !FileManager.default.fileExists(atPath: directory.path) {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        }
+
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        encoder.dateEncodingStrategy = .iso8601
+        let data = try encoder.encode(profile)
+        try data.write(to: url)
+    }
+
+    public func reset() {
+        self.cachedProfile = nil
+        let url = URL(fileURLWithPath: profilePath)
+        try? FileManager.default.removeItem(at: url)
+    }
+}

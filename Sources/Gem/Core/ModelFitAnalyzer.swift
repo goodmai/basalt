@@ -1,13 +1,13 @@
 import Foundation
 
-/// Epic 16.7: Model Fit Analyzer
-/// Analyzes how well models fit on current hardware
+/// Epic 16.7 / Issue #31: Model Fit Analyzer
+/// Multi-dimensional hardware fit scoring and dynamic quantization selection
 public struct ModelFitAnalyzer: Sendable {
     
     // MARK: - Fit Category
     
     /// How well a model fits on the hardware
-    public enum FitCategory: String, Sendable {
+    public enum FitCategory: String, Sendable, Codable {
         case perfect   = "Perfect"   // 85-100: Runs great, highly recommended
         case good      = "Good"      // 65-84: Runs well, recommended
         case tight     = "Tight"     // 45-64: Runs but may be slow
@@ -32,6 +32,36 @@ public struct ModelFitAnalyzer: Sendable {
         }
     }
     
+    // MARK: - Quantization Option
+    
+    public struct QuantizationFitOption: Codable, Sendable {
+        public let bits: Int
+        public let name: String
+        public let footprintMB: Int
+        public let estimatedTPS: Int
+        public let score: FourDimensionalScore
+        public let fitsBudget: Bool
+        public let isOptimal: Bool
+
+        public init(
+            bits: Int,
+            name: String,
+            footprintMB: Int,
+            estimatedTPS: Int,
+            score: FourDimensionalScore,
+            fitsBudget: Bool,
+            isOptimal: Bool
+        ) {
+            self.bits = bits
+            self.name = name
+            self.footprintMB = footprintMB
+            self.estimatedTPS = estimatedTPS
+            self.score = score
+            self.fitsBudget = fitsBudget
+            self.isOptimal = isOptimal
+        }
+    }
+
     // MARK: - Model Analysis Result
     
     /// Analysis result for a single model
@@ -44,6 +74,11 @@ public struct ModelFitAnalyzer: Sendable {
         public let estimatedTPS: Int
         public let estimatedRAMUsage: Int  // MB
         public let recommendation: String
+        public let isMeasured: Bool
+        public let calibrationFactor: Double
+        public let fourDimensionalScore: FourDimensionalScore?
+        public let optimalQuantization: String?
+        public let quantizationOptions: [QuantizationFitOption]
         
         public init(
             modelId: String,
@@ -53,7 +88,12 @@ public struct ModelFitAnalyzer: Sendable {
             fitCategory: FitCategory,
             estimatedTPS: Int,
             estimatedRAMUsage: Int,
-            recommendation: String
+            recommendation: String,
+            isMeasured: Bool = false,
+            calibrationFactor: Double = 1.0,
+            fourDimensionalScore: FourDimensionalScore? = nil,
+            optimalQuantization: String? = nil,
+            quantizationOptions: [QuantizationFitOption] = []
         ) {
             self.modelId = modelId
             self.modelName = modelName
@@ -63,9 +103,109 @@ public struct ModelFitAnalyzer: Sendable {
             self.estimatedTPS = estimatedTPS
             self.estimatedRAMUsage = estimatedRAMUsage
             self.recommendation = recommendation
+            self.isMeasured = isMeasured
+            self.calibrationFactor = calibrationFactor
+            self.fourDimensionalScore = fourDimensionalScore
+            self.optimalQuantization = optimalQuantization
+            self.quantizationOptions = quantizationOptions
         }
     }
     
+    // MARK: - Dynamic Quantization Selection (Grid: 8, 6, 4, 3, 2 bits)
+
+    /// Evaluates model across an 8/6/4/3/2-bit grid and selects optimal q*(m):
+    /// q*(m) = argmax_q S_Quality(m,q) subject to M_footprint(m,q,L_min) ≤ 0.85·M_avail and TPS(m,q) ≥ TPS_min
+    public static func evaluateQuantizations(
+        model: ModelDefinition,
+        resources: SystemProfiler.SystemResources,
+        tpsMin: Double = 10.0,
+        lMin: Int = 4096,
+        benchmarkProfile: HardwareBenchmarkProfile? = nil
+    ) -> (optimal: QuantizationFitOption, options: [QuantizationFitOption]) {
+        let gridBits = [8, 6, 4, 3, 2]
+        let availableMB = Double(resources.availableRAM) / 1_048_576.0
+        let modelBudgetMB = availableMB * 0.85
+        
+        let bw = FitScorer.memoryBandwidthGBs(chip: resources.chipModel, gpuName: resources.gpuName)
+        let effectiveBW = bw * 0.70
+        let profile = benchmarkProfile ?? HardwareBenchmarkProfileStore.loadSync()
+        
+        // Approximate KV cache size in MB at L_min
+        let kvCacheMB = max(256.0, Double(lMin) / 4096.0 * (min(10.0, model.totalParameters) * 80.0 + 200.0))
+        let overhead = 0.15 // 15% framework overhead
+
+        var evaluated: [(bits: Int, name: String, footprintMB: Int, tps: Int, score: FourDimensionalScore, fits: Bool)] = []
+        
+        for q in gridBits {
+            let weightGB = model.totalParameters * (Double(q) / 8.0) * (1.0 + overhead)
+            let footprintMB = Int(weightGB * 1024.0 + kvCacheMB)
+            
+            // Speed modeling: active parameters determine bandwidth consumption per token
+            let activeWeightsGB = model.activeParameters * (Double(q) / 8.0)
+            let bytesPerToken = max(0.1, activeWeightsGB + 0.05)
+            let theoreticalTPS = effectiveBW / bytesPerToken
+            
+            let tps: Int
+            if let m = profile.measurement(for: model.id) {
+                // Adjust measured TPS proportionally to bit width
+                let ratio = 4.0 / Double(q)
+                tps = max(1, Int((m.measuredTPS * ratio).rounded()))
+            } else {
+                tps = max(1, Int(theoreticalTPS.rounded()))
+            }
+            
+            // Quality scale per quantization bit width
+            let qMultiplier: Double
+            switch q {
+            case 8: qMultiplier = 1.00
+            case 6: qMultiplier = 0.98
+            case 4: qMultiplier = 0.93
+            case 3: qMultiplier = 0.84
+            default: qMultiplier = 0.68
+            }
+            let sQuality = min(1.0, max(0.0, model.quality * qMultiplier))
+            
+            // S_Fit
+            let ramRatio = Double(footprintMB) / modelBudgetMB
+            let sFit: Double
+            if ramRatio <= 0.7 {
+                sFit = 1.0
+            } else if ramRatio <= 1.0 {
+                sFit = 1.0 - (ramRatio - 0.7) * 1.66
+            } else {
+                sFit = max(0.0, 0.5 - (ramRatio - 1.0) * 0.5)
+            }
+            
+            let sSpeed = min(1.0, Double(tps) / 100.0)
+            let sContext = min(1.0, Double(model.contextWindow) / 65536.0)
+            
+            let fourD = FourDimensionalScore(quality: sQuality, speed: sSpeed, fit: sFit, context: sContext)
+            let fits = Double(footprintMB) <= modelBudgetMB && Double(tps) >= tpsMin
+            
+            evaluated.append((bits: q, name: "\(q)-bit", footprintMB: footprintMB, tps: tps, score: fourD, fits: fits))
+        }
+        
+        // Pick optimal: highest S_Quality among those satisfying the constraints
+        let qualifying = evaluated.filter { $0.fits }
+        let chosen = qualifying.max(by: { $0.score.quality < $1.score.quality }) ?? evaluated.last!
+        
+        var options: [QuantizationFitOption] = []
+        for e in evaluated {
+            options.append(QuantizationFitOption(
+                bits: e.bits,
+                name: e.name,
+                footprintMB: e.footprintMB,
+                estimatedTPS: e.tps,
+                score: e.score,
+                fitsBudget: e.fits,
+                isOptimal: e.bits == chosen.bits
+            ))
+        }
+        
+        let optimal = options.first { $0.isOptimal } ?? options.first!
+        return (optimal: optimal, options: options)
+    }
+
     // MARK: - Fit Score Calculation
     
     /// Calculate how well a model fits on the hardware (0-100 score)
@@ -83,33 +223,24 @@ public struct ModelFitAnalyzer: Sendable {
         // Factor 1: RAM availability (40% weight)
         let ramRatio = modelRAMGB / availableRAMGB
         if ramRatio > 1.0 {
-            // Model won't fit in available RAM
             score -= 40.0
         } else if ramRatio > 0.8 {
-            // Very tight on RAM
             score -= 30.0
         } else if ramRatio > 0.6 {
-            // Moderately tight
             score -= 15.0
         } else if ramRatio > 0.4 {
-            // Good fit
             score -= 5.0
         }
-        // else: excellent fit, no penalty
         
         // Factor 2: Total RAM vs recommended (30% weight)
         let totalRAMRatio = totalRAMGB / recommendedRAMGB
         if totalRAMRatio < 0.5 {
-            // Well below recommended
             score -= 30.0
         } else if totalRAMRatio < 0.75 {
-            // Below recommended
             score -= 20.0
         } else if totalRAMRatio < 1.0 {
-            // Close to recommended
             score -= 10.0
         }
-        // else: meets or exceeds recommended, no penalty
         
         // Factor 3: GPU memory (20% weight)
         let gpuMemoryGB = Double(resources.gpuMemory) / 1_073_741_824.0
@@ -124,12 +255,11 @@ public struct ModelFitAnalyzer: Sendable {
         
         // Factor 4: Disk space (10% weight)
         let diskSpaceGB = Double(resources.diskSpace) / 1_073_741_824.0
-        let requiredDiskGB = modelRAMGB * 1.2  // 20% overhead
+        let requiredDiskGB = modelRAMGB * 1.2
         if diskSpaceGB < requiredDiskGB {
             score -= 10.0
         }
         
-        // Ensure score is in valid range
         return max(0.0, min(100.0, score))
     }
     
@@ -154,41 +284,30 @@ public struct ModelFitAnalyzer: Sendable {
         modelSizeMB: Int,
         resources: SystemProfiler.SystemResources
     ) -> Int {
-        // Base TPS estimate based on model size
-        // Smaller models = higher TPS
         let baseTPS: Int
-        
         switch modelSizeMB {
-        case 0..<1000:          // < 1GB
-            baseTPS = 150
-        case 1000..<3000:       // 1-3GB
-            baseTPS = 90
-        case 3000..<7000:       // 3-7GB
-            baseTPS = 60
-        case 7000..<15000:      // 7-15GB
-            baseTPS = 30
-        case 15000..<30000:     // 15-30GB
-            baseTPS = 15
-        default:                // 30GB+
-            baseTPS = 5
+        case 0..<1000:          baseTPS = 150
+        case 1000..<3000:       baseTPS = 90
+        case 3000..<7000:       baseTPS = 60
+        case 7000..<15000:      baseTPS = 30
+        case 15000..<30000:     baseTPS = 15
+        default:                baseTPS = 5
         }
         
-        // Adjust based on available RAM
         let availableRAMGB = Double(resources.availableRAM) / 1_073_741_824.0
         let modelRAMGB = Double(modelSizeMB) / 1024.0
         let ramMultiplier: Double
         
         if availableRAMGB > modelRAMGB * 3 {
-            ramMultiplier = 1.2  // Plenty of RAM, +20%
+            ramMultiplier = 1.2
         } else if availableRAMGB > modelRAMGB * 2 {
-            ramMultiplier = 1.0  // Good RAM
+            ramMultiplier = 1.0
         } else if availableRAMGB > modelRAMGB * 1.5 {
-            ramMultiplier = 0.8  // Tight RAM, -20%
+            ramMultiplier = 0.8
         } else {
-            ramMultiplier = 0.5  // Very tight, -50%
+            ramMultiplier = 0.5
         }
         
-        // Adjust based on chip model
         let chipMultiplier: Double
         if resources.chipModel.contains("M4") || resources.chipModel.contains("M5") {
             chipMultiplier = 1.3
@@ -197,7 +316,7 @@ public struct ModelFitAnalyzer: Sendable {
         } else if resources.chipModel.contains("M2") {
             chipMultiplier = 1.0
         } else {
-            chipMultiplier = 0.85  // M1 or older
+            chipMultiplier = 0.85
         }
         
         return Int(Double(baseTPS) * ramMultiplier * chipMultiplier)

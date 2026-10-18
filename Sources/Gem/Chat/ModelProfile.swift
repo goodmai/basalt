@@ -29,6 +29,26 @@ public protocol ModelProfile: Sendable {
     /// fraction of the top token's probability are dropped. nil leaves sampling
     /// untouched. Measured per family — see the conformances for the evidence.
     var defaultMinP: Float? { get }
+
+    /// Total parameter count in billions, if known.
+    var totalParameters: Double? { get }
+
+    /// Active parameter count in billions, if known (for MoE routing).
+    var activeParameters: Double? { get }
+
+    /// True if model uses Mixture-of-Experts routing where active < total.
+    var isMoE: Bool { get }
+}
+
+extension ModelProfile {
+    public var totalParameters: Double? { nil }
+    public var activeParameters: Double? { nil }
+    public var isMoE: Bool {
+        if let active = activeParameters, let total = totalParameters {
+            return active < total
+        }
+        return false
+    }
 }
 
 public struct ThinkingMarkers: Sendable {

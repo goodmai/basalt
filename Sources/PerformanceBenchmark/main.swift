@@ -52,6 +52,9 @@ struct Benchmark: AsyncParsableCommand {
     @Flag(name: .customLong("degradation-test"), help: "Run context degradation benchmark (1k -> 128k) and output to JSON")
     var degradationTest: Bool = false
 
+    @Flag(name: .customLong("share"), help: "Export benchmark results to JSON format suitable for sharing (bench --share)")
+    var share: Bool = false
+
     func run() async throws {
         let resolvedPath = resolveModelPath()
         print("Benchmark — model: \(model)")
@@ -114,6 +117,53 @@ struct Benchmark: AsyncParsableCommand {
         let last = try await orchestrator.generate(request: req)
         let memMB = last.memory.activeBytes / 1_048_576
         print(String(format: "\n  Memory (active): %d MB", memMB))
+
+        // Record benchmark in local hardware profile for self-calibration
+        let tpsMean = tpsSamples.isEmpty ? 0 : tpsSamples.reduce(0, +) / Double(tpsSamples.count)
+        let ttftMean = ttftSamples.isEmpty ? 0 : ttftSamples.reduce(0, +) / Double(ttftSamples.count)
+        let chip = SystemProfiler.detectChipModel()
+
+        let measurement = BenchmarkMeasurement(
+            modelId: model,
+            chipModel: chip,
+            measuredTPS: tpsMean,
+            measuredTTFT: ttftMean,
+            timestamp: Date(),
+            quant: quant
+        )
+        try? await HardwareBenchmarkProfileStore.shared.record(measurement)
+        print("  Hardware profile updated: \(HardwareBenchmarkProfileStore.defaultProfilePath) (measured ✓)")
+
+        if share {
+            struct BenchmarkShareExport: Codable {
+                let basalt_version: String
+                let model: String
+                let quant: String?
+                let chip: String
+                let tps_avg: Double
+                let ttft_avg: Double
+                let memory_active_mb: Int
+                let timestamp: Date
+            }
+            let exportObj = BenchmarkShareExport(
+                basalt_version: "0.1.0",
+                model: model,
+                quant: quant,
+                chip: chip,
+                tps_avg: (tpsMean * 100).rounded() / 100,
+                ttft_avg: (ttftMean * 1000).rounded() / 1000,
+                memory_active_mb: memMB,
+                timestamp: Date()
+            )
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            encoder.dateEncodingStrategy = .iso8601
+            if let data = try? encoder.encode(exportObj), let jsonStr = String(data: data, encoding: .utf8) {
+                print("\n--- BENCHMARK SHARE EXPORT (bench --share) ---")
+                print(jsonStr)
+                print("----------------------------------------------\n")
+            }
+        }
     }
 
     private func runDegradationTest(orchestrator: ModelOrchestratorActor) async throws {

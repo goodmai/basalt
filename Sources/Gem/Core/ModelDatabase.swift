@@ -22,8 +22,26 @@ public struct ModelDefinition: Codable, Sendable {
     public let contextWindow: Int
     public let quantization: String
     public let quality: Double
-    
-    public init(id: String, name: String, family: ModelFamily, task: ModelTask, modality: Modality, ramMB: Int64, contextWindow: Int, quantization: String, quality: Double) {
+    public let totalParameters: Double    // Billions of parameters, e.g. 26.0 for 26B
+    public let activeParameters: Double   // Billions of active parameters, e.g. 4.0 for A4B, or 27.0 for dense
+
+    public var isMoE: Bool {
+        activeParameters < totalParameters
+    }
+
+    public init(
+        id: String,
+        name: String,
+        family: ModelFamily,
+        task: ModelTask,
+        modality: Modality,
+        ramMB: Int64,
+        contextWindow: Int,
+        quantization: String,
+        quality: Double,
+        totalParameters: Double? = nil,
+        activeParameters: Double? = nil
+    ) {
         self.id = id
         self.name = name
         self.family = family
@@ -33,10 +51,41 @@ public struct ModelDefinition: Codable, Sendable {
         self.contextWindow = contextWindow
         self.quantization = quantization
         self.quality = quality
+
+        let total = totalParameters ?? Self.inferTotalParameters(id: id, name: name, ramMB: ramMB)
+        self.totalParameters = total
+        self.activeParameters = activeParameters ?? Self.inferActiveParameters(id: id, name: name, total: total)
+    }
+
+    private static func inferTotalParameters(id: String, name: String, ramMB: Int64) -> Double {
+        let combined = (id + " " + name).lowercased()
+        if combined.contains("72b") { return 72.0 }
+        if combined.contains("35b") { return 35.0 }
+        if combined.contains("32b") { return 32.0 }
+        if combined.contains("27b") { return 27.0 }
+        if combined.contains("26b") { return 26.0 }
+        if combined.contains("14b") { return 14.0 }
+        if combined.contains("9b") { return 9.0 }
+        if combined.contains("7b") { return 7.0 }
+        if combined.contains("4b") { return 4.0 }
+        if combined.contains("3b") { return 3.0 }
+        if combined.contains("2b") { return 2.0 }
+        if combined.contains("0.5b") { return 0.5 }
+        return max(1.0, Double(ramMB) / 600.0)
+    }
+
+    private static func inferActiveParameters(id: String, name: String, total: Double) -> Double {
+        let combined = (id + " " + name).lowercased()
+        if combined.contains("a4b") { return 4.0 }
+        if combined.contains("a3b") { return 3.0 }
+        if combined.contains("a2b") { return 2.0 }
+        if combined.contains("slurpy") { return 12.0 }
+        return total
     }
 }
 
 public struct ModelDatabase: Sendable {
+    /// Models embedded at compile time for Zero-I/O lookup
     public static let allModels: [ModelDefinition] = [
         ModelDefinition(
             id: "mlx-community/Qwen3.5-4B-4bit",
@@ -47,7 +96,9 @@ public struct ModelDatabase: Sendable {
             ramMB: 2300,
             contextWindow: 32768,
             quantization: "4-bit",
-            quality: 0.85
+            quality: 0.85,
+            totalParameters: 4.0,
+            activeParameters: 4.0
         ),
         ModelDefinition(
             id: "mlx-community/Qwen2.5-Coder-7B",
@@ -58,7 +109,9 @@ public struct ModelDatabase: Sendable {
             ramMB: 4100,
             contextWindow: 128000,
             quantization: "4-bit",
-            quality: 0.89
+            quality: 0.89,
+            totalParameters: 7.0,
+            activeParameters: 7.0
         ),
         ModelDefinition(
             id: "mlx-community/Qwen3.6-27B-4bit",
@@ -69,7 +122,9 @@ public struct ModelDatabase: Sendable {
             ramMB: 14500,
             contextWindow: 32768,
             quantization: "4-bit",
-            quality: 0.92
+            quality: 0.92,
+            totalParameters: 27.0,
+            activeParameters: 27.0
         ),
         ModelDefinition(
             id: "mlx-community/gemma-2-2b-it",
@@ -80,7 +135,9 @@ public struct ModelDatabase: Sendable {
             ramMB: 2700,
             contextWindow: 8192,
             quantization: "4-bit",
-            quality: 0.83
+            quality: 0.83,
+            totalParameters: 2.0,
+            activeParameters: 2.0
         ),
         ModelDefinition(
             id: "mlx-community/Llama-3.2-3B-Instruct-4bit",
@@ -91,7 +148,9 @@ public struct ModelDatabase: Sendable {
             ramMB: 2100,
             contextWindow: 128000,
             quantization: "4-bit",
-            quality: 0.81
+            quality: 0.81,
+            totalParameters: 3.0,
+            activeParameters: 3.0
         ),
         // Huihui AI Models
         ModelDefinition(
@@ -103,7 +162,9 @@ public struct ModelDatabase: Sendable {
             ramMB: 54000,
             contextWindow: 262144,
             quantization: "bfloat16",
-            quality: 0.95
+            quality: 0.95,
+            totalParameters: 27.0,
+            activeParameters: 27.0
         ),
         ModelDefinition(
             id: "AutisticAF/Huihui-Qwen3.8-27B-abliterated-mlx-4Bit",
@@ -114,7 +175,9 @@ public struct ModelDatabase: Sendable {
             ramMB: 15200,
             contextWindow: 262144,
             quantization: "4-bit",
-            quality: 0.94
+            quality: 0.94,
+            totalParameters: 27.0,
+            activeParameters: 27.0
         ),
         // Ex0bit Models
         ModelDefinition(
@@ -126,7 +189,9 @@ public struct ModelDatabase: Sendable {
             ramMB: 14500,
             contextWindow: 262144,
             quantization: "Dynamic Quant (DQ)",
-            quality: 0.93
+            quality: 0.93,
+            totalParameters: 26.0,
+            activeParameters: 4.0
         ),
         ModelDefinition(
             id: "Ex0bit/Qwen3.6-35B-A3B-PRISM-MLX-NVFP4",
@@ -137,7 +202,9 @@ public struct ModelDatabase: Sendable {
             ramMB: 20500,
             contextWindow: 131072,
             quantization: "NVFP4",
-            quality: 0.94
+            quality: 0.94,
+            totalParameters: 35.0,
+            activeParameters: 3.0
         ),
         ModelDefinition(
             id: "Ex0bit/MiniMax-SLURPY-DQ-MLX",
@@ -148,10 +215,11 @@ public struct ModelDatabase: Sendable {
             ramMB: 72000,
             contextWindow: 131072,
             quantization: "Dynamic Quant (DQ)",
-            quality: 0.92
+            quality: 0.92,
+            totalParameters: 72.0,
+            activeParameters: 12.0
         ),
-        // Ornith 1.5 — qwen3_5 / qwen3_5_moe architecture, so the existing
-        // QwenProfile and the upstream mlx-swift-lm registration cover them.
+        // Ornith 1.5 — qwen3_5 / qwen3_5_moe architecture
         ModelDefinition(
             id: "ornith-ai/Ornith-1.5-9B-MLX-4bit",
             name: "Ornith 1.5 9B (MLX 4-bit)",
@@ -161,7 +229,9 @@ public struct ModelDatabase: Sendable {
             ramMB: 5800,
             contextWindow: 262144,
             quantization: "4-bit",
-            quality: 0.91
+            quality: 0.91,
+            totalParameters: 9.0,
+            activeParameters: 9.0
         ),
         ModelDefinition(
             id: "ornith-ai/Ornith-1.5-35B-A3B-MLX-4bit",
@@ -172,7 +242,9 @@ public struct ModelDatabase: Sendable {
             ramMB: 21000,
             contextWindow: 262144,
             quantization: "4-bit",
-            quality: 0.95
+            quality: 0.95,
+            totalParameters: 35.0,
+            activeParameters: 3.0
         ),
         ModelDefinition(
             id: "Ex0bit/Elbaz-Olmo-3-7B-Instruct-abliterated",
@@ -183,7 +255,24 @@ public struct ModelDatabase: Sendable {
             ramMB: 4500,
             contextWindow: 65536,
             quantization: "4-bit",
-            quality: 0.88
+            quality: 0.88,
+            totalParameters: 7.0,
+            activeParameters: 7.0
         )
     ]
+
+    /// Zero-I/O compile-time lookup by exact ID
+    public static func find(id: String) -> ModelDefinition? {
+        allModels.first { $0.id == id }
+    }
+
+    /// Zero-I/O compile-time filter by model family
+    public static func models(for family: ModelFamily) -> [ModelDefinition] {
+        allModels.filter { $0.family == family }
+    }
+
+    /// Zero-I/O compile-time filter by task
+    public static func models(for task: ModelTask) -> [ModelDefinition] {
+        allModels.filter { $0.task == task }
+    }
 }

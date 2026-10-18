@@ -440,7 +440,9 @@ public actor MLXInferenceEngine: InferenceEngine {
                             processBuffer(final: false)
                         case .info(let info):
                             lastInfo = info
-                        case .toolCall:
+                        case .toolCall, .rejectedToolCall:
+                            break
+                        @unknown default:
                             break
                         }
                     }
