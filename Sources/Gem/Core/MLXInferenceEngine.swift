@@ -268,15 +268,11 @@ public actor MLXInferenceEngine: InferenceEngine {
         defaultReasoningEffort: String? = nil,
         profile: (any ModelProfile)? = nil
     ) -> [String: any Sendable]? {
-        let rawEffort = request.reasoningEffort ?? defaultReasoningEffort
-        let policy: ReasoningPolicy
-        if request.enableThinking == false || rawEffort == "none" || rawEffort == "off" || rawEffort == "false" {
-            policy = .disabled
-        } else if let effort = rawEffort {
-            policy = ReasoningPolicy(rawValue: effort) ?? .effort(effort)
-        } else {
-            policy = .modelDefault
-        }
+        // ReasoningPolicy(rawValue:) is the one place effort names are normalized
+        // ("off"/"none" → disabled, "high" → "xhigh").
+        let policy: ReasoningPolicy = request.enableThinking == false
+            ? .disabled
+            : ReasoningPolicy(rawValue: request.reasoningEffort ?? defaultReasoningEffort) ?? .modelDefault
 
         if let profile {
             let ctx = profile.templateContext(for: policy)
@@ -288,7 +284,7 @@ public actor MLXInferenceEngine: InferenceEngine {
         case .disabled:
             context["enable_thinking"] = false
         case .effort(let effort):
-            context["reasoning_effort"] = (effort.lowercased() == "high") ? "xhigh" : effort.lowercased()
+            context["reasoning_effort"] = effort
         case .modelDefault:
             break
         }

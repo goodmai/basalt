@@ -14,6 +14,7 @@ actor MockInferenceEngine: InferenceEngine {
     var mockText = "Mock response"
     var mockTPS  = 42.0
     var artificialDelay: TimeInterval = 0.0 // Artificial delay in seconds for testing timeouts
+    var mockReasoning: String? = nil        // yielded as a .reasoning chunk before the text
     var lastRequest: GenerationRequest?
     
     // Setter methods for actor-safe configuration
@@ -25,6 +26,10 @@ actor MockInferenceEngine: InferenceEngine {
         self.lastRequest
     }
     
+    func setMockReasoning(_ reasoning: String?) {
+        self.mockReasoning = reasoning
+    }
+
     func setShouldFailOnGenerate(_ shouldFail: Bool) {
         self.shouldFailOnGenerate = shouldFail
     }
@@ -71,6 +76,7 @@ actor MockInferenceEngine: InferenceEngine {
                 // simulate TTFT
                 try? await Task.sleep(for: .milliseconds(5))
                 let firstTokenTime = clock.now
+                if let reasoning = mockReasoning { continuation.yield(.reasoning(reasoning)) }
                 continuation.yield(.text("Mock response"))
                 
                 // simulate total generation time

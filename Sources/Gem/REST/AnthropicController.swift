@@ -178,9 +178,7 @@ struct AnthropicController: Sendable {
         }
 
         let prompt = buildPrompt(system: dto.system, messages: dto.messages)
-        let isService = ServiceRequestDetector.isTitleOrServiceRequest(prompt: prompt, maxTokens: dto.maxTokens)
-        let optInCompact = request.headers.isFlagTrue("x-compact-prompt") || request.headers.isFlagTrue("x-service-request")
-        let finalPrompt = (isService && optInCompact) ? ServiceRequestDetector.compactTitlePrompt(prompt) : prompt
+        let service = ServiceRequestDetector.prepare(prompt: prompt, maxTokens: dto.maxTokens, headers: request.headers)
 
         let effort: String?
         if let re = dto.reasoningEffort {
@@ -192,12 +190,12 @@ struct AnthropicController: Sendable {
         }
 
         let genRequest = GenerationRequest(
-            prompt: finalPrompt,
+            prompt: service.prompt,
             maxTokens: dto.maxTokens ?? 8192,
             temperature: dto.temperature ?? 0.7,
             topP: dto.topP ?? 0.9,
             reasoningEffort: effort,
-            isServiceRequest: isService
+            isServiceRequest: service.isService
         )
 
         let requestedModel = dto.model.map { ModelsController.hfRepoId(from: $0) }  // strip claude-local/ prefix if present
@@ -269,15 +267,26 @@ struct AnthropicController: Sendable {
                     ] as [String: Any]
                 ])
 
-                // content_block_start
-                send("content_block_start", [
-                    "type": "content_block_start",
-                    "index": 0,
-                    "content_block": ["type": "text", "text": ""]
-                ])
-
                 // ping
                 send("ping", ["type": "ping"])
+
+                // Content blocks per the Messages streaming spec: reasoning goes into its own
+                // `thinking` block, the answer into a `text` block after it — a thinking_delta
+                // inside a text block is something SDKs drop or reject.
+                var openBlock: (index: Int, type: String)?
+                var nextIndex = 0
+                func open(_ type: String) {
+                    if let current = openBlock {
+                        if current.type == type { return }
+                        send("content_block_stop", ["type": "content_block_stop", "index": current.index])
+                    }
+                    let block: [String: Any] = type == "thinking"
+                        ? ["type": "thinking", "thinking": "", "signature": ""]
+                        : ["type": "text", "text": ""]
+                    send("content_block_start", ["type": "content_block_start", "index": nextIndex, "content_block": block])
+                    openBlock = (nextIndex, type)
+                    nextIndex += 1
+                }
 
                 var outputTokens = 0
 
@@ -287,16 +296,20 @@ struct AnthropicController: Sendable {
                         switch chunk {
                         case .text(let text):
                             outputTokens += 1
+                            open("text")
                             send("content_block_delta", [
                                 "type": "content_block_delta",
-                                "index": 0,
+                                "index": openBlock!.index,
                                 "delta": ["type": "text_delta", "text": text]
                             ])
                         case .reasoning(let reasoning):
                             outputTokens += 1
+                            // Reasoning after the answer started has no block to go to; drop it.
+                            guard openBlock?.type != "text" else { continue }
+                            open("thinking")
                             send("content_block_delta", [
                                 "type": "content_block_delta",
-                                "index": 0,
+                                "index": openBlock!.index,
                                 "delta": ["type": "thinking_delta", "thinking": reasoning]
                             ])
                         case .metadata:
@@ -321,8 +334,9 @@ struct AnthropicController: Sendable {
                     return
                 }
 
-                // content_block_stop
-                send("content_block_stop", ["type": "content_block_stop", "index": 0])
+                // An empty answer still carries one (empty) text block.
+                open("text")
+                send("content_block_stop", ["type": "content_block_stop", "index": openBlock!.index])
 
                 // message_delta
                 send("message_delta", [
@@ -392,9 +406,3 @@ private extension HTTPResponse.Status {
     }
 }
 
-private extension HTTPFields {
-    func isFlagTrue(_ name: String) -> Bool {
-        guard let fieldName = HTTPField.Name(name) else { return false }
-        return self[fieldName] == "true"
-    }
-}
