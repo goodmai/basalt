@@ -9,7 +9,7 @@ echo "🚀 Starting REST server with Qwen3.5-4B-4bit..."
 
 # Start the server in the background
 # We use a known port 8080
-swift run Gemm serve --model mlx-community/Qwen3.5-4B-4bit --rest --port 8080 &
+swift run Basalt serve --model mlx-community/Qwen3.5-4B-4bit --rest --port 8080 &
 SERVER_PID=$!
 
 # Wait for server to start
@@ -29,10 +29,10 @@ done
 echo "✅ Server is ready!"
 
 # 1. Login
-echo "🔐 Logging in as $GEMM_ADMIN_USER..."
+echo "🔐 Logging in as $BASALT_ADMIN_USER..."
 LOGIN_RESPONSE=$(curl -s -X POST http://localhost:8080/api/v1/auth/login \
   -H "Content-Type: application/json" \
-  -d "{\"username\": \"$GEMM_ADMIN_USER\", \"password\": \"$GEMM_ADMIN_PASSWORD\"}")
+  -d "{\"username\": \"$BASALT_ADMIN_USER\", \"password\": \"$BASALT_ADMIN_PASSWORD\"}")
 
 TOKEN=$(echo $LOGIN_RESPONSE | python3 -c "import sys, json; print(json.load(sys.stdin).get('token', ''))")
 

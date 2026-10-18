@@ -14,10 +14,15 @@ jobs:
   security-audit:
     name: Security & Dependency Audit
     runs-on: macos-15
+    # The PR comment step below needs write access to pull requests; without it
+    # the job ends red with a 403 even though every check passed.
+    permissions:
+      contents: read
+      pull-requests: write
     
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       
       # No setup-swift: it pins an older toolchain than mlx-swift-lm's manifest
       # requires (tools 6.1), and every `swift package` call then fails to
@@ -100,10 +105,10 @@ jobs:
     
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@v3
+        uses: github/codeql-action/init@v4
         with:
           languages: swift
       
@@ -111,6 +116,6 @@ jobs:
         run: swift build
       
       - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@v3
+        uses: github/codeql-action/analyze@v4
         with:
           category: "/language:swift"

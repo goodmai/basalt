@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
-# Gemma — launcher: build → start server → wait for model → run claude → cleanup
+# basalt-claude — launcher: build → start server → wait for model → run claude → cleanup
 #
 # Usage:
-#   ./Gemma [--model <hf-repo-id>] [--port <port>] [--no-build] [-- <claude args>...]
+#   ./basalt-claude [--model <hf-repo-id>] [--port <port>] [--no-build] [-- <claude args>...]
 #
 # Examples:
-#   ./Gemma
-#   ./Gemma --model mlx-community/gemma-4-e4b-it-4bit
-#   ./Gemma --model mlx-community/gemma-4-31b-it-4bit --port 8081
-#   ./Gemma --no-build -- --model haiku
+#   ./basalt-claude
+#   ./basalt-claude --model mlx-community/gemma-4-e4b-it-4bit
+#   ./basalt-claude --model mlx-community/gemma-4-31b-it-4bit --port 8081
+#   ./basalt-claude --no-build -- --model haiku
 #
-# Server log (persistent):  tail -f ~/.gemm/server.log
+# Server log (persistent):  tail -f ~/.basalt/server.log
 
 set -euo pipefail
 
@@ -33,8 +33,8 @@ done
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-BINARY="$SCRIPT_DIR/.build/release/gemm"
-GEM_DIR="$HOME/.gemm"
+BINARY="$SCRIPT_DIR/.build/release/basalt"
+GEM_DIR="$HOME/.basalt"
 PID_FILE="$GEM_DIR/server.pid"
 LOG_FILE="$GEM_DIR/server.log"
 mkdir -p "$GEM_DIR"
@@ -61,7 +61,7 @@ fi
 # Always rebuild by default — Swift incremental compilation skips unchanged files.
 # Use --no-build only if you're certain nothing changed.
 if $BUILD; then
-  info "Building gemm (incremental)…"
+  info "Building basalt (incremental)…"
   cd "$SCRIPT_DIR"
   swift build -c release 2>&1 | tail -5   # show last 5 lines of build output
   ok "Build done ✓"
@@ -98,7 +98,7 @@ cleanup() {
   [[ -n "$TAIL_PID" ]] && kill "$TAIL_PID" 2>/dev/null || true
 
   if kill -0 "$SERVER_PID" 2>/dev/null; then
-    log "Stopping Gemm server (PID $SERVER_PID)…"
+    log "Stopping Basalt server (PID $SERVER_PID)…"
     kill "$SERVER_PID" 2>/dev/null || true
     for _ in $(seq 1 50); do
       kill -0 "$SERVER_PID" 2>/dev/null || break
@@ -156,7 +156,7 @@ export ANTHROPIC_API_KEY="local"                         # Claude Code requires 
 
 printf '\n'
 info "┌─────────────────────────────────────────────────────┐"
-info "│  Gemm → Claude Code proxy active                    │"
+info "│  Basalt → Claude Code proxy active                    │"
 info "├─────────────────────────────────────────────────────┤"
 info "│  ANTHROPIC_BASE_URL = $ANTHROPIC_BASE_URL"
 info "│  ANTHROPIC_API_KEY  = ${ANTHROPIC_API_KEY:0:6}…"

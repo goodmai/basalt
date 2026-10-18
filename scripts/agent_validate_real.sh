@@ -9,7 +9,7 @@ fi
 echo "--- Starting Real Model Inference Validation (REST) ---"
 
 # Start server in background
-swift run Gemm serve --model mlx-community/Qwen3.5-4B-4bit --rest --port 8080 > logs/rest_validation.log 2>&1 &
+swift run Basalt serve --model mlx-community/Qwen3.5-4B-4bit --rest --port 8080 > logs/rest_validation.log 2>&1 &
 REST_PID=$!
 
 cleanup() {
@@ -28,10 +28,10 @@ for i in {1..60}; do
 done
 
 # Login
-echo "Logging in as $GEMM_ADMIN_USER..."
+echo "Logging in as $BASALT_ADMIN_USER..."
 TOKEN=$(curl -s -X POST http://localhost:8080/api/v1/auth/login \
   -H "Content-Type: application/json" \
-  -d "{\"username\": \"$GEMM_ADMIN_USER\", \"password\": \"$GEMM_ADMIN_PASSWORD\"}" | grep -o '"token":"[^"]*' | cut -d'"' -f4)
+  -d "{\"username\": \"$BASALT_ADMIN_USER\", \"password\": \"$BASALT_ADMIN_PASSWORD\"}" | grep -o '"token":"[^"]*' | cut -d'"' -f4)
 
 if [ -z "$TOKEN" ]; then
   echo "ERROR: Failed to login"
