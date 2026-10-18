@@ -75,7 +75,7 @@ public final class MCPServer: Sendable {
     private let modelId: String?
     private let encoder: JSONEncoder = {
         let e = JSONEncoder()
-        e.outputFormatting = []
+        e.outputFormatting = [.sortedKeys]  // stable output: AGENTS.md / AI_SETUP.md show sorted keys
         return e
     }()
     private let decoder = JSONDecoder()
@@ -171,6 +171,43 @@ public final class MCPServer: Sendable {
         
         let tools: [Tool] = [
             Tool(
+                name: "status",
+                description: "Returns the health, loaded model ID, memory snapshot, and readiness status of the inference engine.",
+                inputSchema: AnyCodable([
+                    "type": "object",
+                    "properties": [
+                        "modelId": ["type": "string", "description": "Optional model repo ID to check"]
+                    ]
+                ])
+            ),
+            Tool(
+                name: "check_hardware",
+                description: "Detects Apple Silicon hardware resources (chip, available unified memory, GPU, disk) without downloading models.",
+                inputSchema: AnyCodable(["type": "object", "properties": [:]])
+            ),
+            Tool(
+                name: "inspect_model",
+                description: "Verifies weight shard integrity and detects the actual bit width of MLX/Safetensors weights.",
+                inputSchema: AnyCodable([
+                    "type": "object",
+                    "required": ["modelId"],
+                    "properties": [
+                        "modelId": ["type": "string", "description": "Hugging Face repo ID or local path to inspect"]
+                    ]
+                ])
+            ),
+            Tool(
+                name: "switch_model",
+                description: "Switches the currently loaded model to a different model in the local cache.",
+                inputSchema: AnyCodable([
+                    "type": "object",
+                    "required": ["modelId"],
+                    "properties": [
+                        "modelId": ["type": "string", "description": "Model ID in local cache to switch to"]
+                    ]
+                ])
+            ),
+            Tool(
                 name: "gemma_generate",
                 description: "Generate text using the locally-running Gemma model via MLX.",
                 inputSchema: AnyCodable([
@@ -228,6 +265,14 @@ public final class MCPServer: Sendable {
         let arguments = p["arguments"] as? [String: Any]
 
         switch name {
+        case "status":
+            await callStatus(id: id, args: arguments)
+        case "check_hardware":
+            await callCheckHardware(id: id)
+        case "inspect_model":
+            await callInspectModel(id: id, args: arguments)
+        case "switch_model":
+            await callSwitchModel(id: id, args: arguments)
         case "gemma_generate":
             await callGenerate(id: id, args: arguments)
         case "gemma_status":
@@ -245,6 +290,87 @@ public final class MCPServer: Sendable {
             await callAddKnowledge(id: id, args: arguments)
         default:
             writeError(id: id, code: -32601, message: "Unknown tool: \(name)")
+        }
+    }
+
+    private func callStatus(id: JSONRPCId?, args: [String: Any]?) async {
+        // Health describes what is actually loaded; a requested id is only compared against it,
+        // so `status {modelId}` can tell an agent the model it wants is not the one serving.
+        let loaded = await orchestrator.currentModelId
+        let requestedId = args?["modelId"] as? String
+        let health = await orchestrator.healthSnapshot(modelId: loaded.isEmpty ? modelId : loaded)
+        let (requests, tokens) = await orchestrator.diagnostics
+        
+        struct StatusOutput: Encodable {
+            let status: String
+            let ready: Bool
+            let version: String
+            let loadedModel: String
+            let requestedModel: String?
+            let requestedModelLoaded: Bool?
+            let diagnostics: Diagnostics
+            
+            struct Diagnostics: Encodable {
+                let requestCount: Int
+                let totalTokensGenerated: Int
+            }
+        }
+        
+        let statusObj = StatusOutput(
+            status: health.status,
+            ready: health.isReady,
+            version: health.version,
+            loadedModel: loaded.isEmpty ? "none" : loaded,
+            requestedModel: requestedId,
+            requestedModelLoaded: requestedId.map { $0 == loaded },
+            diagnostics: .init(requestCount: requests, totalTokensGenerated: tokens)
+        )
+        
+        writeJSONResult(id: id, statusObj)
+    }
+
+    private func callCheckHardware(id: JSONRPCId?) async {
+        writeJSONResult(id: id, await SystemProfiler().generateReport())
+    }
+
+    /// A tool result whose single text block is `value` as JSON. `isError` flags a result the
+    /// agent must not treat as success (MCP tool-result convention).
+    private struct ToolResult: Encodable {
+        let content: [[String: String]]
+        let isError: Bool?
+    }
+
+    private func writeJSONResult<T: Encodable>(id: JSONRPCId?, _ value: T, isError: Bool = false) {
+        let text = (try? String(data: encoder.encode(value), encoding: .utf8)) ?? "{}"
+        writeResult(id: id, result: ToolResult(content: [["type": "text", "text": text]], isError: isError ? true : nil))
+    }
+
+    private func callInspectModel(id: JSONRPCId?, args: [String: Any]?) async {
+        guard let targetModel = args?["modelId"] as? String, !targetModel.isEmpty else {
+            writeError(id: id, code: -32602, message: "Missing required argument: modelId")
+            return
+        }
+        let report = await ModelInspector().inspect(modelIdOrPath: targetModel)
+        // Same signal the CLI gives with its exit status: a broken model is an error result.
+        writeJSONResult(id: id, report, isError: !report.intact)
+    }
+
+    private func callSwitchModel(id: JSONRPCId?, args: [String: Any]?) async {
+        guard let targetModel = args?["modelId"] as? String, !targetModel.isEmpty else {
+            writeError(id: id, code: -32602, message: "Missing required argument: modelId")
+            return
+        }
+        do {
+            try await orchestrator.switchModel(to: targetModel)
+            let result = [
+                "content": [[
+                    "type": "text",
+                    "text": "Successfully switched model to '\(targetModel)'"
+                ]]
+            ]
+            writeResult(id: id, result: result)
+        } catch {
+            writeError(id: id, code: errorCode(for: error), message: error.localizedDescription)
         }
     }
 
