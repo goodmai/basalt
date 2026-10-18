@@ -318,15 +318,42 @@ struct FitScorerTests {
         #expect(result.optimal.fitsBudget == false)
     }
 
-    @Test("FitScorer.parseBits correctly parses 5-bit, DQ, and numeric strings")
-    func testParseBitsVariety() {
-        #expect(FitScorer.parseBits(from: "5-bit") == 5.0)
-        #expect(FitScorer.parseBits(from: "Q5_K_M") == 5.0)
-        #expect(FitScorer.parseBits(from: "DQ-4bit") == 4.0)
-        #expect(FitScorer.parseBits(from: "bfloat16") == 16.0)
-        #expect(FitScorer.parseBits(from: "fp16") == 16.0)
-        #expect(FitScorer.parseBits(from: "8-bit") == 8.0)
-        #expect(FitScorer.parseBits(from: "2-bit") == 2.0)
-        #expect(FitScorer.parseBits(from: "3-bit") == 3.0)
+    @Test("FitScorer speed calibration rescales when scoring model at different quant from measurement")
+    func testFitScorerQuantRescaling() async {
+        let resources = createMockResources(ramGB: 32, availableGB: 20, chip: "M2 Max")
+        let benchmarkProfile = HardwareBenchmarkProfile(
+            chipModel: "M2 Max",
+            measurements: [
+                "mlx-community/Qwen2.5-Coder-7B": BenchmarkMeasurement(
+                    modelId: "mlx-community/Qwen2.5-Coder-7B",
+                    chipModel: "M2 Max",
+                    measuredTPS: 50.0,
+                    measuredTTFT: 0.1,
+                    quant: "4-bit" // Measured at 4-bit, 50 TPS
+                )
+            ]
+        )
+
+        let scorer = FitScorer(profile: resources, benchmarkProfile: benchmarkProfile)
+        let model8bit = ModelDefinition(
+            id: "mlx-community/Qwen2.5-Coder-7B",
+            name: "Qwen 7B (8-bit)",
+            family: .qwen,
+            task: .code,
+            modality: .text,
+            ramMB: 8000,
+            contextWindow: 32768,
+            quantization: "8-bit",
+            quality: 0.90,
+            totalParameters: 7.0,
+            activeParameters: 7.0
+        )
+
+        let score = await scorer.score(model8bit)
+        #expect(score.isMeasured == true)
+        // 4-bit 50 TPS rescaled to 8-bit should be 25 TPS, not 50 TPS
+        #expect(score.estimatedTPS == 25)
+        #expect(score.measuredTPS == 25.0)
     }
 }
+

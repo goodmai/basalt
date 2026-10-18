@@ -181,10 +181,13 @@ public actor FitScorer {
         let theoreticalTPS = effectiveBW / bytesPerToken
         
         if let measurement = benchmarkProfile.measurement(for: model.id, currentChip: chip) {
-            let calib = theoreticalTPS > 0 ? (measurement.measuredTPS / theoreticalTPS) : 1.0
-            let tps = max(1, Int(measurement.measuredTPS.rounded()))
+            let measuredBits = measurement.quant.map { Self.parseBits(from: $0) } ?? bits
+            let ratio = bits > 0 ? (measuredBits / bits) : 1.0
+            let adjustedMeasuredTPS = measurement.measuredTPS * ratio
+            let calib = theoreticalTPS > 0 ? (adjustedMeasuredTPS / theoreticalTPS) : 1.0
+            let tps = max(1, Int(adjustedMeasuredTPS.rounded()))
             let speedFit = min(1.0, Double(tps) / 100.0)
-            return (speedFit, tps, true, measurement.measuredTPS, calib)
+            return (speedFit, tps, true, adjustedMeasuredTPS, calib)
         } else {
             let tps = max(1, Int(theoreticalTPS.rounded()))
             let speedFit = min(1.0, theoreticalTPS / 100.0)
