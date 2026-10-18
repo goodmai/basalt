@@ -12,19 +12,7 @@ struct RESTServer: Sendable {
     let config: ServerConfig
 
     func run() async throws {
-        let defaultId = config.modelId ?? config.modelPath.split(separator: "/").last.map(String.init) ?? "basalt"
-
-        let generateController  = GenerateController(orchestrator: orchestrator, modelId: defaultId)
-        let openAIController    = OpenAIController(orchestrator: orchestrator, modelId: defaultId)
-        let anthropicController = AnthropicController(orchestrator: orchestrator, modelId: defaultId)
-        let modelsController    = ModelsController(orchestrator: orchestrator, defaultModelId: defaultId)
-
-        let router = buildRouter(
-            generateController:  generateController,
-            openAIController:    openAIController,
-            anthropicController: anthropicController,
-            modelsController:    modelsController
-        )
+        let router = makeRouter()
 
         // Suppress Hummingbird's own verbose logging; our GemLogger handles app-level logs.
         var logger = Logger(label: "Gem")
@@ -48,6 +36,17 @@ struct RESTServer: Sendable {
     }
 
     // MARK: — Router
+
+    /// The fully wired router, auth middleware included — also what the perimeter tests drive.
+    func makeRouter() -> Router<BasicRequestContext> {
+        let defaultId = config.modelId ?? config.modelPath.split(separator: "/").last.map(String.init) ?? "basalt"
+        return buildRouter(
+            generateController:  GenerateController(orchestrator: orchestrator, modelId: defaultId),
+            openAIController:    OpenAIController(orchestrator: orchestrator, modelId: defaultId),
+            anthropicController: AnthropicController(orchestrator: orchestrator, modelId: defaultId),
+            modelsController:    ModelsController(orchestrator: orchestrator, defaultModelId: defaultId)
+        )
+    }
 
     private func buildRouter(
         generateController:  GenerateController,
@@ -116,7 +115,7 @@ struct RESTServer: Sendable {
             {
               "openapi": "3.0.0",
               "info": { "title": "Basalt REST API", "version": "1.0.0",
-                        "description": "Local LLM inference — no auth required" },
+                        "description": "Local LLM inference — open on loopback; an API key (Bearer or x-api-key) is required when bound off loopback" },
               "paths": {
                 "/api/v1/health":          { "get":  { "summary": "Health check" } },
                 "/api/v1/generate":        { "post": { "summary": "Raw text generation" } },

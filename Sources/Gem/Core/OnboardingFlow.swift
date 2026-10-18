@@ -47,6 +47,18 @@ public actor OnboardingFlow {
         self.serverConfigPath = (serverConfigPath as NSString).expandingTildeInPath
     }
     
+    /// Launch arguments for the chosen model: only the `--model` value is replaced, so flags the
+    /// user added to `args` (e.g. --max-tokens) survive a re-run of onboarding.
+    static func launchArgs(existing: [String]?, model: String) -> [String] {
+        guard var args = existing, !args.isEmpty else { return ["serve", "--model", model] }
+        if let i = args.firstIndex(of: "--model"), i + 1 < args.count {
+            args[i + 1] = model
+        } else {
+            args += ["--model", model]
+        }
+        return args
+    }
+
     /// Check if onboarding has been completed
     public func isCompleted() -> Bool {
         guard let state = loadState() else {
@@ -166,14 +178,16 @@ public actor OnboardingFlow {
         // Step 5: Non-destructive server configuration update
         let chosenModel = selectedModel ?? recommendation.modelId
         let serverConfigURL = URL(fileURLWithPath: serverConfigPath)
-        let exe = ProcessInfo.processInfo.arguments.first ?? "gemm"
+        // Absolute path: argv[0] may be relative to wherever onboard happened to run.
+        let exe = Bundle.main.executablePath ?? ProcessInfo.processInfo.arguments.first ?? "basalt"
         do {
+            let existingArgs = (try? ServerConfig.load(from: serverConfigURL))?["args"] as? [String]
             // host/port are defaults, not updates: a re-run must not undo a user's edit.
             try ServerConfig.mergeAndSave(
                 to: serverConfigURL,
                 systemUpdates: [
                     "exe": exe,
-                    "args": ["serve", "--model", chosenModel]
+                    "args": Self.launchArgs(existing: existingArgs, model: chosenModel)
                 ],
                 defaults: ["port": 8080, "host": "127.0.0.1"],
                 createBackup: true

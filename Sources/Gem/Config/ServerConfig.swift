@@ -151,27 +151,34 @@ public struct ServerConfig: Sendable {
         let fileManager = FileManager.default
         let dir = url.deletingLastPathComponent()
         if !fileManager.fileExists(atPath: dir.path) {
-            try fileManager.createDirectory(at: dir, withIntermediateDirectories: true)
+            try fileManager.createDirectory(at: dir, withIntermediateDirectories: true,
+                                            attributes: [.posixPermissions: 0o700])
         }
 
-        let existingData: Data?
-        if fileManager.fileExists(atPath: url.path) {
-            let data = try Data(contentsOf: url)
-            existingData = data
-            if createBackup {
-                let backupURL = url.appendingPathExtension("bak")
-                try? fileManager.removeItem(at: backupURL)
-                try data.write(to: backupURL, options: .atomic)
-                try fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: backupURL.path)
-            }
-        } else {
-            existingData = nil
-        }
-
+        let existingData = fileManager.fileExists(atPath: url.path) ? try Data(contentsOf: url) : nil
+        // Merge first: a malformed config must not replace the last good backup.
         let mergedData = try mergeConfiguration(existingData: existingData, systemUpdates: systemUpdates, defaults: defaults)
-        try mergedData.write(to: url, options: .atomic)
-        try fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+        if createBackup, let existingData {
+            try writeOwnerOnly(existingData, to: url.appendingPathExtension("bak"))
+        }
+        try writeOwnerOnly(mergedData, to: url)
         return url
+    }
+
+    /// Atomic write whose file is 0600 from the moment it exists (no world-readable window):
+    /// the temp file is created owner-only, then swapped in by rename.
+    static func writeOwnerOnly(_ data: Data, to url: URL) throws {
+        let fileManager = FileManager.default
+        let tmp = url.deletingLastPathComponent().appendingPathComponent(".\(url.lastPathComponent).\(UUID().uuidString).tmp")
+        guard fileManager.createFile(atPath: tmp.path, contents: data, attributes: [.posixPermissions: 0o600]) else {
+            throw CocoaError(.fileWriteUnknown, userInfo: [NSFilePathErrorKey: tmp.path])
+        }
+        // rename(2), not replaceItemAt: the latter copies the old file's permissions back.
+        guard rename(tmp.path, url.path) == 0 else {
+            let code = errno
+            try? fileManager.removeItem(at: tmp)
+            throw POSIXError(POSIXErrorCode(rawValue: code) ?? .EIO)
+        }
     }
 
     /// Loads the configuration dictionary from a given file URL.
