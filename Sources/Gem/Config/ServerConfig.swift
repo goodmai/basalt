@@ -151,27 +151,39 @@ public struct ServerConfig: Sendable {
         let fileManager = FileManager.default
         let dir = url.deletingLastPathComponent()
         if !fileManager.fileExists(atPath: dir.path) {
-            try fileManager.createDirectory(at: dir, withIntermediateDirectories: true)
+            try fileManager.createDirectory(at: dir, withIntermediateDirectories: true,
+                                            attributes: [.posixPermissions: 0o700])
         }
 
-        let existingData: Data?
-        if fileManager.fileExists(atPath: url.path) {
-            let data = try Data(contentsOf: url)
-            existingData = data
-            if createBackup {
-                let backupURL = url.appendingPathExtension("bak")
-                try? fileManager.removeItem(at: backupURL)
-                try data.write(to: backupURL, options: .atomic)
-                try fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: backupURL.path)
-            }
-        } else {
-            existingData = nil
-        }
-
+        let existingData = fileManager.fileExists(atPath: url.path) ? try Data(contentsOf: url) : nil
+        // Merge first: a malformed config must not replace the last good backup.
         let mergedData = try mergeConfiguration(existingData: existingData, systemUpdates: systemUpdates, defaults: defaults)
-        try mergedData.write(to: url, options: .atomic)
-        try fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+        if createBackup, let existingData {
+            try writeOwnerOnly(existingData, to: url.appendingPathExtension("bak"))
+        }
+        try writeOwnerOnly(mergedData, to: url)
         return url
+    }
+
+    /// Atomic write whose file is 0600 from the moment it exists (no world-readable window):
+    /// the temp file is opened O_EXCL with mode 0600, then swapped in by rename(2).
+    /// (FileManager.createFile and replaceItemAt both chmod after the data is on disk.)
+    static func writeOwnerOnly(_ data: Data, to url: URL) throws {
+        let tmp = url.deletingLastPathComponent().appendingPathComponent(".\(url.lastPathComponent).\(UUID().uuidString).tmp")
+        func fail(_ code: Int32) -> POSIXError {
+            unlink(tmp.path)
+            return POSIXError(POSIXErrorCode(rawValue: code) ?? .EIO)
+        }
+        let fd = open(tmp.path, O_CREAT | O_EXCL | O_WRONLY, 0o600)
+        guard fd >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+        let written = data.withUnsafeBytes { write(fd, $0.baseAddress, $0.count) }
+        guard written == data.count, fsync(fd) == 0 else {
+            let code = errno
+            close(fd)
+            throw fail(code)
+        }
+        guard close(fd) == 0 else { throw fail(errno) }
+        guard rename(tmp.path, url.path) == 0 else { throw fail(errno) }
     }
 
     /// Loads the configuration dictionary from a given file URL.

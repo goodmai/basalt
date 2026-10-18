@@ -61,19 +61,19 @@ struct ServeCommand: AsyncParsableCommand {
 
     @Option(
         name: .customLong("api-key"),
-        help: "API key required for authenticating requests, mandatory when binding to a non-loopback address"
+        help: "API key required for authenticating requests, mandatory when binding to a non-loopback address. Prefer the BASALT_API_KEY environment variable: argv is visible to every local user via ps."
     )
     var apiKey: String?
 
     @Flag(
         name: .customLong("auto-generate-key"),
-        help: "Automatically generate a cryptographically strong API key if none is provided on non-loopback bind"
+        help: "Automatically generate a cryptographically strong API key if none is provided on non-loopback bind (a new key on every start — pass a fixed key for clients that reconnect)"
     )
     var autoGenerateKey: Bool = false
 
     @Option(
         name: .customLong("config"),
-        help: "Path to JSON server configuration file (e.g. ~/.gem/config.json)"
+        help: "Path to JSON server configuration file (default: ~/.gem/config.json when it exists)"
     )
     var configFile: String?
 
@@ -127,7 +127,11 @@ struct ServeCommand: AsyncParsableCommand {
             return
         }
 
-        let network = try Self.resolveNetwork(cliPort: port, cliHost: host, cliApiKey: apiKey, configFile: configFile)
+        let network = try Self.resolveNetwork(
+            cliPort: port, cliHost: host,
+            cliApiKey: apiKey ?? ProcessInfo.processInfo.environment["BASALT_API_KEY"],
+            configFile: configFile ?? Self.defaultConfigFileIfPresent()
+        )
         // Settle the exposure rule before resolveModelPath(), which may download gigabytes.
         let access: (key: String?, generated: Bool)
         do {
@@ -211,8 +215,15 @@ struct ServeCommand: AsyncParsableCommand {
 
     // MARK: — Network resolution
 
+    /// ~/.gem/config.json is what `onboard` writes; serve reads it without --config so those values apply.
+    static func defaultConfigFileIfPresent() -> String? {
+        let url = ServerConfig.defaultConfigFileURL
+        return FileManager.default.fileExists(atPath: url.path) ? url.path : nil
+    }
+
     /// Port, host and API key with precedence CLI > `--config` file > default.
-    /// An unreadable or malformed config file is an error, never a silent fallback to defaults.
+    /// An unreadable or malformed config file — or a value of the wrong type in it — is an error,
+    /// never a silent fallback to defaults.
     static func resolveNetwork(
         cliPort: Int?,
         cliHost: String?,
@@ -225,13 +236,22 @@ struct ServeCommand: AsyncParsableCommand {
             do {
                 dict = try ServerConfig.load(from: url)
             } catch {
-                throw ValidationError("Cannot read --config \(url.path): \(error.localizedDescription)")
+                throw ValidationError("Cannot read server config \(url.path): \(error.localizedDescription)")
             }
         }
+        func value<T>(_ key: String, as _: T.Type) throws -> T? {
+            guard let raw = dict[key], !(raw is NSNull) else { return nil }
+            guard let typed = raw as? T else {
+                throw ValidationError("--config: \"\(key)\" must be \(T.self), got \(raw)")
+            }
+            return typed
+        }
+        // An empty --api-key / BASALT_API_KEY is "not set", so it cannot mask the config's key.
+        let cliKey = cliApiKey.flatMap { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 }
         return (
-            port: cliPort ?? dict["port"] as? Int ?? 8080,
-            host: cliHost ?? dict["host"] as? String ?? "127.0.0.1",
-            apiKey: cliApiKey ?? dict["api_key"] as? String
+            port: try cliPort ?? value("port", as: Int.self) ?? 8080,
+            host: try cliHost ?? value("host", as: String.self) ?? "127.0.0.1",
+            apiKey: try cliKey ?? value("api_key", as: String.self)
         )
     }
 

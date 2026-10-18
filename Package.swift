@@ -63,6 +63,7 @@ let package = Package(
             name: "GemTests",
             dependencies: [
                 "GemCore",
+                .product(name: "HummingbirdTesting", package: "hummingbird"),
             ],
             path: "Tests/GemTests",
             swiftSettings: [
