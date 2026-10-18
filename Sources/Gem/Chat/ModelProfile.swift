@@ -71,9 +71,11 @@ public struct QwenProfile: ModelProfile {
         case .effort(let level):
             // The template raises on anything outside this set, which would surface
             // as an opaque 500. Fail closed to the default instead.
-            // ReasoningPolicy(rawValue:) already normalized the level ("high" → "xhigh").
-            guard ["xhigh", "medium", "low"].contains(level) else { return [:] }
-            return ["reasoning_effort": level]
+            // OpenAI/Anthropic clients name levels low|medium|high (Codex also minimal); the
+            // Qwen template knows low|medium|xhigh and raises on anything else.
+            let mapped = ["minimal": "low", "high": "xhigh"][level] ?? level
+            guard ["xhigh", "medium", "low"].contains(mapped) else { return [:] }
+            return ["reasoning_effort": mapped]
         }
     }
 
@@ -126,7 +128,16 @@ public struct GenericProfile: ModelProfile {
 
     public init() {}
 
-    public func templateContext(for reasoning: ReasoningPolicy) -> [String: any Sendable] { [:] }
+    /// Unknown templates get the request's own words: `enable_thinking: false` to disable, the
+    /// level name as `reasoning_effort` (what gpt-oss-style templates read). A template that
+    /// does not use a key ignores it.
+    public func templateContext(for reasoning: ReasoningPolicy) -> [String: any Sendable] {
+        switch reasoning {
+        case .modelDefault:        return [:]
+        case .disabled:            return ["enable_thinking": false]
+        case .effort(let level):   return ["reasoning_effort": level]
+        }
+    }
     public var thinkingMarkers: ThinkingMarkers { .none }
     public var defaultMaxTokens: Int { 4096 }
     public var defaultMinP: Float? { nil }

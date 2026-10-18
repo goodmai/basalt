@@ -15,6 +15,7 @@ actor MockInferenceEngine: InferenceEngine {
     var mockTPS  = 42.0
     var artificialDelay: TimeInterval = 0.0 // Artificial delay in seconds for testing timeouts
     var mockReasoning: String? = nil        // yielded as a .reasoning chunk before the text
+    var mockToolCall: ToolCallOutput? = nil // yielded as a .toolCall chunk after the text
     var lastRequest: GenerationRequest?
     
     // Setter methods for actor-safe configuration
@@ -28,6 +29,11 @@ actor MockInferenceEngine: InferenceEngine {
     
     func setMockReasoning(_ reasoning: String?) {
         self.mockReasoning = reasoning
+    }
+
+    func setMockToolCall(_ call: ToolCallOutput?, text: String = "Mock response") {
+        self.mockToolCall = call
+        self.mockText = text
     }
 
     func setShouldFailOnGenerate(_ shouldFail: Bool) {
@@ -46,14 +52,27 @@ actor MockInferenceEngine: InferenceEngine {
     func generate(request: GenerationRequest) async throws(GemError) -> GenerationResponse {
         self.lastRequest = request
         let stream = try await generateStream(request: request)
+        // Assemble the response from the stream, like MLXInferenceEngine.generate does.
         var metadata: GenerationResponse?
+        var text = ""
+        var calls: [ToolCallOutput] = []
         for await chunk in stream {
-            if case .metadata(let m) = chunk { metadata = m }
+            switch chunk {
+            case .metadata(let m): metadata = m
+            case .text(let t): text += t
+            case .toolCall(let c): calls.append(c)
+            case .reasoning: break
+            }
         }
         guard let metadata else {
             throw .inferenceHardwareFailure(reason: "No metadata received from stream")
         }
-        return metadata
+        return GenerationResponse(
+            generatedText: text, promptTokens: metadata.promptTokens, completionTokens: metadata.completionTokens,
+            tokensPerSecond: metadata.tokensPerSecond, generationTime: metadata.generationTime,
+            timeToFirstToken: metadata.timeToFirstToken, memory: metadata.memory,
+            finishReason: metadata.finishReason, toolCalls: calls.isEmpty ? nil : calls
+        )
     }
 
     func generateStream(request: GenerationRequest) async throws(GemError) -> AsyncStream<StreamChunk> {
@@ -77,7 +96,8 @@ actor MockInferenceEngine: InferenceEngine {
                 try? await Task.sleep(for: .milliseconds(5))
                 let firstTokenTime = clock.now
                 if let reasoning = mockReasoning { continuation.yield(.reasoning(reasoning)) }
-                continuation.yield(.text("Mock response"))
+                if !mockText.isEmpty { continuation.yield(.text(mockText)) }
+                if let call = mockToolCall { continuation.yield(.toolCall(call)) }
                 
                 // simulate total generation time
                 try? await Task.sleep(for: .milliseconds(5))

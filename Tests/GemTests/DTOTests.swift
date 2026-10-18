@@ -166,7 +166,8 @@ struct CodingAgentDTOTests {
         #expect(ReasoningPolicy(rawValue: "off") == .disabled)
         #expect(ReasoningPolicy(rawValue: "none") == .disabled)
         #expect(ReasoningPolicy(rawValue: "false") == .disabled)
-        #expect(ReasoningPolicy(rawValue: "high") == .effort("xhigh"))
+        // Level names pass through; each profile maps them (Qwen: high → xhigh).
+        #expect(ReasoningPolicy(rawValue: "High") == .effort("high"))
         #expect(ReasoningPolicy(rawValue: "xhigh") == .effort("xhigh"))
         #expect(ReasoningPolicy(rawValue: "medium") == .effort("medium"))
         #expect(ReasoningPolicy(rawValue: "low") == .effort("low"))

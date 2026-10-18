@@ -58,6 +58,8 @@ struct ChatCommand: AsyncParsableCommand {
                 
                 for try await chunk in stream {
                     switch chunk {
+                    case .toolCall:  // this path offers the model no tools, so it cannot call one
+                        break
                     case .text(let t):
                         print(t, terminator: "")
                         fflush(stdout)

@@ -61,18 +61,21 @@ struct OpenAIController: Sendable {
         let role: String?
         let content: MessageContent?   // null when tool_calls are present
         // Responses API input items besides messages: a tool call the model made earlier
-        // (`function_call`: name + arguments) and its result (`function_call_output`: output).
+        // (`function_call`: name + arguments, `custom_tool_call`: name + input) and its result
+        // (`*_output`: output — a string, or content blocks when a tool returned images).
         let name: String?
         let arguments: String?
-        let output: String?
+        let input: String?
+        let output: MessageContent?
 
         init(type: String? = nil, role: String? = nil, content: MessageContent?,
-             name: String? = nil, arguments: String? = nil, output: String? = nil) {
+             name: String? = nil, arguments: String? = nil, input: String? = nil, output: MessageContent? = nil) {
             self.type = type
             self.role = role
             self.content = content
             self.name = name
             self.arguments = arguments
+            self.input = input
             self.output = output
         }
     }
@@ -166,12 +169,21 @@ struct OpenAIController: Sendable {
         let output: [OutputItem]
         let usage: Usage
 
+        /// A `message` (role + content) or a `function_call` (call_id + name + arguments).
         struct OutputItem: Codable, Sendable {
             let id: String
             let type: String
             let status: String
-            let role: String
-            let content: [OutputContent]
+            var role: String? = nil
+            var content: [OutputContent]? = nil
+            var callId: String? = nil
+            var name: String? = nil
+            var arguments: String? = nil
+
+            enum CodingKeys: String, CodingKey {
+                case id, type, status, role, content, name, arguments
+                case callId = "call_id"
+            }
         }
 
         struct OutputContent: Codable, Sendable {
@@ -355,7 +367,8 @@ struct OpenAIController: Sendable {
             temperature: dto.temperature ?? 0.7,
             topP: dto.topP ?? 0.9,
             reasoningEffort: dto.effectiveReasoningEffort,
-            isServiceRequest: service.isService
+            isServiceRequest: service.isService,
+            tools: Self.functionTools(fromRequestBody: data)
         )
         let requestedModel = dto.model.map { ModelsController.hfRepoId(from: $0) }
 
@@ -371,15 +384,19 @@ struct OpenAIController: Sendable {
                 createdAt: Int(Date().timeIntervalSince1970),
                 status: "completed",
                 model: dto.model ?? modelId,
-                output: [
+                // The message (when the model said anything or called nothing), then its tool calls.
+                output: (result.generatedText.isEmpty && result.toolCalls != nil ? [] : [
                     .init(
-                        id: "item_\(UUID().uuidString)",
+                        id: "msg_\(UUID().uuidString)",
                         type: "message",
                         status: "completed",
                         role: "assistant",
                         content: [.init(type: "output_text", text: result.generatedText)]
                     )
-                ],
+                ]) + (result.toolCalls ?? []).map { call in
+                    .init(id: "fc_\(UUID().uuidString)", type: "function_call", status: "completed",
+                          callId: call.id, name: call.name, arguments: call.arguments)
+                },
                 usage: .init(
                     inputTokens: result.promptTokens,
                     outputTokens: result.completionTokens,
@@ -427,13 +444,15 @@ struct OpenAIController: Sendable {
 
     private func sseStream(genRequest: GenerationRequest, model: String, requestedModel: String? = nil) -> AsyncStream<ByteBuffer> {
         AsyncStream { continuation in
-            Task {
+            let task = Task {
                 let id = "chatcmpl-\(UUID().uuidString)"
                 let created = Int(Date().timeIntervalSince1970)
                 do {
                     let stream = try await orchestrator.generateStream(request: genRequest, modelId: requestedModel)
                     for await chunk in stream {
                         switch chunk {
+                        case .toolCall:  // this path offers the model no tools, so it cannot call one
+                            break
                         case .text(let text):
                             let delta: [String: Any] = [
                                 "id": id, "object": "chat.completion.chunk",
@@ -492,6 +511,8 @@ struct OpenAIController: Sendable {
                 }
                 continuation.finish()
             }
+            // A client that disconnects cancels the generation instead of leaving it running.
+            continuation.onTermination = { _ in task.cancel() }
         }
     }
 
@@ -507,17 +528,21 @@ struct OpenAIController: Sendable {
         )
     }
 
-    /// OpenAI Responses API streaming: created → output_item.added → content_part.added →
-    /// output_text.delta… → output_text.done → content_part.done → output_item.done →
-    /// response.completed (response.failed on error). Codex and the OpenAI SDKs end a turn on
-    /// `response.completed`; there is no `[DONE]` sentinel in this protocol. Reasoning chunks are
-    /// not streamed: they would need their own `reasoning` output item, and a malformed one is
-    /// worse for strict clients than none.
+    /// OpenAI Responses API streaming. Output items get indices in the order they appear:
+    /// a `reasoning` item when the model thinks, the answer `message`, and one `function_call`
+    /// item per tool call (a turn that only calls tools has no message). Each item is opened
+    /// with output_item.added and closed with output_item.done; text streams as
+    /// output_text.delta inside a content part, arguments as function_call_arguments.delta.
+    /// The turn ends with response.completed (response.failed on error) — Codex ends a turn
+    /// there; there is no `[DONE]` sentinel in this protocol. Streaming the reasoning also keeps
+    /// the connection alive while a model thinks for minutes — Codex drops a stream that stays
+    /// silent past its idle timeout.
     private func sseResponsesStream(genRequest: GenerationRequest, model: String, requestedModel: String? = nil) -> AsyncStream<ByteBuffer> {
         AsyncStream { continuation in
             let task = Task {
                 let id = "resp_\(UUID().uuidString)"
-                let itemId = "msg_\(UUID().uuidString)"
+                let messageId = "msg_\(UUID().uuidString)"
+                let reasoningId = "rs_\(UUID().uuidString)"
                 let createdAt = Int(Date().timeIntervalSince1970)
                 var seq = 0
 
@@ -539,48 +564,110 @@ struct OpenAIController: Sendable {
                     r.merge(extra) { _, new in new }
                     return r
                 }
+
+                var completed: [[String: Any]] = []   // finished output items, in index order
+                var reasoning: String?                // open reasoning item's text
+                var messageIndex: Int?                // open message item's index
+                var text = ""
+                var final: GenerationResponse?
+
                 func messageItem(status: String, text: String?) -> [String: Any] {
                     let content: [Any] = text.map { [["type": "output_text", "text": $0, "annotations": [] as [Any]]] } ?? []
-                    return ["id": itemId, "type": "message", "status": status, "role": "assistant", "content": content]
+                    return ["id": messageId, "type": "message", "status": status, "role": "assistant", "content": content]
+                }
+                func closeReasoning() {
+                    guard let r = reasoning else { return }
+                    send("response.reasoning_text.done", ["item_id": reasoningId, "output_index": completed.count, "content_index": 0, "text": r])
+                    let done: [String: Any] = ["id": reasoningId, "type": "reasoning", "summary": [] as [Any],
+                                               "content": [["type": "reasoning_text", "text": r]]]
+                    send("response.output_item.done", ["output_index": completed.count, "item": done])
+                    completed.append(done)
+                    reasoning = nil
+                }
+                func closeMessage() {
+                    guard let index = messageIndex else { return }
+                    send("response.output_text.done", ["item_id": messageId, "output_index": index, "content_index": 0, "text": text])
+                    send("response.content_part.done", [
+                        "item_id": messageId, "output_index": index, "content_index": 0,
+                        "part": ["type": "output_text", "text": text, "annotations": [] as [Any]]
+                    ])
+                    let done = messageItem(status: "completed", text: text)
+                    send("response.output_item.done", ["output_index": index, "item": done])
+                    completed.append(done)
+                    messageIndex = nil
+                }
+                func openMessage() -> Int {
+                    if let index = messageIndex { return index }
+                    closeReasoning()
+                    let index = completed.count
+                    send("response.output_item.added", ["output_index": index, "item": messageItem(status: "in_progress", text: nil)])
+                    send("response.content_part.added", [
+                        "item_id": messageId, "output_index": index, "content_index": 0,
+                        "part": ["type": "output_text", "text": "", "annotations": [] as [Any]]
+                    ])
+                    messageIndex = index
+                    return index
+                }
+                func emitToolCall(_ call: ToolCallOutput) {
+                    closeReasoning()
+                    closeMessage()
+                    let index = completed.count
+                    let itemId = "fc_\(UUID().uuidString)"
+                    var item: [String: Any] = ["id": itemId, "type": "function_call", "call_id": call.id,
+                                               "name": call.name, "arguments": "", "status": "in_progress"]
+                    send("response.output_item.added", ["output_index": index, "item": item])
+                    send("response.function_call_arguments.delta", ["item_id": itemId, "output_index": index, "delta": call.arguments])
+                    send("response.function_call_arguments.done", ["item_id": itemId, "output_index": index, "arguments": call.arguments])
+                    item["arguments"] = call.arguments
+                    item["status"] = "completed"
+                    send("response.output_item.done", ["output_index": index, "item": item])
+                    completed.append(item)
                 }
 
                 send("response.created", ["response": responseObject(status: "in_progress", output: [])])
-                send("response.output_item.added", ["output_index": 0, "item": messageItem(status: "in_progress", text: nil)])
-                send("response.content_part.added", [
-                    "item_id": itemId, "output_index": 0, "content_index": 0,
-                    "part": ["type": "output_text", "text": "", "annotations": [] as [Any]]
-                ])
 
                 do {
-                    var text = ""
-                    var final: GenerationResponse?
                     let stream = try await orchestrator.generateStream(request: genRequest, modelId: requestedModel)
                     for await chunk in stream {
                         switch chunk {
                         case .text(let delta):
+                            let index = openMessage()
                             text += delta
                             send("response.output_text.delta", [
-                                "item_id": itemId, "output_index": 0, "content_index": 0, "delta": delta
+                                "item_id": messageId, "output_index": index, "content_index": 0, "delta": delta
                             ])
-                        case .reasoning:
-                            break
+                        case .reasoning(let delta):
+                            // Reasoning after the answer started has no item to go to; drop it.
+                            guard messageIndex == nil, completed.isEmpty else { continue }
+                            if reasoning == nil {
+                                send("response.output_item.added", ["output_index": 0, "item": [
+                                    "id": reasoningId, "type": "reasoning", "summary": [] as [Any], "content": [] as [Any]
+                                ] as [String: Any]])
+                                reasoning = ""
+                            }
+                            reasoning! += delta
+                            send("response.reasoning_text.delta", [
+                                "item_id": reasoningId, "output_index": 0, "content_index": 0, "delta": delta
+                            ])
+                        case .toolCall(let call):
+                            emitToolCall(call)
                         case .metadata(let meta):
                             final = meta
                         }
                     }
                     if Task.isCancelled { continuation.finish(); return }
 
-                    send("response.output_text.done", ["item_id": itemId, "output_index": 0, "content_index": 0, "text": text])
-                    send("response.content_part.done", [
-                        "item_id": itemId, "output_index": 0, "content_index": 0,
-                        "part": ["type": "output_text", "text": text, "annotations": [] as [Any]]
-                    ])
-                    let done = messageItem(status: "completed", text: text)
-                    send("response.output_item.done", ["output_index": 0, "item": done])
+                    closeReasoning()
+                    // A turn that only called tools carries no message; any other turn has one,
+                    // even an empty one.
+                    if messageIndex != nil || !completed.contains(where: { $0["type"] as? String == "function_call" }) {
+                        _ = openMessage()
+                    }
+                    closeMessage()
 
                     let inTokens = final?.promptTokens ?? 0
                     let outTokens = final?.completionTokens ?? 0
-                    send("response.completed", ["response": responseObject(status: "completed", output: [done], extra: [
+                    send("response.completed", ["response": responseObject(status: "completed", output: completed, extra: [
                         "usage": ["input_tokens": inTokens, "output_tokens": outTokens, "total_tokens": inTokens + outTokens]
                     ])])
                 } catch {
@@ -595,6 +682,27 @@ struct OpenAIController: Sendable {
         }
     }
 
+
+    // MARK: — Tools
+
+    /// `function` tools from `tools` and `additional_tools`, in the Responses form
+    /// (`{type, name, description, parameters}`) or the Chat Completions form
+    /// (`{type, function: {name, description, parameters}}`). Read from the raw body because the
+    /// parameter schema is arbitrary JSON. Built-in tools (local_shell, web_search, …) have no
+    /// function schema for the template and are skipped.
+    static func functionTools(fromRequestBody data: Data) -> [ToolDefinition]? {
+        guard let body = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        let raw = ((body["tools"] as? [[String: Any]]) ?? []) + ((body["additional_tools"] as? [[String: Any]]) ?? [])
+        let tools: [ToolDefinition] = raw.compactMap { entry in
+            guard entry["type"] as? String == "function" else { return nil }
+            let spec = (entry["function"] as? [String: Any]) ?? entry
+            guard let name = spec["name"] as? String, !name.isEmpty else { return nil }
+            let parameters = spec["parameters"].flatMap { try? JSONSerialization.data(withJSONObject: $0) }
+                .flatMap { String(data: $0, encoding: .utf8) }
+            return ToolDefinition(name: name, description: spec["description"] as? String, parametersJSON: parameters)
+        }
+        return tools.isEmpty ? nil : tools
+    }
 
     // MARK: — Prompt
 
@@ -611,11 +719,11 @@ struct OpenAIController: Sendable {
             // Responses API history items: keep tool calls and their results in the transcript,
             // otherwise a coding agent's next turn loses what its tools returned.
             switch msg.type {
-            case "function_call":
-                parts.append("[Assistant called \(msg.name ?? "tool")]: \(msg.arguments ?? "{}")")
+            case "function_call", "custom_tool_call":
+                parts.append("[Assistant called \(msg.name ?? "tool")]: \(msg.arguments ?? msg.input ?? "{}")")
                 continue
-            case "function_call_output":
-                parts.append("[Tool result]: \(msg.output ?? "")")
+            case "function_call_output", "custom_tool_call_output":
+                parts.append("[Tool result]: \(msg.output?.textValue ?? "")")
                 continue
             case "reasoning":
                 continue

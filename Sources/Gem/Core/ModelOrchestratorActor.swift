@@ -182,6 +182,8 @@ public actor ModelOrchestratorActor {
                     case .metadata(let m):
                         result = m
                         continuation.yield(.metadata(m))
+                    case .toolCall(let call):
+                        continuation.yield(.toolCall(call))
                     }
                 }
                 // Reached on completion and on cancellation (onTermination cancels this task).
@@ -269,7 +271,8 @@ public actor ModelOrchestratorActor {
                 topP: v.topP,
                 enableThinking: v.enableThinking,
                 reasoningEffort: v.reasoningEffort,
-                isServiceRequest: v.isServiceRequest
+                isServiceRequest: v.isServiceRequest,
+                tools: v.tools
             )
         }
         return v
