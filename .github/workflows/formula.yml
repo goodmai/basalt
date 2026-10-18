@@ -1,0 +1,40 @@
+name: Homebrew Formula
+
+# The formula is what users install; check it whenever it (or this file) changes.
+on:
+  push:
+    branches: [ main ]
+    paths: [ 'Formula/**', '.github/workflows/formula.yml' ]
+  pull_request:
+    paths: [ 'Formula/**', '.github/workflows/formula.yml' ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: formula-${{ github.ref == 'refs/heads/main' && github.sha || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  audit:
+    name: brew style + audit
+    # Hosted on purpose: `brew tap` on the self-hosted runner would change the
+    # owner's own Homebrew installation.
+    runs-on: macos-15
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Style
+        run: brew style Formula/basalt.rb
+
+      # `brew audit` only accepts a formula *name*, never a path, so the checkout
+      # is tapped as itself — that audits this commit's formula, not the one
+      # already published on main.
+      - name: Audit
+        run: |
+          brew tap goodmai/basalt "$GITHUB_WORKSPACE"
+          brew audit --strict --formula goodmai/basalt/basalt

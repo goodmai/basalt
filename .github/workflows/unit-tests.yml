@@ -5,6 +5,14 @@ on:
     branches: [ main, "feat/**" ]
   pull_request:
 
+# One self-hosted runner: a second push to the same ref makes the earlier run (queued or
+# running) irrelevant, so cancel it instead of letting it hold the machine.
+# On main the group is per commit, so every merge commit there keeps its own test result
+# (a shared group holds one pending run and a newer one would replace it).
+concurrency:
+  group: unit-tests-${{ github.ref == 'refs/heads/main' && github.sha || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 jobs:
   test:
     name: Swift Tests
@@ -14,6 +22,7 @@ jobs:
     # edit this file); this condition is a second layer that keeps fork PRs off the runner even
     # once a run is approved.
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    timeout-minutes: 45
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7

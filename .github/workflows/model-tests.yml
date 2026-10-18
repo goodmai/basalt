@@ -5,10 +5,18 @@ name: Model Compatibility Tests
 on:
   workflow_dispatch:
 
+concurrency:
+  group: model-tests
+  # A running dispatch is never killed mid-download; a newer dispatch replaces a still-pending one.
+  cancel-in-progress: false
+
 jobs:
   test-models:
     name: Test Inference & Benchmarks
     runs-on: [self-hosted, macOS, ARM64]
+    # It downloads multi-GB weights; without a ceiling a stalled fetch holds the
+    # runner for the default six hours.
+    timeout-minutes: 90
     
     steps:
       - name: Checkout repository
