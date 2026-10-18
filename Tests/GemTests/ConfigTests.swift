@@ -351,4 +351,94 @@ struct ConfigTests {
         let xApiKeyStatus = try await runMiddleware(path: "/v1/chat/completions", headers: xApiKeyHeaders)
         #expect(xApiKeyStatus == .ok)
     }
+
+    // MARK: — Review round 1 (#48): precedence, permissions, constant-time compare
+
+    private func tempConfig(_ json: String) throws -> (dir: URL, file: URL) {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("Cfg_\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let file = dir.appendingPathComponent("config.json")
+        try Data(json.utf8).write(to: file)
+        return (dir, file)
+    }
+
+    @Test("Explicit CLI values win over --config even when they equal the defaults")
+    func testCliBeatsConfigFile() throws {
+        let (dir, file) = try tempConfig(#"{"port": 9000, "host": "0.0.0.0", "api_key": "from-file"}"#)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let explicit = try ServeCommand.resolveNetwork(cliPort: 8080, cliHost: "127.0.0.1", cliApiKey: nil, configFile: file.path)
+        #expect(explicit.port == 8080)
+        #expect(explicit.host == "127.0.0.1")
+        #expect(explicit.apiKey == "from-file")
+
+        let fromFile = try ServeCommand.resolveNetwork(cliPort: nil, cliHost: nil, cliApiKey: nil, configFile: file.path)
+        #expect(fromFile.port == 9000)
+        #expect(fromFile.host == "0.0.0.0")
+
+        let none = try ServeCommand.resolveNetwork(cliPort: nil, cliHost: nil, cliApiKey: nil, configFile: nil)
+        #expect(none.port == 8080 && none.host == "127.0.0.1" && none.apiKey == nil)
+    }
+
+    @Test("A malformed or missing --config file is an error, not a silent fallback")
+    func testBrokenConfigFileIsFatal() throws {
+        let (dir, file) = try tempConfig("[1, 2, 3]")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        #expect(throws: (any Error).self) {
+            _ = try ServeCommand.resolveNetwork(cliPort: nil, cliHost: nil, cliApiKey: nil, configFile: file.path)
+        }
+        #expect(throws: (any Error).self) {
+            _ = try ServeCommand.resolveNetwork(cliPort: nil, cliHost: nil, cliApiKey: nil, configFile: dir.appendingPathComponent("absent.json").path)
+        }
+    }
+
+    @Test("resolveApiKey: loopback needs no key, external bind generates only on opt-in")
+    func testResolveApiKey() throws {
+        #expect(try ServerConfig.resolveApiKey(host: "127.0.0.1", apiKey: nil, autoGenerateKeyIfMissing: false).key == nil)
+        #expect(throws: ServerConfigError.missingApiKeyForNonLoopback(host: "0.0.0.0")) {
+            _ = try ServerConfig.resolveApiKey(host: "0.0.0.0", apiKey: "  ", autoGenerateKeyIfMissing: false)
+        }
+        let generated = try ServerConfig.resolveApiKey(host: "0.0.0.0", apiKey: nil, autoGenerateKeyIfMissing: true)
+        #expect(generated.generated)
+        #expect(generated.key?.hasPrefix("gem_") == true)
+        #expect(generated.key?.count == 4 + 64)
+        let supplied = try ServerConfig.resolveApiKey(host: "0.0.0.0", apiKey: " k ", autoGenerateKeyIfMissing: true)
+        #expect(supplied.key == "k" && !supplied.generated)
+    }
+
+    @Test("Re-running onboarding keeps a user-edited host/port; defaults fill only missing keys")
+    func testDefaultsDoNotOverrideUserEdits() throws {
+        let existing = Data(#"{"host": "0.0.0.0", "port": 9001, "api_key": "k"}"#.utf8)
+        let merged = try ServerConfig.mergeConfiguration(
+            existingData: existing,
+            systemUpdates: ["args": ["serve"]],
+            defaults: ["host": "127.0.0.1", "port": 8080, "log_level": "info"]
+        )
+        let dict = try #require(try JSONSerialization.jsonObject(with: merged) as? [String: Any])
+        #expect(dict["host"] as? String == "0.0.0.0")
+        #expect(dict["port"] as? Int == 9001)
+        #expect(dict["log_level"] as? String == "info")
+        #expect(dict["args"] as? [String] == ["serve"])
+    }
+
+    @Test("Config and its backup are written owner-only (0600) — they may carry api_key")
+    func testConfigFilePermissions() throws {
+        let (dir, file) = try tempConfig(#"{"api_key": "k"}"#)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try ServerConfig.mergeAndSave(to: file, systemUpdates: ["port": 8080], createBackup: true)
+        for path in [file.path, file.path + ".bak"] {
+            let perms = try FileManager.default.attributesOfItem(atPath: path)[.posixPermissions] as? NSNumber
+            #expect(perms?.intValue == 0o600, "\(path)")
+        }
+    }
+
+    @Test("API key match is exact: a prefix, a longer string or a case change is rejected")
+    func testApiKeyMatching() {
+        let auth = APIKeyAuthenticator<TestContext>(apiKey: "secret-key")
+        #expect(auth.matches("secret-key"))
+        #expect(!auth.matches("secret"))
+        #expect(!auth.matches("secret-key2"))
+        #expect(!auth.matches("SECRET-KEY"))
+        #expect(!auth.matches(""))
+    }
 }

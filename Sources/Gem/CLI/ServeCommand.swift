@@ -51,11 +51,13 @@ struct ServeCommand: AsyncParsableCommand {
     @Option(name: .customLong("repetition-penalty"), help: "Penalty on recently emitted tokens, e.g. 1.1 (default: off)")
     var repetitionPenalty: Float?
 
+    // Optional so an explicit `--port 8080` can be told apart from "not passed":
+    // precedence is CLI > --config file > default.
     @Option(name: .shortAndLong, help: "REST API port (default: 8080)")
-    var port: Int = 8080
+    var port: Int?
 
     @Option(name: .long, help: "Bind address (default: 127.0.0.1)")
-    var host: String = "127.0.0.1"
+    var host: String?
 
     @Option(
         name: .customLong("api-key"),
@@ -125,43 +127,21 @@ struct ServeCommand: AsyncParsableCommand {
             return
         }
 
-        var effectivePort = port
-        var effectiveHost = host
-        var effectiveApiKey = apiKey
-
-        if let configFile = configFile {
-            let configURL = URL(fileURLWithPath: (configFile as NSString).expandingTildeInPath)
-            if let dict = try? ServerConfig.load(from: configURL) {
-                if port == 8080, let p = dict["port"] as? Int {
-                    effectivePort = p
-                }
-                if host == "127.0.0.1", let h = dict["host"] as? String {
-                    effectiveHost = h
-                }
-                if effectiveApiKey == nil, let k = dict["api_key"] as? String {
-                    effectiveApiKey = k
-                }
-            }
+        let network = try Self.resolveNetwork(cliPort: port, cliHost: host, cliApiKey: apiKey, configFile: configFile)
+        // Settle the exposure rule before resolveModelPath(), which may download gigabytes.
+        let access: (key: String?, generated: Bool)
+        do {
+            access = try ServerConfig.resolveApiKey(
+                host: network.host, apiKey: network.apiKey, autoGenerateKeyIfMissing: autoGenerateKey
+            )
+        } catch ServerConfigError.missingApiKeyForNonLoopback(let badHost) {
+            log("\(red("Security error:")) Refusing to start on non-loopback interface '\(badHost)' without an API key.")
+            log("Pass \(bold("--api-key <secret>")) or \(bold("--auto-generate-key")) to enable access.")
+            throw ValidationError("Refusing to start on non-loopback interface '\(badHost)' without an API key. Pass --api-key <secret> or --auto-generate-key to protect external access.")
         }
-
-        let isLoopback = ServerConfig.isLoopback(host: effectiveHost)
-        let resolvedApiKey: String?
-        if !isLoopback {
-            let trimmedKey = effectiveApiKey?.trimmingCharacters(in: .whitespacesAndNewlines)
-            if let key = trimmedKey, !key.isEmpty {
-                resolvedApiKey = key
-            } else if autoGenerateKey {
-                let generated = ServerConfig.generateCryptographicallyStrongToken()
-                log("⚠️  Binding to non-loopback address '\(effectiveHost)' without explicit key.")
-                log("🔑 Auto-generated API key: \(bold(generated))")
-                resolvedApiKey = generated
-            } else {
-                log("\(red("Security error:")) Refusing to start on non-loopback interface '\(effectiveHost)' without an API key.")
-                log("Pass \(bold("--api-key <secret>")) or \(bold("--auto-generate-key")) to enable access.")
-                throw ValidationError("Refusing to start on non-loopback interface '\(effectiveHost)' without an API key. Pass --api-key <secret> or --auto-generate-key to protect external access.")
-            }
-        } else {
-            resolvedApiKey = effectiveApiKey?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if access.generated, let generated = access.key {
+            log("⚠️  Binding to non-loopback address '\(network.host)' without explicit key.")
+            log("🔑 Auto-generated API key: \(bold(generated))")
         }
 
         let resolvedPath = try await resolveModelPath()
@@ -169,11 +149,11 @@ struct ServeCommand: AsyncParsableCommand {
         let config = try ServerConfig(
             modelPath: resolvedPath,
             modelId:   model ?? modelPath,
-            restPort:  effectivePort,
-            host:      effectiveHost,
+            restPort:  network.port,
+            host:      network.host,
             maxTokens: maxTokens,
             logLevel:  logLevel,
-            apiKey:    resolvedApiKey
+            apiKey:    access.key
         )
 
         // Apply log level from config
@@ -209,7 +189,7 @@ struct ServeCommand: AsyncParsableCommand {
         let startREST = !mcp || rest || (!mcp && !rest)
         let startMCP  = mcp
 
-        if startREST { log("REST → http://\(host):\(port)") }
+        if startREST { log("REST → http://\(config.host):\(config.restPort)") }
         if startMCP  { log("MCP → JSON-RPC 2.0 on stdin/stdout") }
 
         try await withThrowingTaskGroup(of: Void.self) { group in
@@ -227,6 +207,32 @@ struct ServeCommand: AsyncParsableCommand {
             try await group.next()
             group.cancelAll()
         }
+    }
+
+    // MARK: — Network resolution
+
+    /// Port, host and API key with precedence CLI > `--config` file > default.
+    /// An unreadable or malformed config file is an error, never a silent fallback to defaults.
+    static func resolveNetwork(
+        cliPort: Int?,
+        cliHost: String?,
+        cliApiKey: String?,
+        configFile: String?
+    ) throws -> (port: Int, host: String, apiKey: String?) {
+        var dict: [String: Any] = [:]
+        if let configFile {
+            let url = URL(fileURLWithPath: (configFile as NSString).expandingTildeInPath)
+            do {
+                dict = try ServerConfig.load(from: url)
+            } catch {
+                throw ValidationError("Cannot read --config \(url.path): \(error.localizedDescription)")
+            }
+        }
+        return (
+            port: cliPort ?? dict["port"] as? Int ?? 8080,
+            host: cliHost ?? dict["host"] as? String ?? "127.0.0.1",
+            apiKey: cliApiKey ?? dict["api_key"] as? String
+        )
     }
 
     // MARK: — Path resolution
