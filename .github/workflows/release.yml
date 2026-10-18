@@ -92,20 +92,6 @@ jobs:
           git commit -m "chore: point formula at ${VERSION}" || echo "formula already current"
           git push origin HEAD:main || echo "push skipped"
 
-      # The formula is what users install. Read back what main now carries and
-      # compare it with the sha computed above: the push above may be skipped
-      # (e.g. refused by the branch ruleset), and a placeholder once sat in this
-      # field for hours with only a human noticing.
-      - name: Verify the pushed formula
-        run: |
-          git fetch -q origin main
-          PUSHED=$(git show origin/main:Formula/basalt.rb 2>/dev/null | grep -oE 'sha256 "[a-f0-9]{64}"' | grep -oE '[a-f0-9]{64}' || true)
-          if [ "$PUSHED" != "${{ steps.pkg.outputs.tarball_sha }}" ]; then
-            echo "::error::Formula/basalt.rb on main carries sha256 '$PUSHED', expected ${{ steps.pkg.outputs.tarball_sha }}"
-            exit 1
-          fi
-          echo "formula on main points at this tag's tarball"
-
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3
         with:
@@ -123,3 +109,18 @@ jobs:
             **Source tarball SHA256**: `${{ steps.pkg.outputs.tarball_sha }}`
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # The formula is what users install. Read back what main now carries and
+      # compare it with the sha computed above: the push above is refused by the
+      # main ruleset (it requires a PR, and the bot has no bypass), so today this
+      # turns the run red until the formula is pushed by hand — after the Release
+      # is published, so the signal never blocks the release itself.
+      - name: Verify the pushed formula
+        run: |
+          git fetch -q origin main
+          PUSHED=$(git show origin/main:Formula/basalt.rb 2>/dev/null | grep -oE 'sha256 "[a-f0-9]{64}"' | head -1 | grep -oE '[a-f0-9]{64}' || true)
+          if [ "$PUSHED" != "${{ steps.pkg.outputs.tarball_sha }}" ]; then
+            echo "::error::Formula/basalt.rb on main carries sha256 '$PUSHED', expected ${{ steps.pkg.outputs.tarball_sha }}"
+            exit 1
+          fi
+          echo "formula on main points at this tag's tarball"

@@ -7,7 +7,8 @@ on:
 
 concurrency:
   group: model-tests
-  cancel-in-progress: true
+  # Queue a second dispatch instead of killing a run mid-download.
+  cancel-in-progress: false
 
 jobs:
   test-models:

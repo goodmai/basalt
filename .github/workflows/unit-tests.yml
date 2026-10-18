@@ -9,7 +9,8 @@ on:
 # irrelevant, so cancel it instead of letting it hold the machine.
 concurrency:
   group: unit-tests-${{ github.ref }}
-  cancel-in-progress: true
+  # Never on main: every merge commit there keeps its own test result.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   test:
