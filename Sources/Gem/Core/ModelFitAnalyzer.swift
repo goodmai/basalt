@@ -121,7 +121,8 @@ public struct ModelFitAnalyzer: Sendable {
         
         for q in gridBits {
             let weightGB = model.totalParameters * (Double(q) / 8.0) * (1.0 + overhead)
-            let footprintMB = Int(weightGB * 1024.0 + kvCacheMB)
+            // Parameters are in decimal billions, the budget is MiB: GB → MiB is ×1e9/2^20, not ×1024.
+            let footprintMB = Int(weightGB * 1e9 / 1_048_576 + kvCacheMB)
             
             // Same speed model as `fit` scoring, evaluated at this grid width and at L_min.
             let speed = FitScorer.decodeSpeed(
