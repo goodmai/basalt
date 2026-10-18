@@ -118,3 +118,88 @@ struct GenerationResponseCodableTests {
         #expect(dec.code == 404)
     }
 }
+
+@Suite("ServiceRequestDetector")
+struct ServiceRequestDetectorTests {
+
+    @Test("Detects thread title prompts with short maxTokens")
+    func detectsTitleRequests() {
+        let titlePrompt = "Generate a short 3-5 word title for this conversation:\nUser: How to setup Swift on macOS?"
+        #expect(ServiceRequestDetector.isTitleOrServiceRequest(prompt: titlePrompt, maxTokens: 32))
+        #expect(ServiceRequestDetector.isTitleOrServiceRequest(prompt: titlePrompt, maxTokens: 64))
+
+        let summarizePrompt = "Summarize the above session in 3 words"
+        #expect(ServiceRequestDetector.isTitleOrServiceRequest(prompt: summarizePrompt, maxTokens: 20))
+    }
+
+    @Test("Ignores standard user prompts even with short maxTokens")
+    func ignoresStandardUserPrompts() {
+        let prompt = "What is the capital of France?"
+        #expect(!ServiceRequestDetector.isTitleOrServiceRequest(prompt: prompt, maxTokens: 32))
+        #expect(!ServiceRequestDetector.isTitleOrServiceRequest(prompt: prompt, maxTokens: 2048))
+    }
+
+    @Test("compactTitlePrompt truncates long context to tail")
+    func compactsLongTitlePrompt() {
+        let longHistory = String(repeating: "Conversation history line. ", count: 100)
+        let prompt = "Please create a title for this chat:\n\(longHistory)"
+        let compacted = ServiceRequestDetector.compactTitlePrompt(prompt)
+        #expect(compacted.count < prompt.count)
+        #expect(compacted.hasPrefix("Generate a short 3-5 word title for this discussion:\n"))
+    }
+}
+
+@Suite("Coding Agent Options & Responses DTOs")
+struct CodingAgentDTOTests {
+
+    @Test("ReasoningPolicy rawValue mapping")
+    func reasoningPolicyMapping() {
+        #expect(ReasoningPolicy(rawValue: "off") == .disabled)
+        #expect(ReasoningPolicy(rawValue: "none") == .disabled)
+        #expect(ReasoningPolicy(rawValue: "false") == .disabled)
+        #expect(ReasoningPolicy(rawValue: "high") == .effort("xhigh"))
+        #expect(ReasoningPolicy(rawValue: "xhigh") == .effort("xhigh"))
+        #expect(ReasoningPolicy(rawValue: "medium") == .effort("medium"))
+        #expect(ReasoningPolicy(rawValue: "low") == .effort("low"))
+        #expect(ReasoningPolicy(rawValue: "auto") == .modelDefault)
+        #expect(ReasoningPolicy(rawValue: nil) == nil)
+    }
+
+    @Test("QwenProfile handles reasoning policy in templateContext")
+    func qwenProfileReasoningContext() {
+        let qwen = QwenProfile()
+        let disabledCtx = qwen.templateContext(for: .disabled)
+        #expect(disabledCtx["enable_thinking"] as? Bool == false)
+
+        let xhighCtx = qwen.templateContext(for: .effort("xhigh"))
+        #expect(xhighCtx["reasoning_effort"] as? String == "xhigh")
+
+        let lowCtx = qwen.templateContext(for: .effort("low"))
+        #expect(lowCtx["reasoning_effort"] as? String == "low")
+    }
+
+    @Test("ResponsesRequest decodes input string and reasoning_effort")
+    func responsesRequestDecoding() throws {
+        let json = """
+        {
+            "model": "qwen3-coder",
+            "input": "Refactor this function",
+            "max_output_tokens": 1024,
+            "reasoning_effort": "low",
+            "stream": true
+        }
+        """.data(using: .utf8)!
+
+        let req = try JSONDecoder().decode(OpenAIController.ResponsesRequest.self, from: json)
+        #expect(req.model == "qwen3-coder")
+        #expect(req.maxOutputTokens == 1024)
+        #expect(req.reasoningEffort == "low")
+        #expect(req.stream == true)
+        if case .text(let t) = req.input {
+            #expect(t == "Refactor this function")
+        } else {
+            Issue.record("Expected text input")
+        }
+    }
+}
+

@@ -49,6 +49,9 @@ public enum ReasoningPolicy: Sendable, Equatable {
         case nil:                     return nil
         case "none", "off", "false":  self = .disabled
         case "default", "auto":       self = .modelDefault
+        case "high", "xhigh":         self = .effort("xhigh")
+        case "medium", "med":         self = .effort("medium")
+        case "low":                   self = .effort("low")
         case .some(let value):        self = .effort(value)
         }
     }

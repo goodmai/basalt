@@ -9,19 +9,25 @@ public struct GenerationRequest: Codable, Sendable {
     public let temperature: Double?
     public let topP: Double?
     public let enableThinking: Bool?
+    public let reasoningEffort: String?
+    public let isServiceRequest: Bool?
 
     public init(
         prompt: String,
         maxTokens: Int? = nil,
         temperature: Double? = 0.7,
         topP: Double? = 0.9,
-        enableThinking: Bool? = true
+        enableThinking: Bool? = true,
+        reasoningEffort: String? = nil,
+        isServiceRequest: Bool? = false
     ) {
         self.prompt = prompt
         self.maxTokens = maxTokens
         self.temperature = temperature
         self.topP = topP
         self.enableThinking = enableThinking
+        self.reasoningEffort = reasoningEffort
+        self.isServiceRequest = isServiceRequest
     }
 
     public func validated(defaultMaxTokens: Int = 4096) throws(GemError) -> GenerationRequest {
@@ -39,7 +45,44 @@ public struct GenerationRequest: Codable, Sendable {
             throw .invalidRequestStructure(details: "temperature must be in [0.0, 2.0]")
         }
         
-        return GenerationRequest(prompt: prompt, maxTokens: maxT, temperature: temp, topP: topP ?? 0.9, enableThinking: enableThinking)
+        return GenerationRequest(
+            prompt: prompt,
+            maxTokens: maxT,
+            temperature: temp,
+            topP: topP ?? 0.9,
+            enableThinking: enableThinking,
+            reasoningEffort: reasoningEffort,
+            isServiceRequest: isServiceRequest
+        )
+    }
+}
+
+/// Heuristic detector for background service requests (such as thread title generation)
+public enum ServiceRequestDetector: Sendable {
+    public static func isTitleOrServiceRequest(prompt: String, maxTokens: Int? = nil) -> Bool {
+        let p = prompt.lowercased()
+        let keywords = [
+            "thread title", "conversation title", "generate a title",
+            "short title", "title for this", "title of this", "summarize in 3-5 words",
+            "title for this session", "suggest a title", "name this conversation",
+            "name this chat", "give this conversation a title", "title:"
+        ]
+        for kw in keywords {
+            if p.contains(kw) { return true }
+        }
+        if let max = maxTokens, max <= 64, (p.contains("title") || p.contains("summarize")) {
+            return true
+        }
+        return false
+    }
+
+    /// Fast path: truncates massive prompt context for lightweight title requests
+    public static func compactTitlePrompt(_ fullPrompt: String) -> String {
+        if fullPrompt.count > 1000 {
+            let tail = String(fullPrompt.suffix(800))
+            return "Generate a short 3-5 word title for this discussion:\n\(tail)"
+        }
+        return fullPrompt
     }
 }
 

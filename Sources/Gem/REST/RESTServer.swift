@@ -72,6 +72,7 @@ struct RESTServer: Sendable {
 
         // Generation
         oai.post("/chat/completions", use: openAIController.chatCompletions) // OpenAI SSE
+        oai.post("/responses",        use: openAIController.responses)       // OpenAI Responses API (Codex/Cursor)
         oai.post("/generate",         use: openAIController.generateNoAuth)  // raw prompt
         oai.post("/messages",         use: anthropicController.messages)     // Anthropic SSE
 
@@ -116,6 +117,7 @@ struct RESTServer: Sendable {
                 "/v1/models/current":      { "get":  { "summary": "Currently loaded model + status" } },
                 "/v1/models/load":         { "post": { "summary": "Hot-swap model at runtime" } },
                 "/v1/chat/completions":    { "post": { "summary": "OpenAI-compatible chat completions" } },
+                "/v1/responses":           { "post": { "summary": "OpenAI Responses API (Codex/Cursor)" } },
                 "/v1/messages":            { "post": { "summary": "Anthropic-compatible messages API" } }
               }
             }

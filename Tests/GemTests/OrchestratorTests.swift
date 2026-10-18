@@ -328,6 +328,46 @@ struct OrchestratorTests {
             #expect(error is CancellationError || error is GemError)
         }
     }
+
+    // MARK: — Working session protection (Service request fast-path)
+
+    @Test("Normal request establishes working session state")
+    func normalRequestEstablishesSession() async throws {
+        let engine = MockInferenceEngine()
+        let orch = ModelOrchestratorActor(engine: engine)
+        try await orch.loadModel(path: "test-model")
+
+        let stateBefore = await orch.workingSessionState()
+        #expect(stateBefore.id == nil)
+
+        _ = try await orch.generate(request: .init(prompt: "User query for coding assistant"))
+        let stateAfter = await orch.workingSessionState()
+        #expect(stateAfter.id != nil)
+        #expect(stateAfter.prefix?.contains("User query") == true)
+    }
+
+    @Test("Service request does not overwrite existing working session state")
+    func serviceRequestPreservesSession() async throws {
+        let engine = MockInferenceEngine()
+        let orch = ModelOrchestratorActor(engine: engine)
+        try await orch.loadModel(path: "test-model")
+
+        // First normal user request
+        _ = try await orch.generate(request: .init(prompt: "Main session prompt here"))
+        let activeSession = await orch.workingSessionState()
+        #expect(activeSession.id != nil)
+
+        // Title/service request comes in
+        _ = try await orch.generate(request: .init(
+            prompt: "Generate a short title for this discussion",
+            isServiceRequest: true
+        ))
+
+        // Session ID and prompt prefix should remain unchanged!
+        let preservedSession = await orch.workingSessionState()
+        #expect(preservedSession.id == activeSession.id)
+        #expect(preservedSession.prefix == activeSession.prefix)
+    }
 }
 
 // MARK: — Helpers

@@ -101,11 +101,24 @@ struct AnthropicController: Sendable {
         let temperature: Double?
         let topP: Double?
         let stream: Bool?
+        let thinking: ThinkingConfig?
+        let reasoningEffort: String?
 
         enum CodingKeys: String, CodingKey {
-            case model, messages, system, temperature, stream
+            case model, messages, system, temperature, stream, thinking
             case maxTokens = "max_tokens"
             case topP = "top_p"
+            case reasoningEffort = "reasoning_effort"
+        }
+    }
+
+    struct ThinkingConfig: Codable, Sendable {
+        let type: String
+        let budgetTokens: Int?
+
+        enum CodingKeys: String, CodingKey {
+            case type
+            case budgetTokens = "budget_tokens"
         }
     }
 
@@ -164,11 +177,25 @@ struct AnthropicController: Sendable {
         }
 
         let prompt = buildPrompt(system: dto.system, messages: dto.messages)
+        let isService = ServiceRequestDetector.isTitleOrServiceRequest(prompt: prompt, maxTokens: dto.maxTokens)
+        let finalPrompt = isService ? ServiceRequestDetector.compactTitlePrompt(prompt) : prompt
+
+        let effort: String?
+        if let re = dto.reasoningEffort {
+            effort = re
+        } else if let th = dto.thinking {
+            effort = th.type == "disabled" ? "off" : (th.budgetTokens.map { $0 > 8000 ? "high" : ($0 > 2000 ? "medium" : "low") } ?? "medium")
+        } else {
+            effort = nil
+        }
+
         let genRequest = GenerationRequest(
-            prompt: prompt,
+            prompt: finalPrompt,
             maxTokens: dto.maxTokens ?? 8192,
             temperature: dto.temperature ?? 0.7,
-            topP: dto.topP ?? 0.9
+            topP: dto.topP ?? 0.9,
+            reasoningEffort: effort,
+            isServiceRequest: isService
         )
 
         let requestedModel = dto.model.map { ModelsController.hfRepoId(from: $0) }  // strip claude-local/ prefix if present
@@ -255,13 +282,23 @@ struct AnthropicController: Sendable {
                 do {
                     let stream = try await orchestrator.generateStream(request: genRequest, modelId: requestedModel)
                     for await chunk in stream {
-                        if case .text(let text) = chunk {
+                        switch chunk {
+                        case .text(let text):
                             outputTokens += 1
                             send("content_block_delta", [
                                 "type": "content_block_delta",
                                 "index": 0,
                                 "delta": ["type": "text_delta", "text": text]
                             ])
+                        case .reasoning(let reasoning):
+                            outputTokens += 1
+                            send("content_block_delta", [
+                                "type": "content_block_delta",
+                                "index": 0,
+                                "delta": ["type": "thinking_delta", "thinking": reasoning]
+                            ])
+                        case .metadata:
+                            break
                         }
                     }
                 } catch {

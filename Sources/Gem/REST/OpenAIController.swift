@@ -67,11 +67,106 @@ struct OpenAIController: Sendable {
         let temperature: Double?
         let topP: Double?
         let stream: Bool?
+        let reasoningEffort: String?
 
         enum CodingKeys: String, CodingKey {
             case model, messages, temperature, stream
             case maxTokens = "max_tokens"
             case topP = "top_p"
+            case reasoningEffort = "reasoning_effort"
+        }
+    }
+
+    struct ResponsesRequest: Codable, Sendable {
+        let model: String?
+        let input: ResponseInput?
+        let messages: [ChatMessage]?
+        let maxOutputTokens: Int?
+        let maxTokens: Int?
+        let temperature: Double?
+        let topP: Double?
+        let stream: Bool?
+        let reasoningEffort: String?
+        let tools: [ResponseTool]?
+        let additionalTools: [ResponseTool]?
+
+        enum CodingKeys: String, CodingKey {
+            case model, input, messages, temperature, stream, tools
+            case maxOutputTokens = "max_output_tokens"
+            case maxTokens = "max_tokens"
+            case topP = "top_p"
+            case reasoningEffort = "reasoning_effort"
+            case additionalTools = "additional_tools"
+        }
+    }
+
+    enum ResponseInput: Codable, Sendable {
+        case text(String)
+        case messages([ChatMessage])
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.singleValueContainer()
+            if let str = try? container.decode(String.self) {
+                self = .text(str)
+            } else if let msgs = try? container.decode([ChatMessage].self) {
+                self = .messages(msgs)
+            } else {
+                self = .text("")
+            }
+        }
+
+        func encode(to encoder: Encoder) throws {
+            var container = encoder.singleValueContainer()
+            switch self {
+            case .text(let s): try container.encode(s)
+            case .messages(let m): try container.encode(m)
+            }
+        }
+    }
+
+    struct ResponseTool: Codable, Sendable {
+        let type: String
+        let name: String?
+        let description: String?
+    }
+
+    struct ResponsesResponse: Codable, Sendable {
+        let id: String
+        let object: String
+        let createdAt: Int
+        let status: String
+        let model: String
+        let output: [OutputItem]
+        let usage: Usage
+
+        struct OutputItem: Codable, Sendable {
+            let id: String
+            let type: String
+            let status: String
+            let role: String
+            let content: [OutputContent]
+        }
+
+        struct OutputContent: Codable, Sendable {
+            let type: String
+            let text: String?
+        }
+
+        struct Usage: Codable, Sendable {
+            let inputTokens: Int
+            let outputTokens: Int
+            let totalTokens: Int
+
+            enum CodingKeys: String, CodingKey {
+                case inputTokens = "input_tokens"
+                case outputTokens = "output_tokens"
+                case totalTokens = "total_tokens"
+            }
+        }
+
+        enum CodingKeys: String, CodingKey {
+            case id, object, status, model, output, usage
+            case createdAt = "created_at"
         }
     }
 
@@ -148,11 +243,15 @@ struct OpenAIController: Sendable {
         }
 
         let prompt = messagesToPrompt(dto.messages)
+        let isService = ServiceRequestDetector.isTitleOrServiceRequest(prompt: prompt, maxTokens: dto.maxTokens)
+        let finalPrompt = isService ? ServiceRequestDetector.compactTitlePrompt(prompt) : prompt
         let genRequest = GenerationRequest(
-            prompt: prompt,
+            prompt: finalPrompt,
             maxTokens: dto.maxTokens,
             temperature: dto.temperature ?? 0.7,
-            topP: dto.topP ?? 0.9
+            topP: dto.topP ?? 0.9,
+            reasoningEffort: dto.reasoningEffort,
+            isServiceRequest: isService
         )
         let requestedModel = dto.model.map { ModelsController.hfRepoId(from: $0) }  // strip claude-local/ prefix if present
 
@@ -182,6 +281,87 @@ struct OpenAIController: Sendable {
             return makeDataResponse(encoded)
         } catch {
             fputs("🔴 [OpenAI] generate failed: \(error)\n", stderr)
+            return makeErrorResponse(status: .internalServerError,
+                                     message: error.localizedDescription, code: 500)
+        }
+    }
+
+    // MARK: — POST /v1/responses (Codex CLI / Cursor / OpenAI Responses API)
+
+    @Sendable
+    func responses(request: Request, context: BasicRequestContext) async throws -> Response {
+        let buffer = try await request.body.collect(upTo: 4 * 1024 * 1024)
+        let data = Data(buffer.readableBytesView)
+
+        let dto: ResponsesRequest
+        do {
+            dto = try JSONDecoder().decode(ResponsesRequest.self, from: data)
+        } catch {
+            return makeErrorResponse(status: .badRequest,
+                                     message: "Cannot decode responses request: \(error.localizedDescription)",
+                                     code: 400)
+        }
+
+        let prompt: String
+        if let input = dto.input {
+            switch input {
+            case .text(let t): prompt = t
+            case .messages(let msgs): prompt = messagesToPrompt(msgs)
+            }
+        } else if let msgs = dto.messages, !msgs.isEmpty {
+            prompt = messagesToPrompt(msgs)
+        } else {
+            prompt = ""
+        }
+
+        guard !prompt.isEmpty else {
+            return makeErrorResponse(status: .badRequest, message: "input or messages must not be empty", code: 400)
+        }
+
+        let maxT = dto.maxOutputTokens ?? dto.maxTokens
+        let isService = ServiceRequestDetector.isTitleOrServiceRequest(prompt: prompt, maxTokens: maxT)
+        let finalPrompt = isService ? ServiceRequestDetector.compactTitlePrompt(prompt) : prompt
+
+        let genRequest = GenerationRequest(
+            prompt: finalPrompt,
+            maxTokens: maxT,
+            temperature: dto.temperature ?? 0.7,
+            topP: dto.topP ?? 0.9,
+            reasoningEffort: dto.reasoningEffort,
+            isServiceRequest: isService
+        )
+        let requestedModel = dto.model.map { ModelsController.hfRepoId(from: $0) }
+
+        if dto.stream == true {
+            return streamResponses(genRequest: genRequest, model: dto.model ?? modelId, requestedModel: requestedModel)
+        }
+
+        do {
+            let result = try await orchestrator.generate(request: genRequest, modelId: requestedModel)
+            let response = ResponsesResponse(
+                id: "resp_\(UUID().uuidString)",
+                object: "response",
+                createdAt: Int(Date().timeIntervalSince1970),
+                status: "completed",
+                model: dto.model ?? modelId,
+                output: [
+                    .init(
+                        id: "item_\(UUID().uuidString)",
+                        type: "message",
+                        status: "completed",
+                        role: "assistant",
+                        content: [.init(type: "text", text: result.generatedText)]
+                    )
+                ],
+                usage: .init(
+                    inputTokens: result.promptTokens,
+                    outputTokens: result.completionTokens,
+                    totalTokens: result.promptTokens + result.completionTokens
+                )
+            )
+            let encoded = try JSONEncoder().encode(response)
+            return makeDataResponse(encoded)
+        } catch {
             return makeErrorResponse(status: .internalServerError,
                                      message: error.localizedDescription, code: 500)
         }
@@ -269,6 +449,89 @@ struct OpenAIController: Sendable {
                     }
                     var done2 = ByteBuffer(); done2.writeString("data: [DONE]\n\n")
                     continuation.yield(done2)
+                } catch {
+                    var buf = ByteBuffer()
+                    buf.writeString("event: error\ndata: {\"error\":\"\(error.localizedDescription)\"}\n\n")
+                    continuation.yield(buf)
+                }
+                continuation.finish()
+            }
+        }
+    }
+
+    private func streamResponses(genRequest: GenerationRequest, model: String, requestedModel: String? = nil) -> Response {
+        Response(
+            status: .ok,
+            headers: [
+                .contentType: "text/event-stream",
+                .cacheControl: "no-cache",
+                .connection: "keep-alive"
+            ],
+            body: ResponseBody(asyncSequence: sseResponsesStream(genRequest: genRequest, model: model, requestedModel: requestedModel))
+        )
+    }
+
+    private func sseResponsesStream(genRequest: GenerationRequest, model: String, requestedModel: String? = nil) -> AsyncStream<ByteBuffer> {
+        AsyncStream { continuation in
+            Task {
+                let id = "resp_\(UUID().uuidString)"
+                func sendEvent(_ event: String, _ dataDict: [String: Any]) {
+                    if let json = try? JSONSerialization.data(withJSONObject: dataDict),
+                       let str = String(data: json, encoding: .utf8) {
+                        var buf = ByteBuffer()
+                        buf.writeString("event: \(event)\ndata: \(str)\n\n")
+                        continuation.yield(buf)
+                    }
+                }
+
+                sendEvent("response.created", [
+                    "id": id,
+                    "object": "response",
+                    "status": "in_progress",
+                    "model": model
+                ])
+
+                sendEvent("response.output_item.added", [
+                    "id": id,
+                    "output_index": 0,
+                    "item": [
+                        "id": "item_\(id)",
+                        "type": "message",
+                        "status": "in_progress",
+                        "role": "assistant",
+                        "content": [] as [Any]
+                    ] as [String: Any]
+                ])
+
+                do {
+                    let stream = try await orchestrator.generateStream(request: genRequest, modelId: requestedModel)
+                    for await chunk in stream {
+                        switch chunk {
+                        case .text(let text):
+                            sendEvent("response.text.delta", ["delta": text])
+                        case .reasoning(let reasoning):
+                            sendEvent("response.reasoning.delta", ["delta": reasoning])
+                        case .metadata:
+                            break
+                        }
+                    }
+
+                    sendEvent("response.output_item.done", [
+                        "id": id,
+                        "output_index": 0,
+                        "status": "completed"
+                    ])
+
+                    sendEvent("response.done", [
+                        "id": id,
+                        "object": "response",
+                        "status": "completed",
+                        "model": model
+                    ])
+
+                    var doneBuf = ByteBuffer()
+                    doneBuf.writeString("data: [DONE]\n\n")
+                    continuation.yield(doneBuf)
                 } catch {
                     var buf = ByteBuffer()
                     buf.writeString("event: error\ndata: {\"error\":\"\(error.localizedDescription)\"}\n\n")

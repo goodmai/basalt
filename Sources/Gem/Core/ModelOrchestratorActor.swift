@@ -29,6 +29,14 @@ public actor ModelOrchestratorActor {
     /// Empty string means nothing has been loaded yet.
     public private(set) var currentModelId: String = ""
 
+    // MARK: — Working Session KV Cache State
+    public private(set) var workingSessionId: String? = nil
+    public private(set) var workingSessionPromptPrefix: String? = nil
+
+    public func workingSessionState() -> (id: String?, prefix: String?) {
+        (workingSessionId, workingSessionPromptPrefix)
+    }
+
     // MARK: — Init
 
     public init(engine: any InferenceEngine, maxTokens: Int = 4096) {
@@ -101,6 +109,11 @@ public actor ModelOrchestratorActor {
         let validated = try capped(request)
         requestCount += 1
 
+        if validated.isServiceRequest != true {
+            self.workingSessionId = "session_\(UUID().uuidString.prefix(8))"
+            self.workingSessionPromptPrefix = String(validated.prompt.prefix(128))
+        }
+
         do {
             let response = try await withTimeout(seconds: timeout(for: validated)) {
                 try await self.engine.generate(request: validated)
@@ -127,6 +140,11 @@ public actor ModelOrchestratorActor {
         logger.trace("generateStream start")
         let validated = try capped(request)
         requestCount += 1
+
+        if validated.isServiceRequest != true {
+            self.workingSessionId = "session_\(UUID().uuidString.prefix(8))"
+            self.workingSessionPromptPrefix = String(validated.prompt.prefix(128))
+        }
 
         let stream: AsyncStream<StreamChunk>
         do {

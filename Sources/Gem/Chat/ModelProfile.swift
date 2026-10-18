@@ -91,8 +91,9 @@ public struct QwenProfile: ModelProfile {
         case .effort(let level):
             // The template raises on anything outside this set, which would surface
             // as an opaque 500. Fail closed to the default instead.
-            guard ["xhigh", "medium", "low"].contains(level) else { return [:] }
-            return ["reasoning_effort": level]
+            let normalized = (level.lowercased() == "high") ? "xhigh" : level.lowercased()
+            guard ["xhigh", "medium", "low"].contains(normalized) else { return [:] }
+            return ["reasoning_effort": normalized]
         }
     }
 
