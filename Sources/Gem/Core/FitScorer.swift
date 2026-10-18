@@ -214,7 +214,8 @@ public actor FitScorer {
     
     /// fp16 KV cache per 4k tokens, GB. Calibrated on GQA geometry (2·layers·kv_heads·head_dim·2 B):
     /// Qwen2.5-7B ≈ 0.23 GB, Qwen3.x-27B ≈ 0.9 GB per 4k tokens → ≈ 0.034 GB per billion params.
-    /// ponytail: a parameter-count proxy, capped at 32B so a large MoE is not charged by its total;
+    /// ponytail: a parameter-count proxy from the total, capped at 32B. It overcharges MoE and hybrid
+    /// models (35B-A3B: ~1.1 GB vs ~0.4 GB real) and undercharges small dense ones (3B: ~0.1 vs ~0.5 GB);
     /// read layers/kv_heads/head_dim from config.json when an exact figure matters.
     static func kvGBPer4k(params: Double) -> Double {
         min(32.0, params) * 0.034 + 0.01

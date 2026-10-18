@@ -157,6 +157,7 @@ struct OrchestratorTests {
         var finalResponse: GenerationResponse?
         for try await chunk in stream {
             switch chunk {
+            case .toolCall: break
             case .text(let t): texts.append(t)
             case .reasoning(let r): texts.append(r)
             case .metadata(let m): finalResponse = m

@@ -291,7 +291,7 @@ struct AnthropicController: Sendable {
         prompt: String? = nil
     ) -> AsyncStream<ByteBuffer> {
         AsyncStream { continuation in
-            Task {
+            let task = Task {
                 let msgId = "msg_\(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(24))"
 
                 func send(_ event: String, _ data: [String: Any]) {
@@ -340,11 +340,14 @@ struct AnthropicController: Sendable {
 
                 var outputTokens = 0
                 var accumulatedText = ""
+                var final: GenerationResponse?
 
                 do {
                     let stream = try await orchestrator.generateStream(request: genRequest, modelId: requestedModel)
                     for await chunk in stream {
                         switch chunk {
+                        case .toolCall:  // this path offers the model no tools, so it cannot call one
+                            break
                         case .text(let text):
                             outputTokens += 1
                             accumulatedText += text
@@ -364,8 +367,8 @@ struct AnthropicController: Sendable {
                                 "index": openBlock!.index,
                                 "delta": ["type": "thinking_delta", "thinking": reasoning]
                             ])
-                        case .metadata:
-                            break
+                        case .metadata(let meta):
+                            final = meta
                         }
                     }
 
@@ -397,9 +400,11 @@ struct AnthropicController: Sendable {
                 // message_delta
                 send("message_delta", [
                     "type": "message_delta",
-                    "delta": ["stop_reason": "end_turn", "stop_sequence": NSNull()],
+                    // The engine's own counts when it reported them; chunk count otherwise.
+                    "delta": ["stop_reason": final?.finishReason == .length ? "max_tokens" : "end_turn",
+                              "stop_sequence": NSNull()],
                     "usage": [
-                        "output_tokens": outputTokens,
+                        "output_tokens": final?.completionTokens ?? outputTokens,
                         "cache_read_input_tokens": genRequest.cachedTokensEstimate ?? 0
                     ]
                 ])
@@ -409,6 +414,8 @@ struct AnthropicController: Sendable {
 
                 continuation.finish()
             }
+            // A client that disconnects cancels the generation instead of leaving it running.
+            continuation.onTermination = { _ in task.cancel() }
         }
     }
 

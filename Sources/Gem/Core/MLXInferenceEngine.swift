@@ -268,26 +268,13 @@ public actor MLXInferenceEngine: InferenceEngine {
         defaultReasoningEffort: String? = nil,
         profile: (any ModelProfile)? = nil
     ) -> [String: any Sendable]? {
-        // ReasoningPolicy(rawValue:) is the one place effort names are normalized
-        // ("off"/"none" → disabled, "high" → "xhigh").
+        // ReasoningPolicy(rawValue:) maps "off"/"none" to disabled; each profile maps level names
+        // onto its template (Qwen: "high" → "xhigh"), GenericProfile passes them through.
         let policy: ReasoningPolicy = request.enableThinking == false
             ? .disabled
             : ReasoningPolicy(rawValue: request.reasoningEffort ?? defaultReasoningEffort) ?? .modelDefault
 
-        if let profile {
-            let ctx = profile.templateContext(for: policy)
-            return ctx.isEmpty ? nil : ctx
-        }
-
-        var context: [String: any Sendable] = [:]
-        switch policy {
-        case .disabled:
-            context["enable_thinking"] = false
-        case .effort(let effort):
-            context["reasoning_effort"] = effort
-        case .modelDefault:
-            break
-        }
+        let context = (profile ?? GenericProfile()).templateContext(for: policy)
         return context.isEmpty ? nil : context
     }
 
@@ -297,6 +284,7 @@ public actor MLXInferenceEngine: InferenceEngine {
         let stream = try await generateStream(request: request)
         var textChunks: [String] = []
         var reasoningChunks: [String] = []
+        var toolCalls: [ToolCallOutput] = []
         var finalResponse: GenerationResponse?
 
         for await chunk in stream {
@@ -307,6 +295,8 @@ public actor MLXInferenceEngine: InferenceEngine {
                 reasoningChunks.append(r)
             case .metadata(let m):
                 finalResponse = m
+            case .toolCall(let call):
+                toolCalls.append(call)
             }
         }
 
@@ -324,8 +314,44 @@ public actor MLXInferenceEngine: InferenceEngine {
             generationTime: finalResponse.generationTime,
             timeToFirstToken: finalResponse.timeToFirstToken,
             memory: finalResponse.memory,
-            finishReason: finalResponse.finishReason
+            finishReason: finalResponse.finishReason,
+            toolCalls: toolCalls.isEmpty ? nil : toolCalls
         )
+    }
+
+    // MARK: — Tools
+
+    /// OpenAI-style function specs for the chat template's tool section.
+    static func toolSpecs(_ tools: [ToolDefinition]?) -> [ToolSpec]? {
+        guard let tools, !tools.isEmpty else { return nil }
+        return tools.map { tool in
+            var function: [String: any Sendable] = ["name": tool.name]
+            if let description = tool.description { function["description"] = description }
+            if let json = tool.parametersJSON,
+               let schema = try? JSONSerialization.jsonObject(with: Data(json.utf8)) {
+                function["parameters"] = sendable(schema)
+            }
+            return ["type": "function", "function": function]
+        }
+    }
+
+    /// JSONSerialization output (NSDictionary/NSArray/NSNumber) as plain Sendable values the
+    /// Jinja renderer understands.
+    private static func sendable(_ value: Any) -> any Sendable {
+        switch value {
+        case let dict as [String: Any]: return dict.mapValues { sendable($0) }
+        case let array as [Any]:        return array.map { sendable($0) }
+        case let number as NSNumber:
+            if CFGetTypeID(number) == CFBooleanGetTypeID() { return number.boolValue }
+            return number.doubleValue.rounded() == number.doubleValue ? number.intValue : number.doubleValue
+        case let string as String:      return string
+        default:                        return String(describing: value)
+        }
+    }
+
+    static func toolCallOutput(_ call: ToolCall) -> ToolCallOutput {
+        let arguments = (try? JSONEncoder().encode(call.function.arguments)).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
+        return ToolCallOutput(id: "call_\(UUID().uuidString.prefix(24))", name: call.function.name, arguments: arguments)
     }
 
     public func generateStream(request: GenerationRequest) async throws(GemError) -> AsyncStream<StreamChunk> {
@@ -359,6 +385,7 @@ public actor MLXInferenceEngine: InferenceEngine {
             )
             userInput = UserInput(
                 chat: [.user(request.prompt)],
+                tools: Self.toolSpecs(request.tools),
                 additionalContext: context
             )
         }
@@ -460,7 +487,9 @@ public actor MLXInferenceEngine: InferenceEngine {
                             processBuffer(final: false)
                         case .info(let info):
                             lastInfo = info
-                        case .toolCall, .rejectedToolCall:
+                        case .toolCall(let call):
+                            continuation.yield(.toolCall(Self.toolCallOutput(call)))
+                        case .rejectedToolCall:
                             break
                         @unknown default:
                             break

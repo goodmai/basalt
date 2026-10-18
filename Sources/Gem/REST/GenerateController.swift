@@ -75,7 +75,7 @@ struct GenerateController: Sendable {
     
     private func sseStream(dto: GenerationRequest) -> AsyncStream<ByteBuffer> {
         AsyncStream { continuation in
-            Task {
+            let task = Task {
                 do {
                     let stream = try await orchestrator.generateStream(request: dto)
                     
@@ -106,6 +106,8 @@ struct GenerateController: Sendable {
                     continuation.finish()
                 }
             }
+            // A client that disconnects cancels the generation instead of leaving it running.
+            continuation.onTermination = { _ in task.cancel() }
         }
     }
     

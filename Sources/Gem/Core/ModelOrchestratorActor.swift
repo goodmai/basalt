@@ -204,6 +204,8 @@ public actor ModelOrchestratorActor {
                     case .metadata(let m):
                         result = m
                         continuation.yield(.metadata(m))
+                    case .toolCall(let call):
+                        continuation.yield(.toolCall(call))
                     }
                 }
                 // Reached on completion and on cancellation (onTermination cancels this task).
@@ -284,15 +286,7 @@ public actor ModelOrchestratorActor {
         var v = try request.validated(defaultMaxTokens: maxT)
         if let req = request.maxTokens, req > maxT {
             logger.warn("Token request (\(req)) > budget (\(maxT)). Capping.")
-            v = GenerationRequest(
-                prompt: v.prompt,
-                maxTokens: maxT,
-                temperature: v.temperature,
-                topP: v.topP,
-                enableThinking: v.enableThinking,
-                reasoningEffort: v.reasoningEffort,
-                isServiceRequest: v.isServiceRequest
-            )
+            v = v.withMaxTokens(maxT)
         }
         return v
     }

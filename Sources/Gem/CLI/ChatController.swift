@@ -98,6 +98,8 @@ actor ChatController {
                             }
                             
                             switch chunk {
+                            case .toolCall:  // this path offers the model no tools, so it cannot call one
+                                break
                             case .text(let t):
                                 await terminal.printOutput(t)
                             case .reasoning(let r):

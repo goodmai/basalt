@@ -447,5 +447,28 @@ struct FitScorerTests {
         #expect(grid.options.first { $0.bits == 4 }?.estimatedTPS == 80)
         #expect(grid.options.first { $0.bits == 8 }?.estimatedTPS == 40)
     }
+
+    @Test("KV cache estimate is pinned to GQA geometry (~0.25 GB per 4k tokens for a 7B model)")
+    func testKVCacheCoefficient() {
+        let gb = FitScorer.kvCacheFootprintGB(params: 7, contextTokens: 4096)
+        #expect(abs(gb - 0.248) < 0.005)
+        #expect(FitScorer.kvCacheMemoryMB(params: 7, contextTokens: 8192) > 500)
+    }
+
+    @Test("A profile that failed to decode is not cached and then overwritten")
+    func testLoadDoesNotCacheUnreadableProfile() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let url = dir.appendingPathComponent("p.json")
+        try Data("not json".utf8).write(to: url)
+
+        let store = HardwareBenchmarkProfileStore(customPath: url.path)
+        #expect(await store.load().measurements.isEmpty)
+        await #expect(throws: (any Error).self) {
+            try await store.record(BenchmarkMeasurement(modelId: "org/m", chipModel: "M4", measuredTPS: 50, measuredTTFT: 0.1))
+        }
+        #expect(try String(contentsOf: url, encoding: .utf8) == "not json")
+    }
 }
 
