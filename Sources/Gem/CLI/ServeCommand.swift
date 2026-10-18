@@ -57,6 +57,24 @@ struct ServeCommand: AsyncParsableCommand {
     @Option(name: .long, help: "Bind address (default: 127.0.0.1)")
     var host: String = "127.0.0.1"
 
+    @Option(
+        name: .customLong("api-key"),
+        help: "API key required for authenticating requests, mandatory when binding to a non-loopback address"
+    )
+    var apiKey: String?
+
+    @Flag(
+        name: .customLong("auto-generate-key"),
+        help: "Automatically generate a cryptographically strong API key if none is provided on non-loopback bind"
+    )
+    var autoGenerateKey: Bool = false
+
+    @Option(
+        name: .customLong("config"),
+        help: "Path to JSON server configuration file (e.g. ~/.gem/config.json)"
+    )
+    var configFile: String?
+
     @Option(name: .customLong("max-tokens"), help: "Default maximum tokens to generate (default: 65536, range: 2048-128000)")
     var maxTokens: Int = 65536
 
@@ -107,15 +125,55 @@ struct ServeCommand: AsyncParsableCommand {
             return
         }
 
+        var effectivePort = port
+        var effectiveHost = host
+        var effectiveApiKey = apiKey
+
+        if let configFile = configFile {
+            let configURL = URL(fileURLWithPath: (configFile as NSString).expandingTildeInPath)
+            if let dict = try? ServerConfig.load(from: configURL) {
+                if port == 8080, let p = dict["port"] as? Int {
+                    effectivePort = p
+                }
+                if host == "127.0.0.1", let h = dict["host"] as? String {
+                    effectiveHost = h
+                }
+                if effectiveApiKey == nil, let k = dict["api_key"] as? String {
+                    effectiveApiKey = k
+                }
+            }
+        }
+
+        let isLoopback = ServerConfig.isLoopback(host: effectiveHost)
+        let resolvedApiKey: String?
+        if !isLoopback {
+            let trimmedKey = effectiveApiKey?.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let key = trimmedKey, !key.isEmpty {
+                resolvedApiKey = key
+            } else if autoGenerateKey {
+                let generated = ServerConfig.generateCryptographicallyStrongToken()
+                log("⚠️  Binding to non-loopback address '\(effectiveHost)' without explicit key.")
+                log("🔑 Auto-generated API key: \(bold(generated))")
+                resolvedApiKey = generated
+            } else {
+                log("\(red("Security error:")) Refusing to start on non-loopback interface '\(effectiveHost)' without an API key.")
+                log("Pass \(bold("--api-key <secret>")) or \(bold("--auto-generate-key")) to enable access.")
+                throw ValidationError("Refusing to start on non-loopback interface '\(effectiveHost)' without an API key. Pass --api-key <secret> or --auto-generate-key to protect external access.")
+            }
+        } else {
+            resolvedApiKey = effectiveApiKey?.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
         let resolvedPath = try await resolveModelPath()
 
-        let config = ServerConfig(
+        let config = try ServerConfig(
             modelPath: resolvedPath,
             modelId:   model ?? modelPath,
-            restPort:  port,
-            host:      host,
+            restPort:  effectivePort,
+            host:      effectiveHost,
             maxTokens: maxTokens,
-            logLevel:  logLevel
+            logLevel:  logLevel,
+            apiKey:    resolvedApiKey
         )
 
         // Apply log level from config

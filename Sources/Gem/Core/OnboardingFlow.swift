@@ -13,6 +13,7 @@ public actor OnboardingFlow {
     
     private let profiler: SystemProfiler
     private let configPath: String
+    private let serverConfigPath: String
     
     /// Onboarding state persisted to disk
     public struct OnboardingState: Codable, Sendable {
@@ -37,9 +38,13 @@ public actor OnboardingFlow {
         }
     }
     
-    public init(configPath: String = "~/.gem/onboarding.json") {
+    public init(
+        configPath: String = "~/.gem/onboarding.json",
+        serverConfigPath: String = "~/.gem/config.json"
+    ) {
         self.profiler = SystemProfiler()
         self.configPath = (configPath as NSString).expandingTildeInPath
+        self.serverConfigPath = (serverConfigPath as NSString).expandingTildeInPath
     }
     
     /// Check if onboarding has been completed
@@ -157,6 +162,21 @@ public actor OnboardingFlow {
         )
         
         try saveState(state)
+
+        // Step 5: Non-destructive server configuration update
+        let chosenModel = selectedModel ?? recommendation.modelId
+        let serverConfigURL = URL(fileURLWithPath: serverConfigPath)
+        let exe = ProcessInfo.processInfo.arguments.first ?? "gemm"
+        _ = try? ServerConfig.mergeAndSave(
+            to: serverConfigURL,
+            systemUpdates: [
+                "exe": exe,
+                "args": ["serve", "--model", chosenModel],
+                "port": 8080,
+                "host": "127.0.0.1"
+            ],
+            createBackup: true
+        )
         
         print("")
         print("✅ Onboarding completed!")

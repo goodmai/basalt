@@ -27,9 +27,17 @@ struct OnboardCommand: AsyncParsableCommand {
     
     @Flag(name: .long, help: "Show system profile only (no interactive setup)")
     var profileOnly: Bool = false
+
+    @Option(name: .customLong("config-path"), help: "Path to server configuration JSON file to update (default: ~/.gem/config.json)")
+    var configPath: String?
     
     func run() async throws {
-        let onboarding = OnboardingFlow()
+        let onboarding: OnboardingFlow
+        if let configPath = configPath {
+            onboarding = OnboardingFlow(serverConfigPath: configPath)
+        } else {
+            onboarding = OnboardingFlow()
+        }
         
         // Reset if requested
         if reset {

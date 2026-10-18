@@ -38,6 +38,11 @@ struct RESTServer: Sendable {
         )
 
         log("Listening on http://\(config.host):\(config.restPort)")
+        if let key = config.apiKey, !key.isEmpty {
+            log("API key protection: ENABLED (bearer token required)")
+        } else {
+            log("API key protection: DISABLED (loopback open access)")
+        }
         log("Swagger: http://\(config.host):\(config.restPort)/swagger")
         try await app.runService()
     }
@@ -54,6 +59,10 @@ struct RESTServer: Sendable {
 
         // Minimal request logging (method + path only, goes to stderr via GemLogger)
         router.add(middleware: LogRequestsMiddleware(.info))
+
+        if let apiKey = config.apiKey, !apiKey.isEmpty {
+            router.add(middleware: APIKeyAuthenticator(apiKey: apiKey))
+        }
 
         // ── Native API ──────────────────────────────────────────────────────────
         let v1 = router.group("/api/v1")
