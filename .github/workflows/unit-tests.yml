@@ -8,7 +8,7 @@ on:
 jobs:
   test:
     name: Swift Tests
-    runs-on: macos-15
+    runs-on: [self-hosted, macOS, ARM64]
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
