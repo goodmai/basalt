@@ -395,6 +395,8 @@ struct CheckSubcommand: AsyncParsableCommand {
 
         if json {
             try printJSON(assessment)
+            // AGENTS.md "Feasible?" step keys on the exit status, like inspect does.
+            if !assessment.fitsInMemory { throw ExitCode.failure }
             return
         }
 
@@ -418,6 +420,8 @@ struct CheckSubcommand: AsyncParsableCommand {
             print(green("  ✓ Feasible: Model fits within system memory budget."))
         } else {
             print(red("  ❌ Insufficient Memory: Model exceeds available memory!"))
+            print()
+            throw ExitCode.failure
         }
         print()
     }
@@ -435,12 +439,15 @@ struct InspectSubcommand: AsyncParsableCommand {
     @Argument(help: "Model repo ID or local path, e.g. ornith-ai/Ornith-1.5-9B-MLX-4bit")
     var modelId: String
 
+    @Option(name: .long, help: "Quantization subfolder to inspect, as for `serve --quant` (default: the one serve picks)")
+    var quant: String?
+
     @Flag(name: .long, help: "Output in machine-readable JSON format")
     var json: Bool = false
 
     mutating func run() async throws {
         let inspector = ModelInspector()
-        let report = await inspector.inspect(modelIdOrPath: modelId)
+        let report = await inspector.inspect(modelIdOrPath: modelId, quant: quant)
 
         if json {
             try printJSON(report)
