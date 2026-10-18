@@ -7,7 +7,7 @@ public struct ModelFitAnalyzer: Sendable {
     // MARK: - Fit Category
     
     /// How well a model fits on the hardware
-    public enum FitCategory: String, Sendable, Codable {
+    public enum FitCategory: String, Sendable {
         case perfect   = "Perfect"   // 85-100: Runs great, highly recommended
         case good      = "Good"      // 65-84: Runs well, recommended
         case tight     = "Tight"     // 45-64: Runs but may be slow
@@ -74,11 +74,6 @@ public struct ModelFitAnalyzer: Sendable {
         public let estimatedTPS: Int
         public let estimatedRAMUsage: Int  // MB
         public let recommendation: String
-        public let isMeasured: Bool
-        public let calibrationFactor: Double
-        public let fourDimensionalScore: FourDimensionalScore?
-        public let optimalQuantization: String?
-        public let quantizationOptions: [QuantizationFitOption]
         
         public init(
             modelId: String,
@@ -88,12 +83,7 @@ public struct ModelFitAnalyzer: Sendable {
             fitCategory: FitCategory,
             estimatedTPS: Int,
             estimatedRAMUsage: Int,
-            recommendation: String,
-            isMeasured: Bool = false,
-            calibrationFactor: Double = 1.0,
-            fourDimensionalScore: FourDimensionalScore? = nil,
-            optimalQuantization: String? = nil,
-            quantizationOptions: [QuantizationFitOption] = []
+            recommendation: String
         ) {
             self.modelId = modelId
             self.modelName = modelName
@@ -103,11 +93,6 @@ public struct ModelFitAnalyzer: Sendable {
             self.estimatedTPS = estimatedTPS
             self.estimatedRAMUsage = estimatedRAMUsage
             self.recommendation = recommendation
-            self.isMeasured = isMeasured
-            self.calibrationFactor = calibrationFactor
-            self.fourDimensionalScore = fourDimensionalScore
-            self.optimalQuantization = optimalQuantization
-            self.quantizationOptions = quantizationOptions
         }
     }
     
@@ -126,8 +111,6 @@ public struct ModelFitAnalyzer: Sendable {
         let availableMB = Double(resources.availableRAM) / 1_048_576.0
         let modelBudgetMB = availableMB * 0.85
         
-        let bw = FitScorer.memoryBandwidthGBs(chip: resources.chipModel, gpuName: resources.gpuName)
-        let effectiveBW = bw * 0.70
         let profile = benchmarkProfile ?? HardwareBenchmarkProfileStore.loadSync()
         
         // Approximate KV cache size in MB at L_min derived from geometry
@@ -140,21 +123,12 @@ public struct ModelFitAnalyzer: Sendable {
             let weightGB = model.totalParameters * (Double(q) / 8.0) * (1.0 + overhead)
             let footprintMB = Int(weightGB * 1024.0 + kvCacheMB)
             
-            // Speed modeling: active parameters determine bandwidth consumption per token
-            let activeWeightsGB = model.activeParameters * (Double(q) / 8.0)
-            let kvReadGB = FitScorer.kvCacheFootprintGB(params: model.totalParameters, contextTokens: lMin)
-            let bytesPerToken = max(0.1, activeWeightsGB + kvReadGB)
-            let theoreticalTPS = effectiveBW / bytesPerToken
-            
-            let tps: Int
-            if let m = profile.measurement(for: model.id, currentChip: resources.chipModel) {
-                // Adjust measured TPS proportionally using the measurement's actual bit width
-                let measuredBits = m.quant.map { FitScorer.parseBits(from: $0) } ?? 4.0
-                let ratio = measuredBits / Double(q)
-                tps = max(1, Int((m.measuredTPS * ratio).rounded()))
-            } else {
-                tps = max(1, Int(theoreticalTPS.rounded()))
-            }
+            // Same speed model as `fit` scoring, evaluated at this grid width and at L_min.
+            let speed = FitScorer.decodeSpeed(
+                model: model, bits: Double(q), contextTokens: lMin,
+                chip: resources.chipModel, gpuName: resources.gpuName, profile: profile
+            )
+            let tps = max(1, Int(speed.tps.rounded()))
             
             // Quality scale per quantization bit width
             let qMultiplier: Double

@@ -21,7 +21,7 @@ struct FitScorerTests {
     @Test("Calculate score for perfect fit on M2 Max")
     func testPerfectFit() async {
         let resources = createMockResources(ramGB: 32, availableGB: 18, chip: "M2 Max")
-        let scorer = FitScorer(profile: resources)
+        let scorer = FitScorer(profile: resources, benchmarkProfile: HardwareBenchmarkProfile())
         let model = ModelDefinition(
             id: "mlx-community/Qwen3.5-4B-4bit",
             name: "Qwen 3.5 4B",
@@ -44,7 +44,7 @@ struct FitScorerTests {
     @Test("Calculate score for marginal fit on low RAM")
     func testMarginalFit() async {
         let resources = createMockResources(ramGB: 8, availableGB: 4, chip: "M1")
-        let scorer = FitScorer(profile: resources)
+        let scorer = FitScorer(profile: resources, benchmarkProfile: HardwareBenchmarkProfile())
         let model = ModelDefinition(
             id: "mlx-community/Qwen3.6-27B",
             name: "Qwen 27B",
@@ -67,7 +67,7 @@ struct FitScorerTests {
     @Test("MoE separate accounting: P_total for memory and P_active for decode speed")
     func testMoESeparateAccounting() async {
         let resources = createMockResources(ramGB: 32, availableGB: 20, chip: "M2 Max")
-        let scorer = FitScorer(profile: resources)
+        let scorer = FitScorer(profile: resources, benchmarkProfile: HardwareBenchmarkProfile())
 
         // MoE model: 26B total parameters, 4B active parameters
         let moeModel = ModelDefinition(
@@ -171,7 +171,7 @@ struct FitScorerTests {
             activeParameters: 7.0
         )
 
-        let result = ModelFitAnalyzer.evaluateQuantizations(model: model, resources: resources)
+        let result = ModelFitAnalyzer.evaluateQuantizations(model: model, resources: resources, benchmarkProfile: HardwareBenchmarkProfile())
         #expect(result.options.count == 5)
         #expect(result.options.map(\.bits) == [8, 6, 4, 3, 2])
 
@@ -309,7 +309,8 @@ struct FitScorerTests {
         let result = ModelFitAnalyzer.evaluateQuantizations(
             model: hugeModel,
             resources: resources,
-            tpsMin: 100.0
+            tpsMin: 100.0,
+            benchmarkProfile: HardwareBenchmarkProfile()
         )
 
         // None of the options fit
@@ -354,6 +355,97 @@ struct FitScorerTests {
         // 4-bit 50 TPS rescaled to 8-bit should be 25 TPS, not 50 TPS
         #expect(score.estimatedTPS == 25)
         #expect(score.measuredTPS == 25.0)
+    }
+
+    // MARK: — Review round 1 (#51)
+
+    @Test("A recorded profile survives a fresh process: the file is read back with its ISO-8601 dates")
+    func testProfileRoundTripsThroughDisk() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let path = dir.appendingPathComponent("hardware_profile.json").path
+
+        try await HardwareBenchmarkProfileStore(customPath: path).record(BenchmarkMeasurement(
+            modelId: "org/model-a", chipModel: "M2 Max", measuredTPS: 50, measuredTTFT: 0.1, quant: "4bit"))
+        // A second store is a second process: it has no cache and must decode the file.
+        try await HardwareBenchmarkProfileStore(customPath: path).record(BenchmarkMeasurement(
+            modelId: "org/model-b", chipModel: "M2 Max", measuredTPS: 60, measuredTTFT: 0.1, quant: "4bit"))
+
+        let loaded = HardwareBenchmarkProfileStore.loadSync(path: path)
+        #expect(loaded.measurements.count == 2, "the second record must not wipe the first")
+        #expect(loaded.measurement(for: "org/model-a", currentChip: "M2 Max")?.measuredTPS == 50)
+    }
+
+    @Test("A run that produced (almost) no tokens is not recorded as a measurement")
+    func testImplausibleMeasurementRejected() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = HardwareBenchmarkProfileStore(customPath: dir.appendingPathComponent("p.json").path)
+        await #expect(throws: HardwareBenchmarkProfileError.self) {
+            try await store.record(BenchmarkMeasurement(modelId: "org/m", chipModel: "M4", measuredTPS: 0, measuredTTFT: 0))
+        }
+        #expect(await store.load().measurements.isEmpty)
+    }
+
+    @Test("parseBits reads the explicit width and is not fooled by other digits")
+    func testParseBits() {
+        #expect(FitScorer.parseBits(from: "4-bit") == 4)
+        #expect(FitScorer.parseBits(from: "8bit") == 8)
+        #expect(FitScorer.parseBits(from: "1.58-bit") == 1.58)
+        #expect(FitScorer.parseBits(from: "4-bit g128") == 4)
+        #expect(FitScorer.parseBits(from: "bf16") == 16)
+        #expect(FitScorer.parseBits(from: "NVFP4") == 4)
+        #expect(FitScorer.parseBits(from: "mxfp8") == 8)
+        #expect(FitScorer.parseBits(from: "Dynamic Quant (DQ)") == 4)
+    }
+
+    @Test("Bandwidth follows the published per-tier figures")
+    func testBandwidthTable() {
+        #expect(FitScorer.memoryBandwidthGBs(chip: "M4 Max", gpuName: "Apple M4 Max") == 546)
+        #expect(FitScorer.memoryBandwidthGBs(chip: "M4 Pro", gpuName: "Apple M4 Pro") == 273)
+        #expect(FitScorer.memoryBandwidthGBs(chip: "M2 Ultra", gpuName: "Apple M2 Ultra") == 800)
+        #expect(FitScorer.memoryBandwidthGBs(chip: "M1", gpuName: "Apple M1") == 68)
+        #expect(FitScorer.memoryBandwidthGBs(chip: "M3 Max", gpuName: "Apple M3 Max") == 400)
+    }
+
+    @Test("A measurement from a different tier of the same generation does not calibrate this one")
+    func testTierMismatchRejected() {
+        let profile = HardwareBenchmarkProfile(chipModel: "M2", measurements: [
+            "org/m": BenchmarkMeasurement(modelId: "org/m", chipModel: "M2", measuredTPS: 30, measuredTTFT: 0.1)
+        ])
+        #expect(profile.measurement(for: "org/m", currentChip: "M2") != nil)
+        #expect(profile.measurement(for: "org/m", currentChip: "M2 Ultra") == nil)
+    }
+
+    @Test("fit reports the grid's best quantization, or none when nothing fits")
+    func testOptimalQuantizationWired() async {
+        let small = ModelDatabase.allModels.first { $0.id == "mlx-community/Qwen3.5-4B-4bit" }!
+        let roomy = FitScorer(profile: createMockResources(ramGB: 64, availableGB: 48, chip: "M2 Max"),
+                              benchmarkProfile: HardwareBenchmarkProfile())
+        #expect(await roomy.score(small).optimalQuantization == "8-bit")
+
+        let huge = ModelDefinition(id: "org/huge-400b", name: "Huge 400B", family: small.family, task: small.task,
+                                   modality: small.modality, ramMB: 220_000, contextWindow: 32768,
+                                   quantization: "4-bit", quality: 0.95, totalParameters: 400, activeParameters: 400)
+        let tight = FitScorer(profile: createMockResources(ramGB: 16, availableGB: 10, chip: "M2"),
+                              benchmarkProfile: HardwareBenchmarkProfile())
+        #expect(await tight.score(huge).optimalQuantization == nil)
+    }
+
+    @Test("fit and the quantization grid agree on the measured speed at the model's own width")
+    func testScorerAndGridShareSpeedModel() async {
+        let model = ModelDatabase.allModels.first { $0.id == "mlx-community/Qwen3.5-4B-4bit" }!
+        let resources = createMockResources(ramGB: 32, availableGB: 24, chip: "M2 Max")
+        // No quant recorded: both paths must take it as the model's own 4-bit.
+        let profile = HardwareBenchmarkProfile(chipModel: "M2 Max", measurements: [
+            model.id: BenchmarkMeasurement(modelId: model.id, chipModel: "M2 Max", measuredTPS: 80, measuredTTFT: 0.1)
+        ])
+        let fitTPS = await FitScorer(profile: resources, benchmarkProfile: profile).score(model).estimatedTPS
+        let grid = ModelFitAnalyzer.evaluateQuantizations(model: model, resources: resources, benchmarkProfile: profile)
+        #expect(fitTPS == 80)
+        #expect(grid.options.first { $0.bits == 4 }?.estimatedTPS == 80)
+        #expect(grid.options.first { $0.bits == 8 }?.estimatedTPS == 40)
     }
 }
 

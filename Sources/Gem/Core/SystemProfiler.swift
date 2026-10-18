@@ -39,6 +39,22 @@ public actor SystemProfiler {
         }
     }
     
+    /// Structured hardware report designed for automated agent diagnostics
+    public struct HardwareDiagnosticReport: Codable, Sendable {
+        public let chip: String
+        public let totalRAMGB: Int
+        public let availableRAMGB: Double
+        public let availableRAMBytes: Int64
+        public let totalRAMBytes: Int64
+        public let gpu: String
+        public let gpuMemoryGB: Int
+        public let cpuCores: Int
+        public let diskSpaceGB: Int
+        public let diskSpaceBytes: Int64
+        public let osVersion: String
+        public let compatible: Bool
+    }
+    
     /// Model recommendation based on hardware specs
     public struct ModelRecommendation: Sendable {
         public let modelId: String
@@ -85,6 +101,28 @@ public actor SystemProfiler {
             diskSpace: diskSpace,
             osVersion: osVersion,
             chipModel: chipModel
+        )
+    }
+
+    /// Generate a machine-readable hardware report for agents
+    public func generateReport() async -> HardwareDiagnosticReport {
+        let res = await detectResources()
+        let availGB = Double(res.availableRAM) / 1_073_741_824.0
+        // detectChipModel() yields an M-series name, "Apple Silicon…" or "Intel"; MLX needs Apple Silicon.
+        let isCompatible = res.chipModel != "Intel"
+        return HardwareDiagnosticReport(
+            chip: res.chipModel,
+            totalRAMGB: res.totalRAMGB,
+            availableRAMGB: (availGB * 10).rounded() / 10,
+            availableRAMBytes: res.availableRAM,
+            totalRAMBytes: res.totalRAM,
+            gpu: res.gpuName,
+            gpuMemoryGB: res.gpuMemoryGB,
+            cpuCores: res.cpuCores,
+            diskSpaceGB: res.diskSpaceGB,
+            diskSpaceBytes: res.diskSpace,
+            osVersion: res.osVersion,
+            compatible: isCompatible
         )
     }
     
@@ -140,6 +178,11 @@ public actor SystemProfiler {
         }
     }
     
+    /// Available RAM only — the cheap part of `detectResources()`, for periodic telemetry.
+    public func currentAvailableRAM() -> Int64 {
+        getAvailableRAM()
+    }
+
     // MARK: - Private Helpers
     
     /// Get available RAM using macOS APIs
@@ -211,20 +254,11 @@ public actor SystemProfiler {
             String(validatingCString: buffer.baseAddress!) ?? "Unknown"
         }
         
-        // Detect M-series chips (including future M5)
-        if brandString.contains("Apple M1") {
-            return "M1"
-        } else if brandString.contains("Apple M2") {
-            return "M2"
-        } else if brandString.contains("Apple M3") {
-            return "M3"
-        } else if brandString.contains("Apple M4") {
-            return "M4"
-        } else if brandString.contains("Apple M5") {
-            return "M5"
-        } else if brandString.contains("Apple M") {
-            // Future M-series (M6, M7, etc.)
-            return "Apple Silicon (M-series)"
+        // M-series: keep the tier ("M2 Max", "M4 Pro", "M3 Ultra") — memory bandwidth and the
+        // benchmark calibration both depend on it, and every consumer matches with `contains`.
+        if let range = brandString.range(of: #"M\d+( (Pro|Max|Ultra))?"#, options: .regularExpression),
+           brandString.contains("Apple M") {
+            return String(brandString[range])
         } else if machineString.contains("arm64") {
             return "Apple Silicon"
         } else {

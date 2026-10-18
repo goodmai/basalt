@@ -108,8 +108,7 @@ public struct ModelCache: Sendable {
     public static func canonicalRepoId(from raw: String) -> String {
         let cleaned = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         if cleaned.hasPrefix("claude-local/") {
-            let body = String(cleaned.dropFirst("claude-local/".count))
-            return body.replacingOccurrences(of: "--", with: "/")
+            return ModelsController.hfRepoId(from: cleaned)
         }
         if cleaned.contains("models--") {
             let parts = cleaned.components(separatedBy: "models--")

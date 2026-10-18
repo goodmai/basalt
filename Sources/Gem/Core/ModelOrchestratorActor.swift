@@ -13,8 +13,6 @@ public actor ModelOrchestratorActor {
 
     private let engine: any InferenceEngine
     private let maxTokens: Int
-    private var requestCount: Int = 0
-    private var totalTokensGenerated: Int = 0
     private var modelSizeMB: Int = 4000
     /// Floor for the generation watchdog. The real budget scales with the token
     /// count — see `timeout(for:)`.
@@ -58,12 +56,27 @@ public actor ModelOrchestratorActor {
         await conversationCache.parkInactiveSlots(except: activeId)
     }
 
+    /// A working session lives while each prompt extends the previous one's first 128 chars;
+    /// service requests (thread titles) never touch it — #53's cache parking keys off this.
+    private func trackWorkingSession(_ request: GenerationRequest) {
+        guard request.isServiceRequest != true else { return }
+        if let prefix = workingSessionPromptPrefix, workingSessionId != nil, request.prompt.hasPrefix(prefix) {
+            return
+        }
+        workingSessionId = "session_\(UUID().uuidString.prefix(8))"
+        workingSessionPromptPrefix = String(request.prompt.prefix(128))
+    }
+
     // MARK: — Init
 
-    public init(engine: any InferenceEngine, maxTokens: Int = 4096) {
+    /// The serving process's counters; injectable so tests do not share global state.
+    public let telemetry: TelemetryTracker
+
+    public init(engine: any InferenceEngine, maxTokens: Int = 4096, telemetry: TelemetryTracker = .shared) {
         self.engine = engine
         self.maxTokens = maxTokens
         self.conversationCache = MultiSlotConversationCache(maxKVBufferTokens: 32768)
+        self.telemetry = telemetry
     }
 
     // MARK: — Model loading
@@ -78,6 +91,8 @@ public actor ModelOrchestratorActor {
             logger.info("Model size: \(self.modelSizeMB) MB")
         }
         try await engine.load(modelPath: path)
+        // After the load: a failed load must not report the failed model's size.
+        await self.telemetry.setModelMemory(mb: self.modelSizeMB)
     }
 
     /// Record the HuggingFace repo ID that was just loaded.
@@ -98,7 +113,8 @@ public actor ModelOrchestratorActor {
             return
         }
 
-        let path = ModelCache.cacheDir(for: modelId).path
+        // Same resolution `serve` uses, so a repo with 4bit/8bit subfolders switches too.
+        let path = (ModelCache.resolve(repoId: modelId) ?? ModelCache.cacheDir(for: modelId)).path
         guard FileManager.default.fileExists(atPath: path) else {
             logger.error("switchModel: model not in cache: \(modelId)")
             throw GemError.modelNotCached(identifier: modelId)
@@ -129,25 +145,20 @@ public actor ModelOrchestratorActor {
 
         logger.trace("generate: \(request.prompt.prefix(60))…")
         let validated = try capped(request)
-        requestCount += 1
 
-        if validated.isServiceRequest != true {
-            let prefix = String(validated.prompt.prefix(128))
-            if self.workingSessionId == nil || self.workingSessionPromptPrefix == nil || !validated.prompt.hasPrefix(self.workingSessionPromptPrefix!) {
-                self.workingSessionId = "session_\(UUID().uuidString.prefix(8))"
-                self.workingSessionPromptPrefix = prefix
-            }
-        }
-
+        trackWorkingSession(validated)
+        await self.telemetry.requestStarted()
         do {
             let response = try await withTimeout(seconds: timeout(for: validated)) {
                 try await self.engine.generate(request: validated)
             }
-            totalTokensGenerated += response.completionTokens
+            await self.telemetry.requestFinished(with: response)
             return response
         } catch let error as GemError {
+            await self.telemetry.requestFinished()
             throw error
         } catch {
+            await self.telemetry.requestFinished()
             throw GemError.inferenceError("Generation error: \(error)")
         }
     }
@@ -164,29 +175,26 @@ public actor ModelOrchestratorActor {
 
         logger.trace("generateStream start")
         let validated = try capped(request)
-        requestCount += 1
 
-        if validated.isServiceRequest != true {
-            let prefix = String(validated.prompt.prefix(128))
-            if self.workingSessionId == nil || self.workingSessionPromptPrefix == nil || !validated.prompt.hasPrefix(self.workingSessionPromptPrefix!) {
-                self.workingSessionId = "session_\(UUID().uuidString.prefix(8))"
-                self.workingSessionPromptPrefix = prefix
-            }
-        }
-
+        trackWorkingSession(validated)
+        await self.telemetry.requestStarted()
         let stream: AsyncStream<StreamChunk>
         do {
             stream = try await withTimeout(seconds: timeout(for: validated)) {
                 try await self.engine.generateStream(request: validated)
             }
         } catch let error as GemError {
+            await self.telemetry.requestFinished()
             throw error
         } catch {
+            await self.telemetry.requestFinished()
             throw GemError.inferenceError("Stream setup error: \(error)")
         }
 
+        let telemetry = self.telemetry
         return AsyncStream<StreamChunk> { continuation in
             let task = Task.detached {
+                var result: GenerationResponse?
                 for await chunk in stream {
                     switch chunk {
                     case .text(let t):
@@ -194,9 +202,13 @@ public actor ModelOrchestratorActor {
                     case .reasoning(let r):
                         continuation.yield(.reasoning(r))
                     case .metadata(let m):
+                        result = m
                         continuation.yield(.metadata(m))
                     }
                 }
+                // Reached on completion and on cancellation (onTermination cancels this task).
+                // Streaming is most of the REST traffic: it is counted like generate().
+                await telemetry.requestFinished(with: result)
                 continuation.finish()
             }
             continuation.onTermination = { _ in task.cancel() }
@@ -213,6 +225,12 @@ public actor ModelOrchestratorActor {
             isReady: ready,
             version: HealthResponse.version
         )
+    }
+
+    // MARK: — Telemetry
+
+    public func telemetrySnapshot() async -> ServerTelemetrySnapshot {
+        await telemetry.snapshot()
     }
 
     // MARK: — Model catalogue
@@ -239,12 +257,6 @@ public actor ModelOrchestratorActor {
                     isLoaded: repoId == currentModelId
                 )
             }
-    }
-
-    // MARK: — Diagnostics
-
-    var diagnostics: (requests: Int, tokens: Int) {
-        (requestCount, totalTokensGenerated)
     }
 
     // MARK: — Private helpers

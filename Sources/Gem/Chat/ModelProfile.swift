@@ -29,26 +29,6 @@ public protocol ModelProfile: Sendable {
     /// fraction of the top token's probability are dropped. nil leaves sampling
     /// untouched. Measured per family — see the conformances for the evidence.
     var defaultMinP: Float? { get }
-
-    /// Total parameter count in billions, if known.
-    var totalParameters: Double? { get }
-
-    /// Active parameter count in billions, if known (for MoE routing).
-    var activeParameters: Double? { get }
-
-    /// True if model uses Mixture-of-Experts routing where active < total.
-    var isMoE: Bool { get }
-}
-
-extension ModelProfile {
-    public var totalParameters: Double? { nil }
-    public var activeParameters: Double? { nil }
-    public var isMoE: Bool {
-        if let active = activeParameters, let total = totalParameters {
-            return active < total
-        }
-        return false
-    }
 }
 
 public struct ThinkingMarkers: Sendable {
@@ -91,9 +71,9 @@ public struct QwenProfile: ModelProfile {
         case .effort(let level):
             // The template raises on anything outside this set, which would surface
             // as an opaque 500. Fail closed to the default instead.
-            let normalized = (level.lowercased() == "high") ? "xhigh" : level.lowercased()
-            guard ["xhigh", "medium", "low"].contains(normalized) else { return [:] }
-            return ["reasoning_effort": normalized]
+            // ReasoningPolicy(rawValue:) already normalized the level ("high" → "xhigh").
+            guard ["xhigh", "medium", "low"].contains(level) else { return [:] }
+            return ["reasoning_effort": level]
         }
     }
 

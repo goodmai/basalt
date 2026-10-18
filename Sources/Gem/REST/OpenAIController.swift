@@ -60,11 +60,20 @@ struct OpenAIController: Sendable {
         let type: String?
         let role: String?
         let content: MessageContent?   // null when tool_calls are present
+        // Responses API input items besides messages: a tool call the model made earlier
+        // (`function_call`: name + arguments) and its result (`function_call_output`: output).
+        let name: String?
+        let arguments: String?
+        let output: String?
 
-        init(type: String? = nil, role: String? = nil, content: MessageContent?) {
+        init(type: String? = nil, role: String? = nil, content: MessageContent?,
+             name: String? = nil, arguments: String? = nil, output: String? = nil) {
             self.type = type
             self.role = role
             self.content = content
+            self.name = name
+            self.arguments = arguments
+            self.output = output
         }
     }
 
@@ -88,6 +97,8 @@ struct OpenAIController: Sendable {
 
     struct ResponsesRequest: Codable, Sendable {
         let model: String?
+        /// The Responses API's system prompt — Codex sends its whole agent prompt here.
+        let instructions: String?
         let input: ResponseInput?
         let messages: [ChatMessage]?
         let maxOutputTokens: Int?
@@ -95,12 +106,21 @@ struct OpenAIController: Sendable {
         let temperature: Double?
         let topP: Double?
         let stream: Bool?
+        /// Responses API form: `"reasoning": {"effort": "low"}`.
+        let reasoning: ReasoningConfig?
+        /// Chat Completions form, accepted here too for clients that reuse it.
         let reasoningEffort: String?
         let tools: [ResponseTool]?
         let additionalTools: [ResponseTool]?
 
+        struct ReasoningConfig: Codable, Sendable {
+            let effort: String?
+        }
+
+        var effectiveReasoningEffort: String? { reasoning?.effort ?? reasoningEffort }
+
         enum CodingKeys: String, CodingKey {
-            case model, input, messages, temperature, stream, tools
+            case model, instructions, input, messages, temperature, stream, tools, reasoning
             case maxOutputTokens = "max_output_tokens"
             case maxTokens = "max_tokens"
             case topP = "top_p"
@@ -270,9 +290,7 @@ struct OpenAIController: Sendable {
         }
 
         let prompt = messagesToPrompt(dto.messages)
-        let isService = ServiceRequestDetector.isTitleOrServiceRequest(prompt: prompt, maxTokens: dto.maxTokens)
-        let optInCompact = request.headers.isFlagTrue("x-compact-prompt") || request.headers.isFlagTrue("x-service-request")
-        let finalPrompt = (isService && optInCompact) ? ServiceRequestDetector.compactTitlePrompt(prompt) : prompt
+        let service = ServiceRequestDetector.prepare(prompt: prompt, maxTokens: dto.maxTokens, headers: request.headers)
 
         let explicitSessionId = (HTTPField.Name("x-session-id").flatMap { request.headers[$0] })
             ?? (HTTPField.Name("x-conversation-id").flatMap { request.headers[$0] })
@@ -280,20 +298,20 @@ struct OpenAIController: Sendable {
 
         var prefillDelta: String? = nil
         var cachedTokensEstimate: Int? = nil
-        if !isService {
+        if !service.isService {
             await orchestrator.parkInactiveSlots(except: sessionId)
-            let delta = await orchestrator.computePrefillDelta(slotId: sessionId, prompt: finalPrompt)
+            let delta = await orchestrator.computePrefillDelta(slotId: sessionId, prompt: service.prompt)
             prefillDelta = delta.newPromptSuffix
             cachedTokensEstimate = delta.cachedPromptTokens
         }
 
         let genRequest = GenerationRequest(
-            prompt: finalPrompt,
+            prompt: service.prompt,
             maxTokens: dto.maxTokens,
             temperature: dto.temperature ?? 0.7,
             topP: dto.topP ?? 0.9,
             reasoningEffort: dto.reasoningEffort,
-            isServiceRequest: isService,
+            isServiceRequest: service.isService,
             prefillDelta: prefillDelta,
             cachedTokensEstimate: cachedTokensEstimate
         )
@@ -301,13 +319,13 @@ struct OpenAIController: Sendable {
         let hasTools = (dto.tools?.isEmpty == false)
 
         if dto.stream == true {
-            return streamResponse(genRequest: genRequest, model: dto.model ?? modelId, requestedModel: requestedModel, sessionId: isService ? nil : sessionId, prompt: finalPrompt)
+            return streamResponse(genRequest: genRequest, model: dto.model ?? modelId, requestedModel: requestedModel, sessionId: service.isService ? nil : sessionId, prompt: service.prompt)
         }
 
         do {
             let result = try await orchestrator.generate(request: genRequest, modelId: requestedModel)
-            if !isService {
-                await orchestrator.recordTurn(slotId: sessionId, prompt: finalPrompt, completion: result.generatedText)
+            if !service.isService {
+                await orchestrator.recordTurn(slotId: sessionId, prompt: service.prompt, completion: result.generatedText)
             }
             let outputText = hasTools ? (ToolCallRepairer.repairJSON(result.generatedText) ?? result.generatedText) : result.generatedText
             let response = ChatCompletionResponse(
@@ -352,26 +370,26 @@ struct OpenAIController: Sendable {
                                      code: 400)
         }
 
-        let prompt: String
+        let conversation: String
         if let input = dto.input {
             switch input {
-            case .text(let t): prompt = t
-            case .messages(let msgs): prompt = messagesToPrompt(msgs)
+            case .text(let t): conversation = t
+            case .messages(let msgs): conversation = messagesToPrompt(msgs)
             }
         } else if let msgs = dto.messages, !msgs.isEmpty {
-            prompt = messagesToPrompt(msgs)
+            conversation = messagesToPrompt(msgs)
         } else {
-            prompt = ""
+            conversation = ""
         }
 
-        guard !prompt.isEmpty else {
+        guard !conversation.isEmpty else {
             return makeErrorResponse(status: .badRequest, message: "input or messages must not be empty", code: 400)
         }
+        // `instructions` is the system prompt of the Responses API; dropping it loses the agent's rules.
+        let prompt = dto.instructions.map { $0.isEmpty ? conversation : "[System]: \($0)\n\n\(conversation)" } ?? conversation
 
         let maxT = dto.maxOutputTokens ?? dto.maxTokens
-        let isService = ServiceRequestDetector.isTitleOrServiceRequest(prompt: prompt, maxTokens: maxT)
-        let optInCompact = request.headers.isFlagTrue("x-compact-prompt") || request.headers.isFlagTrue("x-service-request")
-        let finalPrompt = (isService && optInCompact) ? ServiceRequestDetector.compactTitlePrompt(prompt) : prompt
+        let service = ServiceRequestDetector.prepare(prompt: prompt, maxTokens: maxT, headers: request.headers)
 
         let explicitSessionId = (HTTPField.Name("x-session-id").flatMap { request.headers[$0] })
             ?? (HTTPField.Name("x-conversation-id").flatMap { request.headers[$0] })
@@ -379,20 +397,20 @@ struct OpenAIController: Sendable {
 
         var prefillDelta: String? = nil
         var cachedTokensEstimate: Int? = nil
-        if !isService {
+        if !service.isService {
             await orchestrator.parkInactiveSlots(except: sessionId)
-            let delta = await orchestrator.computePrefillDelta(slotId: sessionId, prompt: finalPrompt)
+            let delta = await orchestrator.computePrefillDelta(slotId: sessionId, prompt: service.prompt)
             prefillDelta = delta.newPromptSuffix
             cachedTokensEstimate = delta.cachedPromptTokens
         }
 
         let genRequest = GenerationRequest(
-            prompt: finalPrompt,
+            prompt: service.prompt,
             maxTokens: maxT,
             temperature: dto.temperature ?? 0.7,
             topP: dto.topP ?? 0.9,
-            reasoningEffort: dto.reasoningEffort,
-            isServiceRequest: isService,
+            reasoningEffort: dto.effectiveReasoningEffort,
+            isServiceRequest: service.isService,
             prefillDelta: prefillDelta,
             cachedTokensEstimate: cachedTokensEstimate
         )
@@ -400,13 +418,13 @@ struct OpenAIController: Sendable {
         let hasTools = (dto.tools?.isEmpty == false) || (dto.additionalTools?.isEmpty == false)
 
         if dto.stream == true {
-            return streamResponses(genRequest: genRequest, model: dto.model ?? modelId, requestedModel: requestedModel, sessionId: isService ? nil : sessionId, prompt: finalPrompt)
+            return streamResponses(genRequest: genRequest, model: dto.model ?? modelId, requestedModel: requestedModel, sessionId: service.isService ? nil : sessionId, prompt: service.prompt)
         }
 
         do {
             let result = try await orchestrator.generate(request: genRequest, modelId: requestedModel)
-            if !isService {
-                await orchestrator.recordTurn(slotId: sessionId, prompt: finalPrompt, completion: result.generatedText)
+            if !service.isService {
+                await orchestrator.recordTurn(slotId: sessionId, prompt: service.prompt, completion: result.generatedText)
             }
             let outputText = hasTools ? (ToolCallRepairer.repairJSON(result.generatedText) ?? result.generatedText) : result.generatedText
             let response = ResponsesResponse(
@@ -421,7 +439,7 @@ struct OpenAIController: Sendable {
                         type: "message",
                         status: "completed",
                         role: "assistant",
-                        content: [.init(type: "text", text: outputText)]
+                        content: [.init(type: "output_text", text: outputText)]
                     )
                 ],
                 usage: .init(
@@ -587,6 +605,12 @@ struct OpenAIController: Sendable {
         )
     }
 
+    /// OpenAI Responses API streaming: created → output_item.added → content_part.added →
+    /// output_text.delta… → output_text.done → content_part.done → output_item.done →
+    /// response.completed (response.failed on error). Codex and the OpenAI SDKs end a turn on
+    /// `response.completed`; there is no `[DONE]` sentinel in this protocol. Reasoning chunks are
+    /// not streamed: they would need their own `reasoning` output item, and a malformed one is
+    /// worse for strict clients than none.
     private func sseResponsesStream(
         genRequest: GenerationRequest,
         model: String,
@@ -595,13 +619,14 @@ struct OpenAIController: Sendable {
         prompt: String? = nil
     ) -> AsyncStream<ByteBuffer> {
         AsyncStream { continuation in
-            Task {
+            let task = Task {
                 let id = "resp_\(UUID().uuidString)"
-                let itemId = "item_\(id)"
+                let itemId = "msg_\(UUID().uuidString)"
+                let createdAt = Int(Date().timeIntervalSince1970)
                 var seq = 0
 
-                func sendEvent(_ event: String, _ dataDict: [String: Any]) {
-                    var payload = dataDict
+                func send(_ event: String, _ fields: [String: Any]) {
+                    var payload = fields
                     payload["type"] = event
                     payload["sequence_number"] = seq
                     seq += 1
@@ -612,142 +637,73 @@ struct OpenAIController: Sendable {
                         continuation.yield(buf)
                     }
                 }
+                func responseObject(status: String, output: [Any], extra: [String: Any] = [:]) -> [String: Any] {
+                    var r: [String: Any] = ["id": id, "object": "response", "created_at": createdAt,
+                                            "status": status, "model": model, "output": output]
+                    r.merge(extra) { _, new in new }
+                    return r
+                }
+                func messageItem(status: String, text: String?) -> [String: Any] {
+                    let content: [Any] = text.map { [["type": "output_text", "text": $0, "annotations": [] as [Any]]] } ?? []
+                    return ["id": itemId, "type": "message", "status": status, "role": "assistant", "content": content]
+                }
 
-                sendEvent("response.created", [
-                    "id": id,
-                    "response": [
-                        "id": id,
-                        "object": "response",
-                        "status": "in_progress",
-                        "model": model,
-                        "output": [] as [Any]
-                    ] as [String: Any]
+                send("response.created", ["response": responseObject(status: "in_progress", output: [])])
+                send("response.output_item.added", ["output_index": 0, "item": messageItem(status: "in_progress", text: nil)])
+                send("response.content_part.added", [
+                    "item_id": itemId, "output_index": 0, "content_index": 0,
+                    "part": ["type": "output_text", "text": "", "annotations": [] as [Any]]
                 ])
-
-                sendEvent("response.output_item.added", [
-                    "id": id,
-                    "output_index": 0,
-                    "item": [
-                        "id": itemId,
-                        "type": "message",
-                        "status": "in_progress",
-                        "role": "assistant",
-                        "content": [] as [Any]
-                    ] as [String: Any]
-                ])
-
-                var accumulatedText = ""
-                var outputTokens = 0
-                var finalResponse: GenerationResponse?
 
                 do {
+                    var text = ""
+                    var final: GenerationResponse?
                     let stream = try await orchestrator.generateStream(request: genRequest, modelId: requestedModel)
                     for await chunk in stream {
                         switch chunk {
-                        case .text(let text):
-                            accumulatedText += text
-                            outputTokens += 1
-                            sendEvent("response.output_text.delta", [
-                                "id": id,
-                                "item_id": itemId,
-                                "output_index": 0,
-                                "content_index": 0,
-                                "delta": text
+                        case .text(let delta):
+                            text += delta
+                            send("response.output_text.delta", [
+                                "item_id": itemId, "output_index": 0, "content_index": 0, "delta": delta
                             ])
-                            sendEvent("response.text.delta", [
-                                "id": id,
-                                "item_id": itemId,
-                                "output_index": 0,
-                                "delta": text
-                            ])
-                        case .reasoning(let reasoning):
-                            sendEvent("response.reasoning.delta", [
-                                "item_id": itemId,
-                                "output_index": 0,
-                                "delta": reasoning
-                            ])
+                        case .reasoning:
+                            break
                         case .metadata(let meta):
-                            finalResponse = meta
+                            final = meta
                         }
                     }
+                    if Task.isCancelled { continuation.finish(); return }
 
-                    if let sessionId, let prompt, !accumulatedText.isEmpty {
-                        await orchestrator.recordTurn(slotId: sessionId, prompt: prompt, completion: accumulatedText)
+                    // #53: the finished turn becomes the conversation slot's cached prefix.
+                    if let sessionId, let prompt, !text.isEmpty {
+                        await orchestrator.recordTurn(slotId: sessionId, prompt: prompt, completion: text)
                     }
 
-                    sendEvent("response.output_item.done", [
-                        "id": id,
-                        "output_index": 0,
-                        "status": "completed",
-                        "item": [
-                            "id": itemId,
-                            "type": "message",
-                            "status": "completed",
-                            "role": "assistant",
-                            "content": [
-                                [
-                                    "type": "text",
-                                    "text": accumulatedText
-                                ]
-                            ] as [Any]
-                        ] as [String: Any]
+                    send("response.output_text.done", ["item_id": itemId, "output_index": 0, "content_index": 0, "text": text])
+                    send("response.content_part.done", [
+                        "item_id": itemId, "output_index": 0, "content_index": 0,
+                        "part": ["type": "output_text", "text": text, "annotations": [] as [Any]]
                     ])
+                    let done = messageItem(status: "completed", text: text)
+                    send("response.output_item.done", ["output_index": 0, "item": done])
 
-                    let inTokens = finalResponse?.promptTokens ?? (genRequest.cachedTokensEstimate ?? 0)
-                    let outTokens = finalResponse?.completionTokens ?? outputTokens
-                    let usage: [String: Any] = [
-                        "input_tokens": inTokens,
-                        "output_tokens": outTokens,
-                        "total_tokens": inTokens + outTokens
-                    ]
-
-                    let completedResponse: [String: Any] = [
-                        "id": id,
-                        "object": "response",
-                        "status": "completed",
-                        "model": model,
-                        "output": [
-                            [
-                                "id": itemId,
-                                "type": "message",
-                                "status": "completed",
-                                "role": "assistant",
-                                "content": [
-                                    [
-                                        "type": "text",
-                                        "text": accumulatedText
-                                    ]
-                                ] as [Any]
-                            ] as [String: Any]
-                        ],
-                        "usage": usage
-                    ]
-
-                    sendEvent("response.done", [
-                        "id": id,
-                        "object": "response",
-                        "status": "completed",
-                        "model": model,
-                        "response": completedResponse,
-                        "usage": usage
-                    ])
-
-                    var doneBuf = ByteBuffer()
-                    doneBuf.writeString("data: [DONE]\n\n")
-                    continuation.yield(doneBuf)
+                    let inTokens = final?.promptTokens ?? (genRequest.cachedTokensEstimate ?? 0)
+                    let outTokens = final?.completionTokens ?? 0
+                    send("response.completed", ["response": responseObject(status: "completed", output: [done], extra: [
+                        "usage": ["input_tokens": inTokens, "output_tokens": outTokens, "total_tokens": inTokens + outTokens]
+                    ])])
                 } catch {
-                    let errObj: [String: Any] = [
-                        "error": [
-                            "type": "server_error",
-                            "message": error.localizedDescription
-                        ] as [String: Any]
-                    ]
-                    sendEvent("error", errObj)
+                    send("response.failed", ["response": responseObject(status: "failed", output: [], extra: [
+                        "error": ["code": "server_error", "message": error.localizedDescription]
+                    ])])
                 }
                 continuation.finish()
             }
+            // A client that disconnects cancels the generation instead of leaving it running.
+            continuation.onTermination = { _ in task.cancel() }
         }
     }
+
 
     // MARK: — Prompt
 
@@ -761,6 +717,20 @@ struct OpenAIController: Sendable {
     private func messagesToPrompt(_ messages: [ChatMessage]) -> String {
         var parts: [String] = []
         for msg in messages {
+            // Responses API history items: keep tool calls and their results in the transcript,
+            // otherwise a coding agent's next turn loses what its tools returned.
+            switch msg.type {
+            case "function_call":
+                parts.append("[Assistant called \(msg.name ?? "tool")]: \(msg.arguments ?? "{}")")
+                continue
+            case "function_call_output":
+                parts.append("[Tool result]: \(msg.output ?? "")")
+                continue
+            case "reasoning":
+                continue
+            default:
+                break
+            }
             guard let text = msg.content?.textValue, !text.isEmpty else { continue }
             let role = msg.role ?? "user"
             switch role {
@@ -800,9 +770,3 @@ private extension HTTPResponse.Status {
     init(code: Int) { self = HTTPResponse.Status(code: code, reasonPhrase: "") }
 }
 
-private extension HTTPFields {
-    func isFlagTrue(_ name: String) -> Bool {
-        guard let fieldName = HTTPField.Name(name) else { return false }
-        return self[fieldName] == "true"
-    }
-}
