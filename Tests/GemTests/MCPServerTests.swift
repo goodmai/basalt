@@ -119,6 +119,32 @@ struct MCPServerTests {
         #expect(output[0].contains("diagnostics"))
     }
 
+    @Test("tools/call (status) with a modelId that is not loaded reports the mismatch")
+    func testToolsCallStatusRequestedModelMismatch() async throws {
+        let orch = ModelOrchestratorActor(engine: MockInferenceEngine())
+        try await orch.loadModel(path: "loaded-path")
+        await orch.setModelId("org/loaded-model")
+
+        let capturer = OutputCapturer()
+        let server = MCPServer(orchestrator: orch) { line in
+            Task { await capturer.capture(line) }
+        }
+        await server.dispatch("""
+        {"jsonrpc": "2.0", "id": 11, "method": "tools/call", "params": {"name": "status", "arguments": {"modelId": "org/other-model"}}}
+        """)
+        try? await Task.sleep(for: .milliseconds(50))
+
+        let output = await capturer.lines
+        #expect(output.count == 1)
+        let outer = try #require(try JSONSerialization.jsonObject(with: Data(output[0].utf8)) as? [String: Any])
+        let content = try #require((outer["result"] as? [String: Any])?["content"] as? [[String: Any]])
+        let text = try #require(content.first?["text"] as? String)
+        let status = try #require(try JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any])
+        #expect(status["loadedModel"] as? String == "org/loaded-model")
+        #expect(status["requestedModel"] as? String == "org/other-model")
+        #expect(status["requestedModelLoaded"] as? Bool == false)
+    }
+
     @Test("tools/call (check_hardware) returns system profiler report")
     func testToolsCallCheckHardware() async throws {
         let engine = MockInferenceEngine()

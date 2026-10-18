@@ -89,7 +89,7 @@ gemm serve --mcp --model mlx-community/Qwen3.5-4B-4bit
 
 | Tool Name | Arguments | Description |
 |-----------|-----------|-------------|
-| `status` | `{"modelId": "..."}` *(optional)* | Returns engine readiness, loaded model ID, memory snapshot, and token diagnostics. |
+| `status` | `{"modelId": "..."}` *(optional)* | Returns engine readiness, loaded model ID and token diagnostics. With `modelId`, `requestedModelLoaded` says whether that model is the one actually serving. |
 | `check_hardware` | `{}` | Detects Apple Silicon chip, available Unified Memory, GPU and disk space as structured JSON. |
 | `inspect_model` | `{"modelId": "..."}` | Validates weight shard integrity and detects actual bit width for the target model. |
 | `switch_model` | `{"modelId": "..."}` | Hot-swaps the loaded model to a different model present in the local cache. |

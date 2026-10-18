@@ -26,13 +26,7 @@ struct FitCommand: AsyncParsableCommand {
     
     mutating func run() async throws {
         if check {
-            let profiler = SystemProfiler()
-            let report = await profiler.generateReport()
-            let encoder = JSONEncoder()
-            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-            if let data = try? encoder.encode(report), let str = String(data: data, encoding: .utf8) {
-                print(str)
-            }
+            try printJSON(await SystemProfiler().generateReport())
             return
         }
 

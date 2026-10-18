@@ -341,6 +341,13 @@ func formatBytes(_ bytes: Int64) -> String {
     }
 }
 
+/// Machine-readable output for agent-facing commands (AGENTS.md): pretty, key-sorted JSON on stdout.
+func printJSON<T: Encodable>(_ value: T) throws {
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+    print(String(decoding: try encoder.encode(value), as: UTF8.self))
+}
+
 // MARK: — models check / dry-run
 
 @available(macOS 10.15, macCatalyst 13, iOS 13, tvOS 13, watchOS 6, *)
@@ -361,15 +368,10 @@ struct CheckSubcommand: AsyncParsableCommand {
     var json: Bool = false
 
     mutating func run() async throws {
-        if system || modelId == nil {
-            let profiler = SystemProfiler()
-            let report = await profiler.generateReport()
-            if json || system {
-                let encoder = JSONEncoder()
-                encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-                if let data = try? encoder.encode(report), let str = String(data: data, encoding: .utf8) {
-                    print(str)
-                }
+        if system {
+            let report = await SystemProfiler().generateReport()
+            if json {
+                try printJSON(report)
             } else {
                 print("\n🖥️  System Hardware Diagnostics:\n")
                 print("  Chip:            \(bold(report.chip))")
@@ -385,16 +387,14 @@ struct CheckSubcommand: AsyncParsableCommand {
             return
         }
 
-        guard let id = modelId else { return }
+        guard let id = modelId else {
+            throw ValidationError("Pass a model repo ID, or --system for a hardware check.")
+        }
         let evaluator = MemoryEvaluator()
         let assessment = await evaluator.evaluate(modelId: id)
 
         if json {
-            let encoder = JSONEncoder()
-            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-            if let data = try? encoder.encode(assessment), let str = String(data: data, encoding: .utf8) {
-                print(str)
-            }
+            try printJSON(assessment)
             return
         }
 
@@ -443,11 +443,9 @@ struct InspectSubcommand: AsyncParsableCommand {
         let report = await inspector.inspect(modelIdOrPath: modelId)
 
         if json {
-            let encoder = JSONEncoder()
-            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-            if let data = try? encoder.encode(report), let str = String(data: data, encoding: .utf8) {
-                print(str)
-            }
+            try printJSON(report)
+            // Agents key on the exit status (AGENTS.md §2.2): a broken model must fail here too.
+            if !report.errors.isEmpty { throw ExitCode.failure }
         } else {
             print("\n🔬 Weight Inspection for \(bold(report.modelId)):\n")
             print("  Location:        \(report.path)")

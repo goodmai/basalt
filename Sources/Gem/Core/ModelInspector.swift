@@ -153,10 +153,11 @@ public actor ModelInspector {
             bitWidth = b
             let modeDesc = configMode.map { " (\($0))" } ?? ""
             bitDesc = "\(b)-bit quantized\(modeDesc)"
-        } else if detectedDtypes.contains("uint32") || resolvedId.lowercased().contains("4bit") {
+        } else if detectedDtypes.contains("U32") {
+            // MLX packs sub-byte weights into uint32 words; safetensors spells the dtype "U32".
             bitWidth = 4
             bitDesc = "4-bit packed"
-        } else if detectedDtypes.contains("I8") || detectedDtypes.contains("int8") || resolvedId.lowercased().contains("8bit") {
+        } else if detectedDtypes.contains("I8") || detectedDtypes.contains("U8") {
             bitWidth = 8
             bitDesc = "8-bit quantized"
         } else if detectedDtypes.contains("F16") || detectedDtypes.contains("BF16") || configDtype?.lowercased().contains("bfloat16") == true || configDtype?.lowercased().contains("float16") == true {
@@ -165,6 +166,13 @@ public actor ModelInspector {
         } else if detectedDtypes.contains("F32") {
             bitWidth = 32
             bitDesc = "32-bit floating point"
+        } else if resolvedId.lowercased().contains("4bit") {
+            // Name heuristic only when neither config nor tensor dtypes say anything.
+            bitWidth = 4
+            bitDesc = "4-bit (from repo name, unverified)"
+        } else if resolvedId.lowercased().contains("8bit") {
+            bitWidth = 8
+            bitDesc = "8-bit (from repo name, unverified)"
         } else {
             bitWidth = 16
             bitDesc = "16-bit (default)"
@@ -198,23 +206,8 @@ public actor ModelInspector {
             return (url, url.lastPathComponent)
         }
 
-        let cached = ModelCache.cacheDir(for: modelIdOrPath)
-        if FileManager.default.fileExists(atPath: cached.path) {
-            return (cached, modelIdOrPath)
-        }
-
-        // Direct check under models--
-        let sanitized = modelIdOrPath.replacingOccurrences(of: "/", with: "--")
-        let modelRoot = ModelCache.root.appendingPathComponent("models--\(sanitized)")
-        if FileManager.default.fileExists(atPath: modelRoot.path) {
-            let snapshots = modelRoot.appendingPathComponent("snapshots")
-            if let entries = try? FileManager.default.contentsOfDirectory(atPath: snapshots.path),
-               let first = entries.first {
-                return (snapshots.appendingPathComponent(first), modelIdOrPath)
-            }
-        }
-
-        return (cached, modelIdOrPath)
+        // Same resolution the loader uses (refs/main → snapshot), so we inspect what will be loaded.
+        return (ModelCache.cacheDir(for: modelIdOrPath), modelIdOrPath)
     }
 
     private func validateSafetensorsHeader(at url: URL, fileSize: Int64) -> (Bool, Set<String>) {
@@ -227,8 +220,10 @@ public actor ModelInspector {
             return (false, [])
         }
 
-        let headerLen = lenData.withUnsafeBytes { $0.load(as: UInt64.self).littleEndian }
-        guard headerLen > 0, headerLen <= UInt64(fileSize - 8) else {
+        let headerLen = lenData.withUnsafeBytes { $0.loadUnaligned(as: UInt64.self).littleEndian }
+        // The safetensors format caps the JSON header at 100 MB; a corrupt length must not
+        // make us read a multi-GB shard into memory.
+        guard headerLen > 0, headerLen <= min(UInt64(fileSize - 8), 100_000_000) else {
             return (false, [])
         }
 
@@ -249,18 +244,5 @@ public actor ModelInspector {
         }
 
         return (true, dtypes)
-    }
-
-    private func formatBytes(_ bytes: Int64) -> String {
-        switch bytes {
-        case 0..<1_024:
-            return "\(bytes) B"
-        case 0..<1_048_576:
-            return String(format: "%.1f KB", Double(bytes) / 1_024.0)
-        case 0..<1_073_741_824:
-            return String(format: "%.1f MB", Double(bytes) / 1_048_576.0)
-        default:
-            return String(format: "%.2f GB", Double(bytes) / 1_073_741_824.0)
-        }
     }
 }

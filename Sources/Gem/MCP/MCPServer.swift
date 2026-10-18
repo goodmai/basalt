@@ -294,10 +294,12 @@ public final class MCPServer: Sendable {
     }
 
     private func callStatus(id: JSONRPCId?, args: [String: Any]?) async {
-        let requestedId = (args?["modelId"] as? String) ?? modelId
-        let health = await orchestrator.healthSnapshot(modelId: requestedId)
-        let (requests, tokens) = await orchestrator.diagnostics
+        // Health describes what is actually loaded; a requested id is only compared against it,
+        // so `status {modelId}` can tell an agent the model it wants is not the one serving.
         let loaded = await orchestrator.currentModelId
+        let requestedId = args?["modelId"] as? String
+        let health = await orchestrator.healthSnapshot(modelId: loaded.isEmpty ? modelId : loaded)
+        let (requests, tokens) = await orchestrator.diagnostics
         
         struct StatusOutput: Encodable {
             let status: String
@@ -305,6 +307,7 @@ public final class MCPServer: Sendable {
             let version: String
             let loadedModel: String
             let requestedModel: String?
+            let requestedModelLoaded: Bool?
             let diagnostics: Diagnostics
             
             struct Diagnostics: Encodable {
@@ -319,6 +322,7 @@ public final class MCPServer: Sendable {
             version: health.version,
             loadedModel: loaded.isEmpty ? "none" : loaded,
             requestedModel: requestedId,
+            requestedModelLoaded: requestedId.map { $0 == loaded },
             diagnostics: .init(requestCount: requests, totalTokensGenerated: tokens)
         )
         
