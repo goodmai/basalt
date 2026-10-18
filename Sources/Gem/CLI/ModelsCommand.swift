@@ -395,6 +395,8 @@ struct CheckSubcommand: AsyncParsableCommand {
 
         if json {
             try printJSON(assessment)
+            // AGENTS.md "Feasible?" step keys on the exit status, like inspect does.
+            if !assessment.fitsInMemory { throw ExitCode.failure }
             return
         }
 
@@ -418,6 +420,8 @@ struct CheckSubcommand: AsyncParsableCommand {
             print(green("  ✓ Feasible: Model fits within system memory budget."))
         } else {
             print(red("  ❌ Insufficient Memory: Model exceeds available memory!"))
+            print()
+            throw ExitCode.failure
         }
         print()
     }

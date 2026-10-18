@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Autonomous Agent Operations & Lifecycle Guide for `gemm` / `basalt`
+Autonomous Agent Operations & Lifecycle Guide for `basalt`
 
 This document defines the deterministic protocol for external AI agents (Claude Code, Cursor, Codex, OpenCode, Antigravity) interacting with the local MLX inference engine and dual-transport server.
 
@@ -12,12 +12,13 @@ Agents MUST execute operations in the following deterministic sequence:
 
 ```mermaid
 flowchart TD
-    A["Phase 1: Hardware Diagnosis<br/>gemm fit --check"] --> B{"Feasible?"}
-    B -- Yes --> C["Phase 2: Weight Inspection<br/>gemm models inspect &lt;modelId&gt;"]
+    A0["Phase 1: Hardware Diagnosis<br/>basalt fit --check"] --> A["Fit check<br/>basalt models check &lt;modelId&gt; --json"]
+    A --> B{"Feasible?<br/>(exit status 0)"}
+    B -- Yes --> C["Phase 2: Weight Inspection<br/>basalt models inspect &lt;modelId&gt;"]
     B -- No --> X["Select smaller model / Warn user"]
     C --> D{"Intact &amp; Verified?"}
-    D -- Yes --> E["Phase 3: Launch MCP Server<br/>gemm serve --mcp"]
-    D -- No --> F["Download / re-fetch shards<br/>gemm models download &lt;modelId&gt;"]
+    D -- Yes --> E["Phase 3: Launch MCP Server<br/>basalt serve --mcp"]
+    D -- No --> F["Download / re-fetch shards<br/>basalt models download &lt;modelId&gt;"]
     F --> C
     E --> G["Phase 4: Agent Control via MCP<br/>status | inspect_model | check_hardware | switch_model"]
     G --> H["Phase 5: Golden Vector Verification<br/>temperature = 0 greedy bit-exact parity"]
@@ -32,10 +33,10 @@ Without downloading or loading any model weights, query the host system's hardwa
 
 ```bash
 # Output machine-readable JSON via SystemProfiler
-gemm fit --check
+basalt fit --check
 
 # Alternative equivalent diagnostic
-gemm models check --system --json
+basalt models check --system --json
 ```
 
 **JSON Output Schema:**
@@ -61,29 +62,31 @@ Verify shard completeness, Safetensors headers, and actual quantization bit widt
 
 ```bash
 # Human-readable summary
-gemm models inspect ornith-ai/Ornith-1.5-9B-MLX-4bit
+basalt models inspect ornith-ai/Ornith-1.5-9B-MLX-4bit
 
 # Machine-readable JSON output
-gemm models inspect ornith-ai/Ornith-1.5-9B-MLX-4bit --json
+basalt models inspect ornith-ai/Ornith-1.5-9B-MLX-4bit --json
 ```
 
 **Validation Checks Performed:**
-1. Directory existence in `~/.cache/huggingface/hub/` or local path.
-2. Complete shard presence against `model.safetensors.index.json` weight map.
-3. Non-zero file sizes and 8-byte Safetensors header integrity.
-4. Parsing `config.json` (`quantization.bits`, `group_size`, `mode`).
-5. Detection of actual bit width (4-bit, 8-bit, 16-bit, DQ, NVFP4, OptiQ).
+1. The directory `serve` would load (HF cache `refs/main` snapshot, quant subfolders) or a local path.
+2. Complete shard presence against `model.safetensors.index.json`; dangling HF blob links.
+3. Safetensors header integrity and completeness: each shard must end exactly at its largest tensor offset, so an interrupted download is caught even with an intact header.
+4. Actual bit width measured from the packed weights per layer; mixed widths (DQ) reported as `mixed a/b-bit`; a `config.json` claim that disagrees is an error.
+
+Exit status is non-zero (and the MCP `inspect_model` result carries `isError: true`) whenever `intact` is false.
 
 ---
 
 ## 3. MCP Lifecycle Interface
 
-`gemm` provides an MCP (Model Context Protocol) stdio server over JSON-RPC 2.0.
+`basalt` provides an MCP (Model Context Protocol) stdio server over JSON-RPC 2.0.
 
-### Starting MCP Server
+### Starting and stopping the MCP Server
 ```bash
-gemm serve --mcp --model mlx-community/Qwen3.5-4B-4bit
+basalt serve --mcp --model mlx-community/Qwen3.5-4B-4bit
 ```
+The server speaks JSON-RPC on stdin/stdout for as long as stdin is open. To stop it, close its stdin (or send SIGTERM); there is no stop tool.
 
 ### Standard MCP Lifecycle Tools
 
@@ -106,7 +109,12 @@ gemm serve --mcp --model mlx-community/Qwen3.5-4B-4bit
 - **Prompt**: Grid pattern induction with 2 train demonstrations and 1 test grid.
 
 ### Reproducibility Invariants
-1. **Greedy Parity (`temperature = 0`)**: Two independent generation runs at `temperature = 0.0` MUST produce bit-exact identical outputs:
-   $$\text{Output}_1 \equiv \text{Output}_2$$
-2. **Reference Softmax Sampling Parity**: Categorical sampling over logits at temperature $T > 0$ matches theoretical softmax probabilities $p_i = \frac{e^{z_i/T}}{\sum_k e^{z_k/T}}$ within $|\hat{p}_i - p_i| < 0.02$.
-3. **Seeded Parity**: When `seed` is specified, repeated runs at any temperature yield identical token sequences.
+**Greedy Parity (`temperature = 0`)**: two independent generation runs at `temperature = 0.0` on the golden vector MUST produce bit-identical output:
+$$\text{Output}_1 \equiv \text{Output}_2$$
+
+Verified by `SamplerAndGreedyParityTests` against the real MLX engine. The test loads several GB and runs on Metal, so it is opt-in and is reported as *skipped* otherwise — a green run without it proves nothing about parity:
+
+```bash
+BASALT_E2E=1 swift test --filter SamplerAndGreedyParityTests                     # golden model in the HF cache
+BASALT_E2E=1 BASALT_E2E_MODEL_PATH=/path/to/model swift test --filter SamplerAndGreedyParityTests
+```

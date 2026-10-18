@@ -108,7 +108,8 @@ public actor SystemProfiler {
     public func generateReport() async -> HardwareDiagnosticReport {
         let res = await detectResources()
         let availGB = Double(res.availableRAM) / 1_073_741_824.0
-        let isCompatible = res.chipModel.contains("M") || res.chipModel.contains("Apple") || res.gpuName.contains("Apple")
+        // detectChipModel() yields an M-series name, "Apple Silicon…" or "Intel"; MLX needs Apple Silicon.
+        let isCompatible = res.chipModel != "Intel"
         return HardwareDiagnosticReport(
             chip: res.chipModel,
             totalRAMGB: res.totalRAMGB,

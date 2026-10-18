@@ -75,7 +75,7 @@ public final class MCPServer: Sendable {
     private let modelId: String?
     private let encoder: JSONEncoder = {
         let e = JSONEncoder()
-        e.outputFormatting = []
+        e.outputFormatting = [.sortedKeys]  // stable output: AGENTS.md / AI_SETUP.md show sorted keys
         return e
     }()
     private let decoder = JSONDecoder()
@@ -326,27 +326,23 @@ public final class MCPServer: Sendable {
             diagnostics: .init(requestCount: requests, totalTokensGenerated: tokens)
         )
         
-        let jsonStr = (try? String(data: encoder.encode(statusObj), encoding: .utf8)) ?? "{\"status\":\"\(health.status)\"}"
-        let result = [
-            "content": [[
-                "type": "text",
-                "text": jsonStr
-            ]]
-        ]
-        writeResult(id: id, result: result)
+        writeJSONResult(id: id, statusObj)
     }
 
     private func callCheckHardware(id: JSONRPCId?) async {
-        let profiler = SystemProfiler()
-        let report = await profiler.generateReport()
-        let jsonStr = (try? String(data: encoder.encode(report), encoding: .utf8)) ?? "{}"
-        let result = [
-            "content": [[
-                "type": "text",
-                "text": jsonStr
-            ]]
-        ]
-        writeResult(id: id, result: result)
+        writeJSONResult(id: id, await SystemProfiler().generateReport())
+    }
+
+    /// A tool result whose single text block is `value` as JSON. `isError` flags a result the
+    /// agent must not treat as success (MCP tool-result convention).
+    private struct ToolResult: Encodable {
+        let content: [[String: String]]
+        let isError: Bool?
+    }
+
+    private func writeJSONResult<T: Encodable>(id: JSONRPCId?, _ value: T, isError: Bool = false) {
+        let text = (try? String(data: encoder.encode(value), encoding: .utf8)) ?? "{}"
+        writeResult(id: id, result: ToolResult(content: [["type": "text", "text": text]], isError: isError ? true : nil))
     }
 
     private func callInspectModel(id: JSONRPCId?, args: [String: Any]?) async {
@@ -354,16 +350,9 @@ public final class MCPServer: Sendable {
             writeError(id: id, code: -32602, message: "Missing required argument: modelId")
             return
         }
-        let inspector = ModelInspector()
-        let report = await inspector.inspect(modelIdOrPath: targetModel)
-        let jsonStr = (try? String(data: encoder.encode(report), encoding: .utf8)) ?? "{}"
-        let result = [
-            "content": [[
-                "type": "text",
-                "text": jsonStr
-            ]]
-        ]
-        writeResult(id: id, result: result)
+        let report = await ModelInspector().inspect(modelIdOrPath: targetModel)
+        // Same signal the CLI gives with its exit status: a broken model is an error result.
+        writeJSONResult(id: id, report, isError: !report.intact)
     }
 
     private func callSwitchModel(id: JSONRPCId?, args: [String: Any]?) async {

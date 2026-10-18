@@ -15,13 +15,13 @@ This guide walks an external AI agent through diagnosing the host Mac hardware, 
 Before requesting or downloading model weights, query hardware resources without initiating any downloads:
 
 ```bash
-gemm fit --check
+basalt fit --check
 ```
 
 Or via the models subcommand:
 
 ```bash
-gemm models check --system --json
+basalt models check --system --json
 ```
 
 ### Expected JSON Output
@@ -53,19 +53,19 @@ gemm models check --system --json
 Before downloading, check whether a specific model fits in RAM:
 
 ```bash
-gemm models check mlx-community/Qwen3.5-4B-4bit --json
+basalt models check mlx-community/Qwen3.5-4B-4bit --json
 ```
 
 Or for larger reasoning models:
 
 ```bash
-gemm models check ornith-ai/Ornith-1.5-9B-MLX-4bit --json
+basalt models check ornith-ai/Ornith-1.5-9B-MLX-4bit --json
 ```
 
-If feasible, proceed to download:
+The exit status is the verdict: `0` when `fitsInMemory` is true, non-zero otherwise (the JSON is printed either way). If feasible, proceed to download:
 
 ```bash
-gemm models download ornith-ai/Ornith-1.5-9B-MLX-4bit
+basalt models download ornith-ai/Ornith-1.5-9B-MLX-4bit
 ```
 
 ---
@@ -75,25 +75,25 @@ gemm models download ornith-ai/Ornith-1.5-9B-MLX-4bit
 After downloading, verify tensor shard integrity and the actual quantization bit width:
 
 ```bash
-gemm models inspect ornith-ai/Ornith-1.5-9B-MLX-4bit --json
+basalt models inspect ornith-ai/Ornith-1.5-9B-MLX-4bit --json
 ```
 
 ### Inspection Checks Performed:
 1. **Directory Structure**: Validates snapshot path in HuggingFace cache or local filesystem.
 2. **Shard Completeness**: If `model.safetensors.index.json` is present, ensures every shard referenced in `weight_map` exists and is non-empty.
 3. **Safetensors Header**: Reads the 8-byte little-endian header length and verifies JSON tensor descriptors.
-4. **Actual Bit Width**: Reads `quantization.bits`, `group_size`, and mode from `config.json` and tensor dtypes.
+4. **Actual Bit Width**: Measured from the packed weights (`32 · weight[-1] / (scales[-1] · group_size)` per layer); a `config.json` claim that disagrees is reported as an error, mixed per-layer widths (DQ) as `mixed a/b-bit`. A shard whose data ends before its header says (an interrupted download) is reported broken.
 
 ### Sample JSON Output
 ```json
 {
-  "bitWidthDescription": "4-bit quantized (optiq)",
+  "bitWidthDescription": "4-bit quantized (measured from weights, optiq)",
   "detectedBitWidth": 4,
   "errors": [],
   "groupSize": 64,
   "intact": true,
   "modelId": "ornith-ai/Ornith-1.5-9B-MLX-4bit",
-  "path": "/Users/.../.cache/huggingface/hub/models--ornith-ai--Ornith-1.5-9B-MLX-4bit/snapshots/main",
+  "path": "/Users/.../.cache/huggingface/hub/models--ornith-ai--Ornith-1.5-9B-MLX-4bit/snapshots/<commit-sha>",
   "quantizationMode": "optiq",
   "shardFiles": [
     {
@@ -103,7 +103,7 @@ gemm models inspect ornith-ai/Ornith-1.5-9B-MLX-4bit --json
       "valid": true
     }
   ],
-  "tensorDtype": "uint32, BF16",
+  "tensorDtype": "BF16, U32",
   "totalSizeBytes": 5800000000,
   "totalSizeFormatted": "5.40 GB",
   "totalShards": 3
@@ -116,10 +116,11 @@ gemm models inspect ornith-ai/Ornith-1.5-9B-MLX-4bit --json
 
 Agents can launch the dual-transport server in MCP stdio mode and control it via JSON-RPC 2.0.
 
-### Starting the Server
+### Starting and Stopping the Server
 ```bash
-gemm serve --mcp --model ornith-ai/Ornith-1.5-9B-MLX-4bit
+basalt serve --mcp --model ornith-ai/Ornith-1.5-9B-MLX-4bit
 ```
+The server runs while its stdin is open. To stop it, close stdin (end of input) or send SIGTERM; there is no stop tool.
 
 ### 1. Initialize
 Send:
@@ -174,15 +175,12 @@ The project enforces strict reproducibility standards verified by test suites.
 - **Benchmark**: ARC-AGI Task 1 (`benchmarks/arc-agi/compare-tasks/task_1.json`)
 - **Reasoning Flag**: `--reasoning-effort none` (prevents infinite reasoning loops).
 
-### Parity Invariants:
-1. **Greedy Parity (`temperature = 0`)**:
-   Consecutive runs with `temperature = 0.0` must produce the exact same token sequence and generated text.
-2. **Reference Softmax Parity**:
-   Non-greedy sampling at temperature $T$ must empirically match reference softmax probabilities $P(i) \propto \exp(z_i / T)$.
-3. **Seeded Determinism**:
-   When `--seed <val>` is passed, non-greedy generation is strictly repeatable.
+### Parity Invariant
+**Greedy Parity (`temperature = 0`)**: consecutive runs with `temperature = 0.0` must produce the exact same token sequence and generated text.
 
-Run reproducibility test suite:
+Run the check against the real MLX engine. It is opt-in (it loads the golden model and runs on Metal); without `BASALT_E2E=1` the test is reported as skipped, not passed:
 ```bash
-swift test --filter SamplerAndGreedyParityTests
+BASALT_E2E=1 swift test --filter SamplerAndGreedyParityTests
+# or with a model outside the HF cache:
+BASALT_E2E=1 BASALT_E2E_MODEL_PATH=/path/to/model swift test --filter SamplerAndGreedyParityTests
 ```
