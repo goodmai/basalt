@@ -132,8 +132,12 @@ struct Benchmark: AsyncParsableCommand {
             timestamp: Date(),
             quant: quant
         )
-        try? await HardwareBenchmarkProfileStore.shared.record(measurement)
-        print("  Hardware profile updated: \(HardwareBenchmarkProfileStore.defaultProfilePath) (measured ✓)")
+        do {
+            try await HardwareBenchmarkProfileStore.shared.record(measurement)
+            print("  Hardware profile updated: \(HardwareBenchmarkProfileStore.defaultProfilePath) (measured ✓)")
+        } catch {
+            print("  Hardware profile NOT updated: \(error.localizedDescription)")
+        }
 
         if share {
             struct BenchmarkShareExport: Codable {
@@ -147,7 +151,7 @@ struct Benchmark: AsyncParsableCommand {
                 let timestamp: Date
             }
             let exportObj = BenchmarkShareExport(
-                basalt_version: "0.1.0",
+                basalt_version: HealthResponse.version,
                 model: model,
                 quant: quant,
                 chip: chip,
