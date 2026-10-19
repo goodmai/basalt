@@ -412,6 +412,7 @@ public actor MLXInferenceEngine: InferenceEngine {
         guard let container else {
             throw .inferenceHardwareFailure(reason: "MLX engine not initialized — call load() first")
         }
+        let epoch = modelEpoch
 
         let requestedMaxTokens = request.maxTokens ?? 1024
         let (params, components) = sampling(for: request)
@@ -440,12 +441,11 @@ public actor MLXInferenceEngine: InferenceEngine {
             let promptTokens = lmInput.text.tokens.asArray(Int.self)
             let carriesMoreThanTokens = lmInput.image != nil || lmInput.video != nil
                 || lmInput.audio != nil || lmInput.text.mask != nil
-            let namespace = carriesMoreThanTokens ? nil : promptCacheNamespace(for: request)
+            let namespace = carriesMoreThanTokens || epoch != modelEpoch ? nil : promptCacheNamespace(for: request)
             let lease = namespace.flatMap { promptCaches.lease($0, for: promptTokens) }
-            let epoch = modelEpoch
             let boundary = namespace == nil
                 ? promptTokens.count - 1
-                : await snapshotBoundary(promptTokens.count, container: container, template: template, makeInput)
+                : await snapshotBoundary(promptTokens.count, container: container, epoch: epoch, template: template, makeInput)
             let launch: GenerationLaunch
             do {
                 launch = try await container.perform(nonSendable: lmInput) { context, input in
@@ -631,9 +631,9 @@ public actor MLXInferenceEngine: InferenceEngine {
     }
 
     private func snapshotBoundary(
-        _ count: Int, container: ModelContainer, template: String?, _ makeInput: @Sendable (String) -> UserInput
+        _ count: Int, container: ModelContainer, epoch: Int, template: String?,
+        _ makeInput: @Sendable (String) -> UserInput
     ) async -> Int {
-        let epoch = modelEpoch
         let hybrid: Bool
         if let known = modelIsHybrid {
             hybrid = known

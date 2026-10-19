@@ -124,6 +124,7 @@ struct PromptCacheTree: Sendable {
             node.snapshot = node.snapshot ?? snapshot
             byteCount += node.bytes - before
             touch(node)
+            retireSnapshots(above: node)
             evict()
             return
         }
@@ -145,7 +146,26 @@ struct PromptCacheTree: Sendable {
         attach(leaf, to: parent)
         byteCount += leaf.bytes
         touch(leaf)
+        retireSnapshots(above: leaf)
         evict()
+    }
+
+    private mutating func retireSnapshots(above node: PromptCacheNode) {
+        guard node.snapshot != nil else { return }
+        var keptParent = false
+        var current = node.parent
+        while let ancestor = current, !ancestor.tokens.isEmpty {
+            current = ancestor.parent
+            guard let snapshot = ancestor.snapshot else { continue }
+            guard keptParent else {
+                keptParent = true
+                continue
+            }
+            guard ancestor.children.count == 1, ancestor.pins == 0 else { continue }
+            ancestor.snapshot = nil
+            byteCount -= snapshot.bytes
+            merge(ancestor)
+        }
     }
 
     mutating func removeAll() {

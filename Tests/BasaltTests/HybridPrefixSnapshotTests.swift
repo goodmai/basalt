@@ -274,6 +274,44 @@ struct HybridPrefixSnapshotTests {
         #expect(kept.tokenCount == boundary)
     }
 
+    @Test("A growing conversation keeps only the last two snapshots on its chain, so the deepest survives a tight budget")
+    func growingConversationRetiresOldSnapshots() throws {
+        let model = try TinyHybrid.make()
+        let opening = TinyModel.tokens(Conversation.firstTurn)
+        let turns = (0..<6).map { turn in opening + (0..<(turn * 20)).map { 100 + $0 % 50 } }
+        let recurrent = try #require(RecurrentSnapshot(of: try TinyHybrid.snapshotted(model, opening))).bytes
+        let deepest = turns.last!.count - 1
+        let budget = deepest * TinyHybrid.attentionBytesPerToken + recurrent * 5 / 2
+        var tree = PromptCacheTree(byteBudget: budget)
+        for (index, prompt) in turns.enumerated() {
+            tree.store("ns", tokens: Array(prompt.dropLast()), cache: try TinyHybrid.snapshotted(model, prompt))
+            var snapshots = 0
+            var bytes = 0
+            var pending = Array(tree.roots.values)
+            while let node = pending.popLast() {
+                snapshots += node.snapshot == nil ? 0 : 1
+                bytes += node.bytes
+                pending.append(contentsOf: node.children.values)
+            }
+            #expect(snapshots == min(index + 1, 2))
+            #expect(tree.byteCount <= (prompt.count - 1) * TinyHybrid.attentionBytesPerToken + 2 * recurrent)
+            #expect(tree.byteCount == bytes)
+            let next = index + 1 < turns.count ? turns[index + 1] : prompt + [7, 7]
+            let lease = tree.lease("ns", for: next)
+            #expect(lease?.reusedTokens == prompt.count - 1)
+            if let lease {
+                tree.release(lease)
+            }
+            if index > 0 {
+                let edited = tree.lease("ns", for: turns[index - 1] + [9, 9])
+                #expect(edited?.reusedTokens == turns[index - 1].count - 1)
+                if let edited {
+                    tree.release(edited)
+                }
+            }
+        }
+    }
+
     @Test("The snapshot boundary is the end of the request text: the template's suffix after it is measured, not assumed")
     func templateSuffixIsMeasured() async throws {
         let container = ModelContainer(context: ModelContext(
