@@ -194,7 +194,7 @@ print(rendered)
 **Technical Design:**
 
 ```swift
-// Sources/Gem/UI/DiffRenderer.swift
+// Sources/BasaltUI/DiffRenderer.swift
 
 public struct DiffRenderer: Sendable {
     public enum Mode {
@@ -303,7 +303,7 @@ $ gem chat --diff-mode side-by-side
 **Test Cases:**
 
 ```swift
-// Tests/GemTests/UI/DiffRendererTests.swift
+// Tests/BasaltTests/UI/DiffRendererTests.swift
 
 func testParseUnifiedDiff() async throws {
     let diff = """
@@ -639,9 +639,9 @@ enum FitLevel {
 - **Resource matching**: [.opencli/Sources/OpenCLIKernel/Hardware/ResourceMatcher.swift]
 
 ### Our Implementation
-- **Diff Renderer**: [Sources/Gem/UI/DiffRenderer.swift] (to be created)
-- **Fit Command**: [Sources/Gem/CLI/FitCommand.swift] (exists, needs completion)
-- **Model Fit Analyzer**: [Sources/Gem/Core/ModelFitAnalyzer.swift] (exists)
+- **Diff Renderer**: [Sources/BasaltUI/DiffRenderer.swift] (to be created)
+- **Fit Command**: [Sources/BasaltCLI/FitCommand.swift] (exists, needs completion)
+- **Model Fit Analyzer**: [Sources/BasaltCore/ModelFitAnalyzer.swift] (exists)
 
 ---
 

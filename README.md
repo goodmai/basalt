@@ -458,22 +458,20 @@ Available MCP tools:
 ## Project Structure
 
 ```
-Sources/
-  Gem/                      — GemCore library (all logic, importable by tests)
-    App/                    — Entry point: CLI root command + routing
-    CLI/                    — Subcommands: chat, serve, models, fit, cloud, onboard
-    Cloud/                  — OpenRouter / cloud model fallback (CostTracker, ModelRouter)
+Sources/                    — one SwiftPM target per directory; dependencies point down only
+  BasaltCore/               — DTOs, errors, config, logger, profilers, calculators, HF cache, orchestrator
+    Chat/                   — ModelProfile: everything that differs between model families
     Config/                 — ServerConfig value type
-    Core/                   — Inference engine, orchestrator, DTOs, errors, utilities
-    MCP/                    — MCP JSON-RPC 2.0 stdio server
-    REST/                   — Hummingbird 2.x HTTP server
-      Middleware/            — API key check + token-bucket rate limit
-    UI/                     — Terminal UI: Markdown, spinner, progress bar, diff, table
-  GemBin/                   — Thin executable wrapper: calls GemCore.GemCLI.main()
+  BasaltInference/          — MLX inference engine, ContextDegradationProfiler, RepetitionGuard  (→ Core)
+  BasaltCloud/              — OpenRouter / cloud model fallback (CostTracker, ModelRouter)    (→ Core)
+  BasaltServer/             — REST (Hummingbird 2.x, API key + rate-limit middleware) and MCP JSON-RPC stdio server (→ Core)
+  BasaltUI/                 — Terminal UI (Markdown, spinner, progress bar, diff, table) + SwiftUI client (→ Core)
+  BasaltCLI/                — Subcommands and the CLI root command (App/)                     (→ all of the above)
+  BasaltBin/                — Thin executable wrapper (product `Basalt`, installed as `basalt`)
   PerformanceBenchmark/     — Standalone benchmark CLI target
 
 Tests/
-  GemTests/                 — Unit + integration tests
+  BasaltTests/              — Unit + integration tests
     CLITests/               — FitCommand, PromptContextBuilder
     CloudTests/             — CostTracker, ModelRouter, OpenRouterClient
     UI/                     — DiffRenderer
@@ -485,23 +483,8 @@ scripts/                    — Build and maintenance Swift scripts
 docs/                       — Extended documentation
 ```
 
-### Source file count (by module)
-
-| Module | Files | Role |
-|---|---|---|
-| `App/` | 1 | CLI entry point |
-| `CLI/` | 10 | Subcommands |
-| `Cloud/` | 4 | Cloud routing + cost tracking |
-| `Config/` | 1 | Server configuration |
-| `Core/` | 13 | Inference engine, orchestrator, DTOs, errors |
-| `MCP/` | 1 | MCP stdio server |
-| `REST/` | 8 | HTTP controllers (SSE streaming) + auth / rate-limit middleware |
-| `UI/` | 9 | Terminal rendering |
-| `GemBin/` | 1 | Executable wrapper |
-| `PerformanceBenchmark/` | 1 | Benchmark CLI |
-| **Total** | **48** | |
-
-*(4 stubs with `// removed` content remain in `REST/Middleware/` and `UI/SwiftUI/` — they are empty placeholders kept for git history continuity.)*
+`BasaltCore` and `BasaltInference` must not import SwiftUI or AppKit (enforced by `ModuleBoundaryTests`).
+Cross-target symbols use the `package` access level, not `public`.
 
 ---
 

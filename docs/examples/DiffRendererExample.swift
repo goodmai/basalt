@@ -1,5 +1,5 @@
 import Foundation
-import GemCore
+import BasaltUI
 
 /// Example demonstrating Epic 16.4: Code Diff Viewer
 /// Shows how to render unified diffs with inline and side-by-side modes
