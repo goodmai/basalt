@@ -56,7 +56,12 @@ public struct GenerationRequest: Codable, Sendable {
     public let tools: [ToolDefinition]?
     public let toolChoice: ToolChoice?
     public let cacheKey: String?
-    public let assistantPrefix: String?
+    public private(set) var assistantPrefix: String? = nil
+
+    enum CodingKeys: String, CodingKey {
+        case prompt, maxTokens, temperature, topP, minP, dynamicTemperature, enableThinking, reasoningEffort
+        case isServiceRequest, tools, toolChoice, cacheKey
+    }
 
     public init(
         prompt: String,

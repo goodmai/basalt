@@ -525,6 +525,17 @@ extension HarnessOptimizerTests {
         #expect(!result.ledger.rolloutIds.contains("probe_inv_0"))
     }
 
+    @Test("A proposer reply cut off at the token budget is rejected, not repaired into a delta")
+    func truncatedProposerReplyIsRejected() async throws {
+        let (optimizer, engine) = try await Self.optimizer(HarnessScript())
+        await engine.setMockFinishReason(.length)
+        let result = try await optimizer.optimize(task: Self.task, base: Self.base, k: 1)
+        for id in ["inv_0", "dom_0"] {
+            #expect(result.rejected.first { $0.candidateId == id }?.reasons.first?.hasPrefix("proposer reply truncated") == true)
+        }
+        #expect(result.ledger.rolloutIds == ["base_r0"])
+    }
+
     @Test("A failing judge call falls back to the base finalist and is reported as a warning")
     func judgeFailureFallsBack() async throws {
         var script = HarnessScript()
@@ -623,6 +634,19 @@ extension HarnessOptimizerTests {
         """#
         #expect(try #require(HarnessProposal.parse(reply)) == ["CLAUDE.md": #"Keep {braces} and "quoted } text"."#])
         #expect(HarnessText.jsonObject(in: reply)?["note"] as? Int == 1)
+    }
+
+    @Test("A later object whose files value is not an object does not shadow the real proposal")
+    func filesMustBeAnObject() throws {
+        let reply = #"{"files": {"CLAUDE.md": "new"}} then a note {"files": "see above"}"#
+        #expect(try #require(HarnessProposal.parse(reply)) == ["CLAUDE.md": "new"])
+    }
+
+    @Test("A client cannot set assistantPrefix through a decoded request")
+    func assistantPrefixIsNotDecoded() throws {
+        let request = try JSONDecoder().decode(GenerationRequest.self, from: Data(#"{"prompt": "p", "assistantPrefix": "x"}"#.utf8))
+        #expect(request.assistantPrefix == nil)
+        #expect(GenerationRequest(prompt: "p", assistantPrefix: "{").assistantPrefix == "{")
     }
 }
 

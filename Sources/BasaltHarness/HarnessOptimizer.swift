@@ -166,9 +166,9 @@ enum HarnessText {
         return false
     }
 
-    static func jsonObject(in text: String, requiredKey: String? = nil) -> [String: Any]? {
+    static func jsonObject(in text: String, objectKey: String? = nil) -> [String: Any]? {
         let cleaned = withoutThinking(text)
-        let accepts: ([String: Any]) -> Bool = { object in requiredKey.map { object[$0] != nil } ?? true }
+        let accepts: ([String: Any]) -> Bool = { object in objectKey.map { object[$0] is [String: Any] } ?? true }
         for candidate in balancedObjects(in: cleaned) {
             if let object = parsedObject(candidate), accepts(object) { return object }
         }
@@ -374,7 +374,7 @@ enum HarnessProposal {
     }
 
     static func parse(_ text: String) -> [String: String]? {
-        guard let object = HarnessText.jsonObject(in: text, requiredKey: "files"), let files = object["files"] as? [String: Any] else { return nil }
+        guard let object = HarnessText.jsonObject(in: text, objectKey: "files"), let files = object["files"] as? [String: Any] else { return nil }
         let strings = files.compactMapValues { $0 as? String }
         return strings.count == files.count && !strings.isEmpty ? strings : nil
     }
@@ -623,9 +623,14 @@ public struct HarnessOptimizer: Sendable {
         let capped = "proposer budget capped to \(effective)"
         if effective < maxTokens, !state.warnings.contains(capped) { state.warnings.append(capped) }
         do {
-            return try await generate(
+            let response = try await generate(
                 prompt, task: task, maxTokens: maxTokens, temperature: temperature, assistantPrefix: HarnessProposal.replyPrefix
-            ).generatedText
+            )
+            guard response.finishReason != .length else {
+                state.rejected.append(HarnessRejection(candidateId: id, reasons: ["proposer reply truncated at \(effective) tokens"]))
+                return nil
+            }
+            return response.generatedText
         } catch {
             if Self.isCancellation(error) { throw CancellationError() }
             state.rejected.append(HarnessRejection(candidateId: id, reasons: ["proposer call failed: \(error)"]))
