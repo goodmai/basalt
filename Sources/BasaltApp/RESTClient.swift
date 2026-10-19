@@ -7,9 +7,9 @@ public actor RESTClient {
     private var token: String?
     private let urlSession: URLSession
     
-    public init(baseURL: String) {
+    public init(baseURL: String, configuration: URLSessionConfiguration = .default) {
         self.baseURL = baseURL
-        self.urlSession = URLSession(configuration: .default)
+        self.urlSession = URLSession(configuration: configuration)
     }
     
     public func setToken(_ newToken: String?) {

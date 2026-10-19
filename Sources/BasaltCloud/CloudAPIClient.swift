@@ -31,10 +31,11 @@ public actor CloudAPIClient: Sendable {
     private var requestCount: Int = 0
     private var errorCount: Int = 0
 
-    public init(config: CloudAPIConfig) {
+    /// `configuration` is the session's base (tests pass one with a stub protocol); the
+    /// timeouts from `config` are applied on top of it.
+    public init(config: CloudAPIConfig, configuration: URLSessionConfiguration = .default) {
         self.config = config
         
-        let configuration = URLSessionConfiguration.default
         configuration.timeoutIntervalForRequest = config.timeout
         configuration.timeoutIntervalForResource = config.timeout * 2
         self.session = URLSession(configuration: configuration)
