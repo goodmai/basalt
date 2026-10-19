@@ -30,6 +30,7 @@ public struct ServerConfig: Sendable {
     public let apiKey:      String?
     /// Server-wide request budget; nil means no rate limit.
     public let rateLimitPerMinute: Int?
+    public let allowedOrigins: [String]
 
     /// Applied off loopback when no `--rate-limit` is given.
     public static let defaultRateLimitPerMinute = 120
@@ -81,7 +82,8 @@ public struct ServerConfig: Sendable {
         logLevel:  LogLevel  = .info,
         apiKey:    String?   = nil,
         autoGenerateKeyIfMissing: Bool = false,
-        rateLimitPerMinute: Int? = nil
+        rateLimitPerMinute: Int? = nil,
+        allowedOrigins: [String] = []
     ) throws {
         self.modelPath = modelPath
         self.modelId   = modelId
@@ -89,6 +91,7 @@ public struct ServerConfig: Sendable {
         self.host      = host
         self.maxTokens = maxTokens
         self.logLevel  = logLevel
+        self.allowedOrigins = allowedOrigins
 
         self.apiKey = try Self.resolveApiKey(
             host: host, apiKey: apiKey, autoGenerateKeyIfMissing: autoGenerateKeyIfMissing

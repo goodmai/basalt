@@ -53,7 +53,7 @@ struct RESTServerTests {
         let s = try await setup()
         let request = #"{"model": "local", "max_tokens": 77, "messages": [{"role": "system", "content": "Be terse."}, {"role": "user", "content": [{"type": "text", "text": "hi"}]}]}"#
         try await s.app.test(.router) { client in
-            try await client.execute(uri: "/v1/chat/completions", method: .post, body: ByteBuffer(string: request)) { res in
+            try await client.execute(uri: "/v1/chat/completions", method: .post, headers: [.contentType: "application/json"], body: ByteBuffer(string: request)) { res in
                 #expect(res.status == .ok)
                 let body = try json(res.body)
                 #expect(body["object"] as? String == "chat.completion")
@@ -86,7 +86,7 @@ struct RESTServerTests {
     func samplingFieldsPerAPI(uri: String, request: String) async throws {
         let s = try await setup()
         try await s.app.test(.router) { client in
-            try await client.execute(uri: uri, method: .post, body: ByteBuffer(string: request)) { res in
+            try await client.execute(uri: uri, method: .post, headers: [.contentType: "application/json"], body: ByteBuffer(string: request)) { res in
                 #expect(res.status == .ok)
             }
         }
@@ -104,7 +104,7 @@ struct RESTServerTests {
     func minPOutOfRange(uri: String, request: String) async throws {
         let s = try await setup()
         try await s.app.test(.router) { client in
-            try await client.execute(uri: uri, method: .post, body: ByteBuffer(string: request)) { res in
+            try await client.execute(uri: uri, method: .post, headers: [.contentType: "application/json"], body: ByteBuffer(string: request)) { res in
                 #expect(res.status == .badRequest, "\(uri) -> \(res.status)")
             }
         }
@@ -116,7 +116,7 @@ struct RESTServerTests {
         let s = try await setup(reasoning: "hmm")
         let request = #"{"model": "local", "stream": true, "messages": [{"role": "user", "content": "hi"}]}"#
         try await s.app.test(.router) { client in
-            try await client.execute(uri: "/v1/chat/completions", method: .post, body: ByteBuffer(string: request)) { res in
+            try await client.execute(uri: "/v1/chat/completions", method: .post, headers: [.contentType: "application/json"], body: ByteBuffer(string: request)) { res in
                 #expect(res.status == .ok)
                 #expect(res.headers[.contentType] == "text/event-stream")
                 let data = sseData(res.body)
@@ -141,7 +141,7 @@ struct RESTServerTests {
         let s = try await setup()
         try await s.app.test(.router) { client in
             for body in [#"{"messages": []}"#, "not json", #"{"messages": "hi"}"#] {
-                try await client.execute(uri: "/v1/chat/completions", method: .post, body: ByteBuffer(string: body)) { res in
+                try await client.execute(uri: "/v1/chat/completions", method: .post, headers: [.contentType: "application/json"], body: ByteBuffer(string: body)) { res in
                     #expect(res.status == .badRequest, "\(body)")
                     let err = try json(res.body)["error"] as? [String: Any]
                     #expect(err?["type"] as? String == "invalid_request_error")
@@ -150,7 +150,7 @@ struct RESTServerTests {
         }
         let failing = try await setup(failGenerate: true)
         try await failing.app.test(.router) { client in
-            try await client.execute(uri: "/v1/chat/completions", method: .post,
+            try await client.execute(uri: "/v1/chat/completions", method: .post, headers: [.contentType: "application/json"],
                                      body: ByteBuffer(string: #"{"messages": [{"role": "user", "content": "hi"}]}"#)) { res in
                 #expect(res.status.code == BasaltError.inferenceHardwareFailure(reason: "").httpStatus)
                 let body = try json(res.body)
@@ -166,7 +166,7 @@ struct RESTServerTests {
         let s = try await setup()
         let request = #"{"model": "claude-local/org--mock-model", "system": "You are Basalt.", "thinking": {"type": "enabled", "budget_tokens": 10000}, "messages": [{"role": "user", "content": "hi"}, {"role": "assistant", "content": "hello"}, {"role": "user", "content": "again"}]}"#
         try await s.app.test(.router) { client in
-            try await client.execute(uri: "/v1/messages", method: .post, body: ByteBuffer(string: request)) { res in
+            try await client.execute(uri: "/v1/messages", method: .post, headers: [.contentType: "application/json"], body: ByteBuffer(string: request)) { res in
                 #expect(res.status == .ok)
                 let body = try json(res.body)
                 #expect(body["type"] as? String == "message")
@@ -200,7 +200,7 @@ struct RESTServerTests {
         try await s.app.test(.router) { client in
             for (fields, expected) in cases {
                 let body = #"{"messages": [{"role": "user", "content": "hi"}], "# + fields + "}"
-                let status = try await client.execute(uri: "/v1/messages", method: .post, body: ByteBuffer(string: body)) { $0.status }
+                let status = try await client.execute(uri: "/v1/messages", method: .post, headers: [.contentType: "application/json"], body: ByteBuffer(string: body)) { $0.status }
                 #expect(status == .ok)
                 #expect(await s.engine.lastRequest?.reasoningEffort == expected, "\(fields)")
             }
@@ -212,7 +212,7 @@ struct RESTServerTests {
         let s = try await setup()
         try await s.app.test(.router) { client in
             for body in [#"{"messages": []}"#, #"{"model": "x"}"#] {
-                try await client.execute(uri: "/v1/messages", method: .post, body: ByteBuffer(string: body)) { res in
+                try await client.execute(uri: "/v1/messages", method: .post, headers: [.contentType: "application/json"], body: ByteBuffer(string: body)) { res in
                     #expect(res.status == .badRequest, "\(body)")
                     let envelope = try json(res.body)
                     #expect(envelope["type"] as? String == "error")
@@ -222,7 +222,7 @@ struct RESTServerTests {
         }
         let failing = try await setup(failGenerate: true)
         try await failing.app.test(.router) { client in
-            try await client.execute(uri: "/v1/messages", method: .post,
+            try await client.execute(uri: "/v1/messages", method: .post, headers: [.contentType: "application/json"],
                                      body: ByteBuffer(string: #"{"messages": [{"role": "user", "content": "hi"}]}"#)) { res in
                 #expect(res.status.code == BasaltError.inferenceHardwareFailure(reason: "").httpStatus)
                 let body = try json(res.body)
@@ -251,7 +251,7 @@ struct RESTServerTests {
                 #expect(health.status == "ok")
             }
             let request = #"{"prompt": "What is the capital of France?", "maxTokens": 50}"#
-            try await client.execute(uri: "/api/v1/generate", method: .post, body: ByteBuffer(string: request)) { res in
+            try await client.execute(uri: "/api/v1/generate", method: .post, headers: [.contentType: "application/json"], body: ByteBuffer(string: request)) { res in
                 #expect(res.status == .ok)
                 let result = try JSONDecoder().decode(GenerationResponse.self, from: Data(String(buffer: res.body).utf8))
                 #expect(result.generatedText == "Mock response")
@@ -269,10 +269,10 @@ struct RESTServerTests {
         let s = try await setup()
         try await s.app.test(.router) { client in
             for uri in ["/api/v1/generate", "/v1/generate"] {
-                let status = try await client.execute(uri: uri, method: .post, body: ByteBuffer(string: #"{"maxTokens": 5}"#)) { $0.status }
+                let status = try await client.execute(uri: uri, method: .post, headers: [.contentType: "application/json"], body: ByteBuffer(string: #"{"maxTokens": 5}"#)) { $0.status }
                 #expect(status == .badRequest, "\(uri)")
             }
-            try await client.execute(uri: "/v1/generate", method: .post, body: ByteBuffer(string: #"{"prompt": "hi"}"#)) { res in
+            try await client.execute(uri: "/v1/generate", method: .post, headers: [.contentType: "application/json"], body: ByteBuffer(string: #"{"prompt": "hi"}"#)) { res in
                 #expect(res.status == .ok)
                 let result = try JSONDecoder().decode(GenerationResponse.self, from: Data(String(buffer: res.body).utf8))
                 #expect(result.generatedText == "Mock response")
@@ -280,7 +280,7 @@ struct RESTServerTests {
         }
         let failing = try await setup(failGenerate: true)
         try await failing.app.test(.router) { client in
-            try await client.execute(uri: "/api/v1/generate", method: .post, body: ByteBuffer(string: #"{"prompt": "hi"}"#)) { res in
+            try await client.execute(uri: "/api/v1/generate", method: .post, headers: [.contentType: "application/json"], body: ByteBuffer(string: #"{"prompt": "hi"}"#)) { res in
                 #expect(res.status.code == 503)
                 let envelope = try JSONDecoder().decode(ErrorResponse.self, from: Data(String(buffer: res.body).utf8))
                 #expect(envelope.code == 503)
@@ -292,7 +292,7 @@ struct RESTServerTests {
     func nativeGenerateStream() async throws {
         let s = try await setup()
         try await s.app.test(.router) { client in
-            try await client.execute(uri: "/api/v1/generate/stream", method: .post, body: ByteBuffer(string: #"{"prompt": "hi"}"#)) { res in
+            try await client.execute(uri: "/api/v1/generate/stream", method: .post, headers: [.contentType: "application/json"], body: ByteBuffer(string: #"{"prompt": "hi"}"#)) { res in
                 #expect(res.status == .ok)
                 #expect(res.headers[.contentType] == "text/event-stream")
                 let data = sseData(res.body)
@@ -308,7 +308,7 @@ struct RESTServerTests {
         }
         let failing = try await setup(failGenerate: true)
         try await failing.app.test(.router) { client in
-            try await client.execute(uri: "/api/v1/generate/stream", method: .post, body: ByteBuffer(string: #"{"prompt": "hi"}"#)) { res in
+            try await client.execute(uri: "/api/v1/generate/stream", method: .post, headers: [.contentType: "application/json"], body: ByteBuffer(string: #"{"prompt": "hi"}"#)) { res in
                 let raw = String(buffer: res.body)
                 #expect(raw.hasPrefix("event: error\n"))
                 #expect(!raw.contains("[DONE]"))
@@ -366,21 +366,21 @@ struct RESTServerTests {
         await s.orchestrator.setModelId("org/mock-model")
         try await s.app.test(.router) { client in
             // Already loaded: resolves the discovery ID to the HF repo ID and is a no-op switch.
-            try await client.execute(uri: "/v1/models/load", method: .post,
+            try await client.execute(uri: "/v1/models/load", method: .post, headers: [.contentType: "application/json"],
                                      body: ByteBuffer(string: #"{"model": "claude-local/org--mock-model"}"#)) { res in
                 #expect(res.status == .ok)
                 let body = try json(res.body)
                 #expect(body["status"] as? String == "loaded")
                 #expect(body["display_name"] as? String == "org/mock-model")
             }
-            try await client.execute(uri: "/v1/models/load", method: .post,
+            try await client.execute(uri: "/v1/models/load", method: .post, headers: [.contentType: "application/json"],
                                      body: ByteBuffer(string: #"{"model": "nobody/not-cached-\#(UUID().uuidString)"}"#)) { res in
                 #expect(res.status == .notFound)
                 let body = try json(res.body)
                 #expect((body["error"] as? [String: Any])?["type"] as? String == "invalid_request_error")
             }
             for body in [#"{}"#, #"{"model": ""}"#] {
-                let status = try await client.execute(uri: "/v1/models/load", method: .post, body: ByteBuffer(string: body)) { $0.status }
+                let status = try await client.execute(uri: "/v1/models/load", method: .post, headers: [.contentType: "application/json"], body: ByteBuffer(string: body)) { $0.status }
                 #expect(status == .badRequest, "\(body)")
             }
         }

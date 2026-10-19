@@ -42,6 +42,7 @@ package struct RESTServer: Sendable {
         } else {
             log("Rate limit: DISABLED")
         }
+        log("Browser origins: loopback" + config.allowedOrigins.map { ", \($0)" }.joined())
         log("Swagger: http://\(config.host):\(config.restPort)/swagger")
         try await app.runService()
     }
@@ -69,6 +70,7 @@ package struct RESTServer: Sendable {
 
         // Minimal request logging (method + path only, goes to stderr via GemLogger)
         router.add(middleware: LogRequestsMiddleware(.info))
+        router.add(middleware: RequestGuardMiddleware(bindHost: config.host, allowedOrigins: config.allowedOrigins))
 
         if let apiKey = config.apiKey, !apiKey.isEmpty {
             router.add(middleware: APIKeyAuthenticator(apiKey: apiKey))

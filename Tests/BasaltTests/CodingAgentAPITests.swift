@@ -53,7 +53,7 @@ struct CodingAgentAPITests {
          ]}
         """#
         try await app.test(.router) { client in
-            try await client.execute(uri: "/v1/responses", method: .post, body: body(request)) { res in
+            try await client.execute(uri: "/v1/responses", method: .post, headers: [.contentType: "application/json"], body: body(request)) { res in
                 #expect(res.status == .ok)
                 let json = try #require(try JSONSerialization.jsonObject(with: Data(String(buffer: res.body).utf8)) as? [String: Any])
                 let output = try #require(json["output"] as? [[String: Any]])
@@ -73,7 +73,7 @@ struct CodingAgentAPITests {
     func responsesStreamProtocol() async throws {
         let (app, _) = try await app(reasoning: "thinking…")
         try await app.test(.router) { client in
-            try await client.execute(uri: "/v1/responses", method: .post,
+            try await client.execute(uri: "/v1/responses", method: .post, headers: [.contentType: "application/json"],
                                      body: body(#"{"input": "hi", "stream": true}"#)) { res in
                 #expect(res.status == .ok)
                 let evs = events(res.body)
@@ -111,7 +111,7 @@ struct CodingAgentAPITests {
         let (app, _) = try await app(reasoning: "let me think")
         let request = #"{"model": "local", "max_tokens": 64, "stream": true, "messages": [{"role": "user", "content": "hi"}]}"#
         try await app.test(.router) { client in
-            try await client.execute(uri: "/v1/messages", method: .post, body: body(request)) { res in
+            try await client.execute(uri: "/v1/messages", method: .post, headers: [.contentType: "application/json"], body: body(request)) { res in
                 #expect(res.status == .ok)
                 let evs = events(res.body).compactMap(\.data)
                 let starts = evs.filter { $0["type"] as? String == "content_block_start" }
@@ -137,7 +137,7 @@ struct CodingAgentAPITests {
         let (app, _) = try await app()
         let request = #"{"model": "local", "max_tokens": 64, "stream": true, "messages": [{"role": "user", "content": "hi"}]}"#
         try await app.test(.router) { client in
-            try await client.execute(uri: "/v1/messages", method: .post, body: body(request)) { res in
+            try await client.execute(uri: "/v1/messages", method: .post, headers: [.contentType: "application/json"], body: body(request)) { res in
                 let evs = events(res.body).compactMap(\.data)
                 let starts = evs.filter { $0["type"] as? String == "content_block_start" }
                 #expect(starts.count == 1)
@@ -151,7 +151,7 @@ struct CodingAgentAPITests {
     func responsesStreamTextOnly() async throws {
         let (app, _) = try await app()
         try await app.test(.router) { client in
-            try await client.execute(uri: "/v1/responses", method: .post,
+            try await client.execute(uri: "/v1/responses", method: .post, headers: [.contentType: "application/json"],
                                      body: body(#"{"input": "hi", "stream": true}"#)) { res in
                 let evs = events(res.body)
                 let types = evs.compactMap(\.event)
@@ -174,7 +174,7 @@ struct CodingAgentAPITests {
          ]}
         """#
         try await app.test(.router) { client in
-            try await client.execute(uri: "/v1/responses", method: .post, body: body(request)) { res in
+            try await client.execute(uri: "/v1/responses", method: .post, headers: [.contentType: "application/json"], body: body(request)) { res in
                 #expect(res.status == .ok)
             }
         }
@@ -214,7 +214,7 @@ struct CodingAgentAPITests {
         let (app, _) = try await app()
         let request = #"{"model": "local", "max_tokens": 64, "stream": true, "messages": [{"role": "user", "content": "hi"}]}"#
         try await app.test(.router) { client in
-            try await client.execute(uri: "/v1/messages", method: .post, body: body(request)) { res in
+            try await client.execute(uri: "/v1/messages", method: .post, headers: [.contentType: "application/json"], body: body(request)) { res in
                 let delta = events(res.body).compactMap(\.data).first { $0["type"] as? String == "message_delta" }
                 #expect((delta?["usage"] as? [String: Any])?["output_tokens"] as? Int == 10)
                 #expect((delta?["delta"] as? [String: Any])?["stop_reason"] as? String == "end_turn")
@@ -236,7 +236,7 @@ struct CodingAgentAPITests {
     func toolsReachEngine() async throws {
         let (app, engine) = try await app()
         try await app.test(.router) { client in
-            try await client.execute(uri: "/v1/responses", method: .post,
+            try await client.execute(uri: "/v1/responses", method: .post, headers: [.contentType: "application/json"],
                                      body: body("{\"input\": \"list files\", \(shellTool)}")) { res in
                 #expect(res.status == .ok)
             }
@@ -259,7 +259,7 @@ struct CodingAgentAPITests {
         let (app, engine) = try await app()
         await engine.setMockToolCall(ToolCallOutput(id: "call_1", name: "shell", arguments: #"{"cmd":"ls"}"#), text: "")
         try await app.test(.router) { client in
-            try await client.execute(uri: "/v1/responses", method: .post,
+            try await client.execute(uri: "/v1/responses", method: .post, headers: [.contentType: "application/json"],
                                      body: body("{\"input\": \"list files\", \"stream\": true, \(shellTool)}")) { res in
                 let evs = events(res.body)
                 let types = evs.compactMap(\.event)
@@ -283,7 +283,7 @@ struct CodingAgentAPITests {
         let (app, engine) = try await app()
         await engine.setMockToolCall(ToolCallOutput(id: "call_9", name: "shell", arguments: #"{"cmd":"pwd"}"#), text: "Checking.")
         try await app.test(.router) { client in
-            try await client.execute(uri: "/v1/responses", method: .post,
+            try await client.execute(uri: "/v1/responses", method: .post, headers: [.contentType: "application/json"],
                                      body: body("{\"input\": \"where am i\", \(shellTool)}")) { res in
                 let json = try #require(try JSONSerialization.jsonObject(with: Data(String(buffer: res.body).utf8)) as? [String: Any])
                 let output = try #require(json["output"] as? [[String: Any]])
@@ -300,7 +300,7 @@ struct CodingAgentAPITests {
         await engine.setMockToolCall(ToolCallOutput(id: "c1", name: "shell", arguments: "{}"), text: "Let me look.", after: after)
         let request = body("{\"input\": \"x\", \"stream\": true, \(shellTool)}")
         let raw: String = try await app.test(.router) { client in
-            try await client.execute(uri: "/v1/responses", method: .post, body: request) { res in
+            try await client.execute(uri: "/v1/responses", method: .post, headers: [.contentType: "application/json"], body: request) { res in
                 String(buffer: res.body)
             }
         }
