@@ -193,6 +193,7 @@ The flags worth knowing on `serve`:
 | `--dry-run` | memory feasibility check, then exit without loading |
 | `--port`, `--host` | default 127.0.0.1:8080; any other host needs an API key (`BASALT_API_KEY` or `--auto-generate-key`) |
 | `--rate-limit N` | server-wide requests per minute, 429 beyond it — default off on loopback, 120 otherwise; `0` disables; also `rate_limit` in `~/.gem/config.json` |
+| `--allow-origin URL` | a browser origin (`https://app.example:3000`) allowed to call the API besides loopback ones; repeatable; also `allowed_origins` in `~/.gem/config.json` |
 
 **Prompt-cache reuse.** The server keeps the model's KV cache for recent prompts in a prefix tree: prompts that start with the same tokens share one stored copy of that start, and a request prefills only what follows the longest stored prefix. So the next turn of a conversation costs only its new tokens (a tool result appended to a long agent transcript, not the whole history again; on `/v1/messages` tool blocks are not forwarded to the model yet, see #73), and a second conversation that opens with the same system prompt and tools — a Claude Code subagent, another Codex thread — starts from the shared part instead of prefilling it again. Matching is by tokens, so no conversation id is needed (`prompt_cache_key`, `metadata.user_id` and `x-session-id` are ignored); title and other service requests never touch the cache. Under the `--prompt-cache-mb` budget the least recently used branch is cut from its end (a hybrid model's snapshot branch, see below, is removed whole, since its recurrent state is valid only at its end), so an idle conversation keeps its system prompt and tools longest, and the node a running request reuses up to is never evicted (for a hybrid model that is its snapshot node; the request has its own copy of the data, so evicting the rest of its branch cannot affect it); the tree also keeps at most 4096 branches, dropping the least recently used free one beyond that. Usage reports what was actually reused: `prompt_tokens_details.cached_tokens` (Chat Completions), `input_tokens_details.cached_tokens` (Responses), `cache_read_input_tokens` (Anthropic, where `input_tokens` counts only the prefilled rest). Hybrid attention/SSM models such as Qwen3.5/3.6 and Ornith-1.5 reuse a conversation's previous turn too: their recurrent state cannot be rewound, so while prefilling a prompt the server keeps a snapshot of it at the end of the request text, before the chat template's closing tokens, and the next turn that extends that text restores the snapshot and prefills only what follows (Ornith-1.5-9B, 12.6k-token agent prompt: the second turn takes about 1 s instead of about 36 s). A reused turn can differ from an uncached run after its first tokens: the prefill is chunked differently, which shifts bf16 results slightly (measured on Ornith: the restored state is bitwise equal to a from-scratch prefill cut at the same points, and differs from a one-phase prefill by at most 1.56 in the last-position logits with the same top 5). They reuse only from such a snapshot, so a second conversation with the same system prompt prefills in full. Sliding-window layers such as Gemma 3/4 and `--kv-bits` always prefill the full prompt.
 
@@ -249,6 +250,15 @@ huggingface-cli download mlx-community/gemma-4-e4b-it-4bit
 ## REST API
 
 Base URL: `http://127.0.0.1:8080` — **no authentication required**.
+
+### Security
+
+On loopback any local process may call the API without a key, but a web page in your browser may not:
+
+- **Host.** Bound to loopback, the server answers only requests whose `Host` is `localhost`, `127.0.0.1` or `[::1]` (any port), anything else gets 403; this stops DNS rebinding, where an attacker's domain re-resolves to 127.0.0.1 and its page reads your responses. Bound to a specific address, that address is accepted as well. Bound to `0.0.0.0`/`::`, any `Host` is accepted: the API key is mandatory there.
+- **Origin.** A request with an `Origin` header is refused (403) unless the origin is loopback (`http(s)://localhost|127.0.0.1|[::1]`, any port) or listed with `--allow-origin` / `allowed_origins`. Clients that send no `Origin` (curl, SDKs, Claude Code, Codex) are unaffected.
+- **Content-Type.** Every `POST` must send `Content-Type: application/json` (a `charset` parameter is fine), otherwise 415. `curl -d` without `-H "Content-Type: application/json"` sends a form type and is refused.
+- **Model ids.** REST `model` values are Hugging Face repo ids: `/v1/models/load` takes only `org/name`, and a path (`/…`, `./…`, `../…`, `~/…`, or one hidden in `claude-local/..--x`) in a generation request's `model` is a 400. Local paths stay available to `basalt serve --model-path` and MCP. A failed load leaves the current model loaded, and error bodies never contain filesystem paths (they are in the server log).
 
 ### Model management
 
@@ -487,7 +497,7 @@ Sources/                    — one SwiftPM target per directory; dependencies p
     Config/                 — ServerConfig value type
   BasaltInference/          — MLX inference engine, ContextDegradationProfiler, RepetitionGuard  (→ Core)
   BasaltCloud/              — OpenRouter / cloud model fallback (CostTracker, ModelRouter)    (→ Core)
-  BasaltServer/             — REST (Hummingbird 2.x, API key + rate-limit middleware) and MCP JSON-RPC stdio server (→ Core)
+  BasaltServer/             — REST (Hummingbird 2.x, Host/Origin/Content-Type guard, API key and rate-limit middleware) and MCP JSON-RPC stdio server (→ Core)
   BasaltUI/                 — Terminal UI (Markdown, spinner, progress bar, diff, table)       (→ Core)
   BasaltApp/                — SwiftUI REST chat client, not linked into the CLI (launch: #55)  (→ Core)
   BasaltCLI/                — Subcommands and the CLI root command (App/)                     (→ all of the above)
