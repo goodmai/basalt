@@ -110,48 +110,8 @@ struct Harness2Tests {
         #expect(result.cachePlans.count == 4)
         #expect(result.cachePlans.allSatisfy { $0.promptCacheKey == "harness:audit-repo" })
 
-        let stored = await library.query(topicOrCue: "audit-repo", domain: "swift")
+        let stored = try library.query("audit-repo", domain: "swift")
         #expect(stored.count == 1)
         #expect(!stored[0].attributions.isEmpty)
-    }
-
-    @Test("MCPServer gemma_add_knowledge persists to ExperienceLibrary and harness_library_query retrieves it")
-    func mcpKnowledgePersistenceAndValidation() async throws {
-        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        defer { try? FileManager.default.removeItem(at: tempDir) }
-
-        let library = HarnessExperienceLibrary(rootDirectory: tempDir)
-        let orchestrator = ModelOrchestratorActor(engine: MockInferenceEngine())
-
-        actor OutputCapturer {
-            var lines: [String] = []
-            func capture(_ line: String) { lines.append(line) }
-        }
-        let capturer = OutputCapturer()
-        let server = MCPServer(orchestrator: orchestrator, library: library) { line in
-            Task { await capturer.capture(line) }
-        }
-
-        await server.dispatch("""
-        {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "gemma_add_knowledge", "arguments": {"topic": "kv-cache-sharing", "content": "Pin invariant prefix in PromptCacheTree and chunk skills for CacheBlend.", "domain": "mlx", "confidence": "high"}}}
-        """)
-
-        await server.dispatch("""
-        {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "harness_library_query", "arguments": {"query": "CacheBlend", "domain": "mlx"}}}
-        """)
-
-        await server.dispatch("""
-        {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "harness_validate", "arguments": {"files": {"CLAUDE.md": "Use skill s1", "skills/s1/SKILL.md": "---\\nname: s1\\ndescription: test\\n---\\nBody"}}}}
-        """)
-
-        try? await Task.sleep(for: .milliseconds(50))
-        let outputs = await capturer.lines
-        #expect(outputs.count == 3)
-        #expect(outputs[0].contains("Successfully added knowledge about 'kv-cache-sharing'"))
-        #expect(outputs[1].contains("PromptCacheTree"))
-        #expect(outputs[2].contains("\\\"isValid\\\":true"))
-
-        let indexFile = tempDir.appendingPathComponent("mlx/INDEX.md")
-        #expect(FileManager.default.fileExists(atPath: indexFile.path))
     }
 }

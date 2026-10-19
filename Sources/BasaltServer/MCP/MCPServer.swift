@@ -254,7 +254,7 @@ public final class MCPServer: Sendable {
             ),
             Tool(
                 name: "gemma_add_knowledge",
-                description: "Add custom information or 'skills' to the session context for the model to use.",
+                description: "Store a lesson in the persistent Harness Experience Library (~/.basalt/harness-library/<domain>/): EXPERIENCE.md, entries.json and the domain INDEX.md that future harness_optimize proposers read. Limits: topic 200 characters, cue 500, domain 64, content 32 KiB, 1000 entries.",
                 inputSchema: AnyCodable([
                     "type": "object",
                     "required": ["topic", "content"],
@@ -263,7 +263,7 @@ public final class MCPServer: Sendable {
                         "content": ["type": "string", "description": "Detailed information to store"],
                         "domain": ["type": "string", "description": "Optional domain bucket in the Experience Library"],
                         "cue": ["type": "string", "description": "Optional trigger cue for retrieving this lesson"],
-                        "confidence": ["type": "string", "description": "Optional confidence level (low, medium, high)"]
+                        "confidence": ["type": "string", "enum": ["low", "medium", "high"], "description": "Confidence level (default medium)"]
                     ]
                 ])
             ),
@@ -449,26 +449,33 @@ public final class MCPServer: Sendable {
             writeError(id: id, code: -32603, message: "Experience Library is not configured on this server")
             return
         }
-        let domain = (args?["domain"] as? String) ?? "general"
-        let cue = (args?["cue"] as? String) ?? topic
-        let confidence = (args?["confidence"] as? String) ?? "medium"
+        for key in ["domain", "cue", "confidence"] where args?[key] != nil && !(args?[key] is String) {
+            writeError(id: id, code: -32602, message: "\(key) must be a string")
+            return
+        }
         do {
-            let saved = try await library.addKnowledge(
+            let entry = try library.addKnowledge(
                 topic: topic,
                 content: content,
-                domain: domain,
-                cue: cue,
-                confidence: confidence
+                domain: args?["domain"] as? String ?? "general",
+                cue: args?["cue"] as? String ?? "",
+                confidence: args?["confidence"] as? String ?? "medium"
             )
             let result = [
                 "content": [[
                     "type": "text",
-                    "text": "Successfully added knowledge about '\(topic)' to Experience Library (\(saved.experiencePath))."
+                    "text": "Stored '\(entry.topic)' in the Experience Library as \(entry.domain)/harnesses/\(entry.slug)."
                 ]]
             ]
             writeResult(id: id, result: result)
+        } catch let error as HarnessLibraryError {
+            if case .invalidArgument = error {
+                writeError(id: id, code: -32602, message: error.description)
+            } else {
+                writeError(id: id, code: -32603, message: "Failed to persist knowledge: \(error)")
+            }
         } catch {
-            writeError(id: id, code: -32603, message: "Failed to persist knowledge: \(error.localizedDescription)")
+            writeError(id: id, code: -32603, message: "Failed to persist knowledge: \(error)")
         }
     }
 
@@ -512,14 +519,15 @@ public final class MCPServer: Sendable {
     }
 
     private func callHarnessLibraryQuery(id: JSONRPCId?, args: [String: Any]?) async {
-        let query = args?["query"] as? String
-        let domain = args?["domain"] as? String
         guard let library else {
             writeError(id: id, code: -32603, message: "Experience Library is not configured on this server")
             return
         }
-        let matches = await library.query(topicOrCue: query, domain: domain)
-        writeJSONResult(id: id, matches)
+        do {
+            writeJSONResult(id: id, try library.query(args?["query"] as? String, domain: args?["domain"] as? String))
+        } catch {
+            writeError(id: id, code: -32603, message: "Cannot read the Experience Library: \(error)")
+        }
     }
 
     private func callPlaywrightScreenshot(id: JSONRPCId?, args: [String: Any]?) async {
