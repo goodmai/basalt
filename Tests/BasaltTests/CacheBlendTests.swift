@@ -9,10 +9,11 @@ import MLXLLM
 
 struct ParagraphTokenizer: MLXLMCommon.Tokenizer {
     static let paragraph = 0
+    var newline = "\n\n"
 
     func encode(text: String, addSpecialTokens: Bool) -> [Int] { [] }
     func decode(tokenIds: [Int], skipSpecialTokens: Bool) -> String {
-        tokenIds.map { $0 == Self.paragraph ? "\n\n" : "x" }.joined()
+        tokenIds.map { $0 == Self.paragraph ? newline : "x" }.joined()
     }
     func convertTokenToId(_ token: String) -> Int? { nil }
     func convertIdToToken(_ id: Int) -> String? { nil }
@@ -49,6 +50,7 @@ enum Files {
     static let question = [11, 13, 17, 19]
     static let original = header + files.joined() + question
     static let reordered = header + [files[2], files[0], files[3], files[1]].joined() + question
+    static let reusable = files.joined().count
 }
 
 enum TinyLlama {
@@ -71,7 +73,8 @@ func fullLogits(_ model: any LanguageModel, _ prompt: [Int]) throws -> MLXArray 
 }
 
 func blendedLogits(
-    _ model: any LanguageModel, store: CacheBlendStore, _ prompt: [Int], after prefix: Int = 0
+    _ model: any LanguageModel, store: CacheBlendStore, _ prompt: [Int], after prefix: Int = 0,
+    tokenizer: ParagraphTokenizer = ParagraphTokenizer()
 ) throws -> (MLXArray, CacheBlendOutcome) {
     let cache = PromptCache(try model.newCache(parameters: nil))
     if prefix > 0 {
@@ -79,15 +82,18 @@ func blendedLogits(
     }
     let outcome = try #require(store.extend(
         cache, prompt: prompt, from: prefix, namespace: "ns",
-        model: model, tokenizer: ParagraphTokenizer()))
+        model: model, tokenizer: tokenizer))
     let logits = model(MLXArray([Int32(prompt.last!)]).reshaped(1, 1), cache: outcome.cache.layers)
     return (logits[0, -1].asType(.float32), outcome)
 }
 
 func primed(_ model: any LanguageModel, ratio: Float) throws -> CacheBlendStore {
     let store = CacheBlendStore(ratio: ratio, byteBudget: 1 << 30)
-    let (_, first) = try blendedLogits(model, store: store, Files.original)
+    let (logits, first) = try blendedLogits(model, store: store, Files.original)
     #expect(first.reused == 0)
+    #expect(first.recomputed == 0)
+    #expect(first.exactPrefix == Files.original.count - 1)
+    #expect(allClose(logits, try fullLogits(model, Files.original), rtol: 1e-3, atol: 1e-3).item(Bool.self))
     return store
 }
 
@@ -98,13 +104,25 @@ func distance(_ a: MLXArray, _ b: MLXArray) -> Float {
 @Suite("CacheBlend non-prefix KV reuse on tiny random Llama and Qwen3 (#36)", .serialized)
 struct CacheBlendTests {
 
-    @Test("Chunks end after every paragraph token, so a reordered file keeps its token span")
-    func chunksSplitAfterParagraphs() {
-        let ranges = CacheBlendStore.chunks([4, 5, 0, 6, 0, 7]) { $0 == 0 }
-        #expect(ranges == [0 ..< 3, 3 ..< 5, 5 ..< 6])
-        let reordered = Files.reordered.dropLast()
-        let spans = Set(CacheBlendStore.chunks(Array(reordered)) { $0 == 0 }.map { Array(reordered[$0]) })
+    @Test("Chunks end after a blank line, in one token or across two newline tokens, so a reordered file keeps its span")
+    func chunksSplitAfterBlankLines() throws {
+        #expect(CacheBlendStore.chunks(["a", "b", "\n\n", "c", "}\n\n", "d"]) == [0 ..< 3, 3 ..< 5, 5 ..< 6])
+        #expect(CacheBlendStore.chunks(["a", "\n", "\n", "b", "}\n", "\n", "c", "\n", "d"]) == [0 ..< 3, 3 ..< 6, 6 ..< 9])
+        let store = CacheBlendStore(ratio: 0, byteBudget: 0)
+        let reordered = Array(Files.reordered.dropLast())
+        let spans = Set(store.chunks(reordered, tokenizer: ParagraphTokenizer()).map { Array(reordered[$0]) })
         #expect(Files.files.allSatisfy(spans.contains))
+    }
+
+    @Test("A SentencePiece-style tokenizer that emits one newline per token still finds the reordered files")
+    func singleNewlineTokensStillChunk() throws {
+        let model = try TinyLlama.make()
+        let pieces = ParagraphTokenizer(newline: "\n")
+        let doubled = { (tokens: [Int]) in tokens.flatMap { $0 == ParagraphTokenizer.paragraph ? [0, 0] : [$0] } }
+        let store = CacheBlendStore(ratio: 0.5, byteBudget: 1 << 30)
+        _ = try blendedLogits(model, store: store, doubled(Files.original), tokenizer: pieces)
+        let (_, outcome) = try blendedLogits(model, store: store, doubled(Files.reordered), tokenizer: pieces)
+        #expect(outcome.reused == Files.reusable + Files.files.count)
     }
 
     @Test("Only Llama and Qwen3 are blended; other families fall back to the prefix path")
@@ -123,13 +141,13 @@ struct CacheBlendTests {
         for model in try blendModels() {
             let store = try primed(model, ratio: 1)
             let (logits, outcome) = try blendedLogits(model, store: store, Files.reordered)
-            #expect(outcome.reused == Files.reordered.count - 1)
+            #expect(outcome.reused == Files.reusable)
             #expect(outcome.recomputed == outcome.reused)
             #expect(outcome.exactPrefix == Files.reordered.count - 1)
             let expected = try fullLogits(model, Files.reordered)
             #expect(allClose(logits, expected, rtol: 1e-3, atol: 1e-3).item(Bool.self))
             let (leased, tail) = try blendedLogits(model, store: store, Files.reordered, after: Files.header.count)
-            #expect(tail.reused == Files.reordered.count - 1 - Files.header.count)
+            #expect(tail.reused == Files.reusable)
             #expect(allClose(leased, expected, rtol: 1e-3, atol: 1e-3).item(Bool.self))
         }
     }
@@ -139,7 +157,7 @@ struct CacheBlendTests {
         for model in try blendModels() {
             for ratio: Float in [0, 0.15] {
                 let (logits, outcome) = try blendedLogits(model, store: try primed(model, ratio: ratio), Files.original)
-                #expect(outcome.reused == Files.original.count - 1)
+                #expect(outcome.reused == Files.reusable)
                 #expect(outcome.recomputed == Int(Float(outcome.reused) * ratio))
                 #expect(allClose(logits, try fullLogits(model, Files.original), rtol: 1e-3, atol: 1e-3).item(Bool.self))
             }
@@ -158,23 +176,28 @@ struct CacheBlendTests {
         }
     }
 
-    @Test("Uncached chunks are always recomputed and stored once, and the byte budget evicts the oldest chunk")
+    @Test("Uncached and short chunks are recomputed, only long misses are stored, and the byte budget evicts and refuses")
     func missesAreRecomputedAndStoredWithinBudget() throws {
         let model = try TinyLlama.make()
         let store = try primed(model, ratio: 0)
-        #expect(store.chunkCount == 6)
+        #expect(store.chunkCount == Files.files.count)
         let changed = Files.header + Files.chunk(9) + Files.files[0] + Files.question
         let (logits, outcome) = try blendedLogits(model, store: store, changed)
-        #expect(outcome.reused == Files.header.count + Files.files[0].count + Files.question.count - 1)
+        #expect(outcome.reused == Files.files[0].count)
         #expect(outcome.recomputed == 0)
-        #expect(store.chunkCount == 7)
+        #expect(store.chunkCount == Files.files.count + 1)
         #expect(logits.shape == [256])
 
         let bytes = store.byteCount
         let tight = CacheBlendStore(ratio: 0, byteBudget: bytes / 2)
         _ = try blendedLogits(model, store: tight, Files.original)
         #expect(tight.byteCount <= bytes / 2)
-        #expect(tight.chunkCount < 6)
+        #expect(tight.chunkCount < Files.files.count)
+
+        let tiny = CacheBlendStore(ratio: 0, byteBudget: bytes / store.chunkCount - 1)
+        _ = try blendedLogits(model, store: tiny, Files.original)
+        #expect(tiny.chunkCount == 0)
+        #expect(tiny.byteCount == 0)
     }
 
     @Test("The engine answers like a full prefill, reports only the exact prefix as cached and keeps the tree exact")

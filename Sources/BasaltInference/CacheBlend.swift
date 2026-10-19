@@ -125,12 +125,19 @@ struct CacheBlendModel {
                 eval(allKeys, allValues)
                 continue
             }
-            let positions = MLXArray(active.map { Int32(offset + $0) })
-            let rotatedQueries = layer.rope(queries.transposed(2, 1, 0, 3), offset: positions).transposed(2, 1, 0, 3)
-            let mask = positions.expandedDimensions(axis: 1)
-                .>= MLXArray((0 ..< offset + count).map(Int32.init)).expandedDimensions(axis: 0)
+            let rotatedQueries: MLXArray
+            let mask: MLXFast.ScaledDotProductAttentionMaskMode
+            if active.count == count {
+                rotatedQueries = layer.rope(queries, offset: offset)
+                mask = .causal
+            } else {
+                let positions = MLXArray(active.map { Int32(offset + $0) })
+                rotatedQueries = layer.rope(queries.transposed(2, 1, 0, 3), offset: positions).transposed(2, 1, 0, 3)
+                mask = .array(positions.expandedDimensions(axis: 1)
+                    .>= MLXArray((0 ..< offset + count).map(Int32.init)).expandedDimensions(axis: 0))
+            }
             let attended = MLXFast.scaledDotProductAttention(
-                queries: rotatedQueries, keys: allKeys, values: allValues, scale: scale, mask: .array(mask))
+                queries: rotatedQueries, keys: allKeys, values: allValues, scale: scale, mask: mask)
             hidden = hidden + layer.o(attended.transposed(0, 2, 1, 3).reshaped(1, active.count, -1))
             hidden = hidden + layer.mlp(layer.postNorm(hidden))
             eval(hidden, allKeys, allValues)
@@ -139,6 +146,25 @@ struct CacheBlendModel {
         return CacheBlendPass(
             caches: caches, layers: kept, recomputed: active.count - (count - hits),
             exactPrefix: skipped.min() ?? count)
+    }
+
+    var rotatesPurely: Bool {
+        layers.allSatisfy { $0.rope is RoPE || $0.rope is Llama3RoPE }
+    }
+
+    func unrotated(_ caches: [KVCache], _ range: Range<Int>) -> [[MLXArray]] {
+        let positions = MLXArray(range.map(Int32.init))
+        let probe = layers[0].rope(MLXArray((0 ..< headDim).map { $0 == 0 ? Float(1) : 0 }).reshaped(1, 1, 1, -1), offset: 1)
+        let traditional = abs(probe[0, 0, 0, 1]).item(Float.self) > 1e-6
+        let sign = MLXArray((0 ..< headDim).map { (traditional ? $0 % 2 == 1 : $0 >= headDim / 2) ? Float(-1) : 1 })
+        return zip(layers, caches).enumerated().map { index, pair in
+            guard index > 0 else { return [] }
+            let state = pair.1.state
+            let keys = state[0][.ellipsis, range, 0...]
+            let flipped = (keys * sign.asType(keys.dtype)).transposed(2, 1, 0, 3)
+            let back = pair.0.rope(flipped, offset: positions).transposed(2, 1, 0, 3) * sign.asType(keys.dtype)
+            return [back, state[1][.ellipsis, range, 0...]]
+        }
     }
 
     private func assemble(_ segments: [CacheBlendSegment], layer: Int, like keys: MLXArray) -> [MLXArray] {
@@ -175,7 +201,7 @@ final class CacheBlendStore: @unchecked Sendable {
         var entries: [Key: Entry] = [:]
         var bytes = 0
         var clock = 0
-        var boundaries: [Int: Bool] = [:]
+        var texts: [Int: String] = [:]
     }
 
     let ratio: Float
@@ -195,31 +221,41 @@ final class CacheBlendStore: @unchecked Sendable {
     var byteCount: Int { withState { $0.bytes } }
     var chunkCount: Int { withState { $0.entries.count } }
 
-    static func chunks(_ tokens: [Int], isBoundary: (Int) -> Bool) -> [Range<Int>] {
+    static let minimumChunk = 16
+    static let maximumTokens = 16384
+    static let minimumShare = 0.1
+
+    static func chunks(_ texts: [String]) -> [Range<Int>] {
         var ranges: [Range<Int>] = []
         var start = 0
-        for (index, token) in tokens.enumerated() where isBoundary(token) {
-            ranges.append(start ..< index + 1)
-            start = index + 1
+        for index in texts.indices {
+            let blank = texts[index].contains("\n\n")
+                || (index > 0 && texts[index - 1].hasSuffix("\n") && texts[index].hasPrefix("\n"))
+            if blank {
+                ranges.append(start ..< index + 1)
+                start = index + 1
+            }
         }
-        if start < tokens.count { ranges.append(start ..< tokens.count) }
+        if start < texts.count { ranges.append(start ..< texts.count) }
         return ranges
     }
 
     func chunks(_ tokens: [Int], tokenizer: any MLXLMCommon.Tokenizer) -> [Range<Int>] {
-        withState { state in
-            Self.chunks(tokens) { token in
-                if let known = state.boundaries[token] { return known }
-                let boundary = tokenizer.decode(tokenIds: [token], skipSpecialTokens: false).contains("\n\n")
-                state.boundaries[token] = boundary
-                return boundary
+        let texts = withState { state in
+            tokens.map { token in
+                if let known = state.texts[token] { return known }
+                let text = tokenizer.decode(tokenIds: [token], skipSpecialTokens: false)
+                state.texts[token] = text
+                return text
             }
         }
+        return Self.chunks(texts)
     }
 
     func extend(
         _ cache: PromptCache, prompt: [Int], from start: Int, namespace: String,
-        model: any LanguageModel, tokenizer: any MLXLMCommon.Tokenizer, ratio: Float? = nil, storing: Bool = true
+        model: any LanguageModel, tokenizer: any MLXLMCommon.Tokenizer, prefillStep: Int = 512,
+        ratio: Float? = nil, storing: Bool = true
     ) -> CacheBlendOutcome? {
         let end = prompt.count - 1
         guard start < end, let blender = CacheBlendModel(model),
@@ -230,7 +266,7 @@ final class CacheBlendStore: @unchecked Sendable {
             ranges.map { range -> CacheBlendSegment in
                 let local = max(range.lowerBound, start) - start ..< range.upperBound - start
                 let key = Key(namespace: namespace, tokens: Array(prompt[range]))
-                guard range.lowerBound >= start, var entry = state.entries[key] else {
+                guard range.lowerBound >= start, range.count >= Self.minimumChunk, var entry = state.entries[key] else {
                     return CacheBlendSegment(range: local, cached: nil)
                 }
                 state.clock += 1
@@ -239,18 +275,48 @@ final class CacheBlendStore: @unchecked Sendable {
                 return CacheBlendSegment(range: local, cached: entry.layers)
             }
         }
-        let pass = blender.prefill(
-            tokens: Array(prompt[start ..< end]), offset: start,
-            past: start == 0 ? [] : cache.layers.map(\.state), segments: segments, ratio: ratio ?? self.ratio)
-        let stored = zip(ranges, segments).filter { storing && $0.0.lowerBound >= start && $0.1.cached == nil }.map { range, segment in
-            (Key(namespace: namespace, tokens: Array(prompt[range])),
-             pass.layers.map { layer in layer.map { contiguous($0[.ellipsis, segment.range, 0...]) } })
+        let reused = segments.filter { $0.cached != nil }.reduce(0) { $0 + $1.range.count }
+        let count = end - start
+        let caches: [KVCache]
+        let recomputed: Int
+        let exactPrefix: Int
+        let layers: (Range<Int>) -> [[MLXArray]]?
+        if reused == 0 || Double(reused) < Self.minimumShare * Double(count) || count > Self.maximumTokens {
+            var position = start
+            while position < end {
+                let step = min(end, position + max(1, prefillStep))
+                _ = model(MLXArray(prompt[position ..< step].map(Int32.init)).reshaped(1, -1), cache: cache.layers)
+                eval(cache.layers.flatMap { $0.innerState() })
+                position = step
+            }
+            (caches, recomputed, exactPrefix) = (cache.layers, 0, end)
+            let region = blender.rotatesPurely ? blender.unrotated(cache.layers, start ..< end) : nil
+            layers = { range in
+                region?.map { layer in layer.map { $0[.ellipsis, (range.lowerBound - start) ..< (range.upperBound - start), 0...] } }
+            }
+        } else {
+            let pass = blender.prefill(
+                tokens: Array(prompt[start ..< end]), offset: start,
+                past: start == 0 ? [] : cache.layers.map(\.state), segments: segments, ratio: ratio ?? self.ratio)
+            (caches, recomputed, exactPrefix) = (pass.caches, pass.recomputed, start + pass.exactPrefix)
+            layers = { range in
+                pass.layers.enumerated().map { index, layer in
+                    index == 0 ? [] : layer.map { $0[.ellipsis, (range.lowerBound - start) ..< (range.upperBound - start), 0...] }
+                }
+            }
+        }
+        let stored = zip(ranges, segments).compactMap { range, segment -> (Key, [[MLXArray]])? in
+            guard storing, range.lowerBound >= start, range.count >= Self.minimumChunk, segment.cached == nil,
+                  let sliced = layers(range)
+            else { return nil }
+            return (Key(namespace: namespace, tokens: Array(prompt[range])), sliced.map { $0.map { contiguous($0) } })
         }
         eval(stored.flatMap { $0.1.joined() })
         withState { state in
             for (key, layers) in stored where state.entries[key] == nil {
-                state.clock += 1
                 let bytes = layers.joined().reduce(0) { $0 + $1.nbytes }
+                guard bytes <= byteBudget else { continue }
+                state.clock += 1
                 state.entries[key] = Entry(layers: layers, bytes: bytes, lastUse: state.clock)
                 state.bytes += bytes
             }
@@ -259,9 +325,8 @@ final class CacheBlendStore: @unchecked Sendable {
                 state.entries[victim.key] = nil
             }
         }
-        let reused = segments.filter { $0.cached != nil }.reduce(0) { $0 + $1.range.count }
         return CacheBlendOutcome(
-            cache: PromptCache(pass.caches), tokens: end - start, reused: reused,
-            recomputed: pass.recomputed, exactPrefix: start + pass.exactPrefix)
+            cache: PromptCache(caches), tokens: count, reused: reused,
+            recomputed: recomputed, exactPrefix: exactPrefix)
     }
 }

@@ -703,10 +703,12 @@ public actor MLXInferenceEngine: InferenceEngine {
         let blended = cache.isHybrid ? nil : blend.flatMap {
             $0.store.extend(
                 cache, prompt: input.text.tokens.asArray(Int.self), from: reused, namespace: $0.namespace,
-                model: context.model, tokenizer: context.tokenizer)
+                model: context.model, tokenizer: context.tokenizer, prefillStep: params.prefill.stepSize ?? 512)
         }
         if let blended {
             cache = blended.cache
+        }
+        if let blended, blended.reused > 0 {
             GemLogger(module: "CacheBlend").info(
                 "Blended \(blended.tokens) prompt tokens: \(blended.reused) from cached chunks, \(blended.recomputed) of them recomputed")
         }
