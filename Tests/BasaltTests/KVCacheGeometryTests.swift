@@ -121,6 +121,58 @@ struct KVCacheGeometryTests {
         #expect(KVCacheGeometry.forModel(dir.path, parameters: 7) == KVCacheGeometry(config: Self.qwen3_4B))
     }
 
+    @Test("Gemma 4: full-attention layers use global_head_dim, k=v layers num_global_key_value_heads, shared layers hold no cache")
+    func gemma4() {
+        var config: [String: Any] = [
+            "model_type": "gemma4_text", "num_hidden_layers": 35, "num_attention_heads": 8,
+            "num_key_value_heads": 1, "head_dim": 256, "global_head_dim": 512, "num_kv_shared_layers": 20,
+            "sliding_window": 512,
+            "layer_types": (0..<35).map { ($0 + 1) % 5 == 0 ? "full_attention" : "sliding_attention" },
+        ]
+        let g = KVCacheGeometry(config: config)!
+        #expect(g.elementsPerToken == 3 * 1 * (512 + 512))
+        #expect(g.windowedElementsPerToken == 12 * 2 * 1 * 256)
+        #expect(g.bytes(tokens: 4096) == 3 * 1024 * 2 * 4096 + 12 * 512 * 2 * 512)
+
+        config["attention_k_eq_v"] = true
+        config["num_global_key_value_heads"] = 4
+        #expect(KVCacheGeometry(config: config)!.elementsPerToken == 3 * 4 * (512 + 512))
+    }
+
+    @Test("MLA (DeepSeek V3): MLX caches the decompressed per-head K (nope + rope) and V, not the latent")
+    func mla() {
+        let g = KVCacheGeometry(config: [
+            "model_type": "deepseek_v3", "num_hidden_layers": 61, "num_attention_heads": 128,
+            "num_key_value_heads": 128, "hidden_size": 7168, "kv_lora_rank": 512,
+            "qk_nope_head_dim": 128, "qk_rope_head_dim": 64, "v_head_dim": 128,
+        ])!
+        #expect(g.bytes(tokens: 1) == 61 * 128 * (192 + 128) * 2)
+        #expect(g.quantizedGroupSize == 64)
+    }
+
+    @Test("Hybrids without layer_types: Jamba attn_layer_period/offset, NemotronH hybrid_override_pattern")
+    func hybridPatterns() {
+        let jamba = KVCacheGeometry(config: [
+            "num_hidden_layers": 32, "num_attention_heads": 32, "num_key_value_heads": 8, "hidden_size": 4096,
+            "attn_layer_period": 8, "attn_layer_offset": 4,
+        ])!
+        #expect(jamba.bytes(tokens: 1) == 2 * 4 * 8 * 128 * 2)
+        let nemotron = KVCacheGeometry(config: [
+            "num_hidden_layers": 8, "num_attention_heads": 32, "num_key_value_heads": 8, "head_dim": 128,
+            "hybrid_override_pattern": "M-M*-M*-",
+        ])!
+        #expect(nemotron.bytes(tokens: 1) == 2 * 2 * 8 * 128 * 2)
+    }
+
+    @Test("--kv-bits group falls back to 32 when head_dim is not a multiple of 64, as MLX does")
+    func quantizedGroupFallback() {
+        let g = KVCacheGeometry(config: ["num_hidden_layers": 2, "num_attention_heads": 4, "head_dim": 96])!
+        #expect(g.quantizedGroupSize == 32)
+        #expect(g.bytesPerElement(kvBits: 4) == 0.5 + 4.0 / 32)
+        #expect(g.bytes(tokens: 1, kvBits: 4) == Int64(2 * 2 * 4 * 96 * (0.5 + 4.0 / 32)))
+        #expect(KVCacheGeometry(config: Self.qwen3_4B)!.quantizedGroupSize == 64)
+    }
+
     @Test("maxTokens inverts bytes: the largest prompt that fits the budget")
     func inverse() {
         let g = KVCacheGeometry(config: Self.ornith9B)!

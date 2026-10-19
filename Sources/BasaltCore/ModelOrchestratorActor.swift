@@ -54,10 +54,10 @@ public actor ModelOrchestratorActor {
             self.modelSizeMB = Int(size / 1_048_576)
             logger.info("Model size: \(self.modelSizeMB) MB")
         }
+        try await engine.load(modelPath: path)
         kvGeometry = KVCacheGeometry.forModel(
             path, parameters: ModelDefinition.inferTotalParameters(id: path, name: "", ramMB: Int64(modelSizeMB))
         )
-        try await engine.load(modelPath: path)
         // After the load: a failed load must not report the failed model's size.
         await self.telemetry.setModelMemory(mb: self.modelSizeMB)
     }
