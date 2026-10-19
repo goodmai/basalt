@@ -71,6 +71,23 @@ struct HarnessMCPTests {
         #expect(try lines.errorCode(4) == -32602)
     }
 
+    @Test("harness_validate applies the load limits to inline files")
+    func validateInlineLimits() async throws {
+        let lines = MCPLines()
+        let server = MCPServer(
+            orchestrator: ModelOrchestratorActor(engine: MockInferenceEngine()),
+            harnessLimits: HarnessLoadLimits(maxFiles: 2, maxFileBytes: 16, maxTotalBytes: 1 << 20, maxDepth: 8),
+            writer: { lines.append($0) }
+        )
+        await server.dispatch(toolCall(1, "harness_validate", ["files": ["CLAUDE.md": "a", ".claude/a.md": "b", ".claude/b.md": "c"]]))
+        await server.dispatch(toolCall(2, "harness_validate", ["files": ["CLAUDE.md": "a", ".claude/big.md": String(repeating: "x", count: 17)]]))
+
+        #expect(try lines.errorCode(0) == -32602)
+        #expect(lines.all[0].contains("more than 2 files"))
+        let report = try lines.toolText(1)
+        #expect((report["warnings"] as? [String])?.contains("skipped .claude/big.md: 17 bytes exceeds the 16-byte file limit") == true)
+    }
+
     @Test("harness_validate reports a real Claude Code layout and inline files")
     func validateReport() async throws {
         let repo = try HarnessLoaderTests.makeRepo()

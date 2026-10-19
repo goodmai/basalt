@@ -176,6 +176,62 @@ struct HarnessLoaderTests {
         }
     }
 
+    @Test("Every visited directory entry counts toward maxEntries, also entries that are skipped")
+    func visitedEntriesAreBounded() throws {
+        let root = try Self.makeRepo()
+        defer { try? FileManager.default.removeItem(at: root) }
+        for index in 0..<30 {
+            try FileManager.default.createDirectory(at: root.appendingPathComponent(".claude/empty/\(index)"), withIntermediateDirectories: true)
+        }
+        let limits = HarnessLoadLimits(maxFiles: 100, maxFileBytes: 4096, maxTotalBytes: 1 << 20, maxDepth: 8, maxEntries: 20)
+        #expect(throws: HarnessLoadError.tooManyEntries(limit: 20)) {
+            try HarnessLoader.load(root: root, spec: .claude, allowedRoots: [root], limits: limits)
+        }
+    }
+
+    @Test("Bytes of a skipped non-UTF-8 file count toward the total limit")
+    func skippedBytesCount() throws {
+        let root = try Self.makeRepo()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let layoutBytes = HarnessValidatorTests.claudeLayout.files.values.reduce(0) { $0 + $1.utf8.count }
+        try Data(repeating: 0xFF, count: 500).write(to: root.appendingPathComponent(".claude/blob.bin"))
+        let limits = HarnessLoadLimits(maxFiles: 100, maxFileBytes: 4096, maxTotalBytes: layoutBytes + 100, maxDepth: 8)
+        #expect(throws: HarnessLoadError.tooManyBytes(limit: layoutBytes + 100)) {
+            try HarnessLoader.load(root: root, spec: .claude, allowedRoots: [root], limits: limits)
+        }
+        let roomy = HarnessLoadLimits(maxFiles: 100, maxFileBytes: 4096, maxTotalBytes: layoutBytes + 600, maxDepth: 8)
+        let loaded = try HarnessLoader.load(root: root, spec: .claude, allowedRoots: [root], limits: roomy)
+        #expect(loaded.skipped == [".claude/blob.bin: not UTF-8 text"])
+    }
+
+    @Test("Claude Code worktrees under .claude/worktrees are not read as part of the harness; a FIFO is ignored")
+    func worktreesAndSpecialFilesAreSkipped() throws {
+        let root = try Self.makeRepo()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let worktree = root.appendingPathComponent(".claude/worktrees/feature/.claude/agents")
+        try FileManager.default.createDirectory(at: worktree, withIntermediateDirectories: true)
+        try "---\nname: x\n---\n".write(to: worktree.appendingPathComponent("copy.md"), atomically: true, encoding: .utf8)
+        try "copy".write(to: root.appendingPathComponent(".claude/worktrees/feature/CLAUDE.md"), atomically: true, encoding: .utf8)
+        #expect(mkfifo(root.appendingPathComponent(".claude/pipe.md").path, 0o600) == 0)
+
+        let loaded = try HarnessLoader.load(root: root, spec: .claude, allowedRoots: [root])
+        #expect(Set(loaded.tree.files.keys) == Set(HarnessValidatorTests.claudeLayout.files.keys))
+    }
+
+    @Test("Inline files obey the same count, per-file and total limits as a directory")
+    func inlineFilesAreBounded() throws {
+        let limits = HarnessLoadLimits(maxFiles: 2, maxFileBytes: 10, maxTotalBytes: 25, maxDepth: 8)
+        #expect(throws: HarnessLoadError.tooManyFiles(limit: 2)) {
+            try HarnessLoader.inline(["a.md": "a", "b.md": "b", "c.md": "c"], limits: limits)
+        }
+        #expect(throws: HarnessLoadError.tooManyBytes(limit: 25)) {
+            try HarnessLoader.inline(["a.md": String(repeating: "a", count: 20), "b.md": String(repeating: "b", count: 10)], limits: limits)
+        }
+        let loaded = try HarnessLoader.inline(["CLAUDE.md": "short", "big.md": String(repeating: "b", count: 11)], limits: limits)
+        #expect(loaded.tree.files == ["CLAUDE.md": "short"])
+        #expect(loaded.skipped == ["big.md: 11 bytes exceeds the 10-byte file limit"])
+    }
+
     @Test("File count, total size and depth are bounded; a symlink out of the root is skipped")
     func limits() throws {
         let root = try Self.makeRepo()

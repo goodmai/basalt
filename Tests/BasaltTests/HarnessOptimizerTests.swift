@@ -248,6 +248,20 @@ struct HarnessOptimizerTests {
         #expect(throws: Never.self) { try admitted.get() }
     }
 
+    @Test("The proposer prompt caps the library index and the compose candidate edits")
+    func proposerPromptIsBounded() {
+        let view = HarnessProposal.view(Self.base, spec: .claude)
+        let index = (1...2000).map { "- [low] lesson \($0) | cue: c | harnesses/l\($0)/EXPERIENCE.md" }.joined(separator: "\n")
+        let chunk = String(repeating: "z", count: 30 * 1024)
+        let sources = (1...3).map { [".claude/s\($0).md": chunk] }
+        let prompt = HarnessProposal.prompt(axis: .compose, task: Self.task, harness: view, spec: .claude, libraryIndex: index, sources: sources)
+        #expect(prompt.contains("lesson 1 |"))
+        #expect(!prompt.contains("lesson 2000 |"))
+        #expect(prompt.contains("<candidate_edit n=\"1\">"))
+        #expect(!prompt.contains("<candidate_edit n=\"2\">"))
+        #expect(prompt.count < HarnessProposal.maxHarnessPromptChars + HarnessProposal.maxIndexChars + 8 * 1024)
+    }
+
     @Test("A task prompt carrying a grader verdict is refused before any model call")
     func leakingTask() async throws {
         let (optimizer, engine) = try await Self.optimizer(HarnessScript())

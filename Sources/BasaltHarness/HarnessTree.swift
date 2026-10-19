@@ -210,16 +210,18 @@ public struct HarnessLoadLimits: Sendable, Equatable {
     public var maxFileBytes: Int
     public var maxTotalBytes: Int
     public var maxDepth: Int
+    public var maxEntries: Int
 
     public static let standard = HarnessLoadLimits(
-        maxFiles: 2000, maxFileBytes: 256 * 1024, maxTotalBytes: 16 * 1024 * 1024, maxDepth: 8
+        maxFiles: 2000, maxFileBytes: 256 * 1024, maxTotalBytes: 16 * 1024 * 1024, maxDepth: 8, maxEntries: 10_000
     )
 
-    public init(maxFiles: Int, maxFileBytes: Int, maxTotalBytes: Int, maxDepth: Int) {
+    public init(maxFiles: Int, maxFileBytes: Int, maxTotalBytes: Int, maxDepth: Int, maxEntries: Int = 10_000) {
         self.maxFiles = maxFiles
         self.maxFileBytes = maxFileBytes
         self.maxTotalBytes = maxTotalBytes
         self.maxDepth = maxDepth
+        self.maxEntries = maxEntries
     }
 }
 
@@ -228,6 +230,7 @@ public enum HarnessLoadError: Error, Equatable, CustomStringConvertible {
     case outsideAllowedRoots(String)
     case tooManyFiles(limit: Int)
     case tooManyBytes(limit: Int)
+    case tooManyEntries(limit: Int)
 
     public var description: String {
         switch self {
@@ -235,6 +238,7 @@ public enum HarnessLoadError: Error, Equatable, CustomStringConvertible {
         case .outsideAllowedRoots(let path): "\(path) is outside the allowed harness roots"
         case .tooManyFiles(let limit): "harness has more than \(limit) files"
         case .tooManyBytes(let limit): "harness is larger than \(limit) bytes"
+        case .tooManyEntries(let limit): "harness directory has more than \(limit) entries"
         }
     }
 }
@@ -270,6 +274,7 @@ public enum HarnessLoader {
         for _ in 0...5 where !pending.isEmpty {
             var next: [String] = []
             for path in pending where reader.files[path] == nil {
+                try reader.visit()
                 try reader.read(path)
                 next += HarnessPath.imports(in: reader.files[path] ?? "", from: path)
             }
@@ -279,11 +284,30 @@ public enum HarnessLoader {
         for (path, content) in reader.files {
             for reference in HarnessPath.scriptReferences(in: content) {
                 for candidate in HarnessPath.resolve(reference, from: path) where reader.files[candidate] == nil {
+                    try reader.visit()
                     try reader.read(candidate)
                 }
             }
         }
         return LoadedHarness(tree: HarnessTree(files: reader.files), skipped: reader.skipped.sorted())
+    }
+
+    public static func inline(_ files: [String: String], limits: HarnessLoadLimits = .standard) throws -> LoadedHarness {
+        guard files.count <= limits.maxFiles else { throw HarnessLoadError.tooManyFiles(limit: limits.maxFiles) }
+        var kept: [String: String] = [:]
+        var skipped: [String] = []
+        var totalBytes = 0
+        for path in files.keys.sorted() {
+            let size = files[path]!.utf8.count
+            totalBytes += size
+            guard totalBytes <= limits.maxTotalBytes else { throw HarnessLoadError.tooManyBytes(limit: limits.maxTotalBytes) }
+            if size > limits.maxFileBytes {
+                skipped.append("\(path): \(size) bytes exceeds the \(limits.maxFileBytes)-byte file limit")
+            } else {
+                kept[path] = files[path]
+            }
+        }
+        return LoadedHarness(tree: HarnessTree(files: kept), skipped: skipped)
     }
 
     static func contains(_ root: URL, _ candidate: URL) -> Bool {
@@ -297,35 +321,46 @@ public enum HarnessLoader {
         var files: [String: String] = [:]
         var skipped: [String] = []
         var totalBytes = 0
+        var visited = 0
 
         init(base: URL, limits: HarnessLoadLimits) {
             self.base = base
             self.limits = limits
         }
 
+        mutating func visit() throws {
+            visited += 1
+            guard visited <= limits.maxEntries else { throw HarnessLoadError.tooManyEntries(limit: limits.maxEntries) }
+        }
+
         mutating func read(_ path: String) throws {
-            let url = base.appendingPathComponent(path)
-            let resolved = url.resolvingSymlinksInPath().standardizedFileURL
-            guard let values = try? resolved.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]),
-                  values.isRegularFile == true else { return }
+            let resolved = base.appendingPathComponent(path).resolvingSymlinksInPath().standardizedFileURL
+            guard FileManager.default.fileExists(atPath: resolved.path) else { return }
             guard HarnessLoader.contains(base, resolved) else {
                 skipped.append("\(path): resolves outside the harness root")
                 return
             }
-            let size = values.fileSize ?? 0
-            guard size <= limits.maxFileBytes else {
-                skipped.append("\(path): \(size) bytes exceeds the \(limits.maxFileBytes)-byte file limit")
+            let descriptor = open(resolved.path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK)
+            guard descriptor >= 0 else { return }
+            let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
+            var info = stat()
+            guard fstat(descriptor, &info) == 0, info.st_mode & S_IFMT == S_IFREG else { return }
+            guard info.st_size <= limits.maxFileBytes else {
+                skipped.append("\(path): \(info.st_size) bytes exceeds the \(limits.maxFileBytes)-byte file limit")
                 return
             }
             guard files.count < limits.maxFiles else { throw HarnessLoadError.tooManyFiles(limit: limits.maxFiles) }
-            guard totalBytes + size <= limits.maxTotalBytes else {
-                throw HarnessLoadError.tooManyBytes(limit: limits.maxTotalBytes)
+            let data = (try? handle.read(upToCount: limits.maxFileBytes + 1)) ?? Data()
+            totalBytes += data.count
+            guard totalBytes <= limits.maxTotalBytes else { throw HarnessLoadError.tooManyBytes(limit: limits.maxTotalBytes) }
+            guard data.count <= limits.maxFileBytes else {
+                skipped.append("\(path): grew past the \(limits.maxFileBytes)-byte file limit while being read")
+                return
             }
-            guard let text = try? String(contentsOf: resolved, encoding: .utf8) else {
+            guard let text = String(data: data, encoding: .utf8) else {
                 skipped.append("\(path): not UTF-8 text")
                 return
             }
-            totalBytes += size
             files[path] = text
         }
 
@@ -335,15 +370,16 @@ public enum HarnessLoader {
                 at: start, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles]
             ) else { return }
             for case let url as URL in enumerator {
+                try visit()
+                let relative = directory + "/" + url.standardizedFileURL.path.dropFirst(start.standardizedFileURL.path.count + 1)
                 let isDirectory = (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
                 if isDirectory {
-                    if url.lastPathComponent == "node_modules" || enumerator.level >= limits.maxDepth {
+                    if url.lastPathComponent == "node_modules" || relative == directory + "/worktrees" || enumerator.level >= limits.maxDepth {
                         enumerator.skipDescendants()
                     }
                     continue
                 }
-                let relative = url.standardizedFileURL.path.dropFirst(start.standardizedFileURL.path.count + 1)
-                try read(directory + "/" + relative)
+                try read(relative)
             }
         }
     }
