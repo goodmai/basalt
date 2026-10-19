@@ -134,6 +134,18 @@ struct CacheBlendTests {
         }
     }
 
+    @Test("Chunks reused at their own positions after their own context blend to a full prefill at any ratio")
+    func unchangedContextBlendsExactly() throws {
+        for model in try blendModels() {
+            for ratio: Float in [0, 0.15] {
+                let (logits, outcome) = try blendedLogits(model, store: try primed(model, ratio: ratio), Files.original)
+                #expect(outcome.reused == Files.original.count - 1)
+                #expect(outcome.recomputed == Int(Float(outcome.reused) * ratio))
+                #expect(allClose(logits, try fullLogits(model, Files.original), rtol: 1e-3, atol: 1e-3).item(Bool.self))
+            }
+        }
+    }
+
     @Test("With ratio 0.15 the blend lands closer to a full prefill than reusing every cached chunk as is")
     func partialRatioBeatsNaiveConcat() throws {
         for model in try blendModels() {
