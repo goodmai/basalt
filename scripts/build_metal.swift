@@ -50,6 +50,30 @@ let fm = FileManager.default
 
 // MARK: — Check if metallib is up to date
 
+/// Copies through a sibling temp file and rename(2), so `dst` is either the old file or the
+/// complete new one.
+func atomicCopy(_ src: String, to dst: String) {
+    let staging = dst + ".partial"
+    try? fm.removeItem(atPath: staging)
+    guard (try? fm.copyItem(atPath: src, toPath: staging)) != nil, rename(staging, dst) == 0 else {
+        try? fm.removeItem(atPath: staging)
+        log("Could not place \(dst): \(String(cString: strerror(errno)))", level: .error)
+        exit(1)
+    }
+}
+
+/// MLX looks for `mlx.metallib` next to the binary first: (re)place it in every existing
+/// build dir where it is missing or older than `source`.
+func placeColocated(from source: String) {
+    let sourceDate = getModificationDate(of: source)
+    for buildDir in [".build/debug", ".build/release"] where fm.fileExists(atPath: buildDir) {
+        let colocated = "\(buildDir)/mlx.metallib"
+        if let have = getModificationDate(of: colocated), let want = sourceDate, have >= want { continue }
+        atomicCopy(source, to: colocated)
+        log("Placed \(colocated)", level: .debug)
+    }
+}
+
 func getModificationDate(of path: String) -> Date? {
     guard let attrs = try? fm.attributesOfItem(atPath: path) else { return nil }
     return attrs[.modificationDate] as? Date
@@ -73,7 +97,7 @@ if fm.fileExists(atPath: genKernelDir) {
 
 if !fm.fileExists(atPath: metalLibPath) && fm.fileExists(atPath: "default.metallib") {
     try? fm.createDirectory(atPath: outputDir, withIntermediateDirectories: true)
-    try? fm.copyItem(atPath: "default.metallib", toPath: metalLibPath)
+    atomicCopy("default.metallib", to: metalLibPath)
 }
 
 // Check if metallib exists and is newer than all .metal files
@@ -86,6 +110,9 @@ if fm.fileExists(atPath: metalLibPath),
         return true
     }
     if allSourcesNewer && !metalFiles.isEmpty {
+        // The library is current, but the colocated copies may not be (a run cancelled
+        // mid-placement, a wiped build dir): restore them before declaring success.
+        placeColocated(from: metalLibPath)
         log("Metal shaders up to date, skipping rebuild", level: .info)
         exit(0)
     }
@@ -180,17 +207,6 @@ if status != 0 {
     exit(status)
 }
 
-/// Copies through a sibling temp file and rename(2), so `dst` is either the old file or the
-/// complete new one.
-func atomicCopy(_ src: String, to dst: String) {
-    let staging = dst + ".partial"
-    try? fm.removeItem(atPath: staging)
-    guard (try? fm.copyItem(atPath: src, toPath: staging)) != nil, rename(staging, dst) == 0 else {
-        try? fm.removeItem(atPath: staging)
-        log("Could not place \(dst): \(String(cString: strerror(errno)))", level: .error)
-        exit(1)
-    }
-}
 
 // Two placements, because MLX has two ways of finding this file. The copy at
 // the repo root is the last resort in its search order and only works when the
@@ -201,11 +217,7 @@ func atomicCopy(_ src: String, to dst: String) {
 // cancelled in between leaves the marker stale, so the next run redoes every placement.
 atomicCopy(stagedLib, to: "default.metallib")
 
-for buildDir in [".build/debug", ".build/release"] where fm.fileExists(atPath: buildDir) {
-    let colocated = "\(buildDir)/mlx.metallib"
-    atomicCopy(stagedLib, to: colocated)
-    log("Placed \(colocated)", level: .debug)
-}
+placeColocated(from: stagedLib)
 
 // Same filesystem as stagedLib, so a plain rename(2).
 guard rename(stagedLib, metalLibPath) == 0 else {

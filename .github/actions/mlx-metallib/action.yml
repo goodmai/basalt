@@ -6,14 +6,20 @@ description: >
 runs:
   using: composite
   steps:
+    # The SDK decides which kernels compile (--skip-unsupported) and what OS the library
+    # targets: a library from the self-hosted runner's newer SDK must not be restored on a
+    # hosted runner with an older one.
+    - id: sdk
+      shell: bash
+      run: echo "version=$(xcrun --sdk macosx --show-sdk-version)" >> "$GITHUB_OUTPUT"
     - id: cache
       uses: actions/cache@v6
       with:
         path: default.metallib
-        key: metallib-${{ hashFiles('Package.resolved', 'scripts/build_metal.swift') }}
+        key: metallib-${{ runner.arch }}-sdk${{ steps.sdk.outputs.version }}-${{ hashFiles('Package.resolved', 'scripts/build_metal.swift') }}
     # A restored file keeps its old mtime, older than the fresh .metal checkouts, so
     # build_metal.swift would recompile anyway. An exact key hit means the same mlx-swift
-    # revision and build script (both are in the key), so the file is current: mark it so.
+    # revision, build script and SDK (all in the key), so the file is current: mark it so.
     - if: steps.cache.outputs.cache-hit == 'true'
       shell: bash
       run: touch default.metallib

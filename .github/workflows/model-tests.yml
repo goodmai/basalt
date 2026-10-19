@@ -10,6 +10,10 @@ concurrency:
   # A running dispatch is never killed mid-download; a newer dispatch replaces a still-pending one.
   cancel-in-progress: false
 
+# Dependency code runs here (build plugins, tests): it gets a read-only token.
+permissions:
+  contents: read
+
 jobs:
   test-models:
     name: Test Inference & Benchmarks

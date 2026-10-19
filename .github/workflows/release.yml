@@ -25,6 +25,9 @@ jobs:
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
+          # build/test run dependency code under a contents: write job: no token is left in
+          # .git/config for it to push with. Only the formula step gets one, explicitly.
+          persist-credentials: false
 
       # A tagged commit is what the world downloads — refuse to publish one that
       # carries a credential. Same pattern set as the pre-publish sweep.
@@ -118,7 +121,7 @@ jobs:
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git commit -qm "chore: point formula at ${VERSION}" Formula/basalt.rb
-          git push -f origin "$BRANCH"
+          git push -f "https://x-access-token:<REDACTED>@github.com/${{ github.repository }}.git" "$BRANCH"
           # No `|| true`: a gh auth failure must fail here, not read as "no PR yet".
           OPEN=$(gh pr list --head "$BRANCH" --state open --json url --jq '.[0].url // empty')
           if [ -n "$OPEN" ]; then
