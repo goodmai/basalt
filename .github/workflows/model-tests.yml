@@ -33,8 +33,9 @@ jobs:
       # already persists, and uploading multi-GB weights to the Actions cache only evicts
       # everything else from its 10 GB quota.
       # Unit tests are not repeated here: Unit Tests runs them on every PR and on main.
-      # Both binaries are built first: build_metal.swift drops mlx.metallib next to the
-      # binaries only in build directories that already exist.
+      # Both binaries are built first: a fresh build_metal.swift run drops mlx.metallib next
+      # to the binaries only in build directories that already exist. (When the kernels are
+      # up to date it places nothing; `swift run` from the repo root finds default.metallib.)
       - name: Build
         run: |
           swift build --product Basalt

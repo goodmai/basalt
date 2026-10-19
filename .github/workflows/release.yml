@@ -91,9 +91,9 @@ jobs:
 
       # main requires a PR (ruleset, no bot bypass), so a direct push of the formula was
       # always refused. The bump goes to a branch instead; merging its PR publishes the formula.
-      # GITHUB_TOKEN may open that PR only when the repository allows Actions to create PRs
+      # GITHUB_TOKEN can open that PR because the repository allows Actions to create PRs
       # (Settings → Actions → "Allow GitHub Actions to create and approve pull requests");
-      # otherwise the run warns with the link to open it by hand. A PR opened by GITHUB_TOKEN
+      # if that is ever turned off, the run warns with the link to open it by hand. A PR opened by GITHUB_TOKEN
       # triggers no workflows, so formula.yml (brew audit) runs only once it is merged; one
       # opened by hand from the link gets the audit on the PR.
       - name: Open a PR pointing the Homebrew formula at this tag
@@ -119,7 +119,8 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git commit -qm "chore: point formula at ${VERSION}" Formula/basalt.rb
           git push -f origin "$BRANCH"
-          OPEN=$(gh pr list --head "$BRANCH" --state open --json url --jq '.[0].url // empty' 2>/dev/null || true)
+          # No `|| true`: a gh auth failure must fail here, not read as "no PR yet".
+          OPEN=$(gh pr list --head "$BRANCH" --state open --json url --jq '.[0].url // empty')
           if [ -n "$OPEN" ]; then
             echo "formula PR already open, updated by the push above: $OPEN"
           elif ! gh pr create --base main --head "$BRANCH" \

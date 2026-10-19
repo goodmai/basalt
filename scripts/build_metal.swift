@@ -165,7 +165,10 @@ if airFiles.isEmpty {
 
 var metallibArgs = ["-sdk", "macosx", "metallib"]
 metallibArgs.append(contentsOf: airFiles)
-metallibArgs.append(contentsOf: ["-o", "\(outputDir)/default.metallib"])
+// Linked into the temp dir and renamed into place: an interrupted run (a cancelled CI job)
+// must never leave a truncated metallib with a fresh mtime that the check above trusts.
+let stagedLib = "\(tempDir)/default.metallib"
+metallibArgs.append(contentsOf: ["-o", stagedLib])
 
 log("Creating metallib...", level: .debug)
 let status = run(metallibArgs)
@@ -174,18 +177,30 @@ if status != 0 {
     exit(status)
 }
 
+/// Copies through a sibling temp file and rename(2), so `dst` is either the old file or the
+/// complete new one.
+func atomicCopy(_ src: String, to dst: String) {
+    let staging = dst + ".partial"
+    try? fm.removeItem(atPath: staging)
+    guard (try? fm.copyItem(atPath: src, toPath: staging)) != nil, rename(staging, dst) == 0 else {
+        try? fm.removeItem(atPath: staging)
+        log("Could not place \(dst)", level: .error)
+        exit(1)
+    }
+}
+
+atomicCopy(stagedLib, to: metalLibPath)
+
 // Two placements, because MLX has two ways of finding this file. The copy at
 // the repo root is the last resort in its search order and only works when the
 // process CWD happens to be the repo. The `mlx.metallib` copies sit next to the
 // built binaries, which is the FIRST thing MLX looks for and the only one that
 // survives `brew install` or running the binary from anywhere else.
-try? fm.removeItem(atPath: "default.metallib")
-try? fm.copyItem(atPath: "\(outputDir)/default.metallib", toPath: "default.metallib")
+atomicCopy(metalLibPath, to: "default.metallib")
 
 for buildDir in [".build/debug", ".build/release"] where fm.fileExists(atPath: buildDir) {
     let colocated = "\(buildDir)/mlx.metallib"
-    try? fm.removeItem(atPath: colocated)
-    try? fm.copyItem(atPath: "\(outputDir)/default.metallib", toPath: colocated)
+    atomicCopy(metalLibPath, to: colocated)
     log("Placed \(colocated)", level: .debug)
 }
 
