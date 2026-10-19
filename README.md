@@ -473,10 +473,9 @@ Sources/                    — one SwiftPM target per directory; dependencies p
 
 Tests/
   BasaltTests/              — Unit + integration tests
-    CLITests/               — FitCommand, PromptContextBuilder
+    CLI/                    — Command parsing, Cloud, Fit, PromptContextBuilder
     CloudTests/             — CostTracker, ModelRouter, OpenRouterClient
-    UI/                     — DiffRenderer
-    UITests/                — Clipboard, Markdown, ProgressBar, Spinner, Table, TerminalUI
+    UI/                     — Clipboard, Diff, Markdown, ProgressBar, Spinner, Table, TerminalUI
     MockInferenceEngine.swift — Controllable mock for orchestrator tests
 
 basalt-claude                       — Executable Swift launcher (build + serve + claude)
