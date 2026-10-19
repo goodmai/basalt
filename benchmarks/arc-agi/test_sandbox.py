@@ -1,6 +1,7 @@
 import errno
 import json
 import os
+import resource
 import subprocess
 import sys
 import tempfile
@@ -14,6 +15,7 @@ from arc_sandbox import run_transform, sandbox_available
 BLOCKED = [[0]]
 ESCAPED = [[1]]
 SANDBOX_REFUSALS = (errno.EPERM, errno.EACCES, errno.EAGAIN)
+MEMORY_SOFT_CAP_BYTES = 3 << 29
 CANARY = "arc-sandbox-canary-5d1c"
 PROCESS_SYSCTL_PROBE = f"""
 def transform(grid):
@@ -134,9 +136,10 @@ if os.system('touch PWNED; touch {self.outside}/PWNED') != 0:
         self.assertLess(time.monotonic() - started, 5)
         self.assertEqual((grid, status), (None, "exec_timeout"))
 
-    def test_memory_hog_is_killed(self):
+    def test_memory_hog_is_killed_near_the_limit(self):
         code = "def transform(grid):\n    b = bytearray(4 << 30)\n    b[::4096] = b'x' * len(b[::4096])\n    return [[1]]"
         self.assertEqual(self.run_code(code), (None, "exec_memory_limit"))
+        self.assertLess(resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss, MEMORY_SOFT_CAP_BYTES)
 
     def test_rotation_returns_the_right_grid(self):
         text = "```python\ndef transform(grid):\n    return [list(row) for row in zip(*grid[::-1])]\n```"

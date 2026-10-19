@@ -14,7 +14,10 @@ DEFAULT_TIMEOUT = 10.0
 MEMORY_LIMIT_BYTES = 1 << 30
 OUTPUT_LIMIT_BYTES = 16 << 20
 OPEN_FILES_LIMIT = 64
-WATCH_INTERVAL = 0.1
+WATCH_INTERVAL = 0.01
+RUSAGE_INFO_V0 = 0
+RUSAGE_INFO_V0_WORDS = 12
+RUSAGE_PHYS_FOOTPRINT_WORD = 9
 UNAME_SYSCTLS = ("kern.ostype", "kern.hostname", "kern.osrelease", "kern.version", "hw.machine")
 RAW_SYSCALL_MODULES = r"/lib-dynload/(_ctypes|_test|_xxtest)[^/]*$"
 FUNCTION_NAMES = ("transform", "solve", "transform_grid")
@@ -112,9 +115,18 @@ def run_transform(code_blocks, grid, timeout: float = DEFAULT_TIMEOUT):
     return None, "exec_failed"
 
 
-def _rss_bytes(pid: int) -> int:
-    probe = subprocess.run(["ps", "-o", "rss=", "-p", str(pid)], capture_output=True, text=True)
-    return int(probe.stdout.strip() or 0) * 1024
+def _footprint_bytes(pid: int) -> int:
+    if sys.platform != "darwin":
+        try:
+            with open(f"/proc/{pid}/statm") as statm:
+                return int(statm.read().split()[1]) * os.sysconf("SC_PAGE_SIZE")
+        except (OSError, IndexError, ValueError):
+            return 0
+    import ctypes
+    usage = (ctypes.c_uint64 * RUSAGE_INFO_V0_WORDS)()
+    if ctypes.CDLL(None).proc_pid_rusage(pid, RUSAGE_INFO_V0, usage) != 0:
+        return 0
+    return usage[RUSAGE_PHYS_FOOTPRINT_WORD]
 
 
 def _supervise(process, timeout: float):
@@ -127,7 +139,7 @@ def _supervise(process, timeout: float):
             pass
         if time.monotonic() > deadline:
             reason = "exec_timeout"
-        elif _rss_bytes(process.pid) > MEMORY_LIMIT_BYTES:
+        elif _footprint_bytes(process.pid) > MEMORY_LIMIT_BYTES:
             reason = "exec_memory_limit"
         else:
             continue
