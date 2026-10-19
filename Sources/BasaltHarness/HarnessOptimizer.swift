@@ -471,6 +471,7 @@ public struct HarnessOptimizer: Sendable {
         do {
             _ = try await generate(Self.warmupPrompt(base: base, spec: spec), task: task, maxTokens: 1, temperature: 0)
         } catch {
+            if Self.isCancellation(error) { throw CancellationError() }
             warnings.append("prompt-cache warm-up failed: \(error)")
         }
         for round in 0..<k {
@@ -481,8 +482,8 @@ public struct HarnessOptimizer: Sendable {
                 let id = "\(axis.rawValue)_\(round)"
                 try state.ledger.recordProposerCall(id: "propose_\(id)")
                 let prompt = HarnessProposal.prompt(axis: axis, task: task, harness: view, spec: spec, libraryIndex: index)
-                let delta = HarnessProposal.parse(try await generate(prompt, task: task, maxTokens: proposerTokens, temperature: 0.8).generatedText)
-                try await admitAndProbe(id, delta: delta, task: task, base: base, baseReport: baseReport, state: &state)
+                guard let reply = try await propose(id, prompt: prompt, task: task, maxTokens: proposerTokens, temperature: 0.8, state: &state) else { continue }
+                try await admitAndProbe(id, delta: HarnessProposal.parse(reply), task: task, base: base, baseReport: baseReport, state: &state)
             }
         }
 
@@ -495,14 +496,15 @@ public struct HarnessOptimizer: Sendable {
                 let id = "compose_\(round)"
                 try state.ledger.recordProposerCall(id: "propose_\(id)")
                 let prompt = HarnessProposal.prompt(axis: .compose, task: task, harness: view, spec: spec, libraryIndex: index, sources: sources)
-                let proposed = HarnessProposal.parse(try await generate(prompt, task: task, maxTokens: proposerTokens, temperature: 0.4).generatedText)
+                guard let reply = try await propose(id, prompt: prompt, task: task, maxTokens: proposerTokens, temperature: 0.4, state: &state) else { continue }
+                let proposed = HarnessProposal.parse(reply)
                 let union = sources.reduce(into: [String: String]()) { $0.merge($1) { first, _ in first } }
                 try await admitAndProbe(id, delta: proposed ?? union, task: task, base: base, baseReport: baseReport, state: &state)
             }
         }
 
+        let selection = try await select(state.runs, task: task, warnings: &state.warnings)
         warnings += state.warnings
-        let selection = try await select(state.runs, task: task)
         let winner = state.runs.first { $0.candidateId == selection.winnerId }!
         let attributions = state.runs.filter { !$0.candidateId.hasPrefix("base_") }.flatMap { run in
             HarnessDiff.attribute(
@@ -577,7 +579,23 @@ public struct HarnessOptimizer: Sendable {
         state.deltas[id] = delta
     }
 
-    private func select(_ runs: [HarnessRunView], task: HarnessTask) async throws -> HarnessSelection {
+    private func propose(
+        _ id: String, prompt: String, task: HarnessTask, maxTokens: Int, temperature: Double, state: inout State
+    ) async throws -> String? {
+        do {
+            return try await generate(prompt, task: task, maxTokens: maxTokens, temperature: temperature).generatedText
+        } catch {
+            if Self.isCancellation(error) { throw CancellationError() }
+            state.rejected.append(HarnessRejection(candidateId: id, reasons: ["proposer call failed: \(error)"]))
+            return nil
+        }
+    }
+
+    static func isCancellation(_ error: any Error) -> Bool {
+        error is CancellationError || Task.isCancelled
+    }
+
+    private func select(_ runs: [HarnessRunView], task: HarnessTask, warnings: inout [String]) async throws -> HarnessSelection {
         let finalists = ContrastiveSelector.finalists(runs)
         let ids = finalists.map(\.candidateId)
         guard finalists.count > 1 else {
@@ -585,7 +603,14 @@ public struct HarnessOptimizer: Sendable {
         }
         let candidates = ContrastiveSelector.anonymised(Array(finalists.prefix(ContrastiveSelector.labels.count)), seed: ContrastiveSelector.seed(for: task.slug))
         let prompt = ContrastiveSelector.judgePrompt(task: task, candidates: candidates)
-        let reply = try await generate(prompt, task: task, maxTokens: tokens.judge, temperature: 0).generatedText
+        let reply: String
+        do {
+            reply = try await generate(prompt, task: task, maxTokens: tokens.judge, temperature: 0).generatedText
+        } catch {
+            if Self.isCancellation(error) { throw CancellationError() }
+            warnings.append("judge call failed: \(error)")
+            reply = ""
+        }
         if let label = ContrastiveSelector.parseLabel(reply, labels: candidates.map(\.label)),
            let chosen = candidates.first(where: { $0.label == label }) {
             return HarnessSelection(winnerId: chosen.run.candidateId, finalists: ids, judged: true, judgeFallback: false)

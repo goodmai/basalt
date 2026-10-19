@@ -37,6 +37,12 @@ actor MockInferenceEngine: InferenceEngine {
         self.responder = responder
     }
 
+    var failure: (@Sendable (GenerationRequest) -> BasaltError?)?
+
+    func setFailure(_ failure: @escaping @Sendable (GenerationRequest) -> BasaltError?) {
+        self.failure = failure
+    }
+
     func getRequests() -> [GenerationRequest] {
         requests
     }
@@ -119,6 +125,7 @@ actor MockInferenceEngine: InferenceEngine {
         }
         if shouldFailOnGenerate { throw generateError }
         requests.append(request)
+        if let error = failure?(request) { throw error }
         let mockText = responder?(request) ?? self.mockText
         
         return AsyncStream { continuation in

@@ -502,3 +502,79 @@ struct HarnessLedgerTests {
         #expect(throws: HarnessBudgetError.leakDetected("\"passed\":")) { try HarnessLeakGuard.assertClean(#"{"passed": true}"#) }
     }
 }
+
+extension HarnessOptimizerTests {
+    static func isProposer(_ request: GenerationRequest) -> Bool { request.prompt.hasPrefix("You improve an agent harness") }
+
+    @Test("A failing proposer call becomes a rejection of that candidate and the optimisation continues")
+    func proposerFailureIsRejection() async throws {
+        let (optimizer, engine) = try await Self.optimizer(HarnessScript())
+        await engine.setFailure { request in
+            request.prompt.contains("Goal: Target failure modes") ? .inferenceError("Timeout after 409s") : nil
+        }
+        let result = try await optimizer.optimize(task: Self.task, base: Self.base, k: 1)
+        #expect(result.rejected.first { $0.candidateId == "inv_0" }?.reasons
+            == ["proposer call failed: \(BasaltError.inferenceError("Timeout after 409s"))"])
+        #expect(result.ledger.rolloutIds.contains("probe_dom_0"))
+        #expect(!result.ledger.rolloutIds.contains("probe_inv_0"))
+    }
+
+    @Test("A failing judge call falls back to the base finalist and is reported as a warning")
+    func judgeFailureFallsBack() async throws {
+        var script = HarnessScript()
+        script.rollout = { _ in "SUMMARY tie" }
+        let (optimizer, engine) = try await Self.optimizer(script)
+        await engine.setFailure { $0.prompt.hasPrefix("Several anonymous deliverables") ? .inferenceError("judge down") : nil }
+        let result = try await optimizer.optimize(task: Self.task, base: Self.base, k: 1)
+        #expect(result.selection.judged && result.selection.judgeFallback)
+        #expect(result.winningCandidateId == "base_r0")
+        #expect(result.warnings.contains { $0.hasPrefix("judge call failed:") })
+    }
+
+    final class CancelSwitch: @unchecked Sendable {
+        private let lock = NSLock()
+        private var task: Task<HarnessOptimizationResult, any Error>?
+        private var tripped = false
+
+        func attach(_ task: Task<HarnessOptimizationResult, any Error>) {
+            lock.withLock {
+                self.task = task
+                if tripped { task.cancel() }
+            }
+        }
+
+        func trip() -> Bool {
+            lock.withLock {
+                tripped = true
+                task?.cancel()
+            }
+            return true
+        }
+
+        var isTripped: Bool { lock.withLock { tripped } }
+    }
+
+    static func cancelledRun(when trigger: @escaping @Sendable (GenerationRequest) -> Bool) async throws -> Result<HarnessOptimizationResult, any Error> {
+        let (optimizer, engine) = try await Self.optimizer(HarnessScript())
+        let cancel = CancelSwitch()
+        await engine.setFailure { request in
+            cancel.isTripped || (trigger(request) && cancel.trip()) ? .inferenceError("cancelled") : nil
+        }
+        let run = Task { try await optimizer.optimize(task: Self.task, base: Self.base, k: 1) }
+        cancel.attach(run)
+        return await run.result
+    }
+
+    @Test("Cancellation during the warm-up, a proposer call or the judge stops the optimisation with CancellationError")
+    func cancellationPropagates() async throws {
+        let triggers: [@Sendable (GenerationRequest) -> Bool] = [
+            { $0.maxTokens == 1 },
+            { Self.isProposer($0) },
+            { $0.prompt.hasPrefix("Several anonymous deliverables") }
+        ]
+        for trigger in triggers {
+            let outcome = try await Self.cancelledRun(when: trigger)
+            #expect(throws: CancellationError.self) { try outcome.get() }
+        }
+    }
+}
