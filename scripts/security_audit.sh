@@ -32,18 +32,23 @@ osv_scan() {
         fi
     done
 
-    local found=0 unchecked=0 checked=0 name url version pkg response ids
-    while IFS=$'\t' read -r name url version; do
-        if [[ -z "$url" || -z "$version" ]]; then
+    local found=0 unchecked=0 checked=0 name url version revision pkg query response ids
+    while IFS=$'\x1f' read -r name url version revision; do
+        if [[ -z "$url" || ( -z "$version" && -z "$revision" ) ]]; then
             unchecked=1
-            echo "UNCHECKED   $name (no location or version in $resolved)"
+            echo "UNCHECKED   $name (no location, version or revision in $resolved)"
             continue
         fi
         pkg="${url#https://}"
         pkg="${pkg%.git}"
+        if [[ -n "$version" ]]; then
+            query="{\"package\":{\"name\":\"$pkg\",\"ecosystem\":\"SwiftURL\"},\"version\":\"$version\"}"
+        else
+            query="{\"commit\":\"$revision\"}"
+            version="commit $revision"
+        fi
 
-        if ! response=$(curl -sSf -m 30 "https://api.osv.dev/v1/query" \
-                -d "{\"package\":{\"name\":\"$pkg\",\"ecosystem\":\"SwiftURL\"},\"version\":\"$version\"}") ||
+        if ! response=$(curl -sSf -m 30 "https://api.osv.dev/v1/query" -d "$query") ||
            ! printf '%s' "$response" | jq -e 'type == "object"' > /dev/null 2>&1; then
             unchecked=1
             echo "UNCHECKED   $name @ $version (OSV query failed)"
@@ -64,8 +69,7 @@ import json, sys
 pins = json.load(open(sys.argv[1]))["pins"]
 for p in pins:
     state = p.get("state", {})
-    # Revision-only pins get an empty version: OSV keys versions, so they are reported UNCHECKED.
-    print("\t".join([p.get("identity", "?"), p.get("location", ""), state.get("version") or ""]))
+    print("\x1f".join([p.get("identity", "?"), p.get("location", ""), state.get("version") or "", state.get("revision") or ""]))
 ' "$resolved")
 
     echo
