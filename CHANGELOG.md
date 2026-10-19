@@ -11,7 +11,9 @@
 ### Coding agents
 - Tool calling on `/v1/messages` (Claude Code): `tools` (`input_schema`) reach the chat template; `tool_use` / `tool_result` history blocks (string or block `content`, `is_error`) are rendered into the prompt like the Responses API's `function_call` / `function_call_output`; calls come back as `tool_use` blocks with `toolu_…` ids and `stop_reason: "tool_use"`, streamed as `content_block_start {tool_use}`, `input_json_delta`, `content_block_stop` after any thinking or text block (#73).
 - Tool calling on `/v1/chat/completions`: `tools` in, assistant `tool_calls` and role `tool` messages rendered into the prompt, `message.tool_calls` / streamed `delta.tool_calls` with `finish_reason: "tool_calls"`. The stream's last chunk now reports `length` when generation hit the cap instead of always `stop` (#73).
-- `tool_choice` on all three endpoints: `none` offers no tools, a named tool offers only that tool; `any` / `required` behave as `auto` (#73).
+- `tool_choice` on all three endpoints: `none` offers no tools; a named tool keeps every tool in the prompt and only that one is let through (a name not in `tools` is 400); `any` / `required` behave as `auto`; `parallel_tool_calls: false` / `disable_parallel_tool_use: true` pass only the first call (#73).
+- A tool call the engine parses for a tool that was not offered (or not the forced one) is no longer passed to the client; it becomes the visible `[tool call to X rejected: …]` note, like an unrepairable call (#73, #53).
+- Tool results in the history render as `[Tool result for <name>]`, matched by `tool_use_id` / `tool_call_id` / `call_id`, so parallel results are not attributed by order; images in tool results render as `[image omitted]`. Tool schemas are serialized with sorted keys for a stable prompt prefix (#73).
 
 ### Sampling
 - Per-request `min_p` (`minP` on `/api/v1/generate` and MCP) overrides `--min-p` and the model profile default; `0` turns Min-P off for that request. Validated to 0–1 (#40).
