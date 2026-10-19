@@ -474,7 +474,7 @@ Sources/                    — one SwiftPM target per directory; dependencies p
 Tests/
   BasaltTests/              — Unit + integration tests
     CLI/                    — Command parsing, Cloud, Fit, PromptContextBuilder
-    CloudTests/             — CostTracker, ModelRouter, OpenRouterClient
+    Cloud/                  — CostTracker, ModelRouter, OpenRouterClient
     UI/                     — Clipboard, Diff, Markdown, ProgressBar, Spinner, Table, TerminalUI
     MockInferenceEngine.swift — Controllable mock for orchestrator tests
 

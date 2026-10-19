@@ -188,6 +188,12 @@ func dailyCandidates() -> [String] {
         let keys: [URLResourceKey] = [.contentModificationDateKey, .creationDateKey]
         let contents = (try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: keys)) ?? []
         for file in contents where file.lastPathComponent != ".gitkeep" {
+            // Rotation is for files: a subdirectory's own mtime says nothing about what is
+            // inside it, so it is never removed by age.
+            if (try? file.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true {
+                log("Kept directory: \(relative(file.path))", level: .debug)
+                continue
+            }
             let values = try? file.resourceValues(forKeys: Set(keys))
             let date = values?.contentModificationDate ?? values?.creationDate ?? Date()
             if maxAgeHours == 0 || date < cutoff {

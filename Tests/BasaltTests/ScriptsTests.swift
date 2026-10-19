@@ -77,6 +77,10 @@ struct ScriptsTests {
         try write("nested/work.log")
         try write(".claude/worktrees/w1/draft.tmp")
         try write("notes~draft.md")                         // `~` mid-name is not a backup file
+        try fm.createDirectory(at: repo.appendingPathComponent("reports/run1"), withIntermediateDirectories: true)
+        try write("reports/run1/today.md")                    // fresh file in an old-looking dir
+        try fm.setAttributes([.modificationDate: Date().addingTimeInterval(-twoDays)],
+                             ofItemAtPath: repo.appendingPathComponent("reports/run1").path)
         try fm.createDirectory(at: repo.appendingPathComponent(".archive/clone"), withIntermediateDirectories: true)
         try write(".archive/clone/.git")                    // a clone parked in .archive
         try write(".archive/clone/wip.swift")
@@ -109,6 +113,7 @@ struct ScriptsTests {
         #expect(exists("nested/work.log"))
         #expect(exists(".claude/worktrees/w1/draft.tmp"))
         #expect(exists("notes~draft.md"))
+        #expect(exists("reports/run1/today.md"), "daily rotation never removes a directory by its own mtime")
         #expect(runScript("scripts/cleanup.swift", args: ["--mode=release", "--include-local", "--apply"], in: repo) == 0)
         #expect(exists(".archive/clone/wip.swift"), ".archive holding a work tree is kept whole")
     }
