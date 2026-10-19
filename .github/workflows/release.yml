@@ -73,7 +73,9 @@ jobs:
       # always refused. The bump goes to a branch instead; merging its PR publishes the formula.
       # GITHUB_TOKEN may open that PR only when the repository allows Actions to create PRs
       # (Settings → Actions → "Allow GitHub Actions to create and approve pull requests");
-      # otherwise the run warns with the link to open it by hand.
+      # otherwise the run warns with the link to open it by hand. A PR opened by GITHUB_TOKEN
+      # triggers no workflows, so formula.yml (brew audit) runs only once it is merged; one
+      # opened by hand from the link gets the audit on the PR.
       - name: Open a PR pointing the Homebrew formula at this tag
         id: formula
         env:
@@ -82,17 +84,20 @@ jobs:
           VERSION=${{ steps.pkg.outputs.version }}
           BRANCH="release/formula-${VERSION}"
           git fetch -q origin main
-          git checkout -q -B "$BRANCH" origin/main
+          # -f: build/test may have rewritten tracked files (Package.resolved) in the tag checkout.
+          git checkout -q -f -B "$BRANCH" origin/main
           sed -i '' "s|url \".*\"|url \"https://github.com/${{ github.repository }}/archive/refs/tags/${VERSION}.tar.gz\"|" Formula/basalt.rb
           sed -i '' "s|sha256 \".*\"|sha256 \"${{ steps.pkg.outputs.tarball_sha }}\"|" Formula/basalt.rb
-          echo "branch=$BRANCH" >> $GITHUB_OUTPUT
           if git diff --quiet Formula/basalt.rb; then
+            # Empty branch: verify main, never a stale release/formula-* left by an earlier cut.
+            echo "branch=" >> $GITHUB_OUTPUT
             echo "formula already points at ${VERSION}"
             exit 0
           fi
+          echo "branch=$BRANCH" >> $GITHUB_OUTPUT
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git commit -qam "chore: point formula at ${VERSION}"
+          git commit -qm "chore: point formula at ${VERSION}" Formula/basalt.rb
           git push -f origin "$BRANCH"
           if ! gh pr create --base main --head "$BRANCH" \
               --title "chore: point formula at ${VERSION}" \
@@ -118,13 +123,18 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # The formula is what users install: read back what the bump branch (or main, when it
-      # was already current) carries and compare it with the sha computed above.
+      # The formula is what users install: read back what the bump branch (or main, when the
+      # formula was already current) carries and compare it with the sha computed above.
       - name: Verify the formula bump
         run: |
-          git fetch -q origin main "${{ steps.formula.outputs.branch }}" 2>/dev/null || git fetch -q origin main
-          REF=origin/${{ steps.formula.outputs.branch }}
-          git rev-parse -q --verify "$REF" >/dev/null || REF=origin/main
+          BRANCH="${{ steps.formula.outputs.branch }}"
+          if [ -n "$BRANCH" ]; then
+            git fetch -q origin "$BRANCH"
+            REF=origin/$BRANCH
+          else
+            git fetch -q origin main
+            REF=origin/main
+          fi
           PUSHED=$(git show "$REF:Formula/basalt.rb" 2>/dev/null | grep -oE 'sha256 "[a-f0-9]{64}"' | head -1 | grep -oE '[a-f0-9]{64}' || true)
           if [ "$PUSHED" != "${{ steps.pkg.outputs.tarball_sha }}" ]; then
             echo "::error::Formula/basalt.rb on $REF carries sha256 '$PUSHED', expected ${{ steps.pkg.outputs.tarball_sha }}"

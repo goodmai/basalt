@@ -6,10 +6,17 @@ description: >
 runs:
   using: composite
   steps:
-    - uses: actions/cache@v6
+    - id: cache
+      uses: actions/cache@v6
       with:
         path: default.metallib
         key: metallib-${{ hashFiles('Package.resolved') }}
+    # A restored file keeps its old mtime, older than the fresh .metal checkouts, so
+    # build_metal.swift would recompile anyway. An exact key hit means the same mlx-swift
+    # revision (the key is Package.resolved), so the file is current: mark it as such.
+    - if: steps.cache.outputs.cache-hit == 'true'
+      shell: bash
+      run: touch default.metallib
     # --skip-unsupported: a runner SDK older than the one MLX targets lacks a couple of
     # headers some kernels include; the library still loads, which is all the suite needs.
     - shell: bash

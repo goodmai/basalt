@@ -19,8 +19,15 @@ jobs:
     timeout-minutes: 90
     
     steps:
+      # clean: false — the workspace is shared with Unit Tests on this runner; the default
+      # `git clean -ffdx` would wipe the .build that both reuse.
       - name: Checkout repository
         uses: actions/checkout@v7
+        with:
+          clean: false
+
+      - name: Configure Swift toolchain
+        uses: ./.github/actions/xcode-toolchain
         
       # No actions/cache for ~/.cache/huggingface: on the self-hosted runner that directory
       # already persists, and uploading multi-GB weights to the Actions cache only evicts
