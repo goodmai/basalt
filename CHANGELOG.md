@@ -8,6 +8,11 @@
 - A model directory without a readable `config.json` is refused before the serving model is unloaded, so a bad load no longer leaves the server without a model (#72).
 - REST error bodies no longer contain filesystem paths or echo the requested model id of a failed load (the endpoint was a file-existence oracle); the full error is in the server log (#72).
 
+### Coding agents
+- Tool calling on `/v1/messages` (Claude Code): `tools` (`input_schema`) reach the chat template; `tool_use` / `tool_result` history blocks (string or block `content`, `is_error`) are rendered into the prompt like the Responses API's `function_call` / `function_call_output`; calls come back as `tool_use` blocks with `toolu_…` ids and `stop_reason: "tool_use"`, streamed as `content_block_start {tool_use}`, `input_json_delta`, `content_block_stop` after any thinking or text block (#73).
+- Tool calling on `/v1/chat/completions`: `tools` in, assistant `tool_calls` and role `tool` messages rendered into the prompt, `message.tool_calls` / streamed `delta.tool_calls` with `finish_reason: "tool_calls"`. The stream's last chunk now reports `length` when generation hit the cap instead of always `stop` (#73).
+- `tool_choice` on all three endpoints: `none` offers no tools, a named tool offers only that tool; `any` / `required` behave as `auto` (#73).
+
 ### Sampling
 - Per-request `min_p` (`minP` on `/api/v1/generate` and MCP) overrides `--min-p` and the model profile default; `0` turns Min-P off for that request. Validated to 0–1 (#40).
 - `dynamic_temperature` (`dynamicTemperature`): entropy-based dynamic temperature (EDT, arXiv:2403.14541), `T = T0·N^(θ/H) + γ·R` with N = 0.8, θ = 1.5, γ = 0.5, clamped to 0.05–2 (a request colder than 0.05 keeps its own temperature as the floor). Confident tokens sample near-greedy; a forming repetition loop raises the temperature. With EDT on, `top_p`/`min_p` still cut the original distribution, not the heated one. Off by default; no effect at temperature 0 (#40).
