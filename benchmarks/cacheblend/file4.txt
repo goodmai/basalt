@@ -1,0 +1,98 @@
+File Sources/BasaltCLI/ServeCommand.swift:
+
+import Foundation
+import ArgumentParser
+import BasaltCore
+import BasaltInference
+import BasaltServer
+
+// MARK: — serve (subcommand)
+
+@available(macOS 10.15, macCatalyst 13, iOS 13, tvOS 13, watchOS 6, *)
+struct ServeCommand: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "serve",
+        abstract: "Start the Basalt inference server (REST + optional MCP stdio)"
+    )
+
+    // MARK: — Arguments
+
+    @Option(
+        name: .customLong("model"),
+        help: "Model repo ID (e.g. mlx-community/gemma-4-e4b-it-4bit) or local path"
+    )
+    var model: String?
+
+    @Option(
+        name: .customLong("model-path"),
+        help: "Explicit local path to model directory (overrides --model cache lookup)"
+    )
+    var modelPath: String?
+
+    @Option(
+        name: .customLong("quant"),
+        help: "Quantization subfolder inside the repo (e.g. 2bit | 4bit) — for repos shipping several variants"
+    )
+    var quant: String?
+
+    @Option(
+        name: .customLong("reasoning-effort"),
+        help: "Chat-template reasoning budget (Qwen3.8: xhigh | medium | low), or `none` to disable thinking entirely"
+    )
+    var reasoningEffort: String?
+
+    @Option(name: .customLong("top-k"), help: "Keep only the k most likely tokens (unset disables)")
+    var topK: Int?
+
+    @Option(name: .customLong("min-p"), help: "Drop tokens below this fraction of the top token's probability")
+    var minP: Float?
+
+    @Option(name: .customLong("seed"), help: "Seed the sampler so a non-greedy run is reproducible")
+    var seed: UInt64?
+
+    @Option(name: .customLong("kv-bits"), help: "Quantize the KV cache to 4 or 8 bits (default: full precision)")
+    var kvBits: Int?
+
+    @Option(name: .customLong("repetition-penalty"), help: "Penalty on recently emitted tokens, e.g. 1.1 (default: off)")
+    var repetitionPenalty: Float?
+
+    @Option(
+        name: .customLong("prompt-cache-mb"),
+        help: "Memory for the prompt-cache prefix tree shared by all requests, in MB (default: half of what Metal's recommended working set leaves after the weights; 0 disables)"
+    )
+    var promptCacheMB: Int?
+
+    @Flag(
+        name: .customLong("cache-blend"),
+        help: "Reuse the KV of prompt chunks (split after blank lines) in any order, recomputing only the most deviating tokens (CacheBlend, approximate; Llama and Qwen3 only; takes half the prompt-cache budget)"
+    )
+    var cacheBlend = false
+
+    @Option(
+        name: .customLong("cache-blend-ratio"),
+        help: "Share of reused chunk tokens recomputed by --cache-blend, 0...1 (default: 0.5; 0 is fastest, 1 ≈ a full prefill up to numerical noise)"
+    )
+    var cacheBlendRatio: Float = 0.5
+
+    // Optional so an explicit `--port 8080` can be told apart from "not passed":
+    // precedence is CLI > --config file > default.
+    @Option(name: .shortAndLong, help: "REST API port (default: 8080)")
+    var port: Int?
+
+    @Option(name: .long, help: "Bind address (default: 127.0.0.1)")
+    var host: String?
+
+    @Option(
+        name: .customLong("api-key"),
+        help: "API key required for authenticating requests, mandatory when binding to a non-loopback address. Prefer the BASALT_API_KEY environment variable: argv is visible to every local user via ps."
+    )
+    var apiKey: String?
+
+    @Flag(
+        name: .customLong("auto-generate-key"),
+        help: "Automatically generate a cryptographically strong API key if none is provided on non-loopback bind (a new key on every start — pass a fixed key for clients that reconnect)"
+    )
+    var autoGenerateKey: Bool = false
+
+    @Opt
+

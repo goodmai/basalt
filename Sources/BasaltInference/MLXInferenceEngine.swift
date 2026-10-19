@@ -68,6 +68,8 @@ public actor MLXInferenceEngine: InferenceEngine {
     private var modelEpoch = 0
     private var modelIsHybrid: Bool?
     private var templateSuffixes: [String: Int] = [:]
+    private let cacheBlendRatio: Float?
+    private(set) var cacheBlend: CacheBlendStore?
 
     public init(
         reasoningEffort: String? = nil,
@@ -78,7 +80,8 @@ public actor MLXInferenceEngine: InferenceEngine {
         repetitionPenalty: Float? = nil,
         topK: Int? = nil,
         minP: Float? = nil,
-        seed: UInt64? = nil
+        seed: UInt64? = nil,
+        cacheBlendRatio: Float? = nil
     ) {
         self.reasoningEffort = reasoningEffort
         self.gpuCacheLimit = gpuCacheLimit
@@ -89,13 +92,17 @@ public actor MLXInferenceEngine: InferenceEngine {
         self.minP = minP
         self.seed = seed
         self.configuredPromptCacheBytes = promptCacheBytes
+        self.cacheBlendRatio = cacheBlendRatio
         self.promptCaches = PromptCacheTree(byteBudget: promptCacheBytes ?? 0)
     }
 
     func attach(_ container: ModelContainer) {
         self.container = container
-        promptCaches = PromptCacheTree(byteBudget: configuredPromptCacheBytes ?? PromptCacheBudget.automatic(
-            workingSet: PromptCacheBudget.gpuWorkingSet(), weights: Memory.activeMemory))
+        let budget = configuredPromptCacheBytes ?? PromptCacheBudget.automatic(
+            workingSet: PromptCacheBudget.gpuWorkingSet(), weights: Memory.activeMemory)
+        let blendBytes = cacheBlendRatio == nil ? 0 : budget / 2
+        promptCaches = PromptCacheTree(byteBudget: budget - blendBytes)
+        cacheBlend = cacheBlendRatio.map { CacheBlendStore(ratio: $0, byteBudget: blendBytes) }
         modelEpoch += 1
         modelIsHybrid = nil
         templateSuffixes = [:]
@@ -181,6 +188,7 @@ public actor MLXInferenceEngine: InferenceEngine {
             if container != nil {
                 container = nil
                 promptCaches.removeAll()
+                cacheBlend = nil
                 modelEpoch += 1
                 Memory.clearCache()   // flush MLX's internal memory allocator cache
                 logger.info("Previous model unloaded, GPU cache cleared.")
@@ -446,11 +454,13 @@ public actor MLXInferenceEngine: InferenceEngine {
             let boundary = namespace == nil
                 ? promptTokens.count - 1
                 : await snapshotBoundary(promptTokens.count, container: container, epoch: epoch, template: template, makeInput)
+            let blend = epoch == modelEpoch && modelIsHybrid == false ? cacheBlend : nil
             let launch: GenerationLaunch
             do {
                 launch = try await container.perform(nonSendable: lmInput) { context, input in
                     try Self.launch(
                         input: input, lease: lease, keepsCache: namespace != nil, boundary: boundary,
+                        blend: namespace.flatMap { space in blend.map { ($0, space) } },
                         params: params, components: components, tools: toolSpecs, context: context)
                 }
             } catch {
@@ -572,7 +582,7 @@ public actor MLXInferenceEngine: InferenceEngine {
                     
                     processBuffer(final: true)
                     await Self.settle(launch, cancelled: Task.isCancelled)
-                    await self.keep(launch.cache, tokens: promptTokens, namespace: namespace, releasing: lease, epoch: epoch)
+                    await self.keep(launch.cache, tokens: Array(promptTokens.prefix(launch.exactTokens)), namespace: namespace, releasing: lease, epoch: epoch)
 
                     // End of stream - send metadata
                     if !Task.isCancelled {
@@ -623,6 +633,7 @@ public actor MLXInferenceEngine: InferenceEngine {
         let task: Task<Void, Never>?
         let cache: PromptCache?
         let reusedTokens: Int
+        var exactTokens = Int.max
     }
 
     static func settle(_ launch: GenerationLaunch, cancelled: Bool) async {
@@ -677,6 +688,7 @@ public actor MLXInferenceEngine: InferenceEngine {
 
     static func launch(
         input: LMInput, lease: PromptCacheLease?, keepsCache: Bool, boundary: Int,
+        blend: (store: CacheBlendStore, namespace: String)? = nil,
         params: GenerateParameters, components: GenerationComponents,
         tools: [ToolSpec]?, context: ModelContext
     ) throws -> GenerationLaunch {
@@ -686,10 +698,23 @@ public actor MLXInferenceEngine: InferenceEngine {
             return GenerationLaunch(stream: stream, task: nil, cache: nil, reusedTokens: 0)
         }
         try components.validate(parameters: params)
-        let cache = try lease?.cache ?? PromptCache(context.model.newCache(parameters: params))
+        var cache = try lease?.cache ?? PromptCache(context.model.newCache(parameters: params))
         let reused = lease?.reusedTokens ?? 0
-        let head = try HybridPrefixSnapshot.prefillHead(
-            input.text.tokens, into: cache, reused: reused, boundary: boundary, model: context.model, prefill: params.prefill)
+        let blended = cache.isHybrid ? nil : blend.flatMap {
+            $0.store.extend(
+                cache, prompt: input.text.tokens.asArray(Int.self), from: reused, namespace: $0.namespace,
+                model: context.model, tokenizer: context.tokenizer, prefillStep: params.prefill.stepSize ?? 512)
+        }
+        if let blended {
+            cache = blended.cache
+        }
+        if let blended, blended.reused > 0 {
+            GemLogger(module: "CacheBlend").info(
+                "Blended \(blended.tokens) prompt tokens: \(blended.reused) from cached chunks, \(blended.recomputed) of them recomputed")
+        }
+        let head = try blended.map { (kept: $0.cache, start: reused + $0.tokens, state: $0.cache.state) }
+            ?? HybridPrefixSnapshot.prefillHead(
+                input.text.tokens, into: cache, reused: reused, boundary: boundary, model: context.model, prefill: params.prefill)
         let tail = LMInput(tokens: input.text.tokens[.ellipsis, head.start...])
         let iterator = try TokenIterator(
             input: tail, model: context.model, cache: cache.layers, state: head.state,
@@ -701,7 +726,9 @@ public actor MLXInferenceEngine: InferenceEngine {
         let (stream, task) = generateTask(
             promptTokenCount: input.text.tokens.dim(-1) - reused, modelConfiguration: context.configuration,
             tokenizer: context.tokenizer, iterator: iterator, tools: tools, toolCallPolicy: params.toolCallPolicy)
-        return GenerationLaunch(stream: stream, task: task, cache: keepable ? head.kept : nil, reusedTokens: reused)
+        return GenerationLaunch(
+            stream: stream, task: task, cache: keepable ? head.kept : nil, reusedTokens: reused,
+            exactTokens: blended?.exactPrefix ?? Int.max)
     }
 }
 
