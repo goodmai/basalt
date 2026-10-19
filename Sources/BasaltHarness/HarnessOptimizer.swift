@@ -289,7 +289,7 @@ enum HarnessProposal {
 
     static func fenced(_ path: String, _ content: String, truncated: Bool = false) -> String {
         let attributes = "path=\"\(HarnessText.inert(path))\"" + (truncated ? " truncated=\"true\"" : "")
-        return "<file \(attributes)>\n\(content.replacingOccurrences(of: "</file>", with: "<\\/file>"))\n</file>"
+        return "<file \(attributes)>\n\(content.replacingOccurrences(of: #"(?i)<(\s*)/(\s*file\s*>)"#, with: #"<$1\\/$2"#, options: .regularExpression))\n</file>"
     }
 
     static func prompt(

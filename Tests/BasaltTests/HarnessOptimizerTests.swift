@@ -245,6 +245,12 @@ struct HarnessOptimizerTests {
         #expect(prompt.contains("<file path=\".claude/notes.md\">\nbefore <\\/file> after\n</file>"))
     }
 
+    @Test("A closing file tag in any case or spacing inside a file is neutralised")
+    func closingTagVariantsAreNeutralised() {
+        let fenced = HarnessProposal.fenced("a.md", "x </FILE > y < /file> z </File\n>")
+        #expect(fenced == "<file path=\"a.md\">\nx <\\/FILE > y < \\/file> z <\\/File\n>\n</file>")
+    }
+
     @Test("Editable files beyond the proposer prompt budget are marked truncated and a delta for them is rejected")
     func truncatedFilesAreNotEditable() {
         let chunk = String(repeating: "y", count: 30 * 1024)
