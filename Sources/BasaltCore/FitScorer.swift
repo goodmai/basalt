@@ -201,7 +201,7 @@ public actor FitScorer {
     ) -> (tps: Double, measured: Bool, calibrationFactor: Double) {
         let etaMetal = 0.70  // fraction of peak bandwidth Metal sustains during decode
         let effectiveBW = memoryBandwidthGBs(chip: chip, gpuName: gpuName) * etaMetal
-        let kvReadGB = kvCacheFootprintGB(params: model.totalParameters, contextTokens: contextTokens)
+        let kvReadGB = kvReadGB(model.kvGeometry, contextTokens: contextTokens)
         let theoretical = effectiveBW / max(0.1, model.activeParameters * (bits / 8.0) + kvReadGB)
 
         guard bits > 0, let m = profile.measurement(for: model.id, currentChip: chip) else {
@@ -212,23 +212,8 @@ public actor FitScorer {
         return (tps, true, theoretical > 0 ? tps / theoretical : 1.0)
     }
     
-    /// fp16 KV cache per 4k tokens, GB. Calibrated on GQA geometry (2·layers·kv_heads·head_dim·2 B):
-    /// Qwen2.5-7B ≈ 0.23 GB, Qwen3.x-27B ≈ 0.9 GB per 4k tokens → ≈ 0.034 GB per billion params.
-    /// ponytail: a parameter-count proxy from the total, capped at 32B. It overcharges MoE and hybrid
-    /// models (35B-A3B: ~1.1 GB vs ~0.4 GB real) and undercharges small dense ones (3B: ~0.1 vs ~0.5 GB);
-    /// read layers/kv_heads/head_dim from config.json when an exact figure matters.
-    static func kvGBPer4k(params: Double) -> Double {
-        min(32.0, params) * 0.034 + 0.01
-    }
-
-    public static func kvCacheFootprintGB(params: Double, contextTokens: Int) -> Double {
-        let referenceTokens = min(Double(contextTokens), 4096.0)
-        return max(0.01, (referenceTokens / 4096.0) * kvGBPer4k(params: params))
-    }
-
-    public static func kvCacheMemoryMB(params: Double, contextTokens: Int) -> Double {
-        let gb = (Double(contextTokens) / 4096.0) * kvGBPer4k(params: params)
-        return max(64.0, gb * 1024.0)
+    public static func kvReadGB(_ kv: KVCacheGeometry, contextTokens: Int) -> Double {
+        max(0.01, Double(kv.bytes(tokens: min(contextTokens, 4096))) / 1e9)
     }
 
     /// Peak unified-memory bandwidth (GB/s) by generation and tier, from Apple's published specs

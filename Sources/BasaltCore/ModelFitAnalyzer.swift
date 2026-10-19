@@ -113,8 +113,7 @@ public struct ModelFitAnalyzer: Sendable {
         
         let profile = benchmarkProfile ?? HardwareBenchmarkProfileStore.loadSync()
         
-        // Approximate KV cache size in MB at L_min derived from geometry
-        let kvCacheMB = FitScorer.kvCacheMemoryMB(params: model.totalParameters, contextTokens: lMin)
+        let kvCacheMB = Double(model.kvGeometry.bytes(tokens: lMin)) / 1_048_576
         let overhead = 0.15 // 15% framework overhead
 
         var evaluated: [(bits: Int, name: String, footprintMB: Int, tps: Int, score: FourDimensionalScore, fits: Bool)] = []
