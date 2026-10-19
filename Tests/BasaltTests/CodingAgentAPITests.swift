@@ -345,3 +345,142 @@ struct CodingAgentAPITests {
         #expect(messageTexts(output) == ["Let me look."])
     }
 }
+
+@Suite("Tool calling on /v1/messages and /v1/chat/completions (#73)")
+struct ToolCallingEndpointsTests {
+
+    private func app(call: ToolCallOutput? = nil, text: String = "", reasoning: String? = nil) async throws -> (Application<RouterResponder<BasicRequestContext>>, MockInferenceEngine) {
+        let engine = MockInferenceEngine()
+        await engine.setMockReasoning(reasoning)
+        if let call { await engine.setMockToolCall(call, text: text) }
+        let orch = ModelOrchestratorActor(engine: engine, telemetry: TelemetryTracker())
+        try await orch.loadModel(path: "mock")
+        let server = RESTServer(orchestrator: orch, config: try ServerConfig(modelPath: "mock"))
+        return (Application(router: server.makeRouter()), engine)
+    }
+
+    private func post(_ app: Application<RouterResponder<BasicRequestContext>>, _ uri: String, _ json: String) async throws -> String {
+        try await app.test(.router) { client in
+            try await client.execute(uri: uri, method: .post, headers: [.contentType: "application/json"], body: ByteBuffer(string: json)) { res in
+                #expect(res.status == .ok)
+                return String(buffer: res.body)
+            }
+        }
+    }
+
+    private func object(_ raw: String) throws -> [String: Any] {
+        try #require(try JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any])
+    }
+
+    private func dataFrames(_ raw: String) -> [[String: Any]] {
+        raw.components(separatedBy: "\n\n").compactMap { frame in
+            guard let line = frame.split(separator: "\n").first(where: { $0.hasPrefix("data: ") }) else { return nil }
+            return try? JSONSerialization.jsonObject(with: Data(line.dropFirst(6).utf8)) as? [String: Any]
+        }
+    }
+
+    private let call = ToolCallOutput(id: "call_abc", name: "Bash", arguments: #"{"command":"ls"}"#)
+
+    private let anthropicTools = #"""
+    "tools": [{"name": "Bash", "description": "Run a shell command",
+               "input_schema": {"type": "object", "properties": {"command": {"type": "string"}}, "required": ["command"]}}]
+    """#
+
+    @Test("Messages: tools reach the engine; tool_use and tool_result history is rendered into the prompt")
+    func messagesHistory() async throws {
+        let (app, engine) = try await app()
+        let request = #"""
+        {"model": "local", "max_tokens": 64, "messages": [
+          {"role": "user", "content": "list files"},
+          {"role": "assistant", "content": [
+            {"type": "text", "text": "Listing."},
+            {"type": "tool_use", "id": "toolu_1", "name": "Bash", "input": {"command": "ls"}}]},
+          {"role": "user", "content": [
+            {"type": "tool_result", "tool_use_id": "toolu_1", "content": "a.txt\nb.txt"},
+            {"type": "tool_result", "tool_use_id": "toolu_2", "is_error": true, "content": [{"type": "text", "text": "denied"}]},
+            {"type": "text", "text": "how many?"}]}
+        ], 
+        """# + anthropicTools + "}"
+        _ = try await post(app, "/v1/messages", request)
+        let sent = try #require(await engine.lastRequest)
+        #expect(sent.tools?.map(\.name) == ["Bash"])
+        #expect(sent.tools?.first?.parametersJSON?.contains("\"command\"") == true)
+        let expected = [
+            "[User]: list files",
+            "[Assistant]: Listing.",
+            #"[Assistant called Bash]: {"command":"ls"}"#,
+            "[Tool result]: a.txt\nb.txt",
+            "[Tool error]: denied",
+            "[User]: how many?"
+        ].joined(separator: "\n\n")
+        #expect(sent.prompt == expected)
+    }
+
+    @Test("Messages: tool_choice none sends no tools to the engine")
+    func messagesToolChoiceNone() async throws {
+        let (app, engine) = try await app()
+        let request = #"{"max_tokens": 64, "tool_choice": {"type": "none"}, "messages": [{"role": "user", "content": "hi"}], "# + anthropicTools + "}"
+        _ = try await post(app, "/v1/messages", request)
+        #expect(await engine.lastRequest?.tools == nil)
+    }
+
+    @Test("Messages non-streaming: a tool call is a tool_use block with stop_reason tool_use")
+    func messagesNonStream() async throws {
+        let (app, _) = try await app(call: call, text: "Let me check.")
+        let json = try object(try await post(app, "/v1/messages",
+            #"{"max_tokens": 64, "messages": [{"role": "user", "content": "ls"}], "# + anthropicTools + "}"))
+        #expect(json["stop_reason"] as? String == "tool_use")
+        let content = try #require(json["content"] as? [[String: Any]])
+        #expect(content.map { $0["type"] as? String } == ["text", "tool_use"])
+        #expect(content[0]["text"] as? String == "Let me check.")
+        #expect(content[1]["id"] as? String == "toolu_abc")
+        #expect(content[1]["name"] as? String == "Bash")
+        #expect((content[1]["input"] as? [String: Any])?["command"] as? String == "ls")
+    }
+
+    @Test("Messages non-streaming: a pure tool call has no empty text block")
+    func messagesNonStreamToolOnly() async throws {
+        let (app, _) = try await app(call: call)
+        let json = try object(try await post(app, "/v1/messages",
+            #"{"max_tokens": 64, "messages": [{"role": "user", "content": "ls"}], "# + anthropicTools + "}"))
+        #expect((json["content"] as? [[String: Any]])?.map { $0["type"] as? String } == ["tool_use"])
+    }
+
+    @Test("Messages stream: thinking, then tool_use with input_json_delta, then message_delta stop_reason tool_use")
+    func messagesStream() async throws {
+        let (app, _) = try await app(call: call, reasoning: "need ls")
+        let raw = try await post(app, "/v1/messages",
+            #"{"max_tokens": 64, "stream": true, "messages": [{"role": "user", "content": "ls"}], "# + anthropicTools + "}")
+        let evs = dataFrames(raw)
+        let types = evs.compactMap { $0["type"] as? String }
+        #expect(types == ["message_start", "ping",
+                          "content_block_start", "content_block_delta", "content_block_stop",
+                          "content_block_start", "content_block_delta", "content_block_stop",
+                          "message_delta", "message_stop"], "\(types)")
+        let starts = evs.filter { $0["type"] as? String == "content_block_start" }
+        let toolStart = try #require(starts.last)
+        #expect(toolStart["index"] as? Int == 1)
+        let block = try #require(toolStart["content_block"] as? [String: Any])
+        #expect(block["type"] as? String == "tool_use")
+        #expect(block["id"] as? String == "toolu_abc")
+        #expect(block["name"] as? String == "Bash")
+        #expect((block["input"] as? [String: Any])?.isEmpty == true)
+        let delta = try #require(evs.filter { $0["type"] as? String == "content_block_delta" }.last?["delta"] as? [String: Any])
+        #expect(delta["type"] as? String == "input_json_delta")
+        #expect(delta["partial_json"] as? String == #"{"command":"ls"}"#)
+        let stops = evs.filter { $0["type"] as? String == "content_block_stop" }.compactMap { $0["index"] as? Int }
+        #expect(stops == [0, 1])
+        let messageDelta = try #require(evs.first { $0["type"] as? String == "message_delta" })
+        #expect((messageDelta["delta"] as? [String: Any])?["stop_reason"] as? String == "tool_use")
+    }
+
+    @Test("Messages stream: text before a tool call keeps its own block")
+    func messagesStreamTextThenTool() async throws {
+        let (app, _) = try await app(call: call, text: "Checking.")
+        let raw = try await post(app, "/v1/messages",
+            #"{"max_tokens": 64, "stream": true, "messages": [{"role": "user", "content": "ls"}], "# + anthropicTools + "}")
+        let starts = dataFrames(raw).filter { $0["type"] as? String == "content_block_start" }
+        #expect(starts.compactMap { ($0["content_block"] as? [String: Any])?["type"] as? String } == ["text", "tool_use"])
+        #expect(starts.compactMap { $0["index"] as? Int } == [0, 1])
+    }
+}
