@@ -127,8 +127,6 @@ public struct GemmaProfile: ModelProfile {
     public var defaultMinP: Float? { 0.9 }
 }
 
-// MARK: — Nemotron-H (Nano 4B, Nano 9B v2)
-
 public struct NemotronProfile: ModelProfile {
     public let name = "nemotron"
     public let switchesThinkingInConversation: Bool
