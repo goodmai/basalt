@@ -69,6 +69,26 @@ jobs:
           curl -sL "https://github.com/${{ github.repository }}/archive/refs/tags/${VERSION}.tar.gz" -o source.tar.gz
           echo "tarball_sha=$(shasum -a 256 source.tar.gz | awk '{print $1}')" >> $GITHUB_OUTPUT
 
+      # Published before the formula step: a failing formula push must never leave a tag
+      # without its Release (the verify step below still turns the run red).
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          generate_release_notes: true
+          body: |
+            ## Basalt ${{ steps.pkg.outputs.version }}
+
+            ```bash
+            brew tap goodmai/basalt https://github.com/${{ github.repository }}
+            brew install goodmai/basalt/basalt
+            ```
+
+            Builds from source: Xcode 16+, Apple Silicon, macOS 15+.
+
+            **Source tarball SHA256**: `${{ steps.pkg.outputs.tarball_sha }}`
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       # main requires a PR (ruleset, no bot bypass), so a direct push of the formula was
       # always refused. The bump goes to a branch instead; merging its PR publishes the formula.
       # GITHUB_TOKEN may open that PR only when the repository allows Actions to create PRs
@@ -99,29 +119,14 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git commit -qm "chore: point formula at ${VERSION}" Formula/basalt.rb
           git push -f origin "$BRANCH"
-          if ! gh pr create --base main --head "$BRANCH" \
+          OPEN=$(gh pr list --head "$BRANCH" --state open --json url --jq '.[0].url // empty' 2>/dev/null || true)
+          if [ -n "$OPEN" ]; then
+            echo "formula PR already open, updated by the push above: $OPEN"
+          elif ! gh pr create --base main --head "$BRANCH" \
               --title "chore: point formula at ${VERSION}" \
               --body "Release ${VERSION}: tarball sha256 \`${{ steps.pkg.outputs.tarball_sha }}\`. Merge to publish the formula."; then
             echo "::warning::could not open the formula PR — open it by hand: https://github.com/${{ github.repository }}/compare/main...${BRANCH}"
           fi
-
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v3
-        with:
-          generate_release_notes: true
-          body: |
-            ## Basalt ${{ steps.pkg.outputs.version }}
-
-            ```bash
-            brew tap goodmai/basalt https://github.com/${{ github.repository }}
-            brew install goodmai/basalt/basalt
-            ```
-
-            Builds from source: Xcode 16+, Apple Silicon, macOS 15+.
-
-            **Source tarball SHA256**: `${{ steps.pkg.outputs.tarball_sha }}`
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       # The formula is what users install: read back what the bump branch (or main, when the
       # formula was already current) carries and compare it with the sha computed above.
