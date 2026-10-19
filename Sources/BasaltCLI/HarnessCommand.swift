@@ -81,6 +81,9 @@ struct HarnessOptimizeCommand: AsyncParsableCommand {
     @Option(help: "Budget parameter k: 4k rollouts, 3k proposer calls")
     var k = 1
 
+    @Option(name: .customLong("proposer-max-tokens"), help: "Token budget of each proposer reply (default: fits the largest editable file, 2048...12288)")
+    var proposerMaxTokens: Int?
+
     @Option(help: "Experience Library directory (default ~/.basalt/harness-library)")
     var library: String?
 
@@ -89,6 +92,9 @@ struct HarnessOptimizeCommand: AsyncParsableCommand {
 
     func validate() throws {
         guard HarnessLedger.kRange.contains(k) else { throw ValidationError("--k must be in \(HarnessLedger.kRange)") }
+        if let proposerMaxTokens, !HarnessOptimizer.TokenBudgets.proposerRange.contains(proposerMaxTokens) {
+            throw ValidationError("--proposer-max-tokens must be in \(HarnessOptimizer.TokenBudgets.proposerRange)")
+        }
     }
 
     func run() async throws {
@@ -108,7 +114,9 @@ struct HarnessOptimizeCommand: AsyncParsableCommand {
             slug: HarnessExperienceLibrary.slugify(slug ?? String(task.prefix(48))),
             prompt: task, domain: domain, requiredTerms: requiredTerms, expectsJSON: expectsJSON
         )
-        let result = try await HarnessOptimizer(orchestrator: orchestrator, spec: spec, library: libraryStore)
+        var tokens = HarnessOptimizer.TokenBudgets()
+        tokens.proposer = proposerMaxTokens
+        let result = try await HarnessOptimizer(orchestrator: orchestrator, spec: spec, library: libraryStore, tokens: tokens)
             .optimize(task: harnessTask, base: loaded.tree, k: k)
         try printJSON(result)
     }

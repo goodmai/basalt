@@ -353,6 +353,30 @@ struct HarnessOptimizerTests {
         #expect(candidatePrompt.range(of: "use skill b")!.lowerBound > candidatePrompt.range(of: "skills/a")!.lowerBound)
     }
 
+    @Test("The proposer token budget covers the full content of the largest editable file; an explicit budget wins")
+    func proposerBudgetFitsLargestFile() async throws {
+        let large = (1...1000).map { "Rule \($0): keep the build green." }.joined(separator: "\n")
+        let base = Self.base.applying(delta: ["CLAUDE.md": large])
+        #expect(large.utf8.count > 30 * 1024 && large.utf8.count <= HarnessProposal.maxFileBytes)
+        let (optimizer, engine) = try await Self.optimizer(HarnessScript())
+        _ = try await optimizer.optimize(task: Self.task, base: base, k: 1)
+        let proposer = await engine.getRequests().filter { $0.prompt.hasPrefix("You improve an agent harness") }
+        #expect(!proposer.isEmpty)
+        #expect(proposer.allSatisfy { ($0.maxTokens ?? 0) * 3 >= large.utf8.count })
+        #expect(proposer.allSatisfy { ($0.maxTokens ?? 0) <= HarnessProposal.maxProposerTokens })
+
+        let engineOverride = MockInferenceEngine()
+        await engineOverride.setResponder { HarnessScript().respond($0) }
+        let orchestrator = ModelOrchestratorActor(engine: engineOverride)
+        try await orchestrator.loadModel(path: "mock-model")
+        var tokens = HarnessOptimizer.TokenBudgets()
+        tokens.proposer = 777
+        _ = try await HarnessOptimizer(orchestrator: orchestrator, spec: .claude, library: nil, tokens: tokens)
+            .optimize(task: Self.task, base: base, k: 1)
+        let overridden = await engineOverride.getRequests().filter { $0.prompt.hasPrefix("You improve an agent harness") }
+        #expect(!overridden.isEmpty && overridden.allSatisfy { $0.maxTokens == 777 })
+    }
+
     @Test("The selector reads only BEST: <label> from a known label set")
     func parseLabel() {
         let labels = ["A", "B"]

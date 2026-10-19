@@ -243,6 +243,12 @@ enum HarnessProposal {
     static let maxHarnessPromptChars = 48 * 1024
     static let readOnlyExcerptChars = 4000
     static let maxIndexChars = 8 * 1024
+    static let minProposerTokens = 2048
+    static let maxProposerTokens = 12 * 1024
+
+    static func proposerTokens(for harness: HarnessView) -> Int {
+        min(maxProposerTokens, max(minProposerTokens, harness.largestEditableBytes / 3 + 1024))
+    }
 
     static func capped(index: String) -> String {
         var kept: [Substring] = []
@@ -258,6 +264,7 @@ enum HarnessProposal {
     struct HarnessView: Equatable {
         let block: String
         let truncated: Set<String>
+        let largestEditableBytes: Int
     }
 
     static func view(_ base: HarnessTree, spec: HarnessSurfaceSpec) -> HarnessView {
@@ -276,7 +283,8 @@ enum HarnessProposal {
         let block = paths.map { path in
             fenced(path, shown[path]!, truncated: truncated.contains(path))
         }.joined(separator: "\n")
-        return HarnessView(block: block, truncated: truncated.filter(spec.owns))
+        let largest = editable.filter { !truncated.contains($0) }.map { base.files[$0]!.utf8.count }.max() ?? 0
+        return HarnessView(block: block, truncated: truncated.filter(spec.owns), largestEditableBytes: largest)
     }
 
     static func fenced(_ path: String, _ content: String, truncated: Bool = false) -> String {
@@ -390,8 +398,10 @@ public struct HarnessOptimizationResult: Codable, Sendable, Equatable {
 public struct HarnessOptimizer: Sendable {
     public struct TokenBudgets: Sendable, Equatable {
         public var rollout = 512
-        public var proposer = 2048
+        public var proposer: Int?
         public var judge = 64
+
+        public static let proposerRange = 256...32 * 1024
 
         public init() {}
     }
@@ -442,6 +452,7 @@ public struct HarnessOptimizer: Sendable {
         }
         let view = HarnessProposal.view(base, spec: spec)
         state.truncated = view.truncated
+        let proposerTokens = tokens.proposer ?? HarnessProposal.proposerTokens(for: view)
 
         for round in 0..<k {
             try await probe("base_r\(round)", tree: base, delta: [:], task: task, base: base, state: &state)
@@ -451,7 +462,7 @@ public struct HarnessOptimizer: Sendable {
                 let id = "\(axis.rawValue)_\(round)"
                 try state.ledger.recordProposerCall(id: "propose_\(id)")
                 let prompt = HarnessProposal.prompt(axis: axis, task: task, harness: view, spec: spec, libraryIndex: index)
-                let delta = HarnessProposal.parse(try await generate(prompt, task: task, maxTokens: tokens.proposer, temperature: 0.8).generatedText)
+                let delta = HarnessProposal.parse(try await generate(prompt, task: task, maxTokens: proposerTokens, temperature: 0.8).generatedText)
                 try await admitAndProbe(id, delta: delta, task: task, base: base, baseReport: baseReport, state: &state)
             }
         }
@@ -465,7 +476,7 @@ public struct HarnessOptimizer: Sendable {
                 let id = "compose_\(round)"
                 try state.ledger.recordProposerCall(id: "propose_\(id)")
                 let prompt = HarnessProposal.prompt(axis: .compose, task: task, harness: view, spec: spec, libraryIndex: index, sources: sources)
-                let proposed = HarnessProposal.parse(try await generate(prompt, task: task, maxTokens: tokens.proposer, temperature: 0.4).generatedText)
+                let proposed = HarnessProposal.parse(try await generate(prompt, task: task, maxTokens: proposerTokens, temperature: 0.4).generatedText)
                 let union = sources.reduce(into: [String: String]()) { $0.merge($1) { first, _ in first } }
                 try await admitAndProbe(id, delta: proposed ?? union, task: task, base: base, baseReport: baseReport, state: &state)
             }

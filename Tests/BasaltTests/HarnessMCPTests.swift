@@ -159,13 +159,14 @@ struct HarnessMCPTests {
         #expect(try lines.errorCode(6) == -32003)
     }
 
-    @Test("harness_optimize rejects a boolean k, a non-boolean expectsJSON and non-string domain or slug")
+    @Test("harness_optimize rejects a boolean k, a non-boolean expectsJSON, non-string domain or slug and an out-of-range proposerMaxTokens")
     func optimizeStrictTypes() async throws {
         let lines = MCPLines()
         let server = MCPServer(orchestrator: ModelOrchestratorActor(engine: MockInferenceEngine()), writer: { lines.append($0) })
         let files = HarnessOptimizerTests.base.files
         let bad: [[String: Any]] = [
-            ["k": true], ["k": 5], ["expectsJSON": "yes"], ["expectsJSON": 1], ["domain": 7], ["slug": ["a"]]
+            ["k": true], ["k": 5], ["expectsJSON": "yes"], ["expectsJSON": 1], ["domain": 7], ["slug": ["a"]],
+            ["proposerMaxTokens": true], ["proposerMaxTokens": 10], ["proposerMaxTokens": 1_000_000], ["proposerMaxTokens": "4096"]
         ]
         for (index, extra) in bad.enumerated() {
             await server.dispatch(toolCall(index, "harness_optimize", ["task": "t", "files": files].merging(extra) { _, new in new }))

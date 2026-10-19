@@ -297,6 +297,11 @@ public final class MCPServer: Sendable {
                         "requiredTerms": ["type": "array", "items": ["type": "string"], "description": "Terms the task demands in the deliverable (conformance stage)"],
                         "expectsJSON": ["type": "boolean", "description": "The deliverable must be a JSON object"],
                         "k": ["type": "integer", "minimum": 1, "maximum": 4, "description": "Budget parameter (default 1)"],
+                        "proposerMaxTokens": [
+                            "type": "integer", "minimum": HarnessOptimizer.TokenBudgets.proposerRange.lowerBound,
+                            "maximum": HarnessOptimizer.TokenBudgets.proposerRange.upperBound,
+                            "description": "Token budget of each proposer reply (default: fits the largest editable file, 2048...12288)"
+                        ],
                         "directory": ["type": "string", "description": "Repository root that contains the harness"],
                         "files": ["type": "object", "additionalProperties": ["type": "string"], "description": "Alternative to directory: {path: content}"],
                         "surface": ["type": "string", "enum": HarnessSurfaceSpec.all.map(\.name), "description": "Harness layout (default claude)"]
@@ -564,6 +569,12 @@ public final class MCPServer: Sendable {
             writeError(id: id, code: -32602, message: "\(key) must be a string")
             return
         }
+        let proposerMaxTokens = args?["proposerMaxTokens"]
+        if let proposerMaxTokens, Self.isJSONBoolean(proposerMaxTokens)
+            || !((proposerMaxTokens as? Int).map(HarnessOptimizer.TokenBudgets.proposerRange.contains) ?? false) {
+            writeError(id: id, code: -32602, message: "proposerMaxTokens must be an integer in \(HarnessOptimizer.TokenBudgets.proposerRange)")
+            return
+        }
         let terms = args?["requiredTerms"] ?? [String]()
         guard let terms = terms as? [String] else {
             writeError(id: id, code: -32602, message: "requiredTerms must be an array of strings")
@@ -578,7 +589,9 @@ public final class MCPServer: Sendable {
             expectsJSON: (args?["expectsJSON"] as? Bool) ?? false
         )
         do {
-            let result = try await HarnessOptimizer(orchestrator: orchestrator, spec: input.spec, library: library)
+            var tokens = HarnessOptimizer.TokenBudgets()
+            tokens.proposer = proposerMaxTokens as? Int
+            let result = try await HarnessOptimizer(orchestrator: orchestrator, spec: input.spec, library: library, tokens: tokens)
                 .optimize(task: task, base: input.tree, k: k)
             writeJSONResult(id: id, result)
         } catch let error as BasaltError {
