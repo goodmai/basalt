@@ -1,6 +1,7 @@
 import Foundation
 import ArgumentParser
-import GemCore
+import BasaltCore
+import BasaltInference
 
 @available(macOS 10.15, *)
 @main

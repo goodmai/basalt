@@ -1,0 +1,339 @@
+import Foundation
+import os
+
+// MARK: — Orchestrator
+
+/// Single source of truth for both transports (MCP + REST).
+///
+/// Swift actor serialises all access (FIFO) — no explicit locking needed.
+/// λ_mcp + λ_rest < μ_inference guarantees the queue stays bounded.
+public actor ModelOrchestratorActor {
+
+    // MARK: — State
+
+    private let engine: any InferenceEngine
+    private let maxTokens: Int
+    private var modelSizeMB: Int = 4000
+    /// Floor for the generation watchdog. The real budget scales with the token
+    /// count — see `timeout(for:)`.
+    private let generationTimeoutSeconds: UInt64 = 300  // 5 minutes
+
+    private let logger = GemLogger(module: "ModelOrchestrator")
+
+    /// Filesystem path of the loaded model.
+    private var currentModelPath: String = ""
+
+    /// HuggingFace repo ID of the loaded model, e.g. "mlx-community/Qwen3.5-4B-4bit".
+    /// Empty string means nothing has been loaded yet.
+    public private(set) var currentModelId: String = ""
+
+    // MARK: — Working Session KV Cache State
+    public private(set) var workingSessionId: String? = nil
+    public private(set) var workingSessionPromptPrefix: String? = nil
+
+    public func workingSessionState() -> (id: String?, prefix: String?) {
+        (workingSessionId, workingSessionPromptPrefix)
+    }
+
+    /// A working session lives while each prompt extends the previous one's first 128 chars;
+    /// service requests (thread titles) never touch it — #53's cache parking keys off this.
+    private func trackWorkingSession(_ request: GenerationRequest) {
+        guard request.isServiceRequest != true else { return }
+        if let prefix = workingSessionPromptPrefix, workingSessionId != nil, request.prompt.hasPrefix(prefix) {
+            return
+        }
+        workingSessionId = "session_\(UUID().uuidString.prefix(8))"
+        workingSessionPromptPrefix = String(request.prompt.prefix(128))
+    }
+
+    // MARK: — Init
+
+    /// The serving process's counters; injectable so tests do not share global state.
+    public let telemetry: TelemetryTracker
+
+    public init(engine: any InferenceEngine, maxTokens: Int = 4096, telemetry: TelemetryTracker = .shared) {
+        self.engine = engine
+        self.maxTokens = maxTokens
+        self.telemetry = telemetry
+    }
+
+    // MARK: — Model loading
+
+    /// Load a model from a filesystem path.
+    /// After loading, call `setModelId(_:)` to record the HuggingFace repo ID.
+    public func loadModel(path: String) async throws(BasaltError) {
+        self.currentModelPath = path
+        let size = try? calculateDirectorySize(url: URL(fileURLWithPath: path))
+        if let size {
+            self.modelSizeMB = Int(size / 1_048_576)
+            logger.info("Model size: \(self.modelSizeMB) MB")
+        }
+        try await engine.load(modelPath: path)
+        // After the load: a failed load must not report the failed model's size.
+        await self.telemetry.setModelMemory(mb: self.modelSizeMB)
+    }
+
+    /// Record the HuggingFace repo ID that was just loaded.
+    /// Call this once after `loadModel` completes.
+    public func setModelId(_ id: String) {
+        self.currentModelId = id
+    }
+
+    // MARK: — Model switching
+
+    /// Hot-swap the loaded model. Resolves `modelId` from the local HuggingFace cache.
+    /// Throws `.modelNotCached` if the model hasn't been downloaded yet.
+    /// Because this is an actor method it serialises with all in-flight generate calls —
+    /// any concurrent request will queue and run after the switch completes.
+    public func switchModel(to modelId: String) async throws(BasaltError) {
+        guard modelId != currentModelId else {
+            logger.trace("switchModel: already loaded '\(modelId)'")
+            return
+        }
+
+        // Same resolution `serve` uses, so a repo with 4bit/8bit subfolders switches too.
+        let path = (ModelCache.resolve(repoId: modelId) ?? ModelCache.cacheDir(for: modelId)).path
+        guard FileManager.default.fileExists(atPath: path) else {
+            logger.error("switchModel: model not in cache: \(modelId)")
+            throw BasaltError.modelNotCached(identifier: modelId)
+        }
+
+        logger.info("Switching model: '\(currentModelId)' → '\(modelId)'")
+        try await loadModel(path: path)
+        self.currentModelId = modelId
+        logger.info("Model switch complete: '\(modelId)'")
+    }
+
+    /// Info string for logging / health checks.
+    public var modelInfo: String {
+        currentModelId.isEmpty
+            ? URL(fileURLWithPath: currentModelPath).lastPathComponent
+            : currentModelId
+    }
+
+    // MARK: — Generate (non-streaming)
+
+    /// Generate a completion. If `modelId` differs from the currently loaded model,
+    /// the model is switched automatically before generation.
+    public func generate(
+        request: GenerationRequest,
+        modelId: String? = nil
+    ) async throws(BasaltError) -> GenerationResponse {
+        try await autoSwitch(to: modelId)
+
+        logger.trace("generate: \(request.prompt.prefix(60))…")
+        let validated = try capped(request)
+
+        trackWorkingSession(validated)
+        await self.telemetry.requestStarted()
+        do {
+            let response = try await withTimeout(seconds: timeout(for: validated)) {
+                try await self.engine.generate(request: validated)
+            }
+            await self.telemetry.requestFinished(with: response)
+            return response
+        } catch let error as BasaltError {
+            await self.telemetry.requestFinished()
+            throw error
+        } catch {
+            await self.telemetry.requestFinished()
+            throw BasaltError.inferenceError("Generation error: \(error)")
+        }
+    }
+
+    // MARK: — Generate (streaming)
+
+    /// Returns a filtered AsyncStream. Strips `<think>…</think>` blocks.
+    /// If `modelId` differs from the currently loaded model, switches first.
+    public func generateStream(
+        request: GenerationRequest,
+        modelId: String? = nil
+    ) async throws(BasaltError) -> AsyncStream<StreamChunk> {
+        try await autoSwitch(to: modelId)
+
+        logger.trace("generateStream start")
+        let validated = try capped(request)
+
+        trackWorkingSession(validated)
+        await self.telemetry.requestStarted()
+        let stream: AsyncStream<StreamChunk>
+        do {
+            stream = try await withTimeout(seconds: timeout(for: validated)) {
+                try await self.engine.generateStream(request: validated)
+            }
+        } catch let error as BasaltError {
+            await self.telemetry.requestFinished()
+            throw error
+        } catch {
+            await self.telemetry.requestFinished()
+            throw BasaltError.inferenceError("Stream setup error: \(error)")
+        }
+
+        let telemetry = self.telemetry
+        return AsyncStream<StreamChunk> { continuation in
+            let task = Task.detached {
+                var result: GenerationResponse?
+                for await chunk in stream {
+                    switch chunk {
+                    case .text(let t):
+                        continuation.yield(.text(t))
+                    case .reasoning(let r):
+                        continuation.yield(.reasoning(r))
+                    case .metadata(let m):
+                        result = m
+                        continuation.yield(.metadata(m))
+                    case .toolCall(let call):
+                        continuation.yield(.toolCall(call))
+                    }
+                }
+                // Reached on completion and on cancellation (onTermination cancels this task).
+                // Streaming is most of the REST traffic: it is counted like generate().
+                await telemetry.requestFinished(with: result)
+                continuation.finish()
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+
+    // MARK: — Health
+
+    public func healthSnapshot(modelId: String?) async -> HealthResponse {
+        let ready = await engine.isLoaded
+        return HealthResponse(
+            status: ready ? "ok" : "initializing",
+            modelId: modelId ?? (currentModelId.isEmpty ? nil : currentModelId),
+            isReady: ready,
+            version: HealthResponse.version
+        )
+    }
+
+    // MARK: — Telemetry
+
+    public func telemetrySnapshot() async -> ServerTelemetrySnapshot {
+        await telemetry.snapshot()
+    }
+
+    // MARK: — Model catalogue
+
+    /// Returns all models currently in the local HuggingFace cache.
+    public func cachedModels() -> [CachedModelInfo] {
+        let root = ModelCache.root
+        guard let entries = try? FileManager.default.contentsOfDirectory(atPath: root.path) else {
+            return []
+        }
+
+        return entries
+            .filter { $0.hasPrefix("models--") }
+            .sorted()
+            .compactMap { dir -> CachedModelInfo? in
+                let repoId = dir
+                    .replacingOccurrences(of: "models--", with: "")
+                    .replacingOccurrences(of: "--", with: "/")
+                let url  = root.appendingPathComponent(dir)
+                let size = directorySize(at: url)
+                return CachedModelInfo(
+                    id: repoId,
+                    sizeBytes: size,
+                    isLoaded: repoId == currentModelId
+                )
+            }
+    }
+
+    // MARK: — Private helpers
+
+    /// Switch model if the requested ID differs from the loaded one.
+    /// Ignores nil, empty, and generic placeholder IDs like "basalt".
+    private func autoSwitch(to modelId: String?) async throws(BasaltError) {
+        guard let id = modelId, !id.isEmpty, id != "basalt" else { return }
+        if await engine.isLoaded { return }
+        guard id != currentModelId else { return }
+        try await switchModel(to: id)
+    }
+
+    /// Watchdog budget for a request. A flat cap makes large `maxTokens` requests
+    /// impossible to satisfy: a 27B model emitting ~15 tok/s needs well over an hour
+    /// for 64k tokens and would always be killed mid-generation. Scale with the
+    /// request at a deliberately pessimistic 10 tok/s, keeping the flat value as a floor.
+    private func timeout(for request: GenerationRequest) -> UInt64 {
+        let tokens = UInt64(max(0, request.maxTokens ?? 0))
+        return max(generationTimeoutSeconds, tokens / 10)
+    }
+
+    private func capped(_ request: GenerationRequest) throws(BasaltError) -> GenerationRequest {
+        let maxT = calculateDynamicMaxTokens()
+        var v = try request.validated(defaultMaxTokens: maxT)
+        if let req = request.maxTokens, req > maxT {
+            logger.warn("Token request (\(req)) > budget (\(maxT)). Capping.")
+            v = v.withMaxTokens(maxT)
+        }
+        return v
+    }
+
+    private func calculateDynamicMaxTokens() -> Int {
+        max(maxTokens, TokenBudgetCalculator.calculateMaxTokensForSystem(modelSizeMB: modelSizeMB))
+    }
+
+    private func calculateDirectorySize(url: URL) throws -> UInt64 {
+        UInt64(max(0, Self.resolvedDirectorySize(at: url)))
+    }
+
+    /// Sums file sizes, following symlinks.
+    ///
+    /// The standard HuggingFace cache stores weights in `blobs/` and fills
+    /// `snapshots/` with symlinks, so measuring the link itself reports a few
+    /// bytes per shard: a 16 GB model came out as 6 MB, and every downstream
+    /// memory estimate and token budget was computed from that.
+    static func resolvedDirectorySize(at url: URL) -> Int64 {
+        guard let e = FileManager.default.enumerator(at: url,
+                        includingPropertiesForKeys: [.fileSizeKey],
+                        options: []) else { return 0 }
+        var total: Int64 = 0
+        for case let f as URL in e {
+            let target = f.resolvingSymlinksInPath()
+            if let s = try? target.resourceValues(forKeys: [.fileSizeKey]).fileSize {
+                total += Int64(s)
+            }
+        }
+        return total
+    }
+
+    private func directorySize(at url: URL) -> Int64 {
+        Self.resolvedDirectorySize(at: url)
+    }
+
+    private func withTimeout<T: Sendable>(
+        seconds: UInt64,
+        operation: @escaping @Sendable () async throws -> T
+    ) async throws -> T {
+        let ns = seconds * 1_000_000_000
+        return try await withThrowingTaskGroup(of: T.self) { group in
+            group.addTask { try await operation() }
+            group.addTask {
+                try await Task.sleep(nanoseconds: ns)
+                try Task.checkCancellation()
+                throw BasaltError.inferenceError("Timeout after \(seconds)s")
+            }
+            guard let result = try await group.next() else {
+                throw BasaltError.inferenceError("Operation produced no result")
+            }
+            group.cancelAll()
+            return result
+        }
+    }
+}
+
+// MARK: — CachedModelInfo DTO
+
+public struct CachedModelInfo: Sendable {
+    public let id: String
+    public let sizeBytes: Int64
+    public let isLoaded: Bool
+
+    public var sizeFormatted: String {
+        switch sizeBytes {
+        case 0..<1_048_576:    return String(format: "%.1f KB", Double(sizeBytes) / 1_024)
+        case 0..<1_073_741_824: return String(format: "%.1f MB", Double(sizeBytes) / 1_048_576)
+        default:               return String(format: "%.2f GB", Double(sizeBytes) / 1_073_741_824)
+        }
+    }
+}
