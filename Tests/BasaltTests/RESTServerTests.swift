@@ -152,8 +152,6 @@ struct RESTServerTests {
         try await failing.app.test(.router) { client in
             try await client.execute(uri: "/v1/chat/completions", method: .post,
                                      body: ByteBuffer(string: #"{"messages": [{"role": "user", "content": "hi"}]}"#)) { res in
-                // The engine's own error status (the mock throws inferenceHardwareFailure → 503),
-                // the same mapping /v1/messages and /api/v1/generate use.
                 #expect(res.status.code == BasaltError.inferenceHardwareFailure(reason: "").httpStatus)
                 let body = try json(res.body)
                 #expect(body["type"] as? String == "error")

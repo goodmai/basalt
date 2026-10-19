@@ -35,11 +35,7 @@ public struct GenerationRequest: Codable, Sendable {
     public let maxTokens: Int?
     public let temperature: Double?
     public let topP: Double?
-    /// Per-request Min-P (drop tokens below `minP · max p`); overrides `serve --min-p` and the
-    /// model profile default. 0 turns Min-P off for this request. nil keeps the server default.
     public let minP: Double?
-    /// Entropy-based dynamic temperature (EDT): rescale the temperature every step by the
-    /// entropy of the next-token distribution. nil/false keeps the static temperature.
     public let dynamicTemperature: Bool?
     public let enableThinking: Bool?
     public let reasoningEffort: String?

@@ -53,7 +53,6 @@ struct EntropyDynamicTemperatureTests {
     func processSharpens() {
         let edt = EntropyDynamicTemperature(baseTemperature: 0.7)
         let logits = MLXArray([Float(2), 0, 0, 0]).reshaped(1, -1)
-        // The stock sampler divides by T0 after the processor.
         let staticTop = softmax(logits / 0.7, axis: -1).max().item(Float.self)
         let edtTop = softmax(edt.process(logits: logits) / 0.7, axis: -1).max().item(Float.self)
         #expect(edtTop > staticTop + 0.05, "static \(staticTop), EDT \(edtTop)")
@@ -103,7 +102,6 @@ struct EngineSamplingTests {
         let edt = try #require(factory() as? EntropyDynamicTemperature)
         #expect(edt.baseTemperature == 0.9)
 
-        // With EDT on, the filters move into the processor and leave the sampler.
         let (params, edtComponents) = await MLXInferenceEngine(minP: 0.1).sampling(
             for: GenerationRequest(prompt: "p", temperature: 0.9, topP: 0.8, dynamicTemperature: true))
         #expect(params.topP == 1 && params.minP == 0)
@@ -113,7 +111,6 @@ struct EngineSamplingTests {
 
     @Test("The request's min_p masks the tail in the sampler the engine builds")
     func minPMasksTail() async {
-        // p = 0.5 / 0.3 / 0.2: min_p 0.5 keeps p ≥ 0.25, so token 2 must never be drawn.
         let logits = log(MLXArray([Float(0.5), 0.3, 0.2])).reshaped(1, -1)
         func draws(minP: Double) async -> Set<Int> {
             let request = GenerationRequest(prompt: "p", temperature: 1, topP: 1, minP: minP)
@@ -126,7 +123,6 @@ struct EngineSamplingTests {
 
     @Test("EDT keeps min_p on the original distribution even when a loop heats T_t up")
     func edtKeepsMinPUnderHeat() {
-        // p = 0.5 / 0.3 / 0.2 with min_p 0.5 must drop token 2 whatever T_t is.
         let logits = log(MLXArray([Float(0.5), 0.3, 0.2])).reshaped(1, -1)
         var hot = EntropyDynamicTemperature(baseTemperature: 0.7, minP: 0.5)
         for token in Array(repeating: Array(0..<16), count: 8).flatMap({ $0 }) {
@@ -136,8 +132,6 @@ struct EngineSamplingTests {
         let out = hot.process(logits: logits)
         #expect(out[0, 2].item(Float.self) == -Float.infinity)
         #expect(out[0, 0].item(Float.self).isFinite && out[0, 1].item(Float.self).isFinite)
-        // Without the processor's own pass, the rescaled distribution would let token 2 through
-        // min_p 0.5 at T_t > T0: confirm that is what the old behaviour would have done.
         let plain = EntropyDynamicTemperature(baseTemperature: 0.7)
         let scaled = plain.process(logits: logits)
         #expect(scaled[0, 2].item(Float.self).isFinite)
@@ -145,7 +139,6 @@ struct EngineSamplingTests {
 
     @Test("EDT top-p drops the tail of the original distribution")
     func edtTopP() {
-        // Cumulative from the top: 0.5, 0.8, 1.0 -> top_p 0.7 keeps tokens 0 and 1.
         let logits = log(MLXArray([Float(0.5), 0.3, 0.2])).reshaped(1, -1)
         let out = EntropyDynamicTemperature(baseTemperature: 0.7, topP: 0.7).process(logits: logits)
         #expect(out[0, 2].item(Float.self) == -Float.infinity)

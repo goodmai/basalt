@@ -110,7 +110,6 @@ struct RepetitionScoreTests {
     func risesOnLoop() {
         var guard_ = RepetitionGuard()
         let cycle = "    # Let's use a small step size for Integration. However, we can use the property that the sum of the series is:\n"
-        // Token-sized chunks, as the model streams them, so the score is seen between 0 and 1.
         let text = Array(String(repeating: cycle, count: 40))
         var scores: [Double] = []
         var stopped = false

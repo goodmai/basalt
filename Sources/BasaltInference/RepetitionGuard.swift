@@ -25,9 +25,6 @@ public struct RepetitionGuard: Sendable {
 
     private var buffer: String = ""
 
-    /// Continuous repetition index R_t ∈ [0, 1] after the last chunk: 0 while the trailing probe
-    /// occurs once, rising linearly to 1 at `threshold` occurrences — where `shouldStop` fires.
-    /// Lets a sampler react to a loop as it forms instead of only abandoning it afterwards.
     public private(set) var score: Double = 0
 
     public init(probeSize: Int = 64, threshold: Int = 4, minLength: Int = 400, retain: Int = 4096) {
@@ -63,9 +60,6 @@ public struct RepetitionGuard: Sendable {
         return occurrences >= threshold
     }
 
-    /// R_t over a token sequence — the same probe-counting rule as `shouldStop`, for a sampler
-    /// that sees token ids rather than text. Non-overlapping occurrences of the trailing
-    /// `probeSize` tokens, mapped onto [0, 1] like `score`.
     public static func score<E: Equatable>(tokens: [E], probeSize: Int, threshold: Int) -> Double {
         guard probeSize > 0, tokens.count > probeSize else { return 0 }
         let probe = tokens[(tokens.count - probeSize)...]

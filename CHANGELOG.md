@@ -8,7 +8,7 @@
 - `RepetitionGuard` exposes a continuous repetition score in [0, 1] alongside its stop decision (#40).
 
 ### Fixed
-- `/v1/chat/completions` and `/v1/responses` answered 500 to an invalid request (e.g. `temperature` or `min_p` out of range); they now return the error's own status, 400 for a bad field.
+- Non-streaming `/v1/chat/completions` and `/v1/responses` answered 500 to an invalid request (e.g. `temperature` or `min_p` out of range); they now return the error's own status, 400 for a bad field.
 
 ## 0.3.0 — 2026-10-19
 

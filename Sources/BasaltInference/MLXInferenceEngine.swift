@@ -361,7 +361,6 @@ public actor MLXInferenceEngine: InferenceEngine {
         return ToolCallOutput(id: "call_\(UUID().uuidString.prefix(24))", name: call.function.name, arguments: arguments)
     }
 
-    /// Sampling setup for one request, separate from generation so it is testable without a model.
     func sampling(for request: GenerationRequest) -> (GenerateParameters, GenerationComponents) {
         let temperature = Float(request.temperature ?? 0.7)
         var params = GenerateParameters(
@@ -373,20 +372,14 @@ public actor MLXInferenceEngine: InferenceEngine {
         params.quantizedKVStart = quantizedKVStart
         params.repetitionPenalty = repetitionPenalty
         if let topK { params.topK = topK }
-        // The request's min_p wins (0 turns it off), then an explicit --min-p, then
-        // whatever the family was measured to need.
         if let effectiveMinP = request.minP.map(Float.init) ?? minP ?? profile.defaultMinP {
             params.minP = effectiveMinP
         }
         params.seed = seed
 
         var components = GenerationComponents()
-        // At temperature 0 the sampler is argmax: there is no temperature to modulate.
         if request.dynamicTemperature == true, temperature > 0 {
             let (topP, minP) = (params.topP, params.minP)
-            // EDT applies top_p/min_p itself on the original distribution; the sampler would
-            // apply them again to the rescaled one (stricter than asked when EDT cools, and a
-            // second sort over the vocabulary per token). top_k is scale-invariant and stays.
             params.topP = 1
             params.minP = 0
             components = components.appendingLogitProcessor {
@@ -427,8 +420,6 @@ public actor MLXInferenceEngine: InferenceEngine {
             logger.trace("Input prepared. Starting MLX generation...")
             // The same specs go to the tool-call decoder: without them it has no schema, so
             // every argument comes back as a string ("timeout_ms": "1000") and typed tools fail.
-            // `perform` rather than `container.generate`: only the free function takes the
-            // GenerationComponents that carry the EDT logit processor.
             let mlxStream = try await container.perform(nonSendable: lmInput) { context, input in
                 try MLXLMCommon.generate(
                     input: input, parameters: params, context: context,
