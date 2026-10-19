@@ -29,10 +29,18 @@ struct AnthropicController: Sendable {
         var toolUseId: String? = nil
         var content: MessageContent? = nil
         var isError: Bool? = nil
+        var thinking: String? = nil
+        var signature: String? = nil
 
         init(type: String = "text", text: String) {
             self.type = type
             self.text = text
+        }
+
+        init(thinking: String) {
+            type = "thinking"
+            self.thinking = thinking
+            signature = ""
         }
 
         init(toolUse call: ToolCallOutput, input: AnyCodable?) {
@@ -57,7 +65,7 @@ struct AnthropicController: Sendable {
         }()
 
         enum CodingKeys: String, CodingKey {
-            case type, text, id, name, input, content
+            case type, text, id, name, input, content, thinking, signature
             case toolUseId = "tool_use_id"
             case isError = "is_error"
         }
@@ -280,7 +288,7 @@ struct AnthropicController: Sendable {
                 id: "msg_\(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(24))",
                 type: "message",
                 role: "assistant",
-                content: Self.responseContent(text: result.generatedText, toolCalls: result.toolCalls ?? []),
+                content: Self.responseContent(reasoning: result.reasoningText, text: result.generatedText, toolCalls: result.toolCalls ?? []),
                 model: dto.model ?? modelId,
                 stopReason: Self.stopReason(result.finishReason, calledTools: result.toolCalls?.isEmpty == false),
                 stopSequence: nil,
@@ -466,11 +474,12 @@ struct AnthropicController: Sendable {
         calledTools ? "tool_use" : (finish == .length ? "max_tokens" : "end_turn")
     }
 
-    static func responseContent(text answer: String, toolCalls: [ToolCallOutput]) -> [ContentBlock] {
+    static func responseContent(reasoning: String? = nil, text answer: String, toolCalls: [ToolCallOutput]) -> [ContentBlock] {
         let inputs = toolCalls.map { objectInput($0.arguments) }
         let text = answer + zip(toolCalls, inputs).filter { $0.1 == nil }.map { nonObjectNote($0.0) }.joined()
         let keepText = toolCalls.isEmpty || !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        return (keepText ? [ContentBlock(text: text)] : []) + zip(toolCalls, inputs).map { ContentBlock(toolUse: $0.0, input: $0.1) }
+        return (reasoning.map { [ContentBlock(thinking: $0)] } ?? []) + (keepText ? [ContentBlock(text: text)] : [])
+            + zip(toolCalls, inputs).map { ContentBlock(toolUse: $0.0, input: $0.1) }
     }
 
     static func chatMessages(system: SystemPrompt?, messages: [Message]) -> [ChatMessageInput] {

@@ -137,6 +137,33 @@ struct RESTServerTests {
         }
     }
 
+    @Test("Non-streaming replies carry the reasoning the stream sends: chat message reasoning, a Responses reasoning item, a Messages thinking block")
+    func nonStreamingReasoning() async throws {
+        let s = try await setup(reasoning: "hmm")
+        let turn = #""messages": [{"role": "user", "content": "hi"}]"#
+        try await s.app.test(.router) { client in
+            try await client.execute(uri: "/v1/chat/completions", method: .post, headers: [.contentType: "application/json"], body: ByteBuffer(string: "{\(turn)}")) { res in
+                let choice = try #require((try json(res.body)["choices"] as? [[String: Any]])?.first)
+                let message = try #require(choice["message"] as? [String: Any])
+                #expect(message["reasoning"] as? String == "hmm")
+                #expect(message["content"] as? String == "Mock response")
+            }
+            try await client.execute(uri: "/v1/responses", method: .post, headers: [.contentType: "application/json"], body: ByteBuffer(string: "{\(turn)}")) { res in
+                let output = try #require(try json(res.body)["output"] as? [[String: Any]])
+                #expect(output.map { $0["type"] as? String } == ["reasoning", "message"])
+                let reasoning = try #require(output.first?["content"] as? [[String: Any]])
+                #expect(reasoning.first?["type"] as? String == "reasoning_text")
+                #expect(reasoning.first?["text"] as? String == "hmm")
+            }
+            try await client.execute(uri: "/v1/messages", method: .post, headers: [.contentType: "application/json"], body: ByteBuffer(string: "{\(turn)}")) { res in
+                let content = try #require(try json(res.body)["content"] as? [[String: Any]])
+                #expect(content.map { $0["type"] as? String } == ["thinking", "text"])
+                #expect(content.first?["thinking"] as? String == "hmm")
+                #expect(content.first?["signature"] as? String == "")
+            }
+        }
+    }
+
     @Test("Chat completion refuses an empty or undecodable body with 400; an engine failure keeps its own status in the error envelope")
     func chatCompletionErrors() async throws {
         let s = try await setup()

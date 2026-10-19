@@ -98,19 +98,20 @@ actor MockInferenceEngine: InferenceEngine {
         var metadata: GenerationResponse?
         var text = ""
         var calls: [ToolCallOutput] = []
+        var reasoning: String?
         for await chunk in stream {
             switch chunk {
             case .metadata(let m): metadata = m
             case .text(let t): text += t
             case .toolCall(let c): calls.append(c)
-            case .reasoning: break
+            case .reasoning(let r): reasoning = (reasoning ?? "") + r
             }
         }
         guard let metadata else {
             throw .inferenceHardwareFailure(reason: "No metadata received from stream")
         }
         return GenerationResponse(
-            generatedText: text, promptTokens: metadata.promptTokens,
+            generatedText: text, reasoningText: reasoning, promptTokens: metadata.promptTokens,
             cachedPromptTokens: metadata.cachedPromptTokens, completionTokens: metadata.completionTokens,
             tokensPerSecond: metadata.tokensPerSecond, generationTime: metadata.generationTime,
             timeToFirstToken: metadata.timeToFirstToken, memory: metadata.memory,
