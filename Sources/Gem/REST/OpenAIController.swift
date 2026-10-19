@@ -9,10 +9,10 @@ import HTTPTypes
 //   export OPENAI_BASE_URL=http://localhost:8080
 //   claude --model openai/gemma-4-31b-it-4bit
 //
-// Routes (all public, no JWT):
+// Routes (open on loopback; behind the API key and rate limit otherwise):
 //   GET  /v1/models
 //   POST /v1/chat/completions   — OpenAI chat format, streaming supported
-//   POST /v1/generate           — raw prompt, no auth
+//   POST /v1/generate           — raw prompt
 
 struct OpenAIController: Sendable {
 
@@ -411,7 +411,7 @@ struct OpenAIController: Sendable {
         }
     }
 
-    // MARK: — POST /v1/generate (no auth, raw prompt)
+    // MARK: — POST /v1/generate (raw prompt)
 
     @Sendable
     func generateRaw(request: Request, context: BasicRequestContext) async throws -> Response {

@@ -28,8 +28,9 @@ done
 
 echo "✅ Server is ready!"
 
-# No login route: the server checks a static API key. On loopback none is needed; when
-# BASALT_API_KEY is set the server (which reads it too) requires it as a Bearer token.
+# No login route: the server checks a static API key. On loopback none is needed unless one
+# is configured — BASALT_API_KEY (the server reads it too) or `api_key` in ~/.gem/config.json;
+# in the latter case export the same value as BASALT_API_KEY before running this script.
 TOKEN="${BASALT_API_KEY:-}"
 
 # 2. Generate

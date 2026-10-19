@@ -467,7 +467,7 @@ Sources/
     Core/                   — Inference engine, orchestrator, DTOs, errors, utilities
     MCP/                    — MCP JSON-RPC 2.0 stdio server
     REST/                   — Hummingbird 2.x HTTP server
-      Middleware/            — (stubs — auth/JWT removed)
+      Middleware/            — API key check + token-bucket rate limit
     UI/                     — Terminal UI: Markdown, spinner, progress bar, diff, table
   GemBin/                   — Thin executable wrapper: calls GemCore.GemCLI.main()
   PerformanceBenchmark/     — Standalone benchmark CLI target

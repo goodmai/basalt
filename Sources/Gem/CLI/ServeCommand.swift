@@ -276,8 +276,8 @@ struct ServeCommand: AsyncParsableCommand {
         func value<T>(_ key: String, as _: T.Type) throws -> T? {
             guard let raw = dict[key], !(raw is NSNull) else { return nil }
             // JSONSerialization bridges `true` to NSNumber, which `as? Int` would read as 1.
-        guard CFGetTypeID(raw as CFTypeRef) != CFBooleanGetTypeID() || T.self == Bool.self,
-              let typed = raw as? T else {
+            guard CFGetTypeID(raw as CFTypeRef) != CFBooleanGetTypeID() || T.self == Bool.self,
+                  let typed = raw as? T else {
                 throw ValidationError("--config: \"\(key)\" must be \(T.self), got \(raw)")
             }
             return typed

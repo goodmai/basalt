@@ -54,9 +54,11 @@ struct RateLimitTests {
         #expect(throws: (any Error).self, "a negative config value must not silently turn the limit off") {
             _ = try ServeCommand.resolveNetwork(cliPort: nil, cliHost: nil, cliApiKey: nil, configFile: file.path)
         }
-        try Data(#"{"rate_limit": true, "port": true}"#.utf8).write(to: file)
-        #expect(throws: (any Error).self, "a JSON boolean is not a number") {
-            _ = try ServeCommand.resolveNetwork(cliPort: nil, cliHost: nil, cliApiKey: nil, configFile: file.path)
+        for json in [#"{"rate_limit": true}"#, #"{"port": true}"#] {
+            try Data(json.utf8).write(to: file)
+            #expect(throws: (any Error).self, "a JSON boolean is not a number: \(json)") {
+                _ = try ServeCommand.resolveNetwork(cliPort: nil, cliHost: nil, cliApiKey: nil, configFile: file.path)
+            }
         }
         #expect(throws: Never.self) { _ = try ServeCommand.parse(["--rate-limit", "0"]) }
     }
