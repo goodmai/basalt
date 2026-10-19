@@ -55,7 +55,7 @@ def _quote(path: str) -> str:
 def sandbox_profile(work_dir: str, numpy_package, images) -> str:
     python_root = os.path.realpath(sys.base_prefix)
     trees = [python_root, work_dir, "/usr/lib", "/System"]
-    files = ["/", CHILD_SCRIPT, HELPERS_MODULE, HERE, "/dev/null", "/dev/urandom"]
+    files = ["/", CHILD_SCRIPT, HELPERS_MODULE, "/dev/null", "/dev/urandom"]
     if numpy_package:
         trees.append(numpy_package)
         files += [os.path.dirname(numpy_package)] + images
@@ -82,7 +82,7 @@ def sandbox_profile(work_dir: str, numpy_package, images) -> str:
 def run_transform(code_blocks, grid, timeout: float = DEFAULT_TIMEOUT):
     numpy_package, images = _numpy_paths()
     site = [os.path.dirname(numpy_package)] if numpy_package else []
-    request = {"blocks": code_blocks, "grid": grid, "paths": [HERE] + site,
+    request = {"blocks": code_blocks, "grid": grid, "paths": site,
                "cpu_seconds": int(timeout) + 1}
     with tempfile.TemporaryDirectory(prefix="arc-sandbox-") as raw_dir:
         work_dir = os.path.realpath(raw_dir)
@@ -198,10 +198,19 @@ def _run_block(code, grid, base):
     return _to_matrix(result, grid_type)
 
 
+def _import_by_path(name: str, path: str):
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
 def _child_main():
     request = json.loads(sys.stdin.read())
     sys.path.extend(request["paths"])
-    import arc_helpers
+    arc_helpers = _import_by_path("arc_helpers", HELPERS_MODULE)
     base = dict(arc_helpers.DSL_NAMES)
     try:
         import numpy

@@ -74,6 +74,9 @@ class SandboxTest(unittest.TestCase):
     def test_reading_files_outside_the_allow_list_fails(self):
         self.assert_blocked(f"open({str(Path(__file__).resolve())!r}).read()")
 
+    def test_listing_the_benchmark_directory_fails(self):
+        self.assert_blocked(f"import os\nos.listdir({str(Path(__file__).resolve().parent)!r})")
+
     def test_os_system_cannot_create_files(self):
         self.assert_blocked(f"""
 import os
