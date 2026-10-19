@@ -245,7 +245,7 @@ public actor ModelOrchestratorActor {
     }
 
     static func budgetedText(_ request: GenerationRequest) -> String {
-        guard request.prompt.isEmpty, let messages = request.messages else { return request.prompt }
+        guard let messages = request.messages, !messages.isEmpty else { return request.prompt }
         return ChatMessageInput.plainText(messages)
     }
 
