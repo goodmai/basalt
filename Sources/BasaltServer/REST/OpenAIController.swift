@@ -730,19 +730,17 @@ struct OpenAIController: Sendable {
 
     // MARK: — Tools
 
-    /// `function` tools from `tools` and `additional_tools`, in the Responses form
-    /// (`{type, name, description, parameters}`) or the Chat Completions form
-    /// (`{type, function: {name, description, parameters}}`). Read from the raw body because the
-    /// parameter schema is arbitrary JSON. Built-in tools (local_shell, web_search, …) have no
-    /// function schema for the template and are skipped.
     static func functionTools(fromRequestBody data: Data) -> [ToolDefinition]? {
         guard let body = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        let choice = body["tool_choice"] as? [String: Any]
+        if ((body["tool_choice"] as? String) ?? (choice?["type"] as? String)) == "none" { return nil }
+        let forced = ((choice?["function"] as? [String: Any])?["name"] as? String) ?? (choice?["name"] as? String)
         let raw = ((body["tools"] as? [[String: Any]]) ?? []) + ((body["additional_tools"] as? [[String: Any]]) ?? [])
         let tools: [ToolDefinition] = raw.compactMap { entry in
-            guard entry["type"] as? String == "function" else { return nil }
+            guard entry["type"] as? String == "function" || entry["input_schema"] != nil else { return nil }
             let spec = (entry["function"] as? [String: Any]) ?? entry
-            guard let name = spec["name"] as? String, !name.isEmpty else { return nil }
-            let parameters = spec["parameters"].flatMap { try? JSONSerialization.data(withJSONObject: $0) }
+            guard let name = spec["name"] as? String, !name.isEmpty, forced == nil || forced == name else { return nil }
+            let parameters = (spec["parameters"] ?? spec["input_schema"]).flatMap { try? JSONSerialization.data(withJSONObject: $0) }
                 .flatMap { String(data: $0, encoding: .utf8) }
             return ToolDefinition(name: name, description: spec["description"] as? String, parametersJSON: parameters)
         }
@@ -765,10 +763,10 @@ struct OpenAIController: Sendable {
             // otherwise a coding agent's next turn loses what its tools returned.
             switch msg.type {
             case "function_call", "custom_tool_call":
-                parts.append("[Assistant called \(msg.name ?? "tool")]: \(msg.arguments ?? msg.input ?? "{}")")
+                parts.append(ToolTranscript.call(name: msg.name ?? "tool", arguments: msg.arguments ?? msg.input ?? "{}"))
                 continue
             case "function_call_output", "custom_tool_call_output":
-                parts.append("[Tool result]: \(msg.output?.textValue ?? "")")
+                parts.append(ToolTranscript.result(msg.output?.textValue ?? ""))
                 continue
             case "reasoning":
                 continue

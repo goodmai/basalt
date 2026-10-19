@@ -254,6 +254,20 @@ struct CodingAgentAPITests {
         #expect((parameters["required"] as? [any Sendable])?.first as? String == "cmd")
     }
 
+    @Test("tool_choice none offers no tools; a named tool_choice offers only that tool")
+    func toolChoice() {
+        let tools = #"[{"type": "function", "name": "shell"}, {"type": "function", "name": "read"}, {"name": "edit", "input_schema": {"type": "object"}}]"#
+        let parse = { (choice: String) in
+            OpenAIController.functionTools(fromRequestBody: Data("{\"tools\": \(tools), \"tool_choice\": \(choice)}".utf8))?.map(\.name)
+        }
+        #expect(parse(#""auto""#) == ["shell", "read", "edit"])
+        #expect(parse(#""none""#) == nil)
+        #expect(parse(#"{"type": "none"}"#) == nil)
+        #expect(parse(#"{"type": "tool", "name": "edit"}"#) == ["edit"])
+        #expect(parse(#"{"type": "function", "function": {"name": "read"}}"#) == ["read"])
+        #expect(parse(#"{"type": "function", "name": "shell"}"#) == ["shell"])
+    }
+
     @Test("A tool call streams as a function_call item and is the whole output when there is no text")
     func toolCallStream() async throws {
         let (app, engine) = try await app()
