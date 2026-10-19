@@ -184,7 +184,7 @@ public struct HarnessExperienceLibrary: Sendable {
         return String(scalars).split(separator: " ", omittingEmptySubsequences: true).joined(separator: " ")
     }
 
-    static func slugify(_ input: String) -> String {
+    public static func slugify(_ input: String) -> String {
         var slug = ""
         for scalar in input.lowercased().unicodeScalars {
             if CharacterSet.alphanumerics.contains(scalar), scalar.isASCII {

@@ -2,12 +2,13 @@ import Foundation
 import ArgumentParser
 import BasaltCore
 import BasaltHarness
+import BasaltInference
 
 struct HarnessCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "harness",
-        abstract: "Validate an agent harness (Claude Code, opencode, AGENTS.md)",
-        subcommands: [HarnessValidateCommand.self]
+        abstract: "Validate or optimize an agent harness (Claude Code, opencode, AGENTS.md)",
+        subcommands: [HarnessValidateCommand.self, HarnessOptimizeCommand.self]
     )
 }
 
@@ -44,5 +45,70 @@ struct HarnessValidateCommand: AsyncParsableCommand {
         report.warnings += loaded.skipped.map { "skipped \($0)" }
         try printJSON(report)
         if !report.isValid { throw ExitCode.failure }
+    }
+}
+
+struct HarnessOptimizeCommand: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "optimize",
+        abstract: "Run one Harness² propose–probe–compose pass on a local model and print the result as JSON; the harness on disk is not changed"
+    )
+
+    @Argument(help: "Repository root holding CLAUDE.md / AGENTS.md and the surface directory")
+    var directory = "."
+
+    @OptionGroup var surface: HarnessSurfaceOptions
+
+    @Option(help: "Model repo id from the local cache, or a local model directory")
+    var model: String
+
+    @Option(help: "The task the harness should get better at")
+    var task: String
+
+    @Option(help: "Task id for the library entry and the prompt-cache namespace (default: derived from --task)")
+    var slug: String?
+
+    @Option(help: "Experience Library domain")
+    var domain = "general"
+
+    @Option(name: .customLong("require"), help: "A term the deliverable must contain (repeatable)")
+    var requiredTerms: [String] = []
+
+    @Flag(name: .customLong("expects-json"), help: "The deliverable must be a JSON object")
+    var expectsJSON = false
+
+    @Option(help: "Budget parameter k: 4k rollouts, 3k proposer calls")
+    var k = 1
+
+    @Option(help: "Experience Library directory (default ~/.basalt/harness-library)")
+    var library: String?
+
+    @Flag(name: .customLong("no-library"), help: "Do not read or write the Experience Library")
+    var noLibrary = false
+
+    func validate() throws {
+        guard (1...8).contains(k) else { throw ValidationError("--k must be in 1...8") }
+    }
+
+    func run() async throws {
+        let spec = try surface.spec()
+        let root = URL(fileURLWithPath: directory, isDirectory: true)
+        let loaded = try HarnessLoader.load(root: root, spec: spec, allowedRoots: [root])
+        let modelPath = FileManager.default.fileExists(atPath: model) ? model : ModelCache.resolve(repoId: model)?.path
+        guard let modelPath else {
+            throw ValidationError("Model '\(model)' is not in the local cache; run `basalt models download \(model)` first")
+        }
+        let orchestrator = ModelOrchestratorActor(engine: MLXInferenceEngine())
+        try await orchestrator.loadModel(path: modelPath)
+        let libraryStore = noLibrary ? nil : HarnessExperienceLibrary(
+            rootDirectory: library.map { URL(fileURLWithPath: $0, isDirectory: true) } ?? HarnessExperienceLibrary.defaultRoot
+        )
+        let harnessTask = HarnessTask(
+            slug: HarnessExperienceLibrary.slugify(slug ?? String(task.prefix(48))),
+            prompt: task, domain: domain, requiredTerms: requiredTerms, expectsJSON: expectsJSON
+        )
+        let result = try await HarnessOptimizer(orchestrator: orchestrator, spec: spec, library: libraryStore)
+            .optimize(task: harnessTask, base: loaded.tree, k: k)
+        try printJSON(result)
     }
 }

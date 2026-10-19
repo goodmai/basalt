@@ -285,6 +285,25 @@ public final class MCPServer: Sendable {
                 ])
             ),
             Tool(
+                name: "harness_optimize",
+                description: "Run one Harness² propose–probe–compose pass on the loaded model: 2k proposer calls (invariant and domain edits of the harness), k base rollouts, a rollout per admitted candidate, k compose calls, then an anonymised judge among the candidates tied on measured stages (delivered, required terms, no loops). Budget R=4k rollouts, P=3k proposer calls. Nothing is written to the harness; the winning edit is returned and stored in the Experience Library. Same directory rules and limits as harness_validate.",
+                inputSchema: AnyCodable([
+                    "type": "object",
+                    "required": ["task"],
+                    "properties": [
+                        "task": ["type": "string", "description": "The task the harness should get better at"],
+                        "slug": ["type": "string", "description": "Short task id used for the library entry and the prompt-cache namespace (default: derived from task)"],
+                        "domain": ["type": "string", "description": "Experience Library domain (default general)"],
+                        "requiredTerms": ["type": "array", "items": ["type": "string"], "description": "Terms the task demands in the deliverable (conformance stage)"],
+                        "expectsJSON": ["type": "boolean", "description": "The deliverable must be a JSON object"],
+                        "k": ["type": "integer", "minimum": 1, "maximum": 4, "description": "Budget parameter (default 1)"],
+                        "directory": ["type": "string", "description": "Repository root that contains the harness"],
+                        "files": ["type": "object", "additionalProperties": ["type": "string"], "description": "Alternative to directory: {path: content}"],
+                        "surface": ["type": "string", "enum": HarnessSurfaceSpec.all.map(\.name), "description": "Harness layout (default claude)"]
+                    ]
+                ])
+            ),
+            Tool(
                 name: "harness_library_query",
                 description: "Query stored lessons and component attributions from the Harness Experience Library.",
                 inputSchema: AnyCodable([
@@ -349,6 +368,8 @@ public final class MCPServer: Sendable {
             callHarnessValidate(id: id, args: arguments)
         case "harness_library_query":
             await callHarnessLibraryQuery(id: id, args: arguments)
+        case "harness_optimize":
+            await callHarnessOptimize(id: id, args: arguments)
         default:
             writeError(id: id, code: -32601, message: "Unknown tool: \(name)")
         }
@@ -479,43 +500,80 @@ public final class MCPServer: Sendable {
         }
     }
 
-    private func callHarnessValidate(id: JSONRPCId?, args: [String: Any]?) {
+    private func harnessInput(id: JSONRPCId?, args: [String: Any]?) -> (spec: HarnessSurfaceSpec, tree: HarnessTree, skipped: [String])? {
         let surfaceName = args?["surface"] as? String ?? "claude"
         guard var spec = HarnessSurfaceSpec.named(surfaceName) else {
             let known = HarnessSurfaceSpec.all.map(\.name).joined(separator: ", ")
             writeError(id: id, code: -32602, message: "Unknown surface '\(surfaceName)'; expected one of: \(known)")
-            return
+            return nil
         }
         if let limit = args?["alwaysOnMaxChars"] {
             guard let limit = limit as? Int, limit > 0 else {
                 writeError(id: id, code: -32602, message: "alwaysOnMaxChars must be a positive integer")
-                return
+                return nil
             }
             spec = spec.withAlwaysOnMaxChars(limit)
         }
-        var skipped: [String] = []
-        let tree: HarnessTree
         if let directory = args?["directory"] as? String, !directory.isEmpty {
             do {
                 let loaded = try HarnessLoader.load(
                     root: URL(fileURLWithPath: directory, isDirectory: true), spec: spec,
                     allowedRoots: harnessRoots, limits: harnessLimits
                 )
-                tree = loaded.tree
-                skipped = loaded.skipped
+                return (spec, loaded.tree, loaded.skipped)
             } catch {
                 writeError(id: id, code: -32602, message: "Cannot load harness: \(error)")
-                return
+                return nil
             }
-        } else if let files = args?["files"] as? [String: String] {
-            tree = HarnessTree(files: files)
-        } else {
-            writeError(id: id, code: -32602, message: "Missing required argument: directory or files")
+        }
+        if let files = args?["files"] as? [String: String] {
+            return (spec, HarnessTree(files: files), [])
+        }
+        writeError(id: id, code: -32602, message: "Missing required argument: directory or files")
+        return nil
+    }
+
+    private func callHarnessValidate(id: JSONRPCId?, args: [String: Any]?) {
+        guard let input = harnessInput(id: id, args: args) else { return }
+        var report = HarnessValidator.validate(input.tree, spec: input.spec)
+        report.warnings += input.skipped.map { "skipped \($0)" }
+        writeJSONResult(id: id, report, isError: !report.isValid)
+    }
+
+    private func callHarnessOptimize(id: JSONRPCId?, args: [String: Any]?) async {
+        guard let prompt = args?["task"] as? String, !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            writeError(id: id, code: -32602, message: "Missing required argument: task")
             return
         }
-        var report = HarnessValidator.validate(tree, spec: spec)
-        report.warnings += skipped.map { "skipped \($0)" }
-        writeJSONResult(id: id, report, isError: !report.isValid)
+        let k = args?["k"] ?? 1
+        guard let k = k as? Int, (1...4).contains(k) else {
+            writeError(id: id, code: -32602, message: "k must be an integer in 1...4")
+            return
+        }
+        let terms = args?["requiredTerms"] ?? [String]()
+        guard let terms = terms as? [String] else {
+            writeError(id: id, code: -32602, message: "requiredTerms must be an array of strings")
+            return
+        }
+        guard let input = harnessInput(id: id, args: args) else { return }
+        let task = HarnessTask(
+            slug: HarnessExperienceLibrary.slugify((args?["slug"] as? String) ?? String(prompt.prefix(48))),
+            prompt: prompt,
+            domain: (args?["domain"] as? String) ?? "general",
+            requiredTerms: terms,
+            expectsJSON: (args?["expectsJSON"] as? Bool) ?? false
+        )
+        do {
+            let result = try await HarnessOptimizer(orchestrator: orchestrator, spec: input.spec, library: library)
+                .optimize(task: task, base: input.tree, k: k)
+            writeJSONResult(id: id, result)
+        } catch let error as BasaltError {
+            writeError(id: id, code: errorCode(for: error), message: error.localizedDescription)
+        } catch let error as HarnessBudgetError {
+            writeError(id: id, code: -32602, message: "Harness optimization refused: \(error)")
+        } catch {
+            writeError(id: id, code: -32603, message: "Harness optimization failed: \(error)")
+        }
     }
 
     private func callHarnessLibraryQuery(id: JSONRPCId?, args: [String: Any]?) async {

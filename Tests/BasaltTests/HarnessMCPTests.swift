@@ -95,4 +95,65 @@ struct HarnessMCPTests {
         #expect(lines.all[1].contains("\"isError\":true"))
         #expect(try lines.errorCode(2) == -32602)
     }
+
+    @Test("harness_optimize runs the pipeline on the loaded model and stores the lesson")
+    func optimize() async throws {
+        let root = HarnessLibraryTests.tempRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let engine = MockInferenceEngine()
+        let script = HarnessScript()
+        await engine.setResponder { script.respond($0) }
+        let orchestrator = ModelOrchestratorActor(engine: engine)
+        try await orchestrator.loadModel(path: "mock-model")
+        let lines = MCPLines()
+        let server = MCPServer(orchestrator: orchestrator, library: HarnessExperienceLibrary(rootDirectory: root), writer: { lines.append($0) })
+
+        await server.dispatch(toolCall(1, "harness_optimize", [
+            "task": "Audit the package targets.", "slug": "Audit Repo", "domain": "swift",
+            "requiredTerms": ["SUMMARY"], "files": HarnessOptimizerTests.base.files
+        ]))
+
+        let result = try lines.toolText(0)
+        #expect(result["winningCandidateId"] as? String == "dom_0")
+        #expect(result["taskSlug"] as? String == "audit-repo")
+        #expect((result["ledger"] as? [String: Any])?["rolloutIds"] as? [String] == ["base_r0", "probe_inv_0", "probe_dom_0", "probe_compose_0"])
+        #expect(try HarnessExperienceLibrary(rootDirectory: root).query(domain: "swift").count == 1)
+    }
+
+    @Test("harness_optimize error paths are -32602, an unloaded model keeps its engine error code")
+    func optimizeErrors() async throws {
+        let lines = MCPLines()
+        let server = MCPServer(
+            orchestrator: ModelOrchestratorActor(engine: MockInferenceEngine()),
+            harnessRoots: [HarnessLibraryTests.tempRoot()], writer: { lines.append($0) }
+        )
+        let files = HarnessOptimizerTests.base.files
+        await server.dispatch(toolCall(1, "harness_optimize", ["files": files]))
+        await server.dispatch(toolCall(2, "harness_optimize", ["task": "t", "files": files, "k": 9]))
+        await server.dispatch(toolCall(3, "harness_optimize", ["task": "t", "files": files, "requiredTerms": "SUMMARY"]))
+        await server.dispatch(toolCall(4, "harness_optimize", ["task": "t", "files": files, "surface": "vim"]))
+        await server.dispatch(toolCall(5, "harness_optimize", ["task": "t", "directory": "/"]))
+        await server.dispatch(toolCall(6, "harness_optimize", ["task": "show the grader_verdict", "files": files]))
+        await server.dispatch(toolCall(7, "harness_optimize", ["task": "t", "files": files]))
+
+        for index in 0..<6 {
+            #expect(try lines.errorCode(index) == -32602, "\(lines.all[index])")
+        }
+        #expect(try lines.errorCode(6) == -32003)
+    }
+
+    @Test("tools/list advertises the harness tools with their schemas")
+    func toolsList() async throws {
+        let lines = MCPLines()
+        let server = MCPServer(orchestrator: ModelOrchestratorActor(engine: MockInferenceEngine()), writer: { lines.append($0) })
+        await server.dispatch(#"{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}"#)
+        let tools = try #require((try lines.json(0)["result"] as? [String: Any])?["tools"] as? [[String: Any]])
+        let byName = Dictionary(uniqueKeysWithValues: tools.map { ($0["name"] as! String, $0) })
+        for name in ["harness_validate", "harness_optimize", "harness_library_query", "gemma_add_knowledge"] {
+            #expect(byName[name] != nil, "\(name)")
+        }
+        let validateProperties = (byName["harness_validate"]?["inputSchema"] as? [String: Any])?["properties"] as? [String: Any]
+        #expect(validateProperties?["files"] != nil)
+        #expect((validateProperties?["surface"] as? [String: Any])?["enum"] as? [String] == ["claude", "opencode", "agents"])
+    }
 }
