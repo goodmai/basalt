@@ -85,7 +85,7 @@ public enum HarnessValidator {
         }
         errors = Array(Set(errors)).sorted()
 
-        let untriggered = untriggeredSkills(skills, tree: tree, spec: spec)
+        let untriggered = untriggeredSkills(skills, tree: tree, spec: spec, alwaysOnPaths: Set(alwaysOnPaths))
         var diversity: Double?
         if !siblings.isEmpty {
             let score = HarnessDiversity.nearestSiblingDistance(tree, siblings: siblings, relativeTo: base)
@@ -195,9 +195,11 @@ public enum HarnessValidator {
         }
     }
 
-    private static func untriggeredSkills(_ skills: [(path: String, name: String)], tree: HarnessTree, spec: HarnessSurfaceSpec) -> [String] {
+    private static func untriggeredSkills(
+        _ skills: [(path: String, name: String)], tree: HarnessTree, spec: HarnessSurfaceSpec, alwaysOnPaths: Set<String>
+    ) -> [String] {
         let referencing = tree.files.filter { path, _ in
-            spec.instructionFiles.contains(path) || tree.alwaysOnPaths(spec: spec).contains(path)
+            spec.instructionFiles.contains(path) || alwaysOnPaths.contains(path)
                 || spec.isAgentFile(path) || spec.classify(path: path) == .skills
         }
         return skills.filter { skill in
