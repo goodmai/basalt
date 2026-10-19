@@ -54,6 +54,14 @@ struct FrontmatterTests {
         #expect(parsed.fields["mode"] == "it's")
     }
 
+    @Test("A plain scalar that starts on the next indented line is folded; a nested mapping or list is not a value")
+    func plainScalarOnNextLine() throws {
+        let parsed = try #require(Frontmatter.parse("---\ndescription:\n  Long text that\n  wraps.\nmetadata:\n  name: nested\nitems:\n  - one\n---\n"))
+        #expect(parsed.fields["description"] == "Long text that wraps.")
+        #expect(parsed.fields["metadata"] == nil)
+        #expect(parsed.fields["items"] == nil)
+    }
+
     @Test("Content without a closing fence has no frontmatter")
     func unterminated() {
         #expect(Frontmatter.parse("---\nname: x\n") == nil)

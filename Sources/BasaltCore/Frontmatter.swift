@@ -51,9 +51,16 @@ public struct Frontmatter: Sendable, Equatable {
             return (style == "|" ? lines.joined(separator: "\n") : folded(lines))
                 .trimmingCharacters(in: .whitespacesAndNewlines)
         }
-        if raw.isEmpty { return nil }
         let continuation = block.map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        if raw.isEmpty {
+            guard let first = continuation.first, !startsCollection(first) else { return nil }
+            return unquoted(continuation.joined(separator: " "))
+        }
         return unquoted(([raw] + continuation).joined(separator: " "))
+    }
+
+    private static func startsCollection(_ line: String) -> Bool {
+        line == "-" || line.hasPrefix("- ") || line.hasSuffix(":") || line.contains(": ")
     }
 
     private static func dedented(_ block: [String]) -> [String] {
