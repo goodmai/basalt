@@ -143,7 +143,7 @@
 - `test_*.swift` в корне (временные ad-hoc тесты, не входящие в `Tests/`).
 
 ## 12) Скрипт очистки перед GitHub
-- Скрипт: `scripts/clean_for_github.sh`
+- Скрипт: `scripts/cleanup.swift --mode=release` (там же `--mode=daily` — ротация logs/images/reports, и `--mode=all`)
 - Назначение: удалить build/runtime мусор и временные локальные файлы перед публикацией.
 - Режимы:
   - `--dry-run` (по умолчанию): только показать, что будет удалено.
@@ -152,8 +152,8 @@
 
 ### 12.1 Рекомендуемый порядок запуска перед публикацией
 1. Просмотр кандидатов на удаление:
-   - `./scripts/clean_for_github.sh --dry-run`
+   - `./scripts/cleanup.swift --mode=release`
 2. Очистка build/runtime артефактов:
-   - `./scripts/clean_for_github.sh --apply`
+   - `./scripts/cleanup.swift --mode=release --apply`
 3. Опционально (если нужен максимально чистый публичный репозиторий):
-   - `./scripts/clean_for_github.sh --apply --include-local`
+   - `./scripts/cleanup.swift --mode=release --apply --include-local`

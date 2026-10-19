@@ -511,10 +511,8 @@ Symbols newly shared across targets use the `package` access level (existing pub
 | Script | Purpose |
 |---|---|
 | `scripts/build_metal.swift` | Compile Metal GPU kernels (skips if up to date) |
-| `scripts/cleanup.swift` | Clean build artifacts and temp files |
-| `scripts/cleanup_daily.swift` | Rotate logs and old benchmarks |
+| `scripts/cleanup.swift` | `--mode=daily` rotates logs/images/reports, `--mode=release` removes build/runtime artifacts before publishing, `--mode=all` both; dry run unless `--apply` |
 | `scripts/archive.sh` | Archive logs/reports/screenshots |
-| `scripts/clean_for_github.swift` | Remove secrets and heavy binaries before push |
 
 ---
 
