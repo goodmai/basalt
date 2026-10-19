@@ -44,9 +44,9 @@ struct EntropyDynamicTemperatureTests {
     @Test("Near-zero entropy is near-greedy and finite; nothing exceeds the clamp")
     func clamped() {
         let edt = EntropyDynamicTemperature(baseTemperature: 1.8)
-        #expect(temperature(edt, h: 0) == EntropyDynamicTemperature.range.lowerBound)
-        #expect(temperature(edt, h: 0.05) == EntropyDynamicTemperature.range.lowerBound)
-        #expect(temperature(edt, h: 50, r: 1) == EntropyDynamicTemperature.range.upperBound)
+        #expect(temperature(edt, h: 0) == EntropyDynamicTemperature.temperatureRange.lowerBound)
+        #expect(temperature(edt, h: 0.05) == EntropyDynamicTemperature.temperatureRange.lowerBound)
+        #expect(temperature(edt, h: 50, r: 1) == EntropyDynamicTemperature.temperatureRange.upperBound)
     }
 
     @Test("process() sharpens a confident distribution relative to the static temperature")

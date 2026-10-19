@@ -5,10 +5,10 @@ public struct EntropyDynamicTemperature: LogitProcessor {
     public static let defaultN: Float = 0.8
     public static let defaultTheta: Float = 1.5
     public static let defaultGammaRep: Float = 0.5
-    public static let range: ClosedRange<Float> = 0.05...2.0
+    public static let temperatureRange: ClosedRange<Float> = 0.05...2.0
 
     static let probeTokens = 16
-    static let threshold = 4
+    static let repeatThreshold = 4
     static let minTokens = 64
     static let retainTokens = 512
     static let readbackLag = 2
@@ -47,7 +47,7 @@ public struct EntropyDynamicTemperature: LogitProcessor {
 
     func temperature(entropy: MLXArray, repetition: Float) -> MLXArray {
         let t = baseTemperature * pow(MLXArray(n), theta / entropy) + gammaRep * repetition
-        return clip(t, min: min(Self.range.lowerBound, baseTemperature), max: Self.range.upperBound)
+        return clip(t, min: min(Self.temperatureRange.lowerBound, baseTemperature), max: Self.temperatureRange.upperBound)
     }
 
     public mutating func prompt(_ prompt: MLXArray) {
@@ -55,10 +55,10 @@ public struct EntropyDynamicTemperature: LogitProcessor {
 
     public func process(logits: MLXArray) -> MLXArray {
         let t = temperature(entropy: Self.entropy(logits), repetition: repetition)
-        return truncated(logits) * (baseTemperature / t)
+        return filteredByTopPMinP(logits) * (baseTemperature / t)
     }
 
-    func truncated(_ logits: MLXArray) -> MLXArray {
+    func filteredByTopPMinP(_ logits: MLXArray) -> MLXArray {
         guard topP != nil || minP != nil else { return logits }
         let z = logits.asType(.float32)
         let logp = z - logSumExp(z, axis: -1, keepDims: true)
@@ -85,6 +85,6 @@ public struct EntropyDynamicTemperature: LogitProcessor {
             history.removeFirst(history.count - Self.retainTokens)
         }
         repetition = history.count < Self.minTokens ? 0 : Float(
-            RepetitionGuard.score(tokens: history, probeSize: Self.probeTokens, threshold: Self.threshold))
+            RepetitionGuard.score(tokens: history, probeSize: Self.probeTokens, threshold: Self.repeatThreshold))
     }
 }
