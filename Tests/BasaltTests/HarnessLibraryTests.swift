@@ -104,6 +104,27 @@ struct HarnessLibraryTests {
         #expect(index.split(separator: "\n", omittingEmptySubsequences: false).count == 4)
     }
 
+    @Test("A grader token in topic or cue is refused at addKnowledge, and an existing such entry stays out of the index")
+    func leakTokensNeverReachTheIndex() throws {
+        let root = Self.tempRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let library = HarnessExperienceLibrary(rootDirectory: root)
+        #expect(throws: HarnessLibraryError.self) { try library.addKnowledge(topic: "see grader_verdict", content: "c") }
+        #expect(throws: HarnessLibraryError.self) { try library.addKnowledge(topic: "t", content: "c", cue: #"{"score": 1}"#) }
+        try library.addKnowledge(topic: "clean", content: #"the deliverable was {"score": 1}"#)
+
+        var entries = try library.query()
+        entries.append(HarnessKnowledgeEntry(
+            slug: "planted", topic: "planted benchmark_score", domain: "general", content: "c", cue: "c",
+            confidence: "low", attributions: [], delta: nil, createdAt: "2026-01-01T00:00:00Z"
+        ))
+        try JSONEncoder().encode(entries).write(to: root.appendingPathComponent("entries.json"))
+
+        let index = try library.index(domain: "general")
+        #expect(index.contains("clean"))
+        #expect(!index.contains("planted"))
+    }
+
     @Test("Two library handles on one directory, as stdio MCP and serve would hold, never lose an entry")
     func concurrentWriters() async throws {
         let root = Self.tempRoot()

@@ -72,6 +72,9 @@ public struct HarnessExperienceLibrary: Sendable {
         try check(domain.count <= limits.maxDomainChars, "domain must be at most \(limits.maxDomainChars) characters")
         try check(!content.isEmpty && content.utf8.count <= limits.maxContentBytes, "content must be 1...\(limits.maxContentBytes) bytes")
         try check(Self.confidences.contains(confidence), "confidence must be one of low, medium, high")
+        if let token = HarnessLeakGuard.forbiddenToken(in: topic + "\n" + cue) {
+            throw HarnessLibraryError.invalidArgument("topic and cue reach the harness proposer and must not contain '\(token)'")
+        }
         let deltaBytes = delta.map { $0.reduce(0) { $0 + $1.key.utf8.count + $1.value.utf8.count } } ?? 0
         try check(deltaBytes <= limits.maxDeltaBytes, "harness delta must be at most \(limits.maxDeltaBytes) bytes")
 
@@ -119,7 +122,8 @@ public struct HarnessExperienceLibrary: Sendable {
 
     public func index(domain: String) throws -> String {
         let domainSlug = Self.slugify(domain)
-        return Self.renderIndex(domain: domainSlug, entries: try query(domain: domainSlug))
+        let indexable = try query(domain: domainSlug).filter { HarnessLeakGuard.forbiddenToken(in: $0.topic + "\n" + $0.cue) == nil }
+        return Self.renderIndex(domain: domainSlug, entries: indexable)
     }
 
     private func check(_ condition: Bool, _ message: String) throws {
