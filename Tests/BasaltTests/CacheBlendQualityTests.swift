@@ -102,12 +102,13 @@ struct CacheBlendQualityTests {
                     sums[key] = (before.logProb + blended.logProb, before.top1 + blended.top1, before.reused + outcome.reused)
                 }
             }
-            return (["full"] + ratios.map { String(format: "%.2f", $0) }).map { key -> (String, Float, Float) in
+            return (["full"] + ratios.map { String(format: "%.2f", $0) }).map { key -> (String, Float, Float, Float) in
                 let sum = sums[key]!
                 let n = Float(prompts.count)
                 let line = String(format: "%@ meanLogProb %.3f top1 %.3f reused %d/%d", key, sum.logProb / n, sum.top1 / n,
                                   sum.reused / prompts.count, prompts.map(\.count).reduce(0, +) / prompts.count)
-                return (line, sum.logProb / n, sum.top1 / n)
+                let share = Float(sum.reused) / Float(prompts.map { $0.count - 1 }.reduce(0, +))
+                return (line, sum.logProb / n, sum.top1 / n, share)
             }
         }
         for row in rows { print("BLEND-QUALITY", row.0) }
@@ -117,7 +118,12 @@ struct CacheBlendQualityTests {
         let none = try #require(byKey["0.00"])
         let half = try #require(byKey["0.50"])
         #expect(exact.2 >= full.2 - 0.01)
-        #expect(half.1 >= none.1)
         #expect(full.2 >= 0.95)
+        for key in ["0.00", "0.15", "0.30", "0.50"] {
+            #expect(try #require(byKey[key]).3 >= 0.9)
+        }
+        #expect(none.1 < full.1 - 0.02)
+        #expect(half.1 > none.1)
+        #expect(half.2 >= 0.9)
     }
 }
