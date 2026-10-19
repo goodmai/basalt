@@ -76,11 +76,39 @@ struct NemotronHTests {
         #expect(rendered.contains(#"<TOOLCALL>[{"name": "get_weather", "arguments": {"city":"Paris"}}, {"name": "get_time", "arguments": {"tz":"CET"}}]</TOOLCALL>"#))
     }
 
-    @Test("only the loop binding call is renamed, text and other names are left alone")
-    func renameIsScopedToTheLoop() {
+    @Test("outside the loop, as an attribute and inside a quoted word call keeps its name")
+    func renameLeavesOtherNamesAlone() {
         let template = "{{ call }}{% for call in xs %}{{ call.name ~ 'call' ~ x.call }}{% endfor %}{{ call }} call"
         #expect(ChatTemplateCompatibility.renamingReservedLoopVariables(template)
             == "{{ call }}{% for call_item in xs %}{{ call_item.name ~ 'call' ~ x.call }}{% endfor %}{{ call }} call")
+    }
+
+    @Test("an inner unpacking loop does not end the renaming of the outer call loop")
+    func unpackingLoopKeepsTheOuterRename() throws {
+        let template = "{% for call in calls %}{% for k, v in call.args.items() %}{{ k }}={{ v }};{% endfor %}{{ call.name }}{% endfor %}"
+        let compatible = ChatTemplateCompatibility.renamingReservedLoopVariables(template)
+        #expect(compatible == "{% for call_item in calls %}{% for k, v in call_item.args.items() %}{{ k }}={{ v }};{% endfor %}{{ call_item.name }}{% endfor %}")
+        let rendered = try Template(compatible).render(["calls": [["name": "ls", "args": ["path": "/"]]]])
+        #expect(rendered == "path=/;ls")
+    }
+
+    @Test("an unpacking loop that binds call is renamed too")
+    func unpackingLoopBindingCallIsRenamed() {
+        #expect(ChatTemplateCompatibility.renamingReservedLoopVariables("{% for i, call in xs %}{{ call }}{% endfor %}")
+            == "{% for i, call_item in xs %}{{ call_item }}{% endfor %}")
+    }
+
+    @Test("the Nano 9B tool instructions keep their wording inside a call loop")
+    func stringLiteralsKeepCall() {
+        let template = #"{%- for call in calls -%}{{- 'If you decide to call any tool(s), use the following format:\n' -}}{{- "call \"call\" " ~ call -}}{%- endfor -%}"#
+        #expect(ChatTemplateCompatibility.renamingReservedLoopVariables(template)
+            == #"{%- for call_item in calls -%}{{- 'If you decide to call any tool(s), use the following format:\n' -}}{{- "call \"call\" " ~ call_item -}}{%- endfor -%}"#)
+    }
+
+    @Test("a {%+ loop is renamed and closed like any other")
+    func plusWhitespaceControlIsRecognised() {
+        #expect(ChatTemplateCompatibility.renamingReservedLoopVariables("{%+ for call in xs %}{{ call }}{%+ endfor %}{{ call }}")
+            == "{%+ for call_item in xs %}{{ call_item }}{%+ endfor %}{{ call }}")
     }
 
     @Test("the tokenizer config carries the compatible template, and an untouched one is returned as is")
