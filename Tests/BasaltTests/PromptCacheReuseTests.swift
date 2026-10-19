@@ -461,6 +461,54 @@ struct PromptCacheTreeTests {
         tree.release(lease)
     }
 
+    @Test("Removing a leaf merges its parent with the only child left, so no one-child chains build up")
+    func removalMergesSingleChildParents() throws {
+        var tree = PromptCacheTree(byteBudget: 1 << 30, leafLimit: 2)
+        let a = Array(0..<10)
+        let b = Array(0..<5) + [70, 71]
+        tree.store("ns", tokens: a, cache: cache(a, layers: 2))
+        tree.store("ns", tokens: b, cache: cache(b, layers: 2))
+        let held = try tree.required("ns", for: b + [99])
+        let c = branch(900, 6)
+        tree.store("ns", tokens: c, cache: cache(c, layers: 2))
+
+        let root = try #require(tree.roots["ns"])
+        let merged = try #require(root.children[0])
+        #expect(merged.tokens == b)
+        #expect(merged.children.isEmpty)
+        #expect(merged === held.pinned)
+        #expect(merged.bytes == b.count * 2 * Self.bytesPerToken)
+        #expect(tree.storedPrefix(of: a, in: "ns") == 5)
+        #expect(tree.leafCount == 2)
+        #expect(tree.leafCount == tree.leaves().count)
+        #expect(tree.byteCount == (b.count + c.count) * 2 * Self.bytesPerToken)
+        tree.release(held)
+
+        let lease = try tree.required("ns", for: b + [99])
+        for layer in 0..<2 {
+            #expect(ids(lease, layer: layer) == b.map { $0 + layer * Self.layerStride }, "layer \(layer)")
+        }
+        tree.release(lease)
+    }
+
+    @Test("A branch the leaf cap would drop is refused before anything is split or copied")
+    func capRefusesBeforeSplitting() throws {
+        var tree = PromptCacheTree(byteBudget: 1 << 30, leafLimit: 1)
+        let a = Array(0..<10)
+        tree.store("ns", tokens: a, cache: cache(a))
+        let held = try tree.required("ns", for: a)
+        let node = try #require(tree.roots["ns"]?.children[0])
+        let before = node.layers[0][0]
+        tree.store("ns", tokens: Array(0..<5) + [70], cache: cache(Array(0..<5) + [70]))
+        tree.store("other", tokens: [1, 2], cache: cache([1, 2]))
+        #expect(tree.roots["ns"]?.children[0] === node)
+        #expect(node.tokens == a)
+        #expect(node.layers[0][0] === before)
+        #expect(Set(tree.roots.keys) == ["ns"])
+        #expect(tree.leafCount == 1)
+        tree.release(held)
+    }
+
     @Test("A namespace whose last branch is evicted leaves no root behind")
     func emptyNamespacesAreRemoved() {
         var tree = PromptCacheTree(byteBudget: 100 * Self.bytesPerToken)
@@ -469,9 +517,9 @@ struct PromptCacheTreeTests {
         tree.store("second", tokens: b, cache: cache(b))
         #expect(Set(tree.roots.keys) == ["second"])
         for index in 0..<20 {
-            tree.store("credential:\(index)", tokens: a, cache: cache(a))
+            tree.store("ns\(index)", tokens: a, cache: cache(a))
         }
-        #expect(Set(tree.roots.keys) == ["credential:19"])
+        #expect(Set(tree.roots.keys) == ["ns19"])
         #expect(tree.byteCount == 100 * Self.bytesPerToken)
     }
 

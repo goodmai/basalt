@@ -346,6 +346,7 @@ struct MCPServerTests {
         let sent = try #require(await engine.lastRequest)
         #expect(sent.minP == 0.1)
         #expect(sent.dynamicTemperature == true)
+        #expect(sent.cacheKey == PromptCacheKey.shared)
     }
 
     private actor OutputCapturer {

@@ -104,13 +104,15 @@ struct PromptCacheTree: Sendable {
     mutating func store(_ namespace: String, tokens: [Int], cache: PromptCache) {
         guard byteBudget > 0, !tokens.isEmpty, cache.isSharable, cache.tokenCount >= tokens.count else { return }
         let root = roots[namespace] ?? PromptCacheNode(tokens: [], layers: [], lastUse: 0)
-        roots[namespace] = root
         let path = Self.walk(from: root, along: tokens)
         let matched = path.reduce(0) { $0 + $1.used }
         guard matched < tokens.count else {
             touch(path.last?.node ?? root)
             return
         }
+        let addsLeaf = path.last.map { $0.used < $0.node.tokens.count || !$0.node.children.isEmpty } ?? true
+        guard !addsLeaf || leafCount < leafLimit || leaves().contains(where: { $0.pins == 0 }) else { return }
+        roots[namespace] = root
         var parent = root
         for step in path {
             parent = step.used < step.node.tokens.count ? split(step.node, at: step.used) : step.node
@@ -205,6 +207,21 @@ struct PromptCacheTree: Sendable {
         if parent.tokens.isEmpty, parent.children.isEmpty {
             roots = roots.filter { $0.value !== parent }
         }
+        merge(parent)
+    }
+
+    private func merge(_ parent: PromptCacheNode) {
+        guard !parent.tokens.isEmpty, parent.pins == 0, parent.children.count == 1,
+              let child = parent.children.values.first, let grandparent = parent.parent
+        else { return }
+        child.layers = zip(parent.layers, child.layers).map { head, tail in
+            let joined = zip(head, tail).map { concatenated([$0, $1], axis: 2) }
+            eval(joined)
+            return joined
+        }
+        child.tokens = parent.tokens + child.tokens
+        child.lastUse = max(child.lastUse, parent.lastUse)
+        attach(child, to: grandparent)
     }
 
     private mutating func evict() {
