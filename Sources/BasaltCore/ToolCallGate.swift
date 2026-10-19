@@ -97,12 +97,16 @@ public struct NemotronToolCallScanner: Sendable {
         case nil:
             return "{}"
         case let text as String:
-            return (try? JSONSerialization.jsonObject(with: Data(text.utf8))) is [String: Any] ? text : nil
+            return (try? JSONSerialization.jsonObject(with: Data(text.utf8))) is [String: Any] ? text : encoded(["input": text])
         case let object as [String: Any]:
-            return (try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys, .withoutEscapingSlashes]))
-                .flatMap { String(data: $0, encoding: .utf8) }
+            return encoded(object)
         default:
             return nil
         }
+    }
+
+    private static func encoded(_ object: [String: Any]) -> String? {
+        (try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys, .withoutEscapingSlashes]))
+            .flatMap { String(data: $0, encoding: .utf8) }
     }
 }

@@ -310,6 +310,13 @@ struct NemotronHTests {
         #expect(calls.map(\.arguments) == [#"{"path":"/tmp/a.txt"}"#])
     }
 
+    @Test("a string argument that is not a JSON object becomes the input field instead of leaking the call as text")
+    func freeTextArgumentBecomesInput() {
+        let (text, calls) = Self.scan([#"<TOOLCALL>[{"name": "apply_patch", "arguments": "*** Begin Patch"}]</TOOLCALL>"#])
+        #expect(text.isEmpty)
+        #expect(calls.map(\.arguments) == [#"{"input":"*** Begin Patch"}"#])
+    }
+
     @Test("generation starts inside a thinking span exactly when the rendered prompt leaves one open")
     func renderedTailOpensThinking() {
         let opened = [
