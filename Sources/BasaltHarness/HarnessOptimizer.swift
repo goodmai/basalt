@@ -240,6 +240,7 @@ enum HarnessProposal {
 
     static let maxFiles = 4
     static let maxFileBytes = 32 * 1024
+    static let maxDeltaBytes = HarnessLibraryLimits().maxDeltaBytes
 
     static func prompt(
         axis: Axis, task: HarnessTask, base: HarnessTree, spec: HarnessSurfaceSpec,
@@ -286,6 +287,8 @@ enum HarnessProposal {
     ) -> Result<HarnessTree, Rejection> {
         var reasons: [String] = []
         if delta.count > maxFiles { reasons.append("changes \(delta.count) files, more than \(maxFiles)") }
+        let deltaBytes = HarnessExperienceLibrary.deltaBytes(delta)
+        if deltaBytes > maxDeltaBytes { reasons.append("changes \(deltaBytes) bytes in total, more than \(maxDeltaBytes)") }
         for (path, content) in delta.sorted(by: { $0.key < $1.key }) {
             if HarnessPath.normalized(path) != path || !spec.owns(path) {
                 reasons.append("\(path): outside the \(spec.name) harness")
@@ -325,6 +328,7 @@ public struct HarnessOptimizationResult: Codable, Sendable, Equatable {
     public let promptTokens: Int
     public let cachedPromptTokens: Int
     public let librarySlug: String?
+    public let warnings: [String]
 }
 
 public struct HarnessOptimizer: Sendable {
@@ -408,16 +412,22 @@ public struct HarnessOptimizer: Sendable {
             )
         }
         let winningDelta = state.deltas[winner.candidateId] ?? [:]
-        let entry = try library.map { library in
-            try library.addKnowledge(
-                topic: task.slug,
-                content: Self.lesson(winner: winner, delta: winningDelta, selection: selection),
-                domain: task.domain,
-                cue: String(HarnessExperienceLibrary.singleLine(task.prompt).prefix(library.limits.maxCueChars)),
-                confidence: winner.candidateId.hasPrefix("base_") ? "low" : winner.compareMeasured(bestBase) > 0 ? "high" : "medium",
-                attributions: attributions,
-                delta: winningDelta
-            )
+        var warnings: [String] = []
+        var librarySlug: String?
+        if let library {
+            do {
+                librarySlug = try library.addKnowledge(
+                    topic: task.slug,
+                    content: Self.lesson(winner: winner, delta: winningDelta, selection: selection),
+                    domain: task.domain,
+                    cue: String(HarnessExperienceLibrary.singleLine(task.prompt).prefix(library.limits.maxCueChars)),
+                    confidence: winner.candidateId.hasPrefix("base_") ? "low" : winner.compareMeasured(bestBase) > 0 ? "high" : "medium",
+                    attributions: attributions,
+                    delta: winningDelta
+                ).slug
+            } catch {
+                warnings.append("lesson not stored in the Experience Library: \(error)")
+            }
         }
         return HarnessOptimizationResult(
             taskSlug: task.slug,
@@ -431,7 +441,8 @@ public struct HarnessOptimizer: Sendable {
             ledger: state.ledger,
             promptTokens: state.runs.reduce(0) { $0 + $1.promptTokens },
             cachedPromptTokens: state.runs.reduce(0) { $0 + $1.cachedPromptTokens },
-            librarySlug: entry?.slug
+            librarySlug: librarySlug,
+            warnings: warnings
         )
     }
 

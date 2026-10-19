@@ -75,7 +75,7 @@ public struct HarnessExperienceLibrary: Sendable {
         if let token = HarnessLeakGuard.forbiddenToken(in: topic + "\n" + cue) {
             throw HarnessLibraryError.invalidArgument("topic and cue reach the harness proposer and must not contain '\(token)'")
         }
-        let deltaBytes = delta.map { $0.reduce(0) { $0 + $1.key.utf8.count + $1.value.utf8.count } } ?? 0
+        let deltaBytes = delta.map(Self.deltaBytes) ?? 0
         try check(deltaBytes <= limits.maxDeltaBytes, "harness delta must be at most \(limits.maxDeltaBytes) bytes")
 
         return try withLock {
@@ -182,6 +182,10 @@ public struct HarnessExperienceLibrary: Sendable {
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         return encoder
     }()
+
+    static func deltaBytes(_ delta: [String: String]) -> Int {
+        delta.reduce(0) { $0 + $1.key.utf8.count + $1.value.utf8.count }
+    }
 
     static func singleLine(_ text: String) -> String {
         let scalars = text.unicodeScalars.map { CharacterSet.controlCharacters.union(.newlines).contains($0) ? " " : Character($0) }

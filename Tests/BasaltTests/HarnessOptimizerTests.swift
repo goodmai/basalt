@@ -185,6 +185,36 @@ struct HarnessOptimizerTests {
         #expect(throws: Never.self) { try second.get() }
     }
 
+    @Test("A delta within 4 files of 32 KiB but over the library's 64 KiB delta limit is rejected at admit")
+    func deltaLimitMatchesLibrary() {
+        let report = HarnessValidator.validate(Self.longBase, spec: .claude)
+        let chunk = String(repeating: "x", count: 30 * 1024)
+        let delta = ["CLAUDE.md": chunk, ".claude/a.md": chunk, ".claude/b.md": chunk]
+        let admitted = HarnessProposal.admit(delta, base: Self.longBase, baseReport: report, siblings: [], spec: .claude)
+        guard case .failure(let rejection) = admitted else {
+            Issue.record("a delta the library cannot store was admitted")
+            return
+        }
+        #expect(rejection.reasons.contains { $0.hasPrefix("changes \(HarnessExperienceLibrary.deltaBytes(delta)) bytes in total") })
+    }
+
+    @Test("A full Experience Library is a warning in the result, not a thrown error after the whole run")
+    func libraryFailureIsWarning() async throws {
+        let root = HarnessLibraryTests.tempRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        var limits = HarnessLibraryLimits()
+        limits.maxEntries = 1
+        let library = HarnessExperienceLibrary(rootDirectory: root, limits: limits)
+        try library.addKnowledge(topic: "earlier", content: "c", domain: "swift")
+        let (optimizer, _) = try await Self.optimizer(HarnessScript(), library: library)
+
+        let result = try await optimizer.optimize(task: Self.task, base: Self.base, k: 1)
+
+        #expect(result.winningCandidateId == "dom_0")
+        #expect(result.librarySlug == nil)
+        #expect(result.warnings == ["lesson not stored in the Experience Library: library holds the maximum of 1 entries"])
+    }
+
     @Test("A task prompt carrying a grader verdict is refused before any model call")
     func leakingTask() async throws {
         let (optimizer, engine) = try await Self.optimizer(HarnessScript())
