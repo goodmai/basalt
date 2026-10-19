@@ -59,9 +59,14 @@ jobs:
           swift package show-dependencies >> security-report.md 2>&1 \
             || echo "(dependency tree unavailable: $(swift --version 2>&1 | head -1))" >> security-report.md
           echo "" >> security-report.md
-          echo "## OSV Scan Results" >> security-report.md
+          echo "## Audit Output (source checks + OSV)" >> security-report.md
           # The audit step's output already holds the OSV results: no second round of queries.
-          cat audit-results.txt >> security-report.md 2>/dev/null || echo "(audit did not run)" >> security-report.md
+          # Fenced, so its ===== lines are not read as Markdown headings.
+          if [ -f audit-results.txt ]; then
+            { echo '```'; cat audit-results.txt; echo '```'; } >> security-report.md
+          else
+            echo "(audit did not run)" >> security-report.md
+          fi
       
       - name: Upload Security Report
         if: always()

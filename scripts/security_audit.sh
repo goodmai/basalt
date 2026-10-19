@@ -99,6 +99,8 @@ RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
+# Plain text when not on a terminal (CI logs, tee into the report).
+[ -t 1 ] || { RED=''; GREEN=''; YELLOW=''; NC=''; }
 
 ISSUES_FOUND=0
 
@@ -210,10 +212,7 @@ echo "🔟 Checking Swift Package dependencies..."
 if [ -f "Package.resolved" ]; then
     DEPS_COUNT=$(grep -c "identity" Package.resolved || echo "0")
     echo -e "${GREEN}✅ Found $DEPS_COUNT dependencies in Package.resolved${NC}"
-    
-    # Check for outdated packages (optional)
-    echo "   Dependency versions:"
-    grep -A 5 "identity" Package.resolved | grep -E "identity|version" | sed 's/^/   /' | head -20
+    # Per-dependency versions are listed by the OSV scan above.
 else
     echo -e "${YELLOW}⚠️  WARNING: Package.resolved not found${NC}"
 fi
