@@ -62,10 +62,12 @@ struct CodingAgentAPITests {
             }
         }
         let sent = try #require(await engine.lastRequest)
-        #expect(sent.prompt.hasPrefix("[System]: Be terse."))
-        #expect(sent.prompt.contains("[User]: list files"))
-        #expect(sent.prompt.contains(#"[Assistant called shell]: {"cmd":"ls"}"#))
-        #expect(sent.prompt.contains("[Tool result for shell]: README.md"))
+        #expect(sent.messages == [
+            ChatMessageInput(role: .system, text: "Be terse."),
+            ChatMessageInput(role: .user, text: "list files"),
+            ChatMessageInput(role: .assistant, text: "", toolCalls: [ToolCallOutput(id: "c1", name: "shell", arguments: #"{"cmd":"ls"}"#)]),
+            ChatMessageInput(role: .tool, text: "README.md", toolCallId: "c1", toolName: "shell"),
+        ])
         #expect(sent.reasoningEffort == "low")
     }
 
@@ -178,9 +180,10 @@ struct CodingAgentAPITests {
                 #expect(res.status == .ok)
             }
         }
-        let prompt = try #require(await engine.lastRequest?.prompt)
-        #expect(prompt.contains("[Tool result]: screenshot taken\n[image omitted]"))
-        #expect(prompt.contains("[Assistant called apply_patch]: *** Begin Patch"))
+        #expect(await engine.lastRequest?.messages == [
+            ChatMessageInput(role: .tool, text: "screenshot taken\n[image omitted]", toolCallId: "c1"),
+            ChatMessageInput(role: .assistant, text: "", toolCalls: [ToolCallOutput(id: "c2", name: "apply_patch", arguments: "*** Begin Patch")]),
+        ])
     }
 
     @Test("Effort levels are mapped per template: Qwen gets xhigh/low, unknown templates the name as sent")
@@ -460,15 +463,13 @@ struct ToolCallingEndpointsTests {
         let sent = try #require(await engine.lastRequest)
         #expect(sent.tools?.map(\.name) == ["Bash", "Read"])
         #expect(sent.tools?.first?.parametersJSON?.contains("\"command\"") == true)
-        let expected = [
-            "[User]: list files",
-            "[Assistant]: Listing.",
-            #"[Assistant called Bash]: {"command":"ls"}"#,
-            "[Tool result for Bash]: a.txt\nb.txt",
-            "[Tool error]: denied",
-            "[User]: how many?"
-        ].joined(separator: "\n\n")
-        #expect(sent.prompt == expected)
+        #expect(sent.messages == [
+            ChatMessageInput(role: .user, text: "list files"),
+            ChatMessageInput(role: .assistant, text: "Listing.", toolCalls: [ToolCallOutput(id: "toolu_1", name: "Bash", arguments: #"{"command":"ls"}"#)]),
+            ChatMessageInput(role: .tool, text: "a.txt\nb.txt", toolCallId: "toolu_1", toolName: "Bash"),
+            ChatMessageInput(role: .tool, text: "Error: denied", toolCallId: "toolu_2"),
+            ChatMessageInput(role: .user, text: "how many?"),
+        ])
     }
 
     @Test("Messages: tool_choice none keeps the tools in the prompt and disables calls")
@@ -561,13 +562,12 @@ struct ToolCallingEndpointsTests {
         _ = try await post(app, "/v1/chat/completions", request)
         let sent = try #require(await engine.lastRequest)
         #expect(sent.tools?.map(\.name) == ["Bash", "Read"])
-        let expected = [
-            "[User]: list files",
-            #"[Assistant called Bash]: {"command":"ls"}"#,
-            "[Tool result for Bash]: a.txt\nb.txt",
-            "[User]: how many?"
-        ].joined(separator: "\n\n")
-        #expect(sent.prompt == expected)
+        #expect(sent.messages == [
+            ChatMessageInput(role: .user, text: "list files"),
+            ChatMessageInput(role: .assistant, text: "", toolCalls: [ToolCallOutput(id: "call_1", name: "Bash", arguments: #"{"command":"ls"}"#)]),
+            ChatMessageInput(role: .tool, text: "a.txt\nb.txt", toolCallId: "call_1", toolName: "Bash"),
+            ChatMessageInput(role: .user, text: "how many?"),
+        ])
     }
 
     @Test("Chat: tool_choice none keeps the tools in the prompt and disables calls")
@@ -643,8 +643,11 @@ struct ToolCallingEndpointsTests {
         ], 
         """# + anthropicTools + "}"
         _ = try await post(app, "/v1/messages", request)
-        let prompt = try #require(await engine.lastRequest?.prompt)
-        #expect(prompt.hasSuffix("[Tool result for Read]: [image omitted]\n\n[Tool result for Bash]: a.png"), "\(prompt)")
+        let messages = try #require(await engine.lastRequest?.messages)
+        #expect(Array(messages.suffix(2)) == [
+            ChatMessageInput(role: .tool, text: "[image omitted]", toolCallId: "toolu_b", toolName: "Read"),
+            ChatMessageInput(role: .tool, text: "a.png", toolCallId: "toolu_a", toolName: "Bash"),
+        ])
     }
 
     @Test("Chat: parallel tool results are matched by tool_call_id")
@@ -661,8 +664,11 @@ struct ToolCallingEndpointsTests {
         ], 
         """# + openAITools + "}"
         _ = try await post(app, "/v1/chat/completions", request)
-        let prompt = try #require(await engine.lastRequest?.prompt)
-        #expect(prompt.hasSuffix("[Tool result for Read]: contents\n\n[Tool result for Bash]: a.txt"), "\(prompt)")
+        let messages = try #require(await engine.lastRequest?.messages)
+        #expect(Array(messages.suffix(2)) == [
+            ChatMessageInput(role: .tool, text: "contents", toolCallId: "call_b", toolName: "Read"),
+            ChatMessageInput(role: .tool, text: "a.txt", toolCallId: "call_a", toolName: "Bash"),
+        ])
     }
 
     @Test("Messages non-streaming: two calls are two tool_use blocks")

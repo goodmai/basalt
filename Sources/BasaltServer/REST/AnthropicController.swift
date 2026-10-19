@@ -232,7 +232,8 @@ struct AnthropicController: Sendable {
                                  type: "invalid_request_error")
         }
 
-        let prompt = buildPrompt(system: dto.system, messages: dto.messages)
+        let chat = Self.chatMessages(system: dto.system, messages: dto.messages)
+        let prompt = ChatMessageInput.plainText(chat)
         let requested: OpenAIController.RequestedTools
         do { requested = try OpenAIController.requestedTools(fromRequestBody: data) } catch {
             return errorResponse(status: .badRequest, message: error.message, type: "invalid_request_error")
@@ -259,7 +260,8 @@ struct AnthropicController: Sendable {
             isServiceRequest: service.isService,
             tools: requested.tools,
             toolChoice: requested.choice,
-            cacheKey: PromptCacheKey.resolve(isService: service.isService)
+            cacheKey: PromptCacheKey.resolve(isService: service.isService),
+            messages: service.prompt == prompt ? chat : nil
         )
 
         let model = dto.model.map(ModelsController.restModel(from:))
@@ -471,12 +473,10 @@ struct AnthropicController: Sendable {
         return (keepText ? [ContentBlock(text: text)] : []) + zip(toolCalls, inputs).map { ContentBlock(toolUse: $0.0, input: $0.1) }
     }
 
-    private func buildPrompt(system: SystemPrompt?, messages: [Message]) -> String {
-        var parts: [String] = []
-
-        if let system {
-            let text = system.textValue
-            if !text.isEmpty { parts.append("[System]: \(text)") }
+    static func chatMessages(system: SystemPrompt?, messages: [Message]) -> [ChatMessageInput] {
+        var chat: [ChatMessageInput] = []
+        if let text = system?.textValue, !text.isEmpty {
+            chat.append(ChatMessageInput(role: .system, text: text))
         }
 
         var toolNames: [String: String] = [:]
@@ -487,43 +487,43 @@ struct AnthropicController: Sendable {
         }
 
         for msg in messages {
-            let label: String
-            switch msg.role {
-            case "user":      label = "[User]: "
-            case "assistant": label = "[Assistant]: "
-            default:          label = ""
-            }
+            let role: ChatMessageInput.Role = msg.role == "assistant" ? .assistant : .user
             let blocks: [ContentBlock]
             switch msg.content {
             case .text(let s):   blocks = [ContentBlock(text: s)]
             case .blocks(let b): blocks = b
             }
             var text: [String] = []
-            func flushText() {
-                if !text.isEmpty { parts.append(label + text.joined(separator: "\n")) }
+            var calls: [ToolCallOutput] = []
+            var emitted = false
+            func flush() {
+                guard !text.isEmpty || !calls.isEmpty else { return }
+                chat.append(ChatMessageInput(role: role, text: text.joined(separator: "\n"), toolCalls: calls.isEmpty ? nil : calls))
                 text = []
+                calls = []
+                emitted = true
             }
             for block in blocks {
                 switch block.type {
                 case "tool_use":
-                    flushText()
-                    parts.append(ToolTranscript.call(name: block.name ?? "tool", arguments: block.inputJSON))
+                    calls.append(ToolCallOutput(id: block.id ?? "", name: block.name ?? "tool", arguments: block.inputJSON))
                 case "tool_result":
-                    flushText()
-                    parts.append(ToolTranscript.result(block.content?.textValue ?? "", for: block.toolUseId.flatMap { toolNames[$0] },
-                                                       isError: block.isError == true))
+                    flush()
+                    let output = block.content?.textValue ?? ""
+                    chat.append(ChatMessageInput(
+                        role: .tool, text: block.isError == true ? "Error: \(output)" : output,
+                        toolCallId: block.toolUseId, toolName: block.toolUseId.flatMap { toolNames[$0] }))
+                    emitted = true
                 default:
                     if let t = block.promptText { text.append(t) }
                 }
             }
-            if text.isEmpty, !blocks.contains(where: { $0.type == "tool_use" || $0.type == "tool_result" }) {
-                parts.append(label)
-            } else {
-                flushText()
+            flush()
+            if !emitted {
+                chat.append(ChatMessageInput(role: role, text: ""))
             }
         }
-
-        return parts.joined(separator: "\n\n")
+        return chat
     }
 
     // MARK: — Helpers
