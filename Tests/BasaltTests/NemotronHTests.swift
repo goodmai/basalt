@@ -92,4 +92,69 @@ struct NemotronHTests {
         let plain = Config(["chat_template": Config("{{ messages }}")])
         #expect(MLXInferenceEngine.compatibleChatTemplate(in: plain).chatTemplate.string() == "{{ messages }}")
     }
+
+    static let nanoV2ThinkingSnippet = """
+    {%- set ns = namespace(enable_thinking=true) %}{%- for message in messages -%}{%- set content = message['content'] -%}\
+    {%- if message['role'] == 'user' or message['role'] == 'system' -%}{%- if '/think' in content -%}\
+    {%- set ns.enable_thinking = true -%}{%- elif '/no_think' in content -%}{%- set ns.enable_thinking = false -%}\
+    {%- endif -%}{%- endif -%}{%- endfor -%}{%- if messages[0]['role'] != 'system' -%}{{- '<SPECIAL_10>System\\n' -}}\
+    {%- else -%}{{- '<SPECIAL_10>System\\n' + messages[0]['content'].replace('/think', '').replace('/no_think', '').strip() }}\
+    {%- endif -%}{{- '\\n' -}}{%- if messages[0]['role'] == 'system' -%}{%- set messages = messages[1:] -%}{%- endif -%}\
+    {%- for message in messages %}{{- '<SPECIAL_11>User\\n' + message['content'] + '\\n' }}{%- endfor -%}\
+    {{- '<SPECIAL_11>Assistant\\n' -}}{%- if ns.enable_thinking is defined and ns.enable_thinking is false -%}\
+    {{- '<think></think>' -}}{%- else -%}{{- '<think>\\n' -}}{%- endif -%}
+    """
+
+    static func renderNanoV2(_ turns: [ChatMessageInput]) throws -> String {
+        let messages = DefaultMessageGenerator().generate(messages: MLXInferenceEngine.chat(turns, lastText: turns.last!.text))
+        return try Template(Self.nanoV2ThinkingSnippet).render(["messages": try Value(any: messages)])
+    }
+
+    static let nanoV2 = NemotronProfile(switchesThinkingInConversation: true)
+    static let question = ChatMessageInput(role: .user, text: "What is 2+2?")
+
+    @Test("thinking off on Nano v2 adds a system turn whose /no_think the template honours and then hides")
+    func thinkingOffWithoutSystemTurn() throws {
+        let turns = Self.nanoV2.turns([Self.question], for: .disabled)
+        #expect(turns.map(\.role) == [.system, .user])
+        let rendered = try Self.renderNanoV2(turns)
+        #expect(rendered == "<SPECIAL_10>System\n\n<SPECIAL_11>User\nWhat is 2+2?\n<SPECIAL_11>Assistant\n<think></think>")
+    }
+
+    @Test("thinking off on Nano v2 keeps the caller's system text")
+    func thinkingOffWithSystemTurn() throws {
+        let turns = Self.nanoV2.turns([ChatMessageInput(role: .system, text: "Be brief."), Self.question], for: .disabled)
+        let rendered = try Self.renderNanoV2(turns)
+        #expect(rendered.hasPrefix("<SPECIAL_10>System\nBe brief.\n"))
+        #expect(rendered.hasSuffix("<think></think>"))
+    }
+
+    @Test("an explicit effort turns Nano v2 thinking on, the model default leaves the turns alone")
+    func thinkingOnAndDefault() throws {
+        let off = [ChatMessageInput(role: .system, text: "/no_think"), Self.question]
+        #expect(try Self.renderNanoV2(Self.nanoV2.turns(off, for: .effort("high"))).hasSuffix("<think>\n"))
+        #expect(Self.nanoV2.turns([Self.question], for: .modelDefault).map(\.text) == [Self.question.text])
+    }
+
+    @Test("Nano 4B switches thinking through enable_thinking and never sees a /no_think marker")
+    func nano4BUsesTemplateKwarg() {
+        let nano4B = NemotronProfile(switchesThinkingInConversation: false)
+        #expect(nano4B.templateContext(for: .disabled)["enable_thinking"] as? Bool == false)
+        #expect(nano4B.turns([Self.question], for: .disabled).map(\.text) == [Self.question.text])
+    }
+
+    @Test("the registry tells the two Nemotron-H templates apart")
+    func registryDetectsTheThinkingSwitch() throws {
+        let dir = try Self.modelDirectory(config: Self.denseNano4BConfig)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let tokenizerConfig = try JSONSerialization.data(withJSONObject: ["chat_template": Self.nanoV2ThinkingSnippet])
+        try tokenizerConfig.write(to: dir.appendingPathComponent("tokenizer_config.json"))
+        let v2 = ModelProfileRegistry.profile(forModelAt: dir.path) as? NemotronProfile
+        #expect(v2?.switchesThinkingInConversation == true)
+
+        try Data("{%- set enable_thinking = enable_thinking if enable_thinking is defined else True %}".utf8)
+            .write(to: dir.appendingPathComponent("chat_template.jinja"))
+        let nano4B = ModelProfileRegistry.profile(forModelAt: dir.path) as? NemotronProfile
+        #expect(nano4B?.switchesThinkingInConversation == false)
+    }
 }

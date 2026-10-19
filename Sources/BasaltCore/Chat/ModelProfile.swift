@@ -29,6 +29,12 @@ public protocol ModelProfile: Sendable {
     /// fraction of the top token's probability are dropped. nil leaves sampling
     /// untouched. Measured per family — see the conformances for the evidence.
     var defaultMinP: Float? { get }
+
+    func turns(_ turns: [ChatMessageInput], for reasoning: ReasoningPolicy) -> [ChatMessageInput]
+}
+
+extension ModelProfile {
+    public func turns(_ turns: [ChatMessageInput], for reasoning: ReasoningPolicy) -> [ChatMessageInput] { turns }
 }
 
 public struct ThinkingMarkers: Sendable {
@@ -121,6 +127,43 @@ public struct GemmaProfile: ModelProfile {
     public var defaultMinP: Float? { 0.9 }
 }
 
+// MARK: — Nemotron-H (Nano 4B, Nano 9B v2)
+
+public struct NemotronProfile: ModelProfile {
+    public let name = "nemotron"
+    public let switchesThinkingInConversation: Bool
+
+    public init(switchesThinkingInConversation: Bool) {
+        self.switchesThinkingInConversation = switchesThinkingInConversation
+    }
+
+    public func templateContext(for reasoning: ReasoningPolicy) -> [String: any Sendable] {
+        reasoning == .disabled ? ["enable_thinking": false] : [:]
+    }
+
+    public func turns(_ turns: [ChatMessageInput], for reasoning: ReasoningPolicy) -> [ChatMessageInput] {
+        guard switchesThinkingInConversation else { return turns }
+        let directive: String
+        switch reasoning {
+        case .modelDefault: return turns
+        case .disabled:     directive = "/no_think"
+        case .effort:       directive = "/think"
+        }
+        guard let first = turns.first, first.role == .system else {
+            return [ChatMessageInput(role: .system, text: directive)] + turns
+        }
+        return [ChatMessageInput(role: .system, text: first.text + "\n" + directive)] + turns.dropFirst()
+    }
+
+    public var thinkingMarkers: ThinkingMarkers {
+        ThinkingMarkers(open: ["<think>"], close: ["</think>"], openedByTemplate: true)
+    }
+
+    public var defaultMaxTokens: Int { 4096 }
+
+    public var defaultMinP: Float? { nil }
+}
+
 // MARK: — Fallback
 
 public struct GenericProfile: ModelProfile {
@@ -152,17 +195,30 @@ public enum ModelProfileRegistry {
     /// `qwen3_5_moe`, `qwen3_6`, `qwen3_8`… all share one template. Note that
     /// Qwen3.6 and 3.8 checkpoints both declare `model_type: qwen3_5` upstream —
     /// the id names the architecture family, not the release.
-    public static func profile(forModelType modelType: String?) -> any ModelProfile {
+    public static func profile(forModelType modelType: String?, chatTemplate: String? = nil) -> any ModelProfile {
         guard let t = modelType?.lowercased() else { return GenericProfile() }
         if t.hasPrefix("qwen3") { return QwenProfile() }
         if t.hasPrefix("gemma") { return GemmaProfile() }
+        if t == "nemotron_h" {
+            return NemotronProfile(switchesThinkingInConversation: chatTemplate?.contains("/no_think") == true)
+        }
         return GenericProfile()
     }
 
     /// Reads `model_type` out of a model directory, tolerating a missing or
     /// unreadable config rather than failing the load.
     public static func profile(forModelAt path: String) -> any ModelProfile {
-        guard let json = ModelCache.config(at: URL(fileURLWithPath: path)) else { return GenericProfile() }
-        return profile(forModelType: json["model_type"] as? String)
+        let directory = URL(fileURLWithPath: path)
+        guard let json = ModelCache.config(at: directory) else { return GenericProfile() }
+        return profile(forModelType: json["model_type"] as? String, chatTemplate: chatTemplate(at: directory))
+    }
+
+    static func chatTemplate(at directory: URL) -> String? {
+        if let jinja = try? String(contentsOf: directory.appendingPathComponent("chat_template.jinja"), encoding: .utf8) {
+            return jinja
+        }
+        let tokenizerConfig = (try? Data(contentsOf: directory.appendingPathComponent("tokenizer_config.json")))
+            .flatMap { try? JSONSerialization.jsonObject(with: $0, options: .json5Allowed) as? [String: Any] }
+        return tokenizerConfig?["chat_template"] as? String
     }
 }

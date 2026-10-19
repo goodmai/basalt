@@ -304,12 +304,15 @@ public actor MLXInferenceEngine: InferenceEngine {
     ) -> [String: any Sendable]? {
         // ReasoningPolicy(rawValue:) maps "off"/"none" to disabled; each profile maps level names
         // onto its template (Qwen: "high" → "xhigh"), GenericProfile passes them through.
-        let policy: ReasoningPolicy = request.enableThinking == false
-            ? .disabled
-            : ReasoningPolicy(rawValue: request.reasoningEffort ?? defaultReasoningEffort) ?? .modelDefault
-
+        let policy = reasoningPolicy(request: request, defaultReasoningEffort: defaultReasoningEffort)
         let context = (profile ?? GenericProfile()).templateContext(for: policy)
         return context.isEmpty ? nil : context
+    }
+
+    static func reasoningPolicy(request: GenerationRequest, defaultReasoningEffort: String?) -> ReasoningPolicy {
+        request.enableThinking == false
+            ? .disabled
+            : ReasoningPolicy(rawValue: request.reasoningEffort ?? defaultReasoningEffort) ?? .modelDefault
     }
 
     // MARK: — Generate
@@ -490,7 +493,8 @@ public actor MLXInferenceEngine: InferenceEngine {
         let declaredTools = Set(request.tools?.map(\.name) ?? [])
         var makeInput: @Sendable (String) -> UserInput
         var template: String?
-        let turns = request.messages.flatMap { $0.isEmpty ? nil : $0 }
+        let policy = Self.reasoningPolicy(request: request, defaultReasoningEffort: reasoningEffort)
+        let turns = request.messages.flatMap { $0.isEmpty ? nil : profile.turns($0, for: policy) }
         var lastText: String
         let context = Self.buildTemplateContext(
             request: request,
@@ -503,7 +507,7 @@ public actor MLXInferenceEngine: InferenceEngine {
             lastText = request.prompt
         } else {
             (makeInput, template, lastText) = Self.chatInput(
-                turns ?? [ChatMessageInput(role: .user, text: request.prompt)],
+                turns ?? profile.turns([ChatMessageInput(role: .user, text: request.prompt)], for: policy),
                 normalisation: "native", tools: toolSpecs, context: context)
         }
 
