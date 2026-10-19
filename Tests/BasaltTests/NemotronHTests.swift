@@ -4,6 +4,7 @@ import MLXLLM
 import MLXLMCommon
 import Jinja
 import Hub
+import Tokenizers
 @testable import BasaltCore
 @testable import BasaltInference
 
@@ -119,6 +120,21 @@ struct NemotronHTests {
         #expect(rewritten.eosToken.string() == "<SPECIAL_12>")
         let plain = Config(["chat_template": Config("{{ messages }}")])
         #expect(MLXInferenceEngine.compatibleChatTemplate(in: plain).chatTemplate.string() == "{{ messages }}")
+    }
+
+    @Test("a Llama tokenizer_class with legacy false loads the same plain tokenizer the model folder loader builds")
+    func tokenizerClassMatchesTheModelFolderLoader() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("tokenizer-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try Data(#"{"tokenizer_class": "LlamaTokenizerFast", "legacy": false}"#.utf8)
+            .write(to: dir.appendingPathComponent("tokenizer_config.json"))
+        try Data(#"{"model": {"type": "BPE", "vocab": {"a": 0, "b": 1, "ab": 2, "▁": 3, "▁ab": 4}, "merges": ["a b", "▁ ab"]}, "added_tokens": []}"#.utf8)
+            .write(to: dir.appendingPathComponent("tokenizer.json"))
+        let loaded = try await MLXInferenceEngine.upstreamTokenizer(at: dir)
+        let reference = try await AutoTokenizer.from(modelFolder: dir)
+        #expect(type(of: loaded) == type(of: reference))
+        #expect(loaded.encode(text: "ab", addSpecialTokens: false) == reference.encode(text: "ab", addSpecialTokens: false))
     }
 
     static let nanoV2ThinkingSnippet = """

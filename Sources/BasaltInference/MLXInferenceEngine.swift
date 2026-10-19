@@ -234,14 +234,7 @@ public actor MLXInferenceEngine: InferenceEngine {
 
             struct DefaultTokenizerLoader: TokenizerLoader {
                 func load(from directory: URL) async throws -> any MLXLMCommon.Tokenizer {
-                    let configuration = LanguageModelConfigurationFromHub(modelFolder: directory)
-                    guard let tokenizerConfig = try await configuration.tokenizerConfig else {
-                        throw Tokenizers.TokenizerError.missingConfig
-                    }
-                    let upstream = try Tokenizers.AutoTokenizer.from(
-                        tokenizerConfig: MLXInferenceEngine.compatibleChatTemplate(in: tokenizerConfig),
-                        tokenizerData: try await configuration.tokenizerData)
-                    return TokenizerBridge(upstream)
+                    TokenizerBridge(try await MLXInferenceEngine.upstreamTokenizer(at: directory))
                 }
             }
 
@@ -293,6 +286,16 @@ public actor MLXInferenceEngine: InferenceEngine {
         default:
             return .weightsCorrupted(path: modelPath, reason: error.localizedDescription)
         }
+    }
+
+    static func upstreamTokenizer(at directory: URL) async throws -> any Tokenizers.Tokenizer {
+        let configuration = LanguageModelConfigurationFromHub(modelFolder: directory)
+        guard let tokenizerConfig = try await configuration.tokenizerConfig else {
+            throw Tokenizers.TokenizerError.missingConfig
+        }
+        return try Tokenizers.PreTrainedTokenizer(
+            tokenizerConfig: compatibleChatTemplate(in: tokenizerConfig),
+            tokenizerData: try await configuration.tokenizerData)
     }
 
     static func compatibleChatTemplate(in tokenizerConfig: Config) -> Config {
