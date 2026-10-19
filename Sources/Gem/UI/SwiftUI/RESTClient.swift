@@ -15,38 +15,6 @@ public actor RESTClient {
         self.token = newToken
     }
     
-    public func login(username: String, password: String) async throws -> String {
-        guard let url = URL(string: "\(baseURL)/api/v1/auth/login") else {
-            throw URLError(.badURL)
-        }
-        
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        
-        let body = ["username": username, "password": password]
-        request.httpBody = try JSONEncoder().encode(body)
-        
-        let (data, response) = try await urlSession.data(for: request)
-        
-        guard let httpRes = response as? HTTPURLResponse else {
-            throw URLError(.badServerResponse)
-        }
-        
-        if httpRes.statusCode == 200 {
-            struct LoginResponse: Decodable {
-                let token: String
-            }
-            let res = try JSONDecoder().decode(LoginResponse.self, from: data)
-            return res.token
-        } else {
-            if let errRes = try? JSONDecoder().decode(ErrorResponse.self, from: data) {
-                throw NSError(domain: "Auth", code: httpRes.statusCode, userInfo: [NSLocalizedDescriptionKey: errRes.error])
-            }
-            throw URLError(.userAuthenticationRequired)
-        }
-    }
-    
     public func generateStream(prompt: String, maxTokens: Int? = nil) -> AsyncThrowingStream<StreamChunk, Error> {
         return AsyncThrowingStream { continuation in
             Task {
@@ -58,7 +26,7 @@ public actor RESTClient {
                     var request = URLRequest(url: url)
                     request.httpMethod = "POST"
                     request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-                    if let token = self.token {
+                    if let token = self.token, !token.isEmpty {
                         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
                     }
                     

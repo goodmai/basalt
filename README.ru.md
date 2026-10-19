@@ -23,7 +23,6 @@
 │   MCP stdio ──┐                                      │
 │               ├──► ModelOrchestratorActor ──► MLX   │
 │   REST :8080 ─┘        (актор, FIFO)      Metal GPU  │
-│   WebSocket ──┘                                      │
 └──────────────────────────────────────────────────────┘
 ```
 
@@ -35,7 +34,7 @@
 
 ## Зачем basalt
 
-- **Один сервер, три протокола.** REST отвечает по OpenAI *и* Anthropic (`/v1/messages`), MCP stdio подключается к Claude Desktop и Cursor, WebSocket стримит токены. Все они делят один актор модели — ничего не грузится дважды.
+- **Один сервер, два транспорта.** REST отвечает по OpenAI *и* Anthropic (`/v1/messages`), MCP stdio подключается к Claude Desktop и Cursor, а все маршруты генерации умеют стримить по SSE. Все они делят один актор модели — ничего не грузится дважды.
 - **Claude Code на локальной модели в две строки.** Задайте `ANTHROPIC_BASE_URL` и запустите `claude` — ваш настоящий API-ключ не затрагивается. См. [интеграцию с Claude Code](#интеграция-с-claude-code).
 - **Быстро на ноутбуке.** На Mac с 24 ГБ: ~110 ток/с на Gemma 4 E2B, ~92 ток/с на Qwen3.5-4B, ~37 ток/с на 9B, ~12 ток/с на 27B.
 - **Чистый Swift.** Только SwiftPM — без Node, Python и Docker в рантайме.
@@ -189,7 +188,8 @@ chmod +x ./basalt-claude
 | `--min-p`, `--top-k`, `--seed` | сэмплирование; `--seed` делает негреди-прогон воспроизводимым |
 | `--max-tokens` | потолок генерации по умолчанию (2048–128000) |
 | `--dry-run` | проверить, влезает ли модель в память, и выйти без загрузки |
-| `--port`, `--host` | по умолчанию 127.0.0.1:8080 |
+| `--port`, `--host` | по умолчанию 127.0.0.1:8080; любой другой хост требует API-ключ (`BASALT_API_KEY` или `--auto-generate-key`) |
+| `--rate-limit N` | лимит запросов в минуту на весь сервер, сверх него 429 — по умолчанию выключен на loopback и 120 вне его; `0` выключает; также `rate_limit` в `~/.gem/config.json` |
 
 ---
 
@@ -293,13 +293,15 @@ curl -s http://127.0.0.1:8080/v1/messages \
 
 Реализована полная последовательность SSE-событий Anthropic (`message_start`, `content_block_start`, `content_block_delta`, `message_stop`). Принимается и строка, и массив блоков в `content`.
 
-### WebSocket
+### SSE-стриминг (нативный API)
 
-```js
-const ws = new WebSocket("ws://127.0.0.1:8080/ws/generate");
-ws.send(JSON.stringify({ prompt: "Привет", maxTokens: 512 }));
-ws.onmessage = e => console.log(JSON.parse(e.data));
+```bash
+curl -N http://127.0.0.1:8080/api/v1/generate/stream \
+  -H "Content-Type: application/json" \
+  -d '{"prompt": "Привет", "maxTokens": 512}'
 ```
+
+Каждое событие — строка `data: {...}`, поток завершается `data: [DONE]`. Ошибка посреди потока приходит как `event: error` с `data: {"error": ...}`.
 
 ### Swagger UI
 

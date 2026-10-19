@@ -2,7 +2,7 @@ import Foundation
 import Hummingbird
 import Logging
 
-// MARK: — Hummingbird 2.x REST Server (plain HTTP/1.1, no WebSocket)
+// MARK: — Hummingbird 2.x REST Server (plain HTTP/1.1 + SSE)
 
 /// Configures and runs the HTTP server on the configured port.
 /// Blocks until shutdown (Ctrl-C / SIGTERM).
@@ -30,6 +30,11 @@ struct RESTServer: Sendable {
             log("API key protection: ENABLED (bearer token required)")
         } else {
             log("API key protection: DISABLED (loopback open access)")
+        }
+        if let limit = config.rateLimitPerMinute {
+            log("Rate limit: \(limit) requests/minute (429 beyond it)")
+        } else {
+            log("Rate limit: DISABLED")
         }
         log("Swagger: http://\(config.host):\(config.restPort)/swagger")
         try await app.runService()
@@ -62,6 +67,10 @@ struct RESTServer: Sendable {
         if let apiKey = config.apiKey, !apiKey.isEmpty {
             router.add(middleware: APIKeyAuthenticator(apiKey: apiKey))
         }
+        // After the authenticator: a request without the key never spends the budget.
+        if let limit = config.rateLimitPerMinute {
+            router.add(middleware: RateLimitMiddleware(requestsPerMinute: limit))
+        }
 
         // ── Native API ──────────────────────────────────────────────────────────
         let v1 = router.group("/api/v1")
@@ -82,7 +91,7 @@ struct RESTServer: Sendable {
         // Generation
         oai.post("/chat/completions", use: openAIController.chatCompletions) // OpenAI SSE
         oai.post("/responses",        use: openAIController.responses)       // OpenAI Responses API (Codex/Cursor)
-        oai.post("/generate",         use: openAIController.generateNoAuth)  // raw prompt
+        oai.post("/generate",         use: openAIController.generateRaw)  // raw prompt
         oai.post("/messages",         use: anthropicController.messages)     // Anthropic SSE
 
         // ── Swagger UI ──────────────────────────────────────────────────────────
