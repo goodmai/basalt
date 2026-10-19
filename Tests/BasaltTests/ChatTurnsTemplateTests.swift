@@ -54,6 +54,7 @@ struct FailingInputProcessor: UserInputProcessor {
 
 struct StrictAlternationInputProcessor: UserInputProcessor {
     var refusesEverything = false
+    var refusesAsRuntimeError = false
 
     func prepare(input: UserInput) throws -> LMInput {
         let messages = DefaultMessageGenerator().generate(from: input)
@@ -62,6 +63,7 @@ struct StrictAlternationInputProcessor: UserInputProcessor {
         let alternates = dialogue.enumerated().allSatisfy { $1 == ($0 % 2 == 0 ? "user" : "assistant") }
         let hasToolCalls = messages.contains { $0["tool_calls"] != nil }
         guard !refusesEverything, alternates, !dialogue.isEmpty, !dialogue.contains("system"), !hasToolCalls else {
+            if refusesAsRuntimeError { throw JinjaError.runtime("Conversation roles must alternate") }
             throw templateRefusal("Conversation roles must alternate user/assistant/user/assistant/...")
         }
         let text = RoleTaggedInputProcessor.render(messages)
@@ -175,6 +177,13 @@ struct ChatTurnsTemplateTests {
         #expect(response.promptTokens == Self.tokenCount(ChatMessageInput.alternating(Self.agentLoop)))
     }
 
+    @Test("A template that refuses with a Jinja runtime error also falls back to the alternating turns")
+    func runtimeTemplateErrorFallsBack() async throws {
+        let engine = await Self.engine(try TinyModel.make(), processor: StrictAlternationInputProcessor(refusesAsRuntimeError: true))
+        let response = try await engine.generate(request: Self.request(Self.agentLoop, key: "ns"))
+        #expect(response.promptTokens == Self.tokenCount(ChatMessageInput.alternating(Self.agentLoop)))
+    }
+
     @Test("A template that only rejects a non-leading system answers after system placement, with tool calls still structured")
     func systemPlacementKeepsToolCallsStructured() async throws {
         let engine = await Self.engine(try TinyModel.make(), processor: NonLeadingSystemRefusingInputProcessor())
@@ -207,6 +216,7 @@ struct ChatTurnsTemplateTests {
             Issue.record("expected the request to be refused")
         } catch {
             #expect(error.httpStatus == 400)
+            #expect(String(describing: error).contains("after normalising"))
         }
     }
 }

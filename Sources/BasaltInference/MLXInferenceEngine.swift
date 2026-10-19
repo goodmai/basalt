@@ -492,7 +492,7 @@ public actor MLXInferenceEngine: InferenceEngine {
             do {
                 rendered = try await container.prepare(input: makeInput(lastText))
             } catch where turns != nil && Self.isTemplateRefusal(error) {
-                logger.debug("Chat template refused native turns, retrying with normalised turns: \(error)")
+                let nativeRefusal = error
                 var refusal = error
                 var prepared: LMInput?
                 var previous = turns
@@ -502,12 +502,14 @@ public actor MLXInferenceEngine: InferenceEngine {
                         messages, normalisation: step, tools: toolSpecs, context: context)
                     do {
                         prepared = try await container.prepare(input: makeInput(lastText))
+                        logger.info("Chat template refused native turns (\(nativeRefusal)); rendered with \(step) turns")
                     } catch where Self.isTemplateRefusal(error) {
                         refusal = error
                     }
                 }
                 guard let prepared else {
-                    throw BasaltError.invalidRequestStructure(details: "Chat template rejected the conversation: \(refusal)")
+                    throw BasaltError.invalidRequestStructure(
+                        details: "Chat template rejected the conversation: \(nativeRefusal); after normalising: \(refusal)")
                 }
                 rendered = prepared
             }
