@@ -56,7 +56,7 @@ struct ServeCommand: AsyncParsableCommand {
 
     @Option(
         name: .customLong("prompt-cache-mb"),
-        help: "Memory for conversation prompt caches reused across turns, in MB (default: half of what the GPU's 3/4 share of RAM leaves after the weights; 0 disables)"
+        help: "Memory for conversation prompt caches reused across turns, in MB (default: half of what Metal's recommended working set leaves after the weights; 0 disables)"
     )
     var promptCacheMB: Int?
 

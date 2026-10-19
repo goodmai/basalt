@@ -93,7 +93,7 @@ public actor MLXInferenceEngine: InferenceEngine {
     func attach(_ container: ModelContainer) {
         self.container = container
         promptCaches = PromptCacheSlots(byteBudget: configuredPromptCacheBytes ?? PromptCacheBudget.automatic(
-            physicalMemory: Int(ProcessInfo.processInfo.physicalMemory), weights: Memory.activeMemory))
+            workingSet: PromptCacheBudget.gpuWorkingSet(), weights: Memory.activeMemory))
         modelEpoch += 1
         logger.info("Prompt cache budget: \(promptCaches.byteBudget >> 20) MB")
     }

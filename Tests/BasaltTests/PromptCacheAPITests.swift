@@ -114,6 +114,23 @@ struct PromptCacheAPITests {
         #expect(first.sent?.cacheKey != other.sent?.cacheKey)
     }
 
+    @Test("A cacheKey in a raw generate body is scoped like any other key and cannot select another namespace's slot")
+    func rawGenerateCannotPickAForeignSlot() async throws {
+        let alice = header("authorization", "Bearer alice-key")
+        let bob = header("authorization", "Bearer bob-key")
+        let aliceSlot = try await post("/v1/responses", #"{"prompt_cache_key": "shared", "input": "hi"}"#, headers: alice)
+        let foreignKey = try #require(aliceSlot.sent?.cacheKey)
+        for uri in ["/api/v1/generate", "/v1/generate", "/api/v1/generate/stream"] {
+            let probe = try await post(uri, #"{"prompt": "hi", "cacheKey": "\#(foreignKey)"}"#, headers: bob)
+            #expect(probe.sent?.cacheKey != foreignKey, "\(uri)")
+            #expect(probe.sent?.cacheKey?.hasSuffix("/key:\(foreignKey)") == true, "\(uri)")
+        }
+        let owner = try await post("/api/v1/generate", #"{"prompt": "hi", "cacheKey": "shared"}"#, headers: alice)
+        #expect(owner.sent?.cacheKey == foreignKey)
+        let unkeyed = try await post("/api/v1/generate", #"{"prompt": "hi"}"#)
+        #expect(unkeyed.sent?.cacheKey?.hasPrefix("prefix:") == true)
+    }
+
     @Test("A service request (thread title) never touches a conversation slot")
     func serviceRequestHasNoKey() async throws {
         let result = try await post("/v1/messages",

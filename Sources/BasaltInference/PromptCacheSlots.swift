@@ -1,3 +1,4 @@
+import Foundation
 import MLX
 import MLXLMCommon
 
@@ -39,8 +40,12 @@ final class PromptCache: @unchecked Sendable {
 }
 
 enum PromptCacheBudget {
-    static func automatic(physicalMemory: Int, weights: Int) -> Int {
-        max(0, physicalMemory / 4 * 3 - weights) / 2
+    static func automatic(workingSet: Int, weights: Int) -> Int {
+        max(0, workingSet - weights) / 2
+    }
+
+    static func gpuWorkingSet() -> Int {
+        GPU.maxRecommendedWorkingSetBytes() ?? Int(ProcessInfo.processInfo.physicalMemory) / 4 * 3
     }
 }
 
@@ -84,10 +89,10 @@ struct PromptCacheSlots: Sendable {
 
     mutating func store(_ key: String, tokens: [Int], cache: PromptCache) {
         guard byteBudget > 0, cache.tokenCount >= tokens.count, cache.shrink(to: tokens.count),
-              cache.byteCount <= byteBudget
+              let kept = Self.fitted(tokens, cache, within: byteBudget)
         else { return }
         clock += 1
-        slots[key] = Slot(tokens: tokens, cache: cache, lastUse: clock)
+        slots[key] = Slot(tokens: kept, cache: cache, lastUse: clock)
         let inactive = slots.filter { $0.key != key }.sorted { $0.value.lastUse < $1.value.lastUse }.map(\.key)
         for other in inactive where byteCount > byteBudget {
             park(other)
@@ -102,13 +107,17 @@ struct PromptCacheSlots: Sendable {
     }
 
     private mutating func park(_ key: String) {
-        guard let slot = slots[key], slot.cache.byteCount > parkedByteLimit else { return }
-        let bytesPerToken = max(1, slot.cache.byteCount / max(1, slot.cache.tokenCount))
-        let keep = min(slot.tokens.count, parkedByteLimit / bytesPerToken)
-        if slot.cache.shrink(to: keep) {
-            slots[key]?.tokens = Array(slot.tokens.prefix(keep))
-        } else {
-            slots[key] = nil
+        guard let slot = slots[key] else { return }
+        slots[key] = Self.fitted(slot.tokens, slot.cache, within: parkedByteLimit).map {
+            Slot(tokens: $0, cache: slot.cache, lastUse: slot.lastUse)
         }
+    }
+
+    private static func fitted(_ tokens: [Int], _ cache: PromptCache, within limit: Int) -> [Int]? {
+        guard cache.byteCount > limit else { return tokens }
+        let bytesPerToken = max(1, cache.byteCount / max(1, cache.tokenCount))
+        let keep = min(tokens.count, limit / bytesPerToken)
+        guard cache.shrink(to: keep), cache.byteCount <= limit else { return nil }
+        return Array(tokens.prefix(keep))
     }
 }

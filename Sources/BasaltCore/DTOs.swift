@@ -88,6 +88,22 @@ public struct GenerationRequest: Codable, Sendable {
         )
     }
 
+    public func withCacheKey(_ cacheKey: String?) -> GenerationRequest {
+        GenerationRequest(
+            prompt: prompt,
+            maxTokens: maxTokens,
+            temperature: temperature,
+            topP: topP,
+            minP: minP,
+            dynamicTemperature: dynamicTemperature,
+            enableThinking: enableThinking,
+            reasoningEffort: reasoningEffort,
+            isServiceRequest: isServiceRequest,
+            tools: tools,
+            cacheKey: cacheKey
+        )
+    }
+
     public func validated(defaultMaxTokens: Int = 4096) throws(BasaltError) -> GenerationRequest {
         guard !prompt.isEmpty else {
             throw .invalidRequestStructure(details: "prompt must not be empty")

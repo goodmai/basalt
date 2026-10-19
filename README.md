@@ -186,7 +186,7 @@ The flags worth knowing on `serve`:
 | `--reasoning-effort xhigh\|medium\|low` | Qwen-family thinking budget |
 | `--quant 4bit` | pick a quantization subfolder in repos that ship several |
 | `--kv-bits 4\|8` | quantize the KV cache — buys context on a memory-tight machine; turns off prompt-cache reuse |
-| `--prompt-cache-mb N` | memory kept for conversation prompt caches (default: half of what the GPU's 3/4 share of RAM leaves after the weights, logged at load; `0` disables), see below |
+| `--prompt-cache-mb N` | memory kept for conversation prompt caches (default: half of what Metal's recommended GPU working set leaves after the weights, logged at load; `0` disables), see below |
 | `--min-p`, `--top-k`, `--seed` | sampling; `--seed` makes a non-greedy run reproducible; a request's `min_p` overrides `--min-p` |
 | `--max-tokens` | default generation ceiling (2048–128000) |
 | `--dry-run` | memory feasibility check, then exit without loading |

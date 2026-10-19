@@ -452,7 +452,8 @@ struct OpenAIController: Sendable {
         let buffer = try await request.body.collect(upTo: 4 * 1024 * 1024)
         let data = Data(buffer.readableBytesView)
         do {
-            let dto = try JSONDecoder().decode(GenerationRequest.self, from: data)
+            let dto = PromptCacheKey.scoped(
+                try JSONDecoder().decode(GenerationRequest.self, from: data), headers: request.headers)
             let result = try await orchestrator.generate(request: dto)
             let encoded = try JSONEncoder().encode(result)
             return makeDataResponse(encoded)

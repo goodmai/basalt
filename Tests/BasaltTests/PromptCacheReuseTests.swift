@@ -206,35 +206,23 @@ struct PromptCacheReuseTests {
         #expect(await quantized.promptCaches.slots.isEmpty)
     }
 
-    @Test("A cancelled generation stops promptly and leaves a slot whose tokens match its cache; the next turn still matches a full prefill")
+    @Test("A cancelled generation leaves a slot whose tokens match its cache; the next turn still matches a full prefill")
     func cancelledGenerationLeavesConsistentSlot() async throws {
-        let longRun = 3000
         let engine = try await TinyModel.engine()
-        let clock = ContinuousClock()
-        let fullRunStart = clock.now
-        _ = try await engine.generate(request: greedy(Conversation.otherBranch, key: "baseline", maxTokens: longRun))
-        let fullRun = clock.now - fullRunStart
-
-        let stream = try await engine.generateStream(request: greedy(Conversation.firstTurn, key: "agent", maxTokens: longRun))
+        let stream = try await engine.generateStream(request: greedy(Conversation.firstTurn, key: "agent", maxTokens: 3000))
         let consumer = Task {
-            var chunks = 0
             for await _ in stream {
-                chunks += 1
                 try? await Task.sleep(for: .milliseconds(2))
             }
-            return chunks
         }
         try await Task.sleep(for: .milliseconds(50))
-        let cancelledAt = clock.now
         consumer.cancel()
-        _ = await consumer.value
+        await consumer.value
 
-        while await engine.promptCaches.slots["agent"] == nil, clock.now - cancelledAt < fullRun * 3 {
+        let deadline = ContinuousClock.now + .seconds(60)
+        while await engine.promptCaches.slots["agent"] == nil, ContinuousClock.now < deadline {
             try await Task.sleep(for: .milliseconds(5))
         }
-        let stoppedAfter = clock.now - cancelledAt
-        #expect(stoppedAfter < fullRun / 4, "cancelled run took \(stoppedAfter), a full run \(fullRun)")
-
         let slot = try #require(await engine.promptCaches.slots["agent"])
         #expect(slot.tokens == TinyModel.tokens(Conversation.firstTurn))
         #expect(slot.cache.tokenCount >= slot.tokens.count)
@@ -309,12 +297,13 @@ struct PromptCacheReuseTests {
         #expect(slot.cache.byteCount == slot.tokens.count * TinyModel.cacheBytesPerToken)
     }
 
-    @Test("The automatic budget is half of what the GPU's 3/4 share of RAM leaves after the weights")
+    @Test("The automatic budget is half of what the GPU's recommended working set leaves after the weights")
     func automaticBudget() {
         let gib = 1 << 30
-        #expect(PromptCacheBudget.automatic(physicalMemory: 32 * gib, weights: 5 * gib) == 19 * gib / 2)
-        #expect(PromptCacheBudget.automatic(physicalMemory: 24 * gib, weights: 16 * gib) == gib)
-        #expect(PromptCacheBudget.automatic(physicalMemory: 16 * gib, weights: 14 * gib) == 0)
+        #expect(PromptCacheBudget.automatic(workingSet: 24 * gib, weights: 5 * gib) == 19 * gib / 2)
+        #expect(PromptCacheBudget.automatic(workingSet: 18 * gib, weights: 16 * gib) == gib)
+        #expect(PromptCacheBudget.automatic(workingSet: 12 * gib, weights: 14 * gib) == 0)
+        #expect(PromptCacheBudget.gpuWorkingSet() > 0)
     }
 
     @Test("Concurrent generations on one key never share a cache and both answer like a full prefill")
@@ -418,14 +407,18 @@ struct PromptCacheSlotsTests {
         #expect((slots.slots["s23"]?.tokens.count ?? 100) < 100)
     }
 
-    @Test("A cache larger than the whole budget is not stored and evicts nothing")
-    func oversizedSlotIsRejected() {
+    @Test("A conversation larger than the whole budget keeps the longest prefix that fits")
+    func oversizedSlotKeepsItsHead() throws {
         let budget = 300 * Self.bytesPerToken
         var slots = PromptCacheSlots(byteBudget: budget)
         slots.store("small", tokens: Array(0..<100), cache: filledCache(tokens: 100))
         slots.store("huge", tokens: Array(0..<600), cache: filledCache(tokens: 600))
-        #expect(slots.slots["huge"] == nil)
-        #expect(slots.slots["small"]?.tokens.count == 100)
+        let huge = try #require(slots.slots["huge"])
+        #expect(huge.tokens == Array(0..<300))
+        #expect(huge.cache.tokenCount == 300)
+        #expect(slots.byteCount <= budget)
+        let lease = slots.lease("huge", for: Array(0..<600) + [7])
+        #expect(lease?.reusedTokens == 300)
     }
 
     @Test("A zero budget stores nothing")

@@ -43,6 +43,12 @@ enum PromptCacheKey {
         return credential(in: headers).map { "\(digest($0))/\(conversation)" } ?? conversation
     }
 
+    static func scoped(_ request: GenerationRequest, headers: HTTPFields) -> GenerationRequest {
+        request.withCacheKey(resolve(
+            declared: request.cacheKey, headers: headers, prompt: request.prompt,
+            isService: request.isServiceRequest == true))
+    }
+
     static func credential(in headers: HTTPFields) -> String? {
         if let authorization = headers[.authorization] {
             let parts = authorization.split(separator: " ", maxSplits: 1)
