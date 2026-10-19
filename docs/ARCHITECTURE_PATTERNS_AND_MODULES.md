@@ -139,21 +139,21 @@
 
 ### 11.2 Удалять опционально (локальные рабочие артефакты)
 - `.archive/` (если архив не должен входить в публичный репозиторий).
-- `.claude/`, `.gemini.md` (локальные AI/assistant артефакты).
+- `.gemini.md` (локальные AI/assistant артефакты). `.claude/` не удаляется никогда: там worktree Claude Code.
 - `test_*.swift` в корне (временные ad-hoc тесты, не входящие в `Tests/`).
 
 ## 12) Скрипт очистки перед GitHub
-- Скрипт: `scripts/clean_for_github.sh`
+- Скрипт: `scripts/cleanup.swift --mode=release` (там же `--mode=daily` — ротация logs/images/reports, и `--mode=all`)
 - Назначение: удалить build/runtime мусор и временные локальные файлы перед публикацией.
 - Режимы:
   - `--dry-run` (по умолчанию): только показать, что будет удалено.
   - `--apply`: реально удалить найденные артефакты.
-  - `--include-local`: дополнительно удалить опциональные локальные артефакты (`.archive`, `.claude`, `.gemini.md` и т.п.).
+  - `--include-local`: дополнительно удалить опциональные локальные артефакты (`.archive` — если внутри нет git work tree, `.gemini.md` и т.п.).
 
 ### 12.1 Рекомендуемый порядок запуска перед публикацией
 1. Просмотр кандидатов на удаление:
-   - `./scripts/clean_for_github.sh --dry-run`
+   - `./scripts/cleanup.swift --mode=release`
 2. Очистка build/runtime артефактов:
-   - `./scripts/clean_for_github.sh --apply`
+   - `./scripts/cleanup.swift --mode=release --apply`
 3. Опционально (если нужен максимально чистый публичный репозиторий):
-   - `./scripts/clean_for_github.sh --apply --include-local`
+   - `./scripts/cleanup.swift --mode=release --apply --include-local`

@@ -1,4 +1,7 @@
 #!/bin/bash
+# Live smoke test against a real model (downloads Qwen3.5-4B on first run). The same
+# health -> generate scenario runs on the mock engine in Tests/BasaltTests/RESTServerTests.swift;
+# this script is what checks it end to end on real weights.
 
 # Load environment variables from .env
 if [ -f .env ]; then

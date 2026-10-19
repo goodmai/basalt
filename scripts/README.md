@@ -92,32 +92,48 @@ jobs:
 
 ## Pre-publish Cleanup
 
-### `clean_for_github.sh`
+### `cleanup.swift`
 
-Removes local build/runtime artifacts before publishing to GitHub.
+One cleanup script with three modes. Every mode is a dry run unless `--apply` is given,
+and nothing tracked by git is ever removed.
 
 **Usage:**  
 ```bash
-# Dry-run (default)
-./scripts/clean_for_github.sh --dry-run
+# Pre-publish: list build/runtime artifacts (default mode is release)
+./scripts/cleanup.swift --mode=release
 
-# Apply cleanup
-./scripts/clean_for_github.sh --apply
+# Remove them, plus local-only artifacts
+./scripts/cleanup.swift --mode=release --apply --include-local
 
-# Apply cleanup + local-only artifacts
-./scripts/clean_for_github.sh --apply --include-local
+# Daily rotation: remove files older than 24 h from logs/, images/, reports/
+./scripts/cleanup.swift --mode=daily --apply
+./scripts/cleanup.swift --mode=daily --apply --max-age-hours=0   # everything untracked
+
+# Both
+./scripts/cleanup.swift --mode=all --apply
 ```
 
-**Cleanup scope (default):**
+**Release scope:**
 - `.build/`, `.swiftpm/`, `logs/`, docs build directories
-- generated artifacts (`*.log`, `*.tmp`, `*.profdata`, `default.metallib`)
-- local runtime DBs (`*.db`, `*.sqlite`, `*.sqlite3`, `auth.sqlite3`)
+- generated artifacts (`*.log`, `*.tmp`, `*.swp`, `*.profdata`, `.DS_Store`, `benchmark_*.json`)
+- local runtime DBs in the root (`*.db`, `*.sqlite`, `*.sqlite3`, `auth.sqlite3`)
+- with `--include-local`: `.archive/` (kept if a git work tree lives inside), `.gemini.md`, root `test_*.swift` — `.claude/` is never removed (Claude Code keeps its worktrees there)
 
-**Optional scope with `--include-local`:**
-- `.archive/`, `.claude/`, `.gemini.md`
-- root helper files like `test_*.swift`
+`default.metallib` is kept: the MLX runtime loads it from the repo root.
 
-The script skips files/directories tracked by git to avoid deleting committed project content.
+## Security
+
+### `security_audit.sh`
+
+Source checks (hardcoded secrets, SQL interpolation, weak crypto, sensitive files) plus an
+OSV scan of every pin in `Package.resolved`. Exits 1 on any failed check; an affected or
+unchecked dependency is a failure. CI: `.github/workflows/security-audit.yml`.
+
+```bash
+./scripts/security_audit.sh                       # full audit
+./scripts/security_audit.sh --osv-only            # OSV scan only (needs curl, jq, python3)
+./scripts/security_audit.sh --osv-only other/Package.resolved
+```
 
 ## Future Scripts
 
@@ -126,9 +142,6 @@ Run full test suite with coverage reporting.
 
 ### `benchmark.sh` (Planned)
 Run performance benchmarks on all verified models.
-
-### `security_audit.sh` (Planned)
-Run dependency and CWE security audits.
 
 ### `release.sh` (Planned)
 Automated release process: version bump, changelog, git tag, GitHub release.
