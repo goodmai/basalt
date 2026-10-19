@@ -10,7 +10,7 @@ let package = Package(
     ],
     dependencies: [
         .package(url: "https://github.com/ml-explore/mlx-swift",     from: "0.32.3"),
-        .package(url: "https://github.com/ml-explore/mlx-swift-lm",  from: "3.32.3"),
+        .package(url: "https://github.com/ml-explore/mlx-swift-lm",  revision: "7e4024e52bb9edc6f5b92e9370c50a9140f5e322"),
         // Capped below 2.28: it pulls swift-distributed-tracing 1.7.x, whose ServiceContextModule target
         // collides with swift-service-context ("target names need to be unique"). Lift once that is resolved.
         .package(url: "https://github.com/hummingbird-project/hummingbird", "2.27.0"..<"2.28.0"),
