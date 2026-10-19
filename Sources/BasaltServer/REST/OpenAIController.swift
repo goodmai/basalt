@@ -68,9 +68,11 @@ struct OpenAIController: Sendable {
         let arguments: String?
         let input: String?
         let output: MessageContent?
+        let toolCalls: [ChatToolCall]?
 
         init(type: String? = nil, role: String? = nil, content: MessageContent?,
-             name: String? = nil, arguments: String? = nil, input: String? = nil, output: MessageContent? = nil) {
+             name: String? = nil, arguments: String? = nil, input: String? = nil, output: MessageContent? = nil,
+             toolCalls: [ChatToolCall]? = nil) {
             self.type = type
             self.role = role
             self.content = content
@@ -78,7 +80,33 @@ struct OpenAIController: Sendable {
             self.arguments = arguments
             self.input = input
             self.output = output
+            self.toolCalls = toolCalls
         }
+
+        enum CodingKeys: String, CodingKey {
+            case type, role, content, name, arguments, input, output
+            case toolCalls = "tool_calls"
+        }
+    }
+
+    struct ChatToolCall: Codable, Sendable {
+        var id: String?
+        var type: String? = "function"
+        let function: Function
+
+        struct Function: Codable, Sendable {
+            let name: String
+            let arguments: String?
+        }
+
+        init(_ call: ToolCallOutput) {
+            id = call.id
+            function = Function(name: call.name, arguments: call.arguments)
+        }
+    }
+
+    static func finishReason(_ finish: GenerationResponse.FinishReason?, calledTools: Bool) -> String {
+        calledTools ? "tool_calls" : (finish == .length ? "length" : "stop")
     }
 
     struct ChatCompletionRequest: Codable, Sendable {
@@ -310,6 +338,7 @@ struct OpenAIController: Sendable {
             dynamicTemperature: dto.dynamicTemperature,
             reasoningEffort: dto.reasoningEffort,
             isServiceRequest: service.isService,
+            tools: Self.functionTools(fromRequestBody: data),
             cacheKey: PromptCacheKey.resolve(isService: service.isService)
         )
         let model = dto.model.map(ModelsController.restModel(from:))
@@ -324,6 +353,8 @@ struct OpenAIController: Sendable {
 
         do {
             let result = try await orchestrator.generate(request: genRequest, modelId: requestedModel)
+            let calls = result.toolCalls ?? []
+            let onlyCalls = !calls.isEmpty && result.generatedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             let response = ChatCompletionResponse(
                 id: "chatcmpl-\(UUID().uuidString)",
                 object: "chat.completion",
@@ -331,8 +362,9 @@ struct OpenAIController: Sendable {
                 model: dto.model ?? modelId,
                 choices: [.init(
                     index: 0,
-                    message: ChatMessage(role: "assistant", content: .text(result.generatedText)),
-                    finishReason: result.finishReason == GenerationResponse.FinishReason.stop ? "stop" : "length"
+                    message: ChatMessage(role: "assistant", content: onlyCalls ? nil : .text(result.generatedText),
+                                         toolCalls: calls.isEmpty ? nil : calls.map(ChatToolCall.init)),
+                    finishReason: Self.finishReason(result.finishReason, calledTools: !calls.isEmpty)
                 )],
                 usage: .init(
                     promptTokens: result.promptTokens,
@@ -483,52 +515,40 @@ struct OpenAIController: Sendable {
             let task = Task {
                 let id = "chatcmpl-\(UUID().uuidString)"
                 let created = Int(Date().timeIntervalSince1970)
-                do {
-                    let stream = try await orchestrator.generateStream(request: genRequest, modelId: requestedModel)
-                    for await chunk in stream {
-                        switch chunk {
-                        case .toolCall:  // this path declares no tools, so a call has no client to go to
-                            break
-                        case .text(let text):
-                            let delta: [String: Any] = [
-                                "id": id, "object": "chat.completion.chunk",
-                                "created": created, "model": model,
-                                "choices": [["index": 0,
-                                             "delta": ["role": "assistant", "content": text] as [String: Any],
-                                             "finish_reason": NSNull()] as [String: Any]]
-                            ]
-                            if let json = try? JSONSerialization.data(withJSONObject: delta),
-                               let str = String(data: json, encoding: .utf8) {
-                                var buf = ByteBuffer(); buf.writeString("data: \(str)\n\n")
-                                continuation.yield(buf)
-                            }
-                        case .reasoning(let reasoning):
-                            let delta: [String: Any] = [
-                                "id": id, "object": "chat.completion.chunk",
-                                "created": created, "model": model,
-                                "choices": [["index": 0,
-                                             "delta": ["role": "assistant", "reasoning": reasoning] as [String: Any],
-                                             "finish_reason": NSNull()] as [String: Any]]
-                            ]
-                            if let json = try? JSONSerialization.data(withJSONObject: delta),
-                               let str = String(data: json, encoding: .utf8) {
-                                var buf = ByteBuffer(); buf.writeString("data: \(str)\n\n")
-                                continuation.yield(buf)
-                            }
-                        case .metadata:
-                            break
-                        }
-                    }
-                    let done: [String: Any] = [
+                func send(delta: [String: Any], finish: String? = nil) {
+                    let chunk: [String: Any] = [
                         "id": id, "object": "chat.completion.chunk",
                         "created": created, "model": model,
-                        "choices": [["index": 0, "delta": [:] as [String: Any], "finish_reason": "stop"] as [String: Any]]
+                        "choices": [["index": 0, "delta": delta, "finish_reason": finish ?? NSNull()] as [String: Any]]
                     ]
-                    if let json = try? JSONSerialization.data(withJSONObject: done),
+                    if let json = try? JSONSerialization.data(withJSONObject: chunk),
                        let str = String(data: json, encoding: .utf8) {
                         var buf = ByteBuffer(); buf.writeString("data: \(str)\n\n")
                         continuation.yield(buf)
                     }
+                }
+                var toolCallCount = 0
+                var final: GenerationResponse?
+                do {
+                    let stream = try await orchestrator.generateStream(request: genRequest, modelId: requestedModel)
+                    for await chunk in stream {
+                        switch chunk {
+                        case .toolCall(let call):
+                            send(delta: ["role": "assistant", "tool_calls": [[
+                                "index": toolCallCount, "id": call.id, "type": "function",
+                                "function": ["name": call.name, "arguments": call.arguments]
+                            ] as [String: Any]]])
+                            toolCallCount += 1
+                        case .text(let text):
+                            if toolCallCount > 0, text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { continue }
+                            send(delta: ["role": "assistant", "content": text])
+                        case .reasoning(let reasoning):
+                            send(delta: ["role": "assistant", "reasoning": reasoning])
+                        case .metadata(let meta):
+                            final = meta
+                        }
+                    }
+                    send(delta: [:], finish: Self.finishReason(final?.finishReason, calledTools: toolCallCount > 0))
                     var done2 = ByteBuffer(); done2.writeString("data: [DONE]\n\n")
                     continuation.yield(done2)
                 } catch {
@@ -773,13 +793,22 @@ struct OpenAIController: Sendable {
             default:
                 break
             }
-            guard let text = msg.content?.textValue, !text.isEmpty else { continue }
+            let text = msg.content?.textValue ?? ""
             let role = msg.role ?? "user"
-            switch role {
-            case "system", "developer": parts.append("[System]: \(text)")
-            case "user":      parts.append("[User]: \(text)")
-            case "assistant": parts.append("[Assistant]: \(text)")
-            default:          parts.append("[\(role.capitalized)]: \(text)")
+            if role == "tool" {
+                parts.append(ToolTranscript.result(text))
+                continue
+            }
+            if !text.isEmpty {
+                switch role {
+                case "system", "developer": parts.append("[System]: \(text)")
+                case "user":      parts.append("[User]: \(text)")
+                case "assistant": parts.append("[Assistant]: \(text)")
+                default:          parts.append("[\(role.capitalized)]: \(text)")
+                }
+            }
+            for call in msg.toolCalls ?? [] {
+                parts.append(ToolTranscript.call(name: call.function.name, arguments: call.function.arguments ?? "{}"))
             }
         }
         return parts.joined(separator: "\n\n")

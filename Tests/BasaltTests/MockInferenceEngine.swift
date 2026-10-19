@@ -24,6 +24,11 @@ actor MockInferenceEngine: InferenceEngine {
     var mockTextAfterToolCall: String? = nil
     var lastRequest: GenerationRequest?
     var mockCachedPromptTokens = 0
+    var mockFinishReason: GenerationResponse.FinishReason = .stop
+
+    func setMockFinishReason(_ reason: GenerationResponse.FinishReason) {
+        self.mockFinishReason = reason
+    }
 
     func setMockCachedPromptTokens(_ tokens: Int) {
         self.mockCachedPromptTokens = tokens
@@ -135,7 +140,7 @@ actor MockInferenceEngine: InferenceEngine {
                     generationTime: genTime,
                     timeToFirstToken: ttft,
                     memory: .init(peakBytes: 1024, activeBytes: 512, cacheBytes: 256),
-                    finishReason: .stop
+                    finishReason: mockFinishReason
                 )
                 continuation.yield(.metadata(metadata))
                 continuation.finish()

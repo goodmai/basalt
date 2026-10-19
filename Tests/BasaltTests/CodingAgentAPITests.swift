@@ -483,4 +483,89 @@ struct ToolCallingEndpointsTests {
         #expect(starts.compactMap { ($0["content_block"] as? [String: Any])?["type"] as? String } == ["text", "tool_use"])
         #expect(starts.compactMap { $0["index"] as? Int } == [0, 1])
     }
+
+    private let openAITools = #"""
+    "tools": [{"type": "function", "function": {"name": "Bash", "description": "Run a shell command",
+               "parameters": {"type": "object", "properties": {"command": {"type": "string"}}}}}]
+    """#
+
+    @Test("Chat: tools reach the engine; assistant tool_calls and tool messages are rendered into the prompt")
+    func chatHistory() async throws {
+        let (app, engine) = try await app()
+        let request = #"""
+        {"messages": [
+          {"role": "user", "content": "list files"},
+          {"role": "assistant", "content": null,
+           "tool_calls": [{"id": "call_1", "type": "function", "function": {"name": "Bash", "arguments": "{\"command\":\"ls\"}"}}]},
+          {"role": "tool", "tool_call_id": "call_1", "content": "a.txt\nb.txt"},
+          {"role": "user", "content": "how many?"}
+        ], 
+        """# + openAITools + "}"
+        _ = try await post(app, "/v1/chat/completions", request)
+        let sent = try #require(await engine.lastRequest)
+        #expect(sent.tools?.map(\.name) == ["Bash"])
+        let expected = [
+            "[User]: list files",
+            #"[Assistant called Bash]: {"command":"ls"}"#,
+            "[Tool result]: a.txt\nb.txt",
+            "[User]: how many?"
+        ].joined(separator: "\n\n")
+        #expect(sent.prompt == expected)
+    }
+
+    @Test("Chat: tool_choice none sends no tools to the engine")
+    func chatToolChoiceNone() async throws {
+        let (app, engine) = try await app()
+        _ = try await post(app, "/v1/chat/completions",
+            #"{"tool_choice": "none", "messages": [{"role": "user", "content": "hi"}], "# + openAITools + "}")
+        #expect(await engine.lastRequest?.tools == nil)
+    }
+
+    @Test("Chat non-streaming: message.tool_calls with finish_reason tool_calls")
+    func chatNonStream() async throws {
+        let (app, _) = try await app(call: call)
+        let json = try object(try await post(app, "/v1/chat/completions",
+            #"{"messages": [{"role": "user", "content": "ls"}], "# + openAITools + "}"))
+        let choice = try #require((json["choices"] as? [[String: Any]])?.first)
+        #expect(choice["finish_reason"] as? String == "tool_calls")
+        let message = try #require(choice["message"] as? [String: Any])
+        #expect(message["content"] as? String == nil)
+        let calls = try #require(message["tool_calls"] as? [[String: Any]])
+        #expect(calls.count == 1)
+        #expect(calls[0]["id"] as? String == "call_abc")
+        #expect(calls[0]["type"] as? String == "function")
+        let function = try #require(calls[0]["function"] as? [String: Any])
+        #expect(function["name"] as? String == "Bash")
+        #expect(function["arguments"] as? String == #"{"command":"ls"}"#)
+    }
+
+    @Test("Chat stream: delta.tool_calls with index, id, name and arguments; final finish_reason tool_calls")
+    func chatStream() async throws {
+        let (app, _) = try await app(call: call, text: "Checking.")
+        let raw = try await post(app, "/v1/chat/completions",
+            #"{"stream": true, "messages": [{"role": "user", "content": "ls"}], "# + openAITools + "}")
+        #expect(raw.hasSuffix("data: [DONE]\n\n"))
+        let choices = dataFrames(raw).compactMap { ($0["choices"] as? [[String: Any]])?.first }
+        let deltas = choices.compactMap { $0["delta"] as? [String: Any] }
+        #expect(deltas.first?["content"] as? String == "Checking.")
+        let toolCalls = deltas.compactMap { $0["tool_calls"] as? [[String: Any]] }
+        let toolDelta = try #require(toolCalls.first?.first)
+        #expect(toolDelta["index"] as? Int == 0)
+        #expect(toolDelta["id"] as? String == "call_abc")
+        #expect(toolDelta["type"] as? String == "function")
+        let function = try #require(toolDelta["function"] as? [String: Any])
+        #expect(function["name"] as? String == "Bash")
+        #expect(function["arguments"] as? String == #"{"command":"ls"}"#)
+        #expect(choices.last?["finish_reason"] as? String == "tool_calls")
+        #expect(choices.dropLast().allSatisfy { $0["finish_reason"] is NSNull })
+    }
+
+    @Test("Chat stream reports finish_reason length when generation hit the cap")
+    func chatStreamLength() async throws {
+        let (app, engine) = try await app()
+        await engine.setMockFinishReason(.length)
+        let raw = try await post(app, "/v1/chat/completions", #"{"stream": true, "messages": [{"role": "user", "content": "hi"}]}"#)
+        let last = dataFrames(raw).compactMap { ($0["choices"] as? [[String: Any]])?.first }.last
+        #expect(last?["finish_reason"] as? String == "length")
+    }
 }
