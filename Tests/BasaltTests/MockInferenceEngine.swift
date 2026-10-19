@@ -20,10 +20,15 @@ actor MockInferenceEngine: InferenceEngine {
     var mockTPS  = 42.0
     var artificialDelay: TimeInterval = 0.0 // Artificial delay in seconds for testing timeouts
     var mockReasoning: String? = nil        // yielded as a .reasoning chunk before the text
-    var mockToolCall: ToolCallOutput? = nil // yielded as a .toolCall chunk after the text
+    var mockToolCalls: [ToolCallOutput] = []
     var mockTextAfterToolCall: String? = nil
     var lastRequest: GenerationRequest?
     var mockCachedPromptTokens = 0
+    var mockFinishReason: GenerationResponse.FinishReason = .stop
+
+    func setMockFinishReason(_ reason: GenerationResponse.FinishReason) {
+        self.mockFinishReason = reason
+    }
 
     func setMockCachedPromptTokens(_ tokens: Int) {
         self.mockCachedPromptTokens = tokens
@@ -43,7 +48,11 @@ actor MockInferenceEngine: InferenceEngine {
     }
 
     func setMockToolCall(_ call: ToolCallOutput?, text: String = "Mock response", after: String? = nil) {
-        self.mockToolCall = call
+        setMockToolCalls(call.map { [$0] } ?? [], text: text, after: after)
+    }
+
+    func setMockToolCalls(_ calls: [ToolCallOutput], text: String = "Mock response", after: String? = nil) {
+        self.mockToolCalls = calls
         self.mockText = text
         self.mockTextAfterToolCall = after
     }
@@ -114,7 +123,10 @@ actor MockInferenceEngine: InferenceEngine {
                 let firstTokenTime = clock.now
                 if let reasoning = mockReasoning { continuation.yield(.reasoning(reasoning)) }
                 if !mockText.isEmpty { continuation.yield(.text(mockText)) }
-                if let call = mockToolCall { continuation.yield(.toolCall(call)) }
+                var gate = ToolCallGate(request: request)
+                for call in mockToolCalls {
+                    if let chunk = gate.admit(call) { continuation.yield(chunk) }
+                }
                 if let after = mockTextAfterToolCall { continuation.yield(.text(after)) }
                 
                 // simulate total generation time
@@ -135,7 +147,7 @@ actor MockInferenceEngine: InferenceEngine {
                     generationTime: genTime,
                     timeToFirstToken: ttft,
                     memory: .init(peakBytes: 1024, activeBytes: 512, cacheBytes: 256),
-                    finishReason: .stop
+                    finishReason: mockFinishReason
                 )
                 continuation.yield(.metadata(metadata))
                 continuation.finish()

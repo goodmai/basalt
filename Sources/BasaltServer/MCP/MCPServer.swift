@@ -581,7 +581,7 @@ public final class MCPServer: Sendable {
 
 // MARK: — AnyCodable helper (minimal, no external dep)
 
-private struct AnyCodable: @unchecked Sendable, Codable {
+struct AnyCodable: @unchecked Sendable, Codable {
     let rawValue: Any
 
     init(_ rawValue: Any) { self.rawValue = rawValue }

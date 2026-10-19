@@ -22,12 +22,58 @@ struct AnthropicController: Sendable {
 
     struct ContentBlock: Codable, Sendable {
         let type: String
-        let text: String?
+        var text: String? = nil
+        var id: String? = nil
+        var name: String? = nil
+        var input: AnyCodable? = nil
+        var toolUseId: String? = nil
+        var content: MessageContent? = nil
+        var isError: Bool? = nil
 
         init(type: String = "text", text: String) {
             self.type = type
             self.text = text
         }
+
+        init(toolUse call: ToolCallOutput, input: AnyCodable?) {
+            type = "tool_use"
+            id = AnthropicController.toolUseID(call.id)
+            name = call.name
+            self.input = input ?? AnyCodable([String: Any]())
+        }
+
+        var promptText: String? {
+            type == "image" ? ToolTranscript.imageOmitted : text
+        }
+
+        var inputJSON: String {
+            input.flatMap { try? Self.sortedEncoder.encode($0) }.flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
+        }
+
+        private static let sortedEncoder: JSONEncoder = {
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+            return encoder
+        }()
+
+        enum CodingKeys: String, CodingKey {
+            case type, text, id, name, input, content
+            case toolUseId = "tool_use_id"
+            case isError = "is_error"
+        }
+    }
+
+    static func objectInput(_ arguments: String) -> AnyCodable? {
+        let decoded = try? JSONDecoder().decode(AnyCodable.self, from: Data(arguments.utf8))
+        return decoded?.rawValue is [String: Any] ? decoded : nil
+    }
+
+    static func nonObjectNote(_ call: ToolCallOutput) -> String {
+        "\n[tool call to \(call.name): arguments are not an object, sent as {}: \(call.arguments)]"
+    }
+
+    static func toolUseID(_ id: String) -> String {
+        id.hasPrefix("toolu_") ? id : "toolu_\(id.hasPrefix("call_") ? id.dropFirst(5) : Substring(id))"
     }
 
     struct Message: Codable, Sendable {
@@ -60,7 +106,7 @@ struct AnthropicController: Sendable {
         var textValue: String {
             switch self {
             case .text(let s): return s
-            case .blocks(let b): return b.compactMap(\.text).joined(separator: "\n")
+            case .blocks(let b): return b.compactMap(\.promptText).joined(separator: "\n")
             }
         }
     }
@@ -90,7 +136,7 @@ struct AnthropicController: Sendable {
         var textValue: String {
             switch self {
             case .text(let s):   return s
-            case .blocks(let b): return b.compactMap(\.text).joined(separator: "\n")
+            case .blocks(let b): return b.compactMap(\.promptText).joined(separator: "\n")
             }
         }
     }
@@ -169,17 +215,15 @@ struct AnthropicController: Sendable {
     func messages(request: Request, context: BasicRequestContext) async throws -> Response {
         // Authentication happens before this handler (APIKeyAuthenticator off loopback).
         let dto: MessagesRequest
+        let buffer = try await request.body.collect(upTo: 4 * 1024 * 1024)
+        let data = Data(buffer.readableBytesView)
         do {
-            let buffer = try await request.body.collect(upTo: 4 * 1024 * 1024)
-            let data = Data(buffer.readableBytesView)
-            do {
-                dto = try JSONDecoder().decode(MessagesRequest.self, from: data)
-            } catch {
-                fputs("🔴 [Anthropic] decode error: \(error) (body: \(data.count) bytes)\n", stderr)
-                return errorResponse(status: .badRequest,
-                                     message: "Decode error: \(error.localizedDescription)",
-                                     type: "invalid_request_error")
-            }
+            dto = try JSONDecoder().decode(MessagesRequest.self, from: data)
+        } catch {
+            fputs("🔴 [Anthropic] decode error: \(error) (body: \(data.count) bytes)\n", stderr)
+            return errorResponse(status: .badRequest,
+                                 message: "Decode error: \(error.localizedDescription)",
+                                 type: "invalid_request_error")
         }
 
         guard !dto.messages.isEmpty else {
@@ -189,6 +233,10 @@ struct AnthropicController: Sendable {
         }
 
         let prompt = buildPrompt(system: dto.system, messages: dto.messages)
+        let requested: OpenAIController.RequestedTools
+        do { requested = try OpenAIController.requestedTools(fromRequestBody: data) } catch {
+            return errorResponse(status: .badRequest, message: error.message, type: "invalid_request_error")
+        }
         let service = ServiceRequestDetector.prepare(prompt: prompt, maxTokens: dto.maxTokens, headers: request.headers)
 
         let effort: String?
@@ -209,6 +257,8 @@ struct AnthropicController: Sendable {
             dynamicTemperature: dto.dynamicTemperature,
             reasoningEffort: effort,
             isServiceRequest: service.isService,
+            tools: requested.tools,
+            toolChoice: requested.choice,
             cacheKey: PromptCacheKey.resolve(isService: service.isService)
         )
 
@@ -228,9 +278,9 @@ struct AnthropicController: Sendable {
                 id: "msg_\(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(24))",
                 type: "message",
                 role: "assistant",
-                content: [ContentBlock(text: result.generatedText)],
+                content: Self.responseContent(text: result.generatedText, toolCalls: result.toolCalls ?? []),
                 model: dto.model ?? modelId,
-                stopReason: result.finishReason == .stop ? "end_turn" : "max_tokens",
+                stopReason: Self.stopReason(result.finishReason, calledTools: result.toolCalls?.isEmpty == false),
                 stopSequence: nil,
                 usage: .init(result)
             )
@@ -305,6 +355,33 @@ struct AnthropicController: Sendable {
                     nextIndex += 1
                 }
 
+                var calledTools = false
+                func emitToolUse(_ call: ToolCallOutput) {
+                    let note = Self.objectInput(call.arguments) == nil ? Self.nonObjectNote(call) : nil
+                    if let note {
+                        open("text")
+                        send("content_block_delta", [
+                            "type": "content_block_delta",
+                            "index": openBlock!.index,
+                            "delta": ["type": "text_delta", "text": note]
+                        ])
+                    }
+                    if let current = openBlock {
+                        send("content_block_stop", ["type": "content_block_stop", "index": current.index])
+                        openBlock = nil
+                    }
+                    let block: [String: Any] = ["type": "tool_use", "id": Self.toolUseID(call.id), "name": call.name, "input": [String: Any]()]
+                    send("content_block_start", ["type": "content_block_start", "index": nextIndex, "content_block": block])
+                    send("content_block_delta", [
+                        "type": "content_block_delta",
+                        "index": nextIndex,
+                        "delta": ["type": "input_json_delta", "partial_json": note == nil ? call.arguments : "{}"]
+                    ])
+                    send("content_block_stop", ["type": "content_block_stop", "index": nextIndex])
+                    nextIndex += 1
+                    calledTools = true
+                }
+
                 var outputTokens = 0
                 var final: GenerationResponse?
 
@@ -312,10 +389,12 @@ struct AnthropicController: Sendable {
                     let stream = try await orchestrator.generateStream(request: genRequest, modelId: requestedModel)
                     for await chunk in stream {
                         switch chunk {
-                        case .toolCall:  // this path declares no tools, so a call has no client to go to
-                            break
+                        case .toolCall(let call):
+                            outputTokens += 1
+                            emitToolUse(call)
                         case .text(let text):
                             outputTokens += 1
+                            if calledTools, openBlock == nil, text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { continue }
                             open("text")
                             send("content_block_delta", [
                                 "type": "content_block_delta",
@@ -324,8 +403,7 @@ struct AnthropicController: Sendable {
                             ])
                         case .reasoning(let reasoning):
                             outputTokens += 1
-                            // Reasoning after the answer started has no block to go to; drop it.
-                            guard openBlock?.type != "text" else { continue }
+                            guard openBlock?.type != "text", !calledTools else { continue }
                             open("thinking")
                             send("content_block_delta", [
                                 "type": "content_block_delta",
@@ -354,15 +432,16 @@ struct AnthropicController: Sendable {
                     return
                 }
 
-                // An empty answer still carries one (empty) text block.
-                open("text")
-                send("content_block_stop", ["type": "content_block_stop", "index": openBlock!.index])
+                if openBlock != nil || !calledTools {
+                    open("text")
+                    send("content_block_stop", ["type": "content_block_stop", "index": openBlock!.index])
+                }
 
                 // message_delta
                 send("message_delta", [
                     "type": "message_delta",
                     // The engine's own counts when it reported them; chunk count otherwise.
-                    "delta": ["stop_reason": final?.finishReason == .length ? "max_tokens" : "end_turn",
+                    "delta": ["stop_reason": Self.stopReason(final?.finishReason ?? .stop, calledTools: calledTools),
                               "stop_sequence": NSNull()],
                     "usage": [
                         "input_tokens": (final?.promptTokens ?? 0) - (final?.cachedPromptTokens ?? 0),
@@ -381,11 +460,17 @@ struct AnthropicController: Sendable {
         }
     }
 
-    // MARK: — Prompt builder
+    static func stopReason(_ finish: GenerationResponse.FinishReason, calledTools: Bool) -> String {
+        calledTools ? "tool_use" : (finish == .length ? "max_tokens" : "end_turn")
+    }
 
-    /// Converts Anthropic messages + system prompt into a flat string.
-    /// MLX engine wraps it in UserInput(chat: [.user(prompt)]) and applies
-    /// the model's own chat template on top.
+    static func responseContent(text answer: String, toolCalls: [ToolCallOutput]) -> [ContentBlock] {
+        let inputs = toolCalls.map { objectInput($0.arguments) }
+        let text = answer + zip(toolCalls, inputs).filter { $0.1 == nil }.map { nonObjectNote($0.0) }.joined()
+        let keepText = toolCalls.isEmpty || !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        return (keepText ? [ContentBlock(text: text)] : []) + zip(toolCalls, inputs).map { ContentBlock(toolUse: $0.0, input: $0.1) }
+    }
+
     private func buildPrompt(system: SystemPrompt?, messages: [Message]) -> String {
         var parts: [String] = []
 
@@ -394,12 +479,47 @@ struct AnthropicController: Sendable {
             if !text.isEmpty { parts.append("[System]: \(text)") }
         }
 
+        var toolNames: [String: String] = [:]
+        for case .blocks(let blocks) in messages.map(\.content) {
+            for block in blocks where block.type == "tool_use" {
+                if let id = block.id, let name = block.name { toolNames[id] = name }
+            }
+        }
+
         for msg in messages {
-            let text = msg.content.textValue
+            let label: String
             switch msg.role {
-            case "user":      parts.append("[User]: \(text)")
-            case "assistant": parts.append("[Assistant]: \(text)")
-            default:          parts.append(text)
+            case "user":      label = "[User]: "
+            case "assistant": label = "[Assistant]: "
+            default:          label = ""
+            }
+            let blocks: [ContentBlock]
+            switch msg.content {
+            case .text(let s):   blocks = [ContentBlock(text: s)]
+            case .blocks(let b): blocks = b
+            }
+            var text: [String] = []
+            func flushText() {
+                if !text.isEmpty { parts.append(label + text.joined(separator: "\n")) }
+                text = []
+            }
+            for block in blocks {
+                switch block.type {
+                case "tool_use":
+                    flushText()
+                    parts.append(ToolTranscript.call(name: block.name ?? "tool", arguments: block.inputJSON))
+                case "tool_result":
+                    flushText()
+                    parts.append(ToolTranscript.result(block.content?.textValue ?? "", for: block.toolUseId.flatMap { toolNames[$0] },
+                                                       isError: block.isError == true))
+                default:
+                    if let t = block.promptText { text.append(t) }
+                }
+            }
+            if text.isEmpty, !blocks.contains(where: { $0.type == "tool_use" || $0.type == "tool_result" }) {
+                parts.append(label)
+            } else {
+                flushText()
             }
         }
 

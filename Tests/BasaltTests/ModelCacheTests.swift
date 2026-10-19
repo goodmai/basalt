@@ -1,5 +1,6 @@
 import Testing
 import Foundation
+import MLXLMCommon
 @testable import BasaltCore
 @testable import BasaltInference
 @testable import BasaltCloud
@@ -60,6 +61,35 @@ struct ModelCacheTests {
     func smallDownloadFormatting() {
         let m = HFModelInfo(id: "mlx-community/x", downloads: 42, likes: nil, tags: nil)
         #expect(m.formattedDownloads == "42")
+    }
+}
+
+@Suite("Early stop after a tool call")
+struct EarlyStopDrainTests {
+    @Test("Draining after an early stop skips chunks and keeps MLX's completion info with the exact token count")
+    func drainKeepsCompletionInfo() async {
+        let info = GenerateCompletionInfo(promptTokenCount: 163, generationTokenCount: 41, promptTime: 0.1, generationTime: 0.5, stopReason: .cancelled)
+        let stream = AsyncStream<Generation> { continuation in
+            continuation.yield(.chunk("after the call"))
+            continuation.yield(.info(info))
+            continuation.yield(.chunk("late"))
+            continuation.finish()
+        }
+        var generations = stream.makeAsyncIterator()
+        let drained = await MLXInferenceEngine.drainCompletionInfo(&generations)
+        #expect(drained?.generationTokenCount == 41)
+        #expect(drained?.promptTokenCount == 163)
+        #expect(await generations.next() == nil)
+    }
+
+    @Test("A stream that ends without completion info drains to nil, leaving the fallback counts")
+    func drainWithoutInfo() async {
+        let stream = AsyncStream<Generation> { continuation in
+            continuation.yield(.chunk("x"))
+            continuation.finish()
+        }
+        var generations = stream.makeAsyncIterator()
+        #expect(await MLXInferenceEngine.drainCompletionInfo(&generations) == nil)
     }
 }
 

@@ -490,6 +490,7 @@ public actor MLXInferenceEngine: InferenceEngine {
                     
                     var buffer = ""
                     var isThinking = promptEndsWithThinking
+                    var gate = ToolCallGate(request: request)
 
                     func processBuffer(final: Bool) {
                         while !buffer.isEmpty {
@@ -548,7 +549,17 @@ public actor MLXInferenceEngine: InferenceEngine {
                         }
                     }
                     
-                    for await generation in mlxStream {
+                    var stoppedAfterCall = false
+                    var generations = mlxStream.makeAsyncIterator()
+                    func stopAfterCall() async {
+                        if let task = launch.task {
+                            task.cancel()
+                            lastInfo = await Self.drainCompletionInfo(&generations) ?? lastInfo
+                        } else {
+                            stoppedAfterCall = true
+                        }
+                    }
+                    tokens: while let generation = await generations.next() {
                         if Task.isCancelled { 
                             break 
                         }
@@ -563,9 +574,9 @@ public actor MLXInferenceEngine: InferenceEngine {
                         case .info(let info):
                             lastInfo = info
                         case .toolCall(let call):
-                            // Text held back for marker detection belongs before the call.
                             processBuffer(final: true)
-                            continuation.yield(.toolCall(Self.toolCallOutput(call)))
+                            if let chunk = gate.admit(Self.toolCallOutput(call)) { continuation.yield(chunk) }
+                            if gate.isSaturated { await stopAfterCall(); break tokens }
                         case .rejectedToolCall(let rejection):
                             processBuffer(final: true)
                             let chunk = Self.resolveRejectedToolCall(
@@ -575,14 +586,15 @@ public actor MLXInferenceEngine: InferenceEngine {
                             if case .text = chunk {
                                 GemLogger(module: "MLXInferenceEngine").warn("Tool call rejected: \(rejection.reason.rawValue)")
                             }
-                            continuation.yield(chunk)
+                            if let chunk = gate.admit(chunk) { continuation.yield(chunk) }
+                            if gate.isSaturated { await stopAfterCall(); break tokens }
                         @unknown default:
                             break
                         }
                     }
                     
                     processBuffer(final: true)
-                    await Self.settle(launch, cancelled: Task.isCancelled)
+                    await Self.settle(launch, cancelled: Task.isCancelled || stoppedAfterCall)
                     await self.keep(launch.cache, tokens: Array(promptTokens.prefix(launch.exactTokens)), namespace: namespace, releasing: lease, epoch: epoch)
 
                     // End of stream - send metadata
@@ -594,9 +606,9 @@ public actor MLXInferenceEngine: InferenceEngine {
                         let metadata = GenerationResponse(
                             generatedText: "", 
                             reasoningText: nil,
-                            promptTokens: launch.reusedTokens + (lastInfo?.promptTokenCount ?? 0),
+                            promptTokens: lastInfo.map { launch.reusedTokens + $0.promptTokenCount } ?? promptTokens.count,
                             cachedPromptTokens: launch.reusedTokens,
-                            completionTokens: lastInfo?.generationTokenCount ?? 0,
+                            completionTokens: lastInfo?.generationTokenCount ?? tokenCount,
                             tokensPerSecond: lastInfo?.tokensPerSecond ?? 0,
                             generationTime: generationTime,
                             timeToFirstToken: timeToFirstToken,
@@ -635,6 +647,14 @@ public actor MLXInferenceEngine: InferenceEngine {
         let cache: PromptCache?
         let reusedTokens: Int
         var exactTokens = Int.max
+    }
+
+    static func drainCompletionInfo(_ generations: inout AsyncStream<Generation>.Iterator) async -> GenerateCompletionInfo? {
+        var info: GenerateCompletionInfo?
+        while let generation = await generations.next() {
+            if case .info(let completion) = generation { info = completion }
+        }
+        return info
     }
 
     static func settle(_ launch: GenerationLaunch, cancelled: Bool) async {
