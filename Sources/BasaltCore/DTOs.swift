@@ -257,6 +257,26 @@ public struct GenerationResponse: Codable, Sendable {
         self.toolCalls = toolCalls
     }
 
+    enum CodingKeys: String, CodingKey {
+        case generatedText, reasoningText, promptTokens, cachedPromptTokens, completionTokens
+        case tokensPerSecond, generationTime, timeToFirstToken, memory, finishReason, toolCalls
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        generatedText = try c.decode(String.self, forKey: .generatedText)
+        reasoningText = try c.decodeIfPresent(String.self, forKey: .reasoningText)
+        promptTokens = try c.decode(Int.self, forKey: .promptTokens)
+        cachedPromptTokens = try c.decodeIfPresent(Int.self, forKey: .cachedPromptTokens) ?? 0
+        completionTokens = try c.decode(Int.self, forKey: .completionTokens)
+        tokensPerSecond = try c.decode(Double.self, forKey: .tokensPerSecond)
+        generationTime = try c.decode(Double.self, forKey: .generationTime)
+        timeToFirstToken = try c.decode(Double.self, forKey: .timeToFirstToken)
+        memory = try c.decode(MemoryUsage.self, forKey: .memory)
+        finishReason = try c.decode(FinishReason.self, forKey: .finishReason)
+        toolCalls = try c.decodeIfPresent([ToolCallOutput].self, forKey: .toolCalls)
+    }
+
     public struct MemoryUsage: Codable, Sendable {
         public let peakBytes: Int
         public let activeBytes: Int

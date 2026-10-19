@@ -8,13 +8,17 @@ import MLXLLM
 
 struct ByteTokenizer: MLXLMCommon.Tokenizer {
     static let endOfUserTurn = 255
+    static let generatedTokenBase = 0x4E00
 
     func encode(text: String, addSpecialTokens: Bool) -> [Int] {
-        text.utf8.map { Int($0) % Self.endOfUserTurn }
+        text.unicodeScalars.map { scalar in
+            let value = Int(scalar.value)
+            return value >= Self.generatedTokenBase ? value - Self.generatedTokenBase : value % Self.endOfUserTurn
+        }
     }
 
     func decode(tokenIds: [Int], skipSpecialTokens: Bool) -> String {
-        String(String.UnicodeScalarView(tokenIds.compactMap { UnicodeScalar(0x4E00 + $0) }))
+        String(String.UnicodeScalarView(tokenIds.compactMap { UnicodeScalar(Self.generatedTokenBase + $0) }))
     }
 
     func convertTokenToId(_ token: String) -> Int? { nil }
@@ -67,8 +71,10 @@ enum TinyModel {
             tokenizer: ByteTokenizer()))
     }
 
-    static func engine(promptCacheBytes: Int = MLXInferenceEngine.defaultPromptCacheBytes) async throws -> MLXInferenceEngine {
-        let engine = MLXInferenceEngine(promptCacheBytes: promptCacheBytes)
+    static let cacheBytesPerToken = 2 * 2 * 16 * 4 * 2
+
+    static func engine(promptCacheBytes: Int? = nil, repetitionPenalty: Float? = nil) async throws -> MLXInferenceEngine {
+        let engine = MLXInferenceEngine(promptCacheBytes: promptCacheBytes, repetitionPenalty: repetitionPenalty)
         await engine.attach(try container())
         return engine
     }
@@ -200,16 +206,35 @@ struct PromptCacheReuseTests {
         #expect(await quantized.promptCaches.slots.isEmpty)
     }
 
-    @Test("A cancelled generation leaves a slot whose tokens match its cache, and the next turn still matches a full prefill")
+    @Test("A cancelled generation stops promptly and leaves a slot whose tokens match its cache; the next turn still matches a full prefill")
     func cancelledGenerationLeavesConsistentSlot() async throws {
+        let longRun = 3000
         let engine = try await TinyModel.engine()
-        let stream = try await engine.generateStream(request: greedy(Conversation.firstTurn, key: "agent", maxTokens: 400))
-        for await _ in stream { break }
+        let clock = ContinuousClock()
+        let fullRunStart = clock.now
+        _ = try await engine.generate(request: greedy(Conversation.otherBranch, key: "baseline", maxTokens: longRun))
+        let fullRun = clock.now - fullRunStart
 
-        let deadline = ContinuousClock.now + .seconds(10)
-        while await engine.promptCaches.slots["agent"] == nil, ContinuousClock.now < deadline {
-            try await Task.sleep(for: .milliseconds(20))
+        let stream = try await engine.generateStream(request: greedy(Conversation.firstTurn, key: "agent", maxTokens: longRun))
+        let consumer = Task {
+            var chunks = 0
+            for await _ in stream {
+                chunks += 1
+                try? await Task.sleep(for: .milliseconds(2))
+            }
+            return chunks
         }
+        try await Task.sleep(for: .milliseconds(50))
+        let cancelledAt = clock.now
+        consumer.cancel()
+        _ = await consumer.value
+
+        while await engine.promptCaches.slots["agent"] == nil, clock.now - cancelledAt < fullRun * 3 {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        let stoppedAfter = clock.now - cancelledAt
+        #expect(stoppedAfter < fullRun / 4, "cancelled run took \(stoppedAfter), a full run \(fullRun)")
+
         let slot = try #require(await engine.promptCaches.slots["agent"])
         #expect(slot.tokens == TinyModel.tokens(Conversation.firstTurn))
         #expect(slot.cache.tokenCount >= slot.tokens.count)
@@ -218,6 +243,78 @@ struct PromptCacheReuseTests {
         let full = try await engine.generate(request: greedy(Conversation.afterToolCall, key: nil))
         #expect(reused.cachedPromptTokens > 0)
         #expect(reused.generatedText == full.generatedText)
+    }
+
+    @Test("Settling a cancelled launch stops MLX's generation instead of waiting for it to reach maxTokens")
+    func settlingACancelledLaunchStopsGeneration() async throws {
+        let longRun = 3000
+        let container = try TinyModel.container()
+        let launch = try await container.perform { context in
+            let input = LMInput(tokens: MLXArray(TinyModel.tokens(Conversation.firstTurn).map(Int32.init)))
+            return try MLXInferenceEngine.launch(
+                input: input, lease: nil, keepsCache: true,
+                params: GenerateParameters(maxTokens: longRun, temperature: 0),
+                components: GenerationComponents(), tools: nil, context: context)
+        }
+        var iterator = launch.stream.makeAsyncIterator()
+        _ = await iterator.next()
+
+        await MLXInferenceEngine.settle(launch, cancelled: true)
+
+        let cache = try #require(launch.cache)
+        let promptCount = TinyModel.tokens(Conversation.firstTurn).count
+        #expect(cache.tokenCount >= promptCount)
+        #expect(cache.tokenCount < promptCount + longRun / 2, "generated \(cache.tokenCount - promptCount) tokens after cancel")
+        withExtendedLifetime(iterator) {}
+    }
+
+    @Test("With a repetition penalty, a reused cache with a short tail still answers like a full prefill")
+    func repetitionPenaltySeesTheWholePrompt() async throws {
+        let favoured = try await TinyModel.engine().generate(request: greedy(Conversation.firstTurn, key: nil))
+        let cachedTurn = Conversation.firstTurn + favoured.generatedText
+        let shortDelta = cachedTurn + " ok"
+        let engine = try await TinyModel.engine(repetitionPenalty: 3)
+        _ = try await engine.generate(request: greedy(cachedTurn, key: "agent", maxTokens: 24))
+        let reused = try await engine.generate(request: greedy(shortDelta, key: "agent", maxTokens: 24))
+        let full = try await engine.generate(request: greedy(shortDelta, key: nil, maxTokens: 24))
+        #expect(TinyModel.tokens(shortDelta).count - reused.cachedPromptTokens < 20)
+        #expect(reused.cachedPromptTokens > 0)
+        #expect(reused.generatedText == full.generatedText)
+    }
+
+    @Test("A slot parked to 1/8 of the budget is leased with its kept head and still answers like a full prefill")
+    func parkedSlotIsReusedCorrectly() async throws {
+        let budget = 120 * TinyModel.cacheBytesPerToken
+        let engine = try await TinyModel.engine(promptCacheBytes: budget)
+        _ = try await engine.generate(request: greedy(Conversation.firstTurn, key: "main"))
+        _ = try await engine.generate(request: greedy(Conversation.otherBranch, key: "subagent"))
+
+        let parked = try #require(await engine.promptCaches.slots["main"])
+        #expect(parked.tokens.count > 0)
+        #expect(parked.tokens.count < TinyModel.tokens(Conversation.firstTurn).count)
+        #expect(parked.cache.byteCount <= budget / 8)
+
+        let reused = try await engine.generate(request: greedy(Conversation.afterToolCall, key: "main"))
+        let full = try await engine.generate(request: greedy(Conversation.afterToolCall, key: nil))
+        #expect(reused.cachedPromptTokens == parked.tokens.count)
+        #expect(reused.generatedText == full.generatedText)
+    }
+
+    @Test("A stored slot is trimmed to its ledger and compacted, so the budget counts real bytes")
+    func storedSlotIsCompact() async throws {
+        let engine = try await TinyModel.engine()
+        _ = try await engine.generate(request: greedy(Conversation.firstTurn, key: "agent", maxTokens: 40))
+        let slot = try #require(await engine.promptCaches.slots["agent"])
+        #expect(slot.cache.tokenCount == slot.tokens.count)
+        #expect(slot.cache.byteCount == slot.tokens.count * TinyModel.cacheBytesPerToken)
+    }
+
+    @Test("The automatic budget is half of what the GPU's 3/4 share of RAM leaves after the weights")
+    func automaticBudget() {
+        let gib = 1 << 30
+        #expect(PromptCacheBudget.automatic(physicalMemory: 32 * gib, weights: 5 * gib) == 19 * gib / 2)
+        #expect(PromptCacheBudget.automatic(physicalMemory: 24 * gib, weights: 16 * gib) == gib)
+        #expect(PromptCacheBudget.automatic(physicalMemory: 16 * gib, weights: 14 * gib) == 0)
     }
 
     @Test("Concurrent generations on one key never share a cache and both answer like a full prefill")
@@ -295,7 +392,7 @@ struct PromptCacheSlotsTests {
 
     @Test("Over budget, the least recently used inactive slot is parked at 1/8 of the budget, keeping its head")
     func parkingTrimsTheOldestSlot() throws {
-        let budget = 400 * Self.bytesPerToken
+        let budget = 300 * Self.bytesPerToken
         var slots = PromptCacheSlots(byteBudget: budget)
         slots.store("old", tokens: Array(0..<200), cache: filledCache(tokens: 200))
         slots.store("active", tokens: Array(0..<200), cache: filledCache(tokens: 200))

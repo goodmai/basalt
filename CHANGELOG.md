@@ -7,10 +7,13 @@
 - `dynamic_temperature` (`dynamicTemperature`): entropy-based dynamic temperature (EDT, arXiv:2403.14541), `T = T0·N^(θ/H) + γ·R` with N = 0.8, θ = 1.5, γ = 0.5, clamped to 0.05–2 (a request colder than 0.05 keeps its own temperature as the floor). Confident tokens sample near-greedy; a forming repetition loop raises the temperature. With EDT on, `top_p`/`min_p` still cut the original distribution, not the heated one. Off by default; no effect at temperature 0 (#40).
 - `RepetitionGuard` exposes a continuous repetition score in [0, 1] alongside its stop decision (#40).
 
+### Upgrading
+- Anthropic `/v1/messages` usage: `input_tokens` is now only the uncached remainder, as in Anthropic's API; the reused part is in `cache_read_input_tokens`. A client that took `input_tokens` as the whole prompt size must add the two (#56).
+
 ### Prompt cache
-- Prefix KV-cache reuse per conversation: the next turn rewinds the conversation's cache to the longest shared token prefix and prefills only the rest. Conversations are keyed by `prompt_cache_key`, `metadata.user_id`, `x-session-id`, or the system-prompt prefix; service requests are never cached. Non-trimmable caches (hybrid SSM models) and `--kv-bits` rebuild in full (#56).
-- `--prompt-cache-mb` (default 2048, `0` disables) caps the memory of all conversation caches; idle ones are trimmed to 1/8 of it (prompt head kept), then evicted least recently used first (#56).
-- Usage reports the tokens actually reused: `prompt_tokens_details.cached_tokens`, `input_tokens_details.cached_tokens`, `cache_read_input_tokens` (Anthropic `input_tokens` is now the uncached rest) (#56).
+- Prefix KV-cache reuse per conversation: the next turn rewinds the conversation's cache to the longest shared token prefix and prefills only the rest. Conversations are keyed by `prompt_cache_key`, `metadata.user_id` (plus a hash of the prompt head, so subagents sharing it get their own slot), `x-session-id`, or the system-prompt prefix, namespaced by the presented API key; service requests are never cached. Non-trimmable caches (hybrid SSM models) and `--kv-bits` rebuild in full (#56).
+- `--prompt-cache-mb` (default: half of what the GPU's 3/4 share of RAM leaves after the weights; `0` disables) caps the memory of all conversation caches, counted on caches trimmed to their prompt and compacted; idle ones are trimmed to 1/8 of it (prompt head kept), then evicted least recently used first (#56).
+- Usage reports the tokens actually reused: `prompt_tokens_details.cached_tokens`, `input_tokens_details.cached_tokens`, `cache_read_input_tokens` (see Upgrading for Anthropic `input_tokens`). `cached_tokens` reveals how much of a prompt matched the slot's previous one; see the README before sharing a server (#56).
 - Removed the unused string-based `MultiSlotConversationCache`, `PromptContextBuilder.extractToolPrefix` / `compactWithToolPrefixProtection` and the orchestrator's working-session tracker; the engine's token-level slots replace them (#56).
 
 ### Fixed

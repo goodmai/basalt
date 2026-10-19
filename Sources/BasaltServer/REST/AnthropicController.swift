@@ -219,7 +219,8 @@ struct AnthropicController: Sendable {
             reasoningEffort: effort,
             isServiceRequest: service.isService,
             cacheKey: PromptCacheKey.resolve(
-                declared: dto.metadata?.userId, headers: request.headers, prompt: service.prompt, isService: service.isService)
+                declared: dto.metadata?.userId, sharedByAgents: true, headers: request.headers,
+                prompt: service.prompt, isService: service.isService)
         )
 
         let requestedModel = dto.model.map { ModelsController.hfRepoId(from: $0) }  // strip claude-local/ prefix if present

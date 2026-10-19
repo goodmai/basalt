@@ -1,3 +1,5 @@
+import Foundation
+import CryptoKit
 import HTTPTypes
 import BasaltCore
 
@@ -25,12 +27,31 @@ enum PromptCacheKey {
     static let sessionHeader = "x-session-id"
     static let hashedPrefixLength = 512
 
-    static func resolve(declared: String?, headers: HTTPFields, prompt: String, isService: Bool) -> String? {
+    static func resolve(
+        declared: String?, sharedByAgents: Bool = false, headers: HTTPFields, prompt: String, isService: Bool
+    ) -> String? {
         guard !isService else { return nil }
-        if let declared, !declared.isEmpty { return "key:\(declared)" }
-        if let name = HTTPField.Name(sessionHeader), let session = headers[name], !session.isEmpty {
-            return "session:\(session)"
+        let head = digest(String(prompt.prefix(hashedPrefixLength)))
+        let conversation: String
+        if let declared, !declared.isEmpty {
+            conversation = sharedByAgents ? "key:\(declared):\(head)" : "key:\(declared)"
+        } else if let name = HTTPField.Name(sessionHeader), let session = headers[name], !session.isEmpty {
+            conversation = "session:\(session)"
+        } else {
+            conversation = "prefix:\(head)"
         }
-        return "prefix:\(prompt.prefix(hashedPrefixLength).hashValue)"
+        return credential(in: headers).map { "\(digest($0))/\(conversation)" } ?? conversation
+    }
+
+    static func credential(in headers: HTTPFields) -> String? {
+        if let authorization = headers[.authorization] {
+            let parts = authorization.split(separator: " ", maxSplits: 1)
+            if parts.count == 2, parts[0].lowercased() == "bearer" { return String(parts[1]) }
+        }
+        return HTTPField.Name("x-api-key").flatMap { headers[$0] }
+    }
+
+    static func digest(_ text: String) -> String {
+        SHA256.hash(data: Data(text.utf8)).prefix(8).map { String(format: "%02x", $0) }.joined()
     }
 }

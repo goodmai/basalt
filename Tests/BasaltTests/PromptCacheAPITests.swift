@@ -61,7 +61,36 @@ struct PromptCacheAPITests {
     func anthropicUserIdIsUsed() async throws {
         let result = try await post("/v1/messages",
             #"{"max_tokens": 64, "metadata": {"user_id": "user_abc_session_42"}, "messages": [{"role": "user", "content": "hi"}]}"#)
-        #expect(result.sent?.cacheKey == "key:user_abc_session_42")
+        #expect(result.sent?.cacheKey?.hasPrefix("key:user_abc_session_42:") == true)
+    }
+
+    @Test("Under one metadata.user_id, turns of a conversation share a slot and a subagent with another system prompt gets its own")
+    func anthropicSubagentsDoNotShareTheMainSlot() async throws {
+        func request(system: String, messages: String) -> String {
+            #"{"max_tokens": 64, "metadata": {"user_id": "u_session_1"}, "system": "\#(system)", "messages": [\#(messages)]}"#
+        }
+        let main = String(repeating: "You are Claude Code, the main agent. ", count: 20)
+        let explorer = String(repeating: "You are an Explore subagent. ", count: 20)
+        let firstTurn = #"{"role": "user", "content": "fix the bug"}"#
+        let laterTurn = firstTurn + #", {"role": "assistant", "content": "done"}, {"role": "user", "content": "now test it"}"#
+        let mainFirst = try await post("/v1/messages", request(system: main, messages: firstTurn))
+        let mainLater = try await post("/v1/messages", request(system: main, messages: laterTurn))
+        let subagent = try await post("/v1/messages", request(system: explorer, messages: firstTurn))
+        #expect(mainFirst.sent?.cacheKey != nil)
+        #expect(mainFirst.sent?.cacheKey == mainLater.sent?.cacheKey)
+        #expect(mainFirst.sent?.cacheKey != subagent.sent?.cacheKey)
+    }
+
+    @Test("Keys are namespaced by the credential a client presents, so clients with different keys never share a slot")
+    func keysAreNamespacedByCredential() async throws {
+        let body = #"{"prompt_cache_key": "shared", "input": "hi"}"#
+        let alice = try await post("/v1/responses", body, headers: header("authorization", "Bearer alice-key"))
+        let aliceAgain = try await post("/v1/responses", body, headers: header("x-api-key", "alice-key"))
+        let bob = try await post("/v1/responses", body, headers: header("authorization", "Bearer bob-key"))
+        #expect(alice.sent?.cacheKey?.hasSuffix("/key:shared") == true)
+        #expect(alice.sent?.cacheKey == aliceAgain.sent?.cacheKey)
+        #expect(alice.sent?.cacheKey != bob.sent?.cacheKey)
+        #expect(alice.sent?.cacheKey?.contains("alice") == false)
     }
 
     @Test("x-session-id keys the slot when the body names none; a body key wins over it")

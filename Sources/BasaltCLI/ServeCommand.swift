@@ -56,9 +56,9 @@ struct ServeCommand: AsyncParsableCommand {
 
     @Option(
         name: .customLong("prompt-cache-mb"),
-        help: "Memory for conversation prompt caches reused across turns, in MB (default: 2048, 0 disables)"
+        help: "Memory for conversation prompt caches reused across turns, in MB (default: half of what the GPU's 3/4 share of RAM leaves after the weights; 0 disables)"
     )
-    var promptCacheMB: Int = MLXInferenceEngine.defaultPromptCacheBytes >> 20
+    var promptCacheMB: Int?
 
     // Optional so an explicit `--port 8080` can be told apart from "not passed":
     // precedence is CLI > --config file > default.
@@ -200,7 +200,7 @@ struct ServeCommand: AsyncParsableCommand {
         // Shared inference engine + orchestrator
         let engine       = MLXInferenceEngine(
             reasoningEffort: reasoningEffort,
-            promptCacheBytes: max(0, promptCacheMB) << 20,
+            promptCacheBytes: promptCacheMB.map { max(0, $0) << 20 },
             kvBits: kvBits,
             repetitionPenalty: repetitionPenalty,
             topK: topK,

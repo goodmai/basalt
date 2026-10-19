@@ -64,14 +64,13 @@ public actor MLXInferenceEngine: InferenceEngine {
     private let gpuCacheLimit: Int?
 
     private(set) var promptCaches: PromptCacheSlots
+    private let configuredPromptCacheBytes: Int?
     private var modelEpoch = 0
-
-    public static let defaultPromptCacheBytes = 2 << 30
 
     public init(
         reasoningEffort: String? = nil,
         gpuCacheLimit: Int? = 512 << 20,
-        promptCacheBytes: Int = MLXInferenceEngine.defaultPromptCacheBytes,
+        promptCacheBytes: Int? = nil,
         kvBits: Int? = nil,
         quantizedKVStart: Int = 512,
         repetitionPenalty: Float? = nil,
@@ -87,13 +86,16 @@ public actor MLXInferenceEngine: InferenceEngine {
         self.topK = topK
         self.minP = minP
         self.seed = seed
-        self.promptCaches = PromptCacheSlots(byteBudget: promptCacheBytes)
+        self.configuredPromptCacheBytes = promptCacheBytes
+        self.promptCaches = PromptCacheSlots(byteBudget: promptCacheBytes ?? 0)
     }
 
     func attach(_ container: ModelContainer) {
         self.container = container
-        promptCaches.removeAll()
+        promptCaches = PromptCacheSlots(byteBudget: configuredPromptCacheBytes ?? PromptCacheBudget.automatic(
+            physicalMemory: Int(ProcessInfo.processInfo.physicalMemory), weights: Memory.activeMemory))
         modelEpoch += 1
+        logger.info("Prompt cache budget: \(promptCaches.byteBudget >> 20) MB")
     }
 
     /// `registerAliases` is a static method, so it is *not* actor-isolated and two
@@ -555,7 +557,7 @@ public actor MLXInferenceEngine: InferenceEngine {
                     }
                     
                     processBuffer(final: true)
-                    await launch.task?.value
+                    await Self.settle(launch, cancelled: Task.isCancelled)
                     if let cache = launch.cache, let slotKey {
                         await self.keep(cache, tokens: promptTokens, key: slotKey, epoch: epoch)
                     }
@@ -609,6 +611,11 @@ public actor MLXInferenceEngine: InferenceEngine {
         let task: Task<Void, Never>?
         let cache: PromptCache?
         let reusedTokens: Int
+    }
+
+    static func settle(_ launch: GenerationLaunch, cancelled: Bool) async {
+        if cancelled { launch.task?.cancel() }
+        await launch.task?.value
     }
 
     private func promptCacheKey(for request: GenerationRequest) -> String? {

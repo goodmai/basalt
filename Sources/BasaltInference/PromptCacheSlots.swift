@@ -29,12 +29,18 @@ final class PromptCache: @unchecked Sendable {
     }
 
     func shrink(to count: Int) -> Bool {
-        guard count > 0, layers.allSatisfy({ $0 is KVCacheSimple }), rewind(to: count) else { return false }
+        guard count > 0, rewind(to: count) else { return false }
         for case let layer as KVCacheSimple in layers where !layer.state.isEmpty {
             layer.state = layer.state.map { contiguous($0) }
+            eval(layer.innerState())
         }
-        eval(layers.flatMap { $0.innerState() })
         return true
+    }
+}
+
+enum PromptCacheBudget {
+    static func automatic(physicalMemory: Int, weights: Int) -> Int {
+        max(0, physicalMemory / 4 * 3 - weights) / 2
     }
 }
 
@@ -77,7 +83,9 @@ struct PromptCacheSlots: Sendable {
     }
 
     mutating func store(_ key: String, tokens: [Int], cache: PromptCache) {
-        guard cache.isRewindable, cache.tokenCount >= tokens.count, cache.byteCount <= byteBudget else { return }
+        guard byteBudget > 0, cache.tokenCount >= tokens.count, cache.shrink(to: tokens.count),
+              cache.byteCount <= byteBudget
+        else { return }
         clock += 1
         slots[key] = Slot(tokens: tokens, cache: cache, lastUse: clock)
         let inactive = slots.filter { $0.key != key }.sorted { $0.value.lastUse < $1.value.lastUse }.map(\.key)
