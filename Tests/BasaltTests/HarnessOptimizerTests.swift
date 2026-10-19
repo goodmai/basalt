@@ -24,6 +24,12 @@ struct HarnessScript: Sendable {
     }
 
     func respond(_ request: GenerationRequest) -> String {
+        let reply = fullReply(request)
+        guard let prefix = request.assistantPrefix, reply.hasPrefix(prefix) else { return reply }
+        return String(reply.dropFirst(prefix.count))
+    }
+
+    func fullReply(_ request: GenerationRequest) -> String {
         let prompt = request.prompt
         if prompt.hasPrefix("Several anonymous deliverables") { return judge(prompt) }
         guard prompt.hasPrefix("You improve an agent harness") else { return rollout(prompt) }
@@ -617,5 +623,32 @@ extension HarnessOptimizerTests {
         """#
         #expect(try #require(HarnessProposal.parse(reply)) == ["CLAUDE.md": #"Keep {braces} and "quoted } text"."#])
         #expect(HarnessText.jsonObject(in: reply)?["note"] as? Int == 1)
+    }
+}
+
+extension HarnessOptimizerTests {
+    @Test("Proposer and judge requests prefill the reply shape, and a model that only continues after it is parsed")
+    func repliesArePrefilled() async throws {
+        let engine = MockInferenceEngine()
+        await engine.setResponder { request in
+            if request.prompt.hasPrefix("Several anonymous deliverables") { return "B" }
+            if HarnessOptimizerTests.isProposer(request) {
+                return #""CLAUDE.md": "Answer precisely.\n\#(request.prompt.contains("Goal: Target") ? "inv" : "dom")"}, "rationale": "r"}"#
+            }
+            return "SUMMARY tie"
+        }
+        let orchestrator = ModelOrchestratorActor(engine: engine)
+        try await orchestrator.loadModel(path: "mock-model")
+        let result = try await HarnessOptimizer(orchestrator: orchestrator, spec: .claude, library: nil)
+            .optimize(task: Self.task, base: Self.base, k: 1)
+        let requests = await engine.getRequests()
+        let proposer = requests.filter(Self.isProposer)
+        let judge = requests.filter { $0.prompt.hasPrefix("Several anonymous deliverables") }
+        #expect(!proposer.isEmpty && proposer.allSatisfy { $0.assistantPrefix == #"{"files": {"# })
+        #expect(judge.count == 1 && judge[0].assistantPrefix == "BEST: ")
+        #expect(requests.filter { !Self.isProposer($0) && !judge.map(\.prompt).contains($0.prompt) }.allSatisfy { $0.assistantPrefix == nil })
+        #expect(!result.rejected.contains { ["inv_0", "dom_0"].contains($0.candidateId) })
+        #expect(result.ledger.rolloutIds.contains("probe_inv_0") && result.ledger.rolloutIds.contains("probe_dom_0"))
+        #expect(result.selection.judged && !result.selection.judgeFallback)
     }
 }

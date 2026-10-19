@@ -240,9 +240,11 @@ enum ContrastiveSelector {
             "<task>\n\(HarnessText.inert(task.prompt))\n</task>"
         ]
         parts += candidates.map { "<deliverable label=\"\($0.label)\">\n\(HarnessText.inert($0.run.deliverable))\n</deliverable>" }
-        parts.append("Reply with exactly one line: BEST: <label>")
+        parts.append("Reply with exactly one line: \(replyPrefix)<label>")
         return parts.joined(separator: "\n\n")
     }
+
+    static let replyPrefix = "BEST: "
 
     static func parseLabel(_ text: String, labels: [String]) -> String? {
         let cleaned = HarnessText.withoutThinking(text)
@@ -283,6 +285,7 @@ enum HarnessProposal {
     static let maxHarnessPromptChars = 48 * 1024
     static let readOnlyExcerptChars = 4000
     static let maxIndexChars = 8 * 1024
+    static let replyPrefix = #"{"files": {"#
     static let minProposerTokens = 2048
     static let maxProposerTokens = 12 * 1024
 
@@ -362,7 +365,7 @@ enum HarnessProposal {
             sourceBudget -= block.count
             parts.append(block)
         }
-        parts.append(#"Reply with one JSON object and nothing else: {"files": {"<path>": "<full file content>"}, "rationale": "<one sentence>"}"#)
+        parts.append(#"Reply with one JSON object and nothing else: "# + replyPrefix + #""<path>": "<full file content>"}, "rationale": "<one sentence>"}"#)
         return parts.joined(separator: "\n\n")
     }
 
@@ -620,7 +623,9 @@ public struct HarnessOptimizer: Sendable {
         let capped = "proposer budget capped to \(effective)"
         if effective < maxTokens, !state.warnings.contains(capped) { state.warnings.append(capped) }
         do {
-            return try await generate(prompt, task: task, maxTokens: maxTokens, temperature: temperature).generatedText
+            return try await generate(
+                prompt, task: task, maxTokens: maxTokens, temperature: temperature, assistantPrefix: HarnessProposal.replyPrefix
+            ).generatedText
         } catch {
             if Self.isCancellation(error) { throw CancellationError() }
             state.rejected.append(HarnessRejection(candidateId: id, reasons: ["proposer call failed: \(error)"]))
@@ -642,7 +647,9 @@ public struct HarnessOptimizer: Sendable {
         let prompt = ContrastiveSelector.judgePrompt(task: task, candidates: candidates)
         let reply: String
         do {
-            reply = try await generate(prompt, task: task, maxTokens: tokens.judge, temperature: 0).generatedText
+            reply = try await generate(
+                prompt, task: task, maxTokens: tokens.judge, temperature: 0, assistantPrefix: ContrastiveSelector.replyPrefix
+            ).generatedText
         } catch {
             if Self.isCancellation(error) { throw CancellationError() }
             warnings.append("judge call failed: \(error)")
@@ -656,10 +663,12 @@ public struct HarnessOptimizer: Sendable {
         return HarnessSelection(winnerId: fallback.candidateId, finalists: ids, judged: true, judgeFallback: true)
     }
 
-    private func generate(_ prompt: String, task: HarnessTask, maxTokens: Int, temperature: Double) async throws -> GenerationResponse {
+    private func generate(
+        _ prompt: String, task: HarnessTask, maxTokens: Int, temperature: Double, assistantPrefix: String? = nil
+    ) async throws -> GenerationResponse {
         try await orchestrator.generate(request: GenerationRequest(
             prompt: prompt, maxTokens: maxTokens, temperature: temperature,
-            enableThinking: false, cacheKey: "harness:\(task.slug)"
+            enableThinking: false, cacheKey: "harness:\(task.slug)", assistantPrefix: assistantPrefix
         ))
     }
 

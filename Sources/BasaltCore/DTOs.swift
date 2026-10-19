@@ -56,6 +56,7 @@ public struct GenerationRequest: Codable, Sendable {
     public let tools: [ToolDefinition]?
     public let toolChoice: ToolChoice?
     public let cacheKey: String?
+    public let assistantPrefix: String?
 
     public init(
         prompt: String,
@@ -69,7 +70,8 @@ public struct GenerationRequest: Codable, Sendable {
         isServiceRequest: Bool? = false,
         tools: [ToolDefinition]? = nil,
         toolChoice: ToolChoice? = nil,
-        cacheKey: String? = nil
+        cacheKey: String? = nil,
+        assistantPrefix: String? = nil
     ) {
         self.prompt = prompt
         self.maxTokens = maxTokens
@@ -83,6 +85,7 @@ public struct GenerationRequest: Codable, Sendable {
         self.tools = tools
         self.toolChoice = toolChoice
         self.cacheKey = cacheKey
+        self.assistantPrefix = assistantPrefix
     }
 
     /// The same request with another token budget. Kept next to the stored properties so a new
@@ -100,7 +103,8 @@ public struct GenerationRequest: Codable, Sendable {
             isServiceRequest: isServiceRequest,
             tools: tools,
             toolChoice: toolChoice,
-            cacheKey: cacheKey
+            cacheKey: cacheKey,
+            assistantPrefix: assistantPrefix
         )
     }
 
@@ -117,7 +121,8 @@ public struct GenerationRequest: Codable, Sendable {
             isServiceRequest: isServiceRequest,
             tools: tools,
             toolChoice: toolChoice,
-            cacheKey: cacheKey
+            cacheKey: cacheKey,
+            assistantPrefix: assistantPrefix
         )
     }
 
@@ -152,7 +157,8 @@ public struct GenerationRequest: Codable, Sendable {
             isServiceRequest: isServiceRequest,
             tools: tools,
             toolChoice: toolChoice,
-            cacheKey: cacheKey
+            cacheKey: cacheKey,
+            assistantPrefix: assistantPrefix
         )
     }
 }

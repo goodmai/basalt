@@ -445,16 +445,25 @@ public actor MLXInferenceEngine: InferenceEngine {
         let userInput = makeInput(request.prompt)
 
         do {
-            let lmInput = try await container.prepare(input: userInput)
+            let rendered = try await container.prepare(input: userInput)
             logger.trace("Input prepared. Starting MLX generation...")
+            let renderedCount = rendered.text.tokens.dim(-1)
+            let carriesMoreThanTokens = rendered.image != nil || rendered.video != nil
+                || rendered.audio != nil || rendered.text.mask != nil
+            let assistantPrefix = carriesMoreThanTokens ? nil : request.assistantPrefix.flatMap { $0.isEmpty ? nil : $0 }
+            let lmInput: LMInput
+            if let assistantPrefix {
+                let ids = await container.perform { $0.tokenizer.encode(text: assistantPrefix, addSpecialTokens: false) }
+                lmInput = Self.appending(ids, to: rendered)
+            } else {
+                lmInput = rendered
+            }
             let promptTokens = lmInput.text.tokens.asArray(Int.self)
-            let carriesMoreThanTokens = lmInput.image != nil || lmInput.video != nil
-                || lmInput.audio != nil || lmInput.text.mask != nil
             let namespace = carriesMoreThanTokens || epoch != modelEpoch ? nil : promptCacheNamespace(for: request)
             let lease = namespace.flatMap { promptCaches.lease($0, for: promptTokens) }
             let boundary = namespace == nil
                 ? promptTokens.count - 1
-                : await snapshotBoundary(promptTokens.count, container: container, epoch: epoch, template: template, makeInput)
+                : await snapshotBoundary(renderedCount, container: container, epoch: epoch, template: template, makeInput)
             let blend = epoch == modelEpoch && modelIsHybrid == false ? cacheBlend : nil
             let launch: GenerationLaunch
             do {
@@ -491,6 +500,7 @@ public actor MLXInferenceEngine: InferenceEngine {
                     var buffer = ""
                     var isThinking = promptEndsWithThinking
                     var gate = ToolCallGate(request: request)
+                    if let assistantPrefix { continuation.yield(.text(assistantPrefix)) }
 
                     func processBuffer(final: Bool) {
                         while !buffer.isEmpty {
@@ -640,6 +650,13 @@ public actor MLXInferenceEngine: InferenceEngine {
     }
 
     public var isLoaded: Bool { container != nil }
+
+    static func appending(_ ids: [Int], to input: LMInput) -> LMInput {
+        let tokens = input.text.tokens
+        let extra = MLXArray(ids.map(Int32.init)).asType(tokens.dtype)
+            .reshaped(Array(tokens.shape.dropLast()) + [ids.count])
+        return LMInput(tokens: concatenated([tokens, extra], axis: -1))
+    }
 
     struct GenerationLaunch: Sendable {
         let stream: AsyncStream<Generation>

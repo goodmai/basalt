@@ -126,7 +126,7 @@ actor MockInferenceEngine: InferenceEngine {
         if shouldFailOnGenerate { throw generateError }
         requests.append(request)
         if let error = failure?(request) { throw error }
-        let mockText = responder?(request) ?? self.mockText
+        let mockText = (request.assistantPrefix ?? "") + (responder?(request) ?? self.mockText)
         
         return AsyncStream { continuation in
             Task {
