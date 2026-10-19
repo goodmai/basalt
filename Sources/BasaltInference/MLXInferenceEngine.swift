@@ -8,6 +8,7 @@ import MLXVLM
 import MLXLMCommon
 import MLXHuggingFace
 import Tokenizers
+import Hub
 import Jinja
 import BasaltCore
 
@@ -233,7 +234,13 @@ public actor MLXInferenceEngine: InferenceEngine {
 
             struct DefaultTokenizerLoader: TokenizerLoader {
                 func load(from directory: URL) async throws -> any MLXLMCommon.Tokenizer {
-                    let upstream = try await Tokenizers.AutoTokenizer.from(modelFolder: directory)
+                    let configuration = LanguageModelConfigurationFromHub(modelFolder: directory)
+                    guard let tokenizerConfig = try await configuration.tokenizerConfig else {
+                        throw Tokenizers.TokenizerError.missingConfig
+                    }
+                    let upstream = try Tokenizers.AutoTokenizer.from(
+                        tokenizerConfig: MLXInferenceEngine.compatibleChatTemplate(in: tokenizerConfig),
+                        tokenizerData: try await configuration.tokenizerData)
                     return TokenizerBridge(upstream)
                 }
             }
@@ -277,6 +284,16 @@ public actor MLXInferenceEngine: InferenceEngine {
         } catch {
             throw .weightsCorrupted(path: modelPath, reason: error.localizedDescription)
         }
+    }
+
+    static func compatibleChatTemplate(in tokenizerConfig: Config) -> Config {
+        guard let template = tokenizerConfig.chatTemplate.string(), var entries = tokenizerConfig.dictionary() else {
+            return tokenizerConfig
+        }
+        let compatible = ChatTemplateCompatibility.renamingReservedLoopVariables(template)
+        guard compatible != template else { return tokenizerConfig }
+        entries["chat_template"] = Config(compatible)
+        return Config(entries)
     }
 
     // MARK: — Template Context
