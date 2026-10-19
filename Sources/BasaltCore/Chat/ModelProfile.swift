@@ -162,10 +162,7 @@ public enum ModelProfileRegistry {
     /// Reads `model_type` out of a model directory, tolerating a missing or
     /// unreadable config rather than failing the load.
     public static func profile(forModelAt path: String) -> any ModelProfile {
-        let url = URL(fileURLWithPath: path).appendingPathComponent("config.json")
-        guard let data = try? Data(contentsOf: url),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-        else { return GenericProfile() }
+        guard let json = ModelCache.config(at: URL(fileURLWithPath: path)) else { return GenericProfile() }
         return profile(forModelType: json["model_type"] as? String)
     }
 }

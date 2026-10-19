@@ -242,9 +242,7 @@ public actor MLXInferenceEngine: InferenceEngine {
             profile = ModelProfileRegistry.profile(forModelAt: modelPath)
             
             // Dynamic config inspection
-            let configURL = directory.appendingPathComponent("config.json")
-            if let data = try? Data(contentsOf: configURL),
-               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            if let json = ModelCache.config(at: directory) {
                 
                 let arch = (json["architectures"] as? [String])?.first ?? "Unknown"
                 let modelType = json["model_type"] as? String ?? "Unknown"

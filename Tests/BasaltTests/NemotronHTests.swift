@@ -26,4 +26,20 @@ struct NemotronHTests {
         #expect(config.nRoutedExperts == 0)
         #expect(config.hiddenSize == 3136)
     }
+
+    static func modelDirectory(config: String) throws -> URL {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("nemotron-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try Data(config.utf8).write(to: dir.appendingPathComponent("config.json"))
+        return dir
+    }
+
+    @Test("a config.json carrying Infinity is a usable config")
+    func infinityConfigIsUsable() throws {
+        let dir = try Self.modelDirectory(config: Self.denseNano4BConfig)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        #expect(ModelCache.hasUsableConfig(at: dir))
+        #expect(ModelCache.config(at: dir)?["model_type"] as? String == "nemotron_h")
+        #expect(KVCacheGeometry.load(modelDirectory: dir) != nil)
+    }
 }

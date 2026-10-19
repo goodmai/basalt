@@ -139,10 +139,7 @@ public actor ModelInspector {
         var configDtype: String?
         var layerGroupSizes: [String: Int] = [:]
 
-        let configURL = dirURL.appendingPathComponent("config.json")
-        if FileManager.default.fileExists(atPath: configURL.path),
-           let configData = try? Data(contentsOf: configURL),
-           let configJSON = try? JSONSerialization.jsonObject(with: configData) as? [String: Any] {
+        if let configJSON = ModelCache.config(at: dirURL) {
             
             if let qDict = configJSON["quantization"] as? [String: Any] {
                 configBits = qDict["bits"] as? Int

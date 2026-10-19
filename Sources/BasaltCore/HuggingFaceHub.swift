@@ -148,9 +148,12 @@ public struct ModelCache: Sendable {
     /// Existence alone is not enough: an interrupted download leaves a truncated
     /// or duplicated config that only fails much later, deep inside model loading.
     public static func hasUsableConfig(at dir: URL) -> Bool {
-        let path = dir.appendingPathComponent("config.json")
-        guard let data = try? Data(contentsOf: path) else { return false }
-        return (try? JSONSerialization.jsonObject(with: data)) != nil
+        config(at: dir) != nil
+    }
+
+    public static func config(at dir: URL) -> [String: Any]? {
+        guard let data = try? Data(contentsOf: dir.appendingPathComponent("config.json")) else { return nil }
+        return (try? JSONSerialization.jsonObject(with: data, options: .json5Allowed)) as? [String: Any]
     }
 
     /// Resolves a repo ID (plus optional quantization subfolder) to a loadable
