@@ -8,7 +8,9 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
+import arc_agi_benchmark
 from arc_agi_benchmark import execute_python_hybrid
 from arc_sandbox import run_transform, sandbox_available
 
@@ -51,6 +53,16 @@ def attempt(body: str) -> str:
         "        raise\n"
         "    return [[1]]\n"
     )
+
+
+class ModeDefaultTest(unittest.TestCase):
+    def test_default_mode_is_direct_without_sandbox_exec(self):
+        with mock.patch.object(arc_agi_benchmark, "sandbox_available", return_value=False):
+            self.assertEqual(arc_agi_benchmark.parse_args([]).mode, "direct")
+
+    def test_default_mode_is_hybrid_with_sandbox_exec(self):
+        with mock.patch.object(arc_agi_benchmark, "sandbox_available", return_value=True):
+            self.assertEqual(arc_agi_benchmark.parse_args([]).mode, "hybrid")
 
 
 @unittest.skipUnless(sandbox_available(), "sandbox-exec is not available on this platform")

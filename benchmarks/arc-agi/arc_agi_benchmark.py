@@ -292,7 +292,7 @@ def evaluate_task(task_path: Path, engine_cfg: dict, max_attempts: int = 2, max_
 
 # ─── Main Benchmarking Loop ──────────────────────────────────────────────────
 
-def main():
+def parse_args(argv=None):
     parser = argparse.ArgumentParser(description="ARC-AGI Official Rules Benchmark Runner")
     parser.add_argument("--mode", choices=["hybrid", "direct"], default="hybrid" if sandbox_available() else "direct",
                         help="Benchmark mode: hybrid (Program-of-Thought, generated Python runs in a sandboxed child process) "
@@ -322,7 +322,11 @@ def main():
     parser.add_argument("--output", type=str, default=None,
                         help="Output JSON file path for results")
 
-    args = parser.parse_args()
+    return parser.parse_args(argv)
+
+
+def main():
+    args = parse_args()
 
     # Determine tasks list
     task_files = []
