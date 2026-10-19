@@ -177,6 +177,13 @@ struct ChatTurnsTemplateTests {
         #expect(response.promptTokens == Self.tokenCount(ChatMessageInput.alternating(Self.agentLoop)))
     }
 
+    @Test("A template refusal quoted in a log line or a 400 is cut to a bounded length")
+    func refusalTextIsBounded() {
+        let long = MLXInferenceEngine.briefly(JinjaError.runtime(String(repeating: "secret user text ", count: 1000)))
+        #expect(long.count == 301 && long.hasSuffix("…"))
+        #expect(MLXInferenceEngine.briefly(JinjaError.runtime("short")).count < 300)
+    }
+
     @Test("A template that refuses with a Jinja runtime error also falls back to the alternating turns")
     func runtimeTemplateErrorFallsBack() async throws {
         let engine = await Self.engine(try TinyModel.make(), processor: StrictAlternationInputProcessor(refusesAsRuntimeError: true))

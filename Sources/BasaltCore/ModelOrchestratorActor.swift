@@ -239,9 +239,14 @@ public actor ModelOrchestratorActor {
 
     private func timeout(for request: GenerationRequest) -> UInt64 {
         Self.watchdogSeconds(
-            maxTokens: request.maxTokens ?? 0, promptTokens: Self.estimatedTokens(request.prompt),
+            maxTokens: request.maxTokens ?? 0, promptTokens: Self.estimatedTokens(Self.budgetedText(request)),
             floor: generationTimeoutSeconds
         )
+    }
+
+    static func budgetedText(_ request: GenerationRequest) -> String {
+        guard request.prompt.isEmpty, let messages = request.messages else { return request.prompt }
+        return ChatMessageInput.plainText(messages)
     }
 
     static func watchdogSeconds(maxTokens: Int, promptTokens: Int, floor: UInt64 = 300) -> UInt64 {
@@ -251,12 +256,12 @@ public actor ModelOrchestratorActor {
     }
 
     public func effectiveMaxTokens(for request: GenerationRequest) -> Int {
-        let budget = calculateDynamicMaxTokens(promptTokens: Self.estimatedTokens(request.prompt))
+        let budget = calculateDynamicMaxTokens(promptTokens: Self.estimatedTokens(Self.budgetedText(request)))
         return min(request.maxTokens ?? budget, budget)
     }
 
     private func capped(_ request: GenerationRequest) throws(BasaltError) -> GenerationRequest {
-        let maxT = calculateDynamicMaxTokens(promptTokens: Self.estimatedTokens(request.prompt))
+        let maxT = calculateDynamicMaxTokens(promptTokens: Self.estimatedTokens(Self.budgetedText(request)))
         var v = try request.validated(defaultMaxTokens: maxT)
         if let req = request.maxTokens, req > maxT {
             logger.warn("Token request (\(req)) > budget (\(maxT)). Capping.")

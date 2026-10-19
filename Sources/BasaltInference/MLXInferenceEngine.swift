@@ -368,6 +368,11 @@ public actor MLXInferenceEngine: InferenceEngine {
         [("leadingSystem", ChatMessageInput.leadingSystem(turns)), ("alternating", ChatMessageInput.alternating(turns))]
     }
 
+    static func briefly(_ error: any Error, limit: Int = 300) -> String {
+        let text = String(describing: error)
+        return text.count > limit ? String(text.prefix(limit)) + "…" : text
+    }
+
     static func isTemplateRefusal(_ error: any Error) -> Bool {
         if error is TemplateException { return true }
         if case JinjaError.runtime = error { return true }
@@ -502,14 +507,14 @@ public actor MLXInferenceEngine: InferenceEngine {
                         messages, normalisation: step, tools: toolSpecs, context: context)
                     do {
                         prepared = try await container.prepare(input: makeInput(lastText))
-                        logger.info("Chat template refused native turns (\(nativeRefusal)); rendered with \(step) turns")
+                        logger.info("Chat template refused native turns (\(Self.briefly(nativeRefusal))); rendered with \(step) turns")
                     } catch where Self.isTemplateRefusal(error) {
                         refusal = error
                     }
                 }
                 guard let prepared else {
                     throw BasaltError.invalidRequestStructure(
-                        details: "Chat template rejected the conversation: \(nativeRefusal); after normalising: \(refusal)")
+                        details: "Chat template rejected the conversation: \(Self.briefly(nativeRefusal)); after normalising: \(Self.briefly(refusal))")
                 }
                 rendered = prepared
             }
