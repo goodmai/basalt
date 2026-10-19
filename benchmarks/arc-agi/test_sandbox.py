@@ -226,6 +226,14 @@ socket.create_connection(('1.1.1.1', 80), timeout=3)
         code = "def transform(grid):\n    return np.rot90(np.array(grid.to_matrix())).tolist()"
         self.assertEqual(self.run_code(code), ([[6, 8], [5, 7]], "python_oop_exec_success"))
 
+    def test_numpy_random_is_available_when_installed(self):
+        try:
+            import numpy
+        except ImportError:
+            self.skipTest("numpy is not installed")
+        code = "def transform(grid):\n    return [[int(np.random.default_rng(0).integers(0, 9))]]"
+        expected = int(numpy.random.default_rng(0).integers(0, 9))
+        self.assertEqual(self.run_code(code), ([[expected]], "python_oop_exec_success"))
 
     def test_a_failing_numpy_library_probe_still_runs_the_sandbox(self):
         arc_sandbox._numpy_paths.cache_clear()
