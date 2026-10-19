@@ -10,6 +10,14 @@ import Foundation
 @Suite("ModelOrchestratorActor")
 struct OrchestratorTests {
 
+    @Test("The watchdog allows 4 tok/s decode plus 200 tok/s prefill, never below the 300 s floor")
+    func watchdogScalesWithDecodeAndPrefill() {
+        #expect(ModelOrchestratorActor.watchdogSeconds(maxTokens: 0, promptTokens: 0) == 300)
+        #expect(ModelOrchestratorActor.watchdogSeconds(maxTokens: 1000, promptTokens: 10_000) == 300)
+        #expect(ModelOrchestratorActor.watchdogSeconds(maxTokens: 12_288, promptTokens: 0) == 3072)
+        #expect(ModelOrchestratorActor.watchdogSeconds(maxTokens: 4096, promptTokens: 40_000) == 1224)
+    }
+
     // MARK: — generate before load
 
     @Test("generate before load throws inferenceHardwareFailure")
