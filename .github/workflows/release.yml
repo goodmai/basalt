@@ -131,7 +131,12 @@ jobs:
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git commit -qm "chore: point formula at ${VERSION}" Formula/basalt.rb
-          git push -f "https://x-access-token:<REDACTED>@github.com/${{ github.repository }}.git" "$BRANCH"
+          # gh wires GH_TOKEN into git's credential helper, so no token is spelled out in
+          # this file. The previous push URL carried a redaction placeholder instead of the
+          # token variable (a tool rewrote it when the line was written), so GitHub got that
+          # placeholder as the password: "Invalid username or token" on v0.3.0's cut.
+          gh auth setup-git
+          git push -f origin "$BRANCH"
           # No `|| true`: a gh auth failure must fail here, not read as "no PR yet".
           OPEN=$(gh pr list --head "$BRANCH" --state open --json url --jq '.[0].url // empty')
           if [ -n "$OPEN" ]; then
