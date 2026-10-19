@@ -40,8 +40,9 @@ struct HarnessValidateCommand: AsyncParsableCommand {
 
     func run() async throws {
         let root = URL(fileURLWithPath: directory, isDirectory: true)
-        let loaded = try HarnessLoader.load(root: root, spec: try surface.spec(), allowedRoots: [root])
-        var report = HarnessValidator.validate(loaded.tree, spec: try surface.spec())
+        let spec = try surface.spec()
+        let loaded = try HarnessLoader.load(root: root, spec: spec, allowedRoots: [root])
+        var report = HarnessValidator.validate(loaded.tree, spec: spec)
         report.warnings += loaded.skipped.map { "skipped \($0)" }
         try printJSON(report)
         if !report.isValid { throw ExitCode.failure }
