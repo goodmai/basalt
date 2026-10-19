@@ -77,6 +77,9 @@ struct ScriptsTests {
         try write("nested/work.log")
         try write(".claude/worktrees/w1/draft.tmp")
         try write("notes~draft.md")                         // `~` mid-name is not a backup file
+        try fm.createDirectory(at: repo.appendingPathComponent(".archive/clone"), withIntermediateDirectories: true)
+        try write(".archive/clone/.git")                    // a clone parked in .archive
+        try write(".archive/clone/wip.swift")
 
         let git = Process()
         git.executableURL = URL(fileURLWithPath: "/usr/bin/git")
@@ -106,6 +109,8 @@ struct ScriptsTests {
         #expect(exists("nested/work.log"))
         #expect(exists(".claude/worktrees/w1/draft.tmp"))
         #expect(exists("notes~draft.md"))
+        #expect(runScript("scripts/cleanup.swift", args: ["--mode=release", "--include-local", "--apply"], in: repo) == 0)
+        #expect(exists(".archive/clone/wip.swift"), ".archive holding a work tree is kept whole")
     }
 
     @Test("cleanup.swift refuses to run outside the root of a git work tree")
@@ -118,6 +123,17 @@ struct ScriptsTests {
         try Data("x".utf8).write(to: file)
         // Without git nothing could count as tracked, so --apply would delete freely.
         #expect(runScript("scripts/cleanup.swift", args: ["--mode=all", "--apply"], in: dir) != 0)
+        #expect(fm.fileExists(atPath: file.path))
+
+        // A subdirectory of a work tree is refused too: relative paths would miss the root.
+        let git = Process()
+        git.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+        git.currentDirectoryURL = dir
+        git.arguments = ["init", "-q"]
+        try git.run(); git.waitUntilExit()
+        let sub = dir.appendingPathComponent("sub")
+        try fm.createDirectory(at: sub, withIntermediateDirectories: true)
+        #expect(runScript("scripts/cleanup.swift", args: ["--mode=all", "--apply"], in: sub) != 0)
         #expect(fm.fileExists(atPath: file.path))
     }
     

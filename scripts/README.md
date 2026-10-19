@@ -117,7 +117,7 @@ and nothing tracked by git is ever removed.
 - `.build/`, `.swiftpm/`, `logs/`, docs build directories
 - generated artifacts (`*.log`, `*.tmp`, `*.swp`, `*.profdata`, `.DS_Store`, `benchmark_*.json`)
 - local runtime DBs in the root (`*.db`, `*.sqlite`, `*.sqlite3`, `auth.sqlite3`)
-- with `--include-local`: `.archive/`, `.claude/`, `.gemini.md`, root `test_*.swift`
+- with `--include-local`: `.archive/` (kept if a git work tree lives inside), `.gemini.md`, root `test_*.swift` — `.claude/` is never removed (Claude Code keeps its worktrees there)
 
 `default.metallib` is kept: the MLX runtime loads it from the repo root.
 

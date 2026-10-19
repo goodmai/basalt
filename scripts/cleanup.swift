@@ -25,7 +25,7 @@ func printUsage() {
                           all: both (default: release)
       --dry-run           Show what would be removed (default)
       --apply             Actually remove the listed artifacts
-      --include-local     release: also remove local working artifacts (.archive, .claude, .gemini.md,
+      --include-local     release: also remove local working artifacts (.archive, .gemini.md,
                           test_*.swift in the repo root)
       --max-age-hours=N   daily: remove files older than N hours (default 24; 0 removes all)
       --verbose           Show debug output
@@ -108,6 +108,15 @@ func isTracked(_ path: String) -> Bool {
     return !listed.isEmpty
 }
 
+/// True when `dir` holds a `.git` file or directory at any depth.
+func containsWorkTree(_ dir: String) -> Bool {
+    guard let walk = fm.enumerator(atPath: dir) else { return false }
+    for case let rel as String in walk where URL(fileURLWithPath: rel).lastPathComponent == ".git" {
+        return true
+    }
+    return false
+}
+
 // MARK: — release
 
 func releaseCandidates() -> [String] {
@@ -115,7 +124,7 @@ func releaseCandidates() -> [String] {
     // default.metallib is deliberately absent: the MLX runtime loads it from the repo root.
     let alwaysFiles = [".coverage", "context_latency.json", "auth.sqlite3"]
     let recursiveFilePatterns = [
-        "\\.DS_Store", ".*\\.log$", ".*\\.tmp$", ".*\\.swp$", ".*~$", ".*\\.profdata$",
+        "^\\.DS_Store$", ".*\\.log$", ".*\\.tmp$", ".*\\.swp$", ".*~$", ".*\\.profdata$",
         "^server_.*\\.log$", "^benchmark_.*\\.json$", "^res_.*\\.json$",
     ]
     let rootFilePatterns = [".*\\.db$", ".*\\.sqlite$", ".*\\.sqlite3$"]
@@ -125,6 +134,15 @@ func releaseCandidates() -> [String] {
     var collected = (alwaysDirs + alwaysFiles + (includeLocal ? optionalLocalPaths : []))
         .map { currentDir + "/" + $0 }
         .filter { fm.fileExists(atPath: $0) }
+        // A whole directory goes in one step, so first make sure no work tree (a clone, a
+        // worktree) lives inside it. SwiftPM's own dirs are exempt: .build/checkouts are clones
+        // SwiftPM recreates, and nobody works in them.
+        .filter { path in
+            let name = URL(fileURLWithPath: path).lastPathComponent
+            guard ![".build", ".swiftpm"].contains(name), containsWorkTree(path) else { return true }
+            log("Kept \(relative(path)): a git work tree lives inside it", level: .warning)
+            return false
+        }
 
     let root = URL(fileURLWithPath: currentDir)
     if let enumerator = fm.enumerator(at: root, includingPropertiesForKeys: [.isDirectoryKey]) {
