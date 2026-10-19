@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Sampling
+- Per-request `min_p` (`minP` on `/api/v1/generate` and MCP) overrides `--min-p` and the model profile default; `0` turns Min-P off for that request. Validated to 0–1 (#40).
+- `dynamic_temperature` (`dynamicTemperature`): entropy-based dynamic temperature (EDT, arXiv:2403.14541), `T = T0·N^(θ/H) + γ·R` with N = 0.8, θ = 1.5, γ = 0.5, clamped to 0.05–2. Confident tokens sample near-greedy; a forming repetition loop raises the temperature. Off by default; no effect at temperature 0 (#40).
+- `RepetitionGuard` exposes a continuous repetition score in [0, 1] alongside its stop decision (#40).
+
 ## 0.3.0 — 2026-10-19
 
 ### Upgrading from 0.2.0

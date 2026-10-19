@@ -185,7 +185,7 @@ chmod +x ./basalt-claude
 | `--reasoning-effort xhigh\|medium\|low` | бюджет размышлений для семейства Qwen |
 | `--quant 4bit` | выбрать подпапку с квантизацией в репозиториях, где их несколько |
 | `--kv-bits 4\|8` | квантовать KV-кэш — покупает контекст на машине с тесной памятью |
-| `--min-p`, `--top-k`, `--seed` | сэмплирование; `--seed` делает негреди-прогон воспроизводимым |
+| `--min-p`, `--top-k`, `--seed` | сэмплирование; `--seed` делает негреди-прогон воспроизводимым; `min_p` запроса перекрывает `--min-p` |
 | `--max-tokens` | потолок генерации по умолчанию (2048–128000) |
 | `--dry-run` | проверить, влезает ли модель в память, и выйти без загрузки |
 | `--port`, `--host` | по умолчанию 127.0.0.1:8080; любой другой хост требует API-ключ (`BASALT_API_KEY` или `--auto-generate-key`) |
@@ -264,6 +264,10 @@ curl -s http://127.0.0.1:8080/api/v1/generate \
 | `maxTokens` | int | 8192 | Максимум токенов генерации |
 | `temperature` | float | 0.7 | Температура сэмплирования (0–2) |
 | `topP` | float | 0.9 | Nucleus sampling |
+| `minP` | float | сервер | Min-P 0–1: отбрасывает токены с вероятностью ниже `minP × max p`. Перекрывает `--min-p` и профиль модели; `0` выключает |
+| `dynamicTemperature` | bool | false | Динамическая температура по энтропии (EDT): на каждом токене `T = T0·0.8^(1.5/H) + 0.5·R` в пределах 0.05–2, где `H` — энтропия распределения следующего токена, `R ∈ [0,1]` — индекс повторов. На уверенных токенах почти greedy, при начале цикла теплее. При `temperature: 0` не действует |
+
+`/v1/chat/completions`, `/v1/responses` и `/v1/messages` принимают те же поля как `min_p` и `dynamic_temperature`; MCP `gemma_generate` — как `minP` и `dynamicTemperature`.
 
 ### Совместимость с OpenAI
 
@@ -434,7 +438,7 @@ basalt models download --author Ex0bit
 
 | Инструмент | Описание |
 |---|---|
-| `gemma_generate` | Генерация текста — `prompt`, `maxTokens`, `temperature`, `topP` |
+| `gemma_generate` | Генерация текста — `prompt`, `maxTokens`, `temperature`, `topP`, `minP`, `dynamicTemperature` |
 | `gemma_status` | Готовность сервера, версия, текущая модель |
 | `playwright_screenshot` | Скриншот страницы через Playwright |
 | `gemma_add_knowledge` | Подмешать свой контекст в сессию |
