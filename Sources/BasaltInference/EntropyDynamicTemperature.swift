@@ -20,11 +20,11 @@ import MLXLMCommon
 // It plugs into mlx-swift-lm as a LogitProcessor (GenerationComponents), so the
 // stock TokenIterator, penalty processors and sampler stay as they are. The stock
 // sampler divides by T0, so the processor scales the logits by T0 / T_t and the
-// effective temperature becomes T_t. The stock sampler applies top-p and min-p to the
-// logits it receives, i.e. after our rescaling — a hotter T_t would widen both filters
-// exactly while a loop forms. So the processor first applies them itself to the
-// original distribution (masked tokens become -inf and stay so), and the sampler's own
-// pass can only be stricter. Everything per step is MLX ops on the logits.
+// effective temperature becomes T_t. The stock sampler would apply top-p and min-p to
+// the logits it receives, i.e. after our rescaling — a hotter T_t would widen both filters
+// exactly while a loop forms. So the processor applies them itself to the original
+// distribution (masked tokens become -inf), and MLXInferenceEngine.sampling(for:) hands the
+// sampler top_p 1 / min_p 0 when EDT is on. Everything per step is MLX ops on the logits.
 
 public struct EntropyDynamicTemperature: LogitProcessor {
     /// EDT's base N and exponent θ, the values issue #40 asks for; γ_rep is ours.
