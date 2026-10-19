@@ -69,6 +69,13 @@ enum HybridPrefixSnapshot {
         return max(1, zip(a.reversed(), b.reversed()).prefix { $0 == $1 }.count)
     }
 
+    static func templateKey(_ parts: [Any]) -> String? {
+        guard JSONSerialization.isValidJSONObject(parts),
+              let data = try? JSONSerialization.data(withJSONObject: parts, options: [.sortedKeys])
+        else { return nil }
+        return String(decoding: data, as: UTF8.self)
+    }
+
     static func restorable(_ path: [PromptCacheTree.Step]) -> [PromptCacheTree.Step] {
         guard path.first?.node.layers.contains(where: \.isEmpty) == true else { return path }
         guard let end = path.lastIndex(where: { $0.used == $0.node.tokens.count && $0.node.snapshot != nil })

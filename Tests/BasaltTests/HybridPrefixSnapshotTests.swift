@@ -240,21 +240,38 @@ struct HybridPrefixSnapshotTests {
         }
     }
 
-    @Test("The snapshot copies only the recurrent layers; attention layers stay the live caches, sliced at store time")
+    @Test("The snapshot copies only the recurrent layers; the live attention rows below b survive buffer growth bitwise")
     func snapshotSharesLiveAttention() throws {
         let model = try TinyHybrid.make()
         let prompt = TinyModel.tokens(Conversation.firstTurn)
+        let boundary = prompt.count - 1
         let live = PromptCache(try model.newCache(parameters: nil))
+        for case let attention as KVCacheSimple in live.layers {
+            attention.step = 8
+        }
         let head = try HybridPrefixSnapshot.prefillHead(
-            MLXArray(prompt.map(Int32.init)), into: live, reused: 0, boundary: prompt.count - 1,
+            MLXArray(prompt.map(Int32.init)), into: live, reused: 0, boundary: boundary,
             model: model, prefill: PrefillParameters(stepSize: 16))
         let kept = try #require(head.kept)
         for (original, snapshot) in zip(live.layers, kept.layers) {
             #expect(((original as AnyObject) === (snapshot as AnyObject)) == !(original is ArraysCache))
         }
-        _ = model(TinyHybrid.row(Array(prompt[(prompt.count - 1)...]) + [1, 2, 3]), cache: live.layers)
-        #expect(kept.isSnapshot(of: prompt.count - 1))
-        #expect(kept.tokenCount == prompt.count - 1)
+        func rows() -> [MLXArray] {
+            let sliced = kept.layers.filter { !($0 is ArraysCache) }.flatMap { $0.state.map { $0[.ellipsis, ..<boundary, 0...] } }
+            eval(sliced)
+            return sliced
+        }
+        let before = rows().map { $0 + 0 }
+        eval(before)
+        var token = MLXArray([Int32(prompt[boundary])]).reshaped(1, 1)
+        for _ in 0..<20 {
+            token = argMax(model(token, cache: live.layers)[0..., -1, 0...], axis: -1).reshaped(1, 1)
+            eval([token] + live.layers.flatMap { $0.innerState() })
+        }
+        #expect(live.layers.allSatisfy { $0 is ArraysCache || $0.offset == boundary + 20 })
+        #expect(zip(before, rows()).allSatisfy { arrayEqual($0, $1).item(Bool.self) })
+        #expect(kept.isSnapshot(of: boundary))
+        #expect(kept.tokenCount == boundary)
     }
 
     @Test("The snapshot boundary is the end of the request text: the template's suffix after it is measured, not assumed")
@@ -268,6 +285,20 @@ struct HybridPrefixSnapshotTests {
             UserInput(chat: [.user($0)])
         }
         #expect(suffix == SuffixedInputProcessor.suffix.count)
+    }
+
+    @Test("The template-tail cache key is a sorted-key encoding, independent of dictionary order")
+    func templateKeyIsStable() {
+        var forward: [String: any Sendable] = [:]
+        var backward: [String: any Sendable] = [:]
+        for index in 0..<32 {
+            forward["k\(index)"] = index
+            backward["k\(31 - index)"] = 31 - index
+        }
+        let tools: [[String: any Sendable]] = [["name": "run", "description": "x"]]
+        #expect(HybridPrefixSnapshot.templateKey([tools, forward]) == HybridPrefixSnapshot.templateKey([tools, backward]))
+        #expect(HybridPrefixSnapshot.templateKey([tools, forward]) != HybridPrefixSnapshot.templateKey([[], forward]))
+        #expect(HybridPrefixSnapshot.templateKey([Date()]) == nil)
     }
 }
 

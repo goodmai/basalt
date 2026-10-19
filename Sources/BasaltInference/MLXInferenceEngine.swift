@@ -419,7 +419,7 @@ public actor MLXInferenceEngine: InferenceEngine {
         let toolSpecs = Self.toolSpecs(request.tools)
         let declaredTools = Set(request.tools?.map(\.name) ?? [])
         let makeInput: @Sendable (String) -> UserInput
-        let template: String
+        let template: String?
         if request.prompt.contains("<|turn|>") || request.prompt.contains("<|channel|>") {
             makeInput = { UserInput(prompt: $0) }
             template = "raw"
@@ -430,7 +430,7 @@ public actor MLXInferenceEngine: InferenceEngine {
                 profile: profile
             )
             makeInput = { UserInput(chat: [.user($0)], tools: toolSpecs, additionalContext: context) }
-            template = "\(String(describing: toolSpecs))\(String(describing: context))"
+            template = HybridPrefixSnapshot.templateKey([toolSpecs ?? [], context])
         }
         let userInput = makeInput(request.prompt)
 
@@ -631,20 +631,31 @@ public actor MLXInferenceEngine: InferenceEngine {
     }
 
     private func snapshotBoundary(
-        _ count: Int, container: ModelContainer, template: String, _ makeInput: @Sendable (String) -> UserInput
+        _ count: Int, container: ModelContainer, template: String?, _ makeInput: @Sendable (String) -> UserInput
     ) async -> Int {
-        if modelIsHybrid == nil {
-            modelIsHybrid = (try? await container.perform { PromptCache(try $0.model.newCache(parameters: nil)).isHybrid })
+        let epoch = modelEpoch
+        let hybrid: Bool
+        if let known = modelIsHybrid {
+            hybrid = known
+        } else {
+            hybrid = (try? await container.perform { PromptCache(try $0.model.newCache(parameters: nil)).isHybrid })
                 ?? false
+            if epoch == modelEpoch {
+                modelIsHybrid = hybrid
+            }
         }
-        guard modelIsHybrid == true else { return count - 1 }
-        if templateSuffixes[template] == nil {
+        guard hybrid else { return count - 1 }
+        if let template, let suffix = templateSuffixes[template] {
+            return count - suffix
+        }
+        let suffix = await HybridPrefixSnapshot.templateSuffixLength(container, makeInput)
+        if let template, epoch == modelEpoch {
             if templateSuffixes.count >= 64 {
                 templateSuffixes.removeAll()
             }
-            templateSuffixes[template] = await HybridPrefixSnapshot.templateSuffixLength(container, makeInput)
+            templateSuffixes[template] = suffix
         }
-        return count - (templateSuffixes[template] ?? 1)
+        return count - suffix
     }
 
     private func promptCacheNamespace(for request: GenerationRequest) -> String? {
