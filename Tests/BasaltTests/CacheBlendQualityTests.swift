@@ -16,11 +16,7 @@ struct CacheBlendQualityTests {
     static let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
         .deletingLastPathComponent()
 
-    static let files = [
-        "Sources/BasaltInference/PromptCacheTree.swift", "Sources/BasaltInference/RepetitionGuard.swift",
-        "Sources/BasaltInference/EntropyDynamicTemperature.swift", "Sources/BasaltInference/ContextDegradationProfiler.swift",
-        "Sources/BasaltCLI/ServeCommand.swift", "Sources/BasaltCore/DTOs.swift",
-    ]
+    static let fixtures = root.appendingPathComponent("benchmarks/cacheblend")
 
     static let questions = [
         "in two sentences, what does the file that defines PromptCacheTree do?",
@@ -33,9 +29,8 @@ struct CacheBlendQualityTests {
     static let orders = [[3, 5, 0, 2, 4, 1], [5, 4, 3, 2, 1, 0], [1, 3, 5, 0, 4, 2], [2, 0, 4, 5, 1, 3]]
 
     static func prompt(_ order: [Int], question: Int) throws -> String {
-        let docs = try files.map { path in
-            let text = try String(contentsOf: root.appendingPathComponent(path), encoding: .utf8)
-            return "File \(path):\n\n\(String(text.prefix(3600)).trimmingCharacters(in: .whitespacesAndNewlines))\n\n"
+        let docs = try (0 ..< 6).map {
+            try String(contentsOf: fixtures.appendingPathComponent("file\($0).txt"), encoding: .utf8)
         }
         return "You are reviewing a Swift codebase. Here are the files.\n\n" + order.map { docs[$0] }.joined()
             + "Question: " + questions[question]
@@ -107,14 +102,22 @@ struct CacheBlendQualityTests {
                     sums[key] = (before.logProb + blended.logProb, before.top1 + blended.top1, before.reused + outcome.reused)
                 }
             }
-            return (["full"] + ratios.map { String(format: "%.2f", $0) }).map { key in
+            return (["full"] + ratios.map { String(format: "%.2f", $0) }).map { key -> (String, Float, Float) in
                 let sum = sums[key]!
                 let n = Float(prompts.count)
-                return String(format: "%@ meanLogProb %.3f top1 %.3f reused %d/%d", key, sum.logProb / n, sum.top1 / n,
-                              sum.reused / prompts.count, prompts.map(\.count).reduce(0, +) / prompts.count)
+                let line = String(format: "%@ meanLogProb %.3f top1 %.3f reused %d/%d", key, sum.logProb / n, sum.top1 / n,
+                                  sum.reused / prompts.count, prompts.map(\.count).reduce(0, +) / prompts.count)
+                return (line, sum.logProb / n, sum.top1 / n)
             }
         }
-        for row in rows { print("BLEND-QUALITY", row) }
-        #expect(rows.count == 6)
+        for row in rows { print("BLEND-QUALITY", row.0) }
+        let byKey = Dictionary(uniqueKeysWithValues: zip(["full", "0.00", "0.15", "0.30", "0.50", "1.00"], rows))
+        let full = try #require(byKey["full"])
+        let exact = try #require(byKey["1.00"])
+        let none = try #require(byKey["0.00"])
+        let half = try #require(byKey["0.50"])
+        #expect(exact.2 >= full.2 - 0.01)
+        #expect(half.1 >= none.1)
+        #expect(full.2 >= 0.95)
     }
 }

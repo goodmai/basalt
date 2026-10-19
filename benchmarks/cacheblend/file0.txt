@@ -1,0 +1,119 @@
+File Sources/BasaltInference/PromptCacheTree.swift:
+
+import Foundation
+import MLX
+import MLXLMCommon
+
+final class PromptCache: @unchecked Sendable {
+    let layers: [KVCache]
+    var state: LMOutput.State?
+
+    init(_ layers: [KVCache]) {
+        self.layers = layers
+    }
+
+    var tokenCount: Int {
+        layers.map(\.offset).min() ?? 0
+    }
+
+    var byteCount: Int {
+        layers.reduce(0) { total, layer in
+            total + layer.innerState().reduce(0) { $0 + $1.nbytes }
+        }
+    }
+
+    var isSharable: Bool {
+        !layers.isEmpty && layers.allSatisfy { type(of: $0) == KVCacheSimple.self }
+    }
+}
+
+enum PromptCacheBudget {
+    static func automatic(workingSet: Int, weights: Int) -> Int {
+        max(0, workingSet - weights) / 2
+    }
+
+    static func gpuWorkingSet() -> Int {
+        GPU.maxRecommendedWorkingSetBytes() ?? Int(ProcessInfo.processInfo.physicalMemory) / 4 * 3
+    }
+}
+
+final class PromptCacheNode: @unchecked Sendable {
+    var tokens: [Int]
+    var layers: [[MLXArray]]
+    var snapshot: RecurrentSnapshot?
+    var children: [Int: PromptCacheNode] = [:]
+    weak var parent: PromptCacheNode?
+    var lastUse: Int
+    var pins = 0
+
+    init(tokens: [Int], layers: [[MLXArray]], lastUse: Int) {
+        self.tokens = tokens
+        self.layers = layers
+        self.lastUse = lastUse
+    }
+
+    var bytes: Int {
+        layers.joined().reduce(0) { $0 + $1.nbytes }
+            + (snapshot?.bytes ?? 0)
+    }
+}
+
+struct PromptCacheLease: Sendable {
+    let cache: PromptCache
+    let reusedTokens: Int
+    let pinned: PromptCacheNode
+}
+
+struct PromptCacheTree: Sendable {
+    typealias Step = (node: PromptCacheNode, used: Int)
+
+    static let maxLeaves = 4096
+
+    let byteBudget: Int
+    let leafLimit: Int
+    private(set) var roots: [String: PromptCacheNode] = [:]
+    private(set) var byteCount = 0
+    private(set) var leafCount = 0
+    private var clock = 0
+
+    init(byteBudget: Int, leafLimit: Int = PromptCacheTree.maxLeaves) {
+        self.byteBudget = byteBudget
+        self.leafLimit = leafLimit
+    }
+
+    func storedPrefix(of tokens: [Int], in namespace: String) -> Int {
+        roots[namespace].map { Self.walk(from: $0, along: tokens).reduce(0) { $0 + $1.used } } ?? 0
+    }
+
+    mutating func lease(_ namespace: String, for prompt: [Int]) -> PromptCacheLease? {
+        guard let root = roots[namespace] else { return nil }
+        let path = HybridPrefixSnapshot.restorable(Self.walk(from: root, along: Array(prompt.dropLast())))
+        guard let deepest = path.last?.node else { return nil }
+        touch(deepest)
+        deepest.pins += 1
+        let layers = deepest.layers.indices.map { layer -> KVCache in
+            if let recurrent = deepest.snapshot?.layers[layer] {
+                return recurrent.copy()
+            }
+            let cache = KVCacheSimple()
+            cache.state = [0, 1].map { part in
+                concatenated(path.map { $0.node.layers[layer][part][.ellipsis, ..<$0.used, 0...] }, axis: 2)
+            }
+            return cache
+        }
+        let cache = PromptCache(layers)
+        cache.state = deepest.snapshot?.state
+        return PromptCacheLease(
+            cache: cache, reusedTokens: path.reduce(0) { $0 + $1.used }, pinned: deepest)
+    }
+
+    mutating func release(_ lease: PromptCacheLease) {
+        lease.pinned.pins -= 1
+    }
+
+    mutating func store(_ namespace: String, tokens: [Int], cache: PromptCache) {
+        guard byteBudget > 0, !tokens.isEmpty, cache.tokenCount >= tokens.count,
+              cache.isSharable || cache.isSnapshot(of: tokens.count)
+        else { return }
+        let snapshot = RecurrentSnapshot(of: cache)
+
