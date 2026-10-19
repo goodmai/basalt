@@ -209,3 +209,28 @@ struct ToolCallRepairerTests {
     }
 }
 
+@Suite("Engine load guard (#72)")
+struct EngineLoadGuardTests {
+
+    @Test("The engine refuses a directory without a readable config.json before touching the loaded model")
+    func engineChecksConfigBeforeUnloading() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let engine = MLXInferenceEngine()
+        do {
+            try await engine.load(modelPath: dir.path)
+            Issue.record("a directory without config.json must not load")
+        } catch {
+            guard case .modelNotFound = error else { Issue.record("expected modelNotFound, got \(error)"); return }
+        }
+        try Data(#"{"model_type": "basalt-test-unknown"}"#.utf8).write(to: dir.appendingPathComponent("config.json"))
+        do {
+            try await engine.load(modelPath: dir.path)
+            Issue.record("a directory without weights must not load")
+        } catch {
+            guard case .weightsCorrupted = error else { Issue.record("a local path with a config must reach the loader, got \(error)"); return }
+        }
+        #expect(await !engine.isLoaded)
+    }
+}

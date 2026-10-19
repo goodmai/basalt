@@ -176,7 +176,8 @@ public actor MLXInferenceEngine: InferenceEngine {
         }
 
         let directory = URL(fileURLWithPath: modelPath)
-        guard FileManager.default.fileExists(atPath: directory.path) else {
+        guard ModelCache.hasUsableConfig(at: directory) else {
+            logger.error("Refusing to load \(modelPath): no readable config.json; the current model stays loaded")
             throw .modelNotFound(identifier: modelPath)
         }
 
