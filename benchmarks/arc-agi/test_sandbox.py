@@ -1,4 +1,5 @@
 import errno
+import importlib.util
 import json
 import os
 import resource
@@ -18,6 +19,7 @@ BLOCKED = [[0]]
 ESCAPED = [[1]]
 SANDBOX_REFUSALS = (errno.EPERM, errno.EACCES, errno.EAGAIN)
 MEMORY_SOFT_CAP_BYTES = 3 << 29
+UNLISTED_EXTENSION = "_uuid"
 CANARY = "arc-sandbox-canary-5d1c"
 PROCESS_SYSCTL_PROBE = f"""
 def transform(grid):
@@ -140,6 +142,16 @@ if os.system('touch PWNED; touch {self.outside}/PWNED') != 0:
                                 env={**os.environ, "ARC_SANDBOX_FAKE_API_KEY": CANARY}, check=True)
         self.assertNotIn(CANARY, parent.stdout)
         self.assertEqual(json.loads(parent.stdout), [BLOCKED, "python_oop_exec_success"])
+
+    def test_extension_module_outside_the_allowlist_cannot_be_loaded(self):
+        if importlib.util.find_spec(UNLISTED_EXTENSION) is None:
+            self.skipTest(f"{UNLISTED_EXTENSION} is not built into this Python")
+        code = ("def transform(grid):\n    try:\n"
+                f"        import {UNLISTED_EXTENSION}\n"
+                "    except ImportError as error:\n"
+                "        return [[0]] if 'sandbox' in str(error) else [[2]]\n"
+                "    return [[1]]")
+        self.assertEqual(self.run_code(code), (BLOCKED, "python_oop_exec_success"))
 
     def test_infinite_loop_is_killed_and_recorded_as_failed(self):
         started = time.monotonic()

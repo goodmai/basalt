@@ -2,6 +2,7 @@ import json
 import os
 import subprocess
 import sys
+import sysconfig
 import tempfile
 import time
 
@@ -21,7 +22,10 @@ RUSAGE_INFO_V0 = 0
 RUSAGE_INFO_V0_WORDS = 12
 RUSAGE_PHYS_FOOTPRINT_WORD = 9
 UNAME_SYSCTLS = ("kern.ostype", "kern.hostname", "kern.osrelease", "kern.version", "hw.machine")
-RAW_SYSCALL_MODULES = r"/lib-dynload/(_ctypes|_test|_xxtest)[^/]*$"
+NATIVE_LIBRARY_PATTERN = "[.](so|dylib)$"
+ALLOWED_EXTENSIONS = ("_posixsubprocess", "_random", "_socket", "_struct", "math", "resource", "select", "unicodedata")
+EXTENSION_DIR = os.path.join(os.path.realpath(sysconfig.get_path("platstdlib")), "lib-dynload")
+EXTENSION_SUFFIX = sysconfig.get_config_var("EXT_SUFFIX")
 FUNCTION_NAMES = ("transform", "solve", "transform_grid")
 
 def sandbox_available() -> bool:
@@ -69,6 +73,10 @@ def sandbox_profile(work_dir: str, numpy_package, images) -> str:
     if "/Cellar/" in python_root:
         link_dirs.append(python_root.split("/Cellar/")[0] + "/opt")
     readable = [f"(subpath {_quote(p)})" for p in trees] + [f"(literal {_quote(p)})" for p in files]
+    native_roots = [python_root] + ([os.path.dirname(numpy_package)] if numpy_package else [])
+    allowed_native = [f"(literal {_quote(os.path.join(EXTENSION_DIR, name + EXTENSION_SUFFIX))})" for name in ALLOWED_EXTENSIONS]
+    if numpy_package:
+        allowed_native.append(f"(subpath {_quote(numpy_package)})")
     executables = [PYTHON, os.path.join(python_root, "Resources/Python.app/Contents/MacOS/Python")]
     return "\n".join([
         "(version 1)",
@@ -78,7 +86,9 @@ def sandbox_profile(work_dir: str, numpy_package, images) -> str:
         + "".join(f" (subpath {_quote(p)})" for p in link_dirs) + ")",
         "(allow file-read* " + " ".join(readable) + ")",
         f"(allow file-write* (subpath {_quote(work_dir)}) (literal \"/dev/null\"))",
-        f"(deny file-read* (regex #{_quote(RAW_SYSCALL_MODULES)}))",
+        "(deny file-read* " + " ".join(f"(require-all (subpath {_quote(p)}) (regex #{_quote(NATIVE_LIBRARY_PATTERN)}))"
+                                       for p in native_roots) + ")",
+        "(allow file-read* " + " ".join(allowed_native) + ")",
         "(allow sysctl-read " + " ".join(f"(sysctl-name {_quote(n)})" for n in UNAME_SYSCTLS) + ")",
         "(deny network*)",
     ])
