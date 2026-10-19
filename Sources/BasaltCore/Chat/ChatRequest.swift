@@ -41,6 +41,33 @@ public struct ChatMessageInput: Codable, Sendable, Equatable {
             .filter { !$0.isEmpty }
             .joined(separator: "\n\n")
     }
+
+    public static func alternating(_ messages: [ChatMessageInput]) -> [ChatMessageInput] {
+        let system = messages.filter { $0.role == .system }.map(\.text)
+        var turns: [(role: Role, texts: [String])] = []
+        for message in messages where message.role != .system {
+            let role: Role = message.role == .tool ? .user : message.role
+            let text = message.role == .tool
+                ? "Tool result (\(message.toolName ?? message.toolCallId ?? "tool")): \(message.text)"
+                : ([message.text] + (message.toolCalls ?? []).map { "\($0.name)(\($0.arguments))" })
+                    .filter { !$0.isEmpty }.joined(separator: "\n")
+            if turns.last?.role == role {
+                turns[turns.count - 1].texts.append(text)
+            } else {
+                turns.append((role, [text]))
+            }
+        }
+        guard turns.contains(where: { $0.role == .user }) else {
+            return [ChatMessageInput(role: .user, text: plainText(messages))]
+        }
+        let leading = joined(system).map { [ChatMessageInput(role: .system, text: $0)] } ?? []
+        return leading + turns.map { ChatMessageInput(role: $0.role, text: joined($0.texts) ?? "") }
+    }
+
+    private static func joined(_ texts: [String]) -> String? {
+        let parts = texts.filter { !$0.isEmpty }
+        return parts.isEmpty ? nil : parts.joined(separator: "\n\n")
+    }
 }
 
 /// How much the model should think before answering.
