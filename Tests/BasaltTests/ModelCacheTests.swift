@@ -259,7 +259,7 @@ struct EngineLoadGuardTests {
             try await engine.load(modelPath: dir.path)
             Issue.record("a directory without weights must not load")
         } catch {
-            guard case .weightsCorrupted = error else { Issue.record("a local path with a config must reach the loader, got \(error)"); return }
+            guard case .modelConfigurationInvalid = error else { Issue.record("a local path with a config must reach the loader, got \(error)"); return }
         }
         #expect(await !engine.isLoaded)
     }
