@@ -2,7 +2,7 @@
 import PackageDescription
 
 let package = Package(
-    name: "Gem",
+    name: "Basalt",
     platforms: [
         .macOS(.v15)
     ],
@@ -25,7 +25,7 @@ let package = Package(
 
         // ── Library (all logic, importable by tests) ─────────────────────────
         .target(
-            name: "GemCore",
+            name: "BasaltKit",
             dependencies: [
                 .product(name: "MLX",           package: "mlx-swift"),
                 .product(name: "MLXNN",         package: "mlx-swift"),
@@ -44,7 +44,7 @@ let package = Package(
                 .product(name: "Markdown",      package: "swift-markdown"),
                 .product(name: "Splash",        package: "Splash"),
             ],
-            path: "Sources/Gem",
+            path: "Sources/Basalt",
             swiftSettings: [
                 .swiftLanguageMode(.v6),
             ]
@@ -53,8 +53,8 @@ let package = Package(
         // ── Executable (thin wrapper — just calls library main) ───────────────
         .executableTarget(
             name: "Basalt",
-            dependencies: ["GemCore"],
-            path: "Sources/GemBin",
+            dependencies: ["BasaltKit"],
+            path: "Sources/BasaltBin",
             swiftSettings: [
                 .swiftLanguageMode(.v6),
             ]
@@ -62,12 +62,12 @@ let package = Package(
 
         // ── Tests ─────────────────────────────────────────────────────────────
         .testTarget(
-            name: "GemTests",
+            name: "BasaltTests",
             dependencies: [
-                "GemCore",
+                "BasaltKit",
                 .product(name: "HummingbirdTesting", package: "hummingbird"),
             ],
-            path: "Tests/GemTests",
+            path: "Tests/BasaltTests",
             swiftSettings: [
                 .swiftLanguageMode(.v6),
             ]
@@ -75,7 +75,7 @@ let package = Package(
         .executableTarget(
             name: "PerformanceBenchmark",
             dependencies: [
-                "GemCore",
+                "BasaltKit",
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
             ],
             path: "Sources/PerformanceBenchmark",
