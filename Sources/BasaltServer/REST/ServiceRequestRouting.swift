@@ -26,13 +26,15 @@ extension HTTPFields {
 enum PromptCacheKey {
     static let anonymous = "anonymous"
 
-    static func resolve(headers: HTTPFields, isService: Bool) -> String? {
+    static func resolve(headers: HTTPFields, isService: Bool, byCredential: Bool) -> String? {
         guard !isService else { return nil }
-        return credential(in: headers).map { "credential:\(digest($0))" } ?? anonymous
+        guard byCredential, let credential = credential(in: headers) else { return anonymous }
+        return "credential:\(digest(credential))"
     }
 
-    static func scoped(_ request: GenerationRequest, headers: HTTPFields) -> GenerationRequest {
-        request.withCacheKey(resolve(headers: headers, isService: request.isServiceRequest == true))
+    static func scoped(_ request: GenerationRequest, headers: HTTPFields, byCredential: Bool) -> GenerationRequest {
+        request.withCacheKey(resolve(
+            headers: headers, isService: request.isServiceRequest == true, byCredential: byCredential))
     }
 
     static func credential(in headers: HTTPFields) -> String? {

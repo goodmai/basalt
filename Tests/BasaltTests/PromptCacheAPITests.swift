@@ -10,19 +10,19 @@ import HTTPTypes
 @Suite("Prompt cache namespaces and cached-token usage on the wire (#32, #56)")
 struct PromptCacheAPITests {
 
-    private func app(cachedTokens: Int = 0) async throws -> (Application<RouterResponder<BasicRequestContext>>, MockInferenceEngine) {
+    private func app(cachedTokens: Int = 0, apiKey: String? = nil) async throws -> (Application<RouterResponder<BasicRequestContext>>, MockInferenceEngine) {
         let engine = MockInferenceEngine()
         await engine.setMockCachedPromptTokens(cachedTokens)
         let orch = ModelOrchestratorActor(engine: engine, telemetry: TelemetryTracker())
         try await orch.loadModel(path: "mock")
-        let server = RESTServer(orchestrator: orch, config: try ServerConfig(modelPath: "mock"))
+        let server = RESTServer(orchestrator: orch, config: try ServerConfig(modelPath: "mock", apiKey: apiKey))
         return (Application(router: server.makeRouter()), engine)
     }
 
     private func post(
-        _ uri: String, _ json: String, headers: HTTPFields = [:], cachedTokens: Int = 0
+        _ uri: String, _ json: String, headers: HTTPFields = [:], cachedTokens: Int = 0, apiKey: String? = nil
     ) async throws -> (body: String, sent: GenerationRequest?) {
-        let (app, engine) = try await app(cachedTokens: cachedTokens)
+        let (app, engine) = try await app(cachedTokens: cachedTokens, apiKey: apiKey)
         let body = try await app.test(.router) { client in
             try await client.execute(uri: uri, method: .post, headers: headers, body: ByteBuffer(string: json)) { res in
                 #expect(res.status == .ok)
@@ -48,7 +48,7 @@ struct PromptCacheAPITests {
         return fields
     }
 
-    @Test("Every non-service request lands in its credential's namespace; conversation ids no longer split the cache")
+    @Test("Every non-service request lands in its server's one namespace; conversation ids no longer split the cache")
     func conversationIdsShareOneNamespace() async throws {
         let requests = [
             ("/v1/chat/completions", #"{"prompt_cache_key": "codex-1", "messages": [{"role": "user", "content": "hi"}]}"#),
@@ -57,42 +57,53 @@ struct PromptCacheAPITests {
             ("/v1/messages", #"{"max_tokens": 64, "metadata": {"user_id": "u_session_1"}, "messages": [{"role": "user", "content": "hi"}]}"#),
             ("/v1/messages", #"{"max_tokens": 64, "system": "You are an Explore subagent.", "messages": [{"role": "user", "content": "hi"}]}"#),
         ]
+        let keyedNamespace = PromptCacheKey.resolve(
+            headers: header("x-api-key", "alice-key"), isService: false, byCredential: true)
         for (uri, body) in requests {
             let anonymous = try await post(uri, body)
             #expect(anonymous.sent?.cacheKey == PromptCacheKey.anonymous, "\(uri)")
             let session = try await post(uri, body, headers: header("x-session-id", "s-7"))
             #expect(session.sent?.cacheKey == PromptCacheKey.anonymous, "\(uri)")
-            let keyed = try await post(uri, body, headers: header("authorization", "Bearer alice-key"))
-            #expect(keyed.sent?.cacheKey == PromptCacheKey.resolve(
-                headers: header("x-api-key", "alice-key"), isService: false), "\(uri)")
+            let keyed = try await post(uri, body, headers: header("authorization", "Bearer alice-key"), apiKey: "alice-key")
+            #expect(keyed.sent?.cacheKey == keyedNamespace, "\(uri)")
         }
     }
 
-    @Test("Namespaces follow the credential a client presents, so clients with different keys never share a prefix")
+    @Test("With a server key, the namespace follows the presented credential and never contains it")
     func keysAreNamespacedByCredential() async throws {
         let body = #"{"input": "hi"}"#
-        let alice = try await post("/v1/responses", body, headers: header("authorization", "Bearer alice-key"))
-        let aliceAgain = try await post("/v1/responses", body, headers: header("x-api-key", "alice-key"))
-        let bob = try await post("/v1/responses", body, headers: header("authorization", "Bearer bob-key"))
-        let anonymous = try await post("/v1/responses", body)
-        #expect(alice.sent?.cacheKey?.hasPrefix("credential:") == true)
-        #expect(alice.sent?.cacheKey == aliceAgain.sent?.cacheKey)
-        #expect(alice.sent?.cacheKey != bob.sent?.cacheKey)
-        #expect(alice.sent?.cacheKey != anonymous.sent?.cacheKey)
-        #expect(alice.sent?.cacheKey?.contains("alice") == false)
+        let bearer = try await post("/v1/responses", body, headers: header("authorization", "Bearer alice-key"), apiKey: "alice-key")
+        let apiKey = try await post("/v1/responses", body, headers: header("x-api-key", "alice-key"), apiKey: "alice-key")
+        #expect(bearer.sent?.cacheKey?.hasPrefix("credential:") == true)
+        #expect(bearer.sent?.cacheKey == apiKey.sent?.cacheKey)
+        #expect(bearer.sent?.cacheKey?.contains("alice") == false)
+        let bob = PromptCacheKey.resolve(headers: header("authorization", "Bearer bob-key"), isService: false, byCredential: true)
+        #expect(bob != bearer.sent?.cacheKey)
+        #expect(bob != PromptCacheKey.anonymous)
     }
 
-    @Test("A cacheKey in a raw generate body is ignored, so it cannot select another client's namespace")
+    @Test("Without a server key, presented credentials are ignored, so random tokens cannot grow one tree each")
+    func credentialsAreIgnoredWithoutAServerKey() async throws {
+        for token in ["random-1", "random-2", "alice-key"] {
+            let result = try await post("/v1/responses", #"{"input": "hi"}"#, headers: header("authorization", "Bearer \(token)"))
+            #expect(result.sent?.cacheKey == PromptCacheKey.anonymous, "\(token)")
+            let apiKey = try await post("/v1/messages",
+                #"{"max_tokens": 64, "messages": [{"role": "user", "content": "hi"}]}"#, headers: header("x-api-key", token))
+            #expect(apiKey.sent?.cacheKey == PromptCacheKey.anonymous, "\(token)")
+        }
+    }
+
+    @Test("A cacheKey in a raw generate body is ignored, so it cannot select another namespace")
     func rawGenerateCannotPickAForeignNamespace() async throws {
         let alice = header("authorization", "Bearer alice-key")
-        let bob = header("authorization", "Bearer bob-key")
-        let aliceNamespace = try #require(try await post("/v1/responses", #"{"input": "hi"}"#, headers: alice).sent?.cacheKey)
-        let bobNamespace = try #require(try await post("/v1/responses", #"{"input": "hi"}"#, headers: bob).sent?.cacheKey)
+        let aliceNamespace = try #require(
+            try await post("/v1/responses", #"{"input": "hi"}"#, headers: alice, apiKey: "alice-key").sent?.cacheKey)
+        let foreign = PromptCacheKey.resolve(headers: header("x-api-key", "bob-key"), isService: false, byCredential: true)
         for uri in ["/api/v1/generate", "/v1/generate", "/api/v1/generate/stream"] {
-            let probe = try await post(uri, #"{"prompt": "hi", "cacheKey": "\#(aliceNamespace)"}"#, headers: bob)
-            #expect(probe.sent?.cacheKey == bobNamespace, "\(uri)")
-            let anonymous = try await post(uri, #"{"prompt": "hi", "cacheKey": "\#(aliceNamespace)"}"#)
-            #expect(anonymous.sent?.cacheKey == PromptCacheKey.anonymous, "\(uri)")
+            let keyed = try await post(uri, #"{"prompt": "hi", "cacheKey": "\#(foreign ?? "")"}"#, headers: alice, apiKey: "alice-key")
+            #expect(keyed.sent?.cacheKey == aliceNamespace, "\(uri)")
+            let open = try await post(uri, #"{"prompt": "hi", "cacheKey": "\#(aliceNamespace)"}"#)
+            #expect(open.sent?.cacheKey == PromptCacheKey.anonymous, "\(uri)")
         }
     }
 

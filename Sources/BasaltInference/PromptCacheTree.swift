@@ -86,7 +86,6 @@ struct PromptCacheTree: Sendable {
             cache.state = [0, 1].map { part in
                 concatenated(path.map { $0.node.layers[layer][part][.ellipsis, ..<$0.used, 0...] }, axis: 2)
             }
-            eval(cache.innerState())
             return cache
         }
         return PromptCacheLease(
@@ -188,6 +187,14 @@ struct PromptCacheTree: Sendable {
         return head
     }
 
+    private mutating func remove(_ leaf: PromptCacheNode) {
+        guard let parent = leaf.parent else { return }
+        parent.children[leaf.tokens[0]] = nil
+        if parent.tokens.isEmpty, parent.children.isEmpty {
+            roots = roots.filter { $0.value !== parent }
+        }
+    }
+
     private mutating func evict() {
         while byteCount > byteBudget,
               let victim = leaves().filter({ $0.pins == 0 }).min(by: { $0.lastUse < $1.lastUse }) {
@@ -199,7 +206,7 @@ struct PromptCacheTree: Sendable {
                 victim.tokens = Array(victim.tokens.prefix(keep))
                 byteCount += victim.bytes - before
             } else {
-                victim.parent?.children[victim.tokens[0]] = nil
+                remove(victim)
                 byteCount -= before
             }
         }

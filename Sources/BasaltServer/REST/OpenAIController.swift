@@ -19,6 +19,7 @@ struct OpenAIController: Sendable {
 
     let orchestrator: ModelOrchestratorActor
     let modelId: String
+    var cachesByCredential = false
 
     // MARK: — DTOs
 
@@ -310,7 +311,8 @@ struct OpenAIController: Sendable {
             dynamicTemperature: dto.dynamicTemperature,
             reasoningEffort: dto.reasoningEffort,
             isServiceRequest: service.isService,
-            cacheKey: PromptCacheKey.resolve(headers: request.headers, isService: service.isService)
+            cacheKey: PromptCacheKey.resolve(
+                headers: request.headers, isService: service.isService, byCredential: cachesByCredential)
         )
         let requestedModel = dto.model.map { ModelsController.hfRepoId(from: $0) }  // strip claude-local/ prefix if present
 
@@ -394,7 +396,8 @@ struct OpenAIController: Sendable {
             reasoningEffort: dto.effectiveReasoningEffort,
             isServiceRequest: service.isService,
             tools: Self.functionTools(fromRequestBody: data),
-            cacheKey: PromptCacheKey.resolve(headers: request.headers, isService: service.isService)
+            cacheKey: PromptCacheKey.resolve(
+                headers: request.headers, isService: service.isService, byCredential: cachesByCredential)
         )
         let requestedModel = dto.model.map { ModelsController.hfRepoId(from: $0) }
 
@@ -447,7 +450,7 @@ struct OpenAIController: Sendable {
         let data = Data(buffer.readableBytesView)
         do {
             let dto = PromptCacheKey.scoped(
-                try JSONDecoder().decode(GenerationRequest.self, from: data), headers: request.headers)
+                try JSONDecoder().decode(GenerationRequest.self, from: data), headers: request.headers, byCredential: cachesByCredential)
             let result = try await orchestrator.generate(request: dto)
             let encoded = try JSONEncoder().encode(result)
             return makeDataResponse(encoded)

@@ -377,17 +377,21 @@ struct PromptCacheTreeTests {
 
     static let bytesPerToken = 2 * 2 * 8 * 4
 
-    func cache(_ tokens: [Int]) -> PromptCache {
-        let cache = PromptCache([KVCacheSimple()])
-        let ids = MLXArray(tokens.map(Float.init)).reshaped(1, 1, tokens.count, 1)
-        let filled = broadcast(ids, to: [1, 2, tokens.count, 8])
-        _ = cache.layers[0].update(keys: filled, values: filled + 1)
+    static let layerStride = 100_000
+
+    func cache(_ tokens: [Int], layers: Int = 1) -> PromptCache {
+        let cache = PromptCache((0..<layers).map { _ in KVCacheSimple() })
+        for (index, layer) in cache.layers.enumerated() {
+            let ids = MLXArray(tokens.map { Float($0 + index * Self.layerStride) }).reshaped(1, 1, tokens.count, 1)
+            let filled = broadcast(ids, to: [1, 2, tokens.count, 8])
+            _ = layer.update(keys: filled, values: filled + 1)
+        }
         eval(cache.layers.flatMap { $0.innerState() })
         return cache
     }
 
-    func ids(_ lease: PromptCacheLease, part: Int = 0) -> [Int] {
-        lease.cache.layers[0].state[part][0, 0, 0..., 0].asArray(Float.self).map(Int.init)
+    func ids(_ lease: PromptCacheLease, part: Int = 0, layer: Int = 0) -> [Int] {
+        lease.cache.layers[layer].state[part][0, 0, 0..., 0].asArray(Float.self).map(Int.init)
     }
 
     func branch(_ head: Int, _ count: Int) -> [Int] {
@@ -417,6 +421,41 @@ struct PromptCacheTreeTests {
         #expect(tree.lease("other", for: a) == nil)
         #expect(tree.lease("ns", for: [0]) == nil)
         #expect(pinCount(tree) == 0)
+    }
+
+    @Test("With several layers, split and assembly keep every layer's own keys and values in order")
+    func multiLayerSplitAndAssembly() throws {
+        var tree = PromptCacheTree(byteBudget: 1 << 30)
+        let a = Array(0..<10)
+        let b = Array(0..<4) + [50, 51, 52]
+        let c = Array(0..<4) + [50, 60, 61]
+        for prompt in [a, b, c] {
+            tree.store("ns", tokens: prompt, cache: cache(prompt, layers: 3))
+        }
+        #expect(tree.byteCount == (10 + 3 + 2) * 3 * Self.bytesPerToken)
+        let lease = try tree.required("ns", for: c + [99])
+        #expect(lease.reusedTokens == c.count)
+        #expect(lease.cache.layers.count == 3)
+        for layer in 0..<3 {
+            let expected = c.map { $0 + layer * Self.layerStride }
+            #expect(ids(lease, layer: layer) == expected, "layer \(layer)")
+            #expect(ids(lease, part: 1, layer: layer) == expected.map { $0 + 1 }, "layer \(layer)")
+        }
+        tree.release(lease)
+    }
+
+    @Test("A namespace whose last branch is evicted leaves no root behind")
+    func emptyNamespacesAreRemoved() {
+        var tree = PromptCacheTree(byteBudget: 100 * Self.bytesPerToken)
+        let a = branch(1, 100), b = branch(2, 100)
+        tree.store("first", tokens: a, cache: cache(a))
+        tree.store("second", tokens: b, cache: cache(b))
+        #expect(Set(tree.roots.keys) == ["second"])
+        for index in 0..<20 {
+            tree.store("credential:\(index)", tokens: a, cache: cache(a))
+        }
+        #expect(Set(tree.roots.keys) == ["credential:19"])
+        #expect(tree.byteCount == 100 * Self.bytesPerToken)
     }
 
     @Test("A shared prefix is stored once; splitting keeps the byte count exact")

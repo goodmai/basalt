@@ -51,10 +51,11 @@ package struct RESTServer: Sendable {
     /// The fully wired router, auth middleware included — also what the perimeter tests drive.
     func makeRouter() -> Router<BasicRequestContext> {
         let defaultId = config.modelId ?? config.modelPath.split(separator: "/").last.map(String.init) ?? "basalt"
+        let keyed = config.apiKey?.isEmpty == false
         return buildRouter(
-            generateController:  GenerateController(orchestrator: orchestrator, modelId: defaultId),
-            openAIController:    OpenAIController(orchestrator: orchestrator, modelId: defaultId),
-            anthropicController: AnthropicController(orchestrator: orchestrator, modelId: defaultId),
+            generateController:  GenerateController(orchestrator: orchestrator, modelId: defaultId, cachesByCredential: keyed),
+            openAIController:    OpenAIController(orchestrator: orchestrator, modelId: defaultId, cachesByCredential: keyed),
+            anthropicController: AnthropicController(orchestrator: orchestrator, modelId: defaultId, cachesByCredential: keyed),
             modelsController:    ModelsController(orchestrator: orchestrator, defaultModelId: defaultId)
         )
     }
