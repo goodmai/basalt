@@ -98,8 +98,9 @@ public actor MLXInferenceEngine: InferenceEngine {
         self.promptCaches = PromptCacheTree(byteBudget: promptCacheBytes ?? 0)
     }
 
-    func attach(_ container: ModelContainer) {
+    func attach(_ container: ModelContainer, profile: any ModelProfile = GenericProfile()) {
         self.container = container
+        self.profile = profile
         let budget = configuredPromptCacheBytes ?? PromptCacheBudget.automatic(
             workingSet: PromptCacheBudget.gpuWorkingSet(), weights: Memory.activeMemory)
         let blendBytes = cacheBlendRatio == nil ? 0 : budget / 2
@@ -238,8 +239,8 @@ public actor MLXInferenceEngine: InferenceEngine {
                 }
             }
 
-            attach(try await loadModelContainer(from: directory, using: DefaultTokenizerLoader()))
-            profile = ModelProfileRegistry.profile(forModelAt: modelPath)
+            attach(try await loadModelContainer(from: directory, using: DefaultTokenizerLoader()),
+                   profile: ModelProfileRegistry.profile(forModelAt: modelPath))
             
             // Dynamic config inspection
             if let json = ModelCache.config(at: directory) {

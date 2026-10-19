@@ -337,6 +337,65 @@ struct NemotronHTests {
         #expect(closed.filter(MLXInferenceEngine.endsInsideThinking) == [])
     }
 
+    @Test("the engine turns a Nemotron <TOOLCALL> into one structured call and stops generating once parallel calls are off")
+    func engineScansNemotronCallsAndStopsAfterOne() async throws {
+        let tools = [ToolDefinition(name: "get_weather"), ToolDefinition(name: "get_time")]
+        let single = try await Self.scriptedChunks(
+            NemotronProfile(switchesThinkingInConversation: false), tools: tools, toolChoice: ToolChoice(parallel: false))
+        #expect(single.calls.map(\.name) == ["get_weather"])
+        #expect(single.text == "Checking. ")
+        #expect(single.completionTokens < ScriptedTokenizer.script.count)
+        let parallel = try await Self.scriptedChunks(NemotronProfile(switchesThinkingInConversation: false), tools: tools)
+        #expect(parallel.calls.map(\.name) == ["get_weather", "get_time"])
+        let generic = try await Self.scriptedChunks(GenericProfile(), tools: tools)
+        #expect(generic.calls.isEmpty)
+        #expect(generic.text.hasPrefix("Checking. <TOOLCALL>"))
+    }
+
+    struct ScriptedTokenizer: MLXLMCommon.Tokenizer {
+        static let script = #"Checking. <TOOLCALL>[{"name": "get_weather", "arguments": {}}, {"name": "get_time", "arguments": {}}]</TOOLCALL> Done, and a long tail that a single-call request never generates."#
+
+        func encode(text: String, addSpecialTokens: Bool) -> [Int] { ByteTokenizer().encode(text: text, addSpecialTokens: addSpecialTokens) }
+        func decode(tokenIds: [Int], skipSpecialTokens: Bool) -> String { String(Self.script.prefix(tokenIds.count)) }
+        func convertTokenToId(_ token: String) -> Int? { nil }
+        func convertIdToToken(_ id: Int) -> String? { nil }
+        var bosToken: String? { nil }
+        var eosToken: String? { nil }
+        var unknownToken: String? { nil }
+
+        func applyChatTemplate(
+            messages: [[String: any Sendable]],
+            tools: [[String: any Sendable]]?,
+            additionalContext: [String: any Sendable]?
+        ) throws -> [Int] {
+            try ByteTokenizer().applyChatTemplate(messages: messages, tools: tools, additionalContext: additionalContext)
+        }
+    }
+
+    static func scriptedChunks(
+        _ profile: any ModelProfile, tools: [ToolDefinition], toolChoice: ToolChoice? = nil
+    ) async throws -> (text: String, calls: [ToolCallOutput], completionTokens: Int) {
+        let engine = MLXInferenceEngine()
+        await engine.attach(ModelContainer(context: ModelContext(
+            configuration: ModelConfiguration(id: "scripted"), model: try TinyModel.make(),
+            processor: ByteInputProcessor(), tokenizer: ScriptedTokenizer())), profile: profile)
+        let request = GenerationRequest(
+            prompt: "weather and time", maxTokens: ScriptedTokenizer.script.count + 20, temperature: 0,
+            tools: tools, toolChoice: toolChoice)
+        var text = ""
+        var calls: [ToolCallOutput] = []
+        var completionTokens = 0
+        for await chunk in try await engine.generateStream(request: request) {
+            switch chunk {
+            case .text(let piece): text += piece
+            case .toolCall(let call): calls.append(call)
+            case .metadata(let response): completionTokens = response.completionTokens
+            default: break
+            }
+        }
+        return (text, calls, completionTokens)
+    }
+
     @Test("chat_template.json sits between chat_template.jinja and tokenizer_config.json")
     func chatTemplateSourcePrecedence() throws {
         let dir = try Self.modelDirectory(config: Self.denseNano4BConfig)
