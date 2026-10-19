@@ -102,8 +102,14 @@ public struct GemmaProfile: ModelProfile {
 
     public init() {}
 
-    /// Gemma templates expose no reasoning knob; the policy is silently inapplicable.
-    public func templateContext(for reasoning: ReasoningPolicy) -> [String: any Sendable] { [:] }
+    /// Gemma 4's template switches thinking with `enable_thinking` (off by default); Gemma 3's ignores it.
+    public func templateContext(for reasoning: ReasoningPolicy) -> [String: any Sendable] {
+        switch reasoning {
+        case .modelDefault: return [:]
+        case .disabled:     return ["enable_thinking": false]
+        case .effort:       return ["enable_thinking": true]
+        }
+    }
 
     public var thinkingMarkers: ThinkingMarkers { .none }
 
