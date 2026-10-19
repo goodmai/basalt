@@ -109,6 +109,17 @@ struct HarnessValidatorTests {
         #expect(HarnessPath.normalized("../etc/passwd") == nil)
     }
 
+    @Test("A byte-identical copy of one admitted sibling fails the floor even when the other siblings differ a lot")
+    func duplicateOfOneSiblingAmongMany() {
+        let base = HarnessTree(files: ["CLAUDE.md": "Base."])
+        let first = base.applying(delta: ["CLAUDE.md": "Base.\nRun the tests."])
+        let second = base.applying(delta: [".claude/guardrails.md": "Never push.\nNever force.\nNever skip hooks."])
+        let third = base.applying(delta: [".claude/memory.md": "Remember the cache key.\nRemember the slug."])
+        let report = HarnessValidator.validate(first, spec: .claude, requireDiverseFrom: [first, second, third], relativeTo: base)
+        #expect(report.diversityScore == 0)
+        #expect(report.errors.contains { $0.hasPrefix("candidate diversity") })
+    }
+
     @Test("Identical sibling candidates fail the diversity floor")
     func diversity() {
         let report = HarnessValidator.validate(Self.claudeLayout, spec: .claude, requireDiverseFrom: [Self.claudeLayout])

@@ -29,17 +29,8 @@ enum HarnessDiversity {
         return 1 - Double(setA.intersection(setB).count) / Double(union)
     }
 
-    static func pairwiseDiversity(_ trees: [HarnessTree], relativeTo base: HarnessTree) -> Double {
-        guard trees.count >= 2 else { return 1 }
-        var total = 0.0
-        var pairs = 0
-        for i in trees.indices {
-            for j in trees.indices where j > i {
-                total += editJaccardDistance(trees[i], trees[j], relativeTo: base)
-                pairs += 1
-            }
-        }
-        return total / Double(pairs)
+    static func nearestSiblingDistance(_ candidate: HarnessTree, siblings: [HarnessTree], relativeTo base: HarnessTree) -> Double {
+        siblings.map { editJaccardDistance(candidate, $0, relativeTo: base) }.min() ?? 1
     }
 }
 
@@ -96,7 +87,7 @@ public enum HarnessValidator {
         let untriggered = untriggeredSkills(skills, tree: tree, spec: spec)
         var diversity: Double?
         if !siblings.isEmpty {
-            let score = HarnessDiversity.pairwiseDiversity(siblings + [tree], relativeTo: base)
+            let score = HarnessDiversity.nearestSiblingDistance(tree, siblings: siblings, relativeTo: base)
             diversity = score
             if score < spec.minDiversity {
                 errors.append(String(format: "candidate diversity %.4f is below minimum %.4f", score, spec.minDiversity))
