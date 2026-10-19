@@ -1,4 +1,5 @@
 import Foundation
+import BasaltCore
 
 public enum HarnessComponentKind: String, Codable, CaseIterable, Sendable {
     case systemPrompt = "systemprompt"
@@ -188,49 +189,6 @@ public struct HarnessTree: Codable, Sendable, Equatable {
     }
 }
 
-public struct HarnessFrontmatter: Sendable, Equatable {
-    public let fields: [String: String]
-    public let body: String
-
-    public init(fields: [String: String], body: String) {
-        self.fields = fields
-        self.body = body
-    }
-
-    public static func parse(_ content: String) -> HarnessFrontmatter? {
-        let lines = content.components(separatedBy: .newlines)
-        guard let first = lines.first?.trimmingCharacters(in: .whitespaces), first == "---" else {
-            return nil
-        }
-        var endIndex: Int?
-        for idx in 1..<lines.count {
-            if lines[idx].trimmingCharacters(in: .whitespaces) == "---" {
-                endIndex = idx
-                break
-            }
-        }
-        guard let closing = endIndex else { return nil }
-        var fields: [String: String] = [:]
-        for idx in 1..<closing {
-            let line = lines[idx].trimmingCharacters(in: .whitespaces)
-            if line.isEmpty { continue }
-            guard let colon = line.firstIndex(of: ":") else { continue }
-            let key = String(line[..<colon]).trimmingCharacters(in: .whitespaces)
-            var value = String(line[line.index(after: colon)...]).trimmingCharacters(in: .whitespaces)
-            if (value.hasPrefix("\"") && value.hasSuffix("\"")) || (value.hasPrefix("'") && value.hasSuffix("'")) {
-                if value.count >= 2 {
-                    value = String(value.dropFirst().dropLast())
-                }
-            }
-            if !key.isEmpty {
-                fields[key] = value
-            }
-        }
-        let bodyLines = closing + 1 < lines.count ? Array(lines[(closing + 1)...]) : []
-        return HarnessFrontmatter(fields: fields, body: bodyLines.joined(separator: "\n"))
-    }
-}
-
 public enum HarnessDiversity {
     public static func lineJaccardDistance(_ first: HarnessTree, _ second: HarnessTree) -> Double {
         let setA = first.serializedLines()
@@ -319,7 +277,7 @@ public enum HarnessValidator {
                 skillCount += 1
                 let parts = path.components(separatedBy: "/")
                 let expectedSkillName = parts.count >= 2 ? parts[parts.count - 2] : ""
-                guard let fm = HarnessFrontmatter.parse(content) else {
+                guard let fm = Frontmatter.parse(content) else {
                     errors.append("\(path): missing YAML frontmatter")
                     continue
                 }
@@ -339,7 +297,7 @@ public enum HarnessValidator {
                 }
             } else if (path.hasPrefix(spec.subagentsPrefix) && path.hasSuffix("/AGENT.md")) || (path.hasPrefix("agents/") && path.hasSuffix(".md")) {
                 subagentCount += 1
-                guard let fm = HarnessFrontmatter.parse(content) else {
+                guard let fm = Frontmatter.parse(content) else {
                     errors.append("\(path): missing YAML frontmatter")
                     continue
                 }
@@ -758,18 +716,15 @@ public struct HarnessKnowledgeEntry: Codable, Sendable, Equatable {
 }
 
 public actor HarnessExperienceLibrary {
-    public static let shared = HarnessExperienceLibrary()
-
     private let rootDirectory: URL
     private var entries: [HarnessKnowledgeEntry] = []
 
-    public init(rootDirectory: URL? = nil) {
-        if let rootDirectory {
-            self.rootDirectory = rootDirectory
-        } else {
-            let home = FileManager.default.homeDirectoryForCurrentUser
-            self.rootDirectory = home.appendingPathComponent(".basalt/harness-library", isDirectory: true)
-        }
+    public static var defaultRoot: URL {
+        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".basalt/harness-library", isDirectory: true)
+    }
+
+    public init(rootDirectory: URL) {
+        self.rootDirectory = rootDirectory
         self.entries = Self.loadExistingEntries(from: self.rootDirectory)
     }
 
@@ -937,7 +892,7 @@ public actor HarnessRecursionRunner {
 
     public init(
         orchestrator: ModelOrchestratorActor,
-        library: HarnessExperienceLibrary = .shared,
+        library: HarnessExperienceLibrary,
         spec: HarnessSurfaceSpec = .claude
     ) {
         self.orchestrator = orchestrator

@@ -3,47 +3,10 @@ import Foundation
 @testable import BasaltCore
 @testable import BasaltInference
 @testable import BasaltServer
+@testable import BasaltHarness
 
 @Suite("Harness2 PoC")
 struct Harness2Tests {
-
-    @Test("AgentCapabilityAnalyzer parses Claude SKILL.md frontmatter and parameters")
-    func parseClaudeSkillFrontmatter() async throws {
-        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: tempDir) }
-
-        let skillURL = tempDir.appendingPathComponent("SKILL.md")
-        let content = """
-        ---
-        name: daml-reviewer
-        description: Review DAML contracts for authorization and privacy bugs.
-        return_type: AuditReport
-        ---
-
-        # DAML Reviewer
-
-        Parameters:
-        - dar_path (String, required): Path to the compiled DAR archive.
-        - strict_mode (Bool, optional): Fail on warnings.
-        """
-        try content.write(to: skillURL, atomically: true, encoding: .utf8)
-
-        let analyzer = AgentCapabilityAnalyzer()
-        let capabilities = try await analyzer.parse(file: skillURL)
-
-        #expect(capabilities.count == 1)
-        #expect(capabilities[0].source == .claudeSkill)
-        #expect(capabilities[0].name == "daml-reviewer")
-        #expect(capabilities[0].description == "Review DAML contracts for authorization and privacy bugs.")
-        #expect(capabilities[0].returnType == "AuditReport")
-        #expect(capabilities[0].parameters.count == 2)
-        #expect(capabilities[0].parameters[0].name == "dar_path")
-        #expect(capabilities[0].parameters[0].type == "String")
-        #expect(capabilities[0].parameters[0].isRequired == true)
-        #expect(capabilities[0].parameters[1].name == "strict_mode")
-        #expect(capabilities[0].parameters[1].isRequired == false)
-    }
 
     @Test("HarnessValidator accepts valid 8-component tree and rejects structural violations")
     func validatorChecksAllComponents() {

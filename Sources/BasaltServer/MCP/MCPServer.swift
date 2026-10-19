@@ -1,5 +1,6 @@
 import Foundation
 import BasaltCore
+import BasaltHarness
 
 // MARK: — MCP over stdio (JSON-RPC 2.0, newline-delimited)
 //
@@ -74,10 +75,10 @@ public final class MCPServer: Sendable {
 
     private let orchestrator: ModelOrchestratorActor
     private let modelId: String?
-    private let library: HarnessExperienceLibrary
+    private let library: HarnessExperienceLibrary?
     private let encoder: JSONEncoder = {
         let e = JSONEncoder()
-        e.outputFormatting = [.sortedKeys]
+        e.outputFormatting = [.sortedKeys]  // stable output: AGENTS.md / AI_SETUP.md show sorted keys
         return e
     }()
     private let decoder = JSONDecoder()
@@ -86,7 +87,7 @@ public final class MCPServer: Sendable {
     public init(
         orchestrator: ModelOrchestratorActor,
         modelId: String? = nil,
-        library: HarnessExperienceLibrary = .shared,
+        library: HarnessExperienceLibrary? = nil,
         writer: @Sendable @escaping (String) -> Void = { print($0); fflush(stdout) }
     ) {
         self.orchestrator = orchestrator
@@ -301,6 +302,7 @@ public final class MCPServer: Sendable {
         if arguments == nil, let rawArgs = p["arguments"] as? String {
             guard let repaired = ToolCallRepairer.repairJSON(rawArgs),
                   let dict = try? JSONSerialization.jsonObject(with: Data(repaired.utf8)) as? [String: Any] else {
+                // Running the tool without its arguments would be a guess; say what is wrong.
                 writeError(id: id, code: -32602, message: "Tool arguments are not a JSON object and could not be repaired")
                 return
             }
@@ -431,6 +433,10 @@ public final class MCPServer: Sendable {
             writeError(id: id, code: -32602, message: "Missing required arguments: topic, content")
             return
         }
+        guard let library else {
+            writeError(id: id, code: -32603, message: "Experience Library is not configured on this server")
+            return
+        }
         let domain = (args?["domain"] as? String) ?? "general"
         let cue = (args?["cue"] as? String) ?? topic
         let confidence = (args?["confidence"] as? String) ?? "medium"
@@ -486,6 +492,10 @@ public final class MCPServer: Sendable {
     private func callHarnessLibraryQuery(id: JSONRPCId?, args: [String: Any]?) async {
         let query = args?["query"] as? String
         let domain = args?["domain"] as? String
+        guard let library else {
+            writeError(id: id, code: -32603, message: "Experience Library is not configured on this server")
+            return
+        }
         let matches = await library.query(topicOrCue: query, domain: domain)
         writeJSONResult(id: id, matches)
     }

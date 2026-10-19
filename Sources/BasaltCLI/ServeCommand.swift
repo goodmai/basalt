@@ -3,6 +3,7 @@ import ArgumentParser
 import BasaltCore
 import BasaltInference
 import BasaltServer
+import BasaltHarness
 
 // MARK: — serve (subcommand)
 
@@ -259,7 +260,8 @@ struct ServeCommand: AsyncParsableCommand {
             if startMCP {
                 let mcpServer = MCPServer(
                     orchestrator: orchestrator,
-                    modelId: resolvedPath.split(separator: "/").last.map(String.init)
+                    modelId: resolvedPath.split(separator: "/").last.map(String.init),
+                    library: HarnessExperienceLibrary(rootDirectory: HarnessExperienceLibrary.defaultRoot)
                 )
                 group.addTask { await mcpServer.run() }
             }

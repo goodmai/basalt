@@ -28,7 +28,7 @@ public actor AgentCapabilityAnalyzer {
     
     public func parse(file: URL) async throws -> [AgentCapability] {
         let content = try String(contentsOf: file, encoding: .utf8)
-        let format = detectFormat(fileName: file.lastPathComponent, content: content)
+        let format = detectFormat(file: file, content: content)
         
         switch format {
         case .agentsMd:   
@@ -36,19 +36,17 @@ public actor AgentCapabilityAnalyzer {
         case .geminiMd:   
             return try parseGeminiMd(content)
         case .claudeSkill: 
-            return try parseClaudeSkill(content)
+            return parseClaudeSkill(content, directoryName: file.deletingLastPathComponent().lastPathComponent)
         case .unknown:
             return []
         }
     }
     
-    private func detectFormat(fileName: String, content: String) -> AgentCapability.CapabilitySource {
-        let lower = fileName.lowercased()
+    private func detectFormat(file: URL, content: String) -> AgentCapability.CapabilitySource {
+        let lower = file.lastPathComponent.lowercased()
         if lower.contains("agents.md") { return .agentsMd }
         if lower.contains("gemini.md") || content.contains("<available_skills>") { return .geminiMd }
-        if lower.contains("claude-skill") || lower == "skill.md" || HarnessFrontmatter.parse(content)?.fields["name"] != nil {
-            return .claudeSkill
-        }
+        if lower.contains("claude-skill") || Self.isSkillFile(file) { return .claudeSkill }
         return .unknown
     }
     
@@ -162,45 +160,21 @@ public actor AgentCapabilityAnalyzer {
         return capabilities
     }
     
-    private func parseClaudeSkill(_ content: String) throws -> [AgentCapability] {
-        guard let frontmatter = HarnessFrontmatter.parse(content),
-              let name = frontmatter.fields["name"],
-              !name.isEmpty else {
-            return []
-        }
-        let description = frontmatter.fields["description"] ?? ""
-        let returnType = frontmatter.fields["return_type"] ?? frontmatter.fields["returnType"]
-        var params: [Parameter] = []
-        for rawLine in frontmatter.body.components(separatedBy: .newlines) {
-            let trimmed = rawLine.trimmingCharacters(in: .whitespaces)
-            guard trimmed.hasPrefix("-") else { continue }
-            let paramContent = trimmed.dropFirst().trimmingCharacters(in: .whitespaces)
-            let parts = paramContent.components(separatedBy: ":")
-            guard parts.count >= 2 else { continue }
-            let paramDesc = parts[1...].joined(separator: ":").trimmingCharacters(in: .whitespaces)
-            let nameTypePart = parts[0].trimmingCharacters(in: .whitespaces)
-            guard let startParen = nameTypePart.firstIndex(of: "("),
-                  let endParen = nameTypePart.firstIndex(of: ")"),
-                  startParen < endParen else { continue }
-            let paramName = String(nameTypePart[..<startParen]).trimmingCharacters(in: .whitespaces)
-            let typeInfo = String(nameTypePart[nameTypePart.index(after: startParen)..<endParen])
-            let typeParts = typeInfo.components(separatedBy: ",")
-            let paramType = typeParts[0].trimmingCharacters(in: .whitespaces)
-            let isRequired = typeParts.count > 1
-                ? typeParts[1].trimmingCharacters(in: .whitespaces).lowercased() == "required"
-                : false
-            if !paramName.isEmpty {
-                params.append(Parameter(name: paramName, type: paramType, isRequired: isRequired, description: paramDesc))
-            }
-        }
-        return [
-            AgentCapability(
-                name: name,
-                description: description,
-                parameters: params,
-                returnType: returnType,
-                source: .claudeSkill
-            )
-        ]
+    static func isSkillFile(_ file: URL) -> Bool {
+        file.lastPathComponent == "SKILL.md"
+            && ["skills", "skill"].contains(file.deletingLastPathComponent().deletingLastPathComponent().lastPathComponent)
+    }
+
+    private func parseClaudeSkill(_ content: String, directoryName: String) -> [AgentCapability] {
+        guard let frontmatter = Frontmatter.parse(content) else { return [] }
+        let name = frontmatter.fields["name"] ?? directoryName
+        guard !name.isEmpty else { return [] }
+        return [AgentCapability(
+            name: name,
+            description: frontmatter.fields["description"] ?? "",
+            parameters: [],
+            returnType: nil,
+            source: .claudeSkill
+        )]
     }
 }
