@@ -475,7 +475,7 @@ public final class MCPServer: Sendable {
             return
         }
         do {
-            let entry = try library.addKnowledge(
+            let entry = try await library.addKnowledge(
                 topic: topic,
                 content: content,
                 domain: args?["domain"] as? String ?? "general",
@@ -588,7 +588,7 @@ public final class MCPServer: Sendable {
             return
         }
         do {
-            writeJSONResult(id: id, try library.query(args?["query"] as? String, domain: args?["domain"] as? String))
+            writeJSONResult(id: id, try await library.query(args?["query"] as? String, domain: args?["domain"] as? String))
         } catch {
             writeError(id: id, code: -32603, message: "Cannot read the Experience Library: \(error)")
         }

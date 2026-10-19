@@ -63,7 +63,7 @@ public struct HarnessExperienceLibrary: Sendable {
         confidence: String = "medium",
         attributions: [HarnessComponentAttribution] = [],
         delta: [String: String]? = nil
-    ) throws -> HarnessKnowledgeEntry {
+    ) async throws -> HarnessKnowledgeEntry {
         let topic = Self.singleLine(topic)
         let cue = Self.singleLine(cue.isEmpty ? topic : cue)
         let domainSlug = Self.slugify(domain.isEmpty ? "general" : domain)
@@ -78,8 +78,8 @@ public struct HarnessExperienceLibrary: Sendable {
         let deltaBytes = delta.map(Self.deltaBytes) ?? 0
         try check(deltaBytes <= limits.maxDeltaBytes, "harness delta must be at most \(limits.maxDeltaBytes) bytes")
 
-        return try withLock {
-            var entries = try loadEntries()
+        return try await onLibraryQueue { try withLock {
+            var entries = try loadEntries(quarantineCorrupt: true)
             guard entries.count < limits.maxEntries else {
                 throw HarnessLibraryError.full("library holds the maximum of \(limits.maxEntries) entries")
             }
@@ -108,26 +108,34 @@ public struct HarnessExperienceLibrary: Sendable {
             let index = Self.renderIndex(domain: domainSlug, entries: entries.filter { $0.domain == domainSlug })
             try? Data(index.utf8).write(to: domainDir.appendingPathComponent("INDEX.md"), options: .atomic)
             return entry
-        }
+        } }
     }
 
-    public func query(_ text: String? = nil, domain: String? = nil) throws -> [HarnessKnowledgeEntry] {
+    public func query(_ text: String? = nil, domain: String? = nil) async throws -> [HarnessKnowledgeEntry] {
         let needle = text?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
         let domainSlug = domain.flatMap { $0.isEmpty ? nil : Self.slugify($0) }
-        return try withLock { try loadEntries() }.filter { entry in
+        return try await onLibraryQueue { try loadEntries(quarantineCorrupt: false) }.filter { entry in
             if let domainSlug, entry.domain != domainSlug { return false }
             return needle.isEmpty || [entry.topic, entry.cue, entry.content].contains { $0.lowercased().contains(needle) }
         }
     }
 
-    public func index(domain: String) throws -> String {
+    public func index(domain: String) async throws -> String {
         let domainSlug = Self.slugify(domain)
-        let indexable = try query(domain: domainSlug).filter { HarnessLeakGuard.forbiddenToken(in: $0.topic + "\n" + $0.cue) == nil }
+        let indexable = try await query(domain: domainSlug).filter { HarnessLeakGuard.forbiddenToken(in: $0.topic + "\n" + $0.cue) == nil }
         return Self.renderIndex(domain: domainSlug, entries: indexable)
     }
 
     private func check(_ condition: Bool, _ message: String) throws {
         if !condition { throw HarnessLibraryError.invalidArgument(message) }
+    }
+
+    private static let queue = DispatchQueue(label: "basalt.harness-library")
+
+    private func onLibraryQueue<T: Sendable>(_ body: @escaping @Sendable () throws -> T) async throws -> T {
+        try await withCheckedThrowingContinuation { continuation in
+            Self.queue.async { continuation.resume(with: Result { try body() }) }
+        }
     }
 
     private func withLock<T>(_ body: () throws -> T) throws -> T {
@@ -144,7 +152,7 @@ public struct HarnessExperienceLibrary: Sendable {
         return try body()
     }
 
-    private func loadEntries() throws -> [HarnessKnowledgeEntry] {
+    private func loadEntries(quarantineCorrupt: Bool) throws -> [HarnessKnowledgeEntry] {
         guard FileManager.default.fileExists(atPath: entriesURL.path) else { return [] }
         let data: Data
         do {
@@ -154,6 +162,9 @@ public struct HarnessExperienceLibrary: Sendable {
         }
         if let entries = try? JSONDecoder().decode([HarnessKnowledgeEntry].self, from: data) {
             return entries
+        }
+        guard quarantineCorrupt else {
+            throw HarnessLibraryError.io("\(entriesURL.path) is not a valid entry list; the next write moves it aside")
         }
         let quarantine = rootDirectory.appendingPathComponent("entries.json.corrupt-\(Int(Date().timeIntervalSince1970))-\(UUID().uuidString.prefix(8))")
         do {

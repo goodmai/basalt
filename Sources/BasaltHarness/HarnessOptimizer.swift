@@ -423,7 +423,15 @@ public struct HarnessOptimizer: Sendable {
         }
         var state = State(ledger: try HarnessLedger(k: k))
         let baseReport = HarnessValidator.validate(base, spec: spec)
-        let index = try library?.index(domain: task.domain) ?? ""
+        var warnings: [String] = []
+        var index = ""
+        if let library {
+            do {
+                index = try await library.index(domain: task.domain)
+            } catch {
+                warnings.append("Experience Library index not read: \(error)")
+            }
+        }
         let view = HarnessProposal.view(base, spec: spec)
         state.truncated = view.truncated
 
@@ -464,11 +472,10 @@ public struct HarnessOptimizer: Sendable {
             )
         }
         let winningDelta = state.deltas[winner.candidateId] ?? [:]
-        var warnings: [String] = []
         var librarySlug: String?
         if let library {
             do {
-                librarySlug = try library.addKnowledge(
+                librarySlug = try await library.addKnowledge(
                     topic: task.slug,
                     content: Self.lesson(winner: winner, delta: winningDelta, selection: selection),
                     domain: task.domain,

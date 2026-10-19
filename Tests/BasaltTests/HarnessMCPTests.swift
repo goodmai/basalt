@@ -134,7 +134,7 @@ struct HarnessMCPTests {
         #expect(result["winningCandidateId"] as? String == "dom_0")
         #expect(result["taskSlug"] as? String == "audit-repo")
         #expect((result["ledger"] as? [String: Any])?["rolloutIds"] as? [String] == ["base_r0", "probe_inv_0", "probe_dom_0", "probe_compose_0"])
-        #expect(try HarnessExperienceLibrary(rootDirectory: root).query(domain: "swift").count == 1)
+        #expect(try await HarnessExperienceLibrary(rootDirectory: root).query(domain: "swift").count == 1)
     }
 
     @Test("harness_optimize error paths are -32602, an unloaded model keeps its engine error code")
