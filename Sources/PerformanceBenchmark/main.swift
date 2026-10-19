@@ -70,7 +70,7 @@ struct Benchmark: AsyncParsableCommand {
             kvBits: kvBits,
             repetitionPenalty: repetitionPenalty,
             topK: topK, minP: minP, seed: seed)
-        let orchestrator = ModelOrchestratorActor(engine: engine, maxTokens: tokens)
+        let orchestrator = ModelOrchestratorActor(engine: engine, maxTokens: tokens, kvBits: kvBits)
 
         print("Loading model…", terminator: ""); fflush(stdout)
         try await orchestrator.loadModel(path: resolvedPath)

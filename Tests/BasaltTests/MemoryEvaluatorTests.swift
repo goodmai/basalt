@@ -54,7 +54,10 @@ struct MemoryEvaluatorTests {
         let r = resources(totalGB: 64, availableGB: 48)
         let short = await e.evaluate(definition: model(ramMB: 1000), resources: r, contextLength: 0)
         let long = await e.evaluate(definition: model(ramMB: 1000), resources: r, contextLength: 32768)
-        #expect(long.requiredRAMBytes - short.requiredRAMBytes == 32768 * 64 * 128 / 1024)
+        let kv = KVCacheGeometry(parameterProxy: model(ramMB: 1000).totalParameters)
+        #expect(long.requiredRAMBytes - short.requiredRAMBytes == kv.bytes(tokens: 32768))
+        let quantized = await e.evaluate(definition: model(ramMB: 1000), resources: r, contextLength: 32768, kvBits: 4)
+        #expect(quantized.requiredRAMBytes - short.requiredRAMBytes == kv.bytes(tokens: 32768, kvBits: 4))
     }
 
     @Test("Only an oversized full-precision or very large model gets the 4-bit recommendation")
@@ -77,10 +80,12 @@ struct MemoryEvaluatorTests {
             ("Foo-3B-bf16", 3 * 2000), ("no-size-in-name", 4000),
         ]
         for (name, mb) in cases {
-            let a = await e.evaluate(modelId: "\(owner)/\(name)")
+            let a = await e.evaluate(modelId: "\(owner)/\(name)", contextLength: 0)
             #expect(a.requiredRAMBytes == mb * Self.mib, "\(name)")
             #expect(a.modelName == name)
         }
+        let withContext = await e.evaluate(modelId: "\(owner)/Foo-7B-4bit", contextLength: 8192)
+        #expect(withContext.requiredRAMBytes == 7 * 550 * Self.mib + KVCacheGeometry(parameterProxy: 7).bytes(tokens: 8192))
         // 800 GB needs no particular machine to be too big; only the unquantized one is told to quantize.
         let base = await e.evaluate(modelId: "\(owner)/Huge-400B-bf16")
         #expect(base.fitLevel == .tooTight)
