@@ -35,7 +35,8 @@ public actor CloudAPIClient: Sendable {
     /// timeouts from `config` are applied on top of it.
     public init(config: CloudAPIConfig, configuration: URLSessionConfiguration = .default) {
         self.config = config
-        
+        // A copy: the caller's configuration object is not ours to mutate.
+        let configuration = configuration.copy() as! URLSessionConfiguration
         configuration.timeoutIntervalForRequest = config.timeout
         configuration.timeoutIntervalForResource = config.timeout * 2
         self.session = URLSession(configuration: configuration)

@@ -70,6 +70,30 @@ for arg in ProcessInfo.processInfo.arguments.dropFirst() {
 let fm = FileManager.default
 let currentDir = fm.currentDirectoryPath
 
+/// stdout of `git <args>`, or nil when git fails or cannot be started.
+func git(_ args: [String]) -> String? {
+    let task = Process()
+    task.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+    task.arguments = args
+    let pipe = Pipe()
+    task.standardOutput = pipe
+    task.standardError = FileHandle.nullDevice
+    guard (try? task.run()) != nil else { return nil }
+    let data = pipe.fileHandleForReading.readDataToEndOfFile()
+    task.waitUntilExit()
+    guard task.terminationStatus == 0 else { return nil }
+    return String(decoding: data, as: UTF8.self)
+}
+
+// The "never remove a tracked file" promise rests on git answering: outside the root of a
+// work tree (from $HOME, an unpacked tarball, a subdirectory) nothing would count as tracked.
+func canonical(_ path: String) -> String { URL(fileURLWithPath: path).resolvingSymlinksInPath().path }
+guard let top = git(["rev-parse", "--show-toplevel"])?.trimmingCharacters(in: .whitespacesAndNewlines),
+      canonical(top) == canonical(currentDir) else {
+    log("Run from the root of the repository's git work tree (\(currentDir) is not one).", level: .error)
+    exit(1)
+}
+
 func relative(_ path: String) -> String { path.replacingOccurrences(of: currentDir + "/", with: "") }
 
 func regexMatch(_ string: String, pattern: String) -> Bool {
@@ -77,18 +101,11 @@ func regexMatch(_ string: String, pattern: String) -> Bool {
     return regex?.firstMatch(in: string, range: NSRange(location: 0, length: string.utf16.count)) != nil
 }
 
-/// True when git tracks the path (for a directory: anything inside it).
+/// True when git tracks the path (for a directory: anything inside it). A git failure counts
+/// as tracked: when in doubt, keep the file.
 func isTracked(_ path: String) -> Bool {
-    let task = Process()
-    task.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-    task.arguments = ["ls-files", "--", relative(path)]
-    let pipe = Pipe()
-    task.standardOutput = pipe
-    task.standardError = FileHandle.nullDevice
-    guard (try? task.run()) != nil else { return false }
-    let data = pipe.fileHandleForReading.readDataToEndOfFile()
-    task.waitUntilExit()
-    return !data.isEmpty
+    guard let listed = git(["ls-files", "--", relative(path)]) else { return true }
+    return !listed.isEmpty
 }
 
 // MARK: — release
@@ -98,21 +115,32 @@ func releaseCandidates() -> [String] {
     // default.metallib is deliberately absent: the MLX runtime loads it from the repo root.
     let alwaysFiles = [".coverage", "context_latency.json", "auth.sqlite3"]
     let recursiveFilePatterns = [
-        "\\.DS_Store", ".*\\.log$", ".*\\.tmp$", ".*\\.swp$", ".*~", ".*\\.profdata$",
+        "\\.DS_Store", ".*\\.log$", ".*\\.tmp$", ".*\\.swp$", ".*~$", ".*\\.profdata$",
         "^server_.*\\.log$", "^benchmark_.*\\.json$", "^res_.*\\.json$",
     ]
     let rootFilePatterns = [".*\\.db$", ".*\\.sqlite$", ".*\\.sqlite3$"]
-    let optionalLocalPaths = [".archive", ".claude", ".gemini.md"]
+    // .claude is never removed: Claude Code keeps its worktrees there, with uncommitted work.
+    let optionalLocalPaths = [".archive", ".gemini.md"]
 
     var collected = (alwaysDirs + alwaysFiles + (includeLocal ? optionalLocalPaths : []))
         .map { currentDir + "/" + $0 }
         .filter { fm.fileExists(atPath: $0) }
 
-    if let enumerator = fm.enumerator(atPath: currentDir) {
-        for case let relPath as String in enumerator {
-            if relPath == ".git" || relPath.hasPrefix(".git/") || relPath.hasPrefix(".build/") { continue }
-            let url = URL(fileURLWithPath: currentDir + "/" + relPath)
-            if (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true { continue }
+    let root = URL(fileURLWithPath: currentDir)
+    if let enumerator = fm.enumerator(at: root, includingPropertiesForKeys: [.isDirectoryKey]) {
+        for case let url as URL in enumerator {
+            let relPath = url.path.replacingOccurrences(of: root.path + "/", with: "")
+            if (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true {
+                // Never descend into git metadata, build output, Claude Code's worktrees, or a
+                // nested work tree (a worktree or submodule has a .git file or directory):
+                // its untracked files are someone's work, not this repository's artifacts.
+                if [".git", ".build", ".claude"].contains(url.lastPathComponent)
+                    || fm.fileExists(atPath: url.appendingPathComponent(".git").path) {
+                    enumerator.skipDescendants()
+                }
+                continue
+            }
+            if url.lastPathComponent == ".git" { continue }  // a worktree's .git file at the root
             let filename = url.lastPathComponent
             if recursiveFilePatterns.contains(where: { regexMatch(filename, pattern: $0) }) {
                 collected.append(url.path)

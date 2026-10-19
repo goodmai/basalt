@@ -68,6 +68,15 @@ struct ScriptsTests {
         try write("Sources/notes.tmp")                      // release artifact
         try write("local.sqlite")                           // root runtime DB
         try write("Sources/main.swift")                     // tracked source
+        // Someone else's work: a nested work tree (a worktree has a .git file) and Claude
+        // Code's worktree dir. Their untracked files are not this repository's artifacts.
+        for dir in ["nested", ".claude/worktrees/w1"] {
+            try fm.createDirectory(at: repo.appendingPathComponent(dir), withIntermediateDirectories: true)
+        }
+        try write("nested/.git")
+        try write("nested/work.log")
+        try write(".claude/worktrees/w1/draft.tmp")
+        try write("notes~draft.md")                         // `~` mid-name is not a backup file
 
         let git = Process()
         git.executableURL = URL(fileURLWithPath: "/usr/bin/git")
@@ -94,6 +103,22 @@ struct ScriptsTests {
         #expect(!exists("Sources/notes.tmp"))
         #expect(!exists("local.sqlite"))
         #expect(exists("Sources/main.swift"))
+        #expect(exists("nested/work.log"))
+        #expect(exists(".claude/worktrees/w1/draft.tmp"))
+        #expect(exists("notes~draft.md"))
+    }
+
+    @Test("cleanup.swift refuses to run outside the root of a git work tree")
+    func testCleanupOutsideRepo() throws {
+        let fm = FileManager.default
+        let dir = fm.temporaryDirectory.appendingPathComponent("cleanup-nogit-\(UUID().uuidString)")
+        try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: dir) }
+        let file = dir.appendingPathComponent("keep.log")
+        try Data("x".utf8).write(to: file)
+        // Without git nothing could count as tracked, so --apply would delete freely.
+        #expect(runScript("scripts/cleanup.swift", args: ["--mode=all", "--apply"], in: dir) != 0)
+        #expect(fm.fileExists(atPath: file.path))
     }
     
     @Test("installer.swift runs with --help")

@@ -32,9 +32,13 @@ osv_scan() {
         fi
     done
 
-    local found=0 unchecked=0 name url version pkg response ids
+    local found=0 unchecked=0 checked=0 name url version pkg response ids
     while IFS=$'\t' read -r name url version; do
-        [[ -z "$url" || -z "$version" ]] && continue
+        if [[ -z "$url" || -z "$version" ]]; then
+            unchecked=1
+            echo "UNCHECKED   $name (no location or version in $resolved)"
+            continue
+        fi
         pkg="${url#https://}"
         pkg="${pkg%.git}"
 
@@ -46,6 +50,7 @@ osv_scan() {
             continue
         fi
 
+        checked=$((checked + 1))
         ids=$(printf '%s' "$response" | jq -r '.vulns[]?.id')
         if [[ -n "$ids" ]]; then
             found=1
@@ -59,10 +64,16 @@ import json, sys
 pins = json.load(open(sys.argv[1]))["pins"]
 for p in pins:
     state = p.get("state", {})
-    print("\t".join([p.get("identity", "?"), p.get("location", ""), state.get("version") or state.get("revision", "")]))
+    # Revision-only pins get an empty version: OSV keys versions, so they are reported UNCHECKED.
+    print("\t".join([p.get("identity", "?"), p.get("location", ""), state.get("version") or ""]))
 ' "$resolved")
 
     echo
+    # Zero pins means the parse failed (Package.resolved v1, broken JSON): nothing was checked.
+    if (( checked == 0 )); then
+        echo "OSV checked no dependency — could not read pins from $resolved."
+        return 1
+    fi
     if (( found )); then
         echo "OSV reported vulnerable dependencies — see above."
         return 1
