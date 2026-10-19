@@ -15,7 +15,7 @@ When a line seems to need a comment, change the code instead: extract a function
 
 Only directives the toolchain reads are allowed: `// swift-tools-version:` in `Package.swift` and the `#!` line of a script.
 
-Existing comments are removed when the code around them changes; a change does not add new ones. CI enforces this on every pull request: `scripts/check_no_new_comments.py` fails when the diff adds a comment line to a Swift file.
+Existing comments are removed when the code around them changes; a change does not add new ones — and a line that is moved or re-indented counts as added, so its old comment goes with the move. CI enforces this on every pull request: `scripts/check_no_new_comments.py` lexes each changed Swift file (strings, multi-line and raw strings, interpolation, nested block comments, regex literals) and fails when a comment lands on an added line.
 
 ## Pull requests
 
