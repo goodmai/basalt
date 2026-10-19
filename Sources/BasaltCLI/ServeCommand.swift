@@ -134,6 +134,9 @@ struct ServeCommand: AsyncParsableCommand {
         if let rateLimit, rateLimit < 0 {
             throw ValidationError("--rate-limit must be 0 (off) or a positive number of requests per minute, got \(rateLimit)")
         }
+        guard (0...1).contains(cacheBlendRatio) else {
+            throw ValidationError("--cache-blend-ratio must be between 0 and 1, got \(cacheBlendRatio)")
+        }
     }
 
     mutating func run() async throws {
