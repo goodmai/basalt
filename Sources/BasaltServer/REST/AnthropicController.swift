@@ -42,6 +42,10 @@ struct AnthropicController: Sendable {
             input = (try? JSONDecoder().decode(AnyCodable.self, from: Data(call.arguments.utf8))) ?? AnyCodable([String: Any]())
         }
 
+        var promptText: String? {
+            type == "image" ? ToolTranscript.imageOmitted : text
+        }
+
         var inputJSON: String {
             input.flatMap { try? Self.sortedEncoder.encode($0) }.flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
         }
@@ -93,7 +97,7 @@ struct AnthropicController: Sendable {
         var textValue: String {
             switch self {
             case .text(let s): return s
-            case .blocks(let b): return b.compactMap(\.text).joined(separator: "\n")
+            case .blocks(let b): return b.compactMap(\.promptText).joined(separator: "\n")
             }
         }
     }
@@ -123,7 +127,7 @@ struct AnthropicController: Sendable {
         var textValue: String {
             switch self {
             case .text(let s):   return s
-            case .blocks(let b): return b.compactMap(\.text).joined(separator: "\n")
+            case .blocks(let b): return b.compactMap(\.promptText).joined(separator: "\n")
             }
         }
     }
@@ -220,7 +224,10 @@ struct AnthropicController: Sendable {
         }
 
         let prompt = buildPrompt(system: dto.system, messages: dto.messages)
-        let tools = OpenAIController.functionTools(fromRequestBody: data)
+        let requested: OpenAIController.RequestedTools
+        do { requested = try OpenAIController.requestedTools(fromRequestBody: data) } catch {
+            return errorResponse(status: .badRequest, message: error.message, type: "invalid_request_error")
+        }
         let service = ServiceRequestDetector.prepare(prompt: prompt, maxTokens: dto.maxTokens, headers: request.headers)
 
         let effort: String?
@@ -241,7 +248,8 @@ struct AnthropicController: Sendable {
             dynamicTemperature: dto.dynamicTemperature,
             reasoningEffort: effort,
             isServiceRequest: service.isService,
-            tools: tools,
+            tools: requested.tools,
+            toolChoice: requested.choice,
             cacheKey: PromptCacheKey.resolve(isService: service.isService)
         )
 
@@ -451,6 +459,13 @@ struct AnthropicController: Sendable {
             if !text.isEmpty { parts.append("[System]: \(text)") }
         }
 
+        var toolNames: [String: String] = [:]
+        for case .blocks(let blocks) in messages.map(\.content) {
+            for block in blocks where block.type == "tool_use" {
+                if let id = block.id, let name = block.name { toolNames[id] = name }
+            }
+        }
+
         for msg in messages {
             let label: String
             switch msg.role {
@@ -475,9 +490,10 @@ struct AnthropicController: Sendable {
                     parts.append(ToolTranscript.call(name: block.name ?? "tool", arguments: block.inputJSON))
                 case "tool_result":
                     flushText()
-                    parts.append(ToolTranscript.result(block.content?.textValue ?? "", isError: block.isError == true))
+                    parts.append(ToolTranscript.result(block.content?.textValue ?? "", for: block.toolUseId.flatMap { toolNames[$0] },
+                                                       isError: block.isError == true))
                 default:
-                    if let t = block.text { text.append(t) }
+                    if let t = block.promptText { text.append(t) }
                 }
             }
             if text.isEmpty, !blocks.contains(where: { $0.type == "tool_use" || $0.type == "tool_result" }) {

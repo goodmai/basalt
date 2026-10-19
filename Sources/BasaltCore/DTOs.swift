@@ -29,6 +29,16 @@ public struct ToolCallOutput: Codable, Sendable, Equatable {
     }
 }
 
+public struct ToolChoice: Codable, Sendable, Equatable {
+    public let forcedTool: String?
+    public let parallel: Bool
+
+    public init(forcedTool: String? = nil, parallel: Bool = true) {
+        self.forcedTool = forcedTool
+        self.parallel = parallel
+    }
+}
+
 /// Единый DTO для генерации — используется и в MCP, и в REST (A2A).
 public struct GenerationRequest: Codable, Sendable {
     public let prompt: String
@@ -42,6 +52,7 @@ public struct GenerationRequest: Codable, Sendable {
     public let isServiceRequest: Bool?
     /// Functions offered to the model; rendered into the chat template's tool section.
     public let tools: [ToolDefinition]?
+    public let toolChoice: ToolChoice?
     public let cacheKey: String?
 
     public init(
@@ -55,6 +66,7 @@ public struct GenerationRequest: Codable, Sendable {
         reasoningEffort: String? = nil,
         isServiceRequest: Bool? = false,
         tools: [ToolDefinition]? = nil,
+        toolChoice: ToolChoice? = nil,
         cacheKey: String? = nil
     ) {
         self.prompt = prompt
@@ -67,6 +79,7 @@ public struct GenerationRequest: Codable, Sendable {
         self.reasoningEffort = reasoningEffort
         self.isServiceRequest = isServiceRequest
         self.tools = tools
+        self.toolChoice = toolChoice
         self.cacheKey = cacheKey
     }
 
@@ -84,6 +97,7 @@ public struct GenerationRequest: Codable, Sendable {
             reasoningEffort: reasoningEffort,
             isServiceRequest: isServiceRequest,
             tools: tools,
+            toolChoice: toolChoice,
             cacheKey: cacheKey
         )
     }
@@ -100,6 +114,7 @@ public struct GenerationRequest: Codable, Sendable {
             reasoningEffort: reasoningEffort,
             isServiceRequest: isServiceRequest,
             tools: tools,
+            toolChoice: toolChoice,
             cacheKey: cacheKey
         )
     }
@@ -134,6 +149,7 @@ public struct GenerationRequest: Codable, Sendable {
             reasoningEffort: reasoningEffort,
             isServiceRequest: isServiceRequest,
             tools: tools,
+            toolChoice: toolChoice,
             cacheKey: cacheKey
         )
     }

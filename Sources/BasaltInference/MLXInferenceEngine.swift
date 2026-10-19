@@ -490,6 +490,7 @@ public actor MLXInferenceEngine: InferenceEngine {
                     
                     var buffer = ""
                     var isThinking = promptEndsWithThinking
+                    var gate = ToolCallGate(request: request)
 
                     func processBuffer(final: Bool) {
                         while !buffer.isEmpty {
@@ -563,9 +564,8 @@ public actor MLXInferenceEngine: InferenceEngine {
                         case .info(let info):
                             lastInfo = info
                         case .toolCall(let call):
-                            // Text held back for marker detection belongs before the call.
                             processBuffer(final: true)
-                            continuation.yield(.toolCall(Self.toolCallOutput(call)))
+                            if let chunk = gate.admit(Self.toolCallOutput(call)) { continuation.yield(chunk) }
                         case .rejectedToolCall(let rejection):
                             processBuffer(final: true)
                             let chunk = Self.resolveRejectedToolCall(
@@ -575,7 +575,7 @@ public actor MLXInferenceEngine: InferenceEngine {
                             if case .text = chunk {
                                 GemLogger(module: "MLXInferenceEngine").warn("Tool call rejected: \(rejection.reason.rawValue)")
                             }
-                            continuation.yield(chunk)
+                            if let chunk = gate.admit(chunk) { continuation.yield(chunk) }
                         @unknown default:
                             break
                         }

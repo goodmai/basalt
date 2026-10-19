@@ -52,7 +52,9 @@ struct OpenAIController: Sendable {
         var textValue: String {
             switch self {
             case .text(let s):   return s
-            case .blocks(let b): return b.compactMap(\.text).joined(separator: "\n")
+            case .blocks(let b):
+                return b.compactMap { $0.type?.contains("image") == true ? ToolTranscript.imageOmitted : $0.text }
+                    .joined(separator: "\n")
             }
         }
     }
@@ -69,6 +71,8 @@ struct OpenAIController: Sendable {
         let input: String?
         let output: MessageContent?
         let toolCalls: [ChatToolCall]?
+        var callId: String? = nil
+        var toolCallId: String? = nil
 
         init(type: String? = nil, role: String? = nil, content: MessageContent?,
              name: String? = nil, arguments: String? = nil, input: String? = nil, output: MessageContent? = nil,
@@ -86,6 +90,22 @@ struct OpenAIController: Sendable {
         enum CodingKeys: String, CodingKey {
             case type, role, content, name, arguments, input, output
             case toolCalls = "tool_calls"
+            case callId = "call_id"
+            case toolCallId = "tool_call_id"
+        }
+
+        func encode(to encoder: Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encodeIfPresent(type, forKey: .type)
+            try c.encodeIfPresent(role, forKey: .role)
+            try c.encode(content, forKey: .content)
+            try c.encodeIfPresent(name, forKey: .name)
+            try c.encodeIfPresent(arguments, forKey: .arguments)
+            try c.encodeIfPresent(input, forKey: .input)
+            try c.encodeIfPresent(output, forKey: .output)
+            try c.encodeIfPresent(toolCalls, forKey: .toolCalls)
+            try c.encodeIfPresent(callId, forKey: .callId)
+            try c.encodeIfPresent(toolCallId, forKey: .toolCallId)
         }
     }
 
@@ -327,6 +347,10 @@ struct OpenAIController: Sendable {
             return makeErrorResponse(status: .badRequest, message: "messages must not be empty", code: 400)
         }
 
+        let requested: RequestedTools
+        do { requested = try Self.requestedTools(fromRequestBody: data) } catch {
+            return makeErrorResponse(status: .badRequest, message: error.message, code: 400)
+        }
         let prompt = messagesToPrompt(dto.messages)
         let service = ServiceRequestDetector.prepare(prompt: prompt, maxTokens: dto.maxTokens, headers: request.headers)
         let genRequest = GenerationRequest(
@@ -338,7 +362,8 @@ struct OpenAIController: Sendable {
             dynamicTemperature: dto.dynamicTemperature,
             reasoningEffort: dto.reasoningEffort,
             isServiceRequest: service.isService,
-            tools: Self.functionTools(fromRequestBody: data),
+            tools: requested.tools,
+            toolChoice: requested.choice,
             cacheKey: PromptCacheKey.resolve(isService: service.isService)
         )
         let model = dto.model.map(ModelsController.restModel(from:))
@@ -417,6 +442,10 @@ struct OpenAIController: Sendable {
         // `instructions` is the system prompt of the Responses API; dropping it loses the agent's rules.
         let prompt = dto.instructions.map { $0.isEmpty ? conversation : "[System]: \($0)\n\n\(conversation)" } ?? conversation
 
+        let requested: RequestedTools
+        do { requested = try Self.requestedTools(fromRequestBody: data) } catch {
+            return makeErrorResponse(status: .badRequest, message: error.message, code: 400)
+        }
         let maxT = dto.maxOutputTokens ?? dto.maxTokens
         let service = ServiceRequestDetector.prepare(prompt: prompt, maxTokens: maxT, headers: request.headers)
 
@@ -429,7 +458,8 @@ struct OpenAIController: Sendable {
             dynamicTemperature: dto.dynamicTemperature,
             reasoningEffort: dto.effectiveReasoningEffort,
             isServiceRequest: service.isService,
-            tools: Self.functionTools(fromRequestBody: data),
+            tools: requested.tools,
+            toolChoice: requested.choice,
             cacheKey: PromptCacheKey.resolve(isService: service.isService)
         )
         let model = dto.model.map(ModelsController.restModel(from:))
@@ -750,21 +780,35 @@ struct OpenAIController: Sendable {
 
     // MARK: — Tools
 
-    static func functionTools(fromRequestBody data: Data) -> [ToolDefinition]? {
-        guard let body = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+    struct RequestedTools {
+        var tools: [ToolDefinition]?
+        var choice: ToolChoice?
+    }
+
+    struct UndeclaredForcedTool: Error {
+        let name: String
+        var message: String { "tool_choice names \(name), which is not in tools" }
+    }
+
+    static func requestedTools(fromRequestBody data: Data) throws(UndeclaredForcedTool) -> RequestedTools {
+        guard let body = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return RequestedTools() }
         let choice = body["tool_choice"] as? [String: Any]
-        if ((body["tool_choice"] as? String) ?? (choice?["type"] as? String)) == "none" { return nil }
+        if ((body["tool_choice"] as? String) ?? (choice?["type"] as? String)) == "none" { return RequestedTools() }
         let forced = ((choice?["function"] as? [String: Any])?["name"] as? String) ?? (choice?["name"] as? String)
+        let parallel = body["parallel_tool_calls"] as? Bool != false && choice?["disable_parallel_tool_use"] as? Bool != true
         let raw = ((body["tools"] as? [[String: Any]]) ?? []) + ((body["additional_tools"] as? [[String: Any]]) ?? [])
         let tools: [ToolDefinition] = raw.compactMap { entry in
             guard entry["type"] as? String == "function" || entry["input_schema"] != nil else { return nil }
             let spec = (entry["function"] as? [String: Any]) ?? entry
-            guard let name = spec["name"] as? String, !name.isEmpty, forced == nil || forced == name else { return nil }
-            let parameters = (spec["parameters"] ?? spec["input_schema"]).flatMap { try? JSONSerialization.data(withJSONObject: $0) }
+            guard let name = spec["name"] as? String, !name.isEmpty else { return nil }
+            let parameters = (spec["parameters"] ?? spec["input_schema"])
+                .flatMap { try? JSONSerialization.data(withJSONObject: $0, options: [.sortedKeys, .withoutEscapingSlashes]) }
                 .flatMap { String(data: $0, encoding: .utf8) }
             return ToolDefinition(name: name, description: spec["description"] as? String, parametersJSON: parameters)
         }
-        return tools.isEmpty ? nil : tools
+        if let forced, !tools.contains(where: { $0.name == forced }) { throw UndeclaredForcedTool(name: forced) }
+        return RequestedTools(tools: tools.isEmpty ? nil : tools,
+                              choice: forced == nil && parallel ? nil : ToolChoice(forcedTool: forced, parallel: parallel))
     }
 
     // MARK: — Prompt
@@ -777,6 +821,11 @@ struct OpenAIController: Sendable {
     /// whole generation, so every token lands in the reasoning channel and
     /// `generatedText` comes back empty. Mirrors AnthropicController.buildPrompt.
     private func messagesToPrompt(_ messages: [ChatMessage]) -> String {
+        var toolNames: [String: String] = [:]
+        for msg in messages {
+            if let id = msg.callId, let name = msg.name { toolNames[id] = name }
+            for call in msg.toolCalls ?? [] { if let id = call.id { toolNames[id] = call.function.name } }
+        }
         var parts: [String] = []
         for msg in messages {
             // Responses API history items: keep tool calls and their results in the transcript,
@@ -786,7 +835,7 @@ struct OpenAIController: Sendable {
                 parts.append(ToolTranscript.call(name: msg.name ?? "tool", arguments: msg.arguments ?? msg.input ?? "{}"))
                 continue
             case "function_call_output", "custom_tool_call_output":
-                parts.append(ToolTranscript.result(msg.output?.textValue ?? ""))
+                parts.append(ToolTranscript.result(msg.output?.textValue ?? "", for: msg.callId.flatMap { toolNames[$0] }))
                 continue
             case "reasoning":
                 continue
@@ -796,7 +845,7 @@ struct OpenAIController: Sendable {
             let text = msg.content?.textValue ?? ""
             let role = msg.role ?? "user"
             if role == "tool" {
-                parts.append(ToolTranscript.result(text))
+                parts.append(ToolTranscript.result(text, for: msg.toolCallId.flatMap { toolNames[$0] }))
                 continue
             }
             if !text.isEmpty {

@@ -65,7 +65,7 @@ struct CodingAgentAPITests {
         #expect(sent.prompt.hasPrefix("[System]: Be terse."))
         #expect(sent.prompt.contains("[User]: list files"))
         #expect(sent.prompt.contains(#"[Assistant called shell]: {"cmd":"ls"}"#))
-        #expect(sent.prompt.contains("[Tool result]: README.md"))
+        #expect(sent.prompt.contains("[Tool result for shell]: README.md"))
         #expect(sent.reasoningEffort == "low")
     }
 
@@ -179,7 +179,7 @@ struct CodingAgentAPITests {
             }
         }
         let prompt = try #require(await engine.lastRequest?.prompt)
-        #expect(prompt.contains("[Tool result]: screenshot taken"))
+        #expect(prompt.contains("[Tool result]: screenshot taken\n[image omitted]"))
         #expect(prompt.contains("[Assistant called apply_patch]: *** Begin Patch"))
     }
 
@@ -254,18 +254,61 @@ struct CodingAgentAPITests {
         #expect((parameters["required"] as? [any Sendable])?.first as? String == "cmd")
     }
 
-    @Test("tool_choice none offers no tools; a named tool_choice offers only that tool")
-    func toolChoice() {
+    @Test("tool_choice none offers no tools; a named tool keeps every tool and is enforced by the gate; parallel can be turned off")
+    func toolChoice() throws {
         let tools = #"[{"type": "function", "name": "shell"}, {"type": "function", "name": "read"}, {"name": "edit", "input_schema": {"type": "object"}}]"#
-        let parse = { (choice: String) in
-            OpenAIController.functionTools(fromRequestBody: Data("{\"tools\": \(tools), \"tool_choice\": \(choice)}".utf8))?.map(\.name)
+        let parse = { (extra: String) throws in
+            try OpenAIController.requestedTools(fromRequestBody: Data("{\"tools\": \(tools), \(extra)}".utf8))
         }
-        #expect(parse(#""auto""#) == ["shell", "read", "edit"])
-        #expect(parse(#""none""#) == nil)
-        #expect(parse(#"{"type": "none"}"#) == nil)
-        #expect(parse(#"{"type": "tool", "name": "edit"}"#) == ["edit"])
-        #expect(parse(#"{"type": "function", "function": {"name": "read"}}"#) == ["read"])
-        #expect(parse(#"{"type": "function", "name": "shell"}"#) == ["shell"])
+        #expect(try parse(#""tool_choice": "auto""#).tools?.map(\.name) == ["shell", "read", "edit"])
+        #expect(try parse(#""tool_choice": "auto""#).choice == nil)
+        #expect(try parse(#""tool_choice": "none""#).tools == nil)
+        #expect(try parse(#""tool_choice": {"type": "none"}"#).tools == nil)
+        for (choice, name) in [(#"{"type": "tool", "name": "edit"}"#, "edit"),
+                               (#"{"type": "function", "function": {"name": "read"}}"#, "read"),
+                               (#"{"type": "function", "name": "shell"}"#, "shell")] {
+            let requested = try parse("\"tool_choice\": \(choice)")
+            #expect(requested.tools?.count == 3)
+            #expect(requested.choice == ToolChoice(forcedTool: name))
+        }
+        #expect(throws: OpenAIController.UndeclaredForcedTool.self) { try parse(#""tool_choice": {"type": "tool", "name": "rm"}"#) }
+        #expect(try parse(#""parallel_tool_calls": false"#).choice == ToolChoice(parallel: false))
+        #expect(try parse(#""tool_choice": {"type": "auto", "disable_parallel_tool_use": true}"#).choice == ToolChoice(parallel: false))
+    }
+
+    @Test("Tool schemas are serialized with sorted keys, so the same tools render the same prompt")
+    func toolSchemaSortedKeys() throws {
+        let body = #"{"tools": [{"type": "function", "name": "f", "parameters": {"type": "object", "required": ["b"], "properties": {"b": {}}}}]}"#
+        let schema = try #require(try OpenAIController.requestedTools(fromRequestBody: Data(body.utf8)).tools?.first?.parametersJSON)
+        #expect(schema == #"{"properties":{"b":{}},"required":["b"],"type":"object"}"#)
+    }
+
+    @Test("The tool-call gate passes declared calls, turns undeclared or non-forced ones into a visible note, and drops extra calls when parallel is off")
+    func toolCallGate() {
+        let tools = [ToolDefinition(name: "shell"), ToolDefinition(name: "read")]
+        let call = { (name: String) in ToolCallOutput(id: "c", name: name, arguments: "{}") }
+        func names(_ chunks: [StreamChunk?]) -> [String] {
+            chunks.map { chunk in
+                switch chunk {
+                case .toolCall(let c): return c.name
+                case .text(let t): return t
+                case nil: return "dropped"
+                default: return "other"
+                }
+            }
+        }
+        var open = ToolCallGate(request: GenerationRequest(prompt: "p", tools: tools))
+        #expect(names([open.admit(call("shell")), open.admit(call("read")), open.admit(call("rm"))])
+                == ["shell", "read", "\n[tool call to rm rejected: undeclared]"])
+        var none = ToolCallGate(request: GenerationRequest(prompt: "p"))
+        #expect(names([none.admit(call("shell"))]) == ["\n[tool call to shell rejected: undeclared]"])
+        var forced = ToolCallGate(request: GenerationRequest(prompt: "p", tools: tools, toolChoice: ToolChoice(forcedTool: "read")))
+        #expect(names([forced.admit(call("shell")), forced.admit(call("read"))])
+                == ["\n[tool call to shell rejected: tool_choice is read]", "read"])
+        var single = ToolCallGate(request: GenerationRequest(prompt: "p", tools: tools, toolChoice: ToolChoice(parallel: false)))
+        #expect(names([single.admit(call("shell")), single.admit(call("read"))]) == ["shell", "dropped"])
+        var passthrough = ToolCallGate(request: GenerationRequest(prompt: "p"))
+        #expect(names([passthrough.admit(StreamChunk.text("hi"))]) == ["hi"])
     }
 
     @Test("A tool call streams as a function_call item and is the whole output when there is no text")
@@ -349,10 +392,10 @@ struct CodingAgentAPITests {
 @Suite("Tool calling on /v1/messages and /v1/chat/completions (#73)")
 struct ToolCallingEndpointsTests {
 
-    private func app(call: ToolCallOutput? = nil, text: String = "", reasoning: String? = nil) async throws -> (Application<RouterResponder<BasicRequestContext>>, MockInferenceEngine) {
+    private func app(call: ToolCallOutput? = nil, calls: [ToolCallOutput] = [], text: String = "", reasoning: String? = nil) async throws -> (Application<RouterResponder<BasicRequestContext>>, MockInferenceEngine) {
         let engine = MockInferenceEngine()
         await engine.setMockReasoning(reasoning)
-        if let call { await engine.setMockToolCall(call, text: text) }
+        if call != nil || !calls.isEmpty { await engine.setMockToolCalls((call.map { [$0] } ?? []) + calls, text: text) }
         let orch = ModelOrchestratorActor(engine: engine, telemetry: TelemetryTracker())
         try await orch.loadModel(path: "mock")
         let server = RESTServer(orchestrator: orch, config: try ServerConfig(modelPath: "mock"))
@@ -380,10 +423,18 @@ struct ToolCallingEndpointsTests {
     }
 
     private let call = ToolCallOutput(id: "call_abc", name: "Bash", arguments: #"{"command":"ls"}"#)
+    private let second = ToolCallOutput(id: "call_def", name: "Read", arguments: #"{"file_path":"a.txt"}"#)
+
+    private func status(_ app: Application<RouterResponder<BasicRequestContext>>, _ uri: String, _ json: String) async throws -> HTTPResponse.Status {
+        try await app.test(.router) { client in
+            try await client.execute(uri: uri, method: .post, headers: [.contentType: "application/json"], body: ByteBuffer(string: json)) { $0.status }
+        }
+    }
 
     private let anthropicTools = #"""
     "tools": [{"name": "Bash", "description": "Run a shell command",
-               "input_schema": {"type": "object", "properties": {"command": {"type": "string"}}, "required": ["command"]}}]
+               "input_schema": {"type": "object", "properties": {"command": {"type": "string"}}, "required": ["command"]}},
+              {"name": "Read", "input_schema": {"type": "object", "properties": {"file_path": {"type": "string"}}}}]
     """#
 
     @Test("Messages: tools reach the engine; tool_use and tool_result history is rendered into the prompt")
@@ -403,13 +454,13 @@ struct ToolCallingEndpointsTests {
         """# + anthropicTools + "}"
         _ = try await post(app, "/v1/messages", request)
         let sent = try #require(await engine.lastRequest)
-        #expect(sent.tools?.map(\.name) == ["Bash"])
+        #expect(sent.tools?.map(\.name) == ["Bash", "Read"])
         #expect(sent.tools?.first?.parametersJSON?.contains("\"command\"") == true)
         let expected = [
             "[User]: list files",
             "[Assistant]: Listing.",
             #"[Assistant called Bash]: {"command":"ls"}"#,
-            "[Tool result]: a.txt\nb.txt",
+            "[Tool result for Bash]: a.txt\nb.txt",
             "[Tool error]: denied",
             "[User]: how many?"
         ].joined(separator: "\n\n")
@@ -486,7 +537,8 @@ struct ToolCallingEndpointsTests {
 
     private let openAITools = #"""
     "tools": [{"type": "function", "function": {"name": "Bash", "description": "Run a shell command",
-               "parameters": {"type": "object", "properties": {"command": {"type": "string"}}}}}]
+               "parameters": {"type": "object", "properties": {"command": {"type": "string"}}}}},
+              {"type": "function", "function": {"name": "Read", "parameters": {"type": "object"}}}]
     """#
 
     @Test("Chat: tools reach the engine; assistant tool_calls and tool messages are rendered into the prompt")
@@ -503,11 +555,11 @@ struct ToolCallingEndpointsTests {
         """# + openAITools + "}"
         _ = try await post(app, "/v1/chat/completions", request)
         let sent = try #require(await engine.lastRequest)
-        #expect(sent.tools?.map(\.name) == ["Bash"])
+        #expect(sent.tools?.map(\.name) == ["Bash", "Read"])
         let expected = [
             "[User]: list files",
             #"[Assistant called Bash]: {"command":"ls"}"#,
-            "[Tool result]: a.txt\nb.txt",
+            "[Tool result for Bash]: a.txt\nb.txt",
             "[User]: how many?"
         ].joined(separator: "\n\n")
         #expect(sent.prompt == expected)
@@ -529,7 +581,8 @@ struct ToolCallingEndpointsTests {
         let choice = try #require((json["choices"] as? [[String: Any]])?.first)
         #expect(choice["finish_reason"] as? String == "tool_calls")
         let message = try #require(choice["message"] as? [String: Any])
-        #expect(message["content"] as? String == nil)
+        #expect(message.keys.contains("content"))
+        #expect(message["content"] is NSNull)
         let calls = try #require(message["tool_calls"] as? [[String: Any]])
         #expect(calls.count == 1)
         #expect(calls[0]["id"] as? String == "call_abc")
@@ -567,5 +620,130 @@ struct ToolCallingEndpointsTests {
         let raw = try await post(app, "/v1/chat/completions", #"{"stream": true, "messages": [{"role": "user", "content": "hi"}]}"#)
         let last = dataFrames(raw).compactMap { ($0["choices"] as? [[String: Any]])?.first }.last
         #expect(last?["finish_reason"] as? String == "length")
+    }
+
+    @Test("Messages: parallel tool results are matched to their calls by tool_use_id, not by order; images become a visible note")
+    func messagesParallelHistory() async throws {
+        let (app, engine) = try await app()
+        let request = #"""
+        {"max_tokens": 64, "messages": [
+          {"role": "user", "content": "go"},
+          {"role": "assistant", "content": [
+            {"type": "tool_use", "id": "toolu_a", "name": "Bash", "input": {"command": "ls"}},
+            {"type": "tool_use", "id": "toolu_b", "name": "Read", "input": {"file_path": "a.png"}}]},
+          {"role": "user", "content": [
+            {"type": "tool_result", "tool_use_id": "toolu_b", "content": [{"type": "image", "source": {"type": "base64", "data": "x"}}]},
+            {"type": "tool_result", "tool_use_id": "toolu_a", "content": "a.png"}]}
+        ], 
+        """# + anthropicTools + "}"
+        _ = try await post(app, "/v1/messages", request)
+        let prompt = try #require(await engine.lastRequest?.prompt)
+        #expect(prompt.hasSuffix("[Tool result for Read]: [image omitted]\n\n[Tool result for Bash]: a.png"), "\(prompt)")
+    }
+
+    @Test("Chat: parallel tool results are matched by tool_call_id")
+    func chatParallelHistory() async throws {
+        let (app, engine) = try await app()
+        let request = #"""
+        {"messages": [
+          {"role": "user", "content": "go"},
+          {"role": "assistant", "content": null, "tool_calls": [
+            {"id": "call_a", "type": "function", "function": {"name": "Bash", "arguments": "{}"}},
+            {"id": "call_b", "type": "function", "function": {"name": "Read", "arguments": "{}"}}]},
+          {"role": "tool", "tool_call_id": "call_b", "content": "contents"},
+          {"role": "tool", "tool_call_id": "call_a", "content": "a.txt"}
+        ], 
+        """# + openAITools + "}"
+        _ = try await post(app, "/v1/chat/completions", request)
+        let prompt = try #require(await engine.lastRequest?.prompt)
+        #expect(prompt.hasSuffix("[Tool result for Read]: contents\n\n[Tool result for Bash]: a.txt"), "\(prompt)")
+    }
+
+    @Test("Messages non-streaming: two calls are two tool_use blocks")
+    func messagesTwoCallsNonStream() async throws {
+        let (app, _) = try await app(calls: [call, second])
+        let json = try object(try await post(app, "/v1/messages",
+            #"{"max_tokens": 64, "messages": [{"role": "user", "content": "ls"}], "# + anthropicTools + "}"))
+        let content = try #require(json["content"] as? [[String: Any]])
+        #expect(content.compactMap { $0["name"] as? String } == ["Bash", "Read"])
+        #expect(content.compactMap { $0["id"] as? String } == ["toolu_abc", "toolu_def"])
+        #expect(json["stop_reason"] as? String == "tool_use")
+    }
+
+    @Test("Messages stream: two calls are two tool_use blocks at indices 0 and 1")
+    func messagesTwoCallsStream() async throws {
+        let (app, _) = try await app(calls: [call, second])
+        let raw = try await post(app, "/v1/messages",
+            #"{"max_tokens": 64, "stream": true, "messages": [{"role": "user", "content": "ls"}], "# + anthropicTools + "}")
+        let evs = dataFrames(raw)
+        let starts = evs.filter { $0["type"] as? String == "content_block_start" }
+        #expect(starts.compactMap { $0["index"] as? Int } == [0, 1])
+        #expect(starts.compactMap { ($0["content_block"] as? [String: Any])?["name"] as? String } == ["Bash", "Read"])
+        let deltas = evs.filter { $0["type"] as? String == "content_block_delta" }
+        #expect(deltas.compactMap { $0["index"] as? Int } == [0, 1])
+        #expect(deltas.compactMap { ($0["delta"] as? [String: Any])?["partial_json"] as? String } == [call.arguments, second.arguments])
+    }
+
+    @Test("Chat non-streaming: two calls are two message.tool_calls entries")
+    func chatTwoCallsNonStream() async throws {
+        let (app, _) = try await app(calls: [call, second])
+        let json = try object(try await post(app, "/v1/chat/completions",
+            #"{"messages": [{"role": "user", "content": "ls"}], "# + openAITools + "}"))
+        let message = try #require(((json["choices"] as? [[String: Any]])?.first)?["message"] as? [String: Any])
+        let calls = try #require(message["tool_calls"] as? [[String: Any]])
+        #expect(calls.compactMap { $0["id"] as? String } == ["call_abc", "call_def"])
+    }
+
+    @Test("Chat stream: two calls are delta.tool_calls with indices 0 and 1")
+    func chatTwoCallsStream() async throws {
+        let (app, _) = try await app(calls: [call, second])
+        let raw = try await post(app, "/v1/chat/completions",
+            #"{"stream": true, "messages": [{"role": "user", "content": "ls"}], "# + openAITools + "}")
+        let deltas = dataFrames(raw).compactMap { (($0["choices"] as? [[String: Any]])?.first)?["delta"] as? [String: Any] }
+        let toolCalls = deltas.compactMap { ($0["tool_calls"] as? [[String: Any]])?.first }
+        #expect(toolCalls.compactMap { $0["index"] as? Int } == [0, 1])
+        #expect(toolCalls.compactMap { $0["id"] as? String } == ["call_abc", "call_def"])
+        #expect(toolCalls.compactMap { ($0["function"] as? [String: Any])?["name"] as? String } == ["Bash", "Read"])
+    }
+
+    @Test("parallel_tool_calls false and disable_parallel_tool_use pass only the first call")
+    func parallelOff() async throws {
+        let (app, _) = try await app(calls: [call, second])
+        let chat = try object(try await post(app, "/v1/chat/completions",
+            #"{"parallel_tool_calls": false, "messages": [{"role": "user", "content": "ls"}], "# + openAITools + "}"))
+        let message = try #require(((chat["choices"] as? [[String: Any]])?.first)?["message"] as? [String: Any])
+        #expect((message["tool_calls"] as? [[String: Any]])?.count == 1)
+        let messages = try object(try await post(app, "/v1/messages",
+            #"{"max_tokens": 64, "tool_choice": {"type": "auto", "disable_parallel_tool_use": true}, "messages": [{"role": "user", "content": "ls"}], "# + anthropicTools + "}"))
+        #expect((messages["content"] as? [[String: Any]])?.compactMap { $0["name"] as? String } == ["Bash"])
+    }
+
+    @Test("A call to a tool outside tool_choice reaches the client as the visible rejection note, not as a call")
+    func undeclaredCallBecomesNote() async throws {
+        let (app, engine) = try await app(call: call)
+        let json = try object(try await post(app, "/v1/messages",
+            #"{"max_tokens": 64, "tool_choice": {"type": "tool", "name": "Read"}, "messages": [{"role": "user", "content": "ls"}], "# + anthropicTools + "}"))
+        #expect(await engine.lastRequest?.tools?.map(\.name) == ["Bash", "Read"])
+        #expect(json["stop_reason"] as? String == "end_turn")
+        let content = try #require(json["content"] as? [[String: Any]])
+        #expect(content.map { $0["type"] as? String } == ["text"])
+        #expect((content.first?["text"] as? String)?.hasSuffix("[tool call to Bash rejected: tool_choice is Read]") == true)
+
+        let chat = try object(try await post(app, "/v1/chat/completions",
+            #"{"tool_choice": "none", "messages": [{"role": "user", "content": "ls"}], "# + openAITools + "}"))
+        let choice = try #require((chat["choices"] as? [[String: Any]])?.first)
+        #expect(choice["finish_reason"] as? String == "stop")
+        #expect(((choice["message"] as? [String: Any])?["content"] as? String)?.contains("[tool call to Bash rejected: undeclared]") == true)
+    }
+
+    @Test("A forced tool that is not declared is a 400 on every endpoint")
+    func forcedUndeclaredIs400() async throws {
+        let (app, _) = try await app()
+        #expect(try await status(app, "/v1/messages",
+            #"{"max_tokens": 64, "tool_choice": {"type": "tool", "name": "rm"}, "messages": [{"role": "user", "content": "x"}], "# + anthropicTools + "}") == .badRequest)
+        #expect(try await status(app, "/v1/chat/completions",
+            #"{"tool_choice": {"type": "function", "function": {"name": "rm"}}, "messages": [{"role": "user", "content": "x"}], "# + openAITools + "}") == .badRequest)
+        #expect(try await status(app, "/v1/responses",
+            #"{"input": "x", "tool_choice": {"type": "function", "name": "rm"}}"#) == .badRequest)
     }
 }
