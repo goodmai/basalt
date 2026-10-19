@@ -248,9 +248,21 @@ public enum HarnessLoadError: Error, Equatable, CustomStringConvertible {
     }
 }
 
+public struct HarnessSkippedFile: Sendable, Equatable, CustomStringConvertible {
+    public let path: String
+    public let reason: String
+
+    public init(path: String, reason: String) {
+        self.path = path
+        self.reason = reason
+    }
+
+    public var description: String { "\(path): \(reason)" }
+}
+
 public struct LoadedHarness: Sendable {
     public let tree: HarnessTree
-    public let skipped: [String]
+    public let skipped: [HarnessSkippedFile]
 }
 
 public enum HarnessLoader {
@@ -300,20 +312,20 @@ public enum HarnessLoader {
                 }
             }
         }
-        return LoadedHarness(tree: HarnessTree(files: reader.files), skipped: reader.skipped.sorted())
+        return LoadedHarness(tree: HarnessTree(files: reader.files), skipped: reader.skipped.sorted { $0.description < $1.description })
     }
 
     public static func inline(_ files: [String: String], limits: HarnessLoadLimits = .standard) throws -> LoadedHarness {
         guard files.count <= limits.maxFiles else { throw HarnessLoadError.tooManyFiles(limit: limits.maxFiles) }
         var kept: [String: String] = [:]
-        var skipped: [String] = []
+        var skipped: [HarnessSkippedFile] = []
         var totalBytes = 0
         for path in files.keys.sorted() {
             let size = files[path]!.utf8.count
             totalBytes += size
             guard totalBytes <= limits.maxTotalBytes else { throw HarnessLoadError.tooManyBytes(limit: limits.maxTotalBytes) }
             if size > limits.maxFileBytes {
-                skipped.append("\(path): \(size) bytes exceeds the \(limits.maxFileBytes)-byte file limit")
+                skipped.append(HarnessSkippedFile(path: path, reason: "\(size) bytes exceeds the \(limits.maxFileBytes)-byte file limit"))
             } else {
                 kept[path] = files[path]
             }
@@ -330,7 +342,7 @@ public enum HarnessLoader {
         let base: URL
         let limits: HarnessLoadLimits
         var files: [String: String] = [:]
-        var skipped: [String] = []
+        var skipped: [HarnessSkippedFile] = []
         var totalBytes = 0
         var visited = 0
 
@@ -348,7 +360,7 @@ public enum HarnessLoader {
             let resolved = base.appendingPathComponent(path).resolvingSymlinksInPath().standardizedFileURL
             guard FileManager.default.fileExists(atPath: resolved.path) else { return }
             guard HarnessLoader.contains(base, resolved) else {
-                skipped.append("\(path): resolves outside the harness root")
+                skipped.append(HarnessSkippedFile(path: path, reason: "resolves outside the harness root"))
                 return
             }
             let descriptor = open(resolved.path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK)
@@ -357,7 +369,7 @@ public enum HarnessLoader {
             var info = stat()
             guard fstat(descriptor, &info) == 0, info.st_mode & S_IFMT == S_IFREG else { return }
             guard info.st_size <= limits.maxFileBytes else {
-                skipped.append("\(path): \(info.st_size) bytes exceeds the \(limits.maxFileBytes)-byte file limit")
+                skipped.append(HarnessSkippedFile(path: path, reason: "\(info.st_size) bytes exceeds the \(limits.maxFileBytes)-byte file limit"))
                 return
             }
             guard files.count < limits.maxFiles else { throw HarnessLoadError.tooManyFiles(limit: limits.maxFiles) }
@@ -365,11 +377,11 @@ public enum HarnessLoader {
             totalBytes += data.count
             guard totalBytes <= limits.maxTotalBytes else { throw HarnessLoadError.tooManyBytes(limit: limits.maxTotalBytes) }
             guard data.count <= limits.maxFileBytes else {
-                skipped.append("\(path): grew past the \(limits.maxFileBytes)-byte file limit while being read")
+                skipped.append(HarnessSkippedFile(path: path, reason: "grew past the \(limits.maxFileBytes)-byte file limit while being read"))
                 return
             }
             guard let text = String(data: data, encoding: .utf8) else {
-                skipped.append("\(path): not UTF-8 text")
+                skipped.append(HarnessSkippedFile(path: path, reason: "not UTF-8 text"))
                 return
             }
             files[path] = text

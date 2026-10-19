@@ -117,7 +117,7 @@ struct HarnessOptimizeCommand: AsyncParsableCommand {
         var tokens = HarnessOptimizer.TokenBudgets()
         tokens.proposer = proposerMaxTokens
         let result = try await HarnessOptimizer(orchestrator: orchestrator, spec: spec, library: libraryStore, tokens: tokens)
-            .optimize(task: harnessTask, base: loaded.tree, k: k)
+            .optimize(task: harnessTask, base: loaded.tree, k: k, skipped: loaded.skipped)
         try printJSON(result)
     }
 }

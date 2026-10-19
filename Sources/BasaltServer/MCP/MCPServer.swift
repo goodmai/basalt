@@ -505,7 +505,7 @@ public final class MCPServer: Sendable {
         }
     }
 
-    private func harnessInput(id: JSONRPCId?, args: [String: Any]?) -> (spec: HarnessSurfaceSpec, tree: HarnessTree, skipped: [String])? {
+    private func harnessInput(id: JSONRPCId?, args: [String: Any]?) -> (spec: HarnessSurfaceSpec, tree: HarnessTree, skipped: [HarnessSkippedFile])? {
         let surfaceName = args?["surface"] as? String ?? "claude"
         guard var spec = HarnessSurfaceSpec.named(surfaceName) else {
             let known = HarnessSurfaceSpec.all.map(\.name).joined(separator: ", ")
@@ -592,7 +592,7 @@ public final class MCPServer: Sendable {
             var tokens = HarnessOptimizer.TokenBudgets()
             tokens.proposer = proposerMaxTokens as? Int
             let result = try await HarnessOptimizer(orchestrator: orchestrator, spec: input.spec, library: library, tokens: tokens)
-                .optimize(task: task, base: input.tree, k: k)
+                .optimize(task: task, base: input.tree, k: k, skipped: input.skipped)
             writeJSONResult(id: id, result)
         } catch let error as BasaltError {
             writeError(id: id, code: errorCode(for: error), message: error.localizedDescription)

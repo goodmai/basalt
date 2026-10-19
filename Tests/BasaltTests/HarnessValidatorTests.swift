@@ -173,7 +173,7 @@ struct HarnessLoaderTests {
 
         let loaded = try HarnessLoader.load(root: root, spec: .claude, allowedRoots: [root])
         #expect(Set(loaded.tree.files.keys) == Set(HarnessValidatorTests.claudeLayout.files.keys))
-        #expect(loaded.skipped == [".claude/huge.md: 300000 bytes exceeds the 262144-byte file limit"])
+        #expect(loaded.skipped.map(\.description) == [".claude/huge.md: 300000 bytes exceeds the 262144-byte file limit"])
     }
 
     @Test("The working directory is an allowed root unless it is / or $HOME; BASALT_HARNESS_ROOTS can still list them")
@@ -231,7 +231,7 @@ struct HarnessLoaderTests {
         }
         let roomy = HarnessLoadLimits(maxFiles: 100, maxFileBytes: 4096, maxTotalBytes: layoutBytes + 600, maxDepth: 8)
         let loaded = try HarnessLoader.load(root: root, spec: .claude, allowedRoots: [root], limits: roomy)
-        #expect(loaded.skipped == [".claude/blob.bin: not UTF-8 text"])
+        #expect(loaded.skipped.map(\.description) == [".claude/blob.bin: not UTF-8 text"])
     }
 
     @Test("Claude Code worktrees under .claude/worktrees are not read as part of the harness; a FIFO is ignored")
@@ -259,7 +259,7 @@ struct HarnessLoaderTests {
         }
         let loaded = try HarnessLoader.inline(["CLAUDE.md": "short", "big.md": String(repeating: "b", count: 11)], limits: limits)
         #expect(loaded.tree.files == ["CLAUDE.md": "short"])
-        #expect(loaded.skipped == ["big.md: 11 bytes exceeds the 10-byte file limit"])
+        #expect(loaded.skipped.map(\.description) == ["big.md: 11 bytes exceeds the 10-byte file limit"])
     }
 
     @Test("File count, total size and depth are bounded; a symlink out of the root is skipped")
@@ -285,6 +285,6 @@ struct HarnessLoaderTests {
         let loaded = try HarnessLoader.load(root: root, spec: .claude, allowedRoots: [root], limits: shallow)
         #expect(loaded.tree.files[".claude/a/b/c/deep.md"] == nil)
         #expect(loaded.tree.files[".claude/leak.md"] == nil)
-        #expect(loaded.skipped.contains(".claude/leak.md: resolves outside the harness root"))
+        #expect(loaded.skipped.map(\.description).contains(".claude/leak.md: resolves outside the harness root"))
     }
 }

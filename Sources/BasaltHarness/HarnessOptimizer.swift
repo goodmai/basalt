@@ -338,7 +338,8 @@ enum HarnessProposal {
 
     static func admit(
         _ delta: [String: String], base: HarnessTree, baseReport: HarnessValidationReport,
-        siblings: [HarnessTree], spec: HarnessSurfaceSpec, truncated: Set<String> = []
+        siblings: [HarnessTree], spec: HarnessSurfaceSpec, truncated: Set<String> = [],
+        skipped: [HarnessSkippedFile] = []
     ) -> Result<Admitted, Rejection> {
         var reasons: [String] = []
         if delta.count > maxFiles { reasons.append("changes \(delta.count) files, more than \(maxFiles)") }
@@ -350,6 +351,9 @@ enum HarnessProposal {
             }
             if content.utf8.count > maxFileBytes { reasons.append("\(path): larger than \(maxFileBytes) bytes") }
             if truncated.contains(path) { reasons.append("\(path): shown truncated to the proposer, so its full content is unknown to it") }
+            if let skip = skipped.first(where: { $0.path == path }) {
+                reasons.append("\(path): skipped when the harness was loaded (\(skip.reason)), so its content is unknown to the proposer")
+            }
             do { try HarnessLeakGuard.assertClean(content) } catch { reasons.append("\(path): \(error)") }
         }
         guard reasons.isEmpty else { return .failure(Rejection(reasons: reasons)) }
@@ -429,19 +433,22 @@ public struct HarnessOptimizer: Sendable {
         var rejected: [HarnessRejection] = []
         var accepted: [HarnessTree] = []
         var truncated: Set<String> = []
+        var skipped: [HarnessSkippedFile] = []
         var warnings: [String] = []
     }
 
-    public func optimize(task: HarnessTask, base: HarnessTree, k: Int = 1) async throws -> HarnessOptimizationResult {
+    public func optimize(
+        task: HarnessTask, base: HarnessTree, k: Int = 1, skipped: [HarnessSkippedFile] = []
+    ) async throws -> HarnessOptimizationResult {
         try HarnessLeakGuard.assertClean(task.prompt)
         for path in base.files.keys.sorted() {
             if let token = HarnessLeakGuard.forbiddenToken(in: base.files[path]!) {
                 throw HarnessBudgetError.leakInHarnessFile(path: path, token: token)
             }
         }
-        var state = State(ledger: try HarnessLedger(k: k))
+        var state = State(ledger: try HarnessLedger(k: k), skipped: skipped)
         let baseReport = HarnessValidator.validate(base, spec: spec)
-        var warnings: [String] = []
+        var warnings = skipped.map { "skipped \($0)" }
         var index = ""
         if let library {
             do {
@@ -533,7 +540,11 @@ public struct HarnessOptimizer: Sendable {
             state.rejected.append(HarnessRejection(candidateId: id, reasons: ["proposer reply is not a JSON object with string \"files\""]))
             return
         }
-        switch HarnessProposal.admit(delta, base: base, baseReport: baseReport, siblings: state.accepted, spec: spec, truncated: state.truncated) {
+        let admission = HarnessProposal.admit(
+            delta, base: base, baseReport: baseReport, siblings: state.accepted, spec: spec,
+            truncated: state.truncated, skipped: state.skipped
+        )
+        switch admission {
         case .failure(let rejection):
             state.rejected.append(HarnessRejection(candidateId: id, reasons: rejection.reasons))
         case .success(let admitted):

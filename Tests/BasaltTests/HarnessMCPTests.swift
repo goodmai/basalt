@@ -137,6 +137,24 @@ struct HarnessMCPTests {
         #expect(try await HarnessExperienceLibrary(rootDirectory: root).query(domain: "swift").count == 1)
     }
 
+    @Test("harness_optimize reports files skipped at load in the result warnings")
+    func optimizeReportsSkipped() async throws {
+        let engine = MockInferenceEngine()
+        await engine.setResponder { HarnessScript().respond($0) }
+        let orchestrator = ModelOrchestratorActor(engine: engine)
+        try await orchestrator.loadModel(path: "mock-model")
+        let lines = MCPLines()
+        let server = MCPServer(
+            orchestrator: orchestrator,
+            harnessLimits: HarnessLoadLimits(maxFiles: 10, maxFileBytes: 100, maxTotalBytes: 1 << 20, maxDepth: 8),
+            writer: { lines.append($0) }
+        )
+        let files = HarnessOptimizerTests.base.files.merging([".claude/big.md": String(repeating: "x", count: 101)]) { $1 }
+        await server.dispatch(toolCall(1, "harness_optimize", ["task": "Audit the package targets.", "requiredTerms": ["SUMMARY"], "files": files]))
+        let result = try lines.toolText(0)
+        #expect((result["warnings"] as? [String])?.contains("skipped .claude/big.md: 101 bytes exceeds the 100-byte file limit") == true)
+    }
+
     @Test("harness_optimize error paths are -32602, an unloaded model keeps its engine error code")
     func optimizeErrors() async throws {
         let lines = MCPLines()

@@ -377,6 +377,19 @@ struct HarnessOptimizerTests {
         #expect(!overridden.isEmpty && overridden.allSatisfy { $0.maxTokens == 777 })
     }
 
+    @Test("Files skipped at load are reported as warnings, and a proposal writing one of them is rejected")
+    func skippedFilesAreWarningsAndReadOnly() async throws {
+        let skill = ".claude/skills/swift-audit/SKILL.md"
+        let (optimizer, _) = try await Self.optimizer(HarnessScript())
+        let result = try await optimizer.optimize(
+            task: Self.task, base: Self.base, k: 1, skipped: [HarnessSkippedFile(path: skill, reason: "not UTF-8 text")]
+        )
+        #expect(result.warnings.first == "skipped \(skill): not UTF-8 text")
+        #expect(result.rejected.first { $0.candidateId == "dom_0" }?.reasons
+            == ["\(skill): skipped when the harness was loaded (not UTF-8 text), so its content is unknown to the proposer"])
+        #expect(!result.ledger.rolloutIds.contains("probe_dom_0"))
+    }
+
     @Test("The selector reads only BEST: <label> from a known label set")
     func parseLabel() {
         let labels = ["A", "B"]
