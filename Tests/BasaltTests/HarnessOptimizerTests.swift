@@ -606,3 +606,16 @@ extension HarnessOptimizerTests {
         #expect(!uncapped.warnings.contains { $0.hasPrefix("proposer budget capped") })
     }
 }
+
+extension HarnessOptimizerTests {
+    @Test("The proposer JSON is found after reasoning that contains braces, and a later object without files is skipped")
+    func proposerJSONAfterBracedReasoning() throws {
+        let reply = #"""
+        Plan: the set {a, b} matters, and `if ok { run() }` stays. Draft {"files": 3} is wrong.
+        {"files": {"CLAUDE.md": "Keep {braces} and \"quoted } text\"."}, "rationale": "r"}
+        Also {"note": 1} and a dangling {
+        """#
+        #expect(try #require(HarnessProposal.parse(reply)) == ["CLAUDE.md": #"Keep {braces} and "quoted } text"."#])
+        #expect(HarnessText.jsonObject(in: reply)?["note"] as? Int == 1)
+    }
+}

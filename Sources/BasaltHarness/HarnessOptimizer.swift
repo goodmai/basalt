@@ -166,13 +166,47 @@ enum HarnessText {
         return false
     }
 
-    static func jsonObject(in text: String) -> [String: Any]? {
+    static func jsonObject(in text: String, requiredKey: String? = nil) -> [String: Any]? {
         let cleaned = withoutThinking(text)
-        guard let open = cleaned.firstIndex(of: "{"), let close = cleaned.lastIndex(of: "}"), open < close else { return nil }
-        let candidate = String(cleaned[open...close])
+        let accepts: ([String: Any]) -> Bool = { object in requiredKey.map { object[$0] != nil } ?? true }
+        for candidate in balancedObjects(in: cleaned) {
+            if let object = parsedObject(candidate), accepts(object) { return object }
+        }
+        guard let open = cleaned.firstIndex(of: "{"), let close = cleaned.lastIndex(of: "}"), open < close,
+              let object = parsedObject(String(cleaned[open...close])), accepts(object) else { return nil }
+        return object
+    }
+
+    private static func parsedObject(_ candidate: String) -> [String: Any]? {
         let repaired = (try? JSONSerialization.jsonObject(with: Data(candidate.utf8))) != nil
             ? candidate : ToolCallRepairer.repairJSON(candidate)
         return repaired.flatMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any] }
+    }
+
+    static func balancedObjects(in text: String) -> [String] {
+        let bytes = Array(text.utf8)
+        let (open, close, quote, backslash) = (UInt8(ascii: "{"), UInt8(ascii: "}"), UInt8(ascii: "\""), UInt8(ascii: "\\"))
+        var spans: [ClosedRange<Int>] = []
+        for start in bytes.indices where bytes[start] == open {
+            var depth = 0
+            var inString = false
+            var escaped = false
+            for index in start..<bytes.count {
+                let byte = bytes[index]
+                if inString {
+                    if escaped { escaped = false } else if byte == backslash { escaped = true } else if byte == quote { inString = false }
+                } else if byte == quote {
+                    inString = true
+                } else if byte == open {
+                    depth += 1
+                } else if byte == close {
+                    depth -= 1
+                    if depth == 0 { spans.append(start...index); break }
+                }
+            }
+        }
+        return spans.sorted { ($0.upperBound, $1.lowerBound) > ($1.upperBound, $0.lowerBound) }
+            .map { String(decoding: bytes[$0], as: UTF8.self) }
     }
 
     static func inert(_ text: String) -> String {
@@ -337,7 +371,7 @@ enum HarnessProposal {
     }
 
     static func parse(_ text: String) -> [String: String]? {
-        guard let object = HarnessText.jsonObject(in: text), let files = object["files"] as? [String: Any] else { return nil }
+        guard let object = HarnessText.jsonObject(in: text, requiredKey: "files"), let files = object["files"] as? [String: Any] else { return nil }
         let strings = files.compactMapValues { $0 as? String }
         return strings.count == files.count && !strings.isEmpty ? strings : nil
     }
