@@ -312,7 +312,11 @@ struct OpenAIController: Sendable {
             isServiceRequest: service.isService,
             cacheKey: PromptCacheKey.resolve(isService: service.isService)
         )
-        let requestedModel = dto.model.map { ModelsController.hfRepoId(from: $0) }  // strip claude-local/ prefix if present
+        let model = dto.model.map(ModelsController.restModel(from:))
+        let requestedModel = model?.repoId
+        if model == .path {
+            return makeErrorResponse(status: .badRequest, message: ModelsController.pathRejected, code: 400)
+        }
 
         if dto.stream == true {
             return streamResponse(genRequest: genRequest, model: dto.model ?? modelId, requestedModel: requestedModel)
@@ -343,7 +347,7 @@ struct OpenAIController: Sendable {
             fputs("🔴 [OpenAI] generate failed: \(error)\n", stderr)
             let code = (error as? BasaltError)?.httpStatus ?? 500
             return makeErrorResponse(status: HTTPResponse.Status(code: code),
-                                     message: error.localizedDescription, code: code)
+                                     message: ModelsController.publicMessage(for: error), code: code)
         }
     }
 
@@ -396,7 +400,11 @@ struct OpenAIController: Sendable {
             tools: Self.functionTools(fromRequestBody: data),
             cacheKey: PromptCacheKey.resolve(isService: service.isService)
         )
-        let requestedModel = dto.model.map { ModelsController.hfRepoId(from: $0) }
+        let model = dto.model.map(ModelsController.restModel(from:))
+        let requestedModel = model?.repoId
+        if model == .path {
+            return makeErrorResponse(status: .badRequest, message: ModelsController.pathRejected, code: 400)
+        }
 
         if dto.stream == true {
             return streamResponses(genRequest: genRequest, model: dto.model ?? modelId, requestedModel: requestedModel)
@@ -435,7 +443,7 @@ struct OpenAIController: Sendable {
         } catch {
             let code = (error as? BasaltError)?.httpStatus ?? 500
             return makeErrorResponse(status: HTTPResponse.Status(code: code),
-                                     message: error.localizedDescription, code: code)
+                                     message: ModelsController.publicMessage(for: error), code: code)
         }
     }
 
@@ -452,7 +460,7 @@ struct OpenAIController: Sendable {
             return makeDataResponse(encoded)
         } catch {
             return makeErrorResponse(status: .badRequest,
-                                     message: error.localizedDescription, code: 400)
+                                     message: ModelsController.publicMessage(for: error), code: 400)
         }
     }
 
@@ -526,7 +534,7 @@ struct OpenAIController: Sendable {
                 } catch {
                     let errPayload: [String: Any] = [
                         "error": [
-                            "message": error.localizedDescription,
+                            "message": ModelsController.publicMessage(for: error),
                             "type": "server_error"
                         ]
                     ]
@@ -709,7 +717,7 @@ struct OpenAIController: Sendable {
                     ])])
                 } catch {
                     send("response.failed", ["response": responseObject(status: "failed", output: [], extra: [
-                        "error": ["code": "server_error", "message": error.localizedDescription]
+                        "error": ["code": "server_error", "message": ModelsController.publicMessage(for: error)]
                     ])])
                 }
                 continuation.finish()

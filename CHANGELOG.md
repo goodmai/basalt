@@ -2,12 +2,20 @@
 
 ## Unreleased
 
+### Security
+- REST on loopback no longer trusts browsers (#72). DNS rebinding (an attacker's domain re-resolved to 127.0.0.1, the class of Ollama CVE-2024-28224) is stopped by a `Host` check: on loopback only `localhost`, `127.0.0.1`, `[::1]` (any port), else 403; a specific non-loopback bind also accepts its own address, a `0.0.0.0`/`::` bind accepts any `Host` because the API key is mandatory there. A request carrying an `Origin` other than the server's own loopback origin (`localhost`, `127.0.0.1`, `[::1]` on the bound port; no port means 80/443) gets 403 unless allow-listed, so a page on another local port (a dev server, Jupyter) cannot drive the API either; allow-list it with `--allow-origin` (repeatable) or `allowed_origins` in `~/.gem/config.json`; requests without `Origin` (curl, SDKs, Claude Code, Codex) are unaffected. Every `POST` needs `Content-Type: application/json`, else 415, which removes the no-preflight CORS "simple request". These checks run before the API key and the rate limit.
+- `POST /v1/models/load` accepts only Hugging Face repo ids (`org/name`); local paths, `..` and `claude-local/..--x` are 400. In the `model` field of `/v1/messages`, `/v1/chat/completions` or `/v1/responses` a path form (starting with `/`, `.` or `~`, or containing `..`, after trimming whitespace) is 400 too; any other value that is not a repo id (`basalt`, `meta-llama/llama-3.1-8b-instruct:free`, `org/name@rev`) is an alias served by the loaded model, with no switch. Local paths stay available to `basalt serve --model-path` and MCP `switch_model` (#72).
+- A model directory without a readable `config.json` is refused before the serving model is unloaded, so a bad load no longer leaves the server without a model (#72).
+- REST error bodies no longer contain filesystem paths or echo the requested model id of a failed load (the endpoint was a file-existence oracle); the full error is in the server log (#72).
+
 ### Sampling
 - Per-request `min_p` (`minP` on `/api/v1/generate` and MCP) overrides `--min-p` and the model profile default; `0` turns Min-P off for that request. Validated to 0–1 (#40).
 - `dynamic_temperature` (`dynamicTemperature`): entropy-based dynamic temperature (EDT, arXiv:2403.14541), `T = T0·N^(θ/H) + γ·R` with N = 0.8, θ = 1.5, γ = 0.5, clamped to 0.05–2 (a request colder than 0.05 keeps its own temperature as the floor). Confident tokens sample near-greedy; a forming repetition loop raises the temperature. With EDT on, `top_p`/`min_p` still cut the original distribution, not the heated one. Off by default; no effect at temperature 0 (#40).
 - `RepetitionGuard` exposes a continuous repetition score in [0, 1] alongside its stop decision (#40).
 
 ### Upgrading
+- `curl -d '…'` without `-H "Content-Type: application/json"` now gets 415; a browser app on any other origin, a UI on another local port included, needs `--allow-origin` (#72).
+- `POST /v1/models/load` accepts only a Hugging Face repo id `org/name` (or its `claude-local/org--name` form), characters `A-Z a-z 0-9 - _ .`; anything else, local paths included, is 400 (#72).
 - Anthropic `/v1/messages` usage: `input_tokens` is now only the uncached remainder, as in Anthropic's API; the reused part is in `cache_read_input_tokens`. A client that took `input_tokens` as the whole prompt size must add the two (#56).
 
 ### Prompt cache

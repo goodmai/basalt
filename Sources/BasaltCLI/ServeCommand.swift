@@ -99,6 +99,12 @@ struct ServeCommand: AsyncParsableCommand {
     var rateLimit: Int?
 
     @Option(
+        name: .customLong("allow-origin"),
+        help: "Browser origin allowed to call the API besides loopback ones, e.g. https://app.example:3000 (repeatable; also allowed_origins in ~/.gem/config.json)"
+    )
+    var allowOrigins: [String] = []
+
+    @Option(
         name: .customLong("config"),
         help: "Path to JSON server configuration file (default: ~/.gem/config.json when it exists)"
     )
@@ -173,6 +179,7 @@ struct ServeCommand: AsyncParsableCommand {
             cliPort: port, cliHost: host,
             cliApiKey: apiKey ?? ProcessInfo.processInfo.environment["BASALT_API_KEY"],
             cliRateLimit: rateLimit,
+            cliAllowedOrigins: allowOrigins,
             configFile: configFile ?? Self.defaultConfigFileIfPresent()
         )
         // Settle the exposure rule before resolveModelPath(), which may download gigabytes.
@@ -201,7 +208,8 @@ struct ServeCommand: AsyncParsableCommand {
             maxTokens: maxTokens,
             logLevel:  logLevel,
             apiKey:    access.key,
-            rateLimitPerMinute: network.rateLimit
+            rateLimitPerMinute: network.rateLimit,
+            allowedOrigins: network.allowedOrigins
         )
 
         // Apply log level from config
@@ -288,8 +296,9 @@ struct ServeCommand: AsyncParsableCommand {
         cliHost: String?,
         cliApiKey: String?,
         cliRateLimit: Int? = nil,
+        cliAllowedOrigins: [String] = [],
         configFile: String?
-    ) throws -> (port: Int, host: String, apiKey: String?, rateLimit: Int?) {
+    ) throws -> (port: Int, host: String, apiKey: String?, rateLimit: Int?, allowedOrigins: [String]) {
         var dict: [String: Any] = [:]
         if let configFile {
             let url = URL(fileURLWithPath: (configFile as NSString).expandingTildeInPath)
@@ -315,11 +324,16 @@ struct ServeCommand: AsyncParsableCommand {
             // Same rule as the flag: a negative value is an error, never a silent "off".
             throw ValidationError("rate_limit must be 0 (off) or a positive number of requests per minute, got \(rateLimit)")
         }
+        let allowedOrigins = try cliAllowedOrigins + (value("allowed_origins", as: [String].self) ?? [])
+        for origin in allowedOrigins where RequestGuardMiddleware.parseOrigin(origin) == nil {
+            throw ValidationError("allowed origin must be scheme://host[:port]: http or https, no path, no trailing slash, no wildcard; got \(origin)")
+        }
         return (
             port: try cliPort ?? value("port", as: Int.self) ?? 8080,
             host: try cliHost ?? value("host", as: String.self) ?? "127.0.0.1",
             apiKey: try cliKey ?? value("api_key", as: String.self),
-            rateLimit: rateLimit
+            rateLimit: rateLimit,
+            allowedOrigins: allowedOrigins
         )
     }
 

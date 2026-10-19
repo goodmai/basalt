@@ -234,6 +234,24 @@ struct MCPServerTests {
         #expect(output[0].contains("optiq"))
     }
 
+    @Test("tools/call (switch_model) still loads a local path: MCP stdio is the same user (#72)")
+    func testToolsCallSwitchModelLocalPath() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let orch = ModelOrchestratorActor(engine: MockInferenceEngine())
+        let capturer = OutputCapturer()
+        let server = MCPServer(orchestrator: orch) { line in
+            Task { await capturer.capture(line) }
+        }
+        await server.dispatch("""
+        {"jsonrpc": "2.0", "id": 14, "method": "tools/call", "params": {"name": "switch_model", "arguments": {"modelId": "\(dir.path)"}}}
+        """)
+        try? await Task.sleep(for: .milliseconds(50))
+        #expect(await orch.currentModelId == dir.path)
+        #expect(await capturer.lines.first?.contains("Successfully switched") == true)
+    }
+
     @Test("tools/call (switch_model) fails with error code when model is not cached")
     func testToolsCallSwitchModelNotCached() async throws {
         let engine = MockInferenceEngine()

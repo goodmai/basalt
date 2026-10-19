@@ -52,6 +52,10 @@ actor MockInferenceEngine: InferenceEngine {
         self.shouldFailOnGenerate = shouldFail
     }
     
+    func setGenerateError(_ error: BasaltError) {
+        self.generateError = error
+    }
+
     func setShouldFailOnLoad(_ shouldFail: Bool) {
         self.shouldFailOnLoad = shouldFail
     }

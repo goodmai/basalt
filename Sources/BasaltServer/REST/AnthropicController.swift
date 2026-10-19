@@ -212,7 +212,11 @@ struct AnthropicController: Sendable {
             cacheKey: PromptCacheKey.resolve(isService: service.isService)
         )
 
-        let requestedModel = dto.model.map { ModelsController.hfRepoId(from: $0) }  // strip claude-local/ prefix if present
+        let model = dto.model.map(ModelsController.restModel(from:))
+        let requestedModel = model?.repoId
+        if model == .path {
+            return errorResponse(status: .badRequest, message: ModelsController.pathRejected, type: "invalid_request_error")
+        }
 
         if dto.stream == true {
             return streamMessagesResponse(genRequest: genRequest, model: dto.model ?? modelId, requestedModel: requestedModel)
@@ -234,7 +238,7 @@ struct AnthropicController: Sendable {
         } catch let err as BasaltError {
             return errorResponse(
                 status: HTTPResponse.Status(code: err.httpStatus),
-                message: err.errorDescription ?? err.localizedDescription,
+                message: ModelsController.publicMessage(for: err),
                 type: "api_error"
             )
         }
@@ -337,7 +341,7 @@ struct AnthropicController: Sendable {
                         "type": "error",
                         "error": [
                             "type": "api_error",
-                            "message": error.localizedDescription
+                            "message": ModelsController.publicMessage(for: error)
                         ]
                     ]
                     if let json = try? JSONSerialization.data(withJSONObject: errPayload),

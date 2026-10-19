@@ -23,6 +23,9 @@ struct PromptCacheAPITests {
         _ uri: String, _ json: String, headers: HTTPFields = [:], cachedTokens: Int = 0, apiKey: String? = nil
     ) async throws -> (body: String, sent: GenerationRequest?) {
         let (app, engine) = try await app(cachedTokens: cachedTokens, apiKey: apiKey)
+        var jsonHeaders = headers
+        jsonHeaders[.contentType] = "application/json"
+        let headers = jsonHeaders
         let body = try await app.test(.router) { client in
             try await client.execute(uri: uri, method: .post, headers: headers, body: ByteBuffer(string: json)) { res in
                 #expect(res.status == .ok)

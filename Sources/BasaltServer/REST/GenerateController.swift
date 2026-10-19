@@ -31,7 +31,7 @@ struct GenerateController: Sendable {
         } catch let err as BasaltError {
             return errorResponse(
                 status: HTTPResponse.Status(code: err.httpStatus),
-                message: err.errorDescription ?? err.localizedDescription,
+                message: ModelsController.publicMessage(for: err),
                 code: err.httpStatus
             )
         }
@@ -96,7 +96,7 @@ struct GenerateController: Sendable {
                     continuation.finish()
                 } catch {
                     // Send error event
-                    let errPayload: [String: Any] = ["error": error.localizedDescription]
+                    let errPayload: [String: Any] = ["error": ModelsController.publicMessage(for: error)]
                     if let json = try? JSONSerialization.data(withJSONObject: errPayload),
                        let str = String(data: json, encoding: .utf8) {
                         var errorBuffer = ByteBuffer()
