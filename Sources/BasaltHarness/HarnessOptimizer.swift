@@ -291,7 +291,7 @@ enum HarnessProposal {
         guard reasons.isEmpty else { return .failure(Rejection(reasons: reasons)) }
         let tree = base.applying(delta: delta)
         guard tree != base else { return .failure(Rejection(reasons: ["does not change the harness"])) }
-        let report = HarnessValidator.validate(tree, spec: spec, requireDiverseFrom: siblings + [base])
+        let report = HarnessValidator.validate(tree, spec: spec, requireDiverseFrom: siblings, relativeTo: base)
         reasons += report.errors.filter { !baseReport.errors.contains($0) }
         reasons += report.untriggeredSkills.filter { delta[$0] != nil }.map { "\($0): proposed skill is never referenced" }
         return reasons.isEmpty ? .success(tree) : .failure(Rejection(reasons: reasons))

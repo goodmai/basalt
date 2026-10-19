@@ -159,6 +159,32 @@ struct HarnessOptimizerTests {
         #expect(composed != nil)
     }
 
+    static let longBase = HarnessTree(files: [
+        "CLAUDE.md": (1...100).map { "Rule \($0): keep the build green." }.joined(separator: "\n")
+    ])
+
+    static func pointEdit(_ line: String) -> [String: String] {
+        ["CLAUDE.md": longBase.files["CLAUDE.md"]! + "\n" + line]
+    }
+
+    @Test("One added line in a 100-line CLAUDE.md is admitted; diversity is not measured against the base")
+    func pointEditIsAdmitted() throws {
+        let report = HarnessValidator.validate(Self.longBase, spec: .claude)
+        let admitted = HarnessProposal.admit(Self.pointEdit("Run swift test before finishing."), base: Self.longBase, baseReport: report, siblings: [], spec: .claude)
+        let tree = try admitted.get()
+        #expect(tree.files["CLAUDE.md"]?.hasSuffix("Run swift test before finishing.") == true)
+        let unchanged = HarnessProposal.admit(["CLAUDE.md": Self.longBase.files["CLAUDE.md"]!], base: Self.longBase, baseReport: report, siblings: [], spec: .claude)
+        #expect(throws: HarnessProposal.Rejection.self) { try unchanged.get() }
+    }
+
+    @Test("Two different one-line edits of a long CLAUDE.md are both admitted as siblings")
+    func distinctPointEditsAreDiverse() throws {
+        let report = HarnessValidator.validate(Self.longBase, spec: .claude)
+        let first = try HarnessProposal.admit(Self.pointEdit("Run swift test before finishing."), base: Self.longBase, baseReport: report, siblings: [], spec: .claude).get()
+        let second = HarnessProposal.admit(Self.pointEdit("Never force-push."), base: Self.longBase, baseReport: report, siblings: [first], spec: .claude)
+        #expect(throws: Never.self) { try second.get() }
+    }
+
     @Test("A task prompt carrying a grader verdict is refused before any model call")
     func leakingTask() async throws {
         let (optimizer, engine) = try await Self.optimizer(HarnessScript())

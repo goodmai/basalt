@@ -17,21 +17,25 @@ public struct HarnessValidationReport: Codable, Sendable, Equatable {
 }
 
 enum HarnessDiversity {
-    static func lineJaccardDistance(_ first: HarnessTree, _ second: HarnessTree) -> Double {
-        let setA = first.serializedLines()
-        let setB = second.serializedLines()
+    static func editedLines(_ tree: HarnessTree, relativeTo base: HarnessTree) -> Set<String> {
+        tree.serializedLines().symmetricDifference(base.serializedLines())
+    }
+
+    static func editJaccardDistance(_ first: HarnessTree, _ second: HarnessTree, relativeTo base: HarnessTree) -> Double {
+        let setA = editedLines(first, relativeTo: base)
+        let setB = editedLines(second, relativeTo: base)
         let union = setA.union(setB).count
         guard union > 0 else { return 0 }
         return 1 - Double(setA.intersection(setB).count) / Double(union)
     }
 
-    static func pairwiseDiversity(_ trees: [HarnessTree]) -> Double {
+    static func pairwiseDiversity(_ trees: [HarnessTree], relativeTo base: HarnessTree) -> Double {
         guard trees.count >= 2 else { return 1 }
         var total = 0.0
         var pairs = 0
         for i in trees.indices {
             for j in trees.indices where j > i {
-                total += lineJaccardDistance(trees[i], trees[j])
+                total += editJaccardDistance(trees[i], trees[j], relativeTo: base)
                 pairs += 1
             }
         }
@@ -49,7 +53,8 @@ public enum HarnessValidator {
     public static func validate(
         _ tree: HarnessTree,
         spec: HarnessSurfaceSpec = .claude,
-        requireDiverseFrom siblings: [HarnessTree] = []
+        requireDiverseFrom siblings: [HarnessTree] = [],
+        relativeTo base: HarnessTree = HarnessTree()
     ) -> HarnessValidationReport {
         var errors: [String] = []
         let alwaysOnPaths = tree.alwaysOnPaths(spec: spec)
@@ -91,7 +96,7 @@ public enum HarnessValidator {
         let untriggered = untriggeredSkills(skills, tree: tree, spec: spec)
         var diversity: Double?
         if !siblings.isEmpty {
-            let score = HarnessDiversity.pairwiseDiversity(siblings + [tree])
+            let score = HarnessDiversity.pairwiseDiversity(siblings + [tree], relativeTo: base)
             diversity = score
             if score < spec.minDiversity {
                 errors.append(String(format: "candidate diversity %.4f is below minimum %.4f", score, spec.minDiversity))
