@@ -61,7 +61,10 @@ struct PromptCacheAPITests {
     func anthropicUserIdIsUsed() async throws {
         let result = try await post("/v1/messages",
             #"{"max_tokens": 64, "metadata": {"user_id": "user_abc_session_42"}, "messages": [{"role": "user", "content": "hi"}]}"#)
-        #expect(result.sent?.cacheKey?.hasPrefix("key:user_abc_session_42:") == true)
+        #expect(result.sent?.cacheKey?.hasPrefix("agent:user_abc_session_42:") == true)
+        let lookalike = PromptCacheKey.resolve(declared: "user_abc_session_42:\(PromptCacheKey.digest(String("p".prefix(512))))",
+                                               headers: [:], prompt: "p", isService: false)
+        #expect(lookalike?.hasPrefix("key:") == true, "a declared key can never take the agent: form")
     }
 
     @Test("Under one metadata.user_id, turns of a conversation share a slot and a subagent with another system prompt gets its own")

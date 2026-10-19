@@ -177,6 +177,7 @@ public actor MLXInferenceEngine: InferenceEngine {
             if container != nil {
                 container = nil
                 promptCaches.removeAll()
+                modelEpoch += 1
                 Memory.clearCache()   // flush MLX's internal memory allocator cache
                 logger.info("Previous model unloaded, GPU cache cleared.")
             }

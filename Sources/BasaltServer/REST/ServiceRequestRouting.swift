@@ -34,7 +34,7 @@ enum PromptCacheKey {
         let head = digest(String(prompt.prefix(hashedPrefixLength)))
         let conversation: String
         if let declared, !declared.isEmpty {
-            conversation = sharedByAgents ? "key:\(declared):\(head)" : "key:\(declared)"
+            conversation = sharedByAgents ? "agent:\(declared):\(head)" : "key:\(declared)"
         } else if let name = HTTPField.Name(sessionHeader), let session = headers[name], !session.isEmpty {
             conversation = "session:\(session)"
         } else {

@@ -115,7 +115,8 @@ struct PromptCacheSlots: Sendable {
 
     private static func fitted(_ tokens: [Int], _ cache: PromptCache, within limit: Int) -> [Int]? {
         guard cache.byteCount > limit else { return tokens }
-        let bytesPerToken = max(1, cache.byteCount / max(1, cache.tokenCount))
+        let tokenCount = max(1, cache.tokenCount)
+        let bytesPerToken = max(1, (cache.byteCount + tokenCount - 1) / tokenCount)
         let keep = min(tokens.count, limit / bytesPerToken)
         guard cache.shrink(to: keep), cache.byteCount <= limit else { return nil }
         return Array(tokens.prefix(keep))

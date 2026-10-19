@@ -200,7 +200,7 @@ struct ServeCommand: AsyncParsableCommand {
         // Shared inference engine + orchestrator
         let engine       = MLXInferenceEngine(
             reasoningEffort: reasoningEffort,
-            promptCacheBytes: promptCacheMB.map { max(0, $0) << 20 },
+            promptCacheBytes: promptCacheMB.map { min(max(0, $0), 1 << 30) << 20 },
             kvBits: kvBits,
             repetitionPenalty: repetitionPenalty,
             topK: topK,
