@@ -8,6 +8,7 @@ import MLXVLM
 import MLXLMCommon
 import MLXHuggingFace
 import Tokenizers
+import Jinja
 import BasaltCore
 
 private extension Duration {
@@ -340,6 +341,50 @@ public actor MLXInferenceEngine: InferenceEngine {
 
     // MARK: — Tools
 
+    static func chat(_ messages: [ChatMessageInput], lastText: String) -> [Chat.Message] {
+        messages.enumerated().map { index, message in
+            let text = index == messages.count - 1 ? lastText : message.text
+            switch message.role {
+            case .system:    return .system(text)
+            case .user:      return .user(text)
+            case .assistant: return .assistant(text, toolCalls: message.toolCalls?.map(toolCall))
+            case .tool:      return .tool(text, id: message.toolCallId, name: message.toolName)
+            }
+        }
+    }
+
+    static func chatInput(
+        _ messages: [ChatMessageInput], normalisation: String, tools: [ToolSpec]?, context: [String: any Sendable]?
+    ) -> (@Sendable (String) -> UserInput, String?, String) {
+        let last = messages[messages.count - 1]
+        return (
+            { UserInput(chat: Self.chat(messages, lastText: $0), tools: tools, additionalContext: context) },
+            HybridPrefixSnapshot.templateKey([tools ?? [], context ?? [:], last.role.rawValue, last.toolCalls != nil, normalisation]),
+            last.text
+        )
+    }
+
+    static func templateFallbacks(_ turns: [ChatMessageInput]) -> [(String, [ChatMessageInput])] {
+        [("leadingSystem", ChatMessageInput.leadingSystem(turns)), ("alternating", ChatMessageInput.alternating(turns))]
+    }
+
+    static func briefly(_ error: any Error, limit: Int = 300) -> String {
+        let text = String(describing: error)
+        return text.count > limit ? String(text.prefix(limit)) + "…" : text
+    }
+
+    static func isTemplateRefusal(_ error: any Error) -> Bool {
+        if error is TemplateException { return true }
+        if case JinjaError.runtime = error { return true }
+        return false
+    }
+
+    static func toolCall(_ call: ToolCallOutput) -> ToolCall {
+        let arguments = (try? JSONDecoder().decode([String: JSONValue].self, from: Data(call.arguments.utf8)))
+            ?? ["input": .string(call.arguments)]
+        return ToolCall(function: .init(name: call.name, arguments: arguments), id: call.id.isEmpty ? nil : call.id)
+    }
+
     /// OpenAI-style function specs for the chat template's tool section.
     static func toolSpecs(_ tools: [ToolDefinition]?) -> [ToolSpec]? {
         guard let tools, !tools.isEmpty else { return nil }
@@ -428,24 +473,51 @@ public actor MLXInferenceEngine: InferenceEngine {
 
         let toolSpecs = Self.toolSpecs(request.tools)
         let declaredTools = Set(request.tools?.map(\.name) ?? [])
-        let makeInput: @Sendable (String) -> UserInput
-        let template: String?
-        if request.prompt.contains("<|turn|>") || request.prompt.contains("<|channel|>") {
+        var makeInput: @Sendable (String) -> UserInput
+        var template: String?
+        let turns = request.messages.flatMap { $0.isEmpty ? nil : $0 }
+        var lastText: String
+        let context = Self.buildTemplateContext(
+            request: request,
+            defaultReasoningEffort: reasoningEffort,
+            profile: profile
+        )
+        if turns == nil, request.prompt.contains("<|turn|>") || request.prompt.contains("<|channel|>") {
             makeInput = { UserInput(prompt: $0) }
             template = "raw"
+            lastText = request.prompt
         } else {
-            let context = Self.buildTemplateContext(
-                request: request,
-                defaultReasoningEffort: reasoningEffort,
-                profile: profile
-            )
-            makeInput = { UserInput(chat: [.user($0)], tools: toolSpecs, additionalContext: context) }
-            template = HybridPrefixSnapshot.templateKey([toolSpecs ?? [], context])
+            (makeInput, template, lastText) = Self.chatInput(
+                turns ?? [ChatMessageInput(role: .user, text: request.prompt)],
+                normalisation: "native", tools: toolSpecs, context: context)
         }
-        let userInput = makeInput(request.prompt)
 
         do {
-            let rendered = try await container.prepare(input: userInput)
+            let rendered: LMInput
+            do {
+                rendered = try await container.prepare(input: makeInput(lastText))
+            } catch where turns != nil && Self.isTemplateRefusal(error) {
+                let nativeRefusal = error
+                var refusal = error
+                var prepared: LMInput?
+                var previous = turns
+                for (step, messages) in Self.templateFallbacks(turns ?? []) where prepared == nil && messages != previous {
+                    previous = messages
+                    (makeInput, template, lastText) = Self.chatInput(
+                        messages, normalisation: step, tools: toolSpecs, context: context)
+                    do {
+                        prepared = try await container.prepare(input: makeInput(lastText))
+                        logger.info("Chat template refused native turns (\(Self.briefly(nativeRefusal))); rendered with \(step) turns")
+                    } catch where Self.isTemplateRefusal(error) {
+                        refusal = error
+                    }
+                }
+                guard let prepared else {
+                    throw BasaltError.invalidRequestStructure(
+                        details: "Chat template rejected the conversation: \(Self.briefly(nativeRefusal)); after normalising: \(Self.briefly(refusal))")
+                }
+                rendered = prepared
+            }
             logger.trace("Input prepared. Starting MLX generation...")
             let renderedCount = rendered.text.tokens.dim(-1)
             let carriesMoreThanTokens = rendered.image != nil || rendered.video != nil

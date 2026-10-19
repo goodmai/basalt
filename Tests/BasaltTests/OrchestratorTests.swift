@@ -18,6 +18,15 @@ struct OrchestratorTests {
         #expect(ModelOrchestratorActor.watchdogSeconds(maxTokens: 4096, promptTokens: 40_000) == 1224)
     }
 
+    @Test("A request with messages is budgeted on the turns the engine renders, whatever its prompt holds")
+    func messagesOnlyRequestIsBudgetedOnItsTurns() {
+        let turns = [ChatMessageInput(role: .system, text: "s"), ChatMessageInput(role: .user, text: "long question here")]
+        let request = GenerationRequest(prompt: "", messages: turns)
+        #expect(ModelOrchestratorActor.budgetedText(request) == ChatMessageInput.plainText(turns))
+        #expect(ModelOrchestratorActor.budgetedText(GenerationRequest(prompt: "p", messages: turns)) == ChatMessageInput.plainText(turns))
+        #expect(ModelOrchestratorActor.budgetedText(GenerationRequest(prompt: "p")) == "p")
+    }
+
     // MARK: — generate before load
 
     @Test("generate before load throws inferenceHardwareFailure")

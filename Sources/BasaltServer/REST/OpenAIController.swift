@@ -351,7 +351,8 @@ struct OpenAIController: Sendable {
         do { requested = try Self.requestedTools(fromRequestBody: data) } catch {
             return makeErrorResponse(status: .badRequest, message: error.message, code: 400)
         }
-        let prompt = messagesToPrompt(dto.messages)
+        let chat = Self.chatMessages(dto.messages)
+        let prompt = ChatMessageInput.plainText(chat)
         let service = ServiceRequestDetector.prepare(prompt: prompt, maxTokens: dto.maxTokens, headers: request.headers)
         let genRequest = GenerationRequest(
             prompt: service.prompt,
@@ -364,7 +365,8 @@ struct OpenAIController: Sendable {
             isServiceRequest: service.isService,
             tools: requested.tools,
             toolChoice: requested.choice,
-            cacheKey: PromptCacheKey.resolve(isService: service.isService)
+            cacheKey: PromptCacheKey.resolve(isService: service.isService),
+            messages: service.prompt == prompt ? chat : nil
         )
         let model = dto.model.map(ModelsController.restModel(from:))
         let requestedModel = model?.repoId
@@ -424,23 +426,20 @@ struct OpenAIController: Sendable {
                                      code: 400)
         }
 
-        let conversation: String
-        if let input = dto.input {
-            switch input {
-            case .text(let t): conversation = t
-            case .messages(let msgs): conversation = messagesToPrompt(msgs)
-            }
-        } else if let msgs = dto.messages, !msgs.isEmpty {
-            conversation = messagesToPrompt(msgs)
-        } else {
-            conversation = ""
+        let conversation: [ChatMessageInput]
+        switch dto.input {
+        case .text(let t):        conversation = t.isEmpty ? [] : [ChatMessageInput(role: .user, text: t)]
+        case .messages(let msgs): conversation = Self.chatMessages(msgs)
+        case nil:                 conversation = Self.chatMessages(dto.messages ?? [])
         }
 
         guard !conversation.isEmpty else {
             return makeErrorResponse(status: .badRequest, message: "input or messages must not be empty", code: 400)
         }
         // `instructions` is the system prompt of the Responses API; dropping it loses the agent's rules.
-        let prompt = dto.instructions.map { $0.isEmpty ? conversation : "[System]: \($0)\n\n\(conversation)" } ?? conversation
+        let instructions = dto.instructions.flatMap { $0.isEmpty ? nil : ChatMessageInput(role: .system, text: $0) }
+        let chat = (instructions.map { [$0] } ?? []) + conversation
+        let prompt = ChatMessageInput.plainText(chat)
 
         let requested: RequestedTools
         do { requested = try Self.requestedTools(fromRequestBody: data) } catch {
@@ -460,7 +459,8 @@ struct OpenAIController: Sendable {
             isServiceRequest: service.isService,
             tools: requested.tools,
             toolChoice: requested.choice,
-            cacheKey: PromptCacheKey.resolve(isService: service.isService)
+            cacheKey: PromptCacheKey.resolve(isService: service.isService),
+            messages: service.prompt == prompt ? chat : nil
         )
         let model = dto.model.map(ModelsController.restModel(from:))
         let requestedModel = model?.repoId
@@ -816,29 +816,28 @@ struct OpenAIController: Sendable {
 
     // MARK: — Prompt
 
-    /// Flattens the conversation to plain text and lets the tokenizer's own chat
-    /// template wrap it (see MLXInferenceEngine.generateStream).
-    ///
-    /// Do NOT hand-roll `<|turn>` / `<|channel>thought` markers here: a prompt ending
-    /// in a thought marker puts the engine's stream parser into thinking mode for the
-    /// whole generation, so every token lands in the reasoning channel and
-    /// `generatedText` comes back empty. Mirrors AnthropicController.buildPrompt.
-    private func messagesToPrompt(_ messages: [ChatMessage]) -> String {
+    static func chatMessages(_ messages: [ChatMessage]) -> [ChatMessageInput] {
         var toolNames: [String: String] = [:]
         for msg in messages {
             if let id = msg.callId, let name = msg.name { toolNames[id] = name }
             for call in msg.toolCalls ?? [] { if let id = call.id { toolNames[id] = call.function.name } }
         }
-        var parts: [String] = []
+        var chat: [ChatMessageInput] = []
+        func appendCall(_ call: ToolCallOutput) {
+            if let last = chat.last, last.role == .assistant {
+                chat[chat.count - 1] = ChatMessageInput(role: .assistant, text: last.text, toolCalls: (last.toolCalls ?? []) + [call])
+            } else {
+                chat.append(ChatMessageInput(role: .assistant, text: "", toolCalls: [call]))
+            }
+        }
         for msg in messages {
-            // Responses API history items: keep tool calls and their results in the transcript,
-            // otherwise a coding agent's next turn loses what its tools returned.
             switch msg.type {
             case "function_call", "custom_tool_call":
-                parts.append(ToolTranscript.call(name: msg.name ?? "tool", arguments: msg.arguments ?? msg.input ?? "{}"))
+                appendCall(ToolCallOutput(id: msg.callId ?? "", name: msg.name ?? "tool", arguments: msg.arguments ?? msg.input ?? "{}"))
                 continue
             case "function_call_output", "custom_tool_call_output":
-                parts.append(ToolTranscript.result(msg.output?.textValue ?? "", for: msg.callId.flatMap { toolNames[$0] }))
+                chat.append(ChatMessageInput(role: .tool, text: msg.output?.textValue ?? "",
+                                             toolCallId: msg.callId, toolName: msg.callId.flatMap { toolNames[$0] }))
                 continue
             case "reasoning":
                 continue
@@ -846,24 +845,24 @@ struct OpenAIController: Sendable {
                 break
             }
             let text = msg.content?.textValue ?? ""
-            let role = msg.role ?? "user"
-            if role == "tool" {
-                parts.append(ToolTranscript.result(text, for: msg.toolCallId.flatMap { toolNames[$0] }))
-                continue
+            let role: ChatMessageInput.Role
+            switch msg.role {
+            case "system", "developer": role = .system
+            case "assistant":           role = .assistant
+            case "tool":                role = .tool
+            default:                    role = .user
             }
-            if !text.isEmpty {
-                switch role {
-                case "system", "developer": parts.append("[System]: \(text)")
-                case "user":      parts.append("[User]: \(text)")
-                case "assistant": parts.append("[Assistant]: \(text)")
-                default:          parts.append("[\(role.capitalized)]: \(text)")
-                }
+            let calls = (msg.toolCalls ?? []).map {
+                ToolCallOutput(id: $0.id ?? "", name: $0.function.name, arguments: $0.function.arguments ?? "{}")
             }
-            for call in msg.toolCalls ?? [] {
-                parts.append(ToolTranscript.call(name: call.function.name, arguments: call.function.arguments ?? "{}"))
+            if role == .tool {
+                chat.append(ChatMessageInput(role: .tool, text: text, toolCallId: msg.toolCallId,
+                                             toolName: msg.toolCallId.flatMap { toolNames[$0] }))
+            } else if !text.isEmpty || !calls.isEmpty {
+                chat.append(ChatMessageInput(role: role, text: text, toolCalls: calls.isEmpty ? nil : calls))
             }
         }
-        return parts.joined(separator: "\n\n")
+        return chat
     }
 
     // MARK: — Helpers

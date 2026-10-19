@@ -102,7 +102,7 @@ struct PromptCacheAPITests {
             #"{"messages": [{"role": "user", "content": "hi"}]}"#, cachedTokens: 30)
         let usage = try #require(try json(result.body)["usage"] as? [String: Any])
         #expect((usage["prompt_tokens_details"] as? [String: Any])?["cached_tokens"] as? Int == 30)
-        #expect(usage["prompt_tokens"] as? Int == 32)
+        #expect(usage["prompt_tokens"] as? Int == 31)
     }
 
     @Test("Responses reports usage.input_tokens_details.cached_tokens, streaming and not")
@@ -124,14 +124,14 @@ struct PromptCacheAPITests {
         let plain = try await post("/v1/messages", request, cachedTokens: 30)
         let usage = try #require(try json(plain.body)["usage"] as? [String: Any])
         #expect(usage["cache_read_input_tokens"] as? Int == 30)
-        #expect(usage["input_tokens"] as? Int == 2)
+        #expect(usage["input_tokens"] as? Int == 1)
 
         let streamed = try await post("/v1/messages",
             #"{"max_tokens": 64, "stream": true, "messages": [{"role": "user", "content": "hi"}]}"#, cachedTokens: 30)
         let delta = try sseData(streamed.body, event: "message_delta")
         let streamedUsage = try #require(delta["usage"] as? [String: Any])
         #expect(streamedUsage["cache_read_input_tokens"] as? Int == 30)
-        #expect(streamedUsage["input_tokens"] as? Int == 2)
+        #expect(streamedUsage["input_tokens"] as? Int == 1)
     }
 
     @Test("With nothing reused every API reports zero cached tokens")

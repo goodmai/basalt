@@ -70,7 +70,8 @@ struct RESTServerTests {
             }
         }
         let sent = try #require(await s.engine.lastRequest)
-        #expect(sent.prompt == "[System]: Be terse.\n\n[User]: hi")
+        #expect(sent.messages == [ChatMessageInput(role: .system, text: "Be terse."), ChatMessageInput(role: .user, text: "hi")])
+        #expect(sent.prompt == "Be terse.\n\nhi")
         #expect(sent.maxTokens == 77)
         #expect(sent.temperature == 0.7)
         #expect(sent.topP == 0.9)
@@ -159,6 +160,49 @@ struct RESTServerTests {
         }
     }
 
+    @Test("A three-turn conversation reaches the engine as role-tagged messages with no [System]:/[User]:/[Assistant]: text anywhere",
+          arguments: [
+            ("/v1/chat/completions", #"{"messages": [{"role": "system", "content": "Be terse."}, {"role": "user", "content": "hi"}, {"role": "assistant", "content": "hello"}, {"role": "user", "content": "again"}]}"#),
+            ("/v1/messages", #"{"system": "Be terse.", "messages": [{"role": "user", "content": "hi"}, {"role": "assistant", "content": [{"type": "text", "text": "hello"}]}, {"role": "user", "content": "again"}]}"#),
+            ("/v1/responses", #"{"instructions": "Be terse.", "input": [{"type": "message", "role": "user", "content": [{"type": "input_text", "text": "hi"}]}, {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "hello"}]}, {"role": "user", "content": "again"}]}"#),
+          ])
+    func threeTurnConversationIsStructured(uri: String, request: String) async throws {
+        let s = try await setup()
+        try await s.app.test(.router) { client in
+            try await client.execute(uri: uri, method: .post, headers: [.contentType: "application/json"], body: ByteBuffer(string: request)) { res in
+                #expect(res.status == .ok)
+            }
+        }
+        let sent = try #require(await s.engine.lastRequest)
+        #expect(sent.messages == [
+            ChatMessageInput(role: .system, text: "Be terse."),
+            ChatMessageInput(role: .user, text: "hi"),
+            ChatMessageInput(role: .assistant, text: "hello"),
+            ChatMessageInput(role: .user, text: "again"),
+        ])
+        let texts = [sent.prompt] + (sent.messages ?? []).map(\.text)
+        for marker in ["[System]:", "[User]:", "[Assistant]:"] {
+            #expect(!texts.contains { $0.contains(marker) }, "\(marker) in \(texts)")
+        }
+    }
+
+    @Test("A compacted service prompt replaces the conversation, so its messages are not sent alongside it")
+    func compactedServicePromptDropsMessages() async throws {
+        let s = try await setup()
+        let history = String(repeating: "word ", count: 300)
+        let request = #"{"messages": [{"role": "user", "content": "\#(history)"}, {"role": "user", "content": "Generate a title for this conversation"}]}"#
+        try await s.app.test(.router) { client in
+            try await client.execute(uri: "/v1/chat/completions", method: .post,
+                                     headers: [.contentType: "application/json", HTTPField.Name("x-service-request")!: "true"],
+                                     body: ByteBuffer(string: request)) { res in
+                #expect(res.status == .ok)
+            }
+        }
+        let sent = try #require(await s.engine.lastRequest)
+        #expect(sent.prompt.hasPrefix("Generate a short 3-5 word title"))
+        #expect(sent.messages == nil)
+    }
+
     // MARK: — Anthropic /v1/messages (non-streaming)
 
     @Test("Messages: system prompt, default max_tokens and thinking budget reach the engine; reply is a text block")
@@ -181,7 +225,8 @@ struct RESTServerTests {
             }
         }
         let sent = try #require(await s.engine.lastRequest)
-        #expect(sent.prompt == "[System]: You are Basalt.\n\n[User]: hi\n\n[Assistant]: hello\n\n[User]: again")
+        #expect(sent.messages?.map(\.role) == [.system, .user, .assistant, .user])
+        #expect(sent.messages?.map(\.text) == ["You are Basalt.", "hi", "hello", "again"])
         #expect(sent.reasoningEffort == "high")
         #expect(sent.maxTokens == 8192, "the controller's default when max_tokens is absent")
     }

@@ -56,11 +56,12 @@ public struct GenerationRequest: Codable, Sendable {
     public let tools: [ToolDefinition]?
     public let toolChoice: ToolChoice?
     public let cacheKey: String?
+    public let messages: [ChatMessageInput]?
     public private(set) var assistantPrefix: String? = nil
 
     enum CodingKeys: String, CodingKey {
         case prompt, maxTokens, temperature, topP, minP, dynamicTemperature, enableThinking, reasoningEffort
-        case isServiceRequest, tools, toolChoice, cacheKey
+        case isServiceRequest, tools, toolChoice, cacheKey, messages
     }
 
     public init(
@@ -76,6 +77,7 @@ public struct GenerationRequest: Codable, Sendable {
         tools: [ToolDefinition]? = nil,
         toolChoice: ToolChoice? = nil,
         cacheKey: String? = nil,
+        messages: [ChatMessageInput]? = nil,
         assistantPrefix: String? = nil
     ) {
         self.prompt = prompt
@@ -90,6 +92,7 @@ public struct GenerationRequest: Codable, Sendable {
         self.tools = tools
         self.toolChoice = toolChoice
         self.cacheKey = cacheKey
+        self.messages = messages
         self.assistantPrefix = assistantPrefix
     }
 
@@ -109,6 +112,7 @@ public struct GenerationRequest: Codable, Sendable {
             tools: tools,
             toolChoice: toolChoice,
             cacheKey: cacheKey,
+            messages: messages,
             assistantPrefix: assistantPrefix
         )
     }
@@ -127,12 +131,13 @@ public struct GenerationRequest: Codable, Sendable {
             tools: tools,
             toolChoice: toolChoice,
             cacheKey: cacheKey,
+            messages: messages,
             assistantPrefix: assistantPrefix
         )
     }
 
     public func validated(defaultMaxTokens: Int = 4096) throws(BasaltError) -> GenerationRequest {
-        guard !prompt.isEmpty else {
+        guard !prompt.isEmpty || messages?.isEmpty == false else {
             throw .invalidRequestStructure(details: "prompt must not be empty")
         }
         
@@ -163,6 +168,7 @@ public struct GenerationRequest: Codable, Sendable {
             tools: tools,
             toolChoice: toolChoice,
             cacheKey: cacheKey,
+            messages: messages,
             assistantPrefix: assistantPrefix
         )
     }

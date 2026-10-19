@@ -14,17 +14,78 @@ import Foundation
 // non-zero. Keeping prompt syntax out of the transport layer makes that class
 // of bug unrepresentable.
 
-public struct ChatMessageInput: Sendable, Equatable {
-    public enum Role: String, Sendable {
+public struct ChatMessageInput: Codable, Sendable, Equatable {
+    public enum Role: String, Codable, Sendable {
         case system, user, assistant, tool
     }
 
     public let role: Role
     public let text: String
+    public let toolCalls: [ToolCallOutput]?
+    public let toolCallId: String?
+    public let toolName: String?
 
-    public init(role: Role, text: String) {
+    public init(
+        role: Role, text: String, toolCalls: [ToolCallOutput]? = nil,
+        toolCallId: String? = nil, toolName: String? = nil
+    ) {
         self.role = role
         self.text = text
+        self.toolCalls = toolCalls
+        self.toolCallId = toolCallId
+        self.toolName = toolName
+    }
+
+    public static func plainText(_ messages: [ChatMessageInput]) -> String {
+        messages.flatMap { [$0.text] + ($0.toolCalls ?? []).map(\.arguments) }
+            .filter { !$0.isEmpty }
+            .joined(separator: "\n\n")
+    }
+
+    public static func leadingSystem(_ messages: [ChatMessageInput]) -> [ChatMessageInput] {
+        let firstUser = messages.firstIndex { $0.role == .user } ?? messages.endIndex
+        let leading = joined(messages[..<firstUser].filter { $0.role == .system }.map(\.text))
+        var rest: [ChatMessageInput] = []
+        for (index, message) in messages.enumerated() where !(index < firstUser && message.role == .system) {
+            let message = message.role == .system ? ChatMessageInput(role: .user, text: "System: \(message.text)") : message
+            if message.role == .user, let previous = rest.last, previous.role == .user {
+                rest[rest.count - 1] = ChatMessageInput(role: .user, text: joined([previous.text, message.text]) ?? "")
+            } else {
+                rest.append(message)
+            }
+        }
+        return (leading.map { [ChatMessageInput(role: .system, text: $0)] } ?? []) + rest
+    }
+
+    public static func alternating(_ messages: [ChatMessageInput]) -> [ChatMessageInput] {
+        let placed = leadingSystem(messages)
+        var turns: [(role: Role, texts: [String])] = []
+        for message in placed where message.role != .system {
+            let role: Role = message.role == .tool ? .user : message.role
+            let text = message.role == .tool
+                ? "Tool result (\(message.toolName ?? message.toolCallId ?? "tool")): \(message.text)"
+                : ([message.text] + (message.toolCalls ?? []).map { "\($0.name)(\($0.arguments))" })
+                    .filter { !$0.isEmpty }.joined(separator: "\n")
+            if turns.last?.role == role {
+                turns[turns.count - 1].texts.append(text)
+            } else {
+                turns.append((role, [text]))
+            }
+        }
+        guard turns.contains(where: { $0.role == .user }) else {
+            return [ChatMessageInput(role: .user, text: plainText(messages))]
+        }
+        if turns[0].role == .assistant {
+            let opening = joined(turns.removeFirst().texts).map { "Assistant: \($0)" }
+            turns[0].texts.insert(contentsOf: opening.map { [$0] } ?? [], at: 0)
+        }
+        let leading = placed.first.flatMap { $0.role == .system ? [$0] : nil } ?? []
+        return leading + turns.map { ChatMessageInput(role: $0.role, text: joined($0.texts) ?? "") }
+    }
+
+    private static func joined(_ texts: [String]) -> String? {
+        let parts = texts.filter { !$0.isEmpty }
+        return parts.isEmpty ? nil : parts.joined(separator: "\n\n")
     }
 }
 

@@ -17,6 +17,7 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-argument-parser",    from: "1.8.2"),
         // Provides the `Tokenizers` module used by MLXHuggingFace macros
         .package(url: "https://github.com/huggingface/swift-transformers",  from: "1.3.5"),
+        .package(url: "https://github.com/huggingface/swift-jinja.git",     from: "2.4.2"),
         // Epic 16: CLI Enhancements
         .package(url: "https://github.com/onevcat/Rainbow.git", from: "4.2.2"),
         .package(url: "https://github.com/apple/swift-markdown.git", from: "0.9.0"),
@@ -51,6 +52,7 @@ let package = Package(
                 .product(name: "MLXLMCommon",   package: "mlx-swift-lm"),
                 .product(name: "MLXHuggingFace", package: "mlx-swift-lm"),
                 .product(name: "Tokenizers",    package: "swift-transformers"),
+                .product(name: "Jinja",         package: "swift-jinja"),
             ],
             path: "Sources/BasaltInference",
             swiftSettings: swiftSettings
@@ -123,6 +125,7 @@ let package = Package(
             dependencies: [
                 "BasaltCore", "BasaltInference", "BasaltCloud", "BasaltServer", "BasaltUI", "BasaltCLI", "BasaltApp", "BasaltHarness",
                 .product(name: "HummingbirdTesting", package: "hummingbird"),
+                .product(name: "Jinja", package: "swift-jinja"),
             ],
             path: "Tests/BasaltTests",
             swiftSettings: swiftSettings
