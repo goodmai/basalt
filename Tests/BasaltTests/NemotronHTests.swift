@@ -260,4 +260,21 @@ struct NemotronHTests {
             #expect(error.httpStatus == 422)
         }
     }
+
+    @Test("only a config that does not decode or names a type no factory knows is an invalid configuration")
+    func loadFailureMapping() async {
+        func failure(_ error: any Error) async -> BasaltError {
+            await MLXInferenceEngine.loadFailure(error, modelPath: "/m")
+        }
+        let decoding = DecodingError.dataCorrupted(.init(codingPath: [], debugDescription: "missing hidden_size"))
+        guard case .modelConfigurationInvalid = await failure(ModelFactoryError.configurationDecodingError("config.json", "m", decoding)),
+              case .modelConfigurationInvalid = await failure(ModelFactoryError.unsupportedModelType("no_such_arch")),
+              case .weightsCorrupted = await failure(ModelFactoryError.unsupportedModelType("qwen2_vl")),
+              case .weightsCorrupted = await failure(ModelFactoryError.invalidConfiguration("bad")),
+              case .weightsCorrupted = await failure(CocoaError(.fileReadCorruptFile))
+        else {
+            Issue.record("a load failure was mapped to the wrong error")
+            return
+        }
+    }
 }

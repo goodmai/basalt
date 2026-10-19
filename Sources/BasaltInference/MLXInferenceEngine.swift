@@ -275,13 +275,15 @@ public actor MLXInferenceEngine: InferenceEngine {
             }
             logger.info("Model loaded and initialized successfully.")
         } catch {
-            throw Self.loadFailure(error, modelPath: modelPath)
+            throw await Self.loadFailure(error, modelPath: modelPath)
         }
     }
 
-    static func loadFailure(_ error: any Error, modelPath: String) -> BasaltError {
+    static func loadFailure(_ error: any Error, modelPath: String) async -> BasaltError {
         switch error as? ModelFactoryError {
-        case .configurationDecodingError?, .unsupportedModelType?:
+        case .configurationDecodingError?:
+            return .modelConfigurationInvalid(path: modelPath, reason: error.localizedDescription)
+        case .unsupportedModelType(let modelType)? where await !VLMTypeRegistry.shared.contains(modelType):
             return .modelConfigurationInvalid(path: modelPath, reason: error.localizedDescription)
         default:
             return .weightsCorrupted(path: modelPath, reason: error.localizedDescription)
