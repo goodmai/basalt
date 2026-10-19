@@ -25,6 +25,11 @@ public struct RepetitionGuard: Sendable {
 
     private var buffer: String = ""
 
+    /// Continuous repetition index R_t ∈ [0, 1] after the last chunk: 0 while the trailing probe
+    /// occurs once, rising linearly to 1 at `threshold` occurrences — where `shouldStop` fires.
+    /// Lets a sampler react to a loop as it forms instead of only abandoning it afterwards.
+    public private(set) var score: Double = 0
+
     public init(probeSize: Int = 64, threshold: Int = 4, minLength: Int = 400, retain: Int = 4096) {
         self.probeSize = probeSize
         self.threshold = threshold
@@ -49,12 +54,36 @@ public struct RepetitionGuard: Sendable {
         let probe = String(buffer.suffix(probeSize))
         var occurrences = 0
         var searchRange = buffer.startIndex..<buffer.endIndex
-        while let found = buffer.range(of: probe, range: searchRange) {
+        while occurrences < threshold, let found = buffer.range(of: probe, range: searchRange) {
             occurrences += 1
-            if occurrences >= threshold { return true }
             guard found.upperBound < buffer.endIndex else { break }
             searchRange = found.upperBound..<buffer.endIndex
         }
-        return false
+        score = Self.score(occurrences: occurrences, threshold: threshold)
+        return occurrences >= threshold
+    }
+
+    /// R_t over a token sequence — the same probe-counting rule as `shouldStop`, for a sampler
+    /// that sees token ids rather than text. Non-overlapping occurrences of the trailing
+    /// `probeSize` tokens, mapped onto [0, 1] like `score`.
+    public static func score<E: Equatable>(tokens: [E], probeSize: Int, threshold: Int) -> Double {
+        guard probeSize > 0, tokens.count > probeSize else { return 0 }
+        let probe = tokens[(tokens.count - probeSize)...]
+        var occurrences = 0
+        var i = 0
+        while occurrences < threshold, i + probeSize <= tokens.count {
+            if tokens[i..<(i + probeSize)].elementsEqual(probe) {
+                occurrences += 1
+                i += probeSize
+            } else {
+                i += 1
+            }
+        }
+        return score(occurrences: occurrences, threshold: threshold)
+    }
+
+    static func score(occurrences: Int, threshold: Int) -> Double {
+        guard threshold > 1 else { return occurrences >= threshold ? 1 : 0 }
+        return min(1, max(0, Double(occurrences - 1) / Double(threshold - 1)))
     }
 }

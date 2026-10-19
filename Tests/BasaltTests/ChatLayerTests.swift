@@ -103,6 +103,45 @@ struct RepetitionGuardTests {
     }
 }
 
+@Suite("Repetition score R_t (#40)")
+struct RepetitionScoreTests {
+
+    @Test("R_t rises on a forming loop and reaches 1 where shouldStop fires")
+    func risesOnLoop() {
+        var guard_ = RepetitionGuard()
+        let cycle = "    # Let's use a small step size for Integration. However, we can use the property that the sum of the series is:\n"
+        // Token-sized chunks, as the model streams them, so the score is seen between 0 and 1.
+        let text = Array(String(repeating: cycle, count: 40))
+        var scores: [Double] = []
+        var stopped = false
+        for start in stride(from: 0, to: text.count, by: 8) where !stopped {
+            stopped = guard_.shouldStop(after: String(text[start..<min(start + 8, text.count)]))
+            scores.append(guard_.score)
+        }
+        #expect(stopped)
+        #expect(scores.last == 1)
+        #expect(scores.contains { $0 > 0 && $0 < 1 }, "the score is continuous, not a second stop flag")
+        #expect(zip(scores, scores.dropFirst()).allSatisfy { $0 <= $1 })
+    }
+
+    @Test("R_t stays 0 on ordinary prose")
+    func zeroOnProse() {
+        var guard_ = RepetitionGuard()
+        for i in 0..<80 {
+            _ = guard_.shouldStop(after: "Line \(i): computing coefficient number \(i) using Simpson's rule over the interval.\n")
+            #expect(guard_.score == 0)
+        }
+    }
+
+    @Test("Token R_t: a repeated cycle scores 1, distinct tokens 0, a second occurrence in between")
+    func tokenScore() {
+        let cycle = Array(100..<120)
+        #expect(RepetitionGuard.score(tokens: Array(0..<200), probeSize: 16, threshold: 4) == 0)
+        #expect(RepetitionGuard.score(tokens: Array(0..<50) + cycle + cycle, probeSize: 16, threshold: 4) == 1.0 / 3)
+        #expect(RepetitionGuard.score(tokens: Array(repeating: cycle, count: 6).flatMap { $0 }, probeSize: 16, threshold: 4) == 1)
+    }
+}
+
 @Suite("Stop reason")
 struct StopReasonTests {
 
