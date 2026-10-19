@@ -76,6 +76,8 @@ public final class MCPServer: Sendable {
     private let orchestrator: ModelOrchestratorActor
     private let modelId: String?
     private let library: HarnessExperienceLibrary?
+    private let harnessRoots: [URL]
+    private let harnessLimits: HarnessLoadLimits
     private let encoder: JSONEncoder = {
         let e = JSONEncoder()
         e.outputFormatting = [.sortedKeys]  // stable output: AGENTS.md / AI_SETUP.md show sorted keys
@@ -88,11 +90,15 @@ public final class MCPServer: Sendable {
         orchestrator: ModelOrchestratorActor,
         modelId: String? = nil,
         library: HarnessExperienceLibrary? = nil,
+        harnessRoots: [URL] = HarnessLoader.allowedRoots(),
+        harnessLimits: HarnessLoadLimits = .standard,
         writer: @Sendable @escaping (String) -> Void = { print($0); fflush(stdout) }
     ) {
         self.orchestrator = orchestrator
         self.modelId = modelId
         self.library = library
+        self.harnessRoots = harnessRoots
+        self.harnessLimits = harnessLimits
         self.writer = writer
     }
 
@@ -263,12 +269,18 @@ public final class MCPServer: Sendable {
             ),
             Tool(
                 name: "harness_validate",
-                description: "Validate an agent harness tree (skills, subagents, hooks, scripts, always-on budget).",
+                description: "Validate an agent harness: a Claude Code (CLAUDE.md, .claude/agents, .claude/skills, .claude/settings.json hooks), opencode (AGENTS.md, .opencode/agent, .opencode/skill, .opencode/plugin) or AGENTS.md + .agents/skills layout. Reports the always-on budget (instruction files and their @imports), skill and agent frontmatter, hook events, missing script references and untriggered skills. A directory must lie under the server's working directory or a root listed in BASALT_HARNESS_ROOTS (colon-separated); loading is capped at 2000 files, 256 KiB per file, 16 MiB in total and 8 levels deep.",
                 inputSchema: AnyCodable([
                     "type": "object",
                     "properties": [
-                        "directory": ["type": "string", "description": "Directory path containing the harness"],
-                        "surface": ["type": "string", "description": "Surface preset: claude, opencode, or agents"]
+                        "directory": ["type": "string", "description": "Repository root that contains the harness (e.g. the folder holding CLAUDE.md and .claude/)"],
+                        "files": [
+                            "type": "object",
+                            "description": "Alternative to directory: the harness as {\"path relative to the repository root\": \"file content\"}",
+                            "additionalProperties": ["type": "string"]
+                        ],
+                        "surface": ["type": "string", "enum": HarnessSurfaceSpec.all.map(\.name), "description": "Harness layout (default claude)"],
+                        "alwaysOnMaxChars": ["type": "integer", "description": "Budget for the always-on files in characters (default 8000)"]
                     ]
                 ])
             ),
@@ -461,31 +473,41 @@ public final class MCPServer: Sendable {
     }
 
     private func callHarnessValidate(id: JSONRPCId?, args: [String: Any]?) {
-        let surfaceRaw = (args?["surface"] as? String ?? "claude").lowercased()
-        let spec: HarnessSurfaceSpec
-        switch surfaceRaw {
-        case "opencode":
-            spec = .opencode
-        case "agents":
-            spec = .agents
-        default:
-            spec = .claude
+        let surfaceName = args?["surface"] as? String ?? "claude"
+        guard var spec = HarnessSurfaceSpec.named(surfaceName) else {
+            let known = HarnessSurfaceSpec.all.map(\.name).joined(separator: ", ")
+            writeError(id: id, code: -32602, message: "Unknown surface '\(surfaceName)'; expected one of: \(known)")
+            return
         }
-        let tree: HarnessTree
-        if let dirPath = args?["directory"] as? String, !dirPath.isEmpty {
-            do {
-                tree = try HarnessTree.load(from: URL(fileURLWithPath: dirPath), spec: spec)
-            } catch {
-                writeError(id: id, code: -32602, message: "Failed to load harness directory: \(error.localizedDescription)")
+        if let limit = args?["alwaysOnMaxChars"] {
+            guard let limit = limit as? Int, limit > 0 else {
+                writeError(id: id, code: -32602, message: "alwaysOnMaxChars must be a positive integer")
                 return
             }
-        } else if let rawFiles = args?["files"] as? [String: String] {
-            tree = HarnessTree(files: rawFiles)
+            spec = spec.withAlwaysOnMaxChars(limit)
+        }
+        var skipped: [String] = []
+        let tree: HarnessTree
+        if let directory = args?["directory"] as? String, !directory.isEmpty {
+            do {
+                let loaded = try HarnessLoader.load(
+                    root: URL(fileURLWithPath: directory, isDirectory: true), spec: spec,
+                    allowedRoots: harnessRoots, limits: harnessLimits
+                )
+                tree = loaded.tree
+                skipped = loaded.skipped
+            } catch {
+                writeError(id: id, code: -32602, message: "Cannot load harness: \(error)")
+                return
+            }
+        } else if let files = args?["files"] as? [String: String] {
+            tree = HarnessTree(files: files)
         } else {
             writeError(id: id, code: -32602, message: "Missing required argument: directory or files")
             return
         }
-        let report = HarnessValidator.validate(tree, spec: spec)
+        var report = HarnessValidator.validate(tree, spec: spec)
+        report.warnings += skipped.map { "skipped \($0)" }
         writeJSONResult(id: id, report, isError: !report.isValid)
     }
 

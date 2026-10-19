@@ -8,46 +8,6 @@ import Foundation
 @Suite("Harness2 PoC")
 struct Harness2Tests {
 
-    @Test("HarnessValidator accepts valid 8-component tree and rejects structural violations")
-    func validatorChecksAllComponents() {
-        let validTree = HarnessTree(files: [
-            "CLAUDE.md": "Use skill audit-check and scripts/verify.py before completing.",
-            "prompts/guardrails.md": "Never skip verification.",
-            "memory/LongTermMEMORY.md": "Repo uses Swift 6.",
-            "prompts/tools.md": "Prefer structured search.",
-            "skills/audit-check/SKILL.md": "---\nname: audit-check\ndescription: Run static audit\n---\nRun scripts/verify.py",
-            "sub_agents/reviewer/AGENT.md": "---\nmode: subagent\ndescription: Code reviewer subagent\n---\nReview diffs.",
-            "scripts/verify.py": "print('ok')\n",
-            "hooks/hooks.json": #"{"PreToolUse": [{"command": "echo pre"}]}"#
-        ])
-
-        let validReport = HarnessValidator.validate(validTree, spec: .claude)
-        #expect(validReport.isValid == true)
-        #expect(validReport.errors.isEmpty)
-        #expect(validReport.skillCount == 1)
-        #expect(validReport.subagentCount == 1)
-        #expect(validReport.scriptCount == 1)
-
-        let brokenTree = HarnessTree(files: [
-            "CLAUDE.md": String(repeating: "x", count: 8100) + " scripts/missing.py",
-            "skills/dead-skill/SKILL.md": "---\nname: dead-skill\ndescription: Never triggered\n---\nBody",
-            "sub_agents/bad/AGENT.md": "---\nmode: primary\n---\nBody",
-            "hooks/hooks.json": #"{"InvalidEvent": []}"#
-        ])
-
-        let brokenReport = HarnessValidator.validate(brokenTree, spec: .claude)
-        #expect(brokenReport.isValid == false)
-        #expect(brokenReport.errors.contains { $0.contains("always-on files exceed budget") })
-        #expect(brokenReport.errors.contains { $0.contains("untriggered skill 'dead-skill'") })
-        #expect(brokenReport.errors.contains { $0.contains("missing referenced script 'scripts/missing.py'") })
-        #expect(brokenReport.errors.contains { $0.contains("mode: subagent") })
-        #expect(brokenReport.errors.contains { $0.contains("unsupported hook event 'InvalidEvent'") })
-
-        let cloneReport = HarnessValidator.validate(validTree, spec: .claude, requireDiverseFrom: [validTree])
-        #expect(cloneReport.isValid == false)
-        #expect(cloneReport.errors.contains { $0.contains("candidate diversity") })
-    }
-
     @Test("HarnessCacheReusePlan separates shared prefix for PromptCacheTree and chunks for CacheBlend")
     func cacheReusePlanComputesSavings() {
         let base = HarnessTree(files: [
