@@ -92,16 +92,7 @@ struct HarnessLibraryTests {
     func blockedWritersLeaveThePoolFree() async throws {
         let root = Self.tempRoot()
         defer { try? FileManager.default.removeItem(at: root) }
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        let holder = open(root.appendingPathComponent(".lock").path, O_CREAT | O_RDWR, 0o600)
-        #expect(flock(holder, LOCK_EX) == 0)
-        let releasedAt = MCPLines()
-        Thread.detachNewThread {
-            Thread.sleep(forTimeInterval: 1.5)
-            releasedAt.append(String(Date().timeIntervalSince1970))
-            flock(holder, LOCK_UN)
-            close(holder)
-        }
+        let releasedAt = try Self.holdLock(root, for: 1.5)
         let library = HarnessExperienceLibrary(rootDirectory: root)
         let writers = (0..<(2 * ProcessInfo.processInfo.activeProcessorCount)).map { index in
             Task { try await library.addKnowledge(topic: "t\(index)", content: "c") }
@@ -112,6 +103,48 @@ struct HarnessLibraryTests {
         let released = try #require(releasedAt.all.first.flatMap(Double.init))
         #expect(probedAt < released)
         #expect(try await library.query().count == writers.count)
+    }
+
+    static func holdLock(_ root: URL, for seconds: TimeInterval) throws -> MCPLines {
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let holder = open(root.appendingPathComponent(".lock").path, O_CREAT | O_RDWR, 0o600)
+        #expect(flock(holder, LOCK_EX) == 0)
+        let releasedAt = MCPLines()
+        Thread.detachNewThread {
+            Thread.sleep(forTimeInterval: seconds)
+            releasedAt.append(String(Date().timeIntervalSince1970))
+            flock(holder, LOCK_UN)
+            close(holder)
+        }
+        return releasedAt
+    }
+
+    @Test("A writer waits for another process's flock on its directory while a query on that directory and a writer on another directory go on")
+    func lockContentionIsPerDirectory() async throws {
+        let root = Self.tempRoot()
+        let other = Self.tempRoot()
+        defer {
+            try? FileManager.default.removeItem(at: root)
+            try? FileManager.default.removeItem(at: other)
+        }
+        try await HarnessExperienceLibrary(rootDirectory: root).addKnowledge(topic: "earlier", content: "c")
+        let releasedAt = try Self.holdLock(root, for: 1.5)
+        let blocked = Task {
+            try await HarnessExperienceLibrary(rootDirectory: root).addKnowledge(topic: "blocked", content: "c")
+            return Date().timeIntervalSince1970
+        }
+        try await Task.sleep(nanoseconds: 200_000_000)
+        let queried = try await HarnessExperienceLibrary(rootDirectory: root).query().map(\.topic)
+        let queriedAt = Date().timeIntervalSince1970
+        try await HarnessExperienceLibrary(rootDirectory: other).addKnowledge(topic: "elsewhere", content: "c")
+        let otherWrittenAt = Date().timeIntervalSince1970
+        let blockedWrittenAt = try await blocked.value
+
+        let released = try #require(releasedAt.all.first.flatMap(Double.init))
+        #expect(queried == ["earlier"])
+        #expect(queriedAt < released)
+        #expect(otherWrittenAt < released)
+        #expect(blockedWrittenAt >= released)
     }
 
     @Test("A write failure leaves no half entry behind")

@@ -78,7 +78,7 @@ public struct HarnessExperienceLibrary: Sendable {
         let deltaBytes = delta.map(Self.deltaBytes) ?? 0
         try check(deltaBytes <= limits.maxDeltaBytes, "harness delta must be at most \(limits.maxDeltaBytes) bytes")
 
-        return try await onLibraryQueue { try withLock {
+        return try await onWriterQueue { try withLock {
             var entries = try loadEntries(quarantineCorrupt: true)
             guard entries.count < limits.maxEntries else {
                 throw HarnessLibraryError.full("library holds the maximum of \(limits.maxEntries) entries")
@@ -114,7 +114,7 @@ public struct HarnessExperienceLibrary: Sendable {
     public func query(_ text: String? = nil, domain: String? = nil) async throws -> [HarnessKnowledgeEntry] {
         let needle = text?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
         let domainSlug = domain.flatMap { $0.isEmpty ? nil : Self.slugify($0) }
-        return try await onLibraryQueue { try loadEntries(quarantineCorrupt: false) }.filter { entry in
+        return try await on(Self.readers) { try loadEntries(quarantineCorrupt: false) }.filter { entry in
             if let domainSlug, entry.domain != domainSlug { return false }
             return needle.isEmpty || [entry.topic, entry.cue, entry.content].contains { $0.lowercased().contains(needle) }
         }
@@ -130,11 +130,27 @@ public struct HarnessExperienceLibrary: Sendable {
         if !condition { throw HarnessLibraryError.invalidArgument(message) }
     }
 
-    private static let queue = DispatchQueue(label: "basalt.harness-library")
+    private static let readers = DispatchQueue(label: "basalt.harness-library.readers", attributes: .concurrent)
+    private static let writerRegistry = NSLock()
+    nonisolated(unsafe) private static var writers: [String: DispatchQueue] = [:]
 
-    private func onLibraryQueue<T: Sendable>(_ body: @escaping @Sendable () throws -> T) async throws -> T {
+    private static func writerQueue(for root: URL) -> DispatchQueue {
+        let key = root.standardizedFileURL.path
+        return writerRegistry.withLock {
+            if let queue = writers[key] { return queue }
+            let queue = DispatchQueue(label: "basalt.harness-library.writer:\(key)")
+            writers[key] = queue
+            return queue
+        }
+    }
+
+    private func onWriterQueue<T: Sendable>(_ body: @escaping @Sendable () throws -> T) async throws -> T {
+        try await on(Self.writerQueue(for: rootDirectory), body)
+    }
+
+    private func on<T: Sendable>(_ queue: DispatchQueue, _ body: @escaping @Sendable () throws -> T) async throws -> T {
         try await withCheckedThrowingContinuation { continuation in
-            Self.queue.async { continuation.resume(with: Result { try body() }) }
+            queue.async { continuation.resume(with: Result { try body() }) }
         }
     }
 
