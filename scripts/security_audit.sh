@@ -122,6 +122,13 @@ if grep -rInE "$CRED_VALUE" Sources/ --include="*.swift" ||
 else
     echo -e "${GREEN}✅ PASS: No hardcoded secrets detected${NC}"
 fi
+# A redaction placeholder in a tracked file means a tool rewrote a credential reference
+# while editing it; the v0.3.0 release push broke on exactly that in release.yml.
+PLACEHOLDER='<''REDACTED>'
+if git grep -nIF "$PLACEHOLDER" -- . ':!scripts/security_audit.sh' 2>/dev/null; then
+    echo -e "${RED}❌ FAIL: redaction placeholder in a tracked file (a credential reference was overwritten)${NC}"
+    ISSUES_FOUND=$((ISSUES_FOUND + 1))
+fi
 echo ""
 
 # 2. Check for SQL injection vulnerabilities
