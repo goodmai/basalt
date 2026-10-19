@@ -16,6 +16,7 @@ public struct HarnessLedger: Codable, Sendable, Equatable {
     public let maxProposerCalls: Int
     public private(set) var rolloutIds: [String] = []
     public private(set) var proposerIds: [String] = []
+    public private(set) var warmupIds: [String] = []
 
     public static let kRange = 1...4
 
@@ -41,8 +42,13 @@ public struct HarnessLedger: Codable, Sendable, Equatable {
         proposerIds.append(id)
     }
 
+    public mutating func recordWarmup(id: String) throws {
+        try checkUnique(id)
+        warmupIds.append(id)
+    }
+
     private func checkUnique(_ id: String) throws {
-        if rolloutIds.contains(id) || proposerIds.contains(id) { throw HarnessBudgetError.duplicateRunId(id) }
+        if rolloutIds.contains(id) || proposerIds.contains(id) || warmupIds.contains(id) { throw HarnessBudgetError.duplicateRunId(id) }
     }
 }
 
@@ -461,6 +467,12 @@ public struct HarnessOptimizer: Sendable {
         state.truncated = view.truncated
         let proposerTokens = tokens.proposer ?? HarnessProposal.proposerTokens(for: view)
 
+        try state.ledger.recordWarmup(id: "warmup_base")
+        do {
+            _ = try await generate(Self.warmupPrompt(base: base, spec: spec), task: task, maxTokens: 1, temperature: 0)
+        } catch {
+            warnings.append("prompt-cache warm-up failed: \(error)")
+        }
         for round in 0..<k {
             try await probe("base_r\(round)", tree: base, delta: [:], task: task, base: base, state: &state)
         }
@@ -589,7 +601,20 @@ public struct HarnessOptimizer: Sendable {
         ))
     }
 
+    static let rolloutHeader = "You are an agent working under the harness below."
+
+    static func warmupPrompt(base: HarnessTree, spec: HarnessSurfaceSpec) -> String {
+        ([rolloutHeader] + rolloutContext(tree: base, base: base, spec: spec)).joined(separator: "\n\n") + "\n\n"
+    }
+
     static func rolloutPrompt(task: HarnessTask, tree: HarnessTree, base: HarnessTree, spec: HarnessSurfaceSpec) -> String {
+        ([rolloutHeader] + rolloutContext(tree: tree, base: base, spec: spec) + [
+            "<task>\n\(task.prompt)\n</task>",
+            "Complete the task. Reply with the deliverable only."
+        ]).joined(separator: "\n\n")
+    }
+
+    private static func rolloutContext(tree: HarnessTree, base: HarnessTree, spec: HarnessSurfaceSpec) -> [String] {
         let alwaysOn = tree.alwaysOnPaths(spec: spec)
         let context = tree.files.keys.filter { path in
             alwaysOn.contains(path) || [.skills, .subagents, .guardrails, .memory, .toolGuidance].contains(spec.classify(path: path))
@@ -597,11 +622,7 @@ public struct HarnessOptimizer: Sendable {
         }
         let unchanged = context.filter { base.files[$0] == tree.files[$0] }.sorted()
         let changed = context.filter { base.files[$0] != tree.files[$0] }.sorted()
-        let blocks = (unchanged + changed).map { "<file path=\"\($0)\">\n\(tree.files[$0]!)\n</file>" }
-        return (["You are an agent working under the harness below."] + blocks + [
-            "<task>\n\(task.prompt)\n</task>",
-            "Complete the task. Reply with the deliverable only."
-        ]).joined(separator: "\n\n")
+        return (unchanged + changed).map { "<file path=\"\($0)\">\n\(tree.files[$0]!)\n</file>" }
     }
 
     static func lesson(winner: HarnessRunView, delta: [String: String], selection: HarnessSelection) -> String {
