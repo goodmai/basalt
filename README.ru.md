@@ -214,7 +214,7 @@ basalt models download ornith-ai/Ornith-1.5-9B-MLX-4bit
 | `mlx-community/Qwen3.5-4B-4bit` | 4B | 2.3 ГБ | ✅ ~92 TPS |
 | `mlx-community/Qwen2.5-Coder-7B-Instruct-4bit` | 7B | 4.1 ГБ | ✅ ~60 TPS |
 | `mlx-community/Qwen3.5-9B-OptiQ-4bit` | 9B | 5.8 ГБ | ✅ ~37 TPS |
-| `ornith-ai/Ornith-1.5-9B-MLX-4bit` | 9B | 5.8 ГБ | ✅ ~45 TPS (reasoning — см. заметку) |
+| `ornith-ai/Ornith-1.5-9B-MLX-4bit` | 9B | 4.7 ГБ | ✅ ~48 TPS (reasoning — см. заметку) |
 | `ornith-ai/Ornith-1.5-35B-A3B-MLX-4bit` | 35B MoE | 21 ГБ | ✅ на 24 ГБ не проверялась |
 | `AutisticAF/Huihui-Qwen3.8-27B-abliterated-mlx-4Bit` | 27B | 15.2 ГБ | ✅ ~12 TPS (abliterated) |
 | `Ex0bit/MYTHOS-26B-A4B-PRISM-PRO-DQ-MLX` | 26B MoE | 14.5 ГБ | ✅ ~14 TPS (Dynamic Quant) |
