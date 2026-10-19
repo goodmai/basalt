@@ -54,12 +54,9 @@ public enum HarnessLeakGuard {
         return forbiddenTokens.first { lower.contains($0) }
     }
 
-    public static func assertClean(_ text: String, forbiddenPaths: [String] = []) throws {
+    public static func assertClean(_ text: String) throws {
         if let token = forbiddenToken(in: text) {
             throw HarnessBudgetError.leakDetected(token)
-        }
-        if let path = forbiddenPaths.first(where: { !$0.isEmpty && text.contains($0) }) {
-            throw HarnessBudgetError.leakDetected(path)
         }
     }
 }

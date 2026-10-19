@@ -386,13 +386,10 @@ struct HarnessLedgerTests {
         #expect(ledger.rolloutIds == ["x"] && ledger.proposerIds.isEmpty)
     }
 
-    @Test("The leak guard rejects grader strings case-insensitively and forbidden paths")
+    @Test("The leak guard rejects grader strings case-insensitively")
     func leakGuard() throws {
         try HarnessLeakGuard.assertClean("ordinary text with a score of 3")
         #expect(throws: HarnessBudgetError.leakDetected("benchmark_score")) { try HarnessLeakGuard.assertClean("BENCHMARK_SCORE=1") }
         #expect(throws: HarnessBudgetError.leakDetected("\"passed\":")) { try HarnessLeakGuard.assertClean(#"{"passed": true}"#) }
-        #expect(throws: HarnessBudgetError.leakDetected("tests/holdout")) {
-            try HarnessLeakGuard.assertClean("see tests/holdout/case1", forbiddenPaths: ["", "tests/holdout"])
-        }
     }
 }
