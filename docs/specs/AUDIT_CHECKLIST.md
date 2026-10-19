@@ -24,7 +24,7 @@
 - [ ] **Concurrency Safety**: Проверить `ProgressBar.swift` и `Spinner.swift`. Не возникает ли мерцания при одновременном обновлении нескольких индикаторов?
 
 ## 5. Инфраструктурные риски
-- [ ] **Auth Refresh Loop**: Проверить `AuthController.swift`. Как система ведет себя при истечении JWT? Нет ли бесконечного цикла запросов?
+- [x] **Auth Refresh Loop**: неактуально — JWT и `AuthController.swift` удалены, сервер проверяет статический API-ключ (#19).
 - [ ] **Rate Limit Fallback**: Проверить `ModelRouter.swift`. Переключается ли система на резервную модель (например, с Qwen на Gemini) при получении HTTP 429?
 - [ ] **Unified Memory Pressure**: Проверить `ModelFitAnalyzer.swift`. Учитывается ли давление на память со стороны других приложений macOS?
 

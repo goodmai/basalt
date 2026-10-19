@@ -33,8 +33,10 @@ struct TokenBucket: Sendable {
 /// Rejects requests with 429 once the server-wide budget of `requestsPerMinute` is spent.
 /// Mounted after the authenticator, so unauthenticated traffic is refused with 401 before
 /// it can drain the budget of the key holder.
-// ponytail: one bucket for the whole server — it guards the single GPU, not fairness between
-// clients; per-key or per-address buckets if several clients ever share one server.
+// The burst equals the per-minute budget: it caps sustained load on the single GPU (excess
+// requests queue on the model actor), it does not smooth bursts.
+// ponytail: one bucket for the whole server, no fairness between clients; per-key or
+// per-address buckets if several clients ever share one server.
 public struct RateLimitMiddleware<Context: RequestContext>: RouterMiddleware {
     // Mutex is ~Copyable; a class reference keeps the middleware copyable and the bucket shared.
     private final class SharedBucket: Sendable {

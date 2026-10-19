@@ -109,6 +109,12 @@ struct ServeCommand: AsyncParsableCommand {
     private static let logger = GemLogger(module: "ServeCommand")
     private static let defaultModel = "AutisticAF/Huihui-Qwen3.8-27B-abliterated-mlx-4Bit"
 
+    func validate() throws {
+        if let rateLimit, rateLimit < 0 {
+            throw ValidationError("--rate-limit must be 0 (off) or a positive number of requests per minute, got \(rateLimit)")
+        }
+    }
+
     mutating func run() async throws {
         let targetModel = model ?? modelPath ?? Self.defaultModel
 
@@ -139,12 +145,10 @@ struct ServeCommand: AsyncParsableCommand {
             return
         }
 
-        if let rateLimit, rateLimit < 0 {
-            throw ValidationError("--rate-limit must be 0 (off) or a positive number of requests per minute, got \(rateLimit)")
-        }
         let network = try Self.resolveNetwork(
             cliPort: port, cliHost: host,
             cliApiKey: apiKey ?? ProcessInfo.processInfo.environment["BASALT_API_KEY"],
+            cliRateLimit: rateLimit,
             configFile: configFile ?? Self.defaultConfigFileIfPresent()
         )
         // Settle the exposure rule before resolveModelPath(), which may download gigabytes.
@@ -173,7 +177,7 @@ struct ServeCommand: AsyncParsableCommand {
             maxTokens: maxTokens,
             logLevel:  logLevel,
             apiKey:    access.key,
-            rateLimitPerMinute: rateLimit
+            rateLimitPerMinute: network.rateLimit
         )
 
         // Apply log level from config
@@ -250,15 +254,16 @@ struct ServeCommand: AsyncParsableCommand {
         return FileManager.default.fileExists(atPath: url.path) ? url.path : nil
     }
 
-    /// Port, host and API key with precedence CLI > `--config` file > default.
+    /// Port, host, API key and rate limit with precedence CLI > `--config` file > default.
     /// An unreadable or malformed config file — or a value of the wrong type in it — is an error,
     /// never a silent fallback to defaults.
     static func resolveNetwork(
         cliPort: Int?,
         cliHost: String?,
         cliApiKey: String?,
+        cliRateLimit: Int? = nil,
         configFile: String?
-    ) throws -> (port: Int, host: String, apiKey: String?) {
+    ) throws -> (port: Int, host: String, apiKey: String?, rateLimit: Int?) {
         var dict: [String: Any] = [:]
         if let configFile {
             let url = URL(fileURLWithPath: (configFile as NSString).expandingTildeInPath)
@@ -280,7 +285,8 @@ struct ServeCommand: AsyncParsableCommand {
         return (
             port: try cliPort ?? value("port", as: Int.self) ?? 8080,
             host: try cliHost ?? value("host", as: String.self) ?? "127.0.0.1",
-            apiKey: try cliKey ?? value("api_key", as: String.self)
+            apiKey: try cliKey ?? value("api_key", as: String.self),
+            rateLimit: try cliRateLimit ?? value("rate_limit", as: Int.self)
         )
     }
 

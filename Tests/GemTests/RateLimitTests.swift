@@ -33,6 +33,20 @@ struct RateLimitTests {
         #expect(try ServerConfig(modelPath: "p", host: "0.0.0.0", apiKey: "k").rateLimitPerMinute == 120)
     }
 
+    @Test("rate_limit comes from --config when the flag is absent; a negative flag is rejected")
+    func testRateLimitFromConfigAndValidation() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let file = dir.appendingPathComponent("config.json")
+        try Data(#"{"rate_limit": 30}"#.utf8).write(to: file)
+        #expect(try ServeCommand.resolveNetwork(cliPort: nil, cliHost: nil, cliApiKey: nil, configFile: file.path).rateLimit == 30)
+        #expect(try ServeCommand.resolveNetwork(cliPort: nil, cliHost: nil, cliApiKey: nil, cliRateLimit: 5,
+                                                configFile: file.path).rateLimit == 5)
+        #expect(throws: (any Error).self) { _ = try ServeCommand.parse(["--rate-limit", "-1"]) }
+        #expect(throws: Never.self) { _ = try ServeCommand.parse(["--rate-limit", "0"]) }
+    }
+
     private func router(rateLimit: Int) throws -> Router<BasicRequestContext> {
         let config = try ServerConfig(modelPath: "stub", host: "0.0.0.0", apiKey: "k-123", rateLimitPerMinute: rateLimit)
         return RESTServer(orchestrator: ModelOrchestratorActor(engine: MockInferenceEngine()), config: config).makeRouter()
@@ -56,7 +70,8 @@ struct RateLimitTests {
                 ($0.status, $0.headers[.retryAfter])
             }
             #expect(status == .tooManyRequests)
-            #expect(retryAfter.flatMap(Int.init).map { $0 >= 1 } == true)
+            // 2/min refills one token every 30 s; the bucket is empty, so the wait is exactly 30.
+            #expect(retryAfter == "30")
             let health = try await client.execute(uri: "/api/v1/health", method: .get) { $0.status }
             #expect(health == .ok)
         }

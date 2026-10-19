@@ -23,7 +23,6 @@
 │   MCP stdio ──┐                                      │
 │               ├──► ModelOrchestratorActor ──► MLX   │
 │   REST :8080 ─┘        (actor, FIFO)      Metal GPU  │
-│   WebSocket ──┘                                      │
 └──────────────────────────────────────────────────────┘
 ```
 
@@ -35,7 +34,7 @@ Two transports share a single actor instance — **MCP stdio** for IDE integrati
 
 ## Why basalt
 
-- **One server, three protocols.** REST speaks OpenAI *and* Anthropic (`/v1/messages`), MCP stdio plugs into Claude Desktop and Cursor, WebSocket streams tokens. They share a single model actor, so nothing loads twice.
+- **One server, two transports.** REST speaks OpenAI *and* Anthropic (`/v1/messages`), MCP stdio plugs into Claude Desktop and Cursor, and every generation route can stream over SSE. They share a single model actor, so nothing loads twice.
 - **Claude Code on a local model in two lines.** Set `ANTHROPIC_BASE_URL` and run `claude` — your real API key is never touched. See [Claude Code Integration](#claude-code-integration).
 - **Fast on a laptop.** On a 24 GB Mac: ~110 tok/s on Gemma 4 E2B, ~92 tok/s on Qwen3.5-4B, ~37 tok/s on a 9B, ~12 tok/s on a 27B ([full table](#verified-models)).
 - **Pure Swift.** SwiftPM only — no Node, no Python, no Docker at runtime. Metal kernels compiled once, `mlx.metallib` shipped next to the binary.
@@ -191,7 +190,7 @@ The flags worth knowing on `serve`:
 | `--max-tokens` | default generation ceiling (2048–128000) |
 | `--dry-run` | memory feasibility check, then exit without loading |
 | `--port`, `--host` | default 127.0.0.1:8080; any other host needs an API key (`BASALT_API_KEY` or `--auto-generate-key`) |
-| `--rate-limit N` | server-wide requests per minute, 429 beyond it — default off on loopback, 120 otherwise; `0` disables |
+| `--rate-limit N` | server-wide requests per minute, 429 beyond it — default off on loopback, 120 otherwise; `0` disables; also `rate_limit` in `~/.gem/config.json` |
 
 ---
 
@@ -292,13 +291,15 @@ curl -s http://localhost:8080/v1/messages \
 
 Implements the full Anthropic SSE event sequence (`message_start`, `content_block_start`, `content_block_delta`, `message_stop`). Accepts plain-string and block-array content formats.
 
-### WebSocket streaming
+### SSE streaming (native API)
 
-```js
-const ws = new WebSocket("ws://localhost:8080/ws/generate");
-ws.send(JSON.stringify({ prompt: "Hello", maxTokens: 512 }));
-ws.onmessage = e => console.log(JSON.parse(e.data));
+```bash
+curl -N http://localhost:8080/api/v1/generate/stream \
+  -H "Content-Type: application/json" \
+  -d '{"prompt": "Hello", "maxTokens": 512}'
 ```
+
+Each event is a `data: {...}` line; the stream ends with `data: [DONE]`.
 
 ### Swagger UI
 
@@ -494,7 +495,7 @@ docs/                       — Extended documentation
 | `Config/` | 1 | Server configuration |
 | `Core/` | 13 | Inference engine, orchestrator, DTOs, errors |
 | `MCP/` | 1 | MCP stdio server |
-| `REST/` | 7 | HTTP controllers + WebSocket |
+| `REST/` | 7 | HTTP controllers (SSE streaming) + auth / rate-limit middleware |
 | `UI/` | 9 | Terminal rendering |
 | `GemBin/` | 1 | Executable wrapper |
 | `PerformanceBenchmark/` | 1 | Benchmark CLI |
