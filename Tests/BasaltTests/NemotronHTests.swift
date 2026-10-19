@@ -1,5 +1,6 @@
 import Testing
 import Foundation
+import MLX
 import MLXLLM
 import MLXLMCommon
 import Jinja
@@ -357,16 +358,22 @@ struct NemotronHTests {
     @Test("the engine turns a Nemotron <TOOLCALL> into one structured call and stops generating once parallel calls are off, with and without a prompt cache")
     func engineScansNemotronCallsAndStopsAfterOne() async throws {
         let tools = [ToolDefinition(name: "get_weather"), ToolDefinition(name: "get_time")]
+        let scriptLength = ScriptedTokenizer.toolCallScript.count
         let single = try await Self.scriptedChunks(
             NemotronProfile(switchesThinkingInConversation: false), tools: tools, toolChoice: ToolChoice(parallel: false))
         #expect(single.calls.map(\.name) == ["get_weather"])
         #expect(single.text == "Checking. ")
-        #expect(single.completionTokens < ScriptedTokenizer.script.count)
-        let cached = try await Self.scriptedChunks(
-            NemotronProfile(switchesThinkingInConversation: false), tools: tools, toolChoice: ToolChoice(parallel: false), cacheKey: "t")
+        #expect(single.completionTokens < scriptLength)
+        let cachingEngine = try await Self.scriptedEngine(
+            NemotronProfile(switchesThinkingInConversation: false), promptCacheBytes: 1 << 24)
+        let cachedRequest = Self.scriptedRequest(tools: tools, toolChoice: ToolChoice(parallel: false), cacheKey: "t")
+        let cached = try await Self.chunks(cachingEngine, cachedRequest)
         #expect(cached.calls.map(\.name) == ["get_weather"])
         #expect(cached.text == "Checking. ")
-        #expect(cached.completionTokens > 0 && cached.completionTokens < ScriptedTokenizer.script.count)
+        #expect(cached.completionTokens > 0 && cached.completionTokens < scriptLength)
+        let reused = try await Self.chunks(cachingEngine, cachedRequest)
+        #expect(reused.cachedPromptTokens > 0, "the first call stored its prompt in the cache")
+        #expect(reused.calls.map(\.name) == ["get_weather"])
         let parallel = try await Self.scriptedChunks(NemotronProfile(switchesThinkingInConversation: false), tools: tools)
         #expect(parallel.calls.map(\.name) == ["get_weather", "get_time"])
         let generic = try await Self.scriptedChunks(GenericProfile(), tools: tools)
@@ -374,11 +381,31 @@ struct NemotronHTests {
         #expect(generic.text.hasPrefix("Checking. <TOOLCALL>"))
     }
 
+    @Test("a prompt whose template ends with <think> streams reasoning even when the assistant prefix is longer than the decoded tail")
+    func renderedTailIsReadBeforeTheAssistantPrefix() async throws {
+        let generationPrompt = "<|im_start|>assistant\n<think>\n"
+        let prefix = String(repeating: "and more ", count: 4)
+        let outcome = try await Self.scriptedChunks(
+            GenericProfile(),
+            tokenizer: ScriptedTokenizer(script: "still thinking</think>It is 391.", prompt: "weather and time" + generationPrompt + prefix),
+            processor: GenerationPromptProcessor(generationPrompt: generationPrompt),
+            assistantPrefix: prefix)
+        #expect(outcome.reasoning == "still thinking")
+        #expect(outcome.text == prefix + "It is 391.")
+    }
+
     struct ScriptedTokenizer: MLXLMCommon.Tokenizer {
-        static let script = #"Checking. <TOOLCALL>[{"name": "get_weather", "arguments": {}}, {"name": "get_time", "arguments": {}}]</TOOLCALL> Done, and a long tail that a single-call request never generates."#
+        static let toolCallScript = #"Checking. <TOOLCALL>[{"name": "get_weather", "arguments": {}}, {"name": "get_time", "arguments": {}}]</TOOLCALL> Done, and a long tail that a single-call request never generates."#
+
+        var script = Self.toolCallScript
+        var prompt = ""
 
         func encode(text: String, addSpecialTokens: Bool) -> [Int] { ByteTokenizer().encode(text: text, addSpecialTokens: addSpecialTokens) }
-        func decode(tokenIds: [Int], skipSpecialTokens: Bool) -> String { String(Self.script.prefix(tokenIds.count)) }
+        func decode(tokenIds: [Int], skipSpecialTokens: Bool) -> String {
+            let promptText = String(String.UnicodeScalarView(tokenIds.compactMap(UnicodeScalar.init)))
+            if tokenIds.count >= 8, prompt.contains(promptText) { return promptText }
+            return String(script.prefix(tokenIds.count))
+        }
         func convertTokenToId(_ token: String) -> Int? { nil }
         func convertIdToToken(_ id: Int) -> String? { nil }
         var bosToken: String? { nil }
@@ -394,28 +421,66 @@ struct NemotronHTests {
         }
     }
 
-    static func scriptedChunks(
-        _ profile: any ModelProfile, tools: [ToolDefinition], toolChoice: ToolChoice? = nil, cacheKey: String? = nil
-    ) async throws -> (text: String, calls: [ToolCallOutput], completionTokens: Int) {
-        let engine = MLXInferenceEngine()
-        await engine.attach(ModelContainer(context: ModelContext(
-            configuration: ModelConfiguration(id: "scripted"), model: try TinyModel.make(),
-            processor: ByteInputProcessor(), tokenizer: ScriptedTokenizer())), profile: profile)
-        let request = GenerationRequest(
-            prompt: "weather and time", maxTokens: ScriptedTokenizer.script.count + 20, temperature: 0,
-            tools: tools, toolChoice: toolChoice, cacheKey: cacheKey)
+    struct GenerationPromptProcessor: UserInputProcessor {
+        let generationPrompt: String
+
+        func prepare(input: UserInput) throws -> LMInput {
+            let turns = DefaultMessageGenerator().generate(from: input).map { $0["content"] as? String ?? "" }.joined()
+            return LMInput(tokens: MLXArray(ByteTokenizer().encode(text: turns + generationPrompt, addSpecialTokens: false).map(Int32.init)))
+        }
+    }
+
+    struct ScriptedOutcome {
         var text = ""
+        var reasoning = ""
         var calls: [ToolCallOutput] = []
         var completionTokens = 0
+        var cachedPromptTokens = 0
+    }
+
+    static func scriptedEngine(
+        _ profile: any ModelProfile, tokenizer: ScriptedTokenizer = ScriptedTokenizer(),
+        processor: any UserInputProcessor = ByteInputProcessor(), promptCacheBytes: Int? = nil
+    ) async throws -> MLXInferenceEngine {
+        let engine = MLXInferenceEngine(promptCacheBytes: promptCacheBytes)
+        await engine.attach(ModelContainer(context: ModelContext(
+            configuration: ModelConfiguration(id: "scripted"), model: try TinyModel.make(),
+            processor: processor, tokenizer: tokenizer)), profile: profile)
+        return engine
+    }
+
+    static func scriptedRequest(
+        tools: [ToolDefinition]? = nil, toolChoice: ToolChoice? = nil, cacheKey: String? = nil,
+        assistantPrefix: String? = nil, maxTokens: Int = ScriptedTokenizer.toolCallScript.count + 20
+    ) -> GenerationRequest {
+        GenerationRequest(
+            prompt: "weather and time", maxTokens: maxTokens, temperature: 0,
+            tools: tools, toolChoice: toolChoice, cacheKey: cacheKey, assistantPrefix: assistantPrefix)
+    }
+
+    static func chunks(_ engine: MLXInferenceEngine, _ request: GenerationRequest) async throws -> ScriptedOutcome {
+        var outcome = ScriptedOutcome()
         for await chunk in try await engine.generateStream(request: request) {
             switch chunk {
-            case .text(let piece): text += piece
-            case .toolCall(let call): calls.append(call)
-            case .metadata(let response): completionTokens = response.completionTokens
-            default: break
+            case .text(let piece): outcome.text += piece
+            case .reasoning(let piece): outcome.reasoning += piece
+            case .toolCall(let call): outcome.calls.append(call)
+            case .metadata(let response):
+                outcome.completionTokens = response.completionTokens
+                outcome.cachedPromptTokens = response.cachedPromptTokens
             }
         }
-        return (text, calls, completionTokens)
+        return outcome
+    }
+
+    static func scriptedChunks(
+        _ profile: any ModelProfile, tools: [ToolDefinition]? = nil, toolChoice: ToolChoice? = nil,
+        tokenizer: ScriptedTokenizer = ScriptedTokenizer(), processor: any UserInputProcessor = ByteInputProcessor(),
+        assistantPrefix: String? = nil
+    ) async throws -> ScriptedOutcome {
+        let engine = try await scriptedEngine(profile, tokenizer: tokenizer, processor: processor)
+        return try await chunks(engine, scriptedRequest(
+            tools: tools, toolChoice: toolChoice, assistantPrefix: assistantPrefix, maxTokens: tokenizer.script.count + 20))
     }
 
     @Test("chat_template.json sits between chat_template.jinja and tokenizer_config.json")
