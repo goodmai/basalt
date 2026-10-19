@@ -541,7 +541,7 @@ struct PromptCacheTreeTests {
         #expect(Set(shared.children.keys) == [60, 500])
     }
 
-    @Test("Non-KVCacheSimple layers (hybrid SSM, rotating, chunked) and caches shorter than their prompt are not stored")
+    @Test("Rotating, chunked or live recurrent layers and caches shorter than their prompt are not stored")
     func onlyPlainConsistentCachesAreStored() {
         var tree = PromptCacheTree(byteBudget: 1 << 30)
         tree.store("ns", tokens: [1, 2], cache: PromptCache([MambaCache()]))

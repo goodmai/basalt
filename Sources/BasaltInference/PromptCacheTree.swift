@@ -37,6 +37,7 @@ enum PromptCacheBudget {
 final class PromptCacheNode: @unchecked Sendable {
     var tokens: [Int]
     var layers: [[MLXArray]]
+    var recurrent: [Int: KVCache] = [:]
     var children: [Int: PromptCacheNode] = [:]
     weak var parent: PromptCacheNode?
     var lastUse: Int
@@ -50,6 +51,7 @@ final class PromptCacheNode: @unchecked Sendable {
 
     var bytes: Int {
         layers.joined().reduce(0) { $0 + $1.nbytes }
+            + recurrent.values.flatMap { $0.innerState() }.reduce(0) { $0 + $1.nbytes }
     }
 }
 
@@ -82,11 +84,14 @@ struct PromptCacheTree: Sendable {
 
     mutating func lease(_ namespace: String, for prompt: [Int]) -> PromptCacheLease? {
         guard let root = roots[namespace] else { return nil }
-        let path = Self.walk(from: root, along: Array(prompt.dropLast()))
+        let path = HybridPrefixSnapshot.restorable(Self.walk(from: root, along: Array(prompt.dropLast())))
         guard let deepest = path.last?.node else { return nil }
         touch(deepest)
         deepest.pins += 1
         let layers = deepest.layers.indices.map { layer -> KVCache in
+            if let state = deepest.recurrent[layer] {
+                return state.copy()
+            }
             let cache = KVCacheSimple()
             cache.state = [0, 1].map { part in
                 concatenated(path.map { $0.node.layers[layer][part][.ellipsis, ..<$0.used, 0...] }, axis: 2)
@@ -102,12 +107,21 @@ struct PromptCacheTree: Sendable {
     }
 
     mutating func store(_ namespace: String, tokens: [Int], cache: PromptCache) {
-        guard byteBudget > 0, !tokens.isEmpty, cache.isSharable, cache.tokenCount >= tokens.count else { return }
+        guard byteBudget > 0, !tokens.isEmpty, cache.tokenCount >= tokens.count,
+              cache.isSharable || cache.isSnapshot(of: tokens.count)
+        else { return }
+        let recurrent = HybridPrefixSnapshot.recurrentLayers(of: cache)
         let root = roots[namespace] ?? PromptCacheNode(tokens: [], layers: [], lastUse: 0)
         let path = Self.walk(from: root, along: tokens)
         let matched = path.reduce(0) { $0 + $1.used }
         guard matched < tokens.count else {
-            touch(path.last?.node ?? root)
+            guard let last = path.last else { return }
+            let node = recurrent.isEmpty || last.used == last.node.tokens.count ? last.node : split(last.node, at: last.used)
+            let before = node.bytes
+            node.recurrent.merge(recurrent) { kept, _ in kept }
+            byteCount += node.bytes - before
+            touch(node)
+            evict()
             return
         }
         let addsLeaf = path.last.map { $0.used < $0.node.tokens.count || !$0.node.children.isEmpty } ?? true
@@ -119,11 +133,12 @@ struct PromptCacheTree: Sendable {
         }
         let leaf = PromptCacheNode(
             tokens: Array(tokens[matched...]),
-            layers: Self.slice(cache.layers.map(\.state), matched..<tokens.count),
+            layers: Self.slice(cache.layers.map { $0 is ArraysCache ? [] : $0.state }, matched..<tokens.count),
             lastUse: 0)
         if parent === root || !parent.children.isEmpty {
             leafCount += 1
         }
+        leaf.recurrent = recurrent
         attach(leaf, to: parent)
         byteCount += leaf.bytes
         touch(leaf)
@@ -231,7 +246,7 @@ struct PromptCacheTree: Sendable {
             let keep = leafCount > leafLimit
                 ? 0 : victim.tokens.count - (byteCount - byteBudget + bytesPerToken - 1) / bytesPerToken
             let before = victim.bytes
-            if keep > 0 {
+            if keep > 0, victim.recurrent.isEmpty {
                 victim.layers = Self.slice(victim.layers, 0..<keep)
                 victim.tokens = Array(victim.tokens.prefix(keep))
                 byteCount += victim.bytes - before

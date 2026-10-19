@@ -636,7 +636,7 @@ public actor MLXInferenceEngine: InferenceEngine {
             promptCaches.release(lease)
         }
         if let cache {
-            promptCaches.store(namespace, tokens: tokens, cache: cache)
+            promptCaches.store(namespace, tokens: Array(tokens.prefix(cache.tokenCount)), cache: cache)
         }
     }
 
@@ -653,7 +653,9 @@ public actor MLXInferenceEngine: InferenceEngine {
         try components.validate(parameters: params)
         let cache = try lease?.cache ?? PromptCache(context.model.newCache(parameters: params))
         let reused = lease?.reusedTokens ?? 0
-        let tail = LMInput(tokens: input.text.tokens[.ellipsis, reused...])
+        let head = try HybridPrefixSnapshot.prefillHead(
+            input.text.tokens, into: cache, reused: reused, model: context.model, prefill: params.prefill)
+        let tail = LMInput(tokens: input.text.tokens[.ellipsis, head.start...])
         let iterator = try TokenIterator(
             input: tail, model: context.model, cache: cache.layers,
             processor: components.logitProcessor(parameters: params).map {
@@ -662,9 +664,9 @@ public actor MLXInferenceEngine: InferenceEngine {
             sampler: params.sampler(), prefill: params.prefill, maxTokens: params.maxTokens)
         let keepable = iterator.state == nil
         let (stream, task) = generateTask(
-            promptTokenCount: tail.text.tokens.size, modelConfiguration: context.configuration,
+            promptTokenCount: input.text.tokens.dim(-1) - reused, modelConfiguration: context.configuration,
             tokenizer: context.tokenizer, iterator: iterator, tools: tools, toolCallPolicy: params.toolCallPolicy)
-        return GenerationLaunch(stream: stream, task: task, cache: keepable ? cache : nil, reusedTokens: reused)
+        return GenerationLaunch(stream: stream, task: task, cache: keepable ? head.kept : nil, reusedTokens: reused)
     }
 }
 
