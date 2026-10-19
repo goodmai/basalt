@@ -327,8 +327,9 @@ struct OpenAIController: Sendable {
             return makeDataResponse(encoded)
         } catch {
             fputs("🔴 [OpenAI] generate failed: \(error)\n", stderr)
-            return makeErrorResponse(status: .internalServerError,
-                                     message: error.localizedDescription, code: 500)
+            let code = (error as? BasaltError)?.httpStatus ?? 500
+            return makeErrorResponse(status: HTTPResponse.Status(code: code),
+                                     message: error.localizedDescription, code: code)
         }
     }
 
@@ -416,8 +417,9 @@ struct OpenAIController: Sendable {
             let encoded = try JSONEncoder().encode(response)
             return makeDataResponse(encoded)
         } catch {
-            return makeErrorResponse(status: .internalServerError,
-                                     message: error.localizedDescription, code: 500)
+            let code = (error as? BasaltError)?.httpStatus ?? 500
+            return makeErrorResponse(status: HTTPResponse.Status(code: code),
+                                     message: error.localizedDescription, code: code)
         }
     }
 

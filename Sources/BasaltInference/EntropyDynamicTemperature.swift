@@ -20,8 +20,11 @@ import MLXLMCommon
 // It plugs into mlx-swift-lm as a LogitProcessor (GenerationComponents), so the
 // stock TokenIterator, penalty processors and sampler stay as they are. The stock
 // sampler divides by T0, so the processor scales the logits by T0 / T_t and the
-// effective temperature becomes T_t. Min-P then runs in the sampler on the rescaled
-// distribution. Everything per step is MLX ops on the logits — no CPU pass over the vocab.
+// effective temperature becomes T_t. The stock sampler applies top-p and min-p to the
+// logits it receives, i.e. after our rescaling — a hotter T_t would widen both filters
+// exactly while a loop forms. So the processor first applies them itself to the
+// original distribution (masked tokens become -inf and stay so), and the sampler's own
+// pass can only be stricter. Everything per step is MLX ops on the logits.
 
 public struct EntropyDynamicTemperature: LogitProcessor {
     /// EDT's base N and exponent θ, the values issue #40 asks for; γ_rep is ours.
@@ -29,7 +32,8 @@ public struct EntropyDynamicTemperature: LogitProcessor {
     public static let defaultTheta: Float = 1.5
     public static let defaultGammaRep: Float = 0.5
     /// Floor keeps T_t > 0 (H = 0 would otherwise divide by zero); ceiling is the API's
-    /// own temperature limit.
+    /// own temperature limit. A request colder than the floor keeps its own temperature
+    /// as the floor: EDT cools, it never heats a near-greedy request up.
     public static let range: ClosedRange<Float> = 0.05...2.0
 
     /// R_t over generated tokens: probe and threshold in tokens, mirroring
@@ -43,6 +47,9 @@ public struct EntropyDynamicTemperature: LogitProcessor {
     let n: Float
     let theta: Float
     let gammaRep: Float
+    /// The request's nucleus and Min-P thresholds, applied to the original distribution.
+    let topP: Float?
+    let minP: Float?
 
     /// Generated tokens already read back to the CPU, for R_t.
     private(set) var history: [Int] = []
@@ -54,9 +61,13 @@ public struct EntropyDynamicTemperature: LogitProcessor {
 
     public init(
         baseTemperature: Float,
-        n: Float = defaultN, theta: Float = defaultTheta, gammaRep: Float = defaultGammaRep
+        n: Float = defaultN, theta: Float = defaultTheta, gammaRep: Float = defaultGammaRep,
+        topP: Float? = nil, minP: Float? = nil
     ) {
         self.baseTemperature = baseTemperature
+        // Same conditions under which the stock sampler applies them.
+        self.topP = topP.flatMap { $0 > 0 && $0 < 1 ? $0 : nil }
+        self.minP = minP.flatMap { $0 > 0 ? $0 : nil }
         self.n = n
         self.theta = theta
         self.gammaRep = gammaRep
@@ -68,13 +79,15 @@ public struct EntropyDynamicTemperature: LogitProcessor {
         let logp = z - logSumExp(z, axis: -1, keepDims: true)
         let p = exp(logp)
         // -inf logits (masked tokens) give 0 · -inf = NaN; they contribute 0.
-        return -sum(MLX.where(p .> 0, p * logp, MLXArray(Float(0))), axis: -1, keepDims: true)
+        let h = -sum(MLX.where(p .> 0, p * logp, MLXArray(Float(0))), axis: -1, keepDims: true)
+        // A one-hot distribution sums to -0, and θ / -0 = -inf would send T to the ceiling.
+        return maximum(h, MLXArray(Float(0)))
     }
 
     /// T_t for a given entropy and repetition index.
     func temperature(entropy: MLXArray, repetition: Float) -> MLXArray {
         let t = baseTemperature * pow(MLXArray(n), theta / entropy) + gammaRep * repetition
-        return clip(t, min: Self.range.lowerBound, max: Self.range.upperBound)
+        return clip(t, min: min(Self.range.lowerBound, baseTemperature), max: Self.range.upperBound)
     }
 
     public mutating func prompt(_ prompt: MLXArray) {
@@ -83,7 +96,26 @@ public struct EntropyDynamicTemperature: LogitProcessor {
 
     public func process(logits: MLXArray) -> MLXArray {
         let t = temperature(entropy: Self.entropy(logits), repetition: repetition)
-        return logits * (baseTemperature / t)
+        return truncated(logits) * (baseTemperature / t)
+    }
+
+    /// Top-p, then min-p (mlx-lm's order) on the original distribution; dropped tokens -> -inf.
+    func truncated(_ logits: MLXArray) -> MLXArray {
+        guard topP != nil || minP != nil else { return logits }
+        let z = logits.asType(.float32)
+        let logp = z - logSumExp(z, axis: -1, keepDims: true)
+        let negInf = MLXArray(-Float.infinity)
+        var keep = logp .> negInf
+        if let topP {
+            let order = argSort(logp, axis: -1)
+            let cumulative = cumsum(exp(takeAlong(logp, order, axis: -1)), axis: -1)
+            let keepSorted = cumulative .> (1 - topP)
+            keep = keep .&& putAlong(keep, order, values: keepSorted, axis: -1)
+        }
+        if let minP {
+            keep = keep .&& (logp .>= logp.max(axis: -1, keepDims: true) + log(MLXArray(minP)))
+        }
+        return MLX.where(keep, z, negInf)
     }
 
     public mutating func didSample(token: MLXArray) {

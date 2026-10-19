@@ -383,8 +383,9 @@ public actor MLXInferenceEngine: InferenceEngine {
         var components = GenerationComponents()
         // At temperature 0 the sampler is argmax: there is no temperature to modulate.
         if request.dynamicTemperature == true, temperature > 0 {
+            let (topP, minP) = (params.topP, params.minP)
             components = components.appendingLogitProcessor {
-                EntropyDynamicTemperature(baseTemperature: temperature)
+                EntropyDynamicTemperature(baseTemperature: temperature, topP: topP, minP: minP)
             }
         }
         return (params, components)

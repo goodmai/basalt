@@ -116,4 +116,43 @@ struct EngineSamplingTests {
         #expect(await draws(minP: 0.5) == [0, 1])
         #expect(await draws(minP: 0).contains(2), "without Min-P the tail is reachable")
     }
+
+    @Test("EDT keeps min_p on the original distribution even when a loop heats T_t up")
+    func edtKeepsMinPUnderHeat() {
+        // p = 0.5 / 0.3 / 0.2 with min_p 0.5 must drop token 2 whatever T_t is.
+        let logits = log(MLXArray([Float(0.5), 0.3, 0.2])).reshaped(1, -1)
+        var hot = EntropyDynamicTemperature(baseTemperature: 0.7, minP: 0.5)
+        for token in Array(repeating: Array(0..<16), count: 8).flatMap({ $0 }) {
+            hot.didSample(token: MLXArray(Int32(token)))
+        }
+        #expect(hot.repetition > 0, "the loop must have raised R_t for this test to mean anything")
+        let out = hot.process(logits: logits)
+        #expect(out[0, 2].item(Float.self) == -Float.infinity)
+        #expect(out[0, 0].item(Float.self).isFinite && out[0, 1].item(Float.self).isFinite)
+        // Without the processor's own pass, the rescaled distribution would let token 2 through
+        // min_p 0.5 at T_t > T0: confirm that is what the old behaviour would have done.
+        let plain = EntropyDynamicTemperature(baseTemperature: 0.7)
+        let scaled = plain.process(logits: logits)
+        #expect(scaled[0, 2].item(Float.self).isFinite)
+    }
+
+    @Test("EDT top-p drops the tail of the original distribution")
+    func edtTopP() {
+        // Cumulative from the top: 0.5, 0.8, 1.0 -> top_p 0.7 keeps tokens 0 and 1.
+        let logits = log(MLXArray([Float(0.5), 0.3, 0.2])).reshaped(1, -1)
+        let out = EntropyDynamicTemperature(baseTemperature: 0.7, topP: 0.7).process(logits: logits)
+        #expect(out[0, 2].item(Float.self) == -Float.infinity)
+        #expect(out[0, 1].item(Float.self).isFinite)
+    }
+
+    @Test("A request colder than the floor is never heated up; one-hot entropy is 0, not -0")
+    func coldRequestStaysCold() {
+        let cold = EntropyDynamicTemperature(baseTemperature: 0.01)
+        #expect(cold.temperature(entropy: MLXArray([Float(0.0001)]), repetition: 0).item(Float.self) <= 0.01 + 1e-6)
+        let oneHot = log(MLXArray([Float(1), 0, 0, 0])).reshaped(1, -1)
+        let h = EntropyDynamicTemperature.entropy(oneHot).item(Float.self)
+        #expect(h == 0 && h.sign == .plus)
+        let t = cold.temperature(entropy: EntropyDynamicTemperature.entropy(oneHot), repetition: 0).item(Float.self)
+        #expect(t <= 0.01 + 1e-6, "a confident token must not jump to the ceiling")
+    }
 }
