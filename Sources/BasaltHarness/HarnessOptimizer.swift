@@ -582,6 +582,9 @@ public struct HarnessOptimizer: Sendable {
     private func propose(
         _ id: String, prompt: String, task: HarnessTask, maxTokens: Int, temperature: Double, state: inout State
     ) async throws -> String? {
+        let effective = await orchestrator.effectiveMaxTokens(for: GenerationRequest(prompt: prompt, maxTokens: maxTokens))
+        let capped = "proposer budget capped to \(effective)"
+        if effective < maxTokens, !state.warnings.contains(capped) { state.warnings.append(capped) }
         do {
             return try await generate(prompt, task: task, maxTokens: maxTokens, temperature: temperature).generatedText
         } catch {

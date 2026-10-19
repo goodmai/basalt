@@ -250,6 +250,11 @@ public actor ModelOrchestratorActor {
         return max(floor, decodeSeconds + prefillSeconds)
     }
 
+    public func effectiveMaxTokens(for request: GenerationRequest) -> Int {
+        let budget = calculateDynamicMaxTokens(promptTokens: Self.estimatedTokens(request.prompt))
+        return min(request.maxTokens ?? budget, budget)
+    }
+
     private func capped(_ request: GenerationRequest) throws(BasaltError) -> GenerationRequest {
         let maxT = calculateDynamicMaxTokens(promptTokens: Self.estimatedTokens(request.prompt))
         var v = try request.validated(defaultMaxTokens: maxT)

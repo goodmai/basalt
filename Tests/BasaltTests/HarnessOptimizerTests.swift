@@ -578,3 +578,31 @@ extension HarnessOptimizerTests {
         }
     }
 }
+
+extension HarnessOptimizerTests {
+    @Test("A proposer budget above the machine budget is reported as capped, once, with the effective cap")
+    func proposerCapIsVisible() async throws {
+        let engine = MockInferenceEngine()
+        await engine.setResponder { HarnessScript().respond($0) }
+        let orchestrator = ModelOrchestratorActor(engine: engine)
+        try await orchestrator.loadModel(path: "mock-model")
+        var tokens = HarnessOptimizer.TokenBudgets()
+        tokens.proposer = 131_072
+        let result = try await HarnessOptimizer(orchestrator: orchestrator, spec: .claude, library: nil, tokens: tokens)
+            .optimize(task: Self.task, base: Self.base, k: 1)
+        let sent = await engine.getRequests().filter(Self.isProposer).compactMap(\.maxTokens)
+        #expect(!sent.isEmpty && sent.allSatisfy { $0 < 131_072 })
+        let capped = result.warnings.filter { $0.hasPrefix("proposer budget capped to ") }
+        #expect(!capped.isEmpty && Set(capped) == Set(sent.map { "proposer budget capped to \($0)" }))
+        #expect(capped.count == Set(capped).count)
+
+        let small = MockInferenceEngine()
+        await small.setResponder { HarnessScript().respond($0) }
+        let uncappedOrchestrator = ModelOrchestratorActor(engine: small)
+        try await uncappedOrchestrator.loadModel(path: "mock-model")
+        tokens.proposer = 256
+        let uncapped = try await HarnessOptimizer(orchestrator: uncappedOrchestrator, spec: .claude, library: nil, tokens: tokens)
+            .optimize(task: Self.task, base: Self.base, k: 1)
+        #expect(!uncapped.warnings.contains { $0.hasPrefix("proposer budget capped") })
+    }
+}
