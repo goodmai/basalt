@@ -386,4 +386,85 @@ struct RESTServerTests {
         }
         #expect(await s.orchestrator.currentModelId == "org/mock-model", "a failed load leaves the current model in place")
     }
+
+    private static let jsonHeaders: HTTPFields = [.contentType: "application/json"]
+    private static let pathLikeModels = ["/tmp", "./x", "../x", "~/x", "claude-local/..--x", "org/../x", "/"]
+
+    @Test("REST model ids are repo ids: HF charset, two components, no path forms (#72)")
+    func repoIdShape() {
+        for id in ["mlx-community/Qwen3.5-4B-4bit", "AutisticAF/Huihui-Qwen3.8-27B-abliterated-mlx-4Bit", "org/mock-model"] {
+            #expect(ModelsController.isRepoId(id), "\(id)")
+        }
+        for id in Self.pathLikeModels + ["basalt", "a/b/c", "org/", "/name", ".org/x", "org/.x", "org/x y", "org/x~", "-org/x"] {
+            #expect(!ModelsController.isRepoId(ModelsController.hfRepoId(from: id)), "\(id)")
+        }
+    }
+
+    @Test("/v1/models/load refuses paths with 400, echoes no path, and the loaded model stays loaded (#72)")
+    func loadModelRefusesPaths() async throws {
+        let s = try await setup()
+        await s.orchestrator.setModelId("org/mock-model")
+        try await s.app.test(.router) { client in
+            for model in Self.pathLikeModels {
+                try await client.execute(uri: "/v1/models/load", method: .post, headers: Self.jsonHeaders,
+                                         body: ByteBuffer(string: #"{"model": "\#(model)"}"#)) { res in
+                    #expect(res.status == .badRequest, "\(model)")
+                    let message = (try json(res.body)["error"] as? [String: Any])?["message"] as? String
+                    #expect(message == ModelsController.repoIdRequired, "\(model)")
+                }
+            }
+        }
+        #expect(await s.orchestrator.currentModelId == "org/mock-model")
+        #expect(await s.engine.isLoaded)
+    }
+
+    @Test("A path in a generation request's model field is refused before it can trigger a load (#72)")
+    func generationRefusesPathModels() async throws {
+        let s = try await setup(load: false)
+        let requests = [
+            ("/v1/messages", #"{"model": "MODEL", "max_tokens": 5, "messages": [{"role": "user", "content": "hi"}]}"#),
+            ("/v1/chat/completions", #"{"model": "MODEL", "messages": [{"role": "user", "content": "hi"}]}"#),
+            ("/v1/responses", #"{"model": "MODEL", "input": "hi"}"#),
+        ]
+        try await s.app.test(.router) { client in
+            for (uri, template) in requests {
+                for model in ["/tmp", "claude-local/..--x"] {
+                    for stream in [false, true] {
+                        let body = template.replacingOccurrences(of: "MODEL", with: model)
+                            .replacingOccurrences(of: #""model""#, with: #""stream": \#(stream), "model""#)
+                        try await client.execute(uri: uri, method: .post, headers: Self.jsonHeaders,
+                                                 body: ByteBuffer(string: body)) { res in
+                            #expect(res.status == .badRequest, "\(uri) \(model) stream=\(stream)")
+                            #expect(!String(buffer: res.body).contains("/tmp"))
+                        }
+                    }
+                }
+            }
+        }
+        #expect(await !s.engine.isLoaded, "no request may load a local path")
+    }
+
+    @Test("REST error bodies carry no filesystem path; the path stays in the server log (#72)")
+    func errorBodiesHideFilesystemPaths() async throws {
+        let secret = "/Users/someone/private-models/x"
+        #expect(ModelsController.publicMessage(for: BasaltError.weightsCorrupted(path: secret, reason: "r")) == ModelsController.modelUnavailable)
+        #expect(ModelsController.publicMessage(for: BasaltError.modelNotFound(identifier: secret)) == ModelsController.modelUnavailable)
+        let s = try await setup(failGenerate: true)
+        await s.engine.setGenerateError(.modelNotFound(identifier: secret))
+        let requests = [
+            ("/v1/messages", #"{"max_tokens": 5, "messages": [{"role": "user", "content": "hi"}]}"#),
+            ("/v1/chat/completions", #"{"messages": [{"role": "user", "content": "hi"}]}"#),
+            ("/v1/responses", #"{"input": "hi"}"#),
+            ("/api/v1/generate", #"{"prompt": "hi"}"#),
+            ("/v1/generate", #"{"prompt": "hi"}"#),
+        ]
+        try await s.app.test(.router) { client in
+            for (uri, body) in requests {
+                try await client.execute(uri: uri, method: .post, headers: Self.jsonHeaders, body: ByteBuffer(string: body)) { res in
+                    #expect(res.status != .ok, "\(uri)")
+                    #expect(!String(buffer: res.body).contains("private-models"), "\(uri)")
+                }
+            }
+        }
+    }
 }

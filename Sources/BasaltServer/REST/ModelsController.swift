@@ -139,13 +139,17 @@ struct ModelsController: Sendable {
         }
 
         let hfId = hfRepoId(from: dto.model)
+        guard Self.isRepoId(hfId) else {
+            fputs("🔴 [Models] Load refused, not a repo id: \(dto.model)\n", stderr)
+            return makeErrorResponse(status: .badRequest, message: Self.repoIdRequired)
+        }
         fputs("🔄 [Models] Load: \(dto.model) → \(hfId)\n", stderr)
 
         do {
             try await orchestrator.switchModel(to: hfId)
         } catch {
             return makeErrorResponse(status: HTTPResponse.Status(code: error.httpStatus),
-                                     message: error.errorDescription ?? error.localizedDescription)
+                                     message: Self.publicMessage(for: error))
         }
 
         let loadedId = await orchestrator.currentModelId
@@ -181,6 +185,36 @@ struct ModelsController: Sendable {
 
     private func hfRepoId(from modelId: String) -> String {
         Self.hfRepoId(from: modelId)
+    }
+
+    static let repoIdRequired = "\"model\" must be a Hugging Face repo id (org/name). Local paths are accepted only by `basalt serve --model-path` and MCP."
+    static let pathRejected = "\"model\" must be a model id, not a filesystem path."
+
+    static func isRepoId(_ id: String) -> Bool {
+        let parts = id.split(separator: "/", omittingEmptySubsequences: false)
+        return parts.count == 2 && parts.allSatisfy(isRepoIdComponent)
+    }
+
+    private static func isRepoIdComponent(_ part: Substring) -> Bool {
+        guard let first = part.first, first.isASCII, first.isLetter || first.isNumber, part.count <= 96,
+              !part.contains("..") else { return false }
+        return part.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || "-_.".contains($0)) }
+    }
+
+    static func publicMessage(for error: any Error) -> String {
+        switch error as? BasaltError {
+        case .modelNotFound?, .weightsCorrupted?:
+            fputs("🔴 [REST] \(error.localizedDescription)\n", stderr)
+            return modelUnavailable
+        default:
+            return error.localizedDescription
+        }
+    }
+
+    static let modelUnavailable = "The model could not be loaded; the server log has the details."
+
+    static func isLocalPath(_ id: String) -> Bool {
+        id.hasPrefix("/") || id.hasPrefix(".") || id.hasPrefix("~") || id.contains("..")
     }
 
     // MARK: — Response helpers
