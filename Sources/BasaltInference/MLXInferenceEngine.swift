@@ -63,7 +63,7 @@ public actor MLXInferenceEngine: InferenceEngine {
     /// MLX buffer-cache ceiling in bytes. nil leaves MLX's own default.
     private let gpuCacheLimit: Int?
 
-    private(set) var promptCaches: PromptCacheSlots
+    private(set) var promptCaches: PromptCacheTree
     private let configuredPromptCacheBytes: Int?
     private var modelEpoch = 0
 
@@ -87,12 +87,12 @@ public actor MLXInferenceEngine: InferenceEngine {
         self.minP = minP
         self.seed = seed
         self.configuredPromptCacheBytes = promptCacheBytes
-        self.promptCaches = PromptCacheSlots(byteBudget: promptCacheBytes ?? 0)
+        self.promptCaches = PromptCacheTree(byteBudget: promptCacheBytes ?? 0)
     }
 
     func attach(_ container: ModelContainer) {
         self.container = container
-        promptCaches = PromptCacheSlots(byteBudget: configuredPromptCacheBytes ?? PromptCacheBudget.automatic(
+        promptCaches = PromptCacheTree(byteBudget: configuredPromptCacheBytes ?? PromptCacheBudget.automatic(
             workingSet: PromptCacheBudget.gpuWorkingSet(), weights: Memory.activeMemory))
         modelEpoch += 1
         logger.info("Prompt cache budget: \(promptCaches.byteBudget >> 20) MB")
@@ -436,13 +436,19 @@ public actor MLXInferenceEngine: InferenceEngine {
             let promptTokens = lmInput.text.tokens.asArray(Int.self)
             let carriesMoreThanTokens = lmInput.image != nil || lmInput.video != nil
                 || lmInput.audio != nil || lmInput.text.mask != nil
-            let slotKey = carriesMoreThanTokens ? nil : promptCacheKey(for: request)
-            let lease = slotKey.flatMap { promptCaches.lease($0, for: promptTokens) }
+            let namespace = carriesMoreThanTokens ? nil : promptCacheNamespace(for: request)
+            let lease = namespace.flatMap { promptCaches.lease($0, for: promptTokens) }
             let epoch = modelEpoch
-            let launch = try await container.perform(nonSendable: lmInput) { context, input in
-                try Self.launch(
-                    input: input, lease: lease, keepsCache: slotKey != nil,
-                    params: params, components: components, tools: toolSpecs, context: context)
+            let launch: GenerationLaunch
+            do {
+                launch = try await container.perform(nonSendable: lmInput) { context, input in
+                    try Self.launch(
+                        input: input, lease: lease, keepsCache: namespace != nil,
+                        params: params, components: components, tools: toolSpecs, context: context)
+                }
+            } catch {
+                keep(nil, tokens: promptTokens, namespace: namespace, releasing: lease, epoch: epoch)
+                throw error
             }
             let mlxStream = launch.stream
             
@@ -559,9 +565,7 @@ public actor MLXInferenceEngine: InferenceEngine {
                     
                     processBuffer(final: true)
                     await Self.settle(launch, cancelled: Task.isCancelled)
-                    if let cache = launch.cache, let slotKey {
-                        await self.keep(cache, tokens: promptTokens, key: slotKey, epoch: epoch)
-                    }
+                    await self.keep(launch.cache, tokens: promptTokens, namespace: namespace, releasing: lease, epoch: epoch)
 
                     // End of stream - send metadata
                     if !Task.isCancelled {
@@ -619,14 +623,21 @@ public actor MLXInferenceEngine: InferenceEngine {
         await launch.task?.value
     }
 
-    private func promptCacheKey(for request: GenerationRequest) -> String? {
+    private func promptCacheNamespace(for request: GenerationRequest) -> String? {
         guard promptCaches.byteBudget > 0, kvBits == nil else { return nil }
         return request.cacheKey
     }
 
-    private func keep(_ cache: PromptCache, tokens: [Int], key: String, epoch: Int) {
-        guard epoch == modelEpoch else { return }
-        promptCaches.store(key, tokens: tokens, cache: cache)
+    private func keep(
+        _ cache: PromptCache?, tokens: [Int], namespace: String?, releasing lease: PromptCacheLease?, epoch: Int
+    ) {
+        guard epoch == modelEpoch, let namespace else { return }
+        if let lease {
+            promptCaches.release(lease)
+        }
+        if let cache {
+            promptCaches.store(namespace, tokens: tokens, cache: cache)
+        }
     }
 
     static func launch(

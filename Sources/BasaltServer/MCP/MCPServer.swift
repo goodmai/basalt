@@ -490,7 +490,8 @@ public final class MCPServer: Sendable {
             temperature: args?["temperature"] as? Double,
             topP:        args?["topP"]        as? Double,
             minP:        args?["minP"]        as? Double,
-            dynamicTemperature: args?["dynamicTemperature"] as? Bool
+            dynamicTemperature: args?["dynamicTemperature"] as? Bool,
+            cacheKey: PromptCacheKey.resolve(isService: false)
         )
         
         do {

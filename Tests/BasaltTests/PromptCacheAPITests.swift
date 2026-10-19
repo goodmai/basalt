@@ -7,22 +7,22 @@ import HTTPTypes
 @testable import BasaltCore
 @testable import BasaltServer
 
-@Suite("Prompt cache keys and cached-token usage on the wire (#56)")
+@Suite("Prompt cache tree selection and cached-token usage on the wire (#32, #56)")
 struct PromptCacheAPITests {
 
-    private func app(cachedTokens: Int = 0) async throws -> (Application<RouterResponder<BasicRequestContext>>, MockInferenceEngine) {
+    private func app(cachedTokens: Int = 0, apiKey: String? = nil) async throws -> (Application<RouterResponder<BasicRequestContext>>, MockInferenceEngine) {
         let engine = MockInferenceEngine()
         await engine.setMockCachedPromptTokens(cachedTokens)
         let orch = ModelOrchestratorActor(engine: engine, telemetry: TelemetryTracker())
         try await orch.loadModel(path: "mock")
-        let server = RESTServer(orchestrator: orch, config: try ServerConfig(modelPath: "mock"))
+        let server = RESTServer(orchestrator: orch, config: try ServerConfig(modelPath: "mock", apiKey: apiKey))
         return (Application(router: server.makeRouter()), engine)
     }
 
     private func post(
-        _ uri: String, _ json: String, headers: HTTPFields = [:], cachedTokens: Int = 0
+        _ uri: String, _ json: String, headers: HTTPFields = [:], cachedTokens: Int = 0, apiKey: String? = nil
     ) async throws -> (body: String, sent: GenerationRequest?) {
-        let (app, engine) = try await app(cachedTokens: cachedTokens)
+        let (app, engine) = try await app(cachedTokens: cachedTokens, apiKey: apiKey)
         let body = try await app.test(.router) { client in
             try await client.execute(uri: uri, method: .post, headers: headers, body: ByteBuffer(string: json)) { res in
                 #expect(res.status == .ok)
@@ -48,93 +48,44 @@ struct PromptCacheAPITests {
         return fields
     }
 
-    @Test("prompt_cache_key keys the slot on Chat Completions and Responses")
-    func promptCacheKeyIsUsed() async throws {
-        let chat = try await post("/v1/chat/completions",
-            #"{"prompt_cache_key": "codex-1", "messages": [{"role": "user", "content": "hi"}]}"#)
-        #expect(chat.sent?.cacheKey == "key:codex-1")
-        let responses = try await post("/v1/responses", #"{"prompt_cache_key": "codex-2", "input": "hi"}"#)
-        #expect(responses.sent?.cacheKey == "key:codex-2")
-    }
-
-    @Test("metadata.user_id keys the slot on the Anthropic Messages API")
-    func anthropicUserIdIsUsed() async throws {
-        let result = try await post("/v1/messages",
-            #"{"max_tokens": 64, "metadata": {"user_id": "user_abc_session_42"}, "messages": [{"role": "user", "content": "hi"}]}"#)
-        #expect(result.sent?.cacheKey?.hasPrefix("agent:user_abc_session_42:") == true)
-        let lookalike = PromptCacheKey.resolve(declared: "user_abc_session_42:\(PromptCacheKey.digest(String("p".prefix(512))))",
-                                               headers: [:], prompt: "p", isService: false)
-        #expect(lookalike?.hasPrefix("key:") == true, "a declared key can never take the agent: form")
-    }
-
-    @Test("Under one metadata.user_id, turns of a conversation share a slot and a subagent with another system prompt gets its own")
-    func anthropicSubagentsDoNotShareTheMainSlot() async throws {
-        func request(system: String, messages: String) -> String {
-            #"{"max_tokens": 64, "metadata": {"user_id": "u_session_1"}, "system": "\#(system)", "messages": [\#(messages)]}"#
+    @Test("Every non-service request shares one tree; conversation ids, sessions and credentials never split it")
+    func everyRequestSharesOneTree() async throws {
+        let requests = [
+            ("/v1/chat/completions", #"{"prompt_cache_key": "codex-1", "messages": [{"role": "user", "content": "hi"}]}"#),
+            ("/v1/responses", #"{"prompt_cache_key": "codex-2", "input": "hi"}"#),
+            ("/v1/responses", #"{"instructions": "Translate.", "input": "first"}"#),
+            ("/v1/messages", #"{"max_tokens": 64, "metadata": {"user_id": "u_session_1"}, "messages": [{"role": "user", "content": "hi"}]}"#),
+            ("/v1/messages", #"{"max_tokens": 64, "system": "You are an Explore subagent.", "messages": [{"role": "user", "content": "hi"}]}"#),
+        ]
+        for (uri, body) in requests {
+            for headers in [HTTPFields(), header("x-session-id", "s-7"), header("authorization", "Bearer random-1")] {
+                let open = try await post(uri, body, headers: headers)
+                #expect(open.sent?.cacheKey == PromptCacheKey.shared, "\(uri)")
+            }
+            let keyed = try await post(uri, body, headers: header("authorization", "Bearer alice-key"), apiKey: "alice-key")
+            #expect(keyed.sent?.cacheKey == PromptCacheKey.shared, "\(uri)")
         }
-        let main = String(repeating: "You are Claude Code, the main agent. ", count: 20)
-        let explorer = String(repeating: "You are an Explore subagent. ", count: 20)
-        let firstTurn = #"{"role": "user", "content": "fix the bug"}"#
-        let laterTurn = firstTurn + #", {"role": "assistant", "content": "done"}, {"role": "user", "content": "now test it"}"#
-        let mainFirst = try await post("/v1/messages", request(system: main, messages: firstTurn))
-        let mainLater = try await post("/v1/messages", request(system: main, messages: laterTurn))
-        let subagent = try await post("/v1/messages", request(system: explorer, messages: firstTurn))
-        #expect(mainFirst.sent?.cacheKey != nil)
-        #expect(mainFirst.sent?.cacheKey == mainLater.sent?.cacheKey)
-        #expect(mainFirst.sent?.cacheKey != subagent.sent?.cacheKey)
     }
 
-    @Test("Keys are namespaced by the credential a client presents, so clients with different keys never share a slot")
-    func keysAreNamespacedByCredential() async throws {
-        let body = #"{"prompt_cache_key": "shared", "input": "hi"}"#
-        let alice = try await post("/v1/responses", body, headers: header("authorization", "Bearer alice-key"))
-        let aliceAgain = try await post("/v1/responses", body, headers: header("x-api-key", "alice-key"))
-        let bob = try await post("/v1/responses", body, headers: header("authorization", "Bearer bob-key"))
-        #expect(alice.sent?.cacheKey?.hasSuffix("/key:shared") == true)
-        #expect(alice.sent?.cacheKey == aliceAgain.sent?.cacheKey)
-        #expect(alice.sent?.cacheKey != bob.sent?.cacheKey)
-        #expect(alice.sent?.cacheKey?.contains("alice") == false)
+    @Test("A junk Bearer next to a valid x-api-key cannot open a tree of its own")
+    func junkBearerBesideAValidKeyGetsTheSharedTree() async throws {
+        for junk in ["junk-1", "junk-2"] {
+            var headers = header("x-api-key", "alice-key")
+            headers[.authorization] = "Bearer \(junk)"
+            let result = try await post("/v1/responses", #"{"input": "hi"}"#, headers: headers, apiKey: "alice-key")
+            #expect(result.sent?.cacheKey == PromptCacheKey.shared, "\(junk)")
+        }
     }
 
-    @Test("x-session-id keys the slot when the body names none; a body key wins over it")
-    func sessionHeaderIsUsed() async throws {
-        let headers = header("x-session-id", "s-7")
-        let plain = try await post("/v1/messages",
-            #"{"max_tokens": 64, "messages": [{"role": "user", "content": "hi"}]}"#, headers: headers)
-        #expect(plain.sent?.cacheKey == "session:s-7")
-        let keyed = try await post("/v1/responses", #"{"prompt_cache_key": "k", "input": "hi"}"#, headers: headers)
-        #expect(keyed.sent?.cacheKey == "key:k")
-    }
-
-    @Test("Without a key, requests sharing the system prompt share a slot and different ones do not")
-    func systemPrefixKeysTheSlot() async throws {
-        let system = String(repeating: "You are a coding agent with tools. ", count: 20)
-        let first = try await post("/v1/responses", #"{"instructions": "\#(system)", "input": "first"}"#)
-        let second = try await post("/v1/responses", #"{"instructions": "\#(system)", "input": "second"}"#)
-        let other = try await post("/v1/responses", #"{"instructions": "Translate.", "input": "first"}"#)
-        #expect(first.sent?.cacheKey?.hasPrefix("prefix:") == true)
-        #expect(first.sent?.cacheKey == second.sent?.cacheKey)
-        #expect(first.sent?.cacheKey != other.sent?.cacheKey)
-    }
-
-    @Test("A cacheKey in a raw generate body is scoped like any other key and cannot select another namespace's slot")
-    func rawGenerateCannotPickAForeignSlot() async throws {
-        let alice = header("authorization", "Bearer alice-key")
-        let bob = header("authorization", "Bearer bob-key")
-        let aliceSlot = try await post("/v1/responses", #"{"prompt_cache_key": "shared", "input": "hi"}"#, headers: alice)
-        let foreignKey = try #require(aliceSlot.sent?.cacheKey)
+    @Test("A cacheKey in a raw generate body is ignored, so it cannot select another tree")
+    func rawGenerateCannotPickAnotherTree() async throws {
         for uri in ["/api/v1/generate", "/v1/generate", "/api/v1/generate/stream"] {
-            let probe = try await post(uri, #"{"prompt": "hi", "cacheKey": "\#(foreignKey)"}"#, headers: bob)
-            #expect(probe.sent?.cacheKey != foreignKey, "\(uri)")
-            #expect(probe.sent?.cacheKey?.hasSuffix("/key:\(foreignKey)") == true, "\(uri)")
+            let probe = try await post(uri, #"{"prompt": "hi", "cacheKey": "someone-else"}"#)
+            #expect(probe.sent?.cacheKey == PromptCacheKey.shared, "\(uri)")
         }
-        let owner = try await post("/api/v1/generate", #"{"prompt": "hi", "cacheKey": "shared"}"#, headers: alice)
-        #expect(owner.sent?.cacheKey == foreignKey)
-        let unkeyed = try await post("/api/v1/generate", #"{"prompt": "hi"}"#)
-        #expect(unkeyed.sent?.cacheKey?.hasPrefix("prefix:") == true)
     }
 
-    @Test("A service request (thread title) never touches a conversation slot")
+    @Test("A service request (thread title) never touches the prompt cache")
     func serviceRequestHasNoKey() async throws {
         let result = try await post("/v1/messages",
             #"{"max_tokens": 64, "metadata": {"user_id": "u"}, "messages": [{"role": "user", "content": "hi"}]}"#,
