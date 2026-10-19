@@ -1,0 +1,31 @@
+name: ARC-AGI Sandbox
+
+on:
+  push:
+    branches: [ main ]
+    paths: [ 'benchmarks/arc-agi/**', '.github/workflows/arc-sandbox.yml' ]
+  pull_request:
+    paths: [ 'benchmarks/arc-agi/**', '.github/workflows/arc-sandbox.yml' ]
+
+concurrency:
+  group: arc-sandbox-${{ github.ref == 'refs/heads/main' && github.sha || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+
+jobs:
+  sandbox:
+    name: Sandbox tests
+    runs-on: [self-hosted, macOS, ARM64]
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          clean: false
+
+      - name: Run sandbox tests
+        working-directory: benchmarks/arc-agi
+        run: python3 -m unittest -v test_sandbox
