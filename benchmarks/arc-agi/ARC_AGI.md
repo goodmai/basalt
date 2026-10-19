@@ -52,7 +52,7 @@ cp -R /tmp/arc-agi/data/evaluation benchmarks/arc-agi/dataset/evaluation
    - По умолчанию для Gemma 4 MoE установлен бюджет в **16 000 токенов** (`--max-tokens 16000`).
    - Модель формирует цепочку рассуждений в специальном канале `<|channel|>thought`.
 4. **Режимы генерации (`--mode`)**:
-   - **`--mode hybrid` (По умолчанию / Рекомендуемый)**: **Program-of-Thought (PoT)**. Модель генерирует алгоритм на Python `def transform(grid)`, который исполняется в изолированном песочнице Python REPL с тестовой сеткой. Это устраняет галлюцинации нейросети при вычислении больших матриц (14x14, 20x20).
+   - **`--mode hybrid` (по умолчанию на macOS)**: **Program-of-Thought (PoT)**. Модель генерирует алгоритм на Python `def transform(grid)`, который исполняется в отдельном процессе под `sandbox-exec` (см. 2.1) с тестовой сеткой. Это устраняет галлюцинации нейросети при вычислении больших матриц (14x14, 20x20). Где `sandbox-exec` нет (Linux), по умолчанию `direct`; явный `--mode hybrid` там печатает предупреждение: код ограничен только rlimit'ами и может читать ваши файлы и ходить в сеть.
    - **`--mode direct`**: Модель генерирует 2D JSON-массив ответа напрямую токенами.
 
 ---
@@ -60,15 +60,29 @@ cp -R /tmp/arc-agi/data/evaluation benchmarks/arc-agi/dataset/evaluation
 ## 2.1. Архитектура гибридного режима (Hybrid Program-of-Thought)
 
 ```
-[ Промпт задачи ]  -->  [ Gemma 4 MoE + <|channel|>thought ]  -->  [ Извлечение Python-кода ]  -->  [ Python Sandbox REPL ]  -->  [ Точная матрица ]
+[ Промпт задачи ]  -->  [ Gemma 4 MoE + <|channel|>thought ]  -->  [ Извлечение Python-кода ]  -->  [ python3 -I -S под sandbox-exec ]  -->  [ Точная матрица ]
   Примеры IN/OUT          Логический анализ и алгоритм               `def transform(grid)`              `transform(test_input)`           100% точность
 ```
 
 В гибридном режиме `arc_agi_benchmark.py`:
 1. Модели подаётся системная инструкция сформировать функцию `transform(grid: list[list[int]]) -> list[list[int]]`.
 2. Код извлекается из блока ` ```python ... ``` ` в ответе или в цепочке рассуждений.
-3. Код безопасно исполняется через `exec()` в изоляции, на вход подаётся матрица `test_input`.
-4. Итоговая вычисленная матрица сравнивается с эталоном. В случае ошибки выполнения делается автоматический откат (fallback) к прямому JSON-парсингу.
+3. Код — недоверенный ввод (модель может ошибиться или быть prompt-injected), поэтому он исполняется не в процессе бенчмарка, а в дочернем `python3 -I -S arc_sandbox.py` (`arc_sandbox.py`): код и матрица `test_input` идут JSON'ом в stdin, результат — JSON-строкой в stdout. DSL-классы (`Point`, `Color`, `GridObject`, `Grid`) ребёнок импортирует из `arc_helpers.py`; `numpy` доступен как `np`, если установлен.
+4. Итоговая вычисленная матрица сравнивается с эталоном. Если код упал или не вернул сетку, делается откат (fallback) к прямому JSON-парсингу; превышение времени (`exec_timeout`) или памяти (`exec_memory_limit`) — сразу провал попытки.
+
+### Изоляция дочернего процесса
+
+| Слой | Что даёт | macOS |
+| :--- | :--- | :--- |
+| Пустой временный каталог как cwd, `env={}` | нет API-ключей, `HOME`, `PATH` | да |
+| `sandbox-exec` (`deny default`) | запуск только самого `python3`; чтение — только установка Python, `numpy` и его dylib, `/usr/lib`, `/System`, два модуля бенчмарка и временный каталог; запись — только во временный каталог и `/dev/null`; сеть запрещена | да |
+| Таймаут по стенным часам (`--exec-timeout`, 10 с) + `RLIMIT_CPU` | бесконечный цикл убивается, задача засчитывается как проваленная | да |
+| Сторож RSS в родителе (`ps`, раз в 0,1 с, лимит 1 ГиБ) | процесс, раздувший память, убивается | да |
+| `RLIMIT_AS` / `RLIMIT_DATA` (1 ГиБ) | лимит памяти в ядре | **нет**: macOS отказывает в `setrlimit` (`EINVAL`), работает на Linux |
+| `RLIMIT_NPROC=0` | `fork`/`os.system`/`subprocess` падают (`EAGAIN`) | да (запуск процессов закрыт и песочницей) |
+| `RLIMIT_NOFILE=64`, `RLIMIT_FSIZE=16 МиБ`, `RLIMIT_CORE=0` | нельзя открыть сотни файлов, записать больше 16 МиБ, сбросить core | да |
+
+Без `sandbox-exec` остаются только процесс, rlimit'ы, пустой cwd и чистое окружение: файлы и сеть доступны. Проверка: `python3 -m unittest test_sandbox` (чтение `/etc/passwd`, `os.system('touch PWNED')`, `subprocess`, запись вне временного каталога, `socket` к 1.1.1.1:80, бесконечный цикл, 4 ГиБ памяти, поворот сетки).
 
 ---
 
@@ -170,6 +184,9 @@ python3 arc_agi_benchmark.py --split evaluation --start-index 50 --limit 50 --en
 ```bash
 # Запуск конкретных задач 007bbfb7 и 00d62c1b
 python3 arc_agi_benchmark.py --tasks 007bbfb7 00d62c1b --engine swift_mlx --max-tokens 16000
+
+# Сервер на другом порту
+python3 arc_agi_benchmark.py --tasks 6150a2bd --engine-url http://127.0.0.1:8098/v1/chat/completions
 ```
 
 ### 4.5. Запуск с изменённым бюджетом рассуждений и температурой

@@ -1,0 +1,117 @@
+import os
+import tempfile
+import time
+import unittest
+from pathlib import Path
+
+from arc_agi_benchmark import execute_python_hybrid
+from arc_sandbox import run_transform, sandbox_available
+
+BLOCKED = [[0]]
+ESCAPED = [[1]]
+
+
+def attempt(body: str) -> str:
+    indented = "\n".join("        " + line for line in body.strip().splitlines())
+    return (
+        "def transform(grid):\n"
+        "    try:\n"
+        f"{indented}\n"
+        "    except BaseException:\n"
+        "        return [[0]]\n"
+        "    return [[1]]\n"
+    )
+
+
+@unittest.skipUnless(sandbox_available(), "sandbox-exec is not available on this platform")
+class SandboxTest(unittest.TestCase):
+    def setUp(self):
+        self.outside = Path(tempfile.mkdtemp(prefix="arc-outside-")).resolve()
+        self.watched = [self.outside, Path.cwd(), Path(__file__).resolve().parent, Path.home(), Path("/tmp")]
+
+    def tearDown(self):
+        for path in self.outside.iterdir():
+            path.unlink()
+        self.outside.rmdir()
+
+    def run_code(self, code: str):
+        return run_transform([code], [[5, 6], [7, 8]])
+
+    def assert_blocked(self, body: str):
+        grid, status = self.run_code(attempt(body))
+        self.assertEqual((grid, status), (BLOCKED, "python_oop_exec_success"))
+
+    def assert_no_pwned(self):
+        for directory in self.watched:
+            self.assertFalse((directory / "PWNED").exists(), directory)
+
+    def test_reading_etc_passwd_fails(self):
+        self.assert_blocked("open('/etc/passwd').read()")
+
+    def test_reading_files_outside_the_allow_list_fails(self):
+        self.assert_blocked(f"open({str(Path(__file__).resolve())!r}).read()")
+
+    def test_os_system_cannot_create_files(self):
+        self.assert_blocked(f"""
+import os
+if os.system('touch PWNED; touch {self.outside}/PWNED') != 0:
+    raise OSError('blocked')
+""")
+        self.assert_no_pwned()
+
+    def test_subprocess_is_blocked(self):
+        self.assert_blocked(f"import subprocess\nsubprocess.run(['touch', '{self.outside}/PWNED'], check=True)")
+        self.assert_no_pwned()
+
+    def test_writing_outside_temp_dir_fails(self):
+        self.assert_blocked(f"open('{self.outside}/PWNED', 'w').write('x')")
+        self.assert_no_pwned()
+
+    def test_writing_inside_temp_dir_works(self):
+        grid, _ = self.run_code(attempt("open('scratch.txt', 'w').write('x')"))
+        self.assertEqual(grid, ESCAPED)
+
+    def test_socket_connect_fails(self):
+        self.assert_blocked("import socket\nsocket.create_connection(('1.1.1.1', 80), timeout=3)")
+
+    def test_environment_is_scrubbed(self):
+        os.environ["ARC_SANDBOX_FAKE_API_KEY"] = "secret"
+        try:
+            grid, _ = self.run_code("import os\ndef transform(grid):\n"
+                                    "    return [[sum(name in os.environ for name in ('ARC_SANDBOX_FAKE_API_KEY', 'HOME', 'PATH'))]]")
+        finally:
+            del os.environ["ARC_SANDBOX_FAKE_API_KEY"]
+        self.assertEqual(grid, [[0]])
+
+    def test_infinite_loop_is_killed_and_recorded_as_failed(self):
+        started = time.monotonic()
+        text = "```python\ndef transform(grid):\n    while True:\n        pass\n```"
+        grid, status = execute_python_hybrid(text, [[1]], timeout=2)
+        self.assertLess(time.monotonic() - started, 5)
+        self.assertEqual((grid, status), (None, "exec_timeout"))
+
+    def test_memory_hog_is_killed(self):
+        code = "def transform(grid):\n    b = bytearray(4 << 30)\n    b[::4096] = b'x' * len(b[::4096])\n    return [[1]]"
+        self.assertEqual(self.run_code(code), (None, "exec_memory_limit"))
+
+    def test_rotation_returns_the_right_grid(self):
+        text = "```python\ndef transform(grid):\n    return [list(row) for row in zip(*grid[::-1])]\n```"
+        self.assertEqual(execute_python_hybrid(text, [[1, 2], [3, 4]]), ([[3, 1], [4, 2]], "python_oop_exec_success"))
+
+    def test_dsl_helpers_are_available(self):
+        code = ("def transform(grid: Grid) -> Grid:\n"
+                "    objects = grid.extract_objects()\n"
+                "    return [[len(objects), int(Color.RED)]]")
+        self.assertEqual(self.run_code(code), ([[4, 2]], "python_oop_exec_success"))
+
+    def test_numpy_is_available_when_installed(self):
+        try:
+            import numpy
+        except ImportError:
+            self.skipTest("numpy is not installed")
+        code = "def transform(grid):\n    return np.rot90(np.array(grid.to_matrix())).tolist()"
+        self.assertEqual(self.run_code(code), ([[6, 8], [5, 7]], "python_oop_exec_success"))
+
+
+if __name__ == "__main__":
+    unittest.main()
