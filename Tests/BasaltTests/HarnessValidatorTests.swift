@@ -234,7 +234,7 @@ struct HarnessLoaderTests {
         #expect(loaded.skipped.map(\.description) == [".claude/blob.bin: not UTF-8 text"])
     }
 
-    @Test("A file the loader cannot open is reported as skipped, not silently left out")
+    @Test("A file the loader cannot open is reported as skipped, not silently left out", .enabled(if: getuid() != 0))
     func unopenableFileIsSkipped() throws {
         let root = try Self.makeRepo()
         defer { try? FileManager.default.removeItem(at: root) }
