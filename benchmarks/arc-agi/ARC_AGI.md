@@ -84,7 +84,7 @@ cp -R /tmp/arc-agi/data/evaluation benchmarks/arc-agi/dataset/evaluation
 | `RLIMIT_NPROC=0` | `fork`/`os.system`/`subprocess` падают (`EAGAIN`) | да (запуск процессов закрыт и песочницей) |
 | `RLIMIT_NOFILE=64`, `RLIMIT_FSIZE=16 МиБ`, `RLIMIT_CORE=0` | нельзя открыть сотни файлов, записать больше 16 МиБ, сбросить core | да |
 
-Без `sandbox-exec` остаются только процесс, rlimit'ы, пустой cwd и чистое окружение: файлы и сеть доступны. Проверка: `python3 -m unittest test_sandbox` (чтение `/etc/passwd`, `os.system('touch PWNED')`, `subprocess`, запись вне временного каталога, `socket` к 1.1.1.1:80, бесконечный цикл, 4 ГиБ памяти, поворот сетки).
+Без `sandbox-exec` остаются только процесс, rlimit'ы, пустой cwd и чистое окружение: файлы и сеть доступны. Проверка: `python3 -m unittest test_sandbox` (чтение `/etc/passwd`, листинг каталога бенчмарка, `os.system('touch PWNED')`, `subprocess`, запись вне временного каталога, `socket` к 1.1.1.1:80, окружение родителя через `sysctl` `KERN_PROCARGS2`, бесконечный цикл, 4 ГиБ памяти, тысячи файлов во временном каталоге, поворот сетки); в CI — workflow `ARC-AGI Sandbox` на self-hosted macOS-раннере при изменениях в `benchmarks/arc-agi/`.
 
 ---
 
