@@ -1,0 +1,18 @@
+name: No Comments
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  no-comments:
+    name: No new code comments
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - run: python3 scripts/check_no_new_comments.py "origin/${{ github.base_ref }}"
