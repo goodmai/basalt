@@ -112,7 +112,7 @@ struct HarnessOptimizerTests {
         #expect(result.attributions.first { $0.candidateId == "inv_0" }?.verdict == .noObservedEffect)
     }
 
-    @Test("Malformed, out-of-surface, leaking and dead-skill proposals are rejected and never probed")
+    @Test("Malformed, out-of-surface and leaking proposals are rejected and never probed")
     func rejections() async throws {
         var script = HarnessScript()
         script.invariant = "I would add a checklist."
@@ -129,11 +129,20 @@ struct HarnessOptimizerTests {
         #expect(reasons.contains { $0.hasPrefix("CLAUDE.md: leakDetected") })
         #expect(await engine.getRequests().count == 3)
 
-        var dead = HarnessScript()
-        dead.domain = #"{"files": {".claude/skills/lonely/SKILL.md": "---\nname: lonely\ndescription: d\n---\n"}}"#
-        let (deadOptimizer, _) = try await Self.optimizer(dead)
-        let deadResult = try await deadOptimizer.optimize(task: Self.task, base: Self.base, k: 1)
-        #expect(deadResult.rejected.first { $0.candidateId == "dom_0" }?.reasons == [".claude/skills/lonely/SKILL.md: proposed skill is never referenced"])
+    }
+
+    @Test("A proposed skill nobody names is probed like any other candidate and only reported as a warning; the model picks skills by description")
+    func unnamedSkillIsProbed() async throws {
+        var script = HarnessScript()
+        script.domain = #"{"files": {".claude/skills/lonely/SKILL.md": "---\nname: lonely\ndescription: d\n---\n"}}"#
+        let (optimizer, _) = try await Self.optimizer(script)
+        let result = try await optimizer.optimize(task: Self.task, base: Self.base, k: 1)
+        #expect(result.rejected.allSatisfy { $0.candidateId != "dom_0" })
+        #expect(result.ledger.rolloutIds.contains("probe_dom_0"))
+        #expect(result.warnings.contains("dom_0: .claude/skills/lonely/SKILL.md is not named in the always-on files; the agent reaches it only by its description"))
+        let prompt = HarnessProposal.prompt(axis: .domain, task: Self.task, harness: HarnessProposal.view(Self.base, spec: .claude), spec: .claude, libraryIndex: "")
+        #expect(prompt.contains("with frontmatter name and description."))
+        #expect(!prompt.contains("must be mentioned"))
     }
 
     @Test("The composed tree is validated before it is run")
@@ -179,7 +188,7 @@ struct HarnessOptimizerTests {
     func pointEditIsAdmitted() throws {
         let report = HarnessValidator.validate(Self.longBase, spec: .claude)
         let admitted = HarnessProposal.admit(Self.pointEdit("Run swift test before finishing."), base: Self.longBase, baseReport: report, siblings: [], spec: .claude)
-        let tree = try admitted.get()
+        let tree = try admitted.get().tree
         #expect(tree.files["CLAUDE.md"]?.hasSuffix("Run swift test before finishing.") == true)
         let unchanged = HarnessProposal.admit(["CLAUDE.md": Self.longBase.files["CLAUDE.md"]!], base: Self.longBase, baseReport: report, siblings: [], spec: .claude)
         #expect(throws: HarnessProposal.Rejection.self) { try unchanged.get() }
@@ -188,7 +197,7 @@ struct HarnessOptimizerTests {
     @Test("Two different one-line edits of a long CLAUDE.md are both admitted as siblings")
     func distinctPointEditsAreDiverse() throws {
         let report = HarnessValidator.validate(Self.longBase, spec: .claude)
-        let first = try HarnessProposal.admit(Self.pointEdit("Run swift test before finishing."), base: Self.longBase, baseReport: report, siblings: [], spec: .claude).get()
+        let first = try HarnessProposal.admit(Self.pointEdit("Run swift test before finishing."), base: Self.longBase, baseReport: report, siblings: [], spec: .claude).get().tree
         let second = HarnessProposal.admit(Self.pointEdit("Never force-push."), base: Self.longBase, baseReport: report, siblings: [first], spec: .claude)
         #expect(throws: Never.self) { try second.get() }
     }

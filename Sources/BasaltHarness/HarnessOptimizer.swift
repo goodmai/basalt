@@ -301,7 +301,7 @@ enum HarnessProposal {
             "You improve an agent harness (\(spec.name) layout) so that an agent does the task below better.",
             "Goal: \(goal)",
             """
-            Rules: change at most \(maxFiles) files and give each one's full new content. Paths are relative to the repository root and must be one of \(spec.instructionFiles.joined(separator: ", ")) or lie under \(spec.directory)/. A new skill goes to \(skillDirectory)/<name>/SKILL.md with frontmatter name and description and must be mentioned in \(spec.instructionFiles[0]). Keep the always-on files under \(spec.alwaysOnMaxChars) characters in total. A file marked truncated="true" is shown only in part and must not be changed.
+            Rules: change at most \(maxFiles) files and give each one's full new content. Paths are relative to the repository root and must be one of \(spec.instructionFiles.joined(separator: ", ")) or lie under \(spec.directory)/. A new skill goes to \(skillDirectory)/<name>/SKILL.md with frontmatter name and description. Keep the always-on files under \(spec.alwaysOnMaxChars) characters in total. A file marked truncated="true" is shown only in part and must not be changed.
             """,
             "<task>\n\(HarnessText.inert(task.prompt))\n</task>",
             "<harness>\n\(harness.block)\n</harness>",
@@ -331,7 +331,7 @@ enum HarnessProposal {
     static func admit(
         _ delta: [String: String], base: HarnessTree, baseReport: HarnessValidationReport,
         siblings: [HarnessTree], spec: HarnessSurfaceSpec, truncated: Set<String> = []
-    ) -> Result<HarnessTree, Rejection> {
+    ) -> Result<Admitted, Rejection> {
         var reasons: [String] = []
         if delta.count > maxFiles { reasons.append("changes \(delta.count) files, more than \(maxFiles)") }
         let deltaBytes = HarnessExperienceLibrary.deltaBytes(delta)
@@ -349,8 +349,16 @@ enum HarnessProposal {
         guard tree != base else { return .failure(Rejection(reasons: ["does not change the harness"])) }
         let report = HarnessValidator.validate(tree, spec: spec, requireDiverseFrom: siblings, relativeTo: base)
         reasons += report.errors.filter { !baseReport.errors.contains($0) }
-        reasons += report.untriggeredSkills.filter { delta[$0] != nil }.map { "\($0): proposed skill is never referenced" }
-        return reasons.isEmpty ? .success(tree) : .failure(Rejection(reasons: reasons))
+        guard reasons.isEmpty else { return .failure(Rejection(reasons: reasons)) }
+        let unnamed = report.untriggeredSkills.filter { delta[$0] != nil }
+        return .success(Admitted(tree: tree, warnings: unnamed.map {
+            "\($0) is not named in the always-on files; the agent reaches it only by its description"
+        }))
+    }
+
+    struct Admitted {
+        let tree: HarnessTree
+        let warnings: [String]
     }
 
     struct Rejection: Error {
@@ -411,6 +419,7 @@ public struct HarnessOptimizer: Sendable {
         var rejected: [HarnessRejection] = []
         var accepted: [HarnessTree] = []
         var truncated: Set<String> = []
+        var warnings: [String] = []
     }
 
     public func optimize(task: HarnessTask, base: HarnessTree, k: Int = 1) async throws -> HarnessOptimizationResult {
@@ -462,6 +471,7 @@ public struct HarnessOptimizer: Sendable {
             }
         }
 
+        warnings += state.warnings
         let selection = try await select(state.runs, task: task)
         let winner = state.runs.first { $0.candidateId == selection.winnerId }!
         let attributions = state.runs.filter { !$0.candidateId.hasPrefix("base_") }.flatMap { run in
@@ -515,9 +525,10 @@ public struct HarnessOptimizer: Sendable {
         switch HarnessProposal.admit(delta, base: base, baseReport: baseReport, siblings: state.accepted, spec: spec, truncated: state.truncated) {
         case .failure(let rejection):
             state.rejected.append(HarnessRejection(candidateId: id, reasons: rejection.reasons))
-        case .success(let tree):
-            state.accepted.append(tree)
-            try await probe(id, tree: tree, delta: delta, task: task, base: base, state: &state)
+        case .success(let admitted):
+            state.accepted.append(admitted.tree)
+            state.warnings += admitted.warnings.map { "\(id): \($0)" }
+            try await probe(id, tree: admitted.tree, delta: delta, task: task, base: base, state: &state)
         }
     }
 
