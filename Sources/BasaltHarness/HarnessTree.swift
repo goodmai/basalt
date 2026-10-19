@@ -186,7 +186,12 @@ enum HarnessPath {
 
     static func imports(in content: String, from file: String) -> [String] {
         matches(of: #"(?<![^\s(\[])@((?:\.{1,2}/)?[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*\.md)"#, in: content)
-            .flatMap { resolve($0, from: file) }
+            .compactMap { relativeToFile($0, from: file) }
+    }
+
+    static func relativeToFile(_ reference: String, from file: String) -> String? {
+        let directory = file.split(separator: "/").dropLast().joined(separator: "/")
+        return normalized(directory.isEmpty ? reference : directory + "/" + reference)
     }
 
     static func scriptReferences(in content: String) -> [String] {

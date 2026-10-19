@@ -120,6 +120,14 @@ struct HarnessValidatorTests {
         #expect(report.errors.contains { $0.hasPrefix("candidate diversity") })
     }
 
+    @Test("@imports resolve relative to the importing file only, as Claude Code does")
+    func importsAreFileRelative() {
+        #expect(HarnessPath.imports(in: "See @docs/rules.md", from: ".claude/CLAUDE.md") == [".claude/docs/rules.md"])
+        #expect(HarnessPath.imports(in: "See @../docs/rules.md", from: ".claude/CLAUDE.md") == ["docs/rules.md"])
+        let tree = HarnessTree(files: [".claude/CLAUDE.md": "See @docs/rules.md", "docs/rules.md": "root rules"])
+        #expect(tree.alwaysOnPaths(spec: .claude) == [".claude/CLAUDE.md"])
+    }
+
     @Test("Identical sibling candidates fail the diversity floor")
     func diversity() {
         let report = HarnessValidator.validate(Self.claudeLayout, spec: .claude, requireDiverseFrom: [Self.claudeLayout])
