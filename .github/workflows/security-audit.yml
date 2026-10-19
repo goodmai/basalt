@@ -28,17 +28,13 @@ jobs:
         run: |
           brew install jq
       
+      # One script: the source checks and the OSV scan of Package.resolved. An affected
+      # (or unchecked) dependency fails it with exit 1.
       - name: Run Security Audit Script
         run: |
+          set -o pipefail  # keep the audit's exit status through tee
           chmod +x scripts/security_audit.sh
-          chmod +x osv_check.sh
-          ./scripts/security_audit.sh
-      
-      - name: Run Dependency Vulnerability Scan
-        run: |
-          set -o pipefail  # keep osv_check.sh's exit status through tee
-          echo "Running OSV vulnerability scan..."
-          ./osv_check.sh | tee osv-results.txt
+          ./scripts/security_audit.sh | tee audit-results.txt
       
       # The hardcoded-secret and SQL-injection greps that used to live here are
       # gone: scripts/security_audit.sh runs both, and keeping a second, weaker
@@ -64,7 +60,8 @@ jobs:
             || echo "(dependency tree unavailable: $(swift --version 2>&1 | head -1))" >> security-report.md
           echo "" >> security-report.md
           echo "## OSV Scan Results" >> security-report.md
-          cat osv-results.txt >> security-report.md 2>/dev/null || echo "(OSV scan did not run)" >> security-report.md
+          # The audit step's output already holds the OSV results: no second round of queries.
+          cat audit-results.txt >> security-report.md 2>/dev/null || echo "(audit did not run)" >> security-report.md
       
       - name: Upload Security Report
         if: always()

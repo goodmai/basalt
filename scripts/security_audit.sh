@@ -1,10 +1,85 @@
 #!/bin/bash
-# Security Audit Script for Gem
-# Part of Epic 8: Security & Dependency Audit
+# Security audit for Basalt: source greps, repository hygiene and an OSV scan of every
+# pinned dependency in Package.resolved.
+#
+# Usage:
+#   ./scripts/security_audit.sh                        full audit; exit 1 on any failed check
+#   ./scripts/security_audit.sh --osv-only [RESOLVED]  only the OSV scan (default Package.resolved)
 
 set -e
 
-echo "🔒 Gem Security Audit"
+# Query OSV for every pin in $1 (Package.resolved).
+#
+# OSV's SwiftPM ecosystem is "SwiftURL", and it keys packages by their repository URL
+# without the scheme — "github.com/apple/swift-nio", not "swift-nio". Asking for the bare
+# name matches nothing: every query comes back {} and the scan passes by never checking
+# anything. For the same reason a query that fails (network, HTTP error, unparsable reply)
+# fails the scan instead of counting as "no vulnerabilities".
+#
+# Returns 1 when a dependency is affected or could not be checked, so CI stops rather than
+# filing it in a report nobody reads.
+osv_scan() {
+    local resolved="${1:-Package.resolved}"
+    if [[ ! -f "$resolved" ]]; then
+        echo "No $resolved — nothing to scan" >&2
+        return 1
+    fi
+    local tool
+    for tool in curl jq python3; do
+        if ! command -v "$tool" &> /dev/null; then
+            echo "OSV scan needs $tool (brew install $tool)" >&2
+            return 1
+        fi
+    done
+
+    local found=0 unchecked=0 name url version pkg response ids
+    while IFS=$'\t' read -r name url version; do
+        [[ -z "$url" || -z "$version" ]] && continue
+        pkg="${url#https://}"
+        pkg="${pkg%.git}"
+
+        if ! response=$(curl -sSf -m 30 "https://api.osv.dev/v1/query" \
+                -d "{\"package\":{\"name\":\"$pkg\",\"ecosystem\":\"SwiftURL\"},\"version\":\"$version\"}") ||
+           ! printf '%s' "$response" | jq -e 'type == "object"' > /dev/null 2>&1; then
+            unchecked=1
+            echo "UNCHECKED   $name @ $version (OSV query failed)"
+            continue
+        fi
+
+        ids=$(printf '%s' "$response" | jq -r '.vulns[]?.id')
+        if [[ -n "$ids" ]]; then
+            found=1
+            echo "VULNERABLE  $name @ $version"
+            printf '%s' "$response" | jq -r '.vulns[] | "    \(.id)  \(.summary // "no summary")"'
+        else
+            echo "ok          $name @ $version"
+        fi
+    done < <(python3 -c '
+import json, sys
+pins = json.load(open(sys.argv[1]))["pins"]
+for p in pins:
+    state = p.get("state", {})
+    print("\t".join([p.get("identity", "?"), p.get("location", ""), state.get("version") or state.get("revision", "")]))
+' "$resolved")
+
+    echo
+    if (( found )); then
+        echo "OSV reported vulnerable dependencies — see above."
+        return 1
+    fi
+    if (( unchecked )); then
+        echo "OSV could not check every dependency — see above."
+        return 1
+    fi
+    echo "OSV: no known vulnerabilities in the pinned dependencies."
+}
+
+if [[ "${1:-}" == "--osv-only" ]]; then
+    osv_scan "${2:-Package.resolved}"
+    exit $?
+fi
+
+echo "🔒 Basalt Security Audit"
 echo "=============================="
 echo ""
 
@@ -59,31 +134,11 @@ echo ""
 
 # 4. Dependency vulnerability scan (OSV)
 echo "4️⃣  Running dependency vulnerability scan (OSV)..."
-if command -v jq &> /dev/null; then
-    ./osv_check.sh > osv_results.tmp 2>&1
-    
-    # Check our actual version of swift-crypto
-    OUR_CRYPTO_VERSION=$(grep -A 5 "swift-crypto" Package.resolved | grep "version" | head -1 | sed 's/.*"\([0-9.]*\)".*/\1/')
-    
-    if grep -q "vulns" osv_results.tmp && grep -q "swift-crypto" osv_results.tmp; then
-        echo -e "${YELLOW}⚠️  CVE found in swift-crypto database${NC}"
-        echo "   Our version: $OUR_CRYPTO_VERSION"
-        echo "   Affected: 4.0.0 - 4.3.0"
-        
-        # Check if our version is affected
-        if [[ "$OUR_CRYPTO_VERSION" == 4.* ]]; then
-            echo -e "${RED}❌ FAIL: We are using affected version!${NC}"
-            ISSUES_FOUND=$((ISSUES_FOUND + 1))
-        else
-            echo -e "${GREEN}✅ PASS: Our version is NOT affected${NC}"
-        fi
-    else
-        echo -e "${GREEN}✅ PASS: No vulnerabilities found${NC}"
-    fi
-    rm -f osv_results.tmp
+if osv_scan Package.resolved; then
+    echo -e "${GREEN}✅ PASS: No known vulnerabilities in pinned dependencies${NC}"
 else
-    echo -e "${YELLOW}⚠️  WARNING: jq not installed, skipping OSV scan${NC}"
-    echo "   Install with: brew install jq"
+    echo -e "${RED}❌ FAIL: OSV scan found affected or unchecked dependencies${NC}"
+    ISSUES_FOUND=$((ISSUES_FOUND + 1))
 fi
 echo ""
 

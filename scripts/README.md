@@ -121,6 +121,20 @@ and nothing tracked by git is ever removed.
 
 `default.metallib` is kept: the MLX runtime loads it from the repo root.
 
+## Security
+
+### `security_audit.sh`
+
+Source checks (hardcoded secrets, SQL interpolation, weak crypto, sensitive files) plus an
+OSV scan of every pin in `Package.resolved`. Exits 1 on any failed check; an affected or
+unchecked dependency is a failure. CI: `.github/workflows/security-audit.yml`.
+
+```bash
+./scripts/security_audit.sh                       # full audit
+./scripts/security_audit.sh --osv-only            # OSV scan only (needs curl, jq, python3)
+./scripts/security_audit.sh --osv-only other/Package.resolved
+```
+
 ## Future Scripts
 
 ### `run_tests.sh` (Planned)
