@@ -62,13 +62,18 @@ struct PromptCacheLease: Sendable {
 struct PromptCacheTree: Sendable {
     typealias Step = (node: PromptCacheNode, used: Int)
 
+    static let maxLeaves = 4096
+
     let byteBudget: Int
+    let leafLimit: Int
     private(set) var roots: [String: PromptCacheNode] = [:]
     private(set) var byteCount = 0
+    private(set) var leafCount = 0
     private var clock = 0
 
-    init(byteBudget: Int) {
+    init(byteBudget: Int, leafLimit: Int = PromptCacheTree.maxLeaves) {
         self.byteBudget = byteBudget
+        self.leafLimit = leafLimit
     }
 
     func storedPrefix(of tokens: [Int], in namespace: String) -> Int {
@@ -114,6 +119,9 @@ struct PromptCacheTree: Sendable {
             tokens: Array(tokens[matched...]),
             layers: Self.slice(cache.layers.map(\.state), matched..<tokens.count),
             lastUse: 0)
+        if parent === root || !parent.children.isEmpty {
+            leafCount += 1
+        }
         attach(leaf, to: parent)
         byteCount += leaf.bytes
         touch(leaf)
@@ -123,6 +131,7 @@ struct PromptCacheTree: Sendable {
     mutating func removeAll() {
         roots.removeAll()
         byteCount = 0
+        leafCount = 0
     }
 
     func leaves() -> [PromptCacheNode] {
@@ -190,16 +199,20 @@ struct PromptCacheTree: Sendable {
     private mutating func remove(_ leaf: PromptCacheNode) {
         guard let parent = leaf.parent else { return }
         parent.children[leaf.tokens[0]] = nil
+        if parent.tokens.isEmpty || !parent.children.isEmpty {
+            leafCount -= 1
+        }
         if parent.tokens.isEmpty, parent.children.isEmpty {
             roots = roots.filter { $0.value !== parent }
         }
     }
 
     private mutating func evict() {
-        while byteCount > byteBudget,
+        while byteCount > byteBudget || leafCount > leafLimit,
               let victim = leaves().filter({ $0.pins == 0 }).min(by: { $0.lastUse < $1.lastUse }) {
             let bytesPerToken = max(1, victim.bytes / victim.tokens.count)
-            let keep = victim.tokens.count - (byteCount - byteBudget + bytesPerToken - 1) / bytesPerToken
+            let keep = leafCount > leafLimit
+                ? 0 : victim.tokens.count - (byteCount - byteBudget + bytesPerToken - 1) / bytesPerToken
             let before = victim.bytes
             if keep > 0 {
                 victim.layers = Self.slice(victim.layers, 0..<keep)

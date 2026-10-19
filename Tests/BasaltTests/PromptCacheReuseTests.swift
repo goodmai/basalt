@@ -599,6 +599,72 @@ struct PromptCacheTreeTests {
         #expect(tree.byteCount == 150 * Self.bytesPerToken)
     }
 
+    @Test("Beyond the leaf cap the oldest free leaves go first, whatever the byte budget")
+    func leafCapEvictsTheOldestLeaves() {
+        var tree = PromptCacheTree(byteBudget: 1 << 30, leafLimit: 8)
+        #expect(PromptCacheTree(byteBudget: 1).leafLimit == PromptCacheTree.maxLeaves)
+        #expect(PromptCacheTree.maxLeaves == 4096)
+        let prompts = (1...13).map { branch($0, 10) }
+        for prompt in prompts {
+            tree.store("ns", tokens: prompt, cache: cache(prompt))
+            #expect(tree.leafCount == tree.leaves().count)
+        }
+        #expect(tree.leafCount == 8)
+        #expect(tree.byteCount == 8 * 10 * Self.bytesPerToken)
+        for prompt in prompts.prefix(5) {
+            #expect(tree.storedPrefix(of: prompt, in: "ns") == 0)
+        }
+        for prompt in prompts.suffix(8) {
+            #expect(tree.storedPrefix(of: prompt, in: "ns") == 10)
+        }
+    }
+
+    @Test("The leaf cap never evicts a leased leaf, and skips a new branch when every leaf is leased")
+    func leafCapKeepsLeasedLeaves() throws {
+        var tree = PromptCacheTree(byteBudget: 1 << 30, leafLimit: 3)
+        let a = branch(1, 10), b = branch(2, 10), c = branch(3, 10), d = branch(4, 10), e = branch(5, 10)
+        for prompt in [a, b, c] {
+            tree.store("ns", tokens: prompt, cache: cache(prompt))
+        }
+        let heldA = try tree.required("ns", for: a)
+        try tree.touch("ns", b)
+        try tree.touch("ns", c)
+        tree.store("ns", tokens: d, cache: cache(d))
+        #expect(tree.storedPrefix(of: a, in: "ns") == 10)
+        #expect(tree.storedPrefix(of: b, in: "ns") == 0)
+        #expect(tree.leafCount == 3)
+
+        let heldC = try tree.required("ns", for: c)
+        let heldD = try tree.required("ns", for: d)
+        tree.store("ns", tokens: e, cache: cache(e))
+        #expect(tree.storedPrefix(of: e, in: "ns") == 0)
+        for prompt in [a, c, d] {
+            #expect(tree.storedPrefix(of: prompt, in: "ns") == 10)
+        }
+        #expect(tree.leafCount == 3)
+        #expect(tree.leafCount == tree.leaves().count)
+        for lease in [heldA, heldC, heldD] {
+            tree.release(lease)
+        }
+    }
+
+    @Test("The leaf count follows splits, extensions, evictions and namespaces without walking the tree")
+    func leafCountStaysExact() {
+        var tree = PromptCacheTree(byteBudget: 120 * Self.bytesPerToken)
+        let a = Array(0..<40)
+        let steps: [(String, [Int])] = [
+            ("ns", a), ("ns", Array(0..<20) + Array(500..<520)), ("ns", a + Array(900..<910)),
+            ("ns", Array(0..<10)), ("other", a), ("other", branch(7, 60)), ("ns", branch(8, 90)),
+        ]
+        for (namespace, prompt) in steps {
+            tree.store(namespace, tokens: prompt, cache: cache(prompt))
+            #expect(tree.leafCount == tree.leaves().count, "\(namespace) \(prompt.count)")
+            #expect(tree.byteCount <= 120 * Self.bytesPerToken)
+        }
+        tree.removeAll()
+        #expect(tree.leafCount == 0)
+    }
+
     @Test("A zero budget stores nothing")
     func zeroBudgetStoresNothing() {
         var tree = PromptCacheTree(byteBudget: 0)
