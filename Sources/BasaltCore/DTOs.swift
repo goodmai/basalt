@@ -42,6 +42,7 @@ public struct GenerationRequest: Codable, Sendable {
     public let isServiceRequest: Bool?
     /// Functions offered to the model; rendered into the chat template's tool section.
     public let tools: [ToolDefinition]?
+    public let cacheKey: String?
 
     public init(
         prompt: String,
@@ -53,7 +54,8 @@ public struct GenerationRequest: Codable, Sendable {
         enableThinking: Bool? = true,
         reasoningEffort: String? = nil,
         isServiceRequest: Bool? = false,
-        tools: [ToolDefinition]? = nil
+        tools: [ToolDefinition]? = nil,
+        cacheKey: String? = nil
     ) {
         self.prompt = prompt
         self.maxTokens = maxTokens
@@ -65,6 +67,7 @@ public struct GenerationRequest: Codable, Sendable {
         self.reasoningEffort = reasoningEffort
         self.isServiceRequest = isServiceRequest
         self.tools = tools
+        self.cacheKey = cacheKey
     }
 
     /// The same request with another token budget. Kept next to the stored properties so a new
@@ -80,7 +83,8 @@ public struct GenerationRequest: Codable, Sendable {
             enableThinking: enableThinking,
             reasoningEffort: reasoningEffort,
             isServiceRequest: isServiceRequest,
-            tools: tools
+            tools: tools,
+            cacheKey: cacheKey
         )
     }
 
@@ -113,7 +117,8 @@ public struct GenerationRequest: Codable, Sendable {
             enableThinking: enableThinking,
             reasoningEffort: reasoningEffort,
             isServiceRequest: isServiceRequest,
-            tools: tools
+            tools: tools,
+            cacheKey: cacheKey
         )
     }
 }
@@ -216,6 +221,7 @@ public struct GenerationResponse: Codable, Sendable {
     public let generatedText: String
     public let reasoningText: String?
     public let promptTokens: Int
+    public let cachedPromptTokens: Int
     public let completionTokens: Int
     public let tokensPerSecond: Double
     public let generationTime: Double
@@ -229,6 +235,7 @@ public struct GenerationResponse: Codable, Sendable {
         generatedText: String,
         reasoningText: String? = nil,
         promptTokens: Int,
+        cachedPromptTokens: Int = 0,
         completionTokens: Int,
         tokensPerSecond: Double,
         generationTime: Double,
@@ -240,6 +247,7 @@ public struct GenerationResponse: Codable, Sendable {
         self.generatedText = generatedText
         self.reasoningText = reasoningText
         self.promptTokens = promptTokens
+        self.cachedPromptTokens = cachedPromptTokens
         self.completionTokens = completionTokens
         self.tokensPerSecond = tokensPerSecond
         self.generationTime = generationTime
