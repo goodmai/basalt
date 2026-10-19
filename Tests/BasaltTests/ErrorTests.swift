@@ -1,5 +1,10 @@
 import Testing
-@testable import BasaltKit
+@testable import BasaltCore
+@testable import BasaltInference
+@testable import BasaltCloud
+@testable import BasaltServer
+@testable import BasaltUI
+@testable import BasaltCLI
 
 @Suite("BasaltError HTTP status mapping")
 struct ErrorHTTPStatusTests {

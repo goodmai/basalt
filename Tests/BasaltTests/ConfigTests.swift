@@ -5,7 +5,12 @@ import HTTPTypes
 import Logging
 import NIOCore
 import HummingbirdTesting
-@testable import BasaltKit
+@testable import BasaltCore
+@testable import BasaltInference
+@testable import BasaltCloud
+@testable import BasaltServer
+@testable import BasaltUI
+@testable import BasaltCLI
 
 @Suite("ServerConfig security and logic")
 struct ConfigTests {

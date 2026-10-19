@@ -1,7 +1,12 @@
 import Testing
 import Foundation
 @preconcurrency import Rainbow
-@testable import BasaltKit
+@testable import BasaltCore
+@testable import BasaltInference
+@testable import BasaltCloud
+@testable import BasaltServer
+@testable import BasaltUI
+@testable import BasaltCLI
 
 /// Epic 16.1: Rich Terminal UI Foundation - Unit Tests
 /// Following TDD: Write tests FIRST, then implement

@@ -1,6 +1,8 @@
 // swift-tools-version: 6.0
 import PackageDescription
 
+let swiftSettings: [SwiftSetting] = [.swiftLanguageMode(.v6)]
+
 let package = Package(
     name: "Basalt",
     platforms: [
@@ -23,10 +25,21 @@ let package = Package(
     ],
     targets: [
 
-        // ── Library (all logic, importable by tests) ─────────────────────────
+        // ── Libraries (layered DAG: Core ← Inference/Cloud/Server/UI ← CLI) ──
+        // Core: DTOs, errors, config, logger, profilers, calculators. No MLX, no UI.
         .target(
-            name: "BasaltKit",
+            name: "BasaltCore",
             dependencies: [
+                .product(name: "ArgumentParser", package: "swift-argument-parser"),
+            ],
+            path: "Sources/BasaltCore",
+            swiftSettings: swiftSettings
+        ),
+        // Inference: the MLX-backed engine.
+        .target(
+            name: "BasaltInference",
+            dependencies: [
+                "BasaltCore",
                 .product(name: "MLX",           package: "mlx-swift"),
                 .product(name: "MLXNN",         package: "mlx-swift"),
                 .product(name: "MLXRandom",     package: "mlx-swift"),
@@ -36,52 +49,77 @@ let package = Package(
                 .product(name: "MLXVLM",        package: "mlx-swift-lm"),
                 .product(name: "MLXLMCommon",   package: "mlx-swift-lm"),
                 .product(name: "MLXHuggingFace", package: "mlx-swift-lm"),
-                .product(name: "Hummingbird",   package: "hummingbird"),
-                .product(name: "ArgumentParser", package: "swift-argument-parser"),
                 .product(name: "Tokenizers",    package: "swift-transformers"),
+            ],
+            path: "Sources/BasaltInference",
+            swiftSettings: swiftSettings
+        ),
+        // Cloud: OpenRouter client, router, cost tracking.
+        .target(
+            name: "BasaltCloud",
+            dependencies: ["BasaltCore"],
+            path: "Sources/BasaltCloud",
+            swiftSettings: swiftSettings
+        ),
+        // Server: REST (Hummingbird) controllers, middleware, MCP server.
+        .target(
+            name: "BasaltServer",
+            dependencies: [
+                "BasaltCore",
+                .product(name: "Hummingbird",   package: "hummingbird"),
+            ],
+            path: "Sources/BasaltServer",
+            swiftSettings: swiftSettings
+        ),
+        // UI: terminal renderers and the SwiftUI REST chat client.
+        .target(
+            name: "BasaltUI",
+            dependencies: [
+                "BasaltCore",
                 .product(name: "Rainbow",       package: "Rainbow"),
-                .product(name: "ConsoleKit",    package: "console-kit"),
                 .product(name: "Markdown",      package: "swift-markdown"),
                 .product(name: "Splash",        package: "Splash"),
             ],
-            path: "Sources/Basalt",
-            swiftSettings: [
-                .swiftLanguageMode(.v6),
-            ]
+            path: "Sources/BasaltUI",
+            swiftSettings: swiftSettings
+        ),
+        // CLI: ArgumentParser commands wiring everything together.
+        .target(
+            name: "BasaltCLI",
+            dependencies: [
+                "BasaltCore", "BasaltInference", "BasaltCloud", "BasaltServer", "BasaltUI",
+                .product(name: "ArgumentParser", package: "swift-argument-parser"),
+            ],
+            path: "Sources/BasaltCLI",
+            swiftSettings: swiftSettings
         ),
 
-        // ── Executable (thin wrapper — just calls library main) ───────────────
+        // ── Executable (thin wrapper — just calls the CLI main) ──────────────
         .executableTarget(
             name: "Basalt",
-            dependencies: ["BasaltKit"],
+            dependencies: ["BasaltCLI"],
             path: "Sources/BasaltBin",
-            swiftSettings: [
-                .swiftLanguageMode(.v6),
-            ]
+            swiftSettings: swiftSettings
         ),
 
         // ── Tests ─────────────────────────────────────────────────────────────
         .testTarget(
             name: "BasaltTests",
             dependencies: [
-                "BasaltKit",
+                "BasaltCore", "BasaltInference", "BasaltCloud", "BasaltServer", "BasaltUI", "BasaltCLI",
                 .product(name: "HummingbirdTesting", package: "hummingbird"),
             ],
             path: "Tests/BasaltTests",
-            swiftSettings: [
-                .swiftLanguageMode(.v6),
-            ]
+            swiftSettings: swiftSettings
         ),
         .executableTarget(
             name: "PerformanceBenchmark",
             dependencies: [
-                "BasaltKit",
+                "BasaltCore", "BasaltInference",
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
             ],
             path: "Sources/PerformanceBenchmark",
-            swiftSettings: [
-                .swiftLanguageMode(.v6),
-            ]
+            swiftSettings: swiftSettings
         ),
     ]
 )

@@ -3,7 +3,12 @@ import Foundation
 import MLX
 import MLXLLM
 import MLXLMCommon
-@testable import BasaltKit
+@testable import BasaltCore
+@testable import BasaltInference
+@testable import BasaltCloud
+@testable import BasaltServer
+@testable import BasaltUI
+@testable import BasaltCLI
 
 @Suite("Huihui and Ex0bit Model Tests")
 struct HuihuiAndEx0bitModelTests {

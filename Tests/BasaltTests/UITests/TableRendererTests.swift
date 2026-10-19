@@ -1,6 +1,11 @@
 import Testing
 import Foundation
-@testable import BasaltKit
+@testable import BasaltCore
+@testable import BasaltInference
+@testable import BasaltCloud
+@testable import BasaltServer
+@testable import BasaltUI
+@testable import BasaltCLI
 
 /// Epic 16.2: Table Rendering System - Unit Tests
 /// Following TDD: Write tests FIRST, then implement

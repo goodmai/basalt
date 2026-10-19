@@ -4,7 +4,12 @@ import Hummingbird
 import HummingbirdTesting
 import NIOCore
 import HTTPTypes
-@testable import BasaltKit
+@testable import BasaltCore
+@testable import BasaltInference
+@testable import BasaltCloud
+@testable import BasaltServer
+@testable import BasaltUI
+@testable import BasaltCLI
 
 /// Wire-format tests for the coding-agent endpoints, driven through the real router.
 @Suite("Coding agent API wire format (#27)")

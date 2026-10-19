@@ -1,5 +1,5 @@
 import ArgumentParser
-import BasaltKit
+import BasaltCLI
 import Foundation
 
 @main

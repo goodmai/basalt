@@ -1,5 +1,10 @@
 import XCTest
-@testable import BasaltKit
+@testable import BasaltCore
+@testable import BasaltInference
+@testable import BasaltCloud
+@testable import BasaltServer
+@testable import BasaltUI
+@testable import BasaltCLI
 
 final class AgentCapabilityAnalyzerTests: XCTestCase {
     

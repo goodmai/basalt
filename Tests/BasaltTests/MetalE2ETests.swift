@@ -1,6 +1,11 @@
 import Testing
 import Foundation
-@testable import BasaltKit
+@testable import BasaltCore
+@testable import BasaltInference
+@testable import BasaltCloud
+@testable import BasaltServer
+@testable import BasaltUI
+@testable import BasaltCLI
 
 // MARK: — Golden Test Vector & Reproducibility Specification
 // Golden Vector: ornith-ai/Ornith-1.5-9B-MLX-4bit on ARC-AGI Task 1

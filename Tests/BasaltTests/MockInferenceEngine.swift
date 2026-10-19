@@ -1,5 +1,10 @@
 import Foundation
-@testable import BasaltKit
+@testable import BasaltCore
+@testable import BasaltInference
+@testable import BasaltCloud
+@testable import BasaltServer
+@testable import BasaltUI
+@testable import BasaltCLI
 
 /// Управляемый mock для тестирования оркестратора без реального MLX.
 actor MockInferenceEngine: InferenceEngine {

@@ -1,5 +1,10 @@
 import Testing
-@testable import BasaltKit
+@testable import BasaltCore
+@testable import BasaltInference
+@testable import BasaltCloud
+@testable import BasaltServer
+@testable import BasaltUI
+@testable import BasaltCLI
 
 // Each test below pins one of the defects that made the previous adapter
 // misbehave, so a regression fails here instead of six hours into a benchmark.
