@@ -444,6 +444,23 @@ struct PromptCacheTreeTests {
         tree.release(lease)
     }
 
+    @Test("An unevaluated lease still reads the old buffers after the leased node is split under it")
+    func leaseSurvivesASplitOfItsNode() throws {
+        var tree = PromptCacheTree(byteBudget: 1 << 30)
+        let a = Array(0..<10)
+        tree.store("ns", tokens: a, cache: cache(a, layers: 2))
+        let lease = try tree.required("ns", for: a + [99])
+        let b = Array(0..<5) + [70, 71]
+        tree.store("ns", tokens: b, cache: cache(b, layers: 2))
+        #expect(tree.roots["ns"]?.children[0]?.tokens == Array(0..<5))
+        for layer in 0..<2 {
+            let expected = a.map { $0 + layer * Self.layerStride }
+            #expect(ids(lease, layer: layer) == expected, "layer \(layer)")
+            #expect(ids(lease, part: 1, layer: layer) == expected.map { $0 + 1 }, "layer \(layer)")
+        }
+        tree.release(lease)
+    }
+
     @Test("A namespace whose last branch is evicted leaves no root behind")
     func emptyNamespacesAreRemoved() {
         var tree = PromptCacheTree(byteBudget: 100 * Self.bytesPerToken)

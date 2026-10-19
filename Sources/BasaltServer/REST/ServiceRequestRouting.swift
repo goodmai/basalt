@@ -1,5 +1,4 @@
 import Foundation
-import CryptoKit
 import HTTPTypes
 import BasaltCore
 
@@ -24,28 +23,13 @@ extension HTTPFields {
 }
 
 enum PromptCacheKey {
-    static let anonymous = "anonymous"
+    static let shared = "shared"
 
-    static func resolve(headers: HTTPFields, isService: Bool, byCredential: Bool) -> String? {
-        guard !isService else { return nil }
-        guard byCredential, let credential = credential(in: headers) else { return anonymous }
-        return "credential:\(digest(credential))"
+    static func resolve(isService: Bool) -> String? {
+        isService ? nil : shared
     }
 
-    static func scoped(_ request: GenerationRequest, headers: HTTPFields, byCredential: Bool) -> GenerationRequest {
-        request.withCacheKey(resolve(
-            headers: headers, isService: request.isServiceRequest == true, byCredential: byCredential))
-    }
-
-    static func credential(in headers: HTTPFields) -> String? {
-        if let authorization = headers[.authorization] {
-            let parts = authorization.split(separator: " ", maxSplits: 1)
-            if parts.count == 2, parts[0].lowercased() == "bearer" { return String(parts[1]) }
-        }
-        return HTTPField.Name("x-api-key").flatMap { headers[$0] }
-    }
-
-    static func digest(_ text: String) -> String {
-        SHA256.hash(data: Data(text.utf8)).prefix(8).map { String(format: "%02x", $0) }.joined()
+    static func scoped(_ request: GenerationRequest) -> GenerationRequest {
+        request.withCacheKey(resolve(isService: request.isServiceRequest == true))
     }
 }

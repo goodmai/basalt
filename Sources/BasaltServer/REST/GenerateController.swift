@@ -8,7 +8,6 @@ struct GenerateController: Sendable {
 
     let orchestrator: ModelOrchestratorActor
     let modelId: String?
-    var cachesByCredential = false
     private let logger = GemLogger(module: "GenerateController")
 
     // MARK: — POST /api/v1/generate
@@ -21,7 +20,7 @@ struct GenerateController: Sendable {
         do {
             let buffer = try await request.body.collect(upTo: 1024 * 1024)
             let data = Data(buffer.readableBytesView)
-            dto = PromptCacheKey.scoped(try JSONDecoder().decode(GenerationRequest.self, from: data), headers: request.headers, byCredential: cachesByCredential)
+            dto = PromptCacheKey.scoped(try JSONDecoder().decode(GenerationRequest.self, from: data))
         } catch {
             return errorResponse(status: .badRequest, message: "Invalid JSON: \(error.localizedDescription)", code: 400)
         }
@@ -48,7 +47,7 @@ struct GenerateController: Sendable {
         do {
             let buffer = try await request.body.collect(upTo: 1024 * 1024)
             let data = Data(buffer.readableBytesView)
-            dto = PromptCacheKey.scoped(try JSONDecoder().decode(GenerationRequest.self, from: data), headers: request.headers, byCredential: cachesByCredential)
+            dto = PromptCacheKey.scoped(try JSONDecoder().decode(GenerationRequest.self, from: data))
         } catch {
             return errorResponse(status: .badRequest, message: "Invalid JSON: \(error.localizedDescription)", code: 400)
         }

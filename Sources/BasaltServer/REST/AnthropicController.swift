@@ -17,7 +17,6 @@ struct AnthropicController: Sendable {
 
     let orchestrator: ModelOrchestratorActor
     let modelId: String
-    var cachesByCredential = false
 
     // MARK: — Anthropic DTOs
 
@@ -210,8 +209,7 @@ struct AnthropicController: Sendable {
             dynamicTemperature: dto.dynamicTemperature,
             reasoningEffort: effort,
             isServiceRequest: service.isService,
-            cacheKey: PromptCacheKey.resolve(
-                headers: request.headers, isService: service.isService, byCredential: cachesByCredential)
+            cacheKey: PromptCacheKey.resolve(isService: service.isService)
         )
 
         let requestedModel = dto.model.map { ModelsController.hfRepoId(from: $0) }  // strip claude-local/ prefix if present
