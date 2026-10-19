@@ -1,6 +1,11 @@
 import Testing
 import Foundation
-@testable import BasaltKit
+@testable import BasaltCore
+@testable import BasaltInference
+@testable import BasaltCloud
+@testable import BasaltServer
+@testable import BasaltUI
+@testable import BasaltCLI
 
 @Suite("Dry-Run Memory Assessment and Hardware Fit Integration Tests")
 struct DryRunAndMemoryIntegrationTests {

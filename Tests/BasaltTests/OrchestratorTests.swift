@@ -1,6 +1,11 @@
 import Testing
 import Foundation
-@testable import BasaltKit
+@testable import BasaltCore
+@testable import BasaltInference
+@testable import BasaltCloud
+@testable import BasaltServer
+@testable import BasaltUI
+@testable import BasaltCLI
 
 @Suite("ModelOrchestratorActor")
 struct OrchestratorTests {

@@ -3,7 +3,12 @@ import Foundation
 import Hummingbird
 import HTTPTypes
 import HummingbirdTesting
-@testable import BasaltKit
+@testable import BasaltCore
+@testable import BasaltInference
+@testable import BasaltCloud
+@testable import BasaltServer
+@testable import BasaltUI
+@testable import BasaltCLI
 
 @Suite("Rate limit (token bucket) and the REST perimeter")
 struct RateLimitTests {

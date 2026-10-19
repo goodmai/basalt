@@ -2,7 +2,12 @@ import Foundation
 import Testing
 import MLX
 import MLXNN
-@testable import BasaltKit
+@testable import BasaltCore
+@testable import BasaltInference
+@testable import BasaltCloud
+@testable import BasaltServer
+@testable import BasaltUI
+@testable import BasaltCLI
 
 @Suite("Model Weight Sanitization")
 struct WeightSanitizationTests {
