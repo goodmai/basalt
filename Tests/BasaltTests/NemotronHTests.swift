@@ -309,5 +309,19 @@ struct NemotronHTests {
         let (_, calls) = Self.scan([#"<TOOLCALL>[{"name": "read", "arguments": {"path": "/tmp/a.txt"}}]</TOOLCALL>"#])
         #expect(calls.map(\.arguments) == [#"{"path":"/tmp/a.txt"}"#])
     }
+
+    @Test("chat_template.json sits between chat_template.jinja and tokenizer_config.json")
+    func chatTemplateSourcePrecedence() throws {
+        let dir = try Self.modelDirectory(config: Self.denseNano4BConfig)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try JSONSerialization.data(withJSONObject: ["chat_template": "from tokenizer_config"])
+            .write(to: dir.appendingPathComponent("tokenizer_config.json"))
+        #expect(ModelProfileRegistry.chatTemplate(at: dir) == "from tokenizer_config")
+        try JSONSerialization.data(withJSONObject: ["chat_template": "from chat_template.json"])
+            .write(to: dir.appendingPathComponent("chat_template.json"))
+        #expect(ModelProfileRegistry.chatTemplate(at: dir) == "from chat_template.json")
+        try Data("from chat_template.jinja".utf8).write(to: dir.appendingPathComponent("chat_template.jinja"))
+        #expect(ModelProfileRegistry.chatTemplate(at: dir) == "from chat_template.jinja")
+    }
 }
 

@@ -221,8 +221,15 @@ public enum ModelProfileRegistry {
         if let jinja = try? String(contentsOf: directory.appendingPathComponent("chat_template.jinja"), encoding: .utf8) {
             return jinja
         }
-        let tokenizerConfig = (try? Data(contentsOf: directory.appendingPathComponent("tokenizer_config.json")))
+        if let json = jsonObject(at: directory.appendingPathComponent("chat_template.json")),
+           let template = json["chat_template"] as? String {
+            return template
+        }
+        return jsonObject(at: directory.appendingPathComponent("tokenizer_config.json"))?["chat_template"] as? String
+    }
+
+    private static func jsonObject(at url: URL) -> [String: Any]? {
+        (try? Data(contentsOf: url))
             .flatMap { try? JSONSerialization.jsonObject(with: $0, options: .json5Allowed) as? [String: Any] }
-        return tokenizerConfig?["chat_template"] as? String
     }
 }
