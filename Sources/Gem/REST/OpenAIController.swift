@@ -414,7 +414,7 @@ struct OpenAIController: Sendable {
     // MARK: — POST /v1/generate (no auth, raw prompt)
 
     @Sendable
-    func generateNoAuth(request: Request, context: BasicRequestContext) async throws -> Response {
+    func generateRaw(request: Request, context: BasicRequestContext) async throws -> Response {
         let buffer = try await request.body.collect(upTo: 4 * 1024 * 1024)
         let data = Data(buffer.readableBytesView)
         do {

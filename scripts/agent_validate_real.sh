@@ -27,16 +27,9 @@ for i in {1..60}; do
   sleep 1
 done
 
-# Login
-echo "Logging in as $BASALT_ADMIN_USER..."
-TOKEN=$(curl -s -X POST http://localhost:8080/api/v1/auth/login \
-  -H "Content-Type: application/json" \
-  -d "{\"username\": \"$BASALT_ADMIN_USER\", \"password\": \"$BASALT_ADMIN_PASSWORD\"}" | grep -o '"token":"[^"]*' | cut -d'"' -f4)
-
-if [ -z "$TOKEN" ]; then
-  echo "ERROR: Failed to login"
-  exit 1
-fi
+# No login route: the server checks a static API key. On loopback none is needed; when
+# BASALT_API_KEY is set the server (which reads it too) requires it as a Bearer token.
+TOKEN="${BASALT_API_KEY:-}"
 
 validate_task() {
   NAME=$1

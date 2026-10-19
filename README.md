@@ -299,7 +299,7 @@ curl -N http://localhost:8080/api/v1/generate/stream \
   -d '{"prompt": "Hello", "maxTokens": 512}'
 ```
 
-Each event is a `data: {...}` line; the stream ends with `data: [DONE]`.
+Each event is a `data: {...}` line; the stream ends with `data: [DONE]`. A failure mid-stream arrives as `event: error` with `data: {"error": ...}`.
 
 ### Swagger UI
 
@@ -495,7 +495,7 @@ docs/                       — Extended documentation
 | `Config/` | 1 | Server configuration |
 | `Core/` | 13 | Inference engine, orchestrator, DTOs, errors |
 | `MCP/` | 1 | MCP stdio server |
-| `REST/` | 7 | HTTP controllers (SSE streaming) + auth / rate-limit middleware |
+| `REST/` | 8 | HTTP controllers (SSE streaming) + auth / rate-limit middleware |
 | `UI/` | 9 | Terminal rendering |
 | `GemBin/` | 1 | Executable wrapper |
 | `PerformanceBenchmark/` | 1 | Benchmark CLI |

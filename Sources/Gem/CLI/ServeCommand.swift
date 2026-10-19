@@ -275,18 +275,25 @@ struct ServeCommand: AsyncParsableCommand {
         }
         func value<T>(_ key: String, as _: T.Type) throws -> T? {
             guard let raw = dict[key], !(raw is NSNull) else { return nil }
-            guard let typed = raw as? T else {
+            // JSONSerialization bridges `true` to NSNumber, which `as? Int` would read as 1.
+        guard CFGetTypeID(raw as CFTypeRef) != CFBooleanGetTypeID() || T.self == Bool.self,
+              let typed = raw as? T else {
                 throw ValidationError("--config: \"\(key)\" must be \(T.self), got \(raw)")
             }
             return typed
         }
         // An empty --api-key / BASALT_API_KEY is "not set", so it cannot mask the config's key.
         let cliKey = cliApiKey.flatMap { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 }
+        let rateLimit = try cliRateLimit ?? value("rate_limit", as: Int.self)
+        if let rateLimit, rateLimit < 0 {
+            // Same rule as the flag: a negative value is an error, never a silent "off".
+            throw ValidationError("rate_limit must be 0 (off) or a positive number of requests per minute, got \(rateLimit)")
+        }
         return (
             port: try cliPort ?? value("port", as: Int.self) ?? 8080,
             host: try cliHost ?? value("host", as: String.self) ?? "127.0.0.1",
             apiKey: try cliKey ?? value("api_key", as: String.self),
-            rateLimit: try cliRateLimit ?? value("rate_limit", as: Int.self)
+            rateLimit: rateLimit
         )
     }
 

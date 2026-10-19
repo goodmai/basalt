@@ -91,7 +91,7 @@ struct RESTServer: Sendable {
         // Generation
         oai.post("/chat/completions", use: openAIController.chatCompletions) // OpenAI SSE
         oai.post("/responses",        use: openAIController.responses)       // OpenAI Responses API (Codex/Cursor)
-        oai.post("/generate",         use: openAIController.generateNoAuth)  // raw prompt
+        oai.post("/generate",         use: openAIController.generateRaw)  // raw prompt
         oai.post("/messages",         use: anthropicController.messages)     // Anthropic SSE
 
         // ── Swagger UI ──────────────────────────────────────────────────────────

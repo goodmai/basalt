@@ -43,7 +43,21 @@ struct RateLimitTests {
         #expect(try ServeCommand.resolveNetwork(cliPort: nil, cliHost: nil, cliApiKey: nil, configFile: file.path).rateLimit == 30)
         #expect(try ServeCommand.resolveNetwork(cliPort: nil, cliHost: nil, cliApiKey: nil, cliRateLimit: 5,
                                                 configFile: file.path).rateLimit == 5)
-        #expect(throws: (any Error).self) { _ = try ServeCommand.parse(["--rate-limit", "-1"]) }
+        // `--rate-limit -1` would fail in the parser (-1 reads as an option); `=` reaches validate().
+        do {
+            _ = try ServeCommand.parse(["--rate-limit=-1"])
+            Issue.record("a negative --rate-limit must be rejected")
+        } catch {
+            #expect(ServeCommand.message(for: error).contains("must be 0"))
+        }
+        try Data(#"{"host": "0.0.0.0", "rate_limit": -1}"#.utf8).write(to: file)
+        #expect(throws: (any Error).self, "a negative config value must not silently turn the limit off") {
+            _ = try ServeCommand.resolveNetwork(cliPort: nil, cliHost: nil, cliApiKey: nil, configFile: file.path)
+        }
+        try Data(#"{"rate_limit": true, "port": true}"#.utf8).write(to: file)
+        #expect(throws: (any Error).self, "a JSON boolean is not a number") {
+            _ = try ServeCommand.resolveNetwork(cliPort: nil, cliHost: nil, cliApiKey: nil, configFile: file.path)
+        }
         #expect(throws: Never.self) { _ = try ServeCommand.parse(["--rate-limit", "0"]) }
     }
 

@@ -301,7 +301,7 @@ curl -N http://127.0.0.1:8080/api/v1/generate/stream \
   -d '{"prompt": "Привет", "maxTokens": 512}'
 ```
 
-Каждое событие — строка `data: {...}`, поток завершается `data: [DONE]`.
+Каждое событие — строка `data: {...}`, поток завершается `data: [DONE]`. Ошибка посреди потока приходит как `event: error` с `data: {"error": ...}`.
 
 ### Swagger UI
 
