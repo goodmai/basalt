@@ -1,7 +1,7 @@
 import Testing
 import Foundation
 @testable import BasaltCore
-@testable import BasaltUI
+@testable import BasaltApp
 
 /// The SwiftUI chat client end to end: ChatViewModel → RESTClient → a stubbed
 /// /api/v1/generate/stream that speaks the server's StreamChunk SSE format.

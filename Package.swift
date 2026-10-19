@@ -115,7 +115,7 @@ let package = Package(
         .testTarget(
             name: "BasaltTests",
             dependencies: [
-                "BasaltCore", "BasaltInference", "BasaltCloud", "BasaltServer", "BasaltUI", "BasaltCLI",
+                "BasaltCore", "BasaltInference", "BasaltCloud", "BasaltServer", "BasaltUI", "BasaltCLI", "BasaltApp",
                 .product(name: "HummingbirdTesting", package: "hummingbird"),
             ],
             path: "Tests/BasaltTests",
