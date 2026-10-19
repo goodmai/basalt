@@ -35,11 +35,11 @@ struct AnthropicController: Sendable {
             self.text = text
         }
 
-        init(toolUse call: ToolCallOutput) {
+        init(toolUse call: ToolCallOutput, input: AnyCodable?) {
             type = "tool_use"
             id = AnthropicController.toolUseID(call.id)
             name = call.name
-            input = AnthropicController.objectInput(call.arguments) ?? AnyCodable([String: Any]())
+            self.input = input ?? AnyCodable([String: Any]())
         }
 
         var promptText: String? {
@@ -68,8 +68,8 @@ struct AnthropicController: Sendable {
         return decoded?.rawValue is [String: Any] ? decoded : nil
     }
 
-    static func nonObjectNote(_ call: ToolCallOutput) -> String? {
-        objectInput(call.arguments) == nil ? "\n[tool call to \(call.name): arguments are not an object, sent as {}: \(call.arguments)]" : nil
+    static func nonObjectNote(_ call: ToolCallOutput) -> String {
+        "\n[tool call to \(call.name): arguments are not an object, sent as {}: \(call.arguments)]"
     }
 
     static func toolUseID(_ id: String) -> String {
@@ -357,7 +357,8 @@ struct AnthropicController: Sendable {
 
                 var calledTools = false
                 func emitToolUse(_ call: ToolCallOutput) {
-                    if let note = Self.nonObjectNote(call) {
+                    let note = Self.objectInput(call.arguments) == nil ? Self.nonObjectNote(call) : nil
+                    if let note {
                         open("text")
                         send("content_block_delta", [
                             "type": "content_block_delta",
@@ -374,7 +375,7 @@ struct AnthropicController: Sendable {
                     send("content_block_delta", [
                         "type": "content_block_delta",
                         "index": nextIndex,
-                        "delta": ["type": "input_json_delta", "partial_json": Self.nonObjectNote(call) == nil ? call.arguments : "{}"]
+                        "delta": ["type": "input_json_delta", "partial_json": note == nil ? call.arguments : "{}"]
                     ])
                     send("content_block_stop", ["type": "content_block_stop", "index": nextIndex])
                     nextIndex += 1
@@ -464,9 +465,10 @@ struct AnthropicController: Sendable {
     }
 
     static func responseContent(text answer: String, toolCalls: [ToolCallOutput]) -> [ContentBlock] {
-        let text = answer + toolCalls.compactMap(nonObjectNote).joined()
+        let inputs = toolCalls.map { objectInput($0.arguments) }
+        let text = answer + zip(toolCalls, inputs).filter { $0.1 == nil }.map { nonObjectNote($0.0) }.joined()
         let keepText = toolCalls.isEmpty || !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        return (keepText ? [ContentBlock(text: text)] : []) + toolCalls.map { ContentBlock(toolUse: $0) }
+        return (keepText ? [ContentBlock(text: text)] : []) + zip(toolCalls, inputs).map { ContentBlock(toolUse: $0.0, input: $0.1) }
     }
 
     private func buildPrompt(system: SystemPrompt?, messages: [Message]) -> String {
