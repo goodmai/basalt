@@ -303,5 +303,11 @@ struct NemotronHTests {
         var parallel = ToolCallGate(request: GenerationRequest(prompt: "p", tools: tools))
         #expect(parallel.admit(scanned).count == 4)
     }
+
+    @Test("object arguments keep their slashes unescaped")
+    func objectArgumentsKeepSlashes() {
+        let (_, calls) = Self.scan([#"<TOOLCALL>[{"name": "read", "arguments": {"path": "/tmp/a.txt"}}]</TOOLCALL>"#])
+        #expect(calls.map(\.arguments) == [#"{"path":"/tmp/a.txt"}"#])
+    }
 }
 
