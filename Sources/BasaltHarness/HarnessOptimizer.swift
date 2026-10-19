@@ -318,7 +318,7 @@ enum HarnessProposal {
         var sourceBudget = maxHarnessPromptChars
         for (offset, source) in sources.enumerated() {
             let block = "<candidate_edit n=\"\(offset + 1)\">\n\(files(source))\n</candidate_edit>"
-            guard block.count <= sourceBudget else { break }
+            guard block.count <= sourceBudget else { continue }
             sourceBudget -= block.count
             parts.append(block)
         }

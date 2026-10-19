@@ -279,6 +279,16 @@ struct HarnessOptimizerTests {
         #expect(prompt.count < HarnessProposal.maxHarnessPromptChars + HarnessProposal.maxIndexChars + 8 * 1024)
     }
 
+    @Test("A compose source edit over the remaining budget is skipped and the smaller edits after it still reach the proposer")
+    func oversizedComposeSourceIsSkipped() {
+        let view = HarnessProposal.view(Self.base, spec: .claude)
+        let chunk = String(repeating: "q", count: 25 * 1024)
+        let sources = [[".claude/a.md": chunk, ".claude/b.md": chunk], [".claude/small.md": "small edit"]]
+        let prompt = HarnessProposal.prompt(axis: .compose, task: Self.task, harness: view, spec: .claude, libraryIndex: "", sources: sources)
+        #expect(!prompt.contains("<candidate_edit n=\"1\">"))
+        #expect(prompt.contains("<candidate_edit n=\"2\">\n<file path=\".claude/small.md\">\nsmall edit\n</file>\n</candidate_edit>"))
+    }
+
     @Test("An unreadable library index is a warning; optimize still runs and the write quarantines the corrupt file")
     func unreadableIndexIsWarning() async throws {
         let root = HarnessLibraryTests.tempRoot()
