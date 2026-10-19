@@ -219,7 +219,7 @@ final class CacheBlendStore: @unchecked Sendable {
 
     func extend(
         _ cache: PromptCache, prompt: [Int], from start: Int, namespace: String,
-        model: any LanguageModel, tokenizer: any MLXLMCommon.Tokenizer
+        model: any LanguageModel, tokenizer: any MLXLMCommon.Tokenizer, ratio: Float? = nil, storing: Bool = true
     ) -> CacheBlendOutcome? {
         let end = prompt.count - 1
         guard start < end, let blender = CacheBlendModel(model),
@@ -241,8 +241,8 @@ final class CacheBlendStore: @unchecked Sendable {
         }
         let pass = blender.prefill(
             tokens: Array(prompt[start ..< end]), offset: start,
-            past: start == 0 ? [] : cache.layers.map(\.state), segments: segments, ratio: ratio)
-        let stored = zip(ranges, segments).filter { $0.0.lowerBound >= start && $0.1.cached == nil }.map { range, segment in
+            past: start == 0 ? [] : cache.layers.map(\.state), segments: segments, ratio: ratio ?? self.ratio)
+        let stored = zip(ranges, segments).filter { storing && $0.0.lowerBound >= start && $0.1.cached == nil }.map { range, segment in
             (Key(namespace: namespace, tokens: Array(prompt[range])),
              pass.layers.map { layer in layer.map { contiguous($0[.ellipsis, segment.range, 0...]) } })
         }
