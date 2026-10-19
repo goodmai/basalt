@@ -48,6 +48,7 @@ public enum HarnessValidator {
         relativeTo base: HarnessTree = HarnessTree()
     ) -> HarnessValidationReport {
         var errors: [String] = []
+        var warnings: [String] = []
         let alwaysOnPaths = tree.alwaysOnPaths(spec: spec)
         let alwaysOnChars = tree.alwaysOnCharCount(spec: spec)
         if alwaysOnChars > spec.alwaysOnMaxChars {
@@ -67,7 +68,7 @@ public enum HarnessValidator {
                 subagentCount += 1
                 validateAgent(path: path, content: content, format: spec.agentFormat, errors: &errors)
             } else if path == spec.hookSettingsFile {
-                validateHookSettings(content: content, path: path, errors: &errors)
+                validateHookSettings(content: content, path: path, errors: &errors, warnings: &warnings)
             } else if spec.classify(path: path) == .scripts || spec.isUnder(spec.pluginDirectories, path) {
                 scriptCount += 1
                 if content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -97,7 +98,7 @@ public enum HarnessValidator {
         return HarnessValidationReport(
             isValid: errors.isEmpty,
             errors: errors,
-            warnings: untriggered.map { "\($0): skill is never referenced by the always-on files, agents or other skills" },
+            warnings: Array(Set(warnings)).sorted() + untriggered.map { "\($0): skill is never referenced by the always-on files, agents or other skills" },
             surface: spec.name,
             alwaysOnFiles: alwaysOnPaths,
             alwaysOnChars: alwaysOnChars,
@@ -148,7 +149,7 @@ public enum HarnessValidator {
         }
     }
 
-    private static func validateHookSettings(content: String, path: String, errors: inout [String]) {
+    private static func validateHookSettings(content: String, path: String, errors: inout [String], warnings: inout [String]) {
         guard let raw = try? JSONSerialization.jsonObject(with: Data(content.utf8)) as? [String: Any] else {
             errors.append("\(path): invalid JSON object")
             return
@@ -160,7 +161,7 @@ public enum HarnessValidator {
         }
         for (event, groupsValue) in hooks.sorted(by: { $0.key < $1.key }) {
             guard claudeHookEvents.contains(event) else {
-                errors.append("\(path): unsupported hook event '\(event)'")
+                warnings.append("\(path): unknown hook event '\(event)'")
                 continue
             }
             guard let groups = groupsValue as? [[String: Any]], !groups.isEmpty else {
@@ -173,20 +174,20 @@ public enum HarnessValidator {
                     continue
                 }
                 for handler in handlers {
-                    validateHookHandler(handler, event: event, path: path, errors: &errors)
+                    validateHookHandler(handler, event: event, path: path, errors: &errors, warnings: &warnings)
                 }
             }
         }
     }
 
-    private static func validateHookHandler(_ handler: [String: Any], event: String, path: String, errors: inout [String]) {
+    private static func validateHookHandler(_ handler: [String: Any], event: String, path: String, errors: inout [String], warnings: inout [String]) {
         let type = handler["type"] as? String ?? ""
         let field: String
         switch type {
         case "command": field = "command"
         case "prompt": field = "prompt"
         default:
-            errors.append("\(path): hook event '\(event)' has a handler of unsupported type '\(type)'")
+            warnings.append("\(path): hook event '\(event)' has a handler of unknown type '\(type)'")
             return
         }
         if ((handler[field] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {

@@ -80,14 +80,26 @@ struct HarnessValidatorTests {
             ".claude/skills/dead/SKILL.md: skill name 'other' does not match directory 'dead'",
             ".claude/skills/nodesc/SKILL.md: frontmatter missing non-empty 'description'",
             ".claude/agents/noname.md: agent frontmatter missing 'name'",
-            ".claude/settings.json: unsupported hook event 'InvalidEvent'",
             ".claude/settings.json: hook event 'PreToolUse' has a command handler with an empty 'command'",
-            ".claude/settings.json: hook event 'Stop' has a handler of unsupported type 'bogus'",
             ".claude/settings.json: hook event 'PostToolUse' has a matcher group without a non-empty 'hooks' array"
         ] {
             #expect(errors.contains(expected), "\(expected)")
         }
         #expect(HarnessValidator.validate(tree, spec: .claude.withAlwaysOnMaxChars(9000)).errors.allSatisfy { !$0.contains("budget") })
+    }
+
+    @Test("An unknown hook event or handler type is a warning, so a newer Claude Code hook does not invalidate the harness")
+    func unknownHooksAreWarnings() {
+        let tree = Self.claudeLayout.applying(delta: [
+            ".claude/settings.json": #"{"hooks": {"FutureEvent": [{"hooks": [{"type": "command", "command": "echo"}]}], "Stop": [{"hooks": [{"type": "agent", "agent": "x"}]}]}}"#
+        ])
+        let report = HarnessValidator.validate(tree, spec: .claude)
+        #expect(report.isValid)
+        #expect(report.errors == [])
+        #expect(report.warnings == [
+            ".claude/settings.json: hook event 'Stop' has a handler of unknown type 'agent'",
+            ".claude/settings.json: unknown hook event 'FutureEvent'"
+        ])
     }
 
     @Test("An unreferenced skill is a warning, not an error; mode: subagent is not required of Claude agents")
