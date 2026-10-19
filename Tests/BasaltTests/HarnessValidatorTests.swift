@@ -247,7 +247,7 @@ struct HarnessLoaderTests {
         #expect(loaded.skipped.map(\.description) == [".claude/locked.md: unreadable"])
     }
 
-    @Test("Claude Code worktrees under .claude/worktrees are not read as part of the harness; a FIFO is ignored")
+    @Test("Claude Code worktrees under .claude/worktrees are not read as part of the harness; a FIFO is skipped as not a regular file")
     func worktreesAndSpecialFilesAreSkipped() throws {
         let root = try Self.makeRepo()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -259,6 +259,7 @@ struct HarnessLoaderTests {
 
         let loaded = try HarnessLoader.load(root: root, spec: .claude, allowedRoots: [root])
         #expect(Set(loaded.tree.files.keys) == Set(HarnessValidatorTests.claudeLayout.files.keys))
+        #expect(loaded.skipped.map(\.description) == [".claude/pipe.md: not a regular file"])
     }
 
     @Test("Inline files obey the same count, per-file and total limits as a directory")

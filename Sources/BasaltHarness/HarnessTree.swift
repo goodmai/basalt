@@ -370,7 +370,14 @@ public enum HarnessLoader {
             }
             let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
             var info = stat()
-            guard fstat(descriptor, &info) == 0, info.st_mode & S_IFMT == S_IFREG else { return }
+            guard fstat(descriptor, &info) == 0 else {
+                skipped.append(HarnessSkippedFile(path: path, reason: "unreadable"))
+                return
+            }
+            guard info.st_mode & S_IFMT == S_IFREG else {
+                skipped.append(HarnessSkippedFile(path: path, reason: "not a regular file"))
+                return
+            }
             guard info.st_size <= limits.maxFileBytes else {
                 skipped.append(HarnessSkippedFile(path: path, reason: "\(info.st_size) bytes exceeds the \(limits.maxFileBytes)-byte file limit"))
                 return
