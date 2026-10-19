@@ -94,14 +94,14 @@ public struct NemotronToolCallScanner: Sendable {
 
     private static func arguments(_ value: Any?) -> String? {
         switch value {
-        case nil:
+        case nil, is NSNull:
             return "{}"
         case let text as String:
             return (try? JSONSerialization.jsonObject(with: Data(text.utf8))) is [String: Any] ? text : encoded(["input": text])
         case let object as [String: Any]:
             return encoded(object)
-        default:
-            return nil
+        case let other?:
+            return encoded(["input": other])
         }
     }
 

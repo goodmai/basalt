@@ -317,6 +317,15 @@ struct NemotronHTests {
         #expect(calls.map(\.arguments) == [#"{"input":"*** Begin Patch"}"#])
     }
 
+    @Test("null arguments are an empty object; an array or a scalar becomes the input field")
+    func nonObjectArgumentsStayCalls() {
+        let (text, calls) = Self.scan([
+            #"<TOOLCALL>[{"name": "ls", "arguments": null}, {"name": "sum", "arguments": [1, 2]}, {"name": "sleep", "arguments": 5}]</TOOLCALL>"#,
+        ])
+        #expect(text.isEmpty)
+        #expect(calls.map(\.arguments) == ["{}", #"{"input":[1,2]}"#, #"{"input":5}"#])
+    }
+
     @Test("generation starts inside a thinking span exactly when the rendered prompt ends with an opener or the assistant prefix leaves one open")
     func renderedTailOpensThinking() {
         let longPrefix = String(repeating: "and then some more reasoning ", count: 20)
