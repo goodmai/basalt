@@ -30,6 +30,17 @@ actor MockInferenceEngine: InferenceEngine {
         self.mockFinishReason = reason
     }
 
+    var responder: (@Sendable (GenerationRequest) -> String)?
+    var requests: [GenerationRequest] = []
+
+    func setResponder(_ responder: @escaping @Sendable (GenerationRequest) -> String) {
+        self.responder = responder
+    }
+
+    func getRequests() -> [GenerationRequest] {
+        requests
+    }
+
     func setMockCachedPromptTokens(_ tokens: Int) {
         self.mockCachedPromptTokens = tokens
     }
@@ -107,6 +118,8 @@ actor MockInferenceEngine: InferenceEngine {
             throw .inferenceHardwareFailure(reason: "not loaded")
         }
         if shouldFailOnGenerate { throw generateError }
+        requests.append(request)
+        let mockText = responder?(request) ?? self.mockText
         
         return AsyncStream { continuation in
             Task {

@@ -147,11 +147,7 @@ public struct HarnessTree: Codable, Sendable, Equatable {
         return ordered
     }
 
-    public func alwaysOnText(spec: HarnessSurfaceSpec) -> String {
-        alwaysOnPaths(spec: spec).compactMap { files[$0] }.joined(separator: "\n\n")
-    }
-
-    public func alwaysOnCharCount(spec: HarnessSurfaceSpec) -> Int {
+    func alwaysOnCharCount(spec: HarnessSurfaceSpec) -> Int {
         alwaysOnPaths(spec: spec).reduce(0) { $0 + (files[$1]?.count ?? 0) }
     }
 

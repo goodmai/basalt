@@ -16,7 +16,7 @@ public struct HarnessValidationReport: Codable, Sendable, Equatable {
     public let diversityScore: Double?
 }
 
-public enum HarnessDiversity {
+enum HarnessDiversity {
     static func lineJaccardDistance(_ first: HarnessTree, _ second: HarnessTree) -> Double {
         let setA = first.serializedLines()
         let setB = second.serializedLines()
@@ -25,7 +25,7 @@ public enum HarnessDiversity {
         return 1 - Double(setA.intersection(setB).count) / Double(union)
     }
 
-    public static func pairwiseDiversity(_ trees: [HarnessTree]) -> Double {
+    static func pairwiseDiversity(_ trees: [HarnessTree]) -> Double {
         guard trees.count >= 2 else { return 1 }
         var total = 0.0
         var pairs = 0
