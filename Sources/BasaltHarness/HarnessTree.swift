@@ -364,7 +364,10 @@ public enum HarnessLoader {
                 return
             }
             let descriptor = open(resolved.path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK)
-            guard descriptor >= 0 else { return }
+            guard descriptor >= 0 else {
+                skipped.append(HarnessSkippedFile(path: path, reason: "unreadable"))
+                return
+            }
             let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
             var info = stat()
             guard fstat(descriptor, &info) == 0, info.st_mode & S_IFMT == S_IFREG else { return }

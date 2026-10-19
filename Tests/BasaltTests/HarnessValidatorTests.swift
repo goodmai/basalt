@@ -234,6 +234,19 @@ struct HarnessLoaderTests {
         #expect(loaded.skipped.map(\.description) == [".claude/blob.bin: not UTF-8 text"])
     }
 
+    @Test("A file the loader cannot open is reported as skipped, not silently left out")
+    func unopenableFileIsSkipped() throws {
+        let root = try Self.makeRepo()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let locked = root.appendingPathComponent(".claude/locked.md")
+        try "secret".write(to: locked, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: locked.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: locked.path) }
+        let loaded = try HarnessLoader.load(root: root, spec: .claude, allowedRoots: [root])
+        #expect(loaded.tree.files[".claude/locked.md"] == nil)
+        #expect(loaded.skipped.map(\.description) == [".claude/locked.md: unreadable"])
+    }
+
     @Test("Claude Code worktrees under .claude/worktrees are not read as part of the harness; a FIFO is ignored")
     func worktreesAndSpecialFilesAreSkipped() throws {
         let root = try Self.makeRepo()
