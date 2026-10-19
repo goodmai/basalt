@@ -59,6 +59,7 @@ struct PromptCacheSlots: Sendable {
         var tokens: [Int]
         let cache: PromptCache
         let lastUse: Int
+        let bytes: Int
     }
 
     let byteBudget: Int
@@ -72,7 +73,7 @@ struct PromptCacheSlots: Sendable {
     var parkedByteLimit: Int { byteBudget / 8 }
 
     var byteCount: Int {
-        slots.values.reduce(0) { $0 + $1.cache.byteCount }
+        slots.values.reduce(0) { $0 + $1.bytes }
     }
 
     static func reusablePrefixLength(cached: [Int], prompt: [Int]) -> Int {
@@ -92,13 +93,17 @@ struct PromptCacheSlots: Sendable {
               let kept = Self.fitted(tokens, cache, within: byteBudget)
         else { return }
         clock += 1
-        slots[key] = Slot(tokens: kept, cache: cache, lastUse: clock)
+        slots[key] = Slot(tokens: kept, cache: cache, lastUse: clock, bytes: cache.byteCount)
+        var total = byteCount
+        guard total > byteBudget else { return }
         let inactive = slots.filter { $0.key != key }.sorted { $0.value.lastUse < $1.value.lastUse }.map(\.key)
-        for other in inactive where byteCount > byteBudget {
-            park(other)
+        for other in inactive {
+            guard total > byteBudget else { return }
+            total += park(other)
         }
-        for other in inactive where byteCount > byteBudget {
-            slots[other] = nil
+        for other in inactive {
+            guard total > byteBudget else { return }
+            total -= slots.removeValue(forKey: other)?.bytes ?? 0
         }
     }
 
@@ -106,11 +111,13 @@ struct PromptCacheSlots: Sendable {
         slots.removeAll()
     }
 
-    private mutating func park(_ key: String) {
-        guard let slot = slots[key] else { return }
-        slots[key] = Self.fitted(slot.tokens, slot.cache, within: parkedByteLimit).map {
-            Slot(tokens: $0, cache: slot.cache, lastUse: slot.lastUse)
+    private mutating func park(_ key: String) -> Int {
+        guard let slot = slots[key] else { return 0 }
+        let parked = Self.fitted(slot.tokens, slot.cache, within: parkedByteLimit).map {
+            Slot(tokens: $0, cache: slot.cache, lastUse: slot.lastUse, bytes: slot.cache.byteCount)
         }
+        slots[key] = parked
+        return (parked?.bytes ?? 0) - slot.bytes
     }
 
     private static func fitted(_ tokens: [Int], _ cache: PromptCache, within limit: Int) -> [Int]? {
