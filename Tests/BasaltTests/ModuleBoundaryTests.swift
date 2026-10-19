@@ -47,4 +47,15 @@ struct ModuleBoundaryTests {
             #expect(line.firstMatch(of: Self.banned) == nil, "\(line)")
         }
     }
+
+    @Test("No source writes to a fixed path under /tmp (world-readable, shared by every user)")
+    func noFixedTmpWrites() throws {
+        let files = (FileManager.default.enumerator(at: Self.sources, includingPropertiesForKeys: nil)?
+            .compactMap { $0 as? URL } ?? []).filter { $0.pathExtension == "swift" }
+        #expect(!files.isEmpty)
+        for file in files {
+            let source = try String(contentsOf: file, encoding: .utf8)
+            #expect(!source.contains("toFile: \"/tmp/"), "\(file.lastPathComponent) writes to a fixed /tmp path")
+        }
+    }
 }

@@ -2,18 +2,29 @@
 
 ## 0.3.0 — 2026-10-19
 
+### Upgrading from 0.2.0
+- `basalt serve --host` off loopback now refuses to start without a key: set `BASALT_API_KEY`, pass `--api-key`, or `--auto-generate-key`. Clients send it as `Authorization: Bearer` or `x-api-key`.
+- Off loopback the server answers 429 beyond 120 requests per minute; raise it with `--rate-limit N`, turn it off with `--rate-limit 0`.
+- The config stays in `~/.gem/`. The command is still `basalt`.
+- Earlier versions left the last request body in `/tmp/basalt_anthropic_request.json` and `/tmp/basalt_openai_request.json`: delete them.
+
 ### Security
 - An API key is mandatory when serving off loopback (`BASALT_API_KEY`, `--api-key` or `--auto-generate-key`); the key check runs on every route except health and docs. `~/.gem/config.json` is written owner-only and merged, never overwritten (#28, #48).
 - Token-bucket rate limit, 429 with `Retry-After`: on by default off loopback (120 req/min), `--rate-limit N` or `rate_limit` in the config, `0` disables (#19, #57).
+- `/v1/messages` and `/v1/chat/completions` no longer write every request body (prompts, code, anything pasted) to world-readable files in `/tmp` (`basalt_anthropic_request.json`, `basalt_openai_request.json`). Delete those files if they exist.
 
 ### Coding agents
 - OpenAI Responses API (`/v1/responses`) with the event sequence Codex expects, `reasoning.effort`, and tool calling end to end: tool definitions reach the model, tool calls stream back to the client (#27, #52).
 - Malformed tool-call JSON from the model is repaired against the declared tools; a call that cannot be repaired is shown, not dropped (#26 part, #53).
+- Fixed: with tools in the request, the answer was replaced by its first `{…}` fragment, which mangled every Claude Code reply containing code (#53).
+- Usage no longer reports `cached_tokens` / `cache_read_input_tokens`: they were an estimate for a cache that was never used (#53).
+- `/v1/messages` accepts `thinking` / `reasoning_effort` (#52).
 
 ### Models and hardware
 - `models inspect` verifies safetensors shards and measures quantization bits from the weights; `models check` exits non-zero when a model does not fit (#29, #49).
 - `fit` scoring: one decode-speed model with per-chip bandwidth, MoE accounting, the best quantization per model, and benchmark profiles that survive a restart (#31, #51).
-- `--stats` and `GET /api/v1/stats`: tok/s, TTFT, RAM and GPU memory, streaming requests included; MCP `status` reports the same snapshot (#30, #50).
+- `--stats` (`--stats-interval`) and `GET /api/v1/stats`: tok/s, TTFT, RAM and GPU memory, streaming requests included; MCP `status` reports the same snapshot (#30, #50).
+- New: `models check --system [--json]`, `PerformanceBenchmark --share`; MCP tools `status`, `check_hardware`, `inspect_model`, `switch_model` (#49, #50).
 
 ### Architecture
 - The single `Gem` target is split into `BasaltCore`, `BasaltInference`, `BasaltCloud`, `BasaltServer`, `BasaltUI`, `BasaltApp` and `BasaltCLI`; SwiftUI is no longer linked into the `basalt` binary. The command name is unchanged (#20, #60).
@@ -21,9 +32,15 @@
 
 ### CI and release
 - Each PR is tested once, incrementally, on the self-hosted runner; release checks the tag against the source version and opens the Homebrew formula bump as a PR; the formula is audited with `brew audit --strict` (#54, #58).
+- Dependencies: hummingbird 2.27 (capped below 2.28), swift-transformers 1.3.5, Rainbow 4.2.2, swift-markdown 0.9.0.
 
 ### Removed
-- Files that only held a `// removed` comment, the login screen of the SwiftUI client (the server has no login route), the WebSocket section of the README (no such route).
+- Files that only held a `// removed` comment (#57).
+- The WebSocket section of the README: the route was already gone before 0.2.0.
+
+### Changed
+- The SwiftUI client's login form now takes the API key (sent as Bearer) instead of calling a `/auth/login` route the server never had (#57).
 
 ### Known limits
 - Prefix KV-cache reuse across turns is not implemented yet (#56); the GUI client has no launch command (#55).
+- Some names still say Gem: the MCP `serverInfo.name`, the logger label, `~/.gem/` (#64).

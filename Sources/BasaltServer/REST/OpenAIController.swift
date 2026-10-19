@@ -264,9 +264,8 @@ struct OpenAIController: Sendable {
         let buffer = try await request.body.collect(upTo: 4 * 1024 * 1024)
         let data = Data(buffer.readableBytesView)
 
-        // Save raw body for diagnosis; visible at /tmp/basalt_openai_request.json
+        // Kept only for the decode-error message below; request bodies are never written to disk.
         let rawString = String(data: data, encoding: .utf8) ?? "<non-utf8>"
-        try? rawString.write(toFile: "/tmp/basalt_openai_request.json", atomically: true, encoding: .utf8)
 
         let dto: ChatCompletionRequest
         do {
