@@ -60,6 +60,18 @@ struct ServeCommand: AsyncParsableCommand {
     )
     var promptCacheMB: Int?
 
+    @Flag(
+        name: .customLong("cache-blend"),
+        help: "Reuse the KV of prompt chunks (split after blank lines) in any order, recomputing only the most deviating tokens (CacheBlend, approximate; Llama and Qwen3 only; takes half the prompt-cache budget)"
+    )
+    var cacheBlend = false
+
+    @Option(
+        name: .customLong("cache-blend-ratio"),
+        help: "Share of reused chunk tokens recomputed by --cache-blend, 0...1 (default: 0.15; 1 equals a full prefill)"
+    )
+    var cacheBlendRatio: Float = 0.15
+
     // Optional so an explicit `--port 8080` can be told apart from "not passed":
     // precedence is CLI > --config file > default.
     @Option(name: .shortAndLong, help: "REST API port (default: 8080)")
@@ -205,7 +217,8 @@ struct ServeCommand: AsyncParsableCommand {
             repetitionPenalty: repetitionPenalty,
             topK: topK,
             minP: minP,
-            seed: seed
+            seed: seed,
+            cacheBlendRatio: cacheBlend ? min(max(0, cacheBlendRatio), 1) : nil
         )
         let orchestrator = ModelOrchestratorActor(engine: engine, maxTokens: config.maxTokens, kvBits: kvBits)
 
