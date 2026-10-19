@@ -46,7 +46,9 @@ public actor AgentCapabilityAnalyzer {
         let lower = fileName.lowercased()
         if lower.contains("agents.md") { return .agentsMd }
         if lower.contains("gemini.md") || content.contains("<available_skills>") { return .geminiMd }
-        if lower.contains("claude-skill") { return .claudeSkill }
+        if lower.contains("claude-skill") || lower == "skill.md" || HarnessFrontmatter.parse(content)?.fields["name"] != nil {
+            return .claudeSkill
+        }
         return .unknown
     }
     
@@ -161,7 +163,44 @@ public actor AgentCapabilityAnalyzer {
     }
     
     private func parseClaudeSkill(_ content: String) throws -> [AgentCapability] {
-        // Placeholder for Claude format
-        return []
+        guard let frontmatter = HarnessFrontmatter.parse(content),
+              let name = frontmatter.fields["name"],
+              !name.isEmpty else {
+            return []
+        }
+        let description = frontmatter.fields["description"] ?? ""
+        let returnType = frontmatter.fields["return_type"] ?? frontmatter.fields["returnType"]
+        var params: [Parameter] = []
+        for rawLine in frontmatter.body.components(separatedBy: .newlines) {
+            let trimmed = rawLine.trimmingCharacters(in: .whitespaces)
+            guard trimmed.hasPrefix("-") else { continue }
+            let paramContent = trimmed.dropFirst().trimmingCharacters(in: .whitespaces)
+            let parts = paramContent.components(separatedBy: ":")
+            guard parts.count >= 2 else { continue }
+            let paramDesc = parts[1...].joined(separator: ":").trimmingCharacters(in: .whitespaces)
+            let nameTypePart = parts[0].trimmingCharacters(in: .whitespaces)
+            guard let startParen = nameTypePart.firstIndex(of: "("),
+                  let endParen = nameTypePart.firstIndex(of: ")"),
+                  startParen < endParen else { continue }
+            let paramName = String(nameTypePart[..<startParen]).trimmingCharacters(in: .whitespaces)
+            let typeInfo = String(nameTypePart[nameTypePart.index(after: startParen)..<endParen])
+            let typeParts = typeInfo.components(separatedBy: ",")
+            let paramType = typeParts[0].trimmingCharacters(in: .whitespaces)
+            let isRequired = typeParts.count > 1
+                ? typeParts[1].trimmingCharacters(in: .whitespaces).lowercased() == "required"
+                : false
+            if !paramName.isEmpty {
+                params.append(Parameter(name: paramName, type: paramType, isRequired: isRequired, description: paramDesc))
+            }
+        }
+        return [
+            AgentCapability(
+                name: name,
+                description: description,
+                parameters: params,
+                returnType: returnType,
+                source: .claudeSkill
+            )
+        ]
     }
 }

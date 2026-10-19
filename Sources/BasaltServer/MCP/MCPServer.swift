@@ -74,9 +74,10 @@ public final class MCPServer: Sendable {
 
     private let orchestrator: ModelOrchestratorActor
     private let modelId: String?
+    private let library: HarnessExperienceLibrary
     private let encoder: JSONEncoder = {
         let e = JSONEncoder()
-        e.outputFormatting = [.sortedKeys]  // stable output: AGENTS.md / AI_SETUP.md show sorted keys
+        e.outputFormatting = [.sortedKeys]
         return e
     }()
     private let decoder = JSONDecoder()
@@ -85,10 +86,12 @@ public final class MCPServer: Sendable {
     public init(
         orchestrator: ModelOrchestratorActor,
         modelId: String? = nil,
+        library: HarnessExperienceLibrary = .shared,
         writer: @Sendable @escaping (String) -> Void = { print($0); fflush(stdout) }
     ) {
         self.orchestrator = orchestrator
         self.modelId = modelId
+        self.library = library
         self.writer = writer
     }
 
@@ -250,7 +253,32 @@ public final class MCPServer: Sendable {
                     "required": ["topic", "content"],
                     "properties": [
                         "topic": ["type": "string", "description": "Subject of the knowledge"],
-                        "content": ["type": "string", "description": "Detailed information to store"]
+                        "content": ["type": "string", "description": "Detailed information to store"],
+                        "domain": ["type": "string", "description": "Optional domain bucket in the Experience Library"],
+                        "cue": ["type": "string", "description": "Optional trigger cue for retrieving this lesson"],
+                        "confidence": ["type": "string", "description": "Optional confidence level (low, medium, high)"]
+                    ]
+                ])
+            ),
+            Tool(
+                name: "harness_validate",
+                description: "Validate an agent harness tree (skills, subagents, hooks, scripts, always-on budget).",
+                inputSchema: AnyCodable([
+                    "type": "object",
+                    "properties": [
+                        "directory": ["type": "string", "description": "Directory path containing the harness"],
+                        "surface": ["type": "string", "description": "Surface preset: claude, opencode, or agents"]
+                    ]
+                ])
+            ),
+            Tool(
+                name: "harness_library_query",
+                description: "Query stored lessons and component attributions from the Harness Experience Library.",
+                inputSchema: AnyCodable([
+                    "type": "object",
+                    "properties": [
+                        "query": ["type": "string", "description": "Optional substring query for topic, cue, or content"],
+                        "domain": ["type": "string", "description": "Optional domain filter"]
                     ]
                 ])
             )
@@ -273,7 +301,6 @@ public final class MCPServer: Sendable {
         if arguments == nil, let rawArgs = p["arguments"] as? String {
             guard let repaired = ToolCallRepairer.repairJSON(rawArgs),
                   let dict = try? JSONSerialization.jsonObject(with: Data(repaired.utf8)) as? [String: Any] else {
-                // Running the tool without its arguments would be a guess; say what is wrong.
                 writeError(id: id, code: -32602, message: "Tool arguments are not a JSON object and could not be repaired")
                 return
             }
@@ -304,6 +331,10 @@ public final class MCPServer: Sendable {
             await callPlaywrightScreenshot(id: id, args: arguments)
         case "gemma_add_knowledge":
             await callAddKnowledge(id: id, args: arguments)
+        case "harness_validate":
+            callHarnessValidate(id: id, args: arguments)
+        case "harness_library_query":
+            await callHarnessLibraryQuery(id: id, args: arguments)
         default:
             writeError(id: id, code: -32601, message: "Unknown tool: \(name)")
         }
@@ -395,21 +426,68 @@ public final class MCPServer: Sendable {
     }
 
     private func callAddKnowledge(id: JSONRPCId?, args: [String: Any]?) async {
-        guard let topic = args?["topic"] as? String,
-              let _ = args?["content"] as? String else {
+        guard let topic = args?["topic"] as? String, !topic.isEmpty,
+              let content = args?["content"] as? String, !content.isEmpty else {
             writeError(id: id, code: -32602, message: "Missing required arguments: topic, content")
             return
         }
-        
-        // This is a stub for now, in a real scenario we might add to RAG or system prompt
-        // For now we just log it and return success
-        let result = [
-            "content": [[
-                "type": "text",
-                "text": "Successfully added knowledge about '\(topic)'. The model will consider this in future generations."
-            ]]
-        ]
-        writeResult(id: id, result: result)
+        let domain = (args?["domain"] as? String) ?? "general"
+        let cue = (args?["cue"] as? String) ?? topic
+        let confidence = (args?["confidence"] as? String) ?? "medium"
+        do {
+            let saved = try await library.addKnowledge(
+                topic: topic,
+                content: content,
+                domain: domain,
+                cue: cue,
+                confidence: confidence
+            )
+            let result = [
+                "content": [[
+                    "type": "text",
+                    "text": "Successfully added knowledge about '\(topic)' to Experience Library (\(saved.experiencePath))."
+                ]]
+            ]
+            writeResult(id: id, result: result)
+        } catch {
+            writeError(id: id, code: -32603, message: "Failed to persist knowledge: \(error.localizedDescription)")
+        }
+    }
+
+    private func callHarnessValidate(id: JSONRPCId?, args: [String: Any]?) {
+        let surfaceRaw = (args?["surface"] as? String ?? "claude").lowercased()
+        let spec: HarnessSurfaceSpec
+        switch surfaceRaw {
+        case "opencode":
+            spec = .opencode
+        case "agents":
+            spec = .agents
+        default:
+            spec = .claude
+        }
+        let tree: HarnessTree
+        if let dirPath = args?["directory"] as? String, !dirPath.isEmpty {
+            do {
+                tree = try HarnessTree.load(from: URL(fileURLWithPath: dirPath), spec: spec)
+            } catch {
+                writeError(id: id, code: -32602, message: "Failed to load harness directory: \(error.localizedDescription)")
+                return
+            }
+        } else if let rawFiles = args?["files"] as? [String: String] {
+            tree = HarnessTree(files: rawFiles)
+        } else {
+            writeError(id: id, code: -32602, message: "Missing required argument: directory or files")
+            return
+        }
+        let report = HarnessValidator.validate(tree, spec: spec)
+        writeJSONResult(id: id, report, isError: !report.isValid)
+    }
+
+    private func callHarnessLibraryQuery(id: JSONRPCId?, args: [String: Any]?) async {
+        let query = args?["query"] as? String
+        let domain = args?["domain"] as? String
+        let matches = await library.query(topicOrCue: query, domain: domain)
+        writeJSONResult(id: id, matches)
     }
 
     private func callPlaywrightScreenshot(id: JSONRPCId?, args: [String: Any]?) async {
