@@ -485,7 +485,7 @@ docs/                       — Extended documentation
 ```
 
 Only `BasaltApp` may import SwiftUI/AppKit; every target the CLI links stays headless (enforced by `ModuleBoundaryTests`).
-Cross-target symbols use the `package` access level, not `public`.
+Symbols newly shared across targets use the `package` access level (existing public API stays `public`).
 
 ---
 

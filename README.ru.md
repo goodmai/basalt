@@ -459,10 +459,12 @@ Sources/                    — один SwiftPM-таргет на катало�
 
 Tests/BasaltTests/          — юнит- и интеграционные тесты
 Formula/basalt.rb             — формула Homebrew
-Gemma                       — лаунчер (сборка + сервер + claude)
+basalt-claude               — лаунчер (сборка + сервер + claude)
 scripts/                    — скрипты сборки и обслуживания
 docs/                       — расширенная документация
 ```
+
+SwiftUI/AppKit может импортировать только `BasaltApp`; все таргеты, которые линкует CLI, остаются headless (проверяет `ModuleBoundaryTests`).
 
 ---
 

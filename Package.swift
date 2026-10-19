@@ -28,9 +28,7 @@ let package = Package(
         // Core: DTOs, errors, config, logger, profilers, calculators. No MLX, no UI.
         .target(
             name: "BasaltCore",
-            dependencies: [
-                .product(name: "ArgumentParser", package: "swift-argument-parser"),
-            ],
+            dependencies: [],
             path: "Sources/BasaltCore",
             swiftSettings: swiftSettings
         ),

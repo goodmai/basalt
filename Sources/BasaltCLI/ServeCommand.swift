@@ -335,3 +335,6 @@ struct ServeCommand: AsyncParsableCommand {
         fputs("[serve] \(msg)\n", stderr)
     }
 }
+
+// The CLI parses the level; the type stays in BasaltCore without depending on ArgumentParser.
+extension ServerConfig.LogLevel: ExpressibleByArgument {}

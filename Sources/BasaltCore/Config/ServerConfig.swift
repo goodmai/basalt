@@ -1,5 +1,4 @@
 import Foundation
-import ArgumentParser
 import Security
 
 /// Errors encountered while validating or loading server configuration.
@@ -35,7 +34,7 @@ public struct ServerConfig: Sendable {
     /// Applied off loopback when no `--rate-limit` is given.
     public static let defaultRateLimitPerMinute = 120
 
-    public enum LogLevel: String, Sendable, ExpressibleByArgument {
+    public enum LogLevel: String, Sendable, CaseIterable {
         case debug, info, warn, error
     }
 

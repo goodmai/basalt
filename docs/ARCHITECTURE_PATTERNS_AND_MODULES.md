@@ -56,7 +56,10 @@
 - `MCP/`: MCP сервер по stdio (JSON-RPC), tools поверх оркестратора.
 
 ### 4.5 `BasaltUI` — `Sources/BasaltUI`
-- Терминальный UI (Markdown, спиннер, прогресс-бар, diff, таблицы) и SwiftUI-клиент REST (`SwiftUI/`).
+- Терминальный UI (Markdown, спиннер, прогресс-бар, diff, таблицы). Без SwiftUI/AppKit.
+
+### 4.5a `BasaltApp` — `Sources/BasaltApp`
+- SwiftUI-клиент REST (чат, ввод API-ключа). В CLI не линкуется; точка запуска — #55.
 
 ### 4.6 `BasaltCLI` — `Sources/BasaltCLI`
 - Подкоманды (`serve`, `chat`, `models`, `fit`, `cloud`, `onboard`) и корневая команда (`App/`).
@@ -69,14 +72,15 @@
 
 ## 5) Матрица зависимостей (правила)
 Граф таргетов (ацикличный, задан в `Package.swift`):
-- `BasaltInference`, `BasaltCloud`, `BasaltServer`, `BasaltUI` → `BasaltCore`
-- `BasaltCLI` → все библиотеки выше; `Basalt` → `BasaltCLI`
+- `BasaltInference`, `BasaltCloud`, `BasaltServer`, `BasaltUI`, `BasaltApp` → `BasaltCore`
+- `BasaltCLI` → все библиотеки выше, кроме `BasaltApp`; `Basalt` → `BasaltCLI`
 - `PerformanceBenchmark` → `BasaltCore`, `BasaltInference`
 
 Ограничения:
-- `BasaltCore` и `BasaltInference` не импортируют SwiftUI/AppKit (проверяет `ModuleBoundaryTests`).
+- Ни один таргет, кроме `BasaltApp`, не импортирует SwiftUI/SwiftUICore/AppKit/Cocoa (проверяет `ModuleBoundaryTests`; таргеты берутся из `Sources/`). AppKit всё же попадает в бинарь транзитивно — через Splash и swift-huggingface.
+- `BasaltCore` не зависит от ArgumentParser: `LogLevel` получает `ExpressibleByArgument` в `BasaltCLI`.
 - `BasaltServer` не зависит от `BasaltInference`, `BasaltCloud` и `BasaltUI`; движок приходит через порт `InferenceEngine`.
-- Межмодульные символы открываются уровнем `package`, а не `public`.
+- Новые межмодульные символы открываются уровнем `package`, а не `public` (уже публичный API остался `public`).
 - Кросс-срезовые политики (auth, rate limit, logging) — через middleware/обёртки, а не в доменной логике.
 
 ## 6) Поток обработки запроса
