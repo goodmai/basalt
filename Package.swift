@@ -32,6 +32,12 @@ let package = Package(
             path: "Sources/BasaltCore",
             swiftSettings: swiftSettings
         ),
+        .target(
+            name: "BasaltHarness",
+            dependencies: ["BasaltCore"],
+            path: "Sources/BasaltHarness",
+            swiftSettings: swiftSettings
+        ),
         // Inference: the MLX-backed engine.
         .target(
             name: "BasaltInference",
@@ -60,7 +66,7 @@ let package = Package(
         .target(
             name: "BasaltServer",
             dependencies: [
-                "BasaltCore",
+                "BasaltCore", "BasaltHarness",
                 .product(name: "Hummingbird",   package: "hummingbird"),
             ],
             path: "Sources/BasaltServer",
@@ -93,7 +99,7 @@ let package = Package(
         .target(
             name: "BasaltCLI",
             dependencies: [
-                "BasaltCore", "BasaltInference", "BasaltCloud", "BasaltServer", "BasaltUI",
+                "BasaltCore", "BasaltInference", "BasaltCloud", "BasaltServer", "BasaltUI", "BasaltHarness",
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
             ],
             path: "Sources/BasaltCLI",
@@ -115,7 +121,7 @@ let package = Package(
         .testTarget(
             name: "BasaltTests",
             dependencies: [
-                "BasaltCore", "BasaltInference", "BasaltCloud", "BasaltServer", "BasaltUI", "BasaltCLI", "BasaltApp",
+                "BasaltCore", "BasaltInference", "BasaltCloud", "BasaltServer", "BasaltUI", "BasaltCLI", "BasaltApp", "BasaltHarness",
                 .product(name: "HummingbirdTesting", package: "hummingbird"),
             ],
             path: "Tests/BasaltTests",

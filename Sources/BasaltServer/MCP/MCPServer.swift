@@ -1,5 +1,6 @@
 import Foundation
 import BasaltCore
+import BasaltHarness
 
 // MARK: — MCP over stdio (JSON-RPC 2.0, newline-delimited)
 //
@@ -74,6 +75,9 @@ public final class MCPServer: Sendable {
 
     private let orchestrator: ModelOrchestratorActor
     private let modelId: String?
+    private let library: HarnessExperienceLibrary?
+    private let harnessRoots: [URL]
+    private let harnessLimits: HarnessLoadLimits
     private let encoder: JSONEncoder = {
         let e = JSONEncoder()
         e.outputFormatting = [.sortedKeys]  // stable output: AGENTS.md / AI_SETUP.md show sorted keys
@@ -85,10 +89,16 @@ public final class MCPServer: Sendable {
     public init(
         orchestrator: ModelOrchestratorActor,
         modelId: String? = nil,
+        library: HarnessExperienceLibrary? = nil,
+        harnessRoots: [URL] = HarnessLoader.allowedRoots(),
+        harnessLimits: HarnessLoadLimits = .standard,
         writer: @Sendable @escaping (String) -> Void = { print($0); fflush(stdout) }
     ) {
         self.orchestrator = orchestrator
         self.modelId = modelId
+        self.library = library
+        self.harnessRoots = harnessRoots
+        self.harnessLimits = harnessLimits
         self.writer = writer
     }
 
@@ -244,13 +254,68 @@ public final class MCPServer: Sendable {
             ),
             Tool(
                 name: "gemma_add_knowledge",
-                description: "Add custom information or 'skills' to the session context for the model to use.",
+                description: "Store a lesson in the persistent Harness Experience Library (~/.basalt/harness-library/<domain>/): EXPERIENCE.md, entries.json and the domain INDEX.md that future harness_optimize proposers read. Limits: topic 200 characters, cue 500, domain 64, content 32 KiB, 1000 entries.",
                 inputSchema: AnyCodable([
                     "type": "object",
                     "required": ["topic", "content"],
                     "properties": [
                         "topic": ["type": "string", "description": "Subject of the knowledge"],
-                        "content": ["type": "string", "description": "Detailed information to store"]
+                        "content": ["type": "string", "description": "Detailed information to store"],
+                        "domain": ["type": "string", "description": "Optional domain bucket in the Experience Library"],
+                        "cue": ["type": "string", "description": "Optional trigger cue for retrieving this lesson"],
+                        "confidence": ["type": "string", "enum": ["low", "medium", "high"], "description": "Confidence level (default medium)"]
+                    ]
+                ])
+            ),
+            Tool(
+                name: "harness_validate",
+                description: "Validate an agent harness: a Claude Code (CLAUDE.md, .claude/agents, .claude/skills, .claude/settings.json hooks), opencode (AGENTS.md, .opencode/agent, .opencode/skill, .opencode/plugin) or AGENTS.md + .agents/skills layout. Reports the always-on budget (instruction files and their @imports), skill and agent frontmatter, hook events, missing script references and untriggered skills. A directory must lie under the server's working directory (unless that is / or $HOME) or a root listed in BASALT_HARNESS_ROOTS (colon-separated); loading, inline files included, is capped at 2000 files, 256 KiB per file, 16 MiB in total, 8 levels deep and 10000 directory entries visited; .claude/worktrees and node_modules are not read.",
+                inputSchema: AnyCodable([
+                    "type": "object",
+                    "properties": [
+                        "directory": ["type": "string", "description": "Repository root that contains the harness (e.g. the folder holding CLAUDE.md and .claude/)"],
+                        "files": [
+                            "type": "object",
+                            "description": "Alternative to directory: the harness as {\"path relative to the repository root\": \"file content\"}",
+                            "additionalProperties": ["type": "string"]
+                        ],
+                        "surface": ["type": "string", "enum": HarnessSurfaceSpec.all.map(\.name), "description": "Harness layout (default claude)"],
+                        "alwaysOnMaxChars": ["type": "integer", "description": "Budget for the always-on files in characters (default 8000)"]
+                    ]
+                ])
+            ),
+            Tool(
+                name: "harness_optimize",
+                description: "Run one Harness² propose–probe–compose pass on the loaded model: 2k proposer calls (invariant and domain edits of the harness), k base rollouts, a rollout per admitted candidate, k compose calls, then an anonymised judge among the candidates tied on measured stages (delivered, required terms, no loops). Budget R=4k rollouts, P=3k proposer calls. Nothing is written to the harness; the winning edit is returned and stored in the Experience Library. Same directory rules and limits as harness_validate.",
+                inputSchema: AnyCodable([
+                    "type": "object",
+                    "required": ["task"],
+                    "properties": [
+                        "task": ["type": "string", "description": "The task the harness should get better at"],
+                        "slug": ["type": "string", "description": "Short task id used for the library entry and the prompt-cache namespace (default: derived from task)"],
+                        "domain": ["type": "string", "description": "Experience Library domain (default general)"],
+                        "requiredTerms": ["type": "array", "items": ["type": "string"], "description": "Terms the task demands in the deliverable (conformance stage)"],
+                        "expectsJSON": ["type": "boolean", "description": "The deliverable must be a JSON object"],
+                        "k": ["type": "integer", "minimum": 1, "maximum": 4, "description": "Budget parameter (default 1)"],
+                        "proposerMaxTokens": [
+                            "type": "integer", "minimum": HarnessOptimizer.TokenBudgets.proposerRange.lowerBound,
+                            "maximum": HarnessOptimizer.TokenBudgets.proposerRange.upperBound,
+                            "description": "Token budget of each proposer reply (default: fits the largest editable file, 2048...12288)"
+                        ],
+                        "directory": ["type": "string", "description": "Repository root that contains the harness"],
+                        "files": ["type": "object", "additionalProperties": ["type": "string"], "description": "Alternative to directory: {path: content}"],
+                        "surface": ["type": "string", "enum": HarnessSurfaceSpec.all.map(\.name), "description": "Harness layout (default claude)"]
+                    ]
+                ])
+            ),
+            Tool(
+                name: "harness_library_query",
+                description: "Query stored lessons and component attributions from the Harness Experience Library.",
+                inputSchema: AnyCodable([
+                    "type": "object",
+                    "properties": [
+                        "query": ["type": "string", "description": "Optional substring query for topic, cue, or content"],
+                        "domain": ["type": "string", "description": "Optional domain filter"]
                     ]
                 ])
             )
@@ -304,6 +369,12 @@ public final class MCPServer: Sendable {
             await callPlaywrightScreenshot(id: id, args: arguments)
         case "gemma_add_knowledge":
             await callAddKnowledge(id: id, args: arguments)
+        case "harness_validate":
+            callHarnessValidate(id: id, args: arguments)
+        case "harness_library_query":
+            await callHarnessLibraryQuery(id: id, args: arguments)
+        case "harness_optimize":
+            await callHarnessOptimize(id: id, args: arguments)
         default:
             writeError(id: id, code: -32601, message: "Unknown tool: \(name)")
         }
@@ -395,21 +466,157 @@ public final class MCPServer: Sendable {
     }
 
     private func callAddKnowledge(id: JSONRPCId?, args: [String: Any]?) async {
-        guard let topic = args?["topic"] as? String,
-              let _ = args?["content"] as? String else {
+        guard let topic = args?["topic"] as? String, !topic.isEmpty,
+              let content = args?["content"] as? String, !content.isEmpty else {
             writeError(id: id, code: -32602, message: "Missing required arguments: topic, content")
             return
         }
-        
-        // This is a stub for now, in a real scenario we might add to RAG or system prompt
-        // For now we just log it and return success
-        let result = [
-            "content": [[
-                "type": "text",
-                "text": "Successfully added knowledge about '\(topic)'. The model will consider this in future generations."
-            ]]
-        ]
-        writeResult(id: id, result: result)
+        guard let library else {
+            writeError(id: id, code: -32603, message: "Experience Library is not configured on this server")
+            return
+        }
+        for key in ["domain", "cue", "confidence"] where args?[key] != nil && !(args?[key] is String) {
+            writeError(id: id, code: -32602, message: "\(key) must be a string")
+            return
+        }
+        do {
+            let entry = try await library.addKnowledge(
+                topic: topic,
+                content: content,
+                domain: args?["domain"] as? String ?? "general",
+                cue: args?["cue"] as? String ?? "",
+                confidence: args?["confidence"] as? String ?? "medium"
+            )
+            let result = [
+                "content": [[
+                    "type": "text",
+                    "text": "Stored '\(entry.topic)' in the Experience Library as \(entry.domain)/harnesses/\(entry.slug)."
+                ]]
+            ]
+            writeResult(id: id, result: result)
+        } catch let error as HarnessLibraryError {
+            if case .invalidArgument = error {
+                writeError(id: id, code: -32602, message: error.description)
+            } else {
+                writeError(id: id, code: -32603, message: "Failed to persist knowledge: \(error)")
+            }
+        } catch {
+            writeError(id: id, code: -32603, message: "Failed to persist knowledge: \(error)")
+        }
+    }
+
+    private func harnessInput(id: JSONRPCId?, args: [String: Any]?) -> (spec: HarnessSurfaceSpec, tree: HarnessTree, skipped: [HarnessSkippedFile])? {
+        let surfaceName = args?["surface"] as? String ?? "claude"
+        guard var spec = HarnessSurfaceSpec.named(surfaceName) else {
+            let known = HarnessSurfaceSpec.all.map(\.name).joined(separator: ", ")
+            writeError(id: id, code: -32602, message: "Unknown surface '\(surfaceName)'; expected one of: \(known)")
+            return nil
+        }
+        if let limit = args?["alwaysOnMaxChars"] {
+            guard let limit = limit as? Int, limit > 0 else {
+                writeError(id: id, code: -32602, message: "alwaysOnMaxChars must be a positive integer")
+                return nil
+            }
+            spec = spec.withAlwaysOnMaxChars(limit)
+        }
+        if let directory = args?["directory"] as? String, !directory.isEmpty {
+            do {
+                let loaded = try HarnessLoader.load(
+                    root: URL(fileURLWithPath: directory, isDirectory: true), spec: spec,
+                    allowedRoots: harnessRoots, limits: harnessLimits
+                )
+                return (spec, loaded.tree, loaded.skipped)
+            } catch {
+                writeError(id: id, code: -32602, message: "Cannot load harness: \(error)")
+                return nil
+            }
+        }
+        if let files = args?["files"] as? [String: String] {
+            do {
+                let loaded = try HarnessLoader.inline(files, limits: harnessLimits)
+                return (spec, loaded.tree, loaded.skipped)
+            } catch {
+                writeError(id: id, code: -32602, message: "Cannot load harness: \(error)")
+                return nil
+            }
+        }
+        writeError(id: id, code: -32602, message: "Missing required argument: directory or files")
+        return nil
+    }
+
+    private func callHarnessValidate(id: JSONRPCId?, args: [String: Any]?) {
+        guard let input = harnessInput(id: id, args: args) else { return }
+        var report = HarnessValidator.validate(input.tree, spec: input.spec)
+        report.warnings += input.skipped.map { "skipped \($0)" }
+        writeJSONResult(id: id, report, isError: !report.isValid)
+    }
+
+    private func callHarnessOptimize(id: JSONRPCId?, args: [String: Any]?) async {
+        guard let prompt = args?["task"] as? String, !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            writeError(id: id, code: -32602, message: "Missing required argument: task")
+            return
+        }
+        let k = args?["k"] ?? 1
+        guard !Self.isJSONBoolean(k), let k = k as? Int, HarnessLedger.kRange.contains(k) else {
+            writeError(id: id, code: -32602, message: "k must be an integer in \(HarnessLedger.kRange)")
+            return
+        }
+        if let expectsJSON = args?["expectsJSON"], !Self.isJSONBoolean(expectsJSON) {
+            writeError(id: id, code: -32602, message: "expectsJSON must be a boolean")
+            return
+        }
+        for key in ["domain", "slug"] where args?[key] != nil && !(args?[key] is String) {
+            writeError(id: id, code: -32602, message: "\(key) must be a string")
+            return
+        }
+        let proposerMaxTokens = args?["proposerMaxTokens"]
+        if let proposerMaxTokens, Self.isJSONBoolean(proposerMaxTokens)
+            || !((proposerMaxTokens as? Int).map(HarnessOptimizer.TokenBudgets.proposerRange.contains) ?? false) {
+            writeError(id: id, code: -32602, message: "proposerMaxTokens must be an integer in \(HarnessOptimizer.TokenBudgets.proposerRange)")
+            return
+        }
+        let terms = args?["requiredTerms"] ?? [String]()
+        guard let terms = terms as? [String] else {
+            writeError(id: id, code: -32602, message: "requiredTerms must be an array of strings")
+            return
+        }
+        guard let input = harnessInput(id: id, args: args) else { return }
+        let task = HarnessTask(
+            slug: HarnessExperienceLibrary.slugify((args?["slug"] as? String) ?? String(prompt.prefix(48))),
+            prompt: prompt,
+            domain: (args?["domain"] as? String) ?? "general",
+            requiredTerms: terms,
+            expectsJSON: (args?["expectsJSON"] as? Bool) ?? false
+        )
+        do {
+            var tokens = HarnessOptimizer.TokenBudgets()
+            tokens.proposer = proposerMaxTokens as? Int
+            let result = try await HarnessOptimizer(orchestrator: orchestrator, spec: input.spec, library: library, tokens: tokens)
+                .optimize(task: task, base: input.tree, k: k, skipped: input.skipped)
+            writeJSONResult(id: id, result)
+        } catch let error as BasaltError {
+            writeError(id: id, code: errorCode(for: error), message: error.localizedDescription)
+        } catch let error as HarnessBudgetError {
+            writeError(id: id, code: -32602, message: "Harness optimization refused: \(error)")
+        } catch {
+            writeError(id: id, code: -32603, message: "Harness optimization failed: \(error)")
+        }
+    }
+
+    private static func isJSONBoolean(_ value: Any) -> Bool {
+        (value as? NSNumber).map { CFGetTypeID($0) == CFBooleanGetTypeID() } ?? false
+    }
+
+    private func callHarnessLibraryQuery(id: JSONRPCId?, args: [String: Any]?) async {
+        guard let library else {
+            writeError(id: id, code: -32603, message: "Experience Library is not configured on this server")
+            return
+        }
+        do {
+            writeJSONResult(id: id, try await library.query(args?["query"] as? String, domain: args?["domain"] as? String))
+        } catch {
+            writeError(id: id, code: -32603, message: "Cannot read the Experience Library: \(error)")
+        }
     }
 
     private func callPlaywrightScreenshot(id: JSONRPCId?, args: [String: Any]?) async {

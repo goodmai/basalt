@@ -237,13 +237,22 @@ public actor ModelOrchestratorActor {
         try await switchModel(to: id)
     }
 
-    /// Watchdog budget for a request. A flat cap makes large `maxTokens` requests
-    /// impossible to satisfy: a 27B model emitting ~15 tok/s needs well over an hour
-    /// for 64k tokens and would always be killed mid-generation. Scale with the
-    /// request at a deliberately pessimistic 10 tok/s, keeping the flat value as a floor.
     private func timeout(for request: GenerationRequest) -> UInt64 {
-        let tokens = UInt64(max(0, request.maxTokens ?? 0))
-        return max(generationTimeoutSeconds, tokens / 10)
+        Self.watchdogSeconds(
+            maxTokens: request.maxTokens ?? 0, promptTokens: Self.estimatedTokens(request.prompt),
+            floor: generationTimeoutSeconds
+        )
+    }
+
+    static func watchdogSeconds(maxTokens: Int, promptTokens: Int, floor: UInt64 = 300) -> UInt64 {
+        let decodeSeconds = UInt64(max(0, maxTokens)) / 4
+        let prefillSeconds = UInt64(max(0, promptTokens)) / 200
+        return max(floor, decodeSeconds + prefillSeconds)
+    }
+
+    public func effectiveMaxTokens(for request: GenerationRequest) -> Int {
+        let budget = calculateDynamicMaxTokens(promptTokens: Self.estimatedTokens(request.prompt))
+        return min(request.maxTokens ?? budget, budget)
     }
 
     private func capped(_ request: GenerationRequest) throws(BasaltError) -> GenerationRequest {

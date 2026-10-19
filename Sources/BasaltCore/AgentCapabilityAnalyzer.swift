@@ -28,7 +28,7 @@ public actor AgentCapabilityAnalyzer {
     
     public func parse(file: URL) async throws -> [AgentCapability] {
         let content = try String(contentsOf: file, encoding: .utf8)
-        let format = detectFormat(fileName: file.lastPathComponent, content: content)
+        let format = detectFormat(file: file, content: content)
         
         switch format {
         case .agentsMd:   
@@ -36,17 +36,17 @@ public actor AgentCapabilityAnalyzer {
         case .geminiMd:   
             return try parseGeminiMd(content)
         case .claudeSkill: 
-            return try parseClaudeSkill(content)
+            return parseClaudeSkill(content, directoryName: file.deletingLastPathComponent().lastPathComponent)
         case .unknown:
             return []
         }
     }
     
-    private func detectFormat(fileName: String, content: String) -> AgentCapability.CapabilitySource {
-        let lower = fileName.lowercased()
+    private func detectFormat(file: URL, content: String) -> AgentCapability.CapabilitySource {
+        let lower = file.lastPathComponent.lowercased()
         if lower.contains("agents.md") { return .agentsMd }
         if lower.contains("gemini.md") || content.contains("<available_skills>") { return .geminiMd }
-        if lower.contains("claude-skill") { return .claudeSkill }
+        if lower.contains("claude-skill") || Self.isSkillFile(file) { return .claudeSkill }
         return .unknown
     }
     
@@ -160,8 +160,21 @@ public actor AgentCapabilityAnalyzer {
         return capabilities
     }
     
-    private func parseClaudeSkill(_ content: String) throws -> [AgentCapability] {
-        // Placeholder for Claude format
-        return []
+    static func isSkillFile(_ file: URL) -> Bool {
+        file.lastPathComponent == "SKILL.md"
+            && ["skills", "skill"].contains(file.deletingLastPathComponent().deletingLastPathComponent().lastPathComponent)
+    }
+
+    private func parseClaudeSkill(_ content: String, directoryName: String) -> [AgentCapability] {
+        guard let frontmatter = Frontmatter.parse(content) else { return [] }
+        let name = frontmatter.fields["name"] ?? directoryName
+        guard !name.isEmpty else { return [] }
+        return [AgentCapability(
+            name: name,
+            description: frontmatter.fields["description"] ?? "",
+            parameters: [],
+            returnType: nil,
+            source: .claudeSkill
+        )]
     }
 }

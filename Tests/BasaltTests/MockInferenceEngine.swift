@@ -30,6 +30,23 @@ actor MockInferenceEngine: InferenceEngine {
         self.mockFinishReason = reason
     }
 
+    var responder: (@Sendable (GenerationRequest) -> String)?
+    var requests: [GenerationRequest] = []
+
+    func setResponder(_ responder: @escaping @Sendable (GenerationRequest) -> String) {
+        self.responder = responder
+    }
+
+    var failure: (@Sendable (GenerationRequest) -> BasaltError?)?
+
+    func setFailure(_ failure: @escaping @Sendable (GenerationRequest) -> BasaltError?) {
+        self.failure = failure
+    }
+
+    func getRequests() -> [GenerationRequest] {
+        requests
+    }
+
     func setMockCachedPromptTokens(_ tokens: Int) {
         self.mockCachedPromptTokens = tokens
     }
@@ -107,6 +124,9 @@ actor MockInferenceEngine: InferenceEngine {
             throw .inferenceHardwareFailure(reason: "not loaded")
         }
         if shouldFailOnGenerate { throw generateError }
+        requests.append(request)
+        if let error = failure?(request) { throw error }
+        let mockText = (request.assistantPrefix ?? "") + (responder?(request) ?? self.mockText)
         
         return AsyncStream { continuation in
             Task {
