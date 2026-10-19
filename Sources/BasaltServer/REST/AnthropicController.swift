@@ -107,23 +107,14 @@ struct AnthropicController: Sendable {
         let stream: Bool?
         let thinking: ThinkingConfig?
         let reasoningEffort: String?
-        let metadata: RequestMetadata?
 
         enum CodingKeys: String, CodingKey {
-            case model, messages, system, temperature, stream, thinking, metadata
+            case model, messages, system, temperature, stream, thinking
             case maxTokens = "max_tokens"
             case topP = "top_p"
             case minP = "min_p"
             case dynamicTemperature = "dynamic_temperature"
             case reasoningEffort = "reasoning_effort"
-        }
-    }
-
-    struct RequestMetadata: Codable, Sendable {
-        let userId: String?
-
-        enum CodingKeys: String, CodingKey {
-            case userId = "user_id"
         }
     }
 
@@ -218,9 +209,7 @@ struct AnthropicController: Sendable {
             dynamicTemperature: dto.dynamicTemperature,
             reasoningEffort: effort,
             isServiceRequest: service.isService,
-            cacheKey: PromptCacheKey.resolve(
-                declared: dto.metadata?.userId, sharedByAgents: true, headers: request.headers,
-                prompt: service.prompt, isService: service.isService)
+            cacheKey: PromptCacheKey.resolve(headers: request.headers, isService: service.isService)
         )
 
         let requestedModel = dto.model.map { ModelsController.hfRepoId(from: $0) }  // strip claude-local/ prefix if present

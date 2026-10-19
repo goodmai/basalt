@@ -24,29 +24,15 @@ extension HTTPFields {
 }
 
 enum PromptCacheKey {
-    static let sessionHeader = "x-session-id"
-    static let hashedPrefixLength = 512
+    static let anonymous = "anonymous"
 
-    static func resolve(
-        declared: String?, sharedByAgents: Bool = false, headers: HTTPFields, prompt: String, isService: Bool
-    ) -> String? {
+    static func resolve(headers: HTTPFields, isService: Bool) -> String? {
         guard !isService else { return nil }
-        let head = digest(String(prompt.prefix(hashedPrefixLength)))
-        let conversation: String
-        if let declared, !declared.isEmpty {
-            conversation = sharedByAgents ? "agent:\(declared):\(head)" : "key:\(declared)"
-        } else if let name = HTTPField.Name(sessionHeader), let session = headers[name], !session.isEmpty {
-            conversation = "session:\(session)"
-        } else {
-            conversation = "prefix:\(head)"
-        }
-        return credential(in: headers).map { "\(digest($0))/\(conversation)" } ?? conversation
+        return credential(in: headers).map { "credential:\(digest($0))" } ?? anonymous
     }
 
     static func scoped(_ request: GenerationRequest, headers: HTTPFields) -> GenerationRequest {
-        request.withCacheKey(resolve(
-            declared: request.cacheKey, headers: headers, prompt: request.prompt,
-            isService: request.isServiceRequest == true))
+        request.withCacheKey(resolve(headers: headers, isService: request.isServiceRequest == true))
     }
 
     static func credential(in headers: HTTPFields) -> String? {
