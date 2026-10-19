@@ -164,6 +164,20 @@ struct KVCacheGeometryTests {
         #expect(nemotron.bytes(tokens: 1) == 2 * 2 * 8 * 128 * 2)
     }
 
+    @Test("--kv-bits leaves sliding-window layers in fp16: MLX quantizes only simple caches, not rotating ones")
+    func kvBitsSkipsSlidingLayers() {
+        let g = KVCacheGeometry(config: [
+            "num_hidden_layers": 6, "num_attention_heads": 4, "num_key_value_heads": 1, "head_dim": 96,
+            "global_head_dim": 128, "sliding_window": 512, "sliding_window_pattern": 6,
+        ])!
+        #expect(g.quantizedGroupSize == 64)
+        let windowed = Int64(5 * 2 * 96 * 2 * 512)
+        let full = 2.0 * 128 * 4096
+        #expect(g.bytes(tokens: 4096) == Int64(full * 2) + windowed)
+        #expect(g.bytes(tokens: 4096, kvBits: 4) == Int64(full * (0.5 + 4.0 / 64)) + windowed)
+        #expect(g.maxTokens(fitting: g.bytes(tokens: 4096, kvBits: 4), kvBits: 4) == 4096)
+    }
+
     @Test("--kv-bits group falls back to 32 when head_dim is not a multiple of 64, as MLX does")
     func quantizedGroupFallback() {
         let g = KVCacheGeometry(config: ["num_hidden_layers": 2, "num_attention_heads": 4, "head_dim": 96])!

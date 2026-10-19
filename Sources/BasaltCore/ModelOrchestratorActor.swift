@@ -48,13 +48,13 @@ public actor ModelOrchestratorActor {
     /// Load a model from a filesystem path.
     /// After loading, call `setModelId(_:)` to record the HuggingFace repo ID.
     public func loadModel(path: String) async throws(BasaltError) {
-        self.currentModelPath = path
         let size = try? calculateDirectorySize(url: URL(fileURLWithPath: path))
+        try await engine.load(modelPath: path)
+        currentModelPath = path
         if let size {
-            self.modelSizeMB = Int(size / 1_048_576)
+            modelSizeMB = Int(size / 1_048_576)
             logger.info("Model size: \(self.modelSizeMB) MB")
         }
-        try await engine.load(modelPath: path)
         kvGeometry = KVCacheGeometry.forModel(
             path, parameters: ModelDefinition.inferTotalParameters(id: path, name: "", ramMB: Int64(modelSizeMB))
         )

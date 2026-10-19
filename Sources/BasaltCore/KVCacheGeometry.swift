@@ -12,7 +12,7 @@ public struct KVCacheGeometry: Sendable, Equatable {
     public static let activationBytes = 2.0
     public static let defaultQuantizedGroupSize = 64
     static let supportedQuantizedGroupSizes = [32, 64, 128]
-    static let fromConfig = Mutex<[String: KVCacheGeometry]>([:])
+    static let fromConfig = Mutex<[String: (modified: Date, geometry: KVCacheGeometry)]>([:])
     static let recurrentStateBytes = 4.0
     static let proxyGBPer4kPerBillion = 0.034
     static let proxyGBPer4kFloor = 0.01
@@ -62,7 +62,7 @@ public struct KVCacheGeometry: Sendable, Equatable {
         )
         window = c["sliding_window"] as? Int ?? 0
         fixedStateBytes = Int64(linear) * Self.linearStateBytes(c)
-        let dims = [global.keyDim, global.valueDim] + (windowedLayers > 0 ? [headDim] : [])
+        let dims = [global.keyDim, global.valueDim]
         quantizedGroupSize = Self.supportedQuantizedGroupSizes
             .filter { g in dims.allSatisfy { $0.isMultiple(of: g) } }
             .min { abs($0 - Self.defaultQuantizedGroupSize) < abs($1 - Self.defaultQuantizedGroupSize) }
@@ -88,27 +88,30 @@ public struct KVCacheGeometry: Sendable, Equatable {
     }
 
     public static func forModel(_ repoIdOrPath: String, parameters: Double) -> KVCacheGeometry {
-        if let known = fromConfig.withLock({ $0[repoIdOrPath] }) { return known }
-        guard let read = ModelCache.resolve(repoId: repoIdOrPath).flatMap(load(modelDirectory:)) else {
+        guard let dir = ModelCache.resolve(repoId: repoIdOrPath),
+              let modified = try? dir.appendingPathComponent("config.json")
+                .resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate else {
             return KVCacheGeometry(parameterProxy: parameters)
         }
-        fromConfig.withLock { $0[repoIdOrPath] = read }
+        let key = dir.standardizedFileURL.path
+        if let known = fromConfig.withLock({ $0[key] }), known.modified == modified { return known.geometry }
+        guard let read = load(modelDirectory: dir) else { return KVCacheGeometry(parameterProxy: parameters) }
+        fromConfig.withLock { $0[key] = (modified, read) }
         return read
     }
 
     public func bytes(tokens: Int, kvBits: Int? = nil) -> Int64 {
         let t = Double(max(0, tokens))
         let windowed = window > 0 ? min(t, Double(window)) : t
-        let elements = elementsPerToken * t + windowedElementsPerToken * windowed
-        return Int64(elements * bytesPerElement(kvBits: kvBits)) + fixedStateBytes
+        let growing = elementsPerToken * t * bytesPerElement(kvBits: kvBits)
+        return Int64(growing + windowedElementsPerToken * windowed * Self.activationBytes) + fixedStateBytes
     }
 
     public func maxTokens(fitting budget: Int64, kvBits: Int? = nil) -> Int {
         let room = Double(budget - fixedStateBytes)
         guard room > 0 else { return 0 }
-        let b = bytesPerElement(kvBits: kvBits)
-        let growing = elementsPerToken * b
-        let windowed = windowedElementsPerToken * b
+        let growing = elementsPerToken * bytesPerElement(kvBits: kvBits)
+        let windowed = windowedElementsPerToken * Self.activationBytes
         let tokens: Double
         if window > 0, windowed > 0, room >= (growing + windowed) * Double(window) {
             tokens = growing > 0 ? Double(window) + (room - (growing + windowed) * Double(window)) / growing : .infinity
