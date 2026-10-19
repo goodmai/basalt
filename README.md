@@ -190,7 +190,8 @@ The flags worth knowing on `serve`:
 | `--min-p`, `--top-k`, `--seed` | sampling; `--seed` makes a non-greedy run reproducible |
 | `--max-tokens` | default generation ceiling (2048–128000) |
 | `--dry-run` | memory feasibility check, then exit without loading |
-| `--port`, `--host` | default 127.0.0.1:8080 |
+| `--port`, `--host` | default 127.0.0.1:8080; any other host needs an API key (`BASALT_API_KEY` or `--auto-generate-key`) |
+| `--rate-limit N` | server-wide requests per minute, 429 beyond it — default off on loopback, 120 otherwise; `0` disables |
 
 ---
 
