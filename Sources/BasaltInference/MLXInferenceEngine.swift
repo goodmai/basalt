@@ -412,19 +412,22 @@ public actor MLXInferenceEngine: InferenceEngine {
         return false
     }
 
-    static let thinkingOpeners = ["<think>", "<|think|>", "<|channel>thought", "<|channel|>thought"]
-    static let thinkingClosers = [
-        "</think>", "<channel|>", "<|channel|>",
-        "<|turn|>", "<|turn>", "<|im_start|>", "<|im_end|>", "<SPECIAL_11>", "<SPECIAL_12>",
-    ]
+    static let thinkingOpeners = ["<think>", "<|channel>thought", "<|channel|>thought"]
+    static let thinkingClosers = ["</think>", "<channel|>", "<|channel|>", "<|turn|>"]
 
-    static func endsInsideThinking(_ rendered: String) -> Bool {
+    static func endsInsideThinking(_ rendered: String, assistantPrefix: String = "") -> Bool {
         func last(_ markers: [String], at bound: KeyPath<Range<String.Index>, String.Index>) -> String.Index? {
-            markers.compactMap { rendered.range(of: $0, options: .backwards)?[keyPath: bound] }.max()
+            markers.compactMap { assistantPrefix.range(of: $0, options: .backwards)?[keyPath: bound] }.max()
         }
-        guard let opened = last(thinkingOpeners, at: \.upperBound) else { return false }
-        guard let closed = last(thinkingClosers, at: \.lowerBound) else { return true }
-        return opened > closed
+        switch (last(thinkingOpeners, at: \.upperBound), last(thinkingClosers, at: \.lowerBound)) {
+        case let (opened?, closed?): return opened > closed
+        case (.some, nil): return true
+        case (nil, .some): return false
+        case (nil, nil):
+            var tail = Substring(rendered)
+            while tail.last?.isWhitespace == true { tail.removeLast() }
+            return thinkingOpeners.contains { tail.hasSuffix($0) }
+        }
     }
 
     static func toolCall(_ call: ToolCallOutput) -> ToolCall {
@@ -601,10 +604,10 @@ public actor MLXInferenceEngine: InferenceEngine {
             }
             let mlxStream = launch.stream
             
-            let promptTail = await container.perform {
-                $0.tokenizer.decode(tokenIds: Array(promptTokens.suffix(16)), skipSpecialTokens: false)
+            let renderedTail = await container.perform {
+                $0.tokenizer.decode(tokenIds: Array(promptTokens.prefix(renderedCount).suffix(16)), skipSpecialTokens: false)
             }
-            let promptEndsWithThinking = Self.endsInsideThinking(promptTail)
+            let promptEndsWithThinking = Self.endsInsideThinking(renderedTail, assistantPrefix: assistantPrefix ?? "")
 
             return AsyncStream<StreamChunk> { continuation in
                 let task = Task.detached {

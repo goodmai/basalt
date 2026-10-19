@@ -317,24 +317,32 @@ struct NemotronHTests {
         #expect(calls.map(\.arguments) == [#"{"input":"*** Begin Patch"}"#])
     }
 
-    @Test("generation starts inside a thinking span exactly when the rendered prompt leaves one open")
+    @Test("generation starts inside a thinking span exactly when the rendered prompt ends with an opener or the assistant prefix leaves one open")
     func renderedTailOpensThinking() {
-        let opened = [
-            "<SPECIAL_11>User\nWhat is 17*23?\n<SPECIAL_11>Assistant\n<think>\n",
-            "<|im_start|>user\nWhat is 17*23?<|im_end|>\n<|im_start|>assistant\n<think>\n",
-            "<|im_start|>assistant\n<think>\nLet me",
-            "<|turn>model\n<|channel>thought\n",
-            "<|start|>assistant<|channel|>thought",
+        let longPrefix = String(repeating: "and then some more reasoning ", count: 20)
+        let opened: [(rendered: String, prefix: String)] = [
+            ("<SPECIAL_11>User\nWhat is 17*23?\n<SPECIAL_11>Assistant\n<think>\n", ""),
+            ("<|im_start|>user\nWhat is 17*23?<|im_end|>\n<|im_start|>assistant\n<think>\n", ""),
+            ("<|turn>user\nWhat is 17*23?<turn|>\n<|turn>model\n<|channel>thought\n", ""),
+            ("<|start|>assistant<|channel|>thought", ""),
+            ("<|im_start|>assistant\n", "<think>\nLet me"),
+            ("<|im_start|>assistant\n<think>\n", "Let me"),
+            ("<|im_start|>assistant\n<think>\n", longPrefix),
+            ("<|im_start|>assistant\n", "<think>\nfirst</think>\n<think>\nagain"),
         ]
-        let closed = [
-            "<SPECIAL_11>Assistant\n<think></think>",
-            "<|im_start|>assistant\n<think></think>",
-            "<|im_start|>assistant\n<think>\n\n</think>\n\n",
-            "<|im_start|>user\nWhat is 17*23?<|im_end|>\n<|im_start|>assistant\n",
-            "<|im_start|>user\nwhat does <think> do<|im_end|>\n<|im_start|>assistant\n",
+        let closed: [(rendered: String, prefix: String)] = [
+            ("<SPECIAL_11>Assistant\n<think></think>", ""),
+            ("<|im_start|>assistant\n<think></think>", ""),
+            ("<|im_start|>assistant\n<think>\n\n</think>\n\n", ""),
+            ("<|im_start|>user\nWhat is 17*23?<|im_end|>\n<|im_start|>assistant\n", ""),
+            ("<|im_start|>user\nwhat does <think> mean<|im_end|>\n<|im_start|>assistant\n", ""),
+            ("<|start_header_id|>user<|end_header_id|>\n\nwhat does <think> mean<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n", ""),
+            ("<|turn>user\nwhat does <|channel>thought mean<turn|>\n<|turn>model\n", ""),
+            ("<|turn>model\n<|channel>thought\nshort<channel|>", ""),
+            ("<|im_start|>assistant\n<think>\n", "done</think>\nThe answer"),
         ]
-        #expect(opened.filter { !MLXInferenceEngine.endsInsideThinking($0) } == [])
-        #expect(closed.filter(MLXInferenceEngine.endsInsideThinking) == [])
+        #expect(opened.filter { !MLXInferenceEngine.endsInsideThinking($0.rendered, assistantPrefix: $0.prefix) }.map(\.rendered) == [])
+        #expect(closed.filter { MLXInferenceEngine.endsInsideThinking($0.rendered, assistantPrefix: $0.prefix) }.map(\.rendered) == [])
     }
 
     @Test("the engine turns a Nemotron <TOOLCALL> into one structured call and stops generating once parallel calls are off")
