@@ -87,6 +87,8 @@ struct OpenAIController: Sendable {
         let maxTokens: Int?
         let temperature: Double?
         let topP: Double?
+        let minP: Double?
+        let dynamicTemperature: Bool?
         let stream: Bool?
         let reasoningEffort: String?
 
@@ -94,6 +96,8 @@ struct OpenAIController: Sendable {
             case model, messages, temperature, stream
             case maxTokens = "max_tokens"
             case topP = "top_p"
+            case minP = "min_p"
+            case dynamicTemperature = "dynamic_temperature"
             case reasoningEffort = "reasoning_effort"
         }
     }
@@ -108,6 +112,8 @@ struct OpenAIController: Sendable {
         let maxTokens: Int?
         let temperature: Double?
         let topP: Double?
+        let minP: Double?
+        let dynamicTemperature: Bool?
         let stream: Bool?
         /// Responses API form: `"reasoning": {"effort": "low"}`.
         let reasoning: ReasoningConfig?
@@ -127,6 +133,8 @@ struct OpenAIController: Sendable {
             case maxOutputTokens = "max_output_tokens"
             case maxTokens = "max_tokens"
             case topP = "top_p"
+            case minP = "min_p"
+            case dynamicTemperature = "dynamic_temperature"
             case reasoningEffort = "reasoning_effort"
             case additionalTools = "additional_tools"
         }
@@ -286,6 +294,8 @@ struct OpenAIController: Sendable {
             maxTokens: dto.maxTokens,
             temperature: dto.temperature ?? 0.7,
             topP: dto.topP ?? 0.9,
+            minP: dto.minP,
+            dynamicTemperature: dto.dynamicTemperature,
             reasoningEffort: dto.reasoningEffort,
             isServiceRequest: service.isService
         )
@@ -317,8 +327,9 @@ struct OpenAIController: Sendable {
             return makeDataResponse(encoded)
         } catch {
             fputs("🔴 [OpenAI] generate failed: \(error)\n", stderr)
-            return makeErrorResponse(status: .internalServerError,
-                                     message: error.localizedDescription, code: 500)
+            let code = (error as? BasaltError)?.httpStatus ?? 500
+            return makeErrorResponse(status: HTTPResponse.Status(code: code),
+                                     message: error.localizedDescription, code: code)
         }
     }
 
@@ -364,6 +375,8 @@ struct OpenAIController: Sendable {
             maxTokens: maxT,
             temperature: dto.temperature ?? 0.7,
             topP: dto.topP ?? 0.9,
+            minP: dto.minP,
+            dynamicTemperature: dto.dynamicTemperature,
             reasoningEffort: dto.effectiveReasoningEffort,
             isServiceRequest: service.isService,
             tools: Self.functionTools(fromRequestBody: data)
@@ -404,8 +417,9 @@ struct OpenAIController: Sendable {
             let encoded = try JSONEncoder().encode(response)
             return makeDataResponse(encoded)
         } catch {
-            return makeErrorResponse(status: .internalServerError,
-                                     message: error.localizedDescription, code: 500)
+            let code = (error as? BasaltError)?.httpStatus ?? 500
+            return makeErrorResponse(status: HTTPResponse.Status(code: code),
+                                     message: error.localizedDescription, code: code)
         }
     }
 

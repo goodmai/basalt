@@ -102,6 +102,8 @@ struct AnthropicController: Sendable {
         let maxTokens: Int?
         let temperature: Double?
         let topP: Double?
+        let minP: Double?
+        let dynamicTemperature: Bool?
         let stream: Bool?
         let thinking: ThinkingConfig?
         let reasoningEffort: String?
@@ -110,6 +112,8 @@ struct AnthropicController: Sendable {
             case model, messages, system, temperature, stream, thinking
             case maxTokens = "max_tokens"
             case topP = "top_p"
+            case minP = "min_p"
+            case dynamicTemperature = "dynamic_temperature"
             case reasoningEffort = "reasoning_effort"
         }
     }
@@ -193,6 +197,8 @@ struct AnthropicController: Sendable {
             maxTokens: dto.maxTokens ?? 8192,
             temperature: dto.temperature ?? 0.7,
             topP: dto.topP ?? 0.9,
+            minP: dto.minP,
+            dynamicTemperature: dto.dynamicTemperature,
             reasoningEffort: effort,
             isServiceRequest: service.isService
         )

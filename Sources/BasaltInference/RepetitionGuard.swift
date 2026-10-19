@@ -25,6 +25,8 @@ public struct RepetitionGuard: Sendable {
 
     private var buffer: String = ""
 
+    public private(set) var score: Double = 0
+
     public init(probeSize: Int = 64, threshold: Int = 4, minLength: Int = 400, retain: Int = 4096) {
         self.probeSize = probeSize
         self.threshold = threshold
@@ -49,12 +51,33 @@ public struct RepetitionGuard: Sendable {
         let probe = String(buffer.suffix(probeSize))
         var occurrences = 0
         var searchRange = buffer.startIndex..<buffer.endIndex
-        while let found = buffer.range(of: probe, range: searchRange) {
+        while occurrences < threshold, let found = buffer.range(of: probe, range: searchRange) {
             occurrences += 1
-            if occurrences >= threshold { return true }
             guard found.upperBound < buffer.endIndex else { break }
             searchRange = found.upperBound..<buffer.endIndex
         }
-        return false
+        score = Self.score(occurrences: occurrences, threshold: threshold)
+        return occurrences >= threshold
+    }
+
+    public static func score<E: Equatable>(tokens: [E], probeSize: Int, threshold: Int) -> Double {
+        guard probeSize > 0, tokens.count > probeSize else { return 0 }
+        let probe = tokens[(tokens.count - probeSize)...]
+        var occurrences = 0
+        var i = 0
+        while occurrences < threshold, i + probeSize <= tokens.count {
+            if tokens[i..<(i + probeSize)].elementsEqual(probe) {
+                occurrences += 1
+                i += probeSize
+            } else {
+                i += 1
+            }
+        }
+        return score(occurrences: occurrences, threshold: threshold)
+    }
+
+    static func score(occurrences: Int, threshold: Int) -> Double {
+        guard threshold > 1 else { return occurrences >= threshold ? 1 : 0 }
+        return min(1, max(0, Double(occurrences - 1) / Double(threshold - 1)))
     }
 }

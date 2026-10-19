@@ -218,7 +218,9 @@ public final class MCPServer: Sendable {
                         "prompt":      ["type": "string",  "description": "Input prompt"],
                         "maxTokens":   ["type": "integer", "description": "Max tokens to generate (default 65536)"],
                         "temperature": ["type": "number",  "description": "Sampling temperature 0–2 (default 0.7)"],
-                        "topP":        ["type": "number",  "description": "Nucleus sampling p (default 0.9)"]
+                        "topP":        ["type": "number",  "description": "Nucleus sampling p (default 0.9)"],
+                        "minP":        ["type": "number",  "description": "Min-P 0–1, overrides the server default (0 = off)"],
+                        "dynamicTemperature": ["type": "boolean", "description": "Entropy-based dynamic temperature (EDT)"]
                     ]
                 ])
             ),
@@ -486,7 +488,9 @@ public final class MCPServer: Sendable {
             prompt: prompt,
             maxTokens:   args?["maxTokens"]   as? Int,
             temperature: args?["temperature"] as? Double,
-            topP:        args?["topP"]        as? Double
+            topP:        args?["topP"]        as? Double,
+            minP:        args?["minP"]        as? Double,
+            dynamicTemperature: args?["dynamicTemperature"] as? Bool
         )
         
         do {

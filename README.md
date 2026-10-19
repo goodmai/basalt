@@ -186,7 +186,7 @@ The flags worth knowing on `serve`:
 | `--reasoning-effort xhigh\|medium\|low` | Qwen-family thinking budget |
 | `--quant 4bit` | pick a quantization subfolder in repos that ship several |
 | `--kv-bits 4\|8` | quantize the KV cache — buys context on a memory-tight machine |
-| `--min-p`, `--top-k`, `--seed` | sampling; `--seed` makes a non-greedy run reproducible |
+| `--min-p`, `--top-k`, `--seed` | sampling; `--seed` makes a non-greedy run reproducible; a request's `min_p` overrides `--min-p` |
 | `--max-tokens` | default generation ceiling (2048–128000) |
 | `--dry-run` | memory feasibility check, then exit without loading |
 | `--port`, `--host` | default 127.0.0.1:8080; any other host needs an API key (`BASALT_API_KEY` or `--auto-generate-key`) |
@@ -262,6 +262,10 @@ curl -s http://localhost:8080/api/v1/generate \
 | `maxTokens` | int | 8192 | Max tokens to generate |
 | `temperature` | float | 0.7 | Sampling temperature (0–2) |
 | `topP` | float | 0.9 | Nucleus sampling |
+| `minP` | float | server | Min-P 0–1: drop tokens below `minP × max p`. Overrides `--min-p` and the model profile; `0` turns it off |
+| `dynamicTemperature` | bool | false | Entropy-based dynamic temperature (EDT): per token `T = T0·0.8^(1.5/H) + 0.5·R`, clamped to 0.05–2 (a colder request keeps its own temperature as the floor; `top_p`/`min_p` cut the original distribution), where `H` is the entropy of the next-token distribution and `R ∈ [0,1]` a repetition index. Near-greedy on confident tokens, warmer when a loop starts. No effect at `temperature: 0` |
+
+`/v1/chat/completions`, `/v1/responses` and `/v1/messages` take the same two fields as `min_p` and `dynamic_temperature`; MCP `gemma_generate` as `minP` and `dynamicTemperature`.
 
 ### OpenAI-compatible
 
@@ -448,7 +452,7 @@ Available MCP tools:
 
 | Tool | Description |
 |---|---|
-| `gemma_generate` | Generate text — `prompt`, `maxTokens`, `temperature`, `topP` |
+| `gemma_generate` | Generate text — `prompt`, `maxTokens`, `temperature`, `topP`, `minP`, `dynamicTemperature` |
 | `gemma_status` | Returns server readiness, version, and current model |
 | `playwright_screenshot` | Capture a webpage screenshot via Playwright |
 | `gemma_add_knowledge` | Inject custom context into the session |

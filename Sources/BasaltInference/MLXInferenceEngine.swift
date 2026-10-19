@@ -361,25 +361,41 @@ public actor MLXInferenceEngine: InferenceEngine {
         return ToolCallOutput(id: "call_\(UUID().uuidString.prefix(24))", name: call.function.name, arguments: arguments)
     }
 
-    public func generateStream(request: GenerationRequest) async throws(BasaltError) -> AsyncStream<StreamChunk> {
-        guard let container else {
-            throw .inferenceHardwareFailure(reason: "MLX engine not initialized — call load() first")
-        }
-
-        let requestedMaxTokens = request.maxTokens ?? 1024
+    func sampling(for request: GenerationRequest) -> (GenerateParameters, GenerationComponents) {
+        let temperature = Float(request.temperature ?? 0.7)
         var params = GenerateParameters(
-            maxTokens: requestedMaxTokens,
-            temperature: Float(request.temperature ?? 0.7),
+            maxTokens: request.maxTokens ?? 1024,
+            temperature: temperature,
             topP: Float(request.topP ?? 0.9)
         )
         params.kvBits = kvBits
         params.quantizedKVStart = quantizedKVStart
         params.repetitionPenalty = repetitionPenalty
         if let topK { params.topK = topK }
-        // An explicit --min-p always wins; otherwise fall back to whatever the
-        // family was measured to need.
-        if let effectiveMinP = minP ?? profile.defaultMinP { params.minP = effectiveMinP }
+        if let effectiveMinP = request.minP.map(Float.init) ?? minP ?? profile.defaultMinP {
+            params.minP = effectiveMinP
+        }
         params.seed = seed
+
+        var components = GenerationComponents()
+        if request.dynamicTemperature == true, temperature > 0 {
+            let (topP, minP) = (params.topP, params.minP)
+            params.topP = 1
+            params.minP = 0
+            components = components.appendingLogitProcessor {
+                EntropyDynamicTemperature(baseTemperature: temperature, topP: topP, minP: minP)
+            }
+        }
+        return (params, components)
+    }
+
+    public func generateStream(request: GenerationRequest) async throws(BasaltError) -> AsyncStream<StreamChunk> {
+        guard let container else {
+            throw .inferenceHardwareFailure(reason: "MLX engine not initialized — call load() first")
+        }
+
+        let requestedMaxTokens = request.maxTokens ?? 1024
+        let (params, components) = sampling(for: request)
 
         let toolSpecs = Self.toolSpecs(request.tools)
         let declaredTools = Set(request.tools?.map(\.name) ?? [])
@@ -404,7 +420,11 @@ public actor MLXInferenceEngine: InferenceEngine {
             logger.trace("Input prepared. Starting MLX generation...")
             // The same specs go to the tool-call decoder: without them it has no schema, so
             // every argument comes back as a string ("timeout_ms": "1000") and typed tools fail.
-            let mlxStream = try await container.generate(input: lmInput, parameters: params, tools: toolSpecs)
+            let mlxStream = try await container.perform(nonSendable: lmInput) { context, input in
+                try MLXLMCommon.generate(
+                    input: input, parameters: params, context: context,
+                    components: components, tools: toolSpecs)
+            }
             
             let promptEndsWithThinking = request.prompt.hasSuffix("<|channel>thought\n")
                 || request.prompt.hasSuffix("<|channel>thought")
