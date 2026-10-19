@@ -86,8 +86,9 @@ struct RateLimitTests {
                 ($0.status, $0.headers[.retryAfter])
             }
             #expect(status == .tooManyRequests)
-            // 2/min refills one token every 30 s; the bucket is empty, so the wait is exactly 30.
-            #expect(retryAfter == "30")
+            // 2/min refills one token every 30 s and the bucket is empty: the wait is 30 s minus
+            // the time since the last spent token, rounded up (29 on a very slow runner).
+            #expect(retryAfter.flatMap(Int.init).map { (29...30).contains($0) } == true, "\(retryAfter ?? "nil")")
             let health = try await client.execute(uri: "/api/v1/health", method: .get) { $0.status }
             #expect(health == .ok)
         }

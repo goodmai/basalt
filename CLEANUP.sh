@@ -16,10 +16,6 @@ if [[ ! $REPLY =~ ^[Yy]$ ]]; then
   exit 1
 fi
 
-# Delete dead Swift source
-echo "Removing dead Swift source files..."
-git rm Sources/Gem/Core/RenderCoordinator.swift
-
 # Delete test scratch files
 echo "Removing test scratch files..."
 git rm test_mlx.swift test_json.swift test_urlsession.swift
