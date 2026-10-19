@@ -13,9 +13,9 @@ The *why* lives where history keeps it, next to the change it explains:
 
 When a line seems to need a comment, change the code instead: extract a function whose name is the comment, name the constant, introduce a type, or write the test.
 
-Only directives the toolchain reads are allowed: `// swift-tools-version:` in `Package.swift` and the `#!` line of a script.
+Only directives the toolchain reads are allowed: `// swift-tools-version:` on the first line of `Package.swift` and the `#!` line of a script.
 
-Existing comments are removed when the code around them changes; a change does not add new ones — and a line that is moved or re-indented counts as added, so its old comment goes with the move. CI enforces this on every pull request: `scripts/check_no_new_comments.py` lexes each changed Swift file (strings, multi-line and raw strings, interpolation, nested block comments, regex literals) and fails when a comment lands on an added line.
+Existing comments are removed when the code around them changes; a change does not add new ones — and a line that is moved or re-indented counts as added, so its old comment goes with the move. CI enforces this for Swift on every pull request (other languages follow the same rule by review): `scripts/check_no_new_comments.py` lexes each changed Swift file (strings, multi-line and raw strings, interpolation, nested block comments, `/regex/` and `#/regex/#` literals) and fails when a comment lands on an added line. A renamed file counts as added in full.
 
 ## Pull requests
 

@@ -3,7 +3,8 @@ import re
 import subprocess
 import sys
 
-DIRECTIVE = re.compile(r"^\s*//\s*swift-tools-version:")
+DIRECTIVE = re.compile(r"^//\s*swift-tools-version:")
+REGEX_START_AFTER = set("=([{,:;!&|?^~+-*%<>") | {""}
 HUNK = re.compile(r"^@@ -\S+ \+(\d+)(?:,(\d+))? @@")
 
 
@@ -30,6 +31,15 @@ def added_line_numbers(base: str, path: str) -> set[int]:
     return lines
 
 
+def previous_significant(source: str, i: int) -> str:
+    j = i - 1
+    while j >= 0 and source[j] in " \t":
+        j -= 1
+    if j < 0 or source[j] == "\n":
+        return ""
+    return source[j]
+
+
 def comment_lines(source: str) -> set[int]:
     found: set[int] = set()
     line, i, n = 1, 0, len(source)
@@ -42,7 +52,7 @@ def comment_lines(source: str) -> set[int]:
         state = stack[-1]
         c = source[i]
         if c == "\n":
-            if state[0] == "line_comment":
+            while stack[-1][0] in ("line_comment", "regex") or (stack[-1][0] == "string" and not stack[-1][2]):
                 stack.pop()
             line += 1
             i += 1
@@ -78,12 +88,23 @@ def comment_lines(source: str) -> set[int]:
         elif kind == "regex":
             _, hashes = state
             closer = "/" + "#" * hashes
+            if c == "[":
+                stack.append(("regex_class",))
+                i += 1
+                continue
             if c == "\\":
                 i += 2
             elif at(closer):
                 stack.pop()
                 i += len(closer)
             else:
+                i += 1
+        elif kind == "regex_class":
+            if c == "\\":
+                i += 2
+            else:
+                if c == "]":
+                    stack.pop()
                 i += 1
         else:
             if kind == "interp" and c == ")":
@@ -103,18 +124,23 @@ def comment_lines(source: str) -> set[int]:
                 found.add(line)
                 stack.append(("block_comment",))
                 i += 2
+            elif c == "/" and previous_significant(source, i) in REGEX_START_AFTER and not at("/ "):
+                stack.append(("regex", 0))
+                i += 1
             else:
-                hashes = len(source[i:]) - len(source[i:].lstrip("#"))
-                rest = source[i + hashes:]
-                if rest.startswith('"""'):
+                hashes = 0
+                while i + hashes < n and source[i + hashes] == "#":
+                    hashes += 1
+                j = i + hashes
+                if source.startswith('"""', j):
                     stack.append(("string", hashes, True))
-                    i += hashes + 3
-                elif rest.startswith('"'):
+                    i = j + 3
+                elif source.startswith('"', j):
                     stack.append(("string", hashes, False))
-                    i += hashes + 1
-                elif hashes and rest.startswith("/"):
+                    i = j + 1
+                elif hashes and source.startswith("/", j):
                     stack.append(("regex", hashes))
-                    i += hashes + 1
+                    i = j + 1
                 else:
                     i += max(hashes, 1)
     return found
@@ -129,7 +155,7 @@ def main() -> int:
         added = added_line_numbers(base, path)
         for number in sorted(comment_lines(source) & added):
             text = rows[number - 1] if number <= len(rows) else ""
-            if not DIRECTIVE.match(text):
+            if not (path == "Package.swift" and number == 1 and DIRECTIVE.match(text)):
                 hits.append((path, number, text.strip()))
     for path, number, text in hits:
         print(f"{path}:{number}: {text}")

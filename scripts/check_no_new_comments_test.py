@@ -17,7 +17,13 @@ let m = """
     /* still a string */
     """
 let raw = #"a "quoted" // raw"#
+let raw2 = #"\\"# + "x // y"
+let deeper = ##"x "# // y"##
+let closure = "\\(xs.map { "\\($0) // no" }.joined(separator: ")"))"
 let r = #/x//y/#
+let bare = /a\\/b/
+let cls = /[/]x/
+let q = a / b
 let product = a
     * b
 '''
@@ -32,6 +38,7 @@ COMMENTED = [
     "case .x:// after a colon",
     "let n = 1 /* inline */ + 2",
     "/* outer /* nested */ still comment */",
+    "let q = a / b // after a division",
 ]
 
 
@@ -66,6 +73,21 @@ class CheckerTest(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         for number in range(1, len(COMMENTED) + 1):
             self.assertIn(f"Bad.swift:{number}:", result.stdout)
+
+    def test_a_quote_inside_a_bare_regex_cannot_hide_the_next_line(self):
+        result = self.repo({"R.swift": 'let r = /"/\n// real comment\nlet s = "x"\n'})
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("R.swift:2:", result.stdout)
+
+    def test_crlf_and_directive_only_in_package_swift(self):
+        result = self.repo({"Crlf.swift": "let a = 1\r\n// c\r\n", "Other.swift": "// swift-tools-version: 6.0\n"})
+        self.assertIn("Crlf.swift:2:", result.stdout)
+        self.assertIn("Other.swift:1:", result.stdout)
+
+    def test_a_renamed_file_counts_as_added(self):
+        result = self.repo({"Old.swift": "", "Renamed.swift": BEFORE})
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("Renamed.swift:1:", result.stdout)
 
     def test_untouched_old_comments_are_not_reported(self):
         result = self.repo({"New.swift": "let x = 1\n"})
