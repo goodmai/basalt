@@ -1,3 +1,4 @@
+import functools
 import json
 import os
 import subprocess
@@ -23,31 +24,39 @@ RUSAGE_INFO_V0_WORDS = 12
 RUSAGE_PHYS_FOOTPRINT_WORD = 9
 UNAME_SYSCTLS = ("kern.ostype", "kern.hostname", "kern.osrelease", "kern.version", "hw.machine")
 NATIVE_LIBRARY_PATTERN = "[.](so|dylib)$"
-ALLOWED_EXTENSIONS = ("_posixsubprocess", "_random", "_socket", "_struct", "math", "resource", "select", "unicodedata")
+ALLOWED_EXTENSIONS = ("_posixsubprocess", "_random", "_struct", "math", "resource", "select")
+NUMPY_TEST_EXTENSIONS_PATTERN = "/(_multiarray_tests|_rational_tests|_umath_tests|_operand_flag_tests|_struct_ufunc_tests|_simd)[.][^/]*$"
 EXTENSION_DIR = os.path.join(os.path.realpath(sysconfig.get_path("platstdlib")), "lib-dynload")
 EXTENSION_SUFFIX = sysconfig.get_config_var("EXT_SUFFIX")
 FUNCTION_NAMES = ("transform", "solve", "transform_grid")
+NUMPY_IMAGES_PROBE = """
+import ctypes, json, os, sys
+sys.path.append(sys.argv[1])
+import numpy
+dyld = ctypes.CDLL(None)
+dyld._dyld_get_image_name.restype = ctypes.c_char_p
+names = (dyld._dyld_get_image_name(i) for i in range(dyld._dyld_image_count()))
+print(json.dumps(sorted({os.path.realpath(name.decode()) for name in names if name})))
+"""
 
 def sandbox_available() -> bool:
     return sys.platform == "darwin" and os.access(SANDBOX_EXEC, os.X_OK)
 
 
-def _loaded_images():
-    import ctypes
-    dyld = ctypes.CDLL(None)
-    dyld._dyld_get_image_name.restype = ctypes.c_char_p
-    names = (dyld._dyld_get_image_name(i) for i in range(dyld._dyld_image_count()))
-    return sorted({os.path.realpath(name.decode()) for name in names if name})
-
-
+@functools.lru_cache(maxsize=None)
 def _numpy_paths():
     try:
         import numpy
     except ImportError:
         return None, []
     package = os.path.dirname(os.path.realpath(numpy.__file__))
-    images = _loaded_images() if sys.platform == "darwin" else []
-    return package, [p for p in images if not p.startswith(("/System/", "/usr/lib/"))]
+    if sys.platform != "darwin":
+        return package, []
+    site = os.path.dirname(package)
+    images = json.loads(subprocess.run([PYTHON, "-I", "-S", "-c", NUMPY_IMAGES_PROBE, site],
+                                       capture_output=True, env={}, check=True).stdout)
+    skipped = ("/System/", "/usr/lib/", os.path.realpath(sys.base_prefix) + "/", site + "/")
+    return package, [p for p in images if not p.startswith(skipped)]
 
 
 def _ancestors(path: str):
@@ -69,11 +78,11 @@ def sandbox_profile(work_dir: str, numpy_package, images) -> str:
         trees.append(numpy_package)
         files += [os.path.dirname(numpy_package)] + images
     ancestors = sorted({a for p in trees + files for a in _ancestors(p)})
-    link_dirs = sorted({os.path.dirname(p) for p in images})
+    native_roots = [python_root] + ([os.path.dirname(numpy_package)] if numpy_package else [])
+    link_dirs = sorted({os.path.dirname(p) for p in images}) + native_roots
     if "/Cellar/" in python_root:
         link_dirs.append(python_root.split("/Cellar/")[0] + "/opt")
     readable = [f"(subpath {_quote(p)})" for p in trees] + [f"(literal {_quote(p)})" for p in files]
-    native_roots = [python_root] + ([os.path.dirname(numpy_package)] if numpy_package else [])
     allowed_native = [f"(literal {_quote(os.path.join(EXTENSION_DIR, name + EXTENSION_SUFFIX))})" for name in ALLOWED_EXTENSIONS]
     if numpy_package:
         allowed_native.append(f"(subpath {_quote(numpy_package)})")
@@ -89,6 +98,8 @@ def sandbox_profile(work_dir: str, numpy_package, images) -> str:
         "(deny file-read* " + " ".join(f"(require-all (subpath {_quote(p)}) (regex #{_quote(NATIVE_LIBRARY_PATTERN)}))"
                                        for p in native_roots) + ")",
         "(allow file-read* " + " ".join(allowed_native) + ")",
+        *([f"(deny file-read* (require-all (subpath {_quote(numpy_package)}) "
+           f"(regex #{_quote(NUMPY_TEST_EXTENSIONS_PATTERN)})))"] if numpy_package else []),
         "(allow sysctl-read " + " ".join(f"(sysctl-name {_quote(n)})" for n in UNAME_SYSCTLS) + ")",
         "(deny network*)",
     ])

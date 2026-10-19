@@ -12,6 +12,7 @@ from pathlib import Path
 from unittest import mock
 
 import arc_agi_benchmark
+import arc_sandbox
 from arc_agi_benchmark import execute_python_hybrid
 from arc_sandbox import run_transform, sandbox_available
 
@@ -20,6 +21,7 @@ ESCAPED = [[1]]
 SANDBOX_REFUSALS = (errno.EPERM, errno.EACCES, errno.EAGAIN)
 MEMORY_SOFT_CAP_BYTES = 3 << 29
 UNLISTED_EXTENSION = "_uuid"
+NUMPY_TEST_EXTENSION = "numpy._core._multiarray_tests"
 CANARY = "arc-sandbox-canary-5d1c"
 PROCESS_SYSCTL_PROBE = f"""
 def transform(grid):
@@ -123,7 +125,15 @@ if os.system('touch PWNED; touch {self.outside}/PWNED') != 0:
         self.assertEqual(grid, ESCAPED)
 
     def test_socket_connect_fails(self):
-        self.assert_blocked("import socket\nsocket.create_connection(('1.1.1.1', 80), timeout=3)")
+        self.assert_blocked("""
+try:
+    import socket
+except ImportError as error:
+    if 'sandbox' not in str(error):
+        raise
+    return [[0]]
+socket.create_connection(('1.1.1.1', 80), timeout=3)
+""")
 
     def test_environment_is_scrubbed(self):
         os.environ["ARC_SANDBOX_FAKE_API_KEY"] = "secret"
@@ -152,6 +162,21 @@ if os.system('touch PWNED; touch {self.outside}/PWNED') != 0:
                 "        return [[0]] if 'sandbox' in str(error) else [[2]]\n"
                 "    return [[1]]")
         self.assertEqual(self.run_code(code), (BLOCKED, "python_oop_exec_success"))
+
+    def test_numpy_test_extension_cannot_be_loaded(self):
+        if importlib.util.find_spec(NUMPY_TEST_EXTENSION) is None:
+            self.skipTest(f"{NUMPY_TEST_EXTENSION} is not installed")
+        code = ("def transform(grid):\n    try:\n"
+                f"        import {NUMPY_TEST_EXTENSION}\n"
+                "    except ImportError as error:\n"
+                "        return [[0]] if 'sandbox' in str(error) else [[2]]\n"
+                "    return [[1]]")
+        self.assertEqual(self.run_code(code), (BLOCKED, "python_oop_exec_success"))
+
+    def test_numpy_libraries_do_not_depend_on_parent_imports(self):
+        import lzma
+        _, images = arc_sandbox._numpy_paths()
+        self.assertFalse([p for p in images if "lzma" in os.path.basename(p)], images)
 
     def test_infinite_loop_is_killed_and_recorded_as_failed(self):
         started = time.monotonic()
