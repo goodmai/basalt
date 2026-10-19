@@ -202,8 +202,9 @@ public actor OpenRouterClient: Sendable {
             timeout: config.timeout,
             maxRetries: config.maxRetries,
             extraHeaders: [
-                "HTTP-Referer": "Gem/0.2.0",
-                "X-Title": "Gem"
+                // Follows the release version instead of a literal that went stale.
+                "HTTP-Referer": "Basalt/\(HealthResponse.version)",
+                "X-Title": "Basalt"
             ]
         )
         

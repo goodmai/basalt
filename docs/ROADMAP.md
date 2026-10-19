@@ -1,3 +1,5 @@
+> **Historical document.** This is the Epic 16 plan from April 2026, written when the project was still called Gem; versions and figures below are from that time. Current work is tracked in [GitHub issues](https://github.com/goodmai/basalt/issues), and released changes in [CHANGELOG.md](../CHANGELOG.md).
+
 # Gem Roadmap — Epic 16 Deep Dive
 ## Advanced CLI Enhancements & Rich Terminal UI 🎨
 
