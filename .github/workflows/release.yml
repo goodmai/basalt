@@ -131,7 +131,10 @@ jobs:
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git commit -qm "chore: point formula at ${VERSION}" Formula/basalt.rb
-          git push -f "https://x-access-token:<REDACTED>@github.com/${{ github.repository }}.git" "$BRANCH"
+          # gh wires GH_TOKEN into git's credential helper. A token in the push URL was
+          # refused on the macos-26 image ("Invalid username or token", v0.3.0's first cut).
+          gh auth setup-git
+          git push -f origin "$BRANCH"
           # No `|| true`: a gh auth failure must fail here, not read as "no PR yet".
           OPEN=$(gh pr list --head "$BRANCH" --state open --json url --jq '.[0].url // empty')
           if [ -n "$OPEN" ]; then
