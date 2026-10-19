@@ -164,6 +164,16 @@ struct HarnessLoaderTests {
         #expect(loaded.skipped == [".claude/huge.md: 300000 bytes exceeds the 262144-byte file limit"])
     }
 
+    @Test("The working directory is an allowed root unless it is / or $HOME; BASALT_HARNESS_ROOTS can still list them")
+    func broadWorkingDirectoryIsNotAllowed() {
+        let home = ["HOME": "/Users/dev"]
+        #expect(HarnessLoader.allowedRoots(environment: home, currentDirectory: "/").isEmpty)
+        #expect(HarnessLoader.allowedRoots(environment: home, currentDirectory: "/Users/dev/").isEmpty)
+        #expect(HarnessLoader.allowedRoots(environment: home, currentDirectory: "/Users/dev/repo").map(\.path) == ["/Users/dev/repo"])
+        let explicit = ["HOME": "/Users/dev", "BASALT_HARNESS_ROOTS": "/Users/dev"]
+        #expect(HarnessLoader.allowedRoots(environment: explicit, currentDirectory: "/Users/dev").map(\.path) == ["/Users/dev"])
+    }
+
     @Test("A root outside every allowed root is refused, also through a symlink")
     func outsideAllowedRoots() throws {
         let root = try Self.makeRepo()

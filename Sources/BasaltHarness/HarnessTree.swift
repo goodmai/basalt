@@ -254,10 +254,16 @@ public struct LoadedHarness: Sendable {
 }
 
 public enum HarnessLoader {
-    public static func allowedRoots(environment: [String: String] = ProcessInfo.processInfo.environment) -> [URL] {
+    public static func allowedRoots(
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        currentDirectory: String = FileManager.default.currentDirectoryPath
+    ) -> [URL] {
         let configured = (environment["BASALT_HARNESS_ROOTS"] ?? "")
             .split(separator: ":").map { URL(fileURLWithPath: String($0), isDirectory: true) }
-        return [URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)] + configured
+        let cwd = URL(fileURLWithPath: currentDirectory, isDirectory: true).standardizedFileURL
+        let broad = ["/", environment["HOME"] ?? NSHomeDirectory()]
+            .map { URL(fileURLWithPath: $0, isDirectory: true).standardizedFileURL.path }
+        return (broad.contains(cwd.path) ? [] : [cwd]) + configured
     }
 
     public static func load(

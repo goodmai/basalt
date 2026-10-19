@@ -269,7 +269,7 @@ public final class MCPServer: Sendable {
             ),
             Tool(
                 name: "harness_validate",
-                description: "Validate an agent harness: a Claude Code (CLAUDE.md, .claude/agents, .claude/skills, .claude/settings.json hooks), opencode (AGENTS.md, .opencode/agent, .opencode/skill, .opencode/plugin) or AGENTS.md + .agents/skills layout. Reports the always-on budget (instruction files and their @imports), skill and agent frontmatter, hook events, missing script references and untriggered skills. A directory must lie under the server's working directory or a root listed in BASALT_HARNESS_ROOTS (colon-separated); loading, inline files included, is capped at 2000 files, 256 KiB per file, 16 MiB in total, 8 levels deep and 10000 directory entries visited; .claude/worktrees and node_modules are not read.",
+                description: "Validate an agent harness: a Claude Code (CLAUDE.md, .claude/agents, .claude/skills, .claude/settings.json hooks), opencode (AGENTS.md, .opencode/agent, .opencode/skill, .opencode/plugin) or AGENTS.md + .agents/skills layout. Reports the always-on budget (instruction files and their @imports), skill and agent frontmatter, hook events, missing script references and untriggered skills. A directory must lie under the server's working directory (unless that is / or $HOME) or a root listed in BASALT_HARNESS_ROOTS (colon-separated); loading, inline files included, is capped at 2000 files, 256 KiB per file, 16 MiB in total, 8 levels deep and 10000 directory entries visited; .claude/worktrees and node_modules are not read.",
                 inputSchema: AnyCodable([
                     "type": "object",
                     "properties": [
