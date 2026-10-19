@@ -152,11 +152,19 @@ struct HarnessOptimizerTests {
         var script = HarnessScript()
         script.domain = #"{"files": {".claude/skills/swift-audit/SKILL.md": "---\nname: swift-audit\ndescription: Audit\n---\nBody", ".claude/agents/reviewer.md": "---\nname: reviewer\ndescription: Reviews diffs with swift-audit\n---\nReview."}}"#
         script.compose = "no"
-        let (optimizer, _) = try await Self.optimizer(script)
+        let (optimizer, engine) = try await Self.optimizer(script)
         let result = try await optimizer.optimize(task: Self.task, base: Self.base, k: 1)
         #expect(result.ledger.rolloutIds.contains("probe_compose_0"))
-        let composed = result.runs.first { $0.candidateId == "compose_0" }
-        #expect(composed != nil)
+
+        let invariant = try #require(HarnessProposal.parse(script.invariant))
+        let domain = try #require(HarnessProposal.parse(script.domain))
+        let union = Self.base.applying(delta: invariant).applying(delta: domain)
+        #expect(union.files.count == 3)
+        let unionRollout = HarnessOptimizer.rolloutPrompt(task: Self.task, tree: union, base: Self.base, spec: .claude)
+        let requests = await engine.getRequests().map(\.prompt)
+        let composeProposal = try #require(requests.firstIndex { $0.contains("Goal: Merge the candidate edits") })
+        #expect(requests[composeProposal + 1] == unionRollout)
+        #expect(Set(result.attributions.filter { $0.candidateId == "compose_0" }.flatMap(\.paths)) == Set(invariant.keys).union(domain.keys))
     }
 
     static let longBase = HarnessTree(files: [
