@@ -107,14 +107,23 @@ struct AnthropicController: Sendable {
         let stream: Bool?
         let thinking: ThinkingConfig?
         let reasoningEffort: String?
+        let metadata: RequestMetadata?
 
         enum CodingKeys: String, CodingKey {
-            case model, messages, system, temperature, stream, thinking
+            case model, messages, system, temperature, stream, thinking, metadata
             case maxTokens = "max_tokens"
             case topP = "top_p"
             case minP = "min_p"
             case dynamicTemperature = "dynamic_temperature"
             case reasoningEffort = "reasoning_effort"
+        }
+    }
+
+    struct RequestMetadata: Codable, Sendable {
+        let userId: String?
+
+        enum CodingKeys: String, CodingKey {
+            case userId = "user_id"
         }
     }
 
@@ -140,10 +149,18 @@ struct AnthropicController: Sendable {
 
         struct Usage: Codable, Sendable {
             let inputTokens: Int
+            let cacheReadInputTokens: Int
             let outputTokens: Int
+
+            init(_ result: GenerationResponse) {
+                inputTokens = result.promptTokens - result.cachedPromptTokens
+                cacheReadInputTokens = result.cachedPromptTokens
+                outputTokens = result.completionTokens
+            }
 
             enum CodingKeys: String, CodingKey {
                 case inputTokens = "input_tokens"
+                case cacheReadInputTokens = "cache_read_input_tokens"
                 case outputTokens = "output_tokens"
             }
         }
@@ -200,7 +217,10 @@ struct AnthropicController: Sendable {
             minP: dto.minP,
             dynamicTemperature: dto.dynamicTemperature,
             reasoningEffort: effort,
-            isServiceRequest: service.isService
+            isServiceRequest: service.isService,
+            cacheKey: PromptCacheKey.resolve(
+                declared: dto.metadata?.userId, sharedByAgents: true, headers: request.headers,
+                prompt: service.prompt, isService: service.isService)
         )
 
         let requestedModel = dto.model.map { ModelsController.hfRepoId(from: $0) }  // strip claude-local/ prefix if present
@@ -219,8 +239,7 @@ struct AnthropicController: Sendable {
                 model: dto.model ?? modelId,
                 stopReason: result.finishReason == .stop ? "end_turn" : "max_tokens",
                 stopSequence: nil,
-                usage: .init(inputTokens: result.promptTokens,
-                             outputTokens: result.completionTokens)
+                usage: .init(result)
             )
             return try jsonResponse(status: .ok, body: response)
         } catch let err as BasaltError {
@@ -352,7 +371,11 @@ struct AnthropicController: Sendable {
                     // The engine's own counts when it reported them; chunk count otherwise.
                     "delta": ["stop_reason": final?.finishReason == .length ? "max_tokens" : "end_turn",
                               "stop_sequence": NSNull()],
-                    "usage": ["output_tokens": final?.completionTokens ?? outputTokens]
+                    "usage": [
+                        "input_tokens": (final?.promptTokens ?? 0) - (final?.cachedPromptTokens ?? 0),
+                        "cache_read_input_tokens": final?.cachedPromptTokens ?? 0,
+                        "output_tokens": final?.completionTokens ?? outputTokens
+                    ]
                 ])
 
                 // message_stop

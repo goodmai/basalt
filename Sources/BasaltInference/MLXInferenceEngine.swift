@@ -63,9 +63,14 @@ public actor MLXInferenceEngine: InferenceEngine {
     /// MLX buffer-cache ceiling in bytes. nil leaves MLX's own default.
     private let gpuCacheLimit: Int?
 
+    private(set) var promptCaches: PromptCacheSlots
+    private let configuredPromptCacheBytes: Int?
+    private var modelEpoch = 0
+
     public init(
         reasoningEffort: String? = nil,
         gpuCacheLimit: Int? = 512 << 20,
+        promptCacheBytes: Int? = nil,
         kvBits: Int? = nil,
         quantizedKVStart: Int = 512,
         repetitionPenalty: Float? = nil,
@@ -81,6 +86,16 @@ public actor MLXInferenceEngine: InferenceEngine {
         self.topK = topK
         self.minP = minP
         self.seed = seed
+        self.configuredPromptCacheBytes = promptCacheBytes
+        self.promptCaches = PromptCacheSlots(byteBudget: promptCacheBytes ?? 0)
+    }
+
+    func attach(_ container: ModelContainer) {
+        self.container = container
+        promptCaches = PromptCacheSlots(byteBudget: configuredPromptCacheBytes ?? PromptCacheBudget.automatic(
+            workingSet: PromptCacheBudget.gpuWorkingSet(), weights: Memory.activeMemory))
+        modelEpoch += 1
+        logger.info("Prompt cache budget: \(promptCaches.byteBudget >> 20) MB")
     }
 
     /// `registerAliases` is a static method, so it is *not* actor-isolated and two
@@ -161,6 +176,8 @@ public actor MLXInferenceEngine: InferenceEngine {
             // releasing the underlying MLXArray tensors and Metal buffers.
             if container != nil {
                 container = nil
+                promptCaches.removeAll()
+                modelEpoch += 1
                 Memory.clearCache()   // flush MLX's internal memory allocator cache
                 logger.info("Previous model unloaded, GPU cache cleared.")
             }
@@ -207,10 +224,7 @@ public actor MLXInferenceEngine: InferenceEngine {
                 }
             }
 
-            container = try await loadModelContainer(
-                from: directory,
-                using: DefaultTokenizerLoader()
-            )
+            attach(try await loadModelContainer(from: directory, using: DefaultTokenizerLoader()))
             profile = ModelProfileRegistry.profile(forModelAt: modelPath)
             
             // Dynamic config inspection
@@ -300,6 +314,7 @@ public actor MLXInferenceEngine: InferenceEngine {
             generatedText: textChunks.joined(),
             reasoningText: fullReasoning.isEmpty ? nil : fullReasoning,
             promptTokens: finalResponse.promptTokens,
+            cachedPromptTokens: finalResponse.cachedPromptTokens,
             completionTokens: finalResponse.completionTokens,
             tokensPerSecond: finalResponse.tokensPerSecond,
             generationTime: finalResponse.generationTime,
@@ -418,13 +433,18 @@ public actor MLXInferenceEngine: InferenceEngine {
         do {
             let lmInput = try await container.prepare(input: userInput)
             logger.trace("Input prepared. Starting MLX generation...")
-            // The same specs go to the tool-call decoder: without them it has no schema, so
-            // every argument comes back as a string ("timeout_ms": "1000") and typed tools fail.
-            let mlxStream = try await container.perform(nonSendable: lmInput) { context, input in
-                try MLXLMCommon.generate(
-                    input: input, parameters: params, context: context,
-                    components: components, tools: toolSpecs)
+            let promptTokens = lmInput.text.tokens.asArray(Int.self)
+            let carriesMoreThanTokens = lmInput.image != nil || lmInput.video != nil
+                || lmInput.audio != nil || lmInput.text.mask != nil
+            let slotKey = carriesMoreThanTokens ? nil : promptCacheKey(for: request)
+            let lease = slotKey.flatMap { promptCaches.lease($0, for: promptTokens) }
+            let epoch = modelEpoch
+            let launch = try await container.perform(nonSendable: lmInput) { context, input in
+                try Self.launch(
+                    input: input, lease: lease, keepsCache: slotKey != nil,
+                    params: params, components: components, tools: toolSpecs, context: context)
             }
+            let mlxStream = launch.stream
             
             let promptEndsWithThinking = request.prompt.hasSuffix("<|channel>thought\n")
                 || request.prompt.hasSuffix("<|channel>thought")
@@ -537,8 +557,11 @@ public actor MLXInferenceEngine: InferenceEngine {
                         }
                     }
                     
-                    // Flush any remaining text in buffer at EOF
                     processBuffer(final: true)
+                    await Self.settle(launch, cancelled: Task.isCancelled)
+                    if let cache = launch.cache, let slotKey {
+                        await self.keep(cache, tokens: promptTokens, key: slotKey, epoch: epoch)
+                    }
 
                     // End of stream - send metadata
                     if !Task.isCancelled {
@@ -549,7 +572,8 @@ public actor MLXInferenceEngine: InferenceEngine {
                         let metadata = GenerationResponse(
                             generatedText: "", 
                             reasoningText: nil,
-                            promptTokens: lastInfo?.promptTokenCount ?? 0,
+                            promptTokens: launch.reusedTokens + (lastInfo?.promptTokenCount ?? 0),
+                            cachedPromptTokens: launch.reusedTokens,
                             completionTokens: lastInfo?.generationTokenCount ?? 0,
                             tokensPerSecond: lastInfo?.tokensPerSecond ?? 0,
                             generationTime: generationTime,
@@ -581,7 +605,71 @@ public actor MLXInferenceEngine: InferenceEngine {
         }
     }
 
-    // MARK: — State
-
     public var isLoaded: Bool { container != nil }
+
+    struct GenerationLaunch: Sendable {
+        let stream: AsyncStream<Generation>
+        let task: Task<Void, Never>?
+        let cache: PromptCache?
+        let reusedTokens: Int
+    }
+
+    static func settle(_ launch: GenerationLaunch, cancelled: Bool) async {
+        if cancelled { launch.task?.cancel() }
+        await launch.task?.value
+    }
+
+    private func promptCacheKey(for request: GenerationRequest) -> String? {
+        guard promptCaches.byteBudget > 0, kvBits == nil else { return nil }
+        return request.cacheKey
+    }
+
+    private func keep(_ cache: PromptCache, tokens: [Int], key: String, epoch: Int) {
+        guard epoch == modelEpoch else { return }
+        promptCaches.store(key, tokens: tokens, cache: cache)
+    }
+
+    static func launch(
+        input: LMInput, lease: PromptCacheLease?, keepsCache: Bool,
+        params: GenerateParameters, components: GenerationComponents,
+        tools: [ToolSpec]?, context: ModelContext
+    ) throws -> GenerationLaunch {
+        guard keepsCache else {
+            let stream = try MLXLMCommon.generate(
+                input: input, parameters: params, context: context, components: components, tools: tools)
+            return GenerationLaunch(stream: stream, task: nil, cache: nil, reusedTokens: 0)
+        }
+        try components.validate(parameters: params)
+        let cache = try lease?.cache ?? PromptCache(context.model.newCache(parameters: params))
+        let reused = lease?.reusedTokens ?? 0
+        let tail = LMInput(tokens: input.text.tokens[.ellipsis, reused...])
+        let iterator = try TokenIterator(
+            input: tail, model: context.model, cache: cache.layers,
+            processor: components.logitProcessor(parameters: params).map {
+                PromptAnchoredProcessor(base: $0, prompt: input.text.tokens)
+            },
+            sampler: params.sampler(), prefill: params.prefill, maxTokens: params.maxTokens)
+        let keepable = iterator.state == nil
+        let (stream, task) = generateTask(
+            promptTokenCount: tail.text.tokens.size, modelConfiguration: context.configuration,
+            tokenizer: context.tokenizer, iterator: iterator, tools: tools, toolCallPolicy: params.toolCallPolicy)
+        return GenerationLaunch(stream: stream, task: task, cache: keepable ? cache : nil, reusedTokens: reused)
+    }
+}
+
+struct PromptAnchoredProcessor: LogitProcessor {
+    var base: any LogitProcessor
+    let prompt: MLXArray
+
+    mutating func prompt(_ tail: MLXArray) {
+        base.prompt(prompt)
+    }
+
+    func process(logits: MLXArray) -> MLXArray {
+        base.process(logits: logits)
+    }
+
+    mutating func didSample(token: MLXArray) {
+        base.didSample(token: token)
+    }
 }

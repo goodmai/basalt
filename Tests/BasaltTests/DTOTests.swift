@@ -89,6 +89,23 @@ struct GenerationResponseCodableTests {
         #expect(decoded.finishReason    == original.finishReason)
     }
 
+    @Test("cachedPromptTokens round-trips, and a payload from a server without it decodes as 0")
+    func cachedPromptTokensDecoding() throws {
+        let original = GenerationResponse(
+            generatedText: "x", promptTokens: 40, cachedPromptTokens: 32, completionTokens: 1,
+            tokensPerSecond: 1, generationTime: 1, timeToFirstToken: 0.1,
+            memory: .init(peakBytes: 0, activeBytes: 0, cacheBytes: 0), finishReason: .stop)
+        let data = try encoder.encode(original)
+        #expect(try decoder.decode(GenerationResponse.self, from: data).cachedPromptTokens == 32)
+
+        var object = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        object["cachedPromptTokens"] = nil
+        let older = try JSONSerialization.data(withJSONObject: object)
+        let decoded = try decoder.decode(GenerationResponse.self, from: older)
+        #expect(decoded.cachedPromptTokens == 0)
+        #expect(decoded.promptTokens == 40)
+    }
+
     @Test("finishReason .length round-trips correctly")
     func finishReasonLength() throws {
         let resp = GenerationResponse(

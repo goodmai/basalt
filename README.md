@@ -185,12 +185,17 @@ The flags worth knowing on `serve`:
 | `--reasoning-effort none` | stop a reasoning model from spending the whole budget inside `<think>` |
 | `--reasoning-effort xhigh\|medium\|low` | Qwen-family thinking budget |
 | `--quant 4bit` | pick a quantization subfolder in repos that ship several |
-| `--kv-bits 4\|8` | quantize the KV cache — buys context on a memory-tight machine |
+| `--kv-bits 4\|8` | quantize the KV cache — buys context on a memory-tight machine; turns off prompt-cache reuse |
+| `--prompt-cache-mb N` | memory kept for conversation prompt caches (default: half of what Metal's recommended GPU working set leaves after the weights, logged at load; `0` disables), see below |
 | `--min-p`, `--top-k`, `--seed` | sampling; `--seed` makes a non-greedy run reproducible; a request's `min_p` overrides `--min-p` |
 | `--max-tokens` | default generation ceiling (2048–128000) |
 | `--dry-run` | memory feasibility check, then exit without loading |
 | `--port`, `--host` | default 127.0.0.1:8080; any other host needs an API key (`BASALT_API_KEY` or `--auto-generate-key`) |
 | `--rate-limit N` | server-wide requests per minute, 429 beyond it — default off on loopback, 120 otherwise; `0` disables; also `rate_limit` in `~/.gem/config.json` |
+
+**Prompt-cache reuse.** Each conversation keeps the model's KV cache for the prompt it last saw. The next turn of the same conversation prefills only what changed: the cache is rewound to the longest token prefix both prompts share, so a tool result appended to a long agent transcript costs its own tokens, not the whole history again (on `/v1/messages` tool blocks are not forwarded to the model yet, see #73). A conversation is recognised by `prompt_cache_key` (Responses / Chat Completions, Codex sends it), `metadata.user_id` (Anthropic, Claude Code sends it; combined with a hash of the prompt head so its subagents, which share the id, do not evict the main session), the `x-session-id` header, or — when none is sent — the first 512 characters of the prompt, i.e. the system prompt. Title and other service requests never touch a conversation's cache. Under the `--prompt-cache-mb` budget, idle conversations are first cut down to 1/8 of it, keeping the head of the prompt (system prompt and tools), then dropped, least recently used first. Usage reports what was actually reused: `prompt_tokens_details.cached_tokens` (Chat Completions), `input_tokens_details.cached_tokens` (Responses), `cache_read_input_tokens` (Anthropic, where `input_tokens` counts only the prefilled rest). Models whose cache cannot be rewound — hybrid attention/SSM layers such as Qwen3.5/3.6 and Ornith-1.5 (see #79), and sliding-window layers such as Gemma 3/4 once the prompt is longer than the window — and `--kv-bits` always prefill the full prompt.
+
+Privacy: `cached_tokens` tells a caller how many leading tokens its prompt shares with the previous prompt in the same slot, so anyone who can guess a slot key can probe what another client sent. Keys are namespaced by the credential the client presents (`Authorization: Bearer` or `x-api-key`), but basalt has one server-wide key, so every holder of it shares a namespace: on a server shared by people who must not see each other's prompts, run with `--prompt-cache-mb 0`.
 
 ---
 
@@ -214,7 +219,7 @@ huggingface-cli download mlx-community/gemma-4-e4b-it-4bit
 | `Ex0bit/MYTHOS-26B-A4B-PRISM-PRO-DQ-MLX` | 26B MoE | 14.5 GB | ✅ ~14 TPS (Dynamic Quant) |
 | `Ex0bit/Qwen3.6-35B-A3B-PRISM-MLX-NVFP4` | 35B MoE | 20.5 GB | ✅ ~8 TPS (NVFP4) |
 | `Ex0bit/Elbaz-Olmo-3-7B-Instruct-abliterated` | 7B | 4.5 GB | ✅ ~55 TPS |
-| `ornith-ai/Ornith-1.5-9B-MLX-4bit` | 9B | 5.8 GB | ✅ ~45 TPS (reasoning — see note) |
+| `ornith-ai/Ornith-1.5-9B-MLX-4bit` | 9B | 4.7 GB | ✅ ~48 TPS (reasoning — see note) |
 | `ornith-ai/Ornith-1.5-35B-A3B-MLX-4bit` | 35B MoE | 21 GB | ✅ untested above 24 GB |
 | `huihui-ai/Huihui-Qwen3.8-27B-abliterated` (Base BF16) | 27B | ~54 GB | ❌ Needs 64GB+ (Use 4-bit MLX version on 24GB) |
 | `mlx-community/gemma-4-26b-a4b-it-4bit` | 26B MoE | 14.5 GB | ❌ Gibberish output |

@@ -91,9 +91,11 @@ struct OpenAIController: Sendable {
         let dynamicTemperature: Bool?
         let stream: Bool?
         let reasoningEffort: String?
+        let promptCacheKey: String?
 
         enum CodingKeys: String, CodingKey {
             case model, messages, temperature, stream
+            case promptCacheKey = "prompt_cache_key"
             case maxTokens = "max_tokens"
             case topP = "top_p"
             case minP = "min_p"
@@ -121,6 +123,7 @@ struct OpenAIController: Sendable {
         let reasoningEffort: String?
         let tools: [ResponseTool]?
         let additionalTools: [ResponseTool]?
+        let promptCacheKey: String?
 
         struct ReasoningConfig: Codable, Sendable {
             let effort: String?
@@ -137,6 +140,7 @@ struct OpenAIController: Sendable {
             case dynamicTemperature = "dynamic_temperature"
             case reasoningEffort = "reasoning_effort"
             case additionalTools = "additional_tools"
+            case promptCacheKey = "prompt_cache_key"
         }
     }
 
@@ -202,11 +206,13 @@ struct OpenAIController: Sendable {
 
         struct Usage: Codable, Sendable {
             let inputTokens: Int
+            let inputTokensDetails: CachedTokens
             let outputTokens: Int
             let totalTokens: Int
 
             enum CodingKeys: String, CodingKey {
                 case inputTokens = "input_tokens"
+                case inputTokensDetails = "input_tokens_details"
                 case outputTokens = "output_tokens"
                 case totalTokens = "total_tokens"
             }
@@ -238,13 +244,23 @@ struct OpenAIController: Sendable {
 
         struct Usage: Codable, Sendable {
             let promptTokens: Int
+            let promptTokensDetails: CachedTokens
             let completionTokens: Int
             let totalTokens: Int
             enum CodingKeys: String, CodingKey {
                 case promptTokens = "prompt_tokens"
+                case promptTokensDetails = "prompt_tokens_details"
                 case completionTokens = "completion_tokens"
                 case totalTokens = "total_tokens"
             }
+        }
+    }
+
+    struct CachedTokens: Codable, Sendable {
+        let cachedTokens: Int
+
+        enum CodingKeys: String, CodingKey {
+            case cachedTokens = "cached_tokens"
         }
     }
 
@@ -297,7 +313,9 @@ struct OpenAIController: Sendable {
             minP: dto.minP,
             dynamicTemperature: dto.dynamicTemperature,
             reasoningEffort: dto.reasoningEffort,
-            isServiceRequest: service.isService
+            isServiceRequest: service.isService,
+            cacheKey: PromptCacheKey.resolve(
+                declared: dto.promptCacheKey, headers: request.headers, prompt: service.prompt, isService: service.isService)
         )
         let requestedModel = dto.model.map { ModelsController.hfRepoId(from: $0) }  // strip claude-local/ prefix if present
 
@@ -319,6 +337,7 @@ struct OpenAIController: Sendable {
                 )],
                 usage: .init(
                     promptTokens: result.promptTokens,
+                    promptTokensDetails: .init(cachedTokens: result.cachedPromptTokens),
                     completionTokens: result.completionTokens,
                     totalTokens: result.promptTokens + result.completionTokens
                 )
@@ -379,7 +398,9 @@ struct OpenAIController: Sendable {
             dynamicTemperature: dto.dynamicTemperature,
             reasoningEffort: dto.effectiveReasoningEffort,
             isServiceRequest: service.isService,
-            tools: Self.functionTools(fromRequestBody: data)
+            tools: Self.functionTools(fromRequestBody: data),
+            cacheKey: PromptCacheKey.resolve(
+                declared: dto.promptCacheKey, headers: request.headers, prompt: service.prompt, isService: service.isService)
         )
         let requestedModel = dto.model.map { ModelsController.hfRepoId(from: $0) }
 
@@ -410,6 +431,7 @@ struct OpenAIController: Sendable {
                 },
                 usage: .init(
                     inputTokens: result.promptTokens,
+                    inputTokensDetails: .init(cachedTokens: result.cachedPromptTokens),
                     outputTokens: result.completionTokens,
                     totalTokens: result.promptTokens + result.completionTokens
                 )
@@ -430,7 +452,8 @@ struct OpenAIController: Sendable {
         let buffer = try await request.body.collect(upTo: 4 * 1024 * 1024)
         let data = Data(buffer.readableBytesView)
         do {
-            let dto = try JSONDecoder().decode(GenerationRequest.self, from: data)
+            let dto = PromptCacheKey.scoped(
+                try JSONDecoder().decode(GenerationRequest.self, from: data), headers: request.headers)
             let result = try await orchestrator.generate(request: dto)
             let encoded = try JSONEncoder().encode(result)
             return makeDataResponse(encoded)
@@ -688,7 +711,8 @@ struct OpenAIController: Sendable {
                     let inTokens = final?.promptTokens ?? 0
                     let outTokens = final?.completionTokens ?? 0
                     send("response.completed", ["response": responseObject(status: "completed", output: completed, extra: [
-                        "usage": ["input_tokens": inTokens, "output_tokens": outTokens, "total_tokens": inTokens + outTokens]
+                        "usage": ["input_tokens": inTokens, "output_tokens": outTokens, "total_tokens": inTokens + outTokens,
+                                  "input_tokens_details": ["cached_tokens": final?.cachedPromptTokens ?? 0]]
                     ])])
                 } catch {
                     send("response.failed", ["response": responseObject(status: "failed", output: [], extra: [
