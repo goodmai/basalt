@@ -279,7 +279,7 @@ struct PromptCacheReuseTests {
         let launch = try await container.perform { context in
             let input = LMInput(tokens: MLXArray(TinyModel.tokens(Conversation.firstTurn).map(Int32.init)))
             return try MLXInferenceEngine.launch(
-                input: input, lease: nil, keepsCache: true,
+                input: input, lease: nil, keepsCache: true, boundary: input.text.tokens.size - 1,
                 params: GenerateParameters(maxTokens: longRun, temperature: 0),
                 components: GenerationComponents(), tools: nil, context: context)
         }
@@ -541,7 +541,7 @@ struct PromptCacheTreeTests {
         #expect(Set(shared.children.keys) == [60, 500])
     }
 
-    @Test("Non-KVCacheSimple layers (hybrid SSM, rotating, chunked) and caches shorter than their prompt are not stored")
+    @Test("Rotating, chunked or live recurrent layers and caches shorter than their prompt are not stored")
     func onlyPlainConsistentCachesAreStored() {
         var tree = PromptCacheTree(byteBudget: 1 << 30)
         tree.store("ns", tokens: [1, 2], cache: PromptCache([MambaCache()]))

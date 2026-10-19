@@ -22,7 +22,7 @@ private extension Duration {
 /// Все Metal/MLX вызовы выполняются из одного контекста — нет гонок на GPU command queue.
 public actor MLXInferenceEngine: InferenceEngine {
 
-    private var container: ModelContainer?
+    private(set) var container: ModelContainer?
 
     /// Resolved from the loaded model's config.json. Supplies per-family sampling
     /// defaults that the caller did not override.
@@ -66,6 +66,8 @@ public actor MLXInferenceEngine: InferenceEngine {
     private(set) var promptCaches: PromptCacheTree
     private let configuredPromptCacheBytes: Int?
     private var modelEpoch = 0
+    private var modelIsHybrid: Bool?
+    private var templateSuffixes: [String: Int] = [:]
 
     public init(
         reasoningEffort: String? = nil,
@@ -95,6 +97,8 @@ public actor MLXInferenceEngine: InferenceEngine {
         promptCaches = PromptCacheTree(byteBudget: configuredPromptCacheBytes ?? PromptCacheBudget.automatic(
             workingSet: PromptCacheBudget.gpuWorkingSet(), weights: Memory.activeMemory))
         modelEpoch += 1
+        modelIsHybrid = nil
+        templateSuffixes = [:]
         logger.info("Prompt cache budget: \(promptCaches.byteBudget >> 20) MB")
     }
 
@@ -408,27 +412,28 @@ public actor MLXInferenceEngine: InferenceEngine {
         guard let container else {
             throw .inferenceHardwareFailure(reason: "MLX engine not initialized — call load() first")
         }
+        let epoch = modelEpoch
 
         let requestedMaxTokens = request.maxTokens ?? 1024
         let (params, components) = sampling(for: request)
 
         let toolSpecs = Self.toolSpecs(request.tools)
         let declaredTools = Set(request.tools?.map(\.name) ?? [])
-        let userInput: UserInput
+        let makeInput: @Sendable (String) -> UserInput
+        let template: String?
         if request.prompt.contains("<|turn|>") || request.prompt.contains("<|channel|>") {
-            userInput = UserInput(prompt: request.prompt)
+            makeInput = { UserInput(prompt: $0) }
+            template = "raw"
         } else {
             let context = Self.buildTemplateContext(
                 request: request,
                 defaultReasoningEffort: reasoningEffort,
                 profile: profile
             )
-            userInput = UserInput(
-                chat: [.user(request.prompt)],
-                tools: toolSpecs,
-                additionalContext: context
-            )
+            makeInput = { UserInput(chat: [.user($0)], tools: toolSpecs, additionalContext: context) }
+            template = HybridPrefixSnapshot.templateKey([toolSpecs ?? [], context])
         }
+        let userInput = makeInput(request.prompt)
 
         do {
             let lmInput = try await container.prepare(input: userInput)
@@ -436,14 +441,16 @@ public actor MLXInferenceEngine: InferenceEngine {
             let promptTokens = lmInput.text.tokens.asArray(Int.self)
             let carriesMoreThanTokens = lmInput.image != nil || lmInput.video != nil
                 || lmInput.audio != nil || lmInput.text.mask != nil
-            let namespace = carriesMoreThanTokens ? nil : promptCacheNamespace(for: request)
+            let namespace = carriesMoreThanTokens || epoch != modelEpoch ? nil : promptCacheNamespace(for: request)
             let lease = namespace.flatMap { promptCaches.lease($0, for: promptTokens) }
-            let epoch = modelEpoch
+            let boundary = namespace == nil
+                ? promptTokens.count - 1
+                : await snapshotBoundary(promptTokens.count, container: container, epoch: epoch, template: template, makeInput)
             let launch: GenerationLaunch
             do {
                 launch = try await container.perform(nonSendable: lmInput) { context, input in
                     try Self.launch(
-                        input: input, lease: lease, keepsCache: namespace != nil,
+                        input: input, lease: lease, keepsCache: namespace != nil, boundary: boundary,
                         params: params, components: components, tools: toolSpecs, context: context)
                 }
             } catch {
@@ -623,6 +630,34 @@ public actor MLXInferenceEngine: InferenceEngine {
         await launch.task?.value
     }
 
+    private func snapshotBoundary(
+        _ count: Int, container: ModelContainer, epoch: Int, template: String?,
+        _ makeInput: @Sendable (String) -> UserInput
+    ) async -> Int {
+        let hybrid: Bool
+        if let known = modelIsHybrid {
+            hybrid = known
+        } else {
+            hybrid = (try? await container.perform { PromptCache(try $0.model.newCache(parameters: nil)).isHybrid })
+                ?? false
+            if epoch == modelEpoch {
+                modelIsHybrid = hybrid
+            }
+        }
+        guard hybrid else { return count - 1 }
+        if let template, let suffix = templateSuffixes[template] {
+            return count - suffix
+        }
+        let suffix = await HybridPrefixSnapshot.templateSuffixLength(container, makeInput)
+        if let template, epoch == modelEpoch {
+            if templateSuffixes.count >= 64 {
+                templateSuffixes.removeAll()
+            }
+            templateSuffixes[template] = suffix
+        }
+        return count - suffix
+    }
+
     private func promptCacheNamespace(for request: GenerationRequest) -> String? {
         guard promptCaches.byteBudget > 0, kvBits == nil else { return nil }
         return request.cacheKey
@@ -636,12 +671,12 @@ public actor MLXInferenceEngine: InferenceEngine {
             promptCaches.release(lease)
         }
         if let cache {
-            promptCaches.store(namespace, tokens: tokens, cache: cache)
+            promptCaches.store(namespace, tokens: Array(tokens.prefix(cache.tokenCount)), cache: cache)
         }
     }
 
     static func launch(
-        input: LMInput, lease: PromptCacheLease?, keepsCache: Bool,
+        input: LMInput, lease: PromptCacheLease?, keepsCache: Bool, boundary: Int,
         params: GenerateParameters, components: GenerationComponents,
         tools: [ToolSpec]?, context: ModelContext
     ) throws -> GenerationLaunch {
@@ -653,18 +688,20 @@ public actor MLXInferenceEngine: InferenceEngine {
         try components.validate(parameters: params)
         let cache = try lease?.cache ?? PromptCache(context.model.newCache(parameters: params))
         let reused = lease?.reusedTokens ?? 0
-        let tail = LMInput(tokens: input.text.tokens[.ellipsis, reused...])
+        let head = try HybridPrefixSnapshot.prefillHead(
+            input.text.tokens, into: cache, reused: reused, boundary: boundary, model: context.model, prefill: params.prefill)
+        let tail = LMInput(tokens: input.text.tokens[.ellipsis, head.start...])
         let iterator = try TokenIterator(
-            input: tail, model: context.model, cache: cache.layers,
+            input: tail, model: context.model, cache: cache.layers, state: head.state,
             processor: components.logitProcessor(parameters: params).map {
                 PromptAnchoredProcessor(base: $0, prompt: input.text.tokens)
             },
             sampler: params.sampler(), prefill: params.prefill, maxTokens: params.maxTokens)
-        let keepable = iterator.state == nil
+        let keepable = iterator.state == nil || cache.isHybrid
         let (stream, task) = generateTask(
-            promptTokenCount: tail.text.tokens.size, modelConfiguration: context.configuration,
+            promptTokenCount: input.text.tokens.dim(-1) - reused, modelConfiguration: context.configuration,
             tokenizer: context.tokenizer, iterator: iterator, tools: tools, toolCallPolicy: params.toolCallPolicy)
-        return GenerationLaunch(stream: stream, task: task, cache: keepable ? cache : nil, reusedTokens: reused)
+        return GenerationLaunch(stream: stream, task: task, cache: keepable ? head.kept : nil, reusedTokens: reused)
     }
 }
 
