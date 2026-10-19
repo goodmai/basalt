@@ -411,6 +411,21 @@ public actor MLXInferenceEngine: InferenceEngine {
         return false
     }
 
+    static let thinkingOpeners = ["<think>", "<|think|>", "<|channel>thought", "<|channel|>thought"]
+    static let thinkingClosers = [
+        "</think>", "<channel|>", "<|channel|>",
+        "<|turn|>", "<|turn>", "<|im_start|>", "<|im_end|>", "<SPECIAL_11>", "<SPECIAL_12>",
+    ]
+
+    static func endsInsideThinking(_ rendered: String) -> Bool {
+        func last(_ markers: [String], at bound: KeyPath<Range<String.Index>, String.Index>) -> String.Index? {
+            markers.compactMap { rendered.range(of: $0, options: .backwards)?[keyPath: bound] }.max()
+        }
+        guard let opened = last(thinkingOpeners, at: \.upperBound) else { return false }
+        guard let closed = last(thinkingClosers, at: \.lowerBound) else { return true }
+        return opened > closed
+    }
+
     static func toolCall(_ call: ToolCallOutput) -> ToolCall {
         let arguments = (try? JSONDecoder().decode([String: JSONValue].self, from: Data(call.arguments.utf8)))
             ?? ["input": .string(call.arguments)]
@@ -585,12 +600,10 @@ public actor MLXInferenceEngine: InferenceEngine {
             }
             let mlxStream = launch.stream
             
-            let promptEndsWithThinking = request.prompt.hasSuffix("<|channel>thought\n")
-                || request.prompt.hasSuffix("<|channel>thought")
-                || request.prompt.hasSuffix("<|channel|>thought\n")
-                || request.prompt.hasSuffix("<|channel|>thought")
-                || request.prompt.hasSuffix("<think>\n")
-                || request.prompt.hasSuffix("<think>")
+            let promptTail = await container.perform {
+                $0.tokenizer.decode(tokenIds: Array(promptTokens.suffix(16)), skipSpecialTokens: false)
+            }
+            let promptEndsWithThinking = Self.endsInsideThinking(promptTail)
 
             return AsyncStream<StreamChunk> { continuation in
                 let task = Task.detached {

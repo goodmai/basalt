@@ -310,6 +310,26 @@ struct NemotronHTests {
         #expect(calls.map(\.arguments) == [#"{"path":"/tmp/a.txt"}"#])
     }
 
+    @Test("generation starts inside a thinking span exactly when the rendered prompt leaves one open")
+    func renderedTailOpensThinking() {
+        let opened = [
+            "<SPECIAL_11>User\nWhat is 17*23?\n<SPECIAL_11>Assistant\n<think>\n",
+            "<|im_start|>user\nWhat is 17*23?<|im_end|>\n<|im_start|>assistant\n<think>\n",
+            "<|im_start|>assistant\n<think>\nLet me",
+            "<|turn>model\n<|channel>thought\n",
+            "<|start|>assistant<|channel|>thought",
+        ]
+        let closed = [
+            "<SPECIAL_11>Assistant\n<think></think>",
+            "<|im_start|>assistant\n<think></think>",
+            "<|im_start|>assistant\n<think>\n\n</think>\n\n",
+            "<|im_start|>user\nWhat is 17*23?<|im_end|>\n<|im_start|>assistant\n",
+            "<|im_start|>user\nwhat does <think> do<|im_end|>\n<|im_start|>assistant\n",
+        ]
+        #expect(opened.filter { !MLXInferenceEngine.endsInsideThinking($0) } == [])
+        #expect(closed.filter(MLXInferenceEngine.endsInsideThinking) == [])
+    }
+
     @Test("chat_template.json sits between chat_template.jinja and tokenizer_config.json")
     func chatTemplateSourcePrecedence() throws {
         let dir = try Self.modelDirectory(config: Self.denseNano4BConfig)

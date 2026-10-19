@@ -46,17 +46,13 @@ public struct ThinkingMarkers: Sendable {
     public let open: [String]
     /// Tokens that close it.
     public let close: [String]
-    /// True when the chat template leaves a thinking span open at the end of the
-    /// prompt, so generation starts *inside* it and only a closing marker appears.
-    public let openedByTemplate: Bool
 
-    public init(open: [String], close: [String], openedByTemplate: Bool) {
+    public init(open: [String], close: [String]) {
         self.open = open
         self.close = close
-        self.openedByTemplate = openedByTemplate
     }
 
-    public static let none = ThinkingMarkers(open: [], close: [], openedByTemplate: false)
+    public static let none = ThinkingMarkers(open: [], close: [])
 }
 
 // MARK: — Qwen 3.x (dense and MoE)
@@ -90,7 +86,7 @@ public struct QwenProfile: ModelProfile {
     }
 
     public var thinkingMarkers: ThinkingMarkers {
-        ThinkingMarkers(open: ["<think>"], close: ["</think>"], openedByTemplate: true)
+        ThinkingMarkers(open: ["<think>"], close: ["</think>"])
     }
 
     public var defaultMaxTokens: Int { 8192 }
@@ -158,7 +154,7 @@ public struct NemotronProfile: ModelProfile {
     }
 
     public var thinkingMarkers: ThinkingMarkers {
-        ThinkingMarkers(open: ["<think>"], close: ["</think>"], openedByTemplate: true)
+        ThinkingMarkers(open: ["<think>"], close: ["</think>"])
     }
 
     public var defaultMaxTokens: Int { 4096 }
