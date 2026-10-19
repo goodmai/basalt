@@ -157,4 +157,45 @@ struct NemotronHTests {
         let nano4B = ModelProfileRegistry.profile(forModelAt: dir.path) as? NemotronProfile
         #expect(nano4B?.switchesThinkingInConversation == false)
     }
+
+    static func scan(_ pieces: [String]) -> (text: String, calls: [ToolCallOutput]) {
+        var scanner = NemotronToolCallScanner()
+        let chunks = pieces.flatMap { scanner.feed($0) } + scanner.finish()
+        var text = ""
+        var calls: [ToolCallOutput] = []
+        for chunk in chunks {
+            switch chunk {
+            case .text(let t): text += t
+            case .toolCall(let call): calls.append(call)
+            default: break
+            }
+        }
+        return (text, calls)
+    }
+
+    static let twoCalls = #"Checking. <TOOLCALL>[{"name": "get_weather", "arguments": {"city": "Paris"}}, {"name": "get_time", "arguments": "{\"tz\": \"CET\"}"}]</TOOLCALL>"#
+
+    @Test("a <TOOLCALL> array becomes one tool call per entry, whole or streamed a character at a time")
+    func toolCallArrayIsParsed() {
+        for pieces in [[Self.twoCalls], Self.twoCalls.map(String.init)] {
+            let (text, calls) = Self.scan(pieces)
+            #expect(text == "Checking. ")
+            #expect(calls.map(\.name) == ["get_weather", "get_time"])
+            #expect(calls.map(\.arguments) == [#"{"city":"Paris"}"#, #"{"tz": "CET"}"#])
+        }
+    }
+
+    @Test("a call cut off before </TOOLCALL> is still parsed at the end of the stream")
+    func unterminatedCallIsParsedAtFinish() {
+        let (text, calls) = Self.scan([#"<TOOLCALL>[{"name": "ls", "arguments": {}}]"#])
+        #expect(text.isEmpty)
+        #expect(calls.map(\.name) == ["ls"])
+    }
+
+    @Test("text that only looks like a tool call stays text")
+    func nonCallsStayText() {
+        let malformed = #"<TOOLCALL>[{"name": ]</TOOLCALL> and a < TOOL sign <TOOL"#
+        #expect(Self.scan([malformed]).text == malformed)
+        #expect(Self.scan([malformed]).calls.isEmpty)
+    }
 }

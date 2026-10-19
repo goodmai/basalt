@@ -593,13 +593,23 @@ public actor MLXInferenceEngine: InferenceEngine {
                     var gate = ToolCallGate(request: request)
                     if let assistantPrefix { continuation.yield(.text(assistantPrefix)) }
 
+                    var toolCallScanner = request.tools?.isEmpty == false ? NemotronToolCallScanner() : nil
+                    func admit(_ chunks: [StreamChunk]) {
+                        for chunk in chunks { if let admitted = gate.admit(chunk) { continuation.yield(admitted) } }
+                    }
+                    func emitText(_ text: String) {
+                        guard var scanner = toolCallScanner else { continuation.yield(.text(text)); return }
+                        admit(scanner.feed(text))
+                        toolCallScanner = scanner
+                    }
+
                     func processBuffer(final: Bool) {
                         while !buffer.isEmpty {
                             if !isThinking {
                                 if let startRange = buffer.range(of: "<|channel|>thought") ?? buffer.range(of: "<think>") ?? buffer.range(of: "<|think|>") {
                                     let leading = String(buffer[..<startRange.lowerBound])
                                     if !leading.isEmpty {
-                                        continuation.yield(.text(leading))
+                                        emitText(leading)
                                     }
                                     buffer.removeSubrange(..<startRange.upperBound)
                                     if buffer.hasPrefix("\n") { buffer.removeFirst() }
@@ -607,7 +617,7 @@ public actor MLXInferenceEngine: InferenceEngine {
                                 } else if let endRange = buffer.range(of: "<channel|>") ?? buffer.range(of: "</think>") {
                                     let leading = String(buffer[..<endRange.lowerBound])
                                     if !leading.isEmpty {
-                                        continuation.yield(.text(leading))
+                                        emitText(leading)
                                     }
                                     buffer.removeSubrange(..<endRange.upperBound)
                                     if buffer.hasPrefix("\n") { buffer.removeFirst() }
@@ -616,9 +626,9 @@ public actor MLXInferenceEngine: InferenceEngine {
                                         let safeEndIndex = buffer.index(buffer.endIndex, offsetBy: -15)
                                         let textToYield = String(buffer[..<safeEndIndex])
                                         buffer.removeSubrange(..<safeEndIndex)
-                                        continuation.yield(.text(textToYield))
+                                        emitText(textToYield)
                                     } else if final {
-                                        continuation.yield(.text(buffer))
+                                        emitText(buffer)
                                         buffer = ""
                                     }
                                     break
@@ -695,6 +705,7 @@ public actor MLXInferenceEngine: InferenceEngine {
                     }
                     
                     processBuffer(final: true)
+                    admit(toolCallScanner?.finish() ?? [])
                     await Self.settle(launch, cancelled: Task.isCancelled || stoppedAfterCall)
                     await self.keep(launch.cache, tokens: Array(promptTokens.prefix(launch.exactTokens)), namespace: namespace, releasing: lease, epoch: epoch)
 
