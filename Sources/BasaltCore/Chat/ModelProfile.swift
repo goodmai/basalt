@@ -102,7 +102,6 @@ public struct GemmaProfile: ModelProfile {
 
     public init() {}
 
-    /// Gemma 4's template switches thinking with `enable_thinking` (off by default); Gemma 3's ignores it.
     public func templateContext(for reasoning: ReasoningPolicy) -> [String: any Sendable] {
         switch reasoning {
         case .modelDefault: return [:]
