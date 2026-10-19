@@ -18,12 +18,16 @@ jobs:
     timeout-minutes: 60
     permissions:
       contents: write
+      pull-requests: write
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
+          # build/test run dependency code under a contents: write job: no token is left in
+          # .git/config for it to push with. Only the formula step gets one, explicitly.
+          persist-credentials: false
 
       # A tagged commit is what the world downloads — refuse to publish one that
       # carries a credential. Same pattern set as the pre-publish sweep.
@@ -51,21 +55,8 @@ jobs:
       - name: Build
         run: swift build -c release
 
-      # MLX aborts the whole test process when it cannot find a metallib, and a
-      # SwiftPM build produces none — so the kernels have to exist before the
-      # suite runs. Cached on Package.resolved: it only changes when mlx-swift
-      # does, and compiling the kernels is the slowest thing in this workflow.
-      - name: Cache MLX metallib
-        uses: actions/cache@v6
-        with:
-          path: default.metallib
-          key: metallib-${{ hashFiles('Package.resolved') }}
-
-      - name: Compile MLX Metal kernels
-        # --skip-unsupported: the runner's SDK is older than the one MLX
-        # targets, and a couple of kernels include headers that only exist in
-        # the newer one. The library still loads, which is all the suite needs.
-        run: ./scripts/build_metal.swift --skip-unsupported
+      - name: MLX Metal kernels
+        uses: ./.github/actions/mlx-metallib
 
       - name: Test
         run: swift test
@@ -81,17 +72,8 @@ jobs:
           curl -sL "https://github.com/${{ github.repository }}/archive/refs/tags/${VERSION}.tar.gz" -o source.tar.gz
           echo "tarball_sha=$(shasum -a 256 source.tar.gz | awk '{print $1}')" >> $GITHUB_OUTPUT
 
-      - name: Point the Homebrew formula at this tag
-        run: |
-          VERSION=${{ steps.pkg.outputs.version }}
-          sed -i '' "s|url \".*\"|url \"https://github.com/${{ github.repository }}/archive/refs/tags/${VERSION}.tar.gz\"|" Formula/basalt.rb
-          sed -i '' "s|sha256 \".*\"|sha256 \"${{ steps.pkg.outputs.tarball_sha }}\"|" Formula/basalt.rb
-          git config user.name  "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add Formula/basalt.rb
-          git commit -m "chore: point formula at ${VERSION}" || echo "formula already current"
-          git push origin HEAD:main || echo "push skipped"
-
+      # Published before the formula step: a failing formula push must never leave a tag
+      # without its Release (the verify step below still turns the run red).
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3
         with:
@@ -110,17 +92,61 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # The formula is what users install. Read back what main now carries and
-      # compare it with the sha computed above: the push above is refused by the
-      # main ruleset (it requires a PR, and the bot has no bypass), so today this
-      # turns the run red until the formula is pushed by hand — after the Release
-      # is published, so the signal never blocks the release itself.
-      - name: Verify the pushed formula
+      # main requires a PR (ruleset, no bot bypass), so a direct push of the formula was
+      # always refused. The bump goes to a branch instead; merging its PR publishes the formula.
+      # GITHUB_TOKEN can open that PR because the repository allows Actions to create PRs
+      # (Settings → Actions → "Allow GitHub Actions to create and approve pull requests");
+      # if that is ever turned off, the run warns with the link to open it by hand. A PR opened by GITHUB_TOKEN
+      # triggers no workflows, so formula.yml (brew audit) runs only once it is merged; one
+      # opened by hand from the link gets the audit on the PR.
+      - name: Open a PR pointing the Homebrew formula at this tag
+        id: formula
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          VERSION=${{ steps.pkg.outputs.version }}
+          BRANCH="release/formula-${VERSION}"
           git fetch -q origin main
-          PUSHED=$(git show origin/main:Formula/basalt.rb 2>/dev/null | grep -oE 'sha256 "[a-f0-9]{64}"' | head -1 | grep -oE '[a-f0-9]{64}' || true)
+          # -f: build/test may have rewritten tracked files (Package.resolved) in the tag checkout.
+          git checkout -q -f -B "$BRANCH" origin/main
+          sed -i '' "s|url \".*\"|url \"https://github.com/${{ github.repository }}/archive/refs/tags/${VERSION}.tar.gz\"|" Formula/basalt.rb
+          sed -i '' "s|sha256 \".*\"|sha256 \"${{ steps.pkg.outputs.tarball_sha }}\"|" Formula/basalt.rb
+          if git diff --quiet Formula/basalt.rb; then
+            # Empty branch: verify main, never a stale release/formula-* left by an earlier cut.
+            echo "branch=" >> $GITHUB_OUTPUT
+            echo "formula already points at ${VERSION}"
+            exit 0
+          fi
+          echo "branch=$BRANCH" >> $GITHUB_OUTPUT
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git commit -qm "chore: point formula at ${VERSION}" Formula/basalt.rb
+          git push -f "https://x-access-token:<REDACTED>@github.com/${{ github.repository }}.git" "$BRANCH"
+          # No `|| true`: a gh auth failure must fail here, not read as "no PR yet".
+          OPEN=$(gh pr list --head "$BRANCH" --state open --json url --jq '.[0].url // empty')
+          if [ -n "$OPEN" ]; then
+            echo "formula PR already open, updated by the push above: $OPEN"
+          elif ! gh pr create --base main --head "$BRANCH" \
+              --title "chore: point formula at ${VERSION}" \
+              --body "Release ${VERSION}: tarball sha256 \`${{ steps.pkg.outputs.tarball_sha }}\`. Merge to publish the formula."; then
+            echo "::warning::could not open the formula PR — open it by hand: https://github.com/${{ github.repository }}/compare/main...${BRANCH}"
+          fi
+
+      # The formula is what users install: read back what the bump branch (or main, when the
+      # formula was already current) carries and compare it with the sha computed above.
+      - name: Verify the formula bump
+        run: |
+          BRANCH="${{ steps.formula.outputs.branch }}"
+          if [ -n "$BRANCH" ]; then
+            git fetch -q origin "$BRANCH"
+            REF=origin/$BRANCH
+          else
+            git fetch -q origin main
+            REF=origin/main
+          fi
+          PUSHED=$(git show "$REF:Formula/basalt.rb" 2>/dev/null | grep -oE 'sha256 "[a-f0-9]{64}"' | head -1 | grep -oE '[a-f0-9]{64}' || true)
           if [ "$PUSHED" != "${{ steps.pkg.outputs.tarball_sha }}" ]; then
-            echo "::error::Formula/basalt.rb on main carries sha256 '$PUSHED', expected ${{ steps.pkg.outputs.tarball_sha }}"
+            echo "::error::Formula/basalt.rb on $REF carries sha256 '$PUSHED', expected ${{ steps.pkg.outputs.tarball_sha }}"
             exit 1
           fi
-          echo "formula on main points at this tag's tarball"
+          echo "formula on $REF points at this tag's tarball"

@@ -50,6 +50,30 @@ let fm = FileManager.default
 
 // MARK: — Check if metallib is up to date
 
+/// Copies through a sibling temp file and rename(2), so `dst` is either the old file or the
+/// complete new one.
+func atomicCopy(_ src: String, to dst: String) {
+    let staging = dst + ".partial"
+    try? fm.removeItem(atPath: staging)
+    guard (try? fm.copyItem(atPath: src, toPath: staging)) != nil, rename(staging, dst) == 0 else {
+        try? fm.removeItem(atPath: staging)
+        log("Could not place \(dst): \(String(cString: strerror(errno)))", level: .error)
+        exit(1)
+    }
+}
+
+/// MLX looks for `mlx.metallib` next to the binary first: (re)place it in every existing
+/// build dir where it is missing or older than `source`.
+func placeColocated(from source: String) {
+    let sourceDate = getModificationDate(of: source)
+    for buildDir in [".build/debug", ".build/release"] where fm.fileExists(atPath: buildDir) {
+        let colocated = "\(buildDir)/mlx.metallib"
+        if let have = getModificationDate(of: colocated), let want = sourceDate, have >= want { continue }
+        atomicCopy(source, to: colocated)
+        log("Placed \(colocated)", level: .debug)
+    }
+}
+
 func getModificationDate(of path: String) -> Date? {
     guard let attrs = try? fm.attributesOfItem(atPath: path) else { return nil }
     return attrs[.modificationDate] as? Date
@@ -73,7 +97,7 @@ if fm.fileExists(atPath: genKernelDir) {
 
 if !fm.fileExists(atPath: metalLibPath) && fm.fileExists(atPath: "default.metallib") {
     try? fm.createDirectory(atPath: outputDir, withIntermediateDirectories: true)
-    try? fm.copyItem(atPath: "default.metallib", toPath: metalLibPath)
+    atomicCopy("default.metallib", to: metalLibPath)
 }
 
 // Check if metallib exists and is newer than all .metal files
@@ -86,6 +110,9 @@ if fm.fileExists(atPath: metalLibPath),
         return true
     }
     if allSourcesNewer && !metalFiles.isEmpty {
+        // The library is current, but the colocated copies may not be (a run cancelled
+        // mid-placement, a wiped build dir): restore them before declaring success.
+        placeColocated(from: metalLibPath)
         log("Metal shaders up to date, skipping rebuild", level: .info)
         exit(0)
     }
@@ -98,6 +125,9 @@ if metalFiles.isEmpty {
     exit(1)
 }
 
+// Fresh every run: a stale .air from an earlier SDK or mlx revision (kept when its kernel is now
+// skipped by --skip-unsupported, or left by a failed run) must not be linked into the library.
+try? fm.removeItem(atPath: tempDir)
 try? fm.createDirectory(atPath: tempDir, withIntermediateDirectories: true)
 try? fm.createDirectory(atPath: outputDir, withIntermediateDirectories: true)
 
@@ -165,7 +195,10 @@ if airFiles.isEmpty {
 
 var metallibArgs = ["-sdk", "macosx", "metallib"]
 metallibArgs.append(contentsOf: airFiles)
-metallibArgs.append(contentsOf: ["-o", "\(outputDir)/default.metallib"])
+// Linked into the temp dir and moved into place at the end: an interrupted run (a cancelled CI
+// job) must never leave a truncated metallib with a fresh mtime that the check above trusts.
+let stagedLib = "\(tempDir)/default.metallib"
+metallibArgs.append(contentsOf: ["-o", stagedLib])
 
 log("Creating metallib...", level: .debug)
 let status = run(metallibArgs)
@@ -174,19 +207,22 @@ if status != 0 {
     exit(status)
 }
 
+
 // Two placements, because MLX has two ways of finding this file. The copy at
 // the repo root is the last resort in its search order and only works when the
 // process CWD happens to be the repo. The `mlx.metallib` copies sit next to the
 // built binaries, which is the FIRST thing MLX looks for and the only one that
 // survives `brew install` or running the binary from anywhere else.
-try? fm.removeItem(atPath: "default.metallib")
-try? fm.copyItem(atPath: "\(outputDir)/default.metallib", toPath: "default.metallib")
+// The copies go first and metalLibPath — whose mtime is the up-to-date marker — last: a run
+// cancelled in between leaves the marker stale, so the next run redoes every placement.
+atomicCopy(stagedLib, to: "default.metallib")
 
-for buildDir in [".build/debug", ".build/release"] where fm.fileExists(atPath: buildDir) {
-    let colocated = "\(buildDir)/mlx.metallib"
-    try? fm.removeItem(atPath: colocated)
-    try? fm.copyItem(atPath: "\(outputDir)/default.metallib", toPath: colocated)
-    log("Placed \(colocated)", level: .debug)
+placeColocated(from: stagedLib)
+
+// Same filesystem as stagedLib, so a plain rename(2).
+guard rename(stagedLib, metalLibPath) == 0 else {
+    log("Could not place \(metalLibPath): \(String(cString: strerror(errno)))", level: .error)
+    exit(1)
 }
 
 log("Successfully built \(outputDir)/default.metallib, copied to root and next to the binaries", level: .info)

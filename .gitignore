@@ -37,6 +37,7 @@ test_*.swift
 
 # Compiled Metal libraries
 *.metallib
+*.metallib.partial
 
 # Working notes/plans
 PLAN.md

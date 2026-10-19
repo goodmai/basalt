@@ -1,0 +1,29 @@
+name: MLX metallib
+description: >
+  Restore or compile MLX's Metal kernels. MLX aborts the whole test process when it
+  cannot find a metallib, and a SwiftPM build produces none. Cached on Package.resolved:
+  it only changes when mlx-swift does, and compiling the kernels is the slowest step.
+runs:
+  using: composite
+  steps:
+    # The SDK decides which kernels compile (--skip-unsupported) and what OS the library
+    # targets: a library from the self-hosted runner's newer SDK must not be restored on a
+    # hosted runner with an older one.
+    - id: sdk
+      shell: bash
+      run: echo "version=$(xcrun --sdk macosx --show-sdk-version)" >> "$GITHUB_OUTPUT"
+    - id: cache
+      uses: actions/cache@v6
+      with:
+        path: default.metallib
+        key: metallib-${{ runner.arch }}-sdk${{ steps.sdk.outputs.version }}-${{ hashFiles('Package.resolved', 'scripts/build_metal.swift') }}
+    # A restored file keeps its old mtime, older than the fresh .metal checkouts, so
+    # build_metal.swift would recompile anyway. An exact key hit means the same mlx-swift
+    # revision, build script and SDK (all in the key), so the file is current: mark it so.
+    - if: steps.cache.outputs.cache-hit == 'true'
+      shell: bash
+      run: touch default.metallib
+    # --skip-unsupported: a runner SDK older than the one MLX targets lacks a couple of
+    # headers some kernels include; the library still loads, which is all the suite needs.
+    - shell: bash
+      run: ./scripts/build_metal.swift --skip-unsupported

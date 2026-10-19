@@ -2,7 +2,7 @@ name: Security Audit
 
 on:
   push:
-    branches: [ main, develop ]
+    branches: [ main ]
   pull_request:
     branches: [ main ]
   schedule:
@@ -14,11 +14,8 @@ jobs:
   security-audit:
     name: Security & Dependency Audit
     runs-on: macos-15
-    # The PR comment step below needs write access to pull requests; without it
-    # the job ends red with a 403 even though every check passed.
     permissions:
       contents: read
-      pull-requests: write
     
     steps:
       - name: Checkout code
@@ -39,8 +36,9 @@ jobs:
       
       - name: Run Dependency Vulnerability Scan
         run: |
+          set -o pipefail  # keep osv_check.sh's exit status through tee
           echo "Running OSV vulnerability scan..."
-          ./osv_check.sh
+          ./osv_check.sh | tee osv-results.txt
       
       # The hardcoded-secret and SQL-injection greps that used to live here are
       # gone: scripts/security_audit.sh runs both, and keeping a second, weaker
@@ -66,7 +64,7 @@ jobs:
             || echo "(dependency tree unavailable: $(swift --version 2>&1 | head -1))" >> security-report.md
           echo "" >> security-report.md
           echo "## OSV Scan Results" >> security-report.md
-          ./osv_check.sh >> security-report.md || true
+          cat osv-results.txt >> security-report.md 2>/dev/null || echo "(OSV scan did not run)" >> security-report.md
       
       - name: Upload Security Report
         if: always()
@@ -76,17 +74,8 @@ jobs:
           path: security-report.md
           retention-days: 30
       
-      - name: Comment PR with Security Status
-        if: github.event_name == 'pull_request'
-        uses: actions/github-script@v9
-        with:
-          script: |
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: '✅ Security audit passed! No vulnerabilities detected.'
-            })
+      # No "✅ passed" PR comment: it added one comment per push, and the check status
+      # already says the same thing.
 
   codeql-analysis:
     name: CodeQL Security Analysis

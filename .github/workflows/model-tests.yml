@@ -10,6 +10,10 @@ concurrency:
   # A running dispatch is never killed mid-download; a newer dispatch replaces a still-pending one.
   cancel-in-progress: false
 
+# Dependency code runs here (build plugins, tests): it gets a read-only token.
+permissions:
+  contents: read
+
 jobs:
   test-models:
     name: Test Inference & Benchmarks
@@ -19,39 +23,34 @@ jobs:
     timeout-minutes: 90
     
     steps:
+      # clean: false — the workspace is shared with Unit Tests on this runner; the default
+      # `git clean -ffdx` would wipe the .build that both reuse.
       - name: Checkout repository
         uses: actions/checkout@v7
-        
-      # Same reason as the audit workflow: a pinned 6.0 toolchain cannot parse
-      # mlx-swift-lm's manifest. Use the runner's Xcode.
-      - name: Cache HuggingFace Models
-        uses: actions/cache@v6
         with:
-          path: ~/.cache/huggingface/hub
-          key: hf-models-${{ hashFiles('**/Package.resolved') }}
-          restore-keys: |
-            hf-models-
-            
-      - name: Build tests
-        run: swift build --build-tests
+          clean: false
+
+      - name: Configure Swift toolchain
+        uses: ./.github/actions/xcode-toolchain
         
-      # MLX aborts the whole test process when it cannot find a metallib, and a
-      # SwiftPM build produces none. Same two steps as the release workflow.
-      - name: Cache MLX metallib
-        uses: actions/cache@v6
-        with:
-          path: default.metallib
-          key: metallib-${{ hashFiles('Package.resolved') }}
+      # No actions/cache for ~/.cache/huggingface: on the self-hosted runner that directory
+      # already persists, and uploading multi-GB weights to the Actions cache only evicts
+      # everything else from its 10 GB quota.
+      # Unit tests are not repeated here: Unit Tests runs them on every PR and on main.
+      # Both binaries are built first: a fresh build_metal.swift run drops mlx.metallib next
+      # to the binaries only in build directories that already exist. (When the kernels are
+      # up to date it places nothing; `swift run` from the repo root finds default.metallib.)
+      - name: Build
+        run: |
+          swift build --product Basalt
+          swift build -c release --product PerformanceBenchmark
 
-      - name: Compile MLX Metal kernels
-        run: ./scripts/build_metal.swift --skip-unsupported
-
-      - name: Run unit tests
-        run: swift test
+      - name: MLX Metal kernels
+        uses: ./.github/actions/mlx-metallib
         
       - name: Download test model (Qwen3.5 4B)
         run: |
-          swift run GemmaServer models download mlx-community/Qwen3.5-4B-4bit
+          swift run Basalt models download mlx-community/Qwen3.5-4B-4bit
           
       - name: Run Performance Benchmark
         run: |

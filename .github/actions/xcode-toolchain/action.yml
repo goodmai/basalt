@@ -1,0 +1,16 @@
+name: Xcode toolchain
+description: >
+  Point DEVELOPER_DIR at the newest installed Xcode. mlx-swift-lm's manifest needs tools 6.3,
+  and the runner's xcode-select default can be older.
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        LATEST_XCODE=$(ls -d /Applications/Xcode*.app 2>/dev/null | sort -V | tail -n 1)
+        if [ -n "$LATEST_XCODE" ] && [ -d "$LATEST_XCODE/Contents/Developer" ]; then
+          echo "DEVELOPER_DIR=$LATEST_XCODE/Contents/Developer" >> $GITHUB_ENV
+          export DEVELOPER_DIR="$LATEST_XCODE/Contents/Developer"
+        fi
+        echo "Active Swift version:"
+        swift --version

@@ -1,8 +1,10 @@
 name: Unit Tests
 
 on:
+  # Branches are tested through their PR; a push trigger on them too ran every PR commit
+  # twice on the single runner.
   push:
-    branches: [ main, "feat/**" ]
+    branches: [ main ]
   pull_request:
 
 # One self-hosted runner: a second push to the same ref makes the earlier run (queued or
@@ -12,6 +14,10 @@ on:
 concurrency:
   group: unit-tests-${{ github.ref == 'refs/heads/main' && github.sha || github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+# Dependency code runs here (build plugins, tests): it gets a read-only token.
+permissions:
+  contents: read
 
 jobs:
   test:
@@ -24,30 +30,24 @@ jobs:
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     timeout-minutes: 45
     steps:
+      # clean: false keeps .build between runs on the self-hosted runner, so a run is an
+      # incremental build instead of a from-scratch one. Safe only because fork PRs never
+      # reach this runner (see `if:` above); tracked files are still reset to the commit.
+      # Same-repo PRs (dependabot included) can leave edited dependency checkouts in .build,
+      # so a later green run vouches for test results only — nothing built here is shipped.
       - name: Checkout repository
         uses: actions/checkout@v7
+        with:
+          clean: false
 
       - name: Configure Swift toolchain
-        run: |
-          LATEST_XCODE=$(ls -d /Applications/Xcode*.app 2>/dev/null | sort -V | tail -n 1)
-          if [ -n "$LATEST_XCODE" ] && [ -d "$LATEST_XCODE/Contents/Developer" ]; then
-            echo "DEVELOPER_DIR=$LATEST_XCODE/Contents/Developer" >> $GITHUB_ENV
-            export DEVELOPER_DIR="$LATEST_XCODE/Contents/Developer"
-          fi
-          echo "Active Swift version:"
-          swift --version
+        uses: ./.github/actions/xcode-toolchain
 
       - name: Build tests
         run: swift build --build-tests
 
-      - name: Cache MLX metallib
-        uses: actions/cache@v6
-        with:
-          path: default.metallib
-          key: metallib-${{ hashFiles('Package.resolved') }}
-
-      - name: Compile MLX Metal kernels
-        run: ./scripts/build_metal.swift --skip-unsupported
+      - name: MLX Metal kernels
+        uses: ./.github/actions/mlx-metallib
 
       - name: Run unit tests
         run: swift test
