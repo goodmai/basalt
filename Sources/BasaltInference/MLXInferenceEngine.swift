@@ -8,6 +8,7 @@ import MLXVLM
 import MLXLMCommon
 import MLXHuggingFace
 import Tokenizers
+import Hub
 import Jinja
 import BasaltCore
 
@@ -97,8 +98,9 @@ public actor MLXInferenceEngine: InferenceEngine {
         self.promptCaches = PromptCacheTree(byteBudget: promptCacheBytes ?? 0)
     }
 
-    func attach(_ container: ModelContainer) {
+    func attach(_ container: ModelContainer, profile: any ModelProfile = GenericProfile()) {
         self.container = container
+        self.profile = profile
         let budget = configuredPromptCacheBytes ?? PromptCacheBudget.automatic(
             workingSet: PromptCacheBudget.gpuWorkingSet(), weights: Memory.activeMemory)
         let blendBytes = cacheBlendRatio == nil ? 0 : budget / 2
@@ -233,18 +235,15 @@ public actor MLXInferenceEngine: InferenceEngine {
 
             struct DefaultTokenizerLoader: TokenizerLoader {
                 func load(from directory: URL) async throws -> any MLXLMCommon.Tokenizer {
-                    let upstream = try await Tokenizers.AutoTokenizer.from(modelFolder: directory)
-                    return TokenizerBridge(upstream)
+                    TokenizerBridge(try await MLXInferenceEngine.upstreamTokenizer(at: directory))
                 }
             }
 
-            attach(try await loadModelContainer(from: directory, using: DefaultTokenizerLoader()))
-            profile = ModelProfileRegistry.profile(forModelAt: modelPath)
+            attach(try await loadModelContainer(from: directory, using: DefaultTokenizerLoader()),
+                   profile: ModelProfileRegistry.profile(forModelAt: modelPath))
             
             // Dynamic config inspection
-            let configURL = directory.appendingPathComponent("config.json")
-            if let data = try? Data(contentsOf: configURL),
-               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            if let json = ModelCache.config(at: directory) {
                 
                 let arch = (json["architectures"] as? [String])?.first ?? "Unknown"
                 let modelType = json["model_type"] as? String ?? "Unknown"
@@ -277,8 +276,40 @@ public actor MLXInferenceEngine: InferenceEngine {
             }
             logger.info("Model loaded and initialized successfully.")
         } catch {
-            throw .weightsCorrupted(path: modelPath, reason: error.localizedDescription)
+            throw await Self.loadFailure(error, modelPath: modelPath)
         }
+    }
+
+    static func loadFailure(_ error: any Error, modelPath: String) async -> BasaltError {
+        switch error as? ModelFactoryError {
+        case .configurationDecodingError?:
+            return .modelConfigurationInvalid(path: modelPath, reason: error.localizedDescription)
+        case .unsupportedModelType(let modelType)? where await !VLMTypeRegistry.shared.contains(modelType):
+            return .modelConfigurationInvalid(path: modelPath, reason: error.localizedDescription)
+        default:
+            return .weightsCorrupted(path: modelPath, reason: error.localizedDescription)
+        }
+    }
+
+    static func upstreamTokenizer(at directory: URL) async throws -> any Tokenizers.Tokenizer {
+        let configuration = LanguageModelConfigurationFromHub(modelFolder: directory)
+        guard let tokenizerConfig = try await configuration.tokenizerConfig else {
+            throw Tokenizers.TokenizerError.missingConfig
+        }
+        return try Tokenizers.PreTrainedTokenizer(
+            tokenizerConfig: compatibleChatTemplate(in: tokenizerConfig),
+            tokenizerData: try await configuration.tokenizerData)
+    }
+
+    static func compatibleChatTemplate(in tokenizerConfig: Config) -> Config {
+        guard let template = tokenizerConfig.chatTemplate.string(), var entries = tokenizerConfig.dictionary() else {
+            return tokenizerConfig
+        }
+        let compatible = ChatTemplateCompatibility.renamingReservedLoopVariables(
+            ChatTemplateCompatibility.strippingWhitespaceControlledComments(template))
+        guard compatible != template else { return tokenizerConfig }
+        entries["chat_template"] = Config(compatible)
+        return Config(entries)
     }
 
     // MARK: — Template Context
@@ -289,12 +320,15 @@ public actor MLXInferenceEngine: InferenceEngine {
     ) -> [String: any Sendable]? {
         // ReasoningPolicy(rawValue:) maps "off"/"none" to disabled; each profile maps level names
         // onto its template (Qwen: "high" → "xhigh"), GenericProfile passes them through.
-        let policy: ReasoningPolicy = request.enableThinking == false
-            ? .disabled
-            : ReasoningPolicy(rawValue: request.reasoningEffort ?? defaultReasoningEffort) ?? .modelDefault
-
+        let policy = reasoningPolicy(request: request, defaultReasoningEffort: defaultReasoningEffort)
         let context = (profile ?? GenericProfile()).templateContext(for: policy)
         return context.isEmpty ? nil : context
+    }
+
+    static func reasoningPolicy(request: GenerationRequest, defaultReasoningEffort: String?) -> ReasoningPolicy {
+        request.enableThinking == false
+            ? .disabled
+            : ReasoningPolicy(rawValue: request.reasoningEffort ?? defaultReasoningEffort) ?? .modelDefault
     }
 
     // MARK: — Generate
@@ -377,6 +411,34 @@ public actor MLXInferenceEngine: InferenceEngine {
         if error is TemplateException { return true }
         if case JinjaError.runtime = error { return true }
         return false
+    }
+
+    static let thinkingOpeners = ["<think>", "<|channel>thought", "<|channel|>thought", "[THINK]"]
+    static let thinkingClosers = ["</think>", "<channel|>", "<|channel|>", "<|turn|>", "[/THINK]"]
+    static let strayThinkingClosers = ["</think>", "<channel|>", "[/THINK]"]
+    static let thinkingMarkerHoldback = (thinkingOpeners + thinkingClosers).map(\.count).max()! - 1
+
+    static func firstMarker(_ markers: [String], in text: some StringProtocol) -> Range<String.Index>? {
+        markers.compactMap { text.range(of: $0) }.min { $0.lowerBound < $1.lowerBound }
+    }
+
+    static func endsInsideThinking(_ rendered: String, assistantPrefix: String = "") -> Bool {
+        var tail = Substring(rendered)
+        while tail.last?.isWhitespace == true { tail.removeLast() }
+        var inside = thinkingOpeners.contains { tail.hasSuffix($0) }
+        var rest = Substring(assistantPrefix)
+        while true {
+            if inside {
+                guard let closer = firstMarker(thinkingClosers, in: rest) else { return true }
+                rest = rest[closer.upperBound...]
+                inside = false
+            } else {
+                let start = rest.drop(while: \.isWhitespace)
+                guard let opener = thinkingOpeners.first(where: { start.hasPrefix($0) }) else { return false }
+                rest = start.dropFirst(opener.count)
+                inside = true
+            }
+        }
     }
 
     static func toolCall(_ call: ToolCallOutput) -> ToolCall {
@@ -473,9 +535,11 @@ public actor MLXInferenceEngine: InferenceEngine {
 
         let toolSpecs = Self.toolSpecs(request.tools)
         let declaredTools = Set(request.tools?.map(\.name) ?? [])
+        let scansToolCallText = profile.writesToolCallsAsText && request.tools?.isEmpty == false
         var makeInput: @Sendable (String) -> UserInput
         var template: String?
-        let turns = request.messages.flatMap { $0.isEmpty ? nil : $0 }
+        let policy = Self.reasoningPolicy(request: request, defaultReasoningEffort: reasoningEffort)
+        let turns = request.messages.flatMap { $0.isEmpty ? nil : profile.turns($0, for: policy) }
         var lastText: String
         let context = Self.buildTemplateContext(
             request: request,
@@ -488,7 +552,7 @@ public actor MLXInferenceEngine: InferenceEngine {
             lastText = request.prompt
         } else {
             (makeInput, template, lastText) = Self.chatInput(
-                turns ?? [ChatMessageInput(role: .user, text: request.prompt)],
+                turns ?? profile.turns([ChatMessageInput(role: .user, text: request.prompt)], for: policy),
                 normalisation: "native", tools: toolSpecs, context: context)
         }
 
@@ -551,12 +615,10 @@ public actor MLXInferenceEngine: InferenceEngine {
             }
             let mlxStream = launch.stream
             
-            let promptEndsWithThinking = request.prompt.hasSuffix("<|channel>thought\n")
-                || request.prompt.hasSuffix("<|channel>thought")
-                || request.prompt.hasSuffix("<|channel|>thought\n")
-                || request.prompt.hasSuffix("<|channel|>thought")
-                || request.prompt.hasSuffix("<think>\n")
-                || request.prompt.hasSuffix("<think>")
+            let renderedTail = await container.perform {
+                $0.tokenizer.decode(tokenIds: Array(promptTokens.prefix(renderedCount).suffix(16)), skipSpecialTokens: false)
+            }
+            let promptEndsWithThinking = Self.endsInsideThinking(renderedTail, assistantPrefix: assistantPrefix ?? "")
 
             return AsyncStream<StreamChunk> { continuation in
                 let task = Task.detached {
@@ -574,60 +636,39 @@ public actor MLXInferenceEngine: InferenceEngine {
                     var gate = ToolCallGate(request: request)
                     if let assistantPrefix { continuation.yield(.text(assistantPrefix)) }
 
+                    var toolCallScanner = scansToolCallText ? NemotronToolCallScanner() : nil
+                    func admit(_ chunks: [StreamChunk]) {
+                        for chunk in gate.admit(chunks) { continuation.yield(chunk) }
+                    }
+                    func emitText(_ text: String) {
+                        guard var scanner = toolCallScanner else { continuation.yield(.text(text)); return }
+                        admit(scanner.feed(text))
+                        toolCallScanner = scanner
+                    }
+
                     func processBuffer(final: Bool) {
                         while !buffer.isEmpty {
-                            if !isThinking {
-                                if let startRange = buffer.range(of: "<|channel|>thought") ?? buffer.range(of: "<think>") ?? buffer.range(of: "<|think|>") {
-                                    let leading = String(buffer[..<startRange.lowerBound])
-                                    if !leading.isEmpty {
-                                        continuation.yield(.text(leading))
-                                    }
-                                    buffer.removeSubrange(..<startRange.upperBound)
-                                    if buffer.hasPrefix("\n") { buffer.removeFirst() }
-                                    isThinking = true
-                                } else if let endRange = buffer.range(of: "<channel|>") ?? buffer.range(of: "</think>") {
-                                    let leading = String(buffer[..<endRange.lowerBound])
-                                    if !leading.isEmpty {
-                                        continuation.yield(.text(leading))
-                                    }
-                                    buffer.removeSubrange(..<endRange.upperBound)
-                                    if buffer.hasPrefix("\n") { buffer.removeFirst() }
-                                } else {
-                                    if !final && buffer.count > 15 {
-                                        let safeEndIndex = buffer.index(buffer.endIndex, offsetBy: -15)
-                                        let textToYield = String(buffer[..<safeEndIndex])
-                                        buffer.removeSubrange(..<safeEndIndex)
-                                        continuation.yield(.text(textToYield))
-                                    } else if final {
-                                        continuation.yield(.text(buffer))
-                                        buffer = ""
-                                    }
-                                    break
-                                }
-                            } else {
-                                if let endRange = buffer.range(of: "<|channel|>") ?? buffer.range(of: "<channel|>") ?? buffer.range(of: "</think>") ?? buffer.range(of: "<|turn|>") {
-                                    let reasoning = String(buffer[..<endRange.lowerBound])
-                                    if !reasoning.isEmpty {
-                                        continuation.yield(.reasoning(reasoning))
-                                    }
-                                    buffer.removeSubrange(..<endRange.upperBound)
-                                    if buffer.hasPrefix("\n") { buffer.removeFirst() }
-                                    isThinking = false
-                                } else {
-                                    if !final && buffer.count > 15 {
-                                        let safeEndIndex = buffer.index(buffer.endIndex, offsetBy: -15)
-                                        let reasoningToYield = String(buffer[..<safeEndIndex])
-                                        buffer.removeSubrange(..<safeEndIndex)
-                                        continuation.yield(.reasoning(reasoningToYield))
-                                    } else if final {
-                                        if !buffer.isEmpty {
-                                            continuation.yield(.reasoning(buffer))
-                                            buffer = ""
-                                        }
-                                    }
-                                    break
-                                }
+                            let boundary = isThinking
+                                ? Self.firstMarker(Self.thinkingClosers, in: buffer)
+                                : [Self.firstMarker(Self.thinkingOpeners, in: buffer), Self.firstMarker(Self.strayThinkingClosers, in: buffer)]
+                                    .compactMap { $0 }.min { $0.lowerBound < $1.lowerBound }
+                            guard let boundary else {
+                                let held = final ? 0 : Self.thinkingMarkerHoldback
+                                guard buffer.count > held else { break }
+                                let cut = buffer.index(buffer.endIndex, offsetBy: -held)
+                                let piece = String(buffer[..<cut])
+                                buffer.removeSubrange(..<cut)
+                                if isThinking { continuation.yield(.reasoning(piece)) } else { emitText(piece) }
+                                break
                             }
+                            let leading = String(buffer[..<boundary.lowerBound])
+                            let opensThinking = !isThinking && Self.thinkingOpeners.contains(String(buffer[boundary]))
+                            if !leading.isEmpty {
+                                if isThinking { continuation.yield(.reasoning(leading)) } else { emitText(leading) }
+                            }
+                            buffer.removeSubrange(..<boundary.upperBound)
+                            if buffer.hasPrefix("\n") { buffer.removeFirst() }
+                            isThinking = opensThinking
                         }
                     }
                     
@@ -653,6 +694,7 @@ public actor MLXInferenceEngine: InferenceEngine {
                             if firstTokenAt == nil { firstTokenAt = clock.now }
                             buffer.append(text)
                             processBuffer(final: false)
+                            if gate.isSaturated { await stopAfterCall(); break tokens }
                         case .info(let info):
                             lastInfo = info
                         case .toolCall(let call):
@@ -676,6 +718,7 @@ public actor MLXInferenceEngine: InferenceEngine {
                     }
                     
                     processBuffer(final: true)
+                    admit(toolCallScanner?.finish() ?? [])
                     await Self.settle(launch, cancelled: Task.isCancelled || stoppedAfterCall)
                     await self.keep(launch.cache, tokens: Array(promptTokens.prefix(launch.exactTokens)), namespace: namespace, releasing: lease, epoch: epoch)
 

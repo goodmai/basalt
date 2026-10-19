@@ -29,6 +29,16 @@ public protocol ModelProfile: Sendable {
     /// fraction of the top token's probability are dropped. nil leaves sampling
     /// untouched. Measured per family — see the conformances for the evidence.
     var defaultMinP: Float? { get }
+
+    func turns(_ turns: [ChatMessageInput], for reasoning: ReasoningPolicy) -> [ChatMessageInput]
+
+    var writesToolCallsAsText: Bool { get }
+}
+
+extension ModelProfile {
+    public func turns(_ turns: [ChatMessageInput], for reasoning: ReasoningPolicy) -> [ChatMessageInput] { turns }
+
+    public var writesToolCallsAsText: Bool { false }
 }
 
 public struct ThinkingMarkers: Sendable {
@@ -36,17 +46,13 @@ public struct ThinkingMarkers: Sendable {
     public let open: [String]
     /// Tokens that close it.
     public let close: [String]
-    /// True when the chat template leaves a thinking span open at the end of the
-    /// prompt, so generation starts *inside* it and only a closing marker appears.
-    public let openedByTemplate: Bool
 
-    public init(open: [String], close: [String], openedByTemplate: Bool) {
+    public init(open: [String], close: [String]) {
         self.open = open
         self.close = close
-        self.openedByTemplate = openedByTemplate
     }
 
-    public static let none = ThinkingMarkers(open: [], close: [], openedByTemplate: false)
+    public static let none = ThinkingMarkers(open: [], close: [])
 }
 
 // MARK: — Qwen 3.x (dense and MoE)
@@ -80,7 +86,7 @@ public struct QwenProfile: ModelProfile {
     }
 
     public var thinkingMarkers: ThinkingMarkers {
-        ThinkingMarkers(open: ["<think>"], close: ["</think>"], openedByTemplate: true)
+        ThinkingMarkers(open: ["<think>"], close: ["</think>"])
     }
 
     public var defaultMaxTokens: Int { 8192 }
@@ -96,8 +102,13 @@ public struct GemmaProfile: ModelProfile {
 
     public init() {}
 
-    /// Gemma templates expose no reasoning knob; the policy is silently inapplicable.
-    public func templateContext(for reasoning: ReasoningPolicy) -> [String: any Sendable] { [:] }
+    public func templateContext(for reasoning: ReasoningPolicy) -> [String: any Sendable] {
+        switch reasoning {
+        case .modelDefault: return [:]
+        case .disabled:     return ["enable_thinking": false]
+        case .effort:       return ["enable_thinking": true]
+        }
+    }
 
     public var thinkingMarkers: ThinkingMarkers { .none }
 
@@ -119,6 +130,43 @@ public struct GemmaProfile: ModelProfile {
     /// low-probability tail, which is where wording variety lives, so a caller
     /// doing open-ended generation should override it.
     public var defaultMinP: Float? { 0.9 }
+}
+
+public struct NemotronProfile: ModelProfile {
+    public let name = "nemotron"
+    public let switchesThinkingInConversation: Bool
+
+    public init(switchesThinkingInConversation: Bool) {
+        self.switchesThinkingInConversation = switchesThinkingInConversation
+    }
+
+    public func templateContext(for reasoning: ReasoningPolicy) -> [String: any Sendable] {
+        reasoning == .disabled ? ["enable_thinking": false] : [:]
+    }
+
+    public func turns(_ turns: [ChatMessageInput], for reasoning: ReasoningPolicy) -> [ChatMessageInput] {
+        guard switchesThinkingInConversation else { return turns }
+        let directive: String
+        switch reasoning {
+        case .modelDefault: return turns
+        case .disabled:     directive = "/no_think"
+        case .effort:       directive = "/think"
+        }
+        guard let first = turns.first, first.role == .system else {
+            return [ChatMessageInput(role: .system, text: directive)] + turns
+        }
+        return [ChatMessageInput(role: .system, text: first.text + "\n" + directive)] + turns.dropFirst()
+    }
+
+    public var thinkingMarkers: ThinkingMarkers {
+        ThinkingMarkers(open: ["<think>"], close: ["</think>"])
+    }
+
+    public var defaultMaxTokens: Int { 4096 }
+
+    public var defaultMinP: Float? { nil }
+
+    public var writesToolCallsAsText: Bool { true }
 }
 
 // MARK: — Fallback
@@ -152,20 +200,37 @@ public enum ModelProfileRegistry {
     /// `qwen3_5_moe`, `qwen3_6`, `qwen3_8`… all share one template. Note that
     /// Qwen3.6 and 3.8 checkpoints both declare `model_type: qwen3_5` upstream —
     /// the id names the architecture family, not the release.
-    public static func profile(forModelType modelType: String?) -> any ModelProfile {
+    public static func profile(forModelType modelType: String?, chatTemplate: String? = nil) -> any ModelProfile {
         guard let t = modelType?.lowercased() else { return GenericProfile() }
         if t.hasPrefix("qwen3") { return QwenProfile() }
         if t.hasPrefix("gemma") { return GemmaProfile() }
+        if t == "nemotron_h" {
+            return NemotronProfile(switchesThinkingInConversation: chatTemplate?.contains("/no_think") == true)
+        }
         return GenericProfile()
     }
 
     /// Reads `model_type` out of a model directory, tolerating a missing or
     /// unreadable config rather than failing the load.
     public static func profile(forModelAt path: String) -> any ModelProfile {
-        let url = URL(fileURLWithPath: path).appendingPathComponent("config.json")
-        guard let data = try? Data(contentsOf: url),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-        else { return GenericProfile() }
-        return profile(forModelType: json["model_type"] as? String)
+        let directory = URL(fileURLWithPath: path)
+        guard let json = ModelCache.config(at: directory) else { return GenericProfile() }
+        return profile(forModelType: json["model_type"] as? String, chatTemplate: chatTemplate(at: directory))
+    }
+
+    static func chatTemplate(at directory: URL) -> String? {
+        if let jinja = try? String(contentsOf: directory.appendingPathComponent("chat_template.jinja"), encoding: .utf8) {
+            return jinja
+        }
+        if let json = jsonObject(at: directory.appendingPathComponent("chat_template.json")),
+           let template = json["chat_template"] as? String {
+            return template
+        }
+        return jsonObject(at: directory.appendingPathComponent("tokenizer_config.json"))?["chat_template"] as? String
+    }
+
+    private static func jsonObject(at url: URL) -> [String: Any]? {
+        (try? Data(contentsOf: url))
+            .flatMap { try? JSONSerialization.jsonObject(with: $0, options: .json5Allowed) as? [String: Any] }
     }
 }

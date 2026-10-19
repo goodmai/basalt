@@ -73,6 +73,7 @@ struct OpenAIController: Sendable {
         let toolCalls: [ChatToolCall]?
         var callId: String? = nil
         var toolCallId: String? = nil
+        var reasoning: String? = nil
 
         init(type: String? = nil, role: String? = nil, content: MessageContent?,
              name: String? = nil, arguments: String? = nil, input: String? = nil, output: MessageContent? = nil,
@@ -92,6 +93,7 @@ struct OpenAIController: Sendable {
             case toolCalls = "tool_calls"
             case callId = "call_id"
             case toolCallId = "tool_call_id"
+            case reasoning
         }
 
         func encode(to encoder: Encoder) throws {
@@ -99,6 +101,7 @@ struct OpenAIController: Sendable {
             try c.encodeIfPresent(type, forKey: .type)
             try c.encodeIfPresent(role, forKey: .role)
             try c.encode(content, forKey: .content)
+            try c.encodeIfPresent(reasoning, forKey: .reasoning)
             try c.encodeIfPresent(name, forKey: .name)
             try c.encodeIfPresent(arguments, forKey: .arguments)
             try c.encodeIfPresent(input, forKey: .input)
@@ -236,9 +239,10 @@ struct OpenAIController: Sendable {
             var callId: String? = nil
             var name: String? = nil
             var arguments: String? = nil
+            var summary: [OutputContent]? = nil
 
             enum CodingKeys: String, CodingKey {
-                case id, type, status, role, content, name, arguments
+                case id, type, status, role, content, name, arguments, summary
                 case callId = "call_id"
             }
         }
@@ -382,6 +386,9 @@ struct OpenAIController: Sendable {
             let result = try await orchestrator.generate(request: genRequest, modelId: requestedModel)
             let calls = result.toolCalls ?? []
             let onlyCalls = !calls.isEmpty && result.generatedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            var message = ChatMessage(role: "assistant", content: onlyCalls ? nil : .text(result.generatedText),
+                                      toolCalls: calls.isEmpty ? nil : calls.map(ChatToolCall.init))
+            message.reasoning = result.reasoningText
             let response = ChatCompletionResponse(
                 id: "chatcmpl-\(UUID().uuidString)",
                 object: "chat.completion",
@@ -389,8 +396,7 @@ struct OpenAIController: Sendable {
                 model: dto.model ?? modelId,
                 choices: [.init(
                     index: 0,
-                    message: ChatMessage(role: "assistant", content: onlyCalls ? nil : .text(result.generatedText),
-                                         toolCalls: calls.isEmpty ? nil : calls.map(ChatToolCall.init)),
+                    message: message,
                     finishReason: Self.finishReason(result.finishReason, calledTools: !calls.isEmpty)
                 )],
                 usage: .init(
@@ -481,7 +487,10 @@ struct OpenAIController: Sendable {
                 status: "completed",
                 model: dto.model ?? modelId,
                 // The message (when the model said anything or called nothing), then its tool calls.
-                output: (result.generatedText.isEmpty && result.toolCalls != nil ? [] : [
+                output: (result.reasoningText.map { [.init(
+                    id: "rs_\(UUID().uuidString)", type: "reasoning", status: "completed",
+                    content: [.init(type: "reasoning_text", text: $0)], summary: [])] } ?? [])
+                    + (result.generatedText.isEmpty && result.toolCalls != nil ? [] : [
                     .init(
                         id: "msg_\(UUID().uuidString)",
                         type: "message",

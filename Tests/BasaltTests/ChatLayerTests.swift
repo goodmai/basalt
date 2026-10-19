@@ -40,10 +40,11 @@ struct ReasoningPolicyTests {
         #expect(QwenProfile().templateContext(for: .effort("ultra")).isEmpty)
     }
 
-    @Test("Gemma has no reasoning knob and stays empty for every policy")
-    func gemmaIgnoresPolicy() {
-        #expect(GemmaProfile().templateContext(for: .disabled).isEmpty)
-        #expect(GemmaProfile().templateContext(for: .effort("low")).isEmpty)
+    @Test("Gemma 4 thinking follows the policy through enable_thinking; the model default leaves the template alone")
+    func gemmaSwitchesThinking() {
+        #expect(GemmaProfile().templateContext(for: .modelDefault).isEmpty)
+        #expect(GemmaProfile().templateContext(for: .disabled)["enable_thinking"] as? Bool == false)
+        #expect(GemmaProfile().templateContext(for: .effort("low"))["enable_thinking"] as? Bool == true)
     }
 }
 

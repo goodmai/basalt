@@ -82,8 +82,7 @@ public struct KVCacheGeometry: Sendable, Equatable {
     }
 
     public static func load(modelDirectory: URL) -> KVCacheGeometry? {
-        guard let data = try? Data(contentsOf: modelDirectory.appendingPathComponent("config.json")),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        guard let json = ModelCache.config(at: modelDirectory) else { return nil }
         return KVCacheGeometry(config: json)
     }
 
