@@ -354,7 +354,7 @@ struct NemotronHTests {
         #expect(closed.filter { MLXInferenceEngine.endsInsideThinking($0.rendered, assistantPrefix: $0.prefix) }.map(\.rendered) == [])
     }
 
-    @Test("the engine turns a Nemotron <TOOLCALL> into one structured call and stops generating once parallel calls are off")
+    @Test("the engine turns a Nemotron <TOOLCALL> into one structured call and stops generating once parallel calls are off, with and without a prompt cache")
     func engineScansNemotronCallsAndStopsAfterOne() async throws {
         let tools = [ToolDefinition(name: "get_weather"), ToolDefinition(name: "get_time")]
         let single = try await Self.scriptedChunks(
@@ -362,6 +362,11 @@ struct NemotronHTests {
         #expect(single.calls.map(\.name) == ["get_weather"])
         #expect(single.text == "Checking. ")
         #expect(single.completionTokens < ScriptedTokenizer.script.count)
+        let cached = try await Self.scriptedChunks(
+            NemotronProfile(switchesThinkingInConversation: false), tools: tools, toolChoice: ToolChoice(parallel: false), cacheKey: "t")
+        #expect(cached.calls.map(\.name) == ["get_weather"])
+        #expect(cached.text == "Checking. ")
+        #expect(cached.completionTokens > 0 && cached.completionTokens < ScriptedTokenizer.script.count)
         let parallel = try await Self.scriptedChunks(NemotronProfile(switchesThinkingInConversation: false), tools: tools)
         #expect(parallel.calls.map(\.name) == ["get_weather", "get_time"])
         let generic = try await Self.scriptedChunks(GenericProfile(), tools: tools)
@@ -390,7 +395,7 @@ struct NemotronHTests {
     }
 
     static func scriptedChunks(
-        _ profile: any ModelProfile, tools: [ToolDefinition], toolChoice: ToolChoice? = nil
+        _ profile: any ModelProfile, tools: [ToolDefinition], toolChoice: ToolChoice? = nil, cacheKey: String? = nil
     ) async throws -> (text: String, calls: [ToolCallOutput], completionTokens: Int) {
         let engine = MLXInferenceEngine()
         await engine.attach(ModelContainer(context: ModelContext(
@@ -398,7 +403,7 @@ struct NemotronHTests {
             processor: ByteInputProcessor(), tokenizer: ScriptedTokenizer())), profile: profile)
         let request = GenerationRequest(
             prompt: "weather and time", maxTokens: ScriptedTokenizer.script.count + 20, temperature: 0,
-            tools: tools, toolChoice: toolChoice)
+            tools: tools, toolChoice: toolChoice, cacheKey: cacheKey)
         var text = ""
         var calls: [ToolCallOutput] = []
         var completionTokens = 0
