@@ -5,6 +5,7 @@
 ### Upgrading from 0.2.0
 - `basalt serve --host` off loopback now refuses to start without a key: set `BASALT_API_KEY`, pass `--api-key`, or `--auto-generate-key`. Clients send it as `Authorization: Bearer` or `x-api-key`.
 - Off loopback the server answers 429 beyond 120 requests per minute; raise it with `--rate-limit N`, turn it off with `--rate-limit 0`.
+- Building from source (Homebrew included) needs Xcode 26.4+ (Swift 6.3): mlx-swift now declares swift-tools-version 6.3.
 - The config stays in `~/.gem/`. The command is still `basalt`.
 - Earlier versions left the last request body in `/tmp/basalt_anthropic_request.json` and `/tmp/basalt_openai_request.json`: delete them.
 
