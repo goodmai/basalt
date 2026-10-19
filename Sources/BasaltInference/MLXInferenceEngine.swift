@@ -22,7 +22,7 @@ private extension Duration {
 /// Все Metal/MLX вызовы выполняются из одного контекста — нет гонок на GPU command queue.
 public actor MLXInferenceEngine: InferenceEngine {
 
-    private var container: ModelContainer?
+    private(set) var container: ModelContainer?
 
     /// Resolved from the loaded model's config.json. Supplies per-family sampling
     /// defaults that the caller did not override.
