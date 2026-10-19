@@ -332,6 +332,22 @@ struct MCPServerTests {
         #expect(output[0].contains("content"))
     }
 
+    @Test("tools/call (gemma_generate) passes minP and dynamicTemperature to the engine")
+    func samplingArguments() async throws {
+        let engine = MockInferenceEngine()
+        let orch = ModelOrchestratorActor(engine: engine)
+        try await orch.loadModel(path: "test-model")
+        let server = MCPServer(orchestrator: orch) { _ in }
+
+        await server.dispatch("""
+        {"jsonrpc": "2.0", "id": 5, "method": "tools/call", "params": {"name": "gemma_generate", "arguments": {"prompt": "Hello", "maxTokens": 10, "minP": 0.1, "dynamicTemperature": true}}}
+        """)
+
+        let sent = try #require(await engine.lastRequest)
+        #expect(sent.minP == 0.1)
+        #expect(sent.dynamicTemperature == true)
+    }
+
     private actor OutputCapturer {
         var lines: [String] = []
         func capture(_ line: String) { lines.append(line) }

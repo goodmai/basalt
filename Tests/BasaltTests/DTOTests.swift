@@ -114,6 +114,32 @@ struct GenerationResponseCodableTests {
         #expect(dec.topP        == req.topP)
     }
 
+    @Test("minP and dynamicTemperature: absent in old JSON, kept by decode, validated and withMaxTokens")
+    func samplingFieldsBackCompat() throws {
+        let old = try decoder.decode(GenerationRequest.self, from: Data(#"{"prompt": "hi"}"#.utf8))
+        #expect(old.minP == nil)
+        #expect(old.dynamicTemperature == nil)
+
+        let new = try decoder.decode(GenerationRequest.self,
+                                     from: Data(#"{"prompt": "hi", "minP": 0.05, "dynamicTemperature": true}"#.utf8))
+        #expect(new.minP == 0.05)
+        #expect(new.dynamicTemperature == true)
+
+        let validated = try new.validated()
+        #expect(validated.minP == 0.05)
+        #expect(validated.dynamicTemperature == true)
+        let capped = validated.withMaxTokens(8)
+        #expect(capped.minP == 0.05)
+        #expect(capped.dynamicTemperature == true)
+    }
+
+    @Test("minP outside [0, 1] is rejected")
+    func minPRange() throws {
+        #expect(throws: BasaltError.self) { try GenerationRequest(prompt: "hi", minP: 1.5).validated() }
+        #expect(throws: BasaltError.self) { try GenerationRequest(prompt: "hi", minP: -0.1).validated() }
+        #expect(try GenerationRequest(prompt: "hi", minP: 0).validated().minP == 0)
+    }
+
     @Test("ErrorResponse Codable round-trip")
     func errorResponseRoundTrip() throws {
         let error = ErrorResponse(error: "Test Error", code: 404)

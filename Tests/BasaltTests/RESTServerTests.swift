@@ -74,6 +74,25 @@ struct RESTServerTests {
         #expect(sent.maxTokens == 77)
         #expect(sent.temperature == 0.7)
         #expect(sent.topP == 0.9)
+        #expect(sent.minP == nil, "absent min_p leaves the server default in charge")
+        #expect(sent.dynamicTemperature == nil)
+    }
+
+    @Test("min_p and dynamic_temperature reach the engine from every API", arguments: [
+        ("/v1/chat/completions", #"{"messages": [{"role": "user", "content": "hi"}], "min_p": 0.05, "dynamic_temperature": true}"#),
+        ("/v1/messages", #"{"messages": [{"role": "user", "content": "hi"}], "min_p": 0.05, "dynamic_temperature": true}"#),
+        ("/v1/responses", #"{"input": "hi", "min_p": 0.05, "dynamic_temperature": true}"#),
+    ])
+    func samplingFieldsPerAPI(uri: String, request: String) async throws {
+        let s = try await setup()
+        try await s.app.test(.router) { client in
+            try await client.execute(uri: uri, method: .post, body: ByteBuffer(string: request)) { res in
+                #expect(res.status == .ok)
+            }
+        }
+        let sent = try #require(await s.engine.lastRequest)
+        #expect(sent.minP == 0.05)
+        #expect(sent.dynamicTemperature == true)
     }
 
     @Test("Chat completion stream: reasoning and text deltas, a finish chunk, then [DONE]")

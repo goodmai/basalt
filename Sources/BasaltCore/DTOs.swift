@@ -35,6 +35,12 @@ public struct GenerationRequest: Codable, Sendable {
     public let maxTokens: Int?
     public let temperature: Double?
     public let topP: Double?
+    /// Per-request Min-P (drop tokens below `minP · max p`); overrides `serve --min-p` and the
+    /// model profile default. 0 turns Min-P off for this request. nil keeps the server default.
+    public let minP: Double?
+    /// Entropy-based dynamic temperature (EDT): rescale the temperature every step by the
+    /// entropy of the next-token distribution. nil/false keeps the static temperature.
+    public let dynamicTemperature: Bool?
     public let enableThinking: Bool?
     public let reasoningEffort: String?
     public let isServiceRequest: Bool?
@@ -46,6 +52,8 @@ public struct GenerationRequest: Codable, Sendable {
         maxTokens: Int? = nil,
         temperature: Double? = 0.7,
         topP: Double? = 0.9,
+        minP: Double? = nil,
+        dynamicTemperature: Bool? = nil,
         enableThinking: Bool? = true,
         reasoningEffort: String? = nil,
         isServiceRequest: Bool? = false,
@@ -55,6 +63,8 @@ public struct GenerationRequest: Codable, Sendable {
         self.maxTokens = maxTokens
         self.temperature = temperature
         self.topP = topP
+        self.minP = minP
+        self.dynamicTemperature = dynamicTemperature
         self.enableThinking = enableThinking
         self.reasoningEffort = reasoningEffort
         self.isServiceRequest = isServiceRequest
@@ -69,6 +79,8 @@ public struct GenerationRequest: Codable, Sendable {
             maxTokens: maxTokens,
             temperature: temperature,
             topP: topP,
+            minP: minP,
+            dynamicTemperature: dynamicTemperature,
             enableThinking: enableThinking,
             reasoningEffort: reasoningEffort,
             isServiceRequest: isServiceRequest,
@@ -90,12 +102,18 @@ public struct GenerationRequest: Codable, Sendable {
         guard 0.0...2.0 ~= temp else {
             throw .invalidRequestStructure(details: "temperature must be in [0.0, 2.0]")
         }
+
+        if let minP, !(0.0...1.0 ~= minP) {
+            throw .invalidRequestStructure(details: "min_p must be in [0.0, 1.0]")
+        }
         
         return GenerationRequest(
             prompt: prompt,
             maxTokens: maxT,
             temperature: temp,
             topP: topP ?? 0.9,
+            minP: minP,
+            dynamicTemperature: dynamicTemperature,
             enableThinking: enableThinking,
             reasoningEffort: reasoningEffort,
             isServiceRequest: isServiceRequest,
