@@ -160,11 +160,10 @@ struct AnthropicController: Sendable {
         do {
             let buffer = try await request.body.collect(upTo: 4 * 1024 * 1024)
             let data = Data(buffer.readableBytesView)
-            let raw = String(data: data, encoding: .utf8) ?? "<non-utf8>"
             do {
                 dto = try JSONDecoder().decode(MessagesRequest.self, from: data)
             } catch {
-                fputs("🔴 [Anthropic] decode error: \(error)\nBody: \(raw.prefix(400))\n", stderr)
+                fputs("🔴 [Anthropic] decode error: \(error) (body: \(data.count) bytes)\n", stderr)
                 return errorResponse(status: .badRequest,
                                      message: "Decode error: \(error.localizedDescription)",
                                      type: "invalid_request_error")

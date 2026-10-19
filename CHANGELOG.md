@@ -43,4 +43,4 @@
 
 ### Known limits
 - Prefix KV-cache reuse across turns is not implemented yet (#56); the GUI client has no launch command (#55).
-- Some names still say Gem: the MCP `serverInfo.name`, the logger label, `~/.gem/` (#64).
+- Some names still say Gem: the MCP `serverInfo.name`, the logger label, the `gem_` prefix of generated API keys, `~/.gem/` (#64).

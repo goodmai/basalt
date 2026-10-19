@@ -55,7 +55,9 @@ struct ModuleBoundaryTests {
         #expect(!files.isEmpty)
         for file in files {
             let source = try String(contentsOf: file, encoding: .utf8)
-            #expect(!source.contains("toFile: \"/tmp/"), "\(file.lastPathComponent) writes to a fixed /tmp path")
+            // Any "/tmp literal: toFile:, URL(fileURLWithPath:), createFile(atPath:) and "/tmp" + name
+            // all start with it. NSTemporaryDirectory() stays allowed (per-user on macOS).
+            #expect(!source.contains("\"/tmp"), "\(file.lastPathComponent) references a fixed /tmp path")
         }
     }
 }

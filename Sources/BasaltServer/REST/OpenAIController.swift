@@ -264,14 +264,12 @@ struct OpenAIController: Sendable {
         let buffer = try await request.body.collect(upTo: 4 * 1024 * 1024)
         let data = Data(buffer.readableBytesView)
 
-        // Kept only for the decode-error message below; request bodies are never written to disk.
-        let rawString = String(data: data, encoding: .utf8) ?? "<non-utf8>"
 
         let dto: ChatCompletionRequest
         do {
             dto = try JSONDecoder().decode(ChatCompletionRequest.self, from: data)
         } catch {
-            fputs("🔴 [OpenAI] decode error: \(error)\nBody: \(rawString.prefix(300))\n", stderr)
+            fputs("🔴 [OpenAI] decode error: \(error) (body: \(data.count) bytes)\n", stderr)
             return makeErrorResponse(status: .badRequest,
                                      message: "Cannot decode request: \(error.localizedDescription)",
                                      code: 400)
