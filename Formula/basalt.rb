@@ -6,7 +6,8 @@ class Basalt < Formula
   license "MIT"
   head "https://github.com/goodmai/basalt.git", branch: "main"
 
-  depends_on xcode: ["16.0", :build]
+  # Swift 6.3: mlx-swift declares swift-tools-version 6.3.
+  depends_on xcode: ["26.4", :build]
   depends_on arch: :arm64
   depends_on macos: :sequoia
 

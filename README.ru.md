@@ -44,7 +44,7 @@
 
 ```bash
 brew tap goodmai/basalt https://github.com/goodmai/basalt
-brew install goodmai/basalt/basalt          # сборка из исходников, нужен Xcode 16+
+brew install goodmai/basalt/basalt          # сборка из исходников, нужен Xcode 26.4+
 
 basalt onboard                              # подберёт модель под ваш Mac и скачает её
 basalt serve --model mlx-community/Qwen3.5-4B-4bit --rest
@@ -64,7 +64,7 @@ ANTHROPIC_BASE_URL=http://localhost:8080 ANTHROPIC_AUTH_TOKEN=local claude
 | | |
 |---|---|
 | **macOS** | 15+ (Sequoia) |
-| **Xcode / Swift** | 16+ / Swift 6 |
+| **Xcode / Swift** | 26.4+ / Swift 6.3 |
 | **Metal toolchain** | `xcodebuild -downloadComponent MetalToolchain` — в Xcode 26 компилятор Metal ставится отдельно, без него ядра MLX не собрать |
 | **Железо** | Apple Silicon M1–M4, Unified Memory |
 | **Диск** | 2–30 ГБ в зависимости от модели |
@@ -82,7 +82,7 @@ brew install goodmai/basalt/basalt
 
 URL в `tap` указывается явно, потому что репозиторий называется не
 `homebrew-basalt`. Бутылки нет: формула собирает из исходников, поэтому нужен
-Xcode 16+ и Metal toolchain — в Xcode 26 он качается отдельно:
+Xcode 26.4+ и Metal toolchain — в Xcode 26 он качается отдельно:
 
 ```bash
 xcodebuild -downloadComponent MetalToolchain
