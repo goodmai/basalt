@@ -15,6 +15,8 @@ MEMORY_LIMIT_BYTES = 1 << 30
 OUTPUT_LIMIT_BYTES = 16 << 20
 OPEN_FILES_LIMIT = 64
 WATCH_INTERVAL = 0.1
+UNAME_SYSCTLS = ("kern.ostype", "kern.hostname", "kern.osrelease", "kern.version", "hw.machine")
+RAW_SYSCALL_MODULES = r"/lib-dynload/(_ctypes|_test|_xxtest)[^/]*$"
 FUNCTION_NAMES = ("transform", "solve", "transform_grid")
 
 def sandbox_available() -> bool:
@@ -71,7 +73,8 @@ def sandbox_profile(work_dir: str, numpy_package, images) -> str:
         + "".join(f" (subpath {_quote(p)})" for p in link_dirs) + ")",
         "(allow file-read* " + " ".join(readable) + ")",
         f"(allow file-write* (subpath {_quote(work_dir)}) (literal \"/dev/null\"))",
-        "(allow sysctl-read)",
+        f"(deny file-read* (regex #{_quote(RAW_SYSCALL_MODULES)}))",
+        "(allow sysctl-read " + " ".join(f"(sysctl-name {_quote(n)})" for n in UNAME_SYSCTLS) + ")",
         "(deny network*)",
     ])
 

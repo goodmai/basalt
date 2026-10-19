@@ -1,4 +1,7 @@
+import json
 import os
+import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -9,6 +12,26 @@ from arc_sandbox import run_transform, sandbox_available
 
 BLOCKED = [[0]]
 ESCAPED = [[1]]
+CANARY = "arc-sandbox-canary-5d1c"
+PROCESS_SYSCTL_PROBE = f"""
+def transform(grid):
+    import os
+    try:
+        import ctypes
+    except ImportError:
+        return [[0]]
+    libc = ctypes.CDLL(None, use_errno=True)
+    def read(*mib):
+        names = (ctypes.c_int * len(mib))(*mib)
+        size = ctypes.c_size_t(1 << 20)
+        buffer = ctypes.create_string_buffer(size.value)
+        if libc.sysctl(names, len(mib), buffer, ctypes.byref(size), None, 0) != 0:
+            return b""
+        return buffer.raw[:size.value]
+    parent_args = read(1, 49, os.getppid())
+    process_table = read(1, 14, 0)
+    return [[1, int({CANARY!r}.encode() in parent_args), len(parent_args), len(process_table)]]
+"""
 
 
 def attempt(body: str) -> str:
@@ -82,6 +105,15 @@ if os.system('touch PWNED; touch {self.outside}/PWNED') != 0:
         finally:
             del os.environ["ARC_SANDBOX_FAKE_API_KEY"]
         self.assertEqual(grid, [[0]])
+
+    def test_child_cannot_read_parent_environment_through_sysctl(self):
+        runner = ("import json, sys\nfrom arc_sandbox import run_transform\n"
+                  "print(json.dumps(run_transform([sys.stdin.read()], [[1]])))")
+        parent = subprocess.run([sys.executable, "-c", runner], input=PROCESS_SYSCTL_PROBE, capture_output=True,
+                                text=True, cwd=Path(__file__).resolve().parent,
+                                env={**os.environ, "ARC_SANDBOX_FAKE_API_KEY": CANARY}, check=True)
+        self.assertNotIn(CANARY, parent.stdout)
+        self.assertEqual(json.loads(parent.stdout), [BLOCKED, "python_oop_exec_success"])
 
     def test_infinite_loop_is_killed_and_recorded_as_failed(self):
         started = time.monotonic()
