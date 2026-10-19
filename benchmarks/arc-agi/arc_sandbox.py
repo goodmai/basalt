@@ -53,8 +53,13 @@ def _numpy_paths():
     if sys.platform != "darwin":
         return package, []
     site = os.path.dirname(package)
-    images = json.loads(subprocess.run([PYTHON, "-I", "-S", "-c", NUMPY_IMAGES_PROBE, site],
-                                       capture_output=True, env={}, check=True).stdout)
+    try:
+        images = json.loads(subprocess.run([PYTHON, "-I", "-S", "-c", NUMPY_IMAGES_PROBE, site],
+                                           capture_output=True, env={}, check=True, timeout=60).stdout)
+    except (subprocess.SubprocessError, OSError, ValueError) as error:
+        print(f"warning: could not list numpy's libraries ({error}); the sandbox allows numpy without them",
+              file=sys.stderr)
+        images = []
     skipped = ("/System/", "/usr/lib/", os.path.realpath(sys.base_prefix) + "/", site + "/")
     return package, [p for p in images if not p.startswith(skipped)]
 
@@ -76,7 +81,7 @@ def sandbox_profile(work_dir: str, numpy_package, images) -> str:
     files = ["/", CHILD_SCRIPT, HELPERS_MODULE, "/dev/null", "/dev/urandom"]
     if numpy_package:
         trees.append(numpy_package)
-        files += [os.path.dirname(numpy_package)] + images
+        files += images
     ancestors = sorted({a for p in trees + files for a in _ancestors(p)})
     native_roots = [python_root] + ([os.path.dirname(numpy_package)] if numpy_package else [])
     link_dirs = sorted({os.path.dirname(p) for p in images}) + native_roots
@@ -107,8 +112,7 @@ def sandbox_profile(work_dir: str, numpy_package, images) -> str:
 
 def run_transform(code_blocks, grid, timeout: float = DEFAULT_TIMEOUT):
     numpy_package, images = _numpy_paths()
-    site = [os.path.dirname(numpy_package)] if numpy_package else []
-    request = {"blocks": code_blocks, "grid": grid, "paths": site,
+    request = {"blocks": code_blocks, "grid": grid, "numpy": numpy_package,
                "cpu_seconds": int(timeout) + 1}
     with tempfile.TemporaryDirectory(prefix="arc-sandbox-") as raw_dir:
         work_dir = os.path.realpath(raw_dir)
@@ -247,9 +251,10 @@ def _run_block(code, grid, base):
     return _to_matrix(result, grid_type)
 
 
-def _import_by_path(name: str, path: str):
+def _import_by_path(name: str, path: str, package_dir=None):
     import importlib.util
-    spec = importlib.util.spec_from_file_location(name, path)
+    locations = [package_dir] if package_dir else None
+    spec = importlib.util.spec_from_file_location(name, path, submodule_search_locations=locations)
     module = importlib.util.module_from_spec(spec)
     sys.modules[name] = module
     spec.loader.exec_module(module)
@@ -258,14 +263,13 @@ def _import_by_path(name: str, path: str):
 
 def _child_main():
     request = json.loads(sys.stdin.read())
-    sys.path.extend(request["paths"])
     arc_helpers = _import_by_path("arc_helpers", HELPERS_MODULE)
     base = dict(arc_helpers.DSL_NAMES)
-    try:
-        import numpy
-        base["np"] = numpy
-    except ImportError:
-        pass
+    if request["numpy"]:
+        try:
+            base["np"] = _import_by_path("numpy", os.path.join(request["numpy"], "__init__.py"), request["numpy"])
+        except ImportError:
+            sys.modules.pop("numpy", None)
     _apply_limits(request["cpu_seconds"])
     result = None
     for code in request["blocks"]:

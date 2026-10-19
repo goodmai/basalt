@@ -104,6 +104,14 @@ class SandboxTest(unittest.TestCase):
     def test_listing_the_benchmark_directory_fails(self):
         self.assert_blocked(f"import os\nos.listdir({str(Path(__file__).resolve().parent)!r})")
 
+    def test_listing_the_numpy_install_directory_fails(self):
+        try:
+            import numpy
+        except ImportError:
+            self.skipTest("numpy is not installed")
+        site = os.path.dirname(os.path.dirname(os.path.realpath(numpy.__file__)))
+        self.assert_blocked(f"import os\nos.listdir({site!r})")
+
     def test_os_system_cannot_create_files(self):
         self.assert_blocked(f"""
 import os
@@ -218,6 +226,16 @@ socket.create_connection(('1.1.1.1', 80), timeout=3)
         code = "def transform(grid):\n    return np.rot90(np.array(grid.to_matrix())).tolist()"
         self.assertEqual(self.run_code(code), ([[6, 8], [5, 7]], "python_oop_exec_success"))
 
+
+    def test_a_failing_numpy_library_probe_still_runs_the_sandbox(self):
+        arc_sandbox._numpy_paths.cache_clear()
+        try:
+            with mock.patch.object(arc_sandbox.subprocess, "run", side_effect=subprocess.TimeoutExpired("python3", 60)):
+                package, images = arc_sandbox._numpy_paths()
+        finally:
+            arc_sandbox._numpy_paths.cache_clear()
+        self.assertEqual(images, [])
+        self.assertEqual(self.run_code("def transform(grid):\n    return [[7]]"), ([[7]], "python_oop_exec_success"))
 
 if __name__ == "__main__":
     unittest.main()
