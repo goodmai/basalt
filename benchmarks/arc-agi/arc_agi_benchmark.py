@@ -353,7 +353,7 @@ def main():
     end_idx = start_idx + args.limit if args.limit else len(task_files)
     task_files = task_files[start_idx:end_idx]
 
-    output_file = args.output or f"arc_benchmark_results_{args.engine}_{args.split}.json"
+    output_file = args.output or f"arc_benchmark_results_{args.engine}_{args.split}_{args.mode}.json"
     report_file = output_file.replace(".json", ".md")
 
     # Load existing results if resuming
