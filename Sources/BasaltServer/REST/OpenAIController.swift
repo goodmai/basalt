@@ -793,7 +793,6 @@ struct OpenAIController: Sendable {
     static func requestedTools(fromRequestBody data: Data) throws(UndeclaredForcedTool) -> RequestedTools {
         guard let body = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return RequestedTools() }
         let choice = body["tool_choice"] as? [String: Any]
-        if ((body["tool_choice"] as? String) ?? (choice?["type"] as? String)) == "none" { return RequestedTools() }
         let forced = ((choice?["function"] as? [String: Any])?["name"] as? String) ?? (choice?["name"] as? String)
         let parallel = body["parallel_tool_calls"] as? Bool != false && choice?["disable_parallel_tool_use"] as? Bool != true
         let raw = ((body["tools"] as? [[String: Any]]) ?? []) + ((body["additional_tools"] as? [[String: Any]]) ?? [])
@@ -806,8 +805,12 @@ struct OpenAIController: Sendable {
                 .flatMap { String(data: $0, encoding: .utf8) }
             return ToolDefinition(name: name, description: spec["description"] as? String, parametersJSON: parameters)
         }
+        let offered = tools.isEmpty ? nil : tools
+        if ((body["tool_choice"] as? String) ?? (choice?["type"] as? String)) == "none" {
+            return RequestedTools(tools: offered, choice: ToolChoice(callsDisabled: true))
+        }
         if let forced, !tools.contains(where: { $0.name == forced }) { throw UndeclaredForcedTool(name: forced) }
-        return RequestedTools(tools: tools.isEmpty ? nil : tools,
+        return RequestedTools(tools: offered,
                               choice: forced == nil && parallel ? nil : ToolChoice(forcedTool: forced, parallel: parallel))
     }
 

@@ -254,7 +254,7 @@ struct CodingAgentAPITests {
         #expect((parameters["required"] as? [any Sendable])?.first as? String == "cmd")
     }
 
-    @Test("tool_choice none offers no tools; a named tool keeps every tool and is enforced by the gate; parallel can be turned off")
+    @Test("tool_choice none keeps the tools in the prompt and disables calls; a named tool keeps every tool and is enforced by the gate; parallel can be turned off")
     func toolChoice() throws {
         let tools = #"[{"type": "function", "name": "shell"}, {"type": "function", "name": "read"}, {"name": "edit", "input_schema": {"type": "object"}}]"#
         let parse = { (extra: String) throws in
@@ -262,8 +262,10 @@ struct CodingAgentAPITests {
         }
         #expect(try parse(#""tool_choice": "auto""#).tools?.map(\.name) == ["shell", "read", "edit"])
         #expect(try parse(#""tool_choice": "auto""#).choice == nil)
-        #expect(try parse(#""tool_choice": "none""#).tools == nil)
-        #expect(try parse(#""tool_choice": {"type": "none"}"#).tools == nil)
+        for none in [#""tool_choice": "none""#, #""tool_choice": {"type": "none"}"#] {
+            #expect(try parse(none).tools?.count == 3)
+            #expect(try parse(none).choice == ToolChoice(callsDisabled: true))
+        }
         for (choice, name) in [(#"{"type": "tool", "name": "edit"}"#, "edit"),
                                (#"{"type": "function", "function": {"name": "read"}}"#, "read"),
                                (#"{"type": "function", "name": "shell"}"#, "shell")] {
@@ -302,6 +304,8 @@ struct CodingAgentAPITests {
                 == ["shell", "read", "\n[tool call to rm rejected: undeclared]"])
         var none = ToolCallGate(request: GenerationRequest(prompt: "p"))
         #expect(names([none.admit(call("shell"))]) == ["\n[tool call to shell rejected: undeclared]"])
+        var disabled = ToolCallGate(request: GenerationRequest(prompt: "p", tools: tools, toolChoice: ToolChoice(callsDisabled: true)))
+        #expect(names([disabled.admit(call("shell"))]) == ["\n[tool call to shell rejected: tool_choice is none]"])
         var forced = ToolCallGate(request: GenerationRequest(prompt: "p", tools: tools, toolChoice: ToolChoice(forcedTool: "read")))
         #expect(names([forced.admit(call("shell")), forced.admit(call("read"))])
                 == ["\n[tool call to shell rejected: tool_choice is read]", "read"])
@@ -467,12 +471,13 @@ struct ToolCallingEndpointsTests {
         #expect(sent.prompt == expected)
     }
 
-    @Test("Messages: tool_choice none sends no tools to the engine")
+    @Test("Messages: tool_choice none keeps the tools in the prompt and disables calls")
     func messagesToolChoiceNone() async throws {
         let (app, engine) = try await app()
         let request = #"{"max_tokens": 64, "tool_choice": {"type": "none"}, "messages": [{"role": "user", "content": "hi"}], "# + anthropicTools + "}"
         _ = try await post(app, "/v1/messages", request)
-        #expect(await engine.lastRequest?.tools == nil)
+        #expect(await engine.lastRequest?.tools?.count == 2)
+        #expect(await engine.lastRequest?.toolChoice == ToolChoice(callsDisabled: true))
     }
 
     @Test("Messages non-streaming: a tool call is a tool_use block with stop_reason tool_use")
@@ -565,12 +570,13 @@ struct ToolCallingEndpointsTests {
         #expect(sent.prompt == expected)
     }
 
-    @Test("Chat: tool_choice none sends no tools to the engine")
+    @Test("Chat: tool_choice none keeps the tools in the prompt and disables calls")
     func chatToolChoiceNone() async throws {
         let (app, engine) = try await app()
         _ = try await post(app, "/v1/chat/completions",
             #"{"tool_choice": "none", "messages": [{"role": "user", "content": "hi"}], "# + openAITools + "}")
-        #expect(await engine.lastRequest?.tools == nil)
+        #expect(await engine.lastRequest?.tools?.count == 2)
+        #expect(await engine.lastRequest?.toolChoice == ToolChoice(callsDisabled: true))
     }
 
     @Test("Chat non-streaming: message.tool_calls with finish_reason tool_calls")
@@ -733,7 +739,7 @@ struct ToolCallingEndpointsTests {
             #"{"tool_choice": "none", "messages": [{"role": "user", "content": "ls"}], "# + openAITools + "}"))
         let choice = try #require((chat["choices"] as? [[String: Any]])?.first)
         #expect(choice["finish_reason"] as? String == "stop")
-        #expect(((choice["message"] as? [String: Any])?["content"] as? String)?.contains("[tool call to Bash rejected: undeclared]") == true)
+        #expect(((choice["message"] as? [String: Any])?["content"] as? String)?.contains("[tool call to Bash rejected: tool_choice is none]") == true)
     }
 
     @Test("A forced tool that is not declared is a 400 on every endpoint")
@@ -745,5 +751,25 @@ struct ToolCallingEndpointsTests {
             #"{"tool_choice": {"type": "function", "function": {"name": "rm"}}, "messages": [{"role": "user", "content": "x"}], "# + openAITools + "}") == .badRequest)
         #expect(try await status(app, "/v1/responses",
             #"{"input": "x", "tool_choice": {"type": "function", "name": "rm"}}"#) == .badRequest)
+    }
+
+    @Test("Messages: arguments that are not a JSON object go out as input {} with the original text in a visible note")
+    func messagesNonObjectArguments() async throws {
+        let bad = ToolCallOutput(id: "call_x", name: "Bash", arguments: #"["ls"]"#)
+        let note = #"[tool call to Bash: arguments are not an object, sent as {}: ["ls"]]"#
+        let (app, _) = try await app(call: bad)
+        let json = try object(try await post(app, "/v1/messages",
+            #"{"max_tokens": 64, "messages": [{"role": "user", "content": "ls"}], "# + anthropicTools + "}"))
+        let content = try #require(json["content"] as? [[String: Any]])
+        #expect(content.map { $0["type"] as? String } == ["text", "tool_use"])
+        #expect((content[0]["text"] as? String)?.hasSuffix(note) == true)
+        #expect((content[1]["input"] as? [String: Any])?.isEmpty == true)
+
+        let raw = try await post(app, "/v1/messages",
+            #"{"max_tokens": 64, "stream": true, "messages": [{"role": "user", "content": "ls"}], "# + anthropicTools + "}")
+        let deltas = dataFrames(raw).filter { $0["type"] as? String == "content_block_delta" }.compactMap { $0["delta"] as? [String: Any] }
+        #expect((deltas.first?["text"] as? String)?.hasSuffix(note) == true)
+        #expect(deltas.last?["type"] as? String == "input_json_delta")
+        #expect(deltas.last?["partial_json"] as? String == "{}")
     }
 }

@@ -32,10 +32,12 @@ public struct ToolCallOutput: Codable, Sendable, Equatable {
 public struct ToolChoice: Codable, Sendable, Equatable {
     public let forcedTool: String?
     public let parallel: Bool
+    public let callsDisabled: Bool
 
-    public init(forcedTool: String? = nil, parallel: Bool = true) {
+    public init(forcedTool: String? = nil, parallel: Bool = true, callsDisabled: Bool = false) {
         self.forcedTool = forcedTool
         self.parallel = parallel
+        self.callsDisabled = callsDisabled
     }
 }
 

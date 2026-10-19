@@ -549,7 +549,8 @@ public actor MLXInferenceEngine: InferenceEngine {
                         }
                     }
                     
-                    for await generation in mlxStream {
+                    var stoppedAfterCall = false
+                    tokens: for await generation in mlxStream {
                         if Task.isCancelled { 
                             break 
                         }
@@ -566,6 +567,7 @@ public actor MLXInferenceEngine: InferenceEngine {
                         case .toolCall(let call):
                             processBuffer(final: true)
                             if let chunk = gate.admit(Self.toolCallOutput(call)) { continuation.yield(chunk) }
+                            if gate.isSaturated { stoppedAfterCall = true; break tokens }
                         case .rejectedToolCall(let rejection):
                             processBuffer(final: true)
                             let chunk = Self.resolveRejectedToolCall(
@@ -576,13 +578,14 @@ public actor MLXInferenceEngine: InferenceEngine {
                                 GemLogger(module: "MLXInferenceEngine").warn("Tool call rejected: \(rejection.reason.rawValue)")
                             }
                             if let chunk = gate.admit(chunk) { continuation.yield(chunk) }
+                            if gate.isSaturated { stoppedAfterCall = true; break tokens }
                         @unknown default:
                             break
                         }
                     }
                     
                     processBuffer(final: true)
-                    await Self.settle(launch, cancelled: Task.isCancelled)
+                    await Self.settle(launch, cancelled: Task.isCancelled || stoppedAfterCall)
                     await self.keep(launch.cache, tokens: Array(promptTokens.prefix(launch.exactTokens)), namespace: namespace, releasing: lease, epoch: epoch)
 
                     // End of stream - send metadata
@@ -594,9 +597,9 @@ public actor MLXInferenceEngine: InferenceEngine {
                         let metadata = GenerationResponse(
                             generatedText: "", 
                             reasoningText: nil,
-                            promptTokens: launch.reusedTokens + (lastInfo?.promptTokenCount ?? 0),
+                            promptTokens: lastInfo.map { launch.reusedTokens + $0.promptTokenCount } ?? promptTokens.count,
                             cachedPromptTokens: launch.reusedTokens,
-                            completionTokens: lastInfo?.generationTokenCount ?? 0,
+                            completionTokens: lastInfo?.generationTokenCount ?? tokenCount,
                             tokensPerSecond: lastInfo?.tokensPerSecond ?? 0,
                             generationTime: generationTime,
                             timeToFirstToken: timeToFirstToken,

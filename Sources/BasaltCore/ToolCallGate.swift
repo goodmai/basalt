@@ -2,15 +2,20 @@ public struct ToolCallGate: Sendable {
     private let declared: Set<String>
     private let forced: String?
     private let parallel: Bool
+    private let callsDisabled: Bool
     private var admitted = 0
 
     public init(request: GenerationRequest) {
         declared = Set(request.tools?.map(\.name) ?? [])
         forced = request.toolChoice?.forcedTool
         parallel = request.toolChoice?.parallel ?? true
+        callsDisabled = request.toolChoice?.callsDisabled ?? false
     }
 
+    public var isSaturated: Bool { !parallel && admitted > 0 }
+
     public mutating func admit(_ call: ToolCallOutput) -> StreamChunk? {
+        if callsDisabled { return Self.rejection(call.name, reason: "tool_choice is none") }
         guard declared.contains(call.name) else { return Self.rejection(call.name, reason: "undeclared") }
         if let forced, forced != call.name { return Self.rejection(call.name, reason: "tool_choice is \(forced)") }
         guard parallel || admitted == 0 else { return nil }

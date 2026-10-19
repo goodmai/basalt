@@ -39,7 +39,7 @@ struct AnthropicController: Sendable {
             type = "tool_use"
             id = AnthropicController.toolUseID(call.id)
             name = call.name
-            input = (try? JSONDecoder().decode(AnyCodable.self, from: Data(call.arguments.utf8))) ?? AnyCodable([String: Any]())
+            input = AnthropicController.objectInput(call.arguments) ?? AnyCodable([String: Any]())
         }
 
         var promptText: String? {
@@ -61,6 +61,15 @@ struct AnthropicController: Sendable {
             case toolUseId = "tool_use_id"
             case isError = "is_error"
         }
+    }
+
+    static func objectInput(_ arguments: String) -> AnyCodable? {
+        let decoded = try? JSONDecoder().decode(AnyCodable.self, from: Data(arguments.utf8))
+        return decoded?.rawValue is [String: Any] ? decoded : nil
+    }
+
+    static func nonObjectNote(_ call: ToolCallOutput) -> String? {
+        objectInput(call.arguments) == nil ? "\n[tool call to \(call.name): arguments are not an object, sent as {}: \(call.arguments)]" : nil
     }
 
     static func toolUseID(_ id: String) -> String {
@@ -348,6 +357,14 @@ struct AnthropicController: Sendable {
 
                 var calledTools = false
                 func emitToolUse(_ call: ToolCallOutput) {
+                    if let note = Self.nonObjectNote(call) {
+                        open("text")
+                        send("content_block_delta", [
+                            "type": "content_block_delta",
+                            "index": openBlock!.index,
+                            "delta": ["type": "text_delta", "text": note]
+                        ])
+                    }
                     if let current = openBlock {
                         send("content_block_stop", ["type": "content_block_stop", "index": current.index])
                         openBlock = nil
@@ -357,7 +374,7 @@ struct AnthropicController: Sendable {
                     send("content_block_delta", [
                         "type": "content_block_delta",
                         "index": nextIndex,
-                        "delta": ["type": "input_json_delta", "partial_json": call.arguments]
+                        "delta": ["type": "input_json_delta", "partial_json": Self.nonObjectNote(call) == nil ? call.arguments : "{}"]
                     ])
                     send("content_block_stop", ["type": "content_block_stop", "index": nextIndex])
                     nextIndex += 1
@@ -446,7 +463,8 @@ struct AnthropicController: Sendable {
         calledTools ? "tool_use" : (finish == .length ? "max_tokens" : "end_turn")
     }
 
-    static func responseContent(text: String, toolCalls: [ToolCallOutput]) -> [ContentBlock] {
+    static func responseContent(text answer: String, toolCalls: [ToolCallOutput]) -> [ContentBlock] {
+        let text = answer + toolCalls.compactMap(nonObjectNote).joined()
         let keepText = toolCalls.isEmpty || !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         return (keepText ? [ContentBlock(text: text)] : []) + toolCalls.map { ContentBlock(toolUse: $0) }
     }
