@@ -340,6 +340,24 @@ public actor MLXInferenceEngine: InferenceEngine {
 
     // MARK: — Tools
 
+    static func chat(_ messages: [ChatMessageInput], lastText: String) -> [Chat.Message] {
+        messages.enumerated().map { index, message in
+            let text = index == messages.count - 1 ? lastText : message.text
+            switch message.role {
+            case .system:    return .system(text)
+            case .user:      return .user(text)
+            case .assistant: return .assistant(text, toolCalls: message.toolCalls?.map(toolCall))
+            case .tool:      return .tool(text, id: message.toolCallId, name: message.toolName)
+            }
+        }
+    }
+
+    static func toolCall(_ call: ToolCallOutput) -> ToolCall {
+        let arguments = (try? JSONDecoder().decode([String: JSONValue].self, from: Data(call.arguments.utf8)))
+            ?? ["input": .string(call.arguments)]
+        return ToolCall(function: .init(name: call.name, arguments: arguments), id: call.id.isEmpty ? nil : call.id)
+    }
+
     /// OpenAI-style function specs for the chat template's tool section.
     static func toolSpecs(_ tools: [ToolDefinition]?) -> [ToolSpec]? {
         guard let tools, !tools.isEmpty else { return nil }
@@ -430,19 +448,24 @@ public actor MLXInferenceEngine: InferenceEngine {
         let declaredTools = Set(request.tools?.map(\.name) ?? [])
         let makeInput: @Sendable (String) -> UserInput
         let template: String?
-        if request.prompt.contains("<|turn|>") || request.prompt.contains("<|channel|>") {
+        let turns = request.messages.flatMap { $0.isEmpty ? nil : $0 }
+        let lastText: String
+        if turns == nil, request.prompt.contains("<|turn|>") || request.prompt.contains("<|channel|>") {
             makeInput = { UserInput(prompt: $0) }
             template = "raw"
+            lastText = request.prompt
         } else {
             let context = Self.buildTemplateContext(
                 request: request,
                 defaultReasoningEffort: reasoningEffort,
                 profile: profile
             )
-            makeInput = { UserInput(chat: [.user($0)], tools: toolSpecs, additionalContext: context) }
-            template = HybridPrefixSnapshot.templateKey([toolSpecs ?? [], context])
+            let messages = turns ?? [ChatMessageInput(role: .user, text: request.prompt)]
+            makeInput = { UserInput(chat: Self.chat(messages, lastText: $0), tools: toolSpecs, additionalContext: context) }
+            template = HybridPrefixSnapshot.templateKey([toolSpecs ?? [], context, messages[messages.count - 1].role.rawValue])
+            lastText = messages[messages.count - 1].text
         }
-        let userInput = makeInput(request.prompt)
+        let userInput = makeInput(lastText)
 
         do {
             let rendered = try await container.prepare(input: userInput)

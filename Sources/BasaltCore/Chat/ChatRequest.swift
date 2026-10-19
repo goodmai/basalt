@@ -14,17 +14,32 @@ import Foundation
 // non-zero. Keeping prompt syntax out of the transport layer makes that class
 // of bug unrepresentable.
 
-public struct ChatMessageInput: Sendable, Equatable {
-    public enum Role: String, Sendable {
+public struct ChatMessageInput: Codable, Sendable, Equatable {
+    public enum Role: String, Codable, Sendable {
         case system, user, assistant, tool
     }
 
     public let role: Role
     public let text: String
+    public let toolCalls: [ToolCallOutput]?
+    public let toolCallId: String?
+    public let toolName: String?
 
-    public init(role: Role, text: String) {
+    public init(
+        role: Role, text: String, toolCalls: [ToolCallOutput]? = nil,
+        toolCallId: String? = nil, toolName: String? = nil
+    ) {
         self.role = role
         self.text = text
+        self.toolCalls = toolCalls
+        self.toolCallId = toolCallId
+        self.toolName = toolName
+    }
+
+    public static func plainText(_ messages: [ChatMessageInput]) -> String {
+        messages.flatMap { [$0.text] + ($0.toolCalls ?? []).map(\.arguments) }
+            .filter { !$0.isEmpty }
+            .joined(separator: "\n\n")
     }
 }
 
