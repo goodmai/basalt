@@ -7,6 +7,9 @@ import CryptoKit
 /// when an API key is configured on the server.
 public struct APIKeyAuthenticator<Context: RequestContext>: RouterMiddleware {
     public let apiKey: String
+
+    /// Health check and API documentation stay reachable without a key and outside the rate limit.
+    static var publicPaths: Set<String> { ["/api/v1/health", "/swagger", "/api/v1/openapi.json", "/"] }
     private let apiKeyDigest: SHA256.Digest
 
     public init(apiKey: String) {
@@ -26,10 +29,7 @@ public struct APIKeyAuthenticator<Context: RequestContext>: RouterMiddleware {
         context: Context,
         next: (Request, Context) async throws -> Response
     ) async throws -> Response {
-        let path = request.uri.path
-
-        // Health check and API documentation endpoints remain publicly accessible.
-        if path == "/api/v1/health" || path == "/swagger" || path == "/api/v1/openapi.json" || path == "/" {
+        if Self.publicPaths.contains(request.uri.path) {
             return try await next(request, context)
         }
 

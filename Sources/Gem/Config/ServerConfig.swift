@@ -29,6 +29,11 @@ public struct ServerConfig: Sendable {
     public let maxTokens:   Int
     public let logLevel:    LogLevel
     public let apiKey:      String?
+    /// Server-wide request budget; nil means no rate limit.
+    public let rateLimitPerMinute: Int?
+
+    /// Applied off loopback when no `--rate-limit` is given.
+    public static let defaultRateLimitPerMinute = 120
 
     public enum LogLevel: String, Sendable, ExpressibleByArgument {
         case debug, info, warn, error
@@ -76,7 +81,8 @@ public struct ServerConfig: Sendable {
         maxTokens: Int       = 65536,
         logLevel:  LogLevel  = .info,
         apiKey:    String?   = nil,
-        autoGenerateKeyIfMissing: Bool = false
+        autoGenerateKeyIfMissing: Bool = false,
+        rateLimitPerMinute: Int? = nil
     ) throws {
         self.modelPath = modelPath
         self.modelId   = modelId
@@ -88,6 +94,13 @@ public struct ServerConfig: Sendable {
         self.apiKey = try Self.resolveApiKey(
             host: host, apiKey: apiKey, autoGenerateKeyIfMissing: autoGenerateKeyIfMissing
         ).key
+        self.rateLimitPerMinute = Self.resolveRateLimit(host: host, requested: rateLimitPerMinute)
+    }
+
+    /// Off loopback a rate limit is on by default; an explicit 0 turns it off anywhere.
+    public static func resolveRateLimit(host: String, requested: Int?) -> Int? {
+        let limit = requested ?? (isLoopback(host: host) ? nil : defaultRateLimitPerMinute)
+        return limit.flatMap { $0 > 0 ? $0 : nil }
     }
 
     /// The one place the exposure rule lives: a non-loopback bind needs a non-empty key,

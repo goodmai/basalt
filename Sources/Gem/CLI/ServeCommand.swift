@@ -72,6 +72,12 @@ struct ServeCommand: AsyncParsableCommand {
     var autoGenerateKey: Bool = false
 
     @Option(
+        name: .customLong("rate-limit"),
+        help: "Server-wide request limit per minute, 429 beyond it (default: off on loopback, \(ServerConfig.defaultRateLimitPerMinute) otherwise; 0 disables)"
+    )
+    var rateLimit: Int?
+
+    @Option(
         name: .customLong("config"),
         help: "Path to JSON server configuration file (default: ~/.gem/config.json when it exists)"
     )
@@ -133,6 +139,9 @@ struct ServeCommand: AsyncParsableCommand {
             return
         }
 
+        if let rateLimit, rateLimit < 0 {
+            throw ValidationError("--rate-limit must be 0 (off) or a positive number of requests per minute, got \(rateLimit)")
+        }
         let network = try Self.resolveNetwork(
             cliPort: port, cliHost: host,
             cliApiKey: apiKey ?? ProcessInfo.processInfo.environment["BASALT_API_KEY"],
@@ -163,7 +172,8 @@ struct ServeCommand: AsyncParsableCommand {
             host:      network.host,
             maxTokens: maxTokens,
             logLevel:  logLevel,
-            apiKey:    access.key
+            apiKey:    access.key,
+            rateLimitPerMinute: rateLimit
         )
 
         // Apply log level from config
