@@ -25,6 +25,25 @@ struct RoleTaggedInputProcessor: UserInputProcessor {
     }
 }
 
+struct StrictAlternationError: Error {}
+
+struct StrictAlternationInputProcessor: UserInputProcessor {
+    var refusesEverything = false
+
+    func prepare(input: UserInput) throws -> LMInput {
+        let messages = DefaultMessageGenerator().generate(from: input)
+        let roles = messages.compactMap { $0["role"] as? String }
+        let dialogue = roles.drop { $0 == "system" }
+        let alternates = dialogue.enumerated().allSatisfy { $1 == ($0 % 2 == 0 ? "user" : "assistant") }
+        let hasToolCalls = messages.contains { $0["tool_calls"] != nil }
+        guard !refusesEverything, alternates, !dialogue.isEmpty, !dialogue.contains("system"), !hasToolCalls else {
+            throw StrictAlternationError()
+        }
+        let text = RoleTaggedInputProcessor.render(messages)
+        return LMInput(tokens: MLXArray(ByteTokenizer().encode(text: text, addSpecialTokens: false).map(Int32.init)))
+    }
+}
+
 @Suite("Structured chat turns through the native chat template (#86)", .serialized)
 struct ChatTurnsTemplateTests {
     static let firstTurn = [
@@ -47,12 +66,12 @@ struct ChatTurnsTemplateTests {
         RoleTaggedInputProcessor.render(DefaultMessageGenerator().generate(messages: MLXInferenceEngine.chat(messages, lastText: messages.last!.text))).unicodeScalars.count
     }
 
-    static func engine(_ model: any LanguageModel) async -> MLXInferenceEngine {
+    static func engine(_ model: any LanguageModel, processor: any UserInputProcessor = RoleTaggedInputProcessor()) async -> MLXInferenceEngine {
         let engine = MLXInferenceEngine(promptCacheBytes: 1 << 30)
         await engine.attach(ModelContainer(context: ModelContext(
             configuration: ModelConfiguration(id: "tiny-role-tagged"),
             model: model,
-            processor: RoleTaggedInputProcessor(),
+            processor: processor,
             tokenizer: ByteTokenizer())))
         return engine
     }
@@ -112,5 +131,79 @@ struct ChatTurnsTemplateTests {
         let turn3 = try await engine.generate(request: Self.request(third, key: "ns"))
         #expect(turn3.cachedPromptTokens == turn2.promptTokens - RoleTaggedInputProcessor.afterLastContent.count)
         #expect(pinCount(await engine.promptCaches) == 0)
+    }
+
+    static let agentLoop = [
+        ChatMessageInput(role: .system, text: "instructions"),
+        ChatMessageInput(role: .system, text: "developer note"),
+        ChatMessageInput(role: .user, text: "list the files"),
+        ChatMessageInput(role: .assistant, text: "", toolCalls: [ToolCallOutput(id: "call_1", name: "Bash", arguments: #"{"command":"ls"}"#)]),
+        ChatMessageInput(role: .tool, text: "README.md", toolCallId: "call_1", toolName: "Bash"),
+        ChatMessageInput(role: .system, text: "be brief"),
+    ]
+
+    @Test("A template that demands alternation, a leading system and no tool role still answers, through the alternating turns")
+    func strictTemplateFallsBackToAlternatingTurns() async throws {
+        let engine = await Self.engine(try TinyModel.make(), processor: StrictAlternationInputProcessor())
+        let response = try await engine.generate(request: Self.request(Self.agentLoop, key: "ns"))
+        #expect(!response.generatedText.isEmpty)
+        #expect(response.promptTokens == Self.tokenCount(ChatMessageInput.alternating(Self.agentLoop)))
+    }
+
+    @Test("A template that rejects even the alternating turns is a 400, not a hardware failure")
+    func templateRejectingAlternatingTurnsIsBadRequest() async throws {
+        let engine = await Self.engine(try TinyModel.make(), processor: StrictAlternationInputProcessor(refusesEverything: true))
+        do {
+            _ = try await engine.generate(request: Self.request(Self.agentLoop, key: "ns"))
+            Issue.record("expected the request to be refused")
+        } catch {
+            #expect(error.httpStatus == 400)
+        }
+    }
+}
+
+@Suite("Alternating chat turns for strict templates (#86)")
+struct AlternatingChatTurnsTests {
+    typealias M = ChatMessageInput
+
+    @Test("Every system message merges into one leading system turn")
+    func systemsMergeToFront() {
+        let turns = M.alternating([M(role: .system, text: "a"), M(role: .user, text: "u"), M(role: .system, text: "b")])
+        #expect(turns == [M(role: .system, text: "a\n\nb"), M(role: .user, text: "u")])
+    }
+
+    @Test("A tool turn becomes user text naming the tool")
+    func toolBecomesUserText() {
+        let turns = M.alternating([
+            M(role: .user, text: "u"), M(role: .assistant, text: "a"),
+            M(role: .tool, text: "README.md", toolCallId: "call_1", toolName: "Bash"),
+        ])
+        #expect(turns.last == M(role: .user, text: "Tool result (Bash): README.md"))
+    }
+
+    @Test("Assistant tool calls become name(arguments) text on the assistant turn")
+    func toolCallsBecomeText() {
+        let turns = M.alternating([
+            M(role: .user, text: "u"),
+            M(role: .assistant, text: "checking", toolCalls: [ToolCallOutput(id: "c", name: "Bash", arguments: #"{"command":"ls"}"#)]),
+        ])
+        #expect(turns.last == M(role: .assistant, text: "checking\nBash({\"command\":\"ls\"})"))
+    }
+
+    @Test("Adjacent turns of one role merge with a blank line")
+    func adjacentSameRoleMerge() {
+        let turns = M.alternating([
+            M(role: .user, text: "u"),
+            M(role: .assistant, text: "", toolCalls: [ToolCallOutput(id: "c", name: "Bash", arguments: "{}")]),
+            M(role: .tool, text: "x", toolName: "Bash"), M(role: .user, text: "next"),
+        ])
+        #expect(turns.map(\.role) == [.user, .assistant, .user])
+        #expect(turns.last?.text == "Tool result (Bash): x\n\nnext")
+    }
+
+    @Test("Without any user turn the whole conversation goes as one user message")
+    func noUserTurnIsOneUserMessage() {
+        let messages = [M(role: .system, text: "only instructions")]
+        #expect(M.alternating(messages) == [M(role: .user, text: "only instructions")])
     }
 }

@@ -352,6 +352,17 @@ public actor MLXInferenceEngine: InferenceEngine {
         }
     }
 
+    static func chatInput(
+        _ messages: [ChatMessageInput], alternating: Bool, tools: [ToolSpec]?, context: [String: any Sendable]?
+    ) -> (@Sendable (String) -> UserInput, String?, String) {
+        let last = messages[messages.count - 1]
+        return (
+            { UserInput(chat: Self.chat(messages, lastText: $0), tools: tools, additionalContext: context) },
+            HybridPrefixSnapshot.templateKey([tools ?? [], context ?? [:], last.role.rawValue, last.toolCalls != nil, alternating]),
+            last.text
+        )
+    }
+
     static func toolCall(_ call: ToolCallOutput) -> ToolCall {
         let arguments = (try? JSONDecoder().decode([String: JSONValue].self, from: Data(call.arguments.utf8)))
             ?? ["input": .string(call.arguments)]
@@ -446,29 +457,40 @@ public actor MLXInferenceEngine: InferenceEngine {
 
         let toolSpecs = Self.toolSpecs(request.tools)
         let declaredTools = Set(request.tools?.map(\.name) ?? [])
-        let makeInput: @Sendable (String) -> UserInput
-        let template: String?
+        var makeInput: @Sendable (String) -> UserInput
+        var template: String?
         let turns = request.messages.flatMap { $0.isEmpty ? nil : $0 }
-        let lastText: String
+        var lastText: String
+        let context = Self.buildTemplateContext(
+            request: request,
+            defaultReasoningEffort: reasoningEffort,
+            profile: profile
+        )
         if turns == nil, request.prompt.contains("<|turn|>") || request.prompt.contains("<|channel|>") {
             makeInput = { UserInput(prompt: $0) }
             template = "raw"
             lastText = request.prompt
         } else {
-            let context = Self.buildTemplateContext(
-                request: request,
-                defaultReasoningEffort: reasoningEffort,
-                profile: profile
-            )
-            let messages = turns ?? [ChatMessageInput(role: .user, text: request.prompt)]
-            makeInput = { UserInput(chat: Self.chat(messages, lastText: $0), tools: toolSpecs, additionalContext: context) }
-            template = HybridPrefixSnapshot.templateKey([toolSpecs ?? [], context, messages[messages.count - 1].role.rawValue])
-            lastText = messages[messages.count - 1].text
+            (makeInput, template, lastText) = Self.chatInput(
+                turns ?? [ChatMessageInput(role: .user, text: request.prompt)],
+                alternating: false, tools: toolSpecs, context: context)
         }
-        let userInput = makeInput(lastText)
 
         do {
-            let rendered = try await container.prepare(input: userInput)
+            let rendered: LMInput
+            do {
+                rendered = try await container.prepare(input: makeInput(lastText))
+            } catch {
+                guard let turns else { throw error }
+                logger.debug("Chat template refused native turns, retrying with alternating turns: \(error)")
+                (makeInput, template, lastText) = Self.chatInput(
+                    ChatMessageInput.alternating(turns), alternating: true, tools: toolSpecs, context: context)
+                do {
+                    rendered = try await container.prepare(input: makeInput(lastText))
+                } catch {
+                    throw BasaltError.invalidRequestStructure(details: "Chat template rejected the conversation: \(error)")
+                }
+            }
             logger.trace("Input prepared. Starting MLX generation...")
             let renderedCount = rendered.text.tokens.dim(-1)
             let carriesMoreThanTokens = rendered.image != nil || rendered.video != nil
