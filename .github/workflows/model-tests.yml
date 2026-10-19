@@ -51,7 +51,7 @@ jobs:
         
       - name: Download test model (Qwen3.5 4B)
         run: |
-          swift run GemmaServer models download mlx-community/Qwen3.5-4B-4bit
+          swift run Basalt models download mlx-community/Qwen3.5-4B-4bit
           
       - name: Run Performance Benchmark
         run: |

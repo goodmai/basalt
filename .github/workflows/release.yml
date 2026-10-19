@@ -41,9 +41,9 @@ jobs:
       - name: Tag matches the version in the source
         run: |
           TAG=${GITHUB_REF#refs/tags/v}
-          SRC=$(grep -oE 'static let version = "[^"]+"' Sources/Gem/Core/DTOs.swift | grep -oE '"[^"]+"' | tr -d '"')
+          SRC=$(grep -oE 'static let version = "[^"]+"' Sources/BasaltCore/DTOs.swift | grep -oE '"[^"]+"' | tr -d '"')
           if [ "$TAG" != "$SRC" ]; then
-            echo "::error::tag v$TAG does not match HealthResponse.version ($SRC) in Sources/Gem/Core/DTOs.swift"
+            echo "::error::tag v$TAG does not match HealthResponse.version ($SRC) in Sources/BasaltCore/DTOs.swift"
             exit 1
           fi
           echo "v$TAG matches the source"

@@ -15,7 +15,7 @@
 
 ## 3) Ключевые паттерны
 ### 3.1 Actor-based orchestrator (Single Source of Truth)
-**Где:** `Sources/Gem/Core/ModelOrchestratorActor.swift`
+**Где:** `Sources/BasaltCore/ModelOrchestratorActor.swift`
 **Суть:** единая actor-точка входа для генерации, сериализация запросов (FIFO), защита от race conditions.
 **Зачем:** безопасная конкурентность при одновременных вызовах из MCP и REST.
 
@@ -25,63 +25,58 @@
 **Зачем:** упрощает тестирование и замену движка инференса.
 
 ### 3.3 Dual-transport facade
-**Где:** `Sources/Gem/REST/*`, `Sources/Gem/MCP/*`, `Sources/Gem/CLI/ServeCommand.swift`
+**Где:** `Sources/BasaltServer/REST/*`, `Sources/BasaltServer/MCP/*`, `Sources/BasaltCLI/ServeCommand.swift`
 **Суть:** два внешних интерфейса поверх одного ядра доменной логики.
 **Зачем:** единое поведение модели при разных способах доступа.
 
 ### 3.4 Middleware pipeline (REST)
-**Где:** `Sources/Gem/REST/RESTServer.swift`, `Sources/Gem/REST/Middleware/*`
+**Где:** `Sources/BasaltServer/REST/RESTServer.swift`, `Sources/BasaltServer/REST/Middleware/*`
 **Суть:** composable цепочка middleware (логирование, JWT, rate limit).
 **Зачем:** отделение кросс-срезовых concerns от контроллеров.
 
 ### 3.5 Command pattern (CLI)
-**Где:** `Sources/Gem/CLI/*Command.swift`
+**Где:** `Sources/BasaltCLI/*Command.swift`
 **Суть:** каждая CLI-команда инкапсулирует сценарий запуска/управления.
 **Зачем:** расширяемый CLI с независимыми subcommands.
 
-## 4) Карта модулей и назначение
-### 4.1 `Sources/Gem/App`
-- Точка входа приложения.
-- Инициализация верхнего уровня.
+## 4) Карта модулей (SwiftPM-таргеты)
+### 4.1 `BasaltCore` — `Sources/BasaltCore`
+- DTO, `BasaltError`, `ServerConfig` (`Config/`), `ModelProfile` (`Chat/`), логгер, телеметрия.
+- Профилирование и оценка: `SystemProfiler`, `MemoryEvaluator`, `TokenBudgetCalculator`, `FitScorer`, `ModelFitAnalyzer`.
+- `ModelOrchestratorActor` и порт `InferenceEngine`; HF-кэш и клиент хаба (`HuggingFaceHub.swift`).
 
-### 4.2 `Sources/Gem/CLI`
-- Парсинг аргументов и запуск сценариев (`serve`, `chat`, `models`, `agents`, onboarding).
-- Разрешение пути модели, конфигурирование режима работы.
+### 4.2 `BasaltInference` — `Sources/BasaltInference`
+- `MLXInferenceEngine` (адаптер порта `InferenceEngine`), `ContextDegradationProfiler`, `RepetitionGuard`.
 
-### 4.3 `Sources/Gem/Config`
-- Типобезопасная конфигурация сервера (порт, host, токены, секреты и пр.).
+### 4.3 `BasaltCloud` — `Sources/BasaltCloud`
+- `CloudAPIClient`, `OpenRouterClient`, `ModelRouter`, `CostTracker`.
 
-### 4.4 `Sources/Gem/Core`
-- Основная доменная логика.
-- Оркестрация инференса, валидация запросов, budgeting, профилирование/анализ.
+### 4.4 `BasaltServer` — `Sources/BasaltServer`
+- `REST/`: HTTP API на Hummingbird, контроллеры, middleware (API key, rate limit).
+- `MCP/`: MCP сервер по stdio (JSON-RPC), tools поверх оркестратора.
 
-### 4.5 `Sources/Gem/REST`
-- HTTP API, контроллеры, middleware, маршрутизация.
-- Адаптация HTTP-запросов в вызовы оркестратора.
+### 4.5 `BasaltUI` — `Sources/BasaltUI`
+- Терминальный UI (Markdown, спиннер, прогресс-бар, diff, таблицы) и SwiftUI-клиент REST (`SwiftUI/`).
 
-### 4.6 `Sources/Gem/MCP`
-- MCP сервер по stdio (JSON-RPC).
-- Экспонирование tools (`gemma_generate`, `gemma_status`) поверх оркестратора.
+### 4.6 `BasaltCLI` — `Sources/BasaltCLI`
+- Подкоманды (`serve`, `chat`, `models`, `fit`, `cloud`, `onboard`) и корневая команда (`App/`).
 
-### 4.7 `Sources/GemBin`
-- Бинарный entrypoint (thin launcher / packaging layer).
+### 4.7 `Basalt` (исполняемый) — `Sources/BasaltBin`
+- Тонкий entrypoint; Homebrew ставит его как `basalt`.
 
-### 4.8 `Sources/PerformanceBenchmark`
+### 4.8 `PerformanceBenchmark` — `Sources/PerformanceBenchmark`
 - Отдельный инструмент нагрузочного/перформанс-тестирования.
 
-### 4.9 `Sources/mlx`
-- Вспомогательный модуль/entry для интеграции с MLX-кодом.
-
 ## 5) Матрица зависимостей (правила)
-Рекомендуемое направление зависимостей:
-- `App/CLI` → `Config` → `Core`
-- `REST` → `Core`
-- `MCP` → `Core`
-- `PerformanceBenchmark` → `Core` (и/или адаптеры)
+Граф таргетов (ацикличный, задан в `Package.swift`):
+- `BasaltInference`, `BasaltCloud`, `BasaltServer`, `BasaltUI` → `BasaltCore`
+- `BasaltCLI` → все библиотеки выше; `Basalt` → `BasaltCLI`
+- `PerformanceBenchmark` → `BasaltCore`, `BasaltInference`
 
 Ограничения:
-- `Core` не должен зависеть от транспортного слоя (`REST`, `MCP`).
-- `REST` и `MCP` не должны зависеть друг от друга.
+- `BasaltCore` и `BasaltInference` не импортируют SwiftUI/AppKit (проверяет `ModuleBoundaryTests`).
+- `BasaltServer` не зависит от `BasaltInference`, `BasaltCloud` и `BasaltUI`; движок приходит через порт `InferenceEngine`.
+- Межмодульные символы открываются уровнем `package`, а не `public`.
 - Кросс-срезовые политики (auth, rate limit, logging) — через middleware/обёртки, а не в доменной логике.
 
 ## 6) Поток обработки запроса
