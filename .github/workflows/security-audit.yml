@@ -83,8 +83,8 @@ jobs:
     name: CodeQL Security Analysis
     # Manual only. CodeQL ships its own Swift toolchain — 6.1.0 in action 2.26.4
     # — and mlx-swift's manifest declares tools 6.3.0, so the extractor's build
-    # step cannot resolve the package at all. It is not the runner: the release
-    # workflow builds the same commit on the same image. Re-enable on push once
+    # step cannot resolve the package at all. (The release job builds on macos-26 with
+    # Xcode 26.4+, Swift 6.3; this one would need the same plus a newer extractor.) Re-enable on push once
     # the extractor catches up; until then a job that is red on every commit
     # only teaches people to ignore the red.
     if: github.event_name == 'workflow_dispatch'

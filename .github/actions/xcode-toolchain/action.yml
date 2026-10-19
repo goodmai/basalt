@@ -7,7 +7,8 @@ runs:
   steps:
     - shell: bash
       run: |
-        LATEST_XCODE=$(ls -d /Applications/Xcode*.app 2>/dev/null | sort -V | tail -n 1)
+        # Released Xcodes only: on hosted images `Xcode_26.5_beta` sorts above 26.4.1.
+        LATEST_XCODE=$(ls -d /Applications/Xcode*.app 2>/dev/null | grep -viE 'beta|_rc|release.candidate' | sort -V | tail -n 1)
         if [ -n "$LATEST_XCODE" ] && [ -d "$LATEST_XCODE/Contents/Developer" ]; then
           echo "DEVELOPER_DIR=$LATEST_XCODE/Contents/Developer" >> $GITHUB_ENV
           export DEVELOPER_DIR="$LATEST_XCODE/Contents/Developer"
