@@ -6,6 +6,7 @@ public enum BasaltError: Error, Sendable, LocalizedError {
     // MARK: — IO / Model loading
     case modelNotFound(identifier: String)
     case weightsCorrupted(path: String, reason: String)
+    case modelConfigurationInvalid(path: String, reason: String)
 
     // MARK: — Memory / Hardware
     case outOfMemory(requestedMB: Int, availableMB: Int)
@@ -33,6 +34,8 @@ public enum BasaltError: Error, Sendable, LocalizedError {
             return "Model '\(id)' not found in storage."
         case .weightsCorrupted(let path, let reason):
             return "Weights at '\(path)' are corrupted: \(reason)"
+        case .modelConfigurationInvalid(let path, let reason):
+            return "The model configuration at '\(path)' cannot be used: \(reason)"
         case .outOfMemory(let req, let avail):
             return "OOM: requested \(req) MB, available \(avail) MB."
         case .inferenceHardwareFailure(let reason):
@@ -61,6 +64,7 @@ public enum BasaltError: Error, Sendable, LocalizedError {
         switch self {
         case .modelNotFound:            return 404
         case .weightsCorrupted:         return 500
+        case .modelConfigurationInvalid: return 422
         case .outOfMemory:              return 507  // Insufficient Storage
         case .inferenceHardwareFailure: return 503
         case .invalidRequestStructure:  return 400

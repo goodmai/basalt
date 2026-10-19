@@ -241,6 +241,10 @@ struct ServeCommand: AsyncParsableCommand {
             await orchestrator.setModelId(model ?? modelPath ?? Self.defaultModel)
             log("Model ready.")
         } catch {
+            if case .modelConfigurationInvalid = error {
+                log("\(red("[error]")) \(error.localizedDescription)")
+                throw ExitCode.failure
+            }
             log("\(yellow("[warn]")) \(error.localizedDescription) — running in stub mode.")
         }
 

@@ -198,4 +198,22 @@ struct NemotronHTests {
         #expect(Self.scan([malformed]).text == malformed)
         #expect(Self.scan([malformed]).calls.isEmpty)
     }
+
+    @Test("a config.json that does not decode fails the load with the decoding error, not as corrupted weights")
+    func undecodableConfigFailsTheLoad() async throws {
+        let withoutHiddenSize = Self.denseNano4BConfig.replacingOccurrences(of: #""hidden_size": 3136,"#, with: "")
+        let dir = try Self.modelDirectory(config: withoutHiddenSize)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        do {
+            try await MLXInferenceEngine().load(modelPath: dir.path)
+            Issue.record("load succeeded")
+        } catch {
+            guard case .modelConfigurationInvalid(_, let reason) = error else {
+                Issue.record("unexpected \(error)")
+                return
+            }
+            #expect(reason.contains("hidden_size"))
+            #expect(error.httpStatus == 422)
+        }
+    }
 }
