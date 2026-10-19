@@ -422,17 +422,21 @@ public actor MLXInferenceEngine: InferenceEngine {
     }
 
     static func endsInsideThinking(_ rendered: String, assistantPrefix: String = "") -> Bool {
-        func last(_ markers: [String], at bound: KeyPath<Range<String.Index>, String.Index>) -> String.Index? {
-            markers.compactMap { assistantPrefix.range(of: $0, options: .backwards)?[keyPath: bound] }.max()
-        }
-        switch (last(thinkingOpeners, at: \.upperBound), last(thinkingClosers, at: \.lowerBound)) {
-        case let (opened?, closed?): return opened > closed
-        case (.some, nil): return true
-        case (nil, .some): return false
-        case (nil, nil):
-            var tail = Substring(rendered)
-            while tail.last?.isWhitespace == true { tail.removeLast() }
-            return thinkingOpeners.contains { tail.hasSuffix($0) }
+        var tail = Substring(rendered)
+        while tail.last?.isWhitespace == true { tail.removeLast() }
+        var inside = thinkingOpeners.contains { tail.hasSuffix($0) }
+        var rest = Substring(assistantPrefix)
+        while true {
+            if inside {
+                guard let closer = firstMarker(thinkingClosers, in: rest) else { return true }
+                rest = rest[closer.upperBound...]
+                inside = false
+            } else {
+                let start = rest.drop(while: \.isWhitespace)
+                guard let opener = thinkingOpeners.first(where: { start.hasPrefix($0) }) else { return false }
+                rest = start.dropFirst(opener.count)
+                inside = true
+            }
         }
     }
 

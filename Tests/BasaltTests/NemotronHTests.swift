@@ -339,6 +339,8 @@ struct NemotronHTests {
             ("<|im_start|>assistant\n<think>\n", "Let me"),
             ("<|im_start|>assistant\n<think>\n", longPrefix),
             ("<|im_start|>assistant\n", "<think>\nfirst</think>\n<think>\nagain"),
+            ("<|im_start|>assistant\n", "  [THINK]Let me"),
+            ("<|turn>model\n", "<|channel>thought\nLet me"),
         ]
         let closed: [(rendered: String, prefix: String)] = [
             ("<SPECIAL_11>Assistant\n<think></think>", ""),
@@ -350,6 +352,8 @@ struct NemotronHTests {
             ("<|turn>user\nwhat does <|channel>thought mean<turn|>\n<|turn>model\n", ""),
             ("<|turn>model\n<|channel>thought\nshort<channel|>", ""),
             ("<|im_start|>assistant\n<think>\n", "done</think>\nThe answer"),
+            ("<|im_start|>assistant\n", "The tag <think> opens a span"),
+            ("<|im_start|>assistant\n", "[THINK]plan[/THINK]The answer"),
         ]
         #expect(opened.filter { !MLXInferenceEngine.endsInsideThinking($0.rendered, assistantPrefix: $0.prefix) }.map(\.rendered) == [])
         #expect(closed.filter { MLXInferenceEngine.endsInsideThinking($0.rendered, assistantPrefix: $0.prefix) }.map(\.rendered) == [])
