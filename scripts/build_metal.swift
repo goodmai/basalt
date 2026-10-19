@@ -98,6 +98,9 @@ if metalFiles.isEmpty {
     exit(1)
 }
 
+// Fresh every run: a stale .air from an earlier SDK or mlx revision (kept when its kernel is now
+// skipped by --skip-unsupported, or left by a failed run) must not be linked into the library.
+try? fm.removeItem(atPath: tempDir)
 try? fm.createDirectory(atPath: tempDir, withIntermediateDirectories: true)
 try? fm.createDirectory(atPath: outputDir, withIntermediateDirectories: true)
 
@@ -165,8 +168,8 @@ if airFiles.isEmpty {
 
 var metallibArgs = ["-sdk", "macosx", "metallib"]
 metallibArgs.append(contentsOf: airFiles)
-// Linked into the temp dir and renamed into place: an interrupted run (a cancelled CI job)
-// must never leave a truncated metallib with a fresh mtime that the check above trusts.
+// Linked into the temp dir and moved into place at the end: an interrupted run (a cancelled CI
+// job) must never leave a truncated metallib with a fresh mtime that the check above trusts.
 let stagedLib = "\(tempDir)/default.metallib"
 metallibArgs.append(contentsOf: ["-o", stagedLib])
 
@@ -184,24 +187,30 @@ func atomicCopy(_ src: String, to dst: String) {
     try? fm.removeItem(atPath: staging)
     guard (try? fm.copyItem(atPath: src, toPath: staging)) != nil, rename(staging, dst) == 0 else {
         try? fm.removeItem(atPath: staging)
-        log("Could not place \(dst)", level: .error)
+        log("Could not place \(dst): \(String(cString: strerror(errno)))", level: .error)
         exit(1)
     }
 }
-
-atomicCopy(stagedLib, to: metalLibPath)
 
 // Two placements, because MLX has two ways of finding this file. The copy at
 // the repo root is the last resort in its search order and only works when the
 // process CWD happens to be the repo. The `mlx.metallib` copies sit next to the
 // built binaries, which is the FIRST thing MLX looks for and the only one that
 // survives `brew install` or running the binary from anywhere else.
-atomicCopy(metalLibPath, to: "default.metallib")
+// The copies go first and metalLibPath — whose mtime is the up-to-date marker — last: a run
+// cancelled in between leaves the marker stale, so the next run redoes every placement.
+atomicCopy(stagedLib, to: "default.metallib")
 
 for buildDir in [".build/debug", ".build/release"] where fm.fileExists(atPath: buildDir) {
     let colocated = "\(buildDir)/mlx.metallib"
-    atomicCopy(metalLibPath, to: colocated)
+    atomicCopy(stagedLib, to: colocated)
     log("Placed \(colocated)", level: .debug)
+}
+
+// Same filesystem as stagedLib, so a plain rename(2).
+guard rename(stagedLib, metalLibPath) == 0 else {
+    log("Could not place \(metalLibPath): \(String(cString: strerror(errno)))", level: .error)
+    exit(1)
 }
 
 log("Successfully built \(outputDir)/default.metallib, copied to root and next to the binaries", level: .info)
