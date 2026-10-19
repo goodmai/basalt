@@ -54,9 +54,15 @@ enum Files {
 }
 
 enum TinyLlama {
-    static func make() throws -> LlamaModel {
+    static let traditional = "\"rope_traditional\": true, "
+    static let llama3 = """
+        "rope_scaling": {"rope_type": "llama3", "factor": 8.0, "low_freq_factor": 1.0, "high_freq_factor": 4.0,
+         "original_max_position_embeddings": 64}, "max_position_embeddings": 512,
+        """
+
+    static func make(_ extra: String = "") throws -> LlamaModel {
         MLXRandom.seed(36)
-        let config = TinyModel.config.replacingOccurrences(of: "\"num_hidden_layers\": 2", with: "\"num_hidden_layers\": 4")
+        let config = TinyModel.config.replacingOccurrences(of: "\"num_hidden_layers\": 2", with: "\(extra)\"num_hidden_layers\": 4")
         let model = LlamaModel(try JSONDecoder().decode(LlamaConfiguration.self, from: Data(config.utf8)))
         eval(model)
         return model
@@ -82,7 +88,7 @@ func blendedLogits(
     }
     let outcome = try #require(store.extend(
         cache, prompt: prompt, from: prefix, namespace: "ns",
-        model: model, tokenizer: tokenizer))
+        model: model, tokenizer: tokenizer, prefillStep: 5))
     let logits = model(MLXArray([Int32(prompt.last!)]).reshaped(1, 1), cache: outcome.cache.layers)
     return (logits[0, -1].asType(.float32), outcome)
 }
@@ -136,19 +142,59 @@ struct CacheBlendTests {
         #expect(CacheBlendModel(qwen2) == nil)
     }
 
-    @Test("With ratio 1 the reordered files blend to the logits of a full prefill, RoPE at the new positions included")
+    @Test("Ratio 1 takes the native prefill; the blend forward recomputing every token equals a full prefill, in blocks and after a lease")
     func fullRatioMatchesFullPrefill() throws {
         for model in try blendModels() {
             let store = try primed(model, ratio: 1)
-            let (logits, outcome) = try blendedLogits(model, store: store, Files.reordered)
-            #expect(outcome.reused == Files.reusable)
-            #expect(outcome.recomputed == outcome.reused)
-            #expect(outcome.exactPrefix == Files.reordered.count - 1)
             let expected = try fullLogits(model, Files.reordered)
+            let (logits, outcome) = try blendedLogits(model, store: store, Files.reordered)
+            #expect(outcome.reused == 0)
+            #expect(outcome.exactPrefix == Files.reordered.count - 1)
             #expect(allClose(logits, expected, rtol: 1e-3, atol: 1e-3).item(Bool.self))
-            let (leased, tail) = try blendedLogits(model, store: store, Files.reordered, after: Files.header.count)
-            #expect(tail.reused == Files.reusable)
-            #expect(allClose(leased, expected, rtol: 1e-3, atol: 1e-3).item(Bool.self))
+
+            let blender = try #require(CacheBlendModel(model))
+            let region = Array(Files.reordered.dropLast())
+            for prefix in [0, Files.header.count] {
+                let cache = PromptCache(try model.newCache(parameters: nil))
+                if prefix > 0 {
+                    _ = model(MLXArray(region[..<prefix].map(Int32.init)).reshaped(1, -1), cache: cache.layers)
+                }
+                let stale = CacheBlendSegment(
+                    range: 0 ..< region.count - prefix, cached: Array(repeating: [], count: blender.layers.count))
+                let pass = blender.prefill(
+                    tokens: Array(region[prefix...]), offset: prefix, past: prefix == 0 ? [] : cache.layers.map(\.state),
+                    segments: [stale], ratio: 1, step: 7)
+                #expect(pass.recomputed == region.count - prefix)
+                let blended = model(MLXArray([Int32(Files.reordered.last!)]).reshaped(1, 1), cache: pass.caches)
+                #expect(allClose(blended[0, -1].asType(.float32), expected, rtol: 1e-3, atol: 1e-3).item(Bool.self))
+            }
+        }
+    }
+
+    @Test("Blending pays off only when (1 - ratio) x reused share >= 0.2 and the cache stays within 16384 tokens")
+    func blendsOnlyAboveBreakEven() throws {
+        #expect(CacheBlendStore.blends(reused: 20, count: 100, offset: 0, ratio: 0))
+        #expect(!CacheBlendStore.blends(reused: 19, count: 100, offset: 0, ratio: 0))
+        #expect(CacheBlendStore.blends(reused: 40, count: 100, offset: 0, ratio: 0.5))
+        #expect(!CacheBlendStore.blends(reused: 39, count: 100, offset: 0, ratio: 0.5))
+        #expect(!CacheBlendStore.blends(reused: 100, count: 100, offset: 0, ratio: 1))
+        #expect(CacheBlendStore.blends(reused: 100, count: 100, offset: 16284, ratio: 0.5))
+        #expect(!CacheBlendStore.blends(reused: 100, count: 100, offset: 16285, ratio: 0.5))
+
+        let model = try TinyLlama.make()
+        let store = try primed(model, ratio: 0.5)
+        let mostlyNew = Files.header + Files.files[0] + (5 ... 9).flatMap { Files.chunk($0) } + Files.question
+        let (_, outcome) = try blendedLogits(model, store: store, mostlyNew)
+        #expect(outcome.reused == 0)
+        #expect(outcome.exactPrefix == mostlyNew.count - 1)
+    }
+
+    @Test("Un-rotating natively stored keys is exact for traditional RoPE and llama3 scaling too")
+    func unrotationCoversRopeVariants() throws {
+        for model in [try TinyLlama.make(TinyLlama.traditional), try TinyLlama.make(TinyLlama.llama3)] {
+            let (logits, outcome) = try blendedLogits(model, store: try primed(model, ratio: 0), Files.original)
+            #expect(outcome.reused == Files.reusable)
+            #expect(allClose(logits, try fullLogits(model, Files.original), rtol: 1e-3, atol: 1e-3).item(Bool.self))
         }
     }
 

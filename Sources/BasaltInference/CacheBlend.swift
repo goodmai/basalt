@@ -68,7 +68,7 @@ struct CacheBlendModel {
     }
 
     func prefill(
-        tokens: [Int], offset: Int, past: [[MLXArray]], segments: [CacheBlendSegment], ratio: Float
+        tokens: [Int], offset: Int, past: [[MLXArray]], segments: [CacheBlendSegment], ratio: Float, step: Int = 512
     ) -> CacheBlendPass {
         let count = tokens.count
         let hits = segments.filter { $0.cached != nil }.reduce(0) { $0 + $1.range.count }
@@ -83,7 +83,7 @@ struct CacheBlendModel {
             var keys: MLXArray
             var values: MLXArray
             var queries: MLXArray?
-            if let gather, active.isEmpty {
+            if gather != nil, active.isEmpty {
                 let cached = assemble(segments, layer: index, like: kept[0][0])
                 (keys, values) = (cached[0], cached[1])
             } else {
@@ -125,21 +125,30 @@ struct CacheBlendModel {
                 eval(allKeys, allValues)
                 continue
             }
-            let rotatedQueries: MLXArray
-            let mask: MLXFast.ScaledDotProductAttentionMaskMode
-            if active.count == count {
-                rotatedQueries = layer.rope(queries, offset: offset)
-                mask = .causal
-            } else {
-                let positions = MLXArray(active.map { Int32(offset + $0) })
-                rotatedQueries = layer.rope(queries.transposed(2, 1, 0, 3), offset: positions).transposed(2, 1, 0, 3)
-                mask = .array(positions.expandedDimensions(axis: 1)
-                    .>= MLXArray((0 ..< offset + count).map(Int32.init)).expandedDimensions(axis: 0))
+            let everyToken = active.count == count
+            let positions = MLXArray(active.map { Int32(offset + $0) })
+            let rotatedQueries = everyToken
+                ? layer.rope(queries, offset: offset)
+                : layer.rope(queries.transposed(2, 1, 0, 3), offset: positions).transposed(2, 1, 0, 3)
+            var blocks: [MLXArray] = []
+            for lower in stride(from: 0, to: active.count, by: max(1, step)) {
+                let upper = min(active.count, lower + max(1, step))
+                let visible = offset + active[upper - 1] + 1
+                let mask: MLXFast.ScaledDotProductAttentionMaskMode = everyToken
+                    ? .causal
+                    : .array(positions[lower ..< upper].expandedDimensions(axis: 1)
+                        .>= MLXArray((0 ..< visible).map(Int32.init)).expandedDimensions(axis: 0))
+                let attended = MLXFast.scaledDotProductAttention(
+                    queries: rotatedQueries[0..., 0..., lower ..< upper, 0...],
+                    keys: allKeys[.ellipsis, ..<visible, 0...], values: allValues[.ellipsis, ..<visible, 0...],
+                    scale: scale, mask: mask)
+                var block = hidden[0..., lower ..< upper, 0...]
+                block = block + layer.o(attended.transposed(0, 2, 1, 3).reshaped(1, upper - lower, -1))
+                block = block + layer.mlp(layer.postNorm(block))
+                eval(block)
+                blocks.append(block)
             }
-            let attended = MLXFast.scaledDotProductAttention(
-                queries: rotatedQueries, keys: allKeys, values: allValues, scale: scale, mask: mask)
-            hidden = hidden + layer.o(attended.transposed(0, 2, 1, 3).reshaped(1, active.count, -1))
-            hidden = hidden + layer.mlp(layer.postNorm(hidden))
+            hidden = concatenated(blocks, axis: 1)
             eval(hidden, allKeys, allValues)
         }
         let skipped = Set(0 ..< count).subtracting(active)
@@ -223,7 +232,12 @@ final class CacheBlendStore: @unchecked Sendable {
 
     static let minimumChunk = 16
     static let maximumTokens = 16384
-    static let minimumShare = 0.1
+    static let minimumSaving: Float = 0.2
+
+    static func blends(reused: Int, count: Int, offset: Int, ratio: Float) -> Bool {
+        count > 0 && offset + count <= maximumTokens
+            && (1 - min(max(ratio, 0), 1)) * Float(reused) / Float(count) >= minimumSaving
+    }
 
     static func chunks(_ texts: [String]) -> [Range<Int>] {
         var ranges: [Range<Int>] = []
@@ -275,13 +289,14 @@ final class CacheBlendStore: @unchecked Sendable {
                 return CacheBlendSegment(range: local, cached: entry.layers)
             }
         }
-        let reused = segments.filter { $0.cached != nil }.reduce(0) { $0 + $1.range.count }
+        let hits = segments.filter { $0.cached != nil }.reduce(0) { $0 + $1.range.count }
         let count = end - start
+        let reused: Int
         let caches: [KVCache]
         let recomputed: Int
         let exactPrefix: Int
         let layers: (Range<Int>) -> [[MLXArray]]?
-        if reused == 0 || Double(reused) < Self.minimumShare * Double(count) || count > Self.maximumTokens {
+        if !Self.blends(reused: hits, count: count, offset: start, ratio: ratio ?? self.ratio) {
             var position = start
             while position < end {
                 let step = min(end, position + max(1, prefillStep))
@@ -289,7 +304,7 @@ final class CacheBlendStore: @unchecked Sendable {
                 eval(cache.layers.flatMap { $0.innerState() })
                 position = step
             }
-            (caches, recomputed, exactPrefix) = (cache.layers, 0, end)
+            (caches, reused, recomputed, exactPrefix) = (cache.layers, 0, 0, end)
             let region = blender.rotatesPurely ? blender.unrotated(cache.layers, start ..< end) : nil
             layers = { range in
                 region?.map { layer in layer.map { $0[.ellipsis, (range.lowerBound - start) ..< (range.upperBound - start), 0...] } }
@@ -297,8 +312,9 @@ final class CacheBlendStore: @unchecked Sendable {
         } else {
             let pass = blender.prefill(
                 tokens: Array(prompt[start ..< end]), offset: start,
-                past: start == 0 ? [] : cache.layers.map(\.state), segments: segments, ratio: ratio ?? self.ratio)
-            (caches, recomputed, exactPrefix) = (pass.caches, pass.recomputed, start + pass.exactPrefix)
+                past: start == 0 ? [] : cache.layers.map(\.state), segments: segments, ratio: ratio ?? self.ratio,
+                step: prefillStep)
+            (caches, reused, recomputed, exactPrefix) = (pass.caches, hits, pass.recomputed, start + pass.exactPrefix)
             layers = { range in
                 pass.layers.enumerated().map { index, layer in
                     index == 0 ? [] : layer.map { $0[.ellipsis, (range.lowerBound - start) ..< (range.upperBound - start), 0...] }
