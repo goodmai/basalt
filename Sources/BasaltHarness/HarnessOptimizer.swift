@@ -339,7 +339,7 @@ enum HarnessProposal {
     static func admit(
         _ delta: [String: String], base: HarnessTree, baseReport: HarnessValidationReport,
         siblings: [HarnessTree], spec: HarnessSurfaceSpec, truncated: Set<String> = [],
-        skipped: [HarnessSkippedFile] = []
+        skipped: [HarnessSkippedFile] = [], maxDeltaBytes: Int = maxDeltaBytes
     ) -> Result<Admitted, Rejection> {
         var reasons: [String] = []
         if delta.count > maxFiles { reasons.append("changes \(delta.count) files, more than \(maxFiles)") }
@@ -542,7 +542,8 @@ public struct HarnessOptimizer: Sendable {
         }
         let admission = HarnessProposal.admit(
             delta, base: base, baseReport: baseReport, siblings: state.accepted, spec: spec,
-            truncated: state.truncated, skipped: state.skipped
+            truncated: state.truncated, skipped: state.skipped,
+            maxDeltaBytes: library?.limits.maxDeltaBytes ?? HarnessProposal.maxDeltaBytes
         )
         switch admission {
         case .failure(let rejection):

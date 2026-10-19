@@ -215,6 +215,21 @@ struct HarnessOptimizerTests {
         #expect(rejection.reasons.contains { $0.hasPrefix("changes \(HarnessExperienceLibrary.deltaBytes(delta)) bytes in total") })
     }
 
+    @Test("admit enforces the delta limit of the library the lesson goes to, not the default one")
+    func deltaLimitFollowsLibraryLimits() async throws {
+        let root = HarnessLibraryTests.tempRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let script = HarnessScript()
+        let domainBytes = HarnessExperienceLibrary.deltaBytes(try #require(HarnessProposal.parse(script.domain)))
+        var limits = HarnessLibraryLimits()
+        limits.maxDeltaBytes = domainBytes - 1
+        let (optimizer, _) = try await Self.optimizer(script, library: HarnessExperienceLibrary(rootDirectory: root, limits: limits))
+        let result = try await optimizer.optimize(task: Self.task, base: Self.base, k: 1)
+        #expect(result.rejected.first { $0.candidateId == "dom_0" }?.reasons
+            == ["changes \(domainBytes) bytes in total, more than \(domainBytes - 1)"])
+        #expect(result.librarySlug != nil)
+    }
+
     @Test("A full Experience Library is a warning in the result, not a thrown error after the whole run")
     func libraryFailureIsWarning() async throws {
         let root = HarnessLibraryTests.tempRoot()
