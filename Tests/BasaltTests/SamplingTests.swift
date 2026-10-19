@@ -102,6 +102,13 @@ struct EngineSamplingTests {
             for: GenerationRequest(prompt: "p", temperature: 0.9, dynamicTemperature: true)).1.logitProcessorFactory)
         let edt = try #require(factory() as? EntropyDynamicTemperature)
         #expect(edt.baseTemperature == 0.9)
+
+        // With EDT on, the filters move into the processor and leave the sampler.
+        let (params, edtComponents) = await MLXInferenceEngine(minP: 0.1).sampling(
+            for: GenerationRequest(prompt: "p", temperature: 0.9, topP: 0.8, dynamicTemperature: true))
+        #expect(params.topP == 1 && params.minP == 0)
+        let moved = try #require(edtComponents.logitProcessorFactory?() as? EntropyDynamicTemperature)
+        #expect(moved.topP == 0.8 && moved.minP == 0.1)
     }
 
     @Test("The request's min_p masks the tail in the sampler the engine builds")

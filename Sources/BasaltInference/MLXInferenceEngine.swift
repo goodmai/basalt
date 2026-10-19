@@ -384,6 +384,11 @@ public actor MLXInferenceEngine: InferenceEngine {
         // At temperature 0 the sampler is argmax: there is no temperature to modulate.
         if request.dynamicTemperature == true, temperature > 0 {
             let (topP, minP) = (params.topP, params.minP)
+            // EDT applies top_p/min_p itself on the original distribution; the sampler would
+            // apply them again to the rescaled one (stricter than asked when EDT cools, and a
+            // second sort over the vocabulary per token). top_k is scale-invariant and stays.
+            params.topP = 1
+            params.minP = 0
             components = components.appendingLogitProcessor {
                 EntropyDynamicTemperature(baseTemperature: temperature, topP: topP, minP: minP)
             }
