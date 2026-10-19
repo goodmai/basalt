@@ -113,12 +113,39 @@ struct NemotronHTests {
             == "{%+ for call_item in xs %}{{ call_item }}{%+ endfor %}{{ call }}")
     }
 
+    @Test("a {#- comment strips the whitespace before it and -#} the whitespace after, as Jinja2 does under trim_blocks")
+    func whitespaceControlledCommentsAreStripped() throws {
+        let ministralShape = """
+        {%- set greeting = 'hi' %}
+
+        {#- Begin of sequence token. #}
+        {{- bos }}
+
+        {#- Handle conversation messages. #}
+        {%- for message in messages %}
+
+            {#- User messages. #}
+            {{- '[INST]' + message + '[/INST]' }}
+        {%- endfor %}
+
+        """
+        let options = Template.Options(lstripBlocks: true, trimBlocks: true)
+        let context: [String: Value] = ["bos": "<s>", "messages": ["q"]]
+        #expect(try Template(ministralShape, with: options).render(context) != "<s>[INST]q[/INST]")
+        let compatible = ChatTemplateCompatibility.strippingWhitespaceControlledComments(ministralShape)
+        #expect(try Template(compatible, with: options).render(context) == "<s>[INST]q[/INST]")
+        #expect(ChatTemplateCompatibility.strippingWhitespaceControlledComments("a  {# kept #} b {# right -#}\n c") == "a  {# kept #} b c")
+        #expect(ChatTemplateCompatibility.strippingWhitespaceControlledComments("{{ a }}\n{# plain #}\n{{ b }}") == "{{ a }}\n{# plain #}\n{{ b }}")
+    }
+
     @Test("the tokenizer config carries the compatible template, and an untouched one is returned as is")
     func tokenizerConfigIsRewritten() {
         let shipped = Config(["chat_template": Config(Self.nanoV2ToolCallsSnippet), "eos_token": Config("<SPECIAL_12>")])
         let rewritten = MLXInferenceEngine.compatibleChatTemplate(in: shipped)
         #expect(rewritten.chatTemplate.string()?.contains("for call_item in message.tool_calls") == true)
         #expect(rewritten.eosToken.string() == "<SPECIAL_12>")
+        let commented = Config(["chat_template": Config("{{ bos }}\n\n{#- note #}\n{{ messages }}")])
+        #expect(MLXInferenceEngine.compatibleChatTemplate(in: commented).chatTemplate.string() == "{{ bos }}{{ messages }}")
         let plain = Config(["chat_template": Config("{{ messages }}")])
         #expect(MLXInferenceEngine.compatibleChatTemplate(in: plain).chatTemplate.string() == "{{ messages }}")
     }
