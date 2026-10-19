@@ -1,3 +1,4 @@
+import errno
 import json
 import os
 import subprocess
@@ -12,6 +13,7 @@ from arc_sandbox import run_transform, sandbox_available
 
 BLOCKED = [[0]]
 ESCAPED = [[1]]
+SANDBOX_REFUSALS = (errno.EPERM, errno.EACCES, errno.EAGAIN)
 CANARY = "arc-sandbox-canary-5d1c"
 PROCESS_SYSCTL_PROBE = f"""
 def transform(grid):
@@ -37,11 +39,14 @@ def transform(grid):
 def attempt(body: str) -> str:
     indented = "\n".join("        " + line for line in body.strip().splitlines())
     return (
+        "import errno\n"
         "def transform(grid):\n"
         "    try:\n"
         f"{indented}\n"
-        "    except BaseException:\n"
-        "        return [[0]]\n"
+        "    except OSError as error:\n"
+        f"        if error.errno in {SANDBOX_REFUSALS!r}:\n"
+        "            return [[0]]\n"
+        "        raise\n"
         "    return [[1]]\n"
     )
 
@@ -68,6 +73,10 @@ class SandboxTest(unittest.TestCase):
         for directory in self.watched:
             self.assertFalse((directory / "PWNED").exists(), directory)
 
+    def test_a_broken_probe_is_not_counted_as_blocked(self):
+        self.assertEqual(self.run_code(attempt("undefined_name")), (None, "exec_failed"))
+        self.assertEqual(self.run_code(attempt("raise FileNotFoundError(errno.ENOENT, 'x')")), (None, "exec_failed"))
+
     def test_reading_etc_passwd_fails(self):
         self.assert_blocked("open('/etc/passwd').read()")
 
@@ -81,7 +90,7 @@ class SandboxTest(unittest.TestCase):
         self.assert_blocked(f"""
 import os
 if os.system('touch PWNED; touch {self.outside}/PWNED') != 0:
-    raise OSError('blocked')
+    raise PermissionError(errno.EPERM, 'os.system could not start a shell')
 """)
         self.assert_no_pwned()
 
