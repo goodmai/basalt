@@ -155,17 +155,15 @@ struct AnthropicController: Sendable {
 
     @Sendable
     func messages(request: Request, context: BasicRequestContext) async throws -> Response {
-        // Accept any Authorization header (or none) — no validation in local mode
+        // Authentication happens before this handler (APIKeyAuthenticator off loopback).
         let dto: MessagesRequest
         do {
             let buffer = try await request.body.collect(upTo: 4 * 1024 * 1024)
             let data = Data(buffer.readableBytesView)
-            let raw = String(data: data, encoding: .utf8) ?? "<non-utf8>"
-            try? raw.write(toFile: "/tmp/basalt_anthropic_request.json", atomically: true, encoding: .utf8)
             do {
                 dto = try JSONDecoder().decode(MessagesRequest.self, from: data)
             } catch {
-                fputs("🔴 [Anthropic] decode error: \(error)\nBody: \(raw.prefix(400))\n", stderr)
+                fputs("🔴 [Anthropic] decode error: \(error) (body: \(data.count) bytes)\n", stderr)
                 return errorResponse(status: .badRequest,
                                      message: "Decode error: \(error.localizedDescription)",
                                      type: "invalid_request_error")
