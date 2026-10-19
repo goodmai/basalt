@@ -381,6 +381,17 @@ struct NemotronHTests {
         #expect(generic.text.hasPrefix("Checking. <TOOLCALL>"))
     }
 
+    @Test("a thinking span the model writes in Gemma 4, Mistral or Qwen markers streams as reasoning, the rest as text", arguments: [
+        "<|channel>thoughtThe user asks for 17*23.<channel|>It is 391.",
+        "[THINK]The user asks for 17*23.[/THINK]It is 391.",
+        "<think>The user asks for 17*23.</think>It is 391.",
+    ])
+    func streamSplitsThinkingSpans(script: String) async throws {
+        let outcome = try await Self.scriptedChunks(GenericProfile(), tokenizer: ScriptedTokenizer(script: script))
+        #expect(outcome.reasoning == "The user asks for 17*23.")
+        #expect(outcome.text == "It is 391.")
+    }
+
     @Test("a prompt whose template ends with <think> streams reasoning even when the assistant prefix is longer than the decoded tail")
     func renderedTailIsReadBeforeTheAssistantPrefix() async throws {
         let generationPrompt = "<|im_start|>assistant\n<think>\n"

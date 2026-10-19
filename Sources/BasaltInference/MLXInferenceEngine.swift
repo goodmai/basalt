@@ -412,8 +412,14 @@ public actor MLXInferenceEngine: InferenceEngine {
         return false
     }
 
-    static let thinkingOpeners = ["<think>", "<|channel>thought", "<|channel|>thought"]
-    static let thinkingClosers = ["</think>", "<channel|>", "<|channel|>", "<|turn|>"]
+    static let thinkingOpeners = ["<think>", "<|channel>thought", "<|channel|>thought", "[THINK]"]
+    static let thinkingClosers = ["</think>", "<channel|>", "<|channel|>", "<|turn|>", "[/THINK]"]
+    static let strayThinkingClosers = ["</think>", "<channel|>", "[/THINK]"]
+    static let thinkingMarkerHoldback = (thinkingOpeners + thinkingClosers).map(\.count).max()! - 1
+
+    static func firstMarker(_ markers: [String], in text: some StringProtocol) -> Range<String.Index>? {
+        markers.compactMap { text.range(of: $0) }.min { $0.lowerBound < $1.lowerBound }
+    }
 
     static func endsInsideThinking(_ rendered: String, assistantPrefix: String = "") -> Bool {
         func last(_ markers: [String], at bound: KeyPath<Range<String.Index>, String.Index>) -> String.Index? {
@@ -637,58 +643,27 @@ public actor MLXInferenceEngine: InferenceEngine {
 
                     func processBuffer(final: Bool) {
                         while !buffer.isEmpty {
-                            if !isThinking {
-                                if let startRange = buffer.range(of: "<|channel|>thought") ?? buffer.range(of: "<think>") ?? buffer.range(of: "<|think|>") {
-                                    let leading = String(buffer[..<startRange.lowerBound])
-                                    if !leading.isEmpty {
-                                        emitText(leading)
-                                    }
-                                    buffer.removeSubrange(..<startRange.upperBound)
-                                    if buffer.hasPrefix("\n") { buffer.removeFirst() }
-                                    isThinking = true
-                                } else if let endRange = buffer.range(of: "<channel|>") ?? buffer.range(of: "</think>") {
-                                    let leading = String(buffer[..<endRange.lowerBound])
-                                    if !leading.isEmpty {
-                                        emitText(leading)
-                                    }
-                                    buffer.removeSubrange(..<endRange.upperBound)
-                                    if buffer.hasPrefix("\n") { buffer.removeFirst() }
-                                } else {
-                                    if !final && buffer.count > 15 {
-                                        let safeEndIndex = buffer.index(buffer.endIndex, offsetBy: -15)
-                                        let textToYield = String(buffer[..<safeEndIndex])
-                                        buffer.removeSubrange(..<safeEndIndex)
-                                        emitText(textToYield)
-                                    } else if final {
-                                        emitText(buffer)
-                                        buffer = ""
-                                    }
-                                    break
-                                }
-                            } else {
-                                if let endRange = buffer.range(of: "<|channel|>") ?? buffer.range(of: "<channel|>") ?? buffer.range(of: "</think>") ?? buffer.range(of: "<|turn|>") {
-                                    let reasoning = String(buffer[..<endRange.lowerBound])
-                                    if !reasoning.isEmpty {
-                                        continuation.yield(.reasoning(reasoning))
-                                    }
-                                    buffer.removeSubrange(..<endRange.upperBound)
-                                    if buffer.hasPrefix("\n") { buffer.removeFirst() }
-                                    isThinking = false
-                                } else {
-                                    if !final && buffer.count > 15 {
-                                        let safeEndIndex = buffer.index(buffer.endIndex, offsetBy: -15)
-                                        let reasoningToYield = String(buffer[..<safeEndIndex])
-                                        buffer.removeSubrange(..<safeEndIndex)
-                                        continuation.yield(.reasoning(reasoningToYield))
-                                    } else if final {
-                                        if !buffer.isEmpty {
-                                            continuation.yield(.reasoning(buffer))
-                                            buffer = ""
-                                        }
-                                    }
-                                    break
-                                }
+                            let boundary = isThinking
+                                ? Self.firstMarker(Self.thinkingClosers, in: buffer)
+                                : [Self.firstMarker(Self.thinkingOpeners, in: buffer), Self.firstMarker(Self.strayThinkingClosers, in: buffer)]
+                                    .compactMap { $0 }.min { $0.lowerBound < $1.lowerBound }
+                            guard let boundary else {
+                                let held = final ? 0 : Self.thinkingMarkerHoldback
+                                guard buffer.count > held else { break }
+                                let cut = buffer.index(buffer.endIndex, offsetBy: -held)
+                                let piece = String(buffer[..<cut])
+                                buffer.removeSubrange(..<cut)
+                                if isThinking { continuation.yield(.reasoning(piece)) } else { emitText(piece) }
+                                break
                             }
+                            let leading = String(buffer[..<boundary.lowerBound])
+                            let opensThinking = !isThinking && Self.thinkingOpeners.contains(String(buffer[boundary]))
+                            if !leading.isEmpty {
+                                if isThinking { continuation.yield(.reasoning(leading)) } else { emitText(leading) }
+                            }
+                            buffer.removeSubrange(..<boundary.upperBound)
+                            if buffer.hasPrefix("\n") { buffer.removeFirst() }
+                            isThinking = opensThinking
                         }
                     }
                     
