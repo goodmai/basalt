@@ -229,7 +229,7 @@ struct PromptCacheTree: Sendable {
     }
 
     private func merge(_ parent: PromptCacheNode) {
-        guard !parent.tokens.isEmpty, parent.pins == 0, parent.children.count == 1,
+        guard !parent.tokens.isEmpty, parent.pins == 0, parent.snapshot == nil, parent.children.count == 1,
               let child = parent.children.values.first, let grandparent = parent.parent
         else { return }
         child.layers = zip(parent.layers, child.layers).map { head, tail in

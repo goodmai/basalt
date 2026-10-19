@@ -170,6 +170,22 @@ struct HybridPrefixSnapshotTests {
         #expect(pinCount(await engine.promptCaches) == 0)
     }
 
+    @Test("A snapshot node left with one child after an eviction is not merged away, so its restore point survives")
+    func snapshotNodeIsNotMerged() throws {
+        let model = try TinyHybrid.make()
+        let p = TinyModel.tokens(Conversation.firstTurn)
+        let head = Array(p.dropLast())
+        var tree = PromptCacheTree(byteBudget: 1 << 30, leafLimit: 2)
+        for prompt in [p, head + [10, 11, 12], head + [20, 21, 22], Array(200..<220)] {
+            tree.store("ns", tokens: Array(prompt.dropLast()), cache: try TinyHybrid.snapshotted(model, prompt))
+        }
+        #expect(tree.leaves().count == 2)
+        #expect(tree.byteCount == tree.leaves().reduce(0) { $0 + $1.bytes } + (tree.roots["ns"]?.children[p[0]]?.bytes ?? 0))
+        let lease = try tree.required("ns", for: head + [30, 31])
+        #expect(lease.reusedTokens == p.count - 1)
+        tree.release(lease)
+    }
+
     @Test("The snapshot boundary is the end of the request text: the template's suffix after it is measured, not assumed")
     func templateSuffixIsMeasured() async throws {
         let container = ModelContainer(context: ModelContext(
