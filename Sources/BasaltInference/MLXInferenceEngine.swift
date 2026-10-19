@@ -414,21 +414,18 @@ public actor MLXInferenceEngine: InferenceEngine {
 
         let toolSpecs = Self.toolSpecs(request.tools)
         let declaredTools = Set(request.tools?.map(\.name) ?? [])
-        let userInput: UserInput
+        let makeInput: @Sendable (String) -> UserInput
         if request.prompt.contains("<|turn|>") || request.prompt.contains("<|channel|>") {
-            userInput = UserInput(prompt: request.prompt)
+            makeInput = { UserInput(prompt: $0) }
         } else {
             let context = Self.buildTemplateContext(
                 request: request,
                 defaultReasoningEffort: reasoningEffort,
                 profile: profile
             )
-            userInput = UserInput(
-                chat: [.user(request.prompt)],
-                tools: toolSpecs,
-                additionalContext: context
-            )
+            makeInput = { UserInput(chat: [.user($0)], tools: toolSpecs, additionalContext: context) }
         }
+        let userInput = makeInput(request.prompt)
 
         do {
             let lmInput = try await container.prepare(input: userInput)
@@ -439,11 +436,13 @@ public actor MLXInferenceEngine: InferenceEngine {
             let namespace = carriesMoreThanTokens ? nil : promptCacheNamespace(for: request)
             let lease = namespace.flatMap { promptCaches.lease($0, for: promptTokens) }
             let epoch = modelEpoch
+            let boundary = promptTokens.count - (namespace == nil
+                ? 1 : await HybridPrefixSnapshot.templateSuffixLength(container, makeInput))
             let launch: GenerationLaunch
             do {
                 launch = try await container.perform(nonSendable: lmInput) { context, input in
                     try Self.launch(
-                        input: input, lease: lease, keepsCache: namespace != nil,
+                        input: input, lease: lease, keepsCache: namespace != nil, boundary: boundary,
                         params: params, components: components, tools: toolSpecs, context: context)
                 }
             } catch {
@@ -641,7 +640,7 @@ public actor MLXInferenceEngine: InferenceEngine {
     }
 
     static func launch(
-        input: LMInput, lease: PromptCacheLease?, keepsCache: Bool,
+        input: LMInput, lease: PromptCacheLease?, keepsCache: Bool, boundary: Int,
         params: GenerateParameters, components: GenerationComponents,
         tools: [ToolSpec]?, context: ModelContext
     ) throws -> GenerationLaunch {
@@ -654,15 +653,15 @@ public actor MLXInferenceEngine: InferenceEngine {
         let cache = try lease?.cache ?? PromptCache(context.model.newCache(parameters: params))
         let reused = lease?.reusedTokens ?? 0
         let head = try HybridPrefixSnapshot.prefillHead(
-            input.text.tokens, into: cache, reused: reused, model: context.model, prefill: params.prefill)
+            input.text.tokens, into: cache, reused: reused, boundary: boundary, model: context.model, prefill: params.prefill)
         let tail = LMInput(tokens: input.text.tokens[.ellipsis, head.start...])
         let iterator = try TokenIterator(
-            input: tail, model: context.model, cache: cache.layers,
+            input: tail, model: context.model, cache: cache.layers, state: head.state,
             processor: components.logitProcessor(parameters: params).map {
                 PromptAnchoredProcessor(base: $0, prompt: input.text.tokens)
             },
             sampler: params.sampler(), prefill: params.prefill, maxTokens: params.maxTokens)
-        let keepable = iterator.state == nil
+        let keepable = iterator.state == nil || cache.isHybrid
         let (stream, task) = generateTask(
             promptTokenCount: input.text.tokens.dim(-1) - reused, modelConfiguration: context.configuration,
             tokenizer: context.tokenizer, iterator: iterator, tools: tools, toolCallPolicy: params.toolCallPolicy)

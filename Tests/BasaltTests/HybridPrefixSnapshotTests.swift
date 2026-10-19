@@ -40,14 +40,14 @@ enum TinyHybrid {
     static func snapshotted(_ model: Qwen35TextModel, _ prompt: [Int]) throws -> PromptCache {
         let head = try HybridPrefixSnapshot.prefillHead(
             MLXArray(prompt.map(Int32.init)), into: PromptCache(try model.newCache(parameters: nil)),
-            reused: 0, model: model, prefill: PrefillParameters(stepSize: 16))
+            reused: 0, boundary: prompt.count - 1, model: model, prefill: PrefillParameters(stepSize: 16))
         #expect(head.start == prompt.count - 1)
         return try #require(head.kept)
     }
 
     static func recurrentStates(_ tree: PromptCacheTree) -> [[Float]] {
-        tree.leaves().flatMap { leaf in
-            leaf.recurrent.keys.sorted().flatMap { leaf.recurrent[$0]!.innerState().map { $0.asType(.float32).asArray(Float.self) } }
+        tree.leaves().compactMap(\.snapshot).flatMap { snapshot in
+            snapshot.layers.keys.sorted().flatMap { snapshot.layers[$0]!.innerState().map { $0.asType(.float32).asArray(Float.self) } }
         }
     }
 }
@@ -149,7 +149,7 @@ struct HybridPrefixSnapshotTests {
         let stored = await engine.promptCaches
         #expect(stored.storedPrefix(of: first, in: "ns") == first.count - 1)
         #expect(stored.byteCount == stored.leaves().reduce(0) { $0 + $1.bytes })
-        #expect(stored.leaves().allSatisfy { !$0.recurrent.isEmpty })
+        #expect(stored.leaves().allSatisfy { $0.snapshot != nil })
 
         let turn2 = try await engine.generate(request: greedy(Conversation.afterToolCall, key: "ns"))
         let full2 = try await engine.generate(request: greedy(Conversation.afterToolCall, key: nil))
@@ -168,5 +168,29 @@ struct HybridPrefixSnapshotTests {
         #expect(other.cachedPromptTokens == 0)
         #expect(other.generatedText == fullOther.generatedText)
         #expect(pinCount(await engine.promptCaches) == 0)
+    }
+
+    @Test("The snapshot boundary is the end of the request text: the template's suffix after it is measured, not assumed")
+    func templateSuffixIsMeasured() async throws {
+        let container = ModelContainer(context: ModelContext(
+            configuration: ModelConfiguration(id: "tiny-qwen35"),
+            model: try TinyHybrid.make(),
+            processor: SuffixedInputProcessor(),
+            tokenizer: ByteTokenizer()))
+        let suffix = await HybridPrefixSnapshot.templateSuffixLength(container) {
+            UserInput(chat: [.user($0)])
+        }
+        #expect(suffix == SuffixedInputProcessor.suffix.count)
+    }
+}
+
+struct SuffixedInputProcessor: UserInputProcessor {
+    static let prefix = [250, 251]
+    static let suffix = [252, 253, 254, 0, 1]
+
+    func prepare(input: UserInput) throws -> LMInput {
+        let text = DefaultMessageGenerator().generate(from: input).compactMap { $0["content"] as? String }.joined()
+        let tokens = Self.prefix + ByteTokenizer().encode(text: text, addSpecialTokens: false) + Self.suffix
+        return LMInput(tokens: MLXArray(tokens.map(Int32.init)))
     }
 }
