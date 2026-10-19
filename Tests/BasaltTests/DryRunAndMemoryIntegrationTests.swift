@@ -143,7 +143,8 @@ struct DryRunAndMemoryIntegrationTests {
     func testTokenBudgetLargeModels() {
         let budget = TokenBudgetCalculator.calculateMaxTokens(
             availableRAM: 24 * 1024 * 1024 * 1024,
-            modelSizeMB: 15200
+            modelSizeMB: 15200,
+            kv: KVCacheGeometry(parameterProxy: 27)
         )
         #expect(budget >= 4096)
         #expect(budget <= 131072)

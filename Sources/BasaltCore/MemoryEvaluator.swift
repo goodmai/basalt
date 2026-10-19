@@ -64,8 +64,7 @@ public actor MemoryEvaluator {
         self.profiler = profiler
     }
 
-    /// Perform a dry-run memory assessment for a model given its repo ID or path.
-    public func evaluate(modelId: String, contextLength: Int = 4096) async -> MemoryAssessment {
+    public func evaluate(modelId: String, contextLength: Int = 4096, kvBits: Int? = nil) async -> MemoryAssessment {
         let resources = await profiler.detectResources()
         
         // 1. Check ModelDatabase
@@ -73,7 +72,7 @@ public actor MemoryEvaluator {
             $0.id.lowercased() == modelId.lowercased() ||
             $0.name.lowercased() == modelId.lowercased()
         }) {
-            return evaluate(definition: def, resources: resources, contextLength: contextLength)
+            return evaluate(definition: def, resources: resources, contextLength: contextLength, kvBits: kvBits)
         }
 
         // 2. Check local cache directory
@@ -84,23 +83,23 @@ public actor MemoryEvaluator {
                 modelId: modelId,
                 localSize: size,
                 resources: resources,
-                contextLength: contextLength
+                contextLength: contextLength,
+                kvBits: kvBits
             )
         }
 
         // 3. Fallback heuristic from repo ID
-        return evaluateHeuristic(modelId: modelId, resources: resources, contextLength: contextLength)
+        return evaluateHeuristic(modelId: modelId, resources: resources, contextLength: contextLength, kvBits: kvBits)
     }
 
     public func evaluate(
         definition def: ModelDefinition,
         resources: SystemProfiler.SystemResources,
-        contextLength: Int = 4096
+        contextLength: Int = 4096,
+        kvBits: Int? = nil
     ) -> MemoryAssessment {
-        let modelBytes = def.ramMB * 1024 * 1024
-        let kvBytesPerToken: Int64 = 64
-        let kvBytes = Int64(contextLength) * kvBytesPerToken * 128
-        let totalRequired = modelBytes + (kvBytes / 1024)
+        let kv = def.kvGeometry
+        let totalRequired = def.ramMB * 1024 * 1024 + kv.bytes(tokens: contextLength, kvBits: kvBits)
 
         let fits = totalRequired <= resources.totalRAM && Double(totalRequired) <= Double(resources.availableRAM) * 1.25
 
@@ -127,7 +126,9 @@ public actor MemoryEvaluator {
 
         let maxBudget = TokenBudgetCalculator.calculateMaxTokens(
             availableRAM: resources.availableRAM,
-            modelSizeMB: Int(def.ramMB)
+            modelSizeMB: Int(def.ramMB),
+            kv: kv,
+            kvBits: kvBits
         )
 
         return MemoryAssessment(
@@ -148,9 +149,14 @@ public actor MemoryEvaluator {
         modelId: String,
         localSize: Int64,
         resources: SystemProfiler.SystemResources,
-        contextLength: Int
+        contextLength: Int,
+        kvBits: Int?
     ) -> MemoryAssessment {
-        let totalRequired = Int64(Double(localSize) * 1.15) // weights + overhead
+        let modelMB = Int(localSize / (1024 * 1024))
+        let kv = KVCacheGeometry.forModel(
+            modelId, parameters: ModelDefinition.inferTotalParameters(id: modelId, name: "", ramMB: Int64(modelMB))
+        )
+        let totalRequired = Int64(Double(localSize) * 1.15) + kv.bytes(tokens: contextLength, kvBits: kvBits)
         let fits = totalRequired <= resources.totalRAM && Double(totalRequired) <= Double(resources.availableRAM) * 1.25
 
         let fitLevel: FitLevel
@@ -169,10 +175,11 @@ public actor MemoryEvaluator {
             warning = "Model files (\(formatRAMBytes(localSize))) require ~\(formatRAMBytes(totalRequired)) RAM, exceeding available memory (\(formatRAMBytes(resources.availableRAM)))."
         }
 
-        let modelMB = Int(localSize / (1024 * 1024))
         let maxBudget = TokenBudgetCalculator.calculateMaxTokens(
             availableRAM: resources.availableRAM,
-            modelSizeMB: modelMB
+            modelSizeMB: modelMB,
+            kv: kv,
+            kvBits: kvBits
         )
 
         return MemoryAssessment(
@@ -192,12 +199,13 @@ public actor MemoryEvaluator {
     private func evaluateHeuristic(
         modelId: String,
         resources: SystemProfiler.SystemResources,
-        contextLength: Int
+        contextLength: Int,
+        kvBits: Int?
     ) -> MemoryAssessment {
         let info = HFModelInfo(id: modelId, downloads: nil, likes: nil, tags: nil)
         var estimatedMB: Int64 = 4000
-        if let paramsStr = info.parameterSize.replacingOccurrences(of: "B", with: "") as String?,
-           let params = Double(paramsStr) {
+        let params = Double(info.parameterSize.replacingOccurrences(of: "B", with: ""))
+        if let params {
             if info.quantization.contains("4bit") || info.quantization == "nvfp4" || info.quantization == "dq" {
                 estimatedMB = Int64(params * 550)
             } else if info.quantization.contains("8bit") {
@@ -208,7 +216,10 @@ public actor MemoryEvaluator {
             }
         }
 
-        let totalRequired = estimatedMB * 1024 * 1024
+        let kv = KVCacheGeometry(
+            parameterProxy: params ?? ModelDefinition.inferTotalParameters(id: modelId, name: "", ramMB: estimatedMB)
+        )
+        let totalRequired = estimatedMB * 1024 * 1024 + kv.bytes(tokens: contextLength, kvBits: kvBits)
         let fits = totalRequired <= resources.totalRAM && Double(totalRequired) <= Double(resources.availableRAM) * 1.25
 
         let fitLevel: FitLevel
@@ -233,7 +244,9 @@ public actor MemoryEvaluator {
 
         let maxBudget = TokenBudgetCalculator.calculateMaxTokens(
             availableRAM: resources.availableRAM,
-            modelSizeMB: Int(estimatedMB)
+            modelSizeMB: Int(estimatedMB),
+            kv: kv,
+            kvBits: kvBits
         )
 
         return MemoryAssessment(

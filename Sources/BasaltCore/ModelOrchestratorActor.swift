@@ -14,6 +14,8 @@ public actor ModelOrchestratorActor {
     private let engine: any InferenceEngine
     private let maxTokens: Int
     private var modelSizeMB: Int = 4000
+    private let kvBits: Int?
+    private var kvGeometry = KVCacheGeometry(parameterProxy: 4)
     /// Floor for the generation watchdog. The real budget scales with the token
     /// count — see `timeout(for:)`.
     private let generationTimeoutSeconds: UInt64 = 300  // 5 minutes
@@ -32,9 +34,12 @@ public actor ModelOrchestratorActor {
     /// The serving process's counters; injectable so tests do not share global state.
     public let telemetry: TelemetryTracker
 
-    public init(engine: any InferenceEngine, maxTokens: Int = 4096, telemetry: TelemetryTracker = .shared) {
+    public init(
+        engine: any InferenceEngine, maxTokens: Int = 4096, kvBits: Int? = nil, telemetry: TelemetryTracker = .shared
+    ) {
         self.engine = engine
         self.maxTokens = maxTokens
+        self.kvBits = kvBits
         self.telemetry = telemetry
     }
 
@@ -43,13 +48,16 @@ public actor ModelOrchestratorActor {
     /// Load a model from a filesystem path.
     /// After loading, call `setModelId(_:)` to record the HuggingFace repo ID.
     public func loadModel(path: String) async throws(BasaltError) {
-        self.currentModelPath = path
         let size = try? calculateDirectorySize(url: URL(fileURLWithPath: path))
+        try await engine.load(modelPath: path)
+        currentModelPath = path
         if let size {
-            self.modelSizeMB = Int(size / 1_048_576)
+            modelSizeMB = Int(size / 1_048_576)
             logger.info("Model size: \(self.modelSizeMB) MB")
         }
-        try await engine.load(modelPath: path)
+        kvGeometry = KVCacheGeometry.forModel(
+            path, parameters: ModelDefinition.inferTotalParameters(id: path, name: "", ramMB: Int64(modelSizeMB))
+        )
         // After the load: a failed load must not report the failed model's size.
         await self.telemetry.setModelMemory(mb: self.modelSizeMB)
     }
@@ -239,7 +247,7 @@ public actor ModelOrchestratorActor {
     }
 
     private func capped(_ request: GenerationRequest) throws(BasaltError) -> GenerationRequest {
-        let maxT = calculateDynamicMaxTokens()
+        let maxT = calculateDynamicMaxTokens(promptTokens: Self.estimatedTokens(request.prompt))
         var v = try request.validated(defaultMaxTokens: maxT)
         if let req = request.maxTokens, req > maxT {
             logger.warn("Token request (\(req)) > budget (\(maxT)). Capping.")
@@ -248,8 +256,14 @@ public actor ModelOrchestratorActor {
         return v
     }
 
-    private func calculateDynamicMaxTokens() -> Int {
-        max(maxTokens, TokenBudgetCalculator.calculateMaxTokensForSystem(modelSizeMB: modelSizeMB))
+    private func calculateDynamicMaxTokens(promptTokens: Int) -> Int {
+        max(maxTokens, TokenBudgetCalculator.calculateMaxTokensForSystem(
+            modelSizeMB: modelSizeMB, kv: kvGeometry, kvBits: kvBits, promptTokens: promptTokens
+        ))
+    }
+
+    static func estimatedTokens(_ prompt: String) -> Int {
+        prompt.utf8.count / 4
     }
 
     private func calculateDirectorySize(url: URL) throws -> UInt64 {

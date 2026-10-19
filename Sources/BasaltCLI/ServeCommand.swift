@@ -130,7 +130,7 @@ struct ServeCommand: AsyncParsableCommand {
         if dryRun {
             let evaluator = MemoryEvaluator()
             log("🔍 Performing dry-run memory assessment for \(bold(targetModel))…")
-            let assessment = await evaluator.evaluate(modelId: targetModel)
+            let assessment = await evaluator.evaluate(modelId: targetModel, kvBits: kvBits)
 
             fputs("\n  Model:           \(assessment.modelName) (\(assessment.modelId))\n", stderr)
             fputs("  Required RAM:    \(assessment.requiredRAMFormatted)\n", stderr)
@@ -207,7 +207,7 @@ struct ServeCommand: AsyncParsableCommand {
             minP: minP,
             seed: seed
         )
-        let orchestrator = ModelOrchestratorActor(engine: engine, maxTokens: config.maxTokens)
+        let orchestrator = ModelOrchestratorActor(engine: engine, maxTokens: config.maxTokens, kvBits: kvBits)
 
         log("Loading model from \(bold(resolvedPath))…")
         do {

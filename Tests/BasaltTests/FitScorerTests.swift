@@ -453,11 +453,25 @@ struct FitScorerTests {
         #expect(grid.options.first { $0.bits == 8 }?.estimatedTPS == 40)
     }
 
-    @Test("KV cache estimate is pinned to GQA geometry (~0.25 GB per 4k tokens for a 7B model)")
-    func testKVCacheCoefficient() {
-        let gb = FitScorer.kvCacheFootprintGB(params: 7, contextTokens: 4096)
-        #expect(abs(gb - 0.248) < 0.005)
-        #expect(FitScorer.kvCacheMemoryMB(params: 7, contextTokens: 8192) > 500)
+    @Test("The decode KV read term is the geometry at up to 4k tokens; the grid charges the full L_min")
+    func testKVCacheTerms() {
+        let qwen = KVCacheGeometry(config: KVCacheGeometryTests.qwen3_4B)!
+        #expect(FitScorer.kvReadGB(qwen, contextTokens: 32_768) == Double(qwen.bytes(tokens: 4096)) / 1e9)
+        #expect(abs(FitScorer.kvReadGB(KVCacheGeometry(parameterProxy: 7), contextTokens: 4096) - 0.248) < 0.001)
+        #expect(FitScorer.kvReadGB(qwen, contextTokens: 0) == 0.01)
+
+        let model = ModelDefinition(id: "nobody/uncached-model", name: "Uncached", family: .qwen,
+                                    task: .chat, modality: .text, ramMB: 4000, contextWindow: 32768,
+                                    quantization: "4bit", quality: 0.8, totalParameters: 7, activeParameters: 7)
+        let resources = createMockResources(ramGB: 32, availableGB: 24, chip: "M2 Max")
+        let short = ModelFitAnalyzer.evaluateQuantizations(model: model, resources: resources, lMin: 4096,
+                                                           benchmarkProfile: HardwareBenchmarkProfile())
+        let long = ModelFitAnalyzer.evaluateQuantizations(model: model, resources: resources, lMin: 32768,
+                                                          benchmarkProfile: HardwareBenchmarkProfile())
+        let kv = KVCacheGeometry(parameterProxy: 7)
+        let grow = Double(kv.bytes(tokens: 32768) - kv.bytes(tokens: 4096)) / 1_048_576
+        let delta = Double(long.options[0].footprintMB - short.options[0].footprintMB)
+        #expect(abs(delta - grow) <= 1)
     }
 
     @Test("A profile that failed to decode is not cached and then overwritten")

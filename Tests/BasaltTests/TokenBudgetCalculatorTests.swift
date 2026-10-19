@@ -1,254 +1,77 @@
 import Testing
 import Foundation
 @testable import BasaltCore
-@testable import BasaltInference
-@testable import BasaltCloud
-@testable import BasaltServer
-@testable import BasaltUI
-@testable import BasaltCLI
-
-// MARK: — TokenBudgetCalculator Tests
 
 @Suite("TokenBudgetCalculator")
 struct TokenBudgetCalculatorTests {
 
-    // MARK: — TC-1.2.4.1: Calculate max tokens for 8GB RAM
+    static let gib: Int64 = 1 << 30
+    static let qwen32B = KVCacheGeometryTests.dense(layers: 64, kvHeads: 8)
+    static var qwen3_4B: KVCacheGeometry { KVCacheGeometry(config: KVCacheGeometryTests.qwen3_4B)! }
 
-    @Test("Calculate max tokens for 8GB RAM with 4GB model")
-    func testCalculateMaxTokens8GB() {
-        let availableRAM: Int64 = 8 * 1024 * 1024 * 1024 // 8 GB
-        let modelSizeMB = 4000 // ~4 GB model
-
-        let maxTokens = TokenBudgetCalculator.calculateMaxTokens(
-            availableRAM: availableRAM,
-            modelSizeMB: modelSizeMB
-        )
-
-        // Safety margin = 0.8
-        // Usable = 8 * 0.8 = 6.4 GB
-        // Available for context = 6.4 GB - 4 GB = 2.4 GB
-        // 1 token ≈ 2 bytes KV cache
-        // maxTokens = 2.4 GB / 2 bytes ≈ 1.2B tokens -> capped at 128,000
-
-        #expect(maxTokens > 0)
-        #expect(maxTokens <= 128_000)
+    static func availableRAM(usable bytes: Int64, weightsMB: Int = 0) -> Int64 {
+        Int64((Double(bytes + Int64(weightsMB) << 20) / TokenBudgetCalculator.safetyMargin).rounded(.up))
     }
 
-    @Test("Calculate max tokens for 8GB RAM with tight model (6GB)")
-    func testCalculateMaxTokens8GBTight() {
-        let availableRAM: Int64 = 8 * 1024 * 1024 * 1024 // 8 GB
-        let modelSizeMB = 6000 // ~6 GB model
-
-        let maxTokens = TokenBudgetCalculator.calculateMaxTokens(
-            availableRAM: availableRAM,
-            modelSizeMB: modelSizeMB
+    @Test("4 GiB left after the weights with a 32B fp16 geometry holds 16,384 tokens, not 128k")
+    func denseBudget() {
+        let tokens = TokenBudgetCalculator.calculateMaxTokens(
+            availableRAM: Self.availableRAM(usable: 4 * Self.gib, weightsMB: 18_000),
+            modelSizeMB: 18_000, kv: Self.qwen32B
         )
-
-        // Safety margin = 0.8
-        // Usable = 8 * 0.8 = 6.4 GB
-        // Available for context = 6.4 GB - 6 GB = 400 MB
-        // Should still return reasonable tokens
-
-        #expect(maxTokens > 0)
-        #expect(maxTokens <= 128_000)
+        #expect(tokens == 16_384)
     }
 
-    @Test("Calculate max tokens for 8GB RAM with very tight model (7.5GB)")
-    func testCalculateMaxTokens8GBVeryTight() {
-        let availableRAM: Int64 = 8 * 1024 * 1024 * 1024 // 8 GB
-        let modelSizeMB = 7500 // ~7.5 GB model
-
-        let maxTokens = TokenBudgetCalculator.calculateMaxTokens(
-            availableRAM: availableRAM,
-            modelSizeMB: modelSizeMB
+    @Test("The prompt is subtracted from the budget")
+    func promptSubtracted() {
+        let ram = Self.availableRAM(usable: 4 * Self.gib)
+        let tokens = TokenBudgetCalculator.calculateMaxTokens(
+            availableRAM: ram, modelSizeMB: 0, kv: Self.qwen32B, promptTokens: 10_000
         )
-
-        // Safety margin = 0.8
-        // Usable = 8 * 0.8 = 6.4 GB
-        // Available for context = 6.4 GB - 7.5 GB = < 0
-        // Should return minimum fallback
-
-        #expect(maxTokens > 0)
-        #expect(maxTokens <= 1024)
+        #expect(tokens == 6_384)
     }
 
-    // MARK: — TC-1.2.4.2: Calculate max tokens for 16GB RAM
-
-    @Test("Calculate max tokens for 16GB RAM with 4GB model")
-    func testCalculateMaxTokens16GB() {
-        let availableRAM: Int64 = 16 * 1024 * 1024 * 1024 // 16 GB
-        let modelSizeMB = 4000 // ~4 GB model
-
-        let maxTokens = TokenBudgetCalculator.calculateMaxTokens(
-            availableRAM: availableRAM,
-            modelSizeMB: modelSizeMB
-        )
-
-        // Safety margin = 0.8
-        // Usable = 16 * 0.8 = 12.8 GB
-        // Available for context = 12.8 GB - 4 GB = 8.8 GB
-        // Should be capped at 128k
-
-        #expect(maxTokens == 128_000)
+    @Test("--kv-bits 4 stretches the same memory by 16/4.5")
+    func kvBits() {
+        let ram = Self.availableRAM(usable: 4 * Self.gib)
+        let tokens = TokenBudgetCalculator.calculateMaxTokens(availableRAM: ram, modelSizeMB: 0, kv: Self.qwen32B, kvBits: 4)
+        #expect(tokens == 16_384 * 16 * 2 / 9)
     }
 
-    @Test("Calculate max tokens for 16GB RAM with 8GB model")
-    func testCalculateMaxTokens16GBLargeModel() {
-        let availableRAM: Int64 = 16 * 1024 * 1024 * 1024 // 16 GB
-        let modelSizeMB = 8000 // ~8 GB model
-
-        let maxTokens = TokenBudgetCalculator.calculateMaxTokens(
-            availableRAM: availableRAM,
-            modelSizeMB: modelSizeMB
+    @Test("Qwen3-4B on 16 GB free: the cap falls from the 2-bytes-per-token 128k to what 144 KiB per token fits")
+    func qwen3_4BCap() {
+        let tokens = TokenBudgetCalculator.calculateMaxTokens(
+            availableRAM: 16 * Self.gib, modelSizeMB: 2_200, kv: Self.qwen3_4B
         )
-
-        // Safety margin = 0.8
-        // Usable = 16 * 0.8 = 12.8 GB
-        // Available for context = 12.8 GB - 8 GB = 4.8 GB
-        // Should still be capped at 128k
-
-        #expect(maxTokens > 0)
-        #expect(maxTokens <= 128_000)
+        let expected = (Int64(Double(16 * Self.gib) * 0.8) - 2_200 << 20) / 147_456
+        #expect(tokens == Int(expected))
+        #expect(tokens < 80_000)
     }
 
-    // MARK: — TC-1.2.4.3: Calculate max tokens for 32GB RAM
-
-    @Test("Calculate max tokens for 32GB RAM with 4GB model")
-    func testCalculateMaxTokens32GB() {
-        let availableRAM: Int64 = 32 * 1024 * 1024 * 1024 // 32 GB
-        let modelSizeMB = 4000 // ~4 GB model
-
-        let maxTokens = TokenBudgetCalculator.calculateMaxTokens(
-            availableRAM: availableRAM,
-            modelSizeMB: modelSizeMB
-        )
-
-        // Safety margin = 0.8
-        // Usable = 32 * 0.8 = 25.6 GB
-        // Available for context = 25.6 GB - 4 GB = 21.6 GB
-        // Should be capped at 128k
-
-        #expect(maxTokens == 128_000)
+    @Test("The hybrid Ornith geometry keeps the 128k cap where a dense one of its size would not")
+    func hybridCap() {
+        let ornith = KVCacheGeometry(config: KVCacheGeometryTests.ornith9B)!
+        let ram = 12 * Self.gib
+        #expect(TokenBudgetCalculator.calculateMaxTokens(availableRAM: ram, modelSizeMB: 5_000, kv: ornith) == 128_000)
+        #expect(TokenBudgetCalculator.calculateMaxTokens(
+            availableRAM: ram, modelSizeMB: 5_000, kv: KVCacheGeometry(parameterProxy: 9)) < 128_000)
     }
 
-    @Test("Calculate max tokens for 32GB RAM with 16GB model")
-    func testCalculateMaxTokens32GBLargeModel() {
-        let availableRAM: Int64 = 32 * 1024 * 1024 * 1024 // 32 GB
-        let modelSizeMB = 16000 // ~16 GB model
-
-        let maxTokens = TokenBudgetCalculator.calculateMaxTokens(
-            availableRAM: availableRAM,
-            modelSizeMB: modelSizeMB
-        )
-
-        // Safety margin = 0.8
-        // Usable = 32 * 0.8 = 25.6 GB
-        // Available for context = 25.6 GB - 16 GB = 9.6 GB
-        // Should be capped at 128k
-
-        #expect(maxTokens == 128_000)
+    @Test("Huge RAM is capped at 128k", arguments: [64, 128] as [Int64])
+    func cap(gb: Int64) {
+        #expect(TokenBudgetCalculator.calculateMaxTokens(availableRAM: gb * Self.gib, modelSizeMB: 4000, kv: Self.qwen3_4B) == 128_000)
     }
 
-    // MARK: — TC-1.2.4.4: Apply safety margin correctly
-
-    @Test("Safety margin is applied correctly")
-    func testSafetyMarginApplied() {
-        let availableRAM: Int64 = 10 * 1024 * 1024 * 1024 // 10 GB
-        let modelSizeMB = 2000 // ~2 GB model
-
-        let maxTokens = TokenBudgetCalculator.calculateMaxTokens(
-            availableRAM: availableRAM,
-            modelSizeMB: modelSizeMB
-        )
-
-        // Safety margin = 0.8
-        // Usable = 10 * 0.8 = 8 GB
-        // Available for context = 8 GB - 2 GB = 6 GB
-        // Should be capped at 128k
-
-        #expect(maxTokens > 0)
-        #expect(maxTokens <= 128_000)
-
-        // Verify safety margin is actually applied by checking it's less than
-        // what we'd get without safety margin
-        let unsafeUsable = availableRAM - Int64(modelSizeMB * 1024 * 1024)
-        let unsafeMaxTokens = Int(unsafeUsable / 2) // 2 bytes per token
-
-        #expect(maxTokens < unsafeMaxTokens)
+    @Test("Weights at or over the usable RAM, or no RAM at all, leave the 512-token floor",
+          arguments: [(8, 7500), (8, 10_000), (4, 3500), (0, 0)] as [(Int64, Int)])
+    func floor(gb: Int64, modelMB: Int) {
+        #expect(TokenBudgetCalculator.calculateMaxTokens(availableRAM: gb * Self.gib, modelSizeMB: modelMB, kv: Self.qwen32B) == 512)
     }
 
-    // MARK: — TC-1.2.4.5: Cap at 128k tokens
-
-    @Test("Max tokens capped at 128k")
-    func testMaxTokensCappedAt128k() {
-        let availableRAM: Int64 = 64 * 1024 * 1024 * 1024 // 64 GB
-        let modelSizeMB = 4000 // ~4 GB model
-
-        let maxTokens = TokenBudgetCalculator.calculateMaxTokens(
-            availableRAM: availableRAM,
-            modelSizeMB: modelSizeMB
-        )
-
-        // Even with huge RAM, should be capped at 128k
-        #expect(maxTokens == 128_000)
-    }
-
-    @Test("Max tokens capped at 128k for 128GB RAM")
-    func testMaxTokensCappedAt128kHugeRAM() {
-        let availableRAM: Int64 = 128 * 1024 * 1024 * 1024 // 128 GB
-        let modelSizeMB = 8000 // ~8 GB model
-
-        let maxTokens = TokenBudgetCalculator.calculateMaxTokens(
-            availableRAM: availableRAM,
-            modelSizeMB: modelSizeMB
-        )
-
-        // Even with huge RAM, should be capped at 128k
-        #expect(maxTokens == 128_000)
-    }
-
-    // MARK: — Additional Edge Cases
-
-    @Test("Calculate max tokens with minimal RAM")
-    func testCalculateMaxTokensMinimalRAM() {
-        let availableRAM: Int64 = 4 * 1024 * 1024 * 1024 // 4 GB
-        let modelSizeMB = 3500 // ~3.5 GB model
-
-        let maxTokens = TokenBudgetCalculator.calculateMaxTokens(
-            availableRAM: availableRAM,
-            modelSizeMB: modelSizeMB
-        )
-
-        // Very tight, but should still return something
-        #expect(maxTokens > 0)
-    }
-
-    @Test("Calculate max tokens with zero model size")
-    func testCalculateMaxTokensZeroModel() {
-        let availableRAM: Int64 = 16 * 1024 * 1024 * 1024 // 16 GB
-        let modelSizeMB = 0
-
-        let maxTokens = TokenBudgetCalculator.calculateMaxTokens(
-            availableRAM: availableRAM,
-            modelSizeMB: modelSizeMB
-        )
-
-        // Should return max (128k) since all RAM is available
-        #expect(maxTokens == 128_000)
-    }
-
-    @Test("Calculate max tokens with model larger than RAM")
-    func testCalculateMaxTokensModelLargerThanRAM() {
-        let availableRAM: Int64 = 8 * 1024 * 1024 * 1024 // 8 GB
-        let modelSizeMB = 10000 // ~10 GB model (larger than RAM)
-
-        let maxTokens = TokenBudgetCalculator.calculateMaxTokens(
-            availableRAM: availableRAM,
-            modelSizeMB: modelSizeMB
-        )
-
-        // Should return minimum fallback
-        #expect(maxTokens > 0)
-        #expect(maxTokens <= 1024)
+    @Test("A prompt larger than the budget leaves the 512-token floor")
+    func promptOverBudget() {
+        let ram = Self.availableRAM(usable: 4 * Self.gib)
+        #expect(TokenBudgetCalculator.calculateMaxTokens(
+            availableRAM: ram, modelSizeMB: 0, kv: Self.qwen32B, promptTokens: 100_000) == 512)
     }
 }
