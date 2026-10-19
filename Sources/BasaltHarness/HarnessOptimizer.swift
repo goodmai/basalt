@@ -7,6 +7,7 @@ public enum HarnessBudgetError: Error, Sendable, Equatable {
     case rolloutBudgetExceeded(limit: Int)
     case proposerBudgetExceeded(limit: Int)
     case leakDetected(String)
+    case leakInHarnessFile(path: String, token: String)
 }
 
 public struct HarnessLedger: Codable, Sendable, Equatable {
@@ -46,9 +47,13 @@ public struct HarnessLedger: Codable, Sendable, Equatable {
 public enum HarnessLeakGuard {
     public static let forbiddenTokens = ["grader_verdict", "\"passed\":", "\"score\":", "benchmark_score", "ground_truth_answer"]
 
-    public static func assertClean(_ text: String, forbiddenPaths: [String] = []) throws {
+    public static func forbiddenToken(in text: String) -> String? {
         let lower = text.lowercased()
-        if let token = forbiddenTokens.first(where: { lower.contains($0) }) {
+        return forbiddenTokens.first { lower.contains($0) }
+    }
+
+    public static func assertClean(_ text: String, forbiddenPaths: [String] = []) throws {
+        if let token = forbiddenToken(in: text) {
             throw HarnessBudgetError.leakDetected(token)
         }
         if let path = forbiddenPaths.first(where: { !$0.isEmpty && text.contains($0) }) {
@@ -357,6 +362,11 @@ public struct HarnessOptimizer: Sendable {
 
     public func optimize(task: HarnessTask, base: HarnessTree, k: Int = 1) async throws -> HarnessOptimizationResult {
         try HarnessLeakGuard.assertClean(task.prompt)
+        for path in base.files.keys.sorted() {
+            if let token = HarnessLeakGuard.forbiddenToken(in: base.files[path]!) {
+                throw HarnessBudgetError.leakInHarnessFile(path: path, token: token)
+            }
+        }
         var state = State(ledger: try HarnessLedger(k: k))
         let baseReport = HarnessValidator.validate(base, spec: spec)
         let index = try library?.index(domain: task.domain) ?? ""
@@ -470,8 +480,7 @@ public struct HarnessOptimizer: Sendable {
     }
 
     private func generate(_ prompt: String, task: HarnessTask, maxTokens: Int, temperature: Double) async throws -> GenerationResponse {
-        try HarnessLeakGuard.assertClean(prompt)
-        return try await orchestrator.generate(request: GenerationRequest(
+        try await orchestrator.generate(request: GenerationRequest(
             prompt: prompt, maxTokens: maxTokens, temperature: temperature,
             enableThinking: false, cacheKey: "harness:\(task.slug)"
         ))

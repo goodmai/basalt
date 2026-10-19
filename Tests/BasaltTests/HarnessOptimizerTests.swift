@@ -195,6 +195,31 @@ struct HarnessOptimizerTests {
         #expect(await engine.getRequests().isEmpty)
     }
 
+    @Test("A rollout answer containing {\"score\":1} still reaches the judge; only operator and proposer inputs are guarded")
+    func modelAnswerWithScoreReachesJudge() async throws {
+        var script = HarnessScript()
+        script.rollout = { _ in #"SUMMARY {"score":1}"# }
+        script.judge = { _ in "BEST: A" }
+        let (optimizer, engine) = try await Self.optimizer(script)
+
+        let result = try await optimizer.optimize(task: Self.task, base: Self.base, k: 1)
+
+        #expect(result.selection.judged && !result.selection.judgeFallback)
+        let judgePrompt = try #require(await engine.getRequests().last?.prompt)
+        #expect(judgePrompt.hasPrefix("Several anonymous deliverables"))
+        #expect(judgePrompt.contains(#"{"score":1}"#))
+    }
+
+    @Test("A base harness file carrying a grader token is refused by path before any model call")
+    func leakingBaseFile() async throws {
+        let (optimizer, engine) = try await Self.optimizer(HarnessScript())
+        let base = Self.base.applying(delta: [".claude/settings.json": #"{"score": 1}"#])
+        await #expect(throws: HarnessBudgetError.leakInHarnessFile(path: ".claude/settings.json", token: "\"score\":")) {
+            try await optimizer.optimize(task: Self.task, base: base)
+        }
+        #expect(await engine.getRequests().isEmpty)
+    }
+
     @Test("Rollout prompts put files unchanged from the base first, so candidates share the base prefix")
     func stablePrefix() {
         let base = HarnessTree(files: [
