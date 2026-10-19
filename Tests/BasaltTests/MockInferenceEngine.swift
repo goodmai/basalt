@@ -23,6 +23,11 @@ actor MockInferenceEngine: InferenceEngine {
     var mockToolCall: ToolCallOutput? = nil // yielded as a .toolCall chunk after the text
     var mockTextAfterToolCall: String? = nil
     var lastRequest: GenerationRequest?
+    var mockCachedPromptTokens = 0
+
+    func setMockCachedPromptTokens(_ tokens: Int) {
+        self.mockCachedPromptTokens = tokens
+    }
     
     // Setter methods for actor-safe configuration
     func setArtificialDelay(_ delay: TimeInterval) {
@@ -75,7 +80,8 @@ actor MockInferenceEngine: InferenceEngine {
             throw .inferenceHardwareFailure(reason: "No metadata received from stream")
         }
         return GenerationResponse(
-            generatedText: text, promptTokens: metadata.promptTokens, completionTokens: metadata.completionTokens,
+            generatedText: text, promptTokens: metadata.promptTokens,
+            cachedPromptTokens: metadata.cachedPromptTokens, completionTokens: metadata.completionTokens,
             tokensPerSecond: metadata.tokensPerSecond, generationTime: metadata.generationTime,
             timeToFirstToken: metadata.timeToFirstToken, memory: metadata.memory,
             finishReason: metadata.finishReason, toolCalls: calls.isEmpty ? nil : calls
@@ -118,7 +124,8 @@ actor MockInferenceEngine: InferenceEngine {
                 
                 let metadata = GenerationResponse(
                     generatedText: "Mock response",
-                    promptTokens: request.prompt.split(separator: " ").count,
+                    promptTokens: request.prompt.split(separator: " ").count + mockCachedPromptTokens,
+                    cachedPromptTokens: mockCachedPromptTokens,
                     completionTokens: 10,
                     tokensPerSecond: 10.0 / genTime,
                     generationTime: genTime,

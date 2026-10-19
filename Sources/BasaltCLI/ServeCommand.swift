@@ -54,6 +54,12 @@ struct ServeCommand: AsyncParsableCommand {
     @Option(name: .customLong("repetition-penalty"), help: "Penalty on recently emitted tokens, e.g. 1.1 (default: off)")
     var repetitionPenalty: Float?
 
+    @Option(
+        name: .customLong("prompt-cache-mb"),
+        help: "Memory for conversation prompt caches reused across turns, in MB (default: 2048, 0 disables)"
+    )
+    var promptCacheMB: Int = MLXInferenceEngine.defaultPromptCacheBytes >> 20
+
     // Optional so an explicit `--port 8080` can be told apart from "not passed":
     // precedence is CLI > --config file > default.
     @Option(name: .shortAndLong, help: "REST API port (default: 8080)")
@@ -194,6 +200,7 @@ struct ServeCommand: AsyncParsableCommand {
         // Shared inference engine + orchestrator
         let engine       = MLXInferenceEngine(
             reasoningEffort: reasoningEffort,
+            promptCacheBytes: max(0, promptCacheMB) << 20,
             kvBits: kvBits,
             repetitionPenalty: repetitionPenalty,
             topK: topK,

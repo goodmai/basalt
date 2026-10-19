@@ -20,3 +20,17 @@ extension HTTPFields {
         return self[fieldName] == "true"
     }
 }
+
+enum PromptCacheKey {
+    static let sessionHeader = "x-session-id"
+    static let hashedPrefixLength = 512
+
+    static func resolve(declared: String?, headers: HTTPFields, prompt: String, isService: Bool) -> String? {
+        guard !isService else { return nil }
+        if let declared, !declared.isEmpty { return "key:\(declared)" }
+        if let name = HTTPField.Name(sessionHeader), let session = headers[name], !session.isEmpty {
+            return "session:\(session)"
+        }
+        return "prefix:\(prompt.prefix(hashedPrefixLength).hashValue)"
+    }
+}

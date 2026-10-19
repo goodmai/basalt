@@ -27,25 +27,6 @@ public actor ModelOrchestratorActor {
     /// Empty string means nothing has been loaded yet.
     public private(set) var currentModelId: String = ""
 
-    // MARK: — Working Session KV Cache State
-    public private(set) var workingSessionId: String? = nil
-    public private(set) var workingSessionPromptPrefix: String? = nil
-
-    public func workingSessionState() -> (id: String?, prefix: String?) {
-        (workingSessionId, workingSessionPromptPrefix)
-    }
-
-    /// A working session lives while each prompt extends the previous one's first 128 chars;
-    /// service requests (thread titles) never touch it — #53's cache parking keys off this.
-    private func trackWorkingSession(_ request: GenerationRequest) {
-        guard request.isServiceRequest != true else { return }
-        if let prefix = workingSessionPromptPrefix, workingSessionId != nil, request.prompt.hasPrefix(prefix) {
-            return
-        }
-        workingSessionId = "session_\(UUID().uuidString.prefix(8))"
-        workingSessionPromptPrefix = String(request.prompt.prefix(128))
-    }
-
     // MARK: — Init
 
     /// The serving process's counters; injectable so tests do not share global state.
@@ -124,7 +105,6 @@ public actor ModelOrchestratorActor {
         logger.trace("generate: \(request.prompt.prefix(60))…")
         let validated = try capped(request)
 
-        trackWorkingSession(validated)
         await self.telemetry.requestStarted()
         do {
             let response = try await withTimeout(seconds: timeout(for: validated)) {
@@ -154,7 +134,6 @@ public actor ModelOrchestratorActor {
         logger.trace("generateStream start")
         let validated = try capped(request)
 
-        trackWorkingSession(validated)
         await self.telemetry.requestStarted()
         let stream: AsyncStream<StreamChunk>
         do {
