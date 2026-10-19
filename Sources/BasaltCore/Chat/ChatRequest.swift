@@ -42,10 +42,25 @@ public struct ChatMessageInput: Codable, Sendable, Equatable {
             .joined(separator: "\n\n")
     }
 
+    public static func leadingSystem(_ messages: [ChatMessageInput]) -> [ChatMessageInput] {
+        let firstUser = messages.firstIndex { $0.role == .user } ?? messages.endIndex
+        let leading = joined(messages[..<firstUser].filter { $0.role == .system }.map(\.text))
+        var rest: [ChatMessageInput] = []
+        for (index, message) in messages.enumerated() where !(index < firstUser && message.role == .system) {
+            let message = message.role == .system ? ChatMessageInput(role: .user, text: "System: \(message.text)") : message
+            if message.role == .user, let previous = rest.last, previous.role == .user {
+                rest[rest.count - 1] = ChatMessageInput(role: .user, text: joined([previous.text, message.text]) ?? "")
+            } else {
+                rest.append(message)
+            }
+        }
+        return (leading.map { [ChatMessageInput(role: .system, text: $0)] } ?? []) + rest
+    }
+
     public static func alternating(_ messages: [ChatMessageInput]) -> [ChatMessageInput] {
-        let system = messages.filter { $0.role == .system }.map(\.text)
+        let placed = leadingSystem(messages)
         var turns: [(role: Role, texts: [String])] = []
-        for message in messages where message.role != .system {
+        for message in placed where message.role != .system {
             let role: Role = message.role == .tool ? .user : message.role
             let text = message.role == .tool
                 ? "Tool result (\(message.toolName ?? message.toolCallId ?? "tool")): \(message.text)"
@@ -60,7 +75,11 @@ public struct ChatMessageInput: Codable, Sendable, Equatable {
         guard turns.contains(where: { $0.role == .user }) else {
             return [ChatMessageInput(role: .user, text: plainText(messages))]
         }
-        let leading = joined(system).map { [ChatMessageInput(role: .system, text: $0)] } ?? []
+        if turns[0].role == .assistant {
+            let opening = joined(turns.removeFirst().texts).map { "Assistant: \($0)" }
+            turns[0].texts.insert(contentsOf: opening.map { [$0] } ?? [], at: 0)
+        }
+        let leading = placed.first.flatMap { $0.role == .system ? [$0] : nil } ?? []
         return leading + turns.map { ChatMessageInput(role: $0.role, text: joined($0.texts) ?? "") }
     }
 

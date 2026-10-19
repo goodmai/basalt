@@ -3,6 +3,7 @@ import Testing
 import MLX
 import MLXLMCommon
 import MLXLLM
+import Jinja
 @testable import BasaltCore
 @testable import BasaltInference
 
@@ -25,7 +26,31 @@ struct RoleTaggedInputProcessor: UserInputProcessor {
     }
 }
 
-struct StrictAlternationError: Error {}
+struct NotATemplateError: Error {}
+
+func templateRefusal(_ message: String) -> any Error {
+    do {
+        _ = try Template("{{ raise_exception('\(message)') }}").render([:])
+        return NotATemplateError()
+    } catch {
+        return error
+    }
+}
+
+struct NonLeadingSystemRefusingInputProcessor: UserInputProcessor {
+    func prepare(input: UserInput) throws -> LMInput {
+        let messages = DefaultMessageGenerator().generate(from: input)
+        guard !messages.dropFirst().contains(where: { $0["role"] as? String == "system" }) else {
+            throw templateRefusal("System message must be at the beginning.")
+        }
+        let text = RoleTaggedInputProcessor.render(messages)
+        return LMInput(tokens: MLXArray(ByteTokenizer().encode(text: text, addSpecialTokens: false).map(Int32.init)))
+    }
+}
+
+struct FailingInputProcessor: UserInputProcessor {
+    func prepare(input: UserInput) throws -> LMInput { throw NotATemplateError() }
+}
 
 struct StrictAlternationInputProcessor: UserInputProcessor {
     var refusesEverything = false
@@ -37,7 +62,7 @@ struct StrictAlternationInputProcessor: UserInputProcessor {
         let alternates = dialogue.enumerated().allSatisfy { $1 == ($0 % 2 == 0 ? "user" : "assistant") }
         let hasToolCalls = messages.contains { $0["tool_calls"] != nil }
         guard !refusesEverything, alternates, !dialogue.isEmpty, !dialogue.contains("system"), !hasToolCalls else {
-            throw StrictAlternationError()
+            throw templateRefusal("Conversation roles must alternate user/assistant/user/assistant/...")
         }
         let text = RoleTaggedInputProcessor.render(messages)
         return LMInput(tokens: MLXArray(ByteTokenizer().encode(text: text, addSpecialTokens: false).map(Int32.init)))
@@ -150,6 +175,30 @@ struct ChatTurnsTemplateTests {
         #expect(response.promptTokens == Self.tokenCount(ChatMessageInput.alternating(Self.agentLoop)))
     }
 
+    @Test("A template that only rejects a non-leading system answers after system placement, with tool calls still structured")
+    func systemPlacementKeepsToolCallsStructured() async throws {
+        let engine = await Self.engine(try TinyModel.make(), processor: NonLeadingSystemRefusingInputProcessor())
+        let response = try await engine.generate(request: Self.request(Self.agentLoop, key: "ns"))
+        let placed = ChatMessageInput.leadingSystem(Self.agentLoop)
+        #expect(!response.generatedText.isEmpty)
+        #expect(response.promptTokens == Self.tokenCount(placed))
+        #expect(response.promptTokens != Self.tokenCount(ChatMessageInput.alternating(Self.agentLoop)))
+        let rendered = RoleTaggedInputProcessor.render(DefaultMessageGenerator().generate(messages: MLXInferenceEngine.chat(placed, lastText: placed.last!.text)))
+        #expect(rendered.contains("<tool_call>Bash</tool_call>"))
+        #expect(rendered.contains("<|im_start|>tool\nREADME.md"))
+    }
+
+    @Test("A prepare error that is not a template refusal stays a 503")
+    func nonTemplatePrepareErrorIsServiceUnavailable() async throws {
+        let engine = await Self.engine(try TinyModel.make(), processor: FailingInputProcessor())
+        do {
+            _ = try await engine.generate(request: Self.request(Self.agentLoop, key: "ns"))
+            Issue.record("expected the request to fail")
+        } catch {
+            #expect(error.httpStatus == 503)
+        }
+    }
+
     @Test("A template that rejects even the alternating turns is a 400, not a hardware failure")
     func templateRejectingAlternatingTurnsIsBadRequest() async throws {
         let engine = await Self.engine(try TinyModel.make(), processor: StrictAlternationInputProcessor(refusesEverything: true))
@@ -166,10 +215,44 @@ struct ChatTurnsTemplateTests {
 struct AlternatingChatTurnsTests {
     typealias M = ChatMessageInput
 
-    @Test("Every system message merges into one leading system turn")
-    func systemsMergeToFront() {
-        let turns = M.alternating([M(role: .system, text: "a"), M(role: .user, text: "u"), M(role: .system, text: "b")])
-        #expect(turns == [M(role: .system, text: "a\n\nb"), M(role: .user, text: "u")])
+    @Test("Systems before the first user merge into the leading system; later ones become user text in place")
+    func systemsBeforeFirstUserLeadLaterOnesStayInPlace() {
+        let turns = M.alternating([
+            M(role: .system, text: "a"), M(role: .system, text: "b"), M(role: .user, text: "u"),
+            M(role: .assistant, text: "x"), M(role: .system, text: "now summarize"),
+        ])
+        #expect(turns == [
+            M(role: .system, text: "a\n\nb"), M(role: .user, text: "u"),
+            M(role: .assistant, text: "x"), M(role: .user, text: "System: now summarize"),
+        ])
+    }
+
+    @Test("A system right after a user turn merges into that user turn")
+    func midSystemMergesIntoAdjacentUser() {
+        let turns = M.leadingSystem([M(role: .user, text: "u"), M(role: .system, text: "b"), M(role: .user, text: "v")])
+        #expect(turns == [M(role: .user, text: "u\n\nSystem: b\n\nv")])
+    }
+
+    @Test("System placement keeps tool messages and tool calls as they are")
+    func leadingSystemPreservesToolTurns() {
+        let call = ToolCallOutput(id: "call_1", name: "Bash", arguments: #"{"command":"ls"}"#)
+        let tool = M(role: .tool, text: "README.md", toolCallId: "call_1", toolName: "Bash")
+        let turns = M.leadingSystem([
+            M(role: .system, text: "s"), M(role: .user, text: "u"),
+            M(role: .assistant, text: "", toolCalls: [call]), tool, M(role: .system, text: "be brief"),
+        ])
+        #expect(turns == [
+            M(role: .system, text: "s"), M(role: .user, text: "u"),
+            M(role: .assistant, text: "", toolCalls: [call]), tool, M(role: .user, text: "System: be brief"),
+        ])
+    }
+
+    @Test("A leading assistant turn folds into the first user turn so the dialogue opens with user")
+    func leadingAssistantFoldsIntoFirstUser() {
+        #expect(M.alternating([M(role: .system, text: "s"), M(role: .assistant, text: "hi"), M(role: .user, text: "u")])
+            == [M(role: .system, text: "s"), M(role: .user, text: "Assistant: hi\n\nu")])
+        #expect(M.alternating([M(role: .assistant, text: "hi"), M(role: .user, text: "u"), M(role: .assistant, text: "a")])
+            == [M(role: .user, text: "Assistant: hi\n\nu"), M(role: .assistant, text: "a")])
     }
 
     @Test("A tool turn becomes user text naming the tool")

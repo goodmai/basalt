@@ -8,6 +8,7 @@ import MLXVLM
 import MLXLMCommon
 import MLXHuggingFace
 import Tokenizers
+import Jinja
 import BasaltCore
 
 private extension Duration {
@@ -353,14 +354,24 @@ public actor MLXInferenceEngine: InferenceEngine {
     }
 
     static func chatInput(
-        _ messages: [ChatMessageInput], alternating: Bool, tools: [ToolSpec]?, context: [String: any Sendable]?
+        _ messages: [ChatMessageInput], normalisation: String, tools: [ToolSpec]?, context: [String: any Sendable]?
     ) -> (@Sendable (String) -> UserInput, String?, String) {
         let last = messages[messages.count - 1]
         return (
             { UserInput(chat: Self.chat(messages, lastText: $0), tools: tools, additionalContext: context) },
-            HybridPrefixSnapshot.templateKey([tools ?? [], context ?? [:], last.role.rawValue, last.toolCalls != nil, alternating]),
+            HybridPrefixSnapshot.templateKey([tools ?? [], context ?? [:], last.role.rawValue, last.toolCalls != nil, normalisation]),
             last.text
         )
+    }
+
+    static func templateFallbacks(_ turns: [ChatMessageInput]) -> [(String, [ChatMessageInput])] {
+        [("leadingSystem", ChatMessageInput.leadingSystem(turns)), ("alternating", ChatMessageInput.alternating(turns))]
+    }
+
+    static func isTemplateRefusal(_ error: any Error) -> Bool {
+        if error is TemplateException { return true }
+        if case JinjaError.runtime = error { return true }
+        return false
     }
 
     static func toolCall(_ call: ToolCallOutput) -> ToolCall {
@@ -473,23 +484,32 @@ public actor MLXInferenceEngine: InferenceEngine {
         } else {
             (makeInput, template, lastText) = Self.chatInput(
                 turns ?? [ChatMessageInput(role: .user, text: request.prompt)],
-                alternating: false, tools: toolSpecs, context: context)
+                normalisation: "native", tools: toolSpecs, context: context)
         }
 
         do {
             let rendered: LMInput
             do {
                 rendered = try await container.prepare(input: makeInput(lastText))
-            } catch {
-                guard let turns else { throw error }
-                logger.debug("Chat template refused native turns, retrying with alternating turns: \(error)")
-                (makeInput, template, lastText) = Self.chatInput(
-                    ChatMessageInput.alternating(turns), alternating: true, tools: toolSpecs, context: context)
-                do {
-                    rendered = try await container.prepare(input: makeInput(lastText))
-                } catch {
-                    throw BasaltError.invalidRequestStructure(details: "Chat template rejected the conversation: \(error)")
+            } catch where turns != nil && Self.isTemplateRefusal(error) {
+                logger.debug("Chat template refused native turns, retrying with normalised turns: \(error)")
+                var refusal = error
+                var prepared: LMInput?
+                var previous = turns
+                for (step, messages) in Self.templateFallbacks(turns ?? []) where prepared == nil && messages != previous {
+                    previous = messages
+                    (makeInput, template, lastText) = Self.chatInput(
+                        messages, normalisation: step, tools: toolSpecs, context: context)
+                    do {
+                        prepared = try await container.prepare(input: makeInput(lastText))
+                    } catch where Self.isTemplateRefusal(error) {
+                        refusal = error
+                    }
                 }
+                guard let prepared else {
+                    throw BasaltError.invalidRequestStructure(details: "Chat template rejected the conversation: \(refusal)")
+                }
+                rendered = prepared
             }
             logger.trace("Input prepared. Starting MLX generation...")
             let renderedCount = rendered.text.tokens.dim(-1)
