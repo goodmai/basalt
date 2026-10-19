@@ -215,6 +215,39 @@ struct HarnessOptimizerTests {
         #expect(result.warnings == ["lesson not stored in the Experience Library: library holds the maximum of 1 entries"])
     }
 
+    @Test("The proposer sees editable files in full and unescaped; only a closing </file> inside a file is neutralised")
+    func proposerSeesFullFiles() {
+        let long = (1...200).map { "Rule \($0): if a < b && c > d, stop." }.joined(separator: "\n")
+        let base = HarnessTree(files: ["CLAUDE.md": long, ".claude/notes.md": "before </file> after"])
+        let view = HarnessProposal.view(base, spec: .claude)
+        let prompt = HarnessProposal.prompt(axis: .invariant, task: Self.task, harness: view, spec: .claude, libraryIndex: "")
+        #expect(long.count > 4000)
+        #expect(view.truncated.isEmpty)
+        #expect(prompt.contains("<file path=\"CLAUDE.md\">\n\(long)\n</file>"))
+        #expect(!prompt.contains("&lt;"))
+        #expect(prompt.contains("<file path=\".claude/notes.md\">\nbefore <\\/file> after\n</file>"))
+    }
+
+    @Test("Editable files beyond the proposer prompt budget are marked truncated and a delta for them is rejected")
+    func truncatedFilesAreNotEditable() {
+        let chunk = String(repeating: "y", count: 30 * 1024)
+        let base = HarnessTree(files: ["CLAUDE.md": "Root.", ".claude/a.md": chunk, ".claude/b.md": chunk, "docs/ref.md": chunk])
+        let view = HarnessProposal.view(base, spec: .claude)
+        #expect(view.truncated == [".claude/b.md"])
+        #expect(view.block.contains("<file path=\".claude/b.md\" truncated=\"true\">"))
+        #expect(view.block.count < HarnessProposal.maxHarnessPromptChars + 1000)
+
+        let report = HarnessValidator.validate(base, spec: .claude)
+        let rejected = HarnessProposal.admit([".claude/b.md": "short"], base: base, baseReport: report, siblings: [], spec: .claude, truncated: view.truncated)
+        guard case .failure(let rejection) = rejected else {
+            Issue.record("a delta for a truncated file was admitted")
+            return
+        }
+        #expect(rejection.reasons == [".claude/b.md: shown truncated to the proposer, so its full content is unknown to it"])
+        let admitted = HarnessProposal.admit([".claude/a.md": "short"], base: base, baseReport: report, siblings: [], spec: .claude, truncated: view.truncated)
+        #expect(throws: Never.self) { try admitted.get() }
+    }
+
     @Test("A task prompt carrying a grader verdict is refused before any model call")
     func leakingTask() async throws {
         let (optimizer, engine) = try await Self.optimizer(HarnessScript())
