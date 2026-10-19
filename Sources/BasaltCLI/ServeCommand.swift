@@ -326,7 +326,7 @@ struct ServeCommand: AsyncParsableCommand {
         }
         let allowedOrigins = try cliAllowedOrigins + (value("allowed_origins", as: [String].self) ?? [])
         for origin in allowedOrigins where RequestGuardMiddleware.parseOrigin(origin) == nil {
-            throw ValidationError("allowed origin must be scheme://host[:port] with http or https and no path, got \(origin)")
+            throw ValidationError("allowed origin must be scheme://host[:port]: http or https, no path, no trailing slash, no wildcard; got \(origin)")
         }
         return (
             port: try cliPort ?? value("port", as: Int.self) ?? 8080,

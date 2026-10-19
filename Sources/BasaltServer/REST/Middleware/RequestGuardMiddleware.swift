@@ -38,7 +38,7 @@ public struct RequestGuardMiddleware: RouterMiddleware {
     }
 
     package static func parseOrigin(_ raw: String) -> (origin: String, host: String, port: Int)? {
-        guard let components = URLComponents(string: raw.trimmingCharacters(in: .whitespaces)),
+        guard !raw.contains("*"), let components = URLComponents(string: raw.trimmingCharacters(in: .whitespaces)),
               let scheme = components.scheme?.lowercased(), scheme == "http" || scheme == "https",
               let rawHost = components.host, !rawHost.isEmpty,
               components.path.isEmpty, components.query == nil, components.fragment == nil,
@@ -46,7 +46,7 @@ public struct RequestGuardMiddleware: RouterMiddleware {
         else { return nil }
         let host = bracketed(rawHost.lowercased())
         let port = components.port ?? (scheme == "https" ? 443 : 80)
-        return ("\(scheme)://\(host)" + (components.port.map { ":\($0)" } ?? ""), host, port)
+        return ("\(scheme)://\(host):\(port)", host, port)
     }
 
     func allowsHost(_ request: Request) -> Bool {

@@ -388,6 +388,7 @@ struct RESTServerTests {
     }
 
     private static let jsonHeaders: HTTPFields = [.contentType: "application/json"]
+    private static let aliasModels = ["meta-llama/llama-3.1-8b-instruct:free", "org/name@rev", "org/model/variant"]
     private static let pathLikeModels = ["/tmp", "./x", "../x", "~/x", "claude-local/..--x", "org/../x", "/", " /tmp/x", " claude-local/..--x"]
 
     @Test("REST model ids are repo ids: HF charset, two components, no path forms (#72)")
@@ -397,16 +398,16 @@ struct RESTServerTests {
         }
         for id in Self.pathLikeModels + ["basalt", "a/b/c", "org/", "/name", ".org/x", "org/.x", "org/x y", "org/x~", "-org/x"] {
             #expect(!ModelsController.isRepoId(ModelsController.hfRepoId(from: id)), "\(id)")
-            #expect(ModelsController.restModelId(from: id, requireRepoId: true) == nil, "\(id)")
+            #expect(ModelsController.restModel(from: id).repoId == nil, "\(id)")
         }
-        for id in Self.pathLikeModels + ["a/b/c", "org/x y", ".hidden", "~user", "\t./x", "\n~/x"] {
-            #expect(ModelsController.restModelId(from: id) == nil, "a generation model field takes no path form: \(id)")
+        for id in Self.pathLikeModels + [".hidden", "~user", "\t./x", "\n~/x", "org/x/../../y"] {
+            #expect(ModelsController.restModel(from: id) == .path, "\(id)")
         }
-        for id in ["basalt", "gpt-4o", "claude-sonnet-4-5", "local"] {
-            #expect(ModelsController.restModelId(from: id) == id, "aliases still pass: \(id)")
+        for id in Self.aliasModels + ["basalt", "gpt-4o", "claude-sonnet-4-5", "local", "org/x y"] {
+            #expect(ModelsController.restModel(from: id) == .alias, "\(id)")
         }
-        #expect(ModelsController.restModelId(from: " org/mock-model\n", requireRepoId: true) == "org/mock-model")
-        #expect(ModelsController.restModelId(from: "claude-local/org--mock-model") == "org/mock-model")
+        #expect(ModelsController.restModel(from: " org/mock-model\n") == .repoId("org/mock-model"))
+        #expect(ModelsController.restModel(from: "claude-local/org--mock-model") == .repoId("org/mock-model"))
     }
 
     @Test("/v1/models/load refuses paths with 400, echoes no path, and the loaded model stays loaded (#72)")
@@ -475,5 +476,28 @@ struct RESTServerTests {
                 }
             }
         }
+    }
+
+    @Test("Generation treats a non-repo id that is not a path as an alias: served by the loaded model, no switch; load still 400s (#72)")
+    func generationIgnoresAliasModels() async throws {
+        let s = try await setup()
+        await s.orchestrator.setModelId("org/mock-model")
+        try await s.app.test(.router) { client in
+            for model in Self.aliasModels {
+                for (uri, body) in [
+                    ("/v1/messages", #"{"model": "\#(model)", "max_tokens": 5, "messages": [{"role": "user", "content": "hi"}]}"#),
+                    ("/v1/chat/completions", #"{"model": "\#(model)", "messages": [{"role": "user", "content": "hi"}]}"#),
+                    ("/v1/responses", #"{"model": "\#(model)", "input": "hi"}"#),
+                ] {
+                    let status = try await client.execute(uri: uri, method: .post, headers: Self.jsonHeaders,
+                                                          body: ByteBuffer(string: body)) { $0.status }
+                    #expect(status == .ok, "\(uri) \(model)")
+                }
+                let status = try await client.execute(uri: "/v1/models/load", method: .post, headers: Self.jsonHeaders,
+                                                      body: ByteBuffer(string: #"{"model": "\#(model)"}"#)) { $0.status }
+                #expect(status == .badRequest, "load needs a strict repo id: \(model)")
+            }
+        }
+        #expect(await s.orchestrator.currentModelId == "org/mock-model")
     }
 }

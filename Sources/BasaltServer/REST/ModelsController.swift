@@ -138,7 +138,7 @@ struct ModelsController: Sendable {
                                      message: "Request body must be JSON with a non-empty \"model\" field.")
         }
 
-        guard let hfId = Self.restModelId(from: dto.model, requireRepoId: true) else {
+        guard let hfId = Self.restModel(from: dto.model).repoId else {
             fputs("🔴 [Models] Load refused, not a repo id: \(dto.model)\n", stderr)
             return makeErrorResponse(status: .badRequest, message: Self.repoIdRequired)
         }
@@ -212,11 +212,22 @@ struct ModelsController: Sendable {
 
     static let modelUnavailable = "The model could not be loaded; the server log has the details."
 
-    static func restModelId(from raw: String, requireRepoId: Bool = false) -> String? {
+    enum RESTModel: Equatable {
+        case repoId(String)
+        case alias
+        case path
+
+        var repoId: String? {
+            if case .repoId(let id) = self { return id }
+            return nil
+        }
+    }
+
+    static func restModel(from raw: String) -> RESTModel {
         let id = hfRepoId(from: raw.trimmingCharacters(in: .whitespacesAndNewlines))
-        if isRepoId(id) { return id }
-        let pathLike = id.contains("/") || id.hasPrefix(".") || id.hasPrefix("~")
-        return requireRepoId || pathLike ? nil : id
+        if isRepoId(id) { return .repoId(id) }
+        let isPath = id.hasPrefix("/") || id.hasPrefix(".") || id.hasPrefix("~") || id.contains("..")
+        return isPath ? .path : .alias
     }
 
     // MARK: — Response helpers

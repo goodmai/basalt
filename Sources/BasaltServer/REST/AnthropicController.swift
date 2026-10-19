@@ -212,8 +212,9 @@ struct AnthropicController: Sendable {
             cacheKey: PromptCacheKey.resolve(isService: service.isService)
         )
 
-        let requestedModel = dto.model.flatMap { ModelsController.restModelId(from: $0) }
-        if dto.model != nil, requestedModel == nil {
+        let model = dto.model.map(ModelsController.restModel(from:))
+        let requestedModel = model?.repoId
+        if model == .path {
             return errorResponse(status: .badRequest, message: ModelsController.pathRejected, type: "invalid_request_error")
         }
 

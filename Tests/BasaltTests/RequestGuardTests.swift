@@ -123,7 +123,7 @@ struct RequestGuardTests {
                                                       cliAllowedOrigins: ["http://b.example:3000"], configFile: file.path)
         #expect(Set(network.allowedOrigins) == ["http://b.example:3000", "https://a.example"])
         #expect(try ServeCommand.parse(["--allow-origin", "https://x.example", "--allow-origin", "http://y:1"]).allowOrigins.count == 2)
-        for bad in ["a.example", "https://a.example/app", "ftp://a.example", "*"] {
+        for bad in ["a.example", "https://a.example/app", "ftp://a.example", "*", "http://*", "https://*.example", "https://a.example/"] {
             #expect(throws: (any Error).self, "\(bad)") {
                 _ = try ServeCommand.resolveNetwork(cliPort: nil, cliHost: nil, cliApiKey: nil, cliAllowedOrigins: [bad], configFile: nil)
             }
@@ -182,6 +182,36 @@ struct RequestGuardTests {
                         #expect(res.status != .ok && res.status != .noContent, "\(uri) \(origin): \(res.status)")
                     }
                 }
+            }
+        }
+    }
+
+    @Test("Allow-listed origins match with default ports filled in on either side")
+    func allowListDefaultPorts() async throws {
+        let middleware = RequestGuardMiddleware(bindHost: "127.0.0.1", bindPort: 8080,
+                                                allowedOrigins: ["https://app.example:443", "http://ui.example"])
+        func allows(_ origin: String) -> Bool {
+            middleware.allowsOrigin(Request(head: .init(method: .post, scheme: "http", authority: "localhost", path: "/v1/messages",
+                                                        headerFields: [.origin: origin]),
+                                            body: .init(buffer: ByteBuffer())))
+        }
+        #expect(allows("https://app.example"))
+        #expect(allows("https://app.example:443"))
+        #expect(allows("http://ui.example:80"))
+        #expect(allows("http://ui.example"))
+        #expect(!allows("http://app.example"))
+        #expect(!allows("https://ui.example"))
+        #expect(!allows("https://app.example:8443"))
+        #expect(RequestGuardMiddleware.parseOrigin("http://*") == nil)
+    }
+
+    @Test("The Swagger page pins its unpkg assets with Subresource Integrity")
+    func swaggerSRI() async throws {
+        try await app().test(.router) { (client) async throws in
+            try await client.execute(uri: "/swagger", method: .get) { res in
+                let html = String(buffer: res.body)
+                #expect(html.components(separatedBy: "integrity=\"sha384-").count == 3)
+                #expect(html.components(separatedBy: "crossorigin=\"anonymous\"").count == 3)
             }
         }
     }
