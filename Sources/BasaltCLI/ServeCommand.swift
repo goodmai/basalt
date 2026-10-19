@@ -68,9 +68,9 @@ struct ServeCommand: AsyncParsableCommand {
 
     @Option(
         name: .customLong("cache-blend-ratio"),
-        help: "Share of reused chunk tokens recomputed by --cache-blend, 0...1 (default: 0.15; 1 equals a full prefill)"
+        help: "Share of reused chunk tokens recomputed by --cache-blend, 0...1 (default: 0.5; 0 is fastest, 1 equals a full prefill)"
     )
-    var cacheBlendRatio: Float = 0.15
+    var cacheBlendRatio: Float = 0.5
 
     // Optional so an explicit `--port 8080` can be told apart from "not passed":
     // precedence is CLI > --config file > default.
