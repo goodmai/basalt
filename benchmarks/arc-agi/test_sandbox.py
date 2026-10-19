@@ -141,6 +141,16 @@ if os.system('touch PWNED; touch {self.outside}/PWNED') != 0:
         self.assertEqual(self.run_code(code), (None, "exec_memory_limit"))
         self.assertLess(resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss, MEMORY_SOFT_CAP_BYTES)
 
+    def test_filling_the_temp_dir_with_many_files_is_killed(self):
+        code = ("def transform(grid):\n    chunk = b'x' * (1 << 20)\n    index = 0\n    while True:\n"
+                "        with open(f'f{index}', 'wb') as out:\n            out.write(chunk)\n        index += 1")
+        self.assertEqual(self.run_code(code), (None, "exec_disk_limit"))
+
+    def test_creating_many_empty_files_is_killed(self):
+        code = ("def transform(grid):\n    index = 0\n    while True:\n"
+                "        open(f'f{index}', 'wb').close()\n        index += 1")
+        self.assertEqual(self.run_code(code), (None, "exec_disk_limit"))
+
     def test_rotation_returns_the_right_grid(self):
         text = "```python\ndef transform(grid):\n    return [list(row) for row in zip(*grid[::-1])]\n```"
         self.assertEqual(execute_python_hybrid(text, [[1, 2], [3, 4]]), ([[3, 1], [4, 2]], "python_oop_exec_success"))

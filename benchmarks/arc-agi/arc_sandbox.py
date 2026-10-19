@@ -13,6 +13,8 @@ PYTHON = os.path.realpath(sys.executable)
 DEFAULT_TIMEOUT = 10.0
 MEMORY_LIMIT_BYTES = 1 << 30
 OUTPUT_LIMIT_BYTES = 16 << 20
+DISK_LIMIT_BYTES = 64 << 20
+DISK_ENTRY_MIN_BYTES = 4096
 OPEN_FILES_LIMIT = 64
 WATCH_INTERVAL = 0.01
 RUSAGE_INFO_V0 = 0
@@ -101,7 +103,7 @@ def run_transform(code_blocks, grid, timeout: float = DEFAULT_TIMEOUT):
                 process.stdin.close()
             except BrokenPipeError:
                 pass
-            stopped = _supervise(process, timeout)
+            stopped = _supervise(process, timeout, work_dir)
             if stopped:
                 return None, stopped
             output.seek(0)
@@ -129,7 +131,19 @@ def _footprint_bytes(pid: int) -> int:
     return usage[RUSAGE_PHYS_FOOTPRINT_WORD]
 
 
-def _supervise(process, timeout: float):
+def _disk_bytes(work_dir: str) -> int:
+    total = 0
+    for root, dirs, files in os.walk(work_dir):
+        for name in dirs + files:
+            try:
+                size = os.lstat(os.path.join(root, name)).st_size
+            except OSError:
+                size = 0
+            total += max(size, DISK_ENTRY_MIN_BYTES)
+    return total
+
+
+def _supervise(process, timeout: float, work_dir: str):
     deadline = time.monotonic() + timeout
     while True:
         try:
@@ -141,6 +155,8 @@ def _supervise(process, timeout: float):
             reason = "exec_timeout"
         elif _footprint_bytes(process.pid) > MEMORY_LIMIT_BYTES:
             reason = "exec_memory_limit"
+        elif _disk_bytes(work_dir) > DISK_LIMIT_BYTES:
+            reason = "exec_disk_limit"
         else:
             continue
         process.kill()
