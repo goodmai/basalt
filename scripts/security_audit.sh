@@ -210,7 +210,7 @@ echo ""
 # 10. Swift Package dependency check
 echo "🔟 Checking Swift Package dependencies..."
 if [ -f "Package.resolved" ]; then
-    DEPS_COUNT=$(grep -c "identity" Package.resolved || echo "0")
+    DEPS_COUNT=$(grep -c "identity" Package.resolved || true)
     echo -e "${GREEN}✅ Found $DEPS_COUNT dependencies in Package.resolved${NC}"
     # Per-dependency versions are listed by the OSV scan above.
 else

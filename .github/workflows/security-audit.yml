@@ -63,7 +63,7 @@ jobs:
           # The audit step's output already holds the OSV results: no second round of queries.
           # Fenced, so its ===== lines are not read as Markdown headings.
           if [ -f audit-results.txt ]; then
-            { echo '```'; cat audit-results.txt; echo '```'; } >> security-report.md
+            { echo '````'; cat audit-results.txt; echo '````'; } >> security-report.md
           else
             echo "(audit did not run)" >> security-report.md
           fi
