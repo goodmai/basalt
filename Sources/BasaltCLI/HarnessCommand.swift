@@ -87,7 +87,7 @@ struct HarnessOptimizeCommand: AsyncParsableCommand {
     var noLibrary = false
 
     func validate() throws {
-        guard (1...8).contains(k) else { throw ValidationError("--k must be in 1...8") }
+        guard HarnessLedger.kRange.contains(k) else { throw ValidationError("--k must be in \(HarnessLedger.kRange)") }
     }
 
     func run() async throws {

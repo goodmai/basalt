@@ -159,6 +159,22 @@ struct HarnessMCPTests {
         #expect(try lines.errorCode(6) == -32003)
     }
 
+    @Test("harness_optimize rejects a boolean k, a non-boolean expectsJSON and non-string domain or slug")
+    func optimizeStrictTypes() async throws {
+        let lines = MCPLines()
+        let server = MCPServer(orchestrator: ModelOrchestratorActor(engine: MockInferenceEngine()), writer: { lines.append($0) })
+        let files = HarnessOptimizerTests.base.files
+        let bad: [[String: Any]] = [
+            ["k": true], ["k": 5], ["expectsJSON": "yes"], ["expectsJSON": 1], ["domain": 7], ["slug": ["a"]]
+        ]
+        for (index, extra) in bad.enumerated() {
+            await server.dispatch(toolCall(index, "harness_optimize", ["task": "t", "files": files].merging(extra) { _, new in new }))
+        }
+        for index in bad.indices {
+            #expect(try lines.errorCode(index) == -32602, "\(lines.all[index])")
+        }
+    }
+
     @Test("tools/list advertises the harness tools with their schemas")
     func toolsList() async throws {
         let lines = MCPLines()

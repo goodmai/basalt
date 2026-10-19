@@ -373,7 +373,8 @@ struct HarnessLedgerTests {
         #expect(throws: HarnessBudgetError.proposerBudgetExceeded(limit: 6)) { try ledger.recordProposerCall(id: "p6") }
         #expect(ledger.remainingRollouts == 0 && ledger.remainingProposerCalls == 0)
         #expect(throws: HarnessBudgetError.invalidK(0)) { try HarnessLedger(k: 0) }
-        #expect(throws: HarnessBudgetError.invalidK(9)) { try HarnessLedger(k: 9) }
+        #expect(throws: HarnessBudgetError.invalidK(5)) { try HarnessLedger(k: 5) }
+        #expect(throws: Never.self) { try HarnessLedger(k: 4) }
     }
 
     @Test("A run id is used once across rollouts and proposer calls")

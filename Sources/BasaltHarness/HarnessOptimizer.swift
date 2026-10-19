@@ -17,8 +17,10 @@ public struct HarnessLedger: Codable, Sendable, Equatable {
     public private(set) var rolloutIds: [String] = []
     public private(set) var proposerIds: [String] = []
 
+    public static let kRange = 1...4
+
     public init(k: Int) throws {
-        guard (1...8).contains(k) else { throw HarnessBudgetError.invalidK(k) }
+        guard Self.kRange.contains(k) else { throw HarnessBudgetError.invalidK(k) }
         self.k = k
         self.maxRollouts = 4 * k
         self.maxProposerCalls = 3 * k

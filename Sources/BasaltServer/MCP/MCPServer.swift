@@ -552,8 +552,16 @@ public final class MCPServer: Sendable {
             return
         }
         let k = args?["k"] ?? 1
-        guard let k = k as? Int, (1...4).contains(k) else {
-            writeError(id: id, code: -32602, message: "k must be an integer in 1...4")
+        guard !Self.isJSONBoolean(k), let k = k as? Int, HarnessLedger.kRange.contains(k) else {
+            writeError(id: id, code: -32602, message: "k must be an integer in \(HarnessLedger.kRange)")
+            return
+        }
+        if let expectsJSON = args?["expectsJSON"], !Self.isJSONBoolean(expectsJSON) {
+            writeError(id: id, code: -32602, message: "expectsJSON must be a boolean")
+            return
+        }
+        for key in ["domain", "slug"] where args?[key] != nil && !(args?[key] is String) {
+            writeError(id: id, code: -32602, message: "\(key) must be a string")
             return
         }
         let terms = args?["requiredTerms"] ?? [String]()
@@ -580,6 +588,10 @@ public final class MCPServer: Sendable {
         } catch {
             writeError(id: id, code: -32603, message: "Harness optimization failed: \(error)")
         }
+    }
+
+    private static func isJSONBoolean(_ value: Any) -> Bool {
+        (value as? NSNumber).map { CFGetTypeID($0) == CFBooleanGetTypeID() } ?? false
     }
 
     private func callHarnessLibraryQuery(id: JSONRPCId?, args: [String: Any]?) async {
