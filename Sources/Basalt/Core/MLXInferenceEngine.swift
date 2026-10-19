@@ -1,0 +1,576 @@
+import Foundation
+import Synchronization
+import MLX
+import MLXLLM
+// Registers MLXVLM's factory trampoline (Gemma 4, Qwen3.5-VL, …). The registry
+// finds it via NSClassFromString, so the module must actually be linked in.
+import MLXVLM
+import MLXLMCommon
+import MLXHuggingFace
+import Tokenizers
+
+private extension Duration {
+    var inSeconds: Double {
+        Double(components.seconds) + Double(components.attoseconds) / 1e18
+    }
+}
+
+// MARK: — Protocol
+
+public protocol InferenceEngine: Sendable {
+    func load(modelPath: String) async throws(BasaltError)
+    func generate(request: GenerationRequest) async throws(BasaltError) -> GenerationResponse
+    func generateStream(request: GenerationRequest) async throws(BasaltError) -> AsyncStream<StreamChunk>
+    /// async getter — compatible with actor-isolated implementations.
+    var isLoaded: Bool { get async }
+}
+
+// MARK: — Real implementation
+
+/// Actor-изолированный MLX inference engine.
+/// Все Metal/MLX вызовы выполняются из одного контекста — нет гонок на GPU command queue.
+public actor MLXInferenceEngine: InferenceEngine {
+
+    private var container: ModelContainer?
+
+    /// Resolved from the loaded model's config.json. Supplies per-family sampling
+    /// defaults that the caller did not override.
+    private var profile: any ModelProfile = GenericProfile()
+    private let logger = GemLogger(module: "MLXInferenceEngine")
+
+    /// Chat-template knob for models with a reasoning budget (Qwen3.8: xhigh | medium | low).
+    /// Left nil the template picks its own default — for Qwen3.8 that is `xhigh`, which
+    /// can spend the whole token budget thinking and never emit an answer.
+    private let reasoningEffort: String?
+
+    /// Bits for KV-cache quantization (4 or 8). nil keeps the cache in full
+    /// precision. The cache grows linearly with context, so on long prompts it
+    /// competes with the weights for unified memory.
+    private let kvBits: Int?
+
+    /// Token index at which the quantized cache kicks in. Quantizing from token 0
+    /// costs accuracy on short prompts for no memory benefit.
+    private let quantizedKVStart: Int
+
+    /// Multiplicative penalty on recently emitted tokens. Left nil, nothing damps
+    /// a degenerate loop: a 2-bit model answered "127 + 458" by repeating the
+    /// question until it hit the ceiling.
+    private let repetitionPenalty: Float?
+
+    /// Truncates the sampling tail. `topK` keeps the k most likely tokens; `minP`
+    /// drops anything below a fraction of the top token's probability. Both are
+    /// stricter than top-p on a peaked distribution, which is what a recalled
+    /// constant looks like: at temperature 0.7 a model wrote 2.5 where the
+    /// Colebrook relation needs 2.51 — a value you cannot approximate.
+    private let topK: Int?
+    private let minP: Float?
+
+    /// Seeds the sampler so a non-greedy run can be repeated. Without it, two
+    /// identical requests give different answers and a single run is not evidence.
+    private let seed: UInt64?
+
+    /// MLX buffer-cache ceiling in bytes. nil leaves MLX's own default.
+    private let gpuCacheLimit: Int?
+
+    public init(
+        reasoningEffort: String? = nil,
+        gpuCacheLimit: Int? = 512 << 20,
+        kvBits: Int? = nil,
+        quantizedKVStart: Int = 512,
+        repetitionPenalty: Float? = nil,
+        topK: Int? = nil,
+        minP: Float? = nil,
+        seed: UInt64? = nil
+    ) {
+        self.reasoningEffort = reasoningEffort
+        self.gpuCacheLimit = gpuCacheLimit
+        self.kvBits = kvBits
+        self.quantizedKVStart = quantizedKVStart
+        self.repetitionPenalty = repetitionPenalty
+        self.topK = topK
+        self.minP = minP
+        self.seed = seed
+    }
+
+    /// `registerAliases` is a static method, so it is *not* actor-isolated and two
+    /// concurrent loads could both observe `false` and register twice. Claim the
+    /// flag atomically instead of check-then-set on a bare Bool.
+    private static let aliasesRegistered = Mutex<Bool>(false)
+
+    /// Register architecture aliases (Qwen 3.8, Qwen 3.6, MiniMax M2) in LLMTypeRegistry.
+    public static func registerAliases() async {
+        let alreadyDone = aliasesRegistered.withLock { done -> Bool in
+            defer { done = true }
+            return done
+        }
+        guard !alreadyDone else { return }
+
+        await LLMTypeRegistry.shared.registerModelType("qwen3_8") { data in
+            let config = try JSONDecoder.json5().decode(MLXLLM.Qwen35Configuration.self, from: data)
+            return MLXLLM.Qwen35Model(config)
+        }
+        await LLMTypeRegistry.shared.registerModelType("qwen3.8") { data in
+            let config = try JSONDecoder.json5().decode(MLXLLM.Qwen35Configuration.self, from: data)
+            return MLXLLM.Qwen35Model(config)
+        }
+        await LLMTypeRegistry.shared.registerModelType("qwen3_8_moe") { data in
+            let config = try JSONDecoder.json5().decode(MLXLLM.Qwen35Configuration.self, from: data)
+            return MLXLLM.Qwen35MoEModel(config)
+        }
+        await LLMTypeRegistry.shared.registerModelType("qwen3.8_moe") { data in
+            let config = try JSONDecoder.json5().decode(MLXLLM.Qwen35Configuration.self, from: data)
+            return MLXLLM.Qwen35MoEModel(config)
+        }
+        await LLMTypeRegistry.shared.registerModelType("qwen3_6") { data in
+            let config = try JSONDecoder.json5().decode(MLXLLM.Qwen35Configuration.self, from: data)
+            return MLXLLM.Qwen35Model(config)
+        }
+        await LLMTypeRegistry.shared.registerModelType("qwen3.6") { data in
+            let config = try JSONDecoder.json5().decode(MLXLLM.Qwen35Configuration.self, from: data)
+            return MLXLLM.Qwen35Model(config)
+        }
+        await LLMTypeRegistry.shared.registerModelType("qwen3_6_moe") { data in
+            let config = try JSONDecoder.json5().decode(MLXLLM.Qwen35Configuration.self, from: data)
+            return MLXLLM.Qwen35MoEModel(config)
+        }
+        await LLMTypeRegistry.shared.registerModelType("minimax_m2") { data in
+            let config = try JSONDecoder.json5().decode(MiniMaxConfiguration.self, from: data)
+            return MiniMaxModel(config)
+        }
+        await LLMTypeRegistry.shared.registerModelType("minimax-m2") { data in
+            let config = try JSONDecoder.json5().decode(MiniMaxConfiguration.self, from: data)
+            return MiniMaxModel(config)
+        }
+    }
+
+    // MARK: — Load
+
+    public func load(modelPath: String) async throws(BasaltError) {
+        logger.trace("Loading model from path: \(modelPath)")
+        await Self.registerAliases()
+        // ServeCommand всегда передаёт абсолютный локальный путь после разрешения кэша.
+        // Если путь не начинается с "/" — это нераспознанный формат.
+        guard modelPath.hasPrefix("/") || modelPath.hasPrefix(".") else {
+            // HF repo ID без локального кэша — сообщаем пользователю
+            throw .modelNotFound(
+                identifier: "'\(modelPath)' не найден в локальном кэше. " +
+                "Сначала загрузите: Gem models download \(modelPath)"
+            )
+        }
+
+        let directory = URL(fileURLWithPath: modelPath)
+        guard FileManager.default.fileExists(atPath: directory.path) else {
+            throw .modelNotFound(identifier: modelPath)
+        }
+
+        do {
+            // Free the old model BEFORE loading the new one to avoid a peak-memory spike
+            // where both models occupy GPU/unified memory simultaneously.
+            // Setting container to nil drops all ARC references to the ModelContainer,
+            // releasing the underlying MLXArray tensors and Metal buffers.
+            if container != nil {
+                container = nil
+                Memory.clearCache()   // flush MLX's internal memory allocator cache
+                logger.info("Previous model unloaded, GPU cache cleared.")
+            }
+
+            // Unbounded buffer cache competes with model weights for unified memory
+            // and pushes large models (27B @ 4-bit ≈ 16 GB) into swap on 24 GB Macs.
+            // ponytail: fixed 512 MB cap; make it a --gpu-cache flag if a workload needs more.
+            if let gpuCacheLimit { Memory.cacheLimit = gpuCacheLimit }
+
+            struct TokenizerBridge: MLXLMCommon.Tokenizer {
+                private let upstream: any Tokenizers.Tokenizer
+                init(_ upstream: any Tokenizers.Tokenizer) { self.upstream = upstream }
+                func encode(text: String, addSpecialTokens: Bool) -> [Int] {
+                    upstream.encode(text: text, addSpecialTokens: addSpecialTokens)
+                }
+                func decode(tokenIds: [Int], skipSpecialTokens: Bool) -> String {
+                    upstream.decode(tokens: tokenIds, skipSpecialTokens: skipSpecialTokens)
+                }
+                func convertTokenToId(_ token: String) -> Int? { upstream.convertTokenToId(token) }
+                func convertIdToToken(_ id: Int) -> String? { upstream.convertIdToToken(id) }
+                var bosToken: String? { upstream.bosToken }
+                var eosToken: String? { upstream.eosToken }
+                var unknownToken: String? { upstream.unknownToken }
+                func applyChatTemplate(
+                    messages: [[String: any Sendable]],
+                    tools: [[String: any Sendable]]?,
+                    additionalContext: [String: any Sendable]?
+                ) throws -> [Int] {
+                    do {
+                        return try upstream.applyChatTemplate(
+                            messages: messages, tools: tools, additionalContext: additionalContext)
+                    } catch Tokenizers.TokenizerError.missingChatTemplate {
+                        throw MLXLMCommon.TokenizerError.missingChatTemplate
+                    } catch {
+                        throw error
+                    }
+                }
+            }
+
+            struct DefaultTokenizerLoader: TokenizerLoader {
+                func load(from directory: URL) async throws -> any MLXLMCommon.Tokenizer {
+                    let upstream = try await Tokenizers.AutoTokenizer.from(modelFolder: directory)
+                    return TokenizerBridge(upstream)
+                }
+            }
+
+            container = try await loadModelContainer(
+                from: directory,
+                using: DefaultTokenizerLoader()
+            )
+            profile = ModelProfileRegistry.profile(forModelAt: modelPath)
+            
+            // Dynamic config inspection
+            let configURL = directory.appendingPathComponent("config.json")
+            if let data = try? Data(contentsOf: configURL),
+               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                
+                let arch = (json["architectures"] as? [String])?.first ?? "Unknown"
+                let modelType = json["model_type"] as? String ?? "Unknown"
+                
+                let textConfig = json["text_config"] as? [String: Any]
+                let numExperts = json["num_experts"] as? Int ?? textConfig?["num_experts"] as? Int
+                let isMoE = (numExperts ?? 0) > 0
+                
+                let qConfig = json["quantization_config"] as? [String: Any] ?? json["quantization"] as? [String: Any]
+                let bits = qConfig?["bits"] as? Int
+                let groupSize = qConfig?["group_size"] as? Int
+                let qMode = qConfig?["mode"] as? String
+                
+                logger.info("--- Model Architecture ---")
+                logger.info("Type: \(modelType) (\(arch))")
+                if isMoE {
+                    logger.info("Topology: Sparse MoE (Experts: \(numExperts ?? 0))")
+                } else {
+                    logger.info("Topology: Dense")
+                }
+                if let b = bits {
+                    let modeStr = qMode.map { " [\($0)]" } ?? ""
+                    logger.info("Quantization: \(b)-bit (Group Size: \(groupSize ?? -1))\(modeStr)")
+                } else if let qDict = json["quantization"] as? [String: Any], !qDict.isEmpty {
+                    logger.info("Quantization: Dynamic Quantization (DQ - per-layer, \(qDict.count) layers)")
+                } else {
+                    logger.info("Quantization: None (FP16/BF16 Base)")
+                }
+                logger.info("--------------------------")
+            }
+            logger.info("Model loaded and initialized successfully.")
+        } catch {
+            throw .weightsCorrupted(path: modelPath, reason: error.localizedDescription)
+        }
+    }
+
+    // MARK: — Template Context
+    public static func buildTemplateContext(
+        request: GenerationRequest,
+        defaultReasoningEffort: String? = nil,
+        profile: (any ModelProfile)? = nil
+    ) -> [String: any Sendable]? {
+        // ReasoningPolicy(rawValue:) maps "off"/"none" to disabled; each profile maps level names
+        // onto its template (Qwen: "high" → "xhigh"), GenericProfile passes them through.
+        let policy: ReasoningPolicy = request.enableThinking == false
+            ? .disabled
+            : ReasoningPolicy(rawValue: request.reasoningEffort ?? defaultReasoningEffort) ?? .modelDefault
+
+        let context = (profile ?? GenericProfile()).templateContext(for: policy)
+        return context.isEmpty ? nil : context
+    }
+
+    // MARK: — Generate
+
+    public func generate(request: GenerationRequest) async throws(BasaltError) -> GenerationResponse {
+        let stream = try await generateStream(request: request)
+        var textChunks: [String] = []
+        var reasoningChunks: [String] = []
+        var toolCalls: [ToolCallOutput] = []
+        var finalResponse: GenerationResponse?
+
+        for await chunk in stream {
+            switch chunk {
+            case .text(let t):
+                textChunks.append(t)
+            case .reasoning(let r):
+                reasoningChunks.append(r)
+            case .metadata(let m):
+                finalResponse = m
+            case .toolCall(let call):
+                toolCalls.append(call)
+            }
+        }
+
+        guard let finalResponse else {
+            throw .inferenceHardwareFailure(reason: "Stream finished without metadata")
+        }
+
+        let fullReasoning = reasoningChunks.joined()
+        return GenerationResponse(
+            generatedText: textChunks.joined(),
+            reasoningText: fullReasoning.isEmpty ? nil : fullReasoning,
+            promptTokens: finalResponse.promptTokens,
+            completionTokens: finalResponse.completionTokens,
+            tokensPerSecond: finalResponse.tokensPerSecond,
+            generationTime: finalResponse.generationTime,
+            timeToFirstToken: finalResponse.timeToFirstToken,
+            memory: finalResponse.memory,
+            finishReason: finalResponse.finishReason,
+            toolCalls: toolCalls.isEmpty ? nil : toolCalls
+        )
+    }
+
+    // MARK: — Tools
+
+    /// OpenAI-style function specs for the chat template's tool section.
+    static func toolSpecs(_ tools: [ToolDefinition]?) -> [ToolSpec]? {
+        guard let tools, !tools.isEmpty else { return nil }
+        return tools.map { tool in
+            var function: [String: any Sendable] = ["name": tool.name]
+            if let description = tool.description { function["description"] = description }
+            if let json = tool.parametersJSON,
+               let schema = try? JSONSerialization.jsonObject(with: Data(json.utf8)) {
+                function["parameters"] = sendable(schema)
+            }
+            return ["type": "function", "function": function]
+        }
+    }
+
+    /// JSONSerialization output (NSDictionary/NSArray/NSNumber) as plain Sendable values the
+    /// Jinja renderer understands.
+    private static func sendable(_ value: Any) -> any Sendable {
+        switch value {
+        case let dict as [String: Any]: return dict.mapValues { sendable($0) }
+        case let array as [Any]:        return array.map { sendable($0) }
+        case let number as NSNumber:
+            if CFGetTypeID(number) == CFBooleanGetTypeID() { return number.boolValue }
+            return number.doubleValue.rounded() == number.doubleValue ? number.intValue : number.doubleValue
+        case let string as String:      return string
+        default:                        return String(describing: value)
+        }
+    }
+
+    /// What a rejected tool call becomes: quantized models often emit almost-JSON, so a malformed
+    /// call to a declared tool is repaired into a real call; anything else becomes a visible note
+    /// instead of a silently empty turn.
+    static func resolveRejectedToolCall(
+        reason: String, toolName: String?, callID: String?,
+        rawText: String, truncated: Bool, declaredTools: Set<String>
+    ) -> StreamChunk {
+        if reason == "malformed_syntax",
+           let call = ToolCallRepairer.repairToolCall(
+               name: toolName, callID: callID, rawText: rawText, truncated: truncated, declaredTools: declaredTools) {
+            return .toolCall(call)
+        }
+        let tool = toolName.map { " to \($0)" } ?? ""
+        return .text("\n[tool call\(tool) rejected: \(reason)]")
+    }
+
+    static func toolCallOutput(_ call: ToolCall) -> ToolCallOutput {
+        let arguments = (try? JSONEncoder().encode(call.function.arguments)).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
+        return ToolCallOutput(id: "call_\(UUID().uuidString.prefix(24))", name: call.function.name, arguments: arguments)
+    }
+
+    public func generateStream(request: GenerationRequest) async throws(BasaltError) -> AsyncStream<StreamChunk> {
+        guard let container else {
+            throw .inferenceHardwareFailure(reason: "MLX engine not initialized — call load() first")
+        }
+
+        let requestedMaxTokens = request.maxTokens ?? 1024
+        var params = GenerateParameters(
+            maxTokens: requestedMaxTokens,
+            temperature: Float(request.temperature ?? 0.7),
+            topP: Float(request.topP ?? 0.9)
+        )
+        params.kvBits = kvBits
+        params.quantizedKVStart = quantizedKVStart
+        params.repetitionPenalty = repetitionPenalty
+        if let topK { params.topK = topK }
+        // An explicit --min-p always wins; otherwise fall back to whatever the
+        // family was measured to need.
+        if let effectiveMinP = minP ?? profile.defaultMinP { params.minP = effectiveMinP }
+        params.seed = seed
+
+        let toolSpecs = Self.toolSpecs(request.tools)
+        let declaredTools = Set(request.tools?.map(\.name) ?? [])
+        let userInput: UserInput
+        if request.prompt.contains("<|turn|>") || request.prompt.contains("<|channel|>") {
+            userInput = UserInput(prompt: request.prompt)
+        } else {
+            let context = Self.buildTemplateContext(
+                request: request,
+                defaultReasoningEffort: reasoningEffort,
+                profile: profile
+            )
+            userInput = UserInput(
+                chat: [.user(request.prompt)],
+                tools: toolSpecs,
+                additionalContext: context
+            )
+        }
+
+        do {
+            let lmInput = try await container.prepare(input: userInput)
+            logger.trace("Input prepared. Starting MLX generation...")
+            // The same specs go to the tool-call decoder: without them it has no schema, so
+            // every argument comes back as a string ("timeout_ms": "1000") and typed tools fail.
+            let mlxStream = try await container.generate(input: lmInput, parameters: params, tools: toolSpecs)
+            
+            let promptEndsWithThinking = request.prompt.hasSuffix("<|channel>thought\n")
+                || request.prompt.hasSuffix("<|channel>thought")
+                || request.prompt.hasSuffix("<|channel|>thought\n")
+                || request.prompt.hasSuffix("<|channel|>thought")
+                || request.prompt.hasSuffix("<think>\n")
+                || request.prompt.hasSuffix("<think>")
+
+            return AsyncStream<StreamChunk> { continuation in
+                let task = Task.detached {
+                    let clock = ContinuousClock()
+                    let startTime = clock.now
+                    var lastInfo: GenerateCompletionInfo?
+                    var tokenCount = 0
+                    // Stamped on the first emitted chunk. Was hardcoded to 0, so every
+                    // benchmark reported TTFT 0.000 with zero variance — a constant
+                    // masquerading as a measurement, hiding all prefill cost.
+                    var firstTokenAt: ContinuousClock.Instant?
+                    
+                    var buffer = ""
+                    var isThinking = promptEndsWithThinking
+
+                    func processBuffer(final: Bool) {
+                        while !buffer.isEmpty {
+                            if !isThinking {
+                                if let startRange = buffer.range(of: "<|channel|>thought") ?? buffer.range(of: "<think>") ?? buffer.range(of: "<|think|>") {
+                                    let leading = String(buffer[..<startRange.lowerBound])
+                                    if !leading.isEmpty {
+                                        continuation.yield(.text(leading))
+                                    }
+                                    buffer.removeSubrange(..<startRange.upperBound)
+                                    if buffer.hasPrefix("\n") { buffer.removeFirst() }
+                                    isThinking = true
+                                } else if let endRange = buffer.range(of: "<channel|>") ?? buffer.range(of: "</think>") {
+                                    let leading = String(buffer[..<endRange.lowerBound])
+                                    if !leading.isEmpty {
+                                        continuation.yield(.text(leading))
+                                    }
+                                    buffer.removeSubrange(..<endRange.upperBound)
+                                    if buffer.hasPrefix("\n") { buffer.removeFirst() }
+                                } else {
+                                    if !final && buffer.count > 15 {
+                                        let safeEndIndex = buffer.index(buffer.endIndex, offsetBy: -15)
+                                        let textToYield = String(buffer[..<safeEndIndex])
+                                        buffer.removeSubrange(..<safeEndIndex)
+                                        continuation.yield(.text(textToYield))
+                                    } else if final {
+                                        continuation.yield(.text(buffer))
+                                        buffer = ""
+                                    }
+                                    break
+                                }
+                            } else {
+                                if let endRange = buffer.range(of: "<|channel|>") ?? buffer.range(of: "<channel|>") ?? buffer.range(of: "</think>") ?? buffer.range(of: "<|turn|>") {
+                                    let reasoning = String(buffer[..<endRange.lowerBound])
+                                    if !reasoning.isEmpty {
+                                        continuation.yield(.reasoning(reasoning))
+                                    }
+                                    buffer.removeSubrange(..<endRange.upperBound)
+                                    if buffer.hasPrefix("\n") { buffer.removeFirst() }
+                                    isThinking = false
+                                } else {
+                                    if !final && buffer.count > 15 {
+                                        let safeEndIndex = buffer.index(buffer.endIndex, offsetBy: -15)
+                                        let reasoningToYield = String(buffer[..<safeEndIndex])
+                                        buffer.removeSubrange(..<safeEndIndex)
+                                        continuation.yield(.reasoning(reasoningToYield))
+                                    } else if final {
+                                        if !buffer.isEmpty {
+                                            continuation.yield(.reasoning(buffer))
+                                            buffer = ""
+                                        }
+                                    }
+                                    break
+                                }
+                            }
+                        }
+                    }
+                    
+                    for await generation in mlxStream {
+                        if Task.isCancelled { 
+                            break 
+                        }
+                        
+                        tokenCount += 1
+                        
+                        switch generation {
+                        case .chunk(let text):
+                            if firstTokenAt == nil { firstTokenAt = clock.now }
+                            buffer.append(text)
+                            processBuffer(final: false)
+                        case .info(let info):
+                            lastInfo = info
+                        case .toolCall(let call):
+                            // Text held back for marker detection belongs before the call.
+                            processBuffer(final: true)
+                            continuation.yield(.toolCall(Self.toolCallOutput(call)))
+                        case .rejectedToolCall(let rejection):
+                            processBuffer(final: true)
+                            let chunk = Self.resolveRejectedToolCall(
+                                reason: rejection.reason.rawValue, toolName: rejection.toolName,
+                                callID: rejection.callID, rawText: rejection.rawTextPreview,
+                                truncated: rejection.isPreviewTruncated, declaredTools: declaredTools)
+                            if case .text = chunk {
+                                GemLogger(module: "MLXInferenceEngine").warn("Tool call rejected: \(rejection.reason.rawValue)")
+                            }
+                            continuation.yield(chunk)
+                        @unknown default:
+                            break
+                        }
+                    }
+                    
+                    // Flush any remaining text in buffer at EOF
+                    processBuffer(final: true)
+
+                    // End of stream - send metadata
+                    if !Task.isCancelled {
+                        let generationTime = (clock.now - startTime).inSeconds
+                        let timeToFirstToken = firstTokenAt.map { ($0 - startTime).inSeconds } ?? 0
+                        let mem = Memory.snapshot()
+
+                        let metadata = GenerationResponse(
+                            generatedText: "", 
+                            reasoningText: nil,
+                            promptTokens: lastInfo?.promptTokenCount ?? 0,
+                            completionTokens: lastInfo?.generationTokenCount ?? 0,
+                            tokensPerSecond: lastInfo?.tokensPerSecond ?? 0,
+                            generationTime: generationTime,
+                            timeToFirstToken: timeToFirstToken,
+                            memory: .init(
+                                peakBytes: mem.peakMemory,
+                                activeBytes: mem.activeMemory,
+                                cacheBytes: mem.cacheMemory
+                            ),
+                            // Was hardcoded to .stop, so a generation cut off at the
+                            // token ceiling reported a clean finish and truncation went
+                            // unnoticed by every caller.
+                            finishReason: (lastInfo?.generationTokenCount ?? 0) >= requestedMaxTokens
+                                ? .length : .stop
+                        )
+                        continuation.yield(.metadata(metadata))
+                    }
+                    continuation.finish()
+                }
+
+                continuation.onTermination = { _ in
+                    task.cancel()
+                }
+            }
+        } catch let err as BasaltError {
+            throw err
+        } catch {
+            throw .inferenceHardwareFailure(reason: error.localizedDescription)
+        }
+    }
+
+    // MARK: — State
+
+    public var isLoaded: Bool { container != nil }
+}

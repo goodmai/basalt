@@ -1,6 +1,6 @@
 import Foundation
 import ArgumentParser
-import GemCore
+import BasaltKit
 
 @available(macOS 10.15, *)
 @main
