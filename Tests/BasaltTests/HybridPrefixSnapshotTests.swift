@@ -3,6 +3,7 @@ import Testing
 import MLX
 import MLXLMCommon
 import MLXLLM
+import MLXVLM
 @testable import BasaltCore
 @testable import BasaltInference
 
@@ -23,14 +24,34 @@ enum TinyHybrid {
         return model
     }
 
-    static func engine(promptCacheBytes: Int? = nil) async throws -> MLXInferenceEngine {
+    static let visionConfig = """
+        {"model_type": "qwen3_5", "text_config": \(config),
+         "vision_config": {"model_type": "qwen3_5", "depth": 1, "hidden_size": 16, "intermediate_size": 32,
+          "out_hidden_size": 64, "num_heads": 2, "patch_size": 2, "spatial_merge_size": 2,
+          "temporal_patch_size": 2, "num_position_embeddings": 16}}
+        """
+
+    static func makeVision() throws -> Qwen35 {
+        MLXRandom.seed(79)
+        let model = Qwen35(try JSONDecoder().decode(Qwen35Configuration.self, from: Data(visionConfig.utf8)))
+        eval(model)
+        return model
+    }
+
+    static func engine(promptCacheBytes: Int? = nil, vision: Bool = false) async throws -> MLXInferenceEngine {
         let engine = MLXInferenceEngine(promptCacheBytes: promptCacheBytes)
         await engine.attach(ModelContainer(context: ModelContext(
             configuration: ModelConfiguration(id: "tiny-qwen35"),
-            model: try make(),
+            model: vision ? try makeVision() : try make(),
             processor: ByteInputProcessor(),
             tokenizer: ByteTokenizer())))
         return engine
+    }
+
+    static let attentionBytesPerToken = 2 * 2 * 2 * 16 * 4
+
+    static func storedBytes(_ snapshot: PromptCache, tokens: Int) -> Int {
+        tokens * attentionBytesPerToken + (RecurrentSnapshot(of: snapshot)?.bytes ?? 0)
     }
 
     static func row(_ tokens: [Int]) -> MLXArray {
@@ -76,7 +97,7 @@ struct HybridPrefixSnapshotTests {
         let snapshot = try TinyHybrid.snapshotted(model, first)
         #expect(snapshot.tokenCount == boundary)
         tree.store("ns", tokens: Array(first.prefix(boundary)), cache: snapshot)
-        #expect(tree.byteCount == snapshot.byteCount)
+        #expect(tree.byteCount == TinyHybrid.storedBytes(snapshot, tokens: boundary))
         let stored = TinyHybrid.recurrentStates(tree)
         #expect(!stored.isEmpty)
 
@@ -133,7 +154,7 @@ struct HybridPrefixSnapshotTests {
         let model = try TinyHybrid.make()
         let first = TinyModel.tokens(Conversation.firstTurn)
         let snapshot = try TinyHybrid.snapshotted(model, first)
-        var tree = PromptCacheTree(byteBudget: snapshot.byteCount - 1)
+        var tree = PromptCacheTree(byteBudget: TinyHybrid.storedBytes(snapshot, tokens: first.count - 1) - 1)
         tree.store("ns", tokens: Array(first.dropLast()), cache: snapshot)
         #expect(tree.byteCount == 0)
         #expect(tree.leaves().isEmpty)
@@ -141,7 +162,27 @@ struct HybridPrefixSnapshotTests {
 
     @Test("On the engine, a follow-up turn reuses all but the last token of the previous prompt and answers like a full prefill")
     func engineReusesTheSnapshot() async throws {
-        let engine = try await TinyHybrid.engine(promptCacheBytes: 1 << 30)
+        try await reuseOnEngine(vision: false)
+    }
+
+    @Test("Through MLXVLM's Qwen35, whose warm continuation needs the carried rope delta, a restored snapshot answers like a full prefill")
+    func visionWrapperCarriesItsState() async throws {
+        try await reuseOnEngine(vision: true)
+        let model = try TinyHybrid.makeVision()
+        let first = TinyModel.tokens(Conversation.firstTurn)
+        let head = try HybridPrefixSnapshot.prefillHead(
+            MLXArray(first.map(Int32.init)), into: PromptCache(try model.newCache(parameters: nil)),
+            reused: 0, boundary: first.count - 1, model: model, prefill: PrefillParameters(stepSize: 16))
+        #expect(head.state != nil)
+        var tree = PromptCacheTree(byteBudget: 1 << 30)
+        tree.store("ns", tokens: Array(first.dropLast()), cache: try #require(head.kept))
+        let lease = try tree.required("ns", for: TinyModel.tokens(Conversation.afterToolCall))
+        #expect(lease.cache.state != nil)
+        tree.release(lease)
+    }
+
+    func reuseOnEngine(vision: Bool) async throws {
+        let engine = try await TinyHybrid.engine(promptCacheBytes: 1 << 30, vision: vision)
         let first = TinyModel.tokens(Conversation.firstTurn)
         let turn1 = try await engine.generate(request: greedy(Conversation.firstTurn, key: "ns"))
         #expect(turn1.cachedPromptTokens == 0)
@@ -184,6 +225,36 @@ struct HybridPrefixSnapshotTests {
         let lease = try tree.required("ns", for: head + [30, 31])
         #expect(lease.reusedTokens == p.count - 1)
         tree.release(lease)
+    }
+
+    @Test("A split head without a snapshot never outlives its branches as an unrestorable leaf")
+    func noStrandedHeadAfterEviction() throws {
+        let model = try TinyHybrid.make()
+        let head = Array(TinyModel.tokens(Conversation.firstTurn).dropLast())
+        var tree = PromptCacheTree(byteBudget: 1 << 30, leafLimit: 1)
+        for prompt in [head + [10, 11, 12], head + [20, 21, 22], Array(200..<220)] {
+            tree.store("ns", tokens: Array(prompt.dropLast()), cache: try TinyHybrid.snapshotted(model, prompt))
+            #expect(tree.leaves().count == 1)
+            #expect(tree.leaves().allSatisfy { $0.snapshot != nil && $0.parent?.tokens.isEmpty == true })
+            #expect(tree.byteCount == tree.leaves().reduce(0) { $0 + $1.bytes })
+        }
+    }
+
+    @Test("The snapshot copies only the recurrent layers; attention layers stay the live caches, sliced at store time")
+    func snapshotSharesLiveAttention() throws {
+        let model = try TinyHybrid.make()
+        let prompt = TinyModel.tokens(Conversation.firstTurn)
+        let live = PromptCache(try model.newCache(parameters: nil))
+        let head = try HybridPrefixSnapshot.prefillHead(
+            MLXArray(prompt.map(Int32.init)), into: live, reused: 0, boundary: prompt.count - 1,
+            model: model, prefill: PrefillParameters(stepSize: 16))
+        let kept = try #require(head.kept)
+        for (original, snapshot) in zip(live.layers, kept.layers) {
+            #expect(((original as AnyObject) === (snapshot as AnyObject)) == !(original is ArraysCache))
+        }
+        _ = model(TinyHybrid.row(Array(prompt[(prompt.count - 1)...]) + [1, 2, 3]), cache: live.layers)
+        #expect(kept.isSnapshot(of: prompt.count - 1))
+        #expect(kept.tokenCount == prompt.count - 1)
     }
 
     @Test("The snapshot boundary is the end of the request text: the template's suffix after it is measured, not assumed")

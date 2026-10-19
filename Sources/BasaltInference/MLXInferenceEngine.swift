@@ -66,6 +66,8 @@ public actor MLXInferenceEngine: InferenceEngine {
     private(set) var promptCaches: PromptCacheTree
     private let configuredPromptCacheBytes: Int?
     private var modelEpoch = 0
+    private var modelIsHybrid: Bool?
+    private var templateSuffixes: [String: Int] = [:]
 
     public init(
         reasoningEffort: String? = nil,
@@ -95,6 +97,8 @@ public actor MLXInferenceEngine: InferenceEngine {
         promptCaches = PromptCacheTree(byteBudget: configuredPromptCacheBytes ?? PromptCacheBudget.automatic(
             workingSet: PromptCacheBudget.gpuWorkingSet(), weights: Memory.activeMemory))
         modelEpoch += 1
+        modelIsHybrid = nil
+        templateSuffixes = [:]
         logger.info("Prompt cache budget: \(promptCaches.byteBudget >> 20) MB")
     }
 
@@ -415,8 +419,10 @@ public actor MLXInferenceEngine: InferenceEngine {
         let toolSpecs = Self.toolSpecs(request.tools)
         let declaredTools = Set(request.tools?.map(\.name) ?? [])
         let makeInput: @Sendable (String) -> UserInput
+        let template: String
         if request.prompt.contains("<|turn|>") || request.prompt.contains("<|channel|>") {
             makeInput = { UserInput(prompt: $0) }
+            template = "raw"
         } else {
             let context = Self.buildTemplateContext(
                 request: request,
@@ -424,6 +430,7 @@ public actor MLXInferenceEngine: InferenceEngine {
                 profile: profile
             )
             makeInput = { UserInput(chat: [.user($0)], tools: toolSpecs, additionalContext: context) }
+            template = "\(String(describing: toolSpecs))\(String(describing: context))"
         }
         let userInput = makeInput(request.prompt)
 
@@ -436,8 +443,9 @@ public actor MLXInferenceEngine: InferenceEngine {
             let namespace = carriesMoreThanTokens ? nil : promptCacheNamespace(for: request)
             let lease = namespace.flatMap { promptCaches.lease($0, for: promptTokens) }
             let epoch = modelEpoch
-            let boundary = promptTokens.count - (namespace == nil
-                ? 1 : await HybridPrefixSnapshot.templateSuffixLength(container, makeInput))
+            let boundary = namespace == nil
+                ? promptTokens.count - 1
+                : await snapshotBoundary(promptTokens.count, container: container, template: template, makeInput)
             let launch: GenerationLaunch
             do {
                 launch = try await container.perform(nonSendable: lmInput) { context, input in
@@ -620,6 +628,23 @@ public actor MLXInferenceEngine: InferenceEngine {
     static func settle(_ launch: GenerationLaunch, cancelled: Bool) async {
         if cancelled { launch.task?.cancel() }
         await launch.task?.value
+    }
+
+    private func snapshotBoundary(
+        _ count: Int, container: ModelContainer, template: String, _ makeInput: @Sendable (String) -> UserInput
+    ) async -> Int {
+        if modelIsHybrid == nil {
+            modelIsHybrid = (try? await container.perform { PromptCache(try $0.model.newCache(parameters: nil)).isHybrid })
+                ?? false
+        }
+        guard modelIsHybrid == true else { return count - 1 }
+        if templateSuffixes[template] == nil {
+            if templateSuffixes.count >= 64 {
+                templateSuffixes.removeAll()
+            }
+            templateSuffixes[template] = await HybridPrefixSnapshot.templateSuffixLength(container, makeInput)
+        }
+        return count - (templateSuffixes[template] ?? 1)
     }
 
     private func promptCacheNamespace(for request: GenerationRequest) -> String? {

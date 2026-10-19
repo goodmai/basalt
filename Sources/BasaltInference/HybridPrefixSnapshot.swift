@@ -9,17 +9,18 @@ extension PromptCache {
     }
 
     func isSnapshot(of count: Int) -> Bool {
-        isHybrid && layers.allSatisfy { $0.offset == count }
+        isHybrid && layers.allSatisfy { $0 is ArraysCache ? $0.offset == count : $0.offset >= count }
     }
 
     func snapshot(at count: Int, state: LMOutput.State?) -> PromptCache {
-        let copies = PromptCache(layers.map { $0.copy() })
-        for case let recurrent as ArraysCache in copies.layers {
+        let kept = PromptCache(layers.map { layer in
+            guard layer is ArraysCache, let recurrent = layer.copy() as? ArraysCache else { return layer }
             recurrent.offset = count
-        }
-        copies.state = state
-        eval(copies.layers.flatMap { $0.innerState() })
-        return copies
+            return recurrent
+        })
+        kept.state = state
+        eval(kept.layers.filter { $0 is ArraysCache }.flatMap { $0.innerState() })
+        return kept
     }
 }
 
@@ -61,7 +62,7 @@ enum HybridPrefixSnapshot {
         return (cache.snapshot(at: boundary, state: state), boundary, state)
     }
 
-    static func templateSuffixLength(_ container: ModelContainer, _ makeInput: (String) -> UserInput) async -> Int {
+    static func templateSuffixLength(_ container: ModelContainer, _ makeInput: @Sendable (String) -> UserInput) async -> Int {
         guard let a = try? await container.prepare(input: makeInput("a")).text.tokens.asArray(Int.self),
               let b = try? await container.prepare(input: makeInput("b")).text.tokens.asArray(Int.self)
         else { return 1 }
