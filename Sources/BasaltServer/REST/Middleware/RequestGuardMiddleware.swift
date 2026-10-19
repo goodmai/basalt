@@ -11,9 +11,11 @@ public struct RequestGuardMiddleware: RouterMiddleware {
 
     let allowedHosts: Set<String>?
     let allowedOrigins: Set<String>
+    let bindPort: Int
 
-    public init(bindHost: String, allowedOrigins: [String] = []) {
+    public init(bindHost: String, bindPort: Int, allowedOrigins: [String] = []) {
         self.allowedHosts = Self.hostAllowlist(bindHost: bindHost)
+        self.bindPort = bindPort
         self.allowedOrigins = Set(allowedOrigins.compactMap { Self.parseOrigin($0)?.origin })
     }
 
@@ -35,7 +37,7 @@ public struct RequestGuardMiddleware: RouterMiddleware {
         return String(lower.prefix { $0 != ":" })
     }
 
-    package static func parseOrigin(_ raw: String) -> (origin: String, host: String)? {
+    package static func parseOrigin(_ raw: String) -> (origin: String, host: String, port: Int)? {
         guard let components = URLComponents(string: raw.trimmingCharacters(in: .whitespaces)),
               let scheme = components.scheme?.lowercased(), scheme == "http" || scheme == "https",
               let rawHost = components.host, !rawHost.isEmpty,
@@ -43,7 +45,8 @@ public struct RequestGuardMiddleware: RouterMiddleware {
               components.user == nil, components.password == nil
         else { return nil }
         let host = bracketed(rawHost.lowercased())
-        return ("\(scheme)://\(host)" + (components.port.map { ":\($0)" } ?? ""), host)
+        let port = components.port ?? (scheme == "https" ? 443 : 80)
+        return ("\(scheme)://\(host)" + (components.port.map { ":\($0)" } ?? ""), host, port)
     }
 
     func allowsHost(_ request: Request) -> Bool {
@@ -56,7 +59,7 @@ public struct RequestGuardMiddleware: RouterMiddleware {
         let values = request.headers[values: .origin]
         guard !values.isEmpty else { return true }
         guard values.count == 1, let parsed = Self.parseOrigin(values[0]) else { return false }
-        return Self.loopbackHosts.contains(parsed.host) || allowedOrigins.contains(parsed.origin)
+        return (Self.loopbackHosts.contains(parsed.host) && parsed.port == bindPort) || allowedOrigins.contains(parsed.origin)
     }
 
     static func isJSON(_ request: Request) -> Bool {

@@ -138,8 +138,7 @@ struct ModelsController: Sendable {
                                      message: "Request body must be JSON with a non-empty \"model\" field.")
         }
 
-        let hfId = hfRepoId(from: dto.model)
-        guard Self.isRepoId(hfId) else {
+        guard let hfId = Self.restModelId(from: dto.model, requireRepoId: true) else {
             fputs("🔴 [Models] Load refused, not a repo id: \(dto.model)\n", stderr)
             return makeErrorResponse(status: .badRequest, message: Self.repoIdRequired)
         }
@@ -203,7 +202,7 @@ struct ModelsController: Sendable {
 
     static func publicMessage(for error: any Error) -> String {
         switch error as? BasaltError {
-        case .modelNotFound?, .weightsCorrupted?:
+        case .modelNotFound?, .weightsCorrupted?, .modelNotCached?:
             fputs("🔴 [REST] \(error.localizedDescription)\n", stderr)
             return modelUnavailable
         default:
@@ -213,8 +212,11 @@ struct ModelsController: Sendable {
 
     static let modelUnavailable = "The model could not be loaded; the server log has the details."
 
-    static func isLocalPath(_ id: String) -> Bool {
-        id.hasPrefix("/") || id.hasPrefix(".") || id.hasPrefix("~") || id.contains("..")
+    static func restModelId(from raw: String, requireRepoId: Bool = false) -> String? {
+        let id = hfRepoId(from: raw.trimmingCharacters(in: .whitespacesAndNewlines))
+        if isRepoId(id) { return id }
+        let pathLike = id.contains("/") || id.hasPrefix(".") || id.hasPrefix("~")
+        return requireRepoId || pathLike ? nil : id
     }
 
     // MARK: — Response helpers

@@ -312,8 +312,8 @@ struct OpenAIController: Sendable {
             isServiceRequest: service.isService,
             cacheKey: PromptCacheKey.resolve(isService: service.isService)
         )
-        let requestedModel = dto.model.map { ModelsController.hfRepoId(from: $0) }
-        if let requestedModel, ModelsController.isLocalPath(requestedModel) {
+        let requestedModel = dto.model.flatMap { ModelsController.restModelId(from: $0) }
+        if dto.model != nil, requestedModel == nil {
             return makeErrorResponse(status: .badRequest, message: ModelsController.pathRejected, code: 400)
         }
 
@@ -399,8 +399,8 @@ struct OpenAIController: Sendable {
             tools: Self.functionTools(fromRequestBody: data),
             cacheKey: PromptCacheKey.resolve(isService: service.isService)
         )
-        let requestedModel = dto.model.map { ModelsController.hfRepoId(from: $0) }
-        if let requestedModel, ModelsController.isLocalPath(requestedModel) {
+        let requestedModel = dto.model.flatMap { ModelsController.restModelId(from: $0) }
+        if dto.model != nil, requestedModel == nil {
             return makeErrorResponse(status: .badRequest, message: ModelsController.pathRejected, code: 400)
         }
 

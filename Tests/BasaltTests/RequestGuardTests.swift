@@ -47,15 +47,16 @@ struct RequestGuardTests {
         }
     }
 
-    @Test("A cross-origin page is refused with 403; loopback and allow-listed origins pass")
+    @Test("A cross-origin page is refused with 403; loopback origins on the server's own port and allow-listed ones pass")
     func originCheck() async throws {
-        try await app(origins: ["https://app.example:3000"]).test(.router) { (client) async throws in
+        try await app(origins: ["https://app.example:3000", "http://localhost:5173"]).test(.router) { (client) async throws in
             for origin in ["https://evil.example", "http://evil.example:8080", "null", "file://", "http://localhost.evil.example",
-                           "https://app.example", "http://app.example:3000", "https://app.example:3000/path"] {
+                           "https://app.example", "http://app.example:3000", "https://app.example:3000/path",
+                           "http://localhost:3000", "http://127.0.0.1:8888", "http://[::1]:9000", "https://localhost", "http://localhost"] {
                 #expect(try await post(client, headers: [.contentType: "application/json", .origin: origin]) == .forbidden, "\(origin)")
             }
-            for origin in ["http://localhost:3000", "http://127.0.0.1:8080", "https://localhost", "http://[::1]:8080",
-                           "https://app.example:3000", "HTTPS://APP.example:3000"] {
+            for origin in ["http://localhost:8080", "http://127.0.0.1:8080", "https://localhost:8080", "http://[::1]:8080",
+                           "https://app.example:3000", "HTTPS://APP.example:3000", "http://localhost:5173"] {
                 #expect(try await post(client, headers: [.contentType: "application/json", .origin: origin]) == .ok, "\(origin)")
             }
         }
@@ -125,6 +126,62 @@ struct RequestGuardTests {
         for bad in ["a.example", "https://a.example/app", "ftp://a.example", "*"] {
             #expect(throws: (any Error).self, "\(bad)") {
                 _ = try ServeCommand.resolveNetwork(cliPort: nil, cliHost: nil, cliApiKey: nil, cliAllowedOrigins: [bad], configFile: nil)
+            }
+        }
+    }
+
+    @Test("On port 80 a loopback Origin without a port is the server's own; 443 is not")
+    func originDefaultPort() async throws {
+        let guardOn80 = RequestGuardMiddleware(bindHost: "127.0.0.1", bindPort: 80)
+        func allows(_ origin: String) -> Bool {
+            guardOn80.allowsOrigin(Request(head: .init(method: .post, scheme: "http", authority: "localhost", path: "/v1/messages",
+                                                       headerFields: [.origin: origin]),
+                                           body: .init(buffer: ByteBuffer())))
+        }
+        #expect(allows("http://localhost"))
+        #expect(allows("http://127.0.0.1:80"))
+        #expect(!allows("https://localhost"))
+        #expect(!allows("http://localhost:8080"))
+    }
+
+    @Test("A second Host header that is foreign, or two Origin headers, are refused with 403")
+    func duplicateHeaders() async throws {
+        try await app().test(.router) { (client) async throws in
+            var hosts: HTTPFields = [.contentType: "application/json"]
+            hosts.append(HTTPField(name: Self.host, value: "localhost:8080"))
+            hosts.append(HTTPField(name: Self.host, value: "evil.example"))
+            #expect(try await post(client, headers: hosts) == .forbidden)
+            var origins: HTTPFields = [.contentType: "application/json"]
+            origins.append(HTTPField(name: .origin, value: "http://localhost:8080"))
+            origins.append(HTTPField(name: .origin, value: "http://localhost:8080"))
+            #expect(try await post(client, headers: origins) == .forbidden)
+        }
+    }
+
+    @Test("A request with no Host at all passes the Host check; an empty Host does not")
+    func missingHost() {
+        let guardMiddleware = RequestGuardMiddleware(bindHost: "127.0.0.1", bindPort: 8080)
+        func request(authority: String?, headers: HTTPFields = [:]) -> Request {
+            Request(head: .init(method: .get, scheme: "http", authority: authority, path: "/v1/models", headerFields: headers),
+                    body: .init(buffer: ByteBuffer()))
+        }
+        #expect(guardMiddleware.allowsHost(request(authority: nil)), "HTTP/1.0 without Host: no browser sends this")
+        #expect(!guardMiddleware.allowsHost(request(authority: "")))
+        #expect(!guardMiddleware.allowsHost(request(authority: nil, headers: [Self.host: "evil.example"])))
+    }
+
+    @Test("OPTIONS preflights are never answered with Access-Control-Allow-Origin")
+    func noCORSPreflight() async throws {
+        try await app().test(.router) { (client) async throws in
+            for origin in ["https://evil.example", "http://localhost:8080"] {
+                let headers: HTTPFields = [.origin: origin, .accessControlRequestMethod: "POST",
+                                           .accessControlRequestHeaders: "content-type"]
+                for uri in ["/v1/messages", "/v1/models/load"] {
+                    try await client.execute(uri: uri, method: .options, headers: headers) { res in
+                        #expect(res.headers[.accessControlAllowOrigin] == nil, "\(uri) \(origin)")
+                        #expect(res.status != .ok && res.status != .noContent, "\(uri) \(origin): \(res.status)")
+                    }
+                }
             }
         }
     }

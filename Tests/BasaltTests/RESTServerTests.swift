@@ -388,7 +388,7 @@ struct RESTServerTests {
     }
 
     private static let jsonHeaders: HTTPFields = [.contentType: "application/json"]
-    private static let pathLikeModels = ["/tmp", "./x", "../x", "~/x", "claude-local/..--x", "org/../x", "/"]
+    private static let pathLikeModels = ["/tmp", "./x", "../x", "~/x", "claude-local/..--x", "org/../x", "/", " /tmp/x", " claude-local/..--x"]
 
     @Test("REST model ids are repo ids: HF charset, two components, no path forms (#72)")
     func repoIdShape() {
@@ -397,7 +397,16 @@ struct RESTServerTests {
         }
         for id in Self.pathLikeModels + ["basalt", "a/b/c", "org/", "/name", ".org/x", "org/.x", "org/x y", "org/x~", "-org/x"] {
             #expect(!ModelsController.isRepoId(ModelsController.hfRepoId(from: id)), "\(id)")
+            #expect(ModelsController.restModelId(from: id, requireRepoId: true) == nil, "\(id)")
         }
+        for id in Self.pathLikeModels + ["a/b/c", "org/x y", ".hidden", "~user", "\t./x", "\n~/x"] {
+            #expect(ModelsController.restModelId(from: id) == nil, "a generation model field takes no path form: \(id)")
+        }
+        for id in ["basalt", "gpt-4o", "claude-sonnet-4-5", "local"] {
+            #expect(ModelsController.restModelId(from: id) == id, "aliases still pass: \(id)")
+        }
+        #expect(ModelsController.restModelId(from: " org/mock-model\n", requireRepoId: true) == "org/mock-model")
+        #expect(ModelsController.restModelId(from: "claude-local/org--mock-model") == "org/mock-model")
     }
 
     @Test("/v1/models/load refuses paths with 400, echoes no path, and the loaded model stays loaded (#72)")
@@ -428,7 +437,7 @@ struct RESTServerTests {
         ]
         try await s.app.test(.router) { client in
             for (uri, template) in requests {
-                for model in ["/tmp", "claude-local/..--x"] {
+                for model in ["/tmp", "claude-local/..--x", " /tmp/x"] {
                     for stream in [false, true] {
                         let body = template.replacingOccurrences(of: "MODEL", with: model)
                             .replacingOccurrences(of: #""model""#, with: #""stream": \#(stream), "model""#)
