@@ -19,7 +19,6 @@ let package = Package(
         .package(url: "https://github.com/huggingface/swift-transformers",  from: "1.3.5"),
         // Epic 16: CLI Enhancements
         .package(url: "https://github.com/onevcat/Rainbow.git", from: "4.2.2"),
-        .package(url: "https://github.com/vapor/console-kit.git", from: "4.16.1"),
         .package(url: "https://github.com/apple/swift-markdown.git", from: "0.9.0"),
         .package(url: "https://github.com/JohnSundell/Splash.git", from: "0.16.0"),
     ],
@@ -41,8 +40,6 @@ let package = Package(
             dependencies: [
                 "BasaltCore",
                 .product(name: "MLX",           package: "mlx-swift"),
-                .product(name: "MLXNN",         package: "mlx-swift"),
-                .product(name: "MLXRandom",     package: "mlx-swift"),
                 .product(name: "MLXLLM",        package: "mlx-swift-lm"),
                 // Gemma 4 and other *ForConditionalGeneration checkpoints are only
                 // registered in MLXVLM; without it ModelFactoryRegistry cannot load them.
@@ -71,7 +68,7 @@ let package = Package(
             path: "Sources/BasaltServer",
             swiftSettings: swiftSettings
         ),
-        // UI: terminal renderers and the SwiftUI REST chat client.
+        // UI: terminal renderers. Headless — the SwiftUI client lives in BasaltApp.
         .target(
             name: "BasaltUI",
             dependencies: [
@@ -81,6 +78,17 @@ let package = Package(
                 .product(name: "Splash",        package: "Splash"),
             ],
             path: "Sources/BasaltUI",
+            swiftSettings: swiftSettings
+        ),
+        // App: the SwiftUI REST chat client. Nothing links it yet (its launch command is #55),
+        // so SwiftUI/AppKit stay out of the CLI binary.
+        .target(
+            name: "BasaltApp",
+            dependencies: [
+                "BasaltCore",
+                .product(name: "Markdown",      package: "swift-markdown"),
+            ],
+            path: "Sources/BasaltApp",
             swiftSettings: swiftSettings
         ),
         // CLI: ArgumentParser commands wiring everything together.
@@ -97,7 +105,10 @@ let package = Package(
         // ── Executable (thin wrapper — just calls the CLI main) ──────────────
         .executableTarget(
             name: "Basalt",
-            dependencies: ["BasaltCLI"],
+            dependencies: [
+                "BasaltCLI",
+                .product(name: "ArgumentParser", package: "swift-argument-parser"),
+            ],
             path: "Sources/BasaltBin",
             swiftSettings: swiftSettings
         ),

@@ -465,7 +465,8 @@ Sources/                    — one SwiftPM target per directory; dependencies p
   BasaltInference/          — MLX inference engine, ContextDegradationProfiler, RepetitionGuard  (→ Core)
   BasaltCloud/              — OpenRouter / cloud model fallback (CostTracker, ModelRouter)    (→ Core)
   BasaltServer/             — REST (Hummingbird 2.x, API key + rate-limit middleware) and MCP JSON-RPC stdio server (→ Core)
-  BasaltUI/                 — Terminal UI (Markdown, spinner, progress bar, diff, table) + SwiftUI client (→ Core)
+  BasaltUI/                 — Terminal UI (Markdown, spinner, progress bar, diff, table)       (→ Core)
+  BasaltApp/                — SwiftUI REST chat client, not linked into the CLI (launch: #55)  (→ Core)
   BasaltCLI/                — Subcommands and the CLI root command (App/)                     (→ all of the above)
   BasaltBin/                — Thin executable wrapper (product `Basalt`, installed as `basalt`)
   PerformanceBenchmark/     — Standalone benchmark CLI target
@@ -483,7 +484,7 @@ scripts/                    — Build and maintenance Swift scripts
 docs/                       — Extended documentation
 ```
 
-`BasaltCore` and `BasaltInference` must not import SwiftUI or AppKit (enforced by `ModuleBoundaryTests`).
+Only `BasaltApp` may import SwiftUI/AppKit; every target the CLI links stays headless (enforced by `ModuleBoundaryTests`).
 Cross-target symbols use the `package` access level, not `public`.
 
 ---
@@ -618,7 +619,7 @@ runtime. `Package.resolved` pins the exact revisions.
 | [swift-transformers](https://github.com/huggingface/swift-transformers) | tokenizers and chat templates |
 | [hummingbird](https://github.com/hummingbird-project/hummingbird) | the HTTP server |
 | [swift-argument-parser](https://github.com/apple/swift-argument-parser) | the CLI |
-| [Rainbow](https://github.com/onevcat/Rainbow), [console-kit](https://github.com/vapor/console-kit) | terminal colour and layout |
+| [Rainbow](https://github.com/onevcat/Rainbow) | terminal colour and layout |
 | [swift-markdown](https://github.com/apple/swift-markdown), [Splash](https://github.com/JohnSundell/Splash) | Markdown rendering and syntax highlighting in the terminal |
 
 `MLXVLM` is not optional: Gemma 4 and the Ornith checkpoints declare

@@ -451,7 +451,8 @@ Sources/                    — один SwiftPM-таргет на катало�
   BasaltInference/          — движок инференса MLX, ContextDegradationProfiler, RepetitionGuard (→ Core)
   BasaltCloud/              — облачный фолбэк OpenRouter (CostTracker, ModelRouter)          (→ Core)
   BasaltServer/             — REST (Hummingbird 2.x, middleware) и MCP JSON-RPC поверх stdio  (→ Core)
-  BasaltUI/                 — терминальный UI (Markdown, спиннер, прогресс-бар, diff, таблицы) + SwiftUI-клиент (→ Core)
+  BasaltUI/                 — терминальный UI (Markdown, спиннер, прогресс-бар, diff, таблицы) (→ Core)
+  BasaltApp/                — SwiftUI REST-клиент, в CLI не линкуется (запуск — #55)        (→ Core)
   BasaltCLI/                — подкоманды и корневая CLI-команда (App/)                       (→ все выше)
   BasaltBin/                — тонкая обёртка-исполняемый файл (продукт `Basalt`, ставится как `basalt`)
   PerformanceBenchmark/     — отдельный CLI для бенчмарков
@@ -586,7 +587,7 @@ python3 benchmarks/arc-agi/arc_agi_benchmark.py --engine mlx --split training --
 | [swift-transformers](https://github.com/huggingface/swift-transformers) | токенизаторы и шаблоны чата |
 | [hummingbird](https://github.com/hummingbird-project/hummingbird) | HTTP-сервер |
 | [swift-argument-parser](https://github.com/apple/swift-argument-parser) | CLI |
-| [Rainbow](https://github.com/onevcat/Rainbow), [console-kit](https://github.com/vapor/console-kit) | цвет и вёрстка в терминале |
+| [Rainbow](https://github.com/onevcat/Rainbow) | цвет и вёрстка в терминале |
 | [swift-markdown](https://github.com/apple/swift-markdown), [Splash](https://github.com/JohnSundell/Splash) | рендер Markdown и подсветка синтаксиса |
 
 `MLXVLM` здесь не опционален: Gemma 4 и чекпойнты Ornith объявляют
