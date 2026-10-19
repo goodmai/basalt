@@ -505,6 +505,7 @@ public actor MLXInferenceEngine: InferenceEngine {
 
         let toolSpecs = Self.toolSpecs(request.tools)
         let declaredTools = Set(request.tools?.map(\.name) ?? [])
+        let scansToolCallText = profile.writesToolCallsAsText && request.tools?.isEmpty == false
         var makeInput: @Sendable (String) -> UserInput
         var template: String?
         let policy = Self.reasoningPolicy(request: request, defaultReasoningEffort: reasoningEffort)
@@ -607,9 +608,9 @@ public actor MLXInferenceEngine: InferenceEngine {
                     var gate = ToolCallGate(request: request)
                     if let assistantPrefix { continuation.yield(.text(assistantPrefix)) }
 
-                    var toolCallScanner = request.tools?.isEmpty == false ? NemotronToolCallScanner() : nil
+                    var toolCallScanner = scansToolCallText ? NemotronToolCallScanner() : nil
                     func admit(_ chunks: [StreamChunk]) {
-                        for chunk in chunks { if let admitted = gate.admit(chunk) { continuation.yield(admitted) } }
+                        for chunk in gate.admit(chunks) { continuation.yield(chunk) }
                     }
                     func emitText(_ text: String) {
                         guard var scanner = toolCallScanner else { continuation.yield(.text(text)); return }
@@ -696,6 +697,7 @@ public actor MLXInferenceEngine: InferenceEngine {
                             if firstTokenAt == nil { firstTokenAt = clock.now }
                             buffer.append(text)
                             processBuffer(final: false)
+                            if gate.isSaturated { await stopAfterCall(); break tokens }
                         case .info(let info):
                             lastInfo = info
                         case .toolCall(let call):

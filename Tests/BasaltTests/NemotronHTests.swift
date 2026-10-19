@@ -277,4 +277,31 @@ struct NemotronHTests {
             return
         }
     }
+
+    @Test("only the Nemotron profile has its text scanned for <TOOLCALL> blocks")
+    func onlyNemotronWritesToolCallsAsText() {
+        #expect(NemotronProfile(switchesThinkingInConversation: true).writesToolCallsAsText)
+        #expect(!QwenProfile().writesToolCallsAsText)
+        #expect(!GemmaProfile().writesToolCallsAsText)
+        #expect(!GenericProfile().writesToolCallsAsText)
+    }
+
+    @Test("with parallel tool calls off, nothing after the first admitted call of a <TOOLCALL> array is emitted")
+    func singleCallStopsTheScannedStream() {
+        let tools = [ToolDefinition(name: "get_weather"), ToolDefinition(name: "get_time")]
+        var scanner = NemotronToolCallScanner()
+        let scanned = scanner.feed(Self.twoCalls + " Done.") + scanner.finish()
+        var single = ToolCallGate(request: GenerationRequest(prompt: "p", tools: tools, toolChoice: ToolChoice(parallel: false)))
+        let emitted = single.admit(scanned)
+        #expect(single.isSaturated)
+        #expect(emitted.count == 2)
+        guard case .text("Checking. ") = emitted.first, case .toolCall(let call) = emitted.last else {
+            Issue.record("unexpected \(emitted)")
+            return
+        }
+        #expect(call.name == "get_weather")
+        var parallel = ToolCallGate(request: GenerationRequest(prompt: "p", tools: tools))
+        #expect(parallel.admit(scanned).count == 4)
+    }
 }
+

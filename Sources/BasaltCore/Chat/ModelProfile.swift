@@ -31,10 +31,14 @@ public protocol ModelProfile: Sendable {
     var defaultMinP: Float? { get }
 
     func turns(_ turns: [ChatMessageInput], for reasoning: ReasoningPolicy) -> [ChatMessageInput]
+
+    var writesToolCallsAsText: Bool { get }
 }
 
 extension ModelProfile {
     public func turns(_ turns: [ChatMessageInput], for reasoning: ReasoningPolicy) -> [ChatMessageInput] { turns }
+
+    public var writesToolCallsAsText: Bool { false }
 }
 
 public struct ThinkingMarkers: Sendable {
@@ -160,6 +164,8 @@ public struct NemotronProfile: ModelProfile {
     public var defaultMaxTokens: Int { 4096 }
 
     public var defaultMinP: Float? { nil }
+
+    public var writesToolCallsAsText: Bool { true }
 }
 
 // MARK: — Fallback

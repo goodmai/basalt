@@ -30,6 +30,15 @@ public struct ToolCallGate: Sendable {
         return admit(call)
     }
 
+    public mutating func admit(_ chunks: [StreamChunk]) -> [StreamChunk] {
+        var admittedChunks: [StreamChunk] = []
+        for chunk in chunks {
+            guard !isSaturated else { break }
+            if let admittedChunk = admit(chunk) { admittedChunks.append(admittedChunk) }
+        }
+        return admittedChunks
+    }
+
     static func rejection(_ name: String, reason: String) -> StreamChunk {
         .text("\n[tool call to \(name) rejected: \(reason)]")
     }
