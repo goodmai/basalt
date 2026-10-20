@@ -491,10 +491,10 @@ Available MCP tools:
 |---|---|
 | `gemma_generate` | Generate text — `prompt`, `maxTokens`, `temperature`, `topP`, `minP`, `dynamicTemperature` |
 | `gemma_status` | Returns server readiness, version, and current model |
-| `status` | Engine health, loaded model, memory snapshot and telemetry |
+| `status` | Engine health, loaded model, memory snapshot and telemetry — optional `modelId` to check |
 | `check_hardware` | Apple Silicon resources: chip, unified memory, GPU, disk |
-| `inspect_model` | Verify weight shards and detect the real bit width of MLX/Safetensors weights |
-| `switch_model` | Switch to another model from the local cache |
+| `inspect_model` | `modelId` (repo ID or local path) — verify weight shards and detect the real bit width of MLX/Safetensors weights |
+| `switch_model` | Switch to another model from the local cache — `modelId` |
 | `gemma_add_knowledge` | Store a lesson in the Harness Experience Library (`~/.basalt/harness-library`) |
 | `harness_validate` | Validate a Claude Code / opencode / AGENTS.md harness under the working directory or `BASALT_HARNESS_ROOTS` |
 | `harness_optimize` | One Harness² propose–probe–compose pass on the loaded model (also `basalt harness optimize`) |
