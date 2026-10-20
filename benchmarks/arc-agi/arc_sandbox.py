@@ -1,6 +1,7 @@
 import functools
 import json
 import os
+import signal
 import subprocess
 import sys
 import sysconfig
@@ -29,6 +30,7 @@ NUMPY_TEST_EXTENSIONS_PATTERN = "/(_multiarray_tests|_rational_tests|_umath_test
 EXTENSION_DIR = os.path.join(os.path.realpath(sysconfig.get_path("platstdlib")), "lib-dynload")
 EXTENSION_SUFFIX = sysconfig.get_config_var("EXT_SUFFIX")
 FUNCTION_NAMES = ("transform", "solve", "transform_grid")
+MAX_BLOCKS = 8
 NUMPY_IMAGES_PROBE = """
 import ctypes, json, os, sys
 sys.path.append(sys.argv[1])
@@ -111,18 +113,16 @@ def sandbox_profile(work_dir: str, numpy_package, images) -> str:
 
 
 def run_transform(code_blocks, grid, timeout: float = DEFAULT_TIMEOUT):
-    runs, status = run_blocks(code_blocks, [grid], timeout=timeout)
-    if runs is None:
-        return None, status
-    grid = next((run[-1] for run in runs if run[-1] is not None), None)
-    return (grid, status) if grid is not None else (None, "exec_failed")
+    grid, status, _ = run_blocks(code_blocks, [], grid, timeout=timeout)
+    return grid, status
 
 
-def run_blocks(code_blocks, grids, timeout: float = DEFAULT_TIMEOUT):
+def run_blocks(code_blocks, train_pairs, test_input, timeout: float = DEFAULT_TIMEOUT):
     numpy_package, images = _numpy_paths()
-    total_timeout = timeout * len(code_blocks) * len(grids)
-    request = {"blocks": code_blocks, "grids": grids, "numpy": numpy_package,
-               "cpu_seconds": int(total_timeout) + 1}
+    blocks = list(code_blocks[:MAX_BLOCKS])
+    total_timeout = timeout * len(blocks) * (len(train_pairs) + 1)
+    request = {"blocks": blocks, "train": train_pairs, "test": test_input, "timeout": timeout,
+               "numpy": numpy_package, "cpu_seconds": int(total_timeout) + 1}
     with tempfile.TemporaryDirectory(prefix="arc-sandbox-") as raw_dir:
         work_dir = os.path.realpath(raw_dir)
         command = [PYTHON, "-I", "-S", CHILD_SCRIPT]
@@ -139,17 +139,21 @@ def run_blocks(code_blocks, grids, timeout: float = DEFAULT_TIMEOUT):
                 pass
             stopped = _supervise(process, total_timeout, work_dir)
             if stopped:
-                return None, stopped
+                return None, stopped, 0
             output.seek(0)
             lines = output.read().splitlines()
     try:
-        runs = json.loads(lines[-1])["runs"]
+        outcome = json.loads(lines[-1])
+        grid, passed, answered, timed_out = (outcome[key] for key in ("grid", "passed", "answered", "timed_out"))
     except (IndexError, ValueError, KeyError, TypeError):
-        return None, "exec_failed"
-    if (not isinstance(runs, list) or len(runs) != len(code_blocks)
-            or not all(isinstance(run, list) and len(run) == len(grids) for run in runs)):
-        return None, "exec_failed"
-    return [[result if _is_grid(result) else None for result in run] for run in runs], "python_oop_exec_success"
+        return None, "exec_failed", 0
+    if type(passed) is not int:
+        return None, "exec_failed", 0
+    if _is_grid(grid):
+        return grid, "python_oop_exec_success", passed
+    if answered:
+        return None, "train_mismatch", passed
+    return None, "exec_timeout" if timed_out else "exec_failed", passed
 
 
 def _footprint_bytes(pid: int) -> int:
@@ -261,11 +265,50 @@ def _run_block(code, grid, base):
     return _to_matrix(result, grid_type)
 
 
-def _run_block_or_none(code, grid, base):
+class _BlockTimeout(BaseException):
+    pass
+
+
+def _raise_block_timeout(signum, frame):
+    raise _BlockTimeout
+
+
+def _run_block_or_none(code, grid, base, seconds):
+    signal.setitimer(signal.ITIMER_REAL, seconds, seconds)
     try:
         return _run_block(code, grid, base)
+    except _BlockTimeout:
+        raise
     except BaseException:
         return None
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+
+
+def _try_block(code, request, base):
+    passed, answered = 0, False
+    try:
+        for pair in request["train"]:
+            grid = _run_block_or_none(code, pair["input"], base, request["timeout"])
+            answered = answered or grid is not None
+            passed += grid == pair["output"]
+        test_grid = None
+        if passed == len(request["train"]):
+            test_grid = _run_block_or_none(code, request["test"], base, request["timeout"])
+        return test_grid, passed, answered or test_grid is not None, False
+    except _BlockTimeout:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        return None, passed, answered, True
+
+
+def _first_reproducing_block(request, base):
+    best, answered, timed_out = 0, False, False
+    for code in request["blocks"]:
+        grid, passed, block_answered, block_timed_out = _try_block(code, request, base)
+        if grid is not None:
+            return {"grid": grid, "passed": passed, "answered": True, "timed_out": False}
+        best, answered, timed_out = max(best, passed), answered or block_answered, timed_out or block_timed_out
+    return {"grid": None, "passed": best, "answered": answered, "timed_out": timed_out}
 
 
 def _import_by_path(name: str, path: str, package_dir=None):
@@ -288,8 +331,9 @@ def _child_main():
         except ImportError:
             sys.modules.pop("numpy", None)
     _apply_limits(request["cpu_seconds"])
-    runs = [[_run_block_or_none(code, grid, base) for grid in request["grids"]] for code in request["blocks"]]
-    os.write(1, b"\n" + json.dumps({"runs": runs}).encode() + b"\n")
+    signal.signal(signal.SIGALRM, _raise_block_timeout)
+    outcome = _first_reproducing_block(request, base)
+    os.write(1, b"\n" + json.dumps(outcome).encode() + b"\n")
     os._exit(0)
 
 

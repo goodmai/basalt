@@ -16,6 +16,9 @@ TASK = {
 ROTATE = "```python\ndef transform(grid):\n    return [list(row) for row in zip(*grid[::-1])]\n```"
 RAISES = "```python\ndef transform(grid):\n    raise ValueError(grid)\n```"
 WRONG = "```python\ndef transform(grid):\n    return [[9]]\n```"
+HANG = "```python\ndef transform(grid):\n    while True:\n        pass\n```"
+BIG_ON_TEST = ("```python\ndef transform(grid):\n    rows = [list(row) for row in zip(*grid[::-1])]\n"
+               "    return [[1] * 3000 for _ in range(3000)] if rows == [[2, 0], [3, 1]] else rows\n```")
 FIRST_PAIR_ONLY = ("```python\ndef transform(grid):\n    if grid[0][0] == 1:\n        return [[3, 1], [4, 2]]\n"
                    "    return [[2, 0], [3, 1]]\n```")
 
@@ -103,6 +106,18 @@ class TrainVerificationTest(unittest.TestCase):
             execute_python_hybrid(ROTATE + "\n" + WRONG, TASK["test"][0]["input"], timeout=1.5,
                                   train_pairs=TASK["train"])
         self.assertEqual(supervise.call_args.args[1], 1.5 * 2 * 3)
+
+    def test_a_hanging_block_times_out_alone_and_the_next_block_still_answers(self):
+        self.assertEqual(execute_python_hybrid(ROTATE + "\n" + HANG, TASK["test"][0]["input"], timeout=1,
+                                               train_pairs=TASK["train"]),
+                         ([[2, 0], [3, 1]], "python_oop_exec_success", 2))
+
+    def test_only_the_last_written_blocks_are_tried_and_the_time_limit_is_capped_by_them(self):
+        text = "\n".join([ROTATE] + [WRONG] * arc_sandbox.MAX_BLOCKS)
+        with mock.patch.object(arc_sandbox, "_supervise", wraps=arc_sandbox._supervise) as supervise:
+            outcome = execute_python_hybrid(text, TASK["test"][0]["input"], timeout=1.5, train_pairs=TASK["train"])
+        self.assertEqual(outcome, (None, "train_mismatch", 0))
+        self.assertEqual(supervise.call_args.args[1], 1.5 * 3 * arc_sandbox.MAX_BLOCKS)
 
 
 if __name__ == "__main__":

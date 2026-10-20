@@ -85,16 +85,7 @@ def execute_python_hybrid(text: str, test_input: list[list[int]], timeout: float
     if not code_blocks:
         code_blocks = re.findall(r"```[a-zA-Z]*\s*\n(.*def\s+\w+.*)\n\s*```", text, re.DOTALL)
     if code_blocks:
-        inputs = [pair["input"] for pair in train_pairs] + [test_input]
-        runs, status = run_blocks(list(reversed(code_blocks)), inputs, timeout=timeout)
-        if runs is None:
-            return None, status, 0
-        scores = [sum(grid == pair["output"] for grid, pair in zip(run, train_pairs)) for run in runs]
-        for run, passed in zip(runs, scores):
-            if run[-1] is not None and passed == len(train_pairs):
-                return run[-1], status, passed
-        answered = any(run[-1] is not None for run in runs)
-        return None, "train_mismatch" if answered else "exec_failed", max(scores)
+        return run_blocks(list(reversed(code_blocks)), list(train_pairs), test_input, timeout=timeout)
     direct_grid = parse_grid(text)
     if direct_grid:
         return direct_grid, "json_parse_fallback", 0
