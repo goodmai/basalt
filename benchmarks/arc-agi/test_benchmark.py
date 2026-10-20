@@ -74,6 +74,12 @@ class PayloadTest(unittest.TestCase):
         self.assertEqual(max_tokens("--thinking-budget", "5000", "--max-tokens", "20000"), 20000)
 
 
+    def test_answer_tokens_below_one_is_rejected(self):
+        for value in ("0", "-5"):
+            with self.assertRaises(SystemExit), mock.patch("sys.stderr"):
+                arc_agi_benchmark.parse_args(["--thinking-budget", "5000", "--answer-tokens", value])
+        self.assertEqual(arc_agi_benchmark.parse_args(["--answer-tokens", "1"]).answer_tokens, 1)
+
 
 @unittest.skipUnless(sandbox_available(), "sandbox-exec is not available on this platform")
 class TrainVerificationTest(unittest.TestCase):

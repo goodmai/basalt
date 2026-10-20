@@ -359,7 +359,7 @@ def parse_args(argv=None):
     parser.add_argument("--max-tokens", type=int, default=None,
                         help="Max generation tokens budget (default: 16000; with --thinking-budget: "
                              "thinking budget + --answer-tokens unless this is larger)")
-    parser.add_argument("--answer-tokens", type=int, default=4000,
+    parser.add_argument("--answer-tokens", type=positive_int, default=4000,
                         help="With --thinking-budget: tokens left for the answer after it (default: 4000)")
     parser.add_argument("--reasoning-effort", default=None,
                         help="OpenAI reasoning_effort sent to the engine, e.g. none to switch thinking off")
@@ -379,6 +379,13 @@ def parse_args(argv=None):
     args = parser.parse_args(argv)
     args.max_tokens = effective_max_tokens(args.max_tokens, args.thinking_budget, args.answer_tokens)
     return args
+
+
+def positive_int(text: str) -> int:
+    value = int(text)
+    if value < 1:
+        raise argparse.ArgumentTypeError(f"must be at least 1, got {value}")
+    return value
 
 
 def effective_max_tokens(max_tokens: int | None, thinking_budget: int | None, answer_tokens: int) -> int:
