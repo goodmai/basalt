@@ -516,10 +516,6 @@ public actor MLXInferenceEngine: InferenceEngine {
         params.kvBits = kvBits
         params.quantizedKVStart = quantizedKVStart
         params.repetitionPenalty = request.repetitionPenalty.map(Float.init) ?? repetitionPenalty
-        if let presencePenalty = request.presencePenalty {
-            params.presencePenalty = Float(presencePenalty)
-            params.presenceContextSize = Self.presenceContextSize
-        }
         if let topK = request.topK ?? topK ?? samplingDefaults.topK { params.topK = topK }
         if let effectiveMinP = request.minP.map(Float.init) ?? minP ?? profile.defaultMinP {
             params.minP = effectiveMinP
@@ -527,6 +523,11 @@ public actor MLXInferenceEngine: InferenceEngine {
         params.seed = seed
 
         var components = GenerationComponents()
+        if let presencePenalty = request.presencePenalty.map(Float.init), presencePenalty != 0 {
+            components = components.appendingLogitProcessor {
+                GeneratedTokensPresencePenalty(penalty: presencePenalty, window: Self.presenceContextSize)
+            }
+        }
         if request.dynamicTemperature == true, temperature > 0 {
             let (topP, minP) = (params.topP, params.minP)
             params.topP = 1
@@ -956,6 +957,24 @@ public actor MLXInferenceEngine: InferenceEngine {
         return GenerationLaunch(
             stream: stream, task: task, cache: keepable ? head.kept : nil, reusedTokens: reused,
             exactTokens: blended?.exactPrefix ?? Int.max)
+    }
+}
+
+struct GeneratedTokensPresencePenalty: LogitProcessor {
+    var context: PresencePenaltyContext
+
+    init(penalty: Float, window: Int) {
+        context = PresencePenaltyContext(presencePenalty: penalty, presenceContextSize: window)
+    }
+
+    mutating func prompt(_ prompt: MLXArray) {}
+
+    func process(logits: MLXArray) -> MLXArray {
+        context.process(logits: logits)
+    }
+
+    mutating func didSample(token: MLXArray) {
+        context.didSample(token: token)
     }
 }
 

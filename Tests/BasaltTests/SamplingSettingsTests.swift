@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import MLX
 import MLXLMCommon
 @testable import BasaltCore
 @testable import BasaltInference
@@ -63,18 +64,29 @@ struct SamplingDefaultsTests {
         #expect(await flagged.sampling(for: GenerationRequest(prompt: "p")).0.topK == 40)
     }
 
-    @Test("presence_penalty uses a 1024-token window; repetition_penalty from the request beats the server flag")
-    func penalties() async throws {
+    @Test("repetition_penalty from the request beats the server flag")
+    func repetitionPenalty() async throws {
         let engine = try await engine(defaults: SamplingDefaults(), repetitionPenalty: 1.1)
-        let (plain, _) = await engine.sampling(for: GenerationRequest(prompt: "p"))
-        #expect(plain.presencePenalty == nil)
-        #expect(plain.repetitionPenalty == 1.1)
+        #expect(await engine.sampling(for: GenerationRequest(prompt: "p")).0.repetitionPenalty == 1.1)
+        #expect(await engine.sampling(for: GenerationRequest(prompt: "p", repetitionPenalty: 1.05)).0.repetitionPenalty == 1.05)
+    }
 
-        let (params, _) = await engine.sampling(
-            for: GenerationRequest(prompt: "p", presencePenalty: 1.5, repetitionPenalty: 1.05))
-        #expect(params.presencePenalty == 1.5)
-        #expect(params.presenceContextSize == 1024)
-        #expect(params.repetitionPenalty == 1.05)
+    @Test("presence_penalty counts only generated tokens: the prompt, fed through the prompt-anchored processor, is not penalised")
+    func presencePenaltySkipsThePrompt() async throws {
+        let engine = try await engine(defaults: SamplingDefaults())
+        let (params, components) = await engine.sampling(for: GenerationRequest(prompt: "p", presencePenalty: 1.5))
+        #expect(params.presencePenalty == nil)
+        var processor = PromptAnchoredProcessor(
+            base: try #require(components.logitProcessor(parameters: params)), prompt: MLXArray([Int32(2), 3]))
+        processor.prompt(MLXArray([Int32(3)]))
+        let logits = MLXArray.zeros([1, 6], type: Float32.self)
+        #expect(processor.process(logits: logits).asArray(Float.self) == [0, 0, 0, 0, 0, 0])
+
+        processor.didSample(token: MLXArray(Int32(4)))
+        #expect(processor.process(logits: logits).asArray(Float.self) == [0, 0, 0, 0, -1.5, 0])
+
+        let (plainParams, plain) = await engine.sampling(for: GenerationRequest(prompt: "p"))
+        #expect(plain.logitProcessor(parameters: plainParams) == nil)
     }
 }
 
