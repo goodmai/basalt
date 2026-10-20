@@ -491,7 +491,6 @@ Available MCP tools:
 |---|---|
 | `gemma_generate` | Generate text — `prompt`, `maxTokens`, `temperature`, `topP`, `minP`, `dynamicTemperature` |
 | `gemma_status` | Returns server readiness, version, and current model |
-| `playwright_screenshot` | Capture a webpage screenshot via Playwright |
 | `gemma_add_knowledge` | Store a lesson in the Harness Experience Library (`~/.basalt/harness-library`) |
 | `harness_validate` | Validate a Claude Code / opencode / AGENTS.md harness under the working directory or `BASALT_HARNESS_ROOTS` |
 | `harness_optimize` | One Harness² propose–probe–compose pass on the loaded model (also `basalt harness optimize`) |
