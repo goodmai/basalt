@@ -103,7 +103,8 @@ public final class TokenVocabulary: Sendable {
 public final class GrammarMasker: Sendable {
     public let grammar: JSONGrammar
     public let vocabulary: TokenVocabulary
-    static let cacheLimit = 512
+    public static let defaultCacheBytes = 8 << 20
+    let cacheBytes: Int
 
     private struct Partition {
         var accepted: TokenMask
@@ -113,33 +114,48 @@ public final class GrammarMasker: Sendable {
     private struct Caches {
         var contextIndependent: [GrammarFrame: Partition] = [:]
         var byState: [[GrammarFrame]: TokenMask] = [:]
+        var bytes = 0
     }
 
     private let caches = Mutex(Caches())
 
-    public init(grammar: JSONGrammar, vocabulary: TokenVocabulary) {
+    public init(grammar: JSONGrammar, vocabulary: TokenVocabulary, cacheBytes: Int = defaultCacheBytes) {
         self.grammar = grammar
         self.vocabulary = vocabulary
+        self.cacheBytes = cacheBytes
     }
+
+    var cachedBytes: Int { caches.withLock { $0.bytes } }
 
     public func mask(for matcher: JSONGrammarMatcher) -> TokenMask {
         caches.withLock { caches in
             if let known = caches.byState[matcher.stack] { return known }
             let top = matcher.stack[matcher.stack.count - 1]
-            let partition = caches.contextIndependent[top] ?? {
+            let maskBytes = MemoryLayout<UInt32>.stride * (vocabulary.size + 31) / 32
+            let frameBytes = MemoryLayout<GrammarFrame>.stride
+            if caches.contextIndependent[top] == nil {
                 var accepted = TokenMask(size: vocabulary.size)
                 let local = JSONGrammarMatcher(grammar: grammar, stack: [top])
                 let dependent = scan(vocabulary.sorted, from: local, into: &accepted)
-                return Partition(accepted: accepted, dependent: dependent)
-            }()
-            if caches.contextIndependent.count >= Self.cacheLimit { caches.contextIndependent.removeAll() }
-            caches.contextIndependent[top] = partition
+                Self.make(room: maskBytes + frameBytes + 4 * dependent.count, in: &caches, limit: cacheBytes)
+                caches.contextIndependent[top] = Partition(accepted: accepted, dependent: dependent)
+            }
+            let partition = caches.contextIndependent[top]!
             var mask = partition.accepted
             _ = scan(partition.dependent, from: matcher, into: &mask)
-            if caches.byState.count >= Self.cacheLimit { caches.byState.removeAll() }
+            Self.make(room: maskBytes + frameBytes * matcher.stack.count, in: &caches, limit: cacheBytes)
             caches.byState[matcher.stack] = mask
             return mask
         }
+    }
+
+    private static func make(room bytes: Int, in caches: inout Caches, limit: Int) {
+        if caches.bytes + bytes > limit {
+            caches.contextIndependent.removeAll()
+            caches.byState.removeAll()
+            caches.bytes = 0
+        }
+        caches.bytes += bytes
     }
 
     private func scan(_ ids: [Int32], from start: JSONGrammarMatcher, into accepted: inout TokenMask) -> [Int32] {

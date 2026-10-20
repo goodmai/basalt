@@ -47,6 +47,77 @@ struct GrammarMaskerTests {
         #expect(masker.mask(for: matcher).isEmpty)
     }
 
+    struct SplitMix64: RandomNumberGenerator {
+        var state: UInt64
+        mutating func next() -> UInt64 {
+            state &+= 0x9E37_79B9_7F4A_7C15
+            var z = state
+            z = (z ^ (z >> 30)) &* 0xBF58_476D_1CE4_E5B9
+            z = (z ^ (z >> 27)) &* 0x94D0_49BB_1331_11EB
+            return z ^ (z >> 31)
+        }
+    }
+
+    static func randomVocabulary(size: Int, using random: inout SplitMix64) -> TokenVocabulary {
+        let alphabet = Array("{}[]\",:0123456789-+.eEtrufalsn \n\\/abxyzDdEe".utf8)
+        let multibyte: [[UInt8]] = [Array("é".utf8), Array("€".utf8), Array("\u{1F600}".utf8), [0xF0, 0x9F], [0x98, 0x80], [0xC3]]
+        var tokens = (0..<256).map { [UInt8($0)] }
+        while tokens.count < size {
+            var token: [UInt8] = []
+            for _ in 0..<Int.random(in: 1...5, using: &random) {
+                if Int.random(in: 0..<8, using: &random) == 0 {
+                    token += multibyte.randomElement(using: &random)!
+                } else {
+                    token.append(alphabet.randomElement(using: &random)!)
+                }
+            }
+            tokens.append(token)
+        }
+        for _ in 0..<8 { tokens[Int.random(in: 0..<tokens.count, using: &random)] = [] }
+        return TokenVocabulary(tokenBytes: tokens)
+    }
+
+    @Test("Randomized: on random vocabularies and random walks the cached mask equals the per-token check, for several schemas")
+    func randomizedDifferential() throws {
+        let schemas = [
+            Self.schema, JSONGrammarTests.tree,
+            #"{"type": "array", "items": {"anyOf": [{"type": "string"}, {"type": "number"}, {"enum": [true, null]}]}}"#,
+            #"{"type": "object", "properties": {"k": {"enum": ["a", "ab", "abc"]}, "v": {"type": "array", "items": {"type": "integer"}}}, "required": ["k"]}"#,
+        ]
+        var random = SplitMix64(state: 42)
+        let start = ContinuousClock.now
+        for (index, schema) in schemas.enumerated() {
+            let vocabulary = Self.randomVocabulary(size: 1500, using: &random)
+            let masker = GrammarMasker(grammar: try grammar(schema), vocabulary: vocabulary, cacheBytes: index.isMultiple(of: 2) ? 1 << 20 : 4096)
+            for _ in 0..<4 {
+                var matcher = JSONGrammarMatcher(grammar: masker.grammar)
+                for _ in 0..<80 {
+                    let expected = Self.bruteForce(matcher, vocabulary)
+                    #expect(masker.mask(for: matcher) == expected, "schema \(index), \(matcher.stack)")
+                    let allowed = (0..<vocabulary.size).filter(expected.contains)
+                    guard let id = allowed.randomElement(using: &random) else { break }
+                    let advanced = matcher.accept(vocabulary.bytes(of: id))
+                    #expect(advanced)
+                }
+            }
+        }
+        #expect(ContinuousClock.now - start < .seconds(30))
+    }
+
+    @Test("The mask caches stay within their byte budget and keep answering correctly after an eviction")
+    func cachesAreBoundedByBytes() throws {
+        let vocabulary = Self.vocabulary()
+        let budget = 2048
+        let masker = GrammarMasker(grammar: try grammar(Self.schema), vocabulary: vocabulary, cacheBytes: budget)
+        let document = "{\"b\": [1, null,12],\n  \"x\":{\"a\":\"x\\n\u{1F600}é\"},\"a\":\"ab\"}"
+        var matcher = JSONGrammarMatcher(grammar: masker.grammar)
+        for byte in Array(document.utf8) {
+            #expect(masker.mask(for: matcher) == Self.bruteForce(matcher, vocabulary))
+            #expect(masker.cachedBytes <= budget)
+            _ = matcher.advance(byte)
+        }
+    }
+
     @Test("A token that closes a string is allowed by its context, not by the string frame it starts in")
     func closingTokenDependsOnTheStack() throws {
         let vocabulary = Self.vocabulary()
