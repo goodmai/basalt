@@ -312,18 +312,20 @@ def evaluate_task(task_path: Path, engine_cfg: dict, max_attempts: int = 2, max_
             }
             task_report["attempts"].append(attempt_info)
             
+            stats = (f"{elapsed:.1f}s, reasoning: {len(reasoning)} chars / {meta.get('reasoning_tokens')} tokens, "
+                     f"train {train_pairs_passed}/{len(task_data.get('train', []))}, finish {meta.get('finish_reason')}")
             if is_correct:
-                print(f" ✅ CORRECT [{exec_status}] ({elapsed:.1f}s, reasoning: {len(reasoning)} chars)")
+                print(f" ✅ CORRECT [{exec_status}] ({stats})")
                 task_report["passed"] = True
                 task_report["passed_attempt"] = attempt
                 break
             else:
                 if predicted_grid is None:
-                    print(f" ❌ PARSE/EXEC FAILED [{exec_status}] ({elapsed:.1f}s, train {train_pairs_passed})")
+                    print(f" ❌ PARSE/EXEC FAILED [{exec_status}] ({stats})")
                 else:
                     p_rows = len(predicted_grid)
                     p_cols = len(predicted_grid[0]) if p_rows > 0 else 0
-                    print(f" ❌ INCORRECT GRID {p_rows}x{p_cols} [{exec_status}] ({elapsed:.1f}s)")
+                    print(f" ❌ INCORRECT GRID {p_rows}x{p_cols} [{exec_status}] ({stats})")
                     
         except Exception as e:
             elapsed = time.time() - t0
