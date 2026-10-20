@@ -227,8 +227,8 @@ public final class MCPServer: Sendable {
                     "properties": [
                         "prompt":      ["type": "string",  "description": "Input prompt"],
                         "maxTokens":   ["type": "integer", "description": "Max tokens to generate (default 65536)"],
-                        "temperature": ["type": "number",  "description": "Sampling temperature 0–2 (default 0.7)"],
-                        "topP":        ["type": "number",  "description": "Nucleus sampling p (default 0.9)"],
+                        "temperature": ["type": "number",  "description": "Sampling temperature 0–2 (default: the model's generation_config, else 0.7)"],
+                        "topP":        ["type": "number",  "description": "Nucleus sampling p (default: the model's generation_config, else 0.9)"],
                         "minP":        ["type": "number",  "description": "Min-P 0–1, overrides the server default (0 = off)"],
                         "dynamicTemperature": ["type": "boolean", "description": "Entropy-based dynamic temperature (EDT)"]
                     ]
