@@ -208,7 +208,7 @@ python3 arc_agi_benchmark.py --split training --limit 10 --engine swift_mlx --ma
 | `--presence-penalty` | `presence_penalty` | не отправляется; карточка Ornith-1.5 рекомендует 1.5 |
 | `--reasoning-effort` | `reasoning_effort` | не отправляется: шаблон Qwen3.8 тогда думает на `xhigh`; `low` — коротко, `none` — без размышлений |
 | `--thinking-budget` | `thinking_budget` | не отправляется; после стольких токенов размышления сервер дописывает фразу Qwen «Considering the limited time…» и `</think>`, и модель отвечает |
-| `--answer-tokens` | — | 4000; с `--thinking-budget` `max_tokens` = бюджет + это число, если `--max-tokens` не задан больше |
+| `--answer-tokens` | — | 4000, не меньше 1; с `--thinking-budget` `max_tokens` = бюджет + это число, если `--max-tokens` не задан больше |
 | `--max-tokens` | `max_tokens` | 16000; с `--thinking-budget` — см. `--answer-tokens` |
 
 ```bash
