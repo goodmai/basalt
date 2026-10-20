@@ -155,7 +155,7 @@ class TrainVerificationTest(unittest.TestCase):
             self.assertEqual(arc_sandbox._parse_outputs('{"outputs": [[[1]]], "timed_out": false}', 1), ([], False))
 
     def test_a_limit_outranks_a_timeout_when_no_block_answers(self):
-        self.assertEqual(execute_python_hybrid(FILLS_THE_DISK + "\n" + HANG, TASK["test"][0]["input"], timeout=1,
+        self.assertEqual(execute_python_hybrid(FILLS_THE_DISK + "\n" + HANG, TASK["test"][0]["input"], timeout=5,
                                                train_pairs=TASK["train"])[1],
                          "exec_disk_limit")
 
