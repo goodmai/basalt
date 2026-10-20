@@ -399,6 +399,30 @@ struct GrammarVocabularyTests {
         return (0..<processor.vocabulary.size).filter(mask.allows)
     }
 
+    @Test("Byte-level BPE: Ġ is a space, Ċ a raw newline that a string refuses, Ã© the bytes of é; the stop token only ends the document")
+    func byteLevel() throws {
+        let vocabulary = try Self.vocabulary(ListTokenizer(
+            pieces: [0: "{", 1: "Ġ\"", 2: "Ċ", 3: "Ã©", 4: "\"", 5: "}", 6: "<|im_end|>", 7: "a"], eosToken: "<|im_end|>"))
+        var processor = try Self.processor(vocabulary)
+        processor.didSample(token: MLXArray(Int32(4)))
+        let inside = try Self.allowed(processor)
+        #expect(inside == [0, 1, 3, 4, 5, 7], "\(inside)")
+        processor.didSample(token: MLXArray(Int32(1)))
+        #expect(try Self.allowed(processor) == [6])
+    }
+
+    @Test("SentencePiece: ▁ is a space, <0x0A> a raw newline, <0x22> a quote that closes the string")
+    func sentencePiece() throws {
+        let vocabulary = try Self.vocabulary(ListTokenizer(
+            pieces: [0: "<0x0A>", 1: "▁a", 2: "é", 3: "\"", 4: "</s>", 5: "<0x22>"], eosToken: "</s>"))
+        var processor = try Self.processor(vocabulary)
+        processor.didSample(token: MLXArray(Int32(3)))
+        #expect(try Self.allowed(processor) == [1, 2, 3, 5])
+        processor.didSample(token: MLXArray(Int32(1)))
+        processor.didSample(token: MLXArray(Int32(5)))
+        #expect(try Self.allowed(processor) == [4])
+    }
+
     @Test("Stop tokens and reasoning markers past a gap in the ids are kept, never fit inside a value, and every stop token ends the document")
     func reservedTokensPastAGap() throws {
         let tokenizer = ListTokenizer(
@@ -428,6 +452,22 @@ struct GrammarVocabularyTests {
         let narrow = processor.process(logits: MLXArray.zeros([1, 150]))
         #expect(narrow.dim(-1) == 150)
         #expect(narrow.max().item(Float.self) == -Float.infinity)
+    }
+
+    @Test("The vocabulary is read from the tokenizer once per model, and a model switch drops it and the pooled grammars")
+    func readOncePerModel() async throws {
+        let tokenizer = ListTokenizer(pieces: JSONPieceTokenizer.pieces.merging([252: "<eos>"]) { $1 }, eosToken: "<eos>")
+        let engine = try await ConstrainedModel.engine(tokenizer: tokenizer)
+        let request = ConstrainedModel.request(format: .jsonSchema(ConstrainedModel.schema), maxTokens: 120)
+        _ = try await engine.generate(request: request)
+        let lookups = tokenizer.lookups.count.withLock { $0 }
+        _ = try await engine.generate(request: request)
+        #expect(tokenizer.lookups.count.withLock { $0 } == lookups)
+        #expect(await !engine.idleGrammars.isEmpty)
+
+        await engine.attach(try ConstrainedModel.container(tokenizer: JSONPieceTokenizer(endsText: false)))
+        #expect(await engine.idleGrammars.isEmpty)
+        await #expect(throws: BasaltError.self) { _ = try await engine.generate(request: request) }
     }
 }
 
