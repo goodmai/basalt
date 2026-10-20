@@ -71,6 +71,28 @@ struct MCPServerTests {
         #expect(output[0].contains("check_hardware"))
         #expect(output[0].contains("inspect_model"))
         #expect(output[0].contains("switch_model"))
+        #expect(!output[0].contains("playwright_screenshot"))
+    }
+
+    @Test("playwright_screenshot is gone: a url carrying Python never reaches an interpreter")
+    func screenshotToolIsRemoved() async throws {
+        let orch = ModelOrchestratorActor(engine: MockInferenceEngine())
+        actor OutputCapturer {
+            var lines: [String] = []
+            func capture(_ line: String) { lines.append(line) }
+        }
+        let capturer = OutputCapturer()
+        let server = MCPServer(orchestrator: orch) { line in Task { await capturer.capture(line) } }
+        let marker = NSTemporaryDirectory() + "basalt-pwned-\(UUID().uuidString)"
+        let url = "'); import os; os.system('touch \(marker)')#"
+        let call: [String: Any] = ["jsonrpc": "2.0", "id": 9, "method": "tools/call",
+                                   "params": ["name": "playwright_screenshot", "arguments": ["url": url]]]
+        await server.dispatch(String(decoding: try JSONSerialization.data(withJSONObject: call), as: UTF8.self))
+        try? await Task.sleep(for: .milliseconds(200))
+        let output = await capturer.lines
+        #expect(output.count == 1)
+        #expect(output[0].contains("-32601"))
+        #expect(!FileManager.default.fileExists(atPath: marker))
     }
 
     @Test("tools/call (gemma_status) returns model info")

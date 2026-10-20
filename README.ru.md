@@ -473,7 +473,6 @@ basalt models download --author Ex0bit
 |---|---|
 | `gemma_generate` | Генерация текста — `prompt`, `maxTokens`, `temperature`, `topP`, `minP`, `dynamicTemperature` |
 | `gemma_status` | Готовность сервера, версия, текущая модель |
-| `playwright_screenshot` | Скриншот страницы через Playwright |
 | `gemma_add_knowledge` | Подмешать свой контекст в сессию |
 
 ---
