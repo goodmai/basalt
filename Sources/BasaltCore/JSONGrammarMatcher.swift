@@ -39,6 +39,21 @@ public struct JSONGrammarMatcher: Sendable {
         return true
     }
 
+    public var isClosed: Bool {
+        stack.count == 1 && stack[0].phase == 1
+    }
+
+    public mutating func acceptLongestPrefix(_ bytes: some Sequence<UInt8>) -> Int {
+        var accepted = 0
+        for byte in bytes {
+            var trial = self
+            guard trial.advance(byte) == .consumed else { break }
+            self = trial
+            accepted += 1
+        }
+        return accepted
+    }
+
     public var isAccepting: Bool {
         guard stack[0].node == GrammarFrame.document, stack[0].phase == 1 else { return false }
         return stack.count == 1 || (stack.count == 2 && isComplete(stack[1]))
@@ -140,8 +155,14 @@ public struct JSONGrammarMatcher: Sendable {
         case (1, 0xF1...0xF3): return moving(frame, to: 12)
         case (1, 0xF4): return moving(frame, to: 16)
         case (2, _) where Self.escapable.contains(byte): return moving(frame, to: 1)
-        case (2, UInt8(ascii: "u")): return moving(frame, to: 3)
-        case (3...6, _) where Self.hexDigits.contains(byte): return moving(frame, to: frame.phase == 6 ? 1 : frame.phase + 1)
+        case (2, UInt8(ascii: "u")): return escapedScalar(frame)
+        case (3...6, _) where Self.hexDigits.contains(byte): return escapedScalarDigit(frame, byte)
+        case (20, UInt8(ascii: "\\")): return moving(frame, to: 21)
+        case (21, UInt8(ascii: "u")): return moving(frame, to: 22)
+        case (22, UInt8(ascii: "d")), (22, UInt8(ascii: "D")): return moving(frame, to: 23)
+        case (23, _) where Self.lowSurrogateSecondDigits.contains(byte): return moving(frame, to: 24)
+        case (24, _) where Self.hexDigits.contains(byte): return moving(frame, to: 25)
+        case (25, _) where Self.hexDigits.contains(byte): return moving(frame, to: 1)
         case (10, 0x80...0xBF): return moving(frame, to: 1)
         case (11, 0x80...0xBF): return moving(frame, to: 10)
         case (12, 0x80...0xBF): return moving(frame, to: 11)
@@ -152,6 +173,26 @@ public struct JSONGrammarMatcher: Sendable {
         case (7, _): return .complete
         default: return .reject
         }
+    }
+
+    private static let lowSurrogateSecondDigits = Set("cdefCDEF".utf8)
+
+    private func escapedScalar(_ frame: GrammarFrame) -> Transition {
+        var next = entering(frame, phase: 3)
+        next.cursor = 0
+        return .stay(next)
+    }
+
+    private func escapedScalarDigit(_ frame: GrammarFrame, _ byte: UInt8) -> Transition {
+        let digit = byte <= UInt8(ascii: "9") ? byte - UInt8(ascii: "0") : (byte | 0x20) - UInt8(ascii: "a") + 10
+        var next = entering(frame, phase: frame.phase + 1)
+        next.cursor = frame.cursor << 4 | Int32(digit)
+        if frame.phase == 4, (0xDC...0xDF).contains(next.cursor) { return .reject }
+        if frame.phase == 6 {
+            next.phase = (0xD800...0xDBFF).contains(next.cursor) ? 20 : 1
+            next.cursor = 0
+        }
+        return .stay(next)
     }
 
     private static let numberEnds: Set<UInt8> = [2, 3, 5, 8]
