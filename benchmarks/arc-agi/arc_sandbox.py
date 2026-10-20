@@ -111,8 +111,13 @@ def sandbox_profile(work_dir: str, numpy_package, images) -> str:
 
 
 def run_transform(code_blocks, grid, timeout: float = DEFAULT_TIMEOUT):
+    grids, status = run_transforms(code_blocks, [grid], timeout=timeout)
+    return (grids[-1] if grids else None), status
+
+
+def run_transforms(code_blocks, grids, timeout: float = DEFAULT_TIMEOUT):
     numpy_package, images = _numpy_paths()
-    request = {"blocks": code_blocks, "grid": grid, "numpy": numpy_package,
+    request = {"blocks": code_blocks, "grids": grids, "numpy": numpy_package,
                "cpu_seconds": int(timeout) + 1}
     with tempfile.TemporaryDirectory(prefix="arc-sandbox-") as raw_dir:
         work_dir = os.path.realpath(raw_dir)
@@ -134,12 +139,12 @@ def run_transform(code_blocks, grid, timeout: float = DEFAULT_TIMEOUT):
             output.seek(0)
             lines = output.read().splitlines()
     try:
-        result = json.loads(lines[-1])["grid"]
+        results = json.loads(lines[-1])["grids"]
     except (IndexError, ValueError, KeyError, TypeError):
         return None, "exec_failed"
-    if _is_grid(result):
-        return result, "python_oop_exec_success"
-    return None, "exec_failed"
+    if not isinstance(results, list) or len(results) != len(grids) or not _is_grid(results[-1]):
+        return None, "exec_failed"
+    return [result if _is_grid(result) else None for result in results], "python_oop_exec_success"
 
 
 def _footprint_bytes(pid: int) -> int:
@@ -251,6 +256,13 @@ def _run_block(code, grid, base):
     return _to_matrix(result, grid_type)
 
 
+def _run_block_or_none(code, grid, base):
+    try:
+        return _run_block(code, grid, base)
+    except BaseException:
+        return None
+
+
 def _import_by_path(name: str, path: str, package_dir=None):
     import importlib.util
     locations = [package_dir] if package_dir else None
@@ -271,15 +283,13 @@ def _child_main():
         except ImportError:
             sys.modules.pop("numpy", None)
     _apply_limits(request["cpu_seconds"])
-    result = None
+    results = None
     for code in request["blocks"]:
-        try:
-            result = _run_block(code, request["grid"], base)
-        except BaseException:
-            result = None
-        if result is not None:
+        outputs = [_run_block_or_none(code, grid, base) for grid in request["grids"]]
+        if outputs[-1] is not None:
+            results = outputs
             break
-    os.write(1, b"\n" + json.dumps({"grid": result}).encode() + b"\n")
+    os.write(1, b"\n" + json.dumps({"grids": results}).encode() + b"\n")
     os._exit(0)
 
 

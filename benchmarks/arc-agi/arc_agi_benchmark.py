@@ -20,7 +20,7 @@ import argparse
 import glob
 from pathlib import Path
 
-from arc_sandbox import DEFAULT_TIMEOUT, run_transform, sandbox_available
+from arc_sandbox import DEFAULT_TIMEOUT, run_transforms, sandbox_available
 
 # ─── Default Configurations ──────────────────────────────────────────────────
 
@@ -50,6 +50,7 @@ DEFAULT_ENGINES = {
 DATASET_ROOT = Path(__file__).resolve().parent / "dataset"
 CHUNK_TIMEOUT = 1800   # per-read timeout (seconds, 30 min)
 ATTEMPT_TIMEOUT = 1800 # max wall-clock time per attempt (30 min)
+REQUEST_OPTIONS = {}
 
 # ─── Grid Extractor ──────────────────────────────────────────────────────────
 
@@ -75,20 +76,27 @@ def parse_grid(text: str):
             continue
     return None
 
-def execute_python_hybrid(text: str, test_input: list[list[int]], timeout: float = DEFAULT_TIMEOUT):
+def execute_python_hybrid(text: str, test_input: list[list[int]], timeout: float = DEFAULT_TIMEOUT,
+                          train_pairs: list[dict] = ()):
     if not text:
-        return None, "empty_text"
+        return None, "empty_text", 0
     code_blocks = re.findall(r"```python\s*\n(.*?)\n\s*```", text, re.DOTALL)
     if not code_blocks:
         code_blocks = re.findall(r"```[a-zA-Z]*\s*\n(.*def\s+\w+.*)\n\s*```", text, re.DOTALL)
     if code_blocks:
-        grid, status = run_transform(list(reversed(code_blocks)), test_input, timeout=timeout)
-        if grid is not None or status != "exec_failed":
-            return grid, status
+        inputs = [pair["input"] for pair in train_pairs] + [test_input]
+        grids, status = run_transforms(list(reversed(code_blocks)), inputs, timeout=timeout)
+        if grids is not None:
+            passed = sum(grid == pair["output"] for grid, pair in zip(grids, train_pairs))
+            if passed < len(train_pairs):
+                return None, "train_mismatch", passed
+            return grids[-1], status, passed
+        if status != "exec_failed":
+            return None, status, 0
     direct_grid = parse_grid(text)
     if direct_grid:
-        return direct_grid, "json_parse_fallback"
-    return None, "failed"
+        return direct_grid, "json_parse_fallback", 0
+    return None, "failed", 0
 
 # ─── Prompt Builder ──────────────────────────────────────────────────────────
 
@@ -100,7 +108,7 @@ def build_arc_prompt(task_data: dict, attempt: int = 1, mode: str = "hybrid") ->
         prompt = "ARC-AGI puzzle. Learn the transformation rule from input/output pairs, then apply it to the test input.\n\n"
         for i, example in enumerate(task_data.get("train", []), 1):
             prompt += f"Example {i}:\nIN = {json.dumps(example['input'])}\nOUT = {json.dumps(example['output'])}\n\n"
-        prompt += f"Test input:\nIN = {json.dumps(task_data['test'][0]['input'])}\n\n"
+        prompt += test_input_section(task_data)
         if attempt == 1:
             prompt += "Output ONLY the 2D JSON array for the test output (e.g. [[1,2],[3,4]]). Do not include extra text."
         else:
@@ -108,8 +116,8 @@ def build_arc_prompt(task_data: dict, attempt: int = 1, mode: str = "hybrid") ->
         return prompt
 
     # Hybrid Mode (Typed OOP DSL Program-of-Thought)
-    prompt = ("You are an expert spatial reasoning solver for ARC-AGI using a Typed Object-Oriented DSL.\n\n"
-              "AVAILABLE DSL TYPES & CLASSES:\n"
+    prompt = ("ARC-AGI puzzle. Each example maps an input grid IN to an output grid OUT by one rule.\n\n"
+              "Optional helper DSL, available to your code but not required:\n"
               "- Color (IntEnum: BLACK=0, BLUE=1, RED=2, GREEN=3, YELLOW=4, GREY=5, MAGENTA=6, ORANGE=7, CYAN=8, MAROON=9)\n"
               "- Point(r: int, c: int)\n"
               "- GridObject: .pixels, .bounding_box (min_r, min_c, max_r, max_c), .move(dr, dc), .change_color(new_color)\n"
@@ -118,16 +126,22 @@ def build_arc_prompt(task_data: dict, attempt: int = 1, mode: str = "hybrid") ->
     for i, example in enumerate(task_data.get("train", []), 1):
         prompt += f"Example {i}:\nIN = {json.dumps(example['input'])}\nOUT = {json.dumps(example['output'])}\n\n"
         
-    prompt += f"Test input:\nIN = {json.dumps(task_data['test'][0]['input'])}\n\n"
+    prompt += test_input_section(task_data)
     prompt += ("INSTRUCTIONS:\n"
-               "1. Analyze spatial patterns inside thinking channel using high-level object abstractions.\n"
-               "2. Write a Python function `transform(grid: Grid) -> Grid` or `transform(grid: list[list[int]]) -> list[list[int]]`.\n"
-               "3. Wrap the Python code inside ```python ... ``` markdown code block.\n")
+               "1. Identify the rule that maps every example IN to its OUT.\n"
+               "2. Write a Python function `transform(grid: list[list[int]]) -> list[list[int]]` that applies it; "
+               "plain lists, the DSL above and numpy as `np` all work.\n"
+               "3. Wrap the code in one ```python ... ``` block. It is run on every example IN and must "
+               "reproduce its OUT before it is applied to TEST_IN.\n")
     return prompt
+
+
+def test_input_section(task_data: dict) -> str:
+    return f"Test input (apply the rule to this):\nTEST_IN = {json.dumps(task_data['test'][0]['input'])}\n\n"
 
 # ─── API Stream Query ────────────────────────────────────────────────────────
 
-def query_engine(engine_cfg: dict, prompt: str, max_tokens: int = 8192, temperature: float = 0.7):
+def query_engine(engine_cfg: dict, prompt: str, max_tokens: int = 8192, temperature: float | None = None):
     """
     Sends request to LLM server and streams thinking + answer tokens.
     """
@@ -138,19 +152,28 @@ def query_engine(engine_cfg: dict, prompt: str, max_tokens: int = 8192, temperat
     else:
         raise ValueError(f"Unknown engine type: {engine_cfg['type']}")
 
-def _stream_openai(url: str, model: str, prompt: str, max_tokens: int, temperature: float):
+def openai_payload(model: str, prompt: str, max_tokens: int, temperature: float | None, options: dict) -> dict:
     payload = {
         "model": model,
         "messages": [{"role": "user", "content": prompt}],
         "stream": True,
+        "stream_options": {"include_usage": True},
         "max_tokens": max_tokens,
-        "temperature": temperature
     }
+    if temperature is not None:
+        payload["temperature"] = temperature
+    payload.update({key: value for key, value in options.items() if value is not None})
+    return payload
+
+
+def _stream_openai(url: str, model: str, prompt: str, max_tokens: int, temperature: float | None):
+    payload = openai_payload(model, prompt, max_tokens, temperature, REQUEST_OPTIONS)
     data = json.dumps(payload).encode('utf-8')
     req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
     
     reasoning = ""
     content = ""
+    meta = {}
     deadline = time.time() + ATTEMPT_TIMEOUT
     
     with urllib.request.urlopen(req, timeout=CHUNK_TIMEOUT) as resp:
@@ -167,7 +190,8 @@ def _stream_openai(url: str, model: str, prompt: str, max_tokens: int, temperatu
                 line = line[6:]
             try:
                 chunk = json.loads(line)
-                delta = chunk.get("choices", [{}])[0].get("delta", {})
+                meta.update(stream_meta(chunk))
+                delta = (chunk.get("choices") or [{}])[0].get("delta", {})
                 r = delta.get("reasoning", "") or ""
                 c = delta.get("content", "") or ""
                 reasoning += r
@@ -175,14 +199,31 @@ def _stream_openai(url: str, model: str, prompt: str, max_tokens: int, temperatu
             except Exception:
                 continue
                 
-    return reasoning, content
+    return reasoning, content, meta
 
-def _stream_ollama(url: str, model: str, prompt: str, max_tokens: int, temperature: float):
+
+def stream_meta(chunk: dict) -> dict:
+    meta = {}
+    finish = (chunk.get("choices") or [{}])[0].get("finish_reason")
+    if finish:
+        meta["finish_reason"] = finish
+    usage = chunk.get("usage") or {}
+    if "completion_tokens" in usage:
+        meta["completion_tokens"] = usage["completion_tokens"]
+    reasoning_tokens = (usage.get("completion_tokens_details") or {}).get("reasoning_tokens")
+    if reasoning_tokens is not None:
+        meta["reasoning_tokens"] = reasoning_tokens
+    return meta
+
+def _stream_ollama(url: str, model: str, prompt: str, max_tokens: int, temperature: float | None):
+    options = {"num_predict": max_tokens}
+    if temperature is not None:
+        options["temperature"] = temperature
     payload = {
         "model": model,
         "messages": [{"role": "user", "content": prompt}],
         "stream": True,
-        "options": {"temperature": temperature, "num_predict": max_tokens}
+        "options": options
     }
     data = json.dumps(payload).encode('utf-8')
     req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
@@ -207,11 +248,11 @@ def _stream_ollama(url: str, model: str, prompt: str, max_tokens: int, temperatu
             except Exception:
                 continue
                 
-    return reasoning, content
+    return reasoning, content, {}
 
 # ─── Task Execution ──────────────────────────────────────────────────────────
 
-def evaluate_task(task_path: Path, engine_cfg: dict, max_attempts: int = 2, max_tokens: int = 16000, temperature: float = 0.7, mode: str = "hybrid", exec_timeout: float = DEFAULT_TIMEOUT):
+def evaluate_task(task_path: Path, engine_cfg: dict, max_attempts: int = 2, max_tokens: int = 16000, temperature: float | None = None, mode: str = "hybrid", exec_timeout: float = DEFAULT_TIMEOUT):
     task_id = task_path.stem
     with open(task_path, 'r', encoding='utf-8') as f:
         task_data = json.load(f)
@@ -239,13 +280,15 @@ def evaluate_task(task_path: Path, engine_cfg: dict, max_attempts: int = 2, max_
         
         t0 = time.time()
         try:
-            reasoning, content = query_engine(engine_cfg, prompt, max_tokens=max_tokens, temperature=temperature)
+            reasoning, content, meta = query_engine(engine_cfg, prompt, max_tokens=max_tokens, temperature=temperature)
             elapsed = time.time() - t0
             
             full_text = (reasoning + "\n" + content).strip()
             
+            train_pairs_passed = None
             if mode == "hybrid":
-                predicted_grid, exec_status = execute_python_hybrid(full_text, test_in_grid, timeout=exec_timeout)
+                predicted_grid, exec_status, train_pairs_passed = execute_python_hybrid(
+                    full_text, test_in_grid, timeout=exec_timeout, train_pairs=task_data.get("train", []))
             else:
                 text_to_parse = content.strip() if content.strip() else reasoning.strip()
                 predicted_grid = parse_grid(text_to_parse)
@@ -259,6 +302,10 @@ def evaluate_task(task_path: Path, engine_cfg: dict, max_attempts: int = 2, max_
                 "reasoning_len": len(reasoning),
                 "content_len": len(content),
                 "exec_status": exec_status,
+                "train_pairs_passed": train_pairs_passed,
+                "train_pairs": len(task_data.get("train", [])),
+                "answered": bool(content.strip()),
+                **meta,
                 "parsed": (predicted_grid is not None),
                 "correct": is_correct,
                 "prediction": predicted_grid
@@ -272,7 +319,7 @@ def evaluate_task(task_path: Path, engine_cfg: dict, max_attempts: int = 2, max_
                 break
             else:
                 if predicted_grid is None:
-                    print(f" ❌ PARSE/EXEC FAILED [{exec_status}] ({elapsed:.1f}s)")
+                    print(f" ❌ PARSE/EXEC FAILED [{exec_status}] ({elapsed:.1f}s, train {train_pairs_passed})")
                 else:
                     p_rows = len(predicted_grid)
                     p_cols = len(predicted_grid[0]) if p_rows > 0 else 0
@@ -315,8 +362,16 @@ def parse_args(argv=None):
                         help="Specific task IDs or file paths to evaluate")
     parser.add_argument("--max-tokens", type=int, default=16000,
                         help="Max generation tokens budget (default: 16000)")
-    parser.add_argument("--temperature", type=float, default=0.7,
-                        help="Sampling temperature (default: 0.7)")
+    parser.add_argument("--reasoning-effort", default=None,
+                        help="OpenAI reasoning_effort sent to the engine, e.g. none to switch thinking off")
+    parser.add_argument("--thinking-budget", type=int, default=None,
+                        help="thinking_budget sent to the engine: reasoning tokens before the answer is forced")
+    parser.add_argument("--top-k", type=int, default=None,
+                        help="top_k sent to the engine (default: the model's generation_config)")
+    parser.add_argument("--presence-penalty", type=float, default=None,
+                        help="presence_penalty sent to the engine")
+    parser.add_argument("--temperature", type=float, default=None,
+                        help="Sampling temperature (default: the model's generation_config)")
     parser.add_argument("--resume", action="store_true",
                         help="Resume benchmark from output JSON file if it exists")
     parser.add_argument("--output", type=str, default=None,
@@ -327,6 +382,7 @@ def parse_args(argv=None):
 
 def main():
     args = parse_args()
+    REQUEST_OPTIONS.update(request_options(args))
 
     # Determine tasks list
     task_files = []
@@ -385,7 +441,8 @@ def main():
     print(f"Split       : {args.split} ({len(task_files)} tasks selected)")
     print(f"Max Attempts: {args.attempts} (Pass@1 & Pass@2)")
     print(f"Max Tokens  : {args.max_tokens}")
-    print(f"Temperature : {args.temperature}")
+    print(f"Temperature : {args.temperature if args.temperature is not None else 'model default'}")
+    print(f"Options     : {json.dumps({k: v for k, v in REQUEST_OPTIONS.items() if v is not None})}")
     print(f"Output File : {output_file}")
     print("=" * 70)
 
@@ -415,6 +472,15 @@ def main():
 
     # Print Final Summary Table
     _print_final_summary(results, engine_cfg, time.time() - start_time)
+
+def request_options(args) -> dict:
+    return {
+        "reasoning_effort": args.reasoning_effort,
+        "thinking_budget": args.thinking_budget,
+        "top_k": args.top_k,
+        "presence_penalty": args.presence_penalty,
+    }
+
 
 def _save_checkpoint(output_file: str, report_file: str, engine_cfg: dict, results: dict, start_time: float):
     total = len(results)

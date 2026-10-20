@@ -189,7 +189,7 @@ socket.create_connection(('1.1.1.1', 80), timeout=3)
     def test_infinite_loop_is_killed_and_recorded_as_failed(self):
         started = time.monotonic()
         text = "```python\ndef transform(grid):\n    while True:\n        pass\n```"
-        grid, status = execute_python_hybrid(text, [[1]], timeout=2)
+        grid, status, _ = execute_python_hybrid(text, [[1]], timeout=2)
         self.assertLess(time.monotonic() - started, 5)
         self.assertEqual((grid, status), (None, "exec_timeout"))
 
@@ -210,7 +210,7 @@ socket.create_connection(('1.1.1.1', 80), timeout=3)
 
     def test_rotation_returns_the_right_grid(self):
         text = "```python\ndef transform(grid):\n    return [list(row) for row in zip(*grid[::-1])]\n```"
-        self.assertEqual(execute_python_hybrid(text, [[1, 2], [3, 4]]), ([[3, 1], [4, 2]], "python_oop_exec_success"))
+        self.assertEqual(execute_python_hybrid(text, [[1, 2], [3, 4]]), ([[3, 1], [4, 2]], "python_oop_exec_success", 0))
 
     def test_dsl_helpers_are_available(self):
         code = ("def transform(grid: Grid) -> Grid:\n"
