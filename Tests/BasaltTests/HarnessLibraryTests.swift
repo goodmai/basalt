@@ -92,23 +92,41 @@ struct HarnessLibraryTests {
     func blockedWritersLeaveThePoolFree() async throws {
         let root = Self.tempRoot()
         defer { try? FileManager.default.removeItem(at: root) }
-        let releasedAt = try Self.holdLock(root, for: 1.5)
+        let probed = MCPLines()
+        let release = try Self.holdLock(root, until: probed)
         let library = HarnessExperienceLibrary(rootDirectory: root)
         let writers = (0..<(2 * ProcessInfo.processInfo.activeProcessorCount)).map { index in
             Task { try await library.addKnowledge(topic: "t\(index)", content: "c") }
         }
-        let probedAt = await Task.detached { Date().timeIntervalSince1970 }.value
+        await Task.detached { probed.append("probed") }.value
         for writer in writers { _ = try await writer.value }
 
-        let released = try #require(releasedAt.all.first.flatMap(Double.init))
-        #expect(probedAt < released)
+        #expect(release.all == ["released after the probe"])
         #expect(try await library.query().count == writers.count)
     }
 
-    static func holdLock(_ root: URL, for seconds: TimeInterval) throws -> MCPLines {
+    static func lockedDescriptor(_ root: URL) throws -> Int32 {
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let holder = open(root.appendingPathComponent(".lock").path, O_CREAT | O_RDWR, 0o600)
         #expect(flock(holder, LOCK_EX) == 0)
+        return holder
+    }
+
+    static func holdLock(_ root: URL, until signal: MCPLines, atMost deadline: Duration = .seconds(30)) throws -> MCPLines {
+        let holder = try lockedDescriptor(root)
+        let release = MCPLines()
+        Thread.detachNewThread {
+            let giveUp = ContinuousClock.now + deadline
+            while signal.all.isEmpty, ContinuousClock.now < giveUp { Thread.sleep(forTimeInterval: 0.005) }
+            release.append(signal.all.isEmpty ? "released at the deadline" : "released after the probe")
+            flock(holder, LOCK_UN)
+            close(holder)
+        }
+        return release
+    }
+
+    static func holdLock(_ root: URL, for seconds: TimeInterval) throws -> MCPLines {
+        let holder = try lockedDescriptor(root)
         let releasedAt = MCPLines()
         Thread.detachNewThread {
             Thread.sleep(forTimeInterval: seconds)

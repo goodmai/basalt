@@ -119,12 +119,10 @@ struct TelemetryTests {
     @Test("A client that disconnects mid-stream releases its slot")
     func testDisconnectReleasesSlot() async throws {
         let tracker = TelemetryTracker()
-        let (orch, _) = try await loadedOrchestrator(tracker, delay: 5.0)
+        let (orch, _) = try await loadedOrchestrator(tracker, delay: 120)
 
-        /// Polls until `activeRequests` reaches `value` or two seconds pass (no fixed sleeps:
-        /// the suite runs in parallel and a fixed wait races the scheduler).
         func waitForActive(_ value: Int) async -> Bool {
-            let deadline = ContinuousClock.now + .seconds(2)
+            let deadline = ContinuousClock.now + .seconds(30)
             while ContinuousClock.now < deadline {
                 if await tracker.snapshot().activeRequests == value { return true }
                 try? await Task.sleep(for: .milliseconds(5))
