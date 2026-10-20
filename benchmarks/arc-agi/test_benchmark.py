@@ -32,6 +32,8 @@ DEEP_RESULT_LINE = ("```python\nimport os\ndef transform(grid):\n"
                     "    os.write(1, b'\\n' + b'[' * 1_000_000 + b'\\n')\n    os._exit(0)\n```")
 LONG_RESULT_LINE = ("```python\nimport os\ndef transform(grid):\n"
                     "    os.write(1, b'\\n[' + b'[],' * 5_000_000 + b'[]]\\n')\n    os._exit(0)\n```")
+FILLS_THE_DISK = ("```python\ndef transform(grid):\n    for index in range(40000):\n"
+                  "        open(f'f{index}', 'wb').close()\n    while True:\n        pass\n```")
 FIRST_PAIR_ONLY = ("```python\ndef transform(grid):\n    if grid[0][0] == 1:\n        return [[3, 1], [4, 2]]\n"
                    "    return [[2, 0], [3, 1]]\n```")
 
@@ -154,6 +156,11 @@ class TrainVerificationTest(unittest.TestCase):
         self.assertEqual(outcome, ([[2, 0], [3, 1]], "python_oop_exec_success", 2))
         limit = 3 * arc_sandbox.RESULT_BYTES_PER_GRID + arc_sandbox.RESULT_LINE_OVERHEAD_BYTES
         self.assertTrue(all(len(call.args[0]) <= limit for call in loads.call_args_list))
+
+    def test_a_block_over_the_disk_limit_is_killed_alone_and_an_older_block_still_answers(self):
+        self.assertEqual(execute_python_hybrid(ROTATE + "\n" + FILLS_THE_DISK, TASK["test"][0]["input"],
+                                               train_pairs=TASK["train"]),
+                         ([[2, 0], [3, 1]], "python_oop_exec_success", 2))
 
     def test_a_hanging_block_times_out_alone_and_the_next_block_still_answers(self):
         self.assertEqual(execute_python_hybrid(ROTATE + "\n" + HANG, TASK["test"][0]["input"], timeout=1,

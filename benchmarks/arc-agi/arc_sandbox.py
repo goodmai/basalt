@@ -127,15 +127,14 @@ def run_blocks(code_blocks, train_pairs, test_input, timeout: float = DEFAULT_TI
     inputs = [pair["input"] for pair in train_pairs] + [test_input]
     block_budget = timeout * len(inputs) + STARTUP_ALLOWANCE
     total_deadline = time.monotonic() + block_budget * len(blocks)
-    best, answered, timed_out = 0, False, False
+    best, answered, timed_out, hit_limit = 0, False, False, None
     for code in blocks:
         remaining = total_deadline - time.monotonic()
         if remaining <= 0:
             return None, "exec_timeout", best
         outputs, block_timed_out, limit = _run_child(code, inputs, timeout, min(block_budget, remaining),
                                                      numpy_package, images)
-        if limit:
-            return None, limit, best
+        hit_limit = hit_limit or limit
         train_outputs = outputs[:len(train_pairs)]
         passed = sum(output == pair["output"] for output, pair in zip(train_outputs, train_pairs))
         if passed == len(train_pairs) and len(outputs) == len(inputs) and outputs[-1] is not None:
@@ -145,6 +144,8 @@ def run_blocks(code_blocks, train_pairs, test_input, timeout: float = DEFAULT_TI
         timed_out = timed_out or block_timed_out
     if answered:
         return None, "train_mismatch", best
+    if hit_limit:
+        return None, hit_limit, best
     return None, "exec_timeout" if timed_out else "exec_failed", best
 
 
