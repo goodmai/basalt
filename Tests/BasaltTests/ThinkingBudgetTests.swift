@@ -101,6 +101,7 @@ struct ThinkingBudgetEngineTests {
         #expect(!budgeted.generatedText.isEmpty)
         #expect(!budgeted.generatedText.contains("Considering"))
         #expect(!budgeted.generatedText.contains("</think>"))
+        #expect(budgeted.reasoningTokens == budget + scalars(ThinkingModel.transition).count)
     }
 
     @Test("The budget holds on the prompt-cache path, and a cached rerun answers the same")

@@ -98,4 +98,32 @@ struct GenerationSettingsAPITests {
             """#) { #expect($0.status == .ok) }
         #expect(await engine.lastRequest?.thinkingBudget == nil)
     }
+
+    @Test("Usage reports reasoning tokens: chat completion_tokens_details, the include_usage stream chunk, Responses output_tokens_details")
+    func usageReportsReasoningTokens() async throws {
+        let (app, _) = try await app(reasoning: "one two three")
+        try await post(app, "/v1/chat/completions", #"{"messages": [{"role": "user", "content": "hi"}]}"#) { res in
+            let usage = try #require(try self.object(res)["usage"] as? [String: Any])
+            #expect((usage["completion_tokens_details"] as? [String: Any])?["reasoning_tokens"] as? Int == 3)
+        }
+        try await post(app, "/v1/chat/completions", #"""
+            {"messages": [{"role": "user", "content": "hi"}], "stream": true, "stream_options": {"include_usage": true}}
+            """#) { res in
+            let usage = try #require(self.dataFrames(res).compactMap { $0["usage"] as? [String: Any] }.last)
+            #expect((usage["completion_tokens_details"] as? [String: Any])?["reasoning_tokens"] as? Int == 3)
+            #expect(usage["completion_tokens"] as? Int == 10)
+        }
+        try await post(app, "/v1/chat/completions", #"{"messages": [{"role": "user", "content": "hi"}], "stream": true}"#) { res in
+            #expect(self.dataFrames(res).allSatisfy { $0["usage"] == nil })
+        }
+        try await post(app, "/v1/responses", #"{"input": "hi"}"#) { res in
+            let usage = try #require(try self.object(res)["usage"] as? [String: Any])
+            #expect((usage["output_tokens_details"] as? [String: Any])?["reasoning_tokens"] as? Int == 3)
+        }
+        try await post(app, "/v1/responses", #"{"input": "hi", "stream": true}"#) { res in
+            let completed = try #require(self.dataFrames(res).last { $0["type"] as? String == "response.completed" })
+            let usage = try #require((completed["response"] as? [String: Any])?["usage"] as? [String: Any])
+            #expect((usage["output_tokens_details"] as? [String: Any])?["reasoning_tokens"] as? Int == 3)
+        }
+    }
 }

@@ -262,6 +262,7 @@ public struct GenerationResponse: Codable, Sendable {
     public let finishReason: FinishReason
     /// Functions the model called, in order; nil when it called none.
     public let toolCalls: [ToolCallOutput]?
+    public let reasoningTokens: Int?
 
     public init(
         generatedText: String,
@@ -274,7 +275,8 @@ public struct GenerationResponse: Codable, Sendable {
         timeToFirstToken: Double,
         memory: MemoryUsage,
         finishReason: FinishReason,
-        toolCalls: [ToolCallOutput]? = nil
+        toolCalls: [ToolCallOutput]? = nil,
+        reasoningTokens: Int? = nil
     ) {
         self.generatedText = generatedText
         self.reasoningText = reasoningText
@@ -287,11 +289,12 @@ public struct GenerationResponse: Codable, Sendable {
         self.memory = memory
         self.finishReason = finishReason
         self.toolCalls = toolCalls
+        self.reasoningTokens = reasoningTokens
     }
 
     enum CodingKeys: String, CodingKey {
         case generatedText, reasoningText, promptTokens, cachedPromptTokens, completionTokens
-        case tokensPerSecond, generationTime, timeToFirstToken, memory, finishReason, toolCalls
+        case tokensPerSecond, generationTime, timeToFirstToken, memory, finishReason, toolCalls, reasoningTokens
     }
 
     public init(from decoder: Decoder) throws {
@@ -307,6 +310,7 @@ public struct GenerationResponse: Codable, Sendable {
         memory = try c.decode(MemoryUsage.self, forKey: .memory)
         finishReason = try c.decode(FinishReason.self, forKey: .finishReason)
         toolCalls = try c.decodeIfPresent([ToolCallOutput].self, forKey: .toolCalls)
+        reasoningTokens = try c.decodeIfPresent(Int.self, forKey: .reasoningTokens)
     }
 
     public struct MemoryUsage: Codable, Sendable {

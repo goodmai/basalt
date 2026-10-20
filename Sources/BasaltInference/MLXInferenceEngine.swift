@@ -376,7 +376,8 @@ public actor MLXInferenceEngine: InferenceEngine {
             timeToFirstToken: finalResponse.timeToFirstToken,
             memory: finalResponse.memory,
             finishReason: finalResponse.finishReason,
-            toolCalls: toolCalls.isEmpty ? nil : toolCalls
+            toolCalls: toolCalls.isEmpty ? nil : toolCalls,
+            reasoningTokens: finalResponse.reasoningTokens
         )
     }
 
@@ -700,6 +701,11 @@ public actor MLXInferenceEngine: InferenceEngine {
                     if let assistantPrefix { continuation.yield(.text(assistantPrefix)) }
 
                     var toolCallScanner = scansToolCallText ? NemotronToolCallScanner() : nil
+                    var reasoningText = ""
+                    func emitReasoning(_ text: String) {
+                        reasoningText += text
+                        continuation.yield(.reasoning(text))
+                    }
                     func admit(_ chunks: [StreamChunk]) {
                         for chunk in gate.admit(chunks) { continuation.yield(chunk) }
                     }
@@ -721,13 +727,13 @@ public actor MLXInferenceEngine: InferenceEngine {
                                 let cut = buffer.index(buffer.endIndex, offsetBy: -held)
                                 let piece = String(buffer[..<cut])
                                 buffer.removeSubrange(..<cut)
-                                if isThinking { continuation.yield(.reasoning(piece)) } else { emitText(piece) }
+                                if isThinking { emitReasoning(piece) } else { emitText(piece) }
                                 break
                             }
                             let leading = String(buffer[..<boundary.lowerBound])
                             let opensThinking = !isThinking && Self.thinkingOpeners.contains(String(buffer[boundary]))
                             if !leading.isEmpty {
-                                if isThinking { continuation.yield(.reasoning(leading)) } else { emitText(leading) }
+                                if isThinking { emitReasoning(leading) } else { emitText(leading) }
                             }
                             buffer.removeSubrange(..<boundary.upperBound)
                             if buffer.hasPrefix("\n") { buffer.removeFirst() }
@@ -790,6 +796,10 @@ public actor MLXInferenceEngine: InferenceEngine {
                         let generationTime = (clock.now - startTime).inSeconds
                         let timeToFirstToken = firstTokenAt.map { ($0 - startTime).inSeconds } ?? 0
                         let mem = Memory.snapshot()
+                        let reasoning = reasoningText
+                        let reasoningTokens = reasoning.isEmpty ? nil : await container.perform {
+                            $0.tokenizer.encode(text: reasoning, addSpecialTokens: false).count
+                        }
 
                         let metadata = GenerationResponse(
                             generatedText: "", 
@@ -809,7 +819,8 @@ public actor MLXInferenceEngine: InferenceEngine {
                             // token ceiling reported a clean finish and truncation went
                             // unnoticed by every caller.
                             finishReason: (lastInfo?.generationTokenCount ?? 0) >= requestedMaxTokens
-                                ? .length : .stop
+                                ? .length : .stop,
+                            reasoningTokens: reasoningTokens
                         )
                         continuation.yield(.metadata(metadata))
                     }

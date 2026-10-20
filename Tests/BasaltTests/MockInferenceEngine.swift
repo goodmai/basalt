@@ -115,7 +115,8 @@ actor MockInferenceEngine: InferenceEngine {
             cachedPromptTokens: metadata.cachedPromptTokens, completionTokens: metadata.completionTokens,
             tokensPerSecond: metadata.tokensPerSecond, generationTime: metadata.generationTime,
             timeToFirstToken: metadata.timeToFirstToken, memory: metadata.memory,
-            finishReason: metadata.finishReason, toolCalls: calls.isEmpty ? nil : calls
+            finishReason: metadata.finishReason, toolCalls: calls.isEmpty ? nil : calls,
+            reasoningTokens: metadata.reasoningTokens
         )
     }
 
@@ -168,7 +169,8 @@ actor MockInferenceEngine: InferenceEngine {
                     generationTime: genTime,
                     timeToFirstToken: ttft,
                     memory: .init(peakBytes: 1024, activeBytes: 512, cacheBytes: 256),
-                    finishReason: mockFinishReason
+                    finishReason: mockFinishReason,
+                    reasoningTokens: mockReasoning.map { $0.split(separator: " ").count }
                 )
                 continuation.yield(.metadata(metadata))
                 continuation.finish()

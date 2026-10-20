@@ -146,9 +146,19 @@ struct OpenAIController: Sendable {
         let presencePenalty: Double?
         let repetitionPenalty: Double?
         let thinkingBudget: Int?
+        let streamOptions: StreamOptions?
+
+        struct StreamOptions: Codable, Sendable {
+            let includeUsage: Bool?
+
+            enum CodingKeys: String, CodingKey {
+                case includeUsage = "include_usage"
+            }
+        }
 
         enum CodingKeys: String, CodingKey {
             case model, messages, temperature, stream
+            case streamOptions = "stream_options"
             case maxTokens = "max_tokens"
             case topP = "top_p"
             case minP = "min_p"
@@ -273,12 +283,14 @@ struct OpenAIController: Sendable {
             let inputTokensDetails: CachedTokens
             let outputTokens: Int
             let totalTokens: Int
+            var outputTokensDetails: ReasoningTokens? = nil
 
             enum CodingKeys: String, CodingKey {
                 case inputTokens = "input_tokens"
                 case inputTokensDetails = "input_tokens_details"
                 case outputTokens = "output_tokens"
                 case totalTokens = "total_tokens"
+                case outputTokensDetails = "output_tokens_details"
             }
         }
 
@@ -311,13 +323,35 @@ struct OpenAIController: Sendable {
             let promptTokensDetails: CachedTokens
             let completionTokens: Int
             let totalTokens: Int
+            var completionTokensDetails: ReasoningTokens? = nil
             enum CodingKeys: String, CodingKey {
                 case promptTokens = "prompt_tokens"
                 case promptTokensDetails = "prompt_tokens_details"
                 case completionTokens = "completion_tokens"
                 case totalTokens = "total_tokens"
+                case completionTokensDetails = "completion_tokens_details"
             }
         }
+    }
+
+    struct ReasoningTokens: Codable, Sendable {
+        let reasoningTokens: Int
+
+        enum CodingKeys: String, CodingKey {
+            case reasoningTokens = "reasoning_tokens"
+        }
+    }
+
+    static func chatUsage(_ result: GenerationResponse) -> [String: Any] {
+        var usage: [String: Any] = [
+            "prompt_tokens": result.promptTokens, "completion_tokens": result.completionTokens,
+            "total_tokens": result.promptTokens + result.completionTokens,
+            "prompt_tokens_details": ["cached_tokens": result.cachedPromptTokens],
+        ]
+        if let reasoning = result.reasoningTokens {
+            usage["completion_tokens_details"] = ["reasoning_tokens": reasoning]
+        }
+        return usage
     }
 
     struct CachedTokens: Codable, Sendable {
@@ -400,7 +434,8 @@ struct OpenAIController: Sendable {
         }
 
         if dto.stream == true {
-            return streamResponse(genRequest: genRequest, model: dto.model ?? modelId, requestedModel: requestedModel)
+            return streamResponse(genRequest: genRequest, model: dto.model ?? modelId, requestedModel: requestedModel,
+                                  includeUsage: dto.streamOptions?.includeUsage == true)
         }
 
         do {
@@ -424,7 +459,8 @@ struct OpenAIController: Sendable {
                     promptTokens: result.promptTokens,
                     promptTokensDetails: .init(cachedTokens: result.cachedPromptTokens),
                     completionTokens: result.completionTokens,
-                    totalTokens: result.promptTokens + result.completionTokens
+                    totalTokens: result.promptTokens + result.completionTokens,
+                    completionTokensDetails: result.reasoningTokens.map(ReasoningTokens.init)
                 )
             )
             let encoded = try JSONEncoder().encode(response)
@@ -532,7 +568,8 @@ struct OpenAIController: Sendable {
                     inputTokens: result.promptTokens,
                     inputTokensDetails: .init(cachedTokens: result.cachedPromptTokens),
                     outputTokens: result.completionTokens,
-                    totalTokens: result.promptTokens + result.completionTokens
+                    totalTokens: result.promptTokens + result.completionTokens,
+                    outputTokensDetails: result.reasoningTokens.map(ReasoningTokens.init)
                 )
             )
             let encoded = try JSONEncoder().encode(response)
@@ -563,7 +600,9 @@ struct OpenAIController: Sendable {
 
     // MARK: — Streaming
 
-    private func streamResponse(genRequest: GenerationRequest, model: String, requestedModel: String? = nil) -> Response {
+    private func streamResponse(
+        genRequest: GenerationRequest, model: String, requestedModel: String? = nil, includeUsage: Bool
+    ) -> Response {
         Response(
             status: .ok,
             headers: [
@@ -571,21 +610,27 @@ struct OpenAIController: Sendable {
                 .cacheControl: "no-cache",
                 .connection: "keep-alive"
             ],
-            body: ResponseBody(asyncSequence: sseStream(genRequest: genRequest, model: model, requestedModel: requestedModel))
+            body: ResponseBody(asyncSequence: sseStream(
+                genRequest: genRequest, model: model, requestedModel: requestedModel, includeUsage: includeUsage))
         )
     }
 
-    private func sseStream(genRequest: GenerationRequest, model: String, requestedModel: String? = nil) -> AsyncStream<ByteBuffer> {
+    private func sseStream(
+        genRequest: GenerationRequest, model: String, requestedModel: String? = nil, includeUsage: Bool
+    ) -> AsyncStream<ByteBuffer> {
         AsyncStream { continuation in
             let task = Task {
                 let id = "chatcmpl-\(UUID().uuidString)"
                 let created = Int(Date().timeIntervalSince1970)
                 func send(delta: [String: Any], finish: String? = nil) {
-                    let chunk: [String: Any] = [
+                    send(["choices": [["index": 0, "delta": delta, "finish_reason": finish ?? NSNull()] as [String: Any]]])
+                }
+                func send(_ fields: [String: Any]) {
+                    var chunk: [String: Any] = [
                         "id": id, "object": "chat.completion.chunk",
-                        "created": created, "model": model,
-                        "choices": [["index": 0, "delta": delta, "finish_reason": finish ?? NSNull()] as [String: Any]]
+                        "created": created, "model": model
                     ]
+                    chunk.merge(fields) { _, new in new }
                     if let json = try? JSONSerialization.data(withJSONObject: chunk),
                        let str = String(data: json, encoding: .utf8) {
                         var buf = ByteBuffer(); buf.writeString("data: \(str)\n\n")
@@ -614,6 +659,9 @@ struct OpenAIController: Sendable {
                         }
                     }
                     send(delta: [:], finish: Self.finishReason(final?.finishReason, calledTools: toolCallCount > 0))
+                    if includeUsage, let final {
+                        send(["choices": [] as [Any], "usage": Self.chatUsage(final)])
+                    }
                     var done2 = ByteBuffer(); done2.writeString("data: [DONE]\n\n")
                     continuation.yield(done2)
                 } catch {
@@ -796,9 +844,14 @@ struct OpenAIController: Sendable {
 
                     let inTokens = final?.promptTokens ?? 0
                     let outTokens = final?.completionTokens ?? 0
+                    var usage: [String: Any] = [
+                        "input_tokens": inTokens, "output_tokens": outTokens, "total_tokens": inTokens + outTokens,
+                        "input_tokens_details": ["cached_tokens": final?.cachedPromptTokens ?? 0]]
+                    if let reasoning = final?.reasoningTokens {
+                        usage["output_tokens_details"] = ["reasoning_tokens": reasoning]
+                    }
                     send("response.completed", ["response": responseObject(status: "completed", output: completed, extra: [
-                        "usage": ["input_tokens": inTokens, "output_tokens": outTokens, "total_tokens": inTokens + outTokens,
-                                  "input_tokens_details": ["cached_tokens": final?.cachedPromptTokens ?? 0]]
+                        "usage": usage
                     ])])
                 } catch {
                     send("response.failed", ["response": responseObject(status: "failed", output: [], extra: [
