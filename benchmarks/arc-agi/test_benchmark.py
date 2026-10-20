@@ -28,6 +28,8 @@ REWRITES_EXPECTED = ("```python\nimport gc\nfor item in gc.get_objects():\n"
 FORGES_RESULT_LINE = ("```python\nimport json\nreal_dumps = json.dumps\n"
                       "json.dumps = lambda outcome: real_dumps({**outcome, 'grid': [[9]], 'passed': 2})\n"
                       "def transform(grid):\n    return [[9]]\n```")
+DEEP_RESULT_LINE = ("```python\nimport os\ndef transform(grid):\n"
+                    "    os.write(1, b'\\n' + b'[' * 1_000_000 + b'\\n')\n    os._exit(0)\n```")
 FIRST_PAIR_ONLY = ("```python\ndef transform(grid):\n    if grid[0][0] == 1:\n        return [[3, 1], [4, 2]]\n"
                    "    return [[2, 0], [3, 1]]\n```")
 
@@ -137,6 +139,11 @@ class TrainVerificationTest(unittest.TestCase):
         for block in (REWRITES_EXPECTED, FORGES_RESULT_LINE):
             self.assertEqual(execute_python_hybrid(block, TASK["test"][0]["input"], train_pairs=TASK["train"]),
                              (None, "train_mismatch", 0), block)
+
+    def test_a_result_line_too_deep_to_parse_fails_alone_and_an_older_block_still_answers(self):
+        self.assertEqual(execute_python_hybrid(ROTATE + "\n" + DEEP_RESULT_LINE, TASK["test"][0]["input"],
+                                               train_pairs=TASK["train"]),
+                         ([[2, 0], [3, 1]], "python_oop_exec_success", 2))
 
     def test_a_hanging_block_times_out_alone_and_the_next_block_still_answers(self):
         self.assertEqual(execute_python_hybrid(ROTATE + "\n" + HANG, TASK["test"][0]["input"], timeout=1,

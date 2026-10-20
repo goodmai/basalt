@@ -177,7 +177,7 @@ def _parse_outputs(lines, count):
     try:
         outcome = json.loads(lines[-1])
         outputs, timed_out = outcome["outputs"], outcome["timed_out"]
-    except (IndexError, ValueError, KeyError, TypeError):
+    except Exception:
         return [], False
     if not isinstance(outputs, list) or len(outputs) > count:
         return [], False
