@@ -50,105 +50,117 @@ public final class JSONGrammar: Sendable {
         let all: UInt64
     }
 
+    static let schemaDepthLimit = 128
+    static let nestingLimit = 64
+    static let nodeLimit = 4096
+    static let enumValueLimit = 1024
+    static let enumBytesLimit = 64 * 1024
+
     let nodes: [Node]
     let root: Int
     let starts: [[Int32]]
+    public let relaxations: [String]
 
-    init(nodes: [Node], root: Int) throws(UnsupportedJSONSchema) {
+    init(nodes: [Node], root: Int, starts: [[Int32]], relaxations: [String]) {
         self.nodes = nodes
         self.root = root
-        var starts: [[Int32]] = []
-        for index in nodes.indices {
-            var visiting: Set<Int> = []
-            starts.append(try Self.dispatch(index, nodes: nodes, visiting: &visiting))
-        }
         self.starts = starts
+        self.relaxations = relaxations
     }
 
-    private static func dispatch(_ index: Int, nodes: [Node], visiting: inout Set<Int>) throws(UnsupportedJSONSchema) -> [Int32] {
-        var table = [Int32](repeating: -1, count: 256)
-        let concrete = Int32(index)
-        switch nodes[index] {
-        case .string:
-            table[Int(UInt8(ascii: "\""))] = concrete
-        case .number:
-            for byte in Array("-0123456789".utf8) { table[Int(byte)] = concrete }
-        case .literals(let trie):
-            for byte in trie.children[0].keys { table[Int(byte)] = concrete }
-        case .object:
-            table[Int(UInt8(ascii: "{"))] = concrete
-        case .array:
-            table[Int(UInt8(ascii: "["))] = concrete
-        case .choice(let alternatives):
-            guard visiting.insert(index).inserted else {
-                throw UnsupportedJSONSchema(message: "a $ref or anyOf that refers to itself without an object or array in between")
-            }
-            for alternative in alternatives {
-                let inner = try dispatch(alternative, nodes: nodes, visiting: &visiting)
-                for byte in 0..<256 where inner[byte] >= 0 {
-                    guard table[byte] < 0 else {
-                        throw UnsupportedJSONSchema(message:
-                            "anyOf/oneOf/type alternatives that can start with the same character '\(Character(UnicodeScalar(UInt8(byte))))'")
-                    }
-                    table[byte] = inner[byte]
-                }
-            }
-            visiting.remove(index)
+    public static func compile(schemaJSON: String, strict: Bool = true) throws(UnsupportedJSONSchema) -> JSONGrammar {
+        let data = Data(schemaJSON.utf8)
+        guard JSONNesting.depth(of: data) <= schemaDepthLimit else {
+            throw UnsupportedJSONSchema(message: "the schema nests deeper than \(schemaDepthLimit) JSON levels")
         }
-        return table
-    }
-
-    public static func compile(schemaJSON: String) throws(UnsupportedJSONSchema) -> JSONGrammar {
-        let schema: JSONValue
-        do {
-            schema = try JSONDecoder().decode(JSONValue.self, from: Data(schemaJSON.utf8))
-        } catch {
+        guard let parsed = try? JSONSerialization.jsonObject(with: data, options: .fragmentsAllowed),
+              let schema = JSONValue(parsed) else {
             throw UnsupportedJSONSchema(message: "the schema is not valid JSON")
         }
-        var compiler = SchemaCompiler(document: schema)
+        var compiler = SchemaCompiler(document: schema, strict: strict)
         let root = try compiler.resolve("#")
-        return try JSONGrammar(nodes: compiler.nodes, root: root)
+        return try compiler.grammar(root: root)
     }
 
     public static func anyObject() -> JSONGrammar {
-        var compiler = SchemaCompiler(document: .bool(true))
+        var compiler = SchemaCompiler(document: .bool(true), strict: true)
         let any = compiler.anyValue()
         let root = compiler.freeObject(values: any)
-        return try! JSONGrammar(nodes: compiler.nodes, root: root)
+        return try! compiler.grammar(root: root)
     }
 }
 
-indirect enum JSONValue: Decodable, Equatable, Sendable {
+public enum JSONNesting {
+    public static func depth(of data: Data) -> Int {
+        var depth = 0
+        var deepest = 0
+        var inString = false
+        var escaped = false
+        for byte in data {
+            if inString {
+                if escaped { escaped = false } else if byte == UInt8(ascii: "\\") { escaped = true } else if byte == UInt8(ascii: "\"") { inString = false }
+            } else if byte == UInt8(ascii: "\"") {
+                inString = true
+            } else if byte == UInt8(ascii: "[") || byte == UInt8(ascii: "{") {
+                depth += 1
+                deepest = max(deepest, depth)
+            } else if byte == UInt8(ascii: "]") || byte == UInt8(ascii: "}") {
+                depth -= 1
+            }
+        }
+        return deepest
+    }
+}
+
+indirect enum JSONValue: Equatable, Sendable {
     case null
     case bool(Bool)
-    case number(Double)
+    case number(String)
     case string(String)
     case array([JSONValue])
     case object([String: JSONValue])
 
-    init(from decoder: any Decoder) throws {
-        let container = try decoder.singleValueContainer()
-        if container.decodeNil() {
+    init?(_ value: Any) {
+        switch value {
+        case is NSNull:
             self = .null
-        } else if let value = try? container.decode(Bool.self) {
-            self = .bool(value)
-        } else if let value = try? container.decode(Double.self) {
-            self = .number(value)
-        } else if let value = try? container.decode(String.self) {
-            self = .string(value)
-        } else if let value = try? container.decode([JSONValue].self) {
-            self = .array(value)
-        } else {
-            self = .object(try container.decode([String: JSONValue].self))
+        case let number as NSNumber:
+            self = CFGetTypeID(number) == CFBooleanGetTypeID() ? .bool(number.boolValue) : .number(Self.text(of: number))
+        case let string as String:
+            self = .string(string)
+        case let items as [Any]:
+            var values: [JSONValue] = []
+            for item in items {
+                guard let value = JSONValue(item) else { return nil }
+                values.append(value)
+            }
+            self = .array(values)
+        case let members as [String: Any]:
+            var values: [String: JSONValue] = [:]
+            for (key, member) in members {
+                guard let value = JSONValue(member) else { return nil }
+                values[key] = value
+            }
+            self = .object(values)
+        default:
+            return nil
         }
+    }
+
+    static func text(of number: NSNumber) -> String {
+        let type = number.objCType.pointee
+        guard !(number is NSDecimalNumber), type == CChar(UInt8(ascii: "d")) || type == CChar(UInt8(ascii: "f")) else {
+            return number.stringValue
+        }
+        let value = number.doubleValue
+        return value.rounded() == value && abs(value) < 9_007_199_254_740_992 ? String(Int64(value)) : "\(value)"
     }
 
     var literalText: String? {
         switch self {
         case .null: "null"
         case .bool(let value): value ? "true" : "false"
-        case .number(let value):
-            value.rounded() == value && abs(value) < 1e15 ? String(Int64(value)) : "\(value)"
+        case .number(let text): text
         case .string(let value): Self.quoted(value)
         case .array, .object: nil
         }
@@ -179,14 +191,23 @@ struct SchemaCompiler {
     static let keywords: Set<String> = [
         "type", "properties", "required", "additionalProperties", "items", "enum", "const", "anyOf", "oneOf", "$ref",
     ]
+    static let valueConstraints: Set<String> = [
+        "minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum", "multipleOf", "minLength", "maxLength", "pattern",
+        "minItems", "maxItems", "uniqueItems", "minProperties", "maxProperties", "propertyNames",
+        "contentEncoding", "contentMediaType",
+    ]
 
     let document: JSONValue
+    let strict: Bool
     var nodes: [JSONGrammar.Node] = []
     var references: [String: Int] = [:]
     var shared: [String: Int] = [:]
+    var relaxations: [String] = []
+    private var nesting = 0
 
-    init(document: JSONValue) {
+    init(document: JSONValue, strict: Bool) {
         self.document = document
+        self.strict = strict
     }
 
     mutating func add(_ node: JSONGrammar.Node) -> Int {
@@ -219,6 +240,17 @@ struct SchemaCompiler {
         return add(.object(JSONGrammar.ObjectShape(keys: keys, declared: false, values: [values], required: 0, all: 0)))
     }
 
+    mutating func anyValue(startingWith byte: UInt8) -> Int {
+        guard case .choice(let kinds) = nodes[anyValue()], kinds.count == 5 else { return anyValue() }
+        switch byte {
+        case UInt8(ascii: "{"): return kinds[0]
+        case UInt8(ascii: "["): return kinds[1]
+        case UInt8(ascii: "\""): return kinds[2]
+        case UInt8(ascii: "t"), UInt8(ascii: "f"), UInt8(ascii: "n"): return kinds[4]
+        default: return kinds[3]
+        }
+    }
+
     mutating func resolve(_ reference: String) throws(UnsupportedJSONSchema) -> Int {
         if let known = references[reference] { return known }
         guard reference.hasPrefix("#") else {
@@ -244,12 +276,23 @@ struct SchemaCompiler {
     }
 
     mutating func compile(_ schema: JSONValue, at path: String) throws(UnsupportedJSONSchema) -> Int {
+        nesting += 1
+        defer { nesting -= 1 }
+        guard nesting <= JSONGrammar.nestingLimit else {
+            throw UnsupportedJSONSchema(message: "schema at \(path) nests deeper than \(JSONGrammar.nestingLimit) levels, counting $ref")
+        }
+        guard nodes.count < JSONGrammar.nodeLimit else {
+            throw UnsupportedJSONSchema(message: "the schema needs more than \(JSONGrammar.nodeLimit) grammar nodes")
+        }
         guard case .object(let members) = schema else {
             if schema == .bool(true) { return anyValue() }
             throw UnsupportedJSONSchema(message: "schema at \(path) must be an object")
         }
-        if let unsupported = members.keys.sorted().first(where: { !Self.keywords.contains($0) && !Self.annotations.contains($0) }) {
-            throw UnsupportedJSONSchema(message: "unsupported JSON Schema keyword '\(unsupported)' at \(path)")
+        for keyword in members.keys.sorted() where !Self.keywords.contains(keyword) && !Self.annotations.contains(keyword) {
+            guard !strict, Self.valueConstraints.contains(keyword) else {
+                throw UnsupportedJSONSchema(message: "unsupported JSON Schema keyword '\(keyword)' at \(path)")
+            }
+            relaxations.append("'\(keyword)' at \(path) is not enforced")
         }
         if case .string(let reference)? = members["$ref"] {
             return try resolve(reference)
@@ -262,6 +305,11 @@ struct SchemaCompiler {
             guard !literals.isEmpty, literals.count == values.count else {
                 throw UnsupportedJSONSchema(message: "enum/const at \(path) must list strings, numbers, booleans or null")
             }
+            guard literals.count <= JSONGrammar.enumValueLimit,
+                  literals.reduce(0, { $0 + $1.utf8.count }) <= JSONGrammar.enumBytesLimit else {
+                throw UnsupportedJSONSchema(message:
+                    "enum at \(path) lists more than \(JSONGrammar.enumValueLimit) values or \(JSONGrammar.enumBytesLimit) bytes")
+            }
             return add(.literals(JSONGrammar.LiteralTrie(literals)))
         }
         if case .array(let alternatives)? = members["anyOf"] ?? members["oneOf"] {
@@ -271,13 +319,21 @@ struct SchemaCompiler {
             }
             return add(.choice(compiled))
         }
-        let types: [String]
+        var types: [String] = []
         switch members["type"] {
-        case nil: return anyValue()
-        case .string(let type)?: types = [type]
-        case .array(let list)?:
-            types = list.compactMap { if case .string(let type) = $0 { type } else { nil } }
-        default: throw UnsupportedJSONSchema(message: "type at \(path) must be a string or an array of strings")
+        case nil:
+            return anyValue()
+        case .string(let type)?:
+            types = [type]
+        case .array(let list)? where !list.isEmpty:
+            for entry in list {
+                guard case .string(let type) = entry else {
+                    throw UnsupportedJSONSchema(message: "type at \(path) must list only strings")
+                }
+                types.append(type)
+            }
+        default:
+            throw UnsupportedJSONSchema(message: "type at \(path) must be a string or a non-empty array of strings")
         }
         var compiled: [Int] = []
         for type in types {
@@ -303,13 +359,14 @@ struct SchemaCompiler {
         var properties: [String: JSONValue] = [:]
         if case .object(let declared)? = members["properties"] { properties = declared }
         let additional = members["additionalProperties"]
-        let allowsAdditional = additional != nil && additional != .bool(false)
-        if allowsAdditional {
-            guard properties.isEmpty, additional == .bool(true) || additional == .object([:]) else {
-                throw UnsupportedJSONSchema(message:
-                    "additionalProperties at \(path) must be false, or true on an object without properties")
+        if properties.isEmpty, members["required"] == nil, additional != .bool(false) {
+            return freeObject(values: try compile(additional ?? .bool(true), at: "\(path)/additionalProperties"))
+        }
+        if let additional, additional != .bool(false) {
+            guard !strict else {
+                throw UnsupportedJSONSchema(message: "additionalProperties at \(path) must be false when properties are declared")
             }
-            return freeObject(values: anyValue())
+            relaxations.append("additionalProperties at \(path): only the declared properties are generated")
         }
         guard properties.count <= 64 else {
             throw UnsupportedJSONSchema(message: "more than 64 properties at \(path)")
@@ -331,5 +388,62 @@ struct SchemaCompiler {
         let keys = add(.literals(JSONGrammar.LiteralTrie(names.map(JSONValue.quoted))))
         let all: UInt64 = names.isEmpty ? 0 : UInt64.max >> UInt64(64 - names.count)
         return add(.object(JSONGrammar.ObjectShape(keys: keys, declared: true, values: values, required: required, all: all)))
+    }
+
+    mutating func grammar(root: Int) throws(UnsupportedJSONSchema) -> JSONGrammar {
+        var starts: [[Int32]?] = []
+        var index = 0
+        while index < nodes.count {
+            var visiting: Set<Int> = []
+            _ = try dispatch(index, into: &starts, visiting: &visiting)
+            index += 1
+        }
+        return JSONGrammar(nodes: nodes, root: root, starts: starts.map { $0! }, relaxations: relaxations)
+    }
+
+    private mutating func dispatch(
+        _ index: Int, into starts: inout [[Int32]?], visiting: inout Set<Int>
+    ) throws(UnsupportedJSONSchema) -> [Int32] {
+        if starts.count < nodes.count { starts += [[Int32]?](repeating: nil, count: nodes.count - starts.count) }
+        if let known = starts[index] { return known }
+        var table = [Int32](repeating: -1, count: 256)
+        let concrete = Int32(index)
+        switch nodes[index] {
+        case .string:
+            table[Int(UInt8(ascii: "\""))] = concrete
+        case .number:
+            for byte in Array("-0123456789".utf8) { table[Int(byte)] = concrete }
+        case .literals(let trie):
+            for byte in trie.children[0].keys { table[Int(byte)] = concrete }
+        case .object:
+            table[Int(UInt8(ascii: "{"))] = concrete
+        case .array:
+            table[Int(UInt8(ascii: "["))] = concrete
+        case .choice(let alternatives):
+            guard visiting.insert(index).inserted else {
+                throw UnsupportedJSONSchema(message: "a $ref or anyOf that refers to itself without an object or array in between")
+            }
+            var widenedFirsts: [Character] = []
+            for alternative in alternatives {
+                let inner = try dispatch(alternative, into: &starts, visiting: &visiting)
+                for byte in 0..<256 where inner[byte] >= 0 && table[byte] != inner[byte] {
+                    guard table[byte] >= 0 else { table[byte] = inner[byte]; continue }
+                    let first = Character(UnicodeScalar(UInt8(byte)))
+                    guard !strict else {
+                        throw UnsupportedJSONSchema(message: "anyOf/oneOf/type alternatives that can start with the same character '\(first)'")
+                    }
+                    let widened = Int32(anyValue(startingWith: UInt8(byte)))
+                    if table[byte] != widened { widenedFirsts.append(first) }
+                    table[byte] = widened
+                }
+            }
+            if !widenedFirsts.isEmpty {
+                relaxations.append("anyOf/oneOf/type alternatives that overlap on '\(String(widenedFirsts))' accept any JSON value starting with those")
+            }
+            visiting.remove(index)
+        }
+        if starts.count < nodes.count { starts += [[Int32]?](repeating: nil, count: nodes.count - starts.count) }
+        starts[index] = table
+        return table
     }
 }

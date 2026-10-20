@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import Synchronization
 @testable import BasaltCore
 
 func grammar(_ schema: String) throws -> JSONGrammar {
@@ -129,11 +130,111 @@ struct JSONGrammarTests {
         }
         #expect(message(#"{"type": "object", "properties": {"n": {"type": "string", "minLength": 2}}}"#)
             == "unsupported JSON Schema keyword 'minLength' at #/properties/n")
-        #expect(message(#"{"type": "object", "additionalProperties": {"type": "string"}}"#)?.contains("additionalProperties") == true)
+        #expect(message(#"{"type": "object", "properties": {"a": {}}, "additionalProperties": {"type": "string"}}"#)?.contains("additionalProperties") == true)
         #expect(message(#"{"anyOf": [{"type": "string"}, {"enum": ["a"]}]}"#)?.contains("same character") == true)
         #expect(message(##"{"$ref": "#"}"##)?.contains("refers to itself") == true)
         #expect(message(#"{"$ref": "https://example.com/s.json"}"#)?.contains("not local") == true)
         #expect(message(#"{"type": "object", "properties": {}, "required": ["x"]}"#)?.contains("'x'") == true)
         #expect(message(#"{"type": "object", "properties": {"d": {"type": "string", "description": "kept", "format": "uri"}}}"#) == nil)
+    }
+
+    static func onServerSizedStack<T: Sendable>(_ work: @escaping @Sendable () -> T) -> T {
+        let done = DispatchSemaphore(value: 0)
+        let result = Mutex<T?>(nil)
+        let thread = Thread {
+            result.withLock { $0 = work() }
+            done.signal()
+        }
+        thread.stackSize = 512 * 1024
+        thread.start()
+        done.wait()
+        return result.withLock { $0! }
+    }
+
+    static func timedMessage(_ schema: String) -> (message: String?, seconds: Double) {
+        onServerSizedStack {
+            let start = ContinuousClock.now
+            let message: String?
+            do { _ = try JSONGrammar.compile(schemaJSON: schema); message = nil } catch { message = (error as? UnsupportedJSONSchema)?.message ?? "\(error)" }
+            return (message, (ContinuousClock.now - start) / .seconds(1))
+        }
+    }
+
+    @Test("Deep nesting, a long $ref chain and a huge enum are refused quickly on a 512 KB stack instead of crashing")
+    func hostileSchemasAreBounded() {
+        let deepArrays = String(repeating: #"{"type": "array", "items": "#, count: 300) + "{}" + String(repeating: "}", count: 300)
+        let raw = String(repeating: "[", count: 300) + String(repeating: "]", count: 300)
+        func chain(_ length: Int) -> String {
+            let defs = (0..<length).map { "\"d\($0)\": {\"$ref\": \"#/$defs/d\($0 + 1)\"}" }.joined(separator: ", ")
+            return "{\"$defs\": {\(defs), \"d\(length)\": {\"type\": \"string\"}}, \"$ref\": \"#/$defs/d0\"}"
+        }
+        let hugeEnum = #"{"enum": ["# + (0..<200_000).map { "\"v\($0)\"" }.joined(separator: ",") + "]}"
+        for (schema, expected) in [(deepArrays, "nests deeper"), (raw, "nests deeper"), (chain(1000), "counting $ref"),
+                                   (chain(5000), "counting $ref"), (hugeEnum, "more than 1024 values")] {
+            let (message, seconds) = Self.timedMessage(schema)
+            #expect(message?.contains(expected) == true, "\(message ?? "compiled")")
+            #expect(seconds < 1, "\(seconds) s")
+        }
+        let (fits, _) = Self.timedMessage(chain(60))
+        #expect(fits == nil)
+    }
+
+    @Test("type object without properties is any object; additionalProperties with a schema constrains its values")
+    func freeObjects() throws {
+        let object = try grammar(#"{"type": "object"}"#)
+        #expect(matches(object, #"{"a":1,"b":{"c":[null]}}"#))
+        #expect(matches(object, "{}"))
+        #expect(!matches(object, "[]"))
+        let strings = try grammar(#"{"type": "object", "additionalProperties": {"type": "string"}}"#)
+        #expect(matches(strings, #"{"a":"x","b":"y"}"#))
+        #expect(!matches(strings, #"{"a":1}"#))
+        let closed = try grammar(#"{"type": "object", "additionalProperties": false}"#)
+        #expect(matches(closed, "{}"))
+        #expect(!matches(closed, #"{"a":1}"#))
+    }
+
+    @Test("type must be a string or a non-empty list of strings")
+    func typeLists() {
+        func message(_ schema: String) -> String? {
+            do { _ = try JSONGrammar.compile(schemaJSON: schema); return nil } catch { return error.message }
+        }
+        #expect(message(#"{"type": []}"#) == "type at # must be a string or a non-empty array of strings")
+        #expect(message(#"{"type": ["string", 1]}"#) == "type at # must list only strings")
+        #expect(message(#"{"type": ["string", "null"]}"#) == nil)
+    }
+
+    @Test("Numeric enum values keep their exact digits")
+    func exactEnumNumbers() throws {
+        let big = try grammar(#"{"enum": [12345678901234567890, 0.1, 123456789012345678901234567890]}"#)
+        #expect(matches(big, "12345678901234567890"))
+        #expect(!matches(big, "12345678901234567168"))
+        #expect(matches(big, "0.1"))
+        #expect(matches(big, "123456789012345678901234567890"))
+    }
+
+    @Test("Escaped surrogates must pair: a high surrogate needs a low one, a lone low one is rejected")
+    func surrogatePairs() throws {
+        let string = try grammar(#"{"type": "string"}"#)
+        #expect(matches(string, #""\uD83D\uDE00""#))
+        #expect(matches(string, #""\ud83d\ude00 \u00e9""#))
+        #expect(!isPrefix(string, #""\uD83D""#))
+        #expect(!isPrefix(string, #""\uD83Dx"#))
+        #expect(!isPrefix(string, #""\uD83D\u0041"#))
+        #expect(!isPrefix(string, #""\uDE00"#))
+    }
+
+    @Test("Without strict, constraint keywords are skipped and an ambiguous anyOf widens to any value of those kinds")
+    func nonStrict() throws {
+        let schema = #"{"type": "object", "properties": {"n": {"type": "integer", "minimum": 1}, "v": {"anyOf": [{"type": "integer"}, {"type": "number"}, {"type": "string", "maxLength": 3}, {"enum": ["long value"]}]}}, "required": ["n", "v"]}"#
+        #expect(throws: UnsupportedJSONSchema.self) { try JSONGrammar.compile(schemaJSON: schema) }
+        let lenient = try JSONGrammar.compile(schemaJSON: schema, strict: false)
+        #expect(matches(lenient, #"{"n":0,"v":2.5}"#))
+        #expect(matches(lenient, #"{"n":0,"v":"anything"}"#))
+        #expect(!matches(lenient, #"{"n":0,"v":true}"#))
+        #expect(lenient.relaxations.contains("'minimum' at #/properties/n is not enforced"))
+        #expect(lenient.relaxations.contains { $0.contains("overlap") })
+        #expect(throws: UnsupportedJSONSchema.self) {
+            try JSONGrammar.compile(schemaJSON: #"{"allOf": [{"type": "string"}]}"#, strict: false)
+        }
     }
 }
