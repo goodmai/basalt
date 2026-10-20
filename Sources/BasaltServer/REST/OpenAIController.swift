@@ -402,6 +402,10 @@ struct OpenAIController: Sendable {
         do { requested = try Self.requestedTools(fromRequestBody: data) } catch {
             return makeErrorResponse(status: .badRequest, message: error.message, code: 400)
         }
+        let responseFormat: ResponseFormat?
+        do { responseFormat = try Self.responseFormat(fromRequestBody: data) } catch {
+            return makeErrorResponse(status: .badRequest, message: error.message, code: 400)
+        }
         let chat = Self.chatMessages(dto.messages)
         let prompt = ChatMessageInput.plainText(chat)
         let service = ServiceRequestDetector.prepare(prompt: prompt, maxTokens: dto.maxTokens, headers: request.headers)
@@ -421,7 +425,8 @@ struct OpenAIController: Sendable {
             topK: dto.topK,
             presencePenalty: dto.presencePenalty,
             repetitionPenalty: dto.repetitionPenalty,
-            thinkingBudget: dto.thinkingBudget
+            thinkingBudget: dto.thinkingBudget,
+            responseFormat: responseFormat
         )
         if let rejection = invalidParameters(genRequest) { return rejection }
         let model = dto.model.map(ModelsController.restModel(from:))
@@ -505,6 +510,10 @@ struct OpenAIController: Sendable {
         do { requested = try Self.requestedTools(fromRequestBody: data) } catch {
             return makeErrorResponse(status: .badRequest, message: error.message, code: 400)
         }
+        let responseFormat: ResponseFormat?
+        do { responseFormat = try Self.responseFormat(fromRequestBody: data) } catch {
+            return makeErrorResponse(status: .badRequest, message: error.message, code: 400)
+        }
         let maxT = dto.maxOutputTokens ?? dto.maxTokens
         let service = ServiceRequestDetector.prepare(prompt: prompt, maxTokens: maxT, headers: request.headers)
 
@@ -524,7 +533,8 @@ struct OpenAIController: Sendable {
             topK: dto.topK,
             presencePenalty: dto.presencePenalty,
             repetitionPenalty: dto.repetitionPenalty,
-            thinkingBudget: dto.thinkingBudget
+            thinkingBudget: dto.thinkingBudget,
+            responseFormat: responseFormat
         )
         if let rejection = invalidParameters(genRequest) { return rejection }
         let model = dto.model.map(ModelsController.restModel(from:))
@@ -895,6 +905,37 @@ struct OpenAIController: Sendable {
         if let forced, !tools.contains(where: { $0.name == forced }) { throw UndeclaredForcedTool(name: forced) }
         return RequestedTools(tools: offered,
                               choice: forced == nil && parallel ? nil : ToolChoice(forcedTool: forced, parallel: parallel))
+    }
+
+    struct InvalidResponseFormat: Error {
+        let message: String
+    }
+
+    static func responseFormat(fromRequestBody data: Data) throws(InvalidResponseFormat) -> ResponseFormat? {
+        guard let body = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let format = (body["response_format"] as? [String: Any])
+                ?? ((body["text"] as? [String: Any])?["format"] as? [String: Any]) else { return nil }
+        switch format["type"] as? String {
+        case "text":
+            return nil
+        case "json_object":
+            return .jsonObject
+        case "json_schema":
+            guard let schema = (format["json_schema"] as? [String: Any])?["schema"] ?? format["schema"],
+                  let encoded = try? JSONSerialization.data(withJSONObject: schema, options: [.sortedKeys, .fragmentsAllowed]),
+                  let text = String(data: encoded, encoding: .utf8) else {
+                throw InvalidResponseFormat(message: "response_format json_schema needs a schema")
+            }
+            do {
+                _ = try ResponseFormat.jsonSchema(text).grammar()
+            } catch {
+                throw InvalidResponseFormat(message: "response_format: \(error.message)")
+            }
+            return .jsonSchema(text)
+        case let type:
+            throw InvalidResponseFormat(message:
+                "response_format type \(type.map { "'\($0)' is not supported" } ?? "is missing"); expected text, json_object or json_schema")
+        }
     }
 
     // MARK: — Prompt
