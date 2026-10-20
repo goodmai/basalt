@@ -147,7 +147,7 @@ public struct GenerationRequest: Codable, Sendable {
         try Self.require(presencePenalty, in: -2.0...2.0, "presence_penalty must be in [-2.0, 2.0]")
         try Self.require(repetitionPenalty, in: Double.leastNonzeroMagnitude...2.0, "repetition_penalty must be in (0.0, 2.0]")
         try Self.require(thinkingBudget, in: 0...Self.maximumTokens, "thinking_budget must be in [0, \(Self.maximumTokens)]")
-        if thinkingBudget != nil, maxT - Self.thinkingAnswerReserve(maxTokens: maxT) < Self.thinkingTransitionHeadroom {
+        if thinkingBudget != nil, !requestDisablesThinking, maxT - Self.thinkingAnswerReserve(maxTokens: maxT) < Self.thinkingTransitionHeadroom {
             throw .invalidRequestStructure(details:
                 "max_tokens \(maxT) cannot hold the thinking_budget transition (\(Self.thinkingTransitionHeadroom) tokens) and an answer reserve of min(512, max_tokens/4)")
         }
@@ -155,6 +155,10 @@ public struct GenerationRequest: Codable, Sendable {
         var validated = self
         validated.maxTokens = maxT
         return validated
+    }
+
+    public var requestDisablesThinking: Bool {
+        enableThinking == false || ReasoningPolicy(rawValue: reasoningEffort) == .disabled
     }
 
     private static func require<Value: Comparable>(

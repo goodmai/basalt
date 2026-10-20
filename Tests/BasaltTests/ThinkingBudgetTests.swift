@@ -138,6 +138,17 @@ struct ThinkingBudgetEngineTests {
         }
     }
 
+    @Test("The transition headroom is checked only when the request leaves thinking on")
+    func headroomIsValidatedOnlyWithThinkingOn() throws {
+        let tight = { (effort: String?, thinking: Bool?) in
+            GenerationRequest(prompt: "x", maxTokens: 50, enableThinking: thinking, reasoningEffort: effort, thinkingBudget: 10)
+        }
+        #expect(throws: BasaltError.self) { try tight(nil, true).validated() }
+        #expect(throws: BasaltError.self) { try tight("low", nil).validated() }
+        #expect(try tight("none", true).validated().maxTokens == 50)
+        #expect(try tight(nil, false).validated().maxTokens == 50)
+    }
+
     @Test("Thinking switched off ignores the budget, even one larger than max_tokens")
     func disabledThinkingIgnoresTheBudget() async throws {
         let engine = try await ThinkingModel.engine()
