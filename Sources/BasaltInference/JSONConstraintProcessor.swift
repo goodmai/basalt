@@ -30,12 +30,29 @@ struct JSONConstraintProcessor: LogitProcessor {
         case released
     }
 
+    private final class Progress {
+        var phase: Phase
+        var matcher: JSONGrammarMatcher
+        var recent: [Int] = []
+        var unread: MLXArray?
+
+        init(phase: Phase, matcher: JSONGrammarMatcher) {
+            self.phase = phase
+            self.matcher = matcher
+        }
+
+        func copy() -> Progress {
+            let copy = Progress(phase: phase, matcher: matcher)
+            copy.recent = recent
+            copy.unread = unread
+            return copy
+        }
+    }
+
     let masker: GrammarMasker
     let stopTokens: Set<Int>
     let markers: ReasoningMarkers
-    private(set) var phase: Phase
-    private(set) var matcher: JSONGrammarMatcher
-    private var recent: [Int] = []
+    private var progress: Progress
     private let wordIndex: MLXArray
     private let bitOffset: MLXArray
 
@@ -43,21 +60,39 @@ struct JSONConstraintProcessor: LogitProcessor {
         self.masker = masker
         self.stopTokens = stopTokens
         self.markers = markers
-        self.phase = markers.openers.isEmpty && phase == .awaitingAnswer ? .constrained : phase
-        matcher = JSONGrammarMatcher(grammar: masker.grammar)
+        progress = Progress(
+            phase: markers.openers.isEmpty && phase == .awaitingAnswer ? .constrained : phase,
+            matcher: JSONGrammarMatcher(grammar: masker.grammar))
         let ids = MLXArray(0..<Int32(masker.vocabulary.size))
         wordIndex = ids >> 5
         bitOffset = (ids & 31).asType(.uint32)
     }
 
+    func copy() -> JSONConstraintProcessor {
+        var copy = self
+        copy.progress = progress.copy()
+        return copy
+    }
+
+    var phase: Phase {
+        readSampledToken()
+        return progress.phase
+    }
+
+    var matcher: JSONGrammarMatcher {
+        readSampledToken()
+        return progress.matcher
+    }
+
     mutating func prompt(_ prompt: MLXArray) {}
 
     func allowedTokens() -> TokenMask {
-        var allowed = masker.mask(for: matcher)
+        let phase = phase
+        var allowed = masker.mask(for: progress.matcher)
         if phase == .awaitingAnswer {
             for opener in markers.openers { allowed.insert(opener) }
         }
-        if matcher.isAccepting || allowed.isEmpty {
+        if progress.matcher.isAccepting || allowed.isEmpty {
             for stop in stopTokens { allowed.insert(stop) }
         }
         return allowed
@@ -77,20 +112,27 @@ struct JSONConstraintProcessor: LogitProcessor {
     }
 
     mutating func didSample(token: MLXArray) {
+        readSampledToken()
+        progress.unread = token
+    }
+
+    private func readSampledToken() {
+        guard let token = progress.unread else { return }
+        progress.unread = nil
         let id = token.item(Int.self)
-        switch phase {
+        switch progress.phase {
         case .released:
             return
         case .reasoning:
-            recent.append(id)
-            if recent.count > 16 { recent.removeFirst(recent.count - 16) }
-            if markers.closers.contains(where: { recent.ends(with: $0) }) { phase = .constrained }
+            progress.recent.append(id)
+            if progress.recent.count > 16 { progress.recent.removeFirst(progress.recent.count - 16) }
+            if markers.closers.contains(where: { progress.recent.ends(with: $0) }) { progress.phase = .constrained }
         case .awaitingAnswer where markers.openers.contains(id):
-            phase = .reasoning
+            progress.phase = .reasoning
         case .awaitingAnswer, .constrained:
-            phase = .constrained
+            progress.phase = .constrained
             guard !stopTokens.contains(id) else { return }
-            if !matcher.accept(masker.vocabulary.bytes(of: id)) { phase = .released }
+            if !progress.matcher.accept(masker.vocabulary.bytes(of: id)) { progress.phase = .released }
         }
     }
 }
