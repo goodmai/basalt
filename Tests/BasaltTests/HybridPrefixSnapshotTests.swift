@@ -73,6 +73,99 @@ enum TinyHybrid {
     }
 }
 
+enum TinySliding {
+    static let window = 8
+
+    static let config = """
+        {"model_type": "gemma3_text", "hidden_size": 64, "num_hidden_layers": 4, "intermediate_size": 128,
+         "num_attention_heads": 4, "num_key_value_heads": 2, "head_dim": 16, "vocab_size": 256,
+         "sliding_window": \(window), "sliding_window_pattern": 2, "query_pre_attn_scalar": 16}
+        """
+
+    static func make() throws -> Gemma3TextModel {
+        MLXRandom.seed(103)
+        let model = Gemma3TextModel(try JSONDecoder().decode(Gemma3TextConfiguration.self, from: Data(config.utf8)))
+        model.update(parameters: model.parameters().mapValues { $0 * 4 })
+        eval(model)
+        return model
+    }
+
+    static func engine() async throws -> MLXInferenceEngine {
+        let engine = MLXInferenceEngine(promptCacheBytes: 1 << 30)
+        await engine.attach(ModelContainer(context: ModelContext(
+            configuration: ModelConfiguration(id: "tiny-gemma3"),
+            model: try make(),
+            processor: ByteInputProcessor(),
+            tokenizer: ByteTokenizer())))
+        return engine
+    }
+}
+
+@Suite("Prefix reuse on a sliding-window model past its window via whole-layer snapshots (#103)", .serialized)
+struct SlidingWindowSnapshotTests {
+
+    @Test("A Gemma-style cache mixes rotating and plain attention layers and is restored from snapshots")
+    func slidingCacheIsHybrid() throws {
+        let cache = PromptCache(try TinySliding.make().newCache(parameters: nil))
+        #expect(cache.layers.contains { $0 is RotatingKVCache })
+        #expect(cache.isHybrid)
+        #expect(!cache.isSharable)
+    }
+
+    @Test("A wrapped rotating snapshot restored and prefilled in chunks gives the logits of a full prefill")
+    func restoredWrappedWindowMatchesFullPrefill() throws {
+        let model = try TinySliding.make()
+        let first = TinyModel.tokens(Conversation.firstTurn)
+        let second = TinyModel.tokens(Conversation.afterToolCall)
+        let boundary = first.count - 1
+        #expect(boundary > 4 * TinySliding.window)
+
+        let head = try HybridPrefixSnapshot.prefillHead(
+            MLXArray(first.map(Int32.init)), into: PromptCache(try model.newCache(parameters: nil)),
+            reused: 0, boundary: boundary, model: model, prefill: PrefillParameters(stepSize: 16))
+        var tree = PromptCacheTree(byteBudget: 1 << 30)
+        tree.store("ns", tokens: Array(first.prefix(boundary)), cache: try #require(head.kept))
+        #expect(tree.leaves().count == 1)
+
+        let full = model(TinyHybrid.row(second), cache: try model.newCache(parameters: nil))
+        let expected = full[0..., boundary..., 0...]
+        let lease = try tree.required("ns", for: second)
+        #expect(lease.reusedTokens == boundary)
+        let tailTokens = TinyHybrid.row(Array(second[boundary...]))
+        let tail = model(tailTokens, cache: lease.cache.layers)
+        tree.release(lease)
+        #expect(tail.shape == expected.shape)
+        #expect(allClose(tail, expected, rtol: 1e-4, atol: 5e-3).item(Bool.self))
+
+        let again = try tree.required("ns", for: second)
+        let unrestored = again.cache.layers.map { $0 is RotatingKVCache ? RotatingKVCache(maxSize: TinySliding.window) : $0 }
+        let control = model(tailTokens, cache: unrestored)
+        tree.release(again)
+        #expect(!allClose(control, expected, rtol: 1e-4, atol: 5e-3).item(Bool.self))
+        #expect(pinCount(tree) == 0)
+    }
+
+    @Test("On the engine, a follow-up turn longer than the window reuses the previous prompt and answers like a full prefill")
+    func engineReusesPastTheWindow() async throws {
+        let engine = try await TinySliding.engine()
+        let first = TinyModel.tokens(Conversation.firstTurn)
+        let second = TinyModel.tokens(Conversation.afterToolCall)
+        let turn1 = try await engine.generate(request: greedy(Conversation.firstTurn, key: "ns"))
+        #expect(turn1.cachedPromptTokens == 0)
+
+        let turn2 = try await engine.generate(request: greedy(Conversation.afterToolCall, key: "ns"))
+        let full2 = try await engine.generate(request: greedy(Conversation.afterToolCall, key: nil))
+        #expect(turn2.cachedPromptTokens == first.count - 1)
+        #expect(Set(turn2.generatedText).count > 1)
+        #expect(turn2.generatedText == full2.generatedText)
+
+        let turn3 = try await engine.generate(request: greedy(Conversation.afterToolCall, key: "ns"))
+        #expect(turn3.cachedPromptTokens == second.count - 1)
+        #expect(turn3.generatedText == full2.generatedText)
+        #expect(pinCount(await engine.promptCaches) == 0)
+    }
+}
+
 @Suite("Prefix reuse on a hybrid linear-attention model via state snapshots (#79)", .serialized)
 struct HybridPrefixSnapshotTests {
 

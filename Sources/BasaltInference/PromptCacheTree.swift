@@ -137,7 +137,7 @@ struct PromptCacheTree: Sendable {
         }
         let leaf = PromptCacheNode(
             tokens: Array(tokens[matched...]),
-            layers: Self.slice(cache.layers.map { $0 is ArraysCache ? [] : $0.state }, matched..<tokens.count),
+            layers: Self.slice(cache.layers.map { $0.isSnapshotOnly ? [] : $0.state }, matched..<tokens.count),
             lastUse: 0)
         if parent === root || !parent.children.isEmpty {
             leafCount += 1
