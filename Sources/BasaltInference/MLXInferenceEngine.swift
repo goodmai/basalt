@@ -29,6 +29,7 @@ public actor MLXInferenceEngine: InferenceEngine {
     /// Resolved from the loaded model's config.json. Supplies per-family sampling
     /// defaults that the caller did not override.
     private var profile: any ModelProfile = GenericProfile()
+    private var samplingDefaults = SamplingDefaults()
     private let logger = GemLogger(module: "MLXInferenceEngine")
 
     /// Chat-template knob for models with a reasoning budget (Qwen3.8: xhigh | medium | low).
@@ -98,9 +99,13 @@ public actor MLXInferenceEngine: InferenceEngine {
         self.promptCaches = PromptCacheTree(byteBudget: promptCacheBytes ?? 0)
     }
 
-    func attach(_ container: ModelContainer, profile: any ModelProfile = GenericProfile()) {
+    func attach(
+        _ container: ModelContainer, profile: any ModelProfile = GenericProfile(),
+        samplingDefaults: SamplingDefaults = SamplingDefaults()
+    ) {
         self.container = container
         self.profile = profile
+        self.samplingDefaults = samplingDefaults
         let budget = configuredPromptCacheBytes ?? PromptCacheBudget.automatic(
             workingSet: PromptCacheBudget.gpuWorkingSet(), weights: Memory.activeMemory)
         let blendBytes = cacheBlendRatio == nil ? 0 : budget / 2
@@ -240,7 +245,9 @@ public actor MLXInferenceEngine: InferenceEngine {
             }
 
             attach(try await loadModelContainer(from: directory, using: DefaultTokenizerLoader()),
-                   profile: ModelProfileRegistry.profile(forModelAt: modelPath))
+                   profile: ModelProfileRegistry.profile(forModelAt: modelPath),
+                   samplingDefaults: SamplingDefaults(generationConfig: ModelCache.generationConfig(at: directory)))
+            logger.info("Sampling defaults from generation_config.json: \(samplingDefaults)")
             
             // Dynamic config inspection
             if let json = ModelCache.config(at: directory) {
@@ -369,7 +376,8 @@ public actor MLXInferenceEngine: InferenceEngine {
             timeToFirstToken: finalResponse.timeToFirstToken,
             memory: finalResponse.memory,
             finishReason: finalResponse.finishReason,
-            toolCalls: toolCalls.isEmpty ? nil : toolCalls
+            toolCalls: toolCalls.isEmpty ? nil : toolCalls,
+            reasoningTokens: finalResponse.reasoningTokens
         )
     }
 
@@ -496,23 +504,30 @@ public actor MLXInferenceEngine: InferenceEngine {
         return ToolCallOutput(id: "call_\(UUID().uuidString.prefix(24))", name: call.function.name, arguments: arguments)
     }
 
+    static let presenceContextSize = 1024
+
     func sampling(for request: GenerationRequest) -> (GenerateParameters, GenerationComponents) {
-        let temperature = Float(request.temperature ?? 0.7)
+        let temperature = Float(request.temperature ?? samplingDefaults.temperature ?? 0.7)
         var params = GenerateParameters(
             maxTokens: request.maxTokens ?? 1024,
             temperature: temperature,
-            topP: Float(request.topP ?? 0.9)
+            topP: Float(request.topP ?? samplingDefaults.topP ?? 0.9)
         )
         params.kvBits = kvBits
         params.quantizedKVStart = quantizedKVStart
-        params.repetitionPenalty = repetitionPenalty
-        if let topK { params.topK = topK }
+        params.repetitionPenalty = request.repetitionPenalty.map(Float.init) ?? repetitionPenalty
+        if let topK = request.topK ?? topK ?? samplingDefaults.topK { params.topK = topK }
         if let effectiveMinP = request.minP.map(Float.init) ?? minP ?? profile.defaultMinP {
             params.minP = effectiveMinP
         }
         params.seed = seed
 
         var components = GenerationComponents()
+        if let presencePenalty = request.presencePenalty.map(Float.init), presencePenalty != 0 {
+            components = components.appendingLogitProcessor {
+                GeneratedTokensPresencePenalty(penalty: presencePenalty, window: Self.presenceContextSize)
+            }
+        }
         if request.dynamicTemperature == true, temperature > 0 {
             let (topP, minP) = (params.topP, params.minP)
             params.topP = 1
@@ -524,6 +539,47 @@ public actor MLXInferenceEngine: InferenceEngine {
         return (params, components)
     }
 
+    static func budgetTransition(for reasoning: ReasoningConfig, profile: any ModelProfile) -> ReasoningBudgetTransition? {
+        if let declared = reasoning.budgetTransition { return declared }
+        guard profile is QwenProfile, reasoning.endDelimiter == QwenReasoningProtocol.qwen3.endDelimiter else {
+            return nil
+        }
+        return QwenReasoningProtocol.qwen3.budgetTransition
+    }
+
+    static func applyingThinkingBudget(
+        _ budget: Int, to components: GenerationComponents, parameters: GenerateParameters,
+        reasoning: ReasoningConfig?, tokenizer: any MLXLMCommon.Tokenizer, profile: any ModelProfile
+    ) throws(BasaltError) -> GenerationComponents {
+        guard let reasoning = reasoning ?? (profile is QwenProfile ? QwenReasoningProtocol.tagged : nil) else {
+            return components
+        }
+        guard let transition = budgetTransition(for: reasoning, profile: profile) else {
+            GemLogger(module: "MLXInferenceEngine").info(
+                "thinking_budget ignored: \(type(of: profile)) declares no budget transition for \(reasoning.endDelimiter)")
+            return components
+        }
+        let answerReserve = GenerationRequest.thinkingAnswerReserve(maxTokens: parameters.maxTokens ?? 0)
+        func applying(_ budget: Int) throws -> GenerationComponents {
+            let budgeted = try components.applyingThinkingBudget(
+                ThinkingBudgetConfiguration(
+                    maximumTokenCount: budget, minimumAnswerTokenCount: answerReserve, transitionOverride: transition),
+                reasoning: reasoning, tokenizer: tokenizer)
+            try budgeted.validate(parameters: parameters)
+            return budgeted
+        }
+        do {
+            do {
+                return try applying(budget)
+            } catch ThinkingBudgetError.insufficientGenerationTokenLimit(let required, let actual)
+                where budget >= required - actual {
+                return try applying(budget - (required - actual))
+            }
+        } catch {
+            throw .invalidRequestStructure(details: "thinking_budget: \(error.localizedDescription)")
+        }
+    }
+
     public func generateStream(request: GenerationRequest) async throws(BasaltError) -> AsyncStream<StreamChunk> {
         guard let container else {
             throw .inferenceHardwareFailure(reason: "MLX engine not initialized — call load() first")
@@ -531,7 +587,7 @@ public actor MLXInferenceEngine: InferenceEngine {
         let epoch = modelEpoch
 
         let requestedMaxTokens = request.maxTokens ?? 1024
-        let (params, components) = sampling(for: request)
+        let (params, unbudgeted) = sampling(for: request)
 
         let toolSpecs = Self.toolSpecs(request.tools)
         let declaredTools = Set(request.tools?.map(\.name) ?? [])
@@ -557,6 +613,17 @@ public actor MLXInferenceEngine: InferenceEngine {
         }
 
         do {
+            let components: GenerationComponents
+            if let budget = request.thinkingBudget, policy != .disabled {
+                let profile = profile
+                components = try await container.perform { context in
+                    try Self.applyingThinkingBudget(
+                        budget, to: unbudgeted, parameters: params,
+                        reasoning: context.configuration.reasoningConfig, tokenizer: context.tokenizer, profile: profile)
+                }
+            } else {
+                components = unbudgeted
+            }
             let rendered: LMInput
             do {
                 rendered = try await container.prepare(input: makeInput(lastText))
@@ -637,6 +704,11 @@ public actor MLXInferenceEngine: InferenceEngine {
                     if let assistantPrefix { continuation.yield(.text(assistantPrefix)) }
 
                     var toolCallScanner = scansToolCallText ? NemotronToolCallScanner() : nil
+                    var reasoningText = ""
+                    func emitReasoning(_ text: String) {
+                        reasoningText += text
+                        continuation.yield(.reasoning(text))
+                    }
                     func admit(_ chunks: [StreamChunk]) {
                         for chunk in gate.admit(chunks) { continuation.yield(chunk) }
                     }
@@ -658,13 +730,13 @@ public actor MLXInferenceEngine: InferenceEngine {
                                 let cut = buffer.index(buffer.endIndex, offsetBy: -held)
                                 let piece = String(buffer[..<cut])
                                 buffer.removeSubrange(..<cut)
-                                if isThinking { continuation.yield(.reasoning(piece)) } else { emitText(piece) }
+                                if isThinking { emitReasoning(piece) } else { emitText(piece) }
                                 break
                             }
                             let leading = String(buffer[..<boundary.lowerBound])
                             let opensThinking = !isThinking && Self.thinkingOpeners.contains(String(buffer[boundary]))
                             if !leading.isEmpty {
-                                if isThinking { continuation.yield(.reasoning(leading)) } else { emitText(leading) }
+                                if isThinking { emitReasoning(leading) } else { emitText(leading) }
                             }
                             buffer.removeSubrange(..<boundary.upperBound)
                             if buffer.hasPrefix("\n") { buffer.removeFirst() }
@@ -727,6 +799,10 @@ public actor MLXInferenceEngine: InferenceEngine {
                         let generationTime = (clock.now - startTime).inSeconds
                         let timeToFirstToken = firstTokenAt.map { ($0 - startTime).inSeconds } ?? 0
                         let mem = Memory.snapshot()
+                        let reasoning = reasoningText
+                        let reasoningTokens = reasoning.isEmpty ? nil : await container.perform {
+                            $0.tokenizer.encode(text: reasoning, addSpecialTokens: false).count
+                        }
 
                         let metadata = GenerationResponse(
                             generatedText: "", 
@@ -746,7 +822,8 @@ public actor MLXInferenceEngine: InferenceEngine {
                             // token ceiling reported a clean finish and truncation went
                             // unnoticed by every caller.
                             finishReason: (lastInfo?.generationTokenCount ?? 0) >= requestedMaxTokens
-                                ? .length : .stop
+                                ? .length : .stop,
+                            reasoningTokens: reasoningTokens
                         )
                         continuation.yield(.metadata(metadata))
                     }
@@ -882,6 +959,24 @@ public actor MLXInferenceEngine: InferenceEngine {
         return GenerationLaunch(
             stream: stream, task: task, cache: keepable ? head.kept : nil, reusedTokens: reused,
             exactTokens: blended?.exactPrefix ?? Int.max)
+    }
+}
+
+struct GeneratedTokensPresencePenalty: LogitProcessor {
+    var context: PresencePenaltyContext
+
+    init(penalty: Float, window: Int) {
+        context = PresencePenaltyContext(presencePenalty: penalty, presenceContextSize: window)
+    }
+
+    mutating func prompt(_ prompt: MLXArray) {}
+
+    func process(logits: MLXArray) -> MLXArray {
+        context.process(logits: logits)
+    }
+
+    mutating func didSample(token: MLXArray) {
+        context.didSample(token: token)
     }
 }
 

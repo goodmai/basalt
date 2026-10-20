@@ -28,4 +28,4 @@ jobs:
 
       - name: Run sandbox tests
         working-directory: benchmarks/arc-agi
-        run: python3 -m unittest -v test_sandbox
+        run: python3 -m unittest -v test_sandbox test_benchmark
