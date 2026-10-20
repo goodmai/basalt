@@ -651,8 +651,7 @@ public actor MLXInferenceEngine: InferenceEngine {
             }
             logger.trace("Input prepared. Starting MLX generation...")
             let renderedCount = rendered.text.tokens.dim(-1)
-            let carriesMoreThanTokens = rendered.image != nil || rendered.video != nil
-                || rendered.audio != nil || rendered.text.mask != nil
+            let carriesMoreThanTokens = Self.carriesMoreThanTokens(rendered)
             let assistantPrefix = carriesMoreThanTokens ? nil : request.assistantPrefix.flatMap { $0.isEmpty ? nil : $0 }
             let lmInput: LMInput
             if let assistantPrefix {
@@ -842,6 +841,11 @@ public actor MLXInferenceEngine: InferenceEngine {
     }
 
     public var isLoaded: Bool { container != nil }
+
+    static func carriesMoreThanTokens(_ input: LMInput) -> Bool {
+        input.image != nil || input.video != nil || input.audio != nil
+            || input.text.mask.map { !all($0).item(Bool.self) } ?? false
+    }
 
     static func appending(_ ids: [Int], to input: LMInput) -> LMInput {
         let tokens = input.text.tokens

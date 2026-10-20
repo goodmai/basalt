@@ -46,6 +46,16 @@ struct ByteInputProcessor: UserInputProcessor {
     }
 }
 
+struct VisionStyleInputProcessor: UserInputProcessor {
+    let padsFirstToken: Bool
+
+    func prepare(input: UserInput) throws -> LMInput {
+        let tokens = try ByteInputProcessor().prepare(input: input).text.tokens
+        let mask = (0..<tokens.dim(-1)).map { Int8(padsFirstToken && $0 == 0 ? 0 : 1) }
+        return LMInput(text: .init(tokens: tokens, mask: MLXArray(mask)))
+    }
+}
+
 enum TinyModel {
     static let config = """
         {"hidden_size": 64, "num_hidden_layers": 2, "intermediate_size": 128,
@@ -63,19 +73,22 @@ enum TinyModel {
         return model
     }
 
-    static func container() throws -> ModelContainer {
+    static func container(processor: any UserInputProcessor = ByteInputProcessor()) throws -> ModelContainer {
         ModelContainer(context: ModelContext(
             configuration: ModelConfiguration(id: "tiny-llama"),
             model: try make(),
-            processor: ByteInputProcessor(),
+            processor: processor,
             tokenizer: ByteTokenizer()))
     }
 
     static let cacheBytesPerToken = 2 * 2 * 16 * 4 * 2
 
-    static func engine(promptCacheBytes: Int? = nil, repetitionPenalty: Float? = nil) async throws -> MLXInferenceEngine {
+    static func engine(
+        promptCacheBytes: Int? = nil, repetitionPenalty: Float? = nil,
+        processor: any UserInputProcessor = ByteInputProcessor()
+    ) async throws -> MLXInferenceEngine {
         let engine = MLXInferenceEngine(promptCacheBytes: promptCacheBytes, repetitionPenalty: repetitionPenalty)
-        await engine.attach(try container())
+        await engine.attach(try container(processor: processor))
         return engine
     }
 
@@ -172,6 +185,30 @@ struct PromptCacheReuseTests {
         #expect(!reused.generatedText.isEmpty)
         #expect(Set(reused.generatedText).count > 1)
         #expect(reused.generatedText == full.generatedText)
+    }
+
+    @Test("A text-only prompt a VLM processor rendered with an all-ones mask reuses the prefix and answers like a full prefill (#103)")
+    func allOnesMaskReusesThePrefix() async throws {
+        let engine = try await TinyModel.engine(processor: VisionStyleInputProcessor(padsFirstToken: false))
+        let first = try await engine.generate(request: greedy(Conversation.firstTurn, key: "ns"))
+        #expect(first.cachedPromptTokens == 0)
+
+        let reused = try await engine.generate(request: greedy(Conversation.afterToolCall, key: "ns"))
+        let full = try await engine.generate(request: greedy(Conversation.afterToolCall, key: nil))
+        let shared = commonPrefix(TinyModel.tokens(Conversation.firstTurn), TinyModel.tokens(Conversation.afterToolCall))
+        #expect(shared > 40)
+        #expect(reused.cachedPromptTokens == shared)
+        #expect(Set(reused.generatedText).count > 1)
+        #expect(reused.generatedText == full.generatedText)
+    }
+
+    @Test("A mask that pads out a token still bypasses the prompt cache")
+    func paddingMaskBypassesTheCache() async throws {
+        let engine = try await TinyModel.engine(processor: VisionStyleInputProcessor(padsFirstToken: true))
+        _ = try await engine.generate(request: greedy(Conversation.firstTurn, key: "ns"))
+        let second = try await engine.generate(request: greedy(Conversation.afterToolCall, key: "ns"))
+        #expect(second.cachedPromptTokens == 0)
+        #expect(await engine.promptCaches.byteCount == 0)
     }
 
     @Test("Branches A = P+x and B = P+y share P, and A+z then reuses the longest stored prefix, all like a full prefill")
