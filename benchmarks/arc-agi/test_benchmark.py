@@ -112,6 +112,11 @@ class TrainVerificationTest(unittest.TestCase):
                                                train_pairs=TASK["train"]),
                          ([[2, 0], [3, 1]], "python_oop_exec_success", 2))
 
+    def test_a_test_grid_beyond_the_arc_bound_is_no_answer_and_the_next_block_still_answers(self):
+        self.assertEqual(execute_python_hybrid(ROTATE + "\n" + BIG_ON_TEST, TASK["test"][0]["input"],
+                                               train_pairs=TASK["train"]),
+                         ([[2, 0], [3, 1]], "python_oop_exec_success", 2))
+
     def test_only_the_last_written_blocks_are_tried_and_the_time_limit_is_capped_by_them(self):
         text = "\n".join([ROTATE] + [WRONG] * arc_sandbox.MAX_BLOCKS)
         with mock.patch.object(arc_sandbox, "_supervise", wraps=arc_sandbox._supervise) as supervise:

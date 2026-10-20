@@ -31,6 +31,7 @@ EXTENSION_DIR = os.path.join(os.path.realpath(sysconfig.get_path("platstdlib")),
 EXTENSION_SUFFIX = sysconfig.get_config_var("EXT_SUFFIX")
 FUNCTION_NAMES = ("transform", "solve", "transform_grid")
 MAX_BLOCKS = 8
+MAX_GRID_SIDE = 30
 NUMPY_IMAGES_PROBE = """
 import ctypes, json, os, sys
 sys.path.append(sys.argv[1])
@@ -246,7 +247,8 @@ def _to_matrix(result, grid_type):
         result = result.to_matrix()
     elif hasattr(result, "tolist"):
         result = result.tolist()
-    if isinstance(result, list) and result and all(isinstance(row, list) for row in result):
+    if (isinstance(result, list) and 0 < len(result) <= MAX_GRID_SIDE
+            and all(isinstance(row, list) and len(row) <= MAX_GRID_SIDE for row in result)):
         return [[int(cell) for cell in row] for row in result]
     return None
 
