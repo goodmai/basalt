@@ -473,6 +473,10 @@ basalt models download --author Ex0bit
 |---|---|
 | `gemma_generate` | Генерация текста — `prompt`, `maxTokens`, `temperature`, `topP`, `minP`, `dynamicTemperature` |
 | `gemma_status` | Готовность сервера, версия, текущая модель |
+| `status` | Состояние движка, загруженная модель, память и телеметрия |
+| `check_hardware` | Ресурсы Apple Silicon: чип, объединённая память, GPU, диск |
+| `inspect_model` | Проверить шарды весов и реальную разрядность весов MLX/Safetensors |
+| `switch_model` | Переключиться на другую модель из локального кэша |
 | `gemma_add_knowledge` | Записать урок в Experience Library Harness² (`~/.basalt/harness-library`) |
 | `harness_validate` | Проверить harness Claude Code / opencode / AGENTS.md в рабочем каталоге или в `BASALT_HARNESS_ROOTS` |
 | `harness_optimize` | Один проход Harness² propose–probe–compose на загруженной модели (также `basalt harness optimize`) |
