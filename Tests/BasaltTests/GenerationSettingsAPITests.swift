@@ -99,6 +99,18 @@ struct GenerationSettingsAPITests {
         #expect(await engine.lastRequest?.thinkingBudget == nil)
     }
 
+    @Test("A thinking_budget that max_tokens cannot hold is a 400 before a stream opens", arguments: [
+        "/v1/chat/completions", "/v1/responses",
+    ])
+    func thinkingBudgetTooLargeForMaxTokensIsRejectedBeforeStreaming(_ uri: String) async throws {
+        let (app, engine) = try await app()
+        try await post(app, uri, #"""
+            {"messages": [{"role": "user", "content": "hi"}], "input": "hi", "thinking_budget": 10,
+             "max_tokens": 84, "max_output_tokens": 84, "stream": true}
+            """#) { #expect($0.status == .badRequest) }
+        #expect(await engine.lastRequest == nil)
+    }
+
     @Test("Usage reports reasoning tokens: chat completion_tokens_details, the include_usage stream chunk, Responses output_tokens_details")
     func usageReportsReasoningTokens() async throws {
         let (app, _) = try await app(reasoning: "one two three")

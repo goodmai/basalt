@@ -132,6 +132,18 @@ struct SamplingRequestValidationTests {
         }
     }
 
+    @Test("thinking_budget needs max_tokens to hold the transition headroom after the answer reserve")
+    func thinkingBudgetNeedsRoomInMaxTokens() throws {
+        _ = try GenerationRequest(prompt: "p", maxTokens: 85, thinkingBudget: 10).validated()
+        _ = try GenerationRequest(prompt: "p", maxTokens: 84).validated()
+        #expect {
+            _ = try GenerationRequest(prompt: "p", maxTokens: 84, thinkingBudget: 10).validated()
+        } throws: { error in
+            guard case .invalidRequestStructure(let details) = error as? BasaltError else { return false }
+            return details.contains("thinking_budget")
+        }
+    }
+
     @Test("Boundary values are accepted")
     func acceptsBoundaries() throws {
         _ = try GenerationRequest(prompt: "p", topK: 0, presencePenalty: -2, repetitionPenalty: 2, thinkingBudget: 0).validated()
