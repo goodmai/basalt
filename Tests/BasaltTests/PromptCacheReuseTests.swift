@@ -46,13 +46,23 @@ struct ByteInputProcessor: UserInputProcessor {
     }
 }
 
+enum AttachedMedia: Sendable, CaseIterable {
+    case image, video, audio
+}
+
 struct VisionStyleInputProcessor: UserInputProcessor {
     let padsFirstToken: Bool
+    var media: AttachedMedia? = nil
 
     func prepare(input: UserInput) throws -> LMInput {
         let tokens = try ByteInputProcessor().prepare(input: input).text.tokens
         let mask = (0..<tokens.dim(-1)).map { Int8(padsFirstToken && $0 == 0 ? 0 : 1) }
-        return LMInput(text: .init(tokens: tokens, mask: MLXArray(mask)))
+        let pixels = MLXArray.zeros([1, 3, 2, 2])
+        return LMInput(
+            text: .init(tokens: tokens, mask: MLXArray(mask)),
+            image: media == .image ? .init(pixels: pixels) : nil,
+            video: media == .video ? .init(pixels: pixels) : nil,
+            audio: media == .audio ? .init(features: pixels) : nil)
     }
 }
 
@@ -209,6 +219,30 @@ struct PromptCacheReuseTests {
         let second = try await engine.generate(request: greedy(Conversation.afterToolCall, key: "ns"))
         #expect(second.cachedPromptTokens == 0)
         #expect(await engine.promptCaches.byteCount == 0)
+    }
+
+    @Test("An all-ones mask next to an image, video or audio still bypasses the prompt cache", arguments: AttachedMedia.allCases)
+    func attachedMediaBypassesTheCache(media: AttachedMedia) async throws {
+        let engine = try await TinyModel.engine(processor: VisionStyleInputProcessor(padsFirstToken: false, media: media))
+        let first = try await engine.generate(request: greedy(Conversation.firstTurn, key: "ns"))
+        let second = try await engine.generate(request: greedy(Conversation.afterToolCall, key: "ns"))
+        #expect(first.cachedPromptTokens == 0)
+        #expect(second.cachedPromptTokens == 0)
+        #expect(await engine.promptCaches.byteCount == 0)
+    }
+
+    @Test("An assistant prefix on an all-ones-mask VLM prompt is appended and answered like on a plain text processor")
+    func assistantPrefixWithAllOnesMask() async throws {
+        let request = GenerationRequest(
+            prompt: Conversation.firstTurn, maxTokens: 12, temperature: 0, cacheKey: "ns", assistantPrefix: "{\"")
+        let vision = try await TinyModel.engine(processor: VisionStyleInputProcessor(padsFirstToken: false))
+        let plain = try await TinyModel.engine()
+        let prefixed = try await vision.generate(request: request)
+        let expected = try await plain.generate(request: request)
+        #expect(prefixed.generatedText.hasPrefix("{\""))
+        #expect(prefixed.generatedText.count > 2)
+        #expect(prefixed.promptTokens == TinyModel.tokens(Conversation.firstTurn).count + 2)
+        #expect(prefixed.generatedText == expected.generatedText)
     }
 
     @Test("Branches A = P+x and B = P+y share P, and A+z then reuses the longest stored prefix, all like a full prefill")
