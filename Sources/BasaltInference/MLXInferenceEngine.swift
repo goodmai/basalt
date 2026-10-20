@@ -541,12 +541,12 @@ public actor MLXInferenceEngine: InferenceEngine {
 
     static let thinkingAnswerReserve = 512
 
-    static func budgetTransition(for reasoning: ReasoningConfig, profile: any ModelProfile) -> ReasoningBudgetTransition {
+    static func budgetTransition(for reasoning: ReasoningConfig, profile: any ModelProfile) -> ReasoningBudgetTransition? {
         if let declared = reasoning.budgetTransition { return declared }
         guard profile is QwenProfile, reasoning.endDelimiter == QwenReasoningProtocol.qwen3.endDelimiter else {
-            return .immediate
+            return nil
         }
-        return QwenReasoningProtocol.qwen3.budgetTransition ?? .immediate
+        return QwenReasoningProtocol.qwen3.budgetTransition
     }
 
     static func applyingThinkingBudget(
@@ -556,7 +556,11 @@ public actor MLXInferenceEngine: InferenceEngine {
         guard let reasoning = reasoning ?? (profile is QwenProfile ? QwenReasoningProtocol.tagged : nil) else {
             return components
         }
-        let transition = budgetTransition(for: reasoning, profile: profile)
+        guard let transition = budgetTransition(for: reasoning, profile: profile) else {
+            GemLogger(module: "MLXInferenceEngine").info(
+                "thinking_budget ignored: \(type(of: profile)) declares no budget transition for \(reasoning.endDelimiter)")
+            return components
+        }
         let answerReserve = min(thinkingAnswerReserve, (parameters.maxTokens ?? 0) / 4)
         func applying(_ budget: Int) throws -> GenerationComponents {
             let budgeted = try components.applyingThinkingBudget(

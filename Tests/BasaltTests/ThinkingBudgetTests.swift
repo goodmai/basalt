@@ -156,17 +156,26 @@ struct ThinkingBudgetEngineTests {
         #expect(budgeted.generatedText == plain.generatedText)
     }
 
-    @Test("Qwen-tagged models without a declared transition get Qwen's, declared ones keep theirs, others close immediately")
-    func transitionSelection() {
-        let qwen = MLXInferenceEngine.budgetTransition(for: QwenReasoningProtocol.tagged, profile: QwenProfile())
+    @Test("Qwen-tagged models without a declared transition get Qwen's, declared ones keep theirs, others get none")
+    func transitionSelection() throws {
+        let qwen = try #require(MLXInferenceEngine.budgetTransition(for: QwenReasoningProtocol.tagged, profile: QwenProfile()))
         #expect(qwen.beforeEndDelimiter
             == "\n\n Considering the limited time by the user, I have to give the solution based on the thinking directly now.\n")
         #expect(qwen.afterEndDelimiter == "\n\n")
 
         var declared = QwenReasoningProtocol.tagged
         declared.budgetTransition = ReasoningBudgetTransition(beforeEndDelimiter: "enough.")
-        #expect(MLXInferenceEngine.budgetTransition(for: declared, profile: GenericProfile()).beforeEndDelimiter == "enough.")
+        #expect(MLXInferenceEngine.budgetTransition(for: declared, profile: GenericProfile())?.beforeEndDelimiter == "enough.")
 
-        #expect(MLXInferenceEngine.budgetTransition(for: QwenReasoningProtocol.tagged, profile: GenericProfile()) == .immediate)
+        #expect(MLXInferenceEngine.budgetTransition(for: QwenReasoningProtocol.tagged, profile: GenericProfile()) == nil)
+    }
+
+    @Test("A non-Qwen reasoning model without a declared transition generates as if no budget was asked")
+    func nonQwenReasoningModelIgnoresTheBudget() async throws {
+        let engine = try await ThinkingModel.engine(profile: GenericProfile())
+        let budgeted = try await engine.generate(request: ThinkingModel.request(budget: 6, maxTokens: 200))
+        let plain = try await engine.generate(request: ThinkingModel.request(budget: nil, maxTokens: 200))
+        #expect(budgeted.reasoningText == plain.reasoningText)
+        #expect(budgeted.generatedText == plain.generatedText)
     }
 }
