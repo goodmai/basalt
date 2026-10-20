@@ -17,6 +17,8 @@ struct JSONSchemaGateTests {
         #expect(Self.message(#"{"type": "array", "items": {"not": {"type": "null"}}}"#) == "unsupported JSON Schema keyword 'not' at #/items")
         #expect(Self.message(#"{"allOf": [{"type": "string"}, {"maxLength": 3}]}"#) == "allOf at # must list exactly one schema")
         #expect(Self.message(#"{"$ref": "https://example.com/s.json"}"#)?.contains("not local") == true)
+        #expect(Self.message(#"{"type": "object", "properties": {"a/b~c": {"type": "integer", "multipleOf": 2}}}"#)
+            == "unsupported JSON Schema keyword 'multipleOf' at #/properties/a~1b~0c")
         #expect(Self.message(#"{"type": "object", "properties": {"d": {"type": "string", "description": "kept", "format": "uri"}, "p": {"type": "string", "pattern": "^h"}, "l": {"type": "string", "minLength": 2}}}"#) == nil)
         let lenient = try JSONSchemaGate.prepare(#"{"type": "integer", "multipleOf": 2, "uniqueItems": true}"#, strict: false)
         #expect(lenient.relaxations == ["'multipleOf' at # is not enforced", "'uniqueItems' at # is not enforced"])

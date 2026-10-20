@@ -254,14 +254,14 @@ public enum JSONSchemaGate {
             try checkDroppedKeywords(schema, keys: members.map(\.key), at: path)
             for index in members.indices {
                 let key = members[index].key
-                let at = "\(path)/\(key)"
+                let at = Self.pointer(path, key)
                 switch members[index].value {
                 case .object(var map) where JSONSchemaGate.schemaMaps.contains(key):
-                    for entry in map.indices { map[entry].value = try visit(map[entry].value, at: "\(at)/\(map[entry].key)") }
+                    for entry in map.indices { map[entry].value = try visit(map[entry].value, at: Self.pointer(at, map[entry].key)) }
                     members[index].value = .object(map)
                 case .array(let list) where JSONSchemaGate.schemaLists.contains(key):
                     var visited: [OrderedJSON] = []
-                    for (position, item) in list.enumerated() { visited.append(try visit(item, at: "\(at)/\(position)")) }
+                    for (position, item) in list.enumerated() { visited.append(try visit(item, at: Self.pointer(at, String(position)))) }
                     members[index].value = .array(visited)
                 case .object where JSONSchemaGate.schemaValues.contains(key):
                     members[index].value = try visit(members[index].value, at: at)
@@ -368,6 +368,10 @@ public enum JSONSchemaGate {
                 }
             default: return false
             }
+        }
+
+        static func pointer(_ path: String, _ token: String) -> String {
+            path + "/" + token.replacingOccurrences(of: "~", with: "~0").replacingOccurrences(of: "/", with: "~1")
         }
 
         static func xgrammarSpelling(_ number: String) -> String? {
