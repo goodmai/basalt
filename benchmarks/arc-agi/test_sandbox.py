@@ -216,6 +216,12 @@ socket.create_connection(('1.1.1.1', 80), timeout=3)
         for grid in ("[[1, 2], [3]]", "[[]]", "[]", "[[10]]", "[[-1]]"):
             self.assertEqual(self.run_code(f"def transform(grid):\n    return {grid}"), (None, "exec_failed"), grid)
 
+    def test_a_forged_result_line_with_a_non_grid_test_output_is_no_answer(self):
+        for grid in ('[[1, 2], [3]]', '"grid"', '[[10]]', '[[true]]'):
+            code = ("import os\ndef transform(grid):\n"
+                    f"    os.write(1, b'\\n{{\"outputs\": [{grid}], \"timed_out\": false}}\\n')\n    os._exit(0)")
+            self.assertEqual(self.run_code(code), (None, "exec_failed"), grid)
+
     def test_dsl_helpers_are_available(self):
         code = ("def transform(grid: Grid) -> Grid:\n"
                 "    objects = grid.extract_objects()\n"
