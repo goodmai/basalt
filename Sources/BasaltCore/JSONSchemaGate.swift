@@ -189,6 +189,12 @@ public enum JSONSchemaGate {
     static let schemaMaps: Set<String> = ["properties", "patternProperties", "$defs", "definitions"]
     static let schemaValues: Set<String> = ["items", "additionalProperties", "propertyNames", "unevaluatedProperties", "unevaluatedItems"]
     static let schemaLists: Set<String> = ["prefixItems", "anyOf", "oneOf", "allOf"]
+    static let exclusiveKeywords = ["$ref", "const", "enum", "anyOf", "oneOf", "allOf"]
+    static let lengthKeywords = ["pattern", "minLength", "maxLength"]
+    static let formats: Set<String> = [
+        "email", "date", "time", "date-time", "duration", "ipv4", "ipv6", "hostname", "uuid", "uri", "uri-reference",
+        "uri-template", "json-pointer", "relative-json-pointer",
+    ]
 
     public static func prepare(_ schemaJSON: String, strict: Bool) throws(UnsupportedJSONSchema) -> PreparedJSONSchema {
         let data = Data(schemaJSON.utf8)
@@ -245,6 +251,7 @@ public enum JSONSchemaGate {
                 try follow(reference, at: path)
             }
             try checkLiterals(schema, at: path)
+            try checkDroppedKeywords(schema, keys: members.map(\.key), at: path)
             for index in members.indices {
                 let key = members[index].key
                 let at = "\(path)/\(key)"
@@ -299,23 +306,82 @@ public enum JSONSchemaGate {
             }
         }
 
+        mutating func checkDroppedKeywords(_ schema: OrderedJSON, keys: [String], at path: String) throws(UnsupportedJSONSchema) {
+            let types = Self.declaredTypes(schema)
+            if let winner = JSONSchemaGate.exclusiveKeywords.first(where: { schema[$0] != nil }) {
+                let literal = winner == "enum" || winner == "const"
+                for key in keys where key != winner && !JSONSchemaGate.annotations.contains(key) && !(literal && key == "type") {
+                    try relax("'\(key)' next to '\(winner)' at \(path) is ignored by XGrammar",
+                              "'\(key)' at \(path) is not enforced next to '\(winner)'")
+                }
+                if literal, !types.isEmpty {
+                    let values: [OrderedJSON] = if case .array(let listed)? = schema["enum"] { listed } else { schema["const"].map { [$0] } ?? [] }
+                    for value in values where !types.contains(where: { Self.value(value, isOf: $0) }) {
+                        try relax("\(winner) at \(path) lists \(value.text), which is not of the declared type",
+                                  "\(winner) value \(value.text) at \(path) is accepted despite the declared type")
+                    }
+                }
+                return
+            }
+            if types.contains("string") {
+                let format = schema["format"].map { OrderedJSON.Reader.decoded($0.text) }
+                if let format, !JSONSchemaGate.formats.contains(format) {
+                    try relax("format '\(format)' at \(path) is not supported by XGrammar", "format '\(format)' at \(path) is not enforced")
+                }
+                let lengths = JSONSchemaGate.lengthKeywords.filter { schema[$0] != nil }
+                let leader = format.map(JSONSchemaGate.formats.contains) == true ? "format" : schema["pattern"] != nil ? "pattern" : nil
+                if let leader {
+                    for key in lengths where key != leader {
+                        try relax("'\(key)' next to '\(leader)' at \(path) is ignored by XGrammar",
+                                  "'\(key)' at \(path) is not enforced next to '\(leader)'")
+                    }
+                }
+            }
+            if case .array(let required)? = schema["required"] {
+                let declared: Set<String> = if case .object(let members)? = schema["properties"] { Set(members.map(\.key)) } else { [] }
+                for case .scalar(let quoted) in required where !declared.contains(OrderedJSON.Reader.decoded(quoted)) {
+                    try relax("required \(quoted) at \(path) is not among its properties, which XGrammar ignores",
+                              "required \(quoted) at \(path) is not enforced")
+                }
+            }
+        }
+
+        static func declaredTypes(_ schema: OrderedJSON) -> [String] {
+            switch schema["type"] {
+            case .scalar(let type)?: [OrderedJSON.Reader.decoded(type)]
+            case .array(let list)?: list.map { OrderedJSON.Reader.decoded($0.text) }
+            default: []
+            }
+        }
+
+        static func value(_ value: OrderedJSON, isOf type: String) -> Bool {
+            switch (value, type) {
+            case (.object, "object"), (.array, "array"): return true
+            case (.scalar(let raw), _):
+                switch type {
+                case "string": return raw.hasPrefix("\"")
+                case "boolean": return raw == "true" || raw == "false"
+                case "null": return raw == "null"
+                case "number": return Double(raw) != nil
+                case "integer": return Double(raw).map { $0.rounded() == $0 } ?? false
+                default: return false
+                }
+            default: return false
+            }
+        }
+
         static func xgrammarSpelling(_ number: String) -> String? {
             guard let first = number.first, first == "-" || first.isNumber, Int64(number) == nil, let value = Double(number) else { return nil }
             return abs(value) < 9_007_199_254_740_992 && value.rounded() == value ? String(format: "%.f", value) : String(format: "%.17g", value)
         }
 
         func openings(_ schema: OrderedJSON) -> [OrderedJSON.Member] {
-            var types: [String] = []
-            switch schema["type"] {
-            case .scalar(let type)?: types = [type]
-            case .array(let list)?: types = list.map(\.text)
-            default: break
-            }
+            let types = Self.declaredTypes(schema)
             var added: [OrderedJSON.Member] = []
-            if types.contains("\"object\""), ["properties", "additionalProperties", "patternProperties", "unevaluatedProperties"].allSatisfy({ schema[$0] == nil }) {
+            if types.contains("object"), ["properties", "additionalProperties", "patternProperties", "unevaluatedProperties"].allSatisfy({ schema[$0] == nil }) {
                 added.append(OrderedJSON.Member(key: "additionalProperties", quotedKey: "\"additionalProperties\"", value: .scalar("true")))
             }
-            if types.contains("\"array\""), ["items", "prefixItems", "unevaluatedItems"].allSatisfy({ schema[$0] == nil }) {
+            if types.contains("array"), ["items", "prefixItems", "unevaluatedItems"].allSatisfy({ schema[$0] == nil }) {
                 added.append(OrderedJSON.Member(key: "items", quotedKey: "\"items\"", value: .scalar("true")))
             }
             return added

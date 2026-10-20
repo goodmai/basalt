@@ -17,9 +17,48 @@ struct JSONSchemaGateTests {
         #expect(Self.message(#"{"type": "array", "items": {"not": {"type": "null"}}}"#) == "unsupported JSON Schema keyword 'not' at #/items")
         #expect(Self.message(#"{"allOf": [{"type": "string"}, {"maxLength": 3}]}"#) == "allOf at # must list exactly one schema")
         #expect(Self.message(#"{"$ref": "https://example.com/s.json"}"#)?.contains("not local") == true)
-        #expect(Self.message(#"{"type": "object", "properties": {"d": {"type": "string", "description": "kept", "format": "uri", "pattern": "^h", "minLength": 2}}}"#) == nil)
+        #expect(Self.message(#"{"type": "object", "properties": {"d": {"type": "string", "description": "kept", "format": "uri"}, "p": {"type": "string", "pattern": "^h"}, "l": {"type": "string", "minLength": 2}}}"#) == nil)
         let lenient = try JSONSchemaGate.prepare(#"{"type": "integer", "multipleOf": 2, "uniqueItems": true}"#, strict: false)
         #expect(lenient.relaxations == ["'multipleOf' at # is not enforced", "'uniqueItems' at # is not enforced"])
+    }
+
+    @Test("Strict refuses what XGrammar silently drops; without strict each is a relaxation, and XGrammar then accepts the violating value", arguments: [
+        (##"{"$defs": {"s": {"type": "string"}}, "$ref": "#/$defs/s", "maxLength": 2}"##, #""abcdef""#,
+         "'maxLength' next to '$ref' at # is ignored by XGrammar"),
+        (#"{"type": "object", "properties": {"a": {"type": "integer"}}, "required": ["a"], "anyOf": [{"type": "object"}]}"#, #"{"b":1}"#,
+         "'type' next to 'anyOf' at # is ignored by XGrammar"),
+        (#"{"oneOf": [{"type": "integer"}], "minimum": 5}"#, "1", "'minimum' next to 'oneOf' at # is ignored by XGrammar"),
+        (#"{"allOf": [{"type": "integer"}], "maximum": 5}"#, "9", "'maximum' next to 'allOf' at # is ignored by XGrammar"),
+        (#"{"enum": ["abc", "x"], "maxLength": 1}"#, #""abc""#, "'maxLength' next to 'enum' at # is ignored by XGrammar"),
+        (#"{"const": 3, "minimum": 5}"#, "3", "'minimum' next to 'const' at # is ignored by XGrammar"),
+        (#"{"type": "string", "enum": ["a", 1]}"#, "1", "enum at # lists 1, which is not of the declared type"),
+        (#"{"type": "integer", "const": "x"}"#, #""x""#, #"const at # lists "x", which is not of the declared type"#),
+        (#"{"type": "string", "pattern": "[a-z]+", "maxLength": 2}"#, #""abcdef""#, "'maxLength' next to 'pattern' at # is ignored by XGrammar"),
+        (#"{"type": "string", "format": "date", "pattern": "^2"}"#, #""1999-01-01""#, "'pattern' next to 'format' at # is ignored by XGrammar"),
+        (#"{"type": ["string", "null"], "format": "int32"}"#, #""hello""#, "format 'int32' at # is not supported by XGrammar"),
+        (#"{"type": "object", "required": ["a"]}"#, "{}", #"required "a" at # is not among its properties, which XGrammar ignores"#),
+        (#"{"type": "object", "properties": {"b": {"type": "integer"}}, "required": ["a"]}"#, #"{"b":1}"#,
+         #"required "a" at # is not among its properties, which XGrammar ignores"#),
+    ])
+    func droppedKeywords(schema: String, violating: String, message: String) throws {
+        #expect(Self.message(schema) == message)
+        let lenient = try JSONSchemaGate.prepare(schema, strict: false)
+        #expect(!lenient.relaxations.isEmpty)
+        #expect(try SchemaCheck.accepts(schema, violating), "XGrammar no longer drops it: \(schema)")
+    }
+
+    @Test("Keywords XGrammar does enforce together stay accepted under strict")
+    func enforcedCombinations() {
+        for schema in [
+            #"{"type": "string", "enum": ["a", "b"], "description": "d"}"#,
+            #"{"type": ["integer", "null"], "enum": [1, null, 2]}"#,
+            ##"{"$defs": {"s": {"type": "string"}}, "$ref": "#/$defs/s", "title": "t"}"##,
+            #"{"type": "string", "minLength": 1, "maxLength": 3}"#,
+            #"{"type": "integer", "format": "int32"}"#,
+            #"{"type": "object", "properties": {"a": {"type": "integer"}}, "required": ["a"]}"#,
+        ] {
+            #expect(Self.message(schema) == nil, "\(schema)")
+        }
     }
 
     @Test("type object or array with nothing declared is any object or any array, as JSON Schema says, not XGrammar's strict-mode empty one")
