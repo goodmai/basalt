@@ -340,7 +340,8 @@ def parse_args(argv=None):
                         help="Benchmark mode: hybrid (Program-of-Thought, generated Python runs in a sandboxed child process) "
                              "or direct (2D JSON grid). Default: hybrid where sandbox-exec exists (macOS), else direct")
     parser.add_argument("--exec-timeout", type=float, default=DEFAULT_TIMEOUT,
-                        help=f"Hybrid mode: wall-clock limit in seconds for the generated code (default: {DEFAULT_TIMEOUT:g})")
+                        help=f"Hybrid mode: wall-clock deadline in seconds for one code block on one grid; the sandbox run is "
+                             f"capped at it x grids x min(blocks, 8) (default: {DEFAULT_TIMEOUT:g})")
     parser.add_argument("--engine-url", type=str, default=None,
                         help="Override the engine's URL, e.g. http://127.0.0.1:8098/v1/chat/completions")
     parser.add_argument("--split", choices=["training", "evaluation", "all"], default="training",
