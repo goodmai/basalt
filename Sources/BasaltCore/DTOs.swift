@@ -61,11 +61,12 @@ public struct GenerationRequest: Codable, Sendable {
     public private(set) var topK: Int? = nil
     public private(set) var presencePenalty: Double? = nil
     public private(set) var repetitionPenalty: Double? = nil
+    public private(set) var thinkingBudget: Int? = nil
 
     enum CodingKeys: String, CodingKey {
         case prompt, maxTokens, temperature, topP, minP, dynamicTemperature, enableThinking, reasoningEffort
         case isServiceRequest, tools, toolChoice, cacheKey, messages
-        case topK, presencePenalty, repetitionPenalty
+        case topK, presencePenalty, repetitionPenalty, thinkingBudget
     }
 
     public init(
@@ -85,7 +86,8 @@ public struct GenerationRequest: Codable, Sendable {
         assistantPrefix: String? = nil,
         topK: Int? = nil,
         presencePenalty: Double? = nil,
-        repetitionPenalty: Double? = nil
+        repetitionPenalty: Double? = nil,
+        thinkingBudget: Int? = nil
     ) {
         self.prompt = prompt
         self.maxTokens = maxTokens
@@ -104,6 +106,7 @@ public struct GenerationRequest: Codable, Sendable {
         self.topK = topK
         self.presencePenalty = presencePenalty
         self.repetitionPenalty = repetitionPenalty
+        self.thinkingBudget = thinkingBudget
     }
 
     /// The same request with another token budget. Kept next to the stored properties so a new
@@ -138,6 +141,7 @@ public struct GenerationRequest: Codable, Sendable {
         try Self.require(topK, in: 0...Int.max, "top_k must be >= 0")
         try Self.require(presencePenalty, in: -2.0...2.0, "presence_penalty must be in [-2.0, 2.0]")
         try Self.require(repetitionPenalty, in: Double.leastNonzeroMagnitude...2.0, "repetition_penalty must be in (0.0, 2.0]")
+        try Self.require(thinkingBudget, in: 0...Self.maximumTokens, "thinking_budget must be in [0, \(Self.maximumTokens)]")
 
         var validated = self
         validated.maxTokens = maxT

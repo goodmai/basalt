@@ -39,17 +39,18 @@ struct GenerationSettingsAPITests {
         }
     }
 
-    @Test("Chat completions: top_k, presence_penalty and repetition_penalty reach the engine; omitted temperature and top_p stay unset")
+    @Test("Chat completions: top_k, presence_penalty, repetition_penalty and thinking_budget reach the engine; omitted temperature and top_p stay unset")
     func chatCompletionsMapsSettings() async throws {
         let (app, engine) = try await app()
         try await post(app, "/v1/chat/completions", #"""
             {"messages": [{"role": "user", "content": "hi"}], "top_k": 20, "presence_penalty": 1.5,
-             "repetition_penalty": 1.05, "max_tokens": 8000}
+             "repetition_penalty": 1.05, "thinking_budget": 5000, "max_tokens": 8000}
             """#) { #expect($0.status == .ok) }
         let sent = try #require(await engine.lastRequest)
         #expect(sent.topK == 20)
         #expect(sent.presencePenalty == 1.5)
         #expect(sent.repetitionPenalty == 1.05)
+        #expect(sent.thinkingBudget == 5000)
         #expect(sent.temperature == nil)
         #expect(sent.topP == nil)
     }
@@ -57,12 +58,13 @@ struct GenerationSettingsAPITests {
     @Test("Responses: the same settings reach the engine")
     func responsesMapsSettings() async throws {
         let (app, engine) = try await app()
-        try await post(app, "/v1/responses", #"{"input": "hi", "top_k": 7, "presence_penalty": 0.5}"#) {
+        try await post(app, "/v1/responses", #"{"input": "hi", "top_k": 7, "presence_penalty": 0.5, "thinking_budget": 300}"#) {
             #expect($0.status == .ok)
         }
         let sent = try #require(await engine.lastRequest)
         #expect(sent.topK == 7)
         #expect(sent.presencePenalty == 0.5)
+        #expect(sent.thinkingBudget == 300)
         #expect(sent.temperature == nil)
     }
 
@@ -76,5 +78,24 @@ struct GenerationSettingsAPITests {
             : #"{"messages": [{"role": "user", "content": "hi"}], "input": "hi", "presence_penalty": 3, "stream": true}"#
         try await post(app, uri, body) { #expect($0.status == .badRequest) }
         #expect(await engine.lastRequest == nil)
+    }
+
+    @Test("Anthropic: thinking.budget_tokens becomes the thinking budget only when thinking is enabled; top_k passes through")
+    func anthropicThinkingBudget() async throws {
+        let (app, engine) = try await app()
+        try await post(app, "/v1/messages", #"""
+            {"messages": [{"role": "user", "content": "hi"}], "max_tokens": 6000, "top_k": 20,
+             "thinking": {"type": "enabled", "budget_tokens": 4000}}
+            """#) { #expect($0.status == .ok) }
+        let enabled = try #require(await engine.lastRequest)
+        #expect(enabled.thinkingBudget == 4000)
+        #expect(enabled.topK == 20)
+        #expect(enabled.temperature == nil)
+
+        try await post(app, "/v1/messages", #"""
+            {"messages": [{"role": "user", "content": "hi"}], "max_tokens": 6000,
+             "thinking": {"type": "disabled", "budget_tokens": 4000}}
+            """#) { #expect($0.status == .ok) }
+        #expect(await engine.lastRequest?.thinkingBudget == nil)
     }
 }

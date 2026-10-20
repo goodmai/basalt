@@ -145,6 +145,7 @@ struct OpenAIController: Sendable {
         let topK: Int?
         let presencePenalty: Double?
         let repetitionPenalty: Double?
+        let thinkingBudget: Int?
 
         enum CodingKeys: String, CodingKey {
             case model, messages, temperature, stream
@@ -156,6 +157,7 @@ struct OpenAIController: Sendable {
             case topK = "top_k"
             case presencePenalty = "presence_penalty"
             case repetitionPenalty = "repetition_penalty"
+            case thinkingBudget = "thinking_budget"
         }
     }
 
@@ -181,6 +183,7 @@ struct OpenAIController: Sendable {
         let topK: Int?
         let presencePenalty: Double?
         let repetitionPenalty: Double?
+        let thinkingBudget: Int?
 
         struct ReasoningConfig: Codable, Sendable {
             let effort: String?
@@ -200,6 +203,7 @@ struct OpenAIController: Sendable {
             case topK = "top_k"
             case presencePenalty = "presence_penalty"
             case repetitionPenalty = "repetition_penalty"
+            case thinkingBudget = "thinking_budget"
         }
     }
 
@@ -385,7 +389,8 @@ struct OpenAIController: Sendable {
             messages: service.prompt == prompt ? chat : nil,
             topK: dto.topK,
             presencePenalty: dto.presencePenalty,
-            repetitionPenalty: dto.repetitionPenalty
+            repetitionPenalty: dto.repetitionPenalty,
+            thinkingBudget: dto.thinkingBudget
         )
         if let rejection = invalidParameters(genRequest) { return rejection }
         let model = dto.model.map(ModelsController.restModel(from:))
@@ -485,7 +490,8 @@ struct OpenAIController: Sendable {
             messages: service.prompt == prompt ? chat : nil,
             topK: dto.topK,
             presencePenalty: dto.presencePenalty,
-            repetitionPenalty: dto.repetitionPenalty
+            repetitionPenalty: dto.repetitionPenalty,
+            thinkingBudget: dto.thinkingBudget
         )
         if let rejection = invalidParameters(genRequest) { return rejection }
         let model = dto.model.map(ModelsController.restModel(from:))

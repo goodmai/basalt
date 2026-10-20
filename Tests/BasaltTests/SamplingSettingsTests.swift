@@ -90,12 +90,13 @@ struct SamplingRequestValidationTests {
 
     @Test("New fields decode from the native DTO and survive withMaxTokens / withCacheKey / validated")
     func fieldsSurviveCopies() throws {
-        let json = #"{"prompt": "p", "topK": 20, "presencePenalty": 1.5, "repetitionPenalty": 1.05}"#
+        let json = #"{"prompt": "p", "topK": 20, "presencePenalty": 1.5, "repetitionPenalty": 1.05, "thinkingBudget": 5000}"#
         let decoded = try JSONDecoder().decode(GenerationRequest.self, from: Data(json.utf8))
         for request in [decoded, decoded.withMaxTokens(9000), decoded.withCacheKey("k"), try decoded.validated()] {
             #expect(request.topK == 20)
             #expect(request.presencePenalty == 1.5)
             #expect(request.repetitionPenalty == 1.05)
+            #expect(request.thinkingBudget == 5000)
             #expect(request.temperature == nil)
         }
     }
@@ -106,6 +107,8 @@ struct SamplingRequestValidationTests {
         GenerationRequest(prompt: "p", presencePenalty: -3),
         GenerationRequest(prompt: "p", repetitionPenalty: 0),
         GenerationRequest(prompt: "p", repetitionPenalty: 2.5),
+        GenerationRequest(prompt: "p", thinkingBudget: -1),
+        GenerationRequest(prompt: "p", thinkingBudget: GenerationRequest.maximumTokens + 1),
         GenerationRequest(prompt: "p", topP: 1.5),
     ])
     func rejectsOutOfRange(_ request: GenerationRequest) {
@@ -119,7 +122,7 @@ struct SamplingRequestValidationTests {
 
     @Test("Boundary values are accepted")
     func acceptsBoundaries() throws {
-        _ = try GenerationRequest(prompt: "p", topK: 0, presencePenalty: -2, repetitionPenalty: 2).validated()
-        _ = try GenerationRequest(prompt: "p", presencePenalty: 2).validated()
+        _ = try GenerationRequest(prompt: "p", topK: 0, presencePenalty: -2, repetitionPenalty: 2, thinkingBudget: 0).validated()
+        _ = try GenerationRequest(prompt: "p", presencePenalty: 2, thinkingBudget: GenerationRequest.maximumTokens).validated()
     }
 }

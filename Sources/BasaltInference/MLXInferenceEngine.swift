@@ -537,6 +537,45 @@ public actor MLXInferenceEngine: InferenceEngine {
         return (params, components)
     }
 
+    static let thinkingAnswerReserve = 512
+
+    static func budgetTransition(for reasoning: ReasoningConfig, profile: any ModelProfile) -> ReasoningBudgetTransition {
+        if let declared = reasoning.budgetTransition { return declared }
+        guard profile is QwenProfile, reasoning.endDelimiter == QwenReasoningProtocol.qwen3.endDelimiter else {
+            return .immediate
+        }
+        return QwenReasoningProtocol.qwen3.budgetTransition ?? .immediate
+    }
+
+    static func applyingThinkingBudget(
+        _ budget: Int, to components: GenerationComponents, parameters: GenerateParameters,
+        reasoning: ReasoningConfig?, tokenizer: any MLXLMCommon.Tokenizer, profile: any ModelProfile
+    ) throws(BasaltError) -> GenerationComponents {
+        guard let reasoning = reasoning ?? (profile is QwenProfile ? QwenReasoningProtocol.tagged : nil) else {
+            return components
+        }
+        let transition = budgetTransition(for: reasoning, profile: profile)
+        let answerReserve = min(thinkingAnswerReserve, (parameters.maxTokens ?? 0) / 4)
+        func applying(_ budget: Int) throws -> GenerationComponents {
+            let budgeted = try components.applyingThinkingBudget(
+                ThinkingBudgetConfiguration(
+                    maximumTokenCount: budget, minimumAnswerTokenCount: answerReserve, transitionOverride: transition),
+                reasoning: reasoning, tokenizer: tokenizer)
+            try budgeted.validate(parameters: parameters)
+            return budgeted
+        }
+        do {
+            do {
+                return try applying(budget)
+            } catch ThinkingBudgetError.insufficientGenerationTokenLimit(let required, let actual)
+                where budget >= required - actual {
+                return try applying(budget - (required - actual))
+            }
+        } catch {
+            throw .invalidRequestStructure(details: "thinking_budget: \(error.localizedDescription)")
+        }
+    }
+
     public func generateStream(request: GenerationRequest) async throws(BasaltError) -> AsyncStream<StreamChunk> {
         guard let container else {
             throw .inferenceHardwareFailure(reason: "MLX engine not initialized — call load() first")
@@ -544,7 +583,7 @@ public actor MLXInferenceEngine: InferenceEngine {
         let epoch = modelEpoch
 
         let requestedMaxTokens = request.maxTokens ?? 1024
-        let (params, components) = sampling(for: request)
+        let (params, unbudgeted) = sampling(for: request)
 
         let toolSpecs = Self.toolSpecs(request.tools)
         let declaredTools = Set(request.tools?.map(\.name) ?? [])
@@ -570,6 +609,17 @@ public actor MLXInferenceEngine: InferenceEngine {
         }
 
         do {
+            let components: GenerationComponents
+            if let budget = request.thinkingBudget, policy != .disabled {
+                let profile = profile
+                components = try await container.perform { context in
+                    try Self.applyingThinkingBudget(
+                        budget, to: unbudgeted, parameters: params,
+                        reasoning: context.configuration.reasoningConfig, tokenizer: context.tokenizer, profile: profile)
+                }
+            } else {
+                components = unbudgeted
+            }
             let rendered: LMInput
             do {
                 rendered = try await container.prepare(input: makeInput(lastText))
