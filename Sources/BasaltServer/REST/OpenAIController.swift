@@ -343,15 +343,12 @@ struct OpenAIController: Sendable {
     }
 
     static func chatUsage(_ result: GenerationResponse) -> [String: Any] {
-        var usage: [String: Any] = [
+        [
             "prompt_tokens": result.promptTokens, "completion_tokens": result.completionTokens,
             "total_tokens": result.promptTokens + result.completionTokens,
             "prompt_tokens_details": ["cached_tokens": result.cachedPromptTokens],
+            "completion_tokens_details": ["reasoning_tokens": result.reasoningTokens ?? 0],
         ]
-        if let reasoning = result.reasoningTokens {
-            usage["completion_tokens_details"] = ["reasoning_tokens": reasoning]
-        }
-        return usage
     }
 
     struct CachedTokens: Codable, Sendable {
@@ -460,7 +457,7 @@ struct OpenAIController: Sendable {
                     promptTokensDetails: .init(cachedTokens: result.cachedPromptTokens),
                     completionTokens: result.completionTokens,
                     totalTokens: result.promptTokens + result.completionTokens,
-                    completionTokensDetails: result.reasoningTokens.map(ReasoningTokens.init)
+                    completionTokensDetails: ReasoningTokens(reasoningTokens: result.reasoningTokens ?? 0)
                 )
             )
             let encoded = try JSONEncoder().encode(response)
@@ -569,7 +566,7 @@ struct OpenAIController: Sendable {
                     inputTokensDetails: .init(cachedTokens: result.cachedPromptTokens),
                     outputTokens: result.completionTokens,
                     totalTokens: result.promptTokens + result.completionTokens,
-                    outputTokensDetails: result.reasoningTokens.map(ReasoningTokens.init)
+                    outputTokensDetails: ReasoningTokens(reasoningTokens: result.reasoningTokens ?? 0)
                 )
             )
             let encoded = try JSONEncoder().encode(response)
@@ -844,12 +841,10 @@ struct OpenAIController: Sendable {
 
                     let inTokens = final?.promptTokens ?? 0
                     let outTokens = final?.completionTokens ?? 0
-                    var usage: [String: Any] = [
+                    let usage: [String: Any] = [
                         "input_tokens": inTokens, "output_tokens": outTokens, "total_tokens": inTokens + outTokens,
-                        "input_tokens_details": ["cached_tokens": final?.cachedPromptTokens ?? 0]]
-                    if let reasoning = final?.reasoningTokens {
-                        usage["output_tokens_details"] = ["reasoning_tokens": reasoning]
-                    }
+                        "input_tokens_details": ["cached_tokens": final?.cachedPromptTokens ?? 0],
+                        "output_tokens_details": ["reasoning_tokens": final?.reasoningTokens ?? 0]]
                     send("response.completed", ["response": responseObject(status: "completed", output: completed, extra: [
                         "usage": usage
                     ])])

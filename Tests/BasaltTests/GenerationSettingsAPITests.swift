@@ -121,6 +121,31 @@ struct GenerationSettingsAPITests {
         #expect(await engine.lastRequest == nil)
     }
 
+    @Test("Usage carries reasoning_tokens 0 when the model did not reason")
+    func usageReportsZeroReasoningTokens() async throws {
+        let (app, _) = try await app()
+        let reasoning: @Sendable ([String: Any]?, String) -> Int? = { usage, key in
+            (usage?[key] as? [String: Any])?["reasoning_tokens"] as? Int
+        }
+        try await post(app, "/v1/chat/completions", #"{"messages": [{"role": "user", "content": "hi"}]}"#) { res in
+            let usage = try self.object(res)["usage"] as? [String: Any]
+            #expect(reasoning(usage, "completion_tokens_details") == 0)
+        }
+        try await post(app, "/v1/chat/completions", #"""
+            {"messages": [{"role": "user", "content": "hi"}], "stream": true, "stream_options": {"include_usage": true}}
+            """#) { res in
+            #expect(reasoning(self.dataFrames(res).compactMap { $0["usage"] as? [String: Any] }.last, "completion_tokens_details") == 0)
+        }
+        try await post(app, "/v1/responses", #"{"input": "hi"}"#) { res in
+            let usage = try self.object(res)["usage"] as? [String: Any]
+            #expect(reasoning(usage, "output_tokens_details") == 0)
+        }
+        try await post(app, "/v1/responses", #"{"input": "hi", "stream": true}"#) { res in
+            let completed = self.dataFrames(res).last { $0["type"] as? String == "response.completed" }
+            #expect(reasoning((completed?["response"] as? [String: Any])?["usage"] as? [String: Any], "output_tokens_details") == 0)
+        }
+    }
+
     @Test("Usage reports reasoning tokens: chat completion_tokens_details, the include_usage stream chunk, Responses output_tokens_details")
     func usageReportsReasoningTokens() async throws {
         let (app, _) = try await app(reasoning: "one two three")
