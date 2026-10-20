@@ -51,6 +51,7 @@ DATASET_ROOT = Path(__file__).resolve().parent / "dataset"
 CHUNK_TIMEOUT = 1800   # per-read timeout (seconds, 30 min)
 ATTEMPT_TIMEOUT = 1800 # max wall-clock time per attempt (30 min)
 REQUEST_OPTIONS = {}
+DEFAULT_MAX_TOKENS = 16000
 
 # ─── Grid Extractor ──────────────────────────────────────────────────────────
 
@@ -363,8 +364,11 @@ def parse_args(argv=None):
                         help="Start index for task chunking")
     parser.add_argument("--tasks", nargs="+", type=str, default=None,
                         help="Specific task IDs or file paths to evaluate")
-    parser.add_argument("--max-tokens", type=int, default=16000,
-                        help="Max generation tokens budget (default: 16000)")
+    parser.add_argument("--max-tokens", type=int, default=None,
+                        help="Max generation tokens budget (default: 16000; with --thinking-budget: "
+                             "thinking budget + --answer-tokens unless this is larger)")
+    parser.add_argument("--answer-tokens", type=int, default=4000,
+                        help="With --thinking-budget: tokens left for the answer after it (default: 4000)")
     parser.add_argument("--reasoning-effort", default=None,
                         help="OpenAI reasoning_effort sent to the engine, e.g. none to switch thinking off")
     parser.add_argument("--thinking-budget", type=int, default=None,
@@ -380,7 +384,15 @@ def parse_args(argv=None):
     parser.add_argument("--output", type=str, default=None,
                         help="Output JSON file path for results")
 
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    args.max_tokens = effective_max_tokens(args.max_tokens, args.thinking_budget, args.answer_tokens)
+    return args
+
+
+def effective_max_tokens(max_tokens: int | None, thinking_budget: int | None, answer_tokens: int) -> int:
+    if thinking_budget is None:
+        return max_tokens or DEFAULT_MAX_TOKENS
+    return max(max_tokens or 0, thinking_budget + answer_tokens)
 
 
 def main():

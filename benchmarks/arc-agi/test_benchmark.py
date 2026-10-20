@@ -60,6 +60,17 @@ class PayloadTest(unittest.TestCase):
         usage = {"choices": [], "usage": {"completion_tokens": 900, "completion_tokens_details": {"reasoning_tokens": 700}}}
         self.assertEqual(stream_meta(usage), {"completion_tokens": 900, "reasoning_tokens": 700})
 
+    def test_max_tokens_makes_room_for_the_answer_after_the_thinking_budget(self):
+        def max_tokens(*argv):
+            return arc_agi_benchmark.parse_args(list(argv)).max_tokens
+        self.assertEqual(max_tokens(), 16000)
+        self.assertEqual(max_tokens("--max-tokens", "6000"), 6000)
+        self.assertEqual(max_tokens("--thinking-budget", "5000"), 9000)
+        self.assertEqual(max_tokens("--thinking-budget", "5000", "--answer-tokens", "1000"), 6000)
+        self.assertEqual(max_tokens("--thinking-budget", "5000", "--max-tokens", "6000"), 9000)
+        self.assertEqual(max_tokens("--thinking-budget", "5000", "--max-tokens", "20000"), 20000)
+
+
 
 @unittest.skipUnless(sandbox_available(), "sandbox-exec is not available on this platform")
 class TrainVerificationTest(unittest.TestCase):
