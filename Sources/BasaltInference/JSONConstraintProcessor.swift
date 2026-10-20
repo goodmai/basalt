@@ -32,6 +32,7 @@ final class GrammarVocabulary: Sendable {
     let markers: ReasoningMarkers
 
     init(pieces: [String], vocabType: VocabType, stopTokens: Set<Int>, markers: ReasoningMarkers) throws {
+        let pieces = pieces + Array(repeating: "", count: max(0, (stopTokens.max() ?? -1) + 1 - pieces.count))
         var grammarPieces = pieces
         let reserved = stopTokens.union(markers.openers).union(markers.closers.filter { $0.count == 1 }.joined())
         for id in reserved where grammarPieces.indices.contains(id) { grammarPieces[id] = "" }
@@ -44,8 +45,11 @@ final class GrammarVocabulary: Sendable {
 
     convenience init(context: ModelContext) throws {
         let extracted = TokenizerVocabExtractor.extractForGrammar(from: context.tokenizer)
-        try self.init(pieces: extracted.vocab, vocabType: extracted.vocabType,
-                      stopTokens: MLXInferenceEngine.stopTokenIds(context), markers: ReasoningMarkers(tokenizer: context.tokenizer))
+        let stopTokens = MLXInferenceEngine.stopTokenIds(context)
+        let pastGap = (extracted.vocab.count..<max(extracted.vocab.count, (stopTokens.max() ?? -1) + 1))
+            .map { context.tokenizer.convertIdToToken($0) ?? "" }
+        try self.init(pieces: extracted.vocab + pastGap, vocabType: extracted.vocabType,
+                      stopTokens: stopTokens, markers: ReasoningMarkers(tokenizer: context.tokenizer))
     }
 
     var size: Int { pieces.count }
@@ -154,7 +158,7 @@ struct JSONConstraintProcessor: LogitProcessor {
     }
 
     func process(logits: MLXArray) -> MLXArray {
-        guard phase != .reasoning, let words = allowedTokens(), words.contains(where: { $0 != 0 }) else { return logits }
+        guard phase != .reasoning, let words = allowedTokens() else { return logits }
         var allowed = (MLXArray(words.map { UInt32(bitPattern: $0) }).take(wordIndex) >> bitOffset) & 1
         let width = logits.dim(-1)
         if width > vocabulary.size {

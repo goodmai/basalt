@@ -83,15 +83,20 @@ enum ConstrainedModel {
         """#
 
     static func engine(
-        opensThinking: Bool = false, profile: any ModelProfile = GenericProfile(), endsText: Bool = true
+        opensThinking: Bool = false, profile: any ModelProfile = GenericProfile(), endsText: Bool = true,
+        tokenizer: (any MLXLMCommon.Tokenizer)? = nil
     ) async throws -> MLXInferenceEngine {
         let engine = MLXInferenceEngine()
-        await engine.attach(ModelContainer(context: ModelContext(
+        await engine.attach(try container(opensThinking: opensThinking, tokenizer: tokenizer ?? JSONPieceTokenizer(endsText: endsText)),
+                            profile: profile)
+        return engine
+    }
+
+    static func container(opensThinking: Bool = false, tokenizer: any MLXLMCommon.Tokenizer = JSONPieceTokenizer()) throws -> ModelContainer {
+        ModelContainer(context: ModelContext(
             configuration: ModelConfiguration(id: "tiny-json", reasoningConfig: QwenReasoningProtocol.tagged),
             model: try withRandomState(MLXRandom.RandomState(seed: 56)) { try TinyModel.make() },
-            processor: JSONPieceInputProcessor(opensThinking: opensThinking),
-            tokenizer: JSONPieceTokenizer(endsText: endsText))), profile: profile)
-        return engine
+            processor: JSONPieceInputProcessor(opensThinking: opensThinking), tokenizer: tokenizer))
     }
 
     static func request(
@@ -342,6 +347,87 @@ struct JSONConstraintProcessorTests {
         session.commit(Int(UInt8(ascii: "{")))
         session.commit(Int(UInt8(ascii: "q")))
         #expect(session.rewound() == nil)
+    }
+}
+
+struct ListTokenizer: MLXLMCommon.Tokenizer {
+    final class Lookups: Sendable {
+        let count = Mutex(0)
+    }
+
+    let pieces: [Int: String]
+    var eosToken: String?
+    let lookups = Lookups()
+
+    func encode(text: String, addSpecialTokens: Bool) -> [Int] { convertTokenToId(text).map { [$0] } ?? [] }
+    func decode(tokenIds: [Int], skipSpecialTokens: Bool) -> String { tokenIds.compactMap { pieces[$0] }.joined() }
+    func convertTokenToId(_ token: String) -> Int? { pieces.first { $0.value == token }?.key }
+    func convertIdToToken(_ id: Int) -> String? {
+        lookups.count.withLock { $0 += 1 }
+        return pieces[id]
+    }
+    var bosToken: String? { nil }
+    var unknownToken: String? { nil }
+
+    func applyChatTemplate(
+        messages: [[String: any Sendable]],
+        tools: [[String: any Sendable]]?,
+        additionalContext: [String: any Sendable]?
+    ) throws -> [Int] { [] }
+
+    static func bytes(_ extra: [Int: String]) -> [Int: String] {
+        Dictionary(uniqueKeysWithValues: (0..<128).map { ($0, String(UnicodeScalar(UInt8($0)))) }).merging(extra) { $1 }
+    }
+}
+
+@Suite("Grammar vocabulary from the loaded tokenizer (#42)")
+struct GrammarVocabularyTests {
+    static func vocabulary(_ tokenizer: ListTokenizer, extraEOSTokens: Set<String> = []) throws -> GrammarVocabulary {
+        try GrammarVocabulary(context: ModelContext(
+            configuration: ModelConfiguration(id: "list", extraEOSTokens: extraEOSTokens), model: try TinyModel.make(),
+            processor: JSONPieceInputProcessor(opensThinking: false), tokenizer: tokenizer))
+    }
+
+    static func processor(_ vocabulary: GrammarVocabulary, _ schema: String = #"{"type": "string"}"#) throws -> JSONConstraintProcessor {
+        let prepared = try JSONSchemaGate.prepare(schema, strict: true).schema
+        let grammar = try GrammarConstraint(tokenizer: vocabulary.tokenizer, jsonSchema: prepared)
+        return JSONConstraintProcessor(session: GrammarSession(schema: prepared, grammar: grammar), vocabulary: vocabulary, phase: .constrained)
+    }
+
+    static func allowed(_ processor: JSONConstraintProcessor) throws -> [Int] {
+        let mask = try #require(processor.allowedTokens())
+        return (0..<processor.vocabulary.size).filter(mask.allows)
+    }
+
+    @Test("Stop tokens and reasoning markers past a gap in the ids are kept, never fit inside a value, and every stop token ends the document")
+    func reservedTokensPastAGap() throws {
+        let tokenizer = ListTokenizer(
+            pieces: ListTokenizer.bytes([250: "<think>", 251: "</think>", 252: "<eos>", 253: "<|im_end|>"]), eosToken: "<eos>")
+        let vocabulary = try Self.vocabulary(tokenizer, extraEOSTokens: ["<|im_end|>"])
+        #expect(vocabulary.size == 254)
+        #expect(vocabulary.stopTokens == [252, 253])
+        var processor = try Self.processor(vocabulary)
+        processor.didSample(token: MLXArray(Int32(UInt8(ascii: "\""))))
+        let inside = try Self.allowed(processor)
+        #expect(inside.contains(Int(UInt8(ascii: "a"))))
+        #expect(inside.filter { $0 >= 128 }.isEmpty, "\(inside.filter { $0 >= 128 })")
+        processor.didSample(token: MLXArray(Int32(UInt8(ascii: "\""))))
+        #expect(try Self.allowed(processor) == [252, 253])
+    }
+
+    @Test("A stop token beyond the last piece still ends a closed document: logits wider or narrower than the vocabulary are masked to it")
+    func closedDocumentAllowsOnlyStops() throws {
+        let vocabulary = try GrammarVocabulary(
+            pieces: (0..<128).map { String(UnicodeScalar(UInt8($0))) }, vocabType: .raw, stopTokens: [200], markers: ReasoningMarkers())
+        #expect(vocabulary.size == 201)
+        var processor = try Self.processor(vocabulary)
+        for byte in Array(#""ok""#.utf8) { processor.didSample(token: MLXArray(Int32(byte))) }
+        let wide = processor.process(logits: MLXArray.zeros([1, 300]))
+        #expect(wide.dim(-1) == 300)
+        #expect((0..<300).filter { wide[0, $0].item(Float.self) == 0 } == [200])
+        let narrow = processor.process(logits: MLXArray.zeros([1, 150]))
+        #expect(narrow.dim(-1) == 150)
+        #expect(narrow.max().item(Float.self) == -Float.infinity)
     }
 }
 
