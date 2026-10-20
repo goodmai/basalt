@@ -103,4 +103,76 @@ struct GrammarMaskerTests {
         #expect(spm.bytes(of: 1) == [0x0A])
         #expect(spm.bytes(of: 2) == Array("é".utf8))
     }
+
+    static var tokenizerDirectory: String? {
+        let env = ProcessInfo.processInfo.environment
+        guard env["BASALT_E2E"] == "1" else { return nil }
+        return env["BASALT_E2E_TOKENIZER_PATH"]
+    }
+
+    static let order = #"""
+        {"type": "object", "properties": {
+            "customer": {"type": "string"},
+            "status": {"enum": ["pending", "shipped", "delivered"]},
+            "items": {"type": "array", "items": {"type": "object", "properties": {
+                "sku": {"type": "string"}, "quantity": {"type": "integer"}, "price": {"type": "number"},
+                "tags": {"type": "array", "items": {"type": "string"}}},
+                "required": ["sku", "quantity", "price", "tags"]}}},
+         "required": ["customer", "status", "items"]}
+        """#
+
+    static func greedyTokens(_ text: String, _ vocabulary: TokenVocabulary) -> [Int] {
+        var byBytes: [[UInt8]: Int] = [:]
+        for id in 0..<vocabulary.size where !vocabulary.bytes(of: id).isEmpty { byBytes[vocabulary.bytes(of: id)] = id }
+        let bytes = Array(text.utf8)
+        var ids: [Int] = []
+        var start = 0
+        while start < bytes.count {
+            let end = (start + 1...min(bytes.count, start + 16)).last { byBytes[Array(bytes[start..<$0])] != nil }!
+            ids.append(byBytes[Array(bytes[start..<end])]!)
+            start = end
+        }
+        return ids
+    }
+
+    @Test("On a real tokenizer every token of a valid document is allowed, and the per-token mask cost is measured",
+          .enabled(if: tokenizerDirectory != nil, "set BASALT_E2E=1 and BASALT_E2E_TOKENIZER_PATH (a model directory)"))
+    func realVocabulary() throws {
+        let clock = ContinuousClock()
+        let url = URL(fileURLWithPath: try #require(Self.tokenizerDirectory)).appendingPathComponent("tokenizer.json")
+        var vocabulary: TokenVocabulary?
+        let loading = try clock.measure { vocabulary = try TokenVocabulary.load(tokenizerJSON: Data(contentsOf: url)) }
+        let masker = GrammarMasker(grammar: try grammar(Self.order), vocabulary: try #require(vocabulary))
+        let document = """
+            {
+              "customer": "Ada Lovelace \\"AL\\"",
+              "status": "shipped",
+              "items": [
+                {"sku": "A-1", "quantity": 2, "price": 19.99, "tags": ["red", "large"]},
+                {"sku": "B-22", "quantity": 10, "price": 3.5e1, "tags": []}
+              ]
+            }
+            """
+        let tokens = Self.greedyTokens(document, masker.vocabulary)
+        func walk() throws -> [Duration] {
+            var matcher = JSONGrammarMatcher(grammar: masker.grammar)
+            var costs: [Duration] = []
+            for token in tokens {
+                var mask = TokenMask(size: 0)
+                costs.append(clock.measure { mask = masker.mask(for: matcher) })
+                let allowed = mask.contains(token)
+                #expect(allowed, "\(String(decoding: masker.vocabulary.bytes(of: token), as: UTF8.self))")
+                let accepted = matcher.accept(masker.vocabulary.bytes(of: token))
+                try #require(accepted)
+            }
+            #expect(matcher.isAccepting)
+            return costs
+        }
+        let cold = try walk()
+        let warm = try walk()
+        func micros(_ duration: Duration) -> Double { Double(duration.components.attoseconds) / 1e12 + Double(duration.components.seconds) * 1e6 }
+        let coldTotal = cold.map(micros).reduce(0, +)
+        let warmMean = warm.map(micros).reduce(0, +) / Double(warm.count)
+        print("grammar-mask vocab=\(masker.vocabulary.size) load=\(loading) tokens=\(tokens.count) cold-total=\(Int(coldTotal))us cold-max=\(Int(cold.map(micros).max()!))us warm-mean=\(String(format: "%.1f", warmMean))us warm-max=\(Int(warm.map(micros).max()!))us")
+    }
 }
