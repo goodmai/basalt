@@ -136,4 +136,46 @@ struct JSONSchemaGateTests {
             #expect(seconds < 1, "\(seconds) s")
         }
     }
+
+    @Test("The order-keeping reader never traps: UTF-16 and UTF-32 bodies, truncations and random bytes come back as nil or a value")
+    func orderedReaderNeverTraps() throws {
+        var generator = SystemRandomNumberGenerator()
+        func value(_ depth: Int) -> Any {
+            switch Int.random(in: 0..<6, using: &generator) {
+            case 0 where depth < 4: return (0..<Int.random(in: 0..<4, using: &generator)).map { _ in value(depth + 1) }
+            case 1 where depth < 4: return Dictionary(uniqueKeysWithValues: (0..<Int.random(in: 0..<4, using: &generator)).map { ("k\($0)", value(depth + 1)) })
+            case 2: return "s\\\"\(Int.random(in: 0..<100, using: &generator))"
+            case 3: return Int.random(in: -100...100, using: &generator)
+            case 4: return true
+            default: return NSNull()
+            }
+        }
+        for round in 0..<500 {
+            let document = try JSONSerialization.data(
+                withJSONObject: ["response_format": value(0), "b": [value(0)]], options: round % 2 == 0 ? [.prettyPrinted] : [])
+            let text = String(decoding: document, as: UTF8.self)
+            #expect(OrderedJSON.parse(document) != nil)
+            for encoding: String.Encoding in [.utf16LittleEndian, .utf16BigEndian, .utf16, .utf32LittleEndian] {
+                #expect(OrderedJSON.parse(try #require(text.data(using: encoding))) == nil)
+            }
+            for cut in stride(from: 0, to: document.count, by: max(1, document.count / 7)) {
+                _ = OrderedJSON.parse(document.prefix(cut))
+                var reader = OrderedJSON.Reader(bytes: Array(document.prefix(cut)))
+                _ = try? reader.value()
+            }
+            var noise = OrderedJSON.Reader(bytes: (0..<Int.random(in: 0..<64, using: &generator)).map { _ in
+                Array("{}[]\",:\\ a1".utf8).randomElement(using: &generator)!
+            })
+            _ = try? noise.value()
+        }
+    }
+
+    @Test("Keeping only response_format reads that subtree and skips the rest of the body, strings with brackets included")
+    func keepsTheFormatSubtree() throws {
+        let body = Data(#"{"messages": [{"content": "}]{[\"x"}], "response_format": {"type": "json_object", "n": [1, {"a": "]"}]}, "tail": 7}"#.utf8)
+        let kept = try #require(OrderedJSON.parse(body, keeping: ["response_format"]))
+        #expect(kept.text == #"{"response_format":{"type":"json_object","n":[1,{"a":"]"}]}}"#)
+        #expect(OrderedJSON.parse(body)?["response_format"] == kept["response_format"])
+    }
 }
+

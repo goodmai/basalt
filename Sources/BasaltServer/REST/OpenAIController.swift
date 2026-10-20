@@ -922,7 +922,7 @@ struct OpenAIController: Sendable {
             return .jsonObject
         case "json_schema":
             let declaration = (format["json_schema"] as? [String: Any]) ?? format
-            let ordered = OrderedJSON.parse(data)
+            let ordered = OrderedJSON.parse(data, keeping: ["response_format", "text"])
             let orderedFormat = ordered?["response_format"] ?? ordered?["text"]?["format"]
             guard declaration["schema"] != nil, let text = (orderedFormat?["json_schema"] ?? orderedFormat)?["schema"]?.text else {
                 throw InvalidResponseFormat(message: "response_format json_schema needs a schema")

@@ -42,11 +42,11 @@ public indirect enum OrderedJSON: Equatable, Sendable {
     case array([OrderedJSON])
     case scalar(String)
 
-    public static func parse(_ data: Data) -> OrderedJSON? {
-        guard JSONNesting.depth(of: data) <= JSONSchemaGate.depthLimit,
+    public static func parse(_ data: Data, keeping topLevelKeys: Set<String>? = nil) -> OrderedJSON? {
+        guard !data.contains(0), JSONNesting.depth(of: data) <= JSONSchemaGate.depthLimit,
               (try? JSONSerialization.jsonObject(with: data, options: .fragmentsAllowed)) != nil else { return nil }
         var reader = Reader(bytes: Array(data))
-        return reader.value()
+        return try? reader.value(keeping: topLevelKeys)
     }
 
     public subscript(key: String) -> OrderedJSON? {
@@ -63,52 +63,103 @@ public indirect enum OrderedJSON: Equatable, Sendable {
     }
 
     struct Reader {
+        struct Malformed: Error {}
+
+        static let whitespace: Set<UInt8> = Set(" \t\r\n".utf8)
+        static let scalarEnd: Set<UInt8> = whitespace.union(",]}:".utf8)
+
         let bytes: [UInt8]
         var index = 0
+        var depth = 0
 
-        mutating func value() -> OrderedJSON {
+        func current() throws(Malformed) -> UInt8 {
+            guard index < bytes.count else { throw Malformed() }
+            return bytes[index]
+        }
+
+        mutating func value(keeping topLevelKeys: Set<String>? = nil) throws(Malformed) -> OrderedJSON {
             skipWhitespace()
-            switch bytes[index] {
+            switch try current() {
             case UInt8(ascii: "{"):
-                index += 1
+                try enter()
+                defer { depth -= 1 }
                 var members: [Member] = []
                 while true {
                     skipWhitespace()
-                    if bytes[index] == UInt8(ascii: "}") { index += 1; return .object(members) }
-                    if bytes[index] == UInt8(ascii: ",") { index += 1; continue }
-                    let quoted = string()
+                    switch try current() {
+                    case UInt8(ascii: "}"): index += 1; return .object(members)
+                    case UInt8(ascii: ","): index += 1; continue
+                    default: break
+                    }
+                    let quoted = try string()
                     skipWhitespace()
+                    guard try current() == UInt8(ascii: ":") else { throw Malformed() }
                     index += 1
-                    members.append(Member(key: Self.decoded(quoted), quotedKey: quoted, value: value()))
+                    let key = Self.decoded(quoted)
+                    if let topLevelKeys, !topLevelKeys.contains(key) {
+                        try skipValue()
+                    } else {
+                        members.append(Member(key: key, quotedKey: quoted, value: try value()))
+                    }
                 }
             case UInt8(ascii: "["):
-                index += 1
+                try enter()
+                defer { depth -= 1 }
                 var items: [OrderedJSON] = []
                 while true {
                     skipWhitespace()
-                    if bytes[index] == UInt8(ascii: "]") { index += 1; return .array(items) }
-                    if bytes[index] == UInt8(ascii: ",") { index += 1; continue }
-                    items.append(value())
+                    switch try current() {
+                    case UInt8(ascii: "]"): index += 1; return .array(items)
+                    case UInt8(ascii: ","): index += 1; continue
+                    default: items.append(try value())
+                    }
                 }
             case UInt8(ascii: "\""):
-                return .scalar(string())
+                return .scalar(try string())
             default:
                 let start = index
-                while index < bytes.count, !Array(",]} \t\r\n".utf8).contains(bytes[index]) { index += 1 }
+                while index < bytes.count, !Self.scalarEnd.contains(bytes[index]) { index += 1 }
+                guard index > start else { throw Malformed() }
                 return .scalar(String(decoding: bytes[start..<index], as: UTF8.self))
             }
         }
 
-        mutating func string() -> String {
+        mutating func enter() throws(Malformed) {
+            depth += 1
+            guard depth <= JSONSchemaGate.depthLimit else { throw Malformed() }
+            index += 1
+        }
+
+        mutating func skipValue() throws(Malformed) {
+            var open = 0
+            while true {
+                switch try current() {
+                case UInt8(ascii: "\""): try skipString()
+                case UInt8(ascii: "{"), UInt8(ascii: "["): open += 1; index += 1
+                case UInt8(ascii: "}"), UInt8(ascii: "]"):
+                    guard open > 0 else { return }
+                    open -= 1; index += 1
+                case UInt8(ascii: ",") where open == 0: return
+                default: index += 1
+                }
+            }
+        }
+
+        mutating func skipString() throws(Malformed) {
+            index += 1
+            while try current() != UInt8(ascii: "\"") { index += bytes[index] == UInt8(ascii: "\\") ? 2 : 1 }
+            index += 1
+        }
+
+        mutating func string() throws(Malformed) -> String {
             let start = index
-            index += 1
-            while bytes[index] != UInt8(ascii: "\"") { index += bytes[index] == UInt8(ascii: "\\") ? 2 : 1 }
-            index += 1
+            guard try current() == UInt8(ascii: "\"") else { throw Malformed() }
+            try skipString()
             return String(decoding: bytes[start..<index], as: UTF8.self)
         }
 
         mutating func skipWhitespace() {
-            while index < bytes.count, Array(" \t\r\n".utf8).contains(bytes[index]) { index += 1 }
+            while index < bytes.count, Self.whitespace.contains(bytes[index]) { index += 1 }
         }
 
         static func decoded(_ quoted: String) -> String {

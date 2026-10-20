@@ -21,9 +21,14 @@ struct ResponseFormatAPITests {
 
     private func post(_ app: Application<RouterResponder<BasicRequestContext>>, _ uri: String, _ json: String,
                       _ check: @escaping @Sendable (TestResponse) throws -> Void) async throws {
+        try await post(app, uri, Data(json.utf8), check)
+    }
+
+    private func post(_ app: Application<RouterResponder<BasicRequestContext>>, _ uri: String, _ body: Data,
+                      _ check: @escaping @Sendable (TestResponse) throws -> Void) async throws {
         try await app.test(.router) { client in
             try await client.execute(uri: uri, method: .post, headers: [.contentType: "application/json"],
-                                     body: ByteBuffer(string: json)) { try check($0) }
+                                     body: ByteBuffer(bytes: body)) { try check($0) }
         }
     }
 
@@ -133,6 +138,30 @@ struct ResponseFormatAPITests {
             #expect(response.status == .badRequest)
             #expect(Self.errorMessage(response)?.contains("counting $ref") == true)
         }
+        try await post(app, "/v1/chat/completions", #"""
+            {"messages": [{"role": "user", "content": "hi"}], "response_format": {"type": "json_object"}}
+            """#) { #expect($0.status == .ok) }
+    }
+
+    @Test("A UTF-16 or UTF-32 body, even a pretty-printed one with response_format or one hiding deep nesting, is a 400 and the server keeps answering")
+    func nonUTF8BodyIsRefused() async throws {
+        let (app, engine) = try await app()
+        let formatted = """
+            {
+              "messages" : [ { "role" : "user", "content" : "hi" } ],
+              "response_format" : { "type" : "json_schema", "json_schema" : { "name" : "t", "schema" : \(Self.schema) } }
+            }
+            """
+        let deep = #"{"messages": [{"role": "user", "content": "\#u{0122}"}], "x": "# + String(repeating: "[", count: 600)
+            + String(repeating: "]", count: 600) + "}"
+        for (body, encoding) in [(formatted, String.Encoding.utf16LittleEndian), (formatted, .utf16BigEndian), (formatted, .utf16),
+                                 (formatted, .utf32LittleEndian), (deep, .utf16LittleEndian)] {
+            try await post(app, "/v1/chat/completions", try #require(body.data(using: encoding))) { response in
+                #expect(response.status == .badRequest)
+                #expect(Self.errorMessage(response) == "the request body is not UTF-8 JSON")
+            }
+        }
+        #expect(await engine.lastRequest == nil)
         try await post(app, "/v1/chat/completions", #"""
             {"messages": [{"role": "user", "content": "hi"}], "response_format": {"type": "json_object"}}
             """#) { #expect($0.status == .ok) }
