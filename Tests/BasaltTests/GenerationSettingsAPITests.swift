@@ -111,6 +111,16 @@ struct GenerationSettingsAPITests {
         #expect(await engine.lastRequest == nil)
     }
 
+    @Test("Anthropic: budget_tokens must be at least 1 and below max_tokens", arguments: [0, 6000, 7000])
+    func anthropicBudgetMustBeBelowMaxTokens(_ budget: Int) async throws {
+        let (app, engine) = try await app()
+        try await post(app, "/v1/messages", #"""
+            {"messages": [{"role": "user", "content": "hi"}], "max_tokens": 6000, "stream": true,
+             "thinking": {"type": "enabled", "budget_tokens": \#(budget)}}
+            """#) { #expect($0.status == .badRequest) }
+        #expect(await engine.lastRequest == nil)
+    }
+
     @Test("Usage reports reasoning tokens: chat completion_tokens_details, the include_usage stream chunk, Responses output_tokens_details")
     func usageReportsReasoningTokens() async throws {
         let (app, _) = try await app(reasoning: "one two three")

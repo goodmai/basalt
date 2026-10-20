@@ -242,6 +242,13 @@ struct AnthropicController: Sendable {
                                  type: "invalid_request_error")
         }
 
+        let maxTokens = dto.maxTokens ?? 8192
+        if dto.thinking?.type == "enabled", let budget = dto.thinking?.budgetTokens, budget < 1 || budget >= maxTokens {
+            return errorResponse(status: .badRequest,
+                                 message: "thinking.budget_tokens must be >= 1 and less than max_tokens (\(maxTokens))",
+                                 type: "invalid_request_error")
+        }
+
         let chat = Self.chatMessages(system: dto.system, messages: dto.messages)
         let prompt = ChatMessageInput.plainText(chat)
         let requested: OpenAIController.RequestedTools
@@ -261,7 +268,7 @@ struct AnthropicController: Sendable {
 
         let genRequest = GenerationRequest(
             prompt: service.prompt,
-            maxTokens: dto.maxTokens ?? 8192,
+            maxTokens: maxTokens,
             temperature: dto.temperature,
             topP: dto.topP,
             minP: dto.minP,

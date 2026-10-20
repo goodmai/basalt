@@ -235,7 +235,7 @@ struct RESTServerTests {
     @Test("Messages: system prompt, default max_tokens and thinking budget reach the engine; reply is a text block")
     func anthropicMessage() async throws {
         let s = try await setup()
-        let request = #"{"model": "claude-local/org--mock-model", "system": "You are Basalt.", "thinking": {"type": "enabled", "budget_tokens": 10000}, "messages": [{"role": "user", "content": "hi"}, {"role": "assistant", "content": "hello"}, {"role": "user", "content": "again"}]}"#
+        let request = #"{"model": "claude-local/org--mock-model", "system": "You are Basalt.", "thinking": {"type": "enabled", "budget_tokens": 8100}, "messages": [{"role": "user", "content": "hi"}, {"role": "assistant", "content": "hello"}, {"role": "user", "content": "again"}]}"#
         try await s.app.test(.router) { client in
             try await client.execute(uri: "/v1/messages", method: .post, headers: [.contentType: "application/json"], body: ByteBuffer(string: request)) { res in
                 #expect(res.status == .ok)
