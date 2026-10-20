@@ -112,8 +112,9 @@ struct SlidingWindowSnapshotTests {
         #expect(!cache.isSharable)
     }
 
-    @Test("A wrapped rotating snapshot restored and prefilled in chunks gives the logits of a full prefill")
-    func restoredWrappedWindowMatchesFullPrefill() throws {
+    @Test("A rotating snapshot wrapped by one-token writes, shallowly after a chunked head or deeply after a one-token head, restored and prefilled in chunks gives the logits of a full prefill",
+          arguments: [16, 1])
+    func restoredWrappedWindowMatchesFullPrefill(stepSize: Int) throws {
         let model = try TinySliding.make()
         let first = TinyModel.tokens(Conversation.firstTurn)
         let second = TinyModel.tokens(Conversation.afterToolCall)
@@ -122,9 +123,13 @@ struct SlidingWindowSnapshotTests {
 
         let head = try HybridPrefixSnapshot.prefillHead(
             MLXArray(first.map(Int32.init)), into: PromptCache(try model.newCache(parameters: nil)),
-            reused: 0, boundary: boundary, model: model, prefill: PrefillParameters(stepSize: 16))
+            reused: 0, boundary: boundary, model: model, prefill: PrefillParameters(stepSize: stepSize))
+        let kept = try #require(head.kept)
+        let rotating = kept.layers.compactMap { $0 as? RotatingKVCache }
+        #expect(!rotating.isEmpty)
+        #expect(rotating.allSatisfy { $0.metaState.last == "true" })
         var tree = PromptCacheTree(byteBudget: 1 << 30)
-        tree.store("ns", tokens: Array(first.prefix(boundary)), cache: try #require(head.kept))
+        tree.store("ns", tokens: Array(first.prefix(boundary)), cache: kept)
         #expect(tree.leaves().count == 1)
 
         let full = model(TinyHybrid.row(second), cache: try model.newCache(parameters: nil))
