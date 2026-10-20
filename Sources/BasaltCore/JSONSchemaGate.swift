@@ -45,7 +45,8 @@ public indirect enum OrderedJSON: Equatable, Sendable {
     public static func parse(_ data: Data, keeping topLevelKeys: Set<String>? = nil) -> OrderedJSON? {
         guard !data.contains(0), JSONNesting.depth(of: data) <= JSONSchemaGate.depthLimit,
               (try? JSONSerialization.jsonObject(with: data, options: .fragmentsAllowed)) != nil else { return nil }
-        var reader = Reader(bytes: Array(data))
+        let bytes = Array(data)
+        var reader = Reader(bytes: bytes.starts(with: [0xEF, 0xBB, 0xBF]) ? Array(bytes.dropFirst(3)) : bytes)
         return try? reader.value(keeping: topLevelKeys)
     }
 

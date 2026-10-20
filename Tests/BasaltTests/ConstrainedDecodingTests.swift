@@ -333,7 +333,7 @@ struct JSONConstraintProcessorTests {
         for byte in Array(#"{"mode"#.utf8) { session.commit(Int(byte)) }
         let pooled = try #require(session.rewound())
         #expect(try pooled.computeMask().mask == pristine)
-        session.commit(Int(UInt8(ascii: "\"")))
+        session.commit(Int(UInt8(ascii: "{")))
         #expect(try pooled.computeMask().mask == pristine)
         #expect(session.mask() == nil)
         #expect(session.rewound() == nil)
@@ -503,6 +503,14 @@ struct GrammarVocabularyTests {
         processor.didSample(token: MLXArray(Int32(261)))
         #expect(processor.phase == .constrained)
         #expect(try Self.allowed(processor).contains(Int(UInt8(ascii: "\""))))
+    }
+
+    @Test("A special token that also closes reasoning, like harmony's <|channel|>, never opens it, so <|channel|>final stays constrained")
+    func harmonyChannelIsNotAnOpener() throws {
+        let harmony = ListTokenizer(pieces: ListTokenizer.bytes([260: "<|channel|>", 262: "<eos>"]), eosToken: "<eos>", special: [260, 262])
+        let markers = ReasoningMarkers(tokenizer: harmony)
+        #expect(!markers.openers.contains(260))
+        #expect(markers.closers.contains([260]))
     }
 }
 

@@ -218,5 +218,12 @@ struct JSONSchemaGateTests {
         #expect(kept.text == #"{"response_format":{"type":"json_object","n":[1,{"a":"]"}]}}"#)
         #expect(OrderedJSON.parse(body)?["response_format"] == kept["response_format"])
     }
+
+    @Test("A UTF-8 body with a byte-order mark parses like the same body without it")
+    func byteOrderMarkIsSkipped() throws {
+        let body = Data(#"{"response_format": {"type": "json_object"}}"#.utf8)
+        let marked = Data([0xEF, 0xBB, 0xBF]) + body
+        #expect(try #require(OrderedJSON.parse(marked, keeping: ["response_format"])) == OrderedJSON.parse(body, keeping: ["response_format"]))
+    }
 }
 
