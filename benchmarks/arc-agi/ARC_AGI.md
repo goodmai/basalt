@@ -65,10 +65,11 @@ cp -R /tmp/arc-agi/data/evaluation benchmarks/arc-agi/dataset/evaluation
 ```
 
 В гибридном режиме `arc_agi_benchmark.py`:
-1. Модели подаётся системная инструкция сформировать функцию `transform(grid: list[list[int]]) -> list[list[int]]`.
+1. Модели подаются примеры `IN =` / `OUT =` и тестовая сетка под отдельной меткой `Test input (apply the rule to this):` / `TEST_IN =` (с общей меткой `IN =` модель путала тестовый вход с примером 1), и нейтральная инструкция: найти правило, которое переводит каждый `IN` примера в его `OUT`, и написать `transform(grid: list[list[int]]) -> list[list[int]]`. DSL перечислен как необязательный: списки, DSL и `numpy` (`np`) одинаково допустимы.
 2. Код извлекается из блока ` ```python ... ``` ` в ответе или в цепочке рассуждений.
 3. Код — недоверенный ввод (модель может ошибиться или быть prompt-injected), поэтому он исполняется не в процессе бенчмарка, а в дочернем `python3 -I -S arc_sandbox.py` (`arc_sandbox.py`): код и матрица `test_input` идут JSON'ом в stdin, результат — JSON-строкой в stdout. DSL-классы (`Point`, `Color`, `GridObject`, `Grid`) ребёнок импортирует из `arc_helpers.py`; `numpy` доступен как `np`, если установлен.
-4. Итоговая вычисленная матрица сравнивается с эталоном. Если код упал или не вернул сетку, делается откат (fallback) к прямому JSON-парсингу; превышение времени (`exec_timeout`), памяти (`exec_memory_limit`) или места во временном каталоге (`exec_disk_limit`) — сразу провал попытки.
+4. Код выполняется в одном дочернем процессе на всех входах обучающих примеров и на тестовом входе. Если он не воспроизводит `OUT` каждого примера, попытка провалена со статусом `train_mismatch`, и откат к JSON-парсингу не делается: сетка, написанная рядом с кодом, который не проходит примеры, — догадка. В попытку пишется `train_pairs_passed` из `train_pairs`.
+5. Итоговая вычисленная матрица сравнивается с эталоном. Если код упал или не вернул сетку, делается откат (fallback) к прямому JSON-парсингу; превышение времени (`exec_timeout`), памяти (`exec_memory_limit`) или места во временном каталоге (`exec_disk_limit`) — сразу провал попытки.
 
 ### Изоляция дочернего процесса
 
@@ -197,6 +198,23 @@ python3 arc_agi_benchmark.py --tasks 6150a2bd --engine-url http://127.0.0.1:8098
 # Увеличенный бюджет 24 000 токенов (Максимум Mac RAM) и температура 0.8
 python3 arc_agi_benchmark.py --split training --limit 10 --engine swift_mlx --max-tokens 24000 --temperature 0.8
 ```
+
+### 4.6. Параметры генерации модели (#105)
+
+| Флаг | Поле запроса | По умолчанию |
+| :--- | :--- | :--- |
+| `--temperature` | `temperature` | не отправляется: сервер берёт `generation_config.json` модели (Qwen3.8: 1.0 / top_p 0.95 / top_k 20), иначе 0.7 |
+| `--top-k` | `top_k` | не отправляется (то же) |
+| `--presence-penalty` | `presence_penalty` | не отправляется; карточка Ornith-1.5 рекомендует 1.5 |
+| `--reasoning-effort` | `reasoning_effort` | не отправляется: шаблон Qwen3.8 тогда думает на `xhigh`; `low` — коротко, `none` — без размышлений |
+| `--thinking-budget` | `thinking_budget` | не отправляется; после стольких токенов размышления сервер дописывает фразу Qwen «Considering the limited time…» и `</think>`, и модель отвечает |
+
+```bash
+python3 arc_agi_benchmark.py --tasks 6150a2bd d631b094 --engine-url http://127.0.0.1:8098/v1/chat/completions \
+  --max-tokens 8000 --thinking-budget 5000 --reasoning-effort low
+```
+
+В каждой попытке JSON-отчёта есть `finish_reason`, `completion_tokens`, `reasoning_tokens` (из `stream_options.include_usage`) и `answered` (был ли ответ вне размышлений).
 
 ---
 

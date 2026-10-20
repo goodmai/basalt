@@ -289,12 +289,16 @@ curl -s http://localhost:8080/api/v1/generate \
 |---|---|---|---|
 | `prompt` | string | required | Input text |
 | `maxTokens` | int | 8192 | Max tokens to generate |
-| `temperature` | float | 0.7 | Sampling temperature (0–2) |
-| `topP` | float | 0.9 | Nucleus sampling |
+| `temperature` | float | model | Sampling temperature (0–2); unset takes the model's `generation_config.json`, else 0.7 |
+| `topP` | float | model | Nucleus sampling (0–1); unset takes `generation_config.json`, else 0.9 |
+| `topK` | int | model | Keep the k most likely tokens; unset takes `--top-k`, then `generation_config.json`, else off |
+| `presencePenalty` | float | off | −2…2, subtracted from every token seen in the last 1024 tokens |
+| `repetitionPenalty` | float | `--repetition-penalty` | (0, 2], multiplicative penalty on recent tokens |
+| `thinkingBudget` | int | off | Reasoning tokens before the server forces the end of thinking (Qwen: "Considering the limited time by the user…" + `</think>`) so the answer fits in `maxTokens`; lowered to fit `maxTokens` minus the transition and an answer reserve of min(512, maxTokens/4); ignored when thinking is off or the model has no reasoning protocol |
 | `minP` | float | server | Min-P 0–1: drop tokens below `minP × max p`. Overrides `--min-p` and the model profile; `0` turns it off |
 | `dynamicTemperature` | bool | false | Entropy-based dynamic temperature (EDT): per token `T = T0·0.8^(1.5/H) + 0.5·R`, clamped to 0.05–2 (a colder request keeps its own temperature as the floor; `top_p`/`min_p` cut the original distribution), where `H` is the entropy of the next-token distribution and `R ∈ [0,1]` a repetition index. Near-greedy on confident tokens, warmer when a loop starts. No effect at `temperature: 0` |
 
-`/v1/chat/completions`, `/v1/responses` and `/v1/messages` take the same two fields as `min_p` and `dynamic_temperature`; MCP `gemma_generate` as `minP` and `dynamicTemperature`.
+`/v1/chat/completions`, `/v1/responses` and `/v1/messages` take the same two fields as `min_p` and `dynamic_temperature`; MCP `gemma_generate` as `minP` and `dynamicTemperature`. The OpenAI endpoints take `top_k`, `presence_penalty`, `repetition_penalty` and `thinking_budget`; `/v1/messages` takes `top_k` and `thinking: {"type": "enabled", "budget_tokens": N}` as the thinking budget. Usage reports `completion_tokens_details.reasoning_tokens` (chat; streamed with `stream_options.include_usage`) and `output_tokens_details.reasoning_tokens` (Responses).
 
 ### OpenAI-compatible
 
