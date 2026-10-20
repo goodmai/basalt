@@ -52,9 +52,15 @@ final class GrammarVocabulary: Sendable {
 }
 
 final class GrammarSession: Sendable {
+    struct Progress {
+        var committed: Int32 = 0
+        var failed = false
+        var retired = false
+    }
+
     let schema: String
-    let grammar: GrammarConstraint
-    private let committed = Atomic<Int32>(0)
+    private let grammar: GrammarConstraint
+    private let progress = Mutex(Progress())
 
     init(schema: String, grammar: GrammarConstraint) {
         self.schema = schema
@@ -62,12 +68,29 @@ final class GrammarSession: Sendable {
     }
 
     func commit(_ id: Int) {
-        guard (try? grammar.commitToken(Int32(id))) != nil else { return }
-        committed.add(1, ordering: .relaxed)
+        progress.withLock { progress in
+            guard !progress.retired else { return }
+            do {
+                _ = try grammar.commitToken(Int32(id))
+                progress.committed += 1
+            } catch {
+                progress.failed = true
+                GemLogger(module: "JSONConstraint").warn("grammar refused sampled token \(id), the session will not be pooled: \(error)")
+            }
+        }
+    }
+
+    func mask() -> MaskResult? {
+        progress.withLock { $0.retired ? nil : try? grammar.computeMask() }
     }
 
     func rewound() -> GrammarConstraint? {
-        (try? grammar.rollback(committed.exchange(0, ordering: .relaxed))).map { grammar }
+        progress.withLock { progress in
+            guard !progress.retired else { return nil }
+            progress.retired = true
+            guard !progress.failed, (try? grammar.rollback(progress.committed)) != nil else { return nil }
+            return grammar
+        }
     }
 }
 
@@ -116,7 +139,7 @@ struct JSONConstraintProcessor: LogitProcessor {
     func allowedTokens() -> [Int32]? {
         let phase = phase
         let words = (vocabulary.size + 31) / 32
-        guard let result = try? progress.session.grammar.computeMask() else {
+        guard let result = progress.session.mask() else {
             return vocabulary.stopTokens.reduce(into: [Int32](repeating: 0, count: words)) { $0.allow($1) }
         }
         guard result.needsApply else { return nil }

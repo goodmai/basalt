@@ -3,6 +3,7 @@ import Testing
 import Synchronization
 import MLX
 import MLXLMCommon
+import MLXLLM
 import MLXGuidedGeneration
 @testable import BasaltCore
 @testable import BasaltInference
@@ -204,6 +205,29 @@ struct ConstrainedDecodingEngineTests {
         #expect(rendered.contains { $0.contains("Switches the reactor mode") }, "\(rendered)")
     }
 
+    @Test("A stream the client abandons does not return its grammar to the pool; one that runs to its end does")
+    func abandonedStreamIsNotPooled() async throws {
+        let config = #"{"hidden_size": 1024, "num_hidden_layers": 12, "intermediate_size": 4096, "num_attention_heads": 8, "num_key_value_heads": 8, "rms_norm_eps": 1e-5, "vocab_size": 256, "rope_theta": 10000.0, "tie_word_embeddings": false}"#
+        MLXRandom.seed(56)
+        let model = LlamaModel(try JSONDecoder().decode(LlamaConfiguration.self, from: Data(config.utf8)))
+        model.update(parameters: model.parameters().mapValues { $0 * 4 })
+        eval(model)
+        let engine = MLXInferenceEngine()
+        await engine.attach(ModelContainer(context: ModelContext(
+            configuration: ModelConfiguration(id: "slow-json"), model: model,
+            processor: JSONPieceInputProcessor(opensThinking: false), tokenizer: JSONPieceTokenizer())))
+        let long = #"{"type": "string", "minLength": 300}"#
+        let schema = try JSONSchemaGate.prepare(long, strict: false).schema
+        let consumer = Task {
+            for await _ in try await engine.generateStream(request: ConstrainedModel.request(format: .jsonSchema(long), maxTokens: 400)) { break }
+        }
+        try await consumer.value
+        try await Task.sleep(for: .seconds(1))
+        #expect(await engine.idleGrammars[schema, default: []].isEmpty)
+        _ = try await engine.generate(request: ConstrainedModel.request(format: .jsonSchema(long), maxTokens: 400))
+        #expect(await engine.idleGrammars[schema]?.count == 1)
+    }
+
     @Test("A model without any stop token cannot end a constrained document, so response_format is a request error")
     func refusesWithoutStopTokens() async throws {
         let engine = try await ConstrainedModel.engine(endsText: false)
@@ -293,4 +317,31 @@ struct JSONConstraintProcessorTests {
         #expect(masked[0, Int(UInt8(ascii: "q"))].item(Float.self) == -Float.infinity)
         #expect(masked[0, Int(UInt8(ascii: "{"))].item(Float.self) == 0)
     }
+
+    @Test("A commit that lands after the session was rewound into the pool leaves the pooled grammar untouched, and the retired session masks nothing")
+    func lateCommitAfterRewind() throws {
+        let vocabulary = JSONPieceTokenizer.markerVocabulary
+        let schema = try JSONSchemaGate.prepare(ConstrainedModel.schema, strict: true).schema
+        let grammar = try GrammarConstraint(tokenizer: vocabulary.tokenizer, jsonSchema: schema)
+        let pristine = try grammar.computeMask().mask
+        let session = GrammarSession(schema: schema, grammar: grammar)
+        for byte in Array(#"{"mode"#.utf8) { session.commit(Int(byte)) }
+        let pooled = try #require(session.rewound())
+        #expect(try pooled.computeMask().mask == pristine)
+        session.commit(Int(UInt8(ascii: "\"")))
+        #expect(try pooled.computeMask().mask == pristine)
+        #expect(session.mask() == nil)
+        #expect(session.rewound() == nil)
+    }
+
+    @Test("A session whose grammar refused a sampled token is not pooled")
+    func refusedCommitIsNotPooled() throws {
+        let vocabulary = JSONPieceTokenizer.markerVocabulary
+        let schema = try JSONSchemaGate.prepare(ConstrainedModel.schema, strict: true).schema
+        let session = GrammarSession(schema: schema, grammar: try GrammarConstraint(tokenizer: vocabulary.tokenizer, jsonSchema: schema))
+        session.commit(Int(UInt8(ascii: "{")))
+        session.commit(Int(UInt8(ascii: "q")))
+        #expect(session.rewound() == nil)
+    }
 }
+

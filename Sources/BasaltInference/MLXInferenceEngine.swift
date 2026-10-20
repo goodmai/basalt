@@ -73,7 +73,7 @@ public actor MLXInferenceEngine: InferenceEngine {
     private var modelIsHybrid: Bool?
     private var templateSuffixes: [String: Int] = [:]
     private var grammarVocabulary: Result<GrammarVocabulary, ConstraintUnavailable>?
-    private var idleGrammars: [String: [GrammarConstraint]] = [:]
+    private(set) var idleGrammars: [String: [GrammarConstraint]] = [:]
     private let cacheBlendRatio: Float?
     private(set) var cacheBlend: CacheBlendStore?
 
@@ -885,8 +885,9 @@ public actor MLXInferenceEngine: InferenceEngine {
                     } else if forcedTool != nil, !arguments.isEmpty {
                         continuation.yield(.text(arguments))
                     }
-                    await Self.settle(launch, cancelled: Task.isCancelled || stoppedAfterCall)
-                    if let session = constraint?.session { await self.recycle(session, epoch: epoch) }
+                    let completed = !(Task.isCancelled || stoppedAfterCall)
+                    await Self.settle(launch, cancelled: !completed)
+                    if completed, let session = constraint?.session { await self.recycle(session, epoch: epoch) }
                     await self.keep(launch.cache, tokens: Array(promptTokens.prefix(launch.exactTokens)), namespace: namespace, releasing: lease, epoch: epoch)
 
                     // End of stream - send metadata
