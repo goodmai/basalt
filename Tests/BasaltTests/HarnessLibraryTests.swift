@@ -125,18 +125,6 @@ struct HarnessLibraryTests {
         return release
     }
 
-    static func holdLock(_ root: URL, for seconds: TimeInterval) throws -> MCPLines {
-        let holder = try lockedDescriptor(root)
-        let releasedAt = MCPLines()
-        Thread.detachNewThread {
-            Thread.sleep(forTimeInterval: seconds)
-            releasedAt.append(String(Date().timeIntervalSince1970))
-            flock(holder, LOCK_UN)
-            close(holder)
-        }
-        return releasedAt
-    }
-
     @Test("A writer waits for another process's flock on its directory while a query on that directory and a writer on another directory go on")
     func lockContentionIsPerDirectory() async throws {
         let root = Self.tempRoot()
@@ -146,23 +134,21 @@ struct HarnessLibraryTests {
             try? FileManager.default.removeItem(at: other)
         }
         try await HarnessExperienceLibrary(rootDirectory: root).addKnowledge(topic: "earlier", content: "c")
-        let releasedAt = try Self.holdLock(root, for: 1.5)
+        let events = MCPLines()
+        let release = try Self.holdLock(root, until: events)
         let blocked = Task {
             try await HarnessExperienceLibrary(rootDirectory: root).addKnowledge(topic: "blocked", content: "c")
-            return Date().timeIntervalSince1970
+            events.append("blocked written")
         }
         try await Task.sleep(nanoseconds: 200_000_000)
         let queried = try await HarnessExperienceLibrary(rootDirectory: root).query().map(\.topic)
-        let queriedAt = Date().timeIntervalSince1970
         try await HarnessExperienceLibrary(rootDirectory: other).addKnowledge(topic: "elsewhere", content: "c")
-        let otherWrittenAt = Date().timeIntervalSince1970
-        let blockedWrittenAt = try await blocked.value
+        events.append("query and other directory done")
+        try await blocked.value
 
-        let released = try #require(releasedAt.all.first.flatMap(Double.init))
         #expect(queried == ["earlier"])
-        #expect(queriedAt < released)
-        #expect(otherWrittenAt < released)
-        #expect(blockedWrittenAt >= released)
+        #expect(release.all == ["released after the probe"])
+        #expect(events.all == ["query and other directory done", "blocked written"])
     }
 
     @Test("A write failure leaves no half entry behind")
