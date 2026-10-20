@@ -18,7 +18,10 @@ struct ReasoningMarkers: Sendable {
     init(tokenizer: any MLXLMCommon.Tokenizer) {
         for opener in MLXInferenceEngine.thinkingOpeners {
             let ids = tokenizer.encode(text: opener, addSpecialTokens: false)
-            if ids.count == 1 { openers.insert(ids[0]) }
+            guard let first = ids.first else { continue }
+            let piece = tokenizer.decode(tokenIds: [first], skipSpecialTokens: false)
+            let opensAsSpecialToken = piece.count > 1 && opener.hasPrefix(piece) && tokenizer.decode(tokenIds: [first], skipSpecialTokens: true).isEmpty
+            if ids.count == 1 || opensAsSpecialToken { openers.insert(first) }
         }
         closers = Set(MLXInferenceEngine.thinkingClosers.map { tokenizer.encode(text: $0, addSpecialTokens: false) })
             .filter { !$0.isEmpty }.sorted { $0.count > $1.count }

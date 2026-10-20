@@ -357,10 +357,24 @@ struct ListTokenizer: MLXLMCommon.Tokenizer {
 
     let pieces: [Int: String]
     var eosToken: String?
+    var special: Set<Int> = []
     let lookups = Lookups()
 
-    func encode(text: String, addSpecialTokens: Bool) -> [Int] { convertTokenToId(text).map { [$0] } ?? [] }
-    func decode(tokenIds: [Int], skipSpecialTokens: Bool) -> String { tokenIds.compactMap { pieces[$0] }.joined() }
+    func encode(text: String, addSpecialTokens: Bool) -> [Int] {
+        var ids: [Int] = []
+        var rest = Substring(text)
+        while !rest.isEmpty {
+            guard let (id, piece) = pieces.filter({ !$0.value.isEmpty && rest.hasPrefix($0.value) }).max(by: { $0.value.count < $1.value.count })
+            else { return ids }
+            ids.append(id)
+            rest = rest.dropFirst(piece.count)
+        }
+        return ids
+    }
+
+    func decode(tokenIds: [Int], skipSpecialTokens: Bool) -> String {
+        tokenIds.filter { !skipSpecialTokens || !special.contains($0) }.compactMap { pieces[$0] }.joined()
+    }
     func convertTokenToId(_ token: String) -> Int? { pieces.first { $0.value == token }?.key }
     func convertIdToToken(_ id: Int) -> String? {
         lookups.count.withLock { $0 += 1 }
@@ -388,10 +402,12 @@ struct GrammarVocabularyTests {
             processor: JSONPieceInputProcessor(opensThinking: false), tokenizer: tokenizer))
     }
 
-    static func processor(_ vocabulary: GrammarVocabulary, _ schema: String = #"{"type": "string"}"#) throws -> JSONConstraintProcessor {
+    static func processor(
+        _ vocabulary: GrammarVocabulary, _ schema: String = #"{"type": "string"}"#, phase: JSONConstraintProcessor.Phase = .constrained
+    ) throws -> JSONConstraintProcessor {
         let prepared = try JSONSchemaGate.prepare(schema, strict: true).schema
         let grammar = try GrammarConstraint(tokenizer: vocabulary.tokenizer, jsonSchema: prepared)
-        return JSONConstraintProcessor(session: GrammarSession(schema: prepared, grammar: grammar), vocabulary: vocabulary, phase: .constrained)
+        return JSONConstraintProcessor(session: GrammarSession(schema: prepared, grammar: grammar), vocabulary: vocabulary, phase: phase)
     }
 
     static func allowed(_ processor: JSONConstraintProcessor) throws -> [Int] {
@@ -468,6 +484,25 @@ struct GrammarVocabularyTests {
         await engine.attach(try ConstrainedModel.container(tokenizer: JSONPieceTokenizer(endsText: false)))
         #expect(await engine.idleGrammars.isEmpty)
         await #expect(throws: BasaltError.self) { _ = try await engine.generate(request: request) }
+    }
+
+    @Test("An opener spelled as a special token plus text, like Gemma 4's <|channel>thought, opens reasoning on its special token; a plain-text one does not")
+    func multiTokenOpener() throws {
+        let channel = ListTokenizer(pieces: ListTokenizer.bytes([260: "<|channel>", 261: "<channel|>", 262: "<eos>"]), eosToken: "<eos>", special: [260, 261, 262])
+        let markers = ReasoningMarkers(tokenizer: channel)
+        #expect(markers.openers == [260])
+        #expect(markers.closers.contains([261]))
+        let plain = ListTokenizer(pieces: ListTokenizer.bytes([260: "<|channel>", 262: "<eos>"]), eosToken: "<eos>", special: [262])
+        #expect(ReasoningMarkers(tokenizer: plain).openers.isEmpty)
+
+        var processor = try Self.processor(try Self.vocabulary(channel), phase: .awaitingAnswer)
+        #expect(try Self.allowed(processor).contains(260))
+        processor.didSample(token: MLXArray(Int32(260)))
+        #expect(processor.phase == .reasoning)
+        for byte in Array("thought plan".utf8) { processor.didSample(token: MLXArray(Int32(byte))) }
+        processor.didSample(token: MLXArray(Int32(261)))
+        #expect(processor.phase == .constrained)
+        #expect(try Self.allowed(processor).contains(Int(UInt8(ascii: "\""))))
     }
 }
 
