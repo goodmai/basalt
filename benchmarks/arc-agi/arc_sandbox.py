@@ -111,14 +111,18 @@ def sandbox_profile(work_dir: str, numpy_package, images) -> str:
 
 
 def run_transform(code_blocks, grid, timeout: float = DEFAULT_TIMEOUT):
-    grids, status = run_transforms(code_blocks, [grid], timeout=timeout)
-    return (grids[-1] if grids else None), status
+    runs, status = run_blocks(code_blocks, [grid], timeout=timeout)
+    if runs is None:
+        return None, status
+    grid = next((run[-1] for run in runs if run[-1] is not None), None)
+    return (grid, status) if grid is not None else (None, "exec_failed")
 
 
-def run_transforms(code_blocks, grids, timeout: float = DEFAULT_TIMEOUT):
+def run_blocks(code_blocks, grids, timeout: float = DEFAULT_TIMEOUT):
     numpy_package, images = _numpy_paths()
+    total_timeout = timeout * len(code_blocks) * len(grids)
     request = {"blocks": code_blocks, "grids": grids, "numpy": numpy_package,
-               "cpu_seconds": int(timeout) + 1}
+               "cpu_seconds": int(total_timeout) + 1}
     with tempfile.TemporaryDirectory(prefix="arc-sandbox-") as raw_dir:
         work_dir = os.path.realpath(raw_dir)
         command = [PYTHON, "-I", "-S", CHILD_SCRIPT]
@@ -133,18 +137,19 @@ def run_transforms(code_blocks, grids, timeout: float = DEFAULT_TIMEOUT):
                 process.stdin.close()
             except BrokenPipeError:
                 pass
-            stopped = _supervise(process, timeout, work_dir)
+            stopped = _supervise(process, total_timeout, work_dir)
             if stopped:
                 return None, stopped
             output.seek(0)
             lines = output.read().splitlines()
     try:
-        results = json.loads(lines[-1])["grids"]
+        runs = json.loads(lines[-1])["runs"]
     except (IndexError, ValueError, KeyError, TypeError):
         return None, "exec_failed"
-    if not isinstance(results, list) or len(results) != len(grids) or not _is_grid(results[-1]):
+    if (not isinstance(runs, list) or len(runs) != len(code_blocks)
+            or not all(isinstance(run, list) and len(run) == len(grids) for run in runs)):
         return None, "exec_failed"
-    return [result if _is_grid(result) else None for result in results], "python_oop_exec_success"
+    return [[result if _is_grid(result) else None for result in run] for run in runs], "python_oop_exec_success"
 
 
 def _footprint_bytes(pid: int) -> int:
@@ -283,13 +288,8 @@ def _child_main():
         except ImportError:
             sys.modules.pop("numpy", None)
     _apply_limits(request["cpu_seconds"])
-    results = None
-    for code in request["blocks"]:
-        outputs = [_run_block_or_none(code, grid, base) for grid in request["grids"]]
-        if outputs[-1] is not None:
-            results = outputs
-            break
-    os.write(1, b"\n" + json.dumps({"grids": results}).encode() + b"\n")
+    runs = [[_run_block_or_none(code, grid, base) for grid in request["grids"]] for code in request["blocks"]]
+    os.write(1, b"\n" + json.dumps({"runs": runs}).encode() + b"\n")
     os._exit(0)
 
 

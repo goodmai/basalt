@@ -20,7 +20,7 @@ import argparse
 import glob
 from pathlib import Path
 
-from arc_sandbox import DEFAULT_TIMEOUT, run_transforms, sandbox_available
+from arc_sandbox import DEFAULT_TIMEOUT, run_blocks, sandbox_available
 
 # ─── Default Configurations ──────────────────────────────────────────────────
 
@@ -85,14 +85,15 @@ def execute_python_hybrid(text: str, test_input: list[list[int]], timeout: float
         code_blocks = re.findall(r"```[a-zA-Z]*\s*\n(.*def\s+\w+.*)\n\s*```", text, re.DOTALL)
     if code_blocks:
         inputs = [pair["input"] for pair in train_pairs] + [test_input]
-        grids, status = run_transforms(list(reversed(code_blocks)), inputs, timeout=timeout)
-        if grids is not None:
-            passed = sum(grid == pair["output"] for grid, pair in zip(grids, train_pairs))
-            if passed < len(train_pairs):
-                return None, "train_mismatch", passed
-            return grids[-1], status, passed
-        if status != "exec_failed":
+        runs, status = run_blocks(list(reversed(code_blocks)), inputs, timeout=timeout)
+        if runs is None:
             return None, status, 0
+        scores = [sum(grid == pair["output"] for grid, pair in zip(run, train_pairs)) for run in runs]
+        for run, passed in zip(runs, scores):
+            if run[-1] is not None and passed == len(train_pairs):
+                return run[-1], status, passed
+        answered = any(run[-1] is not None for run in runs)
+        return None, "train_mismatch" if answered else "exec_failed", max(scores)
     direct_grid = parse_grid(text)
     if direct_grid:
         return direct_grid, "json_parse_fallback", 0

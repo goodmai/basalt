@@ -1,6 +1,8 @@
 import unittest
+from unittest import mock
 
 import arc_agi_benchmark
+import arc_sandbox
 from arc_agi_benchmark import build_arc_prompt, execute_python_hybrid, openai_payload, request_options, stream_meta
 from arc_sandbox import sandbox_available
 
@@ -12,6 +14,8 @@ TASK = {
     "test": [{"input": [[0, 1], [2, 3]], "output": [[2, 0], [3, 1]]}],
 }
 ROTATE = "```python\ndef transform(grid):\n    return [list(row) for row in zip(*grid[::-1])]\n```"
+RAISES = "```python\ndef transform(grid):\n    raise ValueError(grid)\n```"
+WRONG = "```python\ndef transform(grid):\n    return [[9]]\n```"
 FIRST_PAIR_ONLY = ("```python\ndef transform(grid):\n    if grid[0][0] == 1:\n        return [[3, 1], [4, 2]]\n"
                    "    return [[2, 0], [3, 1]]\n```")
 
@@ -67,6 +71,27 @@ class TrainVerificationTest(unittest.TestCase):
         text = FIRST_PAIR_ONLY + "\nFinal answer: [[2, 0], [3, 1]]"
         self.assertEqual(execute_python_hybrid(text, TASK["test"][0]["input"], train_pairs=TASK["train"]),
                          (None, "train_mismatch", 1))
+
+    def test_an_earlier_block_that_reproduces_the_examples_wins_over_a_later_one_that_does_not(self):
+        text = ROTATE + "\n" + FIRST_PAIR_ONLY
+        self.assertEqual(execute_python_hybrid(text, TASK["test"][0]["input"], train_pairs=TASK["train"]),
+                         ([[2, 0], [3, 1]], "python_oop_exec_success", 2))
+
+    def test_without_a_matching_block_the_best_train_score_is_reported(self):
+        text = FIRST_PAIR_ONLY + "\n" + WRONG
+        self.assertEqual(execute_python_hybrid(text, TASK["test"][0]["input"], train_pairs=TASK["train"]),
+                         (None, "train_mismatch", 1))
+
+    def test_failing_code_does_not_fall_back_to_a_json_grid_in_the_text(self):
+        text = RAISES + "\nFinal answer: [[2, 0], [3, 1]]"
+        self.assertEqual(execute_python_hybrid(text, TASK["test"][0]["input"], train_pairs=TASK["train"]),
+                         (None, "exec_failed", 0))
+
+    def test_the_time_limit_scales_with_every_block_and_grid_executed(self):
+        with mock.patch.object(arc_sandbox, "_supervise", wraps=arc_sandbox._supervise) as supervise:
+            execute_python_hybrid(ROTATE + "\n" + WRONG, TASK["test"][0]["input"], timeout=1.5,
+                                  train_pairs=TASK["train"])
+        self.assertEqual(supervise.call_args.args[1], 1.5 * 2 * 3)
 
 
 if __name__ == "__main__":
