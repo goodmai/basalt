@@ -31,6 +31,7 @@ EXTENSION_DIR = os.path.join(os.path.realpath(sysconfig.get_path("platstdlib")),
 EXTENSION_SUFFIX = sysconfig.get_config_var("EXT_SUFFIX")
 FUNCTION_NAMES = ("transform", "solve", "transform_grid")
 MAX_BLOCKS = 8
+STARTUP_ALLOWANCE = 3.0
 MAX_GRID_SIDE = 30
 NUMPY_IMAGES_PROBE = """
 import ctypes, json, os, sys
@@ -121,9 +122,33 @@ def run_transform(code_blocks, grid, timeout: float = DEFAULT_TIMEOUT):
 def run_blocks(code_blocks, train_pairs, test_input, timeout: float = DEFAULT_TIMEOUT):
     numpy_package, images = _numpy_paths()
     blocks = list(code_blocks[:MAX_BLOCKS])
-    total_timeout = timeout * len(blocks) * (len(train_pairs) + 1)
-    request = {"blocks": blocks, "train": train_pairs, "test": test_input, "timeout": timeout,
-               "numpy": numpy_package, "cpu_seconds": int(total_timeout) + 1}
+    inputs = [pair["input"] for pair in train_pairs] + [test_input]
+    block_budget = timeout * len(inputs) + STARTUP_ALLOWANCE
+    total_deadline = time.monotonic() + block_budget * len(blocks)
+    best, answered, timed_out = 0, False, False
+    for code in blocks:
+        remaining = total_deadline - time.monotonic()
+        if remaining <= 0:
+            return None, "exec_timeout", best
+        outputs, block_timed_out, limit = _run_child(code, inputs, timeout, min(block_budget, remaining),
+                                                     numpy_package, images)
+        if limit:
+            return None, limit, best
+        train_outputs = outputs[:len(train_pairs)]
+        passed = sum(output == pair["output"] for output, pair in zip(train_outputs, train_pairs))
+        if passed == len(train_pairs) and len(outputs) == len(inputs) and outputs[-1] is not None:
+            return outputs[-1], "python_oop_exec_success", passed
+        best = max(best, passed)
+        answered = answered or any(output is not None for output in train_outputs)
+        timed_out = timed_out or block_timed_out
+    if answered:
+        return None, "train_mismatch", best
+    return None, "exec_timeout" if timed_out else "exec_failed", best
+
+
+def _run_child(code, inputs, timeout, wall_seconds, numpy_package, images):
+    request = {"code": code, "inputs": inputs, "timeout": timeout, "numpy": numpy_package,
+               "cpu_seconds": int(wall_seconds) + 1}
     with tempfile.TemporaryDirectory(prefix="arc-sandbox-") as raw_dir:
         work_dir = os.path.realpath(raw_dir)
         command = [PYTHON, "-I", "-S", CHILD_SCRIPT]
@@ -138,23 +163,27 @@ def run_blocks(code_blocks, train_pairs, test_input, timeout: float = DEFAULT_TI
                 process.stdin.close()
             except BrokenPipeError:
                 pass
-            stopped = _supervise(process, total_timeout, work_dir)
+            stopped = _supervise(process, wall_seconds, work_dir)
+            if stopped == "exec_timeout":
+                return [], True, None
             if stopped:
-                return None, stopped, 0
+                return [], False, stopped
             output.seek(0)
             lines = output.read().splitlines()
+    return (*_parse_outputs(lines, len(inputs)), None)
+
+
+def _parse_outputs(lines, count):
     try:
         outcome = json.loads(lines[-1])
-        grid, passed, answered, timed_out = (outcome[key] for key in ("grid", "passed", "answered", "timed_out"))
+        outputs, timed_out = outcome["outputs"], outcome["timed_out"]
     except (IndexError, ValueError, KeyError, TypeError):
-        return None, "exec_failed", 0
-    if type(passed) is not int:
-        return None, "exec_failed", 0
-    if _is_grid(grid):
-        return grid, "python_oop_exec_success", passed
-    if answered:
-        return None, "train_mismatch", passed
-    return None, "exec_timeout" if timed_out else "exec_failed", passed
+        return [], False
+    if not isinstance(outputs, list) or len(outputs) > count:
+        return [], False
+    if not all(output is None or _is_grid(output) for output in outputs):
+        return [], False
+    return outputs, timed_out is True
 
 
 def _footprint_bytes(pid: int) -> int:
@@ -287,30 +316,15 @@ def _run_block_or_none(code, grid, base, seconds):
         signal.setitimer(signal.ITIMER_REAL, 0)
 
 
-def _try_block(code, request, base):
-    passed, answered = 0, False
+def _outputs_for_inputs(request, base):
+    outputs = []
     try:
-        for pair in request["train"]:
-            grid = _run_block_or_none(code, pair["input"], base, request["timeout"])
-            answered = answered or grid is not None
-            passed += grid == pair["output"]
-        test_grid = None
-        if passed == len(request["train"]):
-            test_grid = _run_block_or_none(code, request["test"], base, request["timeout"])
-        return test_grid, passed, answered or test_grid is not None, False
+        for grid in request["inputs"]:
+            outputs.append(_run_block_or_none(request["code"], grid, base, request["timeout"]))
+        return outputs, False
     except _BlockTimeout:
         signal.setitimer(signal.ITIMER_REAL, 0)
-        return None, passed, answered, True
-
-
-def _first_reproducing_block(request, base):
-    best, answered, timed_out = 0, False, False
-    for code in request["blocks"]:
-        grid, passed, block_answered, block_timed_out = _try_block(code, request, base)
-        if grid is not None:
-            return {"grid": grid, "passed": passed, "answered": True, "timed_out": False}
-        best, answered, timed_out = max(best, passed), answered or block_answered, timed_out or block_timed_out
-    return {"grid": None, "passed": best, "answered": answered, "timed_out": timed_out}
+        return outputs, True
 
 
 def _import_by_path(name: str, path: str, package_dir=None):
@@ -334,8 +348,8 @@ def _child_main():
             sys.modules.pop("numpy", None)
     _apply_limits(request["cpu_seconds"])
     signal.signal(signal.SIGALRM, _raise_block_timeout)
-    outcome = _first_reproducing_block(request, base)
-    os.write(1, b"\n" + json.dumps(outcome).encode() + b"\n")
+    outputs, timed_out = _outputs_for_inputs(request, base)
+    os.write(1, b"\n" + json.dumps({"outputs": outputs, "timed_out": timed_out}).encode() + b"\n")
     os._exit(0)
 
 
