@@ -161,6 +161,7 @@ struct AnthropicController: Sendable {
         let stream: Bool?
         let thinking: ThinkingConfig?
         let reasoningEffort: String?
+        let topK: Int?
 
         enum CodingKeys: String, CodingKey {
             case model, messages, system, temperature, stream, thinking
@@ -169,6 +170,7 @@ struct AnthropicController: Sendable {
             case minP = "min_p"
             case dynamicTemperature = "dynamic_temperature"
             case reasoningEffort = "reasoning_effort"
+            case topK = "top_k"
         }
     }
 
@@ -260,8 +262,8 @@ struct AnthropicController: Sendable {
         let genRequest = GenerationRequest(
             prompt: service.prompt,
             maxTokens: dto.maxTokens ?? 8192,
-            temperature: dto.temperature ?? 0.7,
-            topP: dto.topP ?? 0.9,
+            temperature: dto.temperature,
+            topP: dto.topP,
             minP: dto.minP,
             dynamicTemperature: dto.dynamicTemperature,
             reasoningEffort: effort,
@@ -269,8 +271,15 @@ struct AnthropicController: Sendable {
             tools: requested.tools,
             toolChoice: requested.choice,
             cacheKey: PromptCacheKey.resolve(isService: service.isService),
-            messages: service.prompt == prompt ? chat : nil
+            messages: service.prompt == prompt ? chat : nil,
+            topK: dto.topK
         )
+        do {
+            _ = try genRequest.validated()
+        } catch {
+            return errorResponse(status: HTTPResponse.Status(code: error.httpStatus),
+                                 message: ModelsController.publicMessage(for: error), type: "invalid_request_error")
+        }
 
         let model = dto.model.map(ModelsController.restModel(from:))
         let requestedModel = model?.repoId

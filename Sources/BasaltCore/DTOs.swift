@@ -44,7 +44,7 @@ public struct ToolChoice: Codable, Sendable, Equatable {
 /// Единый DTO для генерации — используется и в MCP, и в REST (A2A).
 public struct GenerationRequest: Codable, Sendable {
     public let prompt: String
-    public let maxTokens: Int?
+    public private(set) var maxTokens: Int?
     public let temperature: Double?
     public let topP: Double?
     public let minP: Double?
@@ -55,13 +55,17 @@ public struct GenerationRequest: Codable, Sendable {
     /// Functions offered to the model; rendered into the chat template's tool section.
     public let tools: [ToolDefinition]?
     public let toolChoice: ToolChoice?
-    public let cacheKey: String?
+    public private(set) var cacheKey: String?
     public let messages: [ChatMessageInput]?
     public private(set) var assistantPrefix: String? = nil
+    public private(set) var topK: Int? = nil
+    public private(set) var presencePenalty: Double? = nil
+    public private(set) var repetitionPenalty: Double? = nil
 
     enum CodingKeys: String, CodingKey {
         case prompt, maxTokens, temperature, topP, minP, dynamicTemperature, enableThinking, reasoningEffort
         case isServiceRequest, tools, toolChoice, cacheKey, messages
+        case topK, presencePenalty, repetitionPenalty
     }
 
     public init(
@@ -78,7 +82,10 @@ public struct GenerationRequest: Codable, Sendable {
         toolChoice: ToolChoice? = nil,
         cacheKey: String? = nil,
         messages: [ChatMessageInput]? = nil,
-        assistantPrefix: String? = nil
+        assistantPrefix: String? = nil,
+        topK: Int? = nil,
+        presencePenalty: Double? = nil,
+        repetitionPenalty: Double? = nil
     ) {
         self.prompt = prompt
         self.maxTokens = maxTokens
@@ -94,47 +101,26 @@ public struct GenerationRequest: Codable, Sendable {
         self.cacheKey = cacheKey
         self.messages = messages
         self.assistantPrefix = assistantPrefix
+        self.topK = topK
+        self.presencePenalty = presencePenalty
+        self.repetitionPenalty = repetitionPenalty
     }
 
     /// The same request with another token budget. Kept next to the stored properties so a new
     /// field cannot be forgotten by a caller that rebuilds the request field by field.
     public func withMaxTokens(_ maxTokens: Int) -> GenerationRequest {
-        GenerationRequest(
-            prompt: prompt,
-            maxTokens: maxTokens,
-            temperature: temperature,
-            topP: topP,
-            minP: minP,
-            dynamicTemperature: dynamicTemperature,
-            enableThinking: enableThinking,
-            reasoningEffort: reasoningEffort,
-            isServiceRequest: isServiceRequest,
-            tools: tools,
-            toolChoice: toolChoice,
-            cacheKey: cacheKey,
-            messages: messages,
-            assistantPrefix: assistantPrefix
-        )
+        var copy = self
+        copy.maxTokens = maxTokens
+        return copy
     }
 
     public func withCacheKey(_ cacheKey: String?) -> GenerationRequest {
-        GenerationRequest(
-            prompt: prompt,
-            maxTokens: maxTokens,
-            temperature: temperature,
-            topP: topP,
-            minP: minP,
-            dynamicTemperature: dynamicTemperature,
-            enableThinking: enableThinking,
-            reasoningEffort: reasoningEffort,
-            isServiceRequest: isServiceRequest,
-            tools: tools,
-            toolChoice: toolChoice,
-            cacheKey: cacheKey,
-            messages: messages,
-            assistantPrefix: assistantPrefix
-        )
+        var copy = self
+        copy.cacheKey = cacheKey
+        return copy
     }
+
+    public static let maximumTokens = 131_072
 
     public func validated(defaultMaxTokens: Int = 4096) throws(BasaltError) -> GenerationRequest {
         guard !prompt.isEmpty || messages?.isEmpty == false else {
@@ -142,35 +128,26 @@ public struct GenerationRequest: Codable, Sendable {
         }
         
         let maxT = maxTokens ?? defaultMaxTokens
-        guard 1...131_072 ~= maxT else {
-            throw .contextLengthExceeded(maxTokens: 131_072, requested: maxT)
-        }
-        
-        let temp = temperature ?? 0.7
-        guard 0.0...2.0 ~= temp else {
-            throw .invalidRequestStructure(details: "temperature must be in [0.0, 2.0]")
+        guard 1...Self.maximumTokens ~= maxT else {
+            throw .contextLengthExceeded(maxTokens: Self.maximumTokens, requested: maxT)
         }
 
-        if let minP, !(0.0...1.0 ~= minP) {
-            throw .invalidRequestStructure(details: "min_p must be in [0.0, 1.0]")
-        }
-        
-        return GenerationRequest(
-            prompt: prompt,
-            maxTokens: maxT,
-            temperature: temp,
-            topP: topP ?? 0.9,
-            minP: minP,
-            dynamicTemperature: dynamicTemperature,
-            enableThinking: enableThinking,
-            reasoningEffort: reasoningEffort,
-            isServiceRequest: isServiceRequest,
-            tools: tools,
-            toolChoice: toolChoice,
-            cacheKey: cacheKey,
-            messages: messages,
-            assistantPrefix: assistantPrefix
-        )
+        try Self.require(temperature, in: 0.0...2.0, "temperature must be in [0.0, 2.0]")
+        try Self.require(topP, in: 0.0...1.0, "top_p must be in [0.0, 1.0]")
+        try Self.require(minP, in: 0.0...1.0, "min_p must be in [0.0, 1.0]")
+        try Self.require(topK, in: 0...Int.max, "top_k must be >= 0")
+        try Self.require(presencePenalty, in: -2.0...2.0, "presence_penalty must be in [-2.0, 2.0]")
+        try Self.require(repetitionPenalty, in: Double.leastNonzeroMagnitude...2.0, "repetition_penalty must be in (0.0, 2.0]")
+
+        var validated = self
+        validated.maxTokens = maxT
+        return validated
+    }
+
+    private static func require<Value: Comparable>(
+        _ value: Value?, in range: ClosedRange<Value>, _ message: String
+    ) throws(BasaltError) {
+        if let value, !range.contains(value) { throw .invalidRequestStructure(details: message) }
     }
 }
 

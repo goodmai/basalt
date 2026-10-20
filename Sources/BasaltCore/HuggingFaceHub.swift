@@ -152,7 +152,15 @@ public struct ModelCache: Sendable {
     }
 
     public static func config(at dir: URL) -> [String: Any]? {
-        guard let data = try? Data(contentsOf: dir.appendingPathComponent("config.json")) else { return nil }
+        json("config.json", at: dir)
+    }
+
+    public static func generationConfig(at dir: URL) -> [String: Any]? {
+        json("generation_config.json", at: dir)
+    }
+
+    private static func json(_ name: String, at dir: URL) -> [String: Any]? {
+        guard let data = try? Data(contentsOf: dir.appendingPathComponent(name)) else { return nil }
         return (try? JSONSerialization.jsonObject(with: data, options: .json5Allowed)) as? [String: Any]
     }
 

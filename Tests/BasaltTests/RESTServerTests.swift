@@ -73,8 +73,8 @@ struct RESTServerTests {
         #expect(sent.messages == [ChatMessageInput(role: .system, text: "Be terse."), ChatMessageInput(role: .user, text: "hi")])
         #expect(sent.prompt == "Be terse.\n\nhi")
         #expect(sent.maxTokens == 77)
-        #expect(sent.temperature == 0.7)
-        #expect(sent.topP == 0.9)
+        #expect(sent.temperature == nil, "absent temperature leaves the model's generation_config in charge")
+        #expect(sent.topP == nil, "absent top_p leaves the model's generation_config in charge")
         #expect(sent.minP == nil, "absent min_p leaves the server default in charge")
         #expect(sent.dynamicTemperature == nil)
     }

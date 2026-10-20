@@ -142,6 +142,9 @@ struct OpenAIController: Sendable {
         let dynamicTemperature: Bool?
         let stream: Bool?
         let reasoningEffort: String?
+        let topK: Int?
+        let presencePenalty: Double?
+        let repetitionPenalty: Double?
 
         enum CodingKeys: String, CodingKey {
             case model, messages, temperature, stream
@@ -150,6 +153,9 @@ struct OpenAIController: Sendable {
             case minP = "min_p"
             case dynamicTemperature = "dynamic_temperature"
             case reasoningEffort = "reasoning_effort"
+            case topK = "top_k"
+            case presencePenalty = "presence_penalty"
+            case repetitionPenalty = "repetition_penalty"
         }
     }
 
@@ -172,6 +178,9 @@ struct OpenAIController: Sendable {
         let reasoningEffort: String?
         let tools: [ResponseTool]?
         let additionalTools: [ResponseTool]?
+        let topK: Int?
+        let presencePenalty: Double?
+        let repetitionPenalty: Double?
 
         struct ReasoningConfig: Codable, Sendable {
             let effort: String?
@@ -188,6 +197,9 @@ struct OpenAIController: Sendable {
             case dynamicTemperature = "dynamic_temperature"
             case reasoningEffort = "reasoning_effort"
             case additionalTools = "additional_tools"
+            case topK = "top_k"
+            case presencePenalty = "presence_penalty"
+            case repetitionPenalty = "repetition_penalty"
         }
     }
 
@@ -361,8 +373,8 @@ struct OpenAIController: Sendable {
         let genRequest = GenerationRequest(
             prompt: service.prompt,
             maxTokens: dto.maxTokens,
-            temperature: dto.temperature ?? 0.7,
-            topP: dto.topP ?? 0.9,
+            temperature: dto.temperature,
+            topP: dto.topP,
             minP: dto.minP,
             dynamicTemperature: dto.dynamicTemperature,
             reasoningEffort: dto.reasoningEffort,
@@ -370,8 +382,12 @@ struct OpenAIController: Sendable {
             tools: requested.tools,
             toolChoice: requested.choice,
             cacheKey: PromptCacheKey.resolve(isService: service.isService),
-            messages: service.prompt == prompt ? chat : nil
+            messages: service.prompt == prompt ? chat : nil,
+            topK: dto.topK,
+            presencePenalty: dto.presencePenalty,
+            repetitionPenalty: dto.repetitionPenalty
         )
+        if let rejection = invalidParameters(genRequest) { return rejection }
         let model = dto.model.map(ModelsController.restModel(from:))
         let requestedModel = model?.repoId
         if model == .path {
@@ -457,8 +473,8 @@ struct OpenAIController: Sendable {
         let genRequest = GenerationRequest(
             prompt: service.prompt,
             maxTokens: maxT,
-            temperature: dto.temperature ?? 0.7,
-            topP: dto.topP ?? 0.9,
+            temperature: dto.temperature,
+            topP: dto.topP,
             minP: dto.minP,
             dynamicTemperature: dto.dynamicTemperature,
             reasoningEffort: dto.effectiveReasoningEffort,
@@ -466,8 +482,12 @@ struct OpenAIController: Sendable {
             tools: requested.tools,
             toolChoice: requested.choice,
             cacheKey: PromptCacheKey.resolve(isService: service.isService),
-            messages: service.prompt == prompt ? chat : nil
+            messages: service.prompt == prompt ? chat : nil,
+            topK: dto.topK,
+            presencePenalty: dto.presencePenalty,
+            repetitionPenalty: dto.repetitionPenalty
         )
+        if let rejection = invalidParameters(genRequest) { return rejection }
         let model = dto.model.map(ModelsController.restModel(from:))
         let requestedModel = model?.repoId
         if model == .path {
@@ -885,6 +905,16 @@ struct OpenAIController: Sendable {
         var buf = ByteBuffer(); buf.writeBytes(data)
         return Response(status: .ok, headers: [.contentType: "application/json"],
                         body: ResponseBody(byteBuffer: buf))
+    }
+
+    private func invalidParameters(_ request: GenerationRequest) -> Response? {
+        do {
+            _ = try request.validated()
+            return nil
+        } catch {
+            return makeErrorResponse(status: HTTPResponse.Status(code: error.httpStatus),
+                                     message: ModelsController.publicMessage(for: error), code: error.httpStatus)
+        }
     }
 
     private func makeErrorResponse(status: HTTPResponse.Status, message: String, code: Int) -> Response {

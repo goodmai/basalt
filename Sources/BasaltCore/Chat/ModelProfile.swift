@@ -191,6 +191,25 @@ public struct GenericProfile: ModelProfile {
     public var defaultMinP: Float? { nil }
 }
 
+public struct SamplingDefaults: Sendable, Equatable {
+    public let temperature: Double?
+    public let topP: Double?
+    public let topK: Int?
+
+    public init(temperature: Double? = nil, topP: Double? = nil, topK: Int? = nil) {
+        self.temperature = temperature
+        self.topP = topP
+        self.topK = topK
+    }
+
+    public init(generationConfig json: [String: Any]?) {
+        self.init(
+            temperature: (json?["temperature"] as? NSNumber)?.doubleValue,
+            topP: (json?["top_p"] as? NSNumber)?.doubleValue,
+            topK: (json?["top_k"] as? NSNumber)?.intValue)
+    }
+}
+
 // MARK: — Selection
 
 public enum ModelProfileRegistry {

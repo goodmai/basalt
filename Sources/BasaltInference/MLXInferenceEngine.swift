@@ -29,6 +29,7 @@ public actor MLXInferenceEngine: InferenceEngine {
     /// Resolved from the loaded model's config.json. Supplies per-family sampling
     /// defaults that the caller did not override.
     private var profile: any ModelProfile = GenericProfile()
+    private var samplingDefaults = SamplingDefaults()
     private let logger = GemLogger(module: "MLXInferenceEngine")
 
     /// Chat-template knob for models with a reasoning budget (Qwen3.8: xhigh | medium | low).
@@ -98,9 +99,13 @@ public actor MLXInferenceEngine: InferenceEngine {
         self.promptCaches = PromptCacheTree(byteBudget: promptCacheBytes ?? 0)
     }
 
-    func attach(_ container: ModelContainer, profile: any ModelProfile = GenericProfile()) {
+    func attach(
+        _ container: ModelContainer, profile: any ModelProfile = GenericProfile(),
+        samplingDefaults: SamplingDefaults = SamplingDefaults()
+    ) {
         self.container = container
         self.profile = profile
+        self.samplingDefaults = samplingDefaults
         let budget = configuredPromptCacheBytes ?? PromptCacheBudget.automatic(
             workingSet: PromptCacheBudget.gpuWorkingSet(), weights: Memory.activeMemory)
         let blendBytes = cacheBlendRatio == nil ? 0 : budget / 2
@@ -240,7 +245,9 @@ public actor MLXInferenceEngine: InferenceEngine {
             }
 
             attach(try await loadModelContainer(from: directory, using: DefaultTokenizerLoader()),
-                   profile: ModelProfileRegistry.profile(forModelAt: modelPath))
+                   profile: ModelProfileRegistry.profile(forModelAt: modelPath),
+                   samplingDefaults: SamplingDefaults(generationConfig: ModelCache.generationConfig(at: directory)))
+            logger.info("Sampling defaults from generation_config.json: \(samplingDefaults)")
             
             // Dynamic config inspection
             if let json = ModelCache.config(at: directory) {
@@ -496,17 +503,23 @@ public actor MLXInferenceEngine: InferenceEngine {
         return ToolCallOutput(id: "call_\(UUID().uuidString.prefix(24))", name: call.function.name, arguments: arguments)
     }
 
+    static let presenceContextSize = 1024
+
     func sampling(for request: GenerationRequest) -> (GenerateParameters, GenerationComponents) {
-        let temperature = Float(request.temperature ?? 0.7)
+        let temperature = Float(request.temperature ?? samplingDefaults.temperature ?? 0.7)
         var params = GenerateParameters(
             maxTokens: request.maxTokens ?? 1024,
             temperature: temperature,
-            topP: Float(request.topP ?? 0.9)
+            topP: Float(request.topP ?? samplingDefaults.topP ?? 0.9)
         )
         params.kvBits = kvBits
         params.quantizedKVStart = quantizedKVStart
-        params.repetitionPenalty = repetitionPenalty
-        if let topK { params.topK = topK }
+        params.repetitionPenalty = request.repetitionPenalty.map(Float.init) ?? repetitionPenalty
+        if let presencePenalty = request.presencePenalty {
+            params.presencePenalty = Float(presencePenalty)
+            params.presenceContextSize = Self.presenceContextSize
+        }
+        if let topK = request.topK ?? topK ?? samplingDefaults.topK { params.topK = topK }
         if let effectiveMinP = request.minP.map(Float.init) ?? minP ?? profile.defaultMinP {
             params.minP = effectiveMinP
         }
