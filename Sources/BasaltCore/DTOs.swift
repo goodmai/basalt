@@ -41,6 +41,18 @@ public struct ToolChoice: Codable, Sendable, Equatable {
     }
 }
 
+public enum ResponseFormat: Codable, Sendable, Equatable {
+    case jsonObject
+    case jsonSchema(String)
+
+    public func grammar() throws(UnsupportedJSONSchema) -> JSONGrammar {
+        switch self {
+        case .jsonObject: JSONGrammar.anyObject()
+        case .jsonSchema(let schema): try JSONGrammar.compile(schemaJSON: schema)
+        }
+    }
+}
+
 /// Единый DTO для генерации — используется и в MCP, и в REST (A2A).
 public struct GenerationRequest: Codable, Sendable {
     public let prompt: String
@@ -62,11 +74,12 @@ public struct GenerationRequest: Codable, Sendable {
     public private(set) var presencePenalty: Double? = nil
     public private(set) var repetitionPenalty: Double? = nil
     public private(set) var thinkingBudget: Int? = nil
+    public private(set) var responseFormat: ResponseFormat? = nil
 
     enum CodingKeys: String, CodingKey {
         case prompt, maxTokens, temperature, topP, minP, dynamicTemperature, enableThinking, reasoningEffort
         case isServiceRequest, tools, toolChoice, cacheKey, messages
-        case topK, presencePenalty, repetitionPenalty, thinkingBudget
+        case topK, presencePenalty, repetitionPenalty, thinkingBudget, responseFormat
     }
 
     public init(
@@ -87,7 +100,8 @@ public struct GenerationRequest: Codable, Sendable {
         topK: Int? = nil,
         presencePenalty: Double? = nil,
         repetitionPenalty: Double? = nil,
-        thinkingBudget: Int? = nil
+        thinkingBudget: Int? = nil,
+        responseFormat: ResponseFormat? = nil
     ) {
         self.prompt = prompt
         self.maxTokens = maxTokens
@@ -107,6 +121,7 @@ public struct GenerationRequest: Codable, Sendable {
         self.presencePenalty = presencePenalty
         self.repetitionPenalty = repetitionPenalty
         self.thinkingBudget = thinkingBudget
+        self.responseFormat = responseFormat
     }
 
     /// The same request with another token budget. Kept next to the stored properties so a new

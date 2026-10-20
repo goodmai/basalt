@@ -71,6 +71,9 @@ public actor MLXInferenceEngine: InferenceEngine {
     private var modelEpoch = 0
     private var modelIsHybrid: Bool?
     private var templateSuffixes: [String: Int] = [:]
+    private var tokenizerDirectory: URL?
+    private var vocabulary: TokenVocabulary?
+    private var maskers: [String: GrammarMasker] = [:]
     private let cacheBlendRatio: Float?
     private(set) var cacheBlend: CacheBlendStore?
 
@@ -101,9 +104,12 @@ public actor MLXInferenceEngine: InferenceEngine {
 
     func attach(
         _ container: ModelContainer, profile: any ModelProfile = GenericProfile(),
-        samplingDefaults: SamplingDefaults = SamplingDefaults()
+        samplingDefaults: SamplingDefaults = SamplingDefaults(), vocabulary: TokenVocabulary? = nil
     ) {
         self.container = container
+        self.vocabulary = vocabulary
+        tokenizerDirectory = nil
+        maskers = [:]
         self.profile = profile
         self.samplingDefaults = samplingDefaults
         let budget = configuredPromptCacheBytes ?? PromptCacheBudget.automatic(
@@ -247,6 +253,7 @@ public actor MLXInferenceEngine: InferenceEngine {
             attach(try await loadModelContainer(from: directory, using: DefaultTokenizerLoader()),
                    profile: ModelProfileRegistry.profile(forModelAt: modelPath),
                    samplingDefaults: SamplingDefaults(generationConfig: ModelCache.generationConfig(at: directory)))
+            tokenizerDirectory = directory
             logger.info("Sampling defaults from generation_config.json: \(samplingDefaults)")
             
             // Dynamic config inspection
@@ -506,6 +513,59 @@ public actor MLXInferenceEngine: InferenceEngine {
 
     static let presenceContextSize = 1024
 
+    struct OutputConstraint: Sendable {
+        let masker: GrammarMasker
+        let toolName: String?
+    }
+
+    func outputConstraint(for request: GenerationRequest) throws(BasaltError) -> OutputConstraint? {
+        let forcedTool = request.toolChoice?.forcedTool.flatMap { name in request.tools?.first { $0.name == name } }
+        let format = forcedTool.map { $0.parametersJSON.map(ResponseFormat.jsonSchema) ?? .jsonObject } ?? request.responseFormat
+        guard let format else { return nil }
+        let key = "\(format)"
+        if let known = maskers[key] { return OutputConstraint(masker: known, toolName: forcedTool?.name) }
+        let grammar: JSONGrammar
+        do {
+            grammar = try format.grammar()
+        } catch {
+            guard let forcedTool else { throw .invalidRequestStructure(details: "response_format: \(error.message)") }
+            logger.info("tool_choice \(forcedTool.name): arguments left unconstrained, \(error.message)")
+            return nil
+        }
+        guard let vocabulary = loadedVocabulary() else {
+            guard let forcedTool else {
+                throw .invalidRequestStructure(details: "response_format needs the model's tokenizer.json to constrain decoding")
+            }
+            logger.info("tool_choice \(forcedTool.name): arguments left unconstrained, no tokenizer.json vocabulary")
+            return nil
+        }
+        if maskers.count >= 16 { maskers.removeAll() }
+        let masker = GrammarMasker(grammar: grammar, vocabulary: vocabulary)
+        maskers[key] = masker
+        return OutputConstraint(masker: masker, toolName: forcedTool?.name)
+    }
+
+    private func loadedVocabulary() -> TokenVocabulary? {
+        if let vocabulary { return vocabulary }
+        guard let tokenizerDirectory,
+              let data = try? Data(contentsOf: tokenizerDirectory.appendingPathComponent("tokenizer.json")) else { return nil }
+        do {
+            vocabulary = try TokenVocabulary.load(tokenizerJSON: data)
+        } catch {
+            logger.warn("Constrained decoding unavailable: \(error.reason)")
+        }
+        return vocabulary
+    }
+
+    static func stopTokenIds(_ context: ModelContext) -> Set<Int> {
+        var ids = context.configuration.eosTokenIds
+        if let eos = context.tokenizer.eosTokenId { ids.insert(eos) }
+        for token in context.configuration.extraEOSTokens {
+            if let id = context.tokenizer.convertTokenToId(token) { ids.insert(id) }
+        }
+        return ids
+    }
+
     func sampling(for request: GenerationRequest) -> (GenerateParameters, GenerationComponents) {
         let temperature = Float(request.temperature ?? samplingDefaults.temperature ?? 0.7)
         var params = GenerateParameters(
@@ -588,6 +648,7 @@ public actor MLXInferenceEngine: InferenceEngine {
 
         let requestedMaxTokens = request.maxTokens ?? 1024
         let (params, unbudgeted) = sampling(for: request)
+        let constraint = try outputConstraint(for: request)
 
         let toolSpecs = Self.toolSpecs(request.tools)
         let declaredTools = Set(request.tools?.map(\.name) ?? [])
@@ -667,24 +728,28 @@ public actor MLXInferenceEngine: InferenceEngine {
                 ? promptTokens.count - 1
                 : await snapshotBoundary(renderedCount, container: container, epoch: epoch, template: template, makeInput)
             let blend = epoch == modelEpoch && modelIsHybrid == false ? cacheBlend : nil
+            let renderedTail = await container.perform {
+                $0.tokenizer.decode(tokenIds: Array(promptTokens.prefix(renderedCount).suffix(16)), skipSpecialTokens: false)
+            }
+            let promptEndsWithThinking = Self.endsInsideThinking(renderedTail, assistantPrefix: assistantPrefix ?? "")
+            let constrained = await Self.constraining(
+                components, with: constraint, container: container,
+                phase: policy == .disabled ? .constrained : promptEndsWithThinking ? .reasoning : .awaitingAnswer)
+            let forcedTool = constraint?.toolName
             let launch: GenerationLaunch
             do {
                 launch = try await container.perform(nonSendable: lmInput) { context, input in
                     try Self.launch(
                         input: input, lease: lease, keepsCache: namespace != nil, boundary: boundary,
                         blend: namespace.flatMap { space in blend.map { ($0, space) } },
-                        params: params, components: components, tools: toolSpecs, context: context)
+                        params: params, components: constrained, tools: forcedTool == nil ? toolSpecs : nil,
+                        context: context)
                 }
             } catch {
                 keep(nil, tokens: promptTokens, namespace: namespace, releasing: lease, epoch: epoch)
                 throw error
             }
             let mlxStream = launch.stream
-            
-            let renderedTail = await container.perform {
-                $0.tokenizer.decode(tokenIds: Array(promptTokens.prefix(renderedCount).suffix(16)), skipSpecialTokens: false)
-            }
-            let promptEndsWithThinking = Self.endsInsideThinking(renderedTail, assistantPrefix: assistantPrefix ?? "")
 
             return AsyncStream<StreamChunk> { continuation in
                 let task = Task.detached {
@@ -704,6 +769,7 @@ public actor MLXInferenceEngine: InferenceEngine {
 
                     var toolCallScanner = scansToolCallText ? NemotronToolCallScanner() : nil
                     var reasoningText = ""
+                    var forcedToolArguments = ""
                     func emitReasoning(_ text: String) {
                         reasoningText += text
                         continuation.yield(.reasoning(text))
@@ -712,6 +778,7 @@ public actor MLXInferenceEngine: InferenceEngine {
                         for chunk in gate.admit(chunks) { continuation.yield(chunk) }
                     }
                     func emitText(_ text: String) {
+                        guard forcedTool == nil else { forcedToolArguments += text; return }
                         guard var scanner = toolCallScanner else { continuation.yield(.text(text)); return }
                         admit(scanner.feed(text))
                         toolCallScanner = scanner
@@ -790,6 +857,11 @@ public actor MLXInferenceEngine: InferenceEngine {
                     
                     processBuffer(final: true)
                     admit(toolCallScanner?.finish() ?? [])
+                    let arguments = forcedToolArguments.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if let forcedTool, !arguments.isEmpty {
+                        admit([.toolCall(ToolCallOutput(
+                            id: "call_\(UUID().uuidString.prefix(24))", name: forcedTool, arguments: arguments))])
+                    }
                     await Self.settle(launch, cancelled: Task.isCancelled || stoppedAfterCall)
                     await self.keep(launch.cache, tokens: Array(promptTokens.prefix(launch.exactTokens)), namespace: namespace, releasing: lease, epoch: epoch)
 
@@ -841,6 +913,19 @@ public actor MLXInferenceEngine: InferenceEngine {
     }
 
     public var isLoaded: Bool { container != nil }
+
+    static func constraining(
+        _ components: GenerationComponents, with constraint: OutputConstraint?, container: ModelContainer,
+        phase: JSONConstraintProcessor.Phase
+    ) async -> GenerationComponents {
+        guard let constraint else { return components }
+        let (stops, markers) = await container.perform { context in
+            (stopTokenIds(context), ReasoningMarkers(tokenizer: context.tokenizer))
+        }
+        return components.appendingLogitProcessor {
+            JSONConstraintProcessor(masker: constraint.masker, stopTokens: stops, markers: markers, phase: phase)
+        }
+    }
 
     static func carriesMoreThanTokens(_ input: LMInput) -> Bool {
         input.image != nil || input.video != nil || input.audio != nil
