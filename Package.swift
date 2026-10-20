@@ -51,6 +51,7 @@ let package = Package(
                 .product(name: "MLXVLM",        package: "mlx-swift-lm"),
                 .product(name: "MLXLMCommon",   package: "mlx-swift-lm"),
                 .product(name: "MLXHuggingFace", package: "mlx-swift-lm"),
+                .product(name: "MLXGuidedGeneration", package: "mlx-swift-lm"),
                 .product(name: "Tokenizers",    package: "swift-transformers"),
                 .product(name: "Hub",           package: "swift-transformers"),
                 .product(name: "Jinja",         package: "swift-jinja"),
@@ -126,6 +127,7 @@ let package = Package(
             dependencies: [
                 "BasaltCore", "BasaltInference", "BasaltCloud", "BasaltServer", "BasaltUI", "BasaltCLI", "BasaltApp", "BasaltHarness",
                 .product(name: "HummingbirdTesting", package: "hummingbird"),
+                .product(name: "MLXGuidedGeneration", package: "mlx-swift-lm"),
                 .product(name: "Jinja", package: "swift-jinja"),
             ],
             path: "Tests/BasaltTests",

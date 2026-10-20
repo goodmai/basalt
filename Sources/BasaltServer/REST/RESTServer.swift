@@ -79,6 +79,7 @@ package struct RESTServer: Sendable {
         if let limit = config.rateLimitPerMinute {
             router.add(middleware: RateLimitMiddleware(requestsPerMinute: limit))
         }
+        router.add(middleware: JSONNestingLimitMiddleware())
 
         // ── Native API ──────────────────────────────────────────────────────────
         let v1 = router.group("/api/v1")

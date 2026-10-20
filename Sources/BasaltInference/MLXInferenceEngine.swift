@@ -7,6 +7,7 @@ import MLXLLM
 import MLXVLM
 import MLXLMCommon
 import MLXHuggingFace
+import MLXGuidedGeneration
 import Tokenizers
 import Hub
 import Jinja
@@ -71,6 +72,8 @@ public actor MLXInferenceEngine: InferenceEngine {
     private var modelEpoch = 0
     private var modelIsHybrid: Bool?
     private var templateSuffixes: [String: Int] = [:]
+    private var grammarVocabulary: Result<GrammarVocabulary, ConstraintUnavailable>?
+    private(set) var idleGrammars: [String: [GrammarConstraint]] = [:]
     private let cacheBlendRatio: Float?
     private(set) var cacheBlend: CacheBlendStore?
 
@@ -104,6 +107,8 @@ public actor MLXInferenceEngine: InferenceEngine {
         samplingDefaults: SamplingDefaults = SamplingDefaults()
     ) {
         self.container = container
+        grammarVocabulary = nil
+        idleGrammars = [:]
         self.profile = profile
         self.samplingDefaults = samplingDefaults
         let budget = configuredPromptCacheBytes ?? PromptCacheBudget.automatic(
@@ -506,7 +511,83 @@ public actor MLXInferenceEngine: InferenceEngine {
 
     static let presenceContextSize = 1024
 
-    func sampling(for request: GenerationRequest) -> (GenerateParameters, GenerationComponents) {
+    struct OutputConstraint: Sendable {
+        let session: GrammarSession
+        let vocabulary: GrammarVocabulary
+        let toolName: String?
+    }
+
+    static let grammarSchemaLimit = 16
+    static let idleGrammarsPerSchema = 4
+
+    func outputConstraint(for request: GenerationRequest) async throws(BasaltError) -> OutputConstraint? {
+        let forcedTool = request.toolChoice?.forcedTool.flatMap { name in request.tools?.first { $0.name == name } }
+        let format = forcedTool.map { $0.parametersJSON.map { .jsonSchema($0) } ?? .jsonObject } ?? request.responseFormat
+        guard let format else { return nil }
+        func unconstrained(_ reason: String) throws(BasaltError) -> OutputConstraint? {
+            guard let forcedTool else { throw .invalidRequestStructure(details: "response_format: \(reason)") }
+            logger.info("tool_choice \(forcedTool.name): arguments left unconstrained, \(reason)")
+            return nil
+        }
+        let schema: String
+        do { schema = try format.prepared().schema } catch { return try unconstrained(error.message) }
+        let epoch = modelEpoch
+        let vocabulary: GrammarVocabulary
+        switch await loadedGrammarVocabulary() {
+        case .success(let loaded): vocabulary = loaded
+        case .failure(let error): return try unconstrained(error.reason)
+        }
+        guard !vocabulary.stopTokens.isEmpty else { return try unconstrained("the model declares no stop token to end the document") }
+        let grammar: GrammarConstraint
+        if epoch == modelEpoch, let idle = idleGrammars[schema]?.popLast() {
+            grammar = idle
+        } else {
+            do {
+                grammar = try GrammarConstraint(tokenizer: vocabulary.tokenizer, jsonSchema: schema)
+            } catch GrammarError.invalidJSONSchema(let message) {
+                return try unconstrained(message)
+            } catch {
+                return try unconstrained("\(error)")
+            }
+        }
+        return OutputConstraint(
+            session: GrammarSession(schema: schema, grammar: grammar), vocabulary: vocabulary, toolName: forcedTool?.name)
+    }
+
+    func recycle(_ session: GrammarSession, epoch: Int) {
+        guard epoch == modelEpoch, let grammar = session.rewound() else { return }
+        if idleGrammars[session.schema] == nil, idleGrammars.count >= Self.grammarSchemaLimit { idleGrammars.removeAll() }
+        guard idleGrammars[session.schema, default: []].count < Self.idleGrammarsPerSchema else { return }
+        idleGrammars[session.schema, default: []].append(grammar)
+    }
+
+    struct ConstraintUnavailable: Error {
+        let reason: String
+    }
+
+    func loadedGrammarVocabulary() async -> Result<GrammarVocabulary, ConstraintUnavailable> {
+        if let grammarVocabulary { return grammarVocabulary }
+        guard let container else { return .failure(ConstraintUnavailable(reason: "no model is loaded")) }
+        let epoch = modelEpoch
+        let loaded: Result<GrammarVocabulary, ConstraintUnavailable> = await container.perform { context in
+            do { return .success(try GrammarVocabulary(context: context)) } catch {
+                return .failure(ConstraintUnavailable(reason: "constrained decoding is unavailable for this model: \(error)"))
+            }
+        }
+        if epoch == modelEpoch { grammarVocabulary = loaded }
+        return loaded
+    }
+
+    static func stopTokenIds(_ context: ModelContext) -> Set<Int> {
+        var ids = context.configuration.eosTokenIds
+        if let eos = context.tokenizer.eosTokenId { ids.insert(eos) }
+        for token in context.configuration.extraEOSTokens {
+            if let id = context.tokenizer.convertTokenToId(token) { ids.insert(id) }
+        }
+        return ids
+    }
+
+    func sampling(for request: GenerationRequest) -> (GenerateParameters, GenerationComponents, shaping: (@Sendable () -> EntropyDynamicTemperature)?) {
         let temperature = Float(request.temperature ?? samplingDefaults.temperature ?? 0.7)
         var params = GenerateParameters(
             maxTokens: request.maxTokens ?? 1024,
@@ -528,15 +609,14 @@ public actor MLXInferenceEngine: InferenceEngine {
                 GeneratedTokensPresencePenalty(penalty: presencePenalty, window: Self.presenceContextSize)
             }
         }
+        var shaping: (@Sendable () -> EntropyDynamicTemperature)?
         if request.dynamicTemperature == true, temperature > 0 {
             let (topP, minP) = (params.topP, params.minP)
+            shaping = { EntropyDynamicTemperature(baseTemperature: temperature, topP: topP, minP: minP) }
             params.topP = 1
             params.minP = 0
-            components = components.appendingLogitProcessor {
-                EntropyDynamicTemperature(baseTemperature: temperature, topP: topP, minP: minP)
-            }
         }
-        return (params, components)
+        return (params, components, shaping)
     }
 
     static func budgetTransition(for reasoning: ReasoningConfig, profile: any ModelProfile) -> ReasoningBudgetTransition? {
@@ -587,7 +667,8 @@ public actor MLXInferenceEngine: InferenceEngine {
         let epoch = modelEpoch
 
         let requestedMaxTokens = request.maxTokens ?? 1024
-        let (params, unbudgeted) = sampling(for: request)
+        let (params, unbudgeted, shaping) = sampling(for: request)
+        let constraint = try await outputConstraint(for: request)
 
         let toolSpecs = Self.toolSpecs(request.tools)
         let declaredTools = Set(request.tools?.map(\.name) ?? [])
@@ -667,24 +748,29 @@ public actor MLXInferenceEngine: InferenceEngine {
                 ? promptTokens.count - 1
                 : await snapshotBoundary(renderedCount, container: container, epoch: epoch, template: template, makeInput)
             let blend = epoch == modelEpoch && modelIsHybrid == false ? cacheBlend : nil
+            let renderedTail = await container.perform {
+                $0.tokenizer.decode(tokenIds: Array(promptTokens.prefix(renderedCount).suffix(16)), skipSpecialTokens: false)
+            }
+            let promptEndsWithThinking = Self.endsInsideThinking(renderedTail, assistantPrefix: assistantPrefix ?? "")
+            let masked = Self.constraining(
+                components, with: constraint,
+                phase: policy == .disabled ? .constrained : promptEndsWithThinking ? .reasoning : .awaitingAnswer)
+            let constrained = shaping.map { masked.appendingLogitProcessor($0) } ?? masked
+            let forcedTool = constraint?.toolName
             let launch: GenerationLaunch
             do {
                 launch = try await container.perform(nonSendable: lmInput) { context, input in
                     try Self.launch(
                         input: input, lease: lease, keepsCache: namespace != nil, boundary: boundary,
                         blend: namespace.flatMap { space in blend.map { ($0, space) } },
-                        params: params, components: components, tools: toolSpecs, context: context)
+                        params: params, components: constrained, tools: forcedTool == nil ? toolSpecs : nil,
+                        context: context)
                 }
             } catch {
                 keep(nil, tokens: promptTokens, namespace: namespace, releasing: lease, epoch: epoch)
                 throw error
             }
             let mlxStream = launch.stream
-            
-            let renderedTail = await container.perform {
-                $0.tokenizer.decode(tokenIds: Array(promptTokens.prefix(renderedCount).suffix(16)), skipSpecialTokens: false)
-            }
-            let promptEndsWithThinking = Self.endsInsideThinking(renderedTail, assistantPrefix: assistantPrefix ?? "")
 
             return AsyncStream<StreamChunk> { continuation in
                 let task = Task.detached {
@@ -704,6 +790,7 @@ public actor MLXInferenceEngine: InferenceEngine {
 
                     var toolCallScanner = scansToolCallText ? NemotronToolCallScanner() : nil
                     var reasoningText = ""
+                    var forcedToolArguments = ""
                     func emitReasoning(_ text: String) {
                         reasoningText += text
                         continuation.yield(.reasoning(text))
@@ -712,6 +799,7 @@ public actor MLXInferenceEngine: InferenceEngine {
                         for chunk in gate.admit(chunks) { continuation.yield(chunk) }
                     }
                     func emitText(_ text: String) {
+                        guard forcedTool == nil else { forcedToolArguments += text; return }
                         guard var scanner = toolCallScanner else { continuation.yield(.text(text)); return }
                         admit(scanner.feed(text))
                         toolCallScanner = scanner
@@ -790,7 +878,16 @@ public actor MLXInferenceEngine: InferenceEngine {
                     
                     processBuffer(final: true)
                     admit(toolCallScanner?.finish() ?? [])
-                    await Self.settle(launch, cancelled: Task.isCancelled || stoppedAfterCall)
+                    let arguments = forcedToolArguments.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if let forcedTool, (try? JSONSerialization.jsonObject(with: Data(arguments.utf8))) is [String: Any] {
+                        admit([.toolCall(ToolCallOutput(
+                            id: "call_\(UUID().uuidString.prefix(24))", name: forcedTool, arguments: arguments))])
+                    } else if forcedTool != nil, !arguments.isEmpty {
+                        continuation.yield(.text(arguments))
+                    }
+                    let completed = !(Task.isCancelled || stoppedAfterCall)
+                    await Self.settle(launch, cancelled: !completed)
+                    if completed, let session = constraint?.session { await self.recycle(session, epoch: epoch) }
                     await self.keep(launch.cache, tokens: Array(promptTokens.prefix(launch.exactTokens)), namespace: namespace, releasing: lease, epoch: epoch)
 
                     // End of stream - send metadata
@@ -841,6 +938,15 @@ public actor MLXInferenceEngine: InferenceEngine {
     }
 
     public var isLoaded: Bool { container != nil }
+
+    static func constraining(
+        _ components: GenerationComponents, with constraint: OutputConstraint?, phase: JSONConstraintProcessor.Phase
+    ) -> GenerationComponents {
+        guard let constraint else { return components }
+        return components.appendingLogitProcessor {
+            JSONConstraintProcessor(session: constraint.session, vocabulary: constraint.vocabulary, phase: phase)
+        }
+    }
 
     static func carriesMoreThanTokens(_ input: LMInput) -> Bool {
         input.image != nil || input.video != nil || input.audio != nil
