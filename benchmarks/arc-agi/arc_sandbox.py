@@ -234,8 +234,9 @@ def _supervise(process, timeout: float, work_dir: str):
 
 
 def _is_grid(value) -> bool:
-    return (isinstance(value, list) and len(value) > 0
-            and all(isinstance(row, list) and all(type(cell) is int for cell in row) for row in value))
+    return (isinstance(value, list) and 0 < len(value) <= MAX_GRID_SIDE
+            and all(isinstance(row, list) and 0 < len(row) <= MAX_GRID_SIDE and len(row) == len(value[0])
+                    and all(type(cell) is int and 0 <= cell <= 9 for cell in row) for row in value))
 
 
 def _apply_limits(cpu_seconds: int):
@@ -276,10 +277,11 @@ def _to_matrix(result, grid_type):
         result = result.to_matrix()
     elif hasattr(result, "tolist"):
         result = result.tolist()
-    if (isinstance(result, list) and 0 < len(result) <= MAX_GRID_SIDE
+    if not (isinstance(result, list) and len(result) <= MAX_GRID_SIDE
             and all(isinstance(row, list) and len(row) <= MAX_GRID_SIDE for row in result)):
-        return [[int(cell) for cell in row] for row in result]
-    return None
+        return None
+    matrix = [[int(cell) for cell in row] for row in result]
+    return matrix if _is_grid(matrix) else None
 
 
 def _run_block(code, grid, base):

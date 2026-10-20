@@ -212,6 +212,10 @@ socket.create_connection(('1.1.1.1', 80), timeout=3)
         text = "```python\ndef transform(grid):\n    return [list(row) for row in zip(*grid[::-1])]\n```"
         self.assertEqual(execute_python_hybrid(text, [[1, 2], [3, 4]]), ([[3, 1], [4, 2]], "python_oop_exec_success", 0))
 
+    def test_ragged_empty_or_out_of_palette_grids_are_no_answer(self):
+        for grid in ("[[1, 2], [3]]", "[[]]", "[]", "[[10]]", "[[-1]]"):
+            self.assertEqual(self.run_code(f"def transform(grid):\n    return {grid}"), (None, "exec_failed"), grid)
+
     def test_dsl_helpers_are_available(self):
         code = ("def transform(grid: Grid) -> Grid:\n"
                 "    objects = grid.extract_objects()\n"
