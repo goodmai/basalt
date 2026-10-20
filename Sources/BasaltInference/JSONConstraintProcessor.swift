@@ -6,6 +6,7 @@ import BasaltCore
 struct ReasoningMarkers: Sendable {
     var openers: Set<Int> = []
     var closers: [[Int]] = []
+    var closerTexts: [[UInt8]] = MLXInferenceEngine.thinkingClosers.map { Array($0.utf8) }
 
     init(openers: Set<Int> = [], closers: [[Int]] = []) {
         self.openers = openers
@@ -27,13 +28,13 @@ struct JSONConstraintProcessor: LogitProcessor {
         case awaitingAnswer
         case reasoning
         case constrained
-        case released
     }
 
     private final class Progress {
         var phase: Phase
         var matcher: JSONGrammarMatcher
         var recent: [Int] = []
+        var recentText: [UInt8] = []
         var unread: MLXArray?
 
         init(phase: Phase, matcher: JSONGrammarMatcher) {
@@ -44,6 +45,7 @@ struct JSONConstraintProcessor: LogitProcessor {
         func copy() -> Progress {
             let copy = Progress(phase: phase, matcher: matcher)
             copy.recent = recent
+            copy.recentText = recentText
             copy.unread = unread
             return copy
         }
@@ -99,8 +101,10 @@ struct JSONConstraintProcessor: LogitProcessor {
     }
 
     func process(logits: MLXArray) -> MLXArray {
-        guard phase == .constrained || phase == .awaitingAnswer else { return logits }
-        let words = MLXArray(allowedTokens().words)
+        guard phase != .reasoning else { return logits }
+        let allowedTokens = allowedTokens()
+        guard !allowedTokens.isEmpty else { return logits }
+        let words = MLXArray(allowedTokens.words)
         var allowed = (words.take(wordIndex) >> bitOffset) & 1
         let width = logits.dim(-1)
         if width > masker.vocabulary.size {
@@ -121,18 +125,23 @@ struct JSONConstraintProcessor: LogitProcessor {
         progress.unread = nil
         let id = token.item(Int.self)
         switch progress.phase {
-        case .released:
-            return
         case .reasoning:
             progress.recent.append(id)
             if progress.recent.count > 16 { progress.recent.removeFirst(progress.recent.count - 16) }
-            if markers.closers.contains(where: { progress.recent.ends(with: $0) }) { progress.phase = .constrained }
+            progress.recentText += masker.vocabulary.bytes(of: id)
+            if progress.recentText.count > 64 { progress.recentText.removeFirst(progress.recentText.count - 64) }
+            if markers.closers.contains(where: { progress.recent.ends(with: $0) }) {
+                progress.phase = .constrained
+            } else if let answer = markers.closerTexts.compactMap({ progress.recentText.text(after: $0) }).first {
+                progress.phase = .constrained
+                _ = progress.matcher.accept(answer)
+            }
         case .awaitingAnswer where markers.openers.contains(id):
             progress.phase = .reasoning
         case .awaitingAnswer, .constrained:
             progress.phase = .constrained
             guard !stopTokens.contains(id) else { return }
-            if !progress.matcher.accept(masker.vocabulary.bytes(of: id)) { progress.phase = .released }
+            _ = progress.matcher.accept(masker.vocabulary.bytes(of: id))
         }
     }
 }
@@ -140,5 +149,13 @@ struct JSONConstraintProcessor: LogitProcessor {
 private extension Array where Element: Equatable {
     func ends(with suffix: [Element]) -> Bool {
         count >= suffix.count && Array(self[(count - suffix.count)...]) == suffix
+    }
+
+    func text(after marker: [Element]) -> [Element]? {
+        guard !marker.isEmpty, count >= marker.count else { return nil }
+        for start in stride(from: count - marker.count, through: 0, by: -1) where Array(self[start..<(start + marker.count)]) == marker {
+            return Array(self[(start + marker.count)...])
+        }
+        return nil
     }
 }

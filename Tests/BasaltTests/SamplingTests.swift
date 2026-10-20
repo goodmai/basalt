@@ -94,18 +94,18 @@ struct EngineSamplingTests {
     func edtComponent() async throws {
         let engine = MLXInferenceEngine()
         #expect(await engine.sampling(for: GenerationRequest(prompt: "p")).1.logitProcessorFactory == nil)
-        #expect(await engine.sampling(for: GenerationRequest(prompt: "p", dynamicTemperature: false)).1.logitProcessorFactory == nil)
-        #expect(await engine.sampling(for: GenerationRequest(prompt: "p", temperature: 0, dynamicTemperature: true)).1.logitProcessorFactory == nil)
+        #expect(await engine.sampling(for: GenerationRequest(prompt: "p", dynamicTemperature: false)).shaping == nil)
+        #expect(await engine.sampling(for: GenerationRequest(prompt: "p", temperature: 0, dynamicTemperature: true)).shaping == nil)
 
         let factory = try #require(await engine.sampling(
-            for: GenerationRequest(prompt: "p", temperature: 0.9, dynamicTemperature: true)).1.logitProcessorFactory)
-        let edt = try #require(factory() as? EntropyDynamicTemperature)
+            for: GenerationRequest(prompt: "p", temperature: 0.9, dynamicTemperature: true)).shaping)
+        let edt = factory()
         #expect(edt.baseTemperature == 0.9)
 
-        let (params, edtComponents) = await MLXInferenceEngine(minP: 0.1).sampling(
+        let (params, _, shaping) = await MLXInferenceEngine(minP: 0.1).sampling(
             for: GenerationRequest(prompt: "p", temperature: 0.9, topP: 0.8, dynamicTemperature: true))
         #expect(params.topP == 1 && params.minP == 0)
-        let moved = try #require(edtComponents.logitProcessorFactory?() as? EntropyDynamicTemperature)
+        let moved = try #require(shaping?())
         #expect(moved.topP == 0.8 && moved.minP == 0.1)
     }
 

@@ -37,7 +37,7 @@ struct SamplingDefaultsTests {
     @Test("A request without temperature / top_p / top_k samples with the model's generation_config")
     func omittedFieldsFollowTheModel() async throws {
         let engine = try await engine(defaults: modelDefaults)
-        let (params, _) = await engine.sampling(for: GenerationRequest(prompt: "p", temperature: nil, topP: nil))
+        let (params, _, _) = await engine.sampling(for: GenerationRequest(prompt: "p", temperature: nil, topP: nil))
         #expect(params.temperature == 1.0)
         #expect(params.topP == 0.95)
         #expect(params.topK == 20)
@@ -46,7 +46,7 @@ struct SamplingDefaultsTests {
     @Test("Without generation_config the old defaults hold")
     func noGenerationConfigKeepsOldDefaults() async throws {
         let engine = try await engine(defaults: SamplingDefaults())
-        let (params, _) = await engine.sampling(for: GenerationRequest(prompt: "p", temperature: nil, topP: nil))
+        let (params, _, _) = await engine.sampling(for: GenerationRequest(prompt: "p", temperature: nil, topP: nil))
         #expect(params.temperature == 0.7)
         #expect(params.topP == 0.9)
         #expect(params.topK == 0)
@@ -55,7 +55,7 @@ struct SamplingDefaultsTests {
     @Test("Request values win over the model's, the server's --top-k wins over generation_config")
     func requestOverrides() async throws {
         let engine = try await engine(defaults: modelDefaults)
-        let (params, _) = await engine.sampling(for: GenerationRequest(prompt: "p", temperature: 0.2, topP: 0.5, topK: 5))
+        let (params, _, _) = await engine.sampling(for: GenerationRequest(prompt: "p", temperature: 0.2, topP: 0.5, topK: 5))
         #expect(params.temperature == 0.2)
         #expect(params.topP == 0.5)
         #expect(params.topK == 5)
@@ -74,7 +74,7 @@ struct SamplingDefaultsTests {
     @Test("presence_penalty counts only generated tokens: the prompt, fed through the prompt-anchored processor, is not penalised")
     func presencePenaltySkipsThePrompt() async throws {
         let engine = try await engine(defaults: SamplingDefaults())
-        let (params, components) = await engine.sampling(for: GenerationRequest(prompt: "p", presencePenalty: 1.5))
+        let (params, components, _) = await engine.sampling(for: GenerationRequest(prompt: "p", presencePenalty: 1.5))
         #expect(params.presencePenalty == nil)
         var processor = PromptAnchoredProcessor(
             base: try #require(components.logitProcessor(parameters: params)), prompt: MLXArray([Int32(2), 3]))
@@ -85,7 +85,7 @@ struct SamplingDefaultsTests {
         processor.didSample(token: MLXArray(Int32(4)))
         #expect(processor.process(logits: logits).asArray(Float.self) == [0, 0, 0, 0, -1.5, 0])
 
-        let (plainParams, plain) = await engine.sampling(for: GenerationRequest(prompt: "p"))
+        let (plainParams, plain, _) = await engine.sampling(for: GenerationRequest(prompt: "p"))
         #expect(plain.logitProcessor(parameters: plainParams) == nil)
     }
 }

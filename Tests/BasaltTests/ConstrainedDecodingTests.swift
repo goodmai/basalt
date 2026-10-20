@@ -1,11 +1,13 @@
 import Foundation
 import Testing
+import Synchronization
 import MLX
 import MLXLMCommon
 @testable import BasaltCore
 @testable import BasaltInference
 
 struct JSONPieceTokenizer: MLXLMCommon.Tokenizer {
+    var endsText = true
     static let open = 250
     static let close = 251
     static let endOfText = 252
@@ -43,7 +45,7 @@ struct JSONPieceTokenizer: MLXLMCommon.Tokenizer {
     func convertTokenToId(_ token: String) -> Int? { Self.markers[token] }
     func convertIdToToken(_ id: Int) -> String? { decode(tokenIds: [id], skipSpecialTokens: false) }
     var bosToken: String? { nil }
-    var eosToken: String? { "<eos>" }
+    var eosToken: String? { endsText ? "<eos>" : nil }
     var unknownToken: String? { nil }
 
     func applyChatTemplate(
@@ -57,8 +59,10 @@ struct JSONPieceTokenizer: MLXLMCommon.Tokenizer {
 
 struct JSONPieceInputProcessor: UserInputProcessor {
     let opensThinking: Bool
+    static let renderedTools = Mutex<[String]>([])
 
     func prepare(input: UserInput) throws -> LMInput {
+        Self.renderedTools.withLock { $0 = (input.tools ?? []).map { "\($0)" } }
         let messages = DefaultMessageGenerator().generate(from: input)
         let tokens = try JSONPieceTokenizer().applyChatTemplate(messages: messages, tools: nil, additionalContext: nil)
         return LMInput(tokens: MLXArray((tokens + (opensThinking ? [JSONPieceTokenizer.open] : [])).map(Int32.init)))
@@ -74,13 +78,15 @@ enum ConstrainedModel {
          "required": ["mode", "flags", "inner"]}
         """#
 
-    static func engine(opensThinking: Bool = false, profile: any ModelProfile = GenericProfile()) async throws -> MLXInferenceEngine {
+    static func engine(
+        opensThinking: Bool = false, profile: any ModelProfile = GenericProfile(), endsText: Bool = true
+    ) async throws -> MLXInferenceEngine {
         let engine = MLXInferenceEngine()
         await engine.attach(ModelContainer(context: ModelContext(
             configuration: ModelConfiguration(id: "tiny-json", reasoningConfig: QwenReasoningProtocol.tagged),
             model: try withRandomState(MLXRandom.RandomState(seed: 56)) { try TinyModel.make() },
             processor: JSONPieceInputProcessor(opensThinking: opensThinking),
-            tokenizer: JSONPieceTokenizer())), profile: profile, vocabulary: JSONPieceTokenizer.vocabulary)
+            tokenizer: JSONPieceTokenizer(endsText: endsText))), profile: profile, vocabulary: JSONPieceTokenizer.vocabulary)
         return engine
     }
 
@@ -145,20 +151,89 @@ struct ConstrainedDecodingEngineTests {
         #expect(result.generatedText.isEmpty)
     }
 
-    @Test("An unsupported response_format schema is a request error; a forced tool with one falls back to unconstrained")
+    @Test("An unsupported strict response_format schema is a request error; a forced tool with one falls back to unconstrained")
     func unsupportedSchemas() async throws {
         let engine = try await ConstrainedModel.engine()
         let unsupported = #"{"type": "object", "properties": {"s": {"type": "string", "pattern": "^a"}}}"#
         let error = await #expect(throws: BasaltError.self) {
-            _ = try await engine.generate(request: ConstrainedModel.request(format: .jsonSchema(unsupported)))
+            _ = try await engine.generate(request: ConstrainedModel.request(format: .jsonSchema(unsupported, strict: true)))
         }
         guard case .invalidRequestStructure(let details)? = error else { Issue.record("\(String(describing: error))"); return }
         #expect(details == "response_format: unsupported JSON Schema keyword 'pattern' at #/properties/s")
-        let tool = ToolDefinition(name: "f", parametersJSON: unsupported)
+        let tool = ToolDefinition(name: "f", parametersJSON: #"{"allOf": [{"type": "object"}]}"#)
         let fallback = try await engine.generate(request: ConstrainedModel.request(
             format: nil, maxTokens: 20, tools: [tool], choice: ToolChoice(forcedTool: "f")))
         #expect(fallback.toolCalls == nil)
     }
+
+    @Test("Dynamic temperature with a narrow top_p filters the already-masked distribution, so the answer stays schema-valid")
+    func nucleusAfterTheMask() async throws {
+        let engine = try await ConstrainedModel.engine()
+        for _ in 0..<3 {
+            let result = try await engine.generate(request: GenerationRequest(
+                prompt: "Report the mode.", maxTokens: 300, temperature: 1.0, topP: 0.05, dynamicTemperature: true,
+                responseFormat: .jsonSchema(ConstrainedModel.schema)))
+            #expect(try ConstrainedModel.isValid(result.generatedText), "\(result.generatedText)")
+        }
+    }
+
+    @Test("A forced tool call cut by max_tokens comes back as text with finish reason length, not as a tool call")
+    func truncatedForcedToolIsText() async throws {
+        let engine = try await ConstrainedModel.engine()
+        let tool = ToolDefinition(name: "set_mode", parametersJSON: ConstrainedModel.schema)
+        let result = try await engine.generate(request: ConstrainedModel.request(
+            format: nil, maxTokens: 6, tools: [tool], choice: ToolChoice(forcedTool: "set_mode")))
+        #expect(result.toolCalls == nil)
+        #expect(!result.generatedText.isEmpty)
+        #expect(result.finishReason == .length)
+    }
+
+    @Test("A forced tool_choice still renders the tool, with its description, into the prompt")
+    func forcedToolKeepsItsDescription() async throws {
+        let engine = try await ConstrainedModel.engine()
+        let tool = ToolDefinition(name: "set_mode", description: "Switches the reactor mode", parametersJSON: ConstrainedModel.schema)
+        _ = try await engine.generate(request: ConstrainedModel.request(
+            format: nil, tools: [tool], choice: ToolChoice(forcedTool: "set_mode")))
+        let rendered = JSONPieceInputProcessor.renderedTools.withLock { tools in tools }
+        #expect(rendered.contains { $0.contains("Switches the reactor mode") }, "\(rendered)")
+    }
+
+    @Test("Without any stop token generation ends at the closing brace instead of running to max_tokens")
+    func endsWithoutStopTokens() async throws {
+        let engine = try await ConstrainedModel.engine(endsText: false)
+        let result = try await engine.generate(request: ConstrainedModel.request(format: .jsonSchema(ConstrainedModel.schema)))
+        #expect(try ConstrainedModel.isValid(result.generatedText), "\(result.generatedText)")
+        #expect(result.completionTokens < 300)
+        #expect(result.finishReason == .stop)
+    }
+
+    @Test("The grammar compiled by the controller is the one the engine enforces; the schema is not compiled again")
+    func usesTheCompiledGrammar() async throws {
+        let engine = try await ConstrainedModel.engine()
+        let booleans = try JSONGrammar.compile(schemaJSON: #"{"type": "array", "items": {"type": "boolean"}}"#)
+        let result = try await engine.generate(request: GenerationRequest(
+            prompt: "Report the mode.", maxTokens: 300, temperature: 0,
+            responseFormat: .jsonSchema(ConstrainedModel.schema), responseGrammar: booleans))
+        #expect((try? JSONSerialization.jsonObject(with: Data(result.generatedText.utf8))) is [Bool], "\(result.generatedText)")
+    }
+
+    @Test("An unreadable tokenizer.json is read once per model, not on every request")
+    func brokenTokenizerIsReadOnce() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("basalt-tokenizer-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent("tokenizer.json")
+        try Data("{}".utf8).write(to: file)
+        let engine = MLXInferenceEngine()
+        await engine.pointTokenizer(at: directory)
+        #expect(await engine.loadedVocabulary() == nil)
+        try Data(#"{"model": {"vocab": {"a": 0}}}"#.utf8).write(to: file)
+        #expect(await engine.loadedVocabulary() == nil)
+    }
+}
+
+extension MLXInferenceEngine {
+    func pointTokenizer(at directory: URL) { tokenizerDirectory = directory }
 }
 
 @Suite("JSON constraint processor phases (#42)")
@@ -201,5 +276,31 @@ struct JSONConstraintProcessorTests {
         let allowed = processor.allowedTokens()
         #expect(allowed.contains(JSONPieceTokenizer.endOfText))
         #expect((0..<256).filter(allowed.contains) == [JSONPieceTokenizer.endOfText])
+    }
+
+    @Test("A closer spelled over several tokens ends reasoning; the text after it starts the document")
+    func closerAcrossTokens() {
+        var processor = JSONConstraintProcessor(
+            masker: Self.masker, stopTokens: [JSONPieceTokenizer.endOfText], markers: ReasoningMarkers(), phase: .reasoning)
+        for byte in Array("plan</thi".utf8) { processor.didSample(token: MLXArray(Int32(byte))) }
+        #expect(processor.phase == .reasoning)
+        for byte in Array("nk>\n".utf8) { processor.didSample(token: MLXArray(Int32(byte))) }
+        #expect(processor.phase == .constrained)
+        #expect(processor.allowedTokens().contains(Int(UInt8(ascii: "{"))))
+    }
+
+    @Test("A token the grammar rejects does not release the constraint, and a closed document without stop tokens leaves the logits alone")
+    func neverReleases() {
+        var processor = JSONConstraintProcessor(
+            masker: Self.masker, stopTokens: [], markers: ReasoningMarkers(), phase: .constrained)
+        processor.didSample(token: MLXArray(Int32(UInt8(ascii: "q"))))
+        #expect(processor.phase == .constrained)
+        let logits = MLXArray.zeros([1, 256])
+        #expect(processor.process(logits: logits)[0, Int(UInt8(ascii: "q"))].item(Float.self) == -Float.infinity)
+        for byte in Array(#"{"mode":"fast","flags":[],"inner":{"on":true,"note":null}}"#.utf8) {
+            processor.didSample(token: MLXArray(Int32(byte)))
+        }
+        #expect(processor.matcher.isClosed)
+        #expect(processor.process(logits: logits).min().item(Float.self) == 0)
     }
 }

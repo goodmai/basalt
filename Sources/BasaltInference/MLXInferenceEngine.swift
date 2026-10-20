@@ -71,8 +71,9 @@ public actor MLXInferenceEngine: InferenceEngine {
     private var modelEpoch = 0
     private var modelIsHybrid: Bool?
     private var templateSuffixes: [String: Int] = [:]
-    private var tokenizerDirectory: URL?
+    var tokenizerDirectory: URL?
     private var vocabulary: TokenVocabulary?
+    private var vocabularyUnavailable = false
     private var maskers: [String: GrammarMasker] = [:]
     private let cacheBlendRatio: Float?
     private(set) var cacheBlend: CacheBlendStore?
@@ -108,6 +109,7 @@ public actor MLXInferenceEngine: InferenceEngine {
     ) {
         self.container = container
         self.vocabulary = vocabulary
+        vocabularyUnavailable = false
         tokenizerDirectory = nil
         maskers = [:]
         self.profile = profile
@@ -549,14 +551,15 @@ public actor MLXInferenceEngine: InferenceEngine {
         return OutputConstraint(masker: masker, toolName: forcedTool?.name)
     }
 
-    private func loadedVocabulary() -> TokenVocabulary? {
+    func loadedVocabulary() -> TokenVocabulary? {
         if let vocabulary { return vocabulary }
-        guard let tokenizerDirectory,
-              let data = try? Data(contentsOf: tokenizerDirectory.appendingPathComponent("tokenizer.json")) else { return nil }
+        guard !vocabularyUnavailable, let tokenizerDirectory else { return nil }
         do {
+            let data = try Data(contentsOf: tokenizerDirectory.appendingPathComponent("tokenizer.json"))
             vocabulary = try TokenVocabulary.load(tokenizerJSON: data)
         } catch {
-            logger.warn("Constrained decoding unavailable: \(error.reason)")
+            vocabularyUnavailable = true
+            logger.warn("Constrained decoding unavailable for this model: \(error)")
         }
         return vocabulary
     }
@@ -570,7 +573,7 @@ public actor MLXInferenceEngine: InferenceEngine {
         return ids
     }
 
-    func sampling(for request: GenerationRequest) -> (GenerateParameters, GenerationComponents) {
+    func sampling(for request: GenerationRequest) -> (GenerateParameters, GenerationComponents, shaping: (@Sendable () -> EntropyDynamicTemperature)?) {
         let temperature = Float(request.temperature ?? samplingDefaults.temperature ?? 0.7)
         var params = GenerateParameters(
             maxTokens: request.maxTokens ?? 1024,
@@ -592,15 +595,14 @@ public actor MLXInferenceEngine: InferenceEngine {
                 GeneratedTokensPresencePenalty(penalty: presencePenalty, window: Self.presenceContextSize)
             }
         }
+        var shaping: (@Sendable () -> EntropyDynamicTemperature)?
         if request.dynamicTemperature == true, temperature > 0 {
             let (topP, minP) = (params.topP, params.minP)
+            shaping = { EntropyDynamicTemperature(baseTemperature: temperature, topP: topP, minP: minP) }
             params.topP = 1
             params.minP = 0
-            components = components.appendingLogitProcessor {
-                EntropyDynamicTemperature(baseTemperature: temperature, topP: topP, minP: minP)
-            }
         }
-        return (params, components)
+        return (params, components, shaping)
     }
 
     static func budgetTransition(for reasoning: ReasoningConfig, profile: any ModelProfile) -> ReasoningBudgetTransition? {
@@ -651,7 +653,7 @@ public actor MLXInferenceEngine: InferenceEngine {
         let epoch = modelEpoch
 
         let requestedMaxTokens = request.maxTokens ?? 1024
-        let (params, unbudgeted) = sampling(for: request)
+        let (params, unbudgeted, shaping) = sampling(for: request)
         let constraint = try outputConstraint(for: request)
 
         let toolSpecs = Self.toolSpecs(request.tools)
@@ -736,10 +738,12 @@ public actor MLXInferenceEngine: InferenceEngine {
                 $0.tokenizer.decode(tokenIds: Array(promptTokens.prefix(renderedCount).suffix(16)), skipSpecialTokens: false)
             }
             let promptEndsWithThinking = Self.endsInsideThinking(renderedTail, assistantPrefix: assistantPrefix ?? "")
-            let constrained = await Self.constraining(
+            let masked = await Self.constraining(
                 components, with: constraint, container: container,
                 phase: policy == .disabled ? .constrained : promptEndsWithThinking ? .reasoning : .awaitingAnswer)
+            let constrained = shaping.map { masked.appendingLogitProcessor($0) } ?? masked
             let forcedTool = constraint?.toolName
+            let answerGrammar = constraint?.masker.grammar
             let launch: GenerationLaunch
             do {
                 launch = try await container.perform(nonSendable: lmInput) { context, input in
@@ -774,6 +778,8 @@ public actor MLXInferenceEngine: InferenceEngine {
                     var toolCallScanner = scansToolCallText ? NemotronToolCallScanner() : nil
                     var reasoningText = ""
                     var forcedToolArguments = ""
+                    var answerDocument = answerGrammar.map(JSONGrammarMatcher.init)
+                    var answerEnded = false
                     func emitReasoning(_ text: String) {
                         reasoningText += text
                         continuation.yield(.reasoning(text))
@@ -782,6 +788,16 @@ public actor MLXInferenceEngine: InferenceEngine {
                         for chunk in gate.admit(chunks) { continuation.yield(chunk) }
                     }
                     func emitText(_ text: String) {
+                        var text = text
+                        if var document = answerDocument {
+                            guard !answerEnded else { return }
+                            let bytes = Array(text.utf8)
+                            let accepted = document.acceptLongestPrefix(bytes)
+                            answerDocument = document
+                            answerEnded = accepted < bytes.count || document.isClosed
+                            text = String(decoding: bytes.prefix(accepted), as: UTF8.self)
+                            if text.isEmpty { return }
+                        }
                         guard forcedTool == nil else { forcedToolArguments += text; return }
                         guard var scanner = toolCallScanner else { continuation.yield(.text(text)); return }
                         admit(scanner.feed(text))
@@ -836,7 +852,7 @@ public actor MLXInferenceEngine: InferenceEngine {
                             if firstTokenAt == nil { firstTokenAt = clock.now }
                             buffer.append(text)
                             processBuffer(final: false)
-                            if gate.isSaturated { await stopAfterCall(); break tokens }
+                            if gate.isSaturated || answerEnded { await stopAfterCall(); break tokens }
                         case .info(let info):
                             lastInfo = info
                         case .toolCall(let call):
@@ -862,9 +878,11 @@ public actor MLXInferenceEngine: InferenceEngine {
                     processBuffer(final: true)
                     admit(toolCallScanner?.finish() ?? [])
                     let arguments = forcedToolArguments.trimmingCharacters(in: .whitespacesAndNewlines)
-                    if let forcedTool, !arguments.isEmpty {
+                    if let forcedTool, answerDocument?.isAccepting == true {
                         admit([.toolCall(ToolCallOutput(
                             id: "call_\(UUID().uuidString.prefix(24))", name: forcedTool, arguments: arguments))])
+                    } else if forcedTool != nil, !arguments.isEmpty {
+                        continuation.yield(.text(arguments))
                     }
                     await Self.settle(launch, cancelled: Task.isCancelled || stoppedAfterCall)
                     await self.keep(launch.cache, tokens: Array(promptTokens.prefix(launch.exactTokens)), namespace: namespace, releasing: lease, epoch: epoch)
