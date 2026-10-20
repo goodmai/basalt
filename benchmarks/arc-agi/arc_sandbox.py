@@ -33,6 +33,8 @@ FUNCTION_NAMES = ("transform", "solve", "transform_grid")
 MAX_BLOCKS = 8
 STARTUP_ALLOWANCE = 3.0
 MAX_GRID_SIDE = 30
+RESULT_BYTES_PER_GRID = 3 << 10
+RESULT_LINE_OVERHEAD_BYTES = 64
 NUMPY_IMAGES_PROBE = """
 import ctypes, json, os, sys
 sys.path.append(sys.argv[1])
@@ -168,14 +170,22 @@ def _run_child(code, inputs, timeout, wall_seconds, numpy_package, images):
                 return [], True, None
             if stopped:
                 return [], False, stopped
-            output.seek(0)
-            lines = output.read().splitlines()
-    return (*_parse_outputs(lines, len(inputs)), None)
+            line = _last_line(output, len(inputs) * RESULT_BYTES_PER_GRID + RESULT_LINE_OVERHEAD_BYTES)
+    return (*_parse_outputs(line, len(inputs)), None)
 
 
-def _parse_outputs(lines, count):
+def _last_line(output, max_length: int):
+    size = output.seek(0, os.SEEK_END)
+    output.seek(max(0, size - max_length - 2))
+    _, newline, line = output.read().rstrip(b"\n").rpartition(b"\n")
+    return line if newline else None
+
+
+def _parse_outputs(line, count):
+    if line is None:
+        return [], False
     try:
-        outcome = json.loads(lines[-1])
+        outcome = json.loads(line)
         outputs, timed_out = outcome["outputs"], outcome["timed_out"]
     except Exception:
         return [], False
