@@ -473,7 +473,10 @@ basalt models download --author Ex0bit
 |---|---|
 | `gemma_generate` | Генерация текста — `prompt`, `maxTokens`, `temperature`, `topP`, `minP`, `dynamicTemperature` |
 | `gemma_status` | Готовность сервера, версия, текущая модель |
-| `gemma_add_knowledge` | Подмешать свой контекст в сессию |
+| `gemma_add_knowledge` | Записать урок в Experience Library Harness² (`~/.basalt/harness-library`) |
+| `harness_validate` | Проверить harness Claude Code / opencode / AGENTS.md в рабочем каталоге или в `BASALT_HARNESS_ROOTS` |
+| `harness_optimize` | Один проход Harness² propose–probe–compose на загруженной модели (также `basalt harness optimize`) |
+| `harness_library_query` | Поиск по Experience Library |
 
 ---
 
