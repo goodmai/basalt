@@ -2,24 +2,31 @@ import Foundation
 import MLX
 import MLXLMCommon
 
+extension KVCache {
+    var isSnapshotOnly: Bool {
+        self is ArraysCache || type(of: self) == RotatingKVCache.self
+    }
+}
+
 extension PromptCache {
     var isHybrid: Bool {
-        layers.contains { $0 is ArraysCache }
-            && layers.allSatisfy { $0 is ArraysCache || type(of: $0) == KVCacheSimple.self }
+        layers.contains { $0.isSnapshotOnly }
+            && layers.allSatisfy { $0.isSnapshotOnly || type(of: $0) == KVCacheSimple.self }
     }
 
     func isSnapshot(of count: Int) -> Bool {
-        isHybrid && layers.allSatisfy { $0 is ArraysCache ? $0.offset == count : $0.offset >= count }
+        isHybrid && layers.allSatisfy { $0.isSnapshotOnly ? $0.offset == count : $0.offset >= count }
     }
 
     func snapshot(at count: Int, state: LMOutput.State?) -> PromptCache {
         let kept = PromptCache(layers.map { layer in
-            guard layer is ArraysCache, let recurrent = layer.copy() as? ArraysCache else { return layer }
-            recurrent.offset = count
-            return recurrent
+            guard layer.isSnapshotOnly else { return layer }
+            let copy = layer.copy()
+            (copy as? ArraysCache)?.offset = count
+            return copy
         })
         kept.state = state
-        eval(kept.layers.filter { $0 is ArraysCache }.flatMap { $0.innerState() })
+        eval(kept.layers.filter { $0.isSnapshotOnly }.flatMap { $0.innerState() })
         return kept
     }
 }
@@ -31,7 +38,7 @@ struct RecurrentSnapshot {
     init?(of cache: PromptCache) {
         guard cache.isHybrid else { return nil }
         layers = Dictionary(uniqueKeysWithValues: cache.layers.enumerated().compactMap { index, layer in
-            layer is ArraysCache ? (index, layer) : nil
+            layer.isSnapshotOnly ? (index, layer) : nil
         })
         state = cache.state
     }
