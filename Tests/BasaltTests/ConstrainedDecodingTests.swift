@@ -3,6 +3,7 @@ import Testing
 import Synchronization
 import MLX
 import MLXLMCommon
+import MLXGuidedGeneration
 @testable import BasaltCore
 @testable import BasaltInference
 
@@ -21,7 +22,9 @@ struct JSONPieceTokenizer: MLXLMCommon.Tokenizer {
         return pieces
     }()
 
-    static let vocabulary = TokenVocabulary(tokenBytes: (0..<256).map { Array((pieces[$0] ?? "").utf8) })
+    static let markerVocabulary = try! GrammarVocabulary(
+        pieces: (0..<256).map { JSONPieceTokenizer().convertIdToToken($0)! }, vocabType: .raw, stopTokens: [endOfText],
+        markers: ReasoningMarkers(openers: [open], closers: [[close]]))
 
     func encode(text: String, addSpecialTokens: Bool) -> [Int] {
         var ids: [Int] = []
@@ -43,7 +46,7 @@ struct JSONPieceTokenizer: MLXLMCommon.Tokenizer {
     }
 
     func convertTokenToId(_ token: String) -> Int? { Self.markers[token] }
-    func convertIdToToken(_ id: Int) -> String? { decode(tokenIds: [id], skipSpecialTokens: false) }
+    func convertIdToToken(_ id: Int) -> String? { (0..<256).contains(id) ? decode(tokenIds: [id], skipSpecialTokens: false) : nil }
     var bosToken: String? { nil }
     var eosToken: String? { endsText ? "<eos>" : nil }
     var unknownToken: String? { nil }
@@ -86,7 +89,7 @@ enum ConstrainedModel {
             configuration: ModelConfiguration(id: "tiny-json", reasoningConfig: QwenReasoningProtocol.tagged),
             model: try withRandomState(MLXRandom.RandomState(seed: 56)) { try TinyModel.make() },
             processor: JSONPieceInputProcessor(opensThinking: opensThinking),
-            tokenizer: JSONPieceTokenizer(endsText: endsText))), profile: profile, vocabulary: JSONPieceTokenizer.vocabulary)
+            tokenizer: JSONPieceTokenizer(endsText: endsText))), profile: profile)
         return engine
     }
 
@@ -99,9 +102,7 @@ enum ConstrainedModel {
     }
 
     static func isValid(_ text: String, _ schema: String = schema) throws -> Bool {
-        var matcher = JSONGrammarMatcher(grammar: try JSONGrammar.compile(schemaJSON: schema))
-        return matcher.accept(Array(text.utf8)) && matcher.isAccepting
-            && (try? JSONSerialization.jsonObject(with: Data(text.utf8))) is [String: Any]
+        try SchemaCheck.accepts(schema, text) && (try? JSONSerialization.jsonObject(with: Data(text.utf8))) is [String: Any]
     }
 }
 
@@ -124,7 +125,7 @@ struct ConstrainedDecodingEngineTests {
     func jsonObject() async throws {
         let engine = try await ConstrainedModel.engine()
         let result = try await engine.generate(request: ConstrainedModel.request(format: .jsonObject, maxTokens: 400))
-        #expect((try? JSONSerialization.jsonObject(with: Data(result.generatedText.utf8))) is [String: Any], "\(result.generatedText)")
+        #expect(try SchemaCheck.accepts(#"{"type": "object"}"#, result.generatedText), "\(result.generatedText.debugDescription)")
     }
 
     @Test("Reasoning stays free under a thinking budget; the constraint starts after </think>")
@@ -151,16 +152,21 @@ struct ConstrainedDecodingEngineTests {
         #expect(result.generatedText.isEmpty)
     }
 
-    @Test("An unsupported strict response_format schema is a request error; a forced tool with one falls back to unconstrained")
+    @Test("A strict schema with a keyword XGrammar ignores, or one XGrammar rejects, is a request error; a forced tool with one falls back to unconstrained")
     func unsupportedSchemas() async throws {
         let engine = try await ConstrainedModel.engine()
-        let unsupported = #"{"type": "object", "properties": {"s": {"type": "string", "pattern": "^a"}}}"#
+        let unsupported = #"{"type": "object", "properties": {"n": {"type": "integer", "multipleOf": 2}}}"#
         let error = await #expect(throws: BasaltError.self) {
             _ = try await engine.generate(request: ConstrainedModel.request(format: .jsonSchema(unsupported, strict: true)))
         }
         guard case .invalidRequestStructure(let details)? = error else { Issue.record("\(String(describing: error))"); return }
-        #expect(details == "response_format: unsupported JSON Schema keyword 'pattern' at #/properties/s")
-        let tool = ToolDefinition(name: "f", parametersJSON: #"{"allOf": [{"type": "object"}]}"#)
+        #expect(details == "response_format: unsupported JSON Schema keyword 'multipleOf' at #/properties/n")
+        let rejected = await #expect(throws: BasaltError.self) {
+            _ = try await engine.generate(request: ConstrainedModel.request(format: .jsonSchema(#"{"type": 42}"#)))
+        }
+        guard case .invalidRequestStructure(let reason)? = rejected else { Issue.record("\(String(describing: rejected))"); return }
+        #expect(reason.hasPrefix("response_format: "), "\(reason)")
+        let tool = ToolDefinition(name: "f", parametersJSON: #"{"$ref": "https://example.com/s.json"}"#)
         let fallback = try await engine.generate(request: ConstrainedModel.request(
             format: nil, maxTokens: 20, tools: [tool], choice: ToolChoice(forcedTool: "f")))
         #expect(fallback.toolCalls == nil)
@@ -198,59 +204,50 @@ struct ConstrainedDecodingEngineTests {
         #expect(rendered.contains { $0.contains("Switches the reactor mode") }, "\(rendered)")
     }
 
-    @Test("Without any stop token generation ends at the closing brace instead of running to max_tokens")
-    func endsWithoutStopTokens() async throws {
+    @Test("A model without any stop token cannot end a constrained document, so response_format is a request error")
+    func refusesWithoutStopTokens() async throws {
         let engine = try await ConstrainedModel.engine(endsText: false)
-        let result = try await engine.generate(request: ConstrainedModel.request(format: .jsonSchema(ConstrainedModel.schema)))
-        #expect(try ConstrainedModel.isValid(result.generatedText), "\(result.generatedText)")
-        #expect(result.completionTokens < 300)
-        #expect(result.finishReason == .stop)
-    }
-
-    @Test("The grammar compiled by the controller is the one the engine enforces; the schema is not compiled again")
-    func usesTheCompiledGrammar() async throws {
-        let engine = try await ConstrainedModel.engine()
-        let booleans = try JSONGrammar.compile(schemaJSON: #"{"type": "array", "items": {"type": "boolean"}}"#)
-        let result = try await engine.generate(request: GenerationRequest(
-            prompt: "Report the mode.", maxTokens: 300, temperature: 0,
-            responseFormat: .jsonSchema(ConstrainedModel.schema), responseGrammar: booleans))
-        #expect((try? JSONSerialization.jsonObject(with: Data(result.generatedText.utf8))) is [Bool], "\(result.generatedText)")
-    }
-
-    @Test("An unreadable tokenizer.json is read once per model, not on every request")
-    func brokenTokenizerIsReadOnce() async throws {
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("basalt-tokenizer-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let file = directory.appendingPathComponent("tokenizer.json")
-        try Data("{}".utf8).write(to: file)
-        let engine = MLXInferenceEngine()
-        await engine.pointTokenizer(at: directory)
-        #expect(await engine.loadedVocabulary() == nil)
-        try Data(#"{"model": {"vocab": {"a": 0}}}"#.utf8).write(to: file)
-        #expect(await engine.loadedVocabulary() == nil)
+        await #expect(throws: BasaltError.self) {
+            _ = try await engine.generate(request: ConstrainedModel.request(format: .jsonSchema(ConstrainedModel.schema)))
+        }
     }
 }
 
-extension MLXInferenceEngine {
-    func pointTokenizer(at directory: URL) { tokenizerDirectory = directory }
+enum SchemaCheck {
+    static let bytes = try! GrammarTokenizer(
+        vocab: (0..<256).map { String(format: "<0x%02X>", $0) } + ["</s>"], vocabType: .byteFallback, eosTokenId: 256)
+
+    static func accepts(_ schema: String, _ text: String, strict: Bool = false) throws -> Bool {
+        let grammar = try GrammarConstraint(tokenizer: bytes, jsonSchema: try JSONSchemaGate.prepare(schema, strict: strict).schema)
+        for byte in text.utf8 {
+            guard (try? grammar.commitToken(Int32(byte))) != nil else { return false }
+        }
+        return try grammar.computeMask().mask.allows(256)
+    }
 }
 
 @Suite("JSON constraint processor phases (#42)")
 struct JSONConstraintProcessorTests {
-    static let masker = GrammarMasker(
-        grammar: try! JSONGrammar.compile(schemaJSON: ConstrainedModel.schema), vocabulary: JSONPieceTokenizer.vocabulary)
-    static let markers = ReasoningMarkers(openers: [JSONPieceTokenizer.open], closers: [[JSONPieceTokenizer.close]])
+    static func processor(_ phase: JSONConstraintProcessor.Phase, markers: Bool = true) throws -> JSONConstraintProcessor {
+        let vocabulary = markers ? JSONPieceTokenizer.markerVocabulary : try GrammarVocabulary(
+            pieces: (0..<256).map { JSONPieceTokenizer().convertIdToToken($0)! }, vocabType: .raw,
+            stopTokens: [JSONPieceTokenizer.endOfText], markers: ReasoningMarkers())
+        let schema = try JSONSchemaGate.prepare(ConstrainedModel.schema, strict: true).schema
+        let grammar = try GrammarConstraint(tokenizer: vocabulary.tokenizer, jsonSchema: schema)
+        return JSONConstraintProcessor(session: GrammarSession(schema: schema, grammar: grammar), vocabulary: vocabulary, phase: phase)
+    }
+
+    static let document = #"{"mode":"fast","flags":[],"inner":{"on":true,"note":null}}"#
 
     @Test("Before the answer the opener or the grammar's first bytes are allowed; inside reasoning nothing is masked; after the closer only the grammar is")
-    func phases() {
-        var processor = JSONConstraintProcessor(
-            masker: Self.masker, stopTokens: [JSONPieceTokenizer.endOfText], markers: Self.markers, phase: .awaitingAnswer)
+    func phases() throws {
+        var processor = try Self.processor(.awaitingAnswer)
         let brace = Int(UInt8(ascii: "{"))
         let letter = Int(UInt8(ascii: "q"))
-        #expect(processor.allowedTokens().contains(JSONPieceTokenizer.open))
-        #expect(processor.allowedTokens().contains(brace))
-        #expect(!processor.allowedTokens().contains(letter))
+        let allowed = try #require(processor.allowedTokens())
+        #expect(allowed.allows(JSONPieceTokenizer.open))
+        #expect(allowed.allows(brace))
+        #expect(!allowed.allows(letter))
 
         processor.didSample(token: MLXArray(Int32(JSONPieceTokenizer.open)))
         #expect(processor.phase == .reasoning)
@@ -260,47 +257,40 @@ struct JSONConstraintProcessorTests {
         processor.didSample(token: MLXArray(Int32(letter)))
         processor.didSample(token: MLXArray(Int32(JSONPieceTokenizer.close)))
         #expect(processor.phase == .constrained)
-        #expect(!processor.allowedTokens().contains(JSONPieceTokenizer.open))
+        #expect(processor.allowedTokens()?.allows(JSONPieceTokenizer.open) == false)
         let masked = processor.process(logits: logits)
         #expect(masked[0, brace].item(Float.self) == 0)
         #expect(masked[0, letter].item(Float.self) == -Float.infinity)
     }
 
     @Test("Once the top-level value closes only the stop token is left")
-    func stopsAtTheClosingBrace() {
-        var processor = JSONConstraintProcessor(
-            masker: Self.masker, stopTokens: [JSONPieceTokenizer.endOfText], markers: ReasoningMarkers(), phase: .constrained)
-        for byte in Array(#"{"mode":"fast","flags":[],"inner":{"on":true,"note":null}}"#.utf8) {
+    func stopsAtTheClosingBrace() throws {
+        var processor = try Self.processor(.constrained, markers: false)
+        for byte in Array(Self.document.utf8) {
             processor.didSample(token: MLXArray(Int32(byte)))
         }
-        let allowed = processor.allowedTokens()
-        #expect(allowed.contains(JSONPieceTokenizer.endOfText))
-        #expect((0..<256).filter(allowed.contains) == [JSONPieceTokenizer.endOfText])
+        let allowed = try #require(processor.allowedTokens())
+        #expect((0..<256).filter(allowed.allows) == [JSONPieceTokenizer.endOfText])
     }
 
-    @Test("A closer spelled over several tokens ends reasoning; the text after it starts the document")
-    func closerAcrossTokens() {
-        var processor = JSONConstraintProcessor(
-            masker: Self.masker, stopTokens: [JSONPieceTokenizer.endOfText], markers: ReasoningMarkers(), phase: .reasoning)
+    @Test("A closer spelled over several tokens ends reasoning and the grammar starts at the document")
+    func closerAcrossTokens() throws {
+        var processor = try Self.processor(.reasoning, markers: false)
         for byte in Array("plan</thi".utf8) { processor.didSample(token: MLXArray(Int32(byte))) }
         #expect(processor.phase == .reasoning)
-        for byte in Array("nk>\n".utf8) { processor.didSample(token: MLXArray(Int32(byte))) }
+        for byte in Array("nk>".utf8) { processor.didSample(token: MLXArray(Int32(byte))) }
         #expect(processor.phase == .constrained)
-        #expect(processor.allowedTokens().contains(Int(UInt8(ascii: "{"))))
+        #expect(processor.allowedTokens()?.allows(Int(UInt8(ascii: "{"))) == true)
     }
 
-    @Test("A token the grammar rejects does not release the constraint, and a closed document without stop tokens leaves the logits alone")
-    func neverReleases() {
-        var processor = JSONConstraintProcessor(
-            masker: Self.masker, stopTokens: [], markers: ReasoningMarkers(), phase: .constrained)
+    @Test("A token the grammar rejects does not release the constraint")
+    func neverReleases() throws {
+        var processor = try Self.processor(.constrained, markers: false)
         processor.didSample(token: MLXArray(Int32(UInt8(ascii: "q"))))
         #expect(processor.phase == .constrained)
         let logits = MLXArray.zeros([1, 256])
-        #expect(processor.process(logits: logits)[0, Int(UInt8(ascii: "q"))].item(Float.self) == -Float.infinity)
-        for byte in Array(#"{"mode":"fast","flags":[],"inner":{"on":true,"note":null}}"#.utf8) {
-            processor.didSample(token: MLXArray(Int32(byte)))
-        }
-        #expect(processor.matcher.isClosed)
-        #expect(processor.process(logits: logits).min().item(Float.self) == 0)
+        let masked = processor.process(logits: logits)
+        #expect(masked[0, Int(UInt8(ascii: "q"))].item(Float.self) == -Float.infinity)
+        #expect(masked[0, Int(UInt8(ascii: "{"))].item(Float.self) == 0)
     }
 }

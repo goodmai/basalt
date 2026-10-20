@@ -45,10 +45,8 @@ struct ResponseFormatAPITests {
             Issue.record("json_schema did not reach the engine"); return
         }
         #expect(strict)
-        let compiled = try #require(await engine.lastRequest?.responseGrammar)
-        #expect(try JSONGrammar.compile(schemaJSON: sent).starts == compiled.starts)
-        var matcher = JSONGrammarMatcher(grammar: compiled)
-        #expect(matcher.accept(Array(#"{"tags":["a"]}"#.utf8)) && matcher.isAccepting)
+        #expect(try SchemaCheck.accepts(sent, #"{"tags":["a"]}"#, strict: true))
+        #expect(try !SchemaCheck.accepts(sent, #"{"tags":["c"]}"#, strict: true))
 
         try await post(app, "/v1/chat/completions", #"""
             {"messages": [{"role": "user", "content": "hi"}], "response_format": {"type": "json_object"}}
@@ -77,10 +75,10 @@ struct ResponseFormatAPITests {
         let (app, engine) = try await app()
         try await post(app, "/v1/chat/completions", #"""
             {"messages": [{"role": "user", "content": "hi"}], "response_format": {"type": "json_schema",
-             "json_schema": {"name": "t", "strict": true, "schema": {"type": "object", "properties": {"n": {"type": "integer", "minimum": 1}}}}}}
+             "json_schema": {"name": "t", "strict": true, "schema": {"type": "object", "properties": {"n": {"type": "integer", "multipleOf": 2}}}}}}
             """#) { response in
             #expect(response.status == .badRequest)
-            #expect(Self.errorMessage(response) == "response_format: unsupported JSON Schema keyword 'minimum' at #/properties/n")
+            #expect(Self.errorMessage(response) == "response_format: unsupported JSON Schema keyword 'multipleOf' at #/properties/n")
         }
         try await post(app, "/v1/responses", #"""
             {"input": "hi", "text": {"format": {"type": "xml"}}}
@@ -97,22 +95,23 @@ struct ResponseFormatAPITests {
         #expect(await engine.lastRequest == nil)
     }
 
-    @Test("Without strict, constraint keywords are annotations and an ambiguous anyOf widens; strict keeps both a 400")
+    @Test("Without strict, a keyword XGrammar ignores is only logged; strict makes it a 400")
     func nonStrictIsBestEffort() async throws {
         let (app, engine) = try await app()
-        let schema = #"{"type": "object", "properties": {"n": {"anyOf": [{"type": "integer"}, {"type": "number", "maximum": 9}]}}, "required": ["n"]}"#
+        let schema = #"{"type": "object", "properties": {"n": {"anyOf": [{"type": "integer"}, {"type": "number", "multipleOf": 0.5}]}}, "required": ["n"]}"#
         try await post(app, "/v1/chat/completions", """
             {"messages": [{"role": "user", "content": "hi"}], "response_format": {"type": "json_schema", "json_schema": {"name": "t", "schema": \(schema)}}}
             """) { #expect($0.status == .ok) }
-        let grammar = try #require(await engine.lastRequest?.responseGrammar)
-        var matcher = JSONGrammarMatcher(grammar: grammar)
-        #expect(matcher.accept(Array(#"{"n":1.5}"#.utf8)) && matcher.isAccepting)
-        #expect(grammar.relaxations.count == 2)
+        guard case .jsonSchema(let sent, let strict)? = await engine.lastRequest?.responseFormat else {
+            Issue.record("json_schema did not reach the engine"); return
+        }
+        #expect(!strict)
+        #expect(try SchemaCheck.accepts(sent, #"{"n":1.25}"#))
         try await post(app, "/v1/chat/completions", """
             {"messages": [{"role": "user", "content": "hi"}], "response_format": {"type": "json_schema", "json_schema": {"name": "t", "strict": true, "schema": \(schema)}}}
             """) { response in
             #expect(response.status == .badRequest)
-            #expect(Self.errorMessage(response) == "response_format: unsupported JSON Schema keyword 'maximum' at #/properties/n/anyOf/1")
+            #expect(Self.errorMessage(response) == "response_format: unsupported JSON Schema keyword 'multipleOf' at #/properties/n/anyOf/1")
         }
     }
 
