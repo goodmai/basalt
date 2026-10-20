@@ -520,13 +520,17 @@ public actor MLXInferenceEngine: InferenceEngine {
 
     func outputConstraint(for request: GenerationRequest) throws(BasaltError) -> OutputConstraint? {
         let forcedTool = request.toolChoice?.forcedTool.flatMap { name in request.tools?.first { $0.name == name } }
-        let format = forcedTool.map { $0.parametersJSON.map(ResponseFormat.jsonSchema) ?? .jsonObject } ?? request.responseFormat
+        let format = forcedTool.map { $0.parametersJSON.map { .jsonSchema($0) } ?? .jsonObject } ?? request.responseFormat
         guard let format else { return nil }
         let key = "\(format)"
         if let known = maskers[key] { return OutputConstraint(masker: known, toolName: forcedTool?.name) }
         let grammar: JSONGrammar
         do {
-            grammar = try format.grammar()
+            if forcedTool == nil, let compiled = request.responseGrammar {
+                grammar = compiled
+            } else {
+                grammar = try format.grammar()
+            }
         } catch {
             guard let forcedTool else { throw .invalidRequestStructure(details: "response_format: \(error.message)") }
             logger.info("tool_choice \(forcedTool.name): arguments left unconstrained, \(error.message)")

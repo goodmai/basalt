@@ -402,7 +402,7 @@ struct OpenAIController: Sendable {
         do { requested = try Self.requestedTools(fromRequestBody: data) } catch {
             return makeErrorResponse(status: .badRequest, message: error.message, code: 400)
         }
-        let responseFormat: ResponseFormat?
+        let responseFormat: RequestedFormat?
         do { responseFormat = try Self.responseFormat(fromRequestBody: data) } catch {
             return makeErrorResponse(status: .badRequest, message: error.message, code: 400)
         }
@@ -426,7 +426,8 @@ struct OpenAIController: Sendable {
             presencePenalty: dto.presencePenalty,
             repetitionPenalty: dto.repetitionPenalty,
             thinkingBudget: dto.thinkingBudget,
-            responseFormat: responseFormat
+            responseFormat: responseFormat?.format,
+            responseGrammar: responseFormat?.grammar
         )
         if let rejection = invalidParameters(genRequest) { return rejection }
         let model = dto.model.map(ModelsController.restModel(from:))
@@ -510,7 +511,7 @@ struct OpenAIController: Sendable {
         do { requested = try Self.requestedTools(fromRequestBody: data) } catch {
             return makeErrorResponse(status: .badRequest, message: error.message, code: 400)
         }
-        let responseFormat: ResponseFormat?
+        let responseFormat: RequestedFormat?
         do { responseFormat = try Self.responseFormat(fromRequestBody: data) } catch {
             return makeErrorResponse(status: .badRequest, message: error.message, code: 400)
         }
@@ -534,7 +535,8 @@ struct OpenAIController: Sendable {
             presencePenalty: dto.presencePenalty,
             repetitionPenalty: dto.repetitionPenalty,
             thinkingBudget: dto.thinkingBudget,
-            responseFormat: responseFormat
+            responseFormat: responseFormat?.format,
+            responseGrammar: responseFormat?.grammar
         )
         if let rejection = invalidParameters(genRequest) { return rejection }
         let model = dto.model.map(ModelsController.restModel(from:))
@@ -911,7 +913,12 @@ struct OpenAIController: Sendable {
         let message: String
     }
 
-    static func responseFormat(fromRequestBody data: Data) throws(InvalidResponseFormat) -> ResponseFormat? {
+    struct RequestedFormat {
+        let format: ResponseFormat
+        let grammar: JSONGrammar
+    }
+
+    static func responseFormat(fromRequestBody data: Data) throws(InvalidResponseFormat) -> RequestedFormat? {
         guard let body = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let format = (body["response_format"] as? [String: Any])
                 ?? ((body["text"] as? [String: Any])?["format"] as? [String: Any]) else { return nil }
@@ -919,19 +926,26 @@ struct OpenAIController: Sendable {
         case "text":
             return nil
         case "json_object":
-            return .jsonObject
+            return RequestedFormat(format: .jsonObject, grammar: JSONGrammar.anyObject())
         case "json_schema":
-            guard let schema = (format["json_schema"] as? [String: Any])?["schema"] ?? format["schema"],
+            let declaration = (format["json_schema"] as? [String: Any]) ?? format
+            guard let schema = declaration["schema"],
                   let encoded = try? JSONSerialization.data(withJSONObject: schema, options: [.sortedKeys, .fragmentsAllowed]),
                   let text = String(data: encoded, encoding: .utf8) else {
                 throw InvalidResponseFormat(message: "response_format json_schema needs a schema")
             }
+            let requested = ResponseFormat.jsonSchema(text, strict: declaration["strict"] as? Bool == true)
+            let grammar: JSONGrammar
             do {
-                _ = try ResponseFormat.jsonSchema(text).grammar()
+                grammar = try requested.grammar()
             } catch {
                 throw InvalidResponseFormat(message: "response_format: \(error.message)")
             }
-            return .jsonSchema(text)
+            if !grammar.relaxations.isEmpty {
+                GemLogger(module: "OpenAIController").info(
+                    "response_format without strict: \(grammar.relaxations.joined(separator: "; "))")
+            }
+            return RequestedFormat(format: requested, grammar: grammar)
         case let type:
             throw InvalidResponseFormat(message:
                 "response_format type \(type.map { "'\($0)' is not supported" } ?? "is missing"); expected text, json_object or json_schema")

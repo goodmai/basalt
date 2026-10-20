@@ -43,12 +43,12 @@ public struct ToolChoice: Codable, Sendable, Equatable {
 
 public enum ResponseFormat: Codable, Sendable, Equatable {
     case jsonObject
-    case jsonSchema(String)
+    case jsonSchema(String, strict: Bool = false)
 
     public func grammar() throws(UnsupportedJSONSchema) -> JSONGrammar {
         switch self {
         case .jsonObject: JSONGrammar.anyObject()
-        case .jsonSchema(let schema): try JSONGrammar.compile(schemaJSON: schema)
+        case .jsonSchema(let schema, let strict): try JSONGrammar.compile(schemaJSON: schema, strict: strict)
         }
     }
 }
@@ -75,6 +75,7 @@ public struct GenerationRequest: Codable, Sendable {
     public private(set) var repetitionPenalty: Double? = nil
     public private(set) var thinkingBudget: Int? = nil
     public private(set) var responseFormat: ResponseFormat? = nil
+    public private(set) var responseGrammar: JSONGrammar? = nil
 
     enum CodingKeys: String, CodingKey {
         case prompt, maxTokens, temperature, topP, minP, dynamicTemperature, enableThinking, reasoningEffort
@@ -101,7 +102,8 @@ public struct GenerationRequest: Codable, Sendable {
         presencePenalty: Double? = nil,
         repetitionPenalty: Double? = nil,
         thinkingBudget: Int? = nil,
-        responseFormat: ResponseFormat? = nil
+        responseFormat: ResponseFormat? = nil,
+        responseGrammar: JSONGrammar? = nil
     ) {
         self.prompt = prompt
         self.maxTokens = maxTokens
@@ -122,6 +124,7 @@ public struct GenerationRequest: Codable, Sendable {
         self.repetitionPenalty = repetitionPenalty
         self.thinkingBudget = thinkingBudget
         self.responseFormat = responseFormat
+        self.responseGrammar = responseGrammar
     }
 
     /// The same request with another token budget. Kept next to the stored properties so a new

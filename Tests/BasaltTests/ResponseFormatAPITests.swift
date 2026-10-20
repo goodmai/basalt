@@ -41,11 +41,13 @@ struct ResponseFormatAPITests {
             {"messages": [{"role": "user", "content": "hi"}],
              "response_format": {"type": "json_schema", "json_schema": {"name": "t", "strict": true, "schema": \(Self.schema)}}}
             """) { #expect($0.status == .ok) }
-        guard case .jsonSchema(let sent)? = await engine.lastRequest?.responseFormat else {
+        guard case .jsonSchema(let sent, let strict)? = await engine.lastRequest?.responseFormat else {
             Issue.record("json_schema did not reach the engine"); return
         }
-        let grammar = try JSONGrammar.compile(schemaJSON: sent)
-        var matcher = JSONGrammarMatcher(grammar: grammar)
+        #expect(strict)
+        let compiled = try #require(await engine.lastRequest?.responseGrammar)
+        #expect(try JSONGrammar.compile(schemaJSON: sent).starts == compiled.starts)
+        var matcher = JSONGrammarMatcher(grammar: compiled)
         #expect(matcher.accept(Array(#"{"tags":["a"]}"#.utf8)) && matcher.isAccepting)
 
         try await post(app, "/v1/chat/completions", #"""
@@ -75,7 +77,7 @@ struct ResponseFormatAPITests {
         let (app, engine) = try await app()
         try await post(app, "/v1/chat/completions", #"""
             {"messages": [{"role": "user", "content": "hi"}], "response_format": {"type": "json_schema",
-             "json_schema": {"name": "t", "schema": {"type": "object", "properties": {"n": {"type": "integer", "minimum": 1}}}}}}
+             "json_schema": {"name": "t", "strict": true, "schema": {"type": "object", "properties": {"n": {"type": "integer", "minimum": 1}}}}}}
             """#) { response in
             #expect(response.status == .badRequest)
             #expect(Self.errorMessage(response) == "response_format: unsupported JSON Schema keyword 'minimum' at #/properties/n")
@@ -93,5 +95,47 @@ struct ResponseFormatAPITests {
             #expect(Self.errorMessage(response) == "response_format json_schema needs a schema")
         }
         #expect(await engine.lastRequest == nil)
+    }
+
+    @Test("Without strict, constraint keywords are annotations and an ambiguous anyOf widens; strict keeps both a 400")
+    func nonStrictIsBestEffort() async throws {
+        let (app, engine) = try await app()
+        let schema = #"{"type": "object", "properties": {"n": {"anyOf": [{"type": "integer"}, {"type": "number", "maximum": 9}]}}, "required": ["n"]}"#
+        try await post(app, "/v1/chat/completions", """
+            {"messages": [{"role": "user", "content": "hi"}], "response_format": {"type": "json_schema", "json_schema": {"name": "t", "schema": \(schema)}}}
+            """) { #expect($0.status == .ok) }
+        let grammar = try #require(await engine.lastRequest?.responseGrammar)
+        var matcher = JSONGrammarMatcher(grammar: grammar)
+        #expect(matcher.accept(Array(#"{"n":1.5}"#.utf8)) && matcher.isAccepting)
+        #expect(grammar.relaxations.count == 2)
+        try await post(app, "/v1/chat/completions", """
+            {"messages": [{"role": "user", "content": "hi"}], "response_format": {"type": "json_schema", "json_schema": {"name": "t", "strict": true, "schema": \(schema)}}}
+            """) { response in
+            #expect(response.status == .badRequest)
+            #expect(Self.errorMessage(response) == "response_format: unsupported JSON Schema keyword 'maximum' at #/properties/n/anyOf/1")
+        }
+    }
+
+    @Test("A schema nested hundreds of levels deep is a 400 and the server keeps answering")
+    func deepSchemaIsRefused() async throws {
+        let (app, _) = try await app()
+        let deep = String(repeating: #"{"type": "array", "items": "#, count: 300) + #"{"type": "string"}"# + String(repeating: "}", count: 300)
+        try await post(app, "/v1/chat/completions", """
+            {"messages": [{"role": "user", "content": "hi"}], "response_format": {"type": "json_schema", "json_schema": {"name": "t", "schema": \(deep)}}}
+            """) { response in
+            #expect(response.status == .badRequest)
+            #expect(Self.errorMessage(response)?.contains("nests deeper") == true)
+        }
+        let defs = (0..<1000).map { "\"d\($0)\": {\"$ref\": \"#/$defs/d\($0 + 1)\"}" }.joined(separator: ", ")
+        let chain = "{\"$defs\": {\(defs), \"d1000\": {}}, \"$ref\": \"#/$defs/d0\"}"
+        try await post(app, "/v1/responses", """
+            {"input": "hi", "text": {"format": {"type": "json_schema", "name": "t", "schema": \(chain)}}}
+            """) { response in
+            #expect(response.status == .badRequest)
+            #expect(Self.errorMessage(response)?.contains("counting $ref") == true)
+        }
+        try await post(app, "/v1/chat/completions", #"""
+            {"messages": [{"role": "user", "content": "hi"}], "response_format": {"type": "json_object"}}
+            """#) { #expect($0.status == .ok) }
     }
 }
