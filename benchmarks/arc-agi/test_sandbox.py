@@ -3,6 +3,7 @@ import importlib.util
 import json
 import os
 import resource
+import signal
 import subprocess
 import sys
 import tempfile
@@ -221,6 +222,20 @@ socket.create_connection(('1.1.1.1', 80), timeout=3)
             code = ("import os\ndef transform(grid):\n"
                     f"    os.write(1, b'\\n{{\"outputs\": [{grid}], \"timed_out\": false}}\\n')\n    os._exit(0)")
             self.assertEqual(self.run_code(code), (None, "exec_failed"), grid)
+
+    def test_a_child_is_killed_when_the_parent_is_interrupted_while_supervising(self):
+        started = []
+        real_popen = subprocess.Popen
+
+        def popen(*args, **kwargs):
+            started.append(real_popen(*args, **kwargs))
+            return started[-1]
+
+        with mock.patch.object(arc_sandbox.subprocess, "Popen", side_effect=popen), \
+                mock.patch.object(arc_sandbox, "_footprint_bytes", side_effect=KeyboardInterrupt):
+            with self.assertRaises(KeyboardInterrupt):
+                self.run_code("def transform(grid):\n    while True:\n        pass")
+        self.assertEqual(started[-1].returncode, -signal.SIGKILL)
 
     def test_dsl_helpers_are_available(self):
         code = ("def transform(grid: Grid) -> Grid:\n"

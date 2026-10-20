@@ -162,11 +162,15 @@ def _run_child(code, inputs, timeout, wall_seconds, numpy_package, images):
             process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=output,
                                        stderr=subprocess.DEVNULL, cwd=work_dir, env={})
             try:
-                process.stdin.write(json.dumps(request).encode())
-                process.stdin.close()
-            except BrokenPipeError:
-                pass
-            stopped = _supervise(process, wall_seconds, work_dir)
+                try:
+                    process.stdin.write(json.dumps(request).encode())
+                    process.stdin.close()
+                except BrokenPipeError:
+                    pass
+                stopped = _supervise(process, wall_seconds, work_dir)
+            finally:
+                process.kill()
+                process.wait()
             if stopped == "exec_timeout":
                 return [], True, None
             if stopped:
@@ -239,8 +243,6 @@ def _supervise(process, timeout: float, work_dir: str):
             reason = "exec_disk_limit"
         else:
             continue
-        process.kill()
-        process.wait()
         return reason
 
 
