@@ -34,6 +34,7 @@ LONG_RESULT_LINE = ("```python\nimport os\ndef transform(grid):\n"
                     "    os.write(1, b'\\n[' + b'[],' * 5_000_000 + b'[]]\\n')\n    os._exit(0)\n```")
 FILLS_THE_DISK = ("```python\ndef transform(grid):\n    for index in range(40000):\n"
                   "        open(f'f{index}', 'wb').close()\n    while True:\n        pass\n```")
+FULL_SIZE_GRID = "```python\ndef transform(grid):\n    return [[9] * 30 for _ in range(30)]\n```"
 FIRST_PAIR_ONLY = ("```python\ndef transform(grid):\n    if grid[0][0] == 1:\n        return [[3, 1], [4, 2]]\n"
                    "    return [[2, 0], [3, 1]]\n```")
 
@@ -148,6 +149,20 @@ class TrainVerificationTest(unittest.TestCase):
         self.assertEqual(execute_python_hybrid(ROTATE + "\n" + DEEP_RESULT_LINE, TASK["test"][0]["input"],
                                                train_pairs=TASK["train"]),
                          ([[2, 0], [3, 1]], "python_oop_exec_success", 2))
+
+    def test_a_parse_error_of_any_kind_fails_only_its_block(self):
+        with mock.patch.object(arc_sandbox.json, "loads", side_effect=RecursionError("deep")):
+            self.assertEqual(arc_sandbox._parse_outputs('{"outputs": [[[1]]], "timed_out": false}', 1), ([], False))
+
+    def test_a_limit_outranks_a_timeout_when_no_block_answers(self):
+        self.assertEqual(execute_python_hybrid(FILLS_THE_DISK + "\n" + HANG, TASK["test"][0]["input"], timeout=1,
+                                               train_pairs=TASK["train"])[1],
+                         "exec_disk_limit")
+
+    def test_honest_full_size_grids_fit_within_the_result_line_bound(self):
+        pairs = [{"input": [[0] * 30 for _ in range(30)], "output": [[9] * 30 for _ in range(30)]}] * 10
+        self.assertEqual(execute_python_hybrid(FULL_SIZE_GRID, [[0] * 30 for _ in range(30)], train_pairs=pairs),
+                         ([[9] * 30 for _ in range(30)], "python_oop_exec_success", 10))
 
     def test_a_result_line_too_long_for_its_grids_is_rejected_unparsed_and_an_older_block_still_answers(self):
         with mock.patch.object(arc_sandbox.json, "loads", wraps=arc_sandbox.json.loads) as loads:
