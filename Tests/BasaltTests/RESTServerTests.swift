@@ -112,7 +112,7 @@ struct RESTServerTests {
         #expect(await s.engine.lastRequest == nil)
     }
 
-    @Test("Chat completion stream: reasoning and text deltas, a finish chunk, then [DONE]")
+    @Test("Chat completion stream: reasoning (also as reasoning_content) and text deltas, a finish chunk, then [DONE]")
     func chatCompletionStream() async throws {
         let s = try await setup(reasoning: "hmm")
         let request = #"{"model": "local", "stream": true, "messages": [{"role": "user", "content": "hi"}]}"#
@@ -130,6 +130,8 @@ struct RESTServerTests {
                 let choices = chunks.compactMap { ($0["choices"] as? [[String: Any]])?.first }
                 let deltas = choices.compactMap { $0["delta"] as? [String: Any] }
                 #expect(deltas.compactMap { $0["reasoning"] as? String } == ["hmm"])
+                #expect(deltas.compactMap { $0["reasoning_content"] as? String } == ["hmm"])
+                #expect(deltas.allSatisfy { ($0["reasoning"] as? String) == ($0["reasoning_content"] as? String) })
                 #expect(deltas.compactMap { $0["content"] as? String }.joined() == "Mock response")
                 #expect(choices.last?["finish_reason"] as? String == "stop")
                 #expect(choices.dropLast().allSatisfy { $0["finish_reason"] is NSNull })
@@ -137,7 +139,7 @@ struct RESTServerTests {
         }
     }
 
-    @Test("Non-streaming replies carry the reasoning the stream sends: chat message reasoning, a Responses reasoning item, a Messages thinking block")
+    @Test("Non-streaming replies carry the reasoning the stream sends: chat message reasoning and reasoning_content, a Responses reasoning item, a Messages thinking block")
     func nonStreamingReasoning() async throws {
         let s = try await setup(reasoning: "hmm")
         let turn = #""messages": [{"role": "user", "content": "hi"}]"#
@@ -146,6 +148,7 @@ struct RESTServerTests {
                 let choice = try #require((try json(res.body)["choices"] as? [[String: Any]])?.first)
                 let message = try #require(choice["message"] as? [String: Any])
                 #expect(message["reasoning"] as? String == "hmm")
+                #expect(message["reasoning_content"] as? String == "hmm")
                 #expect(message["content"] as? String == "Mock response")
             }
             try await client.execute(uri: "/v1/responses", method: .post, headers: [.contentType: "application/json"], body: ByteBuffer(string: "{\(turn)}")) { res in
@@ -162,6 +165,39 @@ struct RESTServerTests {
                 #expect(content.first?["signature"] as? String == "")
             }
         }
+    }
+
+    @Test("A reply without reasoning carries neither reasoning nor reasoning_content")
+    func noReasoningNoAlias() async throws {
+        let s = try await setup()
+        try await s.app.test(.router) { client in
+            try await client.execute(uri: "/v1/chat/completions", method: .post, headers: [.contentType: "application/json"],
+                                     body: ByteBuffer(string: #"{"messages": [{"role": "user", "content": "hi"}]}"#)) { res in
+                let choice = try #require((try json(res.body)["choices"] as? [[String: Any]])?.first)
+                let message = try #require(choice["message"] as? [String: Any])
+                #expect(message["reasoning"] == nil)
+                #expect(message["reasoning_content"] == nil)
+            }
+        }
+    }
+
+    @Test("An assistant turn sent back with reasoning_content reaches the engine exactly as one sent with reasoning")
+    func reasoningContentInputAlias() async throws {
+        let s = try await setup()
+        var seen: [[ChatMessageInput]?] = []
+        for key in ["reasoning", "reasoning_content"] {
+            let request = """
+                {"messages": [{"role": "user", "content": "hi"}, {"role": "assistant", "content": "hello", "\(key)": "thought"}, {"role": "user", "content": "again"}]}
+                """
+            try await s.app.test(.router) { client in
+                try await client.execute(uri: "/v1/chat/completions", method: .post, headers: [.contentType: "application/json"], body: ByteBuffer(string: request)) { res in
+                    #expect(res.status == .ok, "\(key)")
+                }
+            }
+            seen.append(await s.engine.lastRequest?.messages)
+        }
+        #expect(seen[0] != nil)
+        #expect(seen[0] == seen[1])
     }
 
     @Test("Chat completion refuses an empty or undecodable body with 400; an engine failure keeps its own status in the error envelope")

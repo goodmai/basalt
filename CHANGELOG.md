@@ -17,6 +17,10 @@
 - `basalt sessions list | show <id|latest> | stats <id|latest>` read the log without loading a model; `show` rebuilds the latest conversation from the `parent` chain (metrics only for `meta` sessions).
 - Behaviour change: `basalt chat` keeps a multi-turn history (it sent each line on its own before) in a session of its own (`--session-log full|meta|off`), prints `Resume with: basalt chat --resume <id>` on exit, and `basalt chat --resume <id|latest>` continues a logged chat; a `meta` session has no content and is refused with a non-zero exit. `/clear` clears the history.
 
+### Chat templates and API
+- Chat templates render as Python Jinja2 does under HF transformers (#104): basalt applies `{%- -%}` / `{{- -}}` / `{#- -#}` whitespace control, `{%+` / `+%}`, `lstrip_blocks` and `trim_blocks` itself before swift-jinja sees the template, aware of string literals and `{% raw %}` blocks (which swift-jinja does not parse), and normalizes CRLF. Gemma 4 tool declarations lose the stray spaces in `parameters:{ properties:{ …`; the ten cached model templates checked against `transformers` produce the same tokens for the test conversations.
+- `/v1/chat/completions` returns reasoning as both `reasoning` and `reasoning_content` (`message` and stream `delta`), for vLLM, DeepSeek, llama.cpp and LM Studio clients (#104). The README notes that Anthropic `thinking` blocks carry an empty `signature`.
+
 ## 0.5.0 — 2026-10-27
 
 ### Upgrading from 0.4.0

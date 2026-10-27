@@ -318,6 +318,8 @@ curl -s http://127.0.0.1:8080/v1/chat/completions \
 
 Поддерживаются потоковый SSE, системные промпты и многоходовые диалоги. Если в поле `"model"` передать HuggingFace ID, произойдёт горячая замена модели.
 
+Рассуждения reasoning-модели приходят в `message.reasoning` (в стриме — `delta.reasoning`), как у OpenRouter и Ollama, и тем же текстом в `reasoning_content` — это поле читают клиенты vLLM, DeepSeek, llama.cpp и LM Studio. Ходы ассистента, присланные обратно с любым из двух полей, принимаются; сами рассуждения в промпт не возвращаются.
+
 ### Совместимость с Anthropic
 
 ```bash
@@ -331,6 +333,8 @@ curl -s http://127.0.0.1:8080/v1/messages \
 ```
 
 Реализована полная последовательность SSE-событий Anthropic (`message_start`, `content_block_start`, `content_block_delta`, `message_stop`). Принимается и строка, и массив блоков в `content`.
+
+У блоков `thinking` пустая `signature`: подписать их basalt нечем. Через basalt они проходят туда и обратно, но настоящий Anthropic API отклонит диалог, в котором они повторяются, поэтому перед отправкой той же истории туда их нужно убрать.
 
 ### SSE-стриминг (нативный API)
 

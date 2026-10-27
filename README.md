@@ -320,6 +320,8 @@ curl -s http://localhost:8080/v1/chat/completions \
 
 Supports streaming SSE, system prompts, and multi-turn conversation. Sending a HuggingFace model ID in the `"model"` field triggers a hot-swap automatically.
 
+A reasoning model's thinking comes back as `message.reasoning` (stream: `delta.reasoning`), the OpenRouter / Ollama name, and the same text again as `reasoning_content`, the name vLLM, DeepSeek, llama.cpp and LM Studio clients read. Assistant turns sent back with either field are accepted; the reasoning itself is not put back into the prompt.
+
 ### Anthropic-compatible
 
 ```bash
@@ -333,6 +335,8 @@ curl -s http://localhost:8080/v1/messages \
 ```
 
 Implements the full Anthropic SSE event sequence (`message_start`, `content_block_start`, `content_block_delta`, `message_stop`). Accepts plain-string and block-array content formats.
+
+`thinking` blocks carry an empty `signature`: basalt has no key to sign them with. They round-trip through basalt, but the real Anthropic API rejects a conversation that replays them, so drop them before sending the same history there.
 
 ### SSE streaming (native API)
 
