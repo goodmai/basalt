@@ -86,6 +86,7 @@ public actor MLXInferenceEngine: InferenceEngine {
     private(set) var idleGrammars: [String: [GrammarConstraint]] = [:]
     private let cacheBlendRatio: Float?
     private(set) var cacheBlend: CacheBlendStore?
+    private let speculativeLookup: Bool
 
     public init(
         reasoningEffort: String? = nil,
@@ -97,8 +98,10 @@ public actor MLXInferenceEngine: InferenceEngine {
         topK: Int? = nil,
         minP: Float? = nil,
         seed: UInt64? = nil,
-        cacheBlendRatio: Float? = nil
+        cacheBlendRatio: Float? = nil,
+        speculativeLookup: Bool = false
     ) {
+        self.speculativeLookup = speculativeLookup
         self.reasoningEffort = reasoningEffort
         self.gpuCacheLimit = gpuCacheLimit
         self.kvBits = kvBits
@@ -395,7 +398,9 @@ public actor MLXInferenceEngine: InferenceEngine {
             memory: finalResponse.memory,
             finishReason: finalResponse.finishReason,
             toolCalls: toolCalls.isEmpty ? nil : toolCalls,
-            reasoningTokens: finalResponse.reasoningTokens
+            reasoningTokens: finalResponse.reasoningTokens,
+            draftTokens: finalResponse.draftTokens,
+            acceptedDraftTokens: finalResponse.acceptedDraftTokens
         )
     }
 
@@ -783,6 +788,7 @@ public actor MLXInferenceEngine: InferenceEngine {
                 phase: policy == .disabled ? .constrained : promptEndsWithThinking ? .reasoning : .awaitingAnswer)
             let constrained = shaping.map { masked.appendingLogitProcessor($0) } ?? masked
             let forcedTool = constraint?.toolName
+            let speculativeLookup = request.speculativeLookup ?? speculativeLookup
             let launch: GenerationLaunch
             do {
                 launch = try await container.perform(nonSendable: lmInput) { context, input in
@@ -790,7 +796,7 @@ public actor MLXInferenceEngine: InferenceEngine {
                         input: input, lease: lease, keepsCache: namespace != nil, boundary: boundary,
                         blend: namespace.flatMap { space in blend.map { ($0, space) } },
                         params: params, components: constrained, tools: forcedTool == nil ? toolSpecs : nil,
-                        context: context)
+                        context: context, speculativeLookup: speculativeLookup)
                 }
             } catch {
                 keep(nil, tokens: promptTokens, namespace: namespace, releasing: lease, epoch: epoch)
@@ -962,7 +968,9 @@ public actor MLXInferenceEngine: InferenceEngine {
                             // unnoticed by every caller.
                             finishReason: stoppedOnRepetition ? .repetition
                                 : (lastInfo?.generationTokenCount ?? 0) >= requestedMaxTokens ? .length : .stop,
-                            reasoningTokens: reasoningTokens
+                            reasoningTokens: reasoningTokens,
+                            draftTokens: lastInfo?.speculativeDecodingTelemetry?.draftTokenCount,
+                            acceptedDraftTokens: lastInfo?.speculativeDecodingTelemetry?.acceptedDraftTokenCount
                         )
                         continuation.yield(.metadata(metadata))
                     }
@@ -1073,12 +1081,25 @@ public actor MLXInferenceEngine: InferenceEngine {
         input: LMInput, lease: PromptCacheLease?, keepsCache: Bool, boundary: Int,
         blend: (store: CacheBlendStore, namespace: String)? = nil,
         params: GenerateParameters, components: GenerationComponents,
-        tools: [ToolSpec]?, context: ModelContext
+        tools: [ToolSpec]?, context: ModelContext, speculativeLookup: Bool = false
     ) throws -> GenerationLaunch {
         guard keepsCache else {
-            let stream = try MLXLMCommon.generate(
-                input: input, parameters: params, context: context, components: components, tools: tools)
-            return GenerationLaunch(stream: stream, task: nil, cache: nil, reusedTokens: 0)
+            let fresh = speculativeLookup && params.kvBits == nil && !carriesMoreThanTokens(input)
+                ? try context.model.newCache(parameters: params) : []
+            guard PromptLookupTokenIterator.supports(fresh) else {
+                let stream = try MLXLMCommon.generate(
+                    input: input, parameters: params, context: context, components: components, tools: tools)
+                return GenerationLaunch(stream: stream, task: nil, cache: nil, reusedTokens: 0)
+            }
+            try components.validate(parameters: params)
+            let iterator = try PromptLookupTokenIterator(
+                input: input, context: input.text.tokens.asArray(Int.self), model: context.model, cache: fresh,
+                processor: components.logitProcessor(parameters: params), sampler: params.sampler(),
+                prefill: params.prefill, maxTokens: params.maxTokens)
+            let (stream, task) = generateTask(
+                promptTokenCount: input.text.tokens.dim(-1), modelConfiguration: context.configuration,
+                tokenizer: context.tokenizer, iterator: iterator, tools: tools, toolCallPolicy: params.toolCallPolicy)
+            return GenerationLaunch(stream: stream, task: task, cache: nil, reusedTokens: 0)
         }
         try components.validate(parameters: params)
         var cache = try lease?.cache ?? PromptCache(context.model.newCache(parameters: params))
@@ -1099,19 +1120,27 @@ public actor MLXInferenceEngine: InferenceEngine {
             ?? HybridPrefixSnapshot.prefillHead(
                 input.text.tokens, into: cache, reused: reused, boundary: boundary, model: context.model, prefill: params.prefill)
         let tail = LMInput(tokens: input.text.tokens[.ellipsis, head.start...])
-        let iterator = try TokenIterator(
+        let processor = components.logitProcessor(parameters: params).map {
+            PromptAnchoredProcessor(base: $0, prompt: input.text.tokens)
+        }
+        func launching(_ iterator: some TokenIteratorProtocol) -> GenerationLaunch {
+            let keepable = iterator.state == nil || cache.isHybrid
+            let (stream, task) = generateTask(
+                promptTokenCount: input.text.tokens.dim(-1) - reused, modelConfiguration: context.configuration,
+                tokenizer: context.tokenizer, iterator: iterator, tools: tools, toolCallPolicy: params.toolCallPolicy)
+            return GenerationLaunch(
+                stream: stream, task: task, cache: keepable ? head.kept : nil, reusedTokens: reused,
+                exactTokens: blended?.exactPrefix ?? Int.max)
+        }
+        if speculativeLookup, PromptLookupTokenIterator.supports(cache.layers) {
+            return launching(try PromptLookupTokenIterator(
+                input: tail, context: input.text.tokens.asArray(Int.self), model: context.model, cache: cache.layers,
+                state: head.state, processor: processor, sampler: params.sampler(), prefill: params.prefill,
+                maxTokens: params.maxTokens))
+        }
+        return launching(try TokenIterator(
             input: tail, model: context.model, cache: cache.layers, state: head.state,
-            processor: components.logitProcessor(parameters: params).map {
-                PromptAnchoredProcessor(base: $0, prompt: input.text.tokens)
-            },
-            sampler: params.sampler(), prefill: params.prefill, maxTokens: params.maxTokens)
-        let keepable = iterator.state == nil || cache.isHybrid
-        let (stream, task) = generateTask(
-            promptTokenCount: input.text.tokens.dim(-1) - reused, modelConfiguration: context.configuration,
-            tokenizer: context.tokenizer, iterator: iterator, tools: tools, toolCallPolicy: params.toolCallPolicy)
-        return GenerationLaunch(
-            stream: stream, task: task, cache: keepable ? head.kept : nil, reusedTokens: reused,
-            exactTokens: blended?.exactPrefix ?? Int.max)
+            processor: processor, sampler: params.sampler(), prefill: params.prefill, maxTokens: params.maxTokens))
     }
 }
 
