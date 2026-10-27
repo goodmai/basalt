@@ -69,7 +69,7 @@ jobs:
         uses: ./.github/actions/mlx-metallib
 
       - name: Test
-        run: swift test
+        run: swift test --no-parallel
 
       # No prebuilt binary is published: the binary alone is useless without the
       # Metal library beside it, and a 130 MB metallib in every release is not
