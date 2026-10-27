@@ -1,0 +1,150 @@
+import Foundation
+import MLX
+import MLXLMCommon
+
+struct PromptLookupTokenIterator: TokenIteratorProtocol {
+    static let draftLimit = 8
+    static let ngramSizes = [5, 4, 3]
+
+    let model: any LanguageModel
+    let cache: [KVCache]
+    var state: LMOutput.State?
+    var processor: LogitProcessor?
+    let sampler: LogitSampler
+    let maxTokens: Int?
+    var tokenCount = 0
+    var promptPrefillTime: TimeInterval = 0
+
+    private var history: [Int]
+    private var pending: [Int] = []
+    private var pendingIndex = 0
+    private var rounds = 0
+    private var drafted = 0
+    private var accepted = 0
+    private var verified = 0
+    private var verifyCalls = 0
+
+    static func supports(_ cache: [KVCache]) -> Bool {
+        PromptCache(cache).isSharable
+    }
+
+    init(
+        input: LMInput, context: [Int], model: any LanguageModel, cache: [KVCache], state: LMOutput.State? = nil,
+        processor: LogitProcessor?, sampler: LogitSampler, prefill: PrefillParameters, maxTokens: Int?
+    ) throws {
+        self.model = model
+        self.cache = cache
+        self.state = state
+        self.processor = processor
+        self.sampler = sampler
+        self.maxTokens = maxTokens
+        self.history = context
+        let start = Date()
+        try prepare(input: input, prefill: prefill)
+        promptPrefillTime = Date().timeIntervalSince(start)
+    }
+
+    var speculativeDecodingTelemetry: SpeculativeDecodingTelemetry? {
+        rounds == 0 ? nil : SpeculativeDecodingTelemetry(
+            roundCount: rounds, draftTokenCount: drafted, acceptedDraftTokenCount: accepted,
+            targetModelCallCount: verifyCalls, draftModelCallCount: 0,
+            targetVerifiedTokenCount: verified, emittedTokenCount: tokenCount)
+    }
+
+    private mutating func prepare(input: LMInput, prefill: PrefillParameters) throws {
+        processor?.prompt(input.text.tokens)
+        let logits: MLXArray
+        switch try model.prepare(input, cache: cache, state: state, prefill: prefill) {
+        case .tokens(let rest):
+            let output = forward(rest)
+            logits = output.logits
+            prefill.progress?(input.text.tokens.size, input.text.tokens.size)
+        case .logits(let output):
+            state = output.state
+            logits = output.logits
+        }
+        accept([sample(logits[0..., -1, 0...]).item(Int.self)])
+    }
+
+    private mutating func forward(_ input: LMInput.Text) -> LMOutput {
+        let output = withPreparedCache(cache, lengths: input.sequenceLengths) {
+            model(input[text: .newAxis], cache: cache, state: state)
+        }
+        state = output.state
+        return output
+    }
+
+    private mutating func sample(_ logits: MLXArray) -> MLXArray {
+        let processed = processor?.process(logits: logits) ?? logits
+        let token = sampler.sample(logits: processed)
+        processor?.didSample(token: token)
+        return token
+    }
+
+    private mutating func accept(_ tokens: [Int]) {
+        history += tokens
+        pending = tokens
+        pendingIndex = 0
+    }
+
+    static func draft(after history: [Int], limit: Int) -> [Int] {
+        for n in ngramSizes where history.count > n {
+            let suffix = history[(history.count - n)...]
+            var match: Int?
+            for start in stride(from: history.count - n - 1, through: 0, by: -1)
+            where history[start ..< start + n].elementsEqual(suffix) {
+                match = start
+                if start + n + limit <= history.count { break }
+            }
+            if let match {
+                return Array(history[(match + n) ..< Swift.min(match + n + limit, history.count)])
+            }
+        }
+        return []
+    }
+
+    private mutating func speculate() {
+        let remaining = maxTokens.map { $0 - tokenCount } ?? Int.max
+        let draft = state == nil ? Self.draft(after: history, limit: Swift.min(Self.draftLimit, remaining - 1)) : []
+        let fed = [history[history.count - 1]] + draft
+        let logits = forward(LMInput.Text(tokens: MLXArray(fed.map(Int32.init))))
+            .logits[0, 0..., 0...]
+
+        var emitted: [Int] = []
+        if processor == nil, sampler is ArgMaxSampler {
+            let tokens = sampler.sample(logits: logits).asArray(Int.self)
+            for (index, token) in tokens.enumerated() {
+                emitted.append(token)
+                if index == draft.count || token != draft[index] { break }
+            }
+        } else {
+            for index in 0 ... draft.count {
+                let token = sample(logits[index ..< index + 1]).item(Int.self)
+                emitted.append(token)
+                if index == draft.count || token != draft[index] { break }
+            }
+        }
+
+        let acceptedDrafts = emitted.count - 1
+        trimPromptCache(cache, numTokens: draft.count - acceptedDrafts)
+        if !draft.isEmpty {
+            rounds += 1
+            drafted += draft.count
+            accepted += acceptedDrafts
+        }
+        verifyCalls += 1
+        verified += fed.count
+        accept(emitted)
+    }
+
+    mutating func next() -> Int? {
+        if let maxTokens, tokenCount >= maxTokens { return nil }
+        if pendingIndex == pending.count {
+            autoreleasepool { speculate() }
+        }
+        if tokenCount % 256 == 0 { Memory.clearCache() }
+        tokenCount += 1
+        pendingIndex += 1
+        return pending[pendingIndex - 1]
+    }
+}

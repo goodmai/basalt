@@ -74,6 +74,12 @@ struct ServeCommand: AsyncParsableCommand {
     )
     var cacheBlendRatio: Float = 0.5
 
+    @Flag(
+        name: .customLong("speculative-lookup"),
+        help: "Draft up to 8 tokens per step by matching the last 3-5 tokens against the prompt and output, verified in one forward pass (faster when the answer copies its context, slower on free prose; greedy output can differ at floating-point near-ties; attention-only models without --kv-bits)"
+    )
+    var speculativeLookup = false
+
     // Optional so an explicit `--port 8080` can be told apart from "not passed":
     // precedence is CLI > --config file > default.
     @Option(name: .shortAndLong, help: "REST API port (default: 8080)")
@@ -439,7 +445,8 @@ struct ServeCommand: AsyncParsableCommand {
             topK: topK,
             minP: minP,
             seed: seed,
-            cacheBlendRatio: cacheBlend ? min(max(0, cacheBlendRatio), 1) : nil
+            cacheBlendRatio: cacheBlend ? min(max(0, cacheBlendRatio), 1) : nil,
+            speculativeLookup: speculativeLookup
         )
         let sessionLogWriter = Self.sessionLogWriter(
             mode: sessionLog, directory: sessionLogDir, retentionDays: sessionLogRetentionDays, maxTotalMB: sessionLogMaxTotalMB,

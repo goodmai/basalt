@@ -78,6 +78,7 @@ public struct GenerationRequest: Codable, Sendable {
     public private(set) var sessionId: String? = nil
     public private(set) var budgetKey: String? = nil
     public private(set) var origin: RequestOrigin = .unspecified
+    public private(set) var speculativeLookup: Bool? = nil
 
     enum CodingKeys: String, CodingKey {
         case prompt, maxTokens, temperature, topP, minP, dynamicTemperature, enableThinking, reasoningEffort
@@ -151,6 +152,12 @@ public struct GenerationRequest: Codable, Sendable {
     public func withCacheKey(_ cacheKey: String?) -> GenerationRequest {
         var copy = self
         copy.cacheKey = cacheKey
+        return copy
+    }
+
+    public func withSpeculativeLookup(_ speculativeLookup: Bool?) -> GenerationRequest {
+        var copy = self
+        copy.speculativeLookup = speculativeLookup
         return copy
     }
 
@@ -307,6 +314,8 @@ public struct GenerationResponse: Codable, Sendable {
     /// Functions the model called, in order; nil when it called none.
     public let toolCalls: [ToolCallOutput]?
     public let reasoningTokens: Int?
+    public let draftTokens: Int?
+    public let acceptedDraftTokens: Int?
 
     public init(
         generatedText: String,
@@ -320,7 +329,9 @@ public struct GenerationResponse: Codable, Sendable {
         memory: MemoryUsage,
         finishReason: FinishReason,
         toolCalls: [ToolCallOutput]? = nil,
-        reasoningTokens: Int? = nil
+        reasoningTokens: Int? = nil,
+        draftTokens: Int? = nil,
+        acceptedDraftTokens: Int? = nil
     ) {
         self.generatedText = generatedText
         self.reasoningText = reasoningText
@@ -334,11 +345,14 @@ public struct GenerationResponse: Codable, Sendable {
         self.finishReason = finishReason
         self.toolCalls = toolCalls
         self.reasoningTokens = reasoningTokens
+        self.draftTokens = draftTokens
+        self.acceptedDraftTokens = acceptedDraftTokens
     }
 
     enum CodingKeys: String, CodingKey {
         case generatedText, reasoningText, promptTokens, cachedPromptTokens, completionTokens
         case tokensPerSecond, generationTime, timeToFirstToken, memory, finishReason, toolCalls, reasoningTokens
+        case draftTokens, acceptedDraftTokens
     }
 
     public init(from decoder: Decoder) throws {
@@ -355,6 +369,8 @@ public struct GenerationResponse: Codable, Sendable {
         finishReason = try c.decode(FinishReason.self, forKey: .finishReason)
         toolCalls = try c.decodeIfPresent([ToolCallOutput].self, forKey: .toolCalls)
         reasoningTokens = try c.decodeIfPresent(Int.self, forKey: .reasoningTokens)
+        draftTokens = try c.decodeIfPresent(Int.self, forKey: .draftTokens)
+        acceptedDraftTokens = try c.decodeIfPresent(Int.self, forKey: .acceptedDraftTokens)
     }
 
     public struct MemoryUsage: Codable, Sendable {
