@@ -57,7 +57,7 @@ struct HybridFallbackTests {
         return orchestrator
     }
 
-    @Test("A request whose KV does not fit in η·free memory is answered by the cloud")
+    @Test("A request whose KV does not fit in the generation memory budget is answered by the cloud")
     func memory() async throws {
         let cloud = StubCloud(Self.cheap)
         let orchestrator = try await orchestrator(cloud, freeMemory: { 1 << 20 })
@@ -145,13 +145,11 @@ struct HybridFallbackTests {
         #expect(meta.finishReason.isTruncated)
     }
 
-    @Test("Utility follows w_cap·Φ·(1−δ) − w_lat·τ/τ_max − w_cost·C/B_rem, and η stays in (0.75, 0.85]")
+    @Test("Utility follows w_cap·Φ·(1−δ) − w_lat·τ/τ_max − w_cost·C/B_rem")
     func utilityFormula() {
         let arbiter = HybridArbiter(capabilityWeight: 2, latencyWeight: 1, costWeight: 3, maxLatencySeconds: 10)
         let candidate = HybridCandidate(capability: 0.5, degradation: 0.2, latencySeconds: 5, cost: 1)
         #expect(abs(arbiter.utility(candidate, remainingBudget: 4) - (2 * 0.5 * 0.8 - 0.5 - 3 * 0.25)) < 1e-12)
-        #expect(HybridArbiter(memoryHeadroom: 0.99).memoryHeadroom == 0.85)
-        #expect(HybridArbiter(memoryHeadroom: 0.1).memoryHeadroom == 0.75)
         #expect(arbiter.utility(candidate, remainingBudget: 0) == -.infinity)
     }
 }

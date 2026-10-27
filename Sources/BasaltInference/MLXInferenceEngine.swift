@@ -68,6 +68,15 @@ public actor MLXInferenceEngine: InferenceEngine {
     private let gpuCacheLimit: Int?
 
     private(set) var promptCaches: PromptCacheTree
+    private var kvMemoryBudget: Int64?
+
+    public var kvMemoryBudgetBytes: Int64? { kvMemoryBudget }
+
+    public func promptTokenCount(for request: GenerationRequest) async -> Int? {
+        guard let container else { return nil }
+        let text = request.messages.map { ChatMessageInput.plainText($0) } ?? request.prompt
+        return await container.perform { $0.tokenizer.encode(text: text, addSpecialTokens: false).count }
+    }
     private let configuredPromptCacheBytes: Int?
     private var modelEpoch = 0
     private var modelIsHybrid: Bool?
@@ -111,8 +120,10 @@ public actor MLXInferenceEngine: InferenceEngine {
         idleGrammars = [:]
         self.profile = profile
         self.samplingDefaults = samplingDefaults
-        let budget = configuredPromptCacheBytes ?? PromptCacheBudget.automatic(
-            workingSet: PromptCacheBudget.gpuWorkingSet(), weights: Memory.activeMemory)
+        let workingSet = PromptCacheBudget.gpuWorkingSet()
+        let weights = Memory.activeMemory
+        let budget = configuredPromptCacheBytes ?? PromptCacheBudget.automatic(workingSet: workingSet, weights: weights)
+        kvMemoryBudget = Int64(max(0, workingSet - weights - budget))
         let blendBytes = cacheBlendRatio == nil ? 0 : budget / 2
         promptCaches = PromptCacheTree(byteBudget: budget - blendBytes)
         cacheBlend = cacheBlendRatio.map { CacheBlendStore(ratio: $0, byteBudget: blendBytes) }

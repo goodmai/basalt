@@ -45,18 +45,16 @@ public struct HybridArbiter: Sendable, Equatable {
     public let latencyWeight: Double
     public let costWeight: Double
     public let maxLatencySeconds: Double
-    public let memoryHeadroom: Double
     public let localContextLimit: Int?
 
     public init(
         capabilityWeight: Double = 1, latencyWeight: Double = 0, costWeight: Double = 1,
-        maxLatencySeconds: Double = 300, memoryHeadroom: Double = 0.8, localContextLimit: Int? = nil
+        maxLatencySeconds: Double = 300, localContextLimit: Int? = nil
     ) {
         self.capabilityWeight = capabilityWeight
         self.latencyWeight = latencyWeight
         self.costWeight = costWeight
         self.maxLatencySeconds = maxLatencySeconds
-        self.memoryHeadroom = min(max(memoryHeadroom, 0.75), 0.85)
         self.localContextLimit = localContextLimit
     }
 
@@ -70,10 +68,6 @@ public struct HybridArbiter: Sendable, Equatable {
     public func localDegradation(contextTokens: Int) -> Double {
         guard let localContextLimit else { return 0 }
         return contextTokens > localContextLimit ? 1 : 0
-    }
-
-    public func localFits(requiredBytes: Int64, freeBytes: Int64) -> Bool {
-        Double(requiredBytes) <= memoryHeadroom * Double(freeBytes)
     }
 
     public func cloudReason(

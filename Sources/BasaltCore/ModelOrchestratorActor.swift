@@ -39,7 +39,7 @@ public actor ModelOrchestratorActor {
     public let telemetry: TelemetryTracker
 
     public init(
-        engine: any InferenceEngine, maxTokens: Int = 4096, kvBits: Int? = nil, telemetry: TelemetryTracker = .shared
+        engine: any InferenceEngine, maxTokens: Int = 65_536, kvBits: Int? = nil, telemetry: TelemetryTracker = .shared
     ) {
         self.engine = engine
         self.maxTokens = maxTokens
@@ -71,7 +71,7 @@ public actor ModelOrchestratorActor {
         let cloud = HybridCandidate(
             capability: 1, degradation: 0, latencySeconds: assessment.latencySeconds, cost: assessment.estimatedCost)
         return arbiter.cloudReason(
-            local: local, localFits: arbiter.localFits(requiredBytes: required, freeBytes: freeMemory()),
+            local: local, localFits: required <= (await kvBudgetBytes()),
             cloud: cloud, remainingBudget: assessment.remainingBudget)
     }
 
@@ -151,7 +151,7 @@ public actor ModelOrchestratorActor {
         try await autoSwitch(to: modelId)
 
         logger.trace("generate: \(request.prompt.prefix(60))…")
-        let validated = try capped(request)
+        let validated = try await capped(request)
 
         await self.telemetry.requestStarted()
         do {
@@ -188,7 +188,7 @@ public actor ModelOrchestratorActor {
         try await autoSwitch(to: modelId)
 
         logger.trace("generateStream start")
-        let validated = try capped(request)
+        let validated = try await capped(request)
 
         await self.telemetry.requestStarted()
         let stream: AsyncStream<StreamChunk>
@@ -321,25 +321,38 @@ public actor ModelOrchestratorActor {
         return max(floor, decodeSeconds + prefillSeconds)
     }
 
-    public func effectiveMaxTokens(for request: GenerationRequest) -> Int {
-        let budget = calculateDynamicMaxTokens(promptTokens: Self.estimatedTokens(Self.budgetedText(request)))
-        return min(request.maxTokens ?? budget, budget)
+    public func effectiveMaxTokens(for request: GenerationRequest) async -> Int {
+        let room = await generationRoom(for: request).room
+        return max(0, min(request.maxTokens ?? maxTokens, maxTokens, room))
     }
 
-    private func capped(_ request: GenerationRequest) throws(BasaltError) -> GenerationRequest {
-        let maxT = calculateDynamicMaxTokens(promptTokens: Self.estimatedTokens(Self.budgetedText(request)))
-        var v = try request.validated(defaultMaxTokens: maxT)
-        if let req = request.maxTokens, req > maxT {
-            logger.warn("Token request (\(req)) > budget (\(maxT)). Capping.")
-            v = v.withMaxTokens(maxT)
+    func kvBudgetBytes() async -> Int64 {
+        if let engineBudget = await engine.kvMemoryBudgetBytes { return engineBudget }
+        return Int64(Double(freeMemory()) * TokenBudgetCalculator.safetyMargin)
+    }
+
+    func generationRoom(for request: GenerationRequest) async -> (room: Int, fitting: Int, promptTokens: Int) {
+        let promptTokens = await engine.promptTokenCount(for: request) ?? Self.estimatedTokens(Self.budgetedText(request))
+        let fitting = kvGeometry.maxTokens(fitting: await kvBudgetBytes(), kvBits: kvBits)
+        return (fitting - promptTokens, fitting, promptTokens)
+    }
+
+    private func capped(_ request: GenerationRequest) async throws(BasaltError) -> GenerationRequest {
+        let (room, fitting, promptTokens) = await generationRoom(for: request)
+        guard room > 0 else {
+            throw .contextLengthExceeded(maxTokens: fitting, requested: promptTokens + 1)
+        }
+        let cap = min(maxTokens, room)
+        var v = try request.validated(defaultMaxTokens: cap)
+        if let req = request.maxTokens, req > cap {
+            logger.warn("Token request (\(req)) > budget (\(cap): --max-tokens \(maxTokens), memory room \(room)). Capping.")
+            v = v.withMaxTokens(cap)
         }
         return v
     }
 
-    private func calculateDynamicMaxTokens(promptTokens: Int) -> Int {
-        max(maxTokens, TokenBudgetCalculator.calculateMaxTokensForSystem(
-            modelSizeMB: modelSizeMB, kv: kvGeometry, kvBits: kvBits, promptTokens: promptTokens
-        ))
+    public func setFreeMemoryProbe(_ probe: @escaping @Sendable () -> Int64) {
+        freeMemory = probe
     }
 
     static func estimatedTokens(_ prompt: String) -> Int {
