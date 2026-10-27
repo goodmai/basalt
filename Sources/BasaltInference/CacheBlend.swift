@@ -298,6 +298,7 @@ final class CacheBlendStore: @unchecked Sendable {
         if !Self.blends(reused: hits, count: count, offset: start, ratio: ratio ?? self.ratio) {
             var position = start
             while position < end {
+                if Task.isCancelled { return nil }
                 let step = min(end, position + max(1, prefillStep))
                 _ = model(MLXArray(prompt[position ..< step].map(Int32.init)).reshaped(1, -1), cache: cache.layers)
                 eval(cache.layers.flatMap { $0.innerState() })

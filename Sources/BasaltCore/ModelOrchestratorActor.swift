@@ -156,9 +156,9 @@ public actor ModelOrchestratorActor {
         }
     }
 
-    private func admitted() async throws(BasaltError) -> Int {
+    private func admitted(_ priority: RequestPriority) async throws(BasaltError) -> Int {
         do {
-            return try await gate.admit()
+            return try await gate.admit(priority: priority)
         } catch let error as BasaltError {
             throw error
         } catch {
@@ -168,7 +168,7 @@ public actor ModelOrchestratorActor {
 
     public func admissionRefusal(for request: GenerationRequest) async -> BasaltError? {
         if await cloudFallbackReason(for: request) != nil { return nil }
-        if let refusal = await gate.refusal { return refusal }
+        if let refusal = await gate.refusal(for: request.priority) { return refusal }
         let (room, fitting, promptTokens) = await generationRoom(for: request)
         return room > 0 ? nil : .contextLengthExceeded(maxTokens: fitting, requested: promptTokens + 1)
     }
@@ -236,7 +236,7 @@ public actor ModelOrchestratorActor {
         logger.trace("generate: \(request.prompt.prefix(60))…")
         let validated = try await capped(request)
         let queued = ContinuousClock.now
-        let ticket = try await admitted()
+        let ticket = try await admitted(request.priority)
         let queueWait = ContinuousClock.now - queued
         let seconds = timeout(for: validated)
         let work = Task { try await self.withTimeout(seconds: seconds) { try await self.engine.generate(request: validated) } }
@@ -312,15 +312,16 @@ public actor ModelOrchestratorActor {
         logger.trace("generateStream start")
         let validated = try await capped(request)
         let queued = ContinuousClock.now
-        let ticket = try await admitted()
+        let ticket = try await admitted(request.priority)
         let queueWait = ContinuousClock.now - queued
 
         await self.telemetry.requestStarted()
         let stream: AsyncStream<StreamChunk>
         do {
-            stream = try await withTimeout(seconds: timeout(for: validated)) {
-                try await self.engine.generateStream(request: validated)
-            }
+            let seconds = timeout(for: validated)
+            let setup = Task { try await self.withTimeout(seconds: seconds) { try await self.engine.generateStream(request: validated) } }
+            await gate.onCancel(ticket) { setup.cancel() }
+            stream = try await withTaskCancellationHandler { try await setup.value } onCancel: { setup.cancel() }
         } catch let error as BasaltError {
             await gate.release(ticket)
             await self.telemetry.requestFinished()

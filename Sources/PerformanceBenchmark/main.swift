@@ -194,6 +194,7 @@ struct Benchmark: AsyncParsableCommand {
 
     private func request() -> GenerationRequest {
         GenerationRequest(prompt: prompt, maxTokens: tokens, temperature: temperature)
+            .withOrigin(RequestOrigin(source: "benchmark", endpoint: "PerformanceBenchmark", stream: false))
     }
 
     private func runDegradationTest(orchestrator: ModelOrchestratorActor) async throws {
