@@ -50,8 +50,11 @@ struct ServeCommand: AsyncParsableCommand {
     @Option(name: .customLong("seed"), help: "Seed the sampler so a non-greedy run is reproducible")
     var seed: UInt64?
 
-    @Option(name: .customLong("kv-bits"), help: "Quantize the KV cache to 4 or 8 bits (default: full precision)")
-    var kvBits: Int?
+    @Option(
+        name: .customLong("kv-bits"),
+        help: "Quantize the KV cache to 4 or 8 bits, or `auto`: fp16 until a request's max_tokens does not fit, then 8, then 4 bits (default: full precision)"
+    )
+    var kvBits: KVBitsSetting?
 
     @Option(name: .customLong("repetition-penalty"), help: "Penalty on recently emitted tokens, e.g. 1.1 (default: off)")
     var repetitionPenalty: Float?
@@ -371,14 +374,14 @@ struct ServeCommand: AsyncParsableCommand {
         if dryRun {
             let evaluator = MemoryEvaluator()
             log("🔍 Performing dry-run memory assessment for \(bold(targetModel))…")
-            let assessment = await evaluator.evaluate(modelId: targetModel, kvBits: kvBits)
+            let assessment = await evaluator.evaluate(modelId: targetModel, kvBits: kvBits?.budgetBits)
 
             fputs("\n  Model:           \(assessment.modelName) (\(assessment.modelId))\n", stderr)
             fputs("  Required RAM:    \(assessment.requiredRAMFormatted)\n", stderr)
             fputs("  Available RAM:   \(assessment.availableRAMFormatted)\n", stderr)
             fputs("  Physical RAM:    \(assessment.totalRAMFormatted)\n", stderr)
             fputs("  Fit Level:       \(assessment.fitLevel.emoji) \(assessment.fitLevel.rawValue)\n", stderr)
-            fputs("  Context Budget:  \(assessment.maxContextBudgetTokens) tokens\n\n", stderr)
+            fputs("  Context Budget:  \(assessment.contextBudgetLine)\n\n", stderr)
 
             if let warning = assessment.warning {
                 fputs(red("  \(warning)") + "\n", stderr)
@@ -445,7 +448,7 @@ struct ServeCommand: AsyncParsableCommand {
         let engine       = MLXInferenceEngine(
             reasoningEffort: reasoningEffort,
             promptCacheBytes: promptCacheMB.map { min(max(0, $0), 1 << 30) << 20 },
-            kvBits: kvBits,
+            kvBits: kvBits?.fixedBits,
             repetitionPenalty: repetitionPenalty,
             topK: topK,
             minP: minP,
@@ -460,7 +463,7 @@ struct ServeCommand: AsyncParsableCommand {
             log("Session log: \(sessionLog.rawValue) → \(sessionLogWriter.directory.path) (0700; `--session-log meta` keeps no content, `--session-log off` disables)")
         }
         let orchestrator = ModelOrchestratorActor(
-            engine: engine, maxTokens: config.maxTokens, kvBits: kvBits,
+            engine: engine, maxTokens: config.maxTokens, kvBits: kvBits?.fixedBits, adaptiveKVBits: kvBits == .auto,
             gate: GenerationGate(maxConcurrent: maxConcurrent, maxQueue: maxQueue), sessionLog: sessionLogWriter)
 
         log("Loading model from \(bold(resolvedPath))…")
@@ -639,6 +642,30 @@ struct ServeCommand: AsyncParsableCommand {
 
     private func log(_ msg: String) {
         fputs("[serve] \(msg)\n", stderr)
+    }
+}
+
+enum KVBitsSetting: Equatable, ExpressibleByArgument {
+    case auto
+    case bits(Int)
+
+    init?(argument: String) {
+        if argument == "auto" {
+            self = .auto
+        } else if let bits = Int(argument), bits > 0 {
+            self = .bits(bits)
+        } else {
+            return nil
+        }
+    }
+
+    var fixedBits: Int? {
+        if case .bits(let bits) = self { return bits }
+        return nil
+    }
+
+    var budgetBits: Int {
+        fixedBits ?? KVCacheGeometry.adaptiveKVBitsLadder.compactMap { $0 }.min()!
     }
 }
 

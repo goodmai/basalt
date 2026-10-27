@@ -10,7 +10,7 @@ public actor ModelOrchestratorActor {
     private let engine: any InferenceEngine
     private let maxTokens: Int
     private var modelSizeMB: Int = 4000
-    private let kvBits: Int?
+    private let kvBitsLadder: [Int?]
     private var kvGeometry = KVCacheGeometry(parameterProxy: 4)
     /// Floor for the generation watchdog. The real budget scales with the token
     /// count — see `timeout(for:)`.
@@ -38,14 +38,15 @@ public actor ModelOrchestratorActor {
     public let telemetry: TelemetryTracker
 
     public init(
-        engine: any InferenceEngine, maxTokens: Int = 65_536, kvBits: Int? = nil, telemetry: TelemetryTracker = .shared,
+        engine: any InferenceEngine, maxTokens: Int = 65_536, kvBits: Int? = nil, adaptiveKVBits: Bool = false,
+        telemetry: TelemetryTracker = .shared,
         gate: GenerationGate = GenerationGate(), sessionLog: SessionLogWriter? = nil
     ) {
         self.gate = gate
         self.sessionLog = sessionLog
         self.engine = engine
         self.maxTokens = maxTokens
-        self.kvBits = kvBits
+        self.kvBitsLadder = adaptiveKVBits ? KVCacheGeometry.adaptiveKVBitsLadder : [kvBits]
         self.telemetry = telemetry
     }
 
@@ -63,7 +64,8 @@ public actor ModelOrchestratorActor {
               let assessment = await cloudFallback.assess(request)
         else { return nil }
         let promptTokens = Self.estimatedTokens(Self.budgetedText(request))
-        let required = kvGeometry.bytes(tokens: promptTokens + (request.maxTokens ?? 0), kvBits: kvBits)
+        let wanted = promptTokens + (request.maxTokens ?? 0)
+        let fitting = kvFit(promptTokens: promptTokens, wantedTokens: wanted, budget: await kvBudgetBytes()).fitting
         let localTPS = await telemetry.snapshot().tokensPerSecond
         let local = HybridCandidate(
             capability: 1 - min(max(assessment.capabilityGap, 0), 1),
@@ -73,7 +75,7 @@ public actor ModelOrchestratorActor {
         let cloud = HybridCandidate(
             capability: 1, degradation: 0, latencySeconds: assessment.latencySeconds, cost: assessment.estimatedCost)
         return arbiter.cloudReason(
-            local: local, localFits: required <= (await kvBudgetBytes()),
+            local: local, localFits: wanted <= fitting,
             cloud: cloud, remainingBudget: assessment.remainingBudget)
     }
 
@@ -169,7 +171,7 @@ public actor ModelOrchestratorActor {
     public func admissionRefusal(for request: GenerationRequest) async -> BasaltError? {
         if await cloudFallbackReason(for: request) != nil { return nil }
         if let refusal = await gate.refusal(for: request.priority) { return refusal }
-        let (room, fitting, promptTokens) = await generationRoom(for: request)
+        let (room, fitting, promptTokens, _) = await generationRoom(for: request)
         return room > 0 ? nil : .contextLengthExceeded(maxTokens: fitting, requested: promptTokens + 1)
     }
 
@@ -460,19 +462,32 @@ public actor ModelOrchestratorActor {
         return Int64(Double(freeMemory()) * TokenBudgetCalculator.safetyMargin)
     }
 
-    func generationRoom(for request: GenerationRequest) async -> (room: Int, fitting: Int, promptTokens: Int) {
+    func generationRoom(
+        for request: GenerationRequest
+    ) async -> (room: Int, fitting: Int, promptTokens: Int, kvBits: Int?) {
         let promptTokens = await engine.promptTokenCount(for: request) ?? Self.estimatedTokens(Self.budgetedText(request))
-        let fitting = kvGeometry.maxTokens(fitting: await kvBudgetBytes(), kvBits: kvBits)
-        return (fitting - promptTokens, fitting, promptTokens)
+        let wanted = promptTokens + min(request.maxTokens ?? 1, maxTokens)
+        let fit = kvFit(promptTokens: promptTokens, wantedTokens: wanted, budget: await kvBudgetBytes())
+        return (fit.fitting - promptTokens, fit.fitting, promptTokens, fit.kvBits)
+    }
+
+    func kvFit(promptTokens: Int, wantedTokens: Int, budget: Int64) -> (fitting: Int, kvBits: Int?) {
+        let fits = kvBitsLadder.map { bits in
+            (fitting: kvGeometry.maxTokens(fitting: budget, kvBits: bits, promptTokens: promptTokens), kvBits: bits)
+        }
+        return fits.first { $0.fitting >= wantedTokens } ?? fits.max { $0.fitting < $1.fitting }!
     }
 
     private func capped(_ request: GenerationRequest) async throws(BasaltError) -> GenerationRequest {
-        let (room, fitting, promptTokens) = await generationRoom(for: request)
+        let (room, fitting, promptTokens, kvBits) = await generationRoom(for: request)
         guard room > 0 else {
             throw .contextLengthExceeded(maxTokens: fitting, requested: promptTokens + 1)
         }
         let cap = min(maxTokens, room)
-        var v = try request.validated(defaultMaxTokens: cap)
+        var v = try request.validated(defaultMaxTokens: cap).withKVBits(kvBits)
+        if let kvBits, kvBitsLadder.count > 1 {
+            logger.info("KV cache at \(kvBits) bits for this request: fp16 cannot hold \(promptTokens) prompt + \(v.maxTokens ?? 0) tokens.")
+        }
         if let req = request.maxTokens, req > cap {
             logger.warn("Token request (\(req)) > budget (\(cap): --max-tokens \(maxTokens), memory room \(room)). Capping.")
             v = v.withMaxTokens(cap)

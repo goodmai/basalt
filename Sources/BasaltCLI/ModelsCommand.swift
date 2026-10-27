@@ -345,6 +345,9 @@ struct CheckSubcommand: AsyncParsableCommand {
     @Flag(name: .long, help: "Output in machine-readable JSON format")
     var json: Bool = false
 
+    @Option(name: .customLong("kv-bits"), help: "Size the context budget for `serve --kv-bits` (4, 8 or auto)")
+    var kvBits: KVBitsSetting?
+
     mutating func run() async throws {
         if system {
             let report = await SystemProfiler().generateReport()
@@ -369,7 +372,7 @@ struct CheckSubcommand: AsyncParsableCommand {
             throw ValidationError("Pass a model repo ID, or --system for a hardware check.")
         }
         let evaluator = MemoryEvaluator()
-        let assessment = await evaluator.evaluate(modelId: id)
+        let assessment = await evaluator.evaluate(modelId: id, kvBits: kvBits?.budgetBits)
 
         if json {
             try printJSON(assessment)
@@ -385,7 +388,7 @@ struct CheckSubcommand: AsyncParsableCommand {
         print("  Physical RAM:    \(assessment.totalRAMFormatted)")
         print("  Memory budget:   \(assessment.memoryBudgetFormatted) (Metal working set)")
         print("  Fit Level:       \(assessment.fitLevel.emoji) \(assessment.fitLevel.rawValue)")
-        print("  Context Budget:  \(assessment.maxContextBudgetTokens) tokens")
+        print("  Context Budget:  \(assessment.contextBudgetLine)")
         print()
 
         if let warning = assessment.warning {

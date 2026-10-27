@@ -46,7 +46,7 @@ public struct GemCLI: AsyncParsableCommand {
             mlx-community/Ornith-1.5-9B-OptiQ-4bit   mixed 8/4-bit, same flag
           Ornith and Qwen3.x are reasoning models: without --reasoning-effort none
           they can spend the whole token budget inside <think> and never answer.
-          Tight on memory? --kv-bits 4 buys context, --dry-run checks it first.
+          Tight on memory? --kv-bits auto quantizes the KV cache only for requests fp16 cannot hold; --dry-run checks it first.
         
         POINTING TOOLS AT IT  (127.0.0.1, not localhost — the server is IPv4 only)
           OpenCode:

@@ -9,6 +9,7 @@ public struct MemoryAssessment: Sendable, Codable, Equatable {
     public let fitsInMemory: Bool
     public let fitLevel: FitLevel
     public let maxContextBudgetTokens: Int
+    public let maxPromptBudgetTokens: Int
     public let warning: String?
     public let recommendation: String?
     public let memoryBudgetBytes: Int64
@@ -34,6 +35,7 @@ public struct MemoryAssessment: Sendable, Codable, Equatable {
         fitsInMemory: Bool,
         fitLevel: FitLevel,
         maxContextBudgetTokens: Int,
+        maxPromptBudgetTokens: Int? = nil,
         warning: String? = nil,
         recommendation: String? = nil,
         memoryBudgetBytes: Int64 = 0
@@ -46,9 +48,15 @@ public struct MemoryAssessment: Sendable, Codable, Equatable {
         self.fitsInMemory = fitsInMemory
         self.fitLevel = fitLevel
         self.maxContextBudgetTokens = maxContextBudgetTokens
+        self.maxPromptBudgetTokens = maxPromptBudgetTokens ?? maxContextBudgetTokens
         self.warning = warning
         self.recommendation = recommendation
         self.memoryBudgetBytes = memoryBudgetBytes
+    }
+
+    public var contextBudgetLine: String {
+        guard maxPromptBudgetTokens < maxContextBudgetTokens else { return "\(maxContextBudgetTokens) tokens" }
+        return "\(maxContextBudgetTokens) tokens, the prompt at most \(maxPromptBudgetTokens) (prefilled in fp16, quantized after)"
     }
 
     public var memoryBudgetFormatted: String {
@@ -130,7 +138,15 @@ public actor MemoryEvaluator {
     }
 
     public static func contextBudget(budget: Int64, weights: Int64, kv: KVCacheGeometry, kvBits: Int?) -> Int {
-        min(TokenBudgetCalculator.upperCapTokens, max(0, kv.maxTokens(fitting: max(0, budget - weights) / 2, kvBits: kvBits)))
+        min(TokenBudgetCalculator.upperCapTokens, max(0, kv.maxTokens(fitting: kvRoom(budget: budget, weights: weights), kvBits: kvBits)))
+    }
+
+    public static func promptBudget(budget: Int64, weights: Int64, kv: KVCacheGeometry, kvBits: Int?) -> Int {
+        min(TokenBudgetCalculator.upperCapTokens, kv.maxPromptTokens(fitting: kvRoom(budget: budget, weights: weights), kvBits: kvBits))
+    }
+
+    static func kvRoom(budget: Int64, weights: Int64) -> Int64 {
+        max(0, budget - weights) / 2
     }
 
     static func assessment(
@@ -152,6 +168,7 @@ public actor MemoryEvaluator {
             modelId: id, modelName: name, requiredRAMBytes: required, availableRAMBytes: resources.availableRAM,
             totalPhysicalRAMBytes: resources.totalRAM, fitsInMemory: fits, fitLevel: level,
             maxContextBudgetTokens: contextBudget(budget: budget, weights: weights, kv: kv, kvBits: kvBits),
+            maxPromptBudgetTokens: promptBudget(budget: budget, weights: weights, kv: kv, kvBits: kvBits),
             warning: warning, recommendation: fits ? nil : recommendation, memoryBudgetBytes: budget)
     }
 

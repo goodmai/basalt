@@ -311,6 +311,18 @@ struct PromptCacheReuseTests {
         #expect(await quantized.promptCaches.roots.isEmpty)
     }
 
+    @Test("A request the orchestrator quantized runs at its bits and bypasses the cache; fp16 requests still reuse it")
+    func perRequestKVBits() async throws {
+        let engine = try await TinyModel.engine()
+        let quantized = greedy(Conversation.firstTurn, key: "q").withKVBits(8)
+        #expect(await engine.sampling(for: quantized).0.kvBits == 8)
+        #expect(await engine.sampling(for: greedy(Conversation.firstTurn, key: "q")).0.kvBits == nil)
+        _ = try await engine.generate(request: quantized)
+        #expect(await engine.promptCaches.roots.isEmpty)
+        _ = try await engine.generate(request: greedy(Conversation.firstTurn, key: "fp16"))
+        #expect(Set(await engine.promptCaches.roots.keys) == ["fp16"])
+    }
+
     @Test("A cancelled generation stores exactly its prompt and releases its lease; the next turn still matches a full prefill")
     func cancelledGenerationLeavesConsistentTree() async throws {
         let engine = try await TinyModel.engine()

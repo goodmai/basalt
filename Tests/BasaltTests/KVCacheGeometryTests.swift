@@ -187,6 +187,39 @@ struct KVCacheGeometryTests {
         #expect(KVCacheGeometry(config: Self.qwen3_4B)!.quantizedGroupSize == 64)
     }
 
+    @Test("Qwen3-4B at 32k: 8-bit KV saves 46.875%, 4-bit 71.875% of fp16, the whole cache quantized past quantizedKVStart")
+    func quantizedFootprintAt32k() {
+        let g = KVCacheGeometry(config: Self.qwen3_4B)!
+        #expect(g.bytes(tokens: 32_768, kvBits: 8) == 32_768 * 78_336)
+        #expect(g.bytes(tokens: 32_768, kvBits: 4) == 32_768 * 41_472)
+        #expect(1 - Double(g.bytes(tokens: 32_768, kvBits: 8)) / Double(g.bytes(tokens: 32_768)) == 0.46875)
+        #expect(1 - Double(g.bytes(tokens: 32_768, kvBits: 4)) / Double(g.bytes(tokens: 32_768)) == 0.71875)
+    }
+
+    @Test("MLX prefills the prompt in fp16 and quantizes it afterwards: the conversion holds both copies")
+    func conversionPeak() {
+        let g = KVCacheGeometry(config: Self.qwen3_4B)!
+        #expect(g.conversionPeakBytes(tokens: 16_384, kvBits: 8) == 16_384 * (147_456 + 78_336))
+        #expect(g.conversionPeakBytes(tokens: 16_384, kvBits: nil) == g.bytes(tokens: 16_384))
+        let ornith = KVCacheGeometry(config: Self.ornith9B)!
+        let growing = ornith.bytes(tokens: 1_000) - ornith.fixedStateBytes
+        #expect(ornith.conversionPeakBytes(tokens: 1_000, kvBits: 4) == ornith.bytes(tokens: 1_000) + growing * 9 / 32)
+    }
+
+    @Test("Quantized room on a 7 GiB budget: the prompt must survive its fp16 prefill and the conversion copy")
+    func quantizedRoomHonorsPrefill() {
+        let g = KVCacheGeometry(config: Self.qwen3_4B)!
+        let budget: Int64 = 7 << 30
+        #expect(g.maxPromptTokens(fitting: budget, kvBits: nil) == 50_972)
+        #expect(g.maxPromptTokens(fitting: budget, kvBits: 8) == 33_288)
+        #expect(g.maxPromptTokens(fitting: budget, kvBits: 4) == 39_783)
+        #expect(g.maxTokens(fitting: budget, kvBits: nil, promptTokens: 30_000) == 50_972)
+        #expect(g.maxTokens(fitting: budget, kvBits: 8, promptTokens: 30_000) == 95_948)
+        #expect(g.maxTokens(fitting: budget, kvBits: 4, promptTokens: 30_000) == 181_235)
+        #expect(g.maxTokens(fitting: budget, kvBits: 8, promptTokens: 40_000) == KVCacheGeometry.defaultQuantizedKVStart)
+        #expect(g.maxTokens(fitting: 300 * 147_456, kvBits: 4, promptTokens: 10) == 300)
+    }
+
     @Test("maxTokens inverts bytes: the largest prompt that fits the budget")
     func inverse() {
         let g = KVCacheGeometry(config: Self.ornith9B)!
