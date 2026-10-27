@@ -11,11 +11,19 @@ actor ChatController {
     private var messageQueue: [String] = []
     private var activeTask: Task<Void, Never>? = nil
     private var isRunning = true
-    
-    init(orchestrator: ModelOrchestratorActor, maxTokens: Int) {
+    private let sessionId: String
+    private var history: [ChatMessageInput]
+
+    init(orchestrator: ModelOrchestratorActor, maxTokens: Int, sessionId: String, history: [ChatMessageInput] = []) {
         self.terminal = TerminalManager()
         self.orchestrator = orchestrator
         self.maxTokens = maxTokens
+        self.sessionId = sessionId
+        self.history = history
+    }
+
+    private func record(_ user: String, _ reply: String) {
+        history += [ChatMessageInput(role: .user, text: user), ChatMessageInput(role: .assistant, text: reply)]
     }
     
     func start() async {
@@ -42,6 +50,7 @@ actor ChatController {
                 
                 if trimmed.lowercased() == "/clear" {
                     messageQueue.removeAll()
+                    history.removeAll()
                     await terminal.updateInfo(debug: TerminalUI.info("Chat history cleared."))
                     continue
                 }
@@ -88,8 +97,9 @@ actor ChatController {
                         let finalPrompt = try await PromptContextBuilder.build(prompt: prompt)
                         await terminal.updateInfo(debug: "Thinking...")
                         
-                        let request = GenerationRequest(prompt: finalPrompt, maxTokens: maxTokens).withOrigin(RequestOrigin(source: "cli", endpoint: "chat", stream: true))
+                        let request = ChatCommand.request(finalPrompt, history: history, maxTokens: maxTokens, sessionId: sessionId)
                         let stream = try await orchestrator.generateStream(request: request)
+                        var reply = ""
                         
                         await terminal.printOutput("\n" + TerminalUI.info("Gemma:") + " ")
                         
@@ -103,6 +113,7 @@ actor ChatController {
                             case .toolCall:  // this path declares no tools, so a call has no client to go to
                                 break
                             case .text(let t):
+                                reply += t
                                 await terminal.printOutput(t)
                             case .reasoning(let r):
                                 await terminal.printOutput(r)
@@ -113,6 +124,7 @@ actor ChatController {
                         }
                         
                         await terminal.printOutput("\n")
+                        if !Task.isCancelled { await self.record(finalPrompt, reply) }
                     } catch {
                         await terminal.updateInfo(debug: TerminalUI.error("Error: \(error.localizedDescription)"))
                     }

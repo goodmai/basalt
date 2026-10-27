@@ -27,17 +27,53 @@ struct ChatCommand: AsyncParsableCommand {
     @Option(name: .long, help: "Log level: debug | info | warn | error")
     var logLevel: ServerConfig.LogLevel = .info
 
+    @Option(name: .customLong("resume"), help: "Continue a logged chat: a session id from `basalt sessions list`, or latest")
+    var resume: String?
+
+    @Option(name: .customLong("session-log"), help: "Session log for this chat: full (default; needed for --resume) | meta | off")
+    var sessionLog: SessionLogMode = .full
+
+    @Option(name: .customLong("session-log-dir"), help: "Directory of the session log (default: ~/.basalt/sessions)")
+    var sessionLogDir: String?
+
+    static func request(_ prompt: String, history: [ChatMessageInput], maxTokens: Int, sessionId: String) -> GenerationRequest {
+        GenerationRequest(prompt: prompt, maxTokens: maxTokens, messages: history + [ChatMessageInput(role: .user, text: prompt)])
+            .withRouting(sessionId: sessionId, budgetKey: nil)
+            .withOrigin(RequestOrigin(source: "cli", endpoint: "chat", stream: true))
+    }
+
+    static func resumed(_ id: String, in directory: URL) throws -> (session: String, history: [ChatMessageInput]) {
+        let session = try SessionsCommand.resolve(id, in: directory)
+        let lines = SessionLogReader.lines(of: session.file)
+        guard SessionLogReader.mode(of: lines) == SessionLogMode.full.rawValue else {
+            throw ValidationError("Session \(session.id) was recorded in \(SessionLogReader.mode(of: lines) ?? "an unknown") mode and has no content to resume")
+        }
+        guard let exchange = SessionLogReader.lastExchange(in: lines) else { return (session.id, []) }
+        return (session.id, exchange.messages + (exchange.reply.map { [ChatMessageInput(role: .assistant, text: $0)] } ?? []))
+    }
+
     // MARK: — Run
     private static let logger = GemLogger(module: "ChatCommand")
 
     mutating func run() async throws {
         Self.logger.trace("ChatCommand started.")
         
+        let logDirectory = sessionLogDir.map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath) } ?? SessionLogWriter.defaultDirectory
+        var sessionId = "chat-" + ISO8601DateFormatter.string(from: Date(), timeZone: .current, formatOptions: [.withFullDate, .withTime])
+            .replacingOccurrences(of: ":", with: "")
+        var history: [ChatMessageInput] = []
+        if let resume {
+            (sessionId, history) = try Self.resumed(resume, in: logDirectory)
+            log("Resuming \(bold(sessionId)) with \(history.count) earlier messages")
+        }
+        let writer = ServeCommand.sessionLogWriter(
+            mode: sessionLog, directory: sessionLogDir, retentionDays: 14, maxTotalMB: 1024, defaultSession: sessionId)
+        defer { if writer != nil { print("Resume with: basalt chat --resume \(sessionId)") } }
+
         let resolvedPath = try await resolveModelPath()
 
-        // Shared inference engine + orchestrator
         let engine = MLXInferenceEngine()
-        let orchestrator = ModelOrchestratorActor(engine: engine, maxTokens: maxTokens)
+        let orchestrator = ModelOrchestratorActor(engine: engine, maxTokens: maxTokens, sessionLog: writer)
 
         log("Loading model from \(bold(resolvedPath))…")
         do {
@@ -50,7 +86,7 @@ struct ChatCommand: AsyncParsableCommand {
         if let initialPrompt = prompt {
             // Non-interactive mode
             let finalPrompt = try await PromptContextBuilder.build(prompt: initialPrompt)
-            let request = GenerationRequest(prompt: finalPrompt, maxTokens: maxTokens).withOrigin(RequestOrigin(source: "cli", endpoint: "chat", stream: true))
+            let request = Self.request(finalPrompt, history: history, maxTokens: maxTokens, sessionId: sessionId)
             
             do {
                 let stream = try await orchestrator.generateStream(request: request)
@@ -75,17 +111,20 @@ struct ChatCommand: AsyncParsableCommand {
                     log(dim("Tokens: \(stats.promptTokens) in / \(stats.completionTokens) out | TPS: \(String(format: "%.2f", stats.tokensPerSecond)) | TTFT: \(String(format: "%.3fs", stats.timeToFirstToken))"))
                 }
             } catch {
+                await writer?.close()
                 log("\(red("Error:")) \(error.localizedDescription)")
                 throw ExitCode.failure
             }
+            await writer?.close()
             return
         }
 
         log("Model ready. Type 'exit' or 'quit' to stop.")
         print("\n--- Gemma Chat ---")
         
-        let controller = ChatController(orchestrator: orchestrator, maxTokens: maxTokens)
+        let controller = ChatController(orchestrator: orchestrator, maxTokens: maxTokens, sessionId: sessionId, history: history)
         await controller.start()
+        await writer?.close()
         
         // Ensure raw mode is cleanly disabled when returning to bash
         let terminal = TerminalManager()

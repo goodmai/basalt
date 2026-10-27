@@ -74,6 +74,7 @@ public struct GemCLI: AsyncParsableCommand {
             ServeCommand.self,
             ModelsCommand.self,
             ChatCommand.self,
+            SessionsCommand.self,
             CloudCommand.self,
             HarnessCommand.self,
         ],

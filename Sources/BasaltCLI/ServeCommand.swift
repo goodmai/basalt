@@ -199,6 +199,9 @@ struct ServeCommand: AsyncParsableCommand {
     )
     var sessionLogRedact: Toggle = .on
 
+    @Option(name: .customLong("session-idle-minutes"), help: "Write session_suspend and close a session file after this many idle minutes; the next request resumes it (default: 30)")
+    var sessionIdleMinutes: Int = 30
+
     @Option(name: .customLong("session-log-dir"), help: "Directory of the session log (default: ~/.basalt/sessions)")
     var sessionLogDir: String?
 
@@ -332,12 +335,14 @@ struct ServeCommand: AsyncParsableCommand {
     enum Toggle: String, ExpressibleByArgument, CaseIterable { case on, off }
 
     static func sessionLogWriter(
-        mode: SessionLogMode, directory: String?, retentionDays: Int, maxTotalMB: Int, redacts: Bool = true
+        mode: SessionLogMode, directory: String?, retentionDays: Int, maxTotalMB: Int, redacts: Bool = true,
+        idleMinutes: Int = 30, defaultSession: String = SessionLogWriter.processSession()
     ) -> SessionLogWriter? {
         guard mode != .off else { return nil }
         let url = directory.map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath) } ?? SessionLogWriter.defaultDirectory
         SessionLogWriter.applyRetention(directory: url, days: retentionDays, maxTotalBytes: Int64(maxTotalMB) << 20)
-        let writer = SessionLogWriter(mode: mode, directory: url, redacts: redacts)
+        let writer = SessionLogWriter(
+            mode: mode, directory: url, redacts: redacts, defaultSession: defaultSession, idleTimeout: TimeInterval(max(1, idleMinutes) * 60))
         Task { await writer.startFlushing() }
         return writer
     }
@@ -450,7 +455,7 @@ struct ServeCommand: AsyncParsableCommand {
         )
         let sessionLogWriter = Self.sessionLogWriter(
             mode: sessionLog, directory: sessionLogDir, retentionDays: sessionLogRetentionDays, maxTotalMB: sessionLogMaxTotalMB,
-            redacts: sessionLogRedact == .on)
+            redacts: sessionLogRedact == .on, idleMinutes: sessionIdleMinutes)
         if let sessionLogWriter {
             log("Session log: \(sessionLog.rawValue) → \(sessionLogWriter.directory.path) (0700; `--session-log meta` keeps no content, `--session-log off` disables)")
         }

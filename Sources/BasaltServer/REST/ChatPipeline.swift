@@ -41,7 +41,7 @@ struct ChatPipeline: Sendable {
         } catch let rejection as Rejection {
             await orchestrator.sessionLog?.logRejection(
                 origin: RequestOrigin(source: source, endpoint: endpoint, stream: false),
-                sessionId: request.headers[GenerationRequest.sessionHeader], code: Int(rejection.response.status.code),
+                sessionId: GenerationRequest.sessionId(in: request.headers), code: Int(rejection.response.status.code),
                 message: rejection.message, bodyBytes: data.count)
             return rejection.response
         }
