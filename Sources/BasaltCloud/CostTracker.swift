@@ -55,6 +55,7 @@ public actor CostTracker: Sendable {
     private var stats: UsageStats
     private var scopeLimits: [BudgetScope: Double] = [:]
     private var defaultSessionLimit: Double?
+    static let maxTrackedSessions = 4_096
     private var sessionUsage: [String: Double] = [:]
     
     private let logger = Logger()
@@ -96,6 +97,8 @@ public actor CostTracker: Sendable {
         scopeLimits[scope] = limit
     }
 
+    var trackedSessionCount: Int { sessionUsage.count }
+
     public func setDefaultSessionBudget(_ limit: Double?) {
         defaultSessionLimit = limit
     }
@@ -134,7 +137,9 @@ public actor CostTracker: Sendable {
 
         for scope in Set(scopes) {
             switch scope {
-            case .session(let id): sessionUsage[id, default: 0] += cost
+            case .session(let id):
+                if sessionUsage[id] == nil, sessionUsage.count >= Self.maxTrackedSessions { sessionUsage.removeAll() }
+                sessionUsage[id, default: 0] += cost
             case .virtualKey(let id): stats.virtualKeyUsage = (stats.virtualKeyUsage ?? [:]).merging([id: cost], uniquingKeysWith: +)
             }
         }

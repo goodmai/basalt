@@ -219,6 +219,7 @@ public actor ModelRouter: Sendable {
             warmPrefixTokens: previous?.promptTokens ?? 0
         )
         if let sessionId = context.sessionId {
+            if sessionRoutes[sessionId] == nil, sessionRoutes.count >= Self.maxTrackedSessions { sessionRoutes.removeAll() }
             sessionRoutes[sessionId] = SessionRoute(tier: tier, promptTokens: request.prompt.utf8.count / 4)
         }
         return (tier, probability)
@@ -517,6 +518,7 @@ public actor ModelRouter: Sendable {
 
 extension ModelRouter: CloudFallback {
     static let assumedCloudTokensPerSecond = 50.0
+    static let maxTrackedSessions = 4_096
 
     static func cloudMessages(_ request: GenerationRequest) -> [OpenRouterClient.ChatRequest.Message] {
         guard let messages = request.messages, !messages.isEmpty else {

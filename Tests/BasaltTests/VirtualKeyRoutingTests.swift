@@ -4,6 +4,7 @@ import Hummingbird
 import HTTPTypes
 import Logging
 import NIOCore
+import HummingbirdTesting
 @testable import BasaltCore
 @testable import BasaltCloud
 @testable import BasaltServer
@@ -159,5 +160,45 @@ struct VirtualKeyRoutingTests {
                 cliModel: "m", cliBaseURL: "http://127.0.0.1:9/v1", cliDisabled: false, cliLocalContextLimit: nil,
                 cliCostThreshold: 0.4, configFile: nil, environment: [:], savedOpenRouterKey: { nil })
         }
+    }
+
+    @Test("Client-chosen session ids cannot grow the session tables without bound")
+    func sessionTablesAreBounded() async throws {
+        let costURL = FileManager.default.temporaryDirectory.appendingPathComponent("cost-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: costURL) }
+        let tracker = try CostTracker(storageURL: costURL, budget: .init(dailyLimit: 1e9, monthlyLimit: 1e9))
+        for i in 0...CostTracker.maxTrackedSessions {
+            try await tracker.recordUsage(model: "m", cost: 0.001, scopes: [.session("s\(i)")])
+        }
+        #expect(await tracker.trackedSessionCount <= CostTracker.maxTrackedSessions)
+    }
+
+    @Test("Through the real router a virtual key's request keeps its body and reaches the engine tagged with the key and session")
+    func endToEnd() async throws {
+        let engine = MockInferenceEngine()
+        let orchestrator = ModelOrchestratorActor(engine: engine, telemetry: TelemetryTracker())
+        try await orchestrator.loadModel(path: "mock")
+        let server = RESTServer(orchestrator: orchestrator, config: try ServerConfig(modelPath: "mock", virtualKeys: [Self.team]))
+        let app = Application(router: server.makeRouter())
+        try await app.test(.router) { client in
+            try await client.execute(
+                uri: "/v1/chat/completions", method: .post,
+                headers: [.contentType: "application/json", .authorization: "Bearer vk-team-a-0123456789",
+                          GenerationRequest.sessionHeader: "agent-7", Self.budgetHeader: "spoofed"],
+                body: ByteBuffer(string: #"{"messages": [{"role": "user", "content": "hello there"}]}"#)
+            ) { res in
+                #expect(res.status == .ok)
+            }
+            try await client.execute(
+                uri: "/v1/chat/completions", method: .post, headers: [.contentType: "application/json"],
+                body: ByteBuffer(string: #"{"messages": [{"role": "user", "content": "x"}]}"#)
+            ) { res in
+                #expect(res.status == .unauthorized)
+            }
+        }
+        let sent = try #require(await engine.getRequests().first)
+        #expect(sent.messages?.first?.text == "hello there")
+        #expect(sent.budgetKey == "team-a")
+        #expect(sent.sessionId == "agent-7")
     }
 }
