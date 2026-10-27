@@ -227,4 +227,109 @@ struct ModelRouterTests {
         #expect(available > 0)
         #expect(available < Int64(ProcessInfo.processInfo.physicalMemory))
     }
+
+    private func unreachableCloudClient() throws -> OpenRouterClient {
+        try OpenRouterClient(config: .init(
+            apiKey: "test-key", baseURL: URL(string: "http://127.0.0.1:9")!, timeout: 2, maxRetries: 0
+        ))
+    }
+
+    private func cloudCalls(_ client: OpenRouterClient) async -> Int {
+        let metrics = await client.getMetrics()
+        return metrics.requests + metrics.errors
+    }
+
+    private func costRouting() throws -> ModelRouter.CostRouting {
+        ModelRouter.CostRouting(
+            policy: StickyRoutingPolicy(strongModel: "gpt-4", weakModel: "small-local", threshold: 0.5, cacheStickinessPenalty: 1),
+            scorer: try BradleyTerryRouterTests.scorer()
+        )
+    }
+
+    @Test("Inside one warm session the router keeps the model when a short hard step does not beat the switch penalty")
+    func warmSessionKeepsModel() async throws {
+        let router = ModelRouter(
+            localOrchestrator: ModelOrchestratorActor(engine: MockInferenceEngine()),
+            cloudClient: nil, costRouting: try costRouting()
+        )
+        let session = ModelRouter.RoutingContext(sessionId: "agent-1")
+        let longEasy = GenerationRequest(prompt: Array(repeating: BradleyTerryRouterTests.easyWord, count: 8_000).joined(separator: " "))
+        let shortHard = GenerationRequest(prompt: BradleyTerryRouterTests.hardWord)
+
+        #expect(await router.resolveModel(nil, request: longEasy, context: session) == "small-local")
+        #expect(await router.resolveModel(nil, request: shortHard, context: session) == "small-local")
+        #expect(await router.resolveModel(nil, request: shortHard, context: .init(sessionId: "fresh")) == "gpt-4")
+        #expect(await router.resolveModel("claude-3.5", request: shortHard, context: session) == "claude-3.5")
+    }
+
+    @Test("Once a session budget is exhausted the cloud is not called and the answer is served locally")
+    func exhaustedSessionBudgetServesLocally() async throws {
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("cost-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: file) }
+        let tracker = try CostTracker(storageURL: file, budget: .init(dailyLimit: 100, monthlyLimit: 1_000))
+        await tracker.setMaxBudget(0.5, for: .session("agent-1"))
+        try await tracker.recordUsage(model: "openai/gpt-4-turbo", cost: 0.5, scopes: [.session("agent-1")])
+
+        let engine = MockInferenceEngine()
+        try await engine.load(modelPath: "small-local")
+        let client = try unreachableCloudClient()
+        let router = ModelRouter(
+            localOrchestrator: ModelOrchestratorActor(engine: engine), cloudClient: client,
+            costTracker: tracker, localFallbackModel: "small-local"
+        )
+        let request = GenerationRequest(prompt: "hi")
+        let context = ModelRouter.RoutingContext(sessionId: "agent-1")
+
+        let response = try await router.route(request: request, preferredModel: "gpt-4", context: context)
+        #expect(response.generatedText == "Mock response")
+        for try await _ in try await router.routeStream(request: request, preferredModel: "gpt-4", context: context) {}
+        #expect(await cloudCalls(client) == 0)
+    }
+
+    @Test("An exhausted virtual-key budget without a local fallback refuses instead of calling the cloud")
+    func exhaustedKeyBudgetWithoutFallbackRefuses() async throws {
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("cost-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: file) }
+        let tracker = try CostTracker(storageURL: file, budget: .init(dailyLimit: 100, monthlyLimit: 1_000))
+        await tracker.setMaxBudget(0, for: .virtualKey("team-a"))
+        let client = try unreachableCloudClient()
+        let router = ModelRouter(
+            localOrchestrator: ModelOrchestratorActor(engine: MockInferenceEngine()), cloudClient: client, costTracker: tracker
+        )
+        await #expect(throws: BasaltError.self) {
+            _ = try await router.route(request: GenerationRequest(prompt: "hi"), preferredModel: "gpt-4", context: .init(virtualKey: "team-a"))
+        }
+        #expect(await cloudCalls(client) == 0)
+    }
+
+    @Test("When every model in the cloud chain fails the request falls through to the local fallback")
+    func failedCloudChainFallsBackLocally() async throws {
+        let engine = MockInferenceEngine()
+        try await engine.load(modelPath: "small-local")
+        let client = try unreachableCloudClient()
+        let router = ModelRouter(
+            localOrchestrator: ModelOrchestratorActor(engine: engine), cloudClient: client, localFallbackModel: "small-local"
+        )
+        let response = try await router.route(request: GenerationRequest(prompt: "hi"), preferredModel: "gpt-4")
+        #expect(response.generatedText == "Mock response")
+        #expect(await cloudCalls(client) == 2)
+    }
+
+    @Test("An auto request routed to the weak tier is served by the registered local model without a cloud call")
+    func autoWeakTierServesLocally() async throws {
+        let engine = MockInferenceEngine()
+        try await engine.load(modelPath: "small-local")
+        let client = try unreachableCloudClient()
+        let router = ModelRouter(
+            localOrchestrator: ModelOrchestratorActor(engine: engine), cloudClient: client,
+            mockAvailableRAM: 16 * 1024 * 1024 * 1024, costRouting: try costRouting()
+        )
+        await router.registerLocalModel(id: "small-local", estimatedRAM: 4000)
+        let response = try await router.route(
+            request: GenerationRequest(prompt: BradleyTerryRouterTests.easyWord), preferredModel: nil,
+            context: .init(sessionId: "agent-1")
+        )
+        #expect(response.generatedText == "Mock response")
+        #expect(await cloudCalls(client) == 0)
+    }
 }
