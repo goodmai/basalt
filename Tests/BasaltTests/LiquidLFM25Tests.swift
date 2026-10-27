@@ -56,4 +56,18 @@ struct LiquidLFM25Tests {
         await flagged.attach(try TinyModel.container(), samplingDefaults: defaults)
         #expect(await flagged.sampling(for: GenerationRequest(prompt: "p")).0.repetitionPenalty == 1.1)
     }
+
+    @Test("The answer after a closed reasoning block starts with its first visible character, not the newlines after </think>", arguments: [true, false])
+    func answerStartsWithoutNewlines(liquid: Bool) async throws {
+        let engine = try await ThinkingModel.engine(reasoning: liquid ? nil : QwenReasoningProtocol.tagged,
+                                                    profile: liquid ? LiquidProfile() : QwenProfile())
+        let budgeted = try await engine.generate(request: ThinkingModel.request(budget: 6, maxTokens: 200))
+        let first = try #require(budgeted.generatedText.first)
+        #expect(!first.isNewline)
+        var streamed = ""
+        for await chunk in try await engine.generateStream(request: ThinkingModel.request(budget: 6, maxTokens: 200)) {
+            if case .text(let t) = chunk { streamed += t }
+        }
+        #expect(streamed == budgeted.generatedText)
+    }
 }

@@ -829,6 +829,15 @@ public actor MLXInferenceEngine: InferenceEngine {
                         toolCallScanner = scanner
                     }
 
+                    var trimsAnswerStart = false
+                    func emitAnswer(_ text: String) {
+                        guard trimsAnswerStart else { emitText(text); return }
+                        let visible = String(text.drop(while: \.isNewline))
+                        guard !visible.isEmpty else { return }
+                        trimsAnswerStart = false
+                        emitText(visible)
+                    }
+
                     func processBuffer(final: Bool) {
                         while !buffer.isEmpty {
                             let boundary = isThinking
@@ -841,16 +850,17 @@ public actor MLXInferenceEngine: InferenceEngine {
                                 let cut = buffer.index(buffer.endIndex, offsetBy: -held)
                                 let piece = String(buffer[..<cut])
                                 buffer.removeSubrange(..<cut)
-                                if isThinking { emitReasoning(piece) } else { emitText(piece) }
+                                if isThinking { emitReasoning(piece) } else { emitAnswer(piece) }
                                 break
                             }
                             let leading = String(buffer[..<boundary.lowerBound])
                             let opensThinking = !isThinking && Self.thinkingOpeners.contains(String(buffer[boundary]))
                             if !leading.isEmpty {
-                                if isThinking { emitReasoning(leading) } else { emitText(leading) }
+                                if isThinking { emitReasoning(leading) } else { emitAnswer(leading) }
                             }
                             buffer.removeSubrange(..<boundary.upperBound)
                             if buffer.hasPrefix("\n") { buffer.removeFirst() }
+                            if isThinking, !opensThinking { trimsAnswerStart = true }
                             isThinking = opensThinking
                         }
                     }
