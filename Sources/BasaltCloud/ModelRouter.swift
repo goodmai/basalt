@@ -121,7 +121,7 @@ public actor ModelRouter: Sendable {
     }
     
     /// Route stream request to appropriate model (local or cloud)
-    public func routeStream(request: GenerationRequest, preferredModel: String?) async throws -> AsyncStream<StreamChunk> {
+    public func routeStream(request: GenerationRequest, preferredModel: String?) async throws -> AsyncThrowingStream<StreamChunk, Error> {
         let modelId = preferredModel ?? "auto"
         
         let decision = try await makeRoutingDecision(
@@ -130,9 +130,14 @@ public actor ModelRouter: Sendable {
         
         switch decision {
         case .local(let path):
-            // Fallback for local models
-            _ = path // local models have their own orchestrator stream logic, but we route it
-            return try await localOrchestrator.generateStream(request: request)
+            let local = try await localOrchestrator.generateStream(request: request, modelId: path)
+            return AsyncThrowingStream { continuation in
+                let task = Task {
+                    for await chunk in local { continuation.yield(chunk) }
+                    continuation.finish()
+                }
+                continuation.onTermination = { _ in task.cancel() }
+            }
             
         case .cloud(_, let cloudModels):
             guard let client = cloudClient else {
@@ -246,8 +251,7 @@ public actor ModelRouter: Sendable {
     // MARK: - Private Implementations
     
     private func routeToLocal(path: String, request: GenerationRequest) async throws -> GenerationResponse {
-        // Use existing local orchestrator
-        return try await localOrchestrator.generate(request: request)
+        return try await localOrchestrator.generate(request: request, modelId: path)
     }
     
     private func routeToCloud(
@@ -316,7 +320,7 @@ public actor ModelRouter: Sendable {
         client: OpenRouterClient,
         models: [String],
         request: GenerationRequest
-    ) async throws -> AsyncStream<StreamChunk> {
+    ) async throws -> AsyncThrowingStream<StreamChunk, Error> {
         
         let chatRequest: OpenRouterClient.ChatRequest
         
@@ -343,25 +347,27 @@ public actor ModelRouter: Sendable {
             )
         }
         
-        let startTime = ContinuousClock.now
         let sourceStream = try await client.chatStream(request: chatRequest)
-        
-        return AsyncStream { continuation in
-            Task {
+        return Self.relayCloudStream(sourceStream, startTime: ContinuousClock.now)
+    }
+
+    static func relayCloudStream(
+        _ source: AsyncThrowingStream<OpenRouterClient.ChatStreamResponse, Error>,
+        startTime: ContinuousClock.Instant
+    ) -> AsyncThrowingStream<StreamChunk, Error> {
+        AsyncThrowingStream { continuation in
+            let task = Task {
                 do {
-                    for try await response in sourceStream {
+                    for try await response in source {
                         guard let choice = response.choices.first else { continue }
-                        
                         if let text = choice.delta.content {
                             continuation.yield(.text(text))
                         }
-                        
                         if let reason = choice.finishReason, reason != "null" {
                             let duration = startTime.duration(to: ContinuousClock.now).components.seconds
                             let durationSeconds = Double(duration) > 0 ? Double(duration) : 0.001
-                            
-                            let metadata = GenerationResponse(
-                                generatedText: "", // Final metadata chunk doesn't carry text
+                            continuation.yield(.metadata(GenerationResponse(
+                                generatedText: "",
                                 promptTokens: response.usage?.promptTokens ?? 0,
                                 completionTokens: response.usage?.completionTokens ?? 0,
                                 tokensPerSecond: Double(response.usage?.completionTokens ?? 0) / durationSeconds,
@@ -369,16 +375,16 @@ public actor ModelRouter: Sendable {
                                 timeToFirstToken: 0.0,
                                 memory: .init(peakBytes: 0, activeBytes: 0, cacheBytes: 0),
                                 finishReason: reason == "length" ? .length : .stop
-                            )
-                            continuation.yield(.metadata(metadata))
+                            )))
                             break
                         }
                     }
                     continuation.finish()
                 } catch {
-                    continuation.finish()
+                    continuation.finish(throwing: error)
                 }
             }
+            continuation.onTermination = { _ in task.cancel() }
         }
     }
     
@@ -429,8 +435,7 @@ public actor ModelRouter: Sendable {
         if let mock = mockAvailableRAM {
             return mock
         }
-        // In real app use SystemProfiler
-        return Int64(ProcessInfo.processInfo.physicalMemory)
+        return SystemProfiler.availableSystemMemory()
     }
     
     private func log(_ message: String) {

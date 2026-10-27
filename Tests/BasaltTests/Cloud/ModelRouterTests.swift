@@ -178,4 +178,53 @@ struct ModelRouterTests {
         let claudeCost = await router.estimateCost(model: "claude-3.5", promptTokens: 1000, completionTokens: 1000)
         #expect(abs(claudeCost - 0.018) < 0.0001)
     }
+
+    @Test("routeStream hands the routed local model to the orchestrator")
+    func routeStreamForwardsLocalModelId() async throws {
+        let router = try await createTestRouter(strategy: .localOnly)
+        do {
+            _ = try await router.routeStream(request: GenerationRequest(prompt: "hi"), preferredModel: "uncached-model-xyz")
+            Issue.record("Expected the orchestrator to try switching to uncached-model-xyz")
+        } catch BasaltError.modelNotCached(let identifier) {
+            #expect(identifier == "uncached-model-xyz")
+        }
+    }
+
+    @Test("route hands the routed local model to the orchestrator")
+    func routeForwardsLocalModelId() async throws {
+        let router = try await createTestRouter(strategy: .localOnly)
+        do {
+            _ = try await router.route(request: GenerationRequest(prompt: "hi"), preferredModel: "uncached-model-xyz")
+            Issue.record("Expected the orchestrator to try switching to uncached-model-xyz")
+        } catch BasaltError.modelNotCached(let identifier) {
+            #expect(identifier == "uncached-model-xyz")
+        }
+    }
+
+    @Test("A cloud stream that fails mid-way surfaces the error instead of finishing cleanly")
+    func cloudStreamFailurePropagates() async throws {
+        struct Disconnected: Error {}
+        let chunk = try JSONDecoder().decode(
+            OpenRouterClient.ChatStreamResponse.self,
+            from: Data(#"{"id":"1","model":"m","choices":[{"delta":{"content":"partial"}}]}"#.utf8)
+        )
+        let source = AsyncThrowingStream<OpenRouterClient.ChatStreamResponse, Error> { continuation in
+            continuation.yield(chunk)
+            continuation.finish(throwing: Disconnected())
+        }
+        var texts: [String] = []
+        await #expect(throws: Disconnected.self) {
+            for try await item in ModelRouter.relayCloudStream(source, startTime: .now) {
+                if case .text(let text) = item { texts.append(text) }
+            }
+        }
+        #expect(texts == ["partial"])
+    }
+
+    @Test("Available system memory is the free part of physical RAM, not all of it")
+    func availableSystemMemoryIsBelowPhysical() {
+        let available = SystemProfiler.availableSystemMemory()
+        #expect(available > 0)
+        #expect(available < Int64(ProcessInfo.processInfo.physicalMemory))
+    }
 }
