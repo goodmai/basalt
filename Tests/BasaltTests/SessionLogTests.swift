@@ -242,6 +242,8 @@ struct SessionLogTests {
         #expect(!fm.fileExists(atPath: old.path))
         #expect(!fm.fileExists(atPath: olderBig.path))
         #expect(fm.fileExists(atPath: newest.path))
+        SessionLogWriter.applyRetention(directory: dir, days: 1, maxTotalBytes: 600, now: now)
+        #expect(fm.fileExists(atPath: newest.path), "a total exactly at the cap is kept")
     }
 
     @Test("The writer never touches stdout, which MCP stdio uses for JSON-RPC")
