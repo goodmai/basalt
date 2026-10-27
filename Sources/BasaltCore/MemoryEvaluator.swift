@@ -11,6 +11,7 @@ public struct MemoryAssessment: Sendable, Codable, Equatable {
     public let maxContextBudgetTokens: Int
     public let warning: String?
     public let recommendation: String?
+    public let memoryBudgetBytes: Int64
 
     public var requiredRAMFormatted: String {
         formatRAMBytes(requiredRAMBytes)
@@ -34,7 +35,8 @@ public struct MemoryAssessment: Sendable, Codable, Equatable {
         fitLevel: FitLevel,
         maxContextBudgetTokens: Int,
         warning: String? = nil,
-        recommendation: String? = nil
+        recommendation: String? = nil,
+        memoryBudgetBytes: Int64 = 0
     ) {
         self.modelId = modelId
         self.modelName = modelName
@@ -46,6 +48,11 @@ public struct MemoryAssessment: Sendable, Codable, Equatable {
         self.maxContextBudgetTokens = maxContextBudgetTokens
         self.warning = warning
         self.recommendation = recommendation
+        self.memoryBudgetBytes = memoryBudgetBytes
+    }
+
+    public var memoryBudgetFormatted: String {
+        formatRAMBytes(memoryBudgetBytes)
     }
 }
 
@@ -99,50 +106,53 @@ public actor MemoryEvaluator {
         kvBits: Int? = nil
     ) -> MemoryAssessment {
         let kv = def.kvGeometry
-        let totalRequired = def.ramMB * 1024 * 1024 + kv.bytes(tokens: contextLength, kvBits: kvBits)
+        let weights = def.ramMB * 1024 * 1024
+        let required = weights + kv.bytes(tokens: contextLength, kvBits: kvBits)
+        let oversized = def.quantization.lowercased().contains("bfloat16") || def.quantization.lowercased().contains("fp16") || def.ramMB > 30000
+        return Self.assessment(
+            id: def.id, name: def.name, required: required, weights: weights, kv: kv, kvBits: kvBits, resources: resources,
+            subject: "Model",
+            recommendation: oversized ? "Use an MLX 4-bit or Dynamic Quant (DQ) quantized version (e.g. AutisticAF/Huihui-Qwen3.8-27B-abliterated-mlx-4Bit or Ex0bit/MYTHOS-26B-A4B-PRISM-PRO-DQ-MLX)." : nil)
+    }
 
-        let fits = totalRequired <= resources.totalRAM && Double(totalRequired) <= Double(resources.availableRAM) * 1.25
+    public static func memoryBudget(_ resources: SystemProfiler.SystemResources) -> Int64 {
+        resources.gpuMemory > 0 ? min(resources.gpuMemory, resources.totalRAM) : resources.totalRAM / 4 * 3
+    }
 
-        let fitLevel: FitLevel
-        if totalRequired > resources.totalRAM || totalRequired > Int64(Double(resources.availableRAM) * 1.35) {
-            fitLevel = .tooTight
-        } else if totalRequired > Int64(Double(resources.availableRAM) * 0.90) {
-            fitLevel = .marginal
-        } else if totalRequired > Int64(Double(resources.availableRAM) * 0.60) {
-            fitLevel = .good
+    public static func fitLevel(required: Int64, budget: Int64) -> FitLevel {
+        let share = budget > 0 ? Double(required) / Double(budget) : .infinity
+        switch share {
+        case ...0.60: return .perfect
+        case ...0.90: return .good
+        case ...1.00: return .marginal
+        default:      return .tooTight
+        }
+    }
+
+    public static func contextBudget(budget: Int64, weights: Int64, kv: KVCacheGeometry, kvBits: Int?) -> Int {
+        min(TokenBudgetCalculator.upperCapTokens, max(0, kv.maxTokens(fitting: max(0, budget - weights) / 2, kvBits: kvBits)))
+    }
+
+    static func assessment(
+        id: String, name: String, required: Int64, weights: Int64, kv: KVCacheGeometry, kvBits: Int?,
+        resources: SystemProfiler.SystemResources, subject: String, recommendation: String?
+    ) -> MemoryAssessment {
+        let budget = memoryBudget(resources)
+        let level = fitLevel(required: required, budget: budget)
+        let fits = level != .tooTight
+        let warning: String?
+        if !fits {
+            warning = "\(subject) requires ~\(formatRAMBytes(required)), more than the \(formatRAMBytes(budget)) Metal can use on this Mac (\(formatRAMBytes(resources.totalRAM)) physical)."
+        } else if required > resources.availableRAM {
+            warning = "Only \(formatRAMBytes(resources.availableRAM)) is free right now; loading the model makes macOS compress or swap other apps' memory."
         } else {
-            fitLevel = .perfect
+            warning = nil
         }
-
-        var warning: String? = nil
-        var recommendation: String? = nil
-
-        if !fits || fitLevel == .tooTight {
-            warning = "Model requires ~\(formatRAMBytes(totalRequired)) RAM, exceeding available memory (\(formatRAMBytes(resources.availableRAM))) / total (\(formatRAMBytes(resources.totalRAM)))."
-            if def.quantization.lowercased().contains("bfloat16") || def.quantization.lowercased().contains("fp16") || def.ramMB > 30000 {
-                recommendation = "Use an MLX 4-bit or Dynamic Quant (DQ) quantized version (e.g. AutisticAF/Huihui-Qwen3.8-27B-abliterated-mlx-4Bit or Ex0bit/MYTHOS-26B-A4B-PRISM-PRO-DQ-MLX)."
-            }
-        }
-
-        let maxBudget = TokenBudgetCalculator.calculateMaxTokens(
-            availableRAM: resources.availableRAM,
-            modelSizeMB: Int(def.ramMB),
-            kv: kv,
-            kvBits: kvBits
-        )
-
         return MemoryAssessment(
-            modelId: def.id,
-            modelName: def.name,
-            requiredRAMBytes: totalRequired,
-            availableRAMBytes: resources.availableRAM,
-            totalPhysicalRAMBytes: resources.totalRAM,
-            fitsInMemory: fits,
-            fitLevel: fitLevel,
-            maxContextBudgetTokens: maxBudget,
-            warning: warning,
-            recommendation: recommendation
-        )
+            modelId: id, modelName: name, requiredRAMBytes: required, availableRAMBytes: resources.availableRAM,
+            totalPhysicalRAMBytes: resources.totalRAM, fitsInMemory: fits, fitLevel: level,
+            maxContextBudgetTokens: contextBudget(budget: budget, weights: weights, kv: kv, kvBits: kvBits),
+            warning: warning, recommendation: fits ? nil : recommendation, memoryBudgetBytes: budget)
     }
 
     private func evaluateLocal(
@@ -156,44 +166,11 @@ public actor MemoryEvaluator {
         let kv = KVCacheGeometry.forModel(
             modelId, parameters: ModelDefinition.inferTotalParameters(id: modelId, name: "", ramMB: Int64(modelMB))
         )
-        let totalRequired = Int64(Double(localSize) * 1.15) + kv.bytes(tokens: contextLength, kvBits: kvBits)
-        let fits = totalRequired <= resources.totalRAM && Double(totalRequired) <= Double(resources.availableRAM) * 1.25
-
-        let fitLevel: FitLevel
-        if totalRequired > resources.totalRAM || totalRequired > Int64(Double(resources.availableRAM) * 1.35) {
-            fitLevel = .tooTight
-        } else if totalRequired > Int64(Double(resources.availableRAM) * 0.90) {
-            fitLevel = .marginal
-        } else if totalRequired > Int64(Double(resources.availableRAM) * 0.60) {
-            fitLevel = .good
-        } else {
-            fitLevel = .perfect
-        }
-
-        var warning: String? = nil
-        if !fits || fitLevel == .tooTight {
-            warning = "Model files (\(formatRAMBytes(localSize))) require ~\(formatRAMBytes(totalRequired)) RAM, exceeding available memory (\(formatRAMBytes(resources.availableRAM)))."
-        }
-
-        let maxBudget = TokenBudgetCalculator.calculateMaxTokens(
-            availableRAM: resources.availableRAM,
-            modelSizeMB: modelMB,
-            kv: kv,
-            kvBits: kvBits
-        )
-
-        return MemoryAssessment(
-            modelId: modelId,
-            modelName: modelId.components(separatedBy: "/").last ?? modelId,
-            requiredRAMBytes: totalRequired,
-            availableRAMBytes: resources.availableRAM,
-            totalPhysicalRAMBytes: resources.totalRAM,
-            fitsInMemory: fits,
-            fitLevel: fitLevel,
-            maxContextBudgetTokens: maxBudget,
-            warning: warning,
-            recommendation: nil
-        )
+        let required = Int64(Double(localSize) * 1.15) + kv.bytes(tokens: contextLength, kvBits: kvBits)
+        return Self.assessment(
+            id: modelId, name: modelId.components(separatedBy: "/").last ?? modelId, required: required,
+            weights: localSize, kv: kv, kvBits: kvBits, resources: resources,
+            subject: "Model files (\(formatRAMBytes(localSize)))", recommendation: nil)
     }
 
     private func evaluateHeuristic(
@@ -219,48 +196,12 @@ public actor MemoryEvaluator {
         let kv = KVCacheGeometry(
             parameterProxy: params ?? ModelDefinition.inferTotalParameters(id: modelId, name: "", ramMB: estimatedMB)
         )
-        let totalRequired = estimatedMB * 1024 * 1024 + kv.bytes(tokens: contextLength, kvBits: kvBits)
-        let fits = totalRequired <= resources.totalRAM && Double(totalRequired) <= Double(resources.availableRAM) * 1.25
-
-        let fitLevel: FitLevel
-        if totalRequired > resources.totalRAM || totalRequired > Int64(Double(resources.availableRAM) * 1.35) {
-            fitLevel = .tooTight
-        } else if totalRequired > Int64(Double(resources.availableRAM) * 0.90) {
-            fitLevel = .marginal
-        } else if totalRequired > Int64(Double(resources.availableRAM) * 0.60) {
-            fitLevel = .good
-        } else {
-            fitLevel = .perfect
-        }
-
-        var warning: String? = nil
-        var rec: String? = nil
-        if !fits || fitLevel == .tooTight {
-            warning = "Model estimated to require ~\(formatRAMBytes(totalRequired)) RAM, exceeding available memory (\(formatRAMBytes(resources.availableRAM)))."
-            if !info.quantization.contains("4bit") && !info.quantization.contains("dq") && !info.quantization.contains("nvfp4") {
-                rec = "Consider choosing a 4-bit quantized MLX model variant."
-            }
-        }
-
-        let maxBudget = TokenBudgetCalculator.calculateMaxTokens(
-            availableRAM: resources.availableRAM,
-            modelSizeMB: Int(estimatedMB),
-            kv: kv,
-            kvBits: kvBits
-        )
-
-        return MemoryAssessment(
-            modelId: modelId,
-            modelName: info.name,
-            requiredRAMBytes: totalRequired,
-            availableRAMBytes: resources.availableRAM,
-            totalPhysicalRAMBytes: resources.totalRAM,
-            fitsInMemory: fits,
-            fitLevel: fitLevel,
-            maxContextBudgetTokens: maxBudget,
-            warning: warning,
-            recommendation: rec
-        )
+        let weights = estimatedMB * 1024 * 1024
+        let quantized = info.quantization.contains("4bit") || info.quantization.contains("dq") || info.quantization.contains("nvfp4")
+        return Self.assessment(
+            id: modelId, name: info.name, required: weights + kv.bytes(tokens: contextLength, kvBits: kvBits),
+            weights: weights, kv: kv, kvBits: kvBits, resources: resources, subject: "Model (estimated)",
+            recommendation: quantized ? nil : "Consider choosing a 4-bit quantized MLX model variant.")
     }
 
     /// Follows symlinks: the HuggingFace cache keeps weights in `blobs/` and
