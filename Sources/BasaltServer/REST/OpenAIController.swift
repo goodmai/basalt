@@ -380,66 +380,30 @@ struct OpenAIController: Sendable {
 
     @Sendable
     func chatCompletions(request: Request, context: BasicRequestContext) async throws -> Response {
-        let buffer = try await request.body.collect(upTo: 4 * 1024 * 1024)
-        let data = Data(buffer.readableBytesView)
-
-
+        let pipeline = self.pipeline
         let dto: ChatCompletionRequest
+        let prepared: ChatPipeline.Prepared
         do {
-            dto = try JSONDecoder().decode(ChatCompletionRequest.self, from: data)
-        } catch {
-            fputs("🔴 [OpenAI] decode error: \(error) (body: \(data.count) bytes)\n", stderr)
-            return makeErrorResponse(status: .badRequest,
-                                     message: "Cannot decode request: \(error.localizedDescription)",
-                                     code: 400)
+            let data = try await pipeline.body(of: request)
+            dto = try pipeline.decode(ChatCompletionRequest.self, from: data, failure: "Cannot decode request")
+            try pipeline.require(!dto.messages.isEmpty, "messages must not be empty")
+            let tools = try pipeline.tools(in: data)
+            let format = try pipeline.responseFormat(in: data)
+            prepared = try pipeline.prepare(
+                chat: Self.chatMessages(dto.messages), headers: request.headers, maxTokens: dto.maxTokens,
+                sampling: .init(temperature: dto.temperature, topP: dto.topP, minP: dto.minP,
+                                dynamicTemperature: dto.dynamicTemperature, topK: dto.topK,
+                                presencePenalty: dto.presencePenalty, repetitionPenalty: dto.repetitionPenalty),
+                reasoningEffort: dto.reasoningEffort, tools: tools, thinkingBudget: dto.thinkingBudget,
+                responseFormat: format, model: dto.model)
+            if dto.stream == true { try await pipeline.admitStream(prepared.request) }
+        } catch let rejection as ChatPipeline.Rejection {
+            return rejection.response
         }
-
-        guard !dto.messages.isEmpty else {
-            return makeErrorResponse(status: .badRequest, message: "messages must not be empty", code: 400)
-        }
-
-        let requested: RequestedTools
-        do { requested = try Self.requestedTools(fromRequestBody: data) } catch {
-            return makeErrorResponse(status: .badRequest, message: error.message, code: 400)
-        }
-        let responseFormat: ResponseFormat?
-        do { responseFormat = try Self.responseFormat(fromRequestBody: data) } catch {
-            return makeErrorResponse(status: .badRequest, message: error.message, code: 400)
-        }
-        let chat = Self.chatMessages(dto.messages)
-        let prompt = ChatMessageInput.plainText(chat)
-        let service = ServiceRequestDetector.prepare(prompt: prompt, maxTokens: dto.maxTokens, headers: request.headers)
-        let genRequest = GenerationRequest(
-            prompt: service.prompt,
-            maxTokens: dto.maxTokens,
-            temperature: dto.temperature,
-            topP: dto.topP,
-            minP: dto.minP,
-            dynamicTemperature: dto.dynamicTemperature,
-            reasoningEffort: dto.reasoningEffort,
-            isServiceRequest: service.isService,
-            tools: requested.tools,
-            toolChoice: requested.choice,
-            cacheKey: PromptCacheKey.resolve(isService: service.isService),
-            messages: service.prompt == prompt ? chat : nil,
-            topK: dto.topK,
-            presencePenalty: dto.presencePenalty,
-            repetitionPenalty: dto.repetitionPenalty,
-            thinkingBudget: dto.thinkingBudget,
-            responseFormat: responseFormat
-        ).routed(by: request.headers)
-        if let rejection = invalidParameters(genRequest) { return rejection }
-        let model = dto.model.map(ModelsController.restModel(from:))
-        let requestedModel = model?.repoId
-        if model == .path {
-            return makeErrorResponse(status: .badRequest, message: ModelsController.pathRejected, code: 400)
-        }
+        let genRequest = prepared.request
+        let requestedModel = prepared.requestedModel
 
         if dto.stream == true {
-            if let refusal = await orchestrator.admissionRefusal(for: genRequest) {
-                return makeErrorResponse(status: HTTPResponse.Status(code: refusal.httpStatus),
-                                         message: ModelsController.publicMessage(for: refusal), code: refusal.httpStatus)
-            }
             return streamResponse(genRequest: genRequest, model: dto.model ?? modelId, requestedModel: requestedModel,
                                   includeUsage: dto.streamOptions?.includeUsage == true)
         }
@@ -483,75 +447,38 @@ struct OpenAIController: Sendable {
 
     @Sendable
     func responses(request: Request, context: BasicRequestContext) async throws -> Response {
-        let buffer = try await request.body.collect(upTo: 4 * 1024 * 1024)
-        let data = Data(buffer.readableBytesView)
-
+        let pipeline = self.pipeline
         let dto: ResponsesRequest
+        let prepared: ChatPipeline.Prepared
         do {
-            dto = try JSONDecoder().decode(ResponsesRequest.self, from: data)
-        } catch {
-            return makeErrorResponse(status: .badRequest,
-                                     message: "Cannot decode responses request: \(error.localizedDescription)",
-                                     code: 400)
+            let data = try await pipeline.body(of: request)
+            dto = try pipeline.decode(ResponsesRequest.self, from: data, failure: "Cannot decode responses request")
+            let conversation: [ChatMessageInput]
+            switch dto.input {
+            case .text(let t):        conversation = t.isEmpty ? [] : [ChatMessageInput(role: .user, text: t)]
+            case .messages(let msgs): conversation = Self.chatMessages(msgs)
+            case nil:                 conversation = Self.chatMessages(dto.messages ?? [])
+            }
+            try pipeline.require(!conversation.isEmpty, "input or messages must not be empty")
+            let instructions = dto.instructions.flatMap { $0.isEmpty ? nil : ChatMessageInput(role: .system, text: $0) }
+            let tools = try pipeline.tools(in: data)
+            let format = try pipeline.responseFormat(in: data)
+            prepared = try pipeline.prepare(
+                chat: (instructions.map { [$0] } ?? []) + conversation, headers: request.headers,
+                maxTokens: dto.maxOutputTokens ?? dto.maxTokens,
+                sampling: .init(temperature: dto.temperature, topP: dto.topP, minP: dto.minP,
+                                dynamicTemperature: dto.dynamicTemperature, topK: dto.topK,
+                                presencePenalty: dto.presencePenalty, repetitionPenalty: dto.repetitionPenalty),
+                reasoningEffort: dto.effectiveReasoningEffort, tools: tools, thinkingBudget: dto.thinkingBudget,
+                responseFormat: format, model: dto.model)
+            if dto.stream == true { try await pipeline.admitStream(prepared.request) }
+        } catch let rejection as ChatPipeline.Rejection {
+            return rejection.response
         }
-
-        let conversation: [ChatMessageInput]
-        switch dto.input {
-        case .text(let t):        conversation = t.isEmpty ? [] : [ChatMessageInput(role: .user, text: t)]
-        case .messages(let msgs): conversation = Self.chatMessages(msgs)
-        case nil:                 conversation = Self.chatMessages(dto.messages ?? [])
-        }
-
-        guard !conversation.isEmpty else {
-            return makeErrorResponse(status: .badRequest, message: "input or messages must not be empty", code: 400)
-        }
-        // `instructions` is the system prompt of the Responses API; dropping it loses the agent's rules.
-        let instructions = dto.instructions.flatMap { $0.isEmpty ? nil : ChatMessageInput(role: .system, text: $0) }
-        let chat = (instructions.map { [$0] } ?? []) + conversation
-        let prompt = ChatMessageInput.plainText(chat)
-
-        let requested: RequestedTools
-        do { requested = try Self.requestedTools(fromRequestBody: data) } catch {
-            return makeErrorResponse(status: .badRequest, message: error.message, code: 400)
-        }
-        let responseFormat: ResponseFormat?
-        do { responseFormat = try Self.responseFormat(fromRequestBody: data) } catch {
-            return makeErrorResponse(status: .badRequest, message: error.message, code: 400)
-        }
-        let maxT = dto.maxOutputTokens ?? dto.maxTokens
-        let service = ServiceRequestDetector.prepare(prompt: prompt, maxTokens: maxT, headers: request.headers)
-
-        let genRequest = GenerationRequest(
-            prompt: service.prompt,
-            maxTokens: maxT,
-            temperature: dto.temperature,
-            topP: dto.topP,
-            minP: dto.minP,
-            dynamicTemperature: dto.dynamicTemperature,
-            reasoningEffort: dto.effectiveReasoningEffort,
-            isServiceRequest: service.isService,
-            tools: requested.tools,
-            toolChoice: requested.choice,
-            cacheKey: PromptCacheKey.resolve(isService: service.isService),
-            messages: service.prompt == prompt ? chat : nil,
-            topK: dto.topK,
-            presencePenalty: dto.presencePenalty,
-            repetitionPenalty: dto.repetitionPenalty,
-            thinkingBudget: dto.thinkingBudget,
-            responseFormat: responseFormat
-        ).routed(by: request.headers)
-        if let rejection = invalidParameters(genRequest) { return rejection }
-        let model = dto.model.map(ModelsController.restModel(from:))
-        let requestedModel = model?.repoId
-        if model == .path {
-            return makeErrorResponse(status: .badRequest, message: ModelsController.pathRejected, code: 400)
-        }
+        let genRequest = prepared.request
+        let requestedModel = prepared.requestedModel
 
         if dto.stream == true {
-            if let refusal = await orchestrator.admissionRefusal(for: genRequest) {
-                return makeErrorResponse(status: HTTPResponse.Status(code: refusal.httpStatus),
-                                         message: ModelsController.publicMessage(for: refusal), code: refusal.httpStatus)
-            }
             return streamResponses(genRequest: genRequest, model: dto.model ?? modelId, requestedModel: requestedModel)
         }
 
@@ -1017,17 +944,17 @@ struct OpenAIController: Sendable {
                         body: ResponseBody(byteBuffer: buf))
     }
 
-    private func invalidParameters(_ request: GenerationRequest) -> Response? {
-        do {
-            _ = try request.validated()
-            return nil
-        } catch {
-            return makeErrorResponse(status: HTTPResponse.Status(code: error.httpStatus),
-                                     message: ModelsController.publicMessage(for: error), code: error.httpStatus)
+    var pipeline: ChatPipeline {
+        ChatPipeline(orchestrator: orchestrator, label: "OpenAI") { status, message in
+            Self.makeErrorResponse(status: status, message: message, code: Int(status.code))
         }
     }
 
     private func makeErrorResponse(status: HTTPResponse.Status, message: String, code: Int) -> Response {
+        Self.makeErrorResponse(status: status, message: message, code: code)
+    }
+
+    static func makeErrorResponse(status: HTTPResponse.Status, message: String, code: Int) -> Response {
         let body: [String: Any] = ["type": "error",
                                    "error": ["type": "invalid_request_error", "message": message] as [String: Any]]
         let data = (try? JSONSerialization.data(withJSONObject: body)) ?? Data()

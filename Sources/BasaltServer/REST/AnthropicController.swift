@@ -223,84 +223,40 @@ struct AnthropicController: Sendable {
 
     @Sendable
     func messages(request: Request, context: BasicRequestContext) async throws -> Response {
-        // Authentication happens before this handler (APIKeyAuthenticator off loopback).
+        let pipeline = ChatPipeline(orchestrator: orchestrator, label: "Anthropic") { status, message in
+            Self.errorResponse(status: status, message: message,
+                               type: status == .serviceUnavailable ? "overloaded_error" : "invalid_request_error")
+        }
         let dto: MessagesRequest
-        let buffer = try await request.body.collect(upTo: 4 * 1024 * 1024)
-        let data = Data(buffer.readableBytesView)
+        let prepared: ChatPipeline.Prepared
         do {
-            dto = try JSONDecoder().decode(MessagesRequest.self, from: data)
-        } catch {
-            fputs("🔴 [Anthropic] decode error: \(error) (body: \(data.count) bytes)\n", stderr)
-            return errorResponse(status: .badRequest,
-                                 message: "Decode error: \(error.localizedDescription)",
-                                 type: "invalid_request_error")
+            let data = try await pipeline.body(of: request)
+            dto = try pipeline.decode(MessagesRequest.self, from: data, failure: "Decode error")
+            try pipeline.require(!dto.messages.isEmpty, "messages must not be empty")
+            let maxTokens = dto.maxTokens ?? 8192
+            if dto.thinking?.type == "enabled", let budget = dto.thinking?.budgetTokens, budget < 1 || budget >= maxTokens {
+                throw ChatPipeline.Rejection(response: Self.errorResponse(
+                    status: .badRequest,
+                    message: "thinking.budget_tokens must be >= 1 and less than max_tokens (\(maxTokens))",
+                    type: "invalid_request_error"))
+            }
+            let tools = try pipeline.tools(in: data)
+            prepared = try pipeline.prepare(
+                chat: Self.chatMessages(system: dto.system, messages: dto.messages), headers: request.headers,
+                maxTokens: maxTokens,
+                sampling: .init(temperature: dto.temperature, topP: dto.topP, minP: dto.minP,
+                                dynamicTemperature: dto.dynamicTemperature, topK: dto.topK),
+                reasoningEffort: Self.reasoningEffort(dto), tools: tools,
+                thinkingBudget: dto.thinking?.type == "enabled" ? dto.thinking?.budgetTokens : nil,
+                responseFormat: nil, model: dto.model)
+            if dto.stream == true { try await pipeline.admitStream(prepared.request) }
+        } catch let rejection as ChatPipeline.Rejection {
+            return rejection.response
         }
-
-        guard !dto.messages.isEmpty else {
-            return errorResponse(status: .badRequest,
-                                 message: "messages must not be empty",
-                                 type: "invalid_request_error")
-        }
-
-        let maxTokens = dto.maxTokens ?? 8192
-        if dto.thinking?.type == "enabled", let budget = dto.thinking?.budgetTokens, budget < 1 || budget >= maxTokens {
-            return errorResponse(status: .badRequest,
-                                 message: "thinking.budget_tokens must be >= 1 and less than max_tokens (\(maxTokens))",
-                                 type: "invalid_request_error")
-        }
-
-        let chat = Self.chatMessages(system: dto.system, messages: dto.messages)
-        let prompt = ChatMessageInput.plainText(chat)
-        let requested: OpenAIController.RequestedTools
-        do { requested = try OpenAIController.requestedTools(fromRequestBody: data) } catch {
-            return errorResponse(status: .badRequest, message: error.message, type: "invalid_request_error")
-        }
-        let service = ServiceRequestDetector.prepare(prompt: prompt, maxTokens: dto.maxTokens, headers: request.headers)
-
-        let effort: String?
-        if let re = dto.reasoningEffort {
-            effort = re
-        } else if let th = dto.thinking {
-            effort = th.type == "disabled" ? "off" : (th.budgetTokens.map { $0 > 8000 ? "high" : ($0 > 2000 ? "medium" : "low") } ?? "medium")
-        } else {
-            effort = nil
-        }
-
-        let genRequest = GenerationRequest(
-            prompt: service.prompt,
-            maxTokens: maxTokens,
-            temperature: dto.temperature,
-            topP: dto.topP,
-            minP: dto.minP,
-            dynamicTemperature: dto.dynamicTemperature,
-            reasoningEffort: effort,
-            isServiceRequest: service.isService,
-            tools: requested.tools,
-            toolChoice: requested.choice,
-            cacheKey: PromptCacheKey.resolve(isService: service.isService),
-            messages: service.prompt == prompt ? chat : nil,
-            topK: dto.topK,
-            thinkingBudget: dto.thinking?.type == "enabled" ? dto.thinking?.budgetTokens : nil
-        ).routed(by: request.headers)
-        do {
-            _ = try genRequest.validated()
-        } catch {
-            return errorResponse(status: HTTPResponse.Status(code: error.httpStatus),
-                                 message: ModelsController.publicMessage(for: error), type: "invalid_request_error")
-        }
-
-        let model = dto.model.map(ModelsController.restModel(from:))
-        let requestedModel = model?.repoId
-        if model == .path {
-            return errorResponse(status: .badRequest, message: ModelsController.pathRejected, type: "invalid_request_error")
-        }
+        let genRequest = prepared.request
+        let requestedModel = prepared.requestedModel
 
         if dto.stream == true {
-            if let refusal = await orchestrator.admissionRefusal(for: genRequest) {
-                return errorResponse(status: HTTPResponse.Status(code: refusal.httpStatus),
-                                     message: ModelsController.publicMessage(for: refusal),
-                                     type: refusal.httpStatus == 503 ? "overloaded_error" : "invalid_request_error")
-            }
             return streamMessagesResponse(genRequest: genRequest, model: dto.model ?? modelId, requestedModel: requestedModel)
         }
 
@@ -567,7 +523,18 @@ struct AnthropicController: Sendable {
     }
 
     /// Anthropic error envelope format: {"type":"error","error":{"type":"...","message":"..."}}
+    static func reasoningEffort(_ dto: MessagesRequest) -> String? {
+        if let effort = dto.reasoningEffort { return effort }
+        guard let thinking = dto.thinking else { return nil }
+        if thinking.type == "disabled" { return "off" }
+        return thinking.budgetTokens.map { $0 > 8000 ? "high" : ($0 > 2000 ? "medium" : "low") } ?? "medium"
+    }
+
     private func errorResponse(status: HTTPResponse.Status, message: String, type errorType: String) -> Response {
+        Self.errorResponse(status: status, message: message, type: errorType)
+    }
+
+    static func errorResponse(status: HTTPResponse.Status, message: String, type errorType: String) -> Response {
         let body: [String: Any] = [
             "type": "error",
             "error": ["type": errorType, "message": message]
