@@ -48,6 +48,10 @@ public actor ModelRouter: Sendable {
             self.virtualKey = virtualKey
         }
 
+        public init(_ request: GenerationRequest) {
+            self.init(sessionId: request.sessionId, virtualKey: request.budgetKey)
+        }
+
         var budgetScopes: [CostTracker.BudgetScope] {
             [sessionId.map { .session($0) }, virtualKey.map { .virtualKey($0) }].compactMap { $0 }
         }
@@ -535,7 +539,7 @@ extension ModelRouter: CloudFallback {
         guard cloudClient != nil, let cloudModel = fallbackCloudModel,
               request.tools?.isEmpty ?? true, request.responseFormat == nil
         else { return nil }
-        let context = RoutingContext()
+        let context = RoutingContext(request)
         if let costTracker, await costTracker.isExhausted(scopes: context.budgetScopes) { return nil }
         let completionTokens = request.maxTokens ?? 1_024
         let gap = stickyTier(request: request, context: context).map { $0.tier == .strong ? $0.strongWinProbability : 0 } ?? 0
@@ -548,10 +552,10 @@ extension ModelRouter: CloudFallback {
     }
 
     public func generate(_ request: GenerationRequest) async throws -> GenerationResponse {
-        try await route(request: request, preferredModel: fallbackCloudModel, context: RoutingContext())
+        try await route(request: request, preferredModel: fallbackCloudModel, context: RoutingContext(request))
     }
 
     public func generateStream(_ request: GenerationRequest) async throws -> AsyncThrowingStream<StreamChunk, Error> {
-        try await routeStream(request: request, preferredModel: fallbackCloudModel, context: RoutingContext())
+        try await routeStream(request: request, preferredModel: fallbackCloudModel, context: RoutingContext(request))
     }
 }

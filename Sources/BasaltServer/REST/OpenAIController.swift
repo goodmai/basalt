@@ -427,7 +427,7 @@ struct OpenAIController: Sendable {
             repetitionPenalty: dto.repetitionPenalty,
             thinkingBudget: dto.thinkingBudget,
             responseFormat: responseFormat
-        )
+        ).routed(by: request.headers)
         if let rejection = invalidParameters(genRequest) { return rejection }
         let model = dto.model.map(ModelsController.restModel(from:))
         let requestedModel = model?.repoId
@@ -535,7 +535,7 @@ struct OpenAIController: Sendable {
             repetitionPenalty: dto.repetitionPenalty,
             thinkingBudget: dto.thinkingBudget,
             responseFormat: responseFormat
-        )
+        ).routed(by: request.headers)
         if let rejection = invalidParameters(genRequest) { return rejection }
         let model = dto.model.map(ModelsController.restModel(from:))
         let requestedModel = model?.repoId
@@ -595,7 +595,7 @@ struct OpenAIController: Sendable {
         let buffer = try await request.body.collect(upTo: 4 * 1024 * 1024)
         let data = Data(buffer.readableBytesView)
         do {
-            let dto = PromptCacheKey.scoped(try JSONDecoder().decode(GenerationRequest.self, from: data))
+            let dto = PromptCacheKey.scoped(try JSONDecoder().decode(GenerationRequest.self, from: data)).routed(by: request.headers)
             let result = try await orchestrator.generate(request: dto)
             let encoded = try JSONEncoder().encode(result)
             return makeDataResponse(encoded)

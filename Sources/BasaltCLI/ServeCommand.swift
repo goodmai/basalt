@@ -146,6 +146,24 @@ struct ServeCommand: AsyncParsableCommand {
     var noCloudFallback = false
 
     @Option(
+        name: .customLong("router-params"),
+        help: "JSON with trained Bradley–Terry router parameters (strongEmbedding, weakEmbedding, weights, projection); enables the capability reason of the cloud fallback (also cloud_fallback.router_params)"
+    )
+    var routerParams: String?
+
+    @Option(
+        name: .customLong("cost-threshold"),
+        help: "Win probability θ of the cloud model above which a task counts as beyond the local model (default 0.5; also cloud_fallback.cost_threshold)"
+    )
+    var costThreshold: Double?
+
+    @Option(
+        name: .customLong("cache-stickiness"),
+        help: "Penalty λ for leaving a warm session's model, scaled by its cached prefix (default 0.1; also cloud_fallback.cache_stickiness); sessions are told apart by the x-session-id header"
+    )
+    var cacheStickiness: Double?
+
+    @Option(
         name: .customLong("local-context-limit"),
         help: "Prompt tokens beyond which the local model counts as degraded and the cloud fallback answers instead"
     )
@@ -164,10 +182,16 @@ struct ServeCommand: AsyncParsableCommand {
         let baseURL: URL
         let apiKey: String
         let localContextLimit: Int?
+        var routerParams: URL? = nil
+        var costThreshold: Double? = nil
+        var cacheStickiness: Double? = nil
+        var sessionBudget: Double? = nil
     }
 
     static func resolveCloudFallback(
-        cliModel: String?, cliBaseURL: String?, cliDisabled: Bool, cliLocalContextLimit: Int?, configFile: String?,
+        cliModel: String?, cliBaseURL: String?, cliDisabled: Bool, cliLocalContextLimit: Int?,
+        cliRouterParams: String? = nil, cliCostThreshold: Double? = nil, cliCacheStickiness: Double? = nil,
+        configFile: String?,
         environment: [String: String] = ProcessInfo.processInfo.environment,
         savedOpenRouterKey: () -> String? = { CloudCommand.loadConfig()?.apiKey }
     ) throws -> CloudFallbackSettings? {
@@ -209,18 +233,60 @@ struct ServeCommand: AsyncParsableCommand {
         if let limit, limit <= 0 {
             throw ValidationError("local_context_limit must be a positive number of tokens, got \(limit)")
         }
-        return CloudFallbackSettings(model: model, baseURL: baseURL, apiKey: apiKey, localContextLimit: limit)
+        let routerParams = try (cliRouterParams ?? value("router_params", as: String.self))
+            .map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath) }
+        let threshold = try cliCostThreshold ?? value("cost_threshold", as: Double.self)
+        let stickiness = try cliCacheStickiness ?? value("cache_stickiness", as: Double.self)
+        if routerParams == nil, threshold != nil || stickiness != nil {
+            throw ValidationError("cost_threshold and cache_stickiness need router_params (trained Bradley–Terry parameters)")
+        }
+        if let threshold, !(0...1).contains(threshold) {
+            throw ValidationError("cost_threshold must be a probability between 0 and 1, got \(threshold)")
+        }
+        if let stickiness, stickiness < 0 {
+            throw ValidationError("cache_stickiness must not be negative, got \(stickiness)")
+        }
+        let sessionBudget = try value("session_budget", as: Double.self)
+        if let sessionBudget, sessionBudget < 0 {
+            throw ValidationError("session_budget must not be negative, got \(sessionBudget)")
+        }
+        return CloudFallbackSettings(
+            model: model, baseURL: baseURL, apiKey: apiKey, localContextLimit: limit,
+            routerParams: routerParams, costThreshold: threshold, cacheStickiness: stickiness, sessionBudget: sessionBudget)
     }
 
-    static func cloudFallbackRouter(_ settings: CloudFallbackSettings, orchestrator: ModelOrchestratorActor) throws -> ModelRouter {
+    static func cloudFallbackRouter(
+        _ settings: CloudFallbackSettings, orchestrator: ModelOrchestratorActor, virtualKeys: [VirtualKey] = [],
+        costURL: URL = CloudCommand.costURL()
+    ) async throws -> ModelRouter {
         let saved = CloudCommand.loadConfig()
         let budget = CostTracker.Budget(dailyLimit: saved?.dailyBudget ?? 5, monthlyLimit: saved?.monthlyBudget ?? 50)
+        let tracker = try CostTracker(storageURL: costURL, budget: budget)
+        await tracker.setDefaultSessionBudget(settings.sessionBudget)
+        for key in virtualKeys {
+            if let limit = key.maxBudget { await tracker.setMaxBudget(limit, for: .virtualKey(key.id)) }
+        }
+        let costRouting: ModelRouter.CostRouting?
+        if let params = settings.routerParams {
+            let scorer: BradleyTerryRouter
+            do {
+                scorer = try BradleyTerryRouter.load(from: params)
+            } catch {
+                throw ValidationError("router_params \(params.path): \(error.localizedDescription)")
+            }
+            costRouting = ModelRouter.CostRouting(
+                policy: StickyRoutingPolicy(
+                    strongModel: settings.model, weakModel: "local",
+                    threshold: settings.costThreshold ?? 0.5, cacheStickinessPenalty: settings.cacheStickiness ?? 0.1),
+                scorer: scorer)
+        } else {
+            costRouting = nil
+        }
         return ModelRouter(
             localOrchestrator: orchestrator,
             cloudClient: try OpenRouterClient(config: .init(
                 apiKey: settings.apiKey, baseURL: settings.baseURL, timeout: 120, maxRetries: 2)),
-            strategy: .cloudOnly,
-            costTracker: try CostTracker(storageURL: CloudCommand.costURL(), budget: budget),
+            strategy: .cloudOnly, costRouting: costRouting, costTracker: tracker,
             fallbackCloudModel: settings.model)
     }
 
@@ -297,7 +363,8 @@ struct ServeCommand: AsyncParsableCommand {
             logLevel:  logLevel,
             apiKey:    access.key,
             rateLimitPerMinute: network.rateLimit,
-            allowedOrigins: network.allowedOrigins
+            allowedOrigins: network.allowedOrigins,
+            virtualKeys: network.virtualKeys
         )
 
         // Apply log level from config
@@ -337,9 +404,10 @@ struct ServeCommand: AsyncParsableCommand {
 
         if let fallback = try Self.resolveCloudFallback(
             cliModel: cloudFallback, cliBaseURL: cloudBaseURL, cliDisabled: noCloudFallback,
-            cliLocalContextLimit: localContextLimit, configFile: configFile ?? Self.defaultConfigFileIfPresent())
+            cliLocalContextLimit: localContextLimit, cliRouterParams: routerParams, cliCostThreshold: costThreshold,
+            cliCacheStickiness: cacheStickiness, configFile: configFile ?? Self.defaultConfigFileIfPresent())
         {
-            let router = try Self.cloudFallbackRouter(fallback, orchestrator: orchestrator)
+            let router = try await Self.cloudFallbackRouter(fallback, orchestrator: orchestrator, virtualKeys: config.virtualKeys)
             if OpenRouterClient.isOpenRouter(fallback.baseURL) {
                 do {
                     try await router.syncCloudModels()
@@ -410,7 +478,7 @@ struct ServeCommand: AsyncParsableCommand {
         cliRateLimit: Int? = nil,
         cliAllowedOrigins: [String] = [],
         configFile: String?
-    ) throws -> (port: Int, host: String, apiKey: String?, rateLimit: Int?, allowedOrigins: [String]) {
+    ) throws -> (port: Int, host: String, apiKey: String?, rateLimit: Int?, allowedOrigins: [String], virtualKeys: [VirtualKey]) {
         var dict: [String: Any] = [:]
         if let configFile {
             let url = URL(fileURLWithPath: (configFile as NSString).expandingTildeInPath)
@@ -440,12 +508,26 @@ struct ServeCommand: AsyncParsableCommand {
         for origin in allowedOrigins where RequestGuardMiddleware.parseOrigin(origin) == nil {
             throw ValidationError("allowed origin must be scheme://host[:port]: http or https, no path, no trailing slash, no wildcard; got \(origin)")
         }
+        let virtualKeys = try (value("virtual_keys", as: [[String: Any]].self) ?? []).map { entry -> VirtualKey in
+            guard let key = entry["key"] as? String, key.count >= 16, let id = entry["id"] as? String, !id.isEmpty else {
+                throw ValidationError("virtual_keys: every entry needs \"id\" and a \"key\" of at least 16 characters")
+            }
+            let budget = entry["max_budget"].flatMap { $0 is NSNull ? nil : $0 }
+            if let budget, (budget as? NSNumber).map({ CFGetTypeID($0) == CFBooleanGetTypeID() || $0.doubleValue < 0 }) ?? true {
+                throw ValidationError("virtual_keys[\(id)].max_budget must be a non-negative number of USD, got \(budget)")
+            }
+            return VirtualKey(key: key, id: id, maxBudget: (budget as? NSNumber)?.doubleValue)
+        }
+        if Set(virtualKeys.map(\.id)).count != virtualKeys.count || Set(virtualKeys.map(\.key)).count != virtualKeys.count {
+            throw ValidationError("virtual_keys: ids and keys must be unique")
+        }
         return (
             port: try cliPort ?? value("port", as: Int.self) ?? 8080,
             host: try cliHost ?? value("host", as: String.self) ?? "127.0.0.1",
             apiKey: try cliKey ?? value("api_key", as: String.self),
             rateLimit: rateLimit,
-            allowedOrigins: allowedOrigins
+            allowedOrigins: allowedOrigins,
+            virtualKeys: virtualKeys
         )
     }
 

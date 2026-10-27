@@ -281,7 +281,7 @@ struct AnthropicController: Sendable {
             messages: service.prompt == prompt ? chat : nil,
             topK: dto.topK,
             thinkingBudget: dto.thinking?.type == "enabled" ? dto.thinking?.budgetTokens : nil
-        )
+        ).routed(by: request.headers)
         do {
             _ = try genRequest.validated()
         } catch {
