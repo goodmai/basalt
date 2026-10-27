@@ -141,14 +141,14 @@ struct SessionLogRedactionTests {
         let dir = SessionLogTests.tempDirectory()
         defer { try? FileManager.default.removeItem(at: dir) }
         let writer = SessionLogWriter(mode: .full, directory: dir, defaultSession: "t")
-        let base = Self.turns(["base"])
-        await writer.logRequest(GenerationRequest(prompt: "", messages: base), id: "base", origin: .unspecified, modelRequested: nil)
-        for i in 0..<SessionLogWriter.prefixWindow {
-            await writer.logRequest(GenerationRequest(prompt: "", messages: Self.turns(["other \(i)"])), id: "o\(i)",
-                                    origin: .unspecified, modelRequested: nil)
+        func inT(_ messages: [ChatMessageInput]) -> GenerationRequest {
+            GenerationRequest(prompt: "", messages: messages).withRouting(sessionId: "t", budgetKey: nil)
         }
-        await writer.logRequest(GenerationRequest(prompt: "", messages: Self.turns(["base", "more"])), id: "late",
-                                origin: .unspecified, modelRequested: nil)
+        await writer.logRequest(inT(Self.turns(["base"])), id: "base", origin: .unspecified, modelRequested: nil)
+        for i in 0..<SessionLogWriter.prefixWindow {
+            await writer.logRequest(inT(Self.turns(["other \(i)"])), id: "o\(i)", origin: .unspecified, modelRequested: nil)
+        }
+        await writer.logRequest(inT(Self.turns(["base", "more"])), id: "late", origin: .unspecified, modelRequested: nil)
         await writer.logRequest(GenerationRequest(prompt: "", messages: Self.turns(["other 7", "x"])).withRouting(sessionId: "s2", budgetKey: nil),
                                 id: "elsewhere", origin: .unspecified, modelRequested: nil)
         await writer.flush()

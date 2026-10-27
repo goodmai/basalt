@@ -168,9 +168,13 @@ public enum SessionLogRecord {
         var to: String? = nil
         var durationMs: Int? = nil
         var count: Int? = nil
+        var idleS: Int? = nil
+        var gapS: Int? = nil
+        var resumedFrom: String? = nil
 
         enum CodingKeys: String, CodingKey {
             case v, type, ts, session, version, pid, os, mode, model, from, to, durationMs = "duration_ms", count
+            case idleS = "idle_s", gapS = "gap_s", resumedFrom = "resumed_from"
         }
     }
 }
@@ -215,12 +219,26 @@ public actor SessionLogWriter {
 
     nonisolated public let redacts: Bool
     static let prefixWindow = 8
-    private var recentConversations: [String: [(id: String, messages: [ChatMessageInput])]] = [:]
+    private var recentConversations: [String: [(id: String, digests: [SHA256.Digest])]] = [:]
+
+    static func digests(_ messages: [ChatMessageInput]) -> [SHA256.Digest] {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .sortedKeys
+        return messages.map { SHA256.hash(data: (try? encoder.encode($0)) ?? Data($0.text.utf8)) }
+    }
+    private var requestSessions: [String: String] = [:]
+    private var lastActivity: [String: Date] = [:]
+    private var suspendedAt: [String: Date] = [:]
+    private var resumedPaths: [String: URL] = [:]
+    private var primed: Set<String> = []
+    nonisolated public let idleTimeout: TimeInterval
 
     public init(
         mode: SessionLogMode, directory: URL, bufferLimit: Int = 1_024, redacts: Bool = true,
-        defaultSession: String = SessionLogWriter.processSession(), clock: @escaping @Sendable () -> Date = { Date() }
+        defaultSession: String = SessionLogWriter.processSession(), idleTimeout: TimeInterval = 1_800,
+        clock: @escaping @Sendable () -> Date = { Date() }
     ) {
+        self.idleTimeout = idleTimeout
         self.mode = mode
         self.redacts = redacts
         self.directory = directory
@@ -263,7 +281,52 @@ public actor SessionLogWriter {
     }
 
     func session(for request: GenerationRequest) -> String {
-        Self.sanitized(request.sessionId) ?? defaultSession
+        if let explicit = Self.sanitized(request.sessionId) { return explicit }
+        guard let messages = request.messages, !messages.isEmpty else { return defaultSession }
+        let digests = Self.digests(messages)
+        let continued = recentConversations.first { _, conversations in
+            conversations.contains { $0.digests.count <= digests.count && digests.starts(with: $0.digests) }
+        }
+        return continued?.key ?? "s-" + UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(12).lowercased()
+    }
+
+    func prime(_ session: String) {
+        let now = clock()
+        defer { lastActivity[session] = now }
+        if let suspended = suspendedAt.removeValue(forKey: session) {
+            appendEvent("session_resume", session: session) { $0.gapS = Int(now.timeIntervalSince(suspended)) }
+            return
+        }
+        guard primed.insert(session).inserted, handles[session] == nil,
+              let existing = SessionLogReader.file(for: session, in: directory)
+        else { return }
+        resumedPaths[session] = existing
+        let modified = (try? existing.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? now
+        appendEvent("session_resume", session: session) {
+            $0.gapS = max(0, Int(now.timeIntervalSince(modified)))
+            $0.resumedFrom = existing.deletingLastPathComponent().lastPathComponent + "/" + existing.lastPathComponent
+        }
+        if mode == .full, recentConversations[session] == nil {
+            recentConversations[session] = SessionLogReader.recentConversations(
+                in: SessionLogReader.lines(of: existing), limit: Self.prefixWindow).map { ($0.id, Self.digests($0.messages)) }
+        }
+    }
+
+    func suspendIdleSessions() {
+        let now = clock()
+        for (session, last) in lastActivity where handles[session] != nil && now.timeIntervalSince(last) >= idleTimeout {
+            appendEvent("session_suspend", session: session) { $0.idleS = Int(now.timeIntervalSince(last)) }
+            writePending()
+            if let fd = handles.removeValue(forKey: session) { Darwin.close(fd) }
+            suspendedAt[session] = now
+            lastActivity[session] = nil
+        }
+    }
+
+    private func appendEvent(_ type: String, session: String, _ fill: (inout SessionLogRecord.Event) -> Void) {
+        var event = SessionLogRecord.Event(v: SessionLogRecord.schemaVersion, type: type, ts: timestamp(), session: session)
+        fill(&event)
+        append(event, session: session)
     }
 
     static func sanitized(_ id: String?) -> String? {
@@ -274,9 +337,13 @@ public actor SessionLogWriter {
 
     public func logRequest(_ request: GenerationRequest, id: String, origin: RequestOrigin, modelRequested: String?) {
         guard isEnabled else { return }
+        let session = session(for: request)
+        requestSessions[id] = session
+        prime(session)
+        let parent = remember(request, id: id, session: session)
         let prompt = request.messages.map(ChatMessageInput.plainText) ?? request.prompt
         let record = SessionLogRecord.Request(
-            v: SessionLogRecord.schemaVersion, type: "request", ts: timestamp(), session: session(for: request), id: id,
+            v: SessionLogRecord.schemaVersion, type: "request", ts: timestamp(), session: session, id: id,
             source: origin.source, endpoint: origin.endpoint, stream: origin.stream, service: request.isServiceRequest == true,
             modelRequested: modelRequested,
             params: .init(maxTokens: request.maxTokens, temperature: request.temperature, topP: request.topP,
@@ -284,7 +351,7 @@ public actor SessionLogWriter {
                           thinkingBudget: request.thinkingBudget),
             cacheKey: request.cacheKey, messagesCount: request.messages?.count ?? 1, toolsCount: request.tools?.count ?? 0,
             prompt: .init(prompt),
-            content: mode == .full ? content(of: request, id: id, session: session(for: request)) : nil)
+            content: mode == .full ? content(of: request, parent: parent) : nil)
         append(record, session: record.session)
     }
 
@@ -292,9 +359,11 @@ public actor SessionLogWriter {
         _ request: GenerationRequest, id: String, status: String, result: SessionLogResult, queueWait: Duration, error: String? = nil
     ) {
         guard isEnabled else { return }
+        let session = requestSessions.removeValue(forKey: id) ?? session(for: request)
+        lastActivity[session] = clock()
         let meta = result.metadata
         let record = SessionLogRecord.Response(
-            v: SessionLogRecord.schemaVersion, type: "response", ts: timestamp(), session: session(for: request), requestId: id,
+            v: SessionLogRecord.schemaVersion, type: "response", ts: timestamp(), session: session, requestId: id,
             status: status, finishReason: meta?.finishReason.rawValue,
             tokens: meta.map { .init(prompt: $0.promptTokens, completion: $0.completionTokens, cached: $0.cachedPromptTokens) },
             timing: meta.map {
@@ -315,22 +384,28 @@ public actor SessionLogWriter {
         redacts ? SecretRedactor.redact(text) : text
     }
 
-    func content(of request: GenerationRequest, id: String, session: String) -> SessionLogRecord.RequestContent {
+    func remember(_ request: GenerationRequest, id: String, session: String) -> (id: String, count: Int)? {
+        guard let messages = request.messages else { return nil }
+        let digests = Self.digests(messages)
+        var recent = recentConversations[session] ?? []
+        let parent = recent.reversed().first { earlier in
+            earlier.digests.count <= digests.count && digests.starts(with: earlier.digests)
+        }
+        recent.append((id, digests))
+        if recentConversations[session] == nil, recentConversations.count >= 4_096 { recentConversations.removeAll() }
+        recentConversations[session] = Array(recent.suffix(Self.prefixWindow))
+        return parent.map { ($0.id, $0.digests.count) }
+    }
+
+    func content(of request: GenerationRequest, parent: (id: String, count: Int)?) -> SessionLogRecord.RequestContent {
         guard let messages = request.messages else {
             return .init(messages: nil, prompt: scrub(request.prompt), tools: request.tools)
         }
-        var recent = recentConversations[session] ?? []
-        let parent = recent.reversed().first { earlier in
-            earlier.messages.count <= messages.count && messages.starts(with: earlier.messages)
-        }
-        recent.append((id, messages))
-        if recentConversations[session] == nil, recentConversations.count >= 4_096 { recentConversations.removeAll() }
-        recentConversations[session] = Array(recent.suffix(Self.prefixWindow))
-        let stored = parent.map { Array(messages.dropFirst($0.messages.count)) } ?? messages
+        let stored = parent.map { Array(messages.dropFirst($0.count)) } ?? messages
         var content = SessionLogRecord.RequestContent(
             messages: redacts ? SecretRedactor.redact(stored) : stored, prompt: nil, tools: request.tools)
         content.parent = parent?.id
-        content.prefixCount = parent?.messages.count
+        content.prefixCount = parent?.count
         return content
     }
 
@@ -368,7 +443,9 @@ public actor SessionLogWriter {
     }
 
     public func flush() {
-        guard isEnabled, !pending.isEmpty || dropped > 0 else { return }
+        guard isEnabled else { return }
+        suspendIdleSessions()
+        guard !pending.isEmpty || dropped > 0 else { return }
         if dropped > 0 {
             var event = SessionLogRecord.Event(v: SessionLogRecord.schemaVersion, type: "dropped", ts: timestamp(), session: defaultSession)
             event.count = dropped
@@ -378,6 +455,10 @@ public actor SessionLogWriter {
                 pending.append((defaultSession, line))
             }
         }
+        writePending()
+    }
+
+    private func writePending() {
         let batch = pending
         pending.removeAll(keepingCapacity: true)
         for entry in batch {
@@ -393,7 +474,7 @@ public actor SessionLogWriter {
     private func handle(for session: String) -> Int32? {
         if let fd = handles[session] { return fd }
         let day = ISO8601DateFormatter.string(from: clock(), timeZone: .gmt, formatOptions: [.withFullDate])
-        let folder = directory.appendingPathComponent(day)
+        let folder = resumedPaths[session]?.deletingLastPathComponent() ?? directory.appendingPathComponent(day)
         do {
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
             try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)

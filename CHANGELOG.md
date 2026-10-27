@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Session log
+- Sessions (#106): `X-Basalt-Session` names the session (`x-session-id` as an alias); without an id a request that extends an earlier conversation joins its session, anything else gets a new `s-…` id. A known id appends to its existing file after a restart with a `session_resume` line and continues the `parent` chain (the last 8 conversations are reloaded from the file); `--session-idle-minutes` (default 30) writes `session_suspend` and closes an idle file, the next request resumes it with `gap_s`. Resume across restarts needs an explicit id.
+- `basalt sessions list | show <id|latest> | stats <id|latest>` read the log without loading a model; `show` rebuilds the latest conversation from the `parent` chain (metrics only for `meta` sessions).
+- Behaviour change: `basalt chat` keeps a multi-turn history (it sent each line on its own before) in a session of its own (`--session-log full|meta|off`), prints `Resume with: basalt chat --resume <id>` on exit, and `basalt chat --resume <id|latest>` continues a logged chat; a `meta` session has no content and is refused with a non-zero exit. `/clear` clears the history.
+
 ## 0.5.0 — 2026-10-27
 
 ### Upgrading from 0.4.0
