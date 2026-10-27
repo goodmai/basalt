@@ -20,7 +20,7 @@ struct GenerateController: Sendable {
         do {
             let buffer = try await request.body.collect(upTo: 1024 * 1024)
             let data = Data(buffer.readableBytesView)
-            dto = PromptCacheKey.scoped(try JSONDecoder().decode(GenerationRequest.self, from: data)).routed(by: request.headers)
+            dto = PromptCacheKey.scoped(try JSONDecoder().decode(GenerationRequest.self, from: data)).routed(by: request.headers).withOrigin(RequestOrigin(source: "generate", endpoint: "/api/v1/generate", stream: false))
         } catch {
             return errorResponse(status: .badRequest, message: "Invalid JSON: \(error.localizedDescription)", code: 400)
         }
@@ -47,7 +47,7 @@ struct GenerateController: Sendable {
         do {
             let buffer = try await request.body.collect(upTo: 1024 * 1024)
             let data = Data(buffer.readableBytesView)
-            dto = PromptCacheKey.scoped(try JSONDecoder().decode(GenerationRequest.self, from: data)).routed(by: request.headers)
+            dto = PromptCacheKey.scoped(try JSONDecoder().decode(GenerationRequest.self, from: data)).routed(by: request.headers).withOrigin(RequestOrigin(source: "generate", endpoint: "/api/v1/generate/stream", stream: true))
         } catch {
             return errorResponse(status: .badRequest, message: "Invalid JSON: \(error.localizedDescription)", code: 400)
         }

@@ -50,7 +50,7 @@ struct ChatCommand: AsyncParsableCommand {
         if let initialPrompt = prompt {
             // Non-interactive mode
             let finalPrompt = try await PromptContextBuilder.build(prompt: initialPrompt)
-            let request = GenerationRequest(prompt: finalPrompt, maxTokens: maxTokens)
+            let request = GenerationRequest(prompt: finalPrompt, maxTokens: maxTokens).withOrigin(RequestOrigin(source: "cli", endpoint: "chat", stream: true))
             
             do {
                 let stream = try await orchestrator.generateStream(request: request)

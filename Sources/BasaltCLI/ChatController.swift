@@ -88,7 +88,7 @@ actor ChatController {
                         let finalPrompt = try await PromptContextBuilder.build(prompt: prompt)
                         await terminal.updateInfo(debug: "Thinking...")
                         
-                        let request = GenerationRequest(prompt: finalPrompt, maxTokens: maxTokens)
+                        let request = GenerationRequest(prompt: finalPrompt, maxTokens: maxTokens).withOrigin(RequestOrigin(source: "cli", endpoint: "chat", stream: true))
                         let stream = try await orchestrator.generateStream(request: request)
                         
                         await terminal.printOutput("\n" + TerminalUI.info("Gemma:") + " ")

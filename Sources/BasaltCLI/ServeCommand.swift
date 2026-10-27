@@ -181,6 +181,21 @@ struct ServeCommand: AsyncParsableCommand {
     )
     var localContextLimit: Int?
 
+    @Option(
+        name: .customLong("session-log"),
+        help: "JSONL session log of requests and replies: full (default; prompts and replies are stored on this machine) | meta (metrics, sizes and hashes only) | off"
+    )
+    var sessionLog: SessionLogMode = .full
+
+    @Option(name: .customLong("session-log-dir"), help: "Directory of the session log (default: ~/.basalt/sessions)")
+    var sessionLogDir: String?
+
+    @Option(name: .customLong("session-log-retention-days"), help: "Delete session files older than this many days at start (default: 14)")
+    var sessionLogRetentionDays: Int = 14
+
+    @Option(name: .customLong("session-log-max-total-mb"), help: "Delete the oldest session files beyond this total size at start (default: 1024)")
+    var sessionLogMaxTotalMB: Int = 1024
+
     @Option(name: .long, help: "Log level: debug | info | warn | error (default: info)")
     var logLevel: ServerConfig.LogLevel = .info
 
@@ -302,7 +317,19 @@ struct ServeCommand: AsyncParsableCommand {
             fallbackCloudModel: settings.model)
     }
 
+    static func sessionLogWriter(mode: SessionLogMode, directory: String?, retentionDays: Int, maxTotalMB: Int) -> SessionLogWriter? {
+        guard mode != .off else { return nil }
+        let url = directory.map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath) } ?? SessionLogWriter.defaultDirectory
+        SessionLogWriter.applyRetention(directory: url, days: retentionDays, maxTotalBytes: Int64(maxTotalMB) << 20)
+        let writer = SessionLogWriter(mode: mode, directory: url)
+        Task { await writer.startFlushing() }
+        return writer
+    }
+
     func validate() throws {
+        guard sessionLogRetentionDays >= 0, sessionLogMaxTotalMB >= 0 else {
+            throw ValidationError("--session-log-retention-days and --session-log-max-total-mb must not be negative")
+        }
         guard maxConcurrent >= 1 else {
             throw ValidationError("--max-concurrent must be at least 1, got \(maxConcurrent)")
         }
@@ -404,9 +431,14 @@ struct ServeCommand: AsyncParsableCommand {
             seed: seed,
             cacheBlendRatio: cacheBlend ? min(max(0, cacheBlendRatio), 1) : nil
         )
+        let sessionLogWriter = Self.sessionLogWriter(
+            mode: sessionLog, directory: sessionLogDir, retentionDays: sessionLogRetentionDays, maxTotalMB: sessionLogMaxTotalMB)
+        if let sessionLogWriter {
+            log("Session log: \(sessionLog.rawValue) → \(sessionLogWriter.directory.path) (0700; `--session-log meta` keeps no content, `--session-log off` disables)")
+        }
         let orchestrator = ModelOrchestratorActor(
             engine: engine, maxTokens: config.maxTokens, kvBits: kvBits,
-            gate: GenerationGate(maxConcurrent: maxConcurrent, maxQueue: maxQueue))
+            gate: GenerationGate(maxConcurrent: maxConcurrent, maxQueue: maxQueue), sessionLog: sessionLogWriter)
 
         log("Loading model from \(bold(resolvedPath))…")
         do {
@@ -589,3 +621,5 @@ struct ServeCommand: AsyncParsableCommand {
 
 // The CLI parses the level; the type stays in BasaltCore without depending on ArgumentParser.
 extension ServerConfig.LogLevel: ExpressibleByArgument {}
+
+extension SessionLogMode: ExpressibleByArgument {}

@@ -77,6 +77,7 @@ public struct GenerationRequest: Codable, Sendable {
     public private(set) var responseFormat: ResponseFormat? = nil
     public private(set) var sessionId: String? = nil
     public private(set) var budgetKey: String? = nil
+    public private(set) var origin: RequestOrigin = .unspecified
 
     enum CodingKeys: String, CodingKey {
         case prompt, maxTokens, temperature, topP, minP, dynamicTemperature, enableThinking, reasoningEffort
@@ -138,6 +139,12 @@ public struct GenerationRequest: Codable, Sendable {
         var copy = self
         copy.sessionId = sessionId
         copy.budgetKey = budgetKey
+        return copy
+    }
+
+    public func withOrigin(_ origin: RequestOrigin) -> GenerationRequest {
+        var copy = self
+        copy.origin = origin
         return copy
     }
 
