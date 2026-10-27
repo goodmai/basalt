@@ -17,8 +17,7 @@ struct ServerDrainTests {
         let orchestrator = ModelOrchestratorActor(
             engine: engine, telemetry: TelemetryTracker(), gate: GenerationGate(maxConcurrent: 1, maxQueue: 0))
         try await orchestrator.loadModel(path: "mock")
-        await engine.setArtificialDelay(2)
-        let holding = try await orchestrator.generateStream(request: GenerationRequest(prompt: "hold"))
+        let holder = try await orchestrator.gate.admit()
         let server = RESTServer(orchestrator: orchestrator, config: try ServerConfig(modelPath: "mock"))
         try await Application(router: server.makeRouter()).test(.router) { client in
             try await client.execute(
@@ -29,7 +28,7 @@ struct ServerDrainTests {
                 #expect(res.headers[.retryAfter] == "1")
             }
         }
-        _ = holding
+        await orchestrator.gate.release(holder)
     }
 
     @Test("On graceful shutdown the drain service ends an open stream within the deadline")
@@ -67,8 +66,7 @@ struct ServerDrainTests {
         let orchestrator = ModelOrchestratorActor(
             engine: engine, telemetry: TelemetryTracker(), gate: GenerationGate(maxConcurrent: 1, maxQueue: 0))
         try await orchestrator.loadModel(path: "mock")
-        await engine.setArtificialDelay(2)
-        let holding = try await orchestrator.generateStream(request: GenerationRequest(prompt: "hold"))
+        let holder = try await orchestrator.gate.admit()
         let server = RESTServer(orchestrator: orchestrator, config: try ServerConfig(modelPath: "mock"))
         try await Application(router: server.makeRouter()).test(.router) { client in
             for endpoint in Self.streamEndpoints {
@@ -82,7 +80,7 @@ struct ServerDrainTests {
                 }
             }
         }
-        _ = holding
+        await orchestrator.gate.release(holder)
     }
 
     @Test("A streaming prompt that cannot fit in memory is 413 before the SSE starts; a normal one still streams")
