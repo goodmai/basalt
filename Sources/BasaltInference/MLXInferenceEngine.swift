@@ -84,6 +84,7 @@ public actor MLXInferenceEngine: InferenceEngine {
     private var templateSuffixes: [String: Int] = [:]
     private var grammarVocabulary: Result<GrammarVocabulary, ConstraintUnavailable>?
     private(set) var idleGrammars: [String: [GrammarConstraint]] = [:]
+    private var idleGrammarRecency: [String] = []
     private let cacheBlendRatio: Float?
     private(set) var cacheBlend: CacheBlendStore?
     private let speculativeLookup: Bool
@@ -123,6 +124,7 @@ public actor MLXInferenceEngine: InferenceEngine {
         self.controlTokens = controlTokens
         grammarVocabulary = nil
         idleGrammars = [:]
+        idleGrammarRecency = []
         self.profile = profile
         self.samplingDefaults = samplingDefaults
         let workingSet = PromptCacheBudget.gpuWorkingSet()
@@ -574,7 +576,9 @@ public actor MLXInferenceEngine: InferenceEngine {
 
     func recycle(_ session: GrammarSession, epoch: Int) {
         guard epoch == modelEpoch, let grammar = session.rewound() else { return }
-        if idleGrammars[session.schema] == nil, idleGrammars.count >= Self.grammarSchemaLimit { idleGrammars.removeAll() }
+        idleGrammarRecency.removeAll { $0 == session.schema }
+        idleGrammarRecency.append(session.schema)
+        if idleGrammarRecency.count > Self.grammarSchemaLimit { idleGrammars[idleGrammarRecency.removeFirst()] = nil }
         guard idleGrammars[session.schema, default: []].count < Self.idleGrammarsPerSchema else { return }
         idleGrammars[session.schema, default: []].append(grammar)
     }

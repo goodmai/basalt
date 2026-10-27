@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Performance
+- Constrained decoding (#141): building the JSON mask processor no longer materializes the vocabulary index on the CPU (~10 ms per constrained request on a 152k vocabulary, now ~2 µs), and the per-step mask remap is gone. The grammar pool evicts the least recently used schema when a 17th arrives instead of dropping all 16, so agent loops cycling through many tool schemas stop recompiling them (7 ms on Qwen3, 13.5 ms on Gemma 4 per miss).
+
 ### Memory
 - `--kv-bits auto` (#139): the KV cache stays fp16, with prompt-cache reuse, while a request's prompt plus its `max_tokens` fits the KV room; otherwise that request alone runs at 8, else 4 bits. A request without `max_tokens` is capped as before and never quantized. `serve --dry-run` and `models check --kv-bits` print the longest prompt next to the context budget.
 - Behaviour change: with a fixed `--kv-bits 4|8` the room now accounts for how mlx-swift-lm quantizes — the prompt is prefilled in fp16 and converted afterwards, briefly holding both copies — so a prompt that fits 4-bit room but not that fp16 peak is refused with 413 instead of admitted and run out of memory. Quantization buys generation room, not a longer prompt; measured on Qwen3-4B-4bit the KV is 46.9% smaller at 8 bits and 71.9% at 4 bits, peak memory on a 16k prompt is not lower.
