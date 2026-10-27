@@ -98,4 +98,66 @@ struct HybridPrefixDriftTests {
         #expect(report.top.0 == report.top.2)
         #expect(report.top.0.first == report.top.1.first)
     }
+
+    @Test("Across a twelve-turn session every turn leases the previous snapshot, matches a from-scratch prefill with the same cuts bitwise and keeps the greedy token of a one-phase prefill",
+          .enabled(if: modelPath != nil, "set BASALT_E2E=1 and BASALT_E2E_HYBRID_MODEL_PATH"))
+    func twelveTurnSessionNeverDrifts() async throws {
+        let engine = MLXInferenceEngine()
+        try await engine.load(modelPath: try #require(Self.modelPath))
+        let container = try #require(await engine.container)
+        let suffix = await HybridPrefixSnapshot.templateSuffixLength(container) { UserInput(chat: [.user($0)]) }
+        let opening = Self.system.split(separator: "\n").prefix(120).joined(separator: "\n")
+        let session: @Sendable (Int) -> UserInput = { turns in
+            UserInput(chat: [.system(opening), .user("Summarise module 0.")] + (1 ..< turns).flatMap { turn in
+                [Chat.Message.assistant("Calling tool \(turn)."), .user("Tool \(turn) returned \(turn * 7) rows. Next?")]
+            })
+        }
+        var turns: [MLXArray] = []
+        for turn in 1 ... 12 {
+            turns.append(try await container.prepare(input: session(turn)).text.tokens)
+        }
+        let prompts = turns
+
+        let rows = try await container.perform(nonSendable: prompts) { context, prompts in
+            let model = context.model
+            let prefill = GenerateParameters().prefill
+            var tree = PromptCacheTree(byteBudget: 1 << 34)
+            let reference = PromptCache(try model.newCache(parameters: nil))
+            var previous = 0
+            var rows: [(reused: Int, expected: Int, restoredVsCuts: Float, restoredVsOnePhase: Float, sameTop: Bool)] = []
+            for tokens in prompts {
+                let ids = tokens.asArray(Int.self)
+                let boundary = tokens.dim(-1) - suffix
+                let lease = tree.lease("session", for: ids)
+                let cache = try lease?.cache ?? PromptCache(model.newCache(parameters: nil))
+                let reused = lease?.reusedTokens ?? 0
+                let head = try HybridPrefixSnapshot.prefillHead(
+                    tokens, into: cache, reused: reused, boundary: boundary, model: model, prefill: prefill)
+                tree.store("session", tokens: Array(ids.prefix(boundary)), cache: try #require(head.kept))
+                lease.map { tree.release($0) }
+                let restored = try Self.lastLogits(tokens, from: boundary, cache: cache, state: head.state, model: model)
+
+                let cut = try HybridPrefixSnapshot.prefillHead(
+                    tokens, into: reference, reused: previous, boundary: boundary, model: model, prefill: prefill)
+                reference.state = cut.state
+                let probe = PromptCache(reference.layers.map { $0.copy() })
+                let cuts = try Self.lastLogits(tokens, from: boundary, cache: probe, state: cut.state, model: model)
+                let onePhase = try Self.lastLogits(
+                    tokens, from: 0, cache: PromptCache(try model.newCache(parameters: nil)), state: nil, model: model)
+                eval(restored, cuts, onePhase)
+                rows.append((
+                    reused, previous, abs(restored - cuts).max().item(Float.self),
+                    abs(restored - onePhase).max().item(Float.self),
+                    argMax(restored).item(Int.self) == argMax(onePhase).item(Int.self)))
+                previous = boundary
+            }
+            return rows
+        }
+        for (turn, row) in rows.enumerated() {
+            print("HybridSessionDrift turn=\(turn + 1) reused=\(row.reused)/\(row.expected) |restored-cuts|max=\(row.restoredVsCuts) |restored-onePhase|max=\(row.restoredVsOnePhase) sameTop=\(row.sameTop)")
+        }
+        #expect(rows.allSatisfy { $0.reused == $0.expected })
+        #expect(rows.allSatisfy { $0.restoredVsCuts == 0 })
+        #expect(rows.allSatisfy { $0.sameTop })
+    }
 }
