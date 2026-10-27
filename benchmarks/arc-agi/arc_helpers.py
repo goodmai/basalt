@@ -49,6 +49,10 @@ class Grid:
         self.height = len(matrix)
         self.width = len(matrix[0]) if self.height > 0 else 0
 
+    def __array__(self, dtype=None, copy=None):
+        import numpy
+        return numpy.array(self.matrix, dtype=dtype)
+
     def extract_objects(self, connectivity: int = 4, ignore_background: bool = True) -> List[GridObject]:
         visited = set()
         objects = []

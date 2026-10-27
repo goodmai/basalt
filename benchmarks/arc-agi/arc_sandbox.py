@@ -304,11 +304,22 @@ def _run_block(code, grid, base):
     if fn is None:
         return None
     grid_type = base["Grid"]
+    as_grid = lambda: grid_type([list(row) for row in grid])
+    as_lists = lambda: [list(row) for row in grid]
+    first, second = (as_grid, as_lists) if _wants_grid(fn, grid_type) else (as_lists, as_grid)
     try:
-        result = fn(grid_type([list(row) for row in grid]))
+        result = fn(first())
     except Exception:
-        result = fn([list(row) for row in grid])
+        result = fn(second())
     return _to_matrix(result, grid_type)
+
+
+def _wants_grid(fn, grid_type):
+    code = getattr(fn, "__code__", None)
+    if code is None or code.co_argcount == 0:
+        return False
+    annotation = getattr(fn, "__annotations__", {}).get(code.co_varnames[0])
+    return annotation is grid_type or annotation == "Grid"
 
 
 class _BlockTimeout(BaseException):
