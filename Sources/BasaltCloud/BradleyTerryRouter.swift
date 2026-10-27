@@ -60,7 +60,7 @@ public struct BradleyTerryRouter: Sendable, Codable {
         let sorted = scores.sorted(by: >)
         let strongCount = Int((Double(sorted.count) * min(max(strongFraction, 0), 1)).rounded())
         if strongCount == 0 { return 1 }
-        if strongCount >= sorted.count { return min(sorted[sorted.count - 1], 1) - .ulpOfOne }
+        if strongCount >= sorted.count { return sorted[sorted.count - 1].nextDown }
         return (sorted[strongCount - 1] + sorted[strongCount]) / 2
     }
 

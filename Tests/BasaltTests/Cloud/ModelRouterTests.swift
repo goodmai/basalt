@@ -314,4 +314,22 @@ struct ModelRouterTests {
         #expect(response.generatedText == "Mock response")
         #expect(await cloudCalls(client) == 2)
     }
+
+    @Test("An auto request routed to the weak tier is served by the registered local model without a cloud call")
+    func autoWeakTierServesLocally() async throws {
+        let engine = MockInferenceEngine()
+        try await engine.load(modelPath: "small-local")
+        let client = try unreachableCloudClient()
+        let router = ModelRouter(
+            localOrchestrator: ModelOrchestratorActor(engine: engine), cloudClient: client,
+            mockAvailableRAM: 16 * 1024 * 1024 * 1024, costRouting: try costRouting()
+        )
+        await router.registerLocalModel(id: "small-local", estimatedRAM: 4000)
+        let response = try await router.route(
+            request: GenerationRequest(prompt: BradleyTerryRouterTests.easyWord), preferredModel: nil,
+            context: .init(sessionId: "agent-1")
+        )
+        #expect(response.generatedText == "Mock response")
+        #expect(await cloudCalls(client) == 0)
+    }
 }

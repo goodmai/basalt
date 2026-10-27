@@ -56,6 +56,9 @@ struct BradleyTerryRouterTests {
             let threshold = BradleyTerryRouter.calibrateThreshold(scores: scores, strongFraction: fraction)
             #expect(scores.filter { $0 > threshold }.count == Int(fraction * 100))
         }
+        let tiny = [1e-20, 2e-20]
+        #expect(tiny.allSatisfy { $0 > BradleyTerryRouter.calibrateThreshold(scores: tiny, strongFraction: 1) })
+        #expect(BradleyTerryRouter.calibrateThreshold(scores: tiny, strongFraction: 1) > 0)
     }
 
     @Test("A cold session picks the tier by the threshold alone")
