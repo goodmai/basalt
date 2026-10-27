@@ -219,7 +219,13 @@ public actor SessionLogWriter {
 
     nonisolated public let redacts: Bool
     static let prefixWindow = 8
-    private var recentConversations: [String: [(id: String, messages: [ChatMessageInput])]] = [:]
+    private var recentConversations: [String: [(id: String, digests: [SHA256.Digest])]] = [:]
+
+    static func digests(_ messages: [ChatMessageInput]) -> [SHA256.Digest] {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .sortedKeys
+        return messages.map { SHA256.hash(data: (try? encoder.encode($0)) ?? Data($0.text.utf8)) }
+    }
     private var requestSessions: [String: String] = [:]
     private var lastActivity: [String: Date] = [:]
     private var suspendedAt: [String: Date] = [:]
@@ -277,8 +283,9 @@ public actor SessionLogWriter {
     func session(for request: GenerationRequest) -> String {
         if let explicit = Self.sanitized(request.sessionId) { return explicit }
         guard let messages = request.messages, !messages.isEmpty else { return defaultSession }
+        let digests = Self.digests(messages)
         let continued = recentConversations.first { _, conversations in
-            conversations.contains { $0.messages.count <= messages.count && messages.starts(with: $0.messages) }
+            conversations.contains { $0.digests.count <= digests.count && digests.starts(with: $0.digests) }
         }
         return continued?.key ?? "s-" + UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(12).lowercased()
     }
@@ -301,7 +308,7 @@ public actor SessionLogWriter {
         }
         if mode == .full, recentConversations[session] == nil {
             recentConversations[session] = SessionLogReader.recentConversations(
-                in: SessionLogReader.lines(of: existing), limit: Self.prefixWindow)
+                in: SessionLogReader.lines(of: existing), limit: Self.prefixWindow).map { ($0.id, Self.digests($0.messages)) }
         }
     }
 
@@ -377,27 +384,28 @@ public actor SessionLogWriter {
         redacts ? SecretRedactor.redact(text) : text
     }
 
-    func remember(_ request: GenerationRequest, id: String, session: String) -> (id: String, messages: [ChatMessageInput])? {
+    func remember(_ request: GenerationRequest, id: String, session: String) -> (id: String, count: Int)? {
         guard let messages = request.messages else { return nil }
+        let digests = Self.digests(messages)
         var recent = recentConversations[session] ?? []
         let parent = recent.reversed().first { earlier in
-            earlier.messages.count <= messages.count && messages.starts(with: earlier.messages)
+            earlier.digests.count <= digests.count && digests.starts(with: earlier.digests)
         }
-        recent.append((id, messages))
+        recent.append((id, digests))
         if recentConversations[session] == nil, recentConversations.count >= 4_096 { recentConversations.removeAll() }
         recentConversations[session] = Array(recent.suffix(Self.prefixWindow))
-        return parent
+        return parent.map { ($0.id, $0.digests.count) }
     }
 
-    func content(of request: GenerationRequest, parent: (id: String, messages: [ChatMessageInput])?) -> SessionLogRecord.RequestContent {
+    func content(of request: GenerationRequest, parent: (id: String, count: Int)?) -> SessionLogRecord.RequestContent {
         guard let messages = request.messages else {
             return .init(messages: nil, prompt: scrub(request.prompt), tools: request.tools)
         }
-        let stored = parent.map { Array(messages.dropFirst($0.messages.count)) } ?? messages
+        let stored = parent.map { Array(messages.dropFirst($0.count)) } ?? messages
         var content = SessionLogRecord.RequestContent(
             messages: redacts ? SecretRedactor.redact(stored) : stored, prompt: nil, tools: request.tools)
         content.parent = parent?.id
-        content.prefixCount = parent?.messages.count
+        content.prefixCount = parent?.count
         return content
     }
 
