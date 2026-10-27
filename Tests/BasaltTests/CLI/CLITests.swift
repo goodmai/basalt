@@ -39,6 +39,19 @@ struct CLITests {
         #expect(cmd.maxTokens == 1024)
     }
 
+    @Test("--kv-bits takes auto or a bit width, on serve and on models check")
+    func kvBitsSetting() throws {
+        #expect(try ServeCommand.parse([]).kvBits == nil)
+        #expect(try ServeCommand.parse(["--kv-bits", "auto"]).kvBits == .auto)
+        #expect(try ServeCommand.parse(["--kv-bits", "8"]).kvBits == .bits(8))
+        #expect(try CheckSubcommand.parse(["m", "--kv-bits", "auto"]).kvBits == .auto)
+        #expect(throws: (any Error).self) { _ = try ServeCommand.parse(["--kv-bits", "fp8"]) }
+        #expect(KVBitsSetting.auto.fixedBits == nil)
+        #expect(KVBitsSetting.auto.budgetBits == 4)
+        #expect(KVBitsSetting.bits(8).fixedBits == 8)
+        #expect(KVBitsSetting.bits(8).budgetBits == 8)
+    }
+
     @Test("ServeCommand model options")
     func testServeModel() throws {
         let cmd = try ServeCommand.parse(["--model", "google/gemma-7b"])

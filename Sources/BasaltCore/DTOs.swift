@@ -79,6 +79,7 @@ public struct GenerationRequest: Codable, Sendable {
     public private(set) var budgetKey: String? = nil
     public private(set) var origin: RequestOrigin = .unspecified
     public private(set) var speculativeLookup: Bool? = nil
+    public private(set) var kvBits: Int? = nil
 
     enum CodingKeys: String, CodingKey {
         case prompt, maxTokens, temperature, topP, minP, dynamicTemperature, enableThinking, reasoningEffort
@@ -155,6 +156,12 @@ public struct GenerationRequest: Codable, Sendable {
     public func withOrigin(_ origin: RequestOrigin) -> GenerationRequest {
         var copy = self
         copy.origin = origin
+        return copy
+    }
+
+    public func withKVBits(_ kvBits: Int?) -> GenerationRequest {
+        var copy = self
+        copy.kvBits = kvBits
         return copy
     }
 

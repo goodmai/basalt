@@ -93,7 +93,7 @@ public actor MLXInferenceEngine: InferenceEngine {
         gpuCacheLimit: Int? = 512 << 20,
         promptCacheBytes: Int? = nil,
         kvBits: Int? = nil,
-        quantizedKVStart: Int = 512,
+        quantizedKVStart: Int = KVCacheGeometry.defaultQuantizedKVStart,
         repetitionPenalty: Float? = nil,
         topK: Int? = nil,
         minP: Float? = nil,
@@ -612,7 +612,7 @@ public actor MLXInferenceEngine: InferenceEngine {
             temperature: temperature,
             topP: Float(request.topP ?? samplingDefaults.topP ?? 0.9)
         )
-        params.kvBits = kvBits
+        params.kvBits = request.kvBits ?? kvBits
         params.quantizedKVStart = quantizedKVStart
         params.repetitionPenalty = request.repetitionPenalty.map(Float.init) ?? repetitionPenalty
             ?? samplingDefaults.repetitionPenalty.map(Float.init)
@@ -1061,7 +1061,7 @@ public actor MLXInferenceEngine: InferenceEngine {
     }
 
     private func promptCacheNamespace(for request: GenerationRequest) -> String? {
-        guard promptCaches.byteBudget > 0, kvBits == nil else { return nil }
+        guard promptCaches.byteBudget > 0, (request.kvBits ?? kvBits) == nil else { return nil }
         return request.cacheKey
     }
 

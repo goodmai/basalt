@@ -11,6 +11,8 @@ public struct KVCacheGeometry: Sendable, Equatable {
 
     public static let activationBytes = 2.0
     public static let defaultQuantizedGroupSize = 64
+    public static let defaultQuantizedKVStart = 512
+    public static let adaptiveKVBitsLadder: [Int?] = [nil, 8, 4]
     static let supportedQuantizedGroupSizes = [32, 64, 128]
     static let fromConfig = Mutex<[String: (modified: Date, geometry: KVCacheGeometry)]>([:])
     static let recurrentStateBytes = 4.0
@@ -104,6 +106,34 @@ public struct KVCacheGeometry: Sendable, Equatable {
         let windowed = window > 0 ? min(t, Double(window)) : t
         let growing = elementsPerToken * t * bytesPerElement(kvBits: kvBits)
         return Int64(growing + windowedElementsPerToken * windowed * Self.activationBytes) + fixedStateBytes
+    }
+
+    public func conversionPeakBytes(tokens: Int, kvBits: Int?) -> Int64 {
+        guard kvBits != nil else { return bytes(tokens: tokens) }
+        let quantizedCopy = elementsPerToken * Double(max(0, tokens)) * bytesPerElement(kvBits: kvBits)
+        return bytes(tokens: tokens) + Int64(quantizedCopy)
+    }
+
+    public func maxPromptTokens(fitting budget: Int64, kvBits: Int?) -> Int {
+        let unquantized = maxTokens(fitting: budget)
+        guard kvBits != nil else { return unquantized }
+        var fits = 0
+        var tooMany = unquantized + 1
+        while tooMany - fits > 1 {
+            let mid = fits + (tooMany - fits) / 2
+            if conversionPeakBytes(tokens: mid, kvBits: kvBits) <= budget { fits = mid } else { tooMany = mid }
+        }
+        return fits
+    }
+
+    public func maxTokens(
+        fitting budget: Int64, kvBits: Int?, promptTokens: Int, quantizedKVStart: Int = defaultQuantizedKVStart
+    ) -> Int {
+        let unquantized = maxTokens(fitting: budget)
+        guard kvBits != nil, unquantized > quantizedKVStart else { return unquantized }
+        let convertedAt = max(promptTokens, quantizedKVStart + 1)
+        guard conversionPeakBytes(tokens: convertedAt, kvBits: kvBits) <= budget else { return quantizedKVStart }
+        return maxTokens(fitting: budget, kvBits: kvBits)
     }
 
     public func maxTokens(fitting budget: Int64, kvBits: Int? = nil) -> Int {

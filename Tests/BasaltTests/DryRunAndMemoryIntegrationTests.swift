@@ -1,5 +1,7 @@
 import Testing
 import Foundation
+import MLX
+import MLXLMCommon
 @testable import BasaltCore
 @testable import BasaltInference
 @testable import BasaltCloud
@@ -148,5 +150,41 @@ struct DryRunAndMemoryIntegrationTests {
         )
         #expect(budget >= 4096)
         #expect(budget <= 131072)
+    }
+
+    static var kvProbeModelPath: String? {
+        guard ProcessInfo.processInfo.environment["BASALT_E2E"] == "1" else { return nil }
+        return ModelCache.resolve(repoId: "mlx-community/Qwen3-4B-4bit")?.path
+    }
+
+    @Test("Qwen3-4B: the fp16, 8- and 4-bit KV cache MLX holds after 16k tokens is within 3% of KVCacheGeometry, which ignores the 256-token allocation step",
+          .enabled(if: DryRunAndMemoryIntegrationTests.kvProbeModelPath != nil,
+                   "set BASALT_E2E=1 and cache mlx-community/Qwen3-4B-4bit"))
+    func measuredKVMatchesGeometry() async throws {
+        let path = try #require(Self.kvProbeModelPath)
+        let engine = MLXInferenceEngine(gpuCacheLimit: 0)
+        try await engine.load(modelPath: path)
+        let container = try #require(await engine.container)
+        let geometry = try #require(KVCacheGeometry.load(modelDirectory: URL(fileURLWithPath: path)))
+        let (prompt, generated) = (16_380, 4)
+        for bits in KVCacheGeometry.adaptiveKVBitsLadder {
+            let held = try await container.perform { (context: ModelContext) in
+                var parameters = GenerateParameters(maxTokens: generated, temperature: 0)
+                parameters.kvBits = bits
+                parameters.quantizedKVStart = KVCacheGeometry.defaultQuantizedKVStart
+                Memory.clearCache()
+                let before = Memory.activeMemory
+                var iterator = try TokenIterator(
+                    input: LMInput(tokens: MLXArray((0..<prompt).map { 1_000 + $0 * 7_919 % 20_000 })),
+                    model: context.model, cache: nil, parameters: parameters)
+                while iterator.next() != nil {}
+                Stream.gpu.synchronize()
+                let held = Memory.activeMemory - before
+                #expect(iterator.tokenCount == generated)
+                return held
+            }
+            let estimate = geometry.bytes(tokens: prompt + generated, kvBits: bits)
+            #expect(abs(Double(held) / Double(estimate) - 1) <= 0.03, "kvBits \(String(describing: bits)): MLX holds \(held) B, geometry says \(estimate) B")
+        }
     }
 }
