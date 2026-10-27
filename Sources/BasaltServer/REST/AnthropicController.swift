@@ -488,7 +488,7 @@ struct AnthropicController: Sendable {
     }
 
     static func stopReason(_ finish: GenerationResponse.FinishReason, calledTools: Bool) -> String {
-        calledTools ? "tool_use" : (finish == .length ? "max_tokens" : "end_turn")
+        calledTools ? "tool_use" : (finish.isTruncated ? "max_tokens" : "end_turn")
     }
 
     static func responseContent(reasoning: String? = nil, text answer: String, toolCalls: [ToolCallOutput]) -> [ContentBlock] {

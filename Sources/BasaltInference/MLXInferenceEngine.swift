@@ -832,6 +832,8 @@ public actor MLXInferenceEngine: InferenceEngine {
                     }
                     
                     var stoppedAfterCall = false
+                    var repetition = constraint == nil ? RepetitionGuard() : nil
+                    var stoppedOnRepetition = false
                     var generations = mlxStream.makeAsyncIterator()
                     func stopAfterCall() async {
                         if let task = launch.task {
@@ -854,6 +856,11 @@ public actor MLXInferenceEngine: InferenceEngine {
                             buffer.append(text)
                             processBuffer(final: false)
                             if gate.isSaturated { await stopAfterCall(); break tokens }
+                            if repetition?.shouldStop(after: text) == true {
+                                stoppedOnRepetition = true
+                                await stopAfterCall()
+                                break tokens
+                            }
                         case .info(let info):
                             lastInfo = info
                         case .toolCall(let call):
@@ -917,8 +924,8 @@ public actor MLXInferenceEngine: InferenceEngine {
                             // Was hardcoded to .stop, so a generation cut off at the
                             // token ceiling reported a clean finish and truncation went
                             // unnoticed by every caller.
-                            finishReason: (lastInfo?.generationTokenCount ?? 0) >= requestedMaxTokens
-                                ? .length : .stop,
+                            finishReason: stoppedOnRepetition ? .repetition
+                                : (lastInfo?.generationTokenCount ?? 0) >= requestedMaxTokens ? .length : .stop,
                             reasoningTokens: reasoningTokens
                         )
                         continuation.yield(.metadata(metadata))

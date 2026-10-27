@@ -255,15 +255,14 @@ final class CacheBlendStore: @unchecked Sendable {
     }
 
     func chunks(_ tokens: [Int], tokenizer: any MLXLMCommon.Tokenizer) -> [Range<Int>] {
-        let texts = withState { state in
-            tokens.map { token in
-                if let known = state.texts[token] { return known }
-                let text = tokenizer.decode(tokenIds: [token], skipSpecialTokens: false)
-                state.texts[token] = text
-                return text
-            }
+        let known = withState { $0.texts }
+        let decoded = Dictionary(uniqueKeysWithValues: Set(tokens).filter { known[$0] == nil }.map {
+            ($0, tokenizer.decode(tokenIds: [$0], skipSpecialTokens: false))
+        })
+        if !decoded.isEmpty {
+            withState { state in state.texts.merge(decoded) { cached, _ in cached } }
         }
-        return Self.chunks(texts)
+        return Self.chunks(tokens.map { known[$0] ?? decoded[$0] ?? "" })
     }
 
     func extend(
