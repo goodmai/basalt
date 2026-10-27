@@ -132,9 +132,9 @@ struct JSONConstraintProcessor: LogitProcessor {
         progress = Progress(
             phase: vocabulary.markers.openers.isEmpty && phase == .awaitingAnswer ? .constrained : phase,
             session: session)
-        let ids = MLXArray(0..<Int32(vocabulary.size))
+        let ids = MLXArray.arange(vocabulary.size, dtype: .int32)
         wordIndex = ids >> 5
-        bitOffset = (ids & 31).asType(.uint32)
+        bitOffset = ids & 31
     }
 
     var phase: Phase {
@@ -163,10 +163,10 @@ struct JSONConstraintProcessor: LogitProcessor {
 
     func process(logits: MLXArray) -> MLXArray {
         guard phase != .reasoning, let words = allowedTokens() else { return logits }
-        var allowed = (MLXArray(words.map { UInt32(bitPattern: $0) }).take(wordIndex) >> bitOffset) & 1
+        var allowed = (MLXArray(words).take(wordIndex) >> bitOffset) & 1
         let width = logits.dim(-1)
         if width > vocabulary.size {
-            allowed = concatenated([allowed, MLXArray.zeros([width - vocabulary.size], dtype: .uint32)])
+            allowed = concatenated([allowed, MLXArray.zeros([width - vocabulary.size], dtype: .int32)])
         } else if width < vocabulary.size {
             allowed = allowed[..<width]
         }
