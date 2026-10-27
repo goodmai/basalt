@@ -52,7 +52,7 @@ public actor CloudAPIClient: Sendable {
         let url = config.baseURL.appendingPathComponent(endpoint)
         var request = URLRequest(url: url)
         request.httpMethod = method
-        request.setValue("Bearer \(config.apiKey)", forHTTPHeaderField: "Authorization")
+        if !config.apiKey.isEmpty { request.setValue("Bearer \(config.apiKey)", forHTTPHeaderField: "Authorization") }
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         
         for (key, value) in config.extraHeaders {
@@ -132,7 +132,7 @@ public actor CloudAPIClient: Sendable {
         let url = config.baseURL.appendingPathComponent(endpoint)
         var request = URLRequest(url: url)
         request.httpMethod = method
-        request.setValue("Bearer \(config.apiKey)", forHTTPHeaderField: "Authorization")
+        if !config.apiKey.isEmpty { request.setValue("Bearer \(config.apiKey)", forHTTPHeaderField: "Authorization") }
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
         

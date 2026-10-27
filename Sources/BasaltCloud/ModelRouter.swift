@@ -78,6 +78,7 @@ public actor ModelRouter: Sendable {
     private let costRouting: CostRouting?
     private let costTracker: CostTracker?
     private let localFallbackModel: String?
+    private let fallbackCloudModel: String?
     private var sessionRoutes: [String: SessionRoute] = [:]
     
     public init(
@@ -87,7 +88,8 @@ public actor ModelRouter: Sendable {
         mockAvailableRAM: Int64? = nil,
         costRouting: CostRouting? = nil,
         costTracker: CostTracker? = nil,
-        localFallbackModel: String? = nil
+        localFallbackModel: String? = nil,
+        fallbackCloudModel: String? = nil
     ) {
         self.localOrchestrator = localOrchestrator
         self.cloudClient = cloudClient
@@ -96,6 +98,7 @@ public actor ModelRouter: Sendable {
         self.costRouting = costRouting
         self.costTracker = costTracker
         self.localFallbackModel = localFallbackModel
+        self.fallbackCloudModel = fallbackCloudModel
         
         // Pre-populate registry with known models
         self.modelRegistry = Self.defaultModels()
@@ -194,17 +197,27 @@ public actor ModelRouter: Sendable {
 
     func resolveModel(_ preferredModel: String?, request: GenerationRequest, context: RoutingContext) -> String {
         let modelId = preferredModel ?? "auto"
-        guard modelId == "auto", let costRouting else { return modelId }
+        guard modelId == "auto", let costRouting, let decision = stickyTier(request: request, context: context) else {
+            return modelId
+        }
+        return costRouting.policy.model(for: decision.tier)
+    }
+
+    private func stickyTier(
+        request: GenerationRequest, context: RoutingContext
+    ) -> (tier: StickyRoutingPolicy.Tier, strongWinProbability: Double)? {
+        guard let costRouting else { return nil }
         let previous = context.sessionId.flatMap { sessionRoutes[$0] }
+        let probability = costRouting.scorer.strongWinProbability(for: request.prompt)
         let tier = costRouting.policy.tier(
-            strongWinProbability: costRouting.scorer.strongWinProbability(for: request.prompt),
+            strongWinProbability: probability,
             previous: previous?.tier,
             warmPrefixTokens: previous?.promptTokens ?? 0
         )
         if let sessionId = context.sessionId {
             sessionRoutes[sessionId] = SessionRoute(tier: tier, promptTokens: request.prompt.utf8.count / 4)
         }
-        return costRouting.policy.model(for: tier)
+        return (tier, probability)
     }
 
     private func requireCloudClient() throws -> OpenRouterClient {
@@ -315,6 +328,10 @@ public actor ModelRouter: Sendable {
         )
     }
     
+    public func knowsPrice(of model: String) -> Bool {
+        estimateCost(model: model, promptTokens: 1_000_000, completionTokens: 0) > 0
+    }
+
     public func estimateCost(model: String, promptTokens: Int, completionTokens: Int) -> Double {
         // Use the first mapped model for cost estimation
         let mappedId = mapToCloudModels(model).first ?? model
@@ -354,7 +371,7 @@ public actor ModelRouter: Sendable {
     ) async throws -> GenerationResponse {
         let chatRequest = OpenRouterClient.ChatRequest(
             model: model,
-            messages: [.init(role: "user", content: request.prompt)],
+            messages: Self.cloudMessages(request),
             temperature: request.temperature,
             maxTokens: request.maxTokens,
             stream: false
@@ -387,7 +404,7 @@ public actor ModelRouter: Sendable {
     ) async throws -> AsyncThrowingStream<StreamChunk, Error> {
         let chatRequest = OpenRouterClient.ChatRequest(
             model: model,
-            messages: [.init(role: "user", content: request.prompt)],
+            messages: Self.cloudMessages(request),
             temperature: request.temperature,
             maxTokens: request.maxTokens,
             stream: true
@@ -491,5 +508,50 @@ public actor ModelRouter: Sendable {
     
     private func log(_ message: String) {
         fputs("[ModelRouter] \(message)\n", stderr)
+    }
+}
+
+extension ModelRouter: CloudFallback {
+    static let assumedCloudTokensPerSecond = 50.0
+
+    static func cloudMessages(_ request: GenerationRequest) -> [OpenRouterClient.ChatRequest.Message] {
+        guard let messages = request.messages, !messages.isEmpty else {
+            return [.init(role: "user", content: request.prompt)]
+        }
+        return messages.map { message in
+            switch message.role {
+            case .tool:
+                return .init(role: "user", content: "Result of \(message.toolName ?? "the tool"): \(message.text)")
+            case .assistant:
+                let calls = (message.toolCalls ?? []).map { "\($0.name)(\($0.arguments))" }
+                return .init(role: "assistant", content: ([message.text] + calls).filter { !$0.isEmpty }.joined(separator: "\n"))
+            case .system, .user:
+                return .init(role: message.role.rawValue, content: message.text)
+            }
+        }
+    }
+
+    public func assess(_ request: GenerationRequest) async -> CloudAssessment? {
+        guard cloudClient != nil, let cloudModel = fallbackCloudModel,
+              request.tools?.isEmpty ?? true, request.responseFormat == nil
+        else { return nil }
+        let context = RoutingContext()
+        if let costTracker, await costTracker.isExhausted(scopes: context.budgetScopes) { return nil }
+        let completionTokens = request.maxTokens ?? 1_024
+        let gap = stickyTier(request: request, context: context).map { $0.tier == .strong ? $0.strongWinProbability : 0 } ?? 0
+        return CloudAssessment(
+            capabilityGap: gap,
+            estimatedCost: estimateCost(model: cloudModel, promptTokens: request.prompt.utf8.count / 4, completionTokens: completionTokens),
+            remainingBudget: await costTracker?.remaining(scopes: context.budgetScopes),
+            latencySeconds: Double(completionTokens) / Self.assumedCloudTokensPerSecond
+        )
+    }
+
+    public func generate(_ request: GenerationRequest) async throws -> GenerationResponse {
+        try await route(request: request, preferredModel: fallbackCloudModel, context: RoutingContext())
+    }
+
+    public func generateStream(_ request: GenerationRequest) async throws -> AsyncThrowingStream<StreamChunk, Error> {
+        try await routeStream(request: request, preferredModel: fallbackCloudModel, context: RoutingContext())
     }
 }

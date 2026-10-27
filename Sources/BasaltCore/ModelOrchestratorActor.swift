@@ -29,6 +29,10 @@ public actor ModelOrchestratorActor {
     /// Empty string means nothing has been loaded yet.
     public private(set) var currentModelId: String = ""
 
+    private var cloudFallback: (any CloudFallback)?
+    private var arbiter = HybridArbiter()
+    private var freeMemory: @Sendable () -> Int64 = { SystemProfiler.availableSystemMemory() }
+
     // MARK: — Init
 
     /// The serving process's counters; injectable so tests do not share global state.
@@ -41,6 +45,34 @@ public actor ModelOrchestratorActor {
         self.maxTokens = maxTokens
         self.kvBits = kvBits
         self.telemetry = telemetry
+    }
+
+    public func setCloudFallback(
+        _ fallback: (any CloudFallback)?, arbiter: HybridArbiter = HybridArbiter(),
+        freeMemory: @escaping @Sendable () -> Int64 = { SystemProfiler.availableSystemMemory() }
+    ) {
+        self.cloudFallback = fallback
+        self.arbiter = arbiter
+        self.freeMemory = freeMemory
+    }
+
+    func cloudFallbackReason(for request: GenerationRequest) async -> CloudFallbackReason? {
+        guard let cloudFallback, request.isServiceRequest != true,
+              let assessment = await cloudFallback.assess(request)
+        else { return nil }
+        let promptTokens = Self.estimatedTokens(Self.budgetedText(request))
+        let required = kvGeometry.bytes(tokens: promptTokens + (request.maxTokens ?? 0), kvBits: kvBits)
+        let localTPS = await telemetry.snapshot().tokensPerSecond
+        let local = HybridCandidate(
+            capability: 1 - min(max(assessment.capabilityGap, 0), 1),
+            degradation: arbiter.localDegradation(contextTokens: promptTokens),
+            latencySeconds: localTPS > 0 ? Double(request.maxTokens ?? maxTokens) / localTPS : 0,
+            cost: 0)
+        let cloud = HybridCandidate(
+            capability: 1, degradation: 0, latencySeconds: assessment.latencySeconds, cost: assessment.estimatedCost)
+        return arbiter.cloudReason(
+            local: local, localFits: arbiter.localFits(requiredBytes: required, freeBytes: freeMemory()),
+            cloud: cloud, remainingBudget: assessment.remainingBudget)
     }
 
     // MARK: — Model loading
@@ -108,6 +140,14 @@ public actor ModelOrchestratorActor {
         request: GenerationRequest,
         modelId: String? = nil
     ) async throws(BasaltError) -> GenerationResponse {
+        if let cloudFallback, let reason = await cloudFallbackReason(for: request) {
+            do {
+                logger.info("Serving from the cloud: \(reason.rawValue)")
+                return try await cloudFallback.generate(request)
+            } catch {
+                logger.warn("Cloud fallback (\(reason.rawValue)) failed, serving locally: \(error)")
+            }
+        }
         try await autoSwitch(to: modelId)
 
         logger.trace("generate: \(request.prompt.prefix(60))…")
@@ -137,6 +177,14 @@ public actor ModelOrchestratorActor {
         request: GenerationRequest,
         modelId: String? = nil
     ) async throws(BasaltError) -> AsyncStream<StreamChunk> {
+        if let cloudFallback, let reason = await cloudFallbackReason(for: request) {
+            do {
+                logger.info("Streaming from the cloud: \(reason.rawValue)")
+                return Self.endingWithErrorMetadata(try await cloudFallback.generateStream(request))
+            } catch {
+                logger.warn("Cloud fallback (\(reason.rawValue)) failed to start, serving locally: \(error)")
+            }
+        }
         try await autoSwitch(to: modelId)
 
         logger.trace("generateStream start")
@@ -176,6 +224,24 @@ public actor ModelOrchestratorActor {
                 // Reached on completion and on cancellation (onTermination cancels this task).
                 // Streaming is most of the REST traffic: it is counted like generate().
                 await telemetry.requestFinished(with: result)
+                continuation.finish()
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+
+    static func endingWithErrorMetadata(_ source: AsyncThrowingStream<StreamChunk, Error>) -> AsyncStream<StreamChunk> {
+        AsyncStream { continuation in
+            let task = Task {
+                do {
+                    for try await chunk in source { continuation.yield(chunk) }
+                } catch {
+                    GemLogger(module: "ModelOrchestrator").warn("Cloud stream failed mid-way: \(error)")
+                    continuation.yield(.metadata(GenerationResponse(
+                        generatedText: "", promptTokens: 0, completionTokens: 0, tokensPerSecond: 0,
+                        generationTime: 0, timeToFirstToken: 0,
+                        memory: .init(peakBytes: 0, activeBytes: 0, cacheBytes: 0), finishReason: .error)))
+                }
                 continuation.finish()
             }
             continuation.onTermination = { _ in task.cancel() }

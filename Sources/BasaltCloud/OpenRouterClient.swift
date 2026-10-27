@@ -190,7 +190,7 @@ public actor OpenRouterClient: Sendable {
     // MARK: - Initialization
     
     public init(config: Config = .default) throws {
-        guard !config.apiKey.isEmpty else {
+        guard !config.apiKey.isEmpty || !Self.isOpenRouter(config.baseURL) else {
             throw BasaltError.invalidRequestStructure(
                 details: "OPENROUTER_API_KEY not set. Get your key at https://openrouter.ai/keys"
             )
@@ -211,6 +211,11 @@ public actor OpenRouterClient: Sendable {
         self.apiClient = CloudAPIClient(config: apiConfig)
     }
     
+    public static func isOpenRouter(_ url: URL) -> Bool {
+        guard let host = url.host?.lowercased() else { return false }
+        return host == "openrouter.ai" || host.hasSuffix(".openrouter.ai")
+    }
+
     // MARK: - API Methods
     
     /// Generate completion from cloud model
