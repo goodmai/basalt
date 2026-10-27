@@ -622,7 +622,7 @@ public actor MLXInferenceEngine: InferenceEngine {
 
     static let liquidReasoning = ReasoningConfig(
         startDelimiter: "<think>", endDelimiter: "</think>", promptStrategy: .alwaysOn, isSpecialToken: true,
-        budgetTransition: QwenReasoningProtocol.qwen3.budgetTransition)
+        implicitEndDelimiters: ["<|tool_call_start|>"], budgetTransition: QwenReasoningProtocol.qwen3.budgetTransition)
 
     static func reasoningProtocol(for profile: any ModelProfile) -> ReasoningConfig? {
         switch profile {

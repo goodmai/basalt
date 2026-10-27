@@ -33,6 +33,14 @@ struct LiquidLFM25Tests {
         #expect(!budgeted.generatedText.isEmpty)
     }
 
+    @Test("A Liquid tool call ends thinking, so a budget never forces the transition into the call; other profiles get no protocol")
+    func liquidProtocolEndsAtToolCalls() throws {
+        let liquid = try #require(MLXInferenceEngine.reasoningProtocol(for: LiquidProfile()))
+        #expect(liquid.endDelimiter == "</think>")
+        #expect(liquid.implicitEndDelimiters == ["<|tool_call_start|>"])
+        #expect(MLXInferenceEngine.reasoningProtocol(for: GenericProfile()) == nil)
+    }
+
     @Test("repetition_penalty in generation_config.json applies when neither the request nor --repetition-penalty sets one")
     func generationConfigRepetitionPenalty() async throws {
         let lfm24: [String: Any] = ["do_sample": true, "temperature": 0.1, "top_k": 50, "repetition_penalty": 1.05]
