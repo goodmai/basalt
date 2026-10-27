@@ -161,6 +161,13 @@ public actor ModelOrchestratorActor {
         }
     }
 
+    public func admissionRefusal(for request: GenerationRequest) async -> BasaltError? {
+        if await cloudFallbackReason(for: request) != nil { return nil }
+        if let refusal = await gate.refusal { return refusal }
+        let (room, fitting, promptTokens) = await generationRoom(for: request)
+        return room > 0 ? nil : .contextLengthExceeded(maxTokens: fitting, requested: promptTokens + 1)
+    }
+
     public func shutdown(deadline: Duration = .seconds(5)) async {
         await gate.shutdown(deadline: deadline)
     }

@@ -296,6 +296,11 @@ struct AnthropicController: Sendable {
         }
 
         if dto.stream == true {
+            if let refusal = await orchestrator.admissionRefusal(for: genRequest) {
+                return errorResponse(status: HTTPResponse.Status(code: refusal.httpStatus),
+                                     message: ModelsController.publicMessage(for: refusal),
+                                     type: refusal.httpStatus == 503 ? "overloaded_error" : "invalid_request_error")
+            }
             return streamMessagesResponse(genRequest: genRequest, model: dto.model ?? modelId, requestedModel: requestedModel)
         }
 
