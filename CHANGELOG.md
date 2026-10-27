@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Memory
+- `--kv-bits auto` (#139): the KV cache stays fp16, with prompt-cache reuse, while a request's prompt plus its `max_tokens` fits the KV room; otherwise that request alone runs at 8, else 4 bits. A request without `max_tokens` is capped as before and never quantized. `serve --dry-run` and `models check --kv-bits` print the longest prompt next to the context budget.
+- Behaviour change: with a fixed `--kv-bits 4|8` the room now accounts for how mlx-swift-lm quantizes — the prompt is prefilled in fp16 and converted afterwards, briefly holding both copies — so a prompt that fits 4-bit room but not that fp16 peak is refused with 413 instead of admitted and run out of memory. Quantization buys generation room, not a longer prompt; measured on Qwen3-4B-4bit the KV is 46.9% smaller at 8 bits and 71.9% at 4 bits, peak memory on a 16k prompt is not lower.
+
 ### Concurrency
 - Priority admission (#140): queued generations are admitted interactive (`basalt chat`) → tool validation (service requests, harness) → standard (API) → background (benchmark), first come first served within a level; when the queue is full a higher-priority request turns away the lowest-priority waiter with 503. A stream's prefill is now cancellable by a server shutdown (the cancel hook is registered before the prefill starts), and CacheBlend's own prefill loop stops on cancellation; the model prefill was already chunked and cancellation-checked per chunk by mlx-swift-lm, so a client that disconnects or a drain stops a 16k-token prefill within about one chunk.
 
