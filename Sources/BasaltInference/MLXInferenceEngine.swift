@@ -331,8 +331,7 @@ public actor MLXInferenceEngine: InferenceEngine {
         guard let template = tokenizerConfig.chatTemplate.string(), var entries = tokenizerConfig.dictionary() else {
             return tokenizerConfig
         }
-        let compatible = ChatTemplateCompatibility.renamingReservedLoopVariables(
-            ChatTemplateCompatibility.strippingWhitespaceControlledComments(template))
+        let compatible = ChatTemplateCompatibility.renamingReservedLoopVariables(template)
         guard compatible != template else { return tokenizerConfig }
         entries["chat_template"] = Config(compatible)
         return Config(entries)

@@ -12,14 +12,6 @@ public enum ChatTemplateCompatibility {
         pattern: #"'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*""#, options: .dotMatchesLineSeparators)
     nonisolated(unsafe) private static let reservedIdentifier = try! NSRegularExpression(
         pattern: #"(?<![\w.])"# + reservedLoopVariable + #"(?!\w)"#)
-    nonisolated(unsafe) private static let whitespaceControlledComment = try! NSRegularExpression(
-        pattern: #"\s*\{#-.*?(?:-#\}\s*|#\}\n?)|\{#(?:(?!#\}).)*-#\}\s*"#, options: .dotMatchesLineSeparators)
-
-    public static func strippingWhitespaceControlledComments(_ template: String) -> String {
-        whitespaceControlledComment.stringByReplacingMatches(
-            in: template, range: NSRange(location: 0, length: (template as NSString).length), withTemplate: "")
-    }
-
     public static func renamingReservedLoopVariables(_ template: String) -> String {
         let source = template as NSString
         var output = ""
