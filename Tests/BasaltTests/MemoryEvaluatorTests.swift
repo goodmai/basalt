@@ -20,24 +20,35 @@ struct MemoryEvaluatorTests {
                         ramMB: ramMB, contextWindow: 4096, quantization: quantization, quality: 0.5)
     }
 
-    @Test("Fit levels switch exactly at 60%, 90%, 125% (fits) and 135% of available RAM", arguments: [
-        // 10 GiB available, 16 GiB total; context 0 so the requirement is the weights alone.
-        (6144,  FitLevel.perfect,  true),   // 60%
-        (6145,  FitLevel.good,     true),
-        (9216,  FitLevel.good,     true),   // 90%
-        (9217,  FitLevel.marginal, true),
-        (12800, FitLevel.marginal, true),   // 125%: the last size that still fits
-        (12801, FitLevel.marginal, false),
-        (13824, FitLevel.marginal, false),  // 135%
-        (13825, FitLevel.tooTight, false),
+    @Test("Fit levels switch at 60%, 90% and 100% of the Metal working set (3/4 of 16 GiB = 12 GiB here)", arguments: [
+        (7372,  FitLevel.perfect,  true),
+        (7373,  FitLevel.good,     true),
+        (11059, FitLevel.good,     true),
+        (11060, FitLevel.marginal, true),
+        (12288, FitLevel.marginal, true),
+        (12289, FitLevel.tooTight, false),
     ] as [(Int64, FitLevel, Bool)])
     func fitThresholds(ramMB: Int64, level: FitLevel, fits: Bool) async {
         let a = await MemoryEvaluator().evaluate(definition: model(ramMB: ramMB),
                                                  resources: resources(totalGB: 16, availableGB: 10), contextLength: 0)
         #expect(a.requiredRAMBytes == ramMB * Self.mib)
+        #expect(a.memoryBudgetBytes == 12 * Self.gib)
         #expect(a.fitLevel == level)
         #expect(a.fitsInMemory == fits)
-        #expect((a.warning != nil) == (!fits || level == .tooTight))
+        #expect((a.warning != nil) == (!fits || ramMB * Self.mib > 10 * Self.gib))
+    }
+
+    @Test("24 GB Mac with 9.4 GB free right now: LFM2.5-24B-A2B 4-bit fits the working set, with a note instead of a refusal")
+    func momentaryFreeMemoryDoesNotRefuse() async {
+        let mac24 = SystemProfiler.SystemResources(
+            totalRAM: 24 * Self.gib, availableRAM: Int64(9.4 * Double(Self.gib)), cpuCores: 10, gpuName: "Apple M4",
+            gpuMemory: 16 * Self.gib, diskSpace: 0, osVersion: "26", chipModel: "M4")
+        let a = await MemoryEvaluator().evaluate(definition: model(ramMB: 12_943), resources: mac24, contextLength: 4096)
+        #expect(a.fitsInMemory)
+        #expect(a.memoryBudgetBytes == 16 * Self.gib)
+        #expect(a.warning?.contains("free right now") == true)
+        let kv = model(ramMB: 12_943).kvGeometry
+        #expect(a.maxContextBudgetTokens == kv.maxTokens(fitting: (16 * Self.gib - 12_943 * Self.mib) / 2))
     }
 
     @Test("More than total RAM never fits, however much is 'available'")

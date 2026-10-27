@@ -383,12 +383,13 @@ struct CheckSubcommand: AsyncParsableCommand {
         print("  Required RAM:    \(assessment.requiredRAMFormatted)")
         print("  Available RAM:   \(assessment.availableRAMFormatted)")
         print("  Physical RAM:    \(assessment.totalRAMFormatted)")
+        print("  Memory budget:   \(assessment.memoryBudgetFormatted) (Metal working set)")
         print("  Fit Level:       \(assessment.fitLevel.emoji) \(assessment.fitLevel.rawValue)")
         print("  Context Budget:  \(assessment.maxContextBudgetTokens) tokens")
         print()
 
         if let warning = assessment.warning {
-            print(red("  \(warning)"))
+            print((assessment.fitsInMemory ? yellow : red)("  \(warning)"))
         }
         if let rec = assessment.recommendation {
             print(yellow("  💡 Recommendation: \(rec)"))
