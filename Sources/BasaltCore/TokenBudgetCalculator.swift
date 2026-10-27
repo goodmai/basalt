@@ -16,13 +16,4 @@ public struct TokenBudgetCalculator: Sendable {
         let feasibleTokens = kv.maxTokens(fitting: availableForContext, kvBits: kvBits) - max(0, promptTokens)
         return min(max(feasibleTokens, 512), upperCapTokens)
     }
-
-    public static func calculateMaxTokensForSystem(
-        modelSizeMB: Int, kv: KVCacheGeometry, kvBits: Int? = nil, promptTokens: Int = 0
-    ) -> Int {
-        calculateMaxTokens(
-            availableRAM: SystemProfiler.availableSystemMemory(), modelSizeMB: modelSizeMB,
-            kv: kv, kvBits: kvBits, promptTokens: promptTokens
-        )
-    }
 }

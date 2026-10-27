@@ -25,6 +25,17 @@ actor MockInferenceEngine: InferenceEngine {
     var lastRequest: GenerationRequest?
     var mockCachedPromptTokens = 0
     var mockFinishReason: GenerationResponse.FinishReason = .stop
+    var mockKVBudget: Int64?
+    var mockPromptTokens: Int?
+
+    func setMemory(kvBudget: Int64?, promptTokens: Int? = nil) {
+        mockKVBudget = kvBudget
+        mockPromptTokens = promptTokens
+    }
+
+    var kvMemoryBudgetBytes: Int64? { mockKVBudget }
+
+    func promptTokenCount(for request: GenerationRequest) async -> Int? { mockPromptTokens }
 
     func setMockFinishReason(_ reason: GenerationResponse.FinishReason) {
         self.mockFinishReason = reason
