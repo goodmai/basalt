@@ -19,6 +19,7 @@ public actor GenerationGate {
 
     public var inFlight: Int { running.count }
     public var queued: Int { queue.count }
+    public var exclusiveWaiting: Int { exclusiveQueue.count }
     public var refusal: BasaltError? {
         if closed { return .serverBusy(retryAfterSeconds: nil) }
         return canRun || queue.count < maxQueue ? nil : .serverBusy(retryAfterSeconds: 1)

@@ -35,6 +35,15 @@ struct GenerationGateTests {
         return dir.path
     }
 
+    static func eventually(within limit: Duration = .seconds(10), _ condition: () async -> Bool) async -> Bool {
+        let deadline = ContinuousClock.now + limit
+        while ContinuousClock.now < deadline {
+            if await condition() { return true }
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        return await condition()
+    }
+
     static func drain(_ stream: AsyncStream<StreamChunk>) async -> String {
         var text = ""
         for await chunk in stream { if case .text(let t) = chunk { text += t } }
@@ -47,12 +56,11 @@ struct GenerationGateTests {
         let orchestrator = ModelOrchestratorActor(
             engine: engine, telemetry: TelemetryTracker(), gate: GenerationGate(maxConcurrent: 1, maxQueue: 1))
         try await orchestrator.loadModel(path: "m")
-        await engine.setArtificialDelay(0.3)
+        await engine.setArtificialDelay(2)
 
         let first = try await orchestrator.generateStream(request: GenerationRequest(prompt: "1"))
         async let second = orchestrator.generate(request: GenerationRequest(prompt: "2"))
-        try await Task.sleep(for: .milliseconds(50))
-        #expect(await orchestrator.gate.queued == 1)
+        #expect(await Self.eventually { await orchestrator.gate.queued == 1 })
         do {
             _ = try await orchestrator.generate(request: GenerationRequest(prompt: "3"))
             Issue.record("expected serverBusy")
@@ -89,8 +97,7 @@ struct GenerationGateTests {
         let gate = GenerationGate(maxConcurrent: 1, maxQueue: 2)
         let holder = try await gate.admit()
         let waiter = Task { try await gate.admit() }
-        try await Task.sleep(for: .milliseconds(50))
-        #expect(await gate.queued == 1)
+        #expect(await Self.eventually { await gate.queued == 1 })
         waiter.cancel()
         await #expect(throws: CancellationError.self) { _ = try await waiter.value }
         #expect(await gate.queued == 0)
@@ -101,14 +108,14 @@ struct GenerationGateTests {
     @Test("Two concurrent switches to the same model load it once; a switch to another model meanwhile is 503")
     func singleFlightSwitch() async throws {
         let engine = CountingEngine()
-        await engine.setLoadDelay(.milliseconds(200))
+        await engine.setLoadDelay(.seconds(2))
         let orchestrator = ModelOrchestratorActor(engine: engine, telemetry: TelemetryTracker())
         let b = try Self.modelDirectory("B")
         let c = try Self.modelDirectory("C")
         defer { [b, c].forEach { try? FileManager.default.removeItem(atPath: $0) } }
         async let one: Void = orchestrator.switchModel(to: b)
         async let two: Void = orchestrator.switchModel(to: b)
-        try await Task.sleep(for: .milliseconds(50))
+        #expect(await Self.eventually { await engine.loads.count == 1 })
         do {
             try await orchestrator.switchModel(to: c)
             Issue.record("expected modelSwitching")
@@ -128,17 +135,16 @@ struct GenerationGateTests {
         let orchestrator = ModelOrchestratorActor(
             engine: engine, telemetry: TelemetryTracker(), gate: GenerationGate(maxConcurrent: 2, maxQueue: 4))
         try await orchestrator.loadModel(path: "A")
-        await engine.setStreamDelay(0.3)
+        await engine.setStreamDelay(2)
         let b = try Self.modelDirectory("B")
         defer { try? FileManager.default.removeItem(atPath: b) }
 
         let stream = try await orchestrator.generateStream(request: GenerationRequest(prompt: "running"))
         let switching = Task { try await orchestrator.switchModel(to: b) }
-        try await Task.sleep(for: .milliseconds(50))
+        #expect(await Self.eventually { await orchestrator.gate.exclusiveWaiting == 1 })
         #expect(await engine.loads == ["A"])
         let behind = Task { try await orchestrator.generate(request: GenerationRequest(prompt: "behind")) }
-        try await Task.sleep(for: .milliseconds(50))
-        #expect(await orchestrator.gate.queued == 1)
+        #expect(await Self.eventually { await orchestrator.gate.queued == 1 })
 
         let streamEnded = ContinuousClock.now
         _ = await Self.drain(stream)
