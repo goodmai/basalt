@@ -1,6 +1,18 @@
 # Changelog
 
-## Unreleased
+## 0.4.0 — 2026-10-27
+
+### Upgrading from 0.3.0
+- One generation decodes at a time by default and up to 8 requests wait in line; beyond that the server answers 503 with `Retry-After` — raise `--max-concurrent` / `--max-queue` for parallel agents (#74, #121).
+- `--max-tokens` is now a ceiling: a request is capped at min(its `max_tokens`, `--max-tokens`, what the KV cache can hold after the prompt), and a prompt that cannot fit at all is 413 (#85).
+- `repetition_penalty` from a model's `generation_config.json` now applies when neither the request nor `--repetition-penalty` sets one (#113).
+- A repetition loop now ends the answer early with finish reason `length` / `max_tokens` (#87).
+- Cloud fallback, cost routing and virtual keys are off unless configured (`--cloud-fallback`, `cloud_fallback`, `virtual_keys` in `~/.gem/config.json`) (#22, #34).
+- Building from source needs nothing new; `ServiceLifecycle` is now a direct dependency (already resolved before).
+- Sampling defaults changed: a request without `temperature`, `top_p` or `top_k` now samples with the model's `generation_config.json` (Qwen3.8: 1.0 / 0.95 / 20) instead of 0.7 / 0.9 / off; send them explicitly to keep the old behaviour. `/v1/messages` no longer fills in 0.7 / 0.9 either (#105).
+- `curl -d '…'` without `-H "Content-Type: application/json"` now gets 415; a browser app on any other origin, a UI on another local port included, needs `--allow-origin` (#72).
+- `POST /v1/models/load` accepts only a Hugging Face repo id `org/name` (or its `claude-local/org--name` form), characters `A-Z a-z 0-9 - _ .`; anything else, local paths included, is 400 (#72).
+- Anthropic `/v1/messages` usage: `input_tokens` is now only the uncached remainder, as in Anthropic's API; the reused part is in `cache_read_input_tokens`. A client that took `input_tokens` as the whole prompt size must add the two (#56).
 
 ### Security
 - Dependencies: Hummingbird 2.27.1 → 2.28.0 (the cap below 2.28 is lifted: swift-distributed-tracing 1.7.2 no longer collides with swift-service-context 1.5.1), swift-jinja 2.4.2 → 2.5.2 (floor raised to 2.5.1), swift-service-lifecycle 2.12 → 2.13 and 16 transitive minor/patch bumps (swift-nio 2.104, swift-http-types 1.8, swift-collections 1.7.5, swift-log 1.16.2, swift-crypto 4.5.2, …). swift-jinja's `tojson` now matches Python's `json.dumps` (`{"city": "Paris"}`), so rendered tool-call arguments in chat templates read as they do under HF transformers; its own `{#- -#}` whitespace control replaces basalt's comment-stripping workaround, which is removed.
@@ -44,12 +56,6 @@
 - Per-request `min_p` (`minP` on `/api/v1/generate` and MCP) overrides `--min-p` and the model profile default; `0` turns Min-P off for that request. Validated to 0–1 (#40).
 - `dynamic_temperature` (`dynamicTemperature`): entropy-based dynamic temperature (EDT, arXiv:2403.14541), `T = T0·N^(θ/H) + γ·R` with N = 0.8, θ = 1.5, γ = 0.5, clamped to 0.05–2 (a request colder than 0.05 keeps its own temperature as the floor). Confident tokens sample near-greedy; a forming repetition loop raises the temperature. With EDT on, `top_p`/`min_p` still cut the original distribution, not the heated one. Off by default; no effect at temperature 0 (#40).
 - `RepetitionGuard` exposes a continuous repetition score in [0, 1] alongside its stop decision (#40).
-
-### Upgrading
-- Sampling defaults changed: a request without `temperature`, `top_p` or `top_k` now samples with the model's `generation_config.json` (Qwen3.8: 1.0 / 0.95 / 20) instead of 0.7 / 0.9 / off; send them explicitly to keep the old behaviour. `/v1/messages` no longer fills in 0.7 / 0.9 either (#105).
-- `curl -d '…'` without `-H "Content-Type: application/json"` now gets 415; a browser app on any other origin, a UI on another local port included, needs `--allow-origin` (#72).
-- `POST /v1/models/load` accepts only a Hugging Face repo id `org/name` (or its `claude-local/org--name` form), characters `A-Z a-z 0-9 - _ .`; anything else, local paths included, is 400 (#72).
-- Anthropic `/v1/messages` usage: `input_tokens` is now only the uncached remainder, as in Anthropic's API; the reused part is in `cache_read_input_tokens`. A client that took `input_tokens` as the whole prompt size must add the two (#56).
 
 ### Prompt cache
 - Prefix KV-cache reuse across conversations: a radix tree keeps the KV cache of recent prompts, one node per shared token run. A request takes the longest stored prefix and prefills only the rest, so the next turn of a conversation, and a second conversation with the same system prompt and tools (a Claude Code subagent, another Codex thread), reuse what is already computed instead of prefilling it again; concurrent requests on one prefix both reuse it. All clients share one tree; `prompt_cache_key`, `metadata.user_id` and `x-session-id` are not needed and are ignored; service requests are never cached. Sliding-window layers such as Gemma 3/4 and `--kv-bits` prefill in full (#56, #32).
