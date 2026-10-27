@@ -33,8 +33,7 @@ enum TinyQwen3 {
         """
 
     static func make() throws -> Qwen3Model {
-        MLXRandom.seed(36)
-        let model = Qwen3Model(try JSONDecoder().decode(Qwen3Configuration.self, from: Data(config.utf8)))
+        let model = try withRandomState(MLXRandom.RandomState(seed: 36)) { Qwen3Model(try JSONDecoder().decode(Qwen3Configuration.self, from: Data(config.utf8))) }
         eval(model)
         return model
     }
@@ -61,9 +60,8 @@ enum TinyLlama {
         """
 
     static func make(_ extra: String = "") throws -> LlamaModel {
-        MLXRandom.seed(36)
         let config = TinyModel.config.replacingOccurrences(of: "\"num_hidden_layers\": 2", with: "\(extra)\"num_hidden_layers\": 4")
-        let model = LlamaModel(try JSONDecoder().decode(LlamaConfiguration.self, from: Data(config.utf8)))
+        let model = try withRandomState(MLXRandom.RandomState(seed: 36)) { LlamaModel(try JSONDecoder().decode(LlamaConfiguration.self, from: Data(config.utf8))) }
         eval(model)
         return model
     }

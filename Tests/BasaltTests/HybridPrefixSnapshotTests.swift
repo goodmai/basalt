@@ -18,8 +18,7 @@ enum TinyHybrid {
         """
 
     static func make() throws -> Qwen35TextModel {
-        MLXRandom.seed(79)
-        let model = Qwen35TextModel(try JSONDecoder().decode(Qwen35TextConfiguration.self, from: Data(config.utf8)))
+        let model = try withRandomState(MLXRandom.RandomState(seed: 79)) { Qwen35TextModel(try JSONDecoder().decode(Qwen35TextConfiguration.self, from: Data(config.utf8))) }
         eval(model)
         return model
     }
@@ -32,8 +31,7 @@ enum TinyHybrid {
         """
 
     static func makeVision() throws -> Qwen35 {
-        MLXRandom.seed(79)
-        let model = Qwen35(try JSONDecoder().decode(Qwen35Configuration.self, from: Data(visionConfig.utf8)))
+        let model = try withRandomState(MLXRandom.RandomState(seed: 79)) { Qwen35(try JSONDecoder().decode(Qwen35Configuration.self, from: Data(visionConfig.utf8))) }
         eval(model)
         return model
     }
@@ -83,8 +81,7 @@ enum TinySliding {
         """
 
     static func make() throws -> Gemma3TextModel {
-        MLXRandom.seed(103)
-        let model = Gemma3TextModel(try JSONDecoder().decode(Gemma3TextConfiguration.self, from: Data(config.utf8)))
+        let model = try withRandomState(MLXRandom.RandomState(seed: 103)) { Gemma3TextModel(try JSONDecoder().decode(Gemma3TextConfiguration.self, from: Data(config.utf8))) }
         model.update(parameters: model.parameters().mapValues { $0 * 4 })
         eval(model)
         return model
