@@ -23,7 +23,7 @@ Gem **does not** collect telemetry, analytics, crash reports, or usage statistic
 - **`meta`** stores only metrics, sizes and SHA-256 hashes: no prompt, reply, reasoning or tool arguments.
 - **`off`** writes nothing.
 
-Choose with `--session-log full|meta|off`; the server prints the mode and directory at start. HTTP headers (`Authorization`, `x-api-key`) are never recorded, and a request that fails to decode is logged only by its size. Files older than 14 days, and the oldest beyond 1 GB in total, are deleted at start (`--session-log-retention-days`, `--session-log-max-total-mb`).
+Choose with `--session-log full|meta|off`; the server prints the mode and directory at start. In `full` mode private keys and API tokens found in prompts and replies are replaced by `[REDACTED:*]` before they are written (best effort; `--session-log-redact off` disables it). HTTP headers (`Authorization`, `x-api-key`) are never recorded, and a request that fails to decode is logged only by its size. Files older than 14 days, and the oldest beyond 1 GB in total, are deleted at start (`--session-log-retention-days`, `--session-log-max-total-mb`).
 
 ## 5. Third-Party Access
 No third party has access to your data through Gem. We do not use third-party tracking libraries or APIs that exfiltrate data.

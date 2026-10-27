@@ -53,6 +53,10 @@ public enum SessionLogRecord {
         let messages: [ChatMessageInput]?
         let prompt: String?
         let tools: [ToolDefinition]?
+        var parent: String? = nil
+        var prefixCount: Int? = nil
+
+        enum CodingKeys: String, CodingKey { case messages, prompt, tools, parent, prefixCount = "prefix_count" }
     }
 
     public struct Request: Codable, Sendable {
@@ -209,11 +213,16 @@ public actor SessionLogWriter {
     private var flushTask: Task<Void, Never>?
     private let clock: @Sendable () -> Date
 
+    nonisolated public let redacts: Bool
+    static let prefixWindow = 8
+    private var recentConversations: [String: [(id: String, messages: [ChatMessageInput])]] = [:]
+
     public init(
-        mode: SessionLogMode, directory: URL, bufferLimit: Int = 1_024,
+        mode: SessionLogMode, directory: URL, bufferLimit: Int = 1_024, redacts: Bool = true,
         defaultSession: String = SessionLogWriter.processSession(), clock: @escaping @Sendable () -> Date = { Date() }
     ) {
         self.mode = mode
+        self.redacts = redacts
         self.directory = directory
         self.bufferLimit = bufferLimit
         self.defaultSession = defaultSession
@@ -275,9 +284,7 @@ public actor SessionLogWriter {
                           thinkingBudget: request.thinkingBudget),
             cacheKey: request.cacheKey, messagesCount: request.messages?.count ?? 1, toolsCount: request.tools?.count ?? 0,
             prompt: .init(prompt),
-            content: mode == .full
-                ? .init(messages: request.messages, prompt: request.messages == nil ? request.prompt : nil, tools: request.tools)
-                : nil)
+            content: mode == .full ? content(of: request, id: id, session: session(for: request)) : nil)
         append(record, session: record.session)
     }
 
@@ -297,11 +304,34 @@ public actor SessionLogWriter {
             memory: meta.map { .init(activeBytes: $0.memory.activeBytes, peakBytes: $0.memory.peakBytes) },
             output: .init(
                 chars: result.text.count, sha256: SessionLogRecord.Digest(result.text).sha256,
-                text: mode == .full ? result.text : nil,
-                reasoning: mode == .full && !result.reasoning.isEmpty ? result.reasoning : nil,
-                toolCalls: mode == .full && !result.toolCalls.isEmpty ? result.toolCalls : nil),
+                text: mode == .full ? scrub(result.text) : nil,
+                reasoning: mode == .full && !result.reasoning.isEmpty ? scrub(result.reasoning) : nil,
+                toolCalls: mode == .full && !result.toolCalls.isEmpty ? (redacts ? SecretRedactor.redact(result.toolCalls) : result.toolCalls) : nil),
             toolCallsCount: result.toolCalls.count, error: error)
         append(record, session: record.session)
+    }
+
+    func scrub(_ text: String) -> String {
+        redacts ? SecretRedactor.redact(text) : text
+    }
+
+    func content(of request: GenerationRequest, id: String, session: String) -> SessionLogRecord.RequestContent {
+        guard let messages = request.messages else {
+            return .init(messages: nil, prompt: scrub(request.prompt), tools: request.tools)
+        }
+        var recent = recentConversations[session] ?? []
+        let parent = recent.reversed().first { earlier in
+            earlier.messages.count <= messages.count && messages.starts(with: earlier.messages)
+        }
+        recent.append((id, messages))
+        if recentConversations[session] == nil, recentConversations.count >= 4_096 { recentConversations.removeAll() }
+        recentConversations[session] = Array(recent.suffix(Self.prefixWindow))
+        let stored = parent.map { Array(messages.dropFirst($0.messages.count)) } ?? messages
+        var content = SessionLogRecord.RequestContent(
+            messages: redacts ? SecretRedactor.redact(stored) : stored, prompt: nil, tools: request.tools)
+        content.parent = parent?.id
+        content.prefixCount = parent?.messages.count
+        return content
     }
 
     public func logRejection(origin: RequestOrigin, sessionId: String?, code: Int, message: String, bodyBytes: Int) {

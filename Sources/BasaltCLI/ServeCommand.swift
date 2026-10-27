@@ -187,6 +187,12 @@ struct ServeCommand: AsyncParsableCommand {
     )
     var sessionLog: SessionLogMode = .full
 
+    @Option(
+        name: .customLong("session-log-redact"),
+        help: "Replace private keys and API tokens (sk-, ghp_, AKIA, xox, Bearer) in full-mode records with [REDACTED:*]: on (default) | off; best effort, not a guarantee"
+    )
+    var sessionLogRedact: Toggle = .on
+
     @Option(name: .customLong("session-log-dir"), help: "Directory of the session log (default: ~/.basalt/sessions)")
     var sessionLogDir: String?
 
@@ -317,11 +323,15 @@ struct ServeCommand: AsyncParsableCommand {
             fallbackCloudModel: settings.model)
     }
 
-    static func sessionLogWriter(mode: SessionLogMode, directory: String?, retentionDays: Int, maxTotalMB: Int) -> SessionLogWriter? {
+    enum Toggle: String, ExpressibleByArgument, CaseIterable { case on, off }
+
+    static func sessionLogWriter(
+        mode: SessionLogMode, directory: String?, retentionDays: Int, maxTotalMB: Int, redacts: Bool = true
+    ) -> SessionLogWriter? {
         guard mode != .off else { return nil }
         let url = directory.map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath) } ?? SessionLogWriter.defaultDirectory
         SessionLogWriter.applyRetention(directory: url, days: retentionDays, maxTotalBytes: Int64(maxTotalMB) << 20)
-        let writer = SessionLogWriter(mode: mode, directory: url)
+        let writer = SessionLogWriter(mode: mode, directory: url, redacts: redacts)
         Task { await writer.startFlushing() }
         return writer
     }
@@ -432,7 +442,8 @@ struct ServeCommand: AsyncParsableCommand {
             cacheBlendRatio: cacheBlend ? min(max(0, cacheBlendRatio), 1) : nil
         )
         let sessionLogWriter = Self.sessionLogWriter(
-            mode: sessionLog, directory: sessionLogDir, retentionDays: sessionLogRetentionDays, maxTotalMB: sessionLogMaxTotalMB)
+            mode: sessionLog, directory: sessionLogDir, retentionDays: sessionLogRetentionDays, maxTotalMB: sessionLogMaxTotalMB,
+            redacts: sessionLogRedact == .on)
         if let sessionLogWriter {
             log("Session log: \(sessionLog.rawValue) → \(sessionLogWriter.directory.path) (0700; `--session-log meta` keeps no content, `--session-log off` disables)")
         }
