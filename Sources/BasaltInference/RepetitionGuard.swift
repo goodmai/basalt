@@ -68,7 +68,7 @@ public struct RepetitionGuard: Sendable {
         while start >= 0 {
             if bytes[start] == probe.first, bytes[start..<(start + probeSize)].elementsEqual(probe) {
                 let period = probeStart - start
-                let span = max(repeats * period, repeats * probeSize)
+                let span = max((repeats - 1) * period + probeSize, repeats * probeSize)
                 guard span <= bytes.count else { return false }
                 if (bytes.count - span + period..<bytes.count).allSatisfy({ bytes[$0] == bytes[$0 - period] }) {
                     return true

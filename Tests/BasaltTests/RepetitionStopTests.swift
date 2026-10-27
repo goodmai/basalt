@@ -83,6 +83,10 @@ struct RepetitionStopTests {
         #expect(RepetitionGuard.endsInVerbatimCycle(Array(String(repeating: "abcdefgh", count: 40).utf8), probeSize: 16, repeats: 4))
         #expect(!RepetitionGuard.endsInVerbatimCycle(Array((0..<40).map { "abcdefg\($0)" }.joined().utf8), probeSize: 16, repeats: 4))
         #expect(!RepetitionGuard.endsInVerbatimCycle(Array("abcabc".utf8), probeSize: 16, repeats: 4))
+        let longCycle = (0..<20).map { "line \($0) of a long block that the model keeps rewriting\n" }.joined()
+        var guard_ = RepetitionGuard()
+        #expect(longCycle.utf8.count * 4 > 4_096)
+        #expect((0..<4).contains { _ in guard_.shouldStop(after: longCycle) })
     }
 
     @Test("Token texts are decoded outside the store lock and only once per token")
