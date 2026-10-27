@@ -76,8 +76,7 @@ enum TinyModel {
     static let weightScale: Float = 4
 
     static func make() throws -> LlamaModel {
-        MLXRandom.seed(56)
-        let model = LlamaModel(try JSONDecoder().decode(LlamaConfiguration.self, from: Data(config.utf8)))
+        let model = try withRandomState(MLXRandom.RandomState(seed: 56)) { LlamaModel(try JSONDecoder().decode(LlamaConfiguration.self, from: Data(config.utf8))) }
         model.update(parameters: model.parameters().mapValues { $0 * weightScale })
         eval(model)
         return model

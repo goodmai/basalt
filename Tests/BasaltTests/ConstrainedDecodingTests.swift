@@ -213,8 +213,7 @@ struct ConstrainedDecodingEngineTests {
     @Test("A stream the client abandons does not return its grammar to the pool; one that runs to its end does")
     func abandonedStreamIsNotPooled() async throws {
         let config = #"{"hidden_size": 1024, "num_hidden_layers": 12, "intermediate_size": 4096, "num_attention_heads": 8, "num_key_value_heads": 8, "rms_norm_eps": 1e-5, "vocab_size": 256, "rope_theta": 10000.0, "tie_word_embeddings": false}"#
-        MLXRandom.seed(56)
-        let model = LlamaModel(try JSONDecoder().decode(LlamaConfiguration.self, from: Data(config.utf8)))
+        let model = try withRandomState(MLXRandom.RandomState(seed: 56)) { LlamaModel(try JSONDecoder().decode(LlamaConfiguration.self, from: Data(config.utf8))) }
         model.update(parameters: model.parameters().mapValues { $0 * 4 })
         eval(model)
         let engine = MLXInferenceEngine()

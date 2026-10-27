@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Concurrency
+- Priority admission (#140): queued generations are admitted interactive (`basalt chat`) → tool validation (service requests, harness) → standard (API) → background (benchmark), first come first served within a level; when the queue is full a higher-priority request turns away the lowest-priority waiter with 503. A stream's prefill is now cancellable by a server shutdown (the cancel hook is registered before the prefill starts), and CacheBlend's own prefill loop stops on cancellation; the model prefill was already chunked and cancellation-checked per chunk by mlx-swift-lm, so a client that disconnects or a drain stops a 16k-token prefill within about one chunk.
+
 ### Session log
 - Sessions (#106): `X-Basalt-Session` names the session (`x-session-id` as an alias); without an id a request that extends an earlier conversation joins its session, anything else gets a new `s-…` id. A known id appends to its existing file after a restart with a `session_resume` line and continues the `parent` chain (the last 8 conversations are reloaded from the file); `--session-idle-minutes` (default 30) writes `session_suspend` and closes an idle file, the next request resumes it with `gap_s`. Resume across restarts needs an explicit id.
 - `basalt sessions list | show <id|latest> | stats <id|latest>` read the log without loading a model; `show` rebuilds the latest conversation from the `parent` chain (metrics only for `meta` sessions).

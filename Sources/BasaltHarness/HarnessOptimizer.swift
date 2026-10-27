@@ -674,7 +674,7 @@ public struct HarnessOptimizer: Sendable {
         try await orchestrator.generate(request: GenerationRequest(
             prompt: prompt, maxTokens: maxTokens, temperature: temperature,
             enableThinking: false, cacheKey: "harness:\(task.slug)", assistantPrefix: assistantPrefix
-        ))
+        ).withOrigin(RequestOrigin(source: "harness", endpoint: "optimize", stream: false)))
     }
 
     static let rolloutHeader = "You are an agent working under the harness below."

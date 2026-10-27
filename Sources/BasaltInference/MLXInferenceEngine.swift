@@ -1109,6 +1109,7 @@ public actor MLXInferenceEngine: InferenceEngine {
                 cache, prompt: input.text.tokens.asArray(Int.self), from: reused, namespace: $0.namespace,
                 model: context.model, tokenizer: context.tokenizer, prefillStep: params.prefill.stepSize ?? 512)
         }
+        try Task.checkCancellation()
         if let blended {
             cache = blended.cache
         }

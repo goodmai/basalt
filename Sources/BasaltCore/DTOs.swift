@@ -143,6 +143,15 @@ public struct GenerationRequest: Codable, Sendable {
         return copy
     }
 
+    public var priority: RequestPriority {
+        switch origin.source {
+        case "cli": return .interactive
+        case "harness": return .toolValidation
+        case "benchmark": return .background
+        default: return isServiceRequest == true ? .toolValidation : .standard
+        }
+    }
+
     public func withOrigin(_ origin: RequestOrigin) -> GenerationRequest {
         var copy = self
         copy.origin = origin
