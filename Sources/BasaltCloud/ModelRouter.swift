@@ -328,6 +328,10 @@ public actor ModelRouter: Sendable {
         )
     }
     
+    public func knowsPrice(of model: String) -> Bool {
+        estimateCost(model: model, promptTokens: 1_000_000, completionTokens: 0) > 0
+    }
+
     public func estimateCost(model: String, promptTokens: Int, completionTokens: Int) -> Double {
         // Use the first mapped model for cost estimation
         let mappedId = mapToCloudModels(model).first ?? model

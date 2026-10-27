@@ -193,6 +193,13 @@ struct ModelRouterCloudFallbackTests {
         #expect(assessment.capabilityGap == 0)
     }
 
+    @Test("A model without a known price is reported, so an unmetered budget is not silent")
+    func priceKnowledge() async throws {
+        let router = try router()
+        #expect(await router.knowsPrice(of: "openai/gpt-4-turbo"))
+        #expect(await !router.knowsPrice(of: "qwen3-235b"))
+    }
+
     @Test("Chat turns reach the cloud with their roles; tool turns become readable text")
     func cloudMessages() {
         let request = GenerationRequest(prompt: "flat", messages: [

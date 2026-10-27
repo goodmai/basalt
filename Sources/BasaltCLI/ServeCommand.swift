@@ -340,6 +340,16 @@ struct ServeCommand: AsyncParsableCommand {
             cliLocalContextLimit: localContextLimit, configFile: configFile ?? Self.defaultConfigFileIfPresent())
         {
             let router = try Self.cloudFallbackRouter(fallback, orchestrator: orchestrator)
+            if OpenRouterClient.isOpenRouter(fallback.baseURL) {
+                do {
+                    try await router.syncCloudModels()
+                } catch {
+                    log("\(yellow("[warn]")) Could not fetch OpenRouter prices: \(error.localizedDescription)")
+                }
+            }
+            if await !router.knowsPrice(of: fallback.model) {
+                log("\(yellow("[warn]")) No price known for \(fallback.model): its cloud spend is counted as $0 and the budget does not limit it")
+            }
             await orchestrator.setCloudFallback(router, arbiter: HybridArbiter(localContextLimit: fallback.localContextLimit))
             log("Cloud fallback → \(bold(fallback.model)) at \(fallback.baseURL.absoluteString)")
         }
