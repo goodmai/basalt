@@ -2,19 +2,40 @@ import Foundation
 import Hummingbird
 import HTTPTypes
 import CryptoKit
+import BasaltCore
 
 /// Middleware that enforces API key authentication for incoming REST requests
 /// when an API key is configured on the server.
 public struct APIKeyAuthenticator<Context: RequestContext>: RouterMiddleware {
     public let apiKey: String
+    public let virtualKeys: [VirtualKey]
+    static var budgetKeyHeader: HTTPField.Name { HTTPField.Name("x-basalt-budget-key")! }
+    private let virtualKeyDigests: [(digest: SHA256.Digest, id: String)]
 
     /// Health check and API documentation stay reachable without a key and outside the rate limit.
     static var publicPaths: Set<String> { ["/api/v1/health", "/swagger", "/api/v1/openapi.json", "/"] }
     private let apiKeyDigest: SHA256.Digest
 
-    public init(apiKey: String) {
+    public init(apiKey: String, virtualKeys: [VirtualKey] = []) {
         self.apiKey = apiKey
+        self.virtualKeys = virtualKeys
         self.apiKeyDigest = SHA256.hash(data: Data(apiKey.utf8))
+        self.virtualKeyDigests = virtualKeys.map { (SHA256.hash(data: Data($0.key.utf8)), $0.id) }
+    }
+
+    static func request(_ request: Request, budgetKey: String?) -> Request {
+        guard budgetKey != nil || request.headers[budgetKeyHeader] != nil else { return request }
+        var head = request.head
+        head.headerFields[budgetKeyHeader] = budgetKey
+        return Request(head: head, body: request.body)
+    }
+
+    func virtualKeyId(for candidate: String) -> String? {
+        let digest = SHA256.hash(data: Data(candidate.utf8))
+        return virtualKeyDigests.reduce(nil) { found, entry in
+            let equal = zip(digest, entry.digest).reduce(UInt8(0)) { $0 | ($1.0 ^ $1.1) } == 0
+            return found ?? (equal ? entry.id : nil)
+        }
     }
 
     /// Compares SHA-256 digests with a full XOR fold, so the time spent does not depend
@@ -29,26 +50,28 @@ public struct APIKeyAuthenticator<Context: RequestContext>: RouterMiddleware {
         context: Context,
         next: (Request, Context) async throws -> Response
     ) async throws -> Response {
+        let request = Self.request(request, budgetKey: nil)
         if Self.publicPaths.contains(request.uri.path) {
             return try await next(request, context)
         }
 
-        // 1. Check standard Authorization: Bearer <token>
+        var candidates: [String] = []
         if let authHeader = request.headers[.authorization] {
             let parts = authHeader.split(separator: " ", maxSplits: 1)
             if parts.count == 2 && parts[0].lowercased() == "bearer" {
-                let token = String(parts[1])
-                if matches(token) {
-                    return try await next(request, context)
-                }
+                candidates.append(String(parts[1]))
             }
         }
-
-        // 2. Check x-api-key header
-        if let headerName = HTTPField.Name("x-api-key"),
-           let customKey = request.headers[values: headerName].first,
-           matches(customKey) {
-            return try await next(request, context)
+        if let headerName = HTTPField.Name("x-api-key"), let customKey = request.headers[values: headerName].first {
+            candidates.append(customKey)
+        }
+        for candidate in candidates where !candidate.isEmpty {
+            if !apiKey.isEmpty, matches(candidate) {
+                return try await next(request, context)
+            }
+            if let id = virtualKeyId(for: candidate) {
+                return try await next(Self.request(request, budgetKey: id), context)
+            }
         }
 
         // Unauthorized

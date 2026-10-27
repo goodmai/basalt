@@ -72,8 +72,8 @@ package struct RESTServer: Sendable {
         router.add(middleware: LogRequestsMiddleware(.info))
         router.add(middleware: RequestGuardMiddleware(bindHost: config.host, bindPort: config.restPort, allowedOrigins: config.allowedOrigins))
 
-        if let apiKey = config.apiKey, !apiKey.isEmpty {
-            router.add(middleware: APIKeyAuthenticator(apiKey: apiKey))
+        if !(config.apiKey ?? "").isEmpty || !config.virtualKeys.isEmpty {
+            router.add(middleware: APIKeyAuthenticator(apiKey: config.apiKey ?? "", virtualKeys: config.virtualKeys))
         }
         // After the authenticator: a request without the key never spends the budget.
         if let limit = config.rateLimitPerMinute {

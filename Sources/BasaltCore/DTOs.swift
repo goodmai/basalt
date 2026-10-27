@@ -75,6 +75,8 @@ public struct GenerationRequest: Codable, Sendable {
     public private(set) var repetitionPenalty: Double? = nil
     public private(set) var thinkingBudget: Int? = nil
     public private(set) var responseFormat: ResponseFormat? = nil
+    public private(set) var sessionId: String? = nil
+    public private(set) var budgetKey: String? = nil
 
     enum CodingKeys: String, CodingKey {
         case prompt, maxTokens, temperature, topP, minP, dynamicTemperature, enableThinking, reasoningEffort
@@ -129,6 +131,13 @@ public struct GenerationRequest: Codable, Sendable {
     public func withMaxTokens(_ maxTokens: Int) -> GenerationRequest {
         var copy = self
         copy.maxTokens = maxTokens
+        return copy
+    }
+
+    public func withRouting(sessionId: String?, budgetKey: String?) -> GenerationRequest {
+        var copy = self
+        copy.sessionId = sessionId
+        copy.budgetKey = budgetKey
         return copy
     }
 

@@ -54,6 +54,8 @@ public actor CostTracker: Sendable {
     private let budget: Budget
     private var stats: UsageStats
     private var scopeLimits: [BudgetScope: Double] = [:]
+    private var defaultSessionLimit: Double?
+    static let maxTrackedSessions = 4_096
     private var sessionUsage: [String: Double] = [:]
     
     private let logger = Logger()
@@ -95,6 +97,18 @@ public actor CostTracker: Sendable {
         scopeLimits[scope] = limit
     }
 
+    var trackedSessionCount: Int { sessionUsage.count }
+
+    public func setDefaultSessionBudget(_ limit: Double?) {
+        defaultSessionLimit = limit
+    }
+
+    private func limit(for scope: BudgetScope) -> Double? {
+        if let explicit = scopeLimits[scope] { return explicit }
+        if case .session = scope { return defaultSessionLimit }
+        return nil
+    }
+
     public func spent(in scope: BudgetScope) -> Double {
         switch scope {
         case .session(let id): sessionUsage[id] ?? 0
@@ -106,13 +120,13 @@ public actor CostTracker: Sendable {
         resetCountersIfNeeded()
         if stats.dailyUsage >= budget.dailyLimit || stats.monthlyUsage >= budget.monthlyLimit { return true }
         return scopes.contains { scope in
-            scopeLimits[scope].map { spent(in: scope) >= $0 } ?? false
+            limit(for: scope).map { spent(in: scope) >= $0 } ?? false
         }
     }
 
     public func remaining(scopes: [BudgetScope]) -> Double {
         resetCountersIfNeeded()
-        let scoped = scopes.compactMap { scope in scopeLimits[scope].map { $0 - spent(in: scope) } }
+        let scoped = scopes.compactMap { scope in limit(for: scope).map { $0 - spent(in: scope) } }
         return ([budget.dailyLimit - stats.dailyUsage, budget.monthlyLimit - stats.monthlyUsage] + scoped).min()!
     }
 
@@ -123,7 +137,9 @@ public actor CostTracker: Sendable {
 
         for scope in Set(scopes) {
             switch scope {
-            case .session(let id): sessionUsage[id, default: 0] += cost
+            case .session(let id):
+                if sessionUsage[id] == nil, sessionUsage.count >= Self.maxTrackedSessions { sessionUsage.removeAll() }
+                sessionUsage[id, default: 0] += cost
             case .virtualKey(let id): stats.virtualKeyUsage = (stats.virtualKeyUsage ?? [:]).merging([id: cost], uniquingKeysWith: +)
             }
         }

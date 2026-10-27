@@ -19,6 +19,18 @@ public enum ServerConfigError: Error, LocalizedError, Equatable {
     }
 }
 
+public struct VirtualKey: Sendable, Equatable {
+    public let key: String
+    public let id: String
+    public let maxBudget: Double?
+
+    public init(key: String, id: String, maxBudget: Double? = nil) {
+        self.key = key
+        self.id = id
+        self.maxBudget = maxBudget
+    }
+}
+
 /// Server configuration — parsed from CLI arguments and configuration files.
 public struct ServerConfig: Sendable {
     public let modelPath:   String
@@ -31,6 +43,7 @@ public struct ServerConfig: Sendable {
     /// Server-wide request budget; nil means no rate limit.
     public let rateLimitPerMinute: Int?
     public let allowedOrigins: [String]
+    public let virtualKeys: [VirtualKey]
 
     /// Applied off loopback when no `--rate-limit` is given.
     public static let defaultRateLimitPerMinute = 120
@@ -83,7 +96,8 @@ public struct ServerConfig: Sendable {
         apiKey:    String?   = nil,
         autoGenerateKeyIfMissing: Bool = false,
         rateLimitPerMinute: Int? = nil,
-        allowedOrigins: [String] = []
+        allowedOrigins: [String] = [],
+        virtualKeys: [VirtualKey] = []
     ) throws {
         self.modelPath = modelPath
         self.modelId   = modelId
@@ -92,6 +106,7 @@ public struct ServerConfig: Sendable {
         self.maxTokens = maxTokens
         self.logLevel  = logLevel
         self.allowedOrigins = allowedOrigins
+        self.virtualKeys = virtualKeys
 
         self.apiKey = try Self.resolveApiKey(
             host: host, apiKey: apiKey, autoGenerateKeyIfMissing: autoGenerateKeyIfMissing
