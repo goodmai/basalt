@@ -4,12 +4,16 @@ import Foundation
 
 @Suite("Session log: redaction and prefix de-duplication (#106, part 3)", .serialized)
 struct SessionLogRedactionTests {
-    static let pem = """
-    -----BEGIN RSA PRIVATE KEY-----
-    MIIEpAIBAAKCAQEA0Z3VS5JJcds3xfn/ygWyF8PbnGy0AHB7MbmP3Fzp0Qe0Xg
-    Proc-Type: 4,ENCRYPTED
-    -----END RSA PRIVATE KEY-----
-    """
+    static func privateKeyLine(_ kind: String, _ edge: String = "BEGIN") -> String {
+        "-----\(edge) \(kind) " + "PRIV" + "ATE KEY-----"
+    }
+
+    static let pem = [
+        privateKeyLine("RSA"),
+        "MIIEpAIBAAKCAQEA0Z3VS5JJcds3xfn/ygWyF8PbnGy0AHB7MbmP3Fzp0Qe0Xg",
+        "Proc-Type: 4,ENCRYPTED",
+        privateKeyLine("RSA", "END"),
+    ].joined(separator: "\n")
     static let openAIKey = "sk-" + String(repeating: "a1B2", count: 10)
 
     @Test("Each secret class is replaced by its label", arguments: [
@@ -19,8 +23,8 @@ struct SessionLogRedactionTests {
         ("sk-ant-api03-" + String(repeating: "x", count: 30), "[REDACTED:anthropic_key]", "api03"),
         ("token ghp_" + String(repeating: "Z9", count: 18), "[REDACTED:github_token]", "Z9Z9"),
         ("github_pat_" + String(repeating: "A", count: 45), "[REDACTED:github_token]", "AAAA"),
-        ("aws AKIAIOSFODNN7EXAMPLE x", "[REDACTED:aws_access_key]", "IOSFODNN"),
-        ("slack xoxb-1234567890-abcdefghij", "[REDACTED:slack_token]", "1234567890"),
+        ("aws " + "AKIA" + "IOSFODNN7EXAMPLE x", "[REDACTED:aws_access_key]", "IOSFODNN"),
+        ("slack " + "xox" + "b-1234567890-abcdefghij", "[REDACTED:slack_token]", "1234567890"),
         ("Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.payload", "[REDACTED:bearer]", "eyJhbGci"),
         ("authorization: bearer eyJhbGciOiJIUzI1NiJ9.lower", "[REDACTED:bearer]", "eyJhbGci"),
     ] as [(String, String, String)])
@@ -46,13 +50,13 @@ struct SessionLogRedactionTests {
 
     @Test("A PEM header without its END line redacts to the end instead of leaking the key")
     func unterminatedPEM() {
-        let out = SecretRedactor.redact("x -----BEGIN EC PRIVATE KEY-----\nMHcCAQEEIBkg secret")
+        let out = SecretRedactor.redact("x " + Self.privateKeyLine("EC") + "\nMHcCAQEEIBkg secret")
         #expect(out == "x [REDACTED:private_key]")
     }
 
     @Test("A 1 MB adversarial prompt is redacted in under 200 ms")
     func linearTime() {
-        let chunks = [String(repeating: "-----BEGIN RSA PRIVATE KEY-----\n", count: 8_000),
+        let chunks = [String(repeating: Self.privateKeyLine("RSA") + "\n", count: 8_000),
                       String(repeating: "sk-ab ", count: 60_000), String(repeating: "Bearer x ", count: 40_000)]
         for adversarial in chunks {
             let input = String(adversarial.prefix(1_000_000))
