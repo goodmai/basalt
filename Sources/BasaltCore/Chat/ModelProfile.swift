@@ -169,6 +169,22 @@ public struct NemotronProfile: ModelProfile {
     public var writesToolCallsAsText: Bool { true }
 }
 
+public struct LiquidProfile: ModelProfile {
+    public let name = "lfm2"
+
+    public init() {}
+
+    public func templateContext(for reasoning: ReasoningPolicy) -> [String: any Sendable] { [:] }
+
+    public var thinkingMarkers: ThinkingMarkers {
+        ThinkingMarkers(open: ["<think>"], close: ["</think>"])
+    }
+
+    public var defaultMaxTokens: Int { 8192 }
+
+    public var defaultMinP: Float? { nil }
+}
+
 // MARK: — Fallback
 
 public struct GenericProfile: ModelProfile {
@@ -195,18 +211,21 @@ public struct SamplingDefaults: Sendable, Equatable {
     public let temperature: Double?
     public let topP: Double?
     public let topK: Int?
+    public let repetitionPenalty: Double?
 
-    public init(temperature: Double? = nil, topP: Double? = nil, topK: Int? = nil) {
+    public init(temperature: Double? = nil, topP: Double? = nil, topK: Int? = nil, repetitionPenalty: Double? = nil) {
         self.temperature = temperature
         self.topP = topP
         self.topK = topK
+        self.repetitionPenalty = repetitionPenalty
     }
 
     public init(generationConfig json: [String: Any]?) {
         self.init(
             temperature: (json?["temperature"] as? NSNumber)?.doubleValue,
             topP: (json?["top_p"] as? NSNumber)?.doubleValue,
-            topK: (json?["top_k"] as? NSNumber)?.intValue)
+            topK: (json?["top_k"] as? NSNumber)?.intValue,
+            repetitionPenalty: (json?["repetition_penalty"] as? NSNumber)?.doubleValue)
     }
 }
 
@@ -223,6 +242,7 @@ public enum ModelProfileRegistry {
         guard let t = modelType?.lowercased() else { return GenericProfile() }
         if t.hasPrefix("qwen3") { return QwenProfile() }
         if t.hasPrefix("gemma") { return GemmaProfile() }
+        if t.hasPrefix("lfm2") { return LiquidProfile() }
         if t == "nemotron_h" {
             return NemotronProfile(switchesThinkingInConversation: chatTemplate?.contains("/no_think") == true)
         }
