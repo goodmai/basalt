@@ -597,6 +597,7 @@ public actor MLXInferenceEngine: InferenceEngine {
         params.kvBits = kvBits
         params.quantizedKVStart = quantizedKVStart
         params.repetitionPenalty = request.repetitionPenalty.map(Float.init) ?? repetitionPenalty
+            ?? samplingDefaults.repetitionPenalty.map(Float.init)
         if let topK = request.topK ?? topK ?? samplingDefaults.topK { params.topK = topK }
         if let effectiveMinP = request.minP.map(Float.init) ?? minP ?? profile.defaultMinP {
             params.minP = effectiveMinP
@@ -619,6 +620,18 @@ public actor MLXInferenceEngine: InferenceEngine {
         return (params, components, shaping)
     }
 
+    static let liquidReasoning = ReasoningConfig(
+        startDelimiter: "<think>", endDelimiter: "</think>", promptStrategy: .alwaysOn, isSpecialToken: true,
+        implicitEndDelimiters: ["<|tool_call_start|>"], budgetTransition: QwenReasoningProtocol.qwen3.budgetTransition)
+
+    static func reasoningProtocol(for profile: any ModelProfile) -> ReasoningConfig? {
+        switch profile {
+        case is QwenProfile:   QwenReasoningProtocol.tagged
+        case is LiquidProfile: liquidReasoning
+        default:               nil
+        }
+    }
+
     static func budgetTransition(for reasoning: ReasoningConfig, profile: any ModelProfile) -> ReasoningBudgetTransition? {
         if let declared = reasoning.budgetTransition { return declared }
         guard profile is QwenProfile, reasoning.endDelimiter == QwenReasoningProtocol.qwen3.endDelimiter else {
@@ -631,7 +644,7 @@ public actor MLXInferenceEngine: InferenceEngine {
         _ budget: Int, to components: GenerationComponents, parameters: GenerateParameters,
         reasoning: ReasoningConfig?, tokenizer: any MLXLMCommon.Tokenizer, profile: any ModelProfile
     ) throws(BasaltError) -> GenerationComponents {
-        guard let reasoning = reasoning ?? (profile is QwenProfile ? QwenReasoningProtocol.tagged : nil) else {
+        guard let reasoning = reasoning ?? reasoningProtocol(for: profile) else {
             return components
         }
         guard let transition = budgetTransition(for: reasoning, profile: profile) else {
