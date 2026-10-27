@@ -144,25 +144,24 @@ struct OrchestratorTests {
         #expect(results.allSatisfy { $0.generatedText == "Mock response" })
     }
 
-    @Test("intensive concurrency (Task 4.2): 50 parallel requests")
+    @Test("As many parallel requests as the default gate holds (1 running + 8 queued) all finish, one at a time")
     func intensiveConcurrency() async throws {
         let engine = MockInferenceEngine()
         let orch = ModelOrchestratorActor(engine: engine)
         try await orch.loadModel(path: "model")
-        
-        try await withThrowingTaskGroup(of: GenerationResponse.self) { group in
-            for i in 1...50 {
-                group.addTask {
-                    try await orch.generate(request: .init(prompt: "Prompt \(i)"))
-                }
+        await engine.setArtificialDelay(0.05)
+        let gate = await orch.gate
+        let capacity = gate.maxConcurrent + gate.maxQueue
+        #expect(capacity == 9)
+
+        let results = try await withThrowingTaskGroup(of: GenerationResponse.self) { group in
+            for i in 1...capacity {
+                group.addTask { try await orch.generate(request: .init(prompt: "Prompt \(i)")) }
             }
-            
-            var count = 0
-            for try await _ in group {
-                count += 1
-            }
-            #expect(count == 50)
+            return try await group.reduce(into: [GenerationResponse]()) { $0.append($1) }
         }
+        #expect(results.count == capacity)
+        #expect(await engine.getRequests().count == capacity)
     }
 
     // MARK: — Missing coverage tests

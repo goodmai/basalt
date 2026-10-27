@@ -3,10 +3,6 @@ import os
 
 // MARK: — Orchestrator
 
-/// Single source of truth for both transports (MCP + REST).
-///
-/// Swift actor serialises all access (FIFO) — no explicit locking needed.
-/// λ_mcp + λ_rest < μ_inference guarantees the queue stays bounded.
 public actor ModelOrchestratorActor {
 
     // MARK: — State
@@ -29,6 +25,8 @@ public actor ModelOrchestratorActor {
     /// Empty string means nothing has been loaded yet.
     public private(set) var currentModelId: String = ""
 
+    public let gate: GenerationGate
+    private var pendingSwitch: (modelId: String, task: Task<Void, Error>)?
     private var cloudFallback: (any CloudFallback)?
     private var arbiter = HybridArbiter()
     private var freeMemory: @Sendable () -> Int64 = { SystemProfiler.availableSystemMemory() }
@@ -39,8 +37,10 @@ public actor ModelOrchestratorActor {
     public let telemetry: TelemetryTracker
 
     public init(
-        engine: any InferenceEngine, maxTokens: Int = 65_536, kvBits: Int? = nil, telemetry: TelemetryTracker = .shared
+        engine: any InferenceEngine, maxTokens: Int = 65_536, kvBits: Int? = nil, telemetry: TelemetryTracker = .shared,
+        gate: GenerationGate = GenerationGate()
     ) {
+        self.gate = gate
         self.engine = engine
         self.maxTokens = maxTokens
         self.kvBits = kvBits
@@ -77,9 +77,17 @@ public actor ModelOrchestratorActor {
 
     // MARK: — Model loading
 
-    /// Load a model from a filesystem path.
-    /// After loading, call `setModelId(_:)` to record the HuggingFace repo ID.
     public func loadModel(path: String) async throws(BasaltError) {
+        do {
+            try await gate.exclusively { try await self.performLoad(path: path) }
+        } catch let error as BasaltError {
+            throw error
+        } catch {
+            throw .inferenceError("Model load error: \(error)")
+        }
+    }
+
+    private func performLoad(path: String) async throws(BasaltError) {
         let size = try? calculateDirectorySize(url: URL(fileURLWithPath: path))
         try await engine.load(modelPath: path)
         currentModelPath = path
@@ -102,11 +110,14 @@ public actor ModelOrchestratorActor {
 
     // MARK: — Model switching
 
-    /// Hot-swap the loaded model. Resolves `modelId` from the local HuggingFace cache.
-    /// Throws `.modelNotCached` if the model hasn't been downloaded yet.
-    /// Because this is an actor method it serialises with all in-flight generate calls —
-    /// any concurrent request will queue and run after the switch completes.
     public func switchModel(to modelId: String) async throws(BasaltError) {
+        if let pending = pendingSwitch {
+            guard pending.modelId == modelId else {
+                throw .modelSwitching(from: currentModelId, to: pending.modelId)
+            }
+            try await Self.awaitSwitch(pending.task)
+            return
+        }
         guard modelId != currentModelId else {
             logger.trace("switchModel: already loaded '\(modelId)'")
             return
@@ -120,9 +131,38 @@ public actor ModelOrchestratorActor {
         }
 
         logger.info("Switching model: '\(currentModelId)' → '\(modelId)'")
-        try await loadModel(path: path)
-        self.currentModelId = modelId
+        let task = Task {
+            defer { self.pendingSwitch = nil }
+            try await self.gate.exclusively { try await self.performLoad(path: path) }
+            self.currentModelId = modelId
+        }
+        pendingSwitch = (modelId, task)
+        try await Self.awaitSwitch(task)
         logger.info("Model switch complete: '\(modelId)'")
+    }
+
+    private static func awaitSwitch(_ task: Task<Void, Error>) async throws(BasaltError) {
+        do {
+            try await task.value
+        } catch let error as BasaltError {
+            throw error
+        } catch {
+            throw .inferenceError("Model switch error: \(error)")
+        }
+    }
+
+    private func admitted() async throws(BasaltError) -> Int {
+        do {
+            return try await gate.admit()
+        } catch let error as BasaltError {
+            throw error
+        } catch {
+            throw .inferenceError("Cancelled while queued")
+        }
+    }
+
+    public func shutdown(deadline: Duration = .seconds(5)) async {
+        await gate.shutdown(deadline: deadline)
     }
 
     /// Info string for logging / health checks.
@@ -152,18 +192,23 @@ public actor ModelOrchestratorActor {
 
         logger.trace("generate: \(request.prompt.prefix(60))…")
         let validated = try await capped(request)
+        let ticket = try await admitted()
+        let seconds = timeout(for: validated)
+        let work = Task { try await self.withTimeout(seconds: seconds) { try await self.engine.generate(request: validated) } }
+        await gate.onCancel(ticket) { work.cancel() }
 
         await self.telemetry.requestStarted()
         do {
-            let response = try await withTimeout(seconds: timeout(for: validated)) {
-                try await self.engine.generate(request: validated)
-            }
+            let response = try await withTaskCancellationHandler { try await work.value } onCancel: { work.cancel() }
+            await gate.release(ticket)
             await self.telemetry.requestFinished(with: response)
             return response
         } catch let error as BasaltError {
+            await gate.release(ticket)
             await self.telemetry.requestFinished()
             throw error
         } catch {
+            await gate.release(ticket)
             await self.telemetry.requestFinished()
             throw BasaltError.inferenceError("Generation error: \(error)")
         }
@@ -189,6 +234,7 @@ public actor ModelOrchestratorActor {
 
         logger.trace("generateStream start")
         let validated = try await capped(request)
+        let ticket = try await admitted()
 
         await self.telemetry.requestStarted()
         let stream: AsyncStream<StreamChunk>
@@ -197,14 +243,17 @@ public actor ModelOrchestratorActor {
                 try await self.engine.generateStream(request: validated)
             }
         } catch let error as BasaltError {
+            await gate.release(ticket)
             await self.telemetry.requestFinished()
             throw error
         } catch {
+            await gate.release(ticket)
             await self.telemetry.requestFinished()
             throw BasaltError.inferenceError("Stream setup error: \(error)")
         }
 
         let telemetry = self.telemetry
+        let gate = self.gate
         return AsyncStream<StreamChunk> { continuation in
             let task = Task.detached {
                 var result: GenerationResponse?
@@ -221,11 +270,11 @@ public actor ModelOrchestratorActor {
                         continuation.yield(.toolCall(call))
                     }
                 }
-                // Reached on completion and on cancellation (onTermination cancels this task).
-                // Streaming is most of the REST traffic: it is counted like generate().
+                await gate.release(ticket)
                 await telemetry.requestFinished(with: result)
                 continuation.finish()
             }
+            Task { await gate.onCancel(ticket) { task.cancel() } }
             continuation.onTermination = { _ in task.cancel() }
         }
     }

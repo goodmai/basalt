@@ -1,5 +1,6 @@
 import Foundation
 import Hummingbird
+import ServiceLifecycle
 import Logging
 import BasaltCore
 
@@ -12,9 +13,12 @@ package struct RESTServer: Sendable {
     let orchestrator: ModelOrchestratorActor
     let config: ServerConfig
 
-    package init(orchestrator: ModelOrchestratorActor, config: ServerConfig) {
+    let shutdownDeadline: Duration
+
+    package init(orchestrator: ModelOrchestratorActor, config: ServerConfig, shutdownDeadline: Duration = .seconds(5)) {
         self.orchestrator = orchestrator
         self.config = config
+        self.shutdownDeadline = shutdownDeadline
     }
 
     package func run() async throws {
@@ -44,7 +48,16 @@ package struct RESTServer: Sendable {
         }
         log("Browser origins: loopback on port \(config.restPort)" + config.allowedOrigins.map { ", \($0)" }.joined())
         log("Swagger: http://\(config.host):\(config.restPort)/swagger")
-        try await app.runService()
+        let drain = GenerationDrainService(orchestrator: orchestrator, deadline: shutdownDeadline)
+        let group = ServiceGroup(configuration: .init(
+            services: [
+                .init(service: app),
+                .init(service: drain, successTerminationBehavior: .gracefullyShutdownGroup),
+            ],
+            gracefulShutdownSignals: [.sigterm, .sigint],
+            logger: logger
+        ))
+        try await group.run()
     }
 
     // MARK: — Router
@@ -80,6 +93,7 @@ package struct RESTServer: Sendable {
             router.add(middleware: RateLimitMiddleware(requestsPerMinute: limit))
         }
         router.add(middleware: JSONNestingLimitMiddleware())
+        router.add(middleware: RetryAfterMiddleware())
 
         // ── Native API ──────────────────────────────────────────────────────────
         let v1 = router.group("/api/v1")

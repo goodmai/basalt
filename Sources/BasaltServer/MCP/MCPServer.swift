@@ -701,6 +701,7 @@ public final class MCPServer: Sendable {
         case .inferenceError:           return -32009
         case .modelNotCached:           return -32010
         case .modelSwitching:           return -32011
+        case .serverBusy:               return -32012
         case .modelConfigurationInvalid: return -32012
         }
     }

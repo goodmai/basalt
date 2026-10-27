@@ -15,6 +15,7 @@ let package = Package(
         // collides with swift-service-context ("target names need to be unique"). Lift once that is resolved.
         .package(url: "https://github.com/hummingbird-project/hummingbird", "2.27.0"..<"2.28.0"),
         .package(url: "https://github.com/apple/swift-argument-parser",    from: "1.8.2"),
+        .package(url: "https://github.com/swift-server/swift-service-lifecycle", from: "2.12.0"),
         // Provides the `Tokenizers` module used by MLXHuggingFace macros
         .package(url: "https://github.com/huggingface/swift-transformers",  from: "1.3.5"),
         .package(url: "https://github.com/huggingface/swift-jinja.git",     from: "2.4.2"),
@@ -71,6 +72,7 @@ let package = Package(
             name: "BasaltServer",
             dependencies: [
                 "BasaltCore", "BasaltHarness",
+                .product(name: "ServiceLifecycle", package: "swift-service-lifecycle"),
                 .product(name: "Hummingbird",   package: "hummingbird"),
             ],
             path: "Sources/BasaltServer",
@@ -125,6 +127,7 @@ let package = Package(
         .testTarget(
             name: "BasaltTests",
             dependencies: [
+                .product(name: "ServiceLifecycle", package: "swift-service-lifecycle"),
                 "BasaltCore", "BasaltInference", "BasaltCloud", "BasaltServer", "BasaltUI", "BasaltCLI", "BasaltApp", "BasaltHarness",
                 .product(name: "HummingbirdTesting", package: "hummingbird"),
                 .product(name: "MLXGuidedGeneration", package: "mlx-swift-lm"),
