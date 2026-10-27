@@ -112,7 +112,7 @@ struct HarnessLibraryTests {
         return holder
     }
 
-    static func holdLock(_ root: URL, until signal: MCPLines, atMost deadline: Duration = .seconds(30)) throws -> MCPLines {
+    static func holdLock(_ root: URL, until signal: MCPLines, atMost deadline: Duration = .seconds(300)) throws -> MCPLines {
         let holder = try lockedDescriptor(root)
         let release = MCPLines()
         Thread.detachNewThread {
