@@ -99,6 +99,16 @@ struct CloudAPIClientTests {
         }
         #expect(await api.getMetrics() == (requests: 0, errors: 1))
     }
+
+    @Test("A keyless endpoint (a self-hosted OpenAI-compatible server) gets no Authorization header")
+    func keylessRequestHasNoAuthorization() async throws {
+        let host = StubURLProtocol.host { _, _ in (200, [:], Data(#"{"value": "ok"}"#.utf8)) }
+        let config = CloudAPIConfig(apiKey: "", baseURL: URL(string: "https://\(host)/v1")!, timeout: 5, maxRetries: 1)
+        _ = try await CloudAPIClient(config: config, configuration: StubURLProtocol.configuration)
+            .performRequest(endpoint: "chat", method: "POST", body: json("{}"), responseType: Reply.self)
+        let (request, _) = try #require(StubURLProtocol.requests(for: host).first)
+        #expect(request.value(forHTTPHeaderField: "Authorization") == nil)
+    }
 }
 
 private final class Counter: @unchecked Sendable {

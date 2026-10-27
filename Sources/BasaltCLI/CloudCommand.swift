@@ -31,6 +31,10 @@ public struct CloudCommand: AsyncParsableCommand {
         return home.appendingPathComponent(".gem/cloud.json")
     }
     
+    public static func costURL() -> URL {
+        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".gem/cost.json")
+    }
+
     public static func loadConfig() -> CloudConfig? {
         guard let data = try? Data(contentsOf: configURL()) else { return nil }
         return try? JSONDecoder().decode(CloudConfig.self, from: data)
@@ -176,7 +180,7 @@ public struct CloudCommand: AsyncParsableCommand {
                 return
             }
             
-            let url = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".gem/cost.json")
+            let url = CloudCommand.costURL()
             let budget = CostTracker.Budget(dailyLimit: config.dailyBudget, monthlyLimit: config.monthlyBudget)
             let tracker = try CostTracker(storageURL: url, budget: budget)
             

@@ -4,6 +4,7 @@ import BasaltCore
 import BasaltInference
 import BasaltServer
 import BasaltHarness
+import BasaltCloud
 
 // MARK: — serve (subcommand)
 
@@ -129,6 +130,27 @@ struct ServeCommand: AsyncParsableCommand {
     @Option(name: .customLong("stats-interval"), help: "Interval in seconds between periodic telemetry stats outputs (default: 5)")
     var statsInterval: Int = 5
 
+    @Option(
+        name: .customLong("cloud-fallback"),
+        help: "Model on an OpenAI-compatible server that answers when the local model cannot: the request does not fit in free memory, the prompt exceeds --local-context-limit, or the task rates beyond the local model (also cloud_fallback.model in the config; spend is capped by the `basalt cloud` daily/monthly budgets)"
+    )
+    var cloudFallback: String?
+
+    @Option(
+        name: .customLong("cloud-base-url"),
+        help: "OpenAI-compatible endpoint for --cloud-fallback, e.g. http://192.168.1.20:8000/v1 (default: https://openrouter.ai/api/v1; also cloud_fallback.base_url)"
+    )
+    var cloudBaseURL: String?
+
+    @Flag(name: .customLong("no-cloud-fallback"), help: "Never switch to the cloud fallback, even if the config enables it")
+    var noCloudFallback = false
+
+    @Option(
+        name: .customLong("local-context-limit"),
+        help: "Prompt tokens beyond which the local model counts as degraded and the cloud fallback answers instead"
+    )
+    var localContextLimit: Int?
+
     @Option(name: .long, help: "Log level: debug | info | warn | error (default: info)")
     var logLevel: ServerConfig.LogLevel = .info
 
@@ -136,6 +158,71 @@ struct ServeCommand: AsyncParsableCommand {
 
     private static let logger = GemLogger(module: "ServeCommand")
     private static let defaultModel = "AutisticAF/Huihui-Qwen3.8-27B-abliterated-mlx-4Bit"
+
+    struct CloudFallbackSettings: Equatable {
+        let model: String
+        let baseURL: URL
+        let apiKey: String
+        let localContextLimit: Int?
+    }
+
+    static func resolveCloudFallback(
+        cliModel: String?, cliBaseURL: String?, cliDisabled: Bool, cliLocalContextLimit: Int?, configFile: String?,
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        savedOpenRouterKey: () -> String? = { CloudCommand.loadConfig()?.apiKey }
+    ) throws -> CloudFallbackSettings? {
+        guard !cliDisabled else { return nil }
+        var section: [String: Any] = [:]
+        if let configFile {
+            let url = URL(fileURLWithPath: (configFile as NSString).expandingTildeInPath)
+            let root = try ServerConfig.load(from: url)
+            if let raw = root["cloud_fallback"] {
+                guard let dict = raw as? [String: Any] else {
+                    throw ValidationError("--config: \"cloud_fallback\" must be an object")
+                }
+                section = dict
+            }
+        }
+        func value<T>(_ key: String, as _: T.Type) throws -> T? {
+            guard let raw = section[key], !(raw is NSNull) else { return nil }
+            guard CFGetTypeID(raw as CFTypeRef) != CFBooleanGetTypeID() || T.self == Bool.self, let typed = raw as? T else {
+                throw ValidationError("--config: \"cloud_fallback.\(key)\" must be \(T.self), got \(raw)")
+            }
+            return typed
+        }
+        if cliModel == nil, try value("enabled", as: Bool.self) == false { return nil }
+        guard let model = try cliModel ?? value("model", as: String.self), !model.isEmpty else { return nil }
+        let rawURL = try cliBaseURL ?? value("base_url", as: String.self) ?? "https://openrouter.ai/api/v1"
+        guard let baseURL = URL(string: rawURL), ["http", "https"].contains(baseURL.scheme?.lowercased()), baseURL.host != nil else {
+            throw ValidationError("cloud fallback base URL must be http(s)://host[:port]/path, got \(rawURL)")
+        }
+        let openRouter = OpenRouterClient.isOpenRouter(baseURL)
+        let keyVariable = try value("api_key_env", as: String.self) ?? (openRouter ? "OPENROUTER_API_KEY" : nil)
+        let apiKey = try value("api_key", as: String.self)
+            ?? keyVariable.flatMap { environment[$0] }
+            ?? (openRouter ? savedOpenRouterKey() : nil)
+            ?? ""
+        if openRouter, apiKey.isEmpty {
+            throw ValidationError("cloud fallback on OpenRouter needs OPENROUTER_API_KEY, cloud_fallback.api_key or `basalt cloud configure`")
+        }
+        let limit = try cliLocalContextLimit ?? value("local_context_limit", as: Int.self)
+        if let limit, limit <= 0 {
+            throw ValidationError("local_context_limit must be a positive number of tokens, got \(limit)")
+        }
+        return CloudFallbackSettings(model: model, baseURL: baseURL, apiKey: apiKey, localContextLimit: limit)
+    }
+
+    static func cloudFallbackRouter(_ settings: CloudFallbackSettings, orchestrator: ModelOrchestratorActor) throws -> ModelRouter {
+        let saved = CloudCommand.loadConfig()
+        let budget = CostTracker.Budget(dailyLimit: saved?.dailyBudget ?? 5, monthlyLimit: saved?.monthlyBudget ?? 50)
+        return ModelRouter(
+            localOrchestrator: orchestrator,
+            cloudClient: try OpenRouterClient(config: .init(
+                apiKey: settings.apiKey, baseURL: settings.baseURL, timeout: 120, maxRetries: 2)),
+            strategy: .cloudOnly,
+            costTracker: try CostTracker(storageURL: CloudCommand.costURL(), budget: budget),
+            fallbackCloudModel: settings.model)
+    }
 
     func validate() throws {
         if let rateLimit, rateLimit < 0 {
@@ -246,6 +333,15 @@ struct ServeCommand: AsyncParsableCommand {
                 throw ExitCode.failure
             }
             log("\(yellow("[warn]")) \(error.localizedDescription) — running in stub mode.")
+        }
+
+        if let fallback = try Self.resolveCloudFallback(
+            cliModel: cloudFallback, cliBaseURL: cloudBaseURL, cliDisabled: noCloudFallback,
+            cliLocalContextLimit: localContextLimit, configFile: configFile ?? Self.defaultConfigFileIfPresent())
+        {
+            let router = try Self.cloudFallbackRouter(fallback, orchestrator: orchestrator)
+            await orchestrator.setCloudFallback(router, arbiter: HybridArbiter(localContextLimit: fallback.localContextLimit))
+            log("Cloud fallback → \(bold(fallback.model)) at \(fallback.baseURL.absoluteString)")
         }
 
         // Default: REST only. MCP stdio can be added with --mcp.

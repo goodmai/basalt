@@ -110,6 +110,12 @@ public actor CostTracker: Sendable {
         }
     }
 
+    public func remaining(scopes: [BudgetScope]) -> Double {
+        resetCountersIfNeeded()
+        let scoped = scopes.compactMap { scope in scopeLimits[scope].map { $0 - spent(in: scope) } }
+        return ([budget.dailyLimit - stats.dailyUsage, budget.monthlyLimit - stats.monthlyUsage] + scoped).min()!
+    }
+
     public func recordUsage(model: String, cost: Double, scopes: [BudgetScope] = []) throws {
         guard cost > 0 else { return }
         
