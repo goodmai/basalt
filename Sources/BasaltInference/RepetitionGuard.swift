@@ -57,7 +57,26 @@ public struct RepetitionGuard: Sendable {
             searchRange = found.upperBound..<buffer.endIndex
         }
         score = Self.score(occurrences: occurrences, threshold: threshold)
-        return occurrences >= threshold
+        return occurrences >= threshold && Self.endsInVerbatimCycle(Array(buffer.utf8), probeSize: probeSize, repeats: threshold)
+    }
+
+    static func endsInVerbatimCycle(_ bytes: [UInt8], probeSize: Int, repeats: Int) -> Bool {
+        let probeStart = bytes.count - probeSize
+        guard probeStart > 0 else { return false }
+        let probe = bytes[probeStart...]
+        var start = probeStart - 1
+        while start >= 0 {
+            if bytes[start] == probe.first, bytes[start..<(start + probeSize)].elementsEqual(probe) {
+                let period = probeStart - start
+                let span = max((repeats - 1) * period + probeSize, repeats * probeSize)
+                guard span <= bytes.count else { return false }
+                if (bytes.count - span + period..<bytes.count).allSatisfy({ bytes[$0] == bytes[$0 - period] }) {
+                    return true
+                }
+            }
+            start -= 1
+        }
+        return false
     }
 
     public static func score<E: Equatable>(tokens: [E], probeSize: Int, threshold: Int) -> Double {
