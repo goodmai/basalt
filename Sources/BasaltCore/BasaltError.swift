@@ -26,6 +26,7 @@ public enum BasaltError: Error, Sendable, LocalizedError {
     case modelNotCached(identifier: String)
     /// Model switch is in progress — used for 503 responses.
     case modelSwitching(from: String, to: String)
+    case serverBusy(retryAfterSeconds: Int?)
 
     // MARK: — LocalizedError
     public var errorDescription: String? {
@@ -56,6 +57,9 @@ public enum BasaltError: Error, Sendable, LocalizedError {
             return "Model '\(id)' is not in the local cache. Run: basalt models download \(id)"
         case .modelSwitching(let from, let to):
             return "Switching model from '\(from)' to '\(to)'. Retry in a few seconds."
+        case .serverBusy(let retryAfter):
+            return retryAfter.map { "Server is busy: every generation slot and queue place is taken. Retry in \($0) s." }
+                ?? "Server is shutting down."
         }
     }
 
@@ -75,6 +79,7 @@ public enum BasaltError: Error, Sendable, LocalizedError {
         case .inferenceError:           return 500
         case .modelNotCached:           return 404
         case .modelSwitching:           return 503  // Service Unavailable — retry
+        case .serverBusy:               return 503
         }
     }
 }

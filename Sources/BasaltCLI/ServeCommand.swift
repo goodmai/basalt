@@ -112,6 +112,18 @@ struct ServeCommand: AsyncParsableCommand {
     )
     var configFile: String?
 
+    @Option(
+        name: .customLong("max-concurrent"),
+        help: "Generations decoding at the same time; each holds its own KV cache (default: 1)"
+    )
+    var maxConcurrent: Int = 1
+
+    @Option(
+        name: .customLong("max-queue"),
+        help: "Requests waiting for a generation slot; beyond it the server answers 503 with Retry-After (default: 8)"
+    )
+    var maxQueue: Int = 8
+
     @Option(name: .customLong("max-tokens"), help: "Default maximum tokens to generate (default: 65536, range: 2048-128000)")
     var maxTokens: Int = 65536
 
@@ -291,6 +303,12 @@ struct ServeCommand: AsyncParsableCommand {
     }
 
     func validate() throws {
+        guard maxConcurrent >= 1 else {
+            throw ValidationError("--max-concurrent must be at least 1, got \(maxConcurrent)")
+        }
+        guard maxQueue >= 0 else {
+            throw ValidationError("--max-queue must be 0 or more, got \(maxQueue)")
+        }
         if let rateLimit, rateLimit < 0 {
             throw ValidationError("--rate-limit must be 0 (off) or a positive number of requests per minute, got \(rateLimit)")
         }
@@ -386,7 +404,9 @@ struct ServeCommand: AsyncParsableCommand {
             seed: seed,
             cacheBlendRatio: cacheBlend ? min(max(0, cacheBlendRatio), 1) : nil
         )
-        let orchestrator = ModelOrchestratorActor(engine: engine, maxTokens: config.maxTokens, kvBits: kvBits)
+        let orchestrator = ModelOrchestratorActor(
+            engine: engine, maxTokens: config.maxTokens, kvBits: kvBits,
+            gate: GenerationGate(maxConcurrent: maxConcurrent, maxQueue: maxQueue))
 
         log("Loading model from \(bold(resolvedPath))…")
         do {
