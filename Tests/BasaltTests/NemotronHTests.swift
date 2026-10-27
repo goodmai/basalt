@@ -141,7 +141,7 @@ struct NemotronHTests {
         #expect(rewritten.chatTemplate.string()?.contains("for call_item in message.tool_calls") == true)
         #expect(rewritten.eosToken.string() == "<SPECIAL_12>")
         let commented = Config(["chat_template": Config("{{ bos }}\n\n{#- note #}\n{{ messages }}")])
-        #expect(MLXInferenceEngine.compatibleChatTemplate(in: commented).chatTemplate.string() == "{{ bos }}\n\n{#- note #}\n{{ messages }}")
+        #expect(MLXInferenceEngine.compatibleChatTemplate(in: commented).chatTemplate.string() == "{{ bos }}{# #}{{ messages }}")
         let plain = Config(["chat_template": Config("{{ messages }}")])
         #expect(MLXInferenceEngine.compatibleChatTemplate(in: plain).chatTemplate.string() == "{{ messages }}")
     }

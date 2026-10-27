@@ -96,12 +96,18 @@ struct OpenAIController: Sendable {
             case reasoning
         }
 
+        enum ReasoningContentKey: String, CodingKey {
+            case reasoningContent = "reasoning_content"
+        }
+
         func encode(to encoder: Encoder) throws {
             var c = encoder.container(keyedBy: CodingKeys.self)
             try c.encodeIfPresent(type, forKey: .type)
             try c.encodeIfPresent(role, forKey: .role)
             try c.encode(content, forKey: .content)
             try c.encodeIfPresent(reasoning, forKey: .reasoning)
+            var compatible = encoder.container(keyedBy: ReasoningContentKey.self)
+            try compatible.encodeIfPresent(reasoning, forKey: .reasoningContent)
             try c.encodeIfPresent(name, forKey: .name)
             try c.encodeIfPresent(arguments, forKey: .arguments)
             try c.encodeIfPresent(input, forKey: .input)
@@ -585,7 +591,7 @@ struct OpenAIController: Sendable {
                             if toolCallCount > 0, text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { continue }
                             send(delta: ["role": "assistant", "content": text])
                         case .reasoning(let reasoning):
-                            send(delta: ["role": "assistant", "reasoning": reasoning])
+                            send(delta: ["role": "assistant", "reasoning": reasoning, "reasoning_content": reasoning])
                         case .metadata(let meta):
                             final = meta
                         }
