@@ -21,27 +21,8 @@ public struct TokenBudgetCalculator: Sendable {
         modelSizeMB: Int, kv: KVCacheGeometry, kvBits: Int? = nil, promptTokens: Int = 0
     ) -> Int {
         calculateMaxTokens(
-            availableRAM: getAvailableSystemMemory(), modelSizeMB: modelSizeMB,
+            availableRAM: SystemProfiler.availableSystemMemory(), modelSizeMB: modelSizeMB,
             kv: kv, kvBits: kvBits, promptTokens: promptTokens
         )
-    }
-
-    private static func getAvailableSystemMemory() -> Int64 {
-        var stats = vm_statistics64()
-        var count = mach_msg_type_number_t(MemoryLayout<vm_statistics64_data_t>.size / MemoryLayout<integer_t>.size)
-        
-        let result = withUnsafeMutablePointer(to: &stats) {
-            $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
-                host_statistics64(mach_host_self(), HOST_VM_INFO64, $0, &count)
-            }
-        }
-        
-        if result == KERN_SUCCESS {
-            let pageSize = UInt64(getpagesize())
-            let availablePages = UInt64(stats.free_count) + UInt64(stats.inactive_count)
-            return Int64(availablePages * pageSize)
-        } else {
-            return Int64(ProcessInfo.processInfo.physicalMemory / 2)
-        }
     }
 }

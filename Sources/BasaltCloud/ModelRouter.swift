@@ -39,6 +39,35 @@ public actor ModelRouter: Sendable {
         }
     }
     
+    public struct RoutingContext: Sendable {
+        public let sessionId: String?
+        public let virtualKey: String?
+
+        public init(sessionId: String? = nil, virtualKey: String? = nil) {
+            self.sessionId = sessionId
+            self.virtualKey = virtualKey
+        }
+
+        var budgetScopes: [CostTracker.BudgetScope] {
+            [sessionId.map { .session($0) }, virtualKey.map { .virtualKey($0) }].compactMap { $0 }
+        }
+    }
+
+    public struct CostRouting: Sendable {
+        public let policy: StickyRoutingPolicy
+        public let scorer: BradleyTerryRouter
+
+        public init(policy: StickyRoutingPolicy, scorer: BradleyTerryRouter) {
+            self.policy = policy
+            self.scorer = scorer
+        }
+    }
+
+    private struct SessionRoute {
+        let tier: StickyRoutingPolicy.Tier
+        let promptTokens: Int
+    }
+
     private let localOrchestrator: ModelOrchestratorActor
     private let cloudClient: OpenRouterClient?
     private let strategy: RoutingStrategy
@@ -46,17 +75,27 @@ public actor ModelRouter: Sendable {
     
     // For testing
     private let mockAvailableRAM: Int64?
+    private let costRouting: CostRouting?
+    private let costTracker: CostTracker?
+    private let localFallbackModel: String?
+    private var sessionRoutes: [String: SessionRoute] = [:]
     
     public init(
         localOrchestrator: ModelOrchestratorActor,
         cloudClient: OpenRouterClient?,
         strategy: RoutingStrategy = .auto,
-        mockAvailableRAM: Int64? = nil
+        mockAvailableRAM: Int64? = nil,
+        costRouting: CostRouting? = nil,
+        costTracker: CostTracker? = nil,
+        localFallbackModel: String? = nil
     ) {
         self.localOrchestrator = localOrchestrator
         self.cloudClient = cloudClient
         self.strategy = strategy
         self.mockAvailableRAM = mockAvailableRAM
+        self.costRouting = costRouting
+        self.costTracker = costTracker
+        self.localFallbackModel = localFallbackModel
         
         // Pre-populate registry with known models
         self.modelRegistry = Self.defaultModels()
@@ -93,58 +132,117 @@ public actor ModelRouter: Sendable {
         log("Synced \(fetchedModels.count) models from OpenRouter")
     }
     
-    /// Route request to appropriate model (local or cloud)
-    public func route(request: GenerationRequest, preferredModel: String?) async throws -> GenerationResponse {
-        let modelId = preferredModel ?? "auto"
-        
-        // Determine routing decision
-        let decision = try await makeRoutingDecision(
-            modelId: modelId
-        )
-        
-        switch decision {
+    public func route(
+        request: GenerationRequest, preferredModel: String?, context: RoutingContext = .init()
+    ) async throws -> GenerationResponse {
+        let modelId = resolveModel(preferredModel, request: request, context: context)
+        switch try await makeRoutingDecision(modelId: modelId) {
         case .local(let path):
             return try await routeToLocal(path: path, request: request)
-            
         case .cloud(_, let cloudModels):
-            guard let client = cloudClient else {
-                throw BasaltError.invalidRequestStructure(
-                    details: "Cloud models not configured. Set OPENROUTER_API_KEY"
-                )
+            let client = try requireCloudClient()
+            if let fallback = try await localFallbackIfBudgetExhausted(context) {
+                return try await routeToLocal(path: fallback, request: request)
             }
-            return try await routeToCloud(
-                client: client,
-                models: cloudModels,
-                request: request
-            )
+            var lastError: Error?
+            for model in cloudModels {
+                let response: GenerationResponse
+                do {
+                    response = try await routeToCloud(client: client, model: model, request: request)
+                } catch {
+                    lastError = error
+                    log("Cloud model \(model) failed, trying the next in the chain: \(error)")
+                    continue
+                }
+                await recordCostLoggingFailure(model: model, response: response, context: context)
+                return response
+            }
+            if let fallback = localFallbackModel {
+                return try await routeToLocal(path: fallback, request: request)
+            }
+            throw lastError ?? BasaltError.modelInferenceError(details: "Empty cloud fallback chain")
         }
     }
     
-    /// Route stream request to appropriate model (local or cloud)
-    public func routeStream(request: GenerationRequest, preferredModel: String?) async throws -> AsyncStream<StreamChunk> {
-        let modelId = preferredModel ?? "auto"
-        
-        let decision = try await makeRoutingDecision(
-            modelId: modelId
-        )
-        
-        switch decision {
+    public func routeStream(
+        request: GenerationRequest, preferredModel: String?, context: RoutingContext = .init()
+    ) async throws -> AsyncThrowingStream<StreamChunk, Error> {
+        let modelId = resolveModel(preferredModel, request: request, context: context)
+        switch try await makeRoutingDecision(modelId: modelId) {
         case .local(let path):
-            // Fallback for local models
-            _ = path // local models have their own orchestrator stream logic, but we route it
-            return try await localOrchestrator.generateStream(request: request)
-            
+            return try await routeToLocalStream(path: path, request: request)
         case .cloud(_, let cloudModels):
-            guard let client = cloudClient else {
-                throw BasaltError.invalidRequestStructure(
-                    details: "Cloud models not configured. Set OPENROUTER_API_KEY"
-                )
+            let client = try requireCloudClient()
+            if let fallback = try await localFallbackIfBudgetExhausted(context) {
+                return try await routeToLocalStream(path: fallback, request: request)
             }
-            return try await routeToCloudStream(
-                client: client,
-                models: cloudModels,
-                request: request
+            var lastError: Error?
+            for model in cloudModels {
+                do {
+                    return try await routeToCloudStream(client: client, model: model, request: request, context: context)
+                } catch {
+                    lastError = error
+                    log("Cloud model \(model) failed to start streaming, trying the next in the chain: \(error)")
+                }
+            }
+            if let fallback = localFallbackModel {
+                return try await routeToLocalStream(path: fallback, request: request)
+            }
+            throw lastError ?? BasaltError.modelInferenceError(details: "Empty cloud fallback chain")
+        }
+    }
+
+    func resolveModel(_ preferredModel: String?, request: GenerationRequest, context: RoutingContext) -> String {
+        let modelId = preferredModel ?? "auto"
+        guard modelId == "auto", let costRouting else { return modelId }
+        let previous = context.sessionId.flatMap { sessionRoutes[$0] }
+        let tier = costRouting.policy.tier(
+            strongWinProbability: costRouting.scorer.strongWinProbability(for: request.prompt),
+            previous: previous?.tier,
+            warmPrefixTokens: previous?.promptTokens ?? 0
+        )
+        if let sessionId = context.sessionId {
+            sessionRoutes[sessionId] = SessionRoute(tier: tier, promptTokens: request.prompt.utf8.count / 4)
+        }
+        return costRouting.policy.model(for: tier)
+    }
+
+    private func requireCloudClient() throws -> OpenRouterClient {
+        guard let client = cloudClient else {
+            throw BasaltError.invalidRequestStructure(
+                details: "Cloud models not configured. Set OPENROUTER_API_KEY"
             )
+        }
+        return client
+    }
+
+    private func localFallbackIfBudgetExhausted(_ context: RoutingContext) async throws -> String? {
+        guard let costTracker, await costTracker.isExhausted(scopes: context.budgetScopes) else { return nil }
+        guard let localFallbackModel else {
+            throw BasaltError.invalidRequestStructure(details: "Cloud budget exhausted and no local fallback model is configured")
+        }
+        log("Cloud budget exhausted, serving locally with \(localFallbackModel)")
+        return localFallbackModel
+    }
+
+    private func recordCostLoggingFailure(model: String, response: GenerationResponse, context: RoutingContext) async {
+        guard let costTracker else { return }
+        let cost = estimateCost(model: model, promptTokens: response.promptTokens, completionTokens: response.completionTokens)
+        do {
+            try await costTracker.recordUsage(model: model, cost: cost, scopes: context.budgetScopes)
+        } catch {
+            log("Recording cloud cost for \(model) failed: \(error)")
+        }
+    }
+
+    private func routeToLocalStream(path: String, request: GenerationRequest) async throws -> AsyncThrowingStream<StreamChunk, Error> {
+        let local = try await localOrchestrator.generateStream(request: request, modelId: path)
+        return AsyncThrowingStream { continuation in
+            let task = Task {
+                for await chunk in local { continuation.yield(chunk) }
+                continuation.finish()
+            }
+            continuation.onTermination = { _ in task.cancel() }
         }
     }
     
@@ -246,67 +344,36 @@ public actor ModelRouter: Sendable {
     // MARK: - Private Implementations
     
     private func routeToLocal(path: String, request: GenerationRequest) async throws -> GenerationResponse {
-        // Use existing local orchestrator
-        return try await localOrchestrator.generate(request: request)
+        return try await localOrchestrator.generate(request: request, modelId: path)
     }
     
     private func routeToCloud(
         client: OpenRouterClient,
-        models: [String],
+        model: String,
         request: GenerationRequest
     ) async throws -> GenerationResponse {
-        
-        let chatRequest: OpenRouterClient.ChatRequest
-        
-        if models.count == 1 {
-            chatRequest = OpenRouterClient.ChatRequest(
-                model: models[0],
-                messages: [
-                    .init(role: "user", content: request.prompt)
-                ],
-                temperature: request.temperature,
-                maxTokens: request.maxTokens,
-                stream: false
-            )
-        } else {
-            chatRequest = OpenRouterClient.ChatRequest(
-                models: models,
-                messages: [
-                    .init(role: "user", content: request.prompt)
-                ],
-                temperature: request.temperature,
-                maxTokens: request.maxTokens,
-                stream: false,
-                provider: .init(allowFallbacks: true)
-            )
-        }
-        
+        let chatRequest = OpenRouterClient.ChatRequest(
+            model: model,
+            messages: [.init(role: "user", content: request.prompt)],
+            temperature: request.temperature,
+            maxTokens: request.maxTokens,
+            stream: false
+        )
         let startTime = ContinuousClock.now
         let chatResponse = try await client.chat(request: chatRequest)
-        let endTime = ContinuousClock.now
-        
-        let duration = startTime.duration(to: endTime).components.seconds
+        let duration = startTime.duration(to: ContinuousClock.now).components.seconds
         let durationSeconds = Double(duration) > 0 ? Double(duration) : 0.001
-        
         guard let choice = chatResponse.choices.first else {
-            throw BasaltError.modelInferenceError(
-                details: "No response from cloud model"
-            )
+            throw BasaltError.modelInferenceError(details: "No response from cloud model")
         }
-        
-        let usage = chatResponse.usage ?? .init(
-            promptTokens: 0,
-            completionTokens: 0,
-            totalTokens: 0
-        )
-        
+        let usage = chatResponse.usage ?? .init(promptTokens: 0, completionTokens: 0, totalTokens: 0)
         return GenerationResponse(
             generatedText: choice.message.content,
             promptTokens: usage.promptTokens,
             completionTokens: usage.completionTokens,
             tokensPerSecond: Double(usage.completionTokens) / durationSeconds,
             generationTime: durationSeconds,
-            timeToFirstToken: 0.0, // Not available from API without streaming
+            timeToFirstToken: 0.0,
             memory: .init(peakBytes: 0, activeBytes: 0, cacheBytes: 0),
             finishReason: choice.finishReason == "length" ? .length : .stop
         )
@@ -314,54 +381,42 @@ public actor ModelRouter: Sendable {
     
     private func routeToCloudStream(
         client: OpenRouterClient,
-        models: [String],
-        request: GenerationRequest
-    ) async throws -> AsyncStream<StreamChunk> {
-        
-        let chatRequest: OpenRouterClient.ChatRequest
-        
-        if models.count == 1 {
-            chatRequest = OpenRouterClient.ChatRequest(
-                model: models[0],
-                messages: [
-                    .init(role: "user", content: request.prompt)
-                ],
-                temperature: request.temperature,
-                maxTokens: request.maxTokens,
-                stream: true
-            )
-        } else {
-            chatRequest = OpenRouterClient.ChatRequest(
-                models: models,
-                messages: [
-                    .init(role: "user", content: request.prompt)
-                ],
-                temperature: request.temperature,
-                maxTokens: request.maxTokens,
-                stream: true,
-                provider: .init(allowFallbacks: true)
-            )
-        }
-        
+        model: String,
+        request: GenerationRequest,
+        context: RoutingContext
+    ) async throws -> AsyncThrowingStream<StreamChunk, Error> {
+        let chatRequest = OpenRouterClient.ChatRequest(
+            model: model,
+            messages: [.init(role: "user", content: request.prompt)],
+            temperature: request.temperature,
+            maxTokens: request.maxTokens,
+            stream: true
+        )
         let startTime = ContinuousClock.now
         let sourceStream = try await client.chatStream(request: chatRequest)
-        
-        return AsyncStream { continuation in
-            Task {
+        return Self.relayCloudStream(sourceStream, startTime: startTime) { [weak self] metadata in
+            await self?.recordCostLoggingFailure(model: model, response: metadata, context: context)
+        }
+    }
+
+    static func relayCloudStream(
+        _ source: AsyncThrowingStream<OpenRouterClient.ChatStreamResponse, Error>,
+        startTime: ContinuousClock.Instant,
+        onUsage: @escaping @Sendable (GenerationResponse) async -> Void = { _ in }
+    ) -> AsyncThrowingStream<StreamChunk, Error> {
+        AsyncThrowingStream { continuation in
+            let task = Task {
                 do {
-                    for try await response in sourceStream {
+                    for try await response in source {
                         guard let choice = response.choices.first else { continue }
-                        
                         if let text = choice.delta.content {
                             continuation.yield(.text(text))
                         }
-                        
                         if let reason = choice.finishReason, reason != "null" {
                             let duration = startTime.duration(to: ContinuousClock.now).components.seconds
                             let durationSeconds = Double(duration) > 0 ? Double(duration) : 0.001
-                            
                             let metadata = GenerationResponse(
-                                generatedText: "", // Final metadata chunk doesn't carry text
+                                generatedText: "",
                                 promptTokens: response.usage?.promptTokens ?? 0,
                                 completionTokens: response.usage?.completionTokens ?? 0,
                                 tokensPerSecond: Double(response.usage?.completionTokens ?? 0) / durationSeconds,
@@ -370,15 +425,17 @@ public actor ModelRouter: Sendable {
                                 memory: .init(peakBytes: 0, activeBytes: 0, cacheBytes: 0),
                                 finishReason: reason == "length" ? .length : .stop
                             )
+                            await onUsage(metadata)
                             continuation.yield(.metadata(metadata))
                             break
                         }
                     }
                     continuation.finish()
                 } catch {
-                    continuation.finish()
+                    continuation.finish(throwing: error)
                 }
             }
+            continuation.onTermination = { _ in task.cancel() }
         }
     }
     
@@ -429,8 +486,7 @@ public actor ModelRouter: Sendable {
         if let mock = mockAvailableRAM {
             return mock
         }
-        // In real app use SystemProfiler
-        return Int64(ProcessInfo.processInfo.physicalMemory)
+        return SystemProfiler.availableSystemMemory()
     }
     
     private func log(_ message: String) {

@@ -87,7 +87,7 @@ public actor SystemProfiler {
         let diskSpace = getAvailableDiskSpace()
         
         // Available RAM
-        let availableRAM = getAvailableRAM()
+        let availableRAM = Self.availableSystemMemory()
         
         // Chip model detection
         let chipModel = detectChipModel()
@@ -180,40 +180,24 @@ public actor SystemProfiler {
     
     /// Available RAM only — the cheap part of `detectResources()`, for periodic telemetry.
     public func currentAvailableRAM() -> Int64 {
-        getAvailableRAM()
+        Self.availableSystemMemory()
     }
 
-    // MARK: - Private Helpers
-    
-    /// Get available RAM using macOS APIs
-    private func getAvailableRAM() -> Int64 {
+    public static func availableSystemMemory() -> Int64 {
         var vmStats = vm_statistics64()
         var count = mach_msg_type_number_t(MemoryLayout<vm_statistics64>.size / MemoryLayout<integer_t>.size)
-        
         let result = withUnsafeMutablePointer(to: &vmStats) {
             $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
-                host_statistics64(
-                    mach_host_self(),
-                    HOST_VM_INFO64,
-                    $0,
-                    &count
-                )
+                host_statistics64(mach_host_self(), HOST_VM_INFO64, $0, &count)
             }
         }
-        
         guard result == KERN_SUCCESS else {
-            // Fallback: return 50% of total RAM as estimate
             return Int64(ProcessInfo.processInfo.physicalMemory) / 2
         }
-        
-        // Use constant page size value instead of global variable
-        let pageSize: Int64 = 16384  // 16KB on Apple Silicon
-        let freePages = Int64(vmStats.free_count)
-        let inactivePages = Int64(vmStats.inactive_count)
-        
-        return (freePages + inactivePages) * pageSize
+        let availablePages = Int64(vmStats.free_count) + Int64(vmStats.inactive_count)
+        return availablePages * Int64(getpagesize())
     }
-    
+
     /// Get available disk space
     private func getAvailableDiskSpace() -> Int64 {
         let fileURL = URL(fileURLWithPath: NSHomeDirectory())

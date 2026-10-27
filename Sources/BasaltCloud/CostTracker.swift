@@ -13,12 +13,18 @@ public actor CostTracker: Sendable {
         }
     }
     
+    public enum BudgetScope: Sendable, Hashable {
+        case session(String)
+        case virtualKey(String)
+    }
+
     public struct UsageStats: Sendable, Codable {
         public var dailyUsage: Double
         public var monthlyUsage: Double
         public var modelBreakdown: [String: Double]
         public var lastUpdatedDay: String     // YYYY-MM-DD
         public var lastUpdatedMonth: String   // YYYY-MM
+        public var virtualKeyUsage: [String: Double]?
         
         public init() {
             self.dailyUsage = 0.0
@@ -47,6 +53,8 @@ public actor CostTracker: Sendable {
     private let storageURL: URL
     private let budget: Budget
     private var stats: UsageStats
+    private var scopeLimits: [BudgetScope: Double] = [:]
+    private var sessionUsage: [String: Double] = [:]
     
     private let logger = Logger()
     
@@ -83,25 +91,37 @@ public actor CostTracker: Sendable {
         self.stats = loadedStats
     }
     
-    public func recordUsage(model: String, cost: Double) throws {
+    public func setMaxBudget(_ limit: Double, for scope: BudgetScope) {
+        scopeLimits[scope] = limit
+    }
+
+    public func spent(in scope: BudgetScope) -> Double {
+        switch scope {
+        case .session(let id): sessionUsage[id] ?? 0
+        case .virtualKey(let id): stats.virtualKeyUsage?[id] ?? 0
+        }
+    }
+
+    public func isExhausted(scopes: [BudgetScope]) -> Bool {
+        resetCountersIfNeeded()
+        if stats.dailyUsage >= budget.dailyLimit || stats.monthlyUsage >= budget.monthlyLimit { return true }
+        return scopes.contains { scope in
+            scopeLimits[scope].map { spent(in: scope) >= $0 } ?? false
+        }
+    }
+
+    public func recordUsage(model: String, cost: Double, scopes: [BudgetScope] = []) throws {
         guard cost > 0 else { return }
         
         resetCountersIfNeeded()
-        
-        // Check budget
-        if stats.dailyUsage + cost > budget.dailyLimit {
-            throw BasaltError.invalidRequestStructure(
-                details: "Daily budget exceeded. Limit: $\(budget.dailyLimit), Requested total: $\(stats.dailyUsage + cost)"
-            )
+
+        for scope in Set(scopes) {
+            switch scope {
+            case .session(let id): sessionUsage[id, default: 0] += cost
+            case .virtualKey(let id): stats.virtualKeyUsage = (stats.virtualKeyUsage ?? [:]).merging([id: cost], uniquingKeysWith: +)
+            }
         }
         
-        if stats.monthlyUsage + cost > budget.monthlyLimit {
-            throw BasaltError.invalidRequestStructure(
-                details: "Monthly budget exceeded. Limit: $\(budget.monthlyLimit), Requested total: $\(stats.monthlyUsage + cost)"
-            )
-        }
-        
-        // Warning at 80% (just log for now, could be an event)
         if stats.dailyUsage < budget.dailyLimit * 0.8 && (stats.dailyUsage + cost) >= budget.dailyLimit * 0.8 {
             log("⚠️ Warning: 80% of daily budget consumed.")
         }
@@ -109,8 +129,18 @@ public actor CostTracker: Sendable {
         stats.dailyUsage += cost
         stats.monthlyUsage += cost
         stats.modelBreakdown[model, default: 0.0] += cost
-        
         try save()
+
+        if stats.dailyUsage > budget.dailyLimit {
+            throw BasaltError.invalidRequestStructure(
+                details: "Daily budget exceeded. Limit: $\(budget.dailyLimit), Requested total: $\(stats.dailyUsage)"
+            )
+        }
+        if stats.monthlyUsage > budget.monthlyLimit {
+            throw BasaltError.invalidRequestStructure(
+                details: "Monthly budget exceeded. Limit: $\(budget.monthlyLimit), Requested total: $\(stats.monthlyUsage)"
+            )
+        }
     }
     
     public func getStats() -> UsageStats {
