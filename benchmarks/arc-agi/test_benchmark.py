@@ -35,6 +35,10 @@ LONG_RESULT_LINE = ("```python\nimport os\ndef transform(grid):\n"
 FILLS_THE_DISK = ("```python\ndef transform(grid):\n    for index in range(40000):\n"
                   "        open(f'f{index}', 'wb').close()\n    while True:\n        pass\n```")
 FULL_SIZE_GRID = "```python\ndef transform(grid):\n    return [[9] * 30 for _ in range(30)]\n```"
+NUMPY_TRANSPOSE = "```python\nimport numpy as np\ndef transform(grid):\n    return np.array(grid).T.tolist()\n```"
+NUMPY_ANNOTATED_GRID = ("```python\nimport numpy as np\ndef transform(grid: Grid):\n"
+                        "    return np.array(grid).T.tolist()\n```")
+GRID_METHODS = "```python\ndef transform(grid):\n    return [[len(grid.extract_objects())]]\n```"
 FIRST_PAIR_ONLY = ("```python\ndef transform(grid):\n    if grid[0][0] == 1:\n        return [[3, 1], [4, 2]]\n"
                    "    return [[2, 0], [3, 1]]\n```")
 
@@ -99,6 +103,15 @@ class PayloadTest(unittest.TestCase):
 
 @unittest.skipUnless(sandbox_available(), "sandbox-exec is not available on this platform")
 class TrainVerificationTest(unittest.TestCase):
+    def test_numpy_code_gets_the_matrix_not_a_grid_object(self):
+        transpose = {"train": [{"input": [[1, 2, 3], [4, 5, 6]], "output": [[1, 4], [2, 5], [3, 6]]}]}
+        for code in (NUMPY_TRANSPOSE, NUMPY_ANNOTATED_GRID):
+            self.assertEqual(execute_python_hybrid(code, [[7, 8], [9, 0]], train_pairs=transpose["train"]),
+                             ([[7, 9], [8, 0]], "python_oop_exec_success", 1), code)
+
+    def test_code_that_uses_grid_methods_still_gets_a_grid(self):
+        self.assertEqual(execute_python_hybrid(GRID_METHODS, [[1, 0], [0, 1]]), ([[2]], "python_oop_exec_success", 0))
+
     def test_a_transform_that_reproduces_every_example_is_applied_to_the_test_input(self):
         self.assertEqual(execute_python_hybrid(ROTATE, TASK["test"][0]["input"], train_pairs=TASK["train"]),
                          ([[2, 0], [3, 1]], "python_oop_exec_success", 2))
