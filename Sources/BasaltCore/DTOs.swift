@@ -357,6 +357,9 @@ public struct GenerationResponse: Codable, Sendable {
         case stop
         case length
         case error
+        case repetition
+
+        public var isTruncated: Bool { self == .length || self == .repetition }
     }
 }
 

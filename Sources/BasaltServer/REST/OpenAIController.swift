@@ -129,7 +129,7 @@ struct OpenAIController: Sendable {
     }
 
     static func finishReason(_ finish: GenerationResponse.FinishReason?, calledTools: Bool) -> String {
-        calledTools ? "tool_calls" : (finish == .length ? "length" : "stop")
+        calledTools ? "tool_calls" : (finish?.isTruncated == true ? "length" : "stop")
     }
 
     struct ChatCompletionRequest: Codable, Sendable {
