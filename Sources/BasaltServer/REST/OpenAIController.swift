@@ -436,6 +436,10 @@ struct OpenAIController: Sendable {
         }
 
         if dto.stream == true {
+            if let refusal = await orchestrator.admissionRefusal(for: genRequest) {
+                return makeErrorResponse(status: HTTPResponse.Status(code: refusal.httpStatus),
+                                         message: ModelsController.publicMessage(for: refusal), code: refusal.httpStatus)
+            }
             return streamResponse(genRequest: genRequest, model: dto.model ?? modelId, requestedModel: requestedModel,
                                   includeUsage: dto.streamOptions?.includeUsage == true)
         }
@@ -544,6 +548,10 @@ struct OpenAIController: Sendable {
         }
 
         if dto.stream == true {
+            if let refusal = await orchestrator.admissionRefusal(for: genRequest) {
+                return makeErrorResponse(status: HTTPResponse.Status(code: refusal.httpStatus),
+                                         message: ModelsController.publicMessage(for: refusal), code: refusal.httpStatus)
+            }
             return streamResponses(genRequest: genRequest, model: dto.model ?? modelId, requestedModel: requestedModel)
         }
 

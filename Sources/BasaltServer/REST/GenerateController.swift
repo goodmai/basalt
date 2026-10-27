@@ -51,7 +51,12 @@ struct GenerateController: Sendable {
         } catch {
             return errorResponse(status: .badRequest, message: "Invalid JSON: \(error.localizedDescription)", code: 400)
         }
-        
+        if let refusal = await orchestrator.admissionRefusal(for: dto) {
+            return errorResponse(
+                status: HTTPResponse.Status(code: refusal.httpStatus),
+                message: ModelsController.publicMessage(for: refusal), code: refusal.httpStatus)
+        }
+
         // Create Server-Sent Events (SSE) response
         let response = Response(
             status: .ok,

@@ -19,6 +19,10 @@ public actor GenerationGate {
 
     public var inFlight: Int { running.count }
     public var queued: Int { queue.count }
+    public var refusal: BasaltError? {
+        if closed { return .serverBusy(retryAfterSeconds: nil) }
+        return canRun || queue.count < maxQueue ? nil : .serverBusy(retryAfterSeconds: 1)
+    }
 
     public func admit() async throws -> Int {
         guard !closed else { throw BasaltError.serverBusy(retryAfterSeconds: nil) }
