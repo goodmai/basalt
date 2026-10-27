@@ -6,6 +6,7 @@ import BasaltCore
 struct ChatPipeline: Sendable {
     struct Rejection: Error {
         let response: Response
+        let message: String
     }
 
     struct Sampling: Sendable {
@@ -25,7 +26,26 @@ struct ChatPipeline: Sendable {
 
     let orchestrator: ModelOrchestratorActor
     let label: String
+    let source: String
+    let endpoint: String
     let reject: @Sendable (HTTPResponse.Status, String) -> Response
+
+    func rejection(_ status: HTTPResponse.Status, _ message: String) -> Rejection {
+        Rejection(response: reject(status, message), message: message)
+    }
+
+    func handle(_ request: Request, _ work: (Data) async throws -> Response) async throws -> Response {
+        let data = try await body(of: request)
+        do {
+            return try await work(data)
+        } catch let rejection as Rejection {
+            await orchestrator.sessionLog?.logRejection(
+                origin: RequestOrigin(source: source, endpoint: endpoint, stream: false),
+                sessionId: request.headers[GenerationRequest.sessionHeader], code: Int(rejection.response.status.code),
+                message: rejection.message, bodyBytes: data.count)
+            return rejection.response
+        }
+    }
 
     static let bodyLimit = 4 * 1024 * 1024
 
@@ -38,29 +58,30 @@ struct ChatPipeline: Sendable {
             return try JSONDecoder().decode(type, from: data)
         } catch {
             fputs("🔴 [\(label)] decode error: \(error) (body: \(data.count) bytes)\n", stderr)
-            throw Rejection(response: reject(.badRequest, "\(failure): \(error.localizedDescription)"))
+            throw rejection(.badRequest, "\(failure): \(error.localizedDescription)")
         }
     }
 
     func require(_ condition: Bool, _ message: String) throws {
-        guard condition else { throw Rejection(response: reject(.badRequest, message)) }
+        guard condition else { throw rejection(.badRequest, message) }
     }
 
     func tools(in data: Data) throws -> OpenAIController.RequestedTools {
         do { return try OpenAIController.requestedTools(fromRequestBody: data) } catch {
-            throw Rejection(response: reject(.badRequest, error.message))
+            throw rejection(.badRequest, error.message)
         }
     }
 
     func responseFormat(in data: Data) throws -> ResponseFormat? {
         do { return try OpenAIController.responseFormat(fromRequestBody: data) } catch {
-            throw Rejection(response: reject(.badRequest, error.message))
+            throw rejection(.badRequest, error.message)
         }
     }
 
     func prepare(
         chat: [ChatMessageInput], headers: HTTPFields, maxTokens: Int?, sampling: Sampling, reasoningEffort: String?,
-        tools: OpenAIController.RequestedTools, thinkingBudget: Int?, responseFormat: ResponseFormat?, model: String?
+        tools: OpenAIController.RequestedTools, thinkingBudget: Int?, responseFormat: ResponseFormat?, model: String?,
+        stream: Bool
     ) throws -> Prepared {
         let prompt = ChatMessageInput.plainText(chat)
         let service = ServiceRequestDetector.prepare(prompt: prompt, maxTokens: maxTokens, headers: headers)
@@ -82,22 +103,20 @@ struct ChatPipeline: Sendable {
             repetitionPenalty: sampling.repetitionPenalty,
             thinkingBudget: thinkingBudget,
             responseFormat: responseFormat
-        ).routed(by: headers)
+        ).routed(by: headers).withOrigin(RequestOrigin(source: source, endpoint: endpoint, stream: stream))
         do {
             _ = try request.validated()
         } catch {
-            throw Rejection(response: reject(HTTPResponse.Status(code: error.httpStatus, reasonPhrase: ""),
-                                             ModelsController.publicMessage(for: error)))
+            throw rejection(HTTPResponse.Status(code: error.httpStatus, reasonPhrase: ""), ModelsController.publicMessage(for: error))
         }
         let restModel = model.map(ModelsController.restModel(from:))
-        if restModel == .path { throw Rejection(response: reject(.badRequest, ModelsController.pathRejected)) }
+        if restModel == .path { throw rejection(.badRequest, ModelsController.pathRejected) }
         return Prepared(request: request, requestedModel: restModel?.repoId)
     }
 
     func admitStream(_ request: GenerationRequest) async throws {
         if let refusal = await orchestrator.admissionRefusal(for: request) {
-            throw Rejection(response: reject(HTTPResponse.Status(code: refusal.httpStatus, reasonPhrase: ""),
-                                             ModelsController.publicMessage(for: refusal)))
+            throw rejection(HTTPResponse.Status(code: refusal.httpStatus, reasonPhrase: ""), ModelsController.publicMessage(for: refusal))
         }
     }
 }

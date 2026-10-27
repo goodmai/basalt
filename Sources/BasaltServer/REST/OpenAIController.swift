@@ -380,66 +380,61 @@ struct OpenAIController: Sendable {
 
     @Sendable
     func chatCompletions(request: Request, context: BasicRequestContext) async throws -> Response {
-        let pipeline = self.pipeline
-        let dto: ChatCompletionRequest
-        let prepared: ChatPipeline.Prepared
-        do {
-            let data = try await pipeline.body(of: request)
-            dto = try pipeline.decode(ChatCompletionRequest.self, from: data, failure: "Cannot decode request")
+        let pipeline = self.pipeline(source: "openai-chat", endpoint: "/v1/chat/completions")
+        return try await pipeline.handle(request) { data in
+            let dto = try pipeline.decode(ChatCompletionRequest.self, from: data, failure: "Cannot decode request")
             try pipeline.require(!dto.messages.isEmpty, "messages must not be empty")
             let tools = try pipeline.tools(in: data)
             let format = try pipeline.responseFormat(in: data)
-            prepared = try pipeline.prepare(
+            let prepared = try pipeline.prepare(
                 chat: Self.chatMessages(dto.messages), headers: request.headers, maxTokens: dto.maxTokens,
                 sampling: .init(temperature: dto.temperature, topP: dto.topP, minP: dto.minP,
                                 dynamicTemperature: dto.dynamicTemperature, topK: dto.topK,
                                 presencePenalty: dto.presencePenalty, repetitionPenalty: dto.repetitionPenalty),
                 reasoningEffort: dto.reasoningEffort, tools: tools, thinkingBudget: dto.thinkingBudget,
-                responseFormat: format, model: dto.model)
+                responseFormat: format, model: dto.model, stream: dto.stream == true)
             if dto.stream == true { try await pipeline.admitStream(prepared.request) }
-        } catch let rejection as ChatPipeline.Rejection {
-            return rejection.response
-        }
-        let genRequest = prepared.request
-        let requestedModel = prepared.requestedModel
+            let genRequest = prepared.request
+            let requestedModel = prepared.requestedModel
 
-        if dto.stream == true {
-            return streamResponse(genRequest: genRequest, model: dto.model ?? modelId, requestedModel: requestedModel,
-                                  includeUsage: dto.streamOptions?.includeUsage == true)
-        }
+            if dto.stream == true {
+                return streamResponse(genRequest: genRequest, model: dto.model ?? modelId, requestedModel: requestedModel,
+                                      includeUsage: dto.streamOptions?.includeUsage == true)
+            }
 
-        do {
-            let result = try await orchestrator.generate(request: genRequest, modelId: requestedModel)
-            let calls = result.toolCalls ?? []
-            let onlyCalls = !calls.isEmpty && result.generatedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            var message = ChatMessage(role: "assistant", content: onlyCalls ? nil : .text(result.generatedText),
-                                      toolCalls: calls.isEmpty ? nil : calls.map(ChatToolCall.init))
-            message.reasoning = result.reasoningText
-            let response = ChatCompletionResponse(
-                id: "chatcmpl-\(UUID().uuidString)",
-                object: "chat.completion",
-                created: Int(Date().timeIntervalSince1970),
-                model: dto.model ?? modelId,
-                choices: [.init(
-                    index: 0,
-                    message: message,
-                    finishReason: Self.finishReason(result.finishReason, calledTools: !calls.isEmpty)
-                )],
-                usage: .init(
-                    promptTokens: result.promptTokens,
-                    promptTokensDetails: .init(cachedTokens: result.cachedPromptTokens),
-                    completionTokens: result.completionTokens,
-                    totalTokens: result.promptTokens + result.completionTokens,
-                    completionTokensDetails: ReasoningTokens(reasoningTokens: result.reasoningTokens ?? 0)
+            do {
+                let result = try await orchestrator.generate(request: genRequest, modelId: requestedModel)
+                let calls = result.toolCalls ?? []
+                let onlyCalls = !calls.isEmpty && result.generatedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                var message = ChatMessage(role: "assistant", content: onlyCalls ? nil : .text(result.generatedText),
+                                          toolCalls: calls.isEmpty ? nil : calls.map(ChatToolCall.init))
+                message.reasoning = result.reasoningText
+                let response = ChatCompletionResponse(
+                    id: "chatcmpl-\(UUID().uuidString)",
+                    object: "chat.completion",
+                    created: Int(Date().timeIntervalSince1970),
+                    model: dto.model ?? modelId,
+                    choices: [.init(
+                        index: 0,
+                        message: message,
+                        finishReason: Self.finishReason(result.finishReason, calledTools: !calls.isEmpty)
+                    )],
+                    usage: .init(
+                        promptTokens: result.promptTokens,
+                        promptTokensDetails: .init(cachedTokens: result.cachedPromptTokens),
+                        completionTokens: result.completionTokens,
+                        totalTokens: result.promptTokens + result.completionTokens,
+                        completionTokensDetails: ReasoningTokens(reasoningTokens: result.reasoningTokens ?? 0)
+                    )
                 )
-            )
-            let encoded = try JSONEncoder().encode(response)
-            return makeDataResponse(encoded)
-        } catch {
-            fputs("🔴 [OpenAI] generate failed: \(error)\n", stderr)
-            let code = (error as? BasaltError)?.httpStatus ?? 500
-            return makeErrorResponse(status: HTTPResponse.Status(code: code),
-                                     message: ModelsController.publicMessage(for: error), code: code)
+                let encoded = try JSONEncoder().encode(response)
+                return makeDataResponse(encoded)
+            } catch {
+                fputs("🔴 [OpenAI] generate failed: \(error)\n", stderr)
+                let code = (error as? BasaltError)?.httpStatus ?? 500
+                return makeErrorResponse(status: HTTPResponse.Status(code: code),
+                                         message: ModelsController.publicMessage(for: error), code: code)
+            }
         }
     }
 
@@ -447,12 +442,9 @@ struct OpenAIController: Sendable {
 
     @Sendable
     func responses(request: Request, context: BasicRequestContext) async throws -> Response {
-        let pipeline = self.pipeline
-        let dto: ResponsesRequest
-        let prepared: ChatPipeline.Prepared
-        do {
-            let data = try await pipeline.body(of: request)
-            dto = try pipeline.decode(ResponsesRequest.self, from: data, failure: "Cannot decode responses request")
+        let pipeline = self.pipeline(source: "openai-responses", endpoint: "/v1/responses")
+        return try await pipeline.handle(request) { data in
+            let dto = try pipeline.decode(ResponsesRequest.self, from: data, failure: "Cannot decode responses request")
             let conversation: [ChatMessageInput]
             switch dto.input {
             case .text(let t):        conversation = t.isEmpty ? [] : [ChatMessageInput(role: .user, text: t)]
@@ -463,63 +455,60 @@ struct OpenAIController: Sendable {
             let instructions = dto.instructions.flatMap { $0.isEmpty ? nil : ChatMessageInput(role: .system, text: $0) }
             let tools = try pipeline.tools(in: data)
             let format = try pipeline.responseFormat(in: data)
-            prepared = try pipeline.prepare(
+            let prepared = try pipeline.prepare(
                 chat: (instructions.map { [$0] } ?? []) + conversation, headers: request.headers,
                 maxTokens: dto.maxOutputTokens ?? dto.maxTokens,
                 sampling: .init(temperature: dto.temperature, topP: dto.topP, minP: dto.minP,
                                 dynamicTemperature: dto.dynamicTemperature, topK: dto.topK,
                                 presencePenalty: dto.presencePenalty, repetitionPenalty: dto.repetitionPenalty),
                 reasoningEffort: dto.effectiveReasoningEffort, tools: tools, thinkingBudget: dto.thinkingBudget,
-                responseFormat: format, model: dto.model)
+                responseFormat: format, model: dto.model, stream: dto.stream == true)
             if dto.stream == true { try await pipeline.admitStream(prepared.request) }
-        } catch let rejection as ChatPipeline.Rejection {
-            return rejection.response
-        }
-        let genRequest = prepared.request
-        let requestedModel = prepared.requestedModel
+            let genRequest = prepared.request
+            let requestedModel = prepared.requestedModel
 
-        if dto.stream == true {
-            return streamResponses(genRequest: genRequest, model: dto.model ?? modelId, requestedModel: requestedModel)
-        }
+            if dto.stream == true {
+                return streamResponses(genRequest: genRequest, model: dto.model ?? modelId, requestedModel: requestedModel)
+            }
 
-        do {
-            let result = try await orchestrator.generate(request: genRequest, modelId: requestedModel)
-            let response = ResponsesResponse(
-                id: "resp_\(UUID().uuidString)",
-                object: "response",
-                createdAt: Int(Date().timeIntervalSince1970),
-                status: "completed",
-                model: dto.model ?? modelId,
-                // The message (when the model said anything or called nothing), then its tool calls.
-                output: (result.reasoningText.map { [.init(
-                    id: "rs_\(UUID().uuidString)", type: "reasoning", status: "completed",
-                    content: [.init(type: "reasoning_text", text: $0)], summary: [])] } ?? [])
-                    + (result.generatedText.isEmpty && result.toolCalls != nil ? [] : [
-                    .init(
-                        id: "msg_\(UUID().uuidString)",
-                        type: "message",
-                        status: "completed",
-                        role: "assistant",
-                        content: [.init(type: "output_text", text: result.generatedText)]
+            do {
+                let result = try await orchestrator.generate(request: genRequest, modelId: requestedModel)
+                let response = ResponsesResponse(
+                    id: "resp_\(UUID().uuidString)",
+                    object: "response",
+                    createdAt: Int(Date().timeIntervalSince1970),
+                    status: "completed",
+                    model: dto.model ?? modelId,
+                    output: (result.reasoningText.map { [.init(
+                        id: "rs_\(UUID().uuidString)", type: "reasoning", status: "completed",
+                        content: [.init(type: "reasoning_text", text: $0)], summary: [])] } ?? [])
+                        + (result.generatedText.isEmpty && result.toolCalls != nil ? [] : [
+                        .init(
+                            id: "msg_\(UUID().uuidString)",
+                            type: "message",
+                            status: "completed",
+                            role: "assistant",
+                            content: [.init(type: "output_text", text: result.generatedText)]
+                        )
+                    ]) + (result.toolCalls ?? []).map { call in
+                        .init(id: "fc_\(UUID().uuidString)", type: "function_call", status: "completed",
+                              callId: call.id, name: call.name, arguments: call.arguments)
+                    },
+                    usage: .init(
+                        inputTokens: result.promptTokens,
+                        inputTokensDetails: .init(cachedTokens: result.cachedPromptTokens),
+                        outputTokens: result.completionTokens,
+                        totalTokens: result.promptTokens + result.completionTokens,
+                        outputTokensDetails: ReasoningTokens(reasoningTokens: result.reasoningTokens ?? 0)
                     )
-                ]) + (result.toolCalls ?? []).map { call in
-                    .init(id: "fc_\(UUID().uuidString)", type: "function_call", status: "completed",
-                          callId: call.id, name: call.name, arguments: call.arguments)
-                },
-                usage: .init(
-                    inputTokens: result.promptTokens,
-                    inputTokensDetails: .init(cachedTokens: result.cachedPromptTokens),
-                    outputTokens: result.completionTokens,
-                    totalTokens: result.promptTokens + result.completionTokens,
-                    outputTokensDetails: ReasoningTokens(reasoningTokens: result.reasoningTokens ?? 0)
                 )
-            )
-            let encoded = try JSONEncoder().encode(response)
-            return makeDataResponse(encoded)
-        } catch {
-            let code = (error as? BasaltError)?.httpStatus ?? 500
-            return makeErrorResponse(status: HTTPResponse.Status(code: code),
-                                     message: ModelsController.publicMessage(for: error), code: code)
+                let encoded = try JSONEncoder().encode(response)
+                return makeDataResponse(encoded)
+            } catch {
+                let code = (error as? BasaltError)?.httpStatus ?? 500
+                return makeErrorResponse(status: HTTPResponse.Status(code: code),
+                                         message: ModelsController.publicMessage(for: error), code: code)
+            }
         }
     }
 
@@ -531,6 +520,7 @@ struct OpenAIController: Sendable {
         let data = Data(buffer.readableBytesView)
         do {
             let dto = PromptCacheKey.scoped(try JSONDecoder().decode(GenerationRequest.self, from: data)).routed(by: request.headers)
+                .withOrigin(RequestOrigin(source: "generate", endpoint: "/v1/generate", stream: false))
             let result = try await orchestrator.generate(request: dto)
             let encoded = try JSONEncoder().encode(result)
             return makeDataResponse(encoded)
@@ -944,8 +934,8 @@ struct OpenAIController: Sendable {
                         body: ResponseBody(byteBuffer: buf))
     }
 
-    var pipeline: ChatPipeline {
-        ChatPipeline(orchestrator: orchestrator, label: "OpenAI") { status, message in
+    func pipeline(source: String, endpoint: String) -> ChatPipeline {
+        ChatPipeline(orchestrator: orchestrator, label: "OpenAI", source: source, endpoint: endpoint) { status, message in
             Self.makeErrorResponse(status: status, message: message, code: Int(status.code))
         }
     }

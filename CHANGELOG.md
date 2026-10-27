@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+### Session log
+- `basalt serve` writes a local JSONL session log (#106): `request` before every engine call and `response` after it (status `ok`/`error`/`timeout`/`cancelled`, tokens, timing with queue wait, memory, finish reason, output size and SHA-256), `error` for requests rejected before generation (size only), `model_switch`, `dropped`. One record structure for `/v1/messages`, `/v1/chat/completions`, `/v1/responses`, `/api/v1/generate`, MCP and `basalt chat`; only `source` and `endpoint` differ. `--session-log full` (default) also stores the conversation and the reply, `meta` only metrics and hashes, `off` nothing; files are `0700`/`0600` under `~/.basalt/sessions/`, retention 14 days / 1 GB. Headers are never recorded. The writer appends with one `write(2)` per record, never blocks generation (bounded buffer, counted drops) and disables itself with one warning on an I/O error. `docs/PRIVACY_POLICY.md` describes it, and now also says that the opt-in cloud fallback sends requests to the configured endpoint.
+
 ## 0.4.0 — 2026-10-27
 
 ### Upgrading from 0.3.0

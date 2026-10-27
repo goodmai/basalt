@@ -618,7 +618,7 @@ public final class MCPServer: Sendable {
             minP:        args?["minP"]        as? Double,
             dynamicTemperature: args?["dynamicTemperature"] as? Bool,
             cacheKey: PromptCacheKey.resolve(isService: false)
-        )
+        ).withOrigin(RequestOrigin(source: "mcp", endpoint: "tools/call generate", stream: false))
         
         do {
             let response = try await orchestrator.generate(request: request)

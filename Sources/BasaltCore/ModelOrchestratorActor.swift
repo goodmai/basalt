@@ -26,6 +26,7 @@ public actor ModelOrchestratorActor {
     public private(set) var currentModelId: String = ""
 
     public let gate: GenerationGate
+    public let sessionLog: SessionLogWriter?
     private var pendingSwitch: (modelId: String, task: Task<Void, Error>)?
     private var cloudFallback: (any CloudFallback)?
     private var arbiter = HybridArbiter()
@@ -38,9 +39,10 @@ public actor ModelOrchestratorActor {
 
     public init(
         engine: any InferenceEngine, maxTokens: Int = 65_536, kvBits: Int? = nil, telemetry: TelemetryTracker = .shared,
-        gate: GenerationGate = GenerationGate()
+        gate: GenerationGate = GenerationGate(), sessionLog: SessionLogWriter? = nil
     ) {
         self.gate = gate
+        self.sessionLog = sessionLog
         self.engine = engine
         self.maxTokens = maxTokens
         self.kvBits = kvBits
@@ -131,6 +133,8 @@ public actor ModelOrchestratorActor {
         }
 
         logger.info("Switching model: '\(currentModelId)' → '\(modelId)'")
+        let switchStarted = ContinuousClock.now
+        let previousModel = currentModelId
         let task = Task {
             defer { self.pendingSwitch = nil }
             try await self.gate.exclusively { try await self.performLoad(path: path) }
@@ -138,6 +142,7 @@ public actor ModelOrchestratorActor {
         }
         pendingSwitch = (modelId, task)
         try await Self.awaitSwitch(task)
+        await sessionLog?.logModelSwitch(from: previousModel, to: modelId, duration: ContinuousClock.now - switchStarted)
         logger.info("Model switch complete: '\(modelId)'")
     }
 
@@ -170,6 +175,7 @@ public actor ModelOrchestratorActor {
 
     public func shutdown(deadline: Duration = .seconds(5)) async {
         await gate.shutdown(deadline: deadline)
+        await sessionLog?.close()
     }
 
     /// Info string for logging / health checks.
@@ -187,10 +193,40 @@ public actor ModelOrchestratorActor {
         request: GenerationRequest,
         modelId: String? = nil
     ) async throws(BasaltError) -> GenerationResponse {
+        guard let sessionLog else { return try await performGenerate(request: request, modelId: modelId).response }
+        let id = Self.newRequestId()
+        await sessionLog.logRequest(request, id: id, origin: request.origin, modelRequested: modelId)
+        await sessionLog.flush()
+        do {
+            let (response, queueWait) = try await performGenerate(request: request, modelId: modelId)
+            await sessionLog.logResponse(request, id: id, status: "ok", result: SessionLogResult(response), queueWait: queueWait)
+            return response
+        } catch {
+            await sessionLog.logResponse(request, id: id, status: Self.logStatus(error), result: SessionLogResult(), queueWait: .zero,
+                                         error: error.localizedDescription)
+            throw error
+        }
+    }
+
+    static func newRequestId() -> String {
+        "req_" + UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased().prefix(24)
+    }
+
+    static func logStatus(_ error: BasaltError) -> String {
+        if case .inferenceError(let message) = error {
+            if message.hasPrefix("Timeout after") { return "timeout" }
+            if message == "Cancelled while queued" { return "cancelled" }
+        }
+        return Task.isCancelled ? "cancelled" : "error"
+    }
+
+    private func performGenerate(
+        request: GenerationRequest, modelId: String?
+    ) async throws(BasaltError) -> (response: GenerationResponse, queueWait: Duration) {
         if let cloudFallback, let reason = await cloudFallbackReason(for: request) {
             do {
                 logger.info("Serving from the cloud: \(reason.rawValue)")
-                return try await cloudFallback.generate(request)
+                return (try await cloudFallback.generate(request), .zero)
             } catch {
                 logger.warn("Cloud fallback (\(reason.rawValue)) failed, serving locally: \(error)")
             }
@@ -199,7 +235,9 @@ public actor ModelOrchestratorActor {
 
         logger.trace("generate: \(request.prompt.prefix(60))…")
         let validated = try await capped(request)
+        let queued = ContinuousClock.now
         let ticket = try await admitted()
+        let queueWait = ContinuousClock.now - queued
         let seconds = timeout(for: validated)
         let work = Task { try await self.withTimeout(seconds: seconds) { try await self.engine.generate(request: validated) } }
         await gate.onCancel(ticket) { work.cancel() }
@@ -209,7 +247,7 @@ public actor ModelOrchestratorActor {
             let response = try await withTaskCancellationHandler { try await work.value } onCancel: { work.cancel() }
             await gate.release(ticket)
             await self.telemetry.requestFinished(with: response)
-            return response
+            return (response, queueWait)
         } catch let error as BasaltError {
             await gate.release(ticket)
             await self.telemetry.requestFinished()
@@ -229,10 +267,42 @@ public actor ModelOrchestratorActor {
         request: GenerationRequest,
         modelId: String? = nil
     ) async throws(BasaltError) -> AsyncStream<StreamChunk> {
+        guard let sessionLog else { return try await performStream(request: request, modelId: modelId).stream }
+        let id = Self.newRequestId()
+        await sessionLog.logRequest(request, id: id, origin: request.origin, modelRequested: modelId)
+        await sessionLog.flush()
+        let started: (stream: AsyncStream<StreamChunk>, queueWait: Duration)
+        do {
+            started = try await performStream(request: request, modelId: modelId)
+        } catch {
+            await sessionLog.logResponse(request, id: id, status: Self.logStatus(error), result: SessionLogResult(), queueWait: .zero,
+                                         error: error.localizedDescription)
+            throw error
+        }
+        let source = started.stream
+        let queueWait = started.queueWait
+        return AsyncStream { continuation in
+            let task = Task {
+                var result = SessionLogResult()
+                for await chunk in source {
+                    result.absorb(chunk)
+                    continuation.yield(chunk)
+                }
+                let status = Task.isCancelled ? "cancelled" : result.metadata?.finishReason == .error ? "error" : "ok"
+                await sessionLog.logResponse(request, id: id, status: status, result: result, queueWait: queueWait)
+                continuation.finish()
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+
+    private func performStream(
+        request: GenerationRequest, modelId: String?
+    ) async throws(BasaltError) -> (stream: AsyncStream<StreamChunk>, queueWait: Duration) {
         if let cloudFallback, let reason = await cloudFallbackReason(for: request) {
             do {
                 logger.info("Streaming from the cloud: \(reason.rawValue)")
-                return Self.endingWithErrorMetadata(try await cloudFallback.generateStream(request))
+                return (Self.endingWithErrorMetadata(try await cloudFallback.generateStream(request)), .zero)
             } catch {
                 logger.warn("Cloud fallback (\(reason.rawValue)) failed to start, serving locally: \(error)")
             }
@@ -241,7 +311,9 @@ public actor ModelOrchestratorActor {
 
         logger.trace("generateStream start")
         let validated = try await capped(request)
+        let queued = ContinuousClock.now
         let ticket = try await admitted()
+        let queueWait = ContinuousClock.now - queued
 
         await self.telemetry.requestStarted()
         let stream: AsyncStream<StreamChunk>
@@ -261,7 +333,7 @@ public actor ModelOrchestratorActor {
 
         let telemetry = self.telemetry
         let gate = self.gate
-        return AsyncStream<StreamChunk> { continuation in
+        return (AsyncStream<StreamChunk> { continuation in
             let task = Task.detached {
                 var result: GenerationResponse?
                 for await chunk in stream {
@@ -283,7 +355,7 @@ public actor ModelOrchestratorActor {
             }
             Task { await gate.onCancel(ticket) { task.cancel() } }
             continuation.onTermination = { _ in task.cancel() }
-        }
+        }, queueWait)
     }
 
     static func endingWithErrorMetadata(_ source: AsyncThrowingStream<StreamChunk, Error>) -> AsyncStream<StreamChunk> {

@@ -223,62 +223,54 @@ struct AnthropicController: Sendable {
 
     @Sendable
     func messages(request: Request, context: BasicRequestContext) async throws -> Response {
-        let pipeline = ChatPipeline(orchestrator: orchestrator, label: "Anthropic") { status, message in
+        let pipeline = ChatPipeline(orchestrator: orchestrator, label: "Anthropic", source: "anthropic", endpoint: "/v1/messages") { status, message in
             Self.errorResponse(status: status, message: message,
                                type: status == .serviceUnavailable ? "overloaded_error" : "invalid_request_error")
         }
-        let dto: MessagesRequest
-        let prepared: ChatPipeline.Prepared
-        do {
-            let data = try await pipeline.body(of: request)
-            dto = try pipeline.decode(MessagesRequest.self, from: data, failure: "Decode error")
+        return try await pipeline.handle(request) { data in
+            let dto = try pipeline.decode(MessagesRequest.self, from: data, failure: "Decode error")
             try pipeline.require(!dto.messages.isEmpty, "messages must not be empty")
             let maxTokens = dto.maxTokens ?? 8192
             if dto.thinking?.type == "enabled", let budget = dto.thinking?.budgetTokens, budget < 1 || budget >= maxTokens {
-                throw ChatPipeline.Rejection(response: Self.errorResponse(
-                    status: .badRequest,
-                    message: "thinking.budget_tokens must be >= 1 and less than max_tokens (\(maxTokens))",
-                    type: "invalid_request_error"))
+                throw pipeline.rejection(.badRequest, "thinking.budget_tokens must be >= 1 and less than max_tokens (\(maxTokens))")
             }
             let tools = try pipeline.tools(in: data)
-            prepared = try pipeline.prepare(
+            let prepared = try pipeline.prepare(
                 chat: Self.chatMessages(system: dto.system, messages: dto.messages), headers: request.headers,
                 maxTokens: maxTokens,
                 sampling: .init(temperature: dto.temperature, topP: dto.topP, minP: dto.minP,
                                 dynamicTemperature: dto.dynamicTemperature, topK: dto.topK),
                 reasoningEffort: Self.reasoningEffort(dto), tools: tools,
                 thinkingBudget: dto.thinking?.type == "enabled" ? dto.thinking?.budgetTokens : nil,
-                responseFormat: nil, model: dto.model)
+                responseFormat: nil, model: dto.model, stream: dto.stream == true)
             if dto.stream == true { try await pipeline.admitStream(prepared.request) }
-        } catch let rejection as ChatPipeline.Rejection {
-            return rejection.response
-        }
-        let genRequest = prepared.request
-        let requestedModel = prepared.requestedModel
+            let genRequest = prepared.request
+            let requestedModel = prepared.requestedModel
 
-        if dto.stream == true {
-            return streamMessagesResponse(genRequest: genRequest, model: dto.model ?? modelId, requestedModel: requestedModel)
-        }
+            if dto.stream == true {
+                return streamMessagesResponse(genRequest: genRequest, model: dto.model ?? modelId, requestedModel: requestedModel)
+            }
 
-        do {
-            let result = try await orchestrator.generate(request: genRequest, modelId: requestedModel)
-            let response = MessagesResponse(
-                id: "msg_\(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(24))",
-                type: "message",
-                role: "assistant",
-                content: Self.responseContent(reasoning: result.reasoningText, text: result.generatedText, toolCalls: result.toolCalls ?? []),
-                model: dto.model ?? modelId,
-                stopReason: Self.stopReason(result.finishReason, calledTools: result.toolCalls?.isEmpty == false),
-                stopSequence: nil,
-                usage: .init(result)
-            )
-            return try jsonResponse(status: .ok, body: response)
-        } catch let err as BasaltError {
-            return errorResponse(
-                status: HTTPResponse.Status(code: err.httpStatus),
-                message: ModelsController.publicMessage(for: err),
-                type: "api_error"
-            )
+            do {
+                let result = try await orchestrator.generate(request: genRequest, modelId: requestedModel)
+                let response = MessagesResponse(
+                    id: "msg_\(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(24))",
+                    type: "message",
+                    role: "assistant",
+                    content: Self.responseContent(reasoning: result.reasoningText, text: result.generatedText, toolCalls: result.toolCalls ?? []),
+                    model: dto.model ?? modelId,
+                    stopReason: Self.stopReason(result.finishReason, calledTools: result.toolCalls?.isEmpty == false),
+                    stopSequence: nil,
+                    usage: .init(result)
+                )
+                return try jsonResponse(status: .ok, body: response)
+            } catch let err as BasaltError {
+                return errorResponse(
+                    status: HTTPResponse.Status(code: err.httpStatus),
+                    message: ModelsController.publicMessage(for: err),
+                    type: "api_error"
+                )
+            }
         }
     }
 
