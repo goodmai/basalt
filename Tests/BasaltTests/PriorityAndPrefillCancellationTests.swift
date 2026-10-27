@@ -77,23 +77,26 @@ struct PriorityAndPrefillCancellationTests {
 
     static let longPrompt = String(repeating: "abcdefgh", count: 2_048)
 
-    static func tinyEngine() async throws -> MLXInferenceEngine {
-        let engine = MLXInferenceEngine(promptCacheBytes: 0)
+    static func tinyEngine(cacheBlendRatio: Float? = nil) async throws -> MLXInferenceEngine {
+        let engine = MLXInferenceEngine(promptCacheBytes: cacheBlendRatio == nil ? 0 : 1 << 26, cacheBlendRatio: cacheBlendRatio)
         await engine.attach(try TinyModel.container())
         return engine
     }
 
-    @Test("Cancelling a request mid-prefill of a 16k-token prompt stops it within a prefill chunk, not at the end of the prompt")
-    func prefillStopsOnCancel() async throws {
-        let engine = try await Self.tinyEngine()
-        let request = GenerationRequest(prompt: Self.longPrompt, maxTokens: 4, temperature: 0)
+    @Test("Cancelling a request mid-prefill of a 16k-token prompt stops it within a prefill chunk, not at the end of the prompt",
+          arguments: [nil, 0.5] as [Float?])
+    func prefillStopsOnCancel(cacheBlendRatio: Float?) async throws {
+        let engine = try await Self.tinyEngine(cacheBlendRatio: cacheBlendRatio)
+        func request(_ key: String) -> GenerationRequest {
+            GenerationRequest(prompt: Self.longPrompt, maxTokens: 4, temperature: 0, cacheKey: key)
+        }
         let fullStart = ContinuousClock.now
-        for await _ in try await engine.generateStream(request: request) {}
+        for await _ in try await engine.generateStream(request: request("timed")) {}
         let full = ContinuousClock.now - fullStart
 
         let task = Task { () -> Duration in
             do {
-                for await _ in try await engine.generateStream(request: request) {}
+                for await _ in try await engine.generateStream(request: request("cancelled")) {}
             } catch {}
             return .zero
         }
@@ -102,7 +105,7 @@ struct PriorityAndPrefillCancellationTests {
         task.cancel()
         _ = await task.value
         let abort = ContinuousClock.now - cancelled
-        print("PREFILL-CANCEL full=\(full) abort=\(abort)")
+        print("PREFILL-CANCEL blend=\(String(describing: cacheBlendRatio)) full=\(full) abort=\(abort)")
         #expect(abort < full / 3)
     }
 
