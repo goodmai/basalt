@@ -87,7 +87,7 @@ public actor SystemProfiler {
         let diskSpace = getAvailableDiskSpace()
         
         // Available RAM
-        let availableRAM = getAvailableRAM()
+        let availableRAM = Self.availableSystemMemory()
         
         // Chip model detection
         let chipModel = detectChipModel()
@@ -180,11 +180,9 @@ public actor SystemProfiler {
     
     /// Available RAM only — the cheap part of `detectResources()`, for periodic telemetry.
     public func currentAvailableRAM() -> Int64 {
-        getAvailableRAM()
+        Self.availableSystemMemory()
     }
 
-    // MARK: - Private Helpers
-    
     public static func availableSystemMemory() -> Int64 {
         var vmStats = vm_statistics64()
         var count = mach_msg_type_number_t(MemoryLayout<vm_statistics64>.size / MemoryLayout<integer_t>.size)
@@ -200,10 +198,6 @@ public actor SystemProfiler {
         return availablePages * Int64(getpagesize())
     }
 
-    private func getAvailableRAM() -> Int64 {
-        Self.availableSystemMemory()
-    }
-    
     /// Get available disk space
     private func getAvailableDiskSpace() -> Int64 {
         let fileURL = URL(fileURLWithPath: NSHomeDirectory())

@@ -120,7 +120,6 @@ public actor ModelRouter: Sendable {
         }
     }
     
-    /// Route stream request to appropriate model (local or cloud)
     public func routeStream(request: GenerationRequest, preferredModel: String?) async throws -> AsyncThrowingStream<StreamChunk, Error> {
         let modelId = preferredModel ?? "auto"
         
@@ -347,8 +346,9 @@ public actor ModelRouter: Sendable {
             )
         }
         
+        let startTime = ContinuousClock.now
         let sourceStream = try await client.chatStream(request: chatRequest)
-        return Self.relayCloudStream(sourceStream, startTime: ContinuousClock.now)
+        return Self.relayCloudStream(sourceStream, startTime: startTime)
     }
 
     static func relayCloudStream(
