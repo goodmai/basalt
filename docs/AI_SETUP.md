@@ -140,7 +140,7 @@ Returns:
   "content": [
     {
       "type": "text",
-      "text": "{\"diagnostics\":{\"requestCount\":0,\"totalTokensGenerated\":0},\"loadedModel\":\"ornith-ai/Ornith-1.5-9B-MLX-4bit\",\"ready\":true,\"status\":\"ok\",\"telemetry\":{\"activeRequests\":0,\"availableRAMGB\":18.4,\"chipModel\":\"M4 Pro\",\"gpuActiveBytes\":0,\"gpuName\":\"Apple M4 Pro\",\"gpuPeakBytes\":0,\"modelRAMMB\":5530,\"timeToFirstToken\":0,\"timestamp\":782438400,\"tokensPerSecond\":0,\"totalRAMGB\":24,\"totalRequests\":0,\"totalTokensGenerated\":0},\"version\":\"0.5.0\"}"
+      "text": "{\"diagnostics\":{\"requestCount\":0,\"totalTokensGenerated\":0},\"loadedModel\":\"ornith-ai/Ornith-1.5-9B-MLX-4bit\",\"ready\":true,\"status\":\"ok\",\"telemetry\":{\"activeRequests\":0,\"availableRAMGB\":18.4,\"chipModel\":\"M4 Pro\",\"gpuActiveBytes\":0,\"gpuName\":\"Apple M4 Pro\",\"gpuPeakBytes\":0,\"modelRAMMB\":5530,\"timeToFirstToken\":0,\"timestamp\":782438400,\"tokensPerSecond\":0,\"totalRAMGB\":24,\"totalRequests\":0,\"totalTokensGenerated\":0},\"version\":\"0.6.0\"}"
     }
   ]
 }

@@ -1,8 +1,16 @@
 # Changelog
 
-## Unreleased
+## 0.6.0 — 2026-10-27
+
+### Upgrading from 0.5.0
+- Queued requests are admitted by priority (#140): `basalt chat` first, then service requests and the harness, then the API, then benchmarks. When the queue is full, a higher-priority request turns away the lowest-priority waiter with 503 `Retry-After: 1` instead of being refused itself.
+- A fixed `--kv-bits 4|8` now refuses with 413 a prompt whose fp16 prefill plus quantization copy does not fit, instead of admitting it and running out of memory (#139). `--kv-bits auto` is new and stays fp16 until a request needs more room.
+- `basalt chat` keeps a multi-turn history and logs its own session; `basalt chat --resume <id|latest>` continues one (#106).
+- Chat templates now go through basalt's own Jinja2 whitespace handling, so prompts can differ slightly from 0.5.0 where swift-jinja diverged from transformers (Gemma 4 tool prompts, `{#- … #}` comments, CRLF templates) (#104).
+- `/v1/chat/completions` adds `reasoning_content` next to `reasoning` (#104).
 
 ### Performance
+- Prompt-lookup speculative decoding, opt-in with `serve --speculative-lookup` (#138): up to 8 tokens drafted from an n-gram match against the prompt and the output, verified in one forward pass; sampling stays exact with constraints and penalties. About 2.1× on code edits and 1.7× on JSON echoes, slower on free prose (0.89×), so no profile enables it; attention-only models without `--kv-bits`.
 - Constrained decoding (#141): building the JSON mask processor no longer materializes the vocabulary index on the CPU (~10 ms per constrained request on a 152k vocabulary, now ~2 µs), and the per-step mask remap is gone. The grammar pool evicts the least recently used schema when a 17th arrives instead of dropping all 16, so agent loops cycling through many tool schemas stop recompiling them (7 ms on Qwen3, 13.5 ms on Gemma 4 per miss).
 
 ### Memory
