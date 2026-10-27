@@ -69,6 +69,7 @@ public actor MLXInferenceEngine: InferenceEngine {
 
     private(set) var promptCaches: PromptCacheTree
     private var kvMemoryBudget: Int64?
+    private var controlTokens = ControlTokenGuard.none
 
     public var kvMemoryBudgetBytes: Int64? { kvMemoryBudget }
 
@@ -113,9 +114,10 @@ public actor MLXInferenceEngine: InferenceEngine {
 
     func attach(
         _ container: ModelContainer, profile: any ModelProfile = GenericProfile(),
-        samplingDefaults: SamplingDefaults = SamplingDefaults()
+        samplingDefaults: SamplingDefaults = SamplingDefaults(), controlTokens: ControlTokenGuard = .none
     ) {
         self.container = container
+        self.controlTokens = controlTokens
         grammarVocabulary = nil
         idleGrammars = [:]
         self.profile = profile
@@ -262,7 +264,8 @@ public actor MLXInferenceEngine: InferenceEngine {
 
             attach(try await loadModelContainer(from: directory, using: DefaultTokenizerLoader()),
                    profile: ModelProfileRegistry.profile(forModelAt: modelPath),
-                   samplingDefaults: SamplingDefaults(generationConfig: ModelCache.generationConfig(at: directory)))
+                   samplingDefaults: SamplingDefaults(generationConfig: ModelCache.generationConfig(at: directory)),
+                   controlTokens: ControlTokenGuard(modelDirectory: directory))
             logger.info("Sampling defaults from generation_config.json: \(samplingDefaults)")
             
             // Dynamic config inspection
@@ -700,7 +703,7 @@ public actor MLXInferenceEngine: InferenceEngine {
         var makeInput: @Sendable (String) -> UserInput
         var template: String?
         let policy = Self.reasoningPolicy(request: request, defaultReasoningEffort: reasoningEffort)
-        let turns = request.messages.flatMap { $0.isEmpty ? nil : profile.turns($0, for: policy) }
+        let turns = request.messages.flatMap { $0.isEmpty ? nil : profile.turns(controlTokens.neutralize($0), for: policy) }
         var lastText: String
         let context = Self.buildTemplateContext(
             request: request,
@@ -713,7 +716,7 @@ public actor MLXInferenceEngine: InferenceEngine {
             lastText = request.prompt
         } else {
             (makeInput, template, lastText) = Self.chatInput(
-                turns ?? profile.turns([ChatMessageInput(role: .user, text: request.prompt)], for: policy),
+                turns ?? profile.turns(controlTokens.neutralize([ChatMessageInput(role: .user, text: request.prompt)]), for: policy),
                 normalisation: "native", tools: toolSpecs, context: context)
         }
 
