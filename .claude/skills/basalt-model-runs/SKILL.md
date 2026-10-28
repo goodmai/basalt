@@ -21,7 +21,9 @@ Bash only starts one of these. Don't write `for model in …; do …; done | tai
 - Appends one line per step to `logs/<runner>-<date>.log` and prints it: timestamp, model, mode, parameters, result.
 - Catches every error per step, logs `FAIL <step> <error>`, carries on to the next step only when the steps are independent, and exits non-zero if anything failed.
 - Writes a header line with `git rev-parse HEAD`, the model repo and snapshot revision, and the chip and memory.
-- Takes the GPU lock before loading weights and releases it in `defer`: create the directory `/private/tmp/basalt-gpu.lock` (failing while it exists means another run holds the GPU, so wait and retry) and remove it on exit, including on error.
+- Takes the GPU lock before loading weights and releases it in `defer`: create the directory `/private/tmp/basalt-gpu.lock` (failing while it exists means another run holds the GPU, so wait and retry), write the runner's pid into `owner` inside it, and on exit, including on error, remove it only if `owner` still holds that pid. Release exactly once: a second release (a `defer` plus a signal handler, or a wrapper that also cleans up) deletes the lock the next run has just taken, and two models then share the GPU. Hold it for one model, then release and take it again, so other runs can interleave.
+- A run that was killed or shared the GPU invalidates its numbers from that point; discard and rerun them.
+- Speed numbers (tok/s, TTFT) come from a release build (`swift test -c release`, `swift run -c release`); a debug build is fine for memory, PPL and passkey.
 
 ## Which models
 
