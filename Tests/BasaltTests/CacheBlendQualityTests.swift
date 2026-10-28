@@ -160,22 +160,32 @@ struct CacheBlendExclusionTests {
 
     static func answers(
         cacheBlendRatio: Float?, path: String, log: ModelRunLog
-    ) async throws -> (texts: [String], cached: [Int], chunks: Int?) {
+    ) async throws -> (texts: [String], cached: [Int], chunks: Int?, firstToken: [Double]) {
         let mode = cacheBlendRatio.map { "blend \($0)" } ?? "plain"
         let engine = MLXInferenceEngine(promptCacheBytes: 1 << 30, cacheBlendRatio: cacheBlendRatio)
         try await log.step("load \(mode)") { try await engine.load(modelPath: path) }
+        let container = try #require(await engine.container)
+        let refusal = try await container.perform { context in
+            let layers = try context.model.newCache(parameters: nil).map { String(describing: type(of: $0)) }
+            let kinds = Dictionary(layers.map { ($0, 1) }, uniquingKeysWith: +).sorted { $0.key < $1.key }
+                .map { "\($0.key) x\($0.value)" }.joined(separator: ", ")
+            return "model \(type(of: context.model)) splices \(CacheBlendModel(context.model) != nil) hybrid \(PromptCache(try context.model.newCache(parameters: nil)).isHybrid) cache layers [\(kinds)]"
+        }
+        log.record("refusal", "\(mode) \(refusal)")
         var texts: [String] = []
         var cached: [Int] = []
+        var firstToken: [Double] = []
         for (index, order) in ([[0, 1, 2, 3, 4, 5]] + CacheBlendQualityTests.orders.prefix(2)).enumerated() {
             let prompt = try CacheBlendQualityTests.prompt(order, question: index)
             let response = try await log.step("generate \(mode) \(index)") {
                 try await engine.generate(request: greedy(prompt, key: "ns", maxTokens: 24))
             }
-            log.record("generate", "\(mode) prompt \(index) order \(order) prompt \(response.promptTokens) cached \(response.cachedPromptTokens) answer \(response.generatedText.debugDescription)")
+            log.record("generate", "\(mode) prompt \(index) order \(order) prompt \(response.promptTokens) cached \(response.cachedPromptTokens) ttft \(String(format: "%.2f", response.timeToFirstToken))s answer \(response.generatedText.debugDescription)")
             texts.append(response.generatedText)
             cached.append(response.cachedPromptTokens)
+            firstToken.append(response.timeToFirstToken)
         }
-        return (texts, cached, await engine.cacheBlend?.chunkCount)
+        return (texts, cached, await engine.cacheBlend?.chunkCount, firstToken)
     }
 
     @Test("A sliding-window or hybrid model under --cache-blend stores no chunks and answers reordered files exactly like the plain prompt-cache path",
@@ -184,10 +194,13 @@ struct CacheBlendExclusionTests {
         let path = try #require(Self.modelPath)
         let log = try await ModelRunLog("cacheblend-excluded", issue: "#137", modelPath: path)
         defer { log.releaseGPU() }
-        let blended = try await Self.answers(cacheBlendRatio: 0.3, path: path, log: log)
-        Memory.clearCache()
-        let plain = try await Self.answers(cacheBlendRatio: nil, path: path, log: log)
-        log.record("result", "BLEND-EXCLUDED chunks \(blended.chunks ?? -1) cached \(blended.cached) plain \(plain.cached) same \(blended.texts == plain.texts)")
+        let (blended, plain) = try await log.timed("answers") {
+            let blended = try await Self.answers(cacheBlendRatio: 0.3, path: path, log: log)
+            Memory.clearCache()
+            return (blended, try await Self.answers(cacheBlendRatio: nil, path: path, log: log))
+        }
+        let ttft = { (times: [Double]) in times.map { String(format: "%.2f", $0) }.joined(separator: "/") }
+        log.record("result", "BLEND-EXCLUDED chunks \(blended.chunks ?? -1) cached \(blended.cached) plain \(plain.cached) same \(blended.texts == plain.texts) ttft blend \(ttft(blended.firstToken))s plain \(ttft(plain.firstToken))s")
         #expect(blended.chunks == 0)
         #expect(plain.chunks == nil)
         #expect(blended.cached == plain.cached)
