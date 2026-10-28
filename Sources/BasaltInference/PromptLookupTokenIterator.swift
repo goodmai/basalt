@@ -3,7 +3,7 @@ import MLX
 import MLXLMCommon
 
 struct PromptLookupTokenIterator: TokenIteratorProtocol {
-    static let draftLimit = 7
+    static let draftLimit = 8
     static let ngramSizes = [5, 4, 3]
 
     let model: any LanguageModel
