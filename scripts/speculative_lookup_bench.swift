@@ -14,7 +14,8 @@ let usage = """
       --models     comma-separated HF repo ids (default: \(Options().models.joined(separator: ",")))
       --runs       timed iterations per cell (default: 3)
       --tokens     tokens generated per iteration (default: 300)
-      --variant    another PerformanceBenchmark binary, run with lookup on next to the built one
+      --variant    another PerformanceBenchmark binary, run with lookup on next to the one built
+                   from this checkout; labels are unique and not on or off
       -h, --help   show this help
     """
 
@@ -32,12 +33,16 @@ func parse(_ arguments: [String]) -> Options? {
         if flag == "-h" || flag == "--help" { return nil }
         guard let value = rest.popFirst() else { return nil }
         switch flag {
-        case "--models": options.models = value.split(separator: ",").map(String.init)
+        case "--models":
+            options.models = value.split(separator: ",").map { trimmed(String($0)) }.filter { !$0.isEmpty }
+            guard !options.models.isEmpty else { return nil }
         case "--runs": guard let runs = Int(value), runs > 0 else { return nil }; options.runs = runs
         case "--tokens": guard let tokens = Int(value), tokens > 0 else { return nil }; options.tokens = tokens
         case "--variant":
             let parts = value.split(separator: "=", maxSplits: 1).map(String.init)
-            guard parts.count == 2, !["on", "off"].contains(parts[0]) else { return nil }
+            guard parts.count == 2, !["on", "off"].contains(parts[0]),
+                  !options.variants.contains(where: { $0.label == parts[0] })
+            else { return nil }
             options.variants.append((parts[0], parts[1]))
         default: return nil
         }
@@ -55,7 +60,7 @@ let repo = URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL
 let releaseDirectory = repo + "/.build/release"
 let lockDirectory = "/private/tmp/basalt-gpu.lock"
 let pid = ProcessInfo.processInfo.processIdentifier
-let ownerLine = "pid \(pid) speculative_lookup_bench"
+let ownerLine = String(pid)
 let maxLoad = 8.0
 let stamp = ISO8601DateFormatter().string(from: Date())
 let logPath = repo + "/logs/speculative_lookup_bench-\(stamp.replacingOccurrences(of: ":", with: "")).log"
@@ -74,7 +79,12 @@ func log(_ line: String) {
     let stamped = "\(ISO8601DateFormatter().string(from: Date())) \(line)"
     print(stamped)
     fflush(stdout)
-    logHandle.write(Data((stamped + "\n").utf8))
+    do {
+        try logHandle.write(contentsOf: Data((stamped + "\n").utf8))
+    } catch {
+        failures += 1
+        FileHandle.standardError.write(Data("FAIL log write \(error)\n".utf8))
+    }
 }
 
 func fail(_ step: String, _ detail: String) {
@@ -104,47 +114,70 @@ func releaseLock() {
     state.withLock {
         guard lockHeld else { return }
         lockHeld = false
-        let owner = trimmed((try? String(contentsOfFile: lockDirectory + "/owner", encoding: .utf8)) ?? "")
+        let owner = lockOwner()
         guard owner == ownerLine else {
             fail("release lock", "held by someone else, left untouched: owner=\(owner)")
             return
         }
-        try? FileManager.default.removeItem(atPath: lockDirectory)
+        unlink(lockDirectory + "/owner")
+        rmdir(lockDirectory)
         log("lock released")
     }
+}
+
+func lockOwner() -> String {
+    trimmed((try? String(contentsOfFile: lockDirectory + "/owner", encoding: .utf8)) ?? "")
+}
+
+func reclaimIfStale(owner: String) -> Bool {
+    guard let holder = Int32(owner), kill(holder, 0) != 0, errno == ESRCH else { return false }
+    unlink(lockDirectory + "/owner")
+    rmdir(lockDirectory)
+    log("reclaimed the GPU lock from pid \(holder), which no longer runs")
+    return true
 }
 
 func acquireLock() {
     var waiting = false
     while true {
-        let taken = state.withLock {
-            guard (try? FileManager.default.createDirectory(atPath: lockDirectory, withIntermediateDirectories: false)) != nil
-            else { return false }
-            FileManager.default.createFile(atPath: lockDirectory + "/owner", contents: Data((ownerLine + "\n").utf8))
+        let taken: Bool = state.withLock {
+            guard mkdir(lockDirectory, 0o755) == 0 else { return false }
+            do {
+                try ownerLine.write(toFile: lockDirectory + "/owner", atomically: true, encoding: .utf8)
+            } catch {
+                rmdir(lockDirectory)
+                fail("lock", "cannot write the owner file: \(error)")
+                exit(1)
+            }
             lockHeld = true
             return true
         }
         if taken {
-            log("lock acquired \(ownerLine)")
+            log("lock acquired by pid \(ownerLine)")
             return
         }
+        let owner = lockOwner()
+        if reclaimIfStale(owner: owner) { continue }
         if !waiting {
-            let owner = trimmed((try? String(contentsOfFile: lockDirectory + "/owner", encoding: .utf8)) ?? "")
-            log("waiting for GPU lock held by \(owner)")
+            log("waiting for the GPU lock held by pid \(owner.isEmpty ? "unknown" : owner)")
             waiting = true
         }
         Thread.sleep(forTimeInterval: 15)
     }
 }
 
-let signalSources = [SIGINT, SIGTERM].map { signalNumber in
+signal(SIGPIPE, SIG_IGN)
+let signalSources = [SIGINT, SIGTERM, SIGHUP].map { signalNumber in
     signal(signalNumber, SIG_IGN)
     let source = DispatchSource.makeSignalSource(signal: signalNumber, queue: .global())
     source.setEventHandler {
-        state.withLock { child }?.terminate()
+        if let running = state.withLock({ child }) {
+            running.terminate()
+            running.waitUntilExit()
+        }
         log("FAIL interrupted by signal \(signalNumber)")
         releaseLock()
-        exit(130)
+        exit(128 + signalNumber)
     }
     source.resume()
     return source

@@ -133,10 +133,11 @@ struct PromptLookupDecodingTests {
         #expect(try #require(actual.iterator.speculativeDecodingTelemetry).acceptedDraftTokenCount > 0)
     }
 
-    @Test("A seeded top-p sampler at T > 0 draws exactly the plain decoder's tokens with lookup on, with no processor or a stateful one, and drafts are accepted",
+    @Test("A seeded sampler at T > 0 draws exactly the plain decoder's tokens with lookup on, with no processor or a stateful one past its warm-up, and drafts are accepted",
           arguments: ["none", "repetition", "entropy"])
-    func seededTopPParity(shaping: String) throws {
+    func seededSamplerParity(shaping: String) throws {
         let model = try TinyLlama.make()
+        let maxTokens = EntropyDynamicTemperature.minTokens + EntropyDynamicTemperature.readbackLag + 64
         func processor() -> LogitProcessor? {
             switch shaping {
             case "repetition": RepetitionContext(repetitionPenalty: 1.1, repetitionContextSize: 16)
@@ -144,10 +145,14 @@ struct PromptLookupDecodingTests {
             default: nil
             }
         }
-        func sampler(seed: UInt64 = 11) -> LogitSampler { TopPSampler(temperature: 0.03, topP: 0.9, seed: seed) }
-        let expected = try LookupFixture.baseline(model, processor: processor(), sampler: sampler())
-        #expect(try LookupFixture.baseline(model, processor: processor(), sampler: sampler(seed: 12)) != expected)
-        let actual = try LookupFixture.lookup(model, processor: processor(), sampler: sampler())
+        func sampler(seed: UInt64 = 11) -> LogitSampler {
+            shaping == "entropy"
+                ? CategoricalSampler(temperature: 0.03, seed: seed)
+                : TopPSampler(temperature: 0.03, topP: 0.9, seed: seed)
+        }
+        let expected = try LookupFixture.baseline(model, maxTokens: maxTokens, processor: processor(), sampler: sampler())
+        #expect(try LookupFixture.baseline(model, maxTokens: maxTokens, processor: processor(), sampler: sampler(seed: 12)) != expected)
+        let actual = try LookupFixture.lookup(model, maxTokens: maxTokens, processor: processor(), sampler: sampler())
         #expect(actual.tokens == expected)
         #expect(try #require(actual.iterator.speculativeDecodingTelemetry).acceptedDraftTokenCount > 0)
     }

@@ -71,8 +71,10 @@ Prompt lookup (`--speculative-lookup`, #146/#138/#25) drafts up to 16 tokens per
 
 ```
 ./scripts/speculative_lookup_bench.swift
-./scripts/speculative_lookup_bench.swift --variant k16=/path/to/other/PerformanceBenchmark
+./scripts/speculative_lookup_bench.swift --variant k8=/path/to/k8/PerformanceBenchmark
 ```
+
+The runner builds and measures the checkout it lives in. `--variant` adds cells for another `PerformanceBenchmark` binary, labelled by what that binary is: the second command, run from this checkout (draft limit 16), compares a draft-limit-8 build against it, and its column reads k8 / on. The k16 / k8 table below came from the opposite setup, a k8 checkout with a k16 variant.
 
 Lookup on / off at commit `7e2a0ea` (draft limit 16). `*` marks a ratio with an invalid cell (σ above 3% of the mean). The two passes disagree by more than the gate on the code rows: the host's throughput swung between neighbouring cells in this run, so read the code speedup as a range.
 
@@ -98,4 +100,4 @@ Draft limit 16 against 8, both with lookup on, at commit `f9fa34b`:
 | Llama-3.1-8B-Instruct-4bit | code | 0.7 | 1.45×, 1.48× |
 | Llama-3.1-8B-Instruct-4bit | prose | 0 / 0.7 | 1.00×, 1.00× |
 
-At T 0.7 the output is token-for-token the same as plain decoding with the same seed: each emitted token costs exactly one sampler draw, in plain-decoding order. Qwen3-4B's greedy prose differs from plain decoding: a multi-token verify uses different matmul kernels than a one-token step, and a near-tie on a quantized model can flip (#146).
+"Same text as off" is what these runs observed, not a guarantee. Lookup spends exactly one sampler draw per emitted token, in plain-decoding order, so a seeded run follows plain decoding as long as the logits match. But a multi-token verify uses different matmul kernels than a one-token step, so on a quantized model a near-tie can flip, at T 0 and at T > 0 alike (#146). That happened on Qwen3-4B's greedy prose. The Qwen3-4B prose row at T 0.7 drafted nothing, so its "yes" shows nothing about lookup.
