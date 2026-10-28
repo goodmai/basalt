@@ -11,6 +11,8 @@ public actor ModelOrchestratorActor {
     private let maxTokens: Int
     private var modelSizeMB: Int = 4000
     private let kvBitsLadder: [Int?]
+    private let kvZones: KVZones?
+    private var modelTakesKVZones = true
     private var kvGeometry = KVCacheGeometry(parameterProxy: 4)
     /// Floor for the generation watchdog. The real budget scales with the token
     /// count — see `timeout(for:)`.
@@ -39,7 +41,7 @@ public actor ModelOrchestratorActor {
 
     public init(
         engine: any InferenceEngine, maxTokens: Int = 65_536, kvBits: Int? = nil, adaptiveKVBits: Bool = false,
-        telemetry: TelemetryTracker = .shared,
+        kvZones: KVZones? = nil, telemetry: TelemetryTracker = .shared,
         gate: GenerationGate = GenerationGate(), sessionLog: SessionLogWriter? = nil
     ) {
         self.gate = gate
@@ -47,6 +49,7 @@ public actor ModelOrchestratorActor {
         self.engine = engine
         self.maxTokens = maxTokens
         self.kvBitsLadder = adaptiveKVBits ? KVCacheGeometry.adaptiveKVBitsLadder : [kvBits]
+        self.kvZones = kvZones
         self.telemetry = telemetry
     }
 
@@ -102,6 +105,7 @@ public actor ModelOrchestratorActor {
         kvGeometry = KVCacheGeometry.forModel(
             path, parameters: ModelDefinition.inferTotalParameters(id: path, name: "", ramMB: Int64(modelSizeMB))
         )
+        modelTakesKVZones = await engine.supportsKVZones
         // After the load: a failed load must not report the failed model's size.
         await self.telemetry.setModelMemory(mb: self.modelSizeMB)
     }
@@ -473,7 +477,7 @@ public actor ModelOrchestratorActor {
 
     func kvFit(promptTokens: Int, wantedTokens: Int, budget: Int64) -> (fitting: Int, kvBits: Int?) {
         let fits = kvBitsLadder.map { bits in
-            (fitting: kvGeometry.maxTokens(fitting: budget, kvBits: bits, promptTokens: promptTokens), kvBits: bits)
+            (fitting: kvGeometry.maxTokens(fitting: budget, kvBits: bits, promptTokens: promptTokens, zones: modelTakesKVZones ? kvZones : nil), kvBits: bits)
         }
         return fits.first { $0.fitting >= wantedTokens } ?? fits.max { $0.fitting < $1.fitting }!
     }

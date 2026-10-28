@@ -220,6 +220,42 @@ struct KVCacheGeometryTests {
         #expect(g.maxTokens(fitting: 300 * 147_456, kvBits: 4, promptTokens: 10) == 300)
     }
 
+    @Test("Zoned KV on Qwen3-4B: up to 64 sink + 1024 window + one 256-token migration step stay fp16, the rest is quantized; at 32k that saves 68.9% at 4 bits, 45.0% at 8")
+    func zonedFootprint() {
+        let g = KVCacheGeometry(config: Self.qwen3_4B)!
+        let zones = KVZones.standard
+        #expect(zones.maxFullPrecisionTokens == 1_343)
+        #expect(g.bytes(tokens: 1_343, kvBits: 4, zones: zones) == g.bytes(tokens: 1_343))
+        #expect(g.bytes(tokens: 32_768, kvBits: 4, zones: zones) == 1_343 * 147_456 + 31_425 * 41_472)
+        #expect(g.bytes(tokens: 32_768, kvBits: 8, zones: zones) == 1_343 * 147_456 + 31_425 * 78_336)
+        #expect(g.bytes(tokens: 32_768, kvBits: nil, zones: zones) == g.bytes(tokens: 32_768))
+        let fp16 = Double(g.bytes(tokens: 32_768))
+        #expect(abs(1 - Double(g.bytes(tokens: 32_768, kvBits: 4, zones: zones)) / fp16 - 0.6893) < 1e-4)
+        #expect(abs(1 - Double(g.bytes(tokens: 32_768, kvBits: 8, zones: zones)) / fp16 - 0.4495) < 1e-4)
+    }
+
+    @Test("Zoned KV quantizes while it prefills: no conversion copy, so on 7 GiB the prompt may use the whole zoned room, not uniform 4-bit's 39,783 tokens")
+    func zonedRoomHasNoConversionPeak() {
+        let g = KVCacheGeometry(config: Self.qwen3_4B)!
+        let (budget, zones): (Int64, KVZones) = (7 << 30, .standard)
+        #expect(g.maxTokens(fitting: budget, kvBits: 4, zones: zones) == 177_803)
+        #expect(g.maxTokens(fitting: budget, kvBits: 8, zones: zones) == 94_763)
+        #expect(g.bytes(tokens: 177_803, kvBits: 4, zones: zones) <= budget)
+        #expect(g.bytes(tokens: 177_804, kvBits: 4, zones: zones) > budget)
+        #expect(g.maxPromptTokens(fitting: budget, kvBits: 4, zones: zones) == 177_803)
+        #expect(g.maxTokens(fitting: budget, kvBits: 4, promptTokens: 45_000, zones: zones) == 177_803)
+        #expect(g.maxTokens(fitting: budget, kvBits: nil, promptTokens: 45_000, zones: zones) == 50_972)
+        #expect(g.conversionPeakBytes(tokens: 16_384, kvBits: 8, zones: zones) == g.bytes(tokens: 16_384, kvBits: 8, zones: zones))
+        #expect(g.maxTokens(fitting: 1_000 * 147_456, kvBits: 4, zones: zones) == 1_000)
+    }
+
+    @Test("The quantization group follows the head dimension: 64 when it divides, else the nearest of 32 and 128, none for 16")
+    func quantizedGroupSize() {
+        #expect(KVCacheGeometry.quantizedGroupSize(keyDim: 128, valueDim: 128) == 64)
+        #expect(KVCacheGeometry.quantizedGroupSize(keyDim: 96, valueDim: 96) == 32)
+        #expect(KVCacheGeometry.quantizedGroupSize(keyDim: 16, valueDim: 16) == nil)
+    }
+
     @Test("maxTokens inverts bytes: the largest prompt that fits the budget")
     func inverse() {
         let g = KVCacheGeometry(config: Self.ornith9B)!

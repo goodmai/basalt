@@ -88,6 +88,23 @@ struct MemoryEvaluatorTests {
         #expect(q4.maxPromptBudgetTokens < fp16.maxPromptBudgetTokens)
     }
 
+    @Test("--kv-zones: the prompt budget is the whole zoned context budget, the prompt is quantized as it is prefilled")
+    func zonedPromptBudget() async {
+        let e = MemoryEvaluator()
+        let r = resources(totalGB: 16, availableGB: 12)
+        let def = model(ramMB: 8_000)
+        let uniform = await e.evaluate(definition: def, resources: r, kvBits: 4)
+        let zoned = await e.evaluate(definition: def, resources: r, kvBits: 4, kvZones: .standard)
+        let kv = KVCacheGeometry(parameterProxy: def.totalParameters)
+        let room = (MemoryEvaluator.memoryBudget(r) - def.ramMB * Self.mib) / 2
+        let cap = TokenBudgetCalculator.upperCapTokens
+        #expect(zoned.maxContextBudgetTokens == min(cap, kv.maxTokens(fitting: room, kvBits: 4, zones: .standard)))
+        #expect(zoned.maxPromptBudgetTokens == zoned.maxContextBudgetTokens)
+        #expect(zoned.maxPromptBudgetTokens > uniform.maxPromptBudgetTokens)
+        #expect(zoned.requiredRAMBytes > uniform.requiredRAMBytes)
+        #expect(zoned.contextBudgetLine == "\(zoned.maxContextBudgetTokens) tokens")
+    }
+
     @Test("Only an oversized full-precision or very large model gets the 4-bit recommendation")
     func recommendation() async {
         let e = MemoryEvaluator()

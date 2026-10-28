@@ -187,4 +187,36 @@ struct DryRunAndMemoryIntegrationTests {
             #expect(abs(Double(held) / Double(estimate) - 1) <= 0.03, "kvBits \(String(describing: bits)): MLX holds \(held) B, geometry says \(estimate) B")
         }
     }
+
+    @Test("Qwen3-4B: the zoned 8- and 4-bit KV cache held after a 16k prompt is within 3% of KVCacheGeometry with zones",
+          .enabled(if: DryRunAndMemoryIntegrationTests.kvProbeModelPath != nil,
+                   "set BASALT_E2E=1 and cache mlx-community/Qwen3-4B-4bit"))
+    func measuredZonedKVMatchesGeometry() async throws {
+        let path = try #require(Self.kvProbeModelPath)
+        let engine = MLXInferenceEngine(gpuCacheLimit: 0)
+        try await engine.load(modelPath: path)
+        let container = try #require(await engine.container)
+        let geometry = try #require(KVCacheGeometry.load(modelDirectory: URL(fileURLWithPath: path)))
+        let (prompt, generated) = (16_380, 4)
+        for bits in [8, 4] {
+            let held = try await container.perform { (context: ModelContext) in
+                var parameters = GenerateParameters(maxTokens: generated, temperature: 0)
+                parameters.kvBits = bits
+                let zoned = try #require(try MLXInferenceEngine.zonedCache(params: parameters, zones: .standard, model: context.model))
+                Memory.clearCache()
+                let before = Memory.activeMemory
+                var iterator = try TokenIterator(
+                    input: LMInput(tokens: MLXArray((0..<prompt).map { 1_000 + $0 * 7_919 % 20_000 })),
+                    model: context.model, cache: zoned.cache, parameters: zoned.params)
+                while iterator.next() != nil {}
+                Stream.gpu.synchronize()
+                Memory.clearCache()
+                let held = Memory.activeMemory - before
+                #expect(iterator.tokenCount == generated)
+                return held
+            }
+            let estimate = geometry.bytes(tokens: prompt + generated, kvBits: bits, zones: .standard)
+            #expect(abs(Double(held) / Double(estimate) - 1) <= 0.03, "zoned kvBits \(bits): MLX holds \(held) B, geometry says \(estimate) B")
+        }
+    }
 }

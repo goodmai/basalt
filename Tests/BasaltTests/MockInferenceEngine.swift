@@ -34,6 +34,12 @@ actor MockInferenceEngine: InferenceEngine {
     }
 
     var kvMemoryBudgetBytes: Int64? { mockKVBudget }
+    var mockSupportsKVZones = true
+    var supportsKVZones: Bool { mockSupportsKVZones }
+
+    func setSupportsKVZones(_ supported: Bool) {
+        mockSupportsKVZones = supported
+    }
 
     func promptTokenCount(for request: GenerationRequest) async -> Int? { mockPromptTokens }
 

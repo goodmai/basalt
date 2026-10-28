@@ -25,13 +25,16 @@ struct MemoryCapTests {
 
     static func orchestrator(
         kvBudget: Int64?, promptTokens: Int? = nil, maxTokens: Int = 65_536, weightsBytes: UInt64 = 0,
-        free: Int64 = 64 << 30, kvBits: Int? = nil, adaptiveKVBits: Bool = false
+        free: Int64 = 64 << 30, kvBits: Int? = nil, adaptiveKVBits: Bool = false, kvZones: KVZones? = nil,
+        modelTakesKVZones: Bool = true
     ) async throws -> (ModelOrchestratorActor, MockInferenceEngine, URL) {
         let engine = MockInferenceEngine()
         await engine.setMemory(kvBudget: kvBudget, promptTokens: promptTokens)
+        await engine.setSupportsKVZones(modelTakesKVZones)
         let dir = try modelDirectory(weightsBytes: weightsBytes)
         let orchestrator = ModelOrchestratorActor(
-            engine: engine, maxTokens: maxTokens, kvBits: kvBits, adaptiveKVBits: adaptiveKVBits, telemetry: TelemetryTracker())
+            engine: engine, maxTokens: maxTokens, kvBits: kvBits, adaptiveKVBits: adaptiveKVBits, kvZones: kvZones,
+            telemetry: TelemetryTracker())
         try await orchestrator.loadModel(path: dir.path)
         await orchestrator.setFreeMemoryProbe { free }
         return (orchestrator, engine, dir)
@@ -162,6 +165,39 @@ struct MemoryCapTests {
         let sent = try #require(await engine.getLastRequest())
         #expect(sent.maxTokens == 95_948 - 30_000)
         #expect(sent.kvBits == 8)
+    }
+
+    @Test("With --kv-zones, fixed --kv-bits 4 admits the 45k prompt uniform 4-bit refuses: the zoned cache has no fp16 prefill to convert")
+    func zonedFixedBitsAdmitsLongPrompt() async throws {
+        let (orchestrator, engine, dir) = try await Self.orchestrator(
+            kvBudget: 7 * Self.gib, promptTokens: 45_000, kvBits: 4, kvZones: .standard)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        _ = try await orchestrator.generate(request: GenerationRequest(prompt: "long", maxTokens: 1_000))
+        let sent = try #require(await engine.getLastRequest())
+        #expect(sent.kvBits == 4)
+        #expect(sent.maxTokens == 1_000)
+    }
+
+    @Test("A model whose attention bypasses the zoned cache is sized as uniform --kv-bits even with --kv-zones: the 45k prompt is refused again")
+    func zonesIgnoredForModelThatUpdatesItself() async throws {
+        let (orchestrator, engine, dir) = try await Self.orchestrator(
+            kvBudget: 7 * Self.gib, promptTokens: 45_000, kvBits: 4, kvZones: .standard, modelTakesKVZones: false)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        await #expect(throws: BasaltError.self) {
+            _ = try await orchestrator.generate(request: GenerationRequest(prompt: "long", maxTokens: 1_000))
+        }
+        #expect(await engine.getRequests().isEmpty)
+    }
+
+    @Test("--kv-bits auto with --kv-zones steps a prompt fp16 only just holds down to 8 bits instead of capping it in fp16")
+    func zonedAdaptiveQuantizesLongPrompt() async throws {
+        let (orchestrator, engine, dir) = try await Self.orchestrator(
+            kvBudget: 7 * Self.gib, promptTokens: 45_000, maxTokens: 131_072, adaptiveKVBits: true, kvZones: .standard)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        _ = try await orchestrator.generate(request: GenerationRequest(prompt: "long", maxTokens: 20_000))
+        let sent = try #require(await engine.getLastRequest())
+        #expect(sent.kvBits == 8)
+        #expect(sent.maxTokens == 20_000)
     }
 
     @Test("The MLX engine's KV room is the GPU working set minus the weights and the prompt-cache budget")
