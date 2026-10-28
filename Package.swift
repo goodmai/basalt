@@ -143,5 +143,16 @@ let package = Package(
             path: "Sources/PerformanceBenchmark",
             swiftSettings: swiftSettings
         ),
+        .executableTarget(
+            name: "Spike24",
+            dependencies: [
+                .product(name: "MLX", package: "mlx-swift"),
+                .product(name: "MLXLMCommon", package: "mlx-swift-lm"),
+                .product(name: "MLXLLM", package: "mlx-swift-lm"),
+                .product(name: "Tokenizers", package: "swift-transformers"),
+            ],
+            path: "Sources/Spike24",
+            swiftSettings: swiftSettings
+        ),
     ]
 )
