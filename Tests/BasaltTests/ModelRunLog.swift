@@ -31,7 +31,7 @@ final class ModelRunLog: @unchecked Sendable {
             throw BasaltError.modelNotFound(identifier: modelPath)
         }
         record("inspect", "intact, \(report.totalShards) shards, \(report.totalSizeFormatted), \(report.bitWidthDescription)")
-        try await acquireGPU()
+        try acquireGPU()
     }
 
     deinit { releaseGPU() }
@@ -63,27 +63,18 @@ final class ModelRunLog: @unchecked Sendable {
     }
 
     func timed<T>(_ name: String, _ body: () async throws -> T) async throws -> T {
-        var waited = false
-        while true {
-            let ci = !Self.output("/usr/bin/pgrep", ["-f", "Runner.Worker"]).isEmpty
-            let load = Self.load()
-            if !ci, load <= Self.quietLoad {
-                let descriptor = open(Self.quietMarker, O_CREAT | O_EXCL | O_WRONLY, 0o644)
-                if descriptor >= 0 {
-                    _ = "\(getpid()) \(issue)\n".withCString { write(descriptor, $0, strlen($0)) }
-                    close(descriptor)
-                    break
-                }
-            }
-            if !waited {
-                let holder = (try? String(contentsOfFile: Self.quietMarker, encoding: .utf8)) ?? ""
-                record("quiet-wait", ci ? "a CI job is running" : load > Self.quietLoad
-                    ? String(format: "load %.1f above %.0f", load, Self.quietLoad)
-                    : "quiet marker held by \(holder.trimmingCharacters(in: .whitespacesAndNewlines))")
-                waited = true
-            }
-            try await Task.sleep(for: .seconds(30))
+        let ci = !Self.output("/usr/bin/pgrep", ["-f", "Runner.Worker"]).isEmpty
+        let load = Self.load()
+        let descriptor = ci || load > Self.quietLoad ? -1 : open(Self.quietMarker, O_CREAT | O_EXCL | O_WRONLY, 0o644)
+        guard descriptor >= 0 else {
+            let holder = (try? String(contentsOfFile: Self.quietMarker, encoding: .utf8)) ?? ""
+            record("FAIL quiet-busy", ci ? "a CI job is running" : load > Self.quietLoad
+                ? String(format: "load %.1f above %.0f", load, Self.quietLoad)
+                : "quiet marker held by \(holder.trimmingCharacters(in: .whitespacesAndNewlines))")
+            throw CancellationError()
         }
+        _ = "\(getpid()) \(issue)\n".withCString { write(descriptor, $0, strlen($0)) }
+        close(descriptor)
         record("quiet-acquire", Self.quietMarker)
         defer {
             let holder = try? String(contentsOfFile: Self.quietMarker, encoding: .utf8)
@@ -126,23 +117,28 @@ final class ModelRunLog: @unchecked Sendable {
         if !releasing.isEmpty { record("gpu-release", releasing.joined(separator: ", ")) }
     }
 
-    private func acquireGPU() async throws {
+    private func acquireGPU() throws {
+        var taken: [String] = []
         for path in Self.gpuLocks {
-            var waited = false
-            while mkdir(path, 0o755) != 0 {
-                if !waited {
-                    let owner = (try? String(contentsOfFile: path + "/owner", encoding: .utf8))?
-                        .trimmingCharacters(in: .whitespacesAndNewlines)
-                    let alive = owner.flatMap { Int32($0) }.map { kill($0, 0) == 0 }
-                    record("gpu-wait", "\(path) held by \(owner ?? "no owner file")\(alive == false ? " (process gone)" : "")")
-                    waited = true
-                }
-                try await Task.sleep(for: .seconds(15))
-            }
+            guard mkdir(path, 0o755) == 0 else { break }
             try String(getpid()).write(toFile: path + "/owner", atomically: true, encoding: .utf8)
-            state.withLock { held.append(path) }
+            taken.append(path)
         }
-        record("gpu-acquire", Self.gpuLocks.joined(separator: ", "))
+        if taken.count == Self.gpuLocks.count {
+            state.withLock { held = taken }
+            record("gpu-acquire", taken.joined(separator: ", "))
+            return
+        }
+        for path in taken.reversed() {
+            try? FileManager.default.removeItem(atPath: path + "/owner")
+            rmdir(path)
+        }
+        let busy = Self.gpuLocks.first { !taken.contains($0) } ?? ""
+        let owner = (try? String(contentsOfFile: busy + "/owner", encoding: .utf8))?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let alive = owner.flatMap { Int32($0) }.map { kill($0, 0) == 0 }
+        record("FAIL gpu-busy", "\(busy) held by \(owner ?? "no owner file")\(alive == false ? " (process gone)" : ""); a test does not wait for the GPU, relaunch it when the lock is free")
+        throw CancellationError()
     }
 
     static func output(_ tool: String, _ arguments: [String]) -> String {
