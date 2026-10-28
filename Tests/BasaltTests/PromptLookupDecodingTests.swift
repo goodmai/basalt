@@ -21,6 +21,7 @@ final class ScriptedSampler: LogitSampler {
 enum LookupFixture {
     static let unit = (0 ..< 10).map { 1 + ($0 * 37 + 265) % 250 }
     static let prompt = Array(repeating: unit, count: 6).joined() + Array(unit.prefix(4))
+    static let code = String(repeating: "func add(a: Int, b: Int) -> Int { a + b }\n", count: 6) + "func add("
 
     static func model(_ family: String) throws -> any LanguageModel {
         family == "llama" ? try TinyLlama.make() : try TinyQwen3.make()
@@ -34,6 +35,12 @@ enum LookupFixture {
             input: LMInput(tokens: MLXArray(prompt.map(Int32.init))), model: model,
             processor: processor, sampler: sampler, maxTokens: maxTokens)
         return Array(iterator)
+    }
+
+    static func byteContainer() throws -> ModelContainer {
+        ModelContainer(context: ModelContext(
+            configuration: ModelConfiguration(id: "tiny-llama-4"), model: try TinyLlama.make(),
+            processor: ByteInputProcessor(), tokenizer: ByteTokenizer()))
     }
 
     static func lookup(
@@ -78,6 +85,15 @@ struct PromptLookupDecodingTests {
         #expect(telemetry.targetModelCallCount < tokens.count)
     }
 
+    @Test("When the output copies a long span of the prompt, a verify round drafts more than 8 tokens on average")
+    func draftsRunPastEightTokens() throws {
+        let continuation = (0 ..< 64).map { LookupFixture.unit[(4 + $0) % LookupFixture.unit.count] }
+        let run = try LookupFixture.lookup(try TinyLlama.make(), sampler: ScriptedSampler(continuation))
+        #expect(run.tokens == continuation)
+        let telemetry = try #require(run.iterator.speculativeDecodingTelemetry)
+        #expect(telemetry.draftTokenCount > 8 * telemetry.roundCount)
+    }
+
     @Test("Rejected drafts are rolled back: the cache holds the prompt and every emitted token but the last")
     func rollback() throws {
         let model = try TinyQwen3.make()
@@ -117,18 +133,76 @@ struct PromptLookupDecodingTests {
         #expect(try #require(actual.iterator.speculativeDecodingTelemetry).acceptedDraftTokenCount > 0)
     }
 
+    @Test("A seeded sampler at T > 0 draws exactly the plain decoder's tokens with lookup on, with no processor or a stateful one past its warm-up, and drafts are accepted",
+          arguments: ["none", "repetition", "entropy"])
+    func seededSamplerParity(shaping: String) throws {
+        let model = try TinyLlama.make()
+        let maxTokens = EntropyDynamicTemperature.minTokens + EntropyDynamicTemperature.readbackLag + 64
+        func processor() -> LogitProcessor? {
+            switch shaping {
+            case "repetition": RepetitionContext(repetitionPenalty: 1.1, repetitionContextSize: 16)
+            case "entropy": EntropyDynamicTemperature(baseTemperature: 0.03, topP: 0.9)
+            default: nil
+            }
+        }
+        func sampler(seed: UInt64 = 11) -> LogitSampler {
+            shaping == "entropy"
+                ? CategoricalSampler(temperature: 0.03, seed: seed)
+                : TopPSampler(temperature: 0.03, topP: 0.9, seed: seed)
+        }
+        let expected = try LookupFixture.baseline(model, maxTokens: maxTokens, processor: processor(), sampler: sampler())
+        #expect(try LookupFixture.baseline(model, maxTokens: maxTokens, processor: processor(), sampler: sampler(seed: 12)) != expected)
+        let actual = try LookupFixture.lookup(model, maxTokens: maxTokens, processor: processor(), sampler: sampler())
+        #expect(actual.tokens == expected)
+        #expect(try #require(actual.iterator.speculativeDecodingTelemetry).acceptedDraftTokenCount > 0)
+    }
+
+    static func sampledEngines(
+        seed: UInt64, _ container: () throws -> ModelContainer
+    ) async throws -> (plain: MLXInferenceEngine, lookup: MLXInferenceEngine) {
+        let plain = MLXInferenceEngine(seed: seed)
+        await plain.attach(try container(), profile: GenericProfile())
+        let lookup = MLXInferenceEngine(seed: seed, speculativeLookup: true)
+        await lookup.attach(try container(), profile: GenericProfile())
+        return (plain, lookup)
+    }
+
+    @Test("A JSON-constrained request sampled at T 0.7 with a seed decodes the same document with prompt lookup on, and drafts are accepted")
+    func constrainedSampledEquivalence() async throws {
+        let example = #"{"mode": "fast", "flags": [true, true, true, true], "inner": {"on": true, "note": null}}"#
+        let request = GenerationRequest(
+            prompt: "Report the mode as \(example)", maxTokens: 300, temperature: 0.7,
+            responseFormat: .jsonSchema(ConstrainedModel.schema))
+        let engines = try await Self.sampledEngines(seed: 1) { try ConstrainedModel.container() }
+        let expected = try await engines.plain.generate(request: request)
+        let actual = try await engines.lookup.generate(request: request)
+        #expect(actual.generatedText == expected.generatedText)
+        #expect(try ConstrainedModel.isValid(actual.generatedText), "\(actual.generatedText)")
+        #expect(try #require(actual.acceptedDraftTokens) > 0)
+        let reseeded = try await Self.sampledEngines(seed: 2) { try ConstrainedModel.container() }.plain.generate(request: request)
+        #expect(reseeded.generatedText != expected.generatedText)
+    }
+
+    @Test("A presence penalty at T > 0 with a seed leaves the output unchanged with prompt lookup on, and drafts are accepted")
+    func presencePenaltySampledEquivalence() async throws {
+        let prompt = LookupFixture.code
+        let request = GenerationRequest(prompt: prompt, maxTokens: 64, temperature: 0.1, presencePenalty: 0.5)
+        let engines = try await Self.sampledEngines(seed: 11, LookupFixture.byteContainer)
+        let expected = try await engines.plain.generate(request: request)
+        let actual = try await engines.lookup.generate(request: request)
+        #expect(actual.generatedText == expected.generatedText)
+        #expect(try #require(actual.acceptedDraftTokens) > 0)
+        let unpenalized = GenerationRequest(prompt: prompt, maxTokens: 64, temperature: 0.1)
+        #expect(try await engines.plain.generate(request: unpenalized).generatedText != expected.generatedText)
+    }
+
     @Test("Through the engine, greedy output is unchanged with prompt lookup on, and the response reports the drafts")
     func engineGreedyEquivalence() async throws {
-        let prompt = String(repeating: "func add(a: Int, b: Int) -> Int { a + b }\n", count: 6) + "func add("
-        func container() throws -> ModelContainer {
-            ModelContainer(context: ModelContext(
-                configuration: ModelConfiguration(id: "tiny-llama-4"), model: try TinyLlama.make(),
-                processor: ByteInputProcessor(), tokenizer: ByteTokenizer()))
-        }
+        let prompt = LookupFixture.code
         let plain = MLXInferenceEngine(promptCacheBytes: 1 << 26)
-        await plain.attach(try container())
+        await plain.attach(try LookupFixture.byteContainer())
         let speculative = MLXInferenceEngine(promptCacheBytes: 1 << 26, speculativeLookup: true)
-        await speculative.attach(try container())
+        await speculative.attach(try LookupFixture.byteContainer())
         let request = GenerationRequest(prompt: prompt, maxTokens: 64, temperature: 0)
         let expected = try await plain.generate(request: request)
         let actual = try await speculative.generate(request: request)
