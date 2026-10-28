@@ -148,7 +148,9 @@ struct ZonedKVCacheBenchmarkTests {
         let owner = "\(ProcessInfo.processInfo.processIdentifier) #139 \(UUID().uuidString)"
         while true {
             let ciRuns = shell(["gh", "run", "list", "-R", "goodmai/basalt", "--status", "in_progress", "--json", "databaseId", "--jq", "length"])
-            if ciRuns == "0", createExclusively(marker, contents: owner) {
+            let ciIdle = Int(ciRuns).map { $0 == 0 } ?? true
+            if ciIdle, createExclusively(marker, contents: owner) {
+                if Int(ciRuns) == nil { log.line("NOTE gh run list unavailable (\(ciRuns)), CI activity not checked") }
                 log.line("QUIET \(marker) owner=\(owner)")
                 return owner
             }
