@@ -259,9 +259,18 @@ struct ZonedKVCacheBenchmarkTests {
             }
             defer { Self.releaseQuiet(marker, owner: quiet, log: log) }
             let prompt = Int(Self.env["BASALT_ZONED_PROMPT"] ?? "16380") ?? 16_380
+            await log.step("warmup \(repo) fp16 prompt=512 generated=32") {
+                try await container.perform { (context: ModelContext) -> String in
+                    var iterator = try Self.iterator(.fp16, tokens: (0..<512).map { 1_000 + $0 }, maxTokens: 32, context: context).iterator
+                    while iterator.next() != nil {}
+                    return "done"
+                }
+            }
+            let rounds = max(1, Int(Self.env["BASALT_ZONED_ROUNDS"] ?? "1") ?? 1)
+            for round in 1...rounds {
             for mode in Self.modes("BASALT_ZONED_MODES") {
                 let before = Self.hostLoad()
-                await log.step("mem \(repo) \(mode) prompt=\(prompt) generated=128 before: \(before.summary)") {
+                await log.step("mem \(repo) \(mode) round=\(round) prompt=\(prompt) generated=128 before: \(before.summary)") {
                     let measured = try await container.perform { (context: ModelContext) -> (Int, Int, Double, Double) in
                         Memory.clearCache()
                         let before = Memory.activeMemory
@@ -286,6 +295,7 @@ struct ZonedKVCacheBenchmarkTests {
                     let after = Self.hostLoad()
                     return "after: \(after.summary) speedValid=\(before.quiet && after.quiet) held=\(measured.0) geometry=\(estimate) ratio=\(String(format: "%.4f", Double(measured.0) / Double(estimate))) peak=\(measured.1) prefillTPS=\(String(format: "%.0f", measured.2)) decodeTPS=\(String(format: "%.1f", measured.3))"
                 }
+            }
             }
         }
 
