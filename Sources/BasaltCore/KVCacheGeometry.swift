@@ -1,8 +1,49 @@
 import Foundation
 import Synchronization
 
+public struct KVPrecision: Sendable, Hashable, CustomStringConvertible {
+    public let keyBits: Int
+    public let valueBits: Int
+    public let rotatesValues: Bool
+
+    public static let q8 = KVPrecision(bits: 8)
+    public static let q4 = KVPrecision(bits: 4)
+    public static let k8v4 = KVPrecision(keyBits: 8, valueBits: 4)
+    public static let k8v4h = KVPrecision(keyBits: 8, valueBits: 4, rotatesValues: true)
+    public static let supportedBits = [2, 3, 4, 5, 6, 8]
+
+    public init(keyBits: Int, valueBits: Int, rotatesValues: Bool = false) {
+        self.keyBits = keyBits
+        self.valueBits = valueBits
+        self.rotatesValues = rotatesValues
+    }
+
+    public init(bits: Int) {
+        self.init(keyBits: bits, valueBits: bits)
+    }
+
+    public init?(argument: String) {
+        if let named = [Self.k8v4, .k8v4h].first(where: { $0.description == argument }) {
+            self = named
+        } else if let bits = Int(argument), Self.supportedBits.contains(bits) {
+            self.init(bits: bits)
+        } else {
+            return nil
+        }
+    }
+
+    public var isUniform: Bool { keyBits == valueBits }
+
+    public var uniform: KVPrecision { isUniform ? self : KVPrecision(bits: max(keyBits, valueBits)) }
+
+    public var description: String {
+        (isUniform ? "\(keyBits)-bit" : "k\(keyBits)v\(valueBits)") + (rotatesValues ? "h" : "")
+    }
+}
+
 public struct KVCacheGeometry: Sendable, Equatable {
     public let elementsPerToken: Double
+    public let keyElementsPerToken: Double
     public let windowedElementsPerToken: Double
     public let window: Int
     public let fixedStateBytes: Int64
@@ -12,7 +53,7 @@ public struct KVCacheGeometry: Sendable, Equatable {
     public static let activationBytes = 2.0
     public static let defaultQuantizedGroupSize = 64
     public static let defaultQuantizedKVStart = 512
-    public static let adaptiveKVBitsLadder: [Int?] = [nil, 8, 4]
+    public static let adaptiveKVPrecisionLadder: [KVPrecision?] = [nil, .q8, .k8v4, .q4]
     static let supportedQuantizedGroupSizes = [32, 64, 128]
     static let fromConfig = Mutex<[String: (modified: Date, geometry: KVCacheGeometry)]>([:])
     static let recurrentStateBytes = 4.0
@@ -29,13 +70,17 @@ public struct KVCacheGeometry: Sendable, Equatable {
         return Double(kvBits) / 8 + 2 * activationBytes / Double(groupSize)
     }
 
-    public func bytesPerElement(kvBits: Int?) -> Double {
-        Self.bytesPerElement(kvBits: kvBits, groupSize: quantizedGroupSize)
+    public func bytesPerToken(_ precision: KVPrecision?) -> Double {
+        guard let precision else { return elementsPerToken * Self.activationBytes }
+        let valueElements = elementsPerToken - keyElementsPerToken
+        return keyElementsPerToken * Self.bytesPerElement(kvBits: precision.keyBits, groupSize: quantizedGroupSize)
+            + valueElements * Self.bytesPerElement(kvBits: precision.valueBits, groupSize: quantizedGroupSize)
     }
 
     public init(parameterProxy parameters: Double) {
         let gbPer4k = min(Self.proxyParameterCap, parameters) * Self.proxyGBPer4kPerBillion + Self.proxyGBPer4kFloor
         elementsPerToken = gbPer4k * 1e9 / 4096 / Self.activationBytes
+        keyElementsPerToken = elementsPerToken / 2
         windowedElementsPerToken = 0
         window = 0
         fixedStateBytes = 0
@@ -59,6 +104,7 @@ public struct KVCacheGeometry: Sendable, Equatable {
         let global = Self.fullAttentionShape(c, heads: heads, kvHeads: kvHeads, headDim: headDim)
 
         elementsPerToken = Double(full * global.heads * (global.keyDim + global.valueDim))
+        keyElementsPerToken = Double(full * global.heads * global.keyDim)
         windowedElementsPerToken = Self.kvBytesPerToken(
             layers: windowedLayers, kvHeads: kvHeads, headDim: headDim, bytesPerElement: 1
         )
@@ -104,61 +150,61 @@ public struct KVCacheGeometry: Sendable, Equatable {
         return read
     }
 
-    public func bytes(tokens: Int, kvBits: Int? = nil, zones: KVZones? = nil) -> Int64 {
+    public func bytes(tokens: Int, kvPrecision: KVPrecision? = nil, zones: KVZones? = nil) -> Int64 {
         let t = Double(max(0, tokens))
         let windowed = window > 0 ? min(t, Double(window)) : t
-        let exact = kvBits == nil ? t : min(t, Double(zones?.maxFullPrecisionTokens ?? 0))
-        let growing = elementsPerToken * (exact * Self.activationBytes + (t - exact) * bytesPerElement(kvBits: kvBits))
+        let exact = kvPrecision == nil ? t : min(t, Double(zones?.maxFullPrecisionTokens ?? 0))
+        let growing = exact * bytesPerToken(nil) + (t - exact) * bytesPerToken(kvPrecision)
         return Int64(growing + windowedElementsPerToken * windowed * Self.activationBytes) + fixedStateBytes
     }
 
-    public func conversionPeakBytes(tokens: Int, kvBits: Int?, zones: KVZones? = nil) -> Int64 {
-        guard kvBits != nil, zones == nil else { return bytes(tokens: tokens, kvBits: kvBits, zones: zones) }
-        let quantizedCopy = elementsPerToken * Double(max(0, tokens)) * bytesPerElement(kvBits: kvBits)
+    public func conversionPeakBytes(tokens: Int, kvPrecision: KVPrecision?, zones: KVZones? = nil) -> Int64 {
+        guard kvPrecision != nil, zones == nil else { return bytes(tokens: tokens, kvPrecision: kvPrecision, zones: zones) }
+        let quantizedCopy = Double(max(0, tokens)) * bytesPerToken(kvPrecision)
         return bytes(tokens: tokens) + Int64(quantizedCopy)
     }
 
-    public func maxPromptTokens(fitting budget: Int64, kvBits: Int?, zones: KVZones? = nil) -> Int {
+    public func maxPromptTokens(fitting budget: Int64, kvPrecision: KVPrecision?, zones: KVZones? = nil) -> Int {
         let unquantized = maxTokens(fitting: budget)
-        guard kvBits != nil else { return unquantized }
-        if zones != nil { return maxTokens(fitting: budget, kvBits: kvBits, zones: zones) }
+        guard kvPrecision != nil else { return unquantized }
+        if zones != nil { return maxTokens(fitting: budget, kvPrecision: kvPrecision, zones: zones) }
         var fits = 0
         var tooMany = unquantized + 1
         while tooMany - fits > 1 {
             let mid = fits + (tooMany - fits) / 2
-            if conversionPeakBytes(tokens: mid, kvBits: kvBits) <= budget { fits = mid } else { tooMany = mid }
+            if conversionPeakBytes(tokens: mid, kvPrecision: kvPrecision) <= budget { fits = mid } else { tooMany = mid }
         }
         return fits
     }
 
     public func maxTokens(
-        fitting budget: Int64, kvBits: Int?, promptTokens: Int, quantizedKVStart: Int = defaultQuantizedKVStart,
+        fitting budget: Int64, kvPrecision: KVPrecision?, promptTokens: Int, quantizedKVStart: Int = defaultQuantizedKVStart,
         zones: KVZones? = nil
     ) -> Int {
-        if zones != nil { return maxTokens(fitting: budget, kvBits: kvBits, zones: zones) }
+        if zones != nil { return maxTokens(fitting: budget, kvPrecision: kvPrecision, zones: zones) }
         let unquantized = maxTokens(fitting: budget)
-        guard kvBits != nil, unquantized > quantizedKVStart else { return unquantized }
+        guard kvPrecision != nil, unquantized > quantizedKVStart else { return unquantized }
         let convertedAt = max(promptTokens, quantizedKVStart + 1)
-        guard conversionPeakBytes(tokens: convertedAt, kvBits: kvBits) <= budget else { return quantizedKVStart }
-        return maxTokens(fitting: budget, kvBits: kvBits)
+        guard conversionPeakBytes(tokens: convertedAt, kvPrecision: kvPrecision) <= budget else { return quantizedKVStart }
+        return maxTokens(fitting: budget, kvPrecision: kvPrecision)
     }
 
-    public func maxTokens(fitting budget: Int64, kvBits: Int? = nil, zones: KVZones?) -> Int {
-        let uniform = maxTokens(fitting: budget, kvBits: kvBits)
-        guard kvBits != nil, let zones, uniform < Int(Int32.max) else { return uniform }
+    public func maxTokens(fitting budget: Int64, kvPrecision: KVPrecision? = nil, zones: KVZones?) -> Int {
+        let uniform = maxTokens(fitting: budget, kvPrecision: kvPrecision)
+        guard kvPrecision != nil, let zones, uniform < Int(Int32.max) else { return uniform }
         var fits = min(uniform, maxTokens(fitting: budget))
         var tooMany = uniform + 1
         while tooMany - fits > 1 {
             let mid = fits + (tooMany - fits) / 2
-            if bytes(tokens: mid, kvBits: kvBits, zones: zones) <= budget { fits = mid } else { tooMany = mid }
+            if bytes(tokens: mid, kvPrecision: kvPrecision, zones: zones) <= budget { fits = mid } else { tooMany = mid }
         }
         return fits
     }
 
-    public func maxTokens(fitting budget: Int64, kvBits: Int? = nil) -> Int {
+    public func maxTokens(fitting budget: Int64, kvPrecision: KVPrecision? = nil) -> Int {
         let room = Double(budget - fixedStateBytes)
         guard room > 0 else { return 0 }
-        let growing = elementsPerToken * bytesPerElement(kvBits: kvBits)
+        let growing = bytesPerToken(kvPrecision)
         let windowed = windowedElementsPerToken * Self.activationBytes
         let tokens: Double
         if window > 0, windowed > 0, room >= (growing + windowed) * Double(window) {

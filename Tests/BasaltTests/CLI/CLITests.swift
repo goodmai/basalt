@@ -39,20 +39,27 @@ struct CLITests {
         #expect(cmd.maxTokens == 1024)
     }
 
-    @Test("--kv-bits takes auto or a bit width, on serve and on models check")
+    @Test("--kv-bits takes auto, a bit width or k8v4, on serve and on models check")
     func kvBitsSetting() throws {
         #expect(try ServeCommand.parse([]).kvBits == nil)
         #expect(try ServeCommand.parse(["--kv-bits", "auto"]).kvBits == .auto)
-        #expect(try ServeCommand.parse(["--kv-bits", "8"]).kvBits == .bits(8))
+        #expect(try ServeCommand.parse(["--kv-bits", "8"]).kvBits == .fixed(.q8))
+        #expect(try ServeCommand.parse(["--kv-bits", "k8v4", "--kv-zones"]).kvBits == .fixed(.k8v4))
+        #expect(try CheckSubcommand.parse(["m", "--kv-bits", "k8v4", "--kv-zones"]).kvBits == .fixed(.k8v4))
+        #expect(try ServeCommand.parse(["--kv-bits", "k8v4h", "--kv-zones"]).kvBits == .fixed(.k8v4h))
+        #expect(KVPrecision.k8v4h.rotatesValues && !KVPrecision.k8v4.rotatesValues)
         #expect(try CheckSubcommand.parse(["m", "--kv-bits", "auto"]).kvBits == .auto)
-        #expect(throws: (any Error).self) { _ = try ServeCommand.parse(["--kv-bits", "fp8"]) }
-        #expect(KVBitsSetting.auto.fixedBits == nil)
-        #expect(KVBitsSetting.auto.budgetBits == 4)
-        #expect(KVBitsSetting.bits(8).fixedBits == 8)
-        #expect(KVBitsSetting.bits(8).budgetBits == 8)
+        for invalid in ["fp8", "k9v4", "k4v8", "k8v4H", "8h", "0", "7", "16"] {
+            #expect(throws: (any Error).self) { _ = try ServeCommand.parse(["--kv-bits", invalid]) }
+        }
+        #expect(KVBitsSetting.auto.fixedPrecision == nil)
+        #expect(KVBitsSetting.auto.budgetPrecision == .q4)
+        #expect(KVBitsSetting.fixed(.q8).fixedPrecision == .q8)
+        #expect(KVBitsSetting.fixed(.k8v4).budgetPrecision == .k8v4)
+        #expect(KVPrecision.k8v4.uniform == .q8)
     }
 
-    @Test("--kv-zones is off by default, parses on serve and models check, and needs --kv-bits")
+    @Test("--kv-zones is off by default, parses on serve and models check, and needs --kv-bits; --kv-bits k8v4 needs --kv-zones")
     func kvZonesFlag() throws {
         #expect(try ServeCommand.parse([]).kvZones == false)
         #expect(try ServeCommand.parse(["--kv-bits", "4", "--kv-zones"]).kvZones)
@@ -60,6 +67,9 @@ struct CLITests {
         #expect(try CheckSubcommand.parse(["m", "--kv-bits", "8", "--kv-zones"]).kvZones)
         #expect(throws: (any Error).self) { _ = try ServeCommand.parse(["--kv-zones"]) }
         #expect(throws: (any Error).self) { _ = try CheckSubcommand.parse(["m", "--kv-zones"]) }
+        #expect(throws: (any Error).self) { _ = try ServeCommand.parse(["--kv-bits", "k8v4"]) }
+        #expect(throws: (any Error).self) { _ = try CheckSubcommand.parse(["m", "--kv-bits", "k8v4"]) }
+        #expect(throws: (any Error).self) { _ = try ServeCommand.parse(["--kv-bits", "k8v4h"]) }
         #expect(KVBitsSetting.zones(true) == .standard)
         #expect(KVBitsSetting.zones(false) == nil)
     }

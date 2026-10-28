@@ -345,7 +345,7 @@ struct CheckSubcommand: AsyncParsableCommand {
     @Flag(name: .long, help: "Output in machine-readable JSON format")
     var json: Bool = false
 
-    @Option(name: .customLong("kv-bits"), help: "Size the context budget for `serve --kv-bits` (4, 8 or auto)")
+    @Option(name: .customLong("kv-bits"), help: "Size the context budget for `serve --kv-bits` (4, 8, k8v4, k8v4h or auto)")
     var kvBits: KVBitsSetting?
 
     @Flag(name: .customLong("kv-zones"), help: KVBitsSetting.zonesHelp)
@@ -379,7 +379,7 @@ struct CheckSubcommand: AsyncParsableCommand {
             throw ValidationError("Pass a model repo ID, or --system for a hardware check.")
         }
         let evaluator = MemoryEvaluator()
-        let assessment = await evaluator.evaluate(modelId: id, kvBits: kvBits?.budgetBits, kvZones: KVBitsSetting.zones(kvZones))
+        let assessment = await evaluator.evaluate(modelId: id, kvPrecision: kvBits?.budgetPrecision, kvZones: KVBitsSetting.zones(kvZones))
 
         if json {
             try printJSON(assessment)

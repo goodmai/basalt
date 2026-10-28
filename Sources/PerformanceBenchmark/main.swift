@@ -41,8 +41,16 @@ struct Benchmark: AsyncParsableCommand {
     @Option(name: .customLong("seed"), help: "Seed the sampler so a non-greedy run is reproducible")
     var seed: UInt64?
 
-    @Option(name: .customLong("kv-bits"), help: "Quantize the KV cache to 4 or 8 bits (default: full precision)")
-    var kvBits: Int?
+    @Option(
+        name: .customLong("kv-bits"), help: "Quantize the KV cache to 4 or 8 bits, or k8v4 / k8v4h with --kv-zones (default: full precision)",
+        transform: { argument in
+            guard let precision = KVPrecision(argument: argument) else { throw ValidationError("--kv-bits takes 4, 8, k8v4 or k8v4h, got \(argument)") }
+            return precision
+        })
+    var kvBits: KVPrecision?
+
+    @Flag(name: .customLong("kv-zones"), help: "Keep the first and last tokens of each full-attention layer fp16 and quantize the middle")
+    var kvZones: Bool = false
 
     @Option(name: .customLong("repetition-penalty"), help: "Penalty on recently emitted tokens, e.g. 1.1 (default: off)")
     var repetitionPenalty: Float?
@@ -65,6 +73,12 @@ struct Benchmark: AsyncParsableCommand {
     @Flag(name: .customLong("share"), help: "Export benchmark results to JSON format suitable for sharing (bench --share)")
     var share: Bool = false
 
+    func validate() throws {
+        if kvBits?.isUniform == false, !kvZones {
+            throw ValidationError("--kv-bits \(kvBits?.description ?? "") needs --kv-zones: it is a precision of the zoned cache's quantized middle")
+        }
+    }
+
     func run() async throws {
         let resolvedPath = resolveModelPath()
         print("Benchmark — model: \(model)")
@@ -76,10 +90,11 @@ struct Benchmark: AsyncParsableCommand {
         let engine = MLXInferenceEngine(
             reasoningEffort: reasoningEffort,
             gpuCacheLimit: gpuCacheMB.map { $0 == 0 ? nil : $0 << 20 } ?? (512 << 20),
-            kvBits: kvBits,
+            kvPrecision: kvBits,
+            kvZones: kvZones ? .standard : nil,
             repetitionPenalty: repetitionPenalty,
             topK: topK, minP: minP, seed: seed, speculativeLookup: speculativeLookup)
-        let orchestrator = ModelOrchestratorActor(engine: engine, maxTokens: tokens, kvBits: kvBits)
+        let orchestrator = ModelOrchestratorActor(engine: engine, maxTokens: tokens, kvPrecision: kvBits, kvZones: kvZones ? .standard : nil)
 
         print("Loading model…", terminator: ""); fflush(stdout)
         try await orchestrator.loadModel(path: resolvedPath)

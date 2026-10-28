@@ -25,7 +25,7 @@ struct MemoryCapTests {
 
     static func orchestrator(
         kvBudget: Int64?, promptTokens: Int? = nil, maxTokens: Int = 65_536, weightsBytes: UInt64 = 0,
-        free: Int64 = 64 << 30, kvBits: Int? = nil, adaptiveKVBits: Bool = false, kvZones: KVZones? = nil,
+        free: Int64 = 64 << 30, kvPrecision: KVPrecision? = nil, adaptiveKVPrecision: Bool = false, kvZones: KVZones? = nil,
         modelTakesKVZones: Bool = true
     ) async throws -> (ModelOrchestratorActor, MockInferenceEngine, URL) {
         let engine = MockInferenceEngine()
@@ -33,7 +33,7 @@ struct MemoryCapTests {
         await engine.setSupportsKVZones(modelTakesKVZones)
         let dir = try modelDirectory(weightsBytes: weightsBytes)
         let orchestrator = ModelOrchestratorActor(
-            engine: engine, maxTokens: maxTokens, kvBits: kvBits, adaptiveKVBits: adaptiveKVBits, kvZones: kvZones,
+            engine: engine, maxTokens: maxTokens, kvPrecision: kvPrecision, adaptiveKVPrecision: adaptiveKVPrecision, kvZones: kvZones,
             telemetry: TelemetryTracker())
         try await orchestrator.loadModel(path: dir.path)
         await orchestrator.setFreeMemoryProbe { free }
@@ -103,11 +103,11 @@ struct MemoryCapTests {
 
     @Test("--kv-bits auto keeps fp16 while the request fits: same request, no quantization", arguments: [nil, 1_000] as [Int?])
     func adaptiveKeepsFP16WhenItFits(maxTokens: Int?) async throws {
-        let (orchestrator, engine, dir) = try await Self.orchestrator(kvBudget: 7 * Self.gib, promptTokens: 30_000, adaptiveKVBits: true)
+        let (orchestrator, engine, dir) = try await Self.orchestrator(kvBudget: 7 * Self.gib, promptTokens: 30_000, adaptiveKVPrecision: true)
         defer { try? FileManager.default.removeItem(at: dir) }
         _ = try await orchestrator.generate(request: GenerationRequest(prompt: "long", maxTokens: maxTokens))
         let sent = try #require(await engine.getLastRequest())
-        #expect(sent.kvBits == nil)
+        #expect(sent.kvPrecision == nil)
         #expect(sent.maxTokens == maxTokens ?? (50_972 - 30_000))
     }
 
@@ -116,11 +116,11 @@ struct MemoryCapTests {
     ])
     func adaptiveStepsDown(requested: Int, bits: Int) async throws {
         let (orchestrator, engine, dir) = try await Self.orchestrator(
-            kvBudget: 7 * Self.gib, promptTokens: 30_000, maxTokens: 131_072, adaptiveKVBits: true)
+            kvBudget: 7 * Self.gib, promptTokens: 30_000, maxTokens: 131_072, adaptiveKVPrecision: true)
         defer { try? FileManager.default.removeItem(at: dir) }
         _ = try await orchestrator.generate(request: GenerationRequest(prompt: "long", maxTokens: requested))
         let sent = try #require(await engine.getLastRequest())
-        #expect(sent.kvBits == bits)
+        #expect(sent.kvPrecision == KVPrecision(bits: bits))
         #expect(sent.maxTokens == requested)
         #expect(await orchestrator.effectiveMaxTokens(for: GenerationRequest(prompt: "long", maxTokens: requested)) == requested)
     }
@@ -128,27 +128,27 @@ struct MemoryCapTests {
     @Test("--kv-bits auto: past 4-bit room the request is capped there, as #85 caps fp16")
     func adaptiveCapsAtFourBitRoom() async throws {
         let (orchestrator, engine, dir) = try await Self.orchestrator(
-            kvBudget: 5 * Self.gib, promptTokens: 20_000, maxTokens: 131_072, adaptiveKVBits: true)
+            kvBudget: 5 * Self.gib, promptTokens: 20_000, maxTokens: 131_072, adaptiveKVPrecision: true)
         defer { try? FileManager.default.removeItem(at: dir) }
         _ = try await orchestrator.generate(request: GenerationRequest(prompt: "long", maxTokens: 120_000))
         let sent = try #require(await engine.getLastRequest())
-        #expect(sent.kvBits == 4)
+        #expect(sent.kvPrecision == .q4)
         #expect(sent.maxTokens == 129_453 - 20_000)
     }
 
     @Test("A prompt fp16 only just holds stays fp16: quantizing it would need room for both copies at conversion")
     func adaptiveLeavesUnconvertiblePromptInFP16() async throws {
-        let (orchestrator, engine, dir) = try await Self.orchestrator(kvBudget: 7 * Self.gib, promptTokens: 45_000, adaptiveKVBits: true)
+        let (orchestrator, engine, dir) = try await Self.orchestrator(kvBudget: 7 * Self.gib, promptTokens: 45_000, adaptiveKVPrecision: true)
         defer { try? FileManager.default.removeItem(at: dir) }
         _ = try await orchestrator.generate(request: GenerationRequest(prompt: "long", maxTokens: 20_000))
         let sent = try #require(await engine.getLastRequest())
-        #expect(sent.kvBits == nil)
+        #expect(sent.kvPrecision == nil)
         #expect(sent.maxTokens == 50_972 - 45_000)
     }
 
     @Test("Fixed --kv-bits 4 refuses a prompt whose fp16 prefill plus conversion copy exceed the room, instead of admitting 4-bit room")
     func fixedBitsRefuseUnconvertiblePrompt() async throws {
-        let (orchestrator, engine, dir) = try await Self.orchestrator(kvBudget: 7 * Self.gib, promptTokens: 45_000, kvBits: 4)
+        let (orchestrator, engine, dir) = try await Self.orchestrator(kvBudget: 7 * Self.gib, promptTokens: 45_000, kvPrecision: .q4)
         defer { try? FileManager.default.removeItem(at: dir) }
         await #expect(throws: BasaltError.self) {
             _ = try await orchestrator.generate(request: GenerationRequest(prompt: "long", maxTokens: 1_000))
@@ -159,29 +159,29 @@ struct MemoryCapTests {
     @Test("Fixed --kv-bits 8 sizes the room at 8 bits and sends the request at 8 bits")
     func fixedBitsRoom() async throws {
         let (orchestrator, engine, dir) = try await Self.orchestrator(
-            kvBudget: 7 * Self.gib, promptTokens: 30_000, maxTokens: 131_072, kvBits: 8)
+            kvBudget: 7 * Self.gib, promptTokens: 30_000, maxTokens: 131_072, kvPrecision: .q8)
         defer { try? FileManager.default.removeItem(at: dir) }
         _ = try await orchestrator.generate(request: GenerationRequest(prompt: "long", maxTokens: 100_000))
         let sent = try #require(await engine.getLastRequest())
         #expect(sent.maxTokens == 95_948 - 30_000)
-        #expect(sent.kvBits == 8)
+        #expect(sent.kvPrecision == .q8)
     }
 
     @Test("With --kv-zones, fixed --kv-bits 4 admits the 45k prompt uniform 4-bit refuses: the zoned cache has no fp16 prefill to convert")
     func zonedFixedBitsAdmitsLongPrompt() async throws {
         let (orchestrator, engine, dir) = try await Self.orchestrator(
-            kvBudget: 7 * Self.gib, promptTokens: 45_000, kvBits: 4, kvZones: .standard)
+            kvBudget: 7 * Self.gib, promptTokens: 45_000, kvPrecision: .q4, kvZones: .standard)
         defer { try? FileManager.default.removeItem(at: dir) }
         _ = try await orchestrator.generate(request: GenerationRequest(prompt: "long", maxTokens: 1_000))
         let sent = try #require(await engine.getLastRequest())
-        #expect(sent.kvBits == 4)
+        #expect(sent.kvPrecision == .q4)
         #expect(sent.maxTokens == 1_000)
     }
 
     @Test("A model whose attention bypasses the zoned cache is sized as uniform --kv-bits even with --kv-zones: the 45k prompt is refused again")
     func zonesIgnoredForModelThatUpdatesItself() async throws {
         let (orchestrator, engine, dir) = try await Self.orchestrator(
-            kvBudget: 7 * Self.gib, promptTokens: 45_000, kvBits: 4, kvZones: .standard, modelTakesKVZones: false)
+            kvBudget: 7 * Self.gib, promptTokens: 45_000, kvPrecision: .q4, kvZones: .standard, modelTakesKVZones: false)
         defer { try? FileManager.default.removeItem(at: dir) }
         await #expect(throws: BasaltError.self) {
             _ = try await orchestrator.generate(request: GenerationRequest(prompt: "long", maxTokens: 1_000))
@@ -192,12 +192,35 @@ struct MemoryCapTests {
     @Test("--kv-bits auto with --kv-zones steps a prompt fp16 only just holds down to 8 bits instead of capping it in fp16")
     func zonedAdaptiveQuantizesLongPrompt() async throws {
         let (orchestrator, engine, dir) = try await Self.orchestrator(
-            kvBudget: 7 * Self.gib, promptTokens: 45_000, maxTokens: 131_072, adaptiveKVBits: true, kvZones: .standard)
+            kvBudget: 7 * Self.gib, promptTokens: 45_000, maxTokens: 131_072, adaptiveKVPrecision: true, kvZones: .standard)
         defer { try? FileManager.default.removeItem(at: dir) }
         _ = try await orchestrator.generate(request: GenerationRequest(prompt: "long", maxTokens: 20_000))
         let sent = try #require(await engine.getLastRequest())
-        #expect(sent.kvBits == 8)
+        #expect(sent.kvPrecision == .q8)
         #expect(sent.maxTokens == 20_000)
+    }
+
+    @Test("--kv-bits auto with --kv-zones steps down to k8v4 when 8 bits cannot hold the request and k8v4 can, before 4 bits")
+    func zonedAdaptiveStepsToKeyEightValueFour() async throws {
+        let (orchestrator, engine, dir) = try await Self.orchestrator(
+            kvBudget: 7 * Self.gib, promptTokens: 45_000, maxTokens: 131_072, adaptiveKVPrecision: true, kvZones: .standard)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        _ = try await orchestrator.generate(request: GenerationRequest(prompt: "long", maxTokens: 70_000))
+        let sent = try #require(await engine.getLastRequest())
+        #expect(sent.kvPrecision == .k8v4)
+        #expect(sent.maxTokens == 70_000)
+    }
+
+    @Test("Fixed k8v4 on a model the zones probe rejects is sized and sent as uniform 8-bit, the precision MLX can run there")
+    func keyEightValueFourFallsBackToEightBitsWithoutZones() async throws {
+        let (orchestrator, engine, dir) = try await Self.orchestrator(
+            kvBudget: 7 * Self.gib, promptTokens: 30_000, maxTokens: 131_072, kvPrecision: .k8v4, kvZones: .standard,
+            modelTakesKVZones: false)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        _ = try await orchestrator.generate(request: GenerationRequest(prompt: "long", maxTokens: 100_000))
+        let sent = try #require(await engine.getLastRequest())
+        #expect(sent.kvPrecision == .q8)
+        #expect(sent.maxTokens == 95_948 - 30_000)
     }
 
     @Test("The MLX engine's KV room is the GPU working set minus the weights and the prompt-cache budget")

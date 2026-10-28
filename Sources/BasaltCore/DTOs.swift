@@ -79,7 +79,7 @@ public struct GenerationRequest: Codable, Sendable {
     public private(set) var budgetKey: String? = nil
     public private(set) var origin: RequestOrigin = .unspecified
     public private(set) var speculativeLookup: Bool? = nil
-    public private(set) var kvBits: Int? = nil
+    public private(set) var kvPrecision: KVPrecision? = nil
 
     enum CodingKeys: String, CodingKey {
         case prompt, maxTokens, temperature, topP, minP, dynamicTemperature, enableThinking, reasoningEffort
@@ -159,9 +159,9 @@ public struct GenerationRequest: Codable, Sendable {
         return copy
     }
 
-    public func withKVBits(_ kvBits: Int?) -> GenerationRequest {
+    public func withKVPrecision(_ kvPrecision: KVPrecision?) -> GenerationRequest {
         var copy = self
-        copy.kvBits = kvBits
+        copy.kvPrecision = kvPrecision
         return copy
     }
 

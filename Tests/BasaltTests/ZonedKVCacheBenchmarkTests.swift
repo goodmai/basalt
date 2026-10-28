@@ -9,7 +9,7 @@ import MLXLMCommon
 @Suite("Zoned KV cache benchmark on real models", .serialized)
 struct ZonedKVCacheBenchmarkTests {
     enum Mode: CustomStringConvertible, CaseIterable {
-        case fp16, uniform8, uniform4, zoned8, zoned4
+        case fp16, uniform8, uniform4, zoned8, zoned4, zonedK8V4, zonedK8V4H
 
         var description: String {
             switch self {
@@ -18,20 +18,24 @@ struct ZonedKVCacheBenchmarkTests {
             case .uniform4: "uniform-q4"
             case .zoned8: "zoned-q8"
             case .zoned4: "zoned-q4"
+            case .zonedK8V4: "zoned-k8v4"
+            case .zonedK8V4H: "zoned-k8v4h"
             }
         }
 
-        var bits: Int? {
+        var precision: KVPrecision? {
             switch self {
             case .fp16: nil
-            case .uniform8, .zoned8: 8
-            case .uniform4, .zoned4: 4
+            case .uniform8, .zoned8: .q8
+            case .uniform4, .zoned4: .q4
+            case .zonedK8V4: .k8v4
+            case .zonedK8V4H: .k8v4h
             }
         }
 
         var zones: KVZones? {
             switch self {
-            case .zoned8, .zoned4: .standard
+            case .zoned8, .zoned4, .zonedK8V4, .zonedK8V4H: .standard
             default: nil
             }
         }
@@ -119,15 +123,11 @@ struct ZonedKVCacheBenchmarkTests {
         return partial.isEmpty ? nil : "\(partial.count) .incomplete blobs, a download is still running"
     }
 
-    static func acquire(_ lock: String, log: Log) async throws -> String {
+    static func acquire(_ lock: String, log: Log) throws -> String {
         let owner = "\(ProcessInfo.processInfo.processIdentifier) \(UUID().uuidString)"
-        var announced = false
-        while (try? FileManager.default.createDirectory(atPath: lock, withIntermediateDirectories: false)) == nil {
-            if !announced {
-                log.line("WAIT gpu lock \(lock) held by \((try? String(contentsOfFile: lock + "/owner", encoding: .utf8)) ?? "unknown")")
-                announced = true
-            }
-            try await Task.sleep(for: .seconds(15))
+        guard (try? FileManager.default.createDirectory(atPath: lock, withIntermediateDirectories: false)) != nil else {
+            let holder = (try? String(contentsOfFile: lock + "/owner", encoding: .utf8)) ?? "unknown"
+            throw StepFailure(description: "gpu lock \(lock) is held by \(holder); start the run once it is free")
         }
         try owner.write(toFile: lock + "/owner", atomically: true, encoding: .utf8)
         log.line("LOCKED \(lock) owner=\(owner)")
@@ -178,8 +178,8 @@ struct ZonedKVCacheBenchmarkTests {
 
     static func cache(_ mode: Mode, _ model: any LanguageModel) throws -> [any KVCache] {
         let fresh = try model.newCache(parameters: nil)
-        guard let zones = mode.zones, let bits = mode.bits else { return fresh }
-        return ZonedKVCache.replacingFullAttention(fresh, zones: zones, bits: bits)
+        guard let zones = mode.zones, let precision = mode.precision else { return fresh }
+        return ZonedKVCache.replacingFullAttention(fresh, zones: zones, precision: precision)
     }
 
     static func iterator(
@@ -191,7 +191,7 @@ struct ZonedKVCacheBenchmarkTests {
             let cache = try Self.cache(mode, context.model)
             return (try TokenIterator(input: input, model: context.model, cache: cache, parameters: parameters), cache)
         }
-        parameters.kvBits = mode.bits
+        parameters.kvBits = mode.precision?.keyBits
         parameters.quantizedKVStart = KVCacheGeometry.defaultQuantizedKVStart
         return (try TokenIterator(input: input, model: context.model, cache: nil, parameters: parameters), nil)
     }
@@ -225,7 +225,13 @@ struct ZonedKVCacheBenchmarkTests {
                 continue
             }
             log.line("MODEL \(repo) revision=\(directory.lastPathComponent) path=\(directory.path)")
-            let owner = try await Self.acquire(lock, log: log)
+            let owner: String
+            do {
+                owner = try Self.acquire(lock, log: log)
+            } catch {
+                log.error("\(repo): \(error)")
+                continue
+            }
             await run(repo: repo, directory: directory, steps: steps, corpus: corpus, log: log)
             Self.release(lock, owner: owner, log: log)
         }
@@ -234,7 +240,7 @@ struct ZonedKVCacheBenchmarkTests {
     }
 
     func run(repo: String, directory: URL, steps: Set<String>, corpus: String?, log: Log) async {
-        let engine = MLXInferenceEngine(gpuCacheLimit: 0)
+        let engine = MLXInferenceEngine(gpuCacheLimit: 0, kvPrecision: .k8v4, kvZones: .standard)
         do {
             try await engine.load(modelPath: directory.path)
         } catch {
@@ -294,7 +300,7 @@ struct ZonedKVCacheBenchmarkTests {
                         withExtendedLifetime(made.cache) {}
                         return (Memory.activeMemory - before, Memory.peakMemory - before, Double(prompt) / prefill, decode)
                     }
-                    let estimate = geometry.bytes(tokens: prompt + 128, kvBits: mode.bits, zones: mode.zones)
+                    let estimate = geometry.bytes(tokens: prompt + 128, kvPrecision: mode.precision, zones: mode.zones)
                     let after = Self.hostLoad()
                     return "after: \(after.summary) speedValid=\(before.quiet && after.quiet) held=\(measured.0) geometry=\(estimate) ratio=\(String(format: "%.4f", Double(measured.0) / Double(estimate))) peak=\(measured.1) prefillTPS=\(String(format: "%.0f", measured.2)) decodeTPS=\(String(format: "%.1f", measured.3))"
                 }
@@ -303,6 +309,21 @@ struct ZonedKVCacheBenchmarkTests {
         }
 
         guard let corpus else { return }
+        if steps.contains("fallback") {
+            let prompt = String(corpus.prefix(Int(Self.env["BASALT_ZONED_FALLBACK_CHARS"] ?? "12000") ?? 12_000))
+            var texts = [KVPrecision: String]()
+            for precision in [KVPrecision.k8v4, .q8] {
+                await log.step("fallback \(repo) request=\(precision) engineZones=\(await engine.supportsKVZones)") {
+                    let request = GenerationRequest(prompt: prompt, maxTokens: 48, temperature: 0, enableThinking: false)
+                        .withKVPrecision(precision)
+                    let sentBits = await engine.sampling(for: request).0.kvBits
+                    let response = try await engine.generate(request: request)
+                    texts[precision] = response.generatedText
+                    return "libraryKVBits=\(sentBits.map(String.init) ?? "nil") promptTokens=\(response.promptTokens) text=\(response.generatedText.prefix(80).debugDescription)"
+                }
+            }
+            log.line("FALLBACK \(repo) zonesApply=\(await engine.supportsKVZones) k8v4TextEqualsQ8=\(texts[.k8v4] != nil && texts[.k8v4] == texts[.q8])")
+        }
         if steps.contains("greedy") {
             for length in Self.list("BASALT_ZONED_GREEDY_LENGTHS", default: "1000,16000").compactMap({ Int($0) }) {
                 var reference: [Int]?
@@ -387,7 +408,7 @@ struct ZonedKVCacheBenchmarkTests {
             eval(cache)
             start = end
         }
-        if mode.zones == nil, let bits = mode.bits {
+        if mode.zones == nil, let bits = mode.precision?.keyBits {
             maybeQuantizeKVCache(cache: &cache, kvBits: bits, quantizedKVStart: 0)
         }
         var nll = 0.0

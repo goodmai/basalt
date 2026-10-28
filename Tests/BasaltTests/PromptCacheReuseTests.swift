@@ -305,7 +305,7 @@ struct PromptCacheReuseTests {
         #expect(second.cachedPromptTokens == 0)
         #expect(await disabled.promptCaches.roots.isEmpty)
 
-        let quantized = MLXInferenceEngine(kvBits: 8)
+        let quantized = MLXInferenceEngine(kvPrecision: .q8)
         await quantized.attach(try TinyModel.container())
         _ = try await quantized.generate(request: greedy(Conversation.firstTurn, key: "ns"))
         #expect(await quantized.promptCaches.roots.isEmpty)
@@ -314,8 +314,9 @@ struct PromptCacheReuseTests {
     @Test("A request the orchestrator quantized runs at its bits and bypasses the cache; fp16 requests still reuse it")
     func perRequestKVBits() async throws {
         let engine = try await TinyModel.engine()
-        let quantized = greedy(Conversation.firstTurn, key: "q").withKVBits(8)
+        let quantized = greedy(Conversation.firstTurn, key: "q").withKVPrecision(.q8)
         #expect(await engine.sampling(for: quantized).0.kvBits == 8)
+        #expect(await engine.sampling(for: greedy(Conversation.firstTurn, key: "q").withKVPrecision(.k8v4)).0.kvBits == 8)
         #expect(await engine.sampling(for: greedy(Conversation.firstTurn, key: "q")).0.kvBits == nil)
         _ = try await engine.generate(request: quantized)
         #expect(await engine.promptCaches.roots.isEmpty)
