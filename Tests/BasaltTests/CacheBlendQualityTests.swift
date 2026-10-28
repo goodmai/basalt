@@ -64,7 +64,7 @@ struct CacheBlendQualityTests {
           .enabled(if: modelPath != nil, "set BASALT_E2E=1 and BASALT_E2E_BLEND_MODEL_PATH (a Llama or Qwen3 model)"))
     func blendQualityAgainstFullPrefill() async throws {
         let path = try #require(Self.modelPath)
-        let log = try await ModelRunLog("cacheblend-quality", issue: "#137", modelPath: path)
+        let log = try await ModelRunLog("cacheblend-quality", modelPath: path)
         defer { log.releaseGPU() }
         let engine = MLXInferenceEngine()
         try await log.step("load") { try await engine.load(modelPath: path) }
@@ -82,7 +82,7 @@ struct CacheBlendQualityTests {
         let prompts = collected
         let ratios: [Float] = [0, 0.15, 0.3, 0.5, 1]
         log.record("prompts", "\(prompts.count) reordered prompts, \(prompts.map(\.count)) tokens, ratios \(ratios)")
-        let rows = try await log.timed("measure") { try await container.perform { context in
+        let rows = try await log.step("measure") { try await container.perform { context in
             let model = context.model
             let store = CacheBlendStore(ratio: 1, byteBudget: 1 << 34)
             _ = try #require(store.extend(
@@ -166,10 +166,11 @@ struct CacheBlendExclusionTests {
         try await log.step("load \(mode)") { try await engine.load(modelPath: path) }
         let container = try #require(await engine.container)
         let refusal = try await container.perform { context in
-            let layers = try context.model.newCache(parameters: nil).map { String(describing: type(of: $0)) }
+            let cache = try context.model.newCache(parameters: nil)
+            let layers = cache.map { String(describing: type(of: $0)) }
             let kinds = Dictionary(layers.map { ($0, 1) }, uniquingKeysWith: +).sorted { $0.key < $1.key }
                 .map { "\($0.key) x\($0.value)" }.joined(separator: ", ")
-            return "model \(type(of: context.model)) splices \(CacheBlendModel(context.model) != nil) hybrid \(PromptCache(try context.model.newCache(parameters: nil)).isHybrid) cache layers [\(kinds)]"
+            return "model \(type(of: context.model)) splices \(CacheBlendModel(context.model) != nil) hybrid \(PromptCache(cache).isHybrid) cache layers [\(kinds)]"
         }
         log.record("refusal", "\(mode) \(refusal)")
         var texts: [String] = []
@@ -195,15 +196,15 @@ struct CacheBlendExclusionTests {
           .enabled(if: modelPath != nil, "set BASALT_E2E=1 and BASALT_E2E_BLEND_EXCLUDED_MODEL_PATH (a Gemma 4, Qwen3.5 or LFM2.5 model)"))
     func excludedModelMatchesPlainPath() async throws {
         let path = try #require(Self.modelPath)
-        let log = try await ModelRunLog("cacheblend-excluded", issue: "#137", modelPath: path)
+        let log = try await ModelRunLog("cacheblend-excluded", modelPath: path)
         defer { log.releaseGPU() }
         let (blended, plain) = try await log.step("answers") {
             let blended = try await Self.answers(cacheBlendRatio: 0.3, path: path, log: log)
             Memory.clearCache()
             return (blended, try await Self.answers(cacheBlendRatio: nil, path: path, log: log))
         }
-        let ttft = { (times: [Double]) in times.map { String(format: "%.2f", $0) }.joined(separator: "/") }
-        log.record("result", "BLEND-EXCLUDED chunks \(blended.chunks ?? -1) cached \(blended.cached) plain \(plain.cached) same \(blended.texts == plain.texts) request seconds blend \(ttft(blended.requestSeconds))s plain \(ttft(plain.requestSeconds))s")
+        let joined = { (times: [Double]) in times.map { String(format: "%.2f", $0) }.joined(separator: "/") }
+        log.record("result", "BLEND-EXCLUDED chunks \(blended.chunks ?? -1) cached \(blended.cached) plain \(plain.cached) same \(blended.texts == plain.texts) request seconds blend \(joined(blended.requestSeconds))s plain \(joined(plain.requestSeconds))s")
         #expect(blended.chunks == 0)
         #expect(plain.chunks == nil)
         #expect(blended.cached == plain.cached)

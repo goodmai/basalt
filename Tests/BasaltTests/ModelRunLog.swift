@@ -2,19 +2,27 @@ import Foundation
 import Darwin
 @testable import BasaltCore
 
+enum GPULockClaim: Equatable {
+    case taken
+    case busy(owner: String?)
+}
+
+struct GPULockError: Error, CustomStringConvertible {
+    let path: String
+    let code: Int32
+
+    var description: String { "\(path): \(String(cString: strerror(code)))" }
+}
+
 final class ModelRunLog: @unchecked Sendable {
-    static let gpuLocks = ["/private/tmp/basalt-gpu.lock", "/private/tmp/claude-501/basalt-gpu.lock"]
-    static let quietLoad = 8.0
-    static let quietMarker = "/private/tmp/claude-501/basalt-quiet"
+    static let gpuLock = ProcessInfo.processInfo.environment["BASALT_GPU_LOCK"] ?? "/private/tmp/basalt-gpu.lock"
 
     let url: URL
     let model: String
-    let issue: String
     private let state = NSLock()
-    private var held: [String] = []
+    private var held: String?
 
-    init(_ runner: String, issue: String, modelPath: String) async throws {
-        self.issue = issue
+    init(_ runner: String, modelPath: String) async throws {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent()
         let day = Date().ISO8601Format(.iso8601.year().month().day())
@@ -40,13 +48,10 @@ final class ModelRunLog: @unchecked Sendable {
         let line = "\(Date().ISO8601Format()) \(model) \(step) \(detail)\n"
         print(line, terminator: "")
         state.withLock {
-            if let handle = try? FileHandle(forWritingTo: url) {
-                handle.seekToEndOfFile()
-                handle.write(Data(line.utf8))
-                try? handle.close()
-            } else {
-                try? Data(line.utf8).write(to: url)
-            }
+            let descriptor = open(url.path, O_WRONLY | O_CREAT | O_APPEND, 0o644)
+            guard descriptor >= 0 else { return }
+            _ = line.withCString { write(descriptor, $0, strlen($0)) }
+            close(descriptor)
         }
     }
 
@@ -62,37 +67,10 @@ final class ModelRunLog: @unchecked Sendable {
         }
     }
 
-    func timed<T>(_ name: String, _ body: () async throws -> T) async throws -> T {
-        let ci = !Self.output("/usr/bin/pgrep", ["-f", "Runner.Worker"]).isEmpty
-        let load = Self.load()
-        let descriptor = ci || load > Self.quietLoad ? -1 : open(Self.quietMarker, O_CREAT | O_EXCL | O_WRONLY, 0o644)
-        guard descriptor >= 0 else {
-            let holder = (try? String(contentsOfFile: Self.quietMarker, encoding: .utf8)) ?? ""
-            record("FAIL quiet-busy", ci ? "a CI job is running" : load > Self.quietLoad
-                ? String(format: "load %.1f above %.0f", load, Self.quietLoad)
-                : "quiet marker held by \(holder.trimmingCharacters(in: .whitespacesAndNewlines))")
-            throw CancellationError()
-        }
-        _ = "\(getpid()) \(issue)\n".withCString { write(descriptor, $0, strlen($0)) }
-        close(descriptor)
-        record("quiet-acquire", Self.quietMarker)
-        defer {
-            let holder = try? String(contentsOfFile: Self.quietMarker, encoding: .utf8)
-            if holder?.split(separator: " ").first == "\(getpid())" {
-                unlink(Self.quietMarker)
-                record("quiet-release", Self.quietMarker)
-            } else {
-                record("FAIL quiet-release", "marker is held by \(holder ?? "nobody"), left in place")
-            }
-        }
-        return try await step(name, body)
-    }
-
     func host() -> String {
         let load = Self.load()
         let ci = !Self.output("/usr/bin/pgrep", ["-f", "Runner.Worker"]).isEmpty
-        let quiet = load <= Self.quietLoad && !ci
-        return String(format: "load %.1f ci %@ speed %@", load, ci ? "busy" : "idle", quiet ? "valid" : "invalid")
+        return String(format: "load %.1f ci %@", load, ci ? "busy" : "idle")
     }
 
     static func load() -> Double {
@@ -101,44 +79,66 @@ final class ModelRunLog: @unchecked Sendable {
     }
 
     func releaseGPU() {
-        let releasing = state.withLock { () -> [String] in
-            defer { held = [] }
+        let releasing = state.withLock { () -> String? in
+            defer { held = nil }
             return held
         }
-        for path in releasing.reversed() {
-            let owner = try? String(contentsOfFile: path + "/owner", encoding: .utf8)
-            guard owner?.trimmingCharacters(in: .whitespacesAndNewlines) == String(getpid()) else {
-                record("FAIL gpu-release", "\(path) is owned by \(owner ?? "nobody"), left in place")
-                continue
-            }
-            try? FileManager.default.removeItem(atPath: path + "/owner")
-            rmdir(path)
+        guard let releasing else { return }
+        if Self.release(releasing, pid: getpid()) {
+            record("gpu-release", releasing)
+        } else {
+            record("FAIL gpu-release", "\(releasing) is no longer owned by \(getpid()), left in place")
         }
-        if !releasing.isEmpty { record("gpu-release", releasing.joined(separator: ", ")) }
     }
 
     private func acquireGPU() throws {
-        var taken: [String] = []
-        for path in Self.gpuLocks {
-            guard mkdir(path, 0o755) == 0 else { break }
-            try String(getpid()).write(toFile: path + "/owner", atomically: true, encoding: .utf8)
-            taken.append(path)
+        do {
+            switch try Self.claim(Self.gpuLock, pid: getpid()) {
+            case .taken:
+                state.withLock { held = Self.gpuLock }
+                record("gpu-acquire", Self.gpuLock)
+            case .busy(let owner):
+                record("FAIL gpu-busy", "\(Self.gpuLock) held by \(owner ?? "no owner file yet"); a test does not wait for the GPU, relaunch it when the lock is free")
+                throw CancellationError()
+            }
+        } catch let error as GPULockError {
+            record("FAIL gpu-lock", error.description)
+            throw error
         }
-        if taken.count == Self.gpuLocks.count {
-            state.withLock { held = taken }
-            record("gpu-acquire", taken.joined(separator: ", "))
-            return
+    }
+
+    static func claim(
+        _ path: String, pid: Int32, reclaiming: Bool = true,
+        writeOwner: (String, Int32) throws -> Void = { try String($1).write(toFile: $0, atomically: true, encoding: .utf8) }
+    ) throws -> GPULockClaim {
+        guard mkdir(path, 0o755) == 0 else {
+            let code = errno
+            guard code == EEXIST else { throw GPULockError(path: path, code: code) }
+            let owner = (try? String(contentsOfFile: path + "/owner", encoding: .utf8))?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if reclaiming, let owner, let holder = Int32(owner), kill(holder, 0) != 0, errno == ESRCH {
+                unlink(path + "/owner")
+                rmdir(path)
+                return try claim(path, pid: pid, reclaiming: false, writeOwner: writeOwner)
+            }
+            return .busy(owner: owner)
         }
-        for path in taken.reversed() {
-            try? FileManager.default.removeItem(atPath: path + "/owner")
+        do {
+            try writeOwner(path + "/owner", pid)
+        } catch {
             rmdir(path)
+            throw error
         }
-        let busy = Self.gpuLocks.first { !taken.contains($0) } ?? ""
-        let owner = (try? String(contentsOfFile: busy + "/owner", encoding: .utf8))?
+        return .taken
+    }
+
+    static func release(_ path: String, pid: Int32) -> Bool {
+        let owner = (try? String(contentsOfFile: path + "/owner", encoding: .utf8))?
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        let alive = owner.flatMap { Int32($0) }.map { kill($0, 0) == 0 }
-        record("FAIL gpu-busy", "\(busy) held by \(owner ?? "no owner file")\(alive == false ? " (process gone)" : ""); a test does not wait for the GPU, relaunch it when the lock is free")
-        throw CancellationError()
+        guard owner == String(pid) else { return false }
+        unlink(path + "/owner")
+        rmdir(path)
+        return true
     }
 
     static func output(_ tool: String, _ arguments: [String]) -> String {
