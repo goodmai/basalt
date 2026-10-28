@@ -85,6 +85,15 @@ struct PromptLookupDecodingTests {
         #expect(telemetry.targetModelCallCount < tokens.count)
     }
 
+    @Test("When the output copies a long span of the prompt, a verify round drafts more than 8 tokens on average")
+    func draftsRunPastEightTokens() throws {
+        let continuation = (0 ..< 64).map { LookupFixture.unit[(4 + $0) % LookupFixture.unit.count] }
+        let run = try LookupFixture.lookup(try TinyLlama.make(), sampler: ScriptedSampler(continuation))
+        #expect(run.tokens == continuation)
+        let telemetry = try #require(run.iterator.speculativeDecodingTelemetry)
+        #expect(telemetry.draftTokenCount > 8 * telemetry.roundCount)
+    }
+
     @Test("Rejected drafts are rolled back: the cache holds the prompt and every emitted token but the last")
     func rollback() throws {
         let model = try TinyQwen3.make()
