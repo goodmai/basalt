@@ -75,6 +75,7 @@ public actor MLXInferenceEngine: InferenceEngine {
     public var kvMemoryBudgetBytes: Int64? { kvMemoryBudget }
     public var supportsKVZones: Bool { modelAttendsThroughZones }
     private var modelAttendsThroughZones = false
+    private(set) var valueRotationUnavailable = false
 
     public func promptTokenCount(for request: GenerationRequest) async -> Int? {
         guard let container else { return nil }
@@ -123,9 +124,14 @@ public actor MLXInferenceEngine: InferenceEngine {
 
     func probeKVZones() async {
         guard kvZones != nil, let container else { return }
-        modelAttendsThroughZones = (try? await container.perform { try ZonedKVCache.modelAttendsThroughCache($0.model) }) ?? false
-        if kvZones != nil, !modelAttendsThroughZones {
+        let precision = kvPrecision ?? .q8
+        let probed = (try? await container.perform { try ZonedKVCache.probe($0.model, precision: precision) }) ?? (attendsThroughCache: false, rotatesValues: false)
+        modelAttendsThroughZones = probed.attendsThroughCache
+        valueRotationUnavailable = modelAttendsThroughZones && precision.rotatesValues && !probed.rotatesValues
+        if !modelAttendsThroughZones {
             logger.warn("--kv-zones does not apply to this model: its attention reads the whole cache through update(), or its head dimension has no quantization group. Its quantized requests use uniform --kv-bits, k8v4 as 8-bit.")
+        } else if valueRotationUnavailable {
+            logger.warn("--kv-bits \(precision) cannot rotate this model's value heads: the Hadamard transform is its own inverse only for head dimensions 2^k and 12·2^k. It runs as k8v4.")
         }
     }
 

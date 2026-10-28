@@ -73,11 +73,15 @@ final class ZonedKVCache: KVCacheAttentionProtocol {
     }
 
     static func modelAttendsThroughCache(_ model: any LanguageModel) throws -> Bool {
-        let caches = replacingFullAttention(try model.newCache(parameters: nil), zones: .standard, precision: .q8)
+        try probe(model, precision: .q8).attendsThroughCache
+    }
+
+    static func probe(_ model: any LanguageModel, precision: KVPrecision) throws -> (attendsThroughCache: Bool, rotatesValues: Bool) {
+        let caches = replacingFullAttention(try model.newCache(parameters: nil), zones: .standard, precision: precision)
         let zoned = caches.compactMap { $0 as? ZonedKVCache }
-        guard !zoned.isEmpty else { return false }
+        guard !zoned.isEmpty else { return (false, false) }
         _ = model(LMInput.Text(tokens: MLXArray([Int32(0)]).reshaped(1, 1)), cache: caches, state: nil)
-        return zoned.allSatisfy { !$0.materializedForCaller && $0.headsQuantize == true }
+        return (zoned.allSatisfy { !$0.materializedForCaller && $0.headsQuantize == true }, zoned.allSatisfy(\.rotatesValues))
     }
 
     static func replacingFullAttention(_ caches: [any KVCache], zones: KVZones, precision: KVPrecision) -> [any KVCache] {

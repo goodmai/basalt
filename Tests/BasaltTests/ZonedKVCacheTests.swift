@@ -289,6 +289,15 @@ struct ZonedKVCacheEngineTests {
         return LlamaModel(try JSONDecoder().decode(LlamaConfiguration.self, from: Data(config.utf8)))
     }
 
+    static func llama(hiddenSize: Int) throws -> LlamaModel {
+        let config = """
+            {"hidden_size": \(hiddenSize), "num_hidden_layers": 1, "intermediate_size": 64,
+             "num_attention_heads": 4, "num_key_value_heads": 2, "rms_norm_eps": 1e-5,
+             "vocab_size": 256, "rope_theta": 10000.0, "tie_word_embeddings": false}
+            """
+        return LlamaModel(try JSONDecoder().decode(LlamaConfiguration.self, from: Data(config.utf8)))
+    }
+
     static func text(_ stream: AsyncStream<Generation>) async -> String {
         var text = ""
         for await generation in stream {
@@ -303,6 +312,23 @@ struct ZonedKVCacheEngineTests {
         #expect(try await llama.perform { try ZonedKVCache.modelAttendsThroughCache($0.model) })
         #expect(try !ZonedKVCache.modelAttendsThroughCache(SelfAttendingModel()))
         #expect(try !ZonedKVCache.modelAttendsThroughCache(Self.headDim80Model()))
+    }
+
+    @Test("k8v4h on a model whose value heads it cannot rotate (head dim 160) is found at load and flagged, so serve logs that it runs as k8v4")
+    func loadFlagsUnrotatableValueHeads() async throws {
+        #expect(try ZonedKVCache.probe(Self.llama(hiddenSize: 640), precision: .k8v4h) == (true, false))
+        #expect(try ZonedKVCache.probe(Self.llama(hiddenSize: 512), precision: .k8v4h) == (true, true))
+        #expect(try ZonedKVCache.probe(Self.llama(hiddenSize: 512), precision: .k8v4) == (true, false))
+        for (hiddenSize, precision, flagged) in [(640, KVPrecision.k8v4h, true), (512, .k8v4h, false), (640, .k8v4, false)] {
+            let engine = MLXInferenceEngine(kvPrecision: precision, kvZones: .standard)
+            let model = try Self.llama(hiddenSize: hiddenSize)
+            await engine.attach(ModelContainer(context: ModelContext(
+                configuration: ModelConfiguration(id: "tiny-llama-\(hiddenSize)"), model: model,
+                processor: ByteInputProcessor(), tokenizer: ByteTokenizer())))
+            await engine.probeKVZones()
+            #expect(await engine.supportsKVZones)
+            #expect(await engine.valueRotationUnavailable == flagged)
+        }
     }
 
     @Test("Zones apply only to a quantized request; the zoned request itself runs with kvBits cleared so MLX does not convert the cache again")

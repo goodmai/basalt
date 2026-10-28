@@ -42,9 +42,9 @@ struct Benchmark: AsyncParsableCommand {
     var seed: UInt64?
 
     @Option(
-        name: .customLong("kv-bits"), help: "Quantize the KV cache to 4 or 8 bits, or k8v4 / k8v4h with --kv-zones (default: full precision)",
+        name: .customLong("kv-bits"), help: "Quantize the KV cache to one of \(KVPrecision.accepted); k8v4 and the experimental k8v4h need --kv-zones (default: full precision)",
         transform: { argument in
-            guard let precision = KVPrecision(argument: argument) else { throw ValidationError("--kv-bits takes 4, 8, k8v4 or k8v4h, got \(argument)") }
+            guard let precision = KVPrecision(argument: argument) else { throw ValidationError("--kv-bits takes one of \(KVPrecision.accepted), got \(argument)") }
             return precision
         })
     var kvBits: KVPrecision?
@@ -74,8 +74,8 @@ struct Benchmark: AsyncParsableCommand {
     var share: Bool = false
 
     func validate() throws {
-        if kvBits?.isUniform == false, !kvZones {
-            throw ValidationError("--kv-bits \(kvBits?.description ?? "") needs --kv-zones: it is a precision of the zoned cache's quantized middle")
+        if let conflict = KVPrecision.flagConflict(kvBitsSet: kvBits != nil, fixed: kvBits, zones: kvZones) {
+            throw ValidationError(conflict)
         }
     }
 

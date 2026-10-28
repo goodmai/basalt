@@ -686,11 +686,8 @@ enum KVBitsSetting: Equatable, ExpressibleByArgument {
     }
 
     static func validate(zones: Bool, bits: KVBitsSetting?) throws {
-        if zones, bits == nil {
-            throw ValidationError("--kv-zones needs --kv-bits 4, 8, k8v4 or auto: it says which tokens stay fp16 in a quantized cache")
-        }
-        if bits?.fixedPrecision?.isUniform == false, !zones {
-            throw ValidationError("--kv-bits \(bits?.fixedPrecision?.description ?? "") needs --kv-zones: 8-bit keys and 4-bit values are a precision of the zoned cache's quantized middle")
+        if let conflict = KVPrecision.flagConflict(kvBitsSet: bits != nil, fixed: bits?.fixedPrecision, zones: zones) {
+            throw ValidationError(conflict)
         }
     }
 }

@@ -34,6 +34,20 @@ public struct KVPrecision: Sendable, Hashable, CustomStringConvertible {
 
     public var isUniform: Bool { keyBits == valueBits }
 
+    public static var accepted: String {
+        (supportedBits.map(String.init) + [k8v4, k8v4h].map(\.description)).joined(separator: ", ")
+    }
+
+    public static func flagConflict(kvBitsSet: Bool, fixed: KVPrecision?, zones: Bool) -> String? {
+        if zones, !kvBitsSet {
+            return "--kv-zones needs --kv-bits (one of \(accepted), or auto on serve and models check): it says which tokens stay fp16 in a quantized cache"
+        }
+        if let fixed, !fixed.isUniform, !zones {
+            return "--kv-bits \(fixed) needs --kv-zones: 8-bit keys and 4-bit values are a precision of the zoned cache's quantized middle"
+        }
+        return nil
+    }
+
     public var uniform: KVPrecision { isUniform ? self : KVPrecision(bits: max(keyBits, valueBits)) }
 
     public var description: String {

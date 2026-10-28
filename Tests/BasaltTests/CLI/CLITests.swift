@@ -70,6 +70,12 @@ struct CLITests {
         #expect(throws: (any Error).self) { _ = try ServeCommand.parse(["--kv-bits", "k8v4"]) }
         #expect(throws: (any Error).self) { _ = try CheckSubcommand.parse(["m", "--kv-bits", "k8v4"]) }
         #expect(throws: (any Error).self) { _ = try ServeCommand.parse(["--kv-bits", "k8v4h"]) }
+        #expect(KVPrecision.accepted == "2, 3, 4, 5, 6, 8, k8v4, k8v4h")
+        #expect(KVPrecision.flagConflict(kvBitsSet: false, fixed: nil, zones: true) != nil)
+        #expect(KVPrecision.flagConflict(kvBitsSet: true, fixed: .k8v4h, zones: false) != nil)
+        #expect(KVPrecision.flagConflict(kvBitsSet: true, fixed: .k8v4, zones: true) == nil)
+        #expect(KVPrecision.flagConflict(kvBitsSet: true, fixed: nil, zones: true) == nil)
+        #expect(KVPrecision.flagConflict(kvBitsSet: true, fixed: .q4, zones: false) == nil)
         #expect(KVBitsSetting.zones(true) == .standard)
         #expect(KVBitsSetting.zones(false) == nil)
     }
