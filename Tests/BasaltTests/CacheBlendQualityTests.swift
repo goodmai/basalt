@@ -5,6 +5,56 @@ import MLXLMCommon
 @testable import BasaltCore
 @testable import BasaltInference
 
+struct ModelRunLog: Sendable {
+    let url: URL
+
+    init(_ name: String, modelPath: String) async throws {
+        let directory = ProcessInfo.processInfo.environment["BASALT_E2E_LOG_DIR"] ?? NSTemporaryDirectory()
+        url = URL(fileURLWithPath: directory).appendingPathComponent("basalt-\(name).log")
+        let snapshot = URL(fileURLWithPath: modelPath).resolvingSymlinksInPath()
+        record("start", "commit \(Self.commit()) model \(snapshot.deletingLastPathComponent().deletingLastPathComponent().lastPathComponent) revision \(snapshot.lastPathComponent) machine \(SystemProfiler.detectChipModel()) \(ProcessInfo.processInfo.physicalMemory >> 30) GB")
+        let report = await ModelInspector().inspect(modelIdOrPath: snapshot.path)
+        guard report.intact else {
+            record("error", "incomplete snapshot: \(report.errors.joined(separator: "; "))")
+            throw BasaltError.modelNotFound(identifier: modelPath)
+        }
+        record("snapshot", "\(report.totalShards) shards, \(report.totalSizeFormatted), \(report.bitWidthDescription)")
+    }
+
+    func record(_ step: String, _ detail: String) {
+        let line = "\(Date().ISO8601Format()) \(step) \(detail)\n"
+        print(line, terminator: "")
+        if let handle = try? FileHandle(forWritingTo: url) {
+            handle.seekToEndOfFile()
+            handle.write(Data(line.utf8))
+            try? handle.close()
+        } else {
+            try? Data(line.utf8).write(to: url)
+        }
+    }
+
+    func step<T>(_ name: String, _ body: () async throws -> T) async throws -> T {
+        do {
+            return try await body()
+        } catch {
+            record("error", "\(name): \(error)")
+            throw error
+        }
+    }
+
+    static func commit() -> String {
+        let git = Process()
+        let output = Pipe()
+        git.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+        git.arguments = ["-C", CacheBlendQualityTests.root.path, "rev-parse", "HEAD"]
+        git.standardOutput = output
+        guard (try? git.run()) != nil else { return "unknown" }
+        git.waitUntilExit()
+        return String(decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
 @Suite("CacheBlend output quality on a real model, teacher-forced against a full prefill (#36)", .serialized)
 struct CacheBlendQualityTests {
     static var modelPath: String? {
@@ -60,11 +110,13 @@ struct CacheBlendQualityTests {
         return (picked.mean().item(Float.self), agree.asType(.float32).mean().item(Float.self))
     }
 
-    @Test("Teacher-forced log-prob, top-1 agreement and perplexity of the full-prefill answer under blended caches; at the default ratio the perplexity stays within 0.05 of a full prefill",
+    @Test("Teacher-forced log-prob, top-1 agreement and perplexity of the full-prefill answer under blended caches; at the default ratio 0.3, with chunk heads recomputed first, the perplexity stays within 0.05 of a full prefill",
           .enabled(if: modelPath != nil, "set BASALT_E2E=1 and BASALT_E2E_BLEND_MODEL_PATH (a Llama or Qwen3 model)"))
     func blendQualityAgainstFullPrefill() async throws {
+        let path = try #require(Self.modelPath)
+        let log = try await ModelRunLog("cacheblend-quality", modelPath: path)
         let engine = MLXInferenceEngine()
-        try await engine.load(modelPath: try #require(Self.modelPath))
+        try await log.step("load") { try await engine.load(modelPath: path) }
         let container = try #require(await engine.container)
         let input: @Sendable (String) -> UserInput = {
             UserInput(chat: [.user($0)], additionalContext: ["enable_thinking": false])
@@ -78,7 +130,8 @@ struct CacheBlendQualityTests {
         }
         let prompts = collected
         let ratios: [Float] = [0, 0.15, 0.3, 0.5, 1]
-        let rows = try await container.perform { context in
+        log.record("prompts", "\(prompts.count) reordered prompts, \(prompts.map(\.count)) tokens, ratios \(ratios)")
+        let rows = try await log.step("measure") { try await container.perform { context in
             let model = context.model
             let store = CacheBlendStore(ratio: 1, byteBudget: 1 << 34)
             _ = try #require(store.extend(
@@ -127,21 +180,66 @@ struct CacheBlendQualityTests {
                 let share = Float(sum.reused) / Float(prompts.map { $0.count - 1 }.reduce(0, +))
                 return (line, sum.logProb / n, sum.top1 / n, share, perplexity)
             }
-        }
-        for row in rows { print("BLEND-QUALITY", row.0) }
+        } }
+        for row in rows { log.record("result", "BLEND-QUALITY \(row.0)") }
         let byKey = Dictionary(uniqueKeysWithValues: zip(["full", "0.00", "0.15", "0.30", "0.50", "1.00"], rows))
         let full = try #require(byKey["full"])
         let exact = try #require(byKey["1.00"])
         let none = try #require(byKey["0.00"])
-        let half = try #require(byKey["0.50"])
+        let standard = try #require(byKey["0.30"])
         #expect(exact.2 >= full.2 - 0.01)
         #expect(full.2 >= 0.95)
         for key in ["0.00", "0.15", "0.30", "0.50"] {
             #expect(try #require(byKey[key]).3 >= 0.9)
         }
         #expect(none.1 < full.1 - 0.02)
-        #expect(half.1 > none.1)
-        #expect(half.2 >= 0.9)
-        #expect(half.4 - full.4 < 0.05)
+        #expect(standard.1 > none.1)
+        #expect(standard.2 >= 0.9)
+        #expect(standard.4 - full.4 < 0.05)
+    }
+}
+
+@Suite("CacheBlend refuses models it cannot splice, on real checkpoints (#137)", .serialized)
+struct CacheBlendExclusionTests {
+    static var modelPath: String? {
+        let env = ProcessInfo.processInfo.environment
+        guard env["BASALT_E2E"] == "1" else { return nil }
+        return env["BASALT_E2E_BLEND_EXCLUDED_MODEL_PATH"]
+    }
+
+    static func answers(
+        cacheBlendRatio: Float?, path: String, log: ModelRunLog
+    ) async throws -> (texts: [String], cached: [Int], chunks: Int?) {
+        let mode = cacheBlendRatio.map { "blend \($0)" } ?? "plain"
+        let engine = MLXInferenceEngine(promptCacheBytes: 1 << 30, cacheBlendRatio: cacheBlendRatio)
+        try await log.step("load \(mode)") { try await engine.load(modelPath: path) }
+        var texts: [String] = []
+        var cached: [Int] = []
+        for (index, order) in ([[0, 1, 2, 3, 4, 5]] + CacheBlendQualityTests.orders.prefix(2)).enumerated() {
+            let prompt = try CacheBlendQualityTests.prompt(order, question: index)
+            let response = try await log.step("generate \(mode) \(index)") {
+                try await engine.generate(request: greedy(prompt, key: "ns", maxTokens: 24))
+            }
+            log.record("generate", "\(mode) prompt \(index) order \(order) prompt \(response.promptTokens) cached \(response.cachedPromptTokens) answer \(response.generatedText.debugDescription)")
+            texts.append(response.generatedText)
+            cached.append(response.cachedPromptTokens)
+        }
+        return (texts, cached, await engine.cacheBlend?.chunkCount)
+    }
+
+    @Test("A sliding-window or hybrid model under --cache-blend stores no chunks and answers reordered files exactly like the plain prompt-cache path",
+          .enabled(if: modelPath != nil, "set BASALT_E2E=1 and BASALT_E2E_BLEND_EXCLUDED_MODEL_PATH (a Gemma 4, Qwen3.5 or LFM2.5 model)"))
+    func excludedModelMatchesPlainPath() async throws {
+        let path = try #require(Self.modelPath)
+        let log = try await ModelRunLog("cacheblend-excluded", modelPath: path)
+        let blended = try await Self.answers(cacheBlendRatio: 0.3, path: path, log: log)
+        Memory.clearCache()
+        let plain = try await Self.answers(cacheBlendRatio: nil, path: path, log: log)
+        log.record("result", "BLEND-EXCLUDED chunks \(blended.chunks ?? -1) cached \(blended.cached) plain \(plain.cached) same \(blended.texts == plain.texts)")
+        #expect(blended.chunks == 0)
+        #expect(plain.chunks == nil)
+        #expect(blended.cached == plain.cached)
+        #expect(blended.texts == plain.texts)
+        #expect(blended.texts.allSatisfy { !$0.isEmpty })
     }
 }

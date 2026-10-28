@@ -76,9 +76,9 @@ struct ServeCommand: AsyncParsableCommand {
 
     @Option(
         name: .customLong("cache-blend-ratio"),
-        help: "Share of reused chunk tokens recomputed by --cache-blend, 0...1 (default: 0.5; 0 is fastest, 1 ≈ a full prefill up to numerical noise)"
+        help: "Share of reused chunk tokens recomputed by --cache-blend, 0...1 (default: 0.3; 0 is fastest, 1 ≈ a full prefill up to numerical noise)"
     )
-    var cacheBlendRatio: Float = 0.5
+    var cacheBlendRatio: Float = 0.3
 
     @Flag(
         name: .customLong("speculative-lookup"),
