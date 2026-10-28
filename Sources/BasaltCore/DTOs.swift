@@ -84,7 +84,7 @@ public struct GenerationRequest: Codable, Sendable {
     enum CodingKeys: String, CodingKey {
         case prompt, maxTokens, temperature, topP, minP, dynamicTemperature, enableThinking, reasoningEffort
         case isServiceRequest, tools, toolChoice, cacheKey, messages
-        case topK, presencePenalty, repetitionPenalty, thinkingBudget, responseFormat
+        case topK, presencePenalty, repetitionPenalty, thinkingBudget, responseFormat, speculativeLookup
     }
 
     public init(

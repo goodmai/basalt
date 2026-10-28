@@ -16,6 +16,8 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
     var promptPrefillTime: TimeInterval = 0
 
     private var history: [Int]
+    private var inFlight: MLXArray?
+    private var backoff = DraftBackoff()
     private var pending: [Int] = []
     private var pendingIndex = 0
     private var rounds = 0
@@ -103,9 +105,40 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
         return []
     }
 
-    private mutating func speculate() {
+    private mutating func advance() {
         let remaining = maxTokens.map { $0 - tokenCount } ?? Int.max
-        let draft = state == nil ? Self.draft(after: history, limit: Swift.min(Self.draftLimit, remaining - 1)) : []
+        let draft = backoff.allowsDraft && state == nil
+            ? Self.draft(after: history, limit: Swift.min(Self.draftLimit, remaining - 1)) : []
+        switch (inFlight, draft.isEmpty) {
+        case (let token?, true):
+            decodeAhead(from: token)
+        case (let token?, false):
+            inFlight = nil
+            let confirmed = token.item(Int.self)
+            if confirmed != draft[0] { backoff.record(acceptedDrafts: 0) }
+            accept([confirmed])
+        case (nil, true):
+            decodeAhead(from: step(MLXArray([Int32(history[history.count - 1])])))
+        case (nil, false):
+            speculate(draft)
+        }
+    }
+
+    private mutating func step(_ token: MLXArray) -> MLXArray {
+        verifyCalls += 1
+        verified += 1
+        return sample(forward(LMInput.Text(tokens: token)).logits[0..., -1, 0...])
+    }
+
+    private mutating func decodeAhead(from token: MLXArray) {
+        let next = step(token)
+        asyncEval([next] + cache.flatMap { $0.state })
+        inFlight = next
+        backoff.tick()
+        accept([token.item(Int.self)])
+    }
+
+    private mutating func speculate(_ draft: [Int]) {
         let fed = [history[history.count - 1]] + draft
         let logits = forward(LMInput.Text(tokens: MLXArray(fed.map(Int32.init))))
             .logits[0, 0..., 0...]
@@ -127,11 +160,10 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
 
         let acceptedDrafts = emitted.count - 1
         trimPromptCache(cache, numTokens: draft.count - acceptedDrafts)
-        if !draft.isEmpty {
-            rounds += 1
-            drafted += draft.count
-            accepted += acceptedDrafts
-        }
+        backoff.record(acceptedDrafts: acceptedDrafts)
+        rounds += 1
+        drafted += draft.count
+        accepted += acceptedDrafts
         verifyCalls += 1
         verified += fed.count
         accept(emitted)
@@ -140,11 +172,33 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
     mutating func next() -> Int? {
         if let maxTokens, tokenCount >= maxTokens { return nil }
         if pendingIndex == pending.count {
-            autoreleasepool { speculate() }
+            autoreleasepool { advance() }
         }
         if tokenCount % 256 == 0 { Memory.clearCache() }
         tokenCount += 1
         pendingIndex += 1
         return pending[pendingIndex - 1]
+    }
+}
+
+struct DraftBackoff {
+    static let longestPause = 64
+
+    private(set) var pause = 0
+    private var nextPause = 1
+
+    var allowsDraft: Bool { pause == 0 }
+
+    mutating func tick() {
+        pause = Swift.max(0, pause - 1)
+    }
+
+    mutating func record(acceptedDrafts: Int) {
+        if acceptedDrafts > 0 {
+            nextPause = 1
+        } else {
+            pause = nextPause
+            nextPause = Swift.min(nextPause * 2, Self.longestPause)
+        }
     }
 }

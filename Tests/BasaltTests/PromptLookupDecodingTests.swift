@@ -6,6 +6,18 @@ import MLXLLM
 @testable import BasaltCore
 @testable import BasaltInference
 
+final class ScriptedSampler: LogitSampler {
+    let script: [Int]
+    private var position = 0
+
+    init(_ script: [Int]) { self.script = script }
+
+    func sample(logits: MLXArray) -> MLXArray {
+        defer { position += 1 }
+        return MLXArray([Int32(script[position % script.count])])
+    }
+}
+
 enum LookupFixture {
     static let unit = (0 ..< 10).map { 1 + ($0 * 37 + 265) % 250 }
     static let prompt = Array(repeating: unit, count: 6).joined() + Array(unit.prefix(4))
@@ -66,13 +78,14 @@ struct PromptLookupDecodingTests {
         #expect(telemetry.targetModelCallCount < tokens.count)
     }
 
-    @Test("Rejected drafts are rolled back: the cache holds the prompt and every emitted token but the last")
+    @Test("Rejected drafts are rolled back: the cache holds the prompt and the emitted tokens, the last one at most")
     func rollback() throws {
         let model = try TinyQwen3.make()
         let (tokens, iterator, cache) = try LookupFixture.lookup(model, maxTokens: 48)
         #expect(tokens.count == 48)
         #expect(try #require(iterator.speculativeDecodingTelemetry).rejectedDraftTokenCount > 0)
-        #expect(cache.allSatisfy { $0.offset == LookupFixture.prompt.count + tokens.count - 1 })
+        let emitted = LookupFixture.prompt.count + tokens.count
+        #expect(cache.allSatisfy { (emitted - 1 ... emitted).contains($0.offset) })
     }
 
     @Test("A stateful logit processor and a seeded sampler see the same calls as in plain decoding",
@@ -143,5 +156,33 @@ struct PromptLookupDecodingTests {
             #expect(result.completionTokens > 0)
             #expect(result.draftTokens == nil)
         }
+    }
+
+    @Test("Each failed verify round doubles the pause before the next draft, up to 64 tokens; an accepted draft resets it")
+    func backoffDoublesAndResets() {
+        var backoff = DraftBackoff()
+        var pauses: [Int] = []
+        for _ in 0 ..< 8 {
+            backoff.record(acceptedDrafts: 0)
+            pauses.append(backoff.pause)
+            while !backoff.allowsDraft { backoff.tick() }
+        }
+        #expect(pauses == [1, 2, 4, 8, 16, 32, 64, 64])
+        backoff.record(acceptedDrafts: 1)
+        #expect(backoff.allowsDraft)
+        backoff.record(acceptedDrafts: 0)
+        #expect(backoff.pause == 1)
+    }
+
+    @Test("When every draft past its first token is rejected, lookup backs off instead of verifying each match, and the output is unchanged")
+    func rejectedDraftsBackOff() throws {
+        let cycles = (0 ..< 26).flatMap { [1, 2, 3, 4, 10 + $0] }
+        let run = try LookupFixture.lookup(
+            try TinyQwen3.make(), prompt: [200, 201, 202, 203, 204], maxTokens: cycles.count,
+            sampler: ScriptedSampler(cycles))
+        #expect(run.tokens == cycles)
+        let telemetry = try #require(run.iterator.speculativeDecodingTelemetry)
+        #expect(telemetry.acceptedDraftTokenCount == 0)
+        #expect(telemetry.roundCount <= 6)
     }
 }
