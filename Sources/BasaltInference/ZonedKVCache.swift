@@ -8,6 +8,7 @@ final class ZonedKVCache: KVCacheAttentionProtocol {
     let zones: KVZones
     private let exact: KVCacheSimple
     private let middle: QuantizedKVCache
+    private(set) var materializedForCaller = false
 
     init(zones: KVZones, bits: Int) {
         self.zones = zones
@@ -19,6 +20,14 @@ final class ZonedKVCache: KVCacheAttentionProtocol {
         self.zones = zones
         self.exact = exact
         self.middle = middle
+    }
+
+    static func modelAttendsThroughCache(_ model: any LanguageModel) throws -> Bool {
+        let caches = replacingFullAttention(try model.newCache(parameters: nil), zones: .standard, bits: 8)
+        let zoned = caches.compactMap { $0 as? ZonedKVCache }
+        guard !zoned.isEmpty else { return false }
+        _ = model(LMInput.Text(tokens: MLXArray([Int32(0)]).reshaped(1, 1)), cache: caches, state: nil)
+        return zoned.allSatisfy { !$0.materializedForCaller }
     }
 
     static func replacingFullAttention(_ caches: [any KVCache], zones: KVZones, bits: Int) -> [any KVCache] {
@@ -48,6 +57,7 @@ final class ZonedKVCache: KVCacheAttentionProtocol {
     }
 
     func update(keys: MLXArray, values: MLXArray) -> (MLXArray, MLXArray) {
+        materializedForCaller = true
         append(keys: keys, values: values)
         return materialized()
     }

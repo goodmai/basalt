@@ -3,6 +3,7 @@ import Testing
 import MLX
 import MLXLMCommon
 import MLXLLM
+import MLXNN
 @testable import BasaltCore
 @testable import BasaltInference
 
@@ -192,6 +193,13 @@ struct ZonedKVCacheEngineTests {
         return text
     }
 
+    @Test("The probe accepts a model whose attention goes through attentionWithCacheUpdate and rejects one that reads the cache with update(), as Gemma 4 does")
+    func probeTellsHowAttentionReadsTheCache() async throws {
+        let llama = try Self.container()
+        #expect(try await llama.perform { try ZonedKVCache.modelAttendsThroughCache($0.model) })
+        #expect(try !ZonedKVCache.modelAttendsThroughCache(SelfAttendingModel()))
+    }
+
     @Test("Zones apply only to a quantized request; the zoned request itself runs with kvBits cleared so MLX does not convert the cache again")
     func zonedCacheNeedsBitsAndZones() throws {
         let model = try LlamaModel(JSONDecoder().decode(LlamaConfiguration.self, from: Data(TinyModel.config.utf8)))
@@ -232,5 +240,19 @@ struct ZonedKVCacheEngineTests {
         #expect(!zoned.isEmpty)
         #expect(zoned == reference)
         #expect(zoned != uniform, "the fixture must tell the two layouts apart")
+    }
+}
+
+final class SelfAttendingModel: Module, LLMModel {
+    var loraLayers: [Module] { [] }
+
+    func newCache(parameters: GenerateParameters?) throws -> [any KVCache] {
+        [KVCacheSimple()]
+    }
+
+    func callAsFunction(_ inputs: MLXArray, cache: [KVCache]?) -> MLXArray {
+        let tokens = MLXArray.zeros([1, 2, inputs.dim(1), 64], dtype: .float16)
+        let (keys, _) = cache?.first?.update(keys: tokens, values: tokens) ?? (tokens, tokens)
+        return MLXArray.zeros([1, inputs.dim(1), keys.dim(2)])
     }
 }

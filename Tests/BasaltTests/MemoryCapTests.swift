@@ -25,10 +25,12 @@ struct MemoryCapTests {
 
     static func orchestrator(
         kvBudget: Int64?, promptTokens: Int? = nil, maxTokens: Int = 65_536, weightsBytes: UInt64 = 0,
-        free: Int64 = 64 << 30, kvBits: Int? = nil, adaptiveKVBits: Bool = false, kvZones: KVZones? = nil
+        free: Int64 = 64 << 30, kvBits: Int? = nil, adaptiveKVBits: Bool = false, kvZones: KVZones? = nil,
+        modelTakesKVZones: Bool = true
     ) async throws -> (ModelOrchestratorActor, MockInferenceEngine, URL) {
         let engine = MockInferenceEngine()
         await engine.setMemory(kvBudget: kvBudget, promptTokens: promptTokens)
+        await engine.setSupportsKVZones(modelTakesKVZones)
         let dir = try modelDirectory(weightsBytes: weightsBytes)
         let orchestrator = ModelOrchestratorActor(
             engine: engine, maxTokens: maxTokens, kvBits: kvBits, adaptiveKVBits: adaptiveKVBits, kvZones: kvZones,
@@ -174,6 +176,17 @@ struct MemoryCapTests {
         let sent = try #require(await engine.getLastRequest())
         #expect(sent.kvBits == 4)
         #expect(sent.maxTokens == 1_000)
+    }
+
+    @Test("A model whose attention bypasses the zoned cache is sized as uniform --kv-bits even with --kv-zones: the 45k prompt is refused again")
+    func zonesIgnoredForModelThatUpdatesItself() async throws {
+        let (orchestrator, engine, dir) = try await Self.orchestrator(
+            kvBudget: 7 * Self.gib, promptTokens: 45_000, kvBits: 4, kvZones: .standard, modelTakesKVZones: false)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        await #expect(throws: BasaltError.self) {
+            _ = try await orchestrator.generate(request: GenerationRequest(prompt: "long", maxTokens: 1_000))
+        }
+        #expect(await engine.getRequests().isEmpty)
     }
 
     @Test("--kv-bits auto with --kv-zones steps a prompt fp16 only just holds down to 8 bits instead of capping it in fp16")

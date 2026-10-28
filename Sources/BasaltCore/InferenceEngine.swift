@@ -9,10 +9,12 @@ public protocol InferenceEngine: Sendable {
     /// async getter — compatible with actor-isolated implementations.
     var isLoaded: Bool { get async }
     var kvMemoryBudgetBytes: Int64? { get async }
+    var supportsKVZones: Bool { get async }
     func promptTokenCount(for request: GenerationRequest) async -> Int?
 }
 
 extension InferenceEngine {
     public var kvMemoryBudgetBytes: Int64? { get async { nil } }
+    public var supportsKVZones: Bool { get async { true } }
     public func promptTokenCount(for request: GenerationRequest) async -> Int? { nil }
 }

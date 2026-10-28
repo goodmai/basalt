@@ -73,6 +73,8 @@ public actor MLXInferenceEngine: InferenceEngine {
     private var controlTokens = ControlTokenGuard.none
 
     public var kvMemoryBudgetBytes: Int64? { kvMemoryBudget }
+    public var supportsKVZones: Bool { modelAttendsThroughZones }
+    private var modelAttendsThroughZones = false
 
     public func promptTokenCount(for request: GenerationRequest) async -> Int? {
         guard let container else { return nil }
@@ -119,6 +121,14 @@ public actor MLXInferenceEngine: InferenceEngine {
         self.promptCaches = PromptCacheTree(byteBudget: promptCacheBytes ?? 0)
     }
 
+    func probeKVZones() async {
+        guard let container else { return }
+        modelAttendsThroughZones = (try? await container.perform { try ZonedKVCache.modelAttendsThroughCache($0.model) }) ?? false
+        if kvZones != nil, !modelAttendsThroughZones {
+            logger.warn("--kv-zones does not apply to this model: its attention reads the whole cache through update(), so a zoned middle would be dequantized on every step. Its quantized requests use uniform --kv-bits.")
+        }
+    }
+
     func attach(
         _ container: ModelContainer, profile: any ModelProfile = GenericProfile(),
         samplingDefaults: SamplingDefaults = SamplingDefaults(), controlTokens: ControlTokenGuard = .none
@@ -134,6 +144,7 @@ public actor MLXInferenceEngine: InferenceEngine {
         let weights = Memory.activeMemory
         let budget = configuredPromptCacheBytes ?? PromptCacheBudget.automatic(workingSet: workingSet, weights: weights)
         kvMemoryBudget = Int64(max(0, workingSet - weights - budget))
+        modelAttendsThroughZones = false
         let blendBytes = cacheBlendRatio == nil ? 0 : budget / 2
         promptCaches = PromptCacheTree(byteBudget: budget - blendBytes)
         cacheBlend = cacheBlendRatio.map { CacheBlendStore(ratio: $0, byteBudget: blendBytes) }
@@ -274,6 +285,7 @@ public actor MLXInferenceEngine: InferenceEngine {
                    profile: ModelProfileRegistry.profile(forModelAt: modelPath),
                    samplingDefaults: SamplingDefaults(generationConfig: ModelCache.generationConfig(at: directory)),
                    controlTokens: ControlTokenGuard(modelDirectory: directory))
+            await probeKVZones()
             logger.info("Sampling defaults from generation_config.json: \(samplingDefaults)")
             
             // Dynamic config inspection
@@ -796,6 +808,7 @@ public actor MLXInferenceEngine: InferenceEngine {
             let constrained = shaping.map { masked.appendingLogitProcessor($0) } ?? masked
             let forcedTool = constraint?.toolName
             let speculativeLookup = request.speculativeLookup ?? speculativeLookup
+            let zones = modelAttendsThroughZones ? kvZones : nil
             let launch: GenerationLaunch
             do {
                 launch = try await container.perform(nonSendable: lmInput) { context, input in
@@ -803,7 +816,8 @@ public actor MLXInferenceEngine: InferenceEngine {
                         input: input, lease: lease, keepsCache: namespace != nil, boundary: boundary,
                         blend: namespace.flatMap { space in blend.map { ($0, space) } },
                         params: params, components: constrained, tools: forcedTool == nil ? toolSpecs : nil,
-                        context: context, speculativeLookup: speculativeLookup, kvZones: kvZones)
+                        context: context, speculativeLookup: speculativeLookup,
+                        kvZones: zones)
                 }
             } catch {
                 keep(nil, tokens: promptTokens, namespace: namespace, releasing: lease, epoch: epoch)
