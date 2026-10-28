@@ -37,7 +37,7 @@ func parse(_ arguments: [String]) -> Options? {
         case "--tokens": guard let tokens = Int(value), tokens > 0 else { return nil }; options.tokens = tokens
         case "--variant":
             let parts = value.split(separator: "=", maxSplits: 1).map(String.init)
-            guard parts.count == 2 else { return nil }
+            guard parts.count == 2, !["on", "off"].contains(parts[0]) else { return nil }
             options.variants.append((parts[0], parts[1]))
         default: return nil
         }
@@ -188,6 +188,7 @@ func revision(of model: String, inspector: String) -> String? {
         fail("snapshot \(model)", "not intact: \(report["errors"] ?? "no errors reported")")
         return nil
     }
+    log("snapshot ok model=\(model) path=\(path)")
     return URL(fileURLWithPath: path).lastPathComponent
 }
 
@@ -283,7 +284,6 @@ for workload in ["code", "prose"] {
 var summary: [String] = []
 for model in options.models {
     guard let revision = revision(of: model, inspector: releaseDirectory + "/Basalt") else { continue }
-    log("snapshot ok model=\(model) revision=\(revision)")
     acquireLock()
     var results: [Int: [Cell: Measurement]] = [:]
     for (pass, order) in [cells, cells.reversed()].enumerated() {
