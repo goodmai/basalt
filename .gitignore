@@ -29,7 +29,10 @@ logs/
 *~
 
 # AI assistant files
-.claude/
+.claude/*
+!.claude/skills/
+.claude/skills/*
+!.claude/skills/basalt-model-runs/
 .gemini.md
 
 # Test files
