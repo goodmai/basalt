@@ -103,7 +103,7 @@ struct CacheBlendModel {
                     let cached = assemble(segments, layer: index, like: keys)
                     let deviation = (keys - cached[0]).asType(.float32).square().sum(axes: [0, 1, 3])
                         + (values - cached[1]).asType(.float32).square().sum(axes: [0, 1, 3])
-                    active = Self.recomputed(segments, deviation: deviation.asArray(Float.self), dropping: keep)
+                    active = Self.recomputedPositions(segments, deviation: deviation.asArray(Float.self), dropping: keep)
                     let chosen = MLXArray(active.map(Int32.init))
                     queries = active.isEmpty ? nil : take(q.transposed(0, 2, 1, 3), chosen, axis: 2)
                     hidden = active.isEmpty ? hidden : take(hidden, chosen, axis: 1)
@@ -157,7 +157,7 @@ struct CacheBlendModel {
 
     static let chunkHead = 32
 
-    static func recomputed(_ segments: [CacheBlendSegment], deviation: [Float], dropping count: Int) -> [Int] {
+    static func recomputedPositions(_ segments: [CacheBlendSegment], deviation: [Float], dropping count: Int) -> [Int] {
         let priority = segments.flatMap { segment in
             segment.range.map { segment.cached == nil ? 2 : $0 - segment.range.lowerBound < chunkHead ? 1 : 0 }
         }

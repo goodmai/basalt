@@ -5,56 +5,6 @@ import MLXLMCommon
 @testable import BasaltCore
 @testable import BasaltInference
 
-struct ModelRunLog: Sendable {
-    let url: URL
-
-    init(_ name: String, modelPath: String) async throws {
-        let directory = ProcessInfo.processInfo.environment["BASALT_E2E_LOG_DIR"] ?? NSTemporaryDirectory()
-        url = URL(fileURLWithPath: directory).appendingPathComponent("basalt-\(name).log")
-        let snapshot = URL(fileURLWithPath: modelPath).resolvingSymlinksInPath()
-        record("start", "commit \(Self.commit()) model \(snapshot.deletingLastPathComponent().deletingLastPathComponent().lastPathComponent) revision \(snapshot.lastPathComponent) machine \(SystemProfiler.detectChipModel()) \(ProcessInfo.processInfo.physicalMemory >> 30) GB")
-        let report = await ModelInspector().inspect(modelIdOrPath: snapshot.path)
-        guard report.intact else {
-            record("error", "incomplete snapshot: \(report.errors.joined(separator: "; "))")
-            throw BasaltError.modelNotFound(identifier: modelPath)
-        }
-        record("snapshot", "\(report.totalShards) shards, \(report.totalSizeFormatted), \(report.bitWidthDescription)")
-    }
-
-    func record(_ step: String, _ detail: String) {
-        let line = "\(Date().ISO8601Format()) \(step) \(detail)\n"
-        print(line, terminator: "")
-        if let handle = try? FileHandle(forWritingTo: url) {
-            handle.seekToEndOfFile()
-            handle.write(Data(line.utf8))
-            try? handle.close()
-        } else {
-            try? Data(line.utf8).write(to: url)
-        }
-    }
-
-    func step<T>(_ name: String, _ body: () async throws -> T) async throws -> T {
-        do {
-            return try await body()
-        } catch {
-            record("error", "\(name): \(error)")
-            throw error
-        }
-    }
-
-    static func commit() -> String {
-        let git = Process()
-        let output = Pipe()
-        git.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-        git.arguments = ["-C", CacheBlendQualityTests.root.path, "rev-parse", "HEAD"]
-        git.standardOutput = output
-        guard (try? git.run()) != nil else { return "unknown" }
-        git.waitUntilExit()
-        return String(decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-}
-
 @Suite("CacheBlend output quality on a real model, teacher-forced against a full prefill (#36)", .serialized)
 struct CacheBlendQualityTests {
     static var modelPath: String? {
@@ -114,7 +64,8 @@ struct CacheBlendQualityTests {
           .enabled(if: modelPath != nil, "set BASALT_E2E=1 and BASALT_E2E_BLEND_MODEL_PATH (a Llama or Qwen3 model)"))
     func blendQualityAgainstFullPrefill() async throws {
         let path = try #require(Self.modelPath)
-        let log = try await ModelRunLog("cacheblend-quality", modelPath: path)
+        let log = try await ModelRunLog("cacheblend-quality", issue: "#137", modelPath: path)
+        defer { log.releaseGPU() }
         let engine = MLXInferenceEngine()
         try await log.step("load") { try await engine.load(modelPath: path) }
         let container = try #require(await engine.container)
@@ -131,7 +82,7 @@ struct CacheBlendQualityTests {
         let prompts = collected
         let ratios: [Float] = [0, 0.15, 0.3, 0.5, 1]
         log.record("prompts", "\(prompts.count) reordered prompts, \(prompts.map(\.count)) tokens, ratios \(ratios)")
-        let rows = try await log.step("measure") { try await container.perform { context in
+        let rows = try await log.timed("measure") { try await container.perform { context in
             let model = context.model
             let store = CacheBlendStore(ratio: 1, byteBudget: 1 << 34)
             _ = try #require(store.extend(
@@ -231,7 +182,8 @@ struct CacheBlendExclusionTests {
           .enabled(if: modelPath != nil, "set BASALT_E2E=1 and BASALT_E2E_BLEND_EXCLUDED_MODEL_PATH (a Gemma 4, Qwen3.5 or LFM2.5 model)"))
     func excludedModelMatchesPlainPath() async throws {
         let path = try #require(Self.modelPath)
-        let log = try await ModelRunLog("cacheblend-excluded", modelPath: path)
+        let log = try await ModelRunLog("cacheblend-excluded", issue: "#137", modelPath: path)
+        defer { log.releaseGPU() }
         let blended = try await Self.answers(cacheBlendRatio: 0.3, path: path, log: log)
         Memory.clearCache()
         let plain = try await Self.answers(cacheBlendRatio: nil, path: path, log: log)

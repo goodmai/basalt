@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Performance
+- CacheBlend (`--cache-blend`) spends its recompute budget on the first 32 tokens of each reused chunk before the rest, ranked by layer-1 KV deviation within each group, and `--cache-blend-ratio` now defaults to 0.3 instead of 0.5 (#137). On Qwen3-4B-4bit with `benchmarks/cacheblend`, ratio 0.3 goes from a perplexity gap of 0.085 to 0.032 against a full prefill, below the old default 0.5 (0.038) while recomputing 40% fewer tokens; on four other orders and questions the gap at 0.3 goes from 0.169 to 0.096 (old default: 0.120). Layer-progressive filtering was tried and did not beat it at the same cost.
+
 ### Memory
 - `serve --kv-zones` (with `--kv-bits 4|8|auto`, also on `models check`) (#139): each full-attention layer keeps its first 64 tokens (attention sinks) and its last 1024 in fp16 and quantizes the tokens between them, 256 at a time, while the prompt is prefilled. There is no fp16 prefill to convert, so the prompt may use the whole quantized room and `serve --dry-run` / `models check` report one budget; sliding-window, recurrent and conv layers are untouched. Measured on Qwen3-4B-4bit: KV after a 16k prompt within 0.8% of the geometry, peak 1.03 GB at 4 bits against 3.11 GB uniform, perplexity 6.58 at 4 bits against fp16 6.56 and uniform 4-bit 8.66.
 
