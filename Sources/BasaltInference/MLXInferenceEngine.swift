@@ -41,7 +41,7 @@ public actor MLXInferenceEngine: InferenceEngine {
     /// Bits for KV-cache quantization (4 or 8). nil keeps the cache in full
     /// precision. The cache grows linearly with context, so on long prompts it
     /// competes with the weights for unified memory.
-    private let kvBits: Int?
+    private let kvPrecision: KVPrecision?
 
     /// Token index at which the quantized cache kicks in. Quantizing from token 0
     /// costs accuracy on short prompts for no memory benefit.
@@ -75,6 +75,7 @@ public actor MLXInferenceEngine: InferenceEngine {
     public var kvMemoryBudgetBytes: Int64? { kvMemoryBudget }
     public var supportsKVZones: Bool { modelAttendsThroughZones }
     private var modelAttendsThroughZones = false
+    private(set) var valueRotationUnavailable = false
 
     public func promptTokenCount(for request: GenerationRequest) async -> Int? {
         guard let container else { return nil }
@@ -96,7 +97,7 @@ public actor MLXInferenceEngine: InferenceEngine {
         reasoningEffort: String? = nil,
         gpuCacheLimit: Int? = 512 << 20,
         promptCacheBytes: Int? = nil,
-        kvBits: Int? = nil,
+        kvPrecision: KVPrecision? = nil,
         quantizedKVStart: Int = KVCacheGeometry.defaultQuantizedKVStart,
         kvZones: KVZones? = nil,
         repetitionPenalty: Float? = nil,
@@ -109,7 +110,7 @@ public actor MLXInferenceEngine: InferenceEngine {
         self.speculativeLookup = speculativeLookup
         self.reasoningEffort = reasoningEffort
         self.gpuCacheLimit = gpuCacheLimit
-        self.kvBits = kvBits
+        self.kvPrecision = kvPrecision
         self.quantizedKVStart = quantizedKVStart
         self.kvZones = kvZones
         self.repetitionPenalty = repetitionPenalty
@@ -123,9 +124,14 @@ public actor MLXInferenceEngine: InferenceEngine {
 
     func probeKVZones() async {
         guard kvZones != nil, let container else { return }
-        modelAttendsThroughZones = (try? await container.perform { try ZonedKVCache.modelAttendsThroughCache($0.model) }) ?? false
-        if kvZones != nil, !modelAttendsThroughZones {
-            logger.warn("--kv-zones does not apply to this model: its attention reads the whole cache through update(), or its head dimension has no quantization group. Its quantized requests use uniform --kv-bits.")
+        let precision = kvPrecision ?? .q8
+        let probed = (try? await container.perform { try ZonedKVCache.probe($0.model, precision: precision) }) ?? (attendsThroughCache: false, rotatesValues: false)
+        modelAttendsThroughZones = probed.attendsThroughCache
+        valueRotationUnavailable = modelAttendsThroughZones && precision.rotatesValues && !probed.rotatesValues
+        if !modelAttendsThroughZones {
+            logger.warn("--kv-zones does not apply to this model: its attention reads the whole cache through update(), or its head dimension has no quantization group. Its quantized requests use uniform --kv-bits, k8v4 as 8-bit.")
+        } else if valueRotationUnavailable {
+            logger.warn("--kv-bits \(precision) cannot rotate this model's value heads: the Hadamard transform is its own inverse only for head dimensions 2^k and 12·2^k. It runs as k8v4.")
         }
     }
 
@@ -631,7 +637,7 @@ public actor MLXInferenceEngine: InferenceEngine {
             temperature: temperature,
             topP: Float(request.topP ?? samplingDefaults.topP ?? 0.9)
         )
-        params.kvBits = request.kvBits ?? kvBits
+        params.kvBits = (request.kvPrecision ?? kvPrecision)?.uniform.keyBits
         params.quantizedKVStart = quantizedKVStart
         params.repetitionPenalty = request.repetitionPenalty.map(Float.init) ?? repetitionPenalty
             ?? samplingDefaults.repetitionPenalty.map(Float.init)
@@ -809,6 +815,7 @@ public actor MLXInferenceEngine: InferenceEngine {
             let forcedTool = constraint?.toolName
             let speculativeLookup = request.speculativeLookup ?? speculativeLookup
             let zones = modelAttendsThroughZones ? kvZones : nil
+            let zonedPrecision = zones == nil ? nil : request.kvPrecision ?? kvPrecision
             let launch: GenerationLaunch
             do {
                 launch = try await container.perform(nonSendable: lmInput) { context, input in
@@ -817,7 +824,7 @@ public actor MLXInferenceEngine: InferenceEngine {
                         blend: namespace.flatMap { space in blend.map { ($0, space) } },
                         params: params, components: constrained, tools: forcedTool == nil ? toolSpecs : nil,
                         context: context, speculativeLookup: speculativeLookup,
-                        kvZones: zones)
+                        kvZones: zones, kvPrecision: zonedPrecision)
                 }
             } catch {
                 keep(nil, tokens: promptTokens, namespace: namespace, releasing: lease, epoch: epoch)
@@ -1082,7 +1089,7 @@ public actor MLXInferenceEngine: InferenceEngine {
     }
 
     private func promptCacheNamespace(for request: GenerationRequest) -> String? {
-        guard promptCaches.byteBudget > 0, (request.kvBits ?? kvBits) == nil else { return nil }
+        guard promptCaches.byteBudget > 0, (request.kvPrecision ?? kvPrecision) == nil else { return nil }
         return request.cacheKey
     }
 
@@ -1099,22 +1106,23 @@ public actor MLXInferenceEngine: InferenceEngine {
     }
 
     static func zonedCache(
-        params: GenerateParameters, zones: KVZones?, model: any LanguageModel
+        params: GenerateParameters, zones: KVZones?, precision: KVPrecision?, model: any LanguageModel
     ) throws -> (cache: [any KVCache], params: GenerateParameters)? {
-        guard let zones, let bits = params.kvBits else { return nil }
+        guard let zones, let precision else { return nil }
         var exact = params
         exact.kvBits = nil
-        return (ZonedKVCache.replacingFullAttention(try model.newCache(parameters: exact), zones: zones, bits: bits), exact)
+        return (ZonedKVCache.replacingFullAttention(try model.newCache(parameters: exact), zones: zones, precision: precision), exact)
     }
 
     static func launch(
         input: LMInput, lease: PromptCacheLease?, keepsCache: Bool, boundary: Int,
         blend: (store: CacheBlendStore, namespace: String)? = nil,
         params: GenerateParameters, components: GenerationComponents,
-        tools: [ToolSpec]?, context: ModelContext, speculativeLookup: Bool = false, kvZones: KVZones? = nil
+        tools: [ToolSpec]?, context: ModelContext, speculativeLookup: Bool = false, kvZones: KVZones? = nil,
+        kvPrecision: KVPrecision? = nil
     ) throws -> GenerationLaunch {
         guard keepsCache else {
-            if let zoned = try zonedCache(params: params, zones: kvZones, model: context.model) {
+            if let zoned = try zonedCache(params: params, zones: kvZones, precision: kvPrecision, model: context.model) {
                 let stream = try MLXLMCommon.generate(
                     input: input, cache: zoned.cache, parameters: zoned.params, context: context, components: components, tools: tools)
                 return GenerationLaunch(stream: stream, task: nil, cache: nil, reusedTokens: 0)

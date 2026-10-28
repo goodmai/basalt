@@ -52,7 +52,7 @@ struct ServeCommand: AsyncParsableCommand {
 
     @Option(
         name: .customLong("kv-bits"),
-        help: "Quantize the KV cache to 4 or 8 bits, or `auto`: fp16 until a request's max_tokens does not fit, then 8, then 4 bits (default: full precision)"
+        help: "Quantize the KV cache to 4 or 8 bits, k8v4 (8-bit keys, 4-bit values; needs --kv-zones; experimental k8v4h also Walsh–Hadamard-rotates the values), or `auto`: fp16 until a request's max_tokens does not fit, then 8-bit, k8v4 with --kv-zones, then 4-bit (default: full precision)"
     )
     var kvBits: KVBitsSetting?
 
@@ -379,7 +379,7 @@ struct ServeCommand: AsyncParsableCommand {
             let evaluator = MemoryEvaluator()
             log("🔍 Performing dry-run memory assessment for \(bold(targetModel))…")
             let assessment = await evaluator.evaluate(
-                modelId: targetModel, kvBits: kvBits?.budgetBits, kvZones: KVBitsSetting.zones(kvZones))
+                modelId: targetModel, kvPrecision: kvBits?.budgetPrecision, kvZones: KVBitsSetting.zones(kvZones))
 
             fputs("\n  Model:           \(assessment.modelName) (\(assessment.modelId))\n", stderr)
             fputs("  Required RAM:    \(assessment.requiredRAMFormatted)\n", stderr)
@@ -455,7 +455,7 @@ struct ServeCommand: AsyncParsableCommand {
         let engine       = MLXInferenceEngine(
             reasoningEffort: reasoningEffort,
             promptCacheBytes: promptCacheMB.map { min(max(0, $0), 1 << 30) << 20 },
-            kvBits: kvBits?.fixedBits,
+            kvPrecision: kvBits?.fixedPrecision,
             kvZones: KVBitsSetting.zones(kvZones),
             repetitionPenalty: repetitionPenalty,
             topK: topK,
@@ -471,7 +471,7 @@ struct ServeCommand: AsyncParsableCommand {
             log("Session log: \(sessionLog.rawValue) → \(sessionLogWriter.directory.path) (0700; `--session-log meta` keeps no content, `--session-log off` disables)")
         }
         let orchestrator = ModelOrchestratorActor(
-            engine: engine, maxTokens: config.maxTokens, kvBits: kvBits?.fixedBits, adaptiveKVBits: kvBits == .auto,
+            engine: engine, maxTokens: config.maxTokens, kvPrecision: kvBits?.fixedPrecision, adaptiveKVPrecision: kvBits == .auto,
             kvZones: KVBitsSetting.zones(kvZones), gate: GenerationGate(maxConcurrent: maxConcurrent, maxQueue: maxQueue), sessionLog: sessionLogWriter)
 
         log("Loading model from \(bold(resolvedPath))…")
@@ -655,39 +655,39 @@ struct ServeCommand: AsyncParsableCommand {
 
 enum KVBitsSetting: Equatable, ExpressibleByArgument {
     case auto
-    case bits(Int)
+    case fixed(KVPrecision)
 
     init?(argument: String) {
         if argument == "auto" {
             self = .auto
-        } else if let bits = Int(argument), bits > 0 {
-            self = .bits(bits)
+        } else if let precision = KVPrecision(argument: argument) {
+            self = .fixed(precision)
         } else {
             return nil
         }
     }
 
-    var fixedBits: Int? {
-        if case .bits(let bits) = self { return bits }
+    var fixedPrecision: KVPrecision? {
+        if case .fixed(let precision) = self { return precision }
         return nil
     }
 
-    var budgetBits: Int {
-        fixedBits ?? KVCacheGeometry.adaptiveKVBitsLadder.compactMap { $0 }.min()!
+    var budgetPrecision: KVPrecision? {
+        fixedPrecision ?? KVCacheGeometry.adaptiveKVPrecisionLadder.last!
     }
 
     static let zonesHelp = ArgumentHelp(
         "With --kv-bits: keep the first \(KVZones.standard.sinkTokens) and the last \(KVZones.standard.windowTokens) tokens of each full-attention layer in fp16 and quantize the tokens between them as they arrive")
 
-    static let zonesAssumption = "assumed to apply; serve checks the model at load and sizes a model whose attention bypasses the zoned cache (Gemma 4) or whose head dimension has no quantization group as uniform --kv-bits"
+    static let zonesAssumption = "assumed to apply; serve checks the model at load and sizes a model whose attention bypasses the zoned cache (Gemma 4) or whose head dimension has no quantization group as uniform --kv-bits, k8v4 as 8-bit"
 
     static func zones(_ enabled: Bool) -> KVZones? {
         enabled ? .standard : nil
     }
 
     static func validate(zones: Bool, bits: KVBitsSetting?) throws {
-        if zones, bits == nil {
-            throw ValidationError("--kv-zones needs --kv-bits 4, 8 or auto: it says which tokens stay fp16 in a quantized cache")
+        if let conflict = KVPrecision.flagConflict(kvBitsSet: bits != nil, fixed: bits?.fixedPrecision, zones: zones) {
+            throw ValidationError(conflict)
         }
     }
 }

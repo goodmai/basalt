@@ -34,7 +34,7 @@ struct TokenBudgetCalculatorTests {
     @Test("--kv-bits 4 stretches the same memory by 16/4.5")
     func kvBits() {
         let ram = Self.availableRAM(usable: 4 * Self.gib)
-        let tokens = TokenBudgetCalculator.calculateMaxTokens(availableRAM: ram, modelSizeMB: 0, kv: Self.qwen32B, kvBits: 4)
+        let tokens = TokenBudgetCalculator.calculateMaxTokens(availableRAM: ram, modelSizeMB: 0, kv: Self.qwen32B, kvPrecision: .q4)
         #expect(tokens == 16_384 * 16 * 2 / 9)
     }
 

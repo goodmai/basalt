@@ -10,7 +10,7 @@ public actor ModelOrchestratorActor {
     private let engine: any InferenceEngine
     private let maxTokens: Int
     private var modelSizeMB: Int = 4000
-    private let kvBitsLadder: [Int?]
+    private let kvPrecisionLadder: [KVPrecision?]
     private let kvZones: KVZones?
     private var modelTakesKVZones = true
     private var kvGeometry = KVCacheGeometry(parameterProxy: 4)
@@ -40,7 +40,7 @@ public actor ModelOrchestratorActor {
     public let telemetry: TelemetryTracker
 
     public init(
-        engine: any InferenceEngine, maxTokens: Int = 65_536, kvBits: Int? = nil, adaptiveKVBits: Bool = false,
+        engine: any InferenceEngine, maxTokens: Int = 65_536, kvPrecision: KVPrecision? = nil, adaptiveKVPrecision: Bool = false,
         kvZones: KVZones? = nil, telemetry: TelemetryTracker = .shared,
         gate: GenerationGate = GenerationGate(), sessionLog: SessionLogWriter? = nil
     ) {
@@ -48,7 +48,7 @@ public actor ModelOrchestratorActor {
         self.sessionLog = sessionLog
         self.engine = engine
         self.maxTokens = maxTokens
-        self.kvBitsLadder = adaptiveKVBits ? KVCacheGeometry.adaptiveKVBitsLadder : [kvBits]
+        self.kvPrecisionLadder = adaptiveKVPrecision ? KVCacheGeometry.adaptiveKVPrecisionLadder : [kvPrecision]
         self.kvZones = kvZones
         self.telemetry = telemetry
     }
@@ -468,29 +468,31 @@ public actor ModelOrchestratorActor {
 
     func generationRoom(
         for request: GenerationRequest
-    ) async -> (room: Int, fitting: Int, promptTokens: Int, kvBits: Int?) {
+    ) async -> (room: Int, fitting: Int, promptTokens: Int, kvPrecision: KVPrecision?) {
         let promptTokens = await engine.promptTokenCount(for: request) ?? Self.estimatedTokens(Self.budgetedText(request))
         let wanted = promptTokens + min(request.maxTokens ?? 1, maxTokens)
         let fit = kvFit(promptTokens: promptTokens, wantedTokens: wanted, budget: await kvBudgetBytes())
-        return (fit.fitting - promptTokens, fit.fitting, promptTokens, fit.kvBits)
+        return (fit.fitting - promptTokens, fit.fitting, promptTokens, fit.kvPrecision)
     }
 
-    func kvFit(promptTokens: Int, wantedTokens: Int, budget: Int64) -> (fitting: Int, kvBits: Int?) {
-        let fits = kvBitsLadder.map { bits in
-            (fitting: kvGeometry.maxTokens(fitting: budget, kvBits: bits, promptTokens: promptTokens, zones: modelTakesKVZones ? kvZones : nil), kvBits: bits)
+    func kvFit(promptTokens: Int, wantedTokens: Int, budget: Int64) -> (fitting: Int, kvPrecision: KVPrecision?) {
+        let zones = modelTakesKVZones ? kvZones : nil
+        let fits = kvPrecisionLadder.map { wanted in
+            let precision = zones == nil ? wanted?.uniform : wanted
+            return (fitting: kvGeometry.maxTokens(fitting: budget, kvPrecision: precision, promptTokens: promptTokens, zones: zones), kvPrecision: precision)
         }
         return fits.first { $0.fitting >= wantedTokens } ?? fits.max { $0.fitting < $1.fitting }!
     }
 
     private func capped(_ request: GenerationRequest) async throws(BasaltError) -> GenerationRequest {
-        let (room, fitting, promptTokens, kvBits) = await generationRoom(for: request)
+        let (room, fitting, promptTokens, kvPrecision) = await generationRoom(for: request)
         guard room > 0 else {
             throw .contextLengthExceeded(maxTokens: fitting, requested: promptTokens + 1)
         }
         let cap = min(maxTokens, room)
-        var v = try request.validated(defaultMaxTokens: cap).withKVBits(kvBits)
-        if let kvBits, kvBitsLadder.count > 1 {
-            logger.info("KV cache at \(kvBits) bits for this request: fp16 cannot hold \(promptTokens) prompt + \(v.maxTokens ?? 0) tokens.")
+        var v = try request.validated(defaultMaxTokens: cap).withKVPrecision(kvPrecision)
+        if let kvPrecision, kvPrecisionLadder.count > 1 {
+            logger.info("KV cache quantized \(kvPrecision) for this request: fp16 cannot hold \(promptTokens) prompt + \(v.maxTokens ?? 0) tokens.")
         }
         if let req = request.maxTokens, req > cap {
             logger.warn("Token request (\(req)) > budget (\(cap): --max-tokens \(maxTokens), memory room \(room)). Capping.")
