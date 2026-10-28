@@ -9,6 +9,7 @@ final class ZonedKVCache: KVCacheAttentionProtocol {
     private let exact: KVCacheSimple
     private let middle: QuantizedKVCache
     private(set) var materializedForCaller = false
+    private(set) var headsQuantize: Bool?
 
     init(zones: KVZones, bits: Int) {
         self.zones = zones
@@ -27,7 +28,7 @@ final class ZonedKVCache: KVCacheAttentionProtocol {
         let zoned = caches.compactMap { $0 as? ZonedKVCache }
         guard !zoned.isEmpty else { return false }
         _ = model(LMInput.Text(tokens: MLXArray([Int32(0)]).reshaped(1, 1)), cache: caches, state: nil)
-        return zoned.allSatisfy { !$0.materializedForCaller }
+        return zoned.allSatisfy { !$0.materializedForCaller && $0.headsQuantize == true }
     }
 
     static func replacingFullAttention(_ caches: [any KVCache], zones: KVZones, bits: Int) -> [any KVCache] {
@@ -100,9 +101,10 @@ final class ZonedKVCache: KVCacheAttentionProtocol {
 
     private func append(keys: MLXArray, values: MLXArray) {
         _ = exact.update(keys: keys, values: values)
+        let quantizes = headsQuantize ?? (KVCacheGeometry.quantizedGroupSize(keyDim: keys.dim(3), valueDim: values.dim(3)) != nil)
+        headsQuantize = quantizes
         let overflow = windowCount - zones.windowTokens
-        guard overflow >= zones.migrationStep,
-              KVCacheGeometry.quantizedGroupSize(keyDim: keys.dim(3), valueDim: values.dim(3)) != nil else { return }
+        guard overflow >= zones.migrationStep, quantizes else { return }
         let (sinks, moved, recent) = (sinkCount, sinkCount..<(sinkCount + overflow), (sinkCount + overflow)...)
         let tokens = exact.state
         _ = middle.updateQuantized(keys: tokens[0][.ellipsis, moved, 0...], values: tokens[1][.ellipsis, moved, 0...])

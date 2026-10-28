@@ -247,7 +247,8 @@ struct ZonedKVCacheBenchmarkTests {
             return
         }
         let room = Int64(PromptCacheBudget.gpuWorkingSet()) - Int64(Memory.activeMemory)
-        log.line("PROBE \(repo) attentionThroughZonedCache=\(await engine.supportsKVZones)")
+        let zonesApply = (try? await container.perform { try ZonedKVCache.modelAttendsThroughCache($0.model) }) ?? false
+        log.line("PROBE \(repo) zonesApply=\(zonesApply)")
         log.line("GEOMETRY \(repo) fp16BytesPerToken=\(geometry.bytes(tokens: 1_000) / 1_000) window=\(geometry.window) roomAfterWeights=\(room)")
 
         if steps.contains("mem") {

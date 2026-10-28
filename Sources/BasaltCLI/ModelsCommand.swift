@@ -396,6 +396,7 @@ struct CheckSubcommand: AsyncParsableCommand {
         print("  Memory budget:   \(assessment.memoryBudgetFormatted) (Metal working set)")
         print("  Fit Level:       \(assessment.fitLevel.emoji) \(assessment.fitLevel.rawValue)")
         print("  Context Budget:  \(assessment.contextBudgetLine)")
+        if kvZones { print("  KV zones:        \(KVBitsSetting.zonesAssumption)") }
         print()
 
         if let warning = assessment.warning {

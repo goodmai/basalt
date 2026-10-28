@@ -122,10 +122,10 @@ public actor MLXInferenceEngine: InferenceEngine {
     }
 
     func probeKVZones() async {
-        guard let container else { return }
+        guard kvZones != nil, let container else { return }
         modelAttendsThroughZones = (try? await container.perform { try ZonedKVCache.modelAttendsThroughCache($0.model) }) ?? false
         if kvZones != nil, !modelAttendsThroughZones {
-            logger.warn("--kv-zones does not apply to this model: its attention reads the whole cache through update(), so a zoned middle would be dequantized on every step. Its quantized requests use uniform --kv-bits.")
+            logger.warn("--kv-zones does not apply to this model: its attention reads the whole cache through update(), or its head dimension has no quantization group. Its quantized requests use uniform --kv-bits.")
         }
     }
 

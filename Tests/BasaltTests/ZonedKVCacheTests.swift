@@ -143,6 +143,21 @@ struct ZonedKVCacheTests {
         #expect(Self.maxDifference(k, keys) == 0)
     }
 
+    @Test("Head dimension 96 quantizes in groups of 32 past the window, and attention still matches the dequantized reference",
+          arguments: [96, 160])
+    func groupThirtyTwoHeads(dim: Int) {
+        let cache = ZonedKVCache(zones: Self.zones, bits: 4)
+        let keys = MLXRandom.normal([1, 2, 30, dim], key: MLXRandom.key(101)).asType(.float16)
+        _ = cache.update(keys: keys, values: keys)
+        #expect(Self.counts(cache) == [4, 18, 8] as [Int])
+        let q = MLXRandom.normal([1, 4, 1, dim], key: MLXRandom.key(102)).asType(.float16)
+        let newKey = MLXRandom.normal([1, 2, 1, dim], key: MLXRandom.key(103)).asType(.float16)
+        let (allKeys, allValues) = cache.copy().update(keys: newKey, values: newKey)
+        let expected = MLXFast.scaledDotProductAttention(queries: q, keys: allKeys, values: allValues, scale: 0.125, mask: .none)
+        let got = cache.updateAndAttend(queries: q, keys: newKey, values: newKey, scale: 0.125, mask: .none)
+        #expect(Self.maxDifference(got, expected) < 2e-3)
+    }
+
     @Test("copy is independent of the original")
     func copyIsIndependent() {
         let cache = ZonedKVCache(zones: Self.zones, bits: 4)
@@ -185,6 +200,15 @@ struct ZonedKVCacheEngineTests {
             processor: ByteInputProcessor(), tokenizer: ByteTokenizer()))
     }
 
+    static func headDim80Model() throws -> LlamaModel {
+        let config = """
+            {"hidden_size": 320, "num_hidden_layers": 1, "intermediate_size": 64,
+             "num_attention_heads": 4, "num_key_value_heads": 2, "rms_norm_eps": 1e-5,
+             "vocab_size": 256, "rope_theta": 10000.0, "tie_word_embeddings": false}
+            """
+        return LlamaModel(try JSONDecoder().decode(LlamaConfiguration.self, from: Data(config.utf8)))
+    }
+
     static func text(_ stream: AsyncStream<Generation>) async -> String {
         var text = ""
         for await generation in stream {
@@ -198,6 +222,7 @@ struct ZonedKVCacheEngineTests {
         let llama = try Self.container()
         #expect(try await llama.perform { try ZonedKVCache.modelAttendsThroughCache($0.model) })
         #expect(try !ZonedKVCache.modelAttendsThroughCache(SelfAttendingModel()))
+        #expect(try !ZonedKVCache.modelAttendsThroughCache(Self.headDim80Model()))
     }
 
     @Test("Zones apply only to a quantized request; the zoned request itself runs with kvBits cleared so MLX does not convert the cache again")

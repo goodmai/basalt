@@ -386,7 +386,9 @@ struct ServeCommand: AsyncParsableCommand {
             fputs("  Available RAM:   \(assessment.availableRAMFormatted)\n", stderr)
             fputs("  Physical RAM:    \(assessment.totalRAMFormatted)\n", stderr)
             fputs("  Fit Level:       \(assessment.fitLevel.emoji) \(assessment.fitLevel.rawValue)\n", stderr)
-            fputs("  Context Budget:  \(assessment.contextBudgetLine)\n\n", stderr)
+            fputs("  Context Budget:  \(assessment.contextBudgetLine)\n", stderr)
+            if kvZones { fputs("  KV zones:        \(KVBitsSetting.zonesAssumption)\n", stderr) }
+            fputs("\n", stderr)
 
             if let warning = assessment.warning {
                 fputs(red("  \(warning)") + "\n", stderr)
@@ -676,6 +678,8 @@ enum KVBitsSetting: Equatable, ExpressibleByArgument {
 
     static let zonesHelp = ArgumentHelp(
         "With --kv-bits: keep the first \(KVZones.standard.sinkTokens) and the last \(KVZones.standard.windowTokens) tokens of each full-attention layer in fp16 and quantize the tokens between them as they arrive")
+
+    static let zonesAssumption = "assumed to apply; serve checks the model at load and sizes a model whose attention bypasses the zoned cache (Gemma 4) or whose head dimension has no quantization group as uniform --kv-bits"
 
     static func zones(_ enabled: Bool) -> KVZones? {
         enabled ? .standard : nil
