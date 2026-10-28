@@ -61,7 +61,10 @@ let stamp = ISO8601DateFormatter().string(from: Date())
 let logPath = repo + "/logs/speculative_lookup_bench-\(stamp.replacingOccurrences(of: ":", with: "")).log"
 try? FileManager.default.createDirectory(atPath: repo + "/logs", withIntermediateDirectories: true)
 FileManager.default.createFile(atPath: logPath, contents: nil)
-let logHandle = FileHandle(forWritingAtPath: logPath)
+guard let logHandle = FileHandle(forWritingAtPath: logPath) else {
+    print("FAIL cannot open the log file \(logPath)")
+    exit(1)
+}
 let state = NSLock()
 nonisolated(unsafe) var lockHeld = false
 nonisolated(unsafe) var child: Process?
@@ -71,7 +74,7 @@ func log(_ line: String) {
     let stamped = "\(ISO8601DateFormatter().string(from: Date())) \(line)"
     print(stamped)
     fflush(stdout)
-    logHandle?.write(Data((stamped + "\n").utf8))
+    logHandle.write(Data((stamped + "\n").utf8))
 }
 
 func fail(_ step: String, _ detail: String) {
@@ -103,7 +106,7 @@ func releaseLock() {
         lockHeld = false
         let owner = trimmed((try? String(contentsOfFile: lockDirectory + "/owner", encoding: .utf8)) ?? "")
         guard owner == ownerLine else {
-            log("FAIL release lock held by someone else, left untouched: owner=\(owner)")
+            fail("release lock", "held by someone else, left untouched: owner=\(owner)")
             return
         }
         try? FileManager.default.removeItem(atPath: lockDirectory)
