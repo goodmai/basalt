@@ -78,14 +78,25 @@ struct PromptLookupDecodingTests {
         #expect(telemetry.targetModelCallCount < tokens.count)
     }
 
-    @Test("Rejected drafts are rolled back: the cache holds the prompt and the emitted tokens, the last one at most")
+    @Test("Rejected drafts are rolled back: the cache holds the prompt and every emitted token but the last")
     func rollback() throws {
         let model = try TinyQwen3.make()
         let (tokens, iterator, cache) = try LookupFixture.lookup(model, maxTokens: 48)
         #expect(tokens.count == 48)
         #expect(try #require(iterator.speculativeDecodingTelemetry).rejectedDraftTokenCount > 0)
-        let emitted = LookupFixture.prompt.count + tokens.count
-        #expect(cache.allSatisfy { (emitted - 1 ... emitted).contains($0.offset) })
+        #expect(cache.allSatisfy { $0.offset == LookupFixture.prompt.count + tokens.count - 1 })
+    }
+
+    @Test("Without drafts, the last token of the budget is not fed to the model: no look-ahead forward is thrown away",
+          arguments: [1, 2, 17])
+    func noLookAheadAtTheBudget(maxTokens: Int) throws {
+        let prompt = [200, 201, 202, 203, 204]
+        let run = try LookupFixture.lookup(
+            try TinyQwen3.make(), prompt: prompt, maxTokens: maxTokens,
+            sampler: ScriptedSampler((0 ..< maxTokens).map { 10 + $0 }))
+        #expect(run.tokens == (0 ..< maxTokens).map { 10 + $0 })
+        #expect(run.iterator.speculativeDecodingTelemetry == nil)
+        #expect(run.cache.allSatisfy { $0.offset == prompt.count + maxTokens - 1 })
     }
 
     @Test("A stateful logit processor and a seeded sampler see the same calls as in plain decoding",

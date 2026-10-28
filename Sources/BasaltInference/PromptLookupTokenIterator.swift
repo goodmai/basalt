@@ -3,7 +3,7 @@ import MLX
 import MLXLMCommon
 
 struct PromptLookupTokenIterator: TokenIteratorProtocol {
-    static let draftLimit = 8
+    static let draftLimit = 7
     static let ngramSizes = [5, 4, 3]
 
     let model: any LanguageModel
@@ -111,14 +111,14 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
             ? Self.draft(after: history, limit: Swift.min(Self.draftLimit, remaining - 1)) : []
         switch (inFlight, draft.isEmpty) {
         case (let token?, true):
-            decodeAhead(from: token)
+            emit(token, lookingAhead: remaining > 1)
         case (let token?, false):
             inFlight = nil
             let confirmed = token.item(Int.self)
             if confirmed != draft[0] { backoff.record(acceptedDrafts: 0) }
             accept([confirmed])
         case (nil, true):
-            decodeAhead(from: step(MLXArray([Int32(history[history.count - 1])])))
+            emit(step(MLXArray([Int32(history[history.count - 1])])), lookingAhead: remaining > 1)
         case (nil, false):
             speculate(draft)
         }
@@ -130,10 +130,14 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
         return sample(forward(LMInput.Text(tokens: token)).logits[0..., -1, 0...])
     }
 
-    private mutating func decodeAhead(from token: MLXArray) {
-        let next = step(token)
-        asyncEval([next] + cache.flatMap { $0.state })
-        inFlight = next
+    private mutating func emit(_ token: MLXArray, lookingAhead: Bool) {
+        if lookingAhead {
+            let next = step(token)
+            asyncEval([next] + cache.flatMap { $0.state })
+            inFlight = next
+        } else {
+            inFlight = nil
+        }
         backoff.tick()
         accept([token.item(Int.self)])
     }
