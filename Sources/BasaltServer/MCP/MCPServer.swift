@@ -230,7 +230,8 @@ public final class MCPServer: Sendable {
                         "temperature": ["type": "number",  "description": "Sampling temperature 0–2 (default: the model's generation_config, else 0.7)"],
                         "topP":        ["type": "number",  "description": "Nucleus sampling p (default: the model's generation_config, else 0.9)"],
                         "minP":        ["type": "number",  "description": "Min-P 0–1, overrides the server default (0 = off)"],
-                        "dynamicTemperature": ["type": "boolean", "description": "Entropy-based dynamic temperature (EDT)"]
+                        "dynamicTemperature": ["type": "boolean", "description": "Entropy-based dynamic temperature (EDT)"],
+                        "speculativeLookup": ["type": "boolean", "description": "Prompt-lookup speculative decoding for this call; unset takes serve --speculative-lookup"]
                     ]
                 ])
             ),
@@ -609,7 +610,12 @@ public final class MCPServer: Sendable {
             writeError(id: id, code: -32602, message: "Missing required argument: prompt")
             return
         }
-        
+        let speculativeLookup = args?["speculativeLookup"].flatMap { $0 is NSNull ? nil : $0 }
+        if let speculativeLookup, !Self.isJSONBoolean(speculativeLookup) {
+            writeError(id: id, code: -32602, message: "speculativeLookup must be a boolean")
+            return
+        }
+
         let request = GenerationRequest(
             prompt: prompt,
             maxTokens:   args?["maxTokens"]   as? Int,
@@ -618,7 +624,8 @@ public final class MCPServer: Sendable {
             minP:        args?["minP"]        as? Double,
             dynamicTemperature: args?["dynamicTemperature"] as? Bool,
             cacheKey: PromptCacheKey.resolve(isService: false)
-        ).withOrigin(RequestOrigin(source: "mcp", endpoint: "tools/call generate", stream: false))
+        ).withSpeculativeLookup(speculativeLookup as? Bool)
+            .withOrigin(RequestOrigin(source: "mcp", endpoint: "tools/call generate", stream: false))
         
         do {
             let response = try await orchestrator.generate(request: request)

@@ -173,4 +173,32 @@ struct GenerationSettingsAPITests {
             #expect((usage["output_tokens_details"] as? [String: Any])?["reasoning_tokens"] as? Int == 3)
         }
     }
+    @Test("speculative_lookup reaches the engine from each chat endpoint; omitted, it stays unset so the server flag decides",
+          arguments: ["/v1/chat/completions", "/v1/responses", "/v1/messages"])
+    func speculativeLookupReachesTheEngine(_ uri: String) async throws {
+        let (app, engine) = try await app()
+        for (field, expected) in [(#", "speculative_lookup": true"#, true), (#", "speculative_lookup": false"#, false), ("", nil)] {
+            try await post(app, uri, #"{"messages": [{"role": "user", "content": "hi"}], "input": "hi"\#(field)}"#) {
+                #expect($0.status == .ok)
+            }
+            #expect(try #require(await engine.lastRequest).speculativeLookup == expected)
+        }
+    }
+
+    @Test("The raw generate endpoint takes speculativeLookup like its other camelCase fields")
+    func rawGenerateTakesSpeculativeLookup() async throws {
+        let (app, engine) = try await app()
+        try await post(app, "/v1/generate", #"{"prompt": "hi", "speculativeLookup": true}"#) { #expect($0.status == .ok) }
+        #expect(await engine.lastRequest?.speculativeLookup == true)
+    }
+
+    @Test("A speculative_lookup that is not a boolean is a 400 before a stream opens",
+          arguments: ["/v1/chat/completions", "/v1/responses", "/v1/messages"])
+    func nonBooleanSpeculativeLookupIsRejected(_ uri: String) async throws {
+        let (app, engine) = try await app()
+        try await post(app, uri, #"""
+            {"messages": [{"role": "user", "content": "hi"}], "input": "hi", "speculative_lookup": "yes", "stream": true}
+            """#) { #expect($0.status == .badRequest) }
+        #expect(await engine.lastRequest == nil)
+    }
 }

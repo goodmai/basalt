@@ -389,6 +389,33 @@ struct MCPServerTests {
         #expect(sent.cacheKey == PromptCacheKey.shared)
     }
 
+    @Test("tools/call (gemma_generate) passes speculativeLookup to the engine; omitted, it stays unset")
+    func speculativeLookupArgument() async throws {
+        let engine = MockInferenceEngine()
+        let orch = ModelOrchestratorActor(engine: engine)
+        try await orch.loadModel(path: "test-model")
+        let server = MCPServer(orchestrator: orch) { _ in }
+        for (field, expected) in [(#", "speculativeLookup": true"#, true), (#", "speculativeLookup": false"#, false), ("", nil)] {
+            await server.dispatch(#"{"jsonrpc": "2.0", "id": 6, "method": "tools/call", "params": {"name": "gemma_generate", "arguments": {"prompt": "Hello", "maxTokens": 10\#(field)}}}"#)
+            #expect(try #require(await engine.lastRequest).speculativeLookup == expected)
+        }
+    }
+
+    @Test("tools/call (gemma_generate) rejects a speculativeLookup that is not a boolean with -32602", arguments: [#""yes""#, "1", "0"])
+    func nonBooleanSpeculativeLookup(_ value: String) async throws {
+        let engine = MockInferenceEngine()
+        let orch = ModelOrchestratorActor(engine: engine)
+        try await orch.loadModel(path: "test-model")
+        let capturer = OutputCapturer()
+        let server = MCPServer(orchestrator: orch) { line in
+            Task { await capturer.capture(line) }
+        }
+        await server.dispatch(#"{"jsonrpc": "2.0", "id": 7, "method": "tools/call", "params": {"name": "gemma_generate", "arguments": {"prompt": "Hello", "speculativeLookup": \#(value)}}}"#)
+        try? await Task.sleep(for: .milliseconds(50))
+        #expect(await capturer.lines.first?.contains("-32602") == true)
+        #expect(await engine.lastRequest == nil)
+    }
+
     private actor OutputCapturer {
         var lines: [String] = []
         func capture(_ line: String) { lines.append(line) }

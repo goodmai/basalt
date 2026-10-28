@@ -152,6 +152,7 @@ struct OpenAIController: Sendable {
         let presencePenalty: Double?
         let repetitionPenalty: Double?
         let thinkingBudget: Int?
+        let speculativeLookup: Bool?
         let streamOptions: StreamOptions?
 
         struct StreamOptions: Codable, Sendable {
@@ -174,6 +175,7 @@ struct OpenAIController: Sendable {
             case presencePenalty = "presence_penalty"
             case repetitionPenalty = "repetition_penalty"
             case thinkingBudget = "thinking_budget"
+            case speculativeLookup = "speculative_lookup"
         }
     }
 
@@ -200,6 +202,7 @@ struct OpenAIController: Sendable {
         let presencePenalty: Double?
         let repetitionPenalty: Double?
         let thinkingBudget: Int?
+        let speculativeLookup: Bool?
 
         struct ReasoningConfig: Codable, Sendable {
             let effort: String?
@@ -220,6 +223,7 @@ struct OpenAIController: Sendable {
             case presencePenalty = "presence_penalty"
             case repetitionPenalty = "repetition_penalty"
             case thinkingBudget = "thinking_budget"
+            case speculativeLookup = "speculative_lookup"
         }
     }
 
@@ -396,7 +400,8 @@ struct OpenAIController: Sendable {
                 chat: Self.chatMessages(dto.messages), headers: request.headers, maxTokens: dto.maxTokens,
                 sampling: .init(temperature: dto.temperature, topP: dto.topP, minP: dto.minP,
                                 dynamicTemperature: dto.dynamicTemperature, topK: dto.topK,
-                                presencePenalty: dto.presencePenalty, repetitionPenalty: dto.repetitionPenalty),
+                                presencePenalty: dto.presencePenalty, repetitionPenalty: dto.repetitionPenalty,
+                                speculativeLookup: dto.speculativeLookup),
                 reasoningEffort: dto.reasoningEffort, tools: tools, thinkingBudget: dto.thinkingBudget,
                 responseFormat: format, model: dto.model, stream: dto.stream == true)
             if dto.stream == true { try await pipeline.admitStream(prepared.request) }
@@ -466,7 +471,8 @@ struct OpenAIController: Sendable {
                 maxTokens: dto.maxOutputTokens ?? dto.maxTokens,
                 sampling: .init(temperature: dto.temperature, topP: dto.topP, minP: dto.minP,
                                 dynamicTemperature: dto.dynamicTemperature, topK: dto.topK,
-                                presencePenalty: dto.presencePenalty, repetitionPenalty: dto.repetitionPenalty),
+                                presencePenalty: dto.presencePenalty, repetitionPenalty: dto.repetitionPenalty,
+                                speculativeLookup: dto.speculativeLookup),
                 reasoningEffort: dto.effectiveReasoningEffort, tools: tools, thinkingBudget: dto.thinkingBudget,
                 responseFormat: format, model: dto.model, stream: dto.stream == true)
             if dto.stream == true { try await pipeline.admitStream(prepared.request) }

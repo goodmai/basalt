@@ -17,6 +17,7 @@ struct ChatPipeline: Sendable {
         var topK: Int?
         var presencePenalty: Double?
         var repetitionPenalty: Double?
+        var speculativeLookup: Bool?
     }
 
     struct Prepared: Sendable {
@@ -103,7 +104,8 @@ struct ChatPipeline: Sendable {
             repetitionPenalty: sampling.repetitionPenalty,
             thinkingBudget: thinkingBudget,
             responseFormat: responseFormat
-        ).routed(by: headers).withOrigin(RequestOrigin(source: source, endpoint: endpoint, stream: stream))
+        ).withSpeculativeLookup(sampling.speculativeLookup)
+            .routed(by: headers).withOrigin(RequestOrigin(source: source, endpoint: endpoint, stream: stream))
         do {
             _ = try request.validated()
         } catch {
