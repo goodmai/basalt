@@ -245,6 +245,7 @@ struct ZonedKVCacheBenchmarkTests {
             return
         }
         let room = Int64(PromptCacheBudget.gpuWorkingSet()) - Int64(Memory.activeMemory)
+        log.line("PROBE \(repo) attentionThroughZonedCache=\(await engine.supportsKVZones)")
         log.line("GEOMETRY \(repo) fp16BytesPerToken=\(geometry.bytes(tokens: 1_000) / 1_000) window=\(geometry.window) roomAfterWeights=\(room)")
 
         if steps.contains("mem") {
@@ -289,6 +290,28 @@ struct ZonedKVCacheBenchmarkTests {
         }
 
         guard let corpus else { return }
+        if steps.contains("greedy") {
+            for length in Self.list("BASALT_ZONED_GREEDY_LENGTHS", default: "1000,16000").compactMap({ Int($0) }) {
+                var reference: [Int]?
+                for mode in Self.modes("BASALT_ZONED_MODES") {
+                    await log.step("greedy \(repo) \(mode) prompt=\(length) generated=64") {
+                        let tokens = try await container.perform { (context: ModelContext) -> [Int] in
+                            let prompt = Array(context.tokenizer.encode(text: corpus).prefix(length))
+                            let made = try Self.iterator(mode, tokens: prompt, maxTokens: 64, context: context)
+                            var iterator = made.iterator
+                            var out = [Int]()
+                            while let token = iterator.next() { out.append(token) }
+                            withExtendedLifetime(made.cache) {}
+                            return out
+                        }
+                        let expected = reference ?? tokens
+                        if reference == nil { reference = tokens }
+                        let same = zip(tokens, expected).prefix { $0 == $1 }.count
+                        return "identicalToFirstMode=\(tokens == expected) sharedPrefix=\(same)/\(expected.count)"
+                    }
+                }
+            }
+        }
         if steps.contains("ppl") {
             let total = Int(Self.env["BASALT_ZONED_PPL_TOKENS"] ?? "16384") ?? 16_384
             for mode in Self.modes("BASALT_ZONED_MODES") {
