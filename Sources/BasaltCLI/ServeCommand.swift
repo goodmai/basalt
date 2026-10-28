@@ -56,6 +56,9 @@ struct ServeCommand: AsyncParsableCommand {
     )
     var kvBits: KVBitsSetting?
 
+    @Flag(name: .customLong("kv-zones"), help: KVBitsSetting.zonesHelp)
+    var kvZones: Bool = false
+
     @Option(name: .customLong("repetition-penalty"), help: "Penalty on recently emitted tokens, e.g. 1.1 (default: off)")
     var repetitionPenalty: Float?
 
@@ -366,6 +369,7 @@ struct ServeCommand: AsyncParsableCommand {
         guard (0...1).contains(cacheBlendRatio) else {
             throw ValidationError("--cache-blend-ratio must be between 0 and 1, got \(cacheBlendRatio)")
         }
+        try KVBitsSetting.validate(zones: kvZones, bits: kvBits)
     }
 
     mutating func run() async throws {
@@ -374,7 +378,8 @@ struct ServeCommand: AsyncParsableCommand {
         if dryRun {
             let evaluator = MemoryEvaluator()
             log("🔍 Performing dry-run memory assessment for \(bold(targetModel))…")
-            let assessment = await evaluator.evaluate(modelId: targetModel, kvBits: kvBits?.budgetBits)
+            let assessment = await evaluator.evaluate(
+                modelId: targetModel, kvBits: kvBits?.budgetBits, kvZones: KVBitsSetting.zones(kvZones))
 
             fputs("\n  Model:           \(assessment.modelName) (\(assessment.modelId))\n", stderr)
             fputs("  Required RAM:    \(assessment.requiredRAMFormatted)\n", stderr)
@@ -449,6 +454,7 @@ struct ServeCommand: AsyncParsableCommand {
             reasoningEffort: reasoningEffort,
             promptCacheBytes: promptCacheMB.map { min(max(0, $0), 1 << 30) << 20 },
             kvBits: kvBits?.fixedBits,
+            kvZones: KVBitsSetting.zones(kvZones),
             repetitionPenalty: repetitionPenalty,
             topK: topK,
             minP: minP,
@@ -464,7 +470,7 @@ struct ServeCommand: AsyncParsableCommand {
         }
         let orchestrator = ModelOrchestratorActor(
             engine: engine, maxTokens: config.maxTokens, kvBits: kvBits?.fixedBits, adaptiveKVBits: kvBits == .auto,
-            gate: GenerationGate(maxConcurrent: maxConcurrent, maxQueue: maxQueue), sessionLog: sessionLogWriter)
+            kvZones: KVBitsSetting.zones(kvZones), gate: GenerationGate(maxConcurrent: maxConcurrent, maxQueue: maxQueue), sessionLog: sessionLogWriter)
 
         log("Loading model from \(bold(resolvedPath))…")
         do {
@@ -666,6 +672,19 @@ enum KVBitsSetting: Equatable, ExpressibleByArgument {
 
     var budgetBits: Int {
         fixedBits ?? KVCacheGeometry.adaptiveKVBitsLadder.compactMap { $0 }.min()!
+    }
+
+    static let zonesHelp = ArgumentHelp(
+        "With --kv-bits: keep the first \(KVZones.standard.sinkTokens) and the last \(KVZones.standard.windowTokens) tokens of each full-attention layer in fp16 and quantize the tokens between them as they arrive")
+
+    static func zones(_ enabled: Bool) -> KVZones? {
+        enabled ? .standard : nil
+    }
+
+    static func validate(zones: Bool, bits: KVBitsSetting?) throws {
+        if zones, bits == nil {
+            throw ValidationError("--kv-zones needs --kv-bits 4, 8 or auto: it says which tokens stay fp16 in a quantized cache")
+        }
     }
 }
 

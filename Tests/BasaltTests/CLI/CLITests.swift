@@ -52,6 +52,18 @@ struct CLITests {
         #expect(KVBitsSetting.bits(8).budgetBits == 8)
     }
 
+    @Test("--kv-zones is off by default, parses on serve and models check, and needs --kv-bits")
+    func kvZonesFlag() throws {
+        #expect(try ServeCommand.parse([]).kvZones == false)
+        #expect(try ServeCommand.parse(["--kv-bits", "4", "--kv-zones"]).kvZones)
+        #expect(try ServeCommand.parse(["--kv-bits", "auto", "--kv-zones"]).kvZones)
+        #expect(try CheckSubcommand.parse(["m", "--kv-bits", "8", "--kv-zones"]).kvZones)
+        #expect(throws: (any Error).self) { _ = try ServeCommand.parse(["--kv-zones"]) }
+        #expect(throws: (any Error).self) { _ = try CheckSubcommand.parse(["m", "--kv-zones"]) }
+        #expect(KVBitsSetting.zones(true) == .standard)
+        #expect(KVBitsSetting.zones(false) == nil)
+    }
+
     @Test("ServeCommand model options")
     func testServeModel() throws {
         let cmd = try ServeCommand.parse(["--model", "google/gemma-7b"])

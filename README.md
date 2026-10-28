@@ -186,6 +186,7 @@ The flags worth knowing on `serve`:
 | `--reasoning-effort xhigh\|medium\|low` | Qwen-family thinking budget |
 | `--quant 4bit` | pick a quantization subfolder in repos that ship several |
 | `--kv-bits 4\|8\|auto` | quantize the KV cache — buys generation room on a memory-tight machine; turns off prompt-cache reuse. MLX prefills the prompt in fp16 and quantizes it afterwards, so the prompt itself is no longer than in fp16 (shorter: the conversion briefly holds both copies). `auto` stays fp16, with prompt-cache reuse, until a request's prompt plus `max_tokens` does not fit, then runs that request at 8, else 4 bits |
+| `--kv-zones` | with `--kv-bits`: keep the first 64 and the last 1024 tokens of each full-attention layer in fp16 and quantize only the tokens between them, as the prompt is prefilled. No fp16 prefill to convert, so the prompt may use the whole quantized room and peak memory drops; on Qwen3-4B, 8k tokens scored after an 8k context, 4-bit perplexity is 6.58 against fp16 6.56 and uniform 4-bit 8.66 |
 | `--prompt-cache-mb N` | memory kept for the prompt-cache prefix tree (default: half of what Metal's recommended GPU working set leaves after the weights, logged at load; `0` disables), see below |
 | `--cache-blend` | reuse cached prompt chunks in any order, approximately (CacheBlend); `--cache-blend-ratio R` sets the share recomputed (default 0.5), see below |
 | `--min-p`, `--top-k`, `--seed` | sampling; `--seed` makes a non-greedy run reproducible; a request's `min_p` overrides `--min-p` |

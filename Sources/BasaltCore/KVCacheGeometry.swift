@@ -64,12 +64,15 @@ public struct KVCacheGeometry: Sendable, Equatable {
         )
         window = c["sliding_window"] as? Int ?? 0
         fixedStateBytes = Int64(linear) * Self.linearStateBytes(c)
-        let dims = [global.keyDim, global.valueDim]
-        quantizedGroupSize = Self.supportedQuantizedGroupSizes
-            .filter { g in dims.allSatisfy { $0.isMultiple(of: g) } }
-            .min { abs($0 - Self.defaultQuantizedGroupSize) < abs($1 - Self.defaultQuantizedGroupSize) }
+        quantizedGroupSize = Self.quantizedGroupSize(keyDim: global.keyDim, valueDim: global.valueDim)
             ?? Self.defaultQuantizedGroupSize
         isFromConfig = true
+    }
+
+    public static func quantizedGroupSize(keyDim: Int, valueDim: Int) -> Int? {
+        supportedQuantizedGroupSizes
+            .filter { keyDim.isMultiple(of: $0) && valueDim.isMultiple(of: $0) }
+            .min { abs($0 - defaultQuantizedGroupSize) < abs($1 - defaultQuantizedGroupSize) }
     }
 
     static func fullAttentionShape(
@@ -101,22 +104,24 @@ public struct KVCacheGeometry: Sendable, Equatable {
         return read
     }
 
-    public func bytes(tokens: Int, kvBits: Int? = nil) -> Int64 {
+    public func bytes(tokens: Int, kvBits: Int? = nil, zones: KVZones? = nil) -> Int64 {
         let t = Double(max(0, tokens))
         let windowed = window > 0 ? min(t, Double(window)) : t
-        let growing = elementsPerToken * t * bytesPerElement(kvBits: kvBits)
+        let exact = kvBits == nil ? t : min(t, Double(zones?.maxFullPrecisionTokens ?? 0))
+        let growing = elementsPerToken * (exact * Self.activationBytes + (t - exact) * bytesPerElement(kvBits: kvBits))
         return Int64(growing + windowedElementsPerToken * windowed * Self.activationBytes) + fixedStateBytes
     }
 
-    public func conversionPeakBytes(tokens: Int, kvBits: Int?) -> Int64 {
-        guard kvBits != nil else { return bytes(tokens: tokens) }
+    public func conversionPeakBytes(tokens: Int, kvBits: Int?, zones: KVZones? = nil) -> Int64 {
+        guard kvBits != nil, zones == nil else { return bytes(tokens: tokens, kvBits: kvBits, zones: zones) }
         let quantizedCopy = elementsPerToken * Double(max(0, tokens)) * bytesPerElement(kvBits: kvBits)
         return bytes(tokens: tokens) + Int64(quantizedCopy)
     }
 
-    public func maxPromptTokens(fitting budget: Int64, kvBits: Int?) -> Int {
+    public func maxPromptTokens(fitting budget: Int64, kvBits: Int?, zones: KVZones? = nil) -> Int {
         let unquantized = maxTokens(fitting: budget)
         guard kvBits != nil else { return unquantized }
+        if zones != nil { return maxTokens(fitting: budget, kvBits: kvBits, zones: zones) }
         var fits = 0
         var tooMany = unquantized + 1
         while tooMany - fits > 1 {
@@ -127,13 +132,27 @@ public struct KVCacheGeometry: Sendable, Equatable {
     }
 
     public func maxTokens(
-        fitting budget: Int64, kvBits: Int?, promptTokens: Int, quantizedKVStart: Int = defaultQuantizedKVStart
+        fitting budget: Int64, kvBits: Int?, promptTokens: Int, quantizedKVStart: Int = defaultQuantizedKVStart,
+        zones: KVZones? = nil
     ) -> Int {
+        if zones != nil { return maxTokens(fitting: budget, kvBits: kvBits, zones: zones) }
         let unquantized = maxTokens(fitting: budget)
         guard kvBits != nil, unquantized > quantizedKVStart else { return unquantized }
         let convertedAt = max(promptTokens, quantizedKVStart + 1)
         guard conversionPeakBytes(tokens: convertedAt, kvBits: kvBits) <= budget else { return quantizedKVStart }
         return maxTokens(fitting: budget, kvBits: kvBits)
+    }
+
+    public func maxTokens(fitting budget: Int64, kvBits: Int? = nil, zones: KVZones?) -> Int {
+        let uniform = maxTokens(fitting: budget, kvBits: kvBits)
+        guard kvBits != nil, let zones, uniform < Int(Int32.max) else { return uniform }
+        var fits = min(uniform, maxTokens(fitting: budget))
+        var tooMany = uniform + 1
+        while tooMany - fits > 1 {
+            let mid = fits + (tooMany - fits) / 2
+            if bytes(tokens: mid, kvBits: kvBits, zones: zones) <= budget { fits = mid } else { tooMany = mid }
+        }
+        return fits
     }
 
     public func maxTokens(fitting budget: Int64, kvBits: Int? = nil) -> Int {
@@ -194,4 +213,21 @@ extension ModelDefinition {
     public var kvGeometry: KVCacheGeometry {
         KVCacheGeometry.forModel(id, parameters: totalParameters)
     }
+}
+
+public struct KVZones: Sendable, Equatable {
+    public let sinkTokens: Int
+    public let windowTokens: Int
+    public let migrationStep: Int
+
+    public static let standard = KVZones(sinkTokens: 64, windowTokens: 1024, migrationStep: 256)
+
+    public init(sinkTokens: Int, windowTokens: Int, migrationStep: Int) {
+        precondition(sinkTokens >= 0 && windowTokens >= 0 && migrationStep > 0, "KV zones need non-negative sizes and a positive migration step")
+        self.sinkTokens = sinkTokens
+        self.windowTokens = windowTokens
+        self.migrationStep = migrationStep
+    }
+
+    public var maxFullPrecisionTokens: Int { sinkTokens + windowTokens + migrationStep - 1 }
 }

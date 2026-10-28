@@ -348,6 +348,13 @@ struct CheckSubcommand: AsyncParsableCommand {
     @Option(name: .customLong("kv-bits"), help: "Size the context budget for `serve --kv-bits` (4, 8 or auto)")
     var kvBits: KVBitsSetting?
 
+    @Flag(name: .customLong("kv-zones"), help: KVBitsSetting.zonesHelp)
+    var kvZones: Bool = false
+
+    func validate() throws {
+        try KVBitsSetting.validate(zones: kvZones, bits: kvBits)
+    }
+
     mutating func run() async throws {
         if system {
             let report = await SystemProfiler().generateReport()
@@ -372,7 +379,7 @@ struct CheckSubcommand: AsyncParsableCommand {
             throw ValidationError("Pass a model repo ID, or --system for a hardware check.")
         }
         let evaluator = MemoryEvaluator()
-        let assessment = await evaluator.evaluate(modelId: id, kvBits: kvBits?.budgetBits)
+        let assessment = await evaluator.evaluate(modelId: id, kvBits: kvBits?.budgetBits, kvZones: KVBitsSetting.zones(kvZones))
 
         if json {
             try printJSON(assessment)

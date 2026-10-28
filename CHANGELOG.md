@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+### Memory
+- `serve --kv-zones` (with `--kv-bits 4|8|auto`, also on `models check`) (#139): each full-attention layer keeps its first 64 tokens (attention sinks) and its last 1024 in fp16 and quantizes the tokens between them, 256 at a time, while the prompt is prefilled. There is no fp16 prefill to convert, so the prompt may use the whole quantized room and `serve --dry-run` / `models check` report one budget; sliding-window, recurrent and conv layers are untouched. Measured on Qwen3-4B-4bit: KV after a 16k prompt within 0.8% of the geometry, peak 1.03 GB at 4 bits against 3.11 GB uniform, perplexity 6.58 at 4 bits against fp16 6.56 and uniform 4-bit 8.66.
+
 ## 0.6.0 — 2026-10-27
 
 ### Upgrading from 0.5.0

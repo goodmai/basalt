@@ -46,6 +46,7 @@ public actor MLXInferenceEngine: InferenceEngine {
     /// Token index at which the quantized cache kicks in. Quantizing from token 0
     /// costs accuracy on short prompts for no memory benefit.
     private let quantizedKVStart: Int
+    private let kvZones: KVZones?
 
     /// Multiplicative penalty on recently emitted tokens. Left nil, nothing damps
     /// a degenerate loop: a 2-bit model answered "127 + 458" by repeating the
@@ -95,6 +96,7 @@ public actor MLXInferenceEngine: InferenceEngine {
         promptCacheBytes: Int? = nil,
         kvBits: Int? = nil,
         quantizedKVStart: Int = KVCacheGeometry.defaultQuantizedKVStart,
+        kvZones: KVZones? = nil,
         repetitionPenalty: Float? = nil,
         topK: Int? = nil,
         minP: Float? = nil,
@@ -107,6 +109,7 @@ public actor MLXInferenceEngine: InferenceEngine {
         self.gpuCacheLimit = gpuCacheLimit
         self.kvBits = kvBits
         self.quantizedKVStart = quantizedKVStart
+        self.kvZones = kvZones
         self.repetitionPenalty = repetitionPenalty
         self.topK = topK
         self.minP = minP
@@ -800,7 +803,7 @@ public actor MLXInferenceEngine: InferenceEngine {
                         input: input, lease: lease, keepsCache: namespace != nil, boundary: boundary,
                         blend: namespace.flatMap { space in blend.map { ($0, space) } },
                         params: params, components: constrained, tools: forcedTool == nil ? toolSpecs : nil,
-                        context: context, speculativeLookup: speculativeLookup)
+                        context: context, speculativeLookup: speculativeLookup, kvZones: kvZones)
                 }
             } catch {
                 keep(nil, tokens: promptTokens, namespace: namespace, releasing: lease, epoch: epoch)
@@ -1081,13 +1084,27 @@ public actor MLXInferenceEngine: InferenceEngine {
         }
     }
 
+    static func zonedCache(
+        params: GenerateParameters, zones: KVZones?, model: any LanguageModel
+    ) throws -> (cache: [any KVCache], params: GenerateParameters)? {
+        guard let zones, let bits = params.kvBits else { return nil }
+        var exact = params
+        exact.kvBits = nil
+        return (ZonedKVCache.replacingFullAttention(try model.newCache(parameters: exact), zones: zones, bits: bits), exact)
+    }
+
     static func launch(
         input: LMInput, lease: PromptCacheLease?, keepsCache: Bool, boundary: Int,
         blend: (store: CacheBlendStore, namespace: String)? = nil,
         params: GenerateParameters, components: GenerationComponents,
-        tools: [ToolSpec]?, context: ModelContext, speculativeLookup: Bool = false
+        tools: [ToolSpec]?, context: ModelContext, speculativeLookup: Bool = false, kvZones: KVZones? = nil
     ) throws -> GenerationLaunch {
         guard keepsCache else {
+            if let zoned = try zonedCache(params: params, zones: kvZones, model: context.model) {
+                let stream = try MLXLMCommon.generate(
+                    input: input, cache: zoned.cache, parameters: zoned.params, context: context, components: components, tools: tools)
+                return GenerationLaunch(stream: stream, task: nil, cache: nil, reusedTokens: 0)
+            }
             let fresh = speculativeLookup && params.kvBits == nil && !carriesMoreThanTokens(input)
                 ? try context.model.newCache(parameters: params) : []
             guard PromptLookupTokenIterator.supports(fresh) else {
