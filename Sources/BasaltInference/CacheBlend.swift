@@ -103,9 +103,7 @@ struct CacheBlendModel {
                     let cached = assemble(segments, layer: index, like: keys)
                     let deviation = (keys - cached[0]).asType(.float32).square().sum(axes: [0, 1, 3])
                         + (values - cached[1]).asType(.float32).square().sum(axes: [0, 1, 3])
-                    let reused = MLXArray(segments.flatMap { Array(repeating: $0.cached != nil, count: $0.range.count) })
-                    let ranked = argSort(which(reused, deviation, MLXArray(Float.infinity))).asArray(Int32.self)
-                    active = ranked.dropFirst(keep).map(Int.init).sorted()
+                    active = Self.recomputedPositions(segments, deviation: deviation.asArray(Float.self), dropping: keep)
                     let chosen = MLXArray(active.map(Int32.init))
                     queries = active.isEmpty ? nil : take(q.transposed(0, 2, 1, 3), chosen, axis: 2)
                     hidden = active.isEmpty ? hidden : take(hidden, chosen, axis: 1)
@@ -155,6 +153,17 @@ struct CacheBlendModel {
         return CacheBlendPass(
             caches: caches, layers: kept, recomputed: active.count - (count - hits),
             exactPrefix: skipped.min() ?? count)
+    }
+
+    static let chunkHead = 32
+
+    static func recomputedPositions(_ segments: [CacheBlendSegment], deviation: [Float], dropping count: Int) -> [Int] {
+        let priority = segments.flatMap { segment in
+            segment.range.map { segment.cached == nil ? 2 : $0 - segment.range.lowerBound < chunkHead ? 1 : 0 }
+        }
+        return deviation.indices
+            .sorted { (priority[$0], deviation[$0]) > (priority[$1], deviation[$1]) }
+            .dropLast(count).sorted()
     }
 
     var rotatesPurely: Bool {

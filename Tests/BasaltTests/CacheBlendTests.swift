@@ -220,6 +220,33 @@ struct CacheBlendTests {
         }
     }
 
+    @Test("The recompute budget goes to uncached tokens, then the first 32 tokens of each reused chunk by deviation, then the rest by deviation")
+    func recomputeBudgetPrefersChunkHeads() {
+        let head = CacheBlendModel.chunkHead
+        let segments = [
+            CacheBlendSegment(range: 0 ..< 3, cached: nil),
+            CacheBlendSegment(range: 3 ..< 3 + head + 8, cached: []),
+            CacheBlendSegment(range: 3 + head + 8 ..< 3 + 2 * (head + 8), cached: []),
+        ]
+        let count = 3 + 2 * (head + 8)
+        let tails = Set(Array(3 + head ..< 3 + head + 8) + Array(3 + 2 * head + 8 ..< count))
+        let deviation = (0 ..< count).map { tails.contains($0) ? Float(100 + $0) : Float($0 % 7) }
+        let firstChunkHead = Array(3 ..< 3 + head)
+        let secondChunkHead = Array(3 + head + 8 ..< 3 + 2 * head + 8)
+
+        let headsOnly = CacheBlendModel.recomputedPositions(segments, deviation: deviation, dropping: 16)
+        #expect(headsOnly == [0, 1, 2] + firstChunkHead + secondChunkHead)
+
+        let fewerThanHeads = CacheBlendModel.recomputedPositions(segments, deviation: deviation, dropping: 16 + 2 * head - 5)
+        #expect(fewerThanHeads.count == 8)
+        #expect(Array(fewerThanHeads.prefix(3)) == [0, 1, 2])
+        #expect(fewerThanHeads.dropFirst(3).allSatisfy { !tails.contains($0) && deviation[$0] == 6 })
+
+        let headsAndTopTails = CacheBlendModel.recomputedPositions(segments, deviation: deviation, dropping: 10)
+        #expect(headsAndTopTails == [0, 1, 2] + firstChunkHead + secondChunkHead + Array(count - 6 ..< count))
+        #expect(CacheBlendModel.recomputedPositions(segments, deviation: deviation, dropping: 0) == Array(0 ..< count))
+    }
+
     @Test("Uncached and short chunks are recomputed, only long misses are stored, and the byte budget evicts and refuses")
     func missesAreRecomputedAndStoredWithinBudget() throws {
         let model = try TinyLlama.make()
