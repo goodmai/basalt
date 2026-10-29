@@ -259,7 +259,7 @@ struct PromptLookupDecodingTests {
         #expect(backoff.pause == 1)
     }
 
-    @Test("When every draft past its first token is rejected, lookup backs off instead of verifying each match, and the output is unchanged")
+    @Test("When every draft past its first token is rejected, lookup and recycling each back off instead of verifying each match, and the output is unchanged")
     func rejectedDraftsBackOff() throws {
         let cycles = (0 ..< 26).flatMap { [1, 2, 3, 4, 10 + $0] }
         let run = try LookupFixture.lookup(
@@ -267,7 +267,10 @@ struct PromptLookupDecodingTests {
             sampler: ScriptedSampler(cycles))
         #expect(run.tokens == cycles)
         let telemetry = try #require(run.iterator.speculativeDecodingTelemetry)
-        #expect(telemetry.acceptedDraftTokenCount == 0)
-        #expect(telemetry.roundCount <= 6)
+        let lookupRounds = telemetry.roundCount - run.iterator.recycledRounds
+        let acceptedLookupDrafts = telemetry.acceptedDraftTokenCount - run.iterator.acceptedRecycledDrafts
+        #expect(run.iterator.acceptedRecycledDrafts == 0)
+        #expect(run.iterator.recycledRounds <= 8)
+        #expect(lookupRounds - acceptedLookupDrafts <= 8)
     }
 }

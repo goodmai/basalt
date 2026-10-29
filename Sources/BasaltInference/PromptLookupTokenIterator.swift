@@ -5,6 +5,7 @@ import MLXLMCommon
 struct PromptLookupTokenIterator: TokenIteratorProtocol {
     static let draftLimit = 16
     static let ngramSizes = [5, 4, 3]
+    static let recycledDraftLimit = 6
 
     let model: any LanguageModel
     let cache: [KVCache]
@@ -16,8 +17,12 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
     var promptPrefillTime: TimeInterval = 0
 
     private var history: [Int]
-    private var inFlight: MLXArray?
-    private var backoff = DraftBackoff()
+    private var inFlight: DecodedStep?
+    private(set) var recycling: TokenRecyclingTable?
+    private(set) var recycledRounds = 0
+    private(set) var acceptedRecycledDrafts = 0
+    private var lookupBackoff = DraftBackoff()
+    private var recyclingBackoff = DraftBackoff()
     private var pending: [Int] = []
     private var pendingIndex = 0
     private var rounds = 0
@@ -65,7 +70,21 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
             state = output.state
             logits = output.logits
         }
-        accept([sample(logits[0..., -1, 0...]).item(Int.self)])
+        let last = logits[0..., -1, 0...]
+        let token = sample(last).item(Int.self)
+        recycle(after: [history[history.count - 1]], successors: [argMax(last, axis: -1).item(Int.self)], vocabularySize: last.dim(-1))
+        accept([token])
+    }
+
+    private mutating func recycle(after fed: [Int], successors: [Int], vocabularySize: Int) {
+        if recycling == nil { recycling = TokenRecyclingTable(vocabularySize: vocabularySize) }
+        for (token, successor) in zip(fed, successors) { recycling?.record(token, successor: successor) }
+    }
+
+    private mutating func confirm(_ step: DecodedStep) -> Int {
+        let token = step.token.item(Int.self)
+        recycle(after: [history[history.count - 1]], successors: [step.successor.item(Int.self)], vocabularySize: step.vocabularySize)
+        return token
     }
 
     private mutating func forward(_ input: LMInput.Text) -> LMOutput {
@@ -107,64 +126,90 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
 
     private mutating func advance() {
         let remaining = maxTokens.map { $0 - tokenCount } ?? Int.max
-        let draft = backoff.allowsDraft && state == nil
-            ? Self.draft(after: history, limit: Swift.min(Self.draftLimit, remaining - 1)) : []
+        let looksUp = lookupBackoff.allowsDraft && state == nil
+        let recycles = recyclingBackoff.allowsDraft && state == nil && recycling != nil
+        let draft = looksUp ? Self.draft(after: history, limit: Swift.min(Self.draftLimit, remaining - 1)) : []
         switch (inFlight, draft.isEmpty) {
-        case (let token?, true):
-            emit(token, lookingAhead: remaining > 1)
-        case (let token?, false):
+        case (let step?, true) where recycles && remaining > 2:
             inFlight = nil
-            let confirmed = token.item(Int.self)
-            if confirmed != draft[0] { backoff.record(acceptedDrafts: 0) }
+            accept([confirm(step)])
+        case (let step?, true):
+            emit(step, lookingAhead: remaining > 1)
+        case (let step?, false):
+            inFlight = nil
+            let confirmed = confirm(step)
+            if confirmed != draft[0] { lookupBackoff.record(acceptedDrafts: 0) }
             accept([confirmed])
-        case (nil, true):
-            emit(step(MLXArray([Int32(history[history.count - 1])])), lookingAhead: remaining > 1)
         case (nil, false):
-            speculate(draft)
+            speculate(draft, recycled: false)
+        case (nil, true):
+            let recycled = recycles
+                ? recycling?.chain(from: history[history.count - 1], limit: Swift.min(Self.recycledDraftLimit, remaining - 1)) ?? []
+                : []
+            if recycled.isEmpty {
+                emit(step(MLXArray([Int32(history[history.count - 1])])), lookingAhead: remaining > 1)
+            } else {
+                speculate(recycled, recycled: true)
+            }
         }
     }
 
-    private mutating func step(_ token: MLXArray) -> MLXArray {
+    private mutating func step(_ token: MLXArray) -> DecodedStep {
         verifyCalls += 1
         verified += 1
-        return sample(forward(LMInput.Text(tokens: token)).logits[0..., -1, 0...])
+        let logits = forward(LMInput.Text(tokens: token)).logits[0..., -1, 0...]
+        return DecodedStep(token: sample(logits), successor: argMax(logits, axis: -1), vocabularySize: logits.dim(-1))
     }
 
-    private mutating func emit(_ token: MLXArray, lookingAhead: Bool) {
+    private mutating func emit(_ current: DecodedStep, lookingAhead: Bool) {
         if lookingAhead {
-            let next = step(token)
-            asyncEval([next] + cache.flatMap { $0.state })
+            let next = step(current.token)
+            asyncEval([next.token, next.successor] + cache.flatMap { $0.state })
             inFlight = next
         } else {
             inFlight = nil
         }
-        backoff.tick()
-        accept([token.item(Int.self)])
+        lookupBackoff.tick()
+        recyclingBackoff.tick()
+        accept([confirm(current)])
     }
 
-    private mutating func speculate(_ draft: [Int]) {
+    private mutating func speculate(_ draft: [Int], recycled: Bool) {
         let fed = [history[history.count - 1]] + draft
         let logits = forward(LMInput.Text(tokens: MLXArray(fed.map(Int32.init))))
             .logits[0, 0..., 0...]
 
         var emitted: [Int] = []
+        let successors: [Int]
         if processor == nil, sampler is ArgMaxSampler {
-            let tokens = sampler.sample(logits: logits).asArray(Int.self)
-            for (index, token) in tokens.enumerated() {
+            successors = sampler.sample(logits: logits).asArray(Int.self)
+            for (index, token) in successors.enumerated() {
                 emitted.append(token)
                 if index == draft.count || token != draft[index] { break }
             }
         } else {
+            let argmaxes = argMax(logits, axis: -1)
+            asyncEval(argmaxes)
             for index in 0 ... draft.count {
                 let token = sample(logits[index ..< index + 1]).item(Int.self)
                 emitted.append(token)
                 if index == draft.count || token != draft[index] { break }
             }
+            successors = argmaxes.asArray(Int.self)
         }
+        recycle(after: fed, successors: successors, vocabularySize: logits.dim(-1))
 
         let acceptedDrafts = emitted.count - 1
+        if recycled {
+            recycledRounds += 1
+            acceptedRecycledDrafts += acceptedDrafts
+        }
         trimPromptCache(cache, numTokens: draft.count - acceptedDrafts)
-        backoff.record(acceptedDrafts: acceptedDrafts)
+        if recycled {
+            recyclingBackoff.record(acceptedDrafts: acceptedDrafts)
+        } else {
+            lookupBackoff.record(acceptedDrafts: acceptedDrafts)
+        }
         rounds += 1
         drafted += draft.count
         accepted += acceptedDrafts
@@ -182,6 +227,39 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
         tokenCount += 1
         pendingIndex += 1
         return pending[pendingIndex - 1]
+    }
+}
+
+struct DecodedStep {
+    let token: MLXArray
+    let successor: MLXArray
+    let vocabularySize: Int
+}
+
+struct TokenRecyclingTable {
+    static let unset: Int32 = -1
+
+    private var successors: [Int32]
+
+    init(vocabularySize: Int) {
+        successors = Array(repeating: Self.unset, count: vocabularySize)
+    }
+
+    var byteCount: Int { successors.count * MemoryLayout<Int32>.size }
+
+    mutating func record(_ token: Int, successor: Int) {
+        guard successors.indices.contains(token) else { return }
+        successors[token] = Int32(successor)
+    }
+
+    func chain(from token: Int, limit: Int) -> [Int] {
+        var chain: [Int] = []
+        var current = token
+        while chain.count < limit, successors.indices.contains(current), successors[current] != Self.unset {
+            current = Int(successors[current])
+            chain.append(current)
+        }
+        return chain
     }
 }
 

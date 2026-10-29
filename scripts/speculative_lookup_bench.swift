@@ -5,8 +5,9 @@ let usage = """
     Usage:
       ./scripts/speculative_lookup_bench.swift [--models repo,repo] [--runs N] [--tokens N] [--variant label=binary]...
 
-    Prompt-lookup speculative decoding against plain decoding, per model:
-    workloads code edit and prose, temperatures 0 and 0.7, lookup off and on.
+    Prompt-lookup speculative decoding with Token Recycling against plain decoding,
+    per model: workloads code edit, prose and reasoning, temperatures 0 and 0.7,
+    lookup off and on.
     Each model runs every cell once in order and once in reverse, and every
     ratio is taken between cells of the same pass, so host drift cancels.
 
@@ -295,8 +296,9 @@ for variant in options.variants where !FileManager.default.isExecutableFile(atPa
     exit(1)
 }
 
+let workloads = ["code", "prose", "reasoning"]
 var prompts: [String: String] = [:]
-for workload in ["code", "prose"] {
+for workload in workloads {
     let path = repo + "/benchmarks/speculative-lookup/\(workload).txt"
     guard let text = try? String(contentsOfFile: path, encoding: .utf8) else {
         fail("workload \(workload)", "missing \(path)")
@@ -306,7 +308,7 @@ for workload in ["code", "prose"] {
 }
 
 var cells: [Cell] = []
-for workload in ["code", "prose"] {
+for workload in workloads {
     for temperature in ["0", "0.7"] {
         for mode in ["off", "on"] + options.variants.map(\.label) {
             cells.append(Cell(workload: workload, temperature: temperature, mode: mode))
@@ -335,7 +337,7 @@ for model in options.models {
     summary.append("| workload | T | on / off (pass 1, pass 2) | drafts, pass 1 | same text as off |"
         + options.variants.map { " \($0.label) / on (pass 1, pass 2) |" }.joined())
     summary.append("|---|---|---|---|---|" + String(repeating: "---|", count: options.variants.count))
-    for workload in ["code", "prose"] {
+    for workload in workloads {
         for temperature in ["0", "0.7"] {
             func cell(_ mode: String) -> Cell { Cell(workload: workload, temperature: temperature, mode: mode) }
             func pair(_ mode: String, over base: String) -> String {
