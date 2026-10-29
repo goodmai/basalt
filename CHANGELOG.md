@@ -3,7 +3,7 @@
 ## Unreleased
 
 ### Performance
-- Prompt lookup on dense recurrent hybrids (#162): Qwen3.5/Ornith (GatedDelta) and Nemotron-H (Mamba-2).
+- Prompt lookup on dense recurrent hybrids (#162): Qwen3.5/Ornith (GatedDelta), Nemotron-H (Mamba-2) and dense LFM2 (short conv).
   - Mechanism: before each verify round the iterator keeps references to every `MambaCache` slot. No data is copied, since the models write new arrays. After a rejection it trims the attention layers to the round start, restores the slots, and replays the accepted tokens in one extra forward.
   - Backoff on hybrids: a replayed round counts one accepted draft less and pauses four times longer when it fails, and a 4-token probe comes before the 16-token draft.
   - Hybrids with expert routing (any `SwitchLinear`, e.g. LFM2.5-8B-A1B) stay on plain decoding: a k+1-token verify reads up to k+1 times the active experts, and LFM2.5 measured 0.68–0.85× on code edits.
