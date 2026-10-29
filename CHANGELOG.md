@@ -3,6 +3,12 @@
 ## Unreleased
 
 ### Performance
+- Prompt lookup on dense recurrent hybrids (#162): Qwen3.5/Ornith (GatedDelta) and Nemotron-H (Mamba-2).
+  - Mechanism: before each verify round the iterator keeps references to every `MambaCache` slot. No data is copied, since the models write new arrays. After a rejection it trims the attention layers to the round start, restores the slots, and replays the accepted tokens in one extra forward.
+  - Backoff on hybrids: a replayed round counts one accepted draft less and pauses four times longer when it fails, and a 4-token probe comes before the 16-token draft.
+  - Hybrids with expert routing (any `SwitchLinear`, e.g. LFM2.5-8B-A1B) stay on plain decoding: a k+1-token verify reads up to k+1 times the active experts, and LFM2.5 measured 0.68–0.85× on code edits.
+  - Measured: code edits 2.3–4.9× on Ornith-1.5-9B and Nemotron-Nano-9B-v2, 2.9–3.3× on Nemotron-3-Nano-4B; prose 0.94–1.01×; reasoning 0.82–0.96×, like dense models.
+  - Output was identical to plain decoding on code and prose. On reasoning it differed in some cells, the multi-token kernel near-tie described below.
 - Opt-in Token Recycling for prompt lookup, `serve --speculative-recycling` (#38): when no n-gram matches, the model's own argmax successors, recorded after every forward and confirmed twice in a row, are drafted as a chain of up to 6 tokens and verified exactly like lookup drafts. It uses a per-request table of 5 bytes per vocabulary entry (742 KiB on Qwen3) and backs off on its own. On Qwen3-4B, reasoning-style text runs 1.02–1.15× faster than with lookup alone, but it is still below plain decoding, as lookup alone already is there. Prose accepts no recycled drafts and gains nothing, so it stays off by default. The paper's draft trees need per-token RoPE positions, which mlx-swift-lm does not expose, so recycling drafts chains only.
 
 ### Memory
