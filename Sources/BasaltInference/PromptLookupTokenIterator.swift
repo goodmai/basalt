@@ -35,8 +35,8 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
     private var verifyCalls = 0
     private(set) var replayRounds = 0
 
-    static func supports(_ cache: [KVCache], model: any LanguageModel) -> Bool {
-        PromptCache(cache).isSharable || (isReplayableHybrid(cache) && !routesExperts(model))
+    static func supports(_ cache: [KVCache], routesExperts: Bool) -> Bool {
+        PromptCache(cache).isSharable || (isReplayableHybrid(cache) && !routesExperts)
     }
 
     static func isReplayableHybrid(_ cache: [KVCache]) -> Bool {
@@ -238,7 +238,6 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
             _ = forward(LMInput.Text(tokens: MLXArray(fed[...acceptedDrafts].map(Int32.init))))
             replayRounds += 1
             verifyCalls += 1
-            verified += acceptedDrafts + 1
         }
         if recycled {
             recycledRounds += 1

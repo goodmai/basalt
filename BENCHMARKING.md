@@ -122,7 +122,7 @@ Llama-3.1-8B-Instruct-4bit at the same commit (`logs/speculative_lookup_bench-20
 | Llama-3.1-8B-Instruct-4bit | reasoning | 0 | 0.84×, 1.10×\* | 1.02×, 1.54×\* | 0.128 | 0.146 |
 | Llama-3.1-8B-Instruct-4bit | reasoning | 0.7 | 1.29×\*, 0.49×\* | 0.89×\*, 1.02×\* | 0.053 | 0.232 |
 
-Recurrent hybrids (#162): lookup runs on dense hybrids, whose `MambaCache` layers are snapshotted by reference before each verify and, after a rejection, restored and replayed with the accepted tokens. Hybrids with expert routing stay on plain decoding. Same settings as above. `*` marks a ratio with an invalid cell: σ above 3% of the mean, or idle GPU utilization above 35% before the cell. On this host most cells were invalid. The machine ran on AC with its battery at 8% and not charging, and plain decoding swung up to 2× between neighbouring cells. So read every row as a range.
+Recurrent hybrids (#162): lookup runs on dense hybrids, whose `MambaCache` layers are snapshotted by reference before each verify and, after a rejection, restored and replayed with the accepted tokens. Hybrids with expert routing stay on plain decoding. Same settings as above. `*` marks a ratio with an invalid cell: σ above 3% of the mean, or idle GPU utilization above 35% before the cell (`--max-idle-gpu` sets the threshold; an unreadable `ioreg` stops the run). On this host most cells were invalid. The machine ran on AC with its battery at 8% and not charging, and plain decoding swung up to 2× between neighbouring cells. So read every row as a range.
 
 Commit `8700204` (eager replay; replayed rounds count one accepted draft less in the backoff), `logs/speculative_lookup_bench-2026-10-29T184703Z.log`:
 

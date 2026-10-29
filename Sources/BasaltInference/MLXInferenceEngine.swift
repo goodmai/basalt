@@ -87,6 +87,7 @@ public actor MLXInferenceEngine: InferenceEngine {
     private let configuredPromptCacheBytes: Int?
     private var modelEpoch = 0
     private var modelIsHybrid: Bool?
+    private var modelRoutesExperts: Bool?
     private var templateSuffixes: [String: Int] = [:]
     private var grammarVocabulary: Result<GrammarVocabulary, ConstraintUnavailable>?
     private(set) var idleGrammars: [String: [GrammarConstraint]] = [:]
@@ -174,6 +175,7 @@ public actor MLXInferenceEngine: InferenceEngine {
         cacheBlend = cacheBlendRatio.map { CacheBlendStore(ratio: $0, byteBudget: blendBytes) }
         modelEpoch += 1
         modelIsHybrid = nil
+        modelRoutesExperts = nil
         templateSuffixes = [:]
         logger.info("Prompt cache budget: \(promptCaches.byteBudget >> 20) MB")
     }
@@ -832,6 +834,7 @@ public actor MLXInferenceEngine: InferenceEngine {
             let constrained = shaping.map { masked.appendingLogitProcessor($0) } ?? masked
             let forcedTool = constraint?.toolName
             let speculativeLookup = request.speculativeLookup ?? speculativeLookup
+            let expertRouting = speculativeLookup ? await routesExperts(container, epoch: epoch) : true
             let zones = modelAttendsThroughZones ? (modelPrefillsInChunks ? kvZones : kvZones?.evicting(0)) : nil
             let zonedPrecision = zones == nil ? nil : request.kvPrecision ?? kvPrecision
             let launch: GenerationLaunch
@@ -842,7 +845,7 @@ public actor MLXInferenceEngine: InferenceEngine {
                         blend: namespace.flatMap { space in blend.map { ($0, space) } },
                         params: params, components: constrained, tools: forcedTool == nil ? toolSpecs : nil,
                         context: context, speculativeLookup: speculativeLookup, speculativeRecycling: speculativeRecycling,
-                        kvZones: zones, kvPrecision: zonedPrecision)
+                        routesExperts: expertRouting, kvZones: zones, kvPrecision: zonedPrecision)
                 }
             } catch {
                 keep(nil, tokens: promptTokens, namespace: namespace, releasing: lease, epoch: epoch)
@@ -1078,6 +1081,15 @@ public actor MLXInferenceEngine: InferenceEngine {
         await launch.task?.value
     }
 
+    private func routesExperts(_ container: ModelContainer, epoch: Int) async -> Bool {
+        if let known = modelRoutesExperts { return known }
+        let routes = await container.perform { PromptLookupTokenIterator.routesExperts($0.model) }
+        if epoch == modelEpoch {
+            modelRoutesExperts = routes
+        }
+        return routes
+    }
+
     private func snapshotBoundary(
         _ count: Int, container: ModelContainer, epoch: Int, template: String?,
         _ makeInput: @Sendable (String) -> UserInput
@@ -1137,7 +1149,7 @@ public actor MLXInferenceEngine: InferenceEngine {
         blend: (store: CacheBlendStore, namespace: String)? = nil,
         params: GenerateParameters, components: GenerationComponents,
         tools: [ToolSpec]?, context: ModelContext, speculativeLookup: Bool = false, speculativeRecycling: Bool = false,
-        kvZones: KVZones? = nil,
+        routesExperts: Bool = true, kvZones: KVZones? = nil,
         kvPrecision: KVPrecision? = nil
     ) throws -> GenerationLaunch {
         guard keepsCache else {
@@ -1148,7 +1160,7 @@ public actor MLXInferenceEngine: InferenceEngine {
             }
             let fresh = speculativeLookup && params.kvBits == nil && !carriesMoreThanTokens(input)
                 ? try context.model.newCache(parameters: params) : []
-            guard PromptLookupTokenIterator.supports(fresh, model: context.model) else {
+            guard PromptLookupTokenIterator.supports(fresh, routesExperts: routesExperts) else {
                 let stream = try MLXLMCommon.generate(
                     input: input, parameters: params, context: context, components: components, tools: tools)
                 return GenerationLaunch(stream: stream, task: nil, cache: nil, reusedTokens: 0)
@@ -1195,7 +1207,7 @@ public actor MLXInferenceEngine: InferenceEngine {
                 stream: stream, task: task, cache: keepable ? head.kept : nil, reusedTokens: reused,
                 exactTokens: blended?.exactPrefix ?? Int.max)
         }
-        if speculativeLookup, PromptLookupTokenIterator.supports(cache.layers, model: context.model) {
+        if speculativeLookup, PromptLookupTokenIterator.supports(cache.layers, routesExperts: routesExperts) {
             return launching(try PromptLookupTokenIterator(
                 input: tail, context: input.text.tokens.asArray(Int.self), model: context.model, cache: cache.layers,
                 state: head.state, processor: processor, sampler: params.sampler(), prefill: params.prefill,

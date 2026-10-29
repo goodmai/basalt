@@ -3,7 +3,7 @@ import Foundation
 
 let usage = """
     Usage:
-      ./scripts/speculative_lookup_bench.swift [--models repo,repo] [--workloads name,name] [--modes off,on,recycling] [--runs N] [--tokens N] [--variant label=binary]...
+      ./scripts/speculative_lookup_bench.swift [--models repo,repo] [--workloads name,name] [--modes off,on,recycling] [--runs N] [--tokens N] [--max-idle-gpu PERCENT] [--variant label=binary]...
 
     Prompt-lookup speculative decoding against plain decoding, per model: workloads
     code edit, prose and reasoning, temperatures 0 and 0.7, lookup off, on, and on
@@ -17,6 +17,7 @@ let usage = """
       --modes      comma-separated lookup modes from off, on, recycling; off and on are required (default: off,on,recycling)
       --runs       timed iterations per cell (default: 3)
       --tokens     tokens generated per iteration (default: 300)
+      --max-idle-gpu  a cell waits until GPU utilization, the highest of 3 samples a second apart, is at most this percent (default: 35)
       --variant    another PerformanceBenchmark binary, run with lookup on next to the one built
                    from this checkout; labels are unique and not on, off or recycling
       -h, --help   show this help
@@ -28,6 +29,7 @@ struct Options {
     var modes = ["off", "on", "recycling"]
     var runs = 3
     var tokens = 300
+    var maxIdleGPU = 35
     var variants: [(label: String, binary: String)] = []
 }
 
@@ -51,6 +53,7 @@ func parse(_ arguments: [String]) -> Options? {
             else { return nil }
         case "--runs": guard let runs = Int(value), runs > 0 else { return nil }; options.runs = runs
         case "--tokens": guard let tokens = Int(value), tokens > 0 else { return nil }; options.tokens = tokens
+        case "--max-idle-gpu": guard let percent = Int(value), (0 ... 100).contains(percent) else { return nil }; options.maxIdleGPU = percent
         case "--variant":
             let parts = value.split(separator: "=", maxSplits: 1).map(String.init)
             guard parts.count == 2, !["on", "off", "recycling"].contains(parts[0]),
@@ -75,7 +78,7 @@ let lockDirectory = "/private/tmp/basalt-gpu.lock"
 let pid = ProcessInfo.processInfo.processIdentifier
 let ownerLine = String(pid)
 let maxLoad = 8.0
-let maxIdleGPU = 35
+let maxIdleGPU = options.maxIdleGPU
 let stamp = ISO8601DateFormatter().string(from: Date())
 let logPath = repo + "/logs/speculative_lookup_bench-\(stamp.replacingOccurrences(of: ":", with: "")).log"
 try? FileManager.default.createDirectory(atPath: repo + "/logs", withIntermediateDirectories: true)
@@ -207,9 +210,15 @@ struct Host {
 }
 
 func gpuUtilization() -> Int {
-    let output = run("/usr/sbin/ioreg", ["-r", "-d", "1", "-c", "IOAccelerator"]).output
-    guard let key = output.range(of: "\"Device Utilization %\"=") else { return 100 }
-    return Int(output[key.upperBound...].prefix { $0.isNumber }) ?? 100
+    let result = run("/usr/sbin/ioreg", ["-r", "-d", "1", "-c", "IOAccelerator"])
+    guard result.status == 0, let key = result.output.range(of: "\"Device Utilization %\"="),
+          let percent = Int(result.output[key.upperBound...].prefix { $0.isNumber })
+    else {
+        fail("gpu utilization", "ioreg exit=\(result.status) has no Device Utilization %: \(result.output.prefix(300))")
+        releaseLock()
+        exit(1)
+    }
+    return percent
 }
 
 func host() -> Host {
@@ -219,7 +228,7 @@ func host() -> Host {
     let gpu = (0 ..< 3).map { sample -> Int in
         if sample > 0 { Thread.sleep(forTimeInterval: 1) }
         return gpuUtilization()
-    }.max() ?? 100
+    }.max() ?? 0
     return Host(load: load, ciRunning: ci, gpu: gpu)
 }
 
@@ -306,7 +315,7 @@ let commit = trimmed(run("/usr/bin/git", ["rev-parse", "HEAD"]).output)
 let dirty = !trimmed(run("/usr/bin/git", ["status", "--porcelain", "--untracked-files=no"]).output).isEmpty
 let chip = trimmed(run("/usr/sbin/sysctl", ["-n", "machdep.cpu.brand_string"]).output)
 let memory = (Int64(trimmed(run("/usr/sbin/sysctl", ["-n", "hw.memsize"]).output)) ?? 0) >> 30
-log("start commit=\(commit)\(dirty ? " (dirty)" : "") machine=\(chip) \(memory)GB os=\(ProcessInfo.processInfo.operatingSystemVersionString) runs=\(options.runs) tokens=\(options.tokens) modes=\(options.modes) variants=\(options.variants.map { "\($0.label)=\($0.binary)" }) log=\(logPath)")
+log("start commit=\(commit)\(dirty ? " (dirty)" : "") machine=\(chip) \(memory)GB os=\(ProcessInfo.processInfo.operatingSystemVersionString) runs=\(options.runs) tokens=\(options.tokens) maxIdleGPU=\(options.maxIdleGPU)% modes=\(options.modes) variants=\(options.variants.map { "\($0.label)=\($0.binary)" }) log=\(logPath)")
 
 for product in ["PerformanceBenchmark", "Basalt"] {
     log("build release \(product)")
@@ -383,7 +392,7 @@ for model in options.models {
 }
 
 summary.append("")
-summary.append("* a cell in the ratio was INVALID: σ above 3% of the mean, or load above \(maxLoad), a CI job or idle GPU utilization above \(maxIdleGPU)% before it, or load or a CI job after it")
+summary.append("* a cell in the ratio was INVALID: σ above 3% of the mean, or load above \(maxLoad), a CI job or idle GPU utilization above \(options.maxIdleGPU)% before it, or load or a CI job after it")
 for line in summary { log("summary \(line)") }
 log("done failures=\(failures)")
 exit(failures == 0 ? 0 : 1)
