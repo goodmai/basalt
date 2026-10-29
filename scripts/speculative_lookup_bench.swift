@@ -3,7 +3,7 @@ import Foundation
 
 let usage = """
     Usage:
-      ./scripts/speculative_lookup_bench.swift [--models repo,repo] [--workloads name,name] [--runs N] [--tokens N] [--variant label=binary]...
+      ./scripts/speculative_lookup_bench.swift [--models repo,repo] [--workloads name,name] [--modes off,on,recycling] [--runs N] [--tokens N] [--variant label=binary]...
 
     Prompt-lookup speculative decoding against plain decoding, per model: workloads
     code edit, prose and reasoning, temperatures 0 and 0.7, lookup off, on, and on
@@ -14,6 +14,7 @@ let usage = """
     Options:
       --models     comma-separated HF repo ids (default: \(Options().models.joined(separator: ",")))
       --workloads  comma-separated workloads from benchmarks/speculative-lookup (default: \(Options().workloads.joined(separator: ",")))
+      --modes      comma-separated lookup modes from off, on, recycling; off and on are required (default: off,on,recycling)
       --runs       timed iterations per cell (default: 3)
       --tokens     tokens generated per iteration (default: 300)
       --variant    another PerformanceBenchmark binary, run with lookup on next to the one built
@@ -24,6 +25,7 @@ let usage = """
 struct Options {
     var models = ["mlx-community/Qwen3-4B-4bit", "mlx-community/Meta-Llama-3.1-8B-Instruct-4bit"]
     var workloads = ["code", "prose", "reasoning"]
+    var modes = ["off", "on", "recycling"]
     var runs = 3
     var tokens = 300
     var variants: [(label: String, binary: String)] = []
@@ -42,6 +44,11 @@ func parse(_ arguments: [String]) -> Options? {
         case "--workloads":
             options.workloads = value.split(separator: ",").map { trimmed(String($0)) }.filter { !$0.isEmpty }
             guard !options.workloads.isEmpty, Set(options.workloads).count == options.workloads.count else { return nil }
+        case "--modes":
+            options.modes = value.split(separator: ",").map { trimmed(String($0)) }.filter { !$0.isEmpty }
+            guard Set(options.modes).count == options.modes.count, Set(options.modes).isSubset(of: ["off", "on", "recycling"]),
+                  options.modes.contains("off"), options.modes.contains("on")
+            else { return nil }
         case "--runs": guard let runs = Int(value), runs > 0 else { return nil }; options.runs = runs
         case "--tokens": guard let tokens = Int(value), tokens > 0 else { return nil }; options.tokens = tokens
         case "--variant":
@@ -286,7 +293,7 @@ let commit = trimmed(run("/usr/bin/git", ["rev-parse", "HEAD"]).output)
 let dirty = !trimmed(run("/usr/bin/git", ["status", "--porcelain", "--untracked-files=no"]).output).isEmpty
 let chip = trimmed(run("/usr/sbin/sysctl", ["-n", "machdep.cpu.brand_string"]).output)
 let memory = (Int64(trimmed(run("/usr/sbin/sysctl", ["-n", "hw.memsize"]).output)) ?? 0) >> 30
-log("start commit=\(commit)\(dirty ? " (dirty)" : "") machine=\(chip) \(memory)GB os=\(ProcessInfo.processInfo.operatingSystemVersionString) runs=\(options.runs) tokens=\(options.tokens) variants=\(options.variants.map { "\($0.label)=\($0.binary)" }) log=\(logPath)")
+log("start commit=\(commit)\(dirty ? " (dirty)" : "") machine=\(chip) \(memory)GB os=\(ProcessInfo.processInfo.operatingSystemVersionString) runs=\(options.runs) tokens=\(options.tokens) modes=\(options.modes) variants=\(options.variants.map { "\($0.label)=\($0.binary)" }) log=\(logPath)")
 
 for product in ["PerformanceBenchmark", "Basalt"] {
     log("build release \(product)")
@@ -315,7 +322,7 @@ for workload in options.workloads {
 var cells: [Cell] = []
 for workload in options.workloads {
     for temperature in ["0", "0.7"] {
-        for mode in ["off", "on", "recycling"] + options.variants.map(\.label) {
+        for mode in options.modes + options.variants.map(\.label) {
             cells.append(Cell(workload: workload, temperature: temperature, mode: mode))
         }
     }
@@ -346,15 +353,16 @@ for model in options.models {
         for temperature in ["0", "0.7"] {
             func cell(_ mode: String) -> Cell { Cell(workload: workload, temperature: temperature, mode: mode) }
             func pair(_ mode: String, over base: String) -> String {
-                [1, 2].map { ratio(results[$0]?[cell(mode)], results[$0]?[cell(base)]) }.joined(separator: ", ")
+                guard cells.contains(cell(mode)) else { return "not run" }
+                return [1, 2].map { ratio(results[$0]?[cell(mode)], results[$0]?[cell(base)]) }.joined(separator: ", ")
             }
-            let lookupModes = ["on", "recycling"] + options.variants.map(\.label)
+            let lookupModes = options.modes.filter { $0 != "off" } + options.variants.map(\.label)
             let sameText = [1, 2].allSatisfy { pass in
                 guard let off = results[pass]?[cell("off")] else { return false }
                 return lookupModes.allSatisfy { results[pass]?[cell($0)]?.output == off.output }
             }
             let alpha = results[1]?[cell("on")]?.accepted ?? "n/a"
-            let recycledAlpha = results[1]?[cell("recycling")]?.accepted ?? "n/a"
+            let recycledAlpha = options.modes.contains("recycling") ? results[1]?[cell("recycling")]?.accepted ?? "n/a" : "not run"
             summary.append("| \(workload) | \(temperature) | \(pair("on", over: "off")) | \(pair("recycling", over: "on")) | \(alpha) | \(recycledAlpha) | \(sameText) |"
                 + options.variants.map { " \(pair($0.label, over: "on")) |" }.joined())
         }

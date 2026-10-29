@@ -24,7 +24,11 @@ enum LookupFixture {
     static let code = String(repeating: "func add(a: Int, b: Int) -> Int { a + b }\n", count: 6) + "func add("
 
     static func model(_ family: String) throws -> any LanguageModel {
-        family == "llama" ? try TinyLlama.make() : try TinyQwen3.make()
+        switch family {
+        case "llama": try TinyLlama.make()
+        case "hybrid": try TinyHybrid.make()
+        default: try TinyQwen3.make()
+        }
     }
 
     static func baseline(
@@ -73,7 +77,7 @@ struct PromptLookupDecodingTests {
     }
 
     @Test("Greedy decoding with prompt lookup emits exactly the plain decoder's tokens, and drafts are accepted",
-          arguments: ["llama", "qwen3"])
+          arguments: ["llama", "qwen3", "hybrid"])
     func greedyEquivalence(family: String) throws {
         let model = try LookupFixture.model(family)
         let expected = try LookupFixture.baseline(model)
@@ -101,6 +105,27 @@ struct PromptLookupDecodingTests {
         #expect(tokens.count == 48)
         #expect(try #require(iterator.speculativeDecodingTelemetry).rejectedDraftTokenCount > 0)
         #expect(cache.allSatisfy { $0.offset == LookupFixture.prompt.count + tokens.count - 1 })
+    }
+
+    @Test("On a hybrid model a rejected draft restores the recurrent state and replays the accepted prefix: the state matches a plain prefill of the same tokens")
+    func hybridRejectionRestoresRecurrentState() throws {
+        let model = try TinyHybrid.make()
+        let unit = LookupFixture.unit
+        let script = (0 ..< 6).flatMap { round in Array(unit[4 ..< 8]) + [240 + round] + Array(unit[0 ..< 4]) }
+        let run = try LookupFixture.lookup(model, maxTokens: script.count, sampler: ScriptedSampler(script))
+        #expect(run.tokens == script)
+        #expect(run.iterator.replayRounds > 0)
+        let fed = LookupFixture.prompt + run.tokens.dropLast()
+        let reference = try model.newCache(parameters: nil)
+        eval(model(MLXArray(fed.map(Int32.init))[.newAxis], cache: reference))
+        for (live, plain) in zip(run.cache, reference) {
+            #expect(live.offset == plain.offset)
+            guard let live = live as? MambaCache, let plain = plain as? MambaCache else { continue }
+            for slot in 0 ..< 2 {
+                let (a, b) = (try #require(live[slot]), try #require(plain[slot]))
+                #expect(allClose(a.asType(.float32), b.asType(.float32), atol: 1e-3).item(Bool.self))
+            }
+        }
     }
 
     @Test("Without drafts, the last token of the budget is not fed to the model: no look-ahead forward is thrown away",

@@ -31,9 +31,16 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
     private var accepted = 0
     private var verified = 0
     private var verifyCalls = 0
+    private(set) var replayRounds = 0
+    private(set) var replayedTokens = 0
 
     static func supports(_ cache: [KVCache]) -> Bool {
-        PromptCache(cache).isSharable
+        PromptCache(cache).isSharable || isReplayableHybrid(cache)
+    }
+
+    static func isReplayableHybrid(_ cache: [KVCache]) -> Bool {
+        cache.contains { $0 is MambaCache }
+            && cache.allSatisfy { $0 is MambaCache || type(of: $0) == KVCacheSimple.self }
     }
 
     init(
@@ -186,6 +193,8 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
 
     private mutating func speculate(_ draft: [Int], recycled: Bool) {
         let fed = [history[history.count - 1]] + draft
+        let recurrent = cache.compactMap { $0 as? MambaCache }
+        let checkpoints = recurrent.map { (conv: $0[0], state: $0[1], offset: $0.offset) }
         let logits = forward(LMInput.Text(tokens: MLXArray(fed.map(Int32.init))))
             .logits[0, 0..., 0...]
 
@@ -209,7 +218,19 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
         }
 
         let acceptedDrafts = emitted.count - 1
-        trimPromptCache(cache, numTokens: draft.count - acceptedDrafts)
+        if recurrent.isEmpty {
+            trimPromptCache(cache, numTokens: draft.count - acceptedDrafts)
+        } else if acceptedDrafts < draft.count {
+            for layer in cache where layer.isTrimmable { layer.trim(fed.count) }
+            for (layer, checkpoint) in zip(recurrent, checkpoints) {
+                layer[0] = checkpoint.conv
+                layer[1] = checkpoint.state
+                layer.offset = checkpoint.offset
+            }
+            _ = forward(LMInput.Text(tokens: MLXArray(fed[...acceptedDrafts].map(Int32.init))))
+            replayRounds += 1
+            replayedTokens += acceptedDrafts + 1
+        }
         if recycled {
             recycledRounds += 1
             recycledDraftTokens += draft.count
