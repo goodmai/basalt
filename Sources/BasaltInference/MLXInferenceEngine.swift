@@ -130,17 +130,21 @@ public actor MLXInferenceEngine: InferenceEngine {
         let probed = (try? await container.perform { try ZonedKVCache.probe($0.model, precision: precision) }) ?? (attendsThroughCache: false, rotatesValues: false)
         modelAttendsThroughZones = probed.attendsThroughCache
         if let zones = kvZones, zones.evictedMiddleFraction > 0, modelAttendsThroughZones {
-            modelPrefillsInChunks = (try? await container.perform {
-                try ZonedKVCache.prefillsWithinWindow($0.model, zones: zones, precision: precision, prefill: GenerateParameters().prefill)
-            }) ?? false
+            do {
+                modelPrefillsInChunks = try await container.perform {
+                    try ZonedKVCache.prefillsWithinWindow($0.model, zones: zones, precision: precision, prefill: GenerateParameters().prefill)
+                }
+                if !modelPrefillsInChunks {
+                    logger.warn("--kv-evict does not apply to this model: it prefills a prompt longer than the recent window in one pass, so its zoned cache keeps every token and is sized that way.")
+                }
+            } catch {
+                logger.warn("--kv-evict is off for this model: its prefill probe failed (\(error)), so its zoned cache keeps every token and is sized that way.")
+            }
         }
         valueRotationUnavailable = modelAttendsThroughZones && precision.rotatesValues && !probed.rotatesValues
         if !modelAttendsThroughZones {
             logger.warn("--kv-zones does not apply to this model: its attention reads the whole cache through update(), or its head dimension has no quantization group. Its quantized requests use uniform --kv-bits, k8v4 as 8-bit\((kvZones?.evictedMiddleFraction ?? 0) > 0 ? ", and --kv-evict keeps every token" : "").")
-        } else if !modelPrefillsInChunks, (kvZones?.evictedMiddleFraction ?? 0) > 0 {
-            logger.warn("--kv-evict does not apply to this model: it prefills a prompt longer than the recent window in one pass, so its zoned cache keeps every token and is sized that way.")
-        }
-        if modelAttendsThroughZones, valueRotationUnavailable {
+        } else if valueRotationUnavailable {
             logger.warn("--kv-bits \(precision) cannot rotate this model's value heads: the Hadamard transform is its own inverse only for head dimensions 2^k and 12·2^k. It runs as k8v4.")
         }
     }

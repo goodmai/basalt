@@ -331,6 +331,18 @@ struct ZonedKVCacheEngineTests {
         }
     }
 
+    @Test("At load the engine reports eviction only when the model's default prefill chunks fit the recent window; without --kv-evict it never does",
+          arguments: [(KVZones.standard.evicting(0.5), true), (KVZones(sinkTokens: 4, windowTokens: 16, migrationStep: 8, evictedMiddleFraction: 0.5), false), (KVZones.standard, false)])
+    func loadReportsWhetherEvictionApplies(zones: KVZones, applies: Bool) async throws {
+        let engine = MLXInferenceEngine(kvPrecision: .k8v4, kvZones: zones)
+        await engine.attach(ModelContainer(context: ModelContext(
+            configuration: ModelConfiguration(id: "tiny-llama-evict"), model: try Self.llama(hiddenSize: 128),
+            processor: ByteInputProcessor(), tokenizer: ByteTokenizer())))
+        await engine.probeKVZones()
+        #expect(await engine.supportsKVZones)
+        #expect(await engine.supportsKVEviction == applies)
+    }
+
     @Test("Zones apply only to a quantized request; the zoned request itself runs with kvBits cleared so MLX does not convert the cache again")
     func zonedCacheNeedsBitsAndZones() throws {
         let model = try LlamaModel(JSONDecoder().decode(LlamaConfiguration.self, from: Data(TinyModel.config.utf8)))

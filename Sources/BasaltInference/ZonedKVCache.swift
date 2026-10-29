@@ -126,7 +126,7 @@ final class ZonedKVCache: KVCacheAttentionProtocol {
     var metaState: [String] {
         get {
             [zones.sinkTokens, zones.windowTokens, zones.migrationStep, precision.keyBits, precision.valueBits].map(String.init)
-                + [String(rotatesValues), String(zones.evictedMiddleFraction), String(evictedCount)]
+                + [String(rotatesValues), String(zones.evictedMiddleFraction), String(evictedCount), String(evictionRefused)]
         }
         set { preconditionFailure("ZonedKVCache is never restored from a serialized prompt cache") }
     }
