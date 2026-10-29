@@ -4,6 +4,7 @@ import MLXLMCommon
 
 struct PromptLookupTokenIterator: TokenIteratorProtocol {
     static let draftLimit = 16
+    static let replayedProbeLimit = 4
     static let ngramSizes = [5, 4, 3]
     static let recycledDraftLimit = 6
 
@@ -14,6 +15,7 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
     let sampler: LogitSampler
     let maxTokens: Int?
     let recyclesTokens: Bool
+    let replaysRejections: Bool
     var tokenCount = 0
     var promptPrefillTime: TimeInterval = 0
 
@@ -52,6 +54,7 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
         recyclesTokens: Bool = false
     ) throws {
         self.recyclesTokens = recyclesTokens
+        self.replaysRejections = Self.isReplayableHybrid(cache)
         self.model = model
         self.cache = cache
         self.state = state
@@ -145,7 +148,8 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
         let remaining = maxTokens.map { $0 - tokenCount } ?? Int.max
         let looksUp = backoffs.lookup.allowsDraft && state == nil
         let recycles = recyclesTokens && backoffs.recycling.allowsDraft && state == nil
-        let draft = looksUp ? Self.draft(after: history, limit: Swift.min(Self.draftLimit, remaining - 1)) : []
+        let limit = replaysRejections && backoffs.lookup.probing ? Self.replayedProbeLimit : Self.draftLimit
+        let draft = looksUp ? Self.draft(after: history, limit: Swift.min(limit, remaining - 1)) : []
         switch (inFlight, draft.isEmpty) {
         case (let step?, true) where recycles && recycling.predicts(after: history[history.count - 1]):
             if recycling.chain(from: step.token.item(Int.self), limit: 1).isEmpty {
@@ -334,6 +338,7 @@ struct DraftBackoff {
     static let replayPauseScale = 4
 
     private(set) var pause = 0
+    private(set) var probing = true
     private var nextPause = 1
 
     var allowsDraft: Bool { pause == 0 }
@@ -343,6 +348,7 @@ struct DraftBackoff {
     }
 
     mutating func record(acceptedDrafts: Int, pauseScale: Int = 1) {
+        probing = acceptedDrafts <= 0
         if acceptedDrafts > 0 {
             nextPause = 1
         } else {

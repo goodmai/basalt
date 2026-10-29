@@ -131,6 +131,19 @@ struct PromptLookupDecodingTests {
         #expect(telemetry.draftTokenCount > 8 * telemetry.roundCount)
     }
 
+    @Test("A hybrid's first draft is a 4-token probe, and only an accepted probe opens the full draft limit; a dense model drafts the full limit at once",
+          arguments: [("qwen3", 1, 10), ("hybrid", 2, 9)])
+    func hybridProbesBeforeLongDrafts(family: String, rounds: Int, drafted: Int) throws {
+        let continuation = (0 ..< 12).map { LookupFixture.unit[(4 + $0) % LookupFixture.unit.count] }
+        let run = try LookupFixture.lookup(
+            try LookupFixture.model(family), maxTokens: continuation.count, sampler: ScriptedSampler(continuation))
+        #expect(run.tokens == continuation)
+        let telemetry = try #require(run.iterator.speculativeDecodingTelemetry)
+        #expect(telemetry.roundCount == rounds)
+        #expect(telemetry.draftTokenCount == drafted)
+        #expect(telemetry.acceptedDraftTokenCount == drafted)
+    }
+
     @Test("Rejected drafts are rolled back: the cache holds the prompt and every emitted token but the last")
     func rollback() throws {
         let model = try TinyQwen3.make()
