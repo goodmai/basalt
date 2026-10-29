@@ -130,10 +130,13 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
         let recycles = recyclingBackoff.allowsDraft && state == nil
         let draft = looksUp ? Self.draft(after: history, limit: Swift.min(Self.draftLimit, remaining - 1)) : []
         switch (inFlight, draft.isEmpty) {
-        case (let step?, true) where recycles && remaining > 2:
+        case (let step?, true) where recycles && remaining > 2 && recycling.predicts(after: history[history.count - 1]):
             inFlight = nil
             let confirmed = confirm(step)
-            if recycling.chain(from: confirmed, limit: 1).isEmpty { lookAhead(from: step.token) }
+            if recycling.chain(from: confirmed, limit: 1).isEmpty {
+                lookAhead(from: step.token)
+                tickBackoffs()
+            }
             accept([confirmed])
         case (let step?, true):
             emit(step, lookingAhead: remaining > 1)
@@ -168,9 +171,8 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
             lookAhead(from: current.token)
         } else {
             inFlight = nil
-            lookupBackoff.tick()
-            recyclingBackoff.tick()
         }
+        tickBackoffs()
         accept([confirm(current)])
     }
 
@@ -178,6 +180,9 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
         let next = step(token)
         asyncEval([next.token, next.successor] + cache.flatMap { $0.state })
         inFlight = next
+    }
+
+    private mutating func tickBackoffs() {
         lookupBackoff.tick()
         recyclingBackoff.tick()
     }
@@ -244,23 +249,37 @@ struct DecodedStep {
 struct TokenRecyclingTable {
     static let unset: Int32 = -1
 
+    static let confirmationsToDraft: UInt8 = 2
+
     private var successors: [Int32]
+    private var confirmations: [UInt8]
 
     init(vocabularySize: Int) {
         successors = Array(repeating: Self.unset, count: vocabularySize)
+        confirmations = Array(repeating: 0, count: vocabularySize)
     }
 
-    var byteCount: Int { successors.count * MemoryLayout<Int32>.size }
+    var byteCount: Int { successors.count * MemoryLayout<Int32>.size + confirmations.count }
 
     mutating func record(_ token: Int, successor: Int) {
         guard successors.indices.contains(token) else { return }
-        successors[token] = Int32(successor)
+        if successors[token] == Int32(successor) {
+            confirmations[token] = Swift.min(confirmations[token] &+ 1, Self.confirmationsToDraft)
+        } else {
+            successors[token] = Int32(successor)
+            confirmations[token] = 1
+        }
+    }
+
+    func predicts(after token: Int) -> Bool {
+        successors.indices.contains(token) && confirmations[token] >= Self.confirmationsToDraft
+            && !chain(from: Int(successors[token]), limit: 1).isEmpty
     }
 
     func chain(from token: Int, limit: Int) -> [Int] {
         var chain: [Int] = []
         var current = token
-        while chain.count < limit, successors.indices.contains(current), successors[current] != Self.unset {
+        while chain.count < limit, successors.indices.contains(current), confirmations[current] >= Self.confirmationsToDraft {
             current = Int(successors[current])
             chain.append(current)
         }
