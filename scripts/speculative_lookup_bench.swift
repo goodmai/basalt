@@ -41,7 +41,7 @@ func parse(_ arguments: [String]) -> Options? {
             guard !options.models.isEmpty else { return nil }
         case "--workloads":
             options.workloads = value.split(separator: ",").map { trimmed(String($0)) }.filter { !$0.isEmpty }
-            guard !options.workloads.isEmpty else { return nil }
+            guard !options.workloads.isEmpty, Set(options.workloads).count == options.workloads.count else { return nil }
         case "--runs": guard let runs = Int(value), runs > 0 else { return nil }; options.runs = runs
         case "--tokens": guard let tokens = Int(value), tokens > 0 else { return nil }; options.tokens = tokens
         case "--variant":
@@ -302,9 +302,8 @@ for variant in options.variants where !FileManager.default.isExecutableFile(atPa
     exit(1)
 }
 
-let workloads = options.workloads
 var prompts: [String: String] = [:]
-for workload in workloads {
+for workload in options.workloads {
     let path = repo + "/benchmarks/speculative-lookup/\(workload).txt"
     guard let text = try? String(contentsOfFile: path, encoding: .utf8) else {
         fail("workload \(workload)", "missing \(path)")
@@ -314,7 +313,7 @@ for workload in workloads {
 }
 
 var cells: [Cell] = []
-for workload in workloads {
+for workload in options.workloads {
     for temperature in ["0", "0.7"] {
         for mode in ["off", "on", "recycling"] + options.variants.map(\.label) {
             cells.append(Cell(workload: workload, temperature: temperature, mode: mode))
@@ -343,7 +342,7 @@ for model in options.models {
     summary.append("| workload | T | on / off (pass 1, pass 2) | recycling / on (pass 1, pass 2) | drafts on, pass 1 | drafts recycling, pass 1 | same text as off |"
         + options.variants.map { " \($0.label) / on (pass 1, pass 2) |" }.joined())
     summary.append("|---|---|---|---|---|---|---|" + String(repeating: "---|", count: options.variants.count))
-    for workload in workloads {
+    for workload in options.workloads {
         for temperature in ["0", "0.7"] {
             func cell(_ mode: String) -> Cell { Cell(workload: workload, temperature: temperature, mode: mode) }
             func pair(_ mode: String, over base: String) -> String {
