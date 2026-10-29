@@ -3,7 +3,7 @@ import Foundation
 
 let usage = """
     Usage:
-      ./scripts/speculative_lookup_bench.swift [--models repo,repo] [--runs N] [--tokens N] [--variant label=binary]...
+      ./scripts/speculative_lookup_bench.swift [--models repo,repo] [--workloads name,name] [--runs N] [--tokens N] [--variant label=binary]...
 
     Prompt-lookup speculative decoding with Token Recycling against plain decoding,
     per model: workloads code edit, prose and reasoning, temperatures 0 and 0.7,
@@ -13,6 +13,7 @@ let usage = """
 
     Options:
       --models     comma-separated HF repo ids (default: \(Options().models.joined(separator: ",")))
+      --workloads  comma-separated workloads from benchmarks/speculative-lookup (default: \(Options().workloads.joined(separator: ",")))
       --runs       timed iterations per cell (default: 3)
       --tokens     tokens generated per iteration (default: 300)
       --variant    another PerformanceBenchmark binary, run with lookup on next to the one built
@@ -22,6 +23,7 @@ let usage = """
 
 struct Options {
     var models = ["mlx-community/Qwen3-4B-4bit", "mlx-community/Meta-Llama-3.1-8B-Instruct-4bit"]
+    var workloads = ["code", "prose", "reasoning"]
     var runs = 3
     var tokens = 300
     var variants: [(label: String, binary: String)] = []
@@ -37,6 +39,9 @@ func parse(_ arguments: [String]) -> Options? {
         case "--models":
             options.models = value.split(separator: ",").map { trimmed(String($0)) }.filter { !$0.isEmpty }
             guard !options.models.isEmpty else { return nil }
+        case "--workloads":
+            options.workloads = value.split(separator: ",").map { trimmed(String($0)) }.filter { !$0.isEmpty }
+            guard !options.workloads.isEmpty else { return nil }
         case "--runs": guard let runs = Int(value), runs > 0 else { return nil }; options.runs = runs
         case "--tokens": guard let tokens = Int(value), tokens > 0 else { return nil }; options.tokens = tokens
         case "--variant":
@@ -296,7 +301,7 @@ for variant in options.variants where !FileManager.default.isExecutableFile(atPa
     exit(1)
 }
 
-let workloads = ["code", "prose", "reasoning"]
+let workloads = options.workloads
 var prompts: [String: String] = [:]
 for workload in workloads {
     let path = repo + "/benchmarks/speculative-lookup/\(workload).txt"
