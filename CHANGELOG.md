@@ -2,7 +2,17 @@
 
 ## Unreleased
 
+## 0.7.0 — 2026-10-29
+
+### Upgrading from 0.6.0
+- `--cache-blend-ratio` now defaults to 0.3 instead of 0.5 (#137). Pass `--cache-blend-ratio 0.5` to keep the old recompute budget.
+- `--kv-bits` accepts only the widths MLX quantizes (2–6 and 8) plus `k8v4`/`k8v4h`; 7 or 16 used to pass validation and crash MLX at the first quantized layer (#24).
+- `--kv-zones` (#139) and `--kv-bits k8v4` (#24) are new and opt-in; without them memory behaves as in 0.6.0.
+- Prompt-lookup speculative decoding drafts up to 16 tokens instead of 8 and pauses after rejected drafts (#138, #25); it is still opt-in, now also per request with `speculative_lookup` / `speculativeLookup`.
+
 ### Performance
+- Prompt lookup per request and a cost gate (#138): OpenAI chat and Responses and Anthropic messages take `speculative_lookup`, `/v1/generate` and MCP `gemma_generate` take `speculativeLookup` (a non-boolean is 400 / -32602; omitted falls back to `serve --speculative-lookup`). With nothing to verify, decoding overlaps CPU and GPU like `TokenIterator`; a draft is verified only once the model's own next token agrees with its first token, and after a rejection drafting pauses for 1, 2, 4 … 64 tokens. On Qwen3-4B free prose goes from 0.94× to 1.00× of plain decoding while code edits keep 2.9× and JSON 2.05×; greedy prose can still differ from plain decoding at a near-tie once a verify round runs.
+- Prompt lookup drafts up to 16 tokens per verify round instead of 8 (#25), about 1.4–1.7× faster than 8 on code edits on Qwen3-4B and Llama-3.1-8B with prose unchanged; lookup on versus off is roughly 2.4–4.2× on code edits there. New T > 0 guard tests pin that seeded sampling, JSON constraints and presence penalties produce the same tokens with lookup on as off, and `scripts/speculative_lookup_bench.swift` runs the on/off and draft-length matrix on real models (see BENCHMARKING.md).
 - CacheBlend (`--cache-blend`) spends its recompute budget on the first 32 tokens of each reused chunk before the rest, ranked by layer-1 KV deviation within each group, and `--cache-blend-ratio` now defaults to 0.3 instead of 0.5 (#137). On Qwen3-4B-4bit with `benchmarks/cacheblend`, ratio 0.3 goes from a perplexity gap of 0.085 to 0.032 against a full prefill, below the old default 0.5 (0.038) while recomputing 40% fewer tokens; on four other orders and questions the gap at 0.3 goes from 0.169 to 0.096 (old default: 0.120). Layer-progressive filtering was tried and did not beat it at the same cost.
 
 ### Memory
