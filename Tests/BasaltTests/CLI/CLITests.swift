@@ -92,6 +92,9 @@ struct CLITests {
         #expect(KVBitsSetting.zones(true, evicting: 0.5) == KVZones.standard.evicting(0.5))
         #expect(KVBitsSetting.zones(true, evicting: 0.5)?.evictedMiddleFraction == 0.5)
         #expect(KVBitsSetting.zones(false, evicting: 0.5) == nil)
+        #expect(KVBitsSetting.evictionSizing(0.25)?.hasPrefix("budget sized with 25% of each full-attention layer's quantized middle evicted") == true)
+        #expect(KVBitsSetting.evictionSizing(0) == nil)
+        #expect(KVBitsSetting.evictionSizing(nil) == nil)
     }
 
     @Test("ServeCommand model options")

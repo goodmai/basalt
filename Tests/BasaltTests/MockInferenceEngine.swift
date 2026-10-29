@@ -41,6 +41,13 @@ actor MockInferenceEngine: InferenceEngine {
         mockSupportsKVZones = supported
     }
 
+    var mockSupportsKVEviction = true
+    var supportsKVEviction: Bool { mockSupportsKVEviction }
+
+    func setSupportsKVEviction(_ supported: Bool) {
+        mockSupportsKVEviction = supported
+    }
+
     func promptTokenCount(for request: GenerationRequest) async -> Int? { mockPromptTokens }
 
     func setMockFinishReason(_ reason: GenerationResponse.FinishReason) {

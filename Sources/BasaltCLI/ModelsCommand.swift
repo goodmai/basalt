@@ -400,6 +400,7 @@ struct CheckSubcommand: AsyncParsableCommand {
         print("  Fit Level:       \(assessment.fitLevel.emoji) \(assessment.fitLevel.rawValue)")
         print("  Context Budget:  \(assessment.contextBudgetLine)")
         if kvZones { print("  KV zones:        \(KVBitsSetting.zonesAssumption)") }
+        if let line = KVBitsSetting.evictionSizing(kvEvict) { print("  KV eviction:     \(line)") }
         print()
 
         if let warning = assessment.warning {

@@ -13,6 +13,7 @@ public actor ModelOrchestratorActor {
     private let kvPrecisionLadder: [KVPrecision?]
     private let kvZones: KVZones?
     private var modelTakesKVZones = true
+    private var modelTakesKVEviction = true
     private var kvGeometry = KVCacheGeometry(parameterProxy: 4)
     /// Floor for the generation watchdog. The real budget scales with the token
     /// count — see `timeout(for:)`.
@@ -106,6 +107,7 @@ public actor ModelOrchestratorActor {
             path, parameters: ModelDefinition.inferTotalParameters(id: path, name: "", ramMB: Int64(modelSizeMB))
         )
         modelTakesKVZones = await engine.supportsKVZones
+        modelTakesKVEviction = await engine.supportsKVEviction
         // After the load: a failed load must not report the failed model's size.
         await self.telemetry.setModelMemory(mb: self.modelSizeMB)
     }
@@ -476,7 +478,7 @@ public actor ModelOrchestratorActor {
     }
 
     func kvFit(promptTokens: Int, wantedTokens: Int, budget: Int64) -> (fitting: Int, kvPrecision: KVPrecision?) {
-        let zones = modelTakesKVZones ? kvZones : nil
+        let zones = modelTakesKVZones ? (modelTakesKVEviction ? kvZones : kvZones?.evicting(0)) : nil
         let fits = kvPrecisionLadder.map { wanted in
             let precision = zones == nil ? wanted?.uniform : wanted
             return (fitting: kvGeometry.maxTokens(fitting: budget, kvPrecision: precision, promptTokens: promptTokens, zones: zones), kvPrecision: precision)

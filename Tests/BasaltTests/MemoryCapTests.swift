@@ -195,6 +195,23 @@ struct MemoryCapTests {
         #expect(sent.maxTokens == 1_000)
     }
 
+    @Test("A model that prefills in one pass longer than the window is sized with every token kept: --kv-evict 0.5 no longer admits the 130k prompt")
+    func evictionIgnoredForModelThatPrefillsUnchunked() async throws {
+        let engine = MockInferenceEngine()
+        await engine.setMemory(kvBudget: 7 * Self.gib, promptTokens: 130_000)
+        await engine.setSupportsKVEviction(false)
+        let dir = try Self.modelDirectory(weightsBytes: 0)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let orchestrator = ModelOrchestratorActor(
+            engine: engine, kvPrecision: .k8v4, kvZones: KVZones.standard.evicting(0.5), telemetry: TelemetryTracker())
+        try await orchestrator.loadModel(path: dir.path)
+        await orchestrator.setFreeMemoryProbe { 64 << 30 }
+        await #expect(throws: BasaltError.self) {
+            _ = try await orchestrator.generate(request: GenerationRequest(prompt: "long", maxTokens: 1_000))
+        }
+        #expect(await engine.getRequests().isEmpty)
+    }
+
     @Test("A model whose attention bypasses the zoned cache is sized as uniform --kv-bits even with --kv-zones: the 45k prompt is refused again")
     func zonesIgnoredForModelThatUpdatesItself() async throws {
         let (orchestrator, engine, dir) = try await Self.orchestrator(

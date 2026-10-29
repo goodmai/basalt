@@ -50,6 +50,7 @@ final class ZonedKVCache: KVCacheAttentionProtocol {
     private(set) var headsQuantize: Bool?
     private(set) var rotatesValues = false
     private(set) var evictedCount = 0
+    private(set) var evictionRefused = false
 
     init(zones: KVZones, precision: KVPrecision) {
         self.zones = zones
@@ -66,6 +67,7 @@ final class ZonedKVCache: KVCacheAttentionProtocol {
         headsQuantize = source.headsQuantize
         rotatesValues = source.rotatesValues
         evictedCount = source.evictedCount
+        evictionRefused = source.evictionRefused
     }
 
     static func rotationApplies(toHeadDim dim: Int) -> Bool {
@@ -84,6 +86,19 @@ final class ZonedKVCache: KVCacheAttentionProtocol {
         guard !zoned.isEmpty else { return (false, false) }
         _ = model(LMInput.Text(tokens: MLXArray([Int32(0)]).reshaped(1, 1)), cache: caches, state: nil)
         return (zoned.allSatisfy { !$0.materializedForCaller && $0.headsQuantize == true }, zoned.allSatisfy(\.rotatesValues))
+    }
+
+    static func prefillsWithinWindow(
+        _ model: any LanguageModel, zones: KVZones, precision: KVPrecision, prefill: PrefillParameters
+    ) throws -> Bool {
+        let caches = replacingFullAttention(try model.newCache(parameters: nil), zones: zones, precision: precision)
+        let zoned = caches.compactMap { $0 as? ZonedKVCache }
+        guard !zoned.isEmpty else { return false }
+        let prompt = MLXArray((0...(zones.windowTokens + 1)).map { Int32(1 + $0 % 64) })
+        if case .tokens(let rest) = try model.prepare(LMInput(tokens: prompt), cache: caches, state: nil, prefill: prefill) {
+            _ = model(rest[text: .newAxis], cache: caches, state: nil)
+        }
+        return zoned.allSatisfy { !$0.evictionRefused }
     }
 
     static func replacingFullAttention(_ caches: [any KVCache], zones: KVZones, precision: KVPrecision) -> [any KVCache] {
@@ -173,7 +188,7 @@ final class ZonedKVCache: KVCacheAttentionProtocol {
     }
 
     private func append(keys: MLXArray, values: MLXArray) {
-        let cachedBefore = exact.offset
+        evictionRefused = evictionRefused || keys.dim(2) > zones.windowTokens
         _ = exact.update(keys: keys, values: values)
         let groupSize = KVCacheGeometry.quantizedGroupSize(keyDim: keys.dim(3), valueDim: values.dim(3))
         rotatesValues = precision.rotatesValues && Self.rotationApplies(toHeadDim: values.dim(3))
@@ -184,9 +199,7 @@ final class ZonedKVCache: KVCacheAttentionProtocol {
         let tokens = exact.state
         var grown = middle ?? (
             QuantizedRows(bits: precision.keyBits, groupSize: groupSize), QuantizedRows(bits: precision.valueBits, groupSize: groupSize))
-        let (keptKeys, keptValues) = evictingHighestKeyNorms(
-            keys: tokens[0][.ellipsis, moved, 0...], values: tokens[1][.ellipsis, moved, 0...],
-            candidates: max(0, min(overflow, cachedBefore - sinks)))
+        let (keptKeys, keptValues) = evictingHighestKeyNorms(keys: tokens[0][.ellipsis, moved, 0...], values: tokens[1][.ellipsis, moved, 0...])
         if keptKeys.dim(2) > 0 {
             grown.keys.append(keptKeys)
             grown.values.append(rotatedValues(keptValues))
@@ -196,18 +209,14 @@ final class ZonedKVCache: KVCacheAttentionProtocol {
         eval(exact.innerState() + middleArrays)
     }
 
-    private func evictingHighestKeyNorms(keys: MLXArray, values: MLXArray, candidates: Int) -> (MLXArray, MLXArray) {
+    private func evictingHighestKeyNorms(keys: MLXArray, values: MLXArray) -> (MLXArray, MLXArray) {
         let arriving = keys.dim(2)
-        let target = zones.keptMiddleTokens(quantizedCount + evictedCount + arriving)
-        let kept = min(candidates, max(0, target - quantizedCount - (arriving - candidates)))
-        guard kept < candidates else { return (keys, values) }
-        evictedCount += candidates - kept
-        let squaredNorms = keys[.ellipsis, ..<candidates, 0...].asType(.float32).square().sum(axis: -1)
+        let kept = zones.keptMiddleTokens(quantizedCount + evictedCount + arriving) - quantizedCount
+        guard !evictionRefused, kept < arriving else { return (keys, values) }
+        evictedCount += arriving - kept
+        let squaredNorms = keys.asType(.float32).square().sum(axis: -1)
         let rows = expandedDimensions(sorted(argSort(squaredNorms, axis: -1)[.ellipsis, ..<kept], axis: -1), axis: -1)
-        let keep = { (part: MLXArray) in
-            concatenated([takeAlong(part[.ellipsis, ..<candidates, 0...], rows, axis: 2), part[.ellipsis, candidates..., 0...]], axis: 2)
-        }
-        return (keep(keys), keep(values))
+        return (takeAlong(keys, rows, axis: 2), takeAlong(values, rows, axis: 2))
     }
 
     private func rotatedValues(_ values: MLXArray) -> MLXArray {

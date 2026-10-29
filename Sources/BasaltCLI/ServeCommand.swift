@@ -391,6 +391,7 @@ struct ServeCommand: AsyncParsableCommand {
             fputs("  Fit Level:       \(assessment.fitLevel.emoji) \(assessment.fitLevel.rawValue)\n", stderr)
             fputs("  Context Budget:  \(assessment.contextBudgetLine)\n", stderr)
             if kvZones { fputs("  KV zones:        \(KVBitsSetting.zonesAssumption)\n", stderr) }
+            if let line = KVBitsSetting.evictionSizing(kvEvict) { fputs("  KV eviction:     \(line)\n", stderr) }
             fputs("\n", stderr)
 
             if let warning = assessment.warning {
@@ -686,6 +687,11 @@ enum KVBitsSetting: Equatable, ExpressibleByArgument {
 
     static let evictHelp = ArgumentHelp(
         "With --kv-zones: drop this fraction (0 to 0.9) of the middle tokens of each full-attention layer as they leave the recent window, the ones whose keys have the largest L2 norm (default: keep all)")
+
+    static func evictionSizing(_ fraction: Double?) -> String? {
+        guard let fraction, fraction > 0 else { return nil }
+        return "budget sized with \(Int((fraction * 100).rounded()))% of each full-attention layer's quantized middle evicted; serve keeps every token, and sizes so, on a model that prefills more than the recent window in one pass"
+    }
 
     static func zones(_ enabled: Bool, evicting fraction: Double? = nil) -> KVZones? {
         enabled ? KVZones.standard.evicting(fraction ?? 0) : nil

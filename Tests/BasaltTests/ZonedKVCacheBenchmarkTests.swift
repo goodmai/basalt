@@ -139,10 +139,19 @@ struct ZonedKVCacheBenchmarkTests {
         return owner
     }
 
-    static func reclaimIfStale(_ lock: String, log: Log) {
+    static func staleHolder(_ lock: String) -> Int32? {
         guard let holder = try? String(contentsOfFile: lock + "/owner", encoding: .utf8),
               let pid = Int32(holder.trimmingCharacters(in: .whitespacesAndNewlines)),
-              kill(pid, 0) != 0, errno == ESRCH else { return }
+              kill(pid, 0) != 0, errno == ESRCH else { return nil }
+        return pid
+    }
+
+    static func reclaimIfStale(_ lock: String, log: Log) {
+        guard staleHolder(lock) != nil else { return }
+        let reclaiming = lock + ".reclaim"
+        guard mkdir(reclaiming, 0o755) == 0 else { return }
+        defer { rmdir(reclaiming) }
+        guard let pid = staleHolder(lock) else { return }
         try? FileManager.default.removeItem(atPath: lock)
         log.line("RECLAIMED \(lock) from pid \(pid), which no longer runs")
     }
@@ -268,7 +277,7 @@ struct ZonedKVCacheBenchmarkTests {
         }
         let room = Int64(PromptCacheBudget.gpuWorkingSet()) - Int64(Memory.activeMemory)
         let zonesApply = (try? await container.perform { try ZonedKVCache.modelAttendsThroughCache($0.model) }) ?? false
-        log.line("PROBE \(repo) zonesApply=\(zonesApply)")
+        log.line("PROBE \(repo) zonesApply=\(zonesApply) model=\(await container.perform { String(describing: type(of: $0.model)) })")
         log.line("GEOMETRY \(repo) fp16BytesPerToken=\(geometry.bytes(tokens: 1_000) / 1_000) window=\(geometry.window) roomAfterWeights=\(room)")
 
         if steps.contains("mem") {
@@ -336,7 +345,7 @@ struct ZonedKVCacheBenchmarkTests {
                     return "libraryKVBits=\(sentBits.map(String.init) ?? "nil") promptTokens=\(response.promptTokens) text=\(response.generatedText.prefix(80).debugDescription)"
                 }
             }
-            log.line("FALLBACK \(repo) zonesApply=\(await engine.supportsKVZones) evictedMiddleFraction=\(engineZones.evictedMiddleFraction) k8v4TextEqualsQ8=\(texts[.k8v4] != nil && texts[.k8v4] == texts[.q8])")
+            log.line("FALLBACK \(repo) zonesApply=\(await engine.supportsKVZones) evictedMiddleFraction=\(engineZones.evictedMiddleFraction) evictionApplies=\(await engine.supportsKVEviction) k8v4TextEqualsQ8=\(texts[.k8v4] != nil && texts[.k8v4] == texts[.q8])")
         }
         if steps.contains("greedy") {
             for length in Self.list("BASALT_ZONED_GREEDY_LENGTHS", default: "1000,16000").compactMap({ Int($0) }) {
