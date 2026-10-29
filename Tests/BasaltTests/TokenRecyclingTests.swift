@@ -2,43 +2,98 @@ import Foundation
 import Testing
 import MLX
 import MLXLMCommon
+@testable import BasaltCore
 @testable import BasaltInference
 
 @Suite("Token Recycling speculative decoding (#38)", .serialized)
 struct TokenRecyclingTests {
     static let freshPrompt = [200, 201, 202, 203, 204]
 
-    @Test("The recycled draft follows the latest recorded successor of each token, stopping at an unseen token or the limit")
-    func chainFollowsSuccessors() {
-        var table = TokenRecyclingTable(vocabularySize: 10)
-        #expect(table.chain(from: 1, limit: 4).isEmpty)
-        table.record(1, successor: 2)
-        table.record(2, successor: 3)
-        #expect(table.chain(from: 1, limit: 4) == [2, 3])
-        #expect(table.chain(from: 1, limit: 1) == [2])
-        table.record(2, successor: 1)
-        #expect(table.chain(from: 1, limit: 5) == [2, 1, 2, 1, 2])
-        #expect(table.chain(from: 3, limit: 4).isEmpty)
-        #expect(table.chain(from: 1, limit: 0).isEmpty)
+    static func confirmed(_ links: [(Int, Int)], vocabularySize: Int = 10) -> TokenRecyclingTable {
+        var table = TokenRecyclingTable(vocabularySize: vocabularySize)
+        for (token, successor) in links + links { table.record(token, successor: successor) }
+        return table
     }
 
-    @Test("Tokens outside the vocabulary are neither recorded nor followed, and the table costs four bytes per vocabulary entry")
-    func outOfVocabularyIsIgnored() {
-        var table = TokenRecyclingTable(vocabularySize: 4)
-        table.record(7, successor: 1)
-        table.record(-1, successor: 1)
-        table.record(1, successor: 9)
-        #expect(table.chain(from: 7, limit: 3).isEmpty)
-        #expect(table.chain(from: 1, limit: 3) == [9])
-        #expect(TokenRecyclingTable(vocabularySize: 151_936).byteCount == 607_744)
+    @Test("The recycled draft follows each token's successor once it was recorded twice in a row, stopping at an unconfirmed token or the limit")
+    func chainFollowsConfirmedSuccessors() {
+        var table = TokenRecyclingTable(vocabularySize: 10)
+        table.record(1, successor: 2)
+        #expect(table.chain(from: 1, limit: 4).isEmpty)
+        table = Self.confirmed([(1, 2), (2, 3)])
+        #expect(table.chain(from: 1, limit: 4) == [2, 3])
+        #expect(table.chain(from: 1, limit: 1) == [2])
+        #expect(table.chain(from: 1, limit: 0).isEmpty)
+        #expect(table.chain(from: 3, limit: 4).isEmpty)
+        table.record(2, successor: 1)
+        #expect(table.chain(from: 1, limit: 5) == [2])
+        table.record(2, successor: 1)
+        #expect(table.chain(from: 1, limit: 5) == [2, 1, 2, 1, 2])
     }
+
+    @Test("A token predicts a draft only when its confirmed successor has a confirmed successor of its own")
+    func predictionNeedsTwoConfirmedLinks() {
+        #expect(!Self.confirmed([(1, 2)]).predicts(after: 1))
+        #expect(Self.confirmed([(1, 2), (2, 3)]).predicts(after: 1))
+        #expect(!Self.confirmed([(1, 2), (2, 3)]).predicts(after: 2))
+        #expect(!Self.confirmed([(1, 2), (2, 3)]).predicts(after: 42))
+    }
+
+    @Test("Tokens outside the vocabulary are neither recorded nor followed, and the table costs five bytes per vocabulary entry")
+    func outOfVocabularyIsIgnored() {
+        let table = Self.confirmed([(7, 1), (-1, 1), (1, 9)], vocabularySize: 4)
+        #expect(table.chain(from: 7, limit: 3).isEmpty)
+        #expect(table.chain(from: -1, limit: 3).isEmpty)
+        #expect(table.chain(from: 1, limit: 3) == [9])
+        #expect(TokenRecyclingTable(vocabularySize: 151_936).byteCount == 759_680)
+    }
+
+    @Test("With recycling off, prompt lookup keeps no table and drafts nothing from recycled successors")
+    func offByDefault() throws {
+        let run = try LookupFixture.lookup(try TinyLlama.make(), prompt: Self.freshPrompt)
+        #expect(run.iterator.recycling.byteCount == 0)
+        #expect(run.iterator.recycledRounds == 0)
+    }
+
+    @Test("When every recycled draft is rejected, recycling pauses by doubling and the output is unchanged")
+    func rejectedRecycledDraftsBackOff() throws {
+        let cycles = (0 ..< 26).flatMap { [1, 2, 3, 4, 10 + $0] }
+        let run = try LookupFixture.lookup(
+            try TinyQwen3.make(), prompt: Self.freshPrompt, maxTokens: cycles.count,
+            sampler: ScriptedSampler(cycles), recycling: true)
+        #expect(run.tokens == cycles)
+        #expect(run.iterator.acceptedRecycledDrafts == 0)
+        #expect(run.iterator.recycledRounds > 0)
+        #expect(run.iterator.recycledRounds <= 8)
+    }
+
+    @Test("Through the engine, greedy output is unchanged with recycling on, and recycling drafts beyond what lookup alone drafts, with and without a cache key")
+    func engineGreedyEquivalence() async throws {
+        func engine(lookup: Bool, recycling: Bool) async throws -> MLXInferenceEngine {
+            let engine = MLXInferenceEngine(promptCacheBytes: 1 << 26, speculativeLookup: lookup, speculativeRecycling: recycling)
+            await engine.attach(try LookupFixture.byteContainer())
+            return engine
+        }
+        let plain = try await engine(lookup: false, recycling: false)
+        let lookup = try await engine(lookup: true, recycling: false)
+        let recycling = try await engine(lookup: true, recycling: true)
+        let request = GenerationRequest(prompt: "Hello", maxTokens: 64, temperature: 0)
+        let expected = try await plain.generate(request: request)
+        for key in [nil, "recycling"] {
+            let lookupOnly = try await lookup.generate(request: request.withCacheKey(key))
+            let actual = try await recycling.generate(request: request.withCacheKey(key))
+            #expect(actual.generatedText == expected.generatedText)
+            #expect(try #require(actual.draftTokens) > lookupOnly.draftTokens ?? 0)
+        }
+    }
+
 
     @Test("With no n-gram in the prompt to look up, greedy decoding drafts from recycled successors, accepts them, and emits exactly the plain decoder's tokens",
           arguments: ["llama", "qwen3"])
     func greedyEquivalence(family: String) throws {
         let model = try LookupFixture.model(family)
         let expected = try LookupFixture.baseline(model, prompt: Self.freshPrompt)
-        let run = try LookupFixture.lookup(model, prompt: Self.freshPrompt)
+        let run = try LookupFixture.lookup(model, prompt: Self.freshPrompt, recycling: true)
         #expect(run.tokens == expected)
         #expect(run.iterator.acceptedRecycledDrafts > 0)
         let telemetry = try #require(run.iterator.speculativeDecodingTelemetry)
@@ -46,21 +101,25 @@ struct TokenRecyclingTests {
         #expect(telemetry.emittedTokenCount == run.tokens.count)
     }
 
-    @Test("Recycled drafts never run past the token budget: the output is the plain decoder's prefix and the cache holds the prompt and every emitted token but the last",
-          arguments: [3, 4, 9, 33])
-    func budgetBoundary(maxTokens: Int) throws {
+    @Test("Recycled drafts never run past the token budget: at every budget the output is the plain decoder's prefix and the cache holds the prompt and every emitted token but the last")
+    func budgetBoundary() throws {
         let model = try TinyLlama.make()
-        let expected = try LookupFixture.baseline(model, prompt: Self.freshPrompt, maxTokens: maxTokens)
-        let run = try LookupFixture.lookup(model, prompt: Self.freshPrompt, maxTokens: maxTokens)
-        #expect(run.tokens == expected)
-        #expect(run.cache.allSatisfy { $0.offset == Self.freshPrompt.count + maxTokens - 1 })
+        let expected = try LookupFixture.baseline(model, prompt: Self.freshPrompt, maxTokens: 64)
+        var recycledRounds = 0
+        for maxTokens in 2 ... 64 {
+            let run = try LookupFixture.lookup(model, prompt: Self.freshPrompt, maxTokens: maxTokens, recycling: true)
+            #expect(run.tokens == Array(expected.prefix(maxTokens)))
+            #expect(run.cache.allSatisfy { $0.offset == Self.freshPrompt.count + maxTokens - 1 }, "budget \(maxTokens)")
+            recycledRounds += run.iterator.recycledRounds
+        }
+        #expect(recycledRounds > 0)
     }
 
     @Test("Rejected recycled drafts are rolled back: the cache holds the prompt and every emitted token but the last")
     func rollback() throws {
-        let run = try LookupFixture.lookup(try TinyQwen3.make(), prompt: Self.freshPrompt, maxTokens: 48)
+        let run = try LookupFixture.lookup(try TinyLlama.make(), prompt: Self.freshPrompt, maxTokens: 64, recycling: true)
         let telemetry = try #require(run.iterator.speculativeDecodingTelemetry)
-        #expect(run.iterator.recycledRounds > 0)
+        #expect(run.iterator.recycledDraftTokens > run.iterator.acceptedRecycledDrafts)
         #expect(telemetry.rejectedDraftTokenCount > 0)
         #expect(run.cache.allSatisfy { $0.offset == Self.freshPrompt.count + run.tokens.count - 1 })
     }
@@ -87,7 +146,7 @@ struct TokenRecyclingTests {
         #expect(try LookupFixture.baseline(
             model, prompt: Self.freshPrompt, maxTokens: maxTokens, processor: processor(), sampler: sampler(seed: 12)) != expected)
         let run = try LookupFixture.lookup(
-            model, prompt: Self.freshPrompt, maxTokens: maxTokens, processor: processor(), sampler: sampler())
+            model, prompt: Self.freshPrompt, maxTokens: maxTokens, processor: processor(), sampler: sampler(), recycling: true)
         #expect(run.tokens == expected)
         #expect(run.iterator.acceptedRecycledDrafts > 0)
     }

@@ -45,12 +45,12 @@ enum LookupFixture {
 
     static func lookup(
         _ model: any LanguageModel, prompt: [Int] = prompt, maxTokens: Int = 64,
-        processor: LogitProcessor? = nil, sampler: LogitSampler = ArgMaxSampler()
+        processor: LogitProcessor? = nil, sampler: LogitSampler = ArgMaxSampler(), recycling: Bool = false
     ) throws -> (tokens: [Int], iterator: PromptLookupTokenIterator, cache: [KVCache]) {
         let cache = try model.newCache(parameters: nil)
         var iterator = try PromptLookupTokenIterator(
             input: LMInput(tokens: MLXArray(prompt.map(Int32.init))), context: prompt, model: model, cache: cache,
-            processor: processor, sampler: sampler, prefill: .init(), maxTokens: maxTokens)
+            processor: processor, sampler: sampler, prefill: .init(), maxTokens: maxTokens, recyclesTokens: recycling)
         var tokens: [Int] = []
         while let token = iterator.next() { tokens.append(token) }
         return (tokens, iterator, cache)
@@ -259,7 +259,7 @@ struct PromptLookupDecodingTests {
         #expect(backoff.pause == 1)
     }
 
-    @Test("When every draft past its first token is rejected, recycling backs off by doubling pauses while lookup keeps accepting, lookup's failed rounds stay bounded, and the output is unchanged")
+    @Test("When every draft past its first token is rejected, lookup backs off instead of verifying each match, and the output is unchanged")
     func rejectedDraftsBackOff() throws {
         let cycles = (0 ..< 26).flatMap { [1, 2, 3, 4, 10 + $0] }
         let run = try LookupFixture.lookup(
@@ -267,11 +267,7 @@ struct PromptLookupDecodingTests {
             sampler: ScriptedSampler(cycles))
         #expect(run.tokens == cycles)
         let telemetry = try #require(run.iterator.speculativeDecodingTelemetry)
-        let lookupRounds = telemetry.roundCount - run.iterator.recycledRounds
-        let acceptedLookupDrafts = telemetry.acceptedDraftTokenCount - run.iterator.acceptedRecycledDrafts
-        #expect(run.iterator.acceptedRecycledDrafts == 0)
-        #expect(run.iterator.recycledRounds <= 8)
-        #expect(acceptedLookupDrafts > 0)
-        #expect(lookupRounds - acceptedLookupDrafts <= 12)
+        #expect(telemetry.acceptedDraftTokenCount == 0)
+        #expect(telemetry.roundCount <= 6)
     }
 }

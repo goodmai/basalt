@@ -85,9 +85,15 @@ struct ServeCommand: AsyncParsableCommand {
 
     @Flag(
         name: .customLong("speculative-lookup"),
-        help: "Draft up to 8 tokens per step by matching the last 3-5 tokens against the prompt and output, verified in one forward pass (faster when the answer copies its context, slower on free prose; greedy output can differ at floating-point near-ties; attention-only models without --kv-bits)"
+        help: "Draft up to 16 tokens per step by matching the last 3-5 tokens against the prompt and output, verified in one forward pass (faster when the answer copies its context, slower on free prose; greedy output can differ at floating-point near-ties; attention-only models without --kv-bits)"
     )
     var speculativeLookup = false
+
+    @Flag(
+        name: .customLong("speculative-recycling"),
+        help: "With speculative lookup on, draft up to 6 tokens from the model's own argmax successors (Token Recycling) when no n-gram matches; measured neutral to 1.2x over lookup alone on reasoning-style text, no gain on prose"
+    )
+    var speculativeRecycling = false
 
     // Optional so an explicit `--port 8080` can be told apart from "not passed":
     // precedence is CLI > --config file > default.
@@ -466,7 +472,8 @@ struct ServeCommand: AsyncParsableCommand {
             minP: minP,
             seed: seed,
             cacheBlendRatio: cacheBlend ? min(max(0, cacheBlendRatio), 1) : nil,
-            speculativeLookup: speculativeLookup
+            speculativeLookup: speculativeLookup,
+            speculativeRecycling: speculativeRecycling
         )
         let sessionLogWriter = Self.sessionLogWriter(
             mode: sessionLog, directory: sessionLogDir, retentionDays: sessionLogRetentionDays, maxTotalMB: sessionLogMaxTotalMB,
