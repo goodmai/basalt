@@ -48,6 +48,24 @@ struct TokenRecyclingTests {
         #expect(TokenRecyclingTable(vocabularySize: 151_936).byteCount == 759_680)
     }
 
+    @Test("A verify round counts down the other drafter's pause by the tokens it emitted, so accepted recycled rounds do not keep lookup paused, nor lookup rounds recycling")
+    func roundsCountDownTheOtherDraftersPause() {
+        var backoffs = DrafterBackoffs()
+        for _ in 0 ..< 3 { backoffs.lookup.record(acceptedDrafts: 0) }
+        #expect(backoffs.lookup.pause == 4)
+        backoffs.recordRound(recycled: true, acceptedDrafts: 2)
+        #expect(backoffs.lookup.pause == 1)
+        #expect(backoffs.recycling.allowsDraft)
+        backoffs.recordRound(recycled: true, acceptedDrafts: 0)
+        #expect(backoffs.lookup.allowsDraft)
+        #expect(backoffs.recycling.pause == 1)
+        backoffs.recordRound(recycled: false, acceptedDrafts: 0)
+        #expect(backoffs.recycling.allowsDraft)
+        #expect(backoffs.lookup.pause == 8)
+        backoffs.tick()
+        #expect(backoffs.lookup.pause == 7)
+    }
+
     @Test("With recycling off, prompt lookup keeps no table and drafts nothing from recycled successors")
     func offByDefault() throws {
         let run = try LookupFixture.lookup(try TinyLlama.make(), prompt: Self.freshPrompt)
@@ -87,7 +105,6 @@ struct TokenRecyclingTests {
         }
     }
 
-
     @Test("With no n-gram in the prompt to look up, greedy decoding drafts from recycled successors, accepts them, and emits exactly the plain decoder's tokens",
           arguments: ["llama", "qwen3"])
     func greedyEquivalence(family: String) throws {
@@ -113,6 +130,19 @@ struct TokenRecyclingTests {
             recycledRounds += run.iterator.recycledRounds
         }
         #expect(recycledRounds > 0)
+    }
+
+    @Test("When the last token of the budget breaks a confirmed recycled chain, it is emitted without feeding it to the model")
+    func noLookAheadPastTheBudgetWhenTheChainBreaks() throws {
+        let model = try TinyLlama.make()
+        let greedy = try LookupFixture.baseline(model, prompt: Self.freshPrompt, maxTokens: 64)
+        for maxTokens in 2 ... 64 {
+            let script = Array(greedy.prefix(maxTokens - 1)) + [249]
+            let run = try LookupFixture.lookup(
+                model, prompt: Self.freshPrompt, maxTokens: maxTokens, sampler: ScriptedSampler(script), recycling: true)
+            #expect(run.tokens == script)
+            #expect(run.cache.allSatisfy { $0.offset == Self.freshPrompt.count + maxTokens - 1 }, "budget \(maxTokens)")
+        }
     }
 
     @Test("Rejected recycled drafts are rolled back: the cache holds the prompt and every emitted token but the last")

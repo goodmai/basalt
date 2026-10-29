@@ -23,8 +23,7 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
     private(set) var recycledRounds = 0
     private(set) var recycledDraftTokens = 0
     private(set) var acceptedRecycledDrafts = 0
-    private var lookupBackoff = DraftBackoff()
-    private var recyclingBackoff = DraftBackoff()
+    private var backoffs = DrafterBackoffs()
     private var pending: [Int] = []
     private var pendingIndex = 0
     private var rounds = 0
@@ -134,24 +133,23 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
 
     private mutating func advance() {
         let remaining = maxTokens.map { $0 - tokenCount } ?? Int.max
-        let looksUp = lookupBackoff.allowsDraft && state == nil
-        let recycles = recyclesTokens && recyclingBackoff.allowsDraft && state == nil
+        let looksUp = backoffs.lookup.allowsDraft && state == nil
+        let recycles = recyclesTokens && backoffs.recycling.allowsDraft && state == nil
         let draft = looksUp ? Self.draft(after: history, limit: Swift.min(Self.draftLimit, remaining - 1)) : []
         switch (inFlight, draft.isEmpty) {
-        case (let step?, true) where recycles && remaining > 2 && recycling.predicts(after: history[history.count - 1]):
-            inFlight = nil
-            let confirmed = confirm(step)
-            if recycling.chain(from: confirmed, limit: 1).isEmpty {
-                lookAhead(from: step.token)
-                tickBackoffs()
+        case (let step?, true) where recycles && recycling.predicts(after: history[history.count - 1]):
+            if recycling.chain(from: step.token.item(Int.self), limit: 1).isEmpty {
+                emit(step, lookingAhead: remaining > 1)
+            } else {
+                inFlight = nil
+                accept([confirm(step)])
             }
-            accept([confirmed])
         case (let step?, true):
             emit(step, lookingAhead: remaining > 1)
         case (let step?, false):
             inFlight = nil
             let confirmed = confirm(step)
-            if confirmed != draft[0] { lookupBackoff.record(acceptedDrafts: 0) }
+            if confirmed != draft[0] { backoffs.lookup.record(acceptedDrafts: 0) }
             accept([confirmed])
         case (nil, false):
             speculate(draft, recycled: false)
@@ -176,23 +174,14 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
 
     private mutating func emit(_ current: DecodedStep, lookingAhead: Bool) {
         if lookingAhead {
-            lookAhead(from: current.token)
+            let next = step(current.token)
+            asyncEval([next.token] + [next.successor].compactMap { $0 } + cache.flatMap { $0.state })
+            inFlight = next
         } else {
             inFlight = nil
         }
-        tickBackoffs()
+        backoffs.tick()
         accept([confirm(current)])
-    }
-
-    private mutating func lookAhead(from token: MLXArray) {
-        let next = step(token)
-        asyncEval([next.token] + [next.successor].compactMap { $0 } + cache.flatMap { $0.state })
-        inFlight = next
-    }
-
-    private mutating func tickBackoffs() {
-        lookupBackoff.tick()
-        recyclingBackoff.tick()
     }
 
     private mutating func speculate(_ draft: [Int], recycled: Bool) {
@@ -225,10 +214,8 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
             recycledRounds += 1
             recycledDraftTokens += draft.count
             acceptedRecycledDrafts += acceptedDrafts
-            recyclingBackoff.record(acceptedDrafts: acceptedDrafts)
-        } else {
-            lookupBackoff.record(acceptedDrafts: acceptedDrafts)
         }
+        backoffs.recordRound(recycled: recycled, acceptedDrafts: acceptedDrafts)
         rounds += 1
         drafted += draft.count
         accepted += acceptedDrafts
@@ -290,6 +277,27 @@ struct TokenRecyclingTable {
             chain.append(current)
         }
         return chain
+    }
+}
+
+struct DrafterBackoffs {
+    var lookup = DraftBackoff()
+    var recycling = DraftBackoff()
+
+    mutating func tick() {
+        lookup.tick()
+        recycling.tick()
+    }
+
+    mutating func recordRound(recycled: Bool, acceptedDrafts: Int) {
+        for _ in 0 ... acceptedDrafts {
+            if recycled { lookup.tick() } else { recycling.tick() }
+        }
+        if recycled {
+            recycling.record(acceptedDrafts: acceptedDrafts)
+        } else {
+            lookup.record(acceptedDrafts: acceptedDrafts)
+        }
     }
 }
 
