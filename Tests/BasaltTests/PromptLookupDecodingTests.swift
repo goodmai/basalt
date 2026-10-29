@@ -336,6 +336,22 @@ struct PromptLookupDecodingTests {
         #expect(backoff.pause == 1)
     }
 
+    @Test("On a hybrid a round that accepts one draft and then replays does not pay for its extra forward, so lookup backs off; a dense model keeps drafting")
+    func hybridBacksOffWhenTheReplayEatsTheGain() throws {
+        let cycles = (0 ..< 20).flatMap { [1, 2, 3, 4, 5, 20 + $0] }
+        func rounds(_ family: String) throws -> (rounds: Int, accepted: Int) {
+            let run = try LookupFixture.lookup(
+                try LookupFixture.model(family), prompt: [200, 201, 202, 203, 204], maxTokens: cycles.count,
+                sampler: ScriptedSampler(cycles))
+            #expect(run.tokens == cycles)
+            let telemetry = try #require(run.iterator.speculativeDecodingTelemetry)
+            return (telemetry.roundCount, telemetry.acceptedDraftTokenCount)
+        }
+        let (dense, hybrid) = (try rounds("qwen3"), try rounds("hybrid"))
+        #expect(dense.accepted == dense.rounds)
+        #expect(hybrid.rounds * 2 <= dense.rounds)
+    }
+
     @Test("When every draft past its first token is rejected, lookup backs off instead of verifying each match, and the output is unchanged",
           arguments: ["qwen3", "hybrid"])
     func rejectedDraftsBackOff(family: String) throws {

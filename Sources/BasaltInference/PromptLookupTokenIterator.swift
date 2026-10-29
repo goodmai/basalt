@@ -222,9 +222,10 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
         }
 
         let acceptedDrafts = emitted.count - 1
+        let replays = !recurrent.isEmpty && acceptedDrafts < draft.count
         if recurrent.isEmpty {
             trimPromptCache(cache, numTokens: draft.count - acceptedDrafts)
-        } else if acceptedDrafts < draft.count {
+        } else if replays {
             for layer in cache where layer.isTrimmable { layer.trim(fed.count) }
             for (layer, checkpoint) in zip(recurrent, checkpoints) {
                 layer[0] = checkpoint.conv
@@ -234,13 +235,15 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
             _ = forward(LMInput.Text(tokens: MLXArray(fed[...acceptedDrafts].map(Int32.init))))
             replayRounds += 1
             replayedTokens += acceptedDrafts + 1
+            verifyCalls += 1
+            verified += acceptedDrafts + 1
         }
         if recycled {
             recycledRounds += 1
             recycledDraftTokens += draft.count
             acceptedRecycledDrafts += acceptedDrafts
         }
-        backoffs.recordRound(recycled: recycled, acceptedDrafts: acceptedDrafts)
+        backoffs.recordRound(recycled: recycled, acceptedDrafts: acceptedDrafts, replayed: replays)
         rounds += 1
         drafted += draft.count
         accepted += acceptedDrafts
@@ -314,14 +317,15 @@ struct DrafterBackoffs {
         recycling.tick()
     }
 
-    mutating func recordRound(recycled: Bool, acceptedDrafts: Int) {
+    mutating func recordRound(recycled: Bool, acceptedDrafts: Int, replayed: Bool) {
         for _ in 0 ... acceptedDrafts {
             if recycled { lookup.tick() } else { recycling.tick() }
         }
+        let paidDrafts = replayed ? acceptedDrafts - 1 : acceptedDrafts
         if recycled {
-            recycling.record(acceptedDrafts: acceptedDrafts)
+            recycling.record(acceptedDrafts: paidDrafts)
         } else {
-            lookup.record(acceptedDrafts: acceptedDrafts)
+            lookup.record(acceptedDrafts: paidDrafts)
         }
     }
 }

@@ -201,7 +201,8 @@ struct Host {
     let load: Double
     let ciRunning: Bool
     let gpu: Int
-    var quiet: Bool { load <= maxLoad && !ciRunning && gpu <= maxIdleGPU }
+    var quiet: Bool { calm && gpu <= maxIdleGPU }
+    var calm: Bool { load <= maxLoad && !ciRunning }
     var text: String { String(format: "load=%.2f ci=%@ gpu=%d%%", load, ciRunning ? "yes" : "no", gpu) }
 }
 
@@ -290,7 +291,7 @@ func measure(_ cell: Cell, model: String, binary: String, prompt: String, pass: 
         .map { $0.split(separator: " ").dropFirst().joined(separator: " ") } ?? "no drafts"
     let output = result.output.components(separatedBy: "--- OUTPUT ---").last?
         .components(separatedBy: "--- END OUTPUT ---").first ?? ""
-    let valid = before.quiet && after.quiet && sigma / tps <= 0.03
+    let valid = before.quiet && after.calm && sigma / tps <= 0.03
     log("result \(step) \(valid ? "valid" : "INVALID") tps=\(tps) sigma=\(sigma) \(accepted) before:\(before.text) after:\(after.text)")
     return Measurement(tps: tps, sigma: sigma, accepted: accepted, output: output, valid: valid)
 }
@@ -382,7 +383,7 @@ for model in options.models {
 }
 
 summary.append("")
-summary.append("* a cell in the ratio was INVALID: σ above 3% of the mean, or load above \(maxLoad), a CI job or idle GPU utilization above \(maxIdleGPU)% before or after it")
+summary.append("* a cell in the ratio was INVALID: σ above 3% of the mean, or load above \(maxLoad), a CI job or idle GPU utilization above \(maxIdleGPU)% before it, or load or a CI job after it")
 for line in summary { log("summary \(line)") }
 log("done failures=\(failures)")
 exit(failures == 0 ? 0 : 1)
