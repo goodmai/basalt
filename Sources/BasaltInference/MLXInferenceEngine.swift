@@ -1082,7 +1082,7 @@ public actor MLXInferenceEngine: InferenceEngine {
     }
 
     private func routesExperts(_ container: ModelContainer, epoch: Int) async -> Bool {
-        if let known = modelRoutesExperts { return known }
+        if epoch == modelEpoch, let known = modelRoutesExperts { return known }
         let routes = await container.perform { PromptLookupTokenIterator.routesExperts($0.model) }
         if epoch == modelEpoch {
             modelRoutesExperts = routes
