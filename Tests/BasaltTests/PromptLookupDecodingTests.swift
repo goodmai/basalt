@@ -27,6 +27,7 @@ enum LookupFixture {
         switch family {
         case "llama": try TinyLlama.make()
         case "hybrid": try TinyHybrid.make()
+        case "lfm": try TinyLFM2MoE.make()
         default: try TinyQwen3.make()
         }
     }
@@ -61,6 +62,24 @@ enum LookupFixture {
     }
 }
 
+enum TinyLFM2MoE {
+    static let config = """
+        {"model_type": "lfm2_moe", "vocab_size": 256, "hidden_size": 64, "intermediate_size": 128,
+         "moe_intermediate_size": 32, "num_hidden_layers": 4, "num_experts": 4, "num_experts_per_tok": 2,
+         "norm_topk_prob": true, "num_attention_heads": 4, "num_key_value_heads": 2,
+         "max_position_embeddings": 4096, "use_expert_bias": true, "num_dense_layers": 1, "norm_eps": 1e-5,
+         "conv_bias": false, "conv_L_cache": 3, "layer_types": ["conv", "full_attention", "conv", "full_attention"]}
+        """
+
+    static func make() throws -> LFM2MoEModel {
+        let model = try withRandomState(MLXRandom.RandomState(seed: 83)) {
+            LFM2MoEModel(try JSONDecoder().decode(LFM2MoEConfiguration.self, from: Data(config.utf8)))
+        }
+        eval(model)
+        return model
+    }
+}
+
 @Suite("Prompt lookup speculative decoding (#138)", .serialized)
 struct PromptLookupDecodingTests {
 
@@ -77,7 +96,7 @@ struct PromptLookupDecodingTests {
     }
 
     @Test("Greedy decoding with prompt lookup emits exactly the plain decoder's tokens, and drafts are accepted",
-          arguments: ["llama", "qwen3", "hybrid"])
+          arguments: ["llama", "qwen3", "hybrid", "lfm"])
     func greedyEquivalence(family: String) throws {
         let model = try LookupFixture.model(family)
         let expected = try LookupFixture.baseline(model)
@@ -107,22 +126,24 @@ struct PromptLookupDecodingTests {
         #expect(cache.allSatisfy { $0.offset == LookupFixture.prompt.count + tokens.count - 1 })
     }
 
-    @Test("On a hybrid model a rejected draft restores the recurrent state and replays the accepted prefix: the state matches a plain prefill of the same tokens")
-    func hybridRejectionRestoresRecurrentState() throws {
-        let model = try TinyHybrid.make()
+    @Test("On a hybrid model a rejected draft restores the recurrent state and replays the accepted prefix: the state matches a plain prefill of the same tokens",
+          arguments: ["hybrid", "lfm"])
+    func hybridRejectionRestoresRecurrentState(family: String) throws {
+        let model = try LookupFixture.model(family)
         let unit = LookupFixture.unit
         let script = (0 ..< 6).flatMap { round in Array(unit[4 ..< 8]) + [240 + round] + Array(unit[0 ..< 4]) }
         let run = try LookupFixture.lookup(model, maxTokens: script.count, sampler: ScriptedSampler(script))
         #expect(run.tokens == script)
         #expect(run.iterator.replayRounds > 0)
-        let fed = LookupFixture.prompt + run.tokens.dropLast()
+        let fed = LookupFixture.prompt + run.tokens.dropLast(1 + run.iterator.replay.count)
         let reference = try model.newCache(parameters: nil)
         eval(model(MLXArray(fed.map(Int32.init))[.newAxis], cache: reference))
         for (live, plain) in zip(run.cache, reference) {
             #expect(live.offset == plain.offset)
             guard let live = live as? MambaCache, let plain = plain as? MambaCache else { continue }
             for slot in 0 ..< 2 {
-                let (a, b) = (try #require(live[slot]), try #require(plain[slot]))
+                #expect((live[slot] == nil) == (plain[slot] == nil))
+                guard let a = live[slot], let b = plain[slot] else { continue }
                 #expect(allClose(a.asType(.float32), b.asType(.float32), atol: 1e-3).item(Bool.self))
             }
         }

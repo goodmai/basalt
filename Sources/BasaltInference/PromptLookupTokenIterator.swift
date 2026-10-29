@@ -33,6 +33,7 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
     private var verifyCalls = 0
     private(set) var replayRounds = 0
     private(set) var replayedTokens = 0
+    private(set) var replay: [Int] = []
 
     static func supports(_ cache: [KVCache]) -> Bool {
         PromptCache(cache).isSharable || isReplayableHybrid(cache)
@@ -109,6 +110,12 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
         return output
     }
 
+    private mutating func forwardAfterReplay(_ tokens: MLXArray) -> MLXArray {
+        let fed = replay.isEmpty ? tokens : concatenated([MLXArray(replay.map(Int32.init)), tokens.asType(.int32)])
+        replay = []
+        return forward(LMInput.Text(tokens: fed)).logits[0..., (fed.dim(0) - tokens.dim(0))..., 0...]
+    }
+
     private mutating func sample(_ logits: MLXArray) -> MLXArray {
         let processed = processor?.process(logits: logits) ?? logits
         let token = sampler.sample(logits: processed)
@@ -175,7 +182,7 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
     private mutating func step(_ token: MLXArray) -> DecodedStep {
         verifyCalls += 1
         verified += 1
-        let logits = forward(LMInput.Text(tokens: token)).logits[0..., -1, 0...]
+        let logits = forwardAfterReplay(token)[0..., -1, 0...]
         return DecodedStep(token: sample(logits), successor: recyclesTokens ? argMax(logits, axis: -1) : nil)
     }
 
@@ -195,8 +202,8 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
         let fed = [history[history.count - 1]] + draft
         let recurrent = cache.compactMap { $0 as? MambaCache }
         let checkpoints = recurrent.map { (conv: $0[0], state: $0[1], offset: $0.offset) }
-        let logits = forward(LMInput.Text(tokens: MLXArray(fed.map(Int32.init))))
-            .logits[0, 0..., 0...]
+        let replayed = replay
+        let logits = forwardAfterReplay(MLXArray(fed.map(Int32.init)))[0, 0..., 0...]
 
         var emitted: [Int] = []
         if processor == nil, sampler is ArgMaxSampler {
@@ -221,13 +228,16 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
         if recurrent.isEmpty {
             trimPromptCache(cache, numTokens: draft.count - acceptedDrafts)
         } else if acceptedDrafts < draft.count {
-            for layer in cache where layer.isTrimmable { layer.trim(fed.count) }
+            for layer in cache where layer.isTrimmable { layer.trim(replayed.count + fed.count) }
             for (layer, checkpoint) in zip(recurrent, checkpoints) {
                 layer[0] = checkpoint.conv
                 layer[1] = checkpoint.state
                 layer.offset = checkpoint.offset
             }
-            _ = forward(LMInput.Text(tokens: MLXArray(fed[...acceptedDrafts].map(Int32.init))))
+            replay = replayed + fed[...acceptedDrafts]
+            if replay.count > Self.draftLimit {
+                _ = forwardAfterReplay(MLXArray([Int32]()))
+            }
             replayRounds += 1
             replayedTokens += acceptedDrafts + 1
         }
