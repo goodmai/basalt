@@ -253,7 +253,8 @@ struct ZonedKVCacheBenchmarkTests {
     }
 
     func run(repo: String, directory: URL, steps: Set<String>, corpus: String?, log: Log) async {
-        let engine = MLXInferenceEngine(gpuCacheLimit: 0, kvPrecision: .k8v4, kvZones: .standard)
+        let engineZones = KVZones.standard.evicting(Double(Self.env["BASALT_ZONED_ENGINE_EVICT"] ?? "0") ?? 0)
+        let engine = MLXInferenceEngine(gpuCacheLimit: 0, kvPrecision: .k8v4, kvZones: engineZones)
         do {
             try await engine.load(modelPath: directory.path)
         } catch {
@@ -335,7 +336,7 @@ struct ZonedKVCacheBenchmarkTests {
                     return "libraryKVBits=\(sentBits.map(String.init) ?? "nil") promptTokens=\(response.promptTokens) text=\(response.generatedText.prefix(80).debugDescription)"
                 }
             }
-            log.line("FALLBACK \(repo) zonesApply=\(await engine.supportsKVZones) k8v4TextEqualsQ8=\(texts[.k8v4] != nil && texts[.k8v4] == texts[.q8])")
+            log.line("FALLBACK \(repo) zonesApply=\(await engine.supportsKVZones) evictedMiddleFraction=\(engineZones.evictedMiddleFraction) k8v4TextEqualsQ8=\(texts[.k8v4] != nil && texts[.k8v4] == texts[.q8])")
         }
         if steps.contains("greedy") {
             for length in Self.list("BASALT_ZONED_GREEDY_LENGTHS", default: "1000,16000").compactMap({ Int($0) }) {
