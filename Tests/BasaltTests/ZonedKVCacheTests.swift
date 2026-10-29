@@ -464,13 +464,14 @@ extension ZonedKVCacheTests {
         #expect(cache.evictedCount > 0)
     }
 
-    @Test("A chunk longer than the recent window never evicts its own tokens, so the causal mask over the chunk still lines up with positions")
+    @Test("A chunk longer than the recent window lands in position order with none of its tokens evicted, so the causal mask over the chunk lines up")
     func chunkLongerThanWindowKeepsItsOwnTokens() {
         let cache = ZonedKVCache(zones: Self.evicting, precision: .q8)
         Self.fed(cache, 30, seed: 171)
         let chunk = Self.tokens(20, seed: 173)
         let (k, _) = cache.update(keys: chunk, values: chunk)
         #expect(cache.offset == 50)
+        #expect(cache.evictionRefused)
         let chunkInMiddle = 20 - cache.windowCount
         #expect(chunkInMiddle > 0, "the fixture must push part of the chunk into the middle")
         let stored = k.dim(2)
