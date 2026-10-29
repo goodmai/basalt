@@ -129,7 +129,7 @@ public actor MLXInferenceEngine: InferenceEngine {
         modelAttendsThroughZones = probed.attendsThroughCache
         valueRotationUnavailable = modelAttendsThroughZones && precision.rotatesValues && !probed.rotatesValues
         if !modelAttendsThroughZones {
-            logger.warn("--kv-zones does not apply to this model: its attention reads the whole cache through update(), or its head dimension has no quantization group. Its quantized requests use uniform --kv-bits, k8v4 as 8-bit.")
+            logger.warn("--kv-zones does not apply to this model: its attention reads the whole cache through update(), or its head dimension has no quantization group. Its quantized requests use uniform --kv-bits, k8v4 as 8-bit\((kvZones?.evictedMiddleFraction ?? 0) > 0 ? ", and --kv-evict keeps every token" : "").")
         } else if valueRotationUnavailable {
             logger.warn("--kv-bits \(precision) cannot rotate this model's value heads: the Hadamard transform is its own inverse only for head dimensions 2^k and 12·2^k. It runs as k8v4.")
         }

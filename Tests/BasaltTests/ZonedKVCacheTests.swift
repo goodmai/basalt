@@ -383,12 +383,27 @@ extension ZonedKVCacheTests {
         return tokens(count, seed: seed) * perToken
     }
 
+    @discardableResult
+    static func fed(_ cache: ZonedKVCache, keys: MLXArray, values: MLXArray, chunk: Int = 4) -> (MLXArray, MLXArray) {
+        var last = (keys, values)
+        for start in stride(from: 0, to: keys.dim(2), by: chunk) {
+            let rows = start..<min(keys.dim(2), start + chunk)
+            last = cache.update(keys: keys[.ellipsis, rows, 0...], values: values[.ellipsis, rows, 0...])
+        }
+        return last
+    }
+
+    @discardableResult
+    static func fed(_ cache: ZonedKVCache, _ count: Int, seed: UInt64) -> (MLXArray, MLXArray) {
+        fed(cache, keys: tokens(count, seed: seed), values: tokens(count, seed: seed + 1))
+    }
+
     static func lowestNormRows(_ keys: MLXArray, head: Int, among rows: Range<Int>, keeping kept: Int) -> [Int] {
         let norms = (keys[0, head, rows, 0...].asType(.float32).square().sum(axis: -1)).asArray(Float.self)
         return Array(norms.indices.sorted { norms[$0] < norms[$1] }.prefix(kept)).sorted().map { $0 + rows.lowerBound }
     }
 
-    @Test("Eviction keeps, per KV head, the middle tokens whose keys have the lowest L2 norm, in position order, and quantizes only them")
+    @Test("Eviction keeps, per KV head and per migration step, the middle tokens whose keys have the lowest L2 norm, in position order, and quantizes only them")
     func evictionKeepsLowestKeyNormRowsPerHead() {
         let cache = ZonedKVCache(zones: Self.evicting, precision: .q8)
         let scales: [[Float]] = [
@@ -397,7 +412,7 @@ extension ZonedKVCacheTests {
         ]
         let keys = Self.scaledTokens(20, seed: 101, scales: scales)
         let values = Self.tokens(20, seed: 102)
-        let (k, v) = cache.update(keys: keys, values: values)
+        let (k, v) = Self.fed(cache, keys: keys, values: values)
         #expect(Self.counts(cache) == [4, 4, 8] as [Int])
         #expect(cache.evictedCount == 4)
         #expect(cache.storedCount == 16)
@@ -405,7 +420,8 @@ extension ZonedKVCacheTests {
         #expect(k.shape == [1, Self.kvHeads, 16, Self.dim] && v.shape == k.shape)
         var keptSets = [[Int]]()
         for head in 0..<Self.kvHeads {
-            let kept = Self.lowestNormRows(keys, head: head, among: 4..<12, keeping: 4)
+            let kept = Self.lowestNormRows(keys, head: head, among: 4..<8, keeping: 2)
+                + Self.lowestNormRows(keys, head: head, among: 8..<12, keeping: 2)
             keptSets.append(kept)
             let rows = MLXArray(kept.map(Int32.init))
             let expectedKeys = Self.roundTripped(keys[0..., head..<(head + 1), 0..., 0...].take(rows, axis: 2), bits: 8)
@@ -424,7 +440,7 @@ extension ZonedKVCacheTests {
         let zones = Self.zones.evicting(fraction)
         let cache = ZonedKVCache(zones: zones, precision: .q4)
         var seen = 0
-        for (step, count) in [3, 12, 1, 30, 5, 7, 64, 2].enumerated() {
+        for (step, count) in [3, 12, 1, 8, 5, 7, 8, 2, 6, 8, 8, 4].enumerated() {
             _ = cache.update(keys: Self.tokens(count, seed: UInt64(200 + step)), values: Self.tokens(count, seed: UInt64(300 + step)))
             seen += count
             let middleSeen = cache.quantizedCount + cache.evictedCount
@@ -436,11 +452,29 @@ extension ZonedKVCacheTests {
         #expect(cache.evictedCount > 0)
     }
 
+    @Test("A chunk longer than the recent window never evicts its own tokens, so the causal mask over the chunk still lines up with positions")
+    func chunkLongerThanWindowKeepsItsOwnTokens() {
+        let cache = ZonedKVCache(zones: Self.evicting, precision: .q8)
+        Self.fed(cache, 30, seed: 171)
+        let chunk = Self.tokens(20, seed: 173)
+        let (k, _) = cache.update(keys: chunk, values: chunk)
+        #expect(cache.offset == 50)
+        let chunkInMiddle = 20 - cache.windowCount
+        #expect(chunkInMiddle > 0, "the fixture must push part of the chunk into the middle")
+        let stored = k.dim(2)
+        let chunkRows = k[.ellipsis, (stored - 20)..., 0...]
+        let expected = concatenated([
+            Self.roundTripped(chunk[.ellipsis, ..<chunkInMiddle, 0...], bits: 8), chunk[.ellipsis, chunkInMiddle..., 0...],
+        ], axis: 2)
+        #expect(Self.maxDifference(chunkRows, expected) == 0)
+    }
+
     @Test("With eviction off the cache keeps every token, as before")
     func zeroFractionEvictsNothing() {
         let cache = ZonedKVCache(zones: Self.zones.evicting(0), precision: .q8)
-        _ = cache.update(keys: Self.tokens(46, seed: 111), values: Self.tokens(46, seed: 112))
-        #expect(Self.counts(cache) == [4, 34, 8] as [Int])
+        Self.fed(cache, 46, seed: 111)
+        #expect(Self.counts(cache) == [4, 32, 10] as [Int])
+        #expect(cache.storedCount == cache.offset)
         #expect(cache.evictedCount == 0)
         #expect(cache.isTrimmable)
     }
@@ -448,7 +482,7 @@ extension ZonedKVCacheTests {
     @Test("After eviction, decode attention over the kept tokens equals fused attention over the same kept keys and values", arguments: precisions)
     func decodeAfterEvictionMatchesFusedReference(precision: KVPrecision) {
         let cache = ZonedKVCache(zones: Self.evicting, precision: precision)
-        _ = cache.update(keys: Self.tokens(37, seed: 121), values: Self.tokens(37, seed: 122))
+        Self.fed(cache, 37, seed: 121)
         let (newKey, newValue) = (Self.tokens(1, seed: 123), Self.tokens(1, seed: 124))
         let reference = cache.copy()
         let (allKeys, allValues) = reference.update(keys: newKey, values: newValue)
@@ -463,7 +497,7 @@ extension ZonedKVCacheTests {
     @Test("After eviction, an array mask spans the stored tokens, not the logical offset, and prefill through it equals the causal reference even when the same update evicts")
     func arrayMaskAfterEvictionSpansStoredTokens() {
         let cache = ZonedKVCache(zones: Self.evicting, precision: .q8)
-        _ = cache.update(keys: Self.tokens(30, seed: 131), values: Self.tokens(30, seed: 132))
+        Self.fed(cache, 30, seed: 131)
         #expect(cache.evictedCount > 0)
         guard case .array(let mask) = cache.makeMask(n: 5, windowSize: nil, returnArray: true) else {
             Issue.record("returnArray asks for an array mask")
@@ -481,7 +515,7 @@ extension ZonedKVCacheTests {
     @Test("Once tokens are evicted the cache is not trimmable and a trim never reaches past the recent window")
     func evictedCacheTrimsOnlyTheWindow() {
         let cache = ZonedKVCache(zones: Self.evicting, precision: .q8)
-        _ = cache.update(keys: Self.tokens(30, seed: 141), values: Self.tokens(30, seed: 142))
+        Self.fed(cache, 30, seed: 141)
         let (window, middle, offset) = (cache.windowCount, cache.quantizedCount, cache.offset)
         #expect(!cache.isTrimmable)
         #expect(cache.trim(window + 5) == window)
@@ -492,7 +526,7 @@ extension ZonedKVCacheTests {
     @Test("A copy keeps the evicted count, so its next RoPE position is the same")
     func copyKeepsEvictedCount() {
         let cache = ZonedKVCache(zones: Self.evicting, precision: .q8)
-        _ = cache.update(keys: Self.tokens(30, seed: 151), values: Self.tokens(30, seed: 152))
+        Self.fed(cache, 30, seed: 151)
         let copied = cache.copy()
         #expect(copied.offset == cache.offset)
         #expect((copied as? ZonedKVCache)?.evictedCount == cache.evictedCount)
