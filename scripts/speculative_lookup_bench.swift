@@ -3,7 +3,7 @@ import Foundation
 
 let usage = """
     Usage:
-      ./scripts/speculative_lookup_bench.swift [--models repo,repo] [--workloads name,name] [--runs N] [--tokens N] [--variant label=binary]...
+      ./scripts/speculative_lookup_bench.swift [--models repo,repo] [--workloads name,name] [--modes off,on,recycling] [--runs N] [--tokens N] [--max-idle-gpu PERCENT] [--variant label=binary]...
 
     Prompt-lookup speculative decoding against plain decoding, per model: workloads
     code edit, prose and reasoning, temperatures 0 and 0.7, lookup off, on, and on
@@ -14,8 +14,10 @@ let usage = """
     Options:
       --models     comma-separated HF repo ids (default: \(Options().models.joined(separator: ",")))
       --workloads  comma-separated workloads from benchmarks/speculative-lookup (default: \(Options().workloads.joined(separator: ",")))
+      --modes      comma-separated lookup modes from off, on, recycling; off and on are required (default: off,on,recycling)
       --runs       timed iterations per cell (default: 3)
       --tokens     tokens generated per iteration (default: 300)
+      --max-idle-gpu  a cell waits until GPU utilization, the highest of 3 samples a second apart, is at most this percent (default: 35)
       --variant    another PerformanceBenchmark binary, run with lookup on next to the one built
                    from this checkout; labels are unique and not on, off or recycling
       -h, --help   show this help
@@ -24,8 +26,10 @@ let usage = """
 struct Options {
     var models = ["mlx-community/Qwen3-4B-4bit", "mlx-community/Meta-Llama-3.1-8B-Instruct-4bit"]
     var workloads = ["code", "prose", "reasoning"]
+    var modes = ["off", "on", "recycling"]
     var runs = 3
     var tokens = 300
+    var maxIdleGPU = 35
     var variants: [(label: String, binary: String)] = []
 }
 
@@ -42,8 +46,14 @@ func parse(_ arguments: [String]) -> Options? {
         case "--workloads":
             options.workloads = value.split(separator: ",").map { trimmed(String($0)) }.filter { !$0.isEmpty }
             guard !options.workloads.isEmpty, Set(options.workloads).count == options.workloads.count else { return nil }
+        case "--modes":
+            options.modes = value.split(separator: ",").map { trimmed(String($0)) }.filter { !$0.isEmpty }
+            guard Set(options.modes).count == options.modes.count, Set(options.modes).isSubset(of: ["off", "on", "recycling"]),
+                  options.modes.contains("off"), options.modes.contains("on")
+            else { return nil }
         case "--runs": guard let runs = Int(value), runs > 0 else { return nil }; options.runs = runs
         case "--tokens": guard let tokens = Int(value), tokens > 0 else { return nil }; options.tokens = tokens
+        case "--max-idle-gpu": guard let percent = Int(value), (0 ... 100).contains(percent) else { return nil }; options.maxIdleGPU = percent
         case "--variant":
             let parts = value.split(separator: "=", maxSplits: 1).map(String.init)
             guard parts.count == 2, !["on", "off", "recycling"].contains(parts[0]),
@@ -68,6 +78,7 @@ let lockDirectory = "/private/tmp/basalt-gpu.lock"
 let pid = ProcessInfo.processInfo.processIdentifier
 let ownerLine = String(pid)
 let maxLoad = 8.0
+let maxIdleGPU = options.maxIdleGPU
 let stamp = ISO8601DateFormatter().string(from: Date())
 let logPath = repo + "/logs/speculative_lookup_bench-\(stamp.replacingOccurrences(of: ":", with: "")).log"
 try? FileManager.default.createDirectory(atPath: repo + "/logs", withIntermediateDirectories: true)
@@ -192,15 +203,33 @@ let signalSources = [SIGINT, SIGTERM, SIGHUP].map { signalNumber in
 struct Host {
     let load: Double
     let ciRunning: Bool
-    var quiet: Bool { load <= maxLoad && !ciRunning }
-    var text: String { String(format: "load=%.2f ci=%@", load, ciRunning ? "yes" : "no") }
+    let gpu: Int
+    var quiet: Bool { calm && gpu <= maxIdleGPU }
+    var calm: Bool { load <= maxLoad && !ciRunning }
+    var text: String { String(format: "load=%.2f ci=%@ gpu=%d%%", load, ciRunning ? "yes" : "no", gpu) }
+}
+
+func gpuUtilization() -> Int {
+    let result = run("/usr/sbin/ioreg", ["-r", "-d", "1", "-c", "IOAccelerator"])
+    guard result.status == 0, let key = result.output.range(of: "\"Device Utilization %\"="),
+          let percent = Int(result.output[key.upperBound...].prefix { $0.isNumber })
+    else {
+        fail("gpu utilization", "ioreg exit=\(result.status) has no Device Utilization %: \(result.output.prefix(300))")
+        releaseLock()
+        exit(1)
+    }
+    return percent
 }
 
 func host() -> Host {
     let raw = run("/usr/sbin/sysctl", ["-n", "vm.loadavg"]).output
     let load = raw.split(separator: " ").compactMap { Double($0) }.first ?? .infinity
     let ci = run("/usr/bin/pgrep", ["-x", "Runner.Worker"]).status == 0
-    return Host(load: load, ciRunning: ci)
+    let gpu = (0 ..< 3).map { sample -> Int in
+        if sample > 0 { Thread.sleep(forTimeInterval: 1) }
+        return gpuUtilization()
+    }.max() ?? 0
+    return Host(load: load, ciRunning: ci, gpu: gpu)
 }
 
 func waitForQuietHost() {
@@ -271,7 +300,7 @@ func measure(_ cell: Cell, model: String, binary: String, prompt: String, pass: 
         .map { $0.split(separator: " ").dropFirst().joined(separator: " ") } ?? "no drafts"
     let output = result.output.components(separatedBy: "--- OUTPUT ---").last?
         .components(separatedBy: "--- END OUTPUT ---").first ?? ""
-    let valid = before.quiet && after.quiet && sigma / tps <= 0.03
+    let valid = before.quiet && after.calm && sigma / tps <= 0.03
     log("result \(step) \(valid ? "valid" : "INVALID") tps=\(tps) sigma=\(sigma) \(accepted) before:\(before.text) after:\(after.text)")
     return Measurement(tps: tps, sigma: sigma, accepted: accepted, output: output, valid: valid)
 }
@@ -286,7 +315,7 @@ let commit = trimmed(run("/usr/bin/git", ["rev-parse", "HEAD"]).output)
 let dirty = !trimmed(run("/usr/bin/git", ["status", "--porcelain", "--untracked-files=no"]).output).isEmpty
 let chip = trimmed(run("/usr/sbin/sysctl", ["-n", "machdep.cpu.brand_string"]).output)
 let memory = (Int64(trimmed(run("/usr/sbin/sysctl", ["-n", "hw.memsize"]).output)) ?? 0) >> 30
-log("start commit=\(commit)\(dirty ? " (dirty)" : "") machine=\(chip) \(memory)GB os=\(ProcessInfo.processInfo.operatingSystemVersionString) runs=\(options.runs) tokens=\(options.tokens) variants=\(options.variants.map { "\($0.label)=\($0.binary)" }) log=\(logPath)")
+log("start commit=\(commit)\(dirty ? " (dirty)" : "") machine=\(chip) \(memory)GB os=\(ProcessInfo.processInfo.operatingSystemVersionString) runs=\(options.runs) tokens=\(options.tokens) maxIdleGPU=\(options.maxIdleGPU)% modes=\(options.modes) variants=\(options.variants.map { "\($0.label)=\($0.binary)" }) log=\(logPath)")
 
 for product in ["PerformanceBenchmark", "Basalt"] {
     log("build release \(product)")
@@ -315,7 +344,7 @@ for workload in options.workloads {
 var cells: [Cell] = []
 for workload in options.workloads {
     for temperature in ["0", "0.7"] {
-        for mode in ["off", "on", "recycling"] + options.variants.map(\.label) {
+        for mode in options.modes + options.variants.map(\.label) {
             cells.append(Cell(workload: workload, temperature: temperature, mode: mode))
         }
     }
@@ -346,15 +375,16 @@ for model in options.models {
         for temperature in ["0", "0.7"] {
             func cell(_ mode: String) -> Cell { Cell(workload: workload, temperature: temperature, mode: mode) }
             func pair(_ mode: String, over base: String) -> String {
-                [1, 2].map { ratio(results[$0]?[cell(mode)], results[$0]?[cell(base)]) }.joined(separator: ", ")
+                guard cells.contains(cell(mode)) else { return "not run" }
+                return [1, 2].map { ratio(results[$0]?[cell(mode)], results[$0]?[cell(base)]) }.joined(separator: ", ")
             }
-            let lookupModes = ["on", "recycling"] + options.variants.map(\.label)
+            let lookupModes = options.modes.filter { $0 != "off" } + options.variants.map(\.label)
             let sameText = [1, 2].allSatisfy { pass in
                 guard let off = results[pass]?[cell("off")] else { return false }
                 return lookupModes.allSatisfy { results[pass]?[cell($0)]?.output == off.output }
             }
             let alpha = results[1]?[cell("on")]?.accepted ?? "n/a"
-            let recycledAlpha = results[1]?[cell("recycling")]?.accepted ?? "n/a"
+            let recycledAlpha = options.modes.contains("recycling") ? results[1]?[cell("recycling")]?.accepted ?? "n/a" : "not run"
             summary.append("| \(workload) | \(temperature) | \(pair("on", over: "off")) | \(pair("recycling", over: "on")) | \(alpha) | \(recycledAlpha) | \(sameText) |"
                 + options.variants.map { " \(pair($0.label, over: "on")) |" }.joined())
         }
@@ -362,7 +392,7 @@ for model in options.models {
 }
 
 summary.append("")
-summary.append("* a cell in the ratio was INVALID: σ above 3% of the mean, or load above \(maxLoad) or a CI job before or after it")
+summary.append("* a cell in the ratio was INVALID: σ above 3% of the mean, or load above \(maxLoad), a CI job or idle GPU utilization above \(options.maxIdleGPU)% before it, or load or a CI job after it")
 for line in summary { log("summary \(line)") }
 log("done failures=\(failures)")
 exit(failures == 0 ? 0 : 1)

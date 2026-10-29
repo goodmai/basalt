@@ -122,4 +122,36 @@ Llama-3.1-8B-Instruct-4bit at the same commit (`logs/speculative_lookup_bench-20
 | Llama-3.1-8B-Instruct-4bit | reasoning | 0 | 0.84×, 1.10×\* | 1.02×, 1.54×\* | 0.128 | 0.146 |
 | Llama-3.1-8B-Instruct-4bit | reasoning | 0.7 | 1.29×\*, 0.49×\* | 0.89×\*, 1.02×\* | 0.053 | 0.232 |
 
+Recurrent hybrids (#162): lookup runs on dense hybrids, whose `MambaCache` layers are snapshotted by reference before each verify and, after a rejection, restored and replayed with the accepted tokens. Hybrids with expert routing stay on plain decoding. Same settings as above. `*` marks a ratio with an invalid cell: σ above 3% of the mean, or idle GPU utilization above 35% before the cell (`--max-idle-gpu` sets the threshold; an unreadable `ioreg` stops the run). On this host most cells were invalid. The machine ran on AC with its battery at 8% and not charging, and plain decoding swung up to 2× between neighbouring cells. So read every row as a range.
+
+Final head `186beb9` (eager replay; a replayed round counts one accepted draft less; a failed replayed round pauses 4 … 256 tokens; a 4-token probe comes before the 16-token draft). Log: `logs/speculative_lookup_bench-2026-10-29T222027Z.log`.
+
+| model | workload | T | on / off (pass 1, pass 2) | α on | same text as off |
+|---|---|---|---|---|---|
+| Ornith-1.5-9B-MLX-4bit (qwen3_5) | code | 0 | 2.57×, 3.18×\* | 0.931 | yes |
+| Ornith-1.5-9B-MLX-4bit | code | 0.7 | 2.41×, 3.80×\* | 0.931 | yes |
+| Ornith-1.5-9B-MLX-4bit | prose | 0 | 0.99×, 0.99× | 0 (0 of 12) | yes |
+| Ornith-1.5-9B-MLX-4bit | prose | 0.7 | 1.00×\*, 1.00× | no drafts | yes |
+| Ornith-1.5-9B-MLX-4bit | reasoning | 0 | 0.89×, 0.89× | 0.171 | no |
+| Ornith-1.5-9B-MLX-4bit | reasoning | 0.7 | 0.94×, 0.94× | 0.115 | no |
+| NVIDIA-Nemotron-3-Nano-4B-4bit (nemotron_h) | code | 0 | 2.95×\*, 6.19×\* | 0.965 | yes |
+| NVIDIA-Nemotron-3-Nano-4B-4bit | code | 0.7 | 3.11×\*, 2.92×\* | 0.965 | yes |
+| NVIDIA-Nemotron-3-Nano-4B-4bit | prose | 0 | 1.02×\*, 0.97×\* | 0.350 | yes |
+| NVIDIA-Nemotron-3-Nano-4B-4bit | prose | 0.7 | 0.97×\*, 0.64×\* | 0.062 | yes |
+| NVIDIA-Nemotron-3-Nano-4B-4bit | reasoning | 0 | 0.93×\*, 1.30×\* | 0.224 | yes |
+| NVIDIA-Nemotron-3-Nano-4B-4bit | reasoning | 0.7 | 0.89×\*, 0.92×\* | 0.198 | yes |
+| NVIDIA-Nemotron-Nano-9B-v2-4bits (nemotron_h) | code | 0 | 4.77×\*, 3.66× | 0.965 | yes |
+| NVIDIA-Nemotron-Nano-9B-v2-4bits | code | 0.7 | 3.62×, 3.59× | 0.965 | yes |
+| NVIDIA-Nemotron-Nano-9B-v2-4bits | prose | 0 | 1.04×\*, 1.15×\* | no drafts | yes |
+| NVIDIA-Nemotron-Nano-9B-v2-4bits | prose | 0.7 | 0.96×\*, 0.57×\* | no drafts | yes |
+| NVIDIA-Nemotron-Nano-9B-v2-4bits | reasoning | 0 | 0.90×\*, 0.94×\* | 0.138 | yes |
+| NVIDIA-Nemotron-Nano-9B-v2-4bits | reasoning | 0.7 | 0.90×\*, 0.89×\* | 0.183 | no |
+| LFM2.5-8B-A1B-MLX-4bit (lfm2_moe, excluded) | all | 0 / 0.7 | 0.94×\*–1.06×\* | no drafts | yes |
+
+The 0.57× and 0.64× prose cells at T 0.7 are host swings, not lookup cost. The Nemotron-9B one drafted nothing, so both of its sides ran the same computation. Earlier, at `0044efa`, the Nemotron-4B prose T 0.7 cell measured 0.94× (valid) and 0.97×\* (`logs/speculative_lookup_bench-2026-10-29T210131Z.log`).
+
+With no drafts, the lookup iterator decodes as fast as plain decoding on a hybrid. Nemotron-Nano-9B-v2 prose at `da60a42`, 5 runs per cell: 1.00× and 0.99× at T 0, 0.98× and 0.99× at T 0.7 (`logs/speculative_lookup_bench-2026-10-29T173645Z.log`). An earlier 0.77× there came from a video call sharing the GPU.
+
+On reasoning, lookup is below plain decoding on hybrids as it is on Qwen3-4B (0.80–0.86× above). Each failed round on a hybrid also pays a replay forward. That is why replayed rounds back off harder and probe with 4 tokens first. On Nemotron-Nano-9B-v2 the backoff charge alone moved reasoning from 0.76× to 0.80–0.89× (`logs/speculative_lookup_bench-2026-10-29T180222Z.log`).
+
 "Same text as off" is what these runs observed, not a guarantee. Lookup spends exactly one sampler draw per emitted token, in plain-decoding order, so a seeded run follows plain decoding as long as the logits match. But a multi-token verify uses different matmul kernels than a one-token step, so on a quantized model a near-tie can flip, at T 0 and at T > 0 alike (#146). That happened on Qwen3-4B's greedy prose. The Qwen3-4B prose row at T 0.7 drafted nothing, so its "yes" shows nothing about lookup.

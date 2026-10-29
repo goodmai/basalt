@@ -4,6 +4,7 @@ import MLXLMCommon
 
 struct PromptLookupTokenIterator: TokenIteratorProtocol {
     static let draftLimit = 16
+    static let replayedProbeLimit = 4
     static let ngramSizes = [5, 4, 3]
     static let recycledDraftLimit = 6
 
@@ -14,6 +15,7 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
     let sampler: LogitSampler
     let maxTokens: Int?
     let recyclesTokens: Bool
+    let replaysRejections: Bool
     var tokenCount = 0
     var promptPrefillTime: TimeInterval = 0
 
@@ -31,9 +33,19 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
     private var accepted = 0
     private var verified = 0
     private var verifyCalls = 0
+    private(set) var replayRounds = 0
 
-    static func supports(_ cache: [KVCache]) -> Bool {
-        PromptCache(cache).isSharable
+    static func supports(_ cache: [KVCache], routesExperts: Bool) -> Bool {
+        PromptCache(cache).isSharable || (isReplayableHybrid(cache) && !routesExperts)
+    }
+
+    static func isReplayableHybrid(_ cache: [KVCache]) -> Bool {
+        cache.contains { $0 is MambaCache }
+            && cache.allSatisfy { $0 is MambaCache || type(of: $0) == KVCacheSimple.self }
+    }
+
+    static func routesExperts(_ model: any LanguageModel) -> Bool {
+        model.modules().contains { $0 is SwitchLinear }
     }
 
     init(
@@ -42,6 +54,7 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
         recyclesTokens: Bool = false
     ) throws {
         self.recyclesTokens = recyclesTokens
+        self.replaysRejections = Self.isReplayableHybrid(cache)
         self.model = model
         self.cache = cache
         self.state = state
@@ -135,7 +148,8 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
         let remaining = maxTokens.map { $0 - tokenCount } ?? Int.max
         let looksUp = backoffs.lookup.allowsDraft && state == nil
         let recycles = recyclesTokens && backoffs.recycling.allowsDraft && state == nil
-        let draft = looksUp ? Self.draft(after: history, limit: Swift.min(Self.draftLimit, remaining - 1)) : []
+        let limit = replaysRejections && backoffs.lookup.probing ? Self.replayedProbeLimit : Self.draftLimit
+        let draft = looksUp ? Self.draft(after: history, limit: Swift.min(limit, remaining - 1)) : []
         switch (inFlight, draft.isEmpty) {
         case (let step?, true) where recycles && recycling.predicts(after: history[history.count - 1]):
             if recycling.chain(from: step.token.item(Int.self), limit: 1).isEmpty {
@@ -186,6 +200,8 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
 
     private mutating func speculate(_ draft: [Int], recycled: Bool) {
         let fed = [history[history.count - 1]] + draft
+        let recurrent = cache.compactMap { $0 as? MambaCache }
+        let checkpoints = recurrent.map { (conv: $0[0], state: $0[1], offset: $0.offset) }
         let logits = forward(LMInput.Text(tokens: MLXArray(fed.map(Int32.init))))
             .logits[0, 0..., 0...]
 
@@ -209,13 +225,26 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
         }
 
         let acceptedDrafts = emitted.count - 1
-        trimPromptCache(cache, numTokens: draft.count - acceptedDrafts)
+        let replays = !recurrent.isEmpty && acceptedDrafts < draft.count
+        if recurrent.isEmpty {
+            trimPromptCache(cache, numTokens: draft.count - acceptedDrafts)
+        } else if replays {
+            for layer in cache where layer.isTrimmable { layer.trim(fed.count) }
+            for (layer, checkpoint) in zip(recurrent, checkpoints) {
+                layer[0] = checkpoint.conv
+                layer[1] = checkpoint.state
+                layer.offset = checkpoint.offset
+            }
+            _ = forward(LMInput.Text(tokens: MLXArray(fed[...acceptedDrafts].map(Int32.init))))
+            replayRounds += 1
+            verifyCalls += 1
+        }
         if recycled {
             recycledRounds += 1
             recycledDraftTokens += draft.count
             acceptedRecycledDrafts += acceptedDrafts
         }
-        backoffs.recordRound(recycled: recycled, acceptedDrafts: acceptedDrafts)
+        backoffs.recordRound(recycled: recycled, acceptedDrafts: acceptedDrafts, replayed: replays)
         rounds += 1
         drafted += draft.count
         accepted += acceptedDrafts
@@ -289,22 +318,26 @@ struct DrafterBackoffs {
         recycling.tick()
     }
 
-    mutating func recordRound(recycled: Bool, acceptedDrafts: Int) {
+    mutating func recordRound(recycled: Bool, acceptedDrafts: Int, replayed: Bool) {
         for _ in 0 ... acceptedDrafts {
             if recycled { lookup.tick() } else { recycling.tick() }
         }
+        let paidDrafts = replayed ? acceptedDrafts - 1 : acceptedDrafts
+        let pauseScale = replayed ? DraftBackoff.replayPauseScale : 1
         if recycled {
-            recycling.record(acceptedDrafts: acceptedDrafts)
+            recycling.record(acceptedDrafts: paidDrafts, pauseScale: pauseScale)
         } else {
-            lookup.record(acceptedDrafts: acceptedDrafts)
+            lookup.record(acceptedDrafts: paidDrafts, pauseScale: pauseScale)
         }
     }
 }
 
 struct DraftBackoff {
     static let longestPause = 64
+    static let replayPauseScale = 4
 
     private(set) var pause = 0
+    private(set) var probing = true
     private var nextPause = 1
 
     var allowsDraft: Bool { pause == 0 }
@@ -313,11 +346,12 @@ struct DraftBackoff {
         pause = Swift.max(0, pause - 1)
     }
 
-    mutating func record(acceptedDrafts: Int) {
+    mutating func record(acceptedDrafts: Int, pauseScale: Int = 1) {
+        probing = acceptedDrafts <= 0
         if acceptedDrafts > 0 {
             nextPause = 1
         } else {
-            pause = nextPause
+            pause = nextPause * pauseScale
             nextPause = Swift.min(nextPause * 2, Self.longestPause)
         }
     }
