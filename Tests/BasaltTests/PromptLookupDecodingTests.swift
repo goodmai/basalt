@@ -336,6 +336,20 @@ struct PromptLookupDecodingTests {
         #expect(backoff.pause == 1)
     }
 
+    @Test("A failed round that also paid a replay forward pauses four times longer, still doubling: 4, 8 … 256 tokens")
+    func replayedFailuresPauseLonger() {
+        var backoffs = DrafterBackoffs()
+        var pauses: [Int] = []
+        for _ in 0 ..< 8 {
+            backoffs.recordRound(recycled: false, acceptedDrafts: 1, replayed: true)
+            pauses.append(backoffs.lookup.pause)
+            while !backoffs.lookup.allowsDraft { backoffs.tick() }
+        }
+        #expect(pauses == [4, 8, 16, 32, 64, 128, 256, 256])
+        backoffs.recordRound(recycled: false, acceptedDrafts: 2, replayed: true)
+        #expect(backoffs.lookup.allowsDraft)
+    }
+
     @Test("On a hybrid a round that accepts one draft and then replays does not pay for its extra forward, so lookup backs off; a dense model keeps drafting")
     func hybridBacksOffWhenTheReplayEatsTheGain() throws {
         let cycles = (0 ..< 20).flatMap { [1, 2, 3, 4, 5, 20 + $0] }

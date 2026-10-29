@@ -320,16 +320,18 @@ struct DrafterBackoffs {
             if recycled { lookup.tick() } else { recycling.tick() }
         }
         let paidDrafts = replayed ? acceptedDrafts - 1 : acceptedDrafts
+        let pauseScale = replayed ? DraftBackoff.replayPauseScale : 1
         if recycled {
-            recycling.record(acceptedDrafts: paidDrafts)
+            recycling.record(acceptedDrafts: paidDrafts, pauseScale: pauseScale)
         } else {
-            lookup.record(acceptedDrafts: paidDrafts)
+            lookup.record(acceptedDrafts: paidDrafts, pauseScale: pauseScale)
         }
     }
 }
 
 struct DraftBackoff {
     static let longestPause = 64
+    static let replayPauseScale = 4
 
     private(set) var pause = 0
     private var nextPause = 1
@@ -340,11 +342,11 @@ struct DraftBackoff {
         pause = Swift.max(0, pause - 1)
     }
 
-    mutating func record(acceptedDrafts: Int) {
+    mutating func record(acceptedDrafts: Int, pauseScale: Int = 1) {
         if acceptedDrafts > 0 {
             nextPause = 1
         } else {
-            pause = nextPause
+            pause = nextPause * pauseScale
             nextPause = Swift.min(nextPause * 2, Self.longestPause)
         }
     }
