@@ -100,4 +100,15 @@ Draft limit 16 against 8, both with lookup on, at commit `f9fa34b`:
 | Llama-3.1-8B-Instruct-4bit | code | 0.7 | 1.45×, 1.48× |
 | Llama-3.1-8B-Instruct-4bit | prose | 0 / 0.7 | 1.00×, 1.00× |
 
+Token Recycling (`--speculative-recycling`, #38) adds a `recycling` mode to the runner: lookup on, plus chains of recycled argmax successors when no n-gram matches. The reasoning workload is a step-by-step arithmetic word problem. Commit `fb4d56e`, same settings as above; the log is `logs/speculative_lookup_bench-2026-10-29T120031Z.log`.
+
+| model | workload | T | on / off (pass 1, pass 2) | recycling / on (pass 1, pass 2) | α on | α recycling |
+|---|---|---|---|---|---|---|
+| Qwen3-4B-4bit | code | 0 | 2.51×\*, 3.85× | 0.82×\*, 1.01× | 0.986 | 0.986 |
+| Qwen3-4B-4bit | code | 0.7 | 3.45×\*, 3.04×\* | 1.11×\*, 1.20×\* | 0.986 | 0.986 |
+| Qwen3-4B-4bit | prose | 0 | 1.03×\*, 1.04×\* | 1.01×, 0.99× | 0 (0 of 48) | 0 (0 of 48) |
+| Qwen3-4B-4bit | prose | 0.7 | 1.00×, 1.00× | 0.99×, 0.97× | no drafts | 0 (0 of 3) |
+| Qwen3-4B-4bit | reasoning | 0 | 0.85×, 0.80× | 1.15×, 1.02× | 0.055 | 0.070 |
+| Qwen3-4B-4bit | reasoning | 0.7 | 0.86×, 0.82× | 1.04×, 1.04× | 0.096 | 0.148 |
+
 "Same text as off" is what these runs observed, not a guarantee. Lookup spends exactly one sampler draw per emitted token, in plain-decoding order, so a seeded run follows plain decoding as long as the logits match. But a multi-token verify uses different matmul kernels than a one-token step, so on a quantized model a near-tie can flip, at T 0 and at T > 0 alike (#146). That happened on Qwen3-4B's greedy prose. The Qwen3-4B prose row at T 0.7 drafted nothing, so its "yes" shows nothing about lookup.
