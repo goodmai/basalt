@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Memory
+- Experimental `--kv-evict F` with `--kv-zones` (on `serve` and `models check`) (#43): as tokens migrate from the recent window into the zoned cache's quantized middle, each full-attention layer drops the fraction `F` of them whose keys have the largest L2 norm, per KV head, before quantizing (arXiv:2406.11430). Fast attention stays on; `KVCacheGeometry`, `models check` and the orchestrator's room count only the kept tokens. After a 16k prompt with k8v4, Qwen3-4B holds 0.89 GB of KV at 0.25 and 0.66 GB at 0.5 instead of 1.11 GB. Quality drops: perplexity 6.71 / 7.04 against 6.56 on Qwen3-4B, 9.06 / 9.52 against 8.75 on LFM2.5-8B, unchanged on Ornith-1.5-9B; 16k passkey at five depths 4/5 at both fractions on Qwen3-4B (5/5 without), 4/5 and 3/5 on Ornith (4/5 without). Gemma 4 is excluded with the zones, and a model that prefills more than the recent window in one pass (checked at load) keeps every token and is sized so; `models check` and `serve --dry-run` print the fraction the budget assumes.
+
 ## 0.7.0 — 2026-10-29
 
 ### Upgrading from 0.6.0

@@ -59,6 +59,9 @@ struct ServeCommand: AsyncParsableCommand {
     @Flag(name: .customLong("kv-zones"), help: KVBitsSetting.zonesHelp)
     var kvZones: Bool = false
 
+    @Option(name: .customLong("kv-evict"), help: KVBitsSetting.evictHelp)
+    var kvEvict: Double?
+
     @Option(name: .customLong("repetition-penalty"), help: "Penalty on recently emitted tokens, e.g. 1.1 (default: off)")
     var repetitionPenalty: Float?
 
@@ -369,7 +372,7 @@ struct ServeCommand: AsyncParsableCommand {
         guard (0...1).contains(cacheBlendRatio) else {
             throw ValidationError("--cache-blend-ratio must be between 0 and 1, got \(cacheBlendRatio)")
         }
-        try KVBitsSetting.validate(zones: kvZones, bits: kvBits)
+        try KVBitsSetting.validate(zones: kvZones, bits: kvBits, evict: kvEvict)
     }
 
     mutating func run() async throws {
@@ -379,7 +382,7 @@ struct ServeCommand: AsyncParsableCommand {
             let evaluator = MemoryEvaluator()
             log("🔍 Performing dry-run memory assessment for \(bold(targetModel))…")
             let assessment = await evaluator.evaluate(
-                modelId: targetModel, kvPrecision: kvBits?.budgetPrecision, kvZones: KVBitsSetting.zones(kvZones))
+                modelId: targetModel, kvPrecision: kvBits?.budgetPrecision, kvZones: KVBitsSetting.zones(kvZones, evicting: kvEvict))
 
             fputs("\n  Model:           \(assessment.modelName) (\(assessment.modelId))\n", stderr)
             fputs("  Required RAM:    \(assessment.requiredRAMFormatted)\n", stderr)
@@ -388,6 +391,7 @@ struct ServeCommand: AsyncParsableCommand {
             fputs("  Fit Level:       \(assessment.fitLevel.emoji) \(assessment.fitLevel.rawValue)\n", stderr)
             fputs("  Context Budget:  \(assessment.contextBudgetLine)\n", stderr)
             if kvZones { fputs("  KV zones:        \(KVBitsSetting.zonesAssumption)\n", stderr) }
+            if let line = KVBitsSetting.evictionSizing(kvEvict) { fputs("  KV eviction:     \(line)\n", stderr) }
             fputs("\n", stderr)
 
             if let warning = assessment.warning {
@@ -456,7 +460,7 @@ struct ServeCommand: AsyncParsableCommand {
             reasoningEffort: reasoningEffort,
             promptCacheBytes: promptCacheMB.map { min(max(0, $0), 1 << 30) << 20 },
             kvPrecision: kvBits?.fixedPrecision,
-            kvZones: KVBitsSetting.zones(kvZones),
+            kvZones: KVBitsSetting.zones(kvZones, evicting: kvEvict),
             repetitionPenalty: repetitionPenalty,
             topK: topK,
             minP: minP,
@@ -472,7 +476,7 @@ struct ServeCommand: AsyncParsableCommand {
         }
         let orchestrator = ModelOrchestratorActor(
             engine: engine, maxTokens: config.maxTokens, kvPrecision: kvBits?.fixedPrecision, adaptiveKVPrecision: kvBits == .auto,
-            kvZones: KVBitsSetting.zones(kvZones), gate: GenerationGate(maxConcurrent: maxConcurrent, maxQueue: maxQueue), sessionLog: sessionLogWriter)
+            kvZones: KVBitsSetting.zones(kvZones, evicting: kvEvict), gate: GenerationGate(maxConcurrent: maxConcurrent, maxQueue: maxQueue), sessionLog: sessionLogWriter)
 
         log("Loading model from \(bold(resolvedPath))…")
         do {
@@ -681,13 +685,26 @@ enum KVBitsSetting: Equatable, ExpressibleByArgument {
 
     static let zonesAssumption = "assumed to apply; serve checks the model at load and sizes a model whose attention bypasses the zoned cache (Gemma 4) or whose head dimension has no quantization group as uniform --kv-bits, k8v4 as 8-bit"
 
-    static func zones(_ enabled: Bool) -> KVZones? {
-        enabled ? .standard : nil
+    static let evictHelp = ArgumentHelp(
+        "With --kv-zones: drop this fraction (0 to 0.9) of the middle tokens of each full-attention layer as they leave the recent window, the ones whose keys have the largest L2 norm (default: keep all)")
+
+    static func evictionSizing(_ fraction: Double?) -> String? {
+        guard let fraction, fraction > 0 else { return nil }
+        return "budget sized with \(Int((fraction * 100).rounded()))% of each full-attention layer's quantized middle evicted; serve keeps every token, and sizes so, on a model that prefills more than the recent window in one pass"
     }
 
-    static func validate(zones: Bool, bits: KVBitsSetting?) throws {
+    static func zones(_ enabled: Bool, evicting fraction: Double? = nil) -> KVZones? {
+        enabled ? KVZones.standard.evicting(fraction ?? 0) : nil
+    }
+
+    static func validate(zones: Bool, bits: KVBitsSetting?, evict: Double? = nil) throws {
         if let conflict = KVPrecision.flagConflict(kvBitsSet: bits != nil, fixed: bits?.fixedPrecision, zones: zones) {
             throw ValidationError(conflict)
+        }
+        guard let evict else { return }
+        guard zones else { throw ValidationError("--kv-evict needs --kv-zones: it drops tokens from the zoned cache's quantized middle") }
+        guard KVZones.evictionFractions.contains(evict) else {
+            throw ValidationError("--kv-evict takes a fraction between 0 and 0.9, got \(evict)")
         }
     }
 }

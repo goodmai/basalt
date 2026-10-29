@@ -26,11 +26,12 @@ struct MemoryCapTests {
     static func orchestrator(
         kvBudget: Int64?, promptTokens: Int? = nil, maxTokens: Int = 65_536, weightsBytes: UInt64 = 0,
         free: Int64 = 64 << 30, kvPrecision: KVPrecision? = nil, adaptiveKVPrecision: Bool = false, kvZones: KVZones? = nil,
-        modelTakesKVZones: Bool = true
+        modelTakesKVZones: Bool = true, modelTakesKVEviction: Bool = true
     ) async throws -> (ModelOrchestratorActor, MockInferenceEngine, URL) {
         let engine = MockInferenceEngine()
         await engine.setMemory(kvBudget: kvBudget, promptTokens: promptTokens)
         await engine.setSupportsKVZones(modelTakesKVZones)
+        await engine.setSupportsKVEviction(modelTakesKVEviction)
         let dir = try modelDirectory(weightsBytes: weightsBytes)
         let orchestrator = ModelOrchestratorActor(
             engine: engine, maxTokens: maxTokens, kvPrecision: kvPrecision, adaptiveKVPrecision: adaptiveKVPrecision, kvZones: kvZones,
@@ -176,6 +177,35 @@ struct MemoryCapTests {
         let sent = try #require(await engine.getLastRequest())
         #expect(sent.kvPrecision == .q4)
         #expect(sent.maxTokens == 1_000)
+    }
+
+    @Test("--kv-evict 0.5 admits a 130k prompt that zoned k8v4 alone refuses on 7 GiB: the room counts only the kept half of the middle")
+    func evictingHalfTheMiddleAdmitsLongerPrompt() async throws {
+        let request = GenerationRequest(prompt: "long", maxTokens: 1_000)
+        let (full, fullEngine, fullDir) = try await Self.orchestrator(
+            kvBudget: 7 * Self.gib, promptTokens: 130_000, kvPrecision: .k8v4, kvZones: .standard)
+        defer { try? FileManager.default.removeItem(at: fullDir) }
+        await #expect(throws: BasaltError.self) { _ = try await full.generate(request: request) }
+        #expect(await fullEngine.getRequests().isEmpty)
+        let (evicting, engine, dir) = try await Self.orchestrator(
+            kvBudget: 7 * Self.gib, promptTokens: 130_000, kvPrecision: .k8v4, kvZones: KVZones.standard.evicting(0.5))
+        defer { try? FileManager.default.removeItem(at: dir) }
+        _ = try await evicting.generate(request: request)
+        let sent = try #require(await engine.getLastRequest())
+        #expect(sent.kvPrecision == .k8v4)
+        #expect(sent.maxTokens == 1_000)
+    }
+
+    @Test("A model that prefills in one pass longer than the window is sized with every token kept: --kv-evict 0.5 no longer admits the 130k prompt")
+    func evictionIgnoredForModelThatPrefillsUnchunked() async throws {
+        let (orchestrator, engine, dir) = try await Self.orchestrator(
+            kvBudget: 7 * Self.gib, promptTokens: 130_000, kvPrecision: .k8v4, kvZones: KVZones.standard.evicting(0.5),
+            modelTakesKVEviction: false)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        await #expect(throws: BasaltError.self) {
+            _ = try await orchestrator.generate(request: GenerationRequest(prompt: "long", maxTokens: 1_000))
+        }
+        #expect(await engine.getRequests().isEmpty)
     }
 
     @Test("A model whose attention bypasses the zoned cache is sized as uniform --kv-bits even with --kv-zones: the 45k prompt is refused again")

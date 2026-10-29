@@ -74,7 +74,9 @@ public actor MLXInferenceEngine: InferenceEngine {
 
     public var kvMemoryBudgetBytes: Int64? { kvMemoryBudget }
     public var supportsKVZones: Bool { modelAttendsThroughZones }
+    public var supportsKVEviction: Bool { modelPrefillsInChunks }
     private var modelAttendsThroughZones = false
+    private var modelPrefillsInChunks = false
     private(set) var valueRotationUnavailable = false
 
     public func promptTokenCount(for request: GenerationRequest) async -> Int? {
@@ -127,9 +129,21 @@ public actor MLXInferenceEngine: InferenceEngine {
         let precision = kvPrecision ?? .q8
         let probed = (try? await container.perform { try ZonedKVCache.probe($0.model, precision: precision) }) ?? (attendsThroughCache: false, rotatesValues: false)
         modelAttendsThroughZones = probed.attendsThroughCache
+        if let zones = kvZones, zones.evictedMiddleFraction > 0, modelAttendsThroughZones {
+            do {
+                modelPrefillsInChunks = try await container.perform {
+                    try ZonedKVCache.prefillsWithinWindow($0.model, zones: zones, precision: precision, prefill: GenerateParameters().prefill)
+                }
+                if !modelPrefillsInChunks {
+                    logger.warn("--kv-evict does not apply to this model: it prefills a prompt longer than the recent window in one pass, so its zoned cache keeps every token and is sized that way.")
+                }
+            } catch {
+                logger.warn("--kv-evict is off for this model: its prefill probe failed (\(error)), so its zoned cache keeps every token and is sized that way.")
+            }
+        }
         valueRotationUnavailable = modelAttendsThroughZones && precision.rotatesValues && !probed.rotatesValues
         if !modelAttendsThroughZones {
-            logger.warn("--kv-zones does not apply to this model: its attention reads the whole cache through update(), or its head dimension has no quantization group. Its quantized requests use uniform --kv-bits, k8v4 as 8-bit.")
+            logger.warn("--kv-zones does not apply to this model: its attention reads the whole cache through update(), or its head dimension has no quantization group. Its quantized requests use uniform --kv-bits, k8v4 as 8-bit\((kvZones?.evictedMiddleFraction ?? 0) > 0 ? ", and --kv-evict keeps every token" : "").")
         } else if valueRotationUnavailable {
             logger.warn("--kv-bits \(precision) cannot rotate this model's value heads: the Hadamard transform is its own inverse only for head dimensions 2^k and 12·2^k. It runs as k8v4.")
         }
@@ -151,6 +165,7 @@ public actor MLXInferenceEngine: InferenceEngine {
         let budget = configuredPromptCacheBytes ?? PromptCacheBudget.automatic(workingSet: workingSet, weights: weights)
         kvMemoryBudget = Int64(max(0, workingSet - weights - budget))
         modelAttendsThroughZones = false
+        modelPrefillsInChunks = false
         let blendBytes = cacheBlendRatio == nil ? 0 : budget / 2
         promptCaches = PromptCacheTree(byteBudget: budget - blendBytes)
         cacheBlend = cacheBlendRatio.map { CacheBlendStore(ratio: $0, byteBudget: blendBytes) }
@@ -814,7 +829,7 @@ public actor MLXInferenceEngine: InferenceEngine {
             let constrained = shaping.map { masked.appendingLogitProcessor($0) } ?? masked
             let forcedTool = constraint?.toolName
             let speculativeLookup = request.speculativeLookup ?? speculativeLookup
-            let zones = modelAttendsThroughZones ? kvZones : nil
+            let zones = modelAttendsThroughZones ? (modelPrefillsInChunks ? kvZones : kvZones?.evicting(0)) : nil
             let zonedPrecision = zones == nil ? nil : request.kvPrecision ?? kvPrecision
             let launch: GenerationLaunch
             do {

@@ -80,6 +80,24 @@ struct CLITests {
         #expect(KVBitsSetting.zones(false) == nil)
     }
 
+    @Test("--kv-evict takes a fraction of the zoned middle on serve and models check, needs --kv-zones and stays within 0...0.9")
+    func kvEvictFlag() throws {
+        #expect(try ServeCommand.parse([]).kvEvict == nil)
+        #expect(try ServeCommand.parse(["--kv-bits", "k8v4", "--kv-zones", "--kv-evict", "0.5"]).kvEvict == 0.5)
+        #expect(try CheckSubcommand.parse(["m", "--kv-bits", "8", "--kv-zones", "--kv-evict", "0.25"]).kvEvict == 0.25)
+        #expect(throws: (any Error).self) { _ = try ServeCommand.parse(["--kv-bits", "8", "--kv-evict", "0.5"]) }
+        #expect(throws: (any Error).self) { _ = try CheckSubcommand.parse(["m", "--kv-bits", "8", "--kv-evict", "0.5"]) }
+        #expect(throws: (any Error).self) { _ = try ServeCommand.parse(["--kv-bits", "8", "--kv-zones", "--kv-evict", "0.95"]) }
+        #expect(throws: (any Error).self) { _ = try ServeCommand.parse(["--kv-bits", "8", "--kv-zones", "--kv-evict", "-0.1"]) }
+        #expect(throws: (any Error).self) { _ = try ServeCommand.parse(["--kv-bits", "8", "--kv-zones", "--kv-evict", "nan"]) }
+        #expect(KVBitsSetting.zones(true, evicting: 0.5) == KVZones.standard.evicting(0.5))
+        #expect(KVBitsSetting.zones(true, evicting: 0.5)?.evictedMiddleFraction == 0.5)
+        #expect(KVBitsSetting.zones(false, evicting: 0.5) == nil)
+        #expect(KVBitsSetting.evictionSizing(0.25)?.hasPrefix("budget sized with 25% of each full-attention layer's quantized middle evicted") == true)
+        #expect(KVBitsSetting.evictionSizing(0) == nil)
+        #expect(KVBitsSetting.evictionSizing(nil) == nil)
+    }
+
     @Test("ServeCommand model options")
     func testServeModel() throws {
         let cmd = try ServeCommand.parse(["--model", "google/gemma-7b"])

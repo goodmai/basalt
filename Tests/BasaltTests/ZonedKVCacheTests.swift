@@ -331,6 +331,18 @@ struct ZonedKVCacheEngineTests {
         }
     }
 
+    @Test("At load the engine reports eviction only when the model's default prefill chunks fit the recent window; without --kv-evict it never does",
+          arguments: [(KVZones.standard.evicting(0.5), true), (KVZones(sinkTokens: 4, windowTokens: 16, migrationStep: 8, evictedMiddleFraction: 0.5), false), (KVZones.standard, false)])
+    func loadReportsWhetherEvictionApplies(zones: KVZones, applies: Bool) async throws {
+        let engine = MLXInferenceEngine(kvPrecision: .k8v4, kvZones: zones)
+        await engine.attach(ModelContainer(context: ModelContext(
+            configuration: ModelConfiguration(id: "tiny-llama-evict"), model: try Self.llama(hiddenSize: 128),
+            processor: ByteInputProcessor(), tokenizer: ByteTokenizer())))
+        await engine.probeKVZones()
+        #expect(await engine.supportsKVZones)
+        #expect(await engine.supportsKVEviction == applies)
+    }
+
     @Test("Zones apply only to a quantized request; the zoned request itself runs with kvBits cleared so MLX does not convert the cache again")
     func zonedCacheNeedsBitsAndZones() throws {
         let model = try LlamaModel(JSONDecoder().decode(LlamaConfiguration.self, from: Data(TinyModel.config.utf8)))
@@ -372,6 +384,219 @@ struct ZonedKVCacheEngineTests {
         #expect(!zoned.isEmpty)
         #expect(zoned == reference)
         #expect(zoned != uniform, "the fixture must tell the two layouts apart")
+    }
+}
+
+extension ZonedKVCacheTests {
+    static let evicting = zones.evicting(0.5)
+
+    static func scaledTokens(_ count: Int, seed: UInt64, scales: [[Float]]) -> MLXArray {
+        let perToken = MLXArray(scales.flatMap { $0 }, [1, kvHeads, count, 1]).asType(.float16)
+        return tokens(count, seed: seed) * perToken
+    }
+
+    @discardableResult
+    static func fed(_ cache: ZonedKVCache, keys: MLXArray, values: MLXArray, chunk: Int = 4) -> (MLXArray, MLXArray) {
+        var last = (keys, values)
+        for start in stride(from: 0, to: keys.dim(2), by: chunk) {
+            let rows = start..<min(keys.dim(2), start + chunk)
+            last = cache.update(keys: keys[.ellipsis, rows, 0...], values: values[.ellipsis, rows, 0...])
+        }
+        return last
+    }
+
+    @discardableResult
+    static func fed(_ cache: ZonedKVCache, _ count: Int, seed: UInt64) -> (MLXArray, MLXArray) {
+        fed(cache, keys: tokens(count, seed: seed), values: tokens(count, seed: seed + 1))
+    }
+
+    static func lowestNormRows(_ keys: MLXArray, head: Int, among rows: Range<Int>, keeping kept: Int) -> [Int] {
+        let norms = (keys[0, head, rows, 0...].asType(.float32).square().sum(axis: -1)).asArray(Float.self)
+        return Array(norms.indices.sorted { norms[$0] < norms[$1] }.prefix(kept)).sorted().map { $0 + rows.lowerBound }
+    }
+
+    @Test("Eviction keeps, per KV head and per migration step, the middle tokens whose keys have the lowest L2 norm, in position order, and quantizes only them")
+    func evictionKeepsLowestKeyNormRowsPerHead() {
+        let cache = ZonedKVCache(zones: Self.evicting, precision: .q8)
+        let scales: [[Float]] = [
+            (0..<20).map { Float(1 + ($0 * 7) % 20) / 4 },
+            (0..<20).map { Float(20 - ($0 * 3) % 20) / 4 },
+        ]
+        let keys = Self.scaledTokens(20, seed: 101, scales: scales)
+        let values = Self.tokens(20, seed: 102)
+        let (k, v) = Self.fed(cache, keys: keys, values: values)
+        #expect(Self.counts(cache) == [4, 4, 8] as [Int])
+        #expect(cache.evictedCount == 4)
+        #expect(cache.storedCount == 16)
+        #expect(cache.offset == 20)
+        #expect(k.shape == [1, Self.kvHeads, 16, Self.dim] && v.shape == k.shape)
+        var keptSets = [[Int]]()
+        for head in 0..<Self.kvHeads {
+            let kept = Self.lowestNormRows(keys, head: head, among: 4..<8, keeping: 2)
+                + Self.lowestNormRows(keys, head: head, among: 8..<12, keeping: 2)
+            keptSets.append(kept)
+            let rows = MLXArray(kept.map(Int32.init))
+            let expectedKeys = Self.roundTripped(keys[0..., head..<(head + 1), 0..., 0...].take(rows, axis: 2), bits: 8)
+            let expectedValues = Self.roundTripped(values[0..., head..<(head + 1), 0..., 0...].take(rows, axis: 2), bits: 8)
+            #expect(Self.maxDifference(k[0..., head..<(head + 1), 4..<8, 0...], expectedKeys) == 0)
+            #expect(Self.maxDifference(v[0..., head..<(head + 1), 4..<8, 0...], expectedValues) == 0)
+        }
+        #expect(keptSets[0] != keptSets[1], "the fixture must give the two heads different keep sets")
+        #expect(Self.maxDifference(k[.ellipsis, ..<4, 0...], keys[.ellipsis, ..<4, 0...]) == 0)
+        #expect(Self.maxDifference(k[.ellipsis, 8..., 0...], keys[.ellipsis, 12..., 0...]) == 0)
+    }
+
+    @Test("The evicted share of the middle stays exactly the configured fraction across uneven migrations, and offset counts every token seen",
+          arguments: [0.25, 0.5, 0.9])
+    func evictedShareIsExactAcrossMigrations(fraction: Double) {
+        let zones = Self.zones.evicting(fraction)
+        let cache = ZonedKVCache(zones: zones, precision: .q4)
+        var seen = 0
+        for (step, count) in [3, 8, 4, 1, 8, 5, 7, 8, 2, 6, 8, 8, 4].enumerated() {
+            _ = cache.update(keys: Self.tokens(count, seed: UInt64(200 + step)), values: Self.tokens(count, seed: UInt64(300 + step)))
+            seen += count
+            let middleSeen = cache.quantizedCount + cache.evictedCount
+            #expect(cache.quantizedCount == zones.keptMiddleTokens(middleSeen))
+            #expect(cache.offset == seen)
+            #expect(cache.storedCount == seen - cache.evictedCount)
+        }
+        #expect(cache.evictedCount == Int((Double(cache.quantizedCount + cache.evictedCount) * fraction).rounded(.down)))
+        #expect(cache.evictedCount > 0)
+    }
+
+    @Test("A chunk longer than the recent window lands in position order with none of its tokens evicted, so the causal mask over the chunk lines up")
+    func chunkLongerThanWindowKeepsItsOwnTokens() {
+        let cache = ZonedKVCache(zones: Self.evicting, precision: .q8)
+        Self.fed(cache, 30, seed: 171)
+        let chunk = Self.tokens(20, seed: 173)
+        let (k, _) = cache.update(keys: chunk, values: chunk)
+        #expect(cache.offset == 50)
+        #expect(cache.evictionRefused)
+        let chunkInMiddle = 20 - cache.windowCount
+        #expect(chunkInMiddle > 0, "the fixture must push part of the chunk into the middle")
+        let stored = k.dim(2)
+        let chunkRows = k[.ellipsis, (stored - 20)..., 0...]
+        let expected = concatenated([
+            Self.roundTripped(chunk[.ellipsis, ..<chunkInMiddle, 0...], bits: 8), chunk[.ellipsis, chunkInMiddle..., 0...],
+        ], axis: 2)
+        #expect(Self.maxDifference(chunkRows, expected) == 0)
+    }
+
+    @Test("After an update longer than the window the cache stops evicting for good, so decode never drops the newest middle wholesale to catch up")
+    func updateLongerThanWindowRefusesEvictionForGood() {
+        let cache = ZonedKVCache(zones: Self.evicting, precision: .q8)
+        Self.fed(cache, 30, seed: 181)
+        let evicted = cache.evictedCount
+        #expect(evicted > 0 && !cache.evictionRefused)
+        let chunk = Self.tokens(20, seed: 183)
+        _ = cache.update(keys: chunk, values: chunk)
+        #expect(cache.evictionRefused)
+        let middle = cache.quantizedCount
+        for step in 0..<24 {
+            _ = cache.update(keys: Self.tokens(1, seed: UInt64(190 + step)), values: Self.tokens(1, seed: UInt64(290 + step)))
+        }
+        #expect(cache.evictedCount == evicted)
+        #expect(cache.quantizedCount > middle)
+        #expect(cache.offset == 74)
+        #expect((cache.copy() as? ZonedKVCache)?.evictionRefused == true)
+    }
+
+    @Test("A long first update on an empty cache is refused too: the whole prompt stays, as the F = 0 room assumes")
+    func unchunkedPrefillKeepsEveryToken() {
+        let cache = ZonedKVCache(zones: Self.evicting, precision: .q8)
+        let prompt = Self.tokens(40, seed: 187)
+        _ = cache.update(keys: prompt, values: prompt)
+        _ = cache.update(keys: Self.tokens(8, seed: 188), values: Self.tokens(8, seed: 189))
+        #expect(cache.evictedCount == 0)
+        #expect(cache.storedCount == 48)
+    }
+
+    @Test("The load probe finds whether the model prefills a long prompt in chunks no longer than the recent window")
+    func probeFindsWhetherPrefillChunksFitTheWindow() throws {
+        let model = try ZonedKVCacheEngineTests.llama(hiddenSize: 128)
+        let zones = KVZones(sinkTokens: 4, windowTokens: 16, migrationStep: 8, evictedMiddleFraction: 0.5)
+        #expect(try ZonedKVCache.prefillsWithinWindow(model, zones: zones, precision: .q8, prefill: PrefillParameters(stepSize: 8)))
+        #expect(try !ZonedKVCache.prefillsWithinWindow(model, zones: zones, precision: .q8, prefill: PrefillParameters(stepSize: 64)))
+    }
+
+    @Test("With eviction off the cache keeps every token, as before")
+    func zeroFractionEvictsNothing() {
+        let cache = ZonedKVCache(zones: Self.zones.evicting(0), precision: .q8)
+        Self.fed(cache, 46, seed: 111)
+        #expect(Self.counts(cache) == [4, 32, 10] as [Int])
+        #expect(cache.storedCount == cache.offset)
+        #expect(cache.evictedCount == 0)
+        #expect(cache.isTrimmable)
+    }
+
+    @Test("After eviction, decode attention over the kept tokens equals fused attention over the same kept keys and values", arguments: precisions)
+    func decodeAfterEvictionMatchesFusedReference(precision: KVPrecision) {
+        let cache = ZonedKVCache(zones: Self.evicting, precision: precision)
+        Self.fed(cache, 37, seed: 121)
+        let (newKey, newValue) = (Self.tokens(1, seed: 123), Self.tokens(1, seed: 124))
+        let reference = cache.copy()
+        let (allKeys, allValues) = reference.update(keys: newKey, values: newValue)
+        let q = Self.queries(1, seed: 125)
+        let expected = MLXFast.scaledDotProductAttention(queries: q, keys: allKeys, values: allValues, scale: 0.125, mask: .none)
+        let got = cache.updateAndAttend(queries: q, keys: newKey, values: newValue, scale: 0.125, mask: .none)
+        #expect(cache.evictedCount > 0)
+        #expect(allKeys.dim(2) == cache.storedCount)
+        #expect(Self.maxDifference(got, expected) < 2e-3)
+    }
+
+    @Test("After eviction, an array mask spans the stored tokens, not the logical offset, and prefill through it equals the causal reference even when the same update evicts")
+    func arrayMaskAfterEvictionSpansStoredTokens() {
+        let cache = ZonedKVCache(zones: Self.evicting, precision: .q8)
+        Self.fed(cache, 30, seed: 131)
+        #expect(cache.evictedCount > 0)
+        guard case .array(let mask) = cache.makeMask(n: 5, windowSize: nil, returnArray: true) else {
+            Issue.record("returnArray asks for an array mask")
+            return
+        }
+        #expect(mask.shape == [5, cache.storedCount + 5])
+        let (keys, values, q) = (Self.tokens(5, seed: 133), Self.tokens(5, seed: 134), Self.queries(5, seed: 135))
+        let reference = cache.copy()
+        let (allKeys, allValues) = reference.update(keys: keys, values: values)
+        let expected = MLXFast.scaledDotProductAttention(queries: q, keys: allKeys, values: allValues, scale: 0.125, mask: .causal)
+        let got = cache.updateAndAttend(queries: q, keys: keys, values: values, scale: 0.125, mask: .array(mask))
+        #expect(Self.maxDifference(got, expected) == 0)
+    }
+
+    @Test("Once tokens are evicted the cache is not trimmable and a trim never reaches past the recent window")
+    func evictedCacheTrimsOnlyTheWindow() {
+        let cache = ZonedKVCache(zones: Self.evicting, precision: .q8)
+        Self.fed(cache, 30, seed: 141)
+        let (window, middle, offset) = (cache.windowCount, cache.quantizedCount, cache.offset)
+        #expect(!cache.isTrimmable)
+        #expect(cache.trim(window + 5) == window)
+        #expect(cache.quantizedCount == middle)
+        #expect(cache.offset == offset - window)
+    }
+
+    @Test("A copy keeps the evicted count, so its next RoPE position is the same")
+    func copyKeepsEvictedCount() {
+        let cache = ZonedKVCache(zones: Self.evicting, precision: .q8)
+        Self.fed(cache, 30, seed: 151)
+        let copied = cache.copy()
+        #expect(copied.offset == cache.offset)
+        #expect((copied as? ZonedKVCache)?.evictedCount == cache.evictedCount)
+    }
+
+    @Test("The cache evicts the same tokens whether it is fed pre-RoPE or post-RoPE keys, so the post-RoPE keys it holds are a valid criterion")
+    func evictsTheSameTokensBeforeAndAfterRoPE() {
+        let scales: [[Float]] = [
+            (0..<40).map { Float(1 + ($0 * 7) % 40) / 8 },
+            (0..<40).map { Float(40 - ($0 * 3) % 40) / 8 },
+        ]
+        let keys = Self.scaledTokens(40, seed: 161, scales: scales)
+        let rotated = MLXFast.RoPE(keys.asType(.float32), dimensions: Self.dim, traditional: false, base: 10_000, scale: 1, offset: 0)
+            .asType(.float16)
+        let values = Self.tokens(40, seed: 162)
+        let (plain, roped) = (ZonedKVCache(zones: Self.evicting, precision: .q8), ZonedKVCache(zones: Self.evicting, precision: .q8))
+        let (_, plainValues) = Self.fed(plain, keys: keys, values: values)
+        let (_, ropedValues) = Self.fed(roped, keys: rotated, values: values)
+        #expect(plain.evictedCount > 0 && plain.evictedCount == roped.evictedCount)
+        #expect(Self.maxDifference(plainValues, ropedValues) == 0)
     }
 }
 

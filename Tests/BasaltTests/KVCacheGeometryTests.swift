@@ -263,6 +263,20 @@ struct KVCacheGeometryTests {
         #expect(abs(1 - Double(g.bytes(tokens: 32_768, kvPrecision: .q8, zones: zones)) / fp16 - 0.4495) < 1e-4)
     }
 
+    @Test("Evicting half the zoned middle on Qwen3-4B counts half the quantized tokens and widens the room the binary search may find")
+    func evictedMiddleFootprintAndRoom() {
+        let g = KVCacheGeometry(config: Self.qwen3_4B)!
+        let (budget, zones): (Int64, KVZones) = (7 << 30, .standard)
+        let half = zones.evicting(0.5)
+        #expect(half.keptMiddleTokens(31_425) == 15_713)
+        #expect(g.bytes(tokens: 32_768, kvPrecision: .k8v4, zones: half) == 1_343 * 147_456 + 15_713 * 59_904)
+        #expect(g.bytes(tokens: 1_343, kvPrecision: .k8v4, zones: half) == g.bytes(tokens: 1_343))
+        let room = g.maxTokens(fitting: budget, kvPrecision: .k8v4, zones: half)
+        #expect(room > g.maxTokens(fitting: budget, kvPrecision: .k8v4, zones: zones) * 19 / 10)
+        #expect(g.bytes(tokens: room, kvPrecision: .k8v4, zones: half) <= budget)
+        #expect(g.bytes(tokens: room + 2, kvPrecision: .k8v4, zones: half) > budget)
+    }
+
     @Test("Zoned KV quantizes while it prefills: no conversion copy, so on 7 GiB the prompt may use the whole zoned room, not uniform 4-bit's 39,783 tokens")
     func zonedRoomHasNoConversionPeak() {
         let g = KVCacheGeometry(config: Self.qwen3_4B)!
