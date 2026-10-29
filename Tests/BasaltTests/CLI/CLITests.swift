@@ -89,6 +89,7 @@ struct CLITests {
         #expect(throws: (any Error).self) { _ = try CheckSubcommand.parse(["m", "--kv-bits", "8", "--kv-evict", "0.5"]) }
         #expect(throws: (any Error).self) { _ = try ServeCommand.parse(["--kv-bits", "8", "--kv-zones", "--kv-evict", "0.95"]) }
         #expect(throws: (any Error).self) { _ = try ServeCommand.parse(["--kv-bits", "8", "--kv-zones", "--kv-evict", "-0.1"]) }
+        #expect(throws: (any Error).self) { _ = try ServeCommand.parse(["--kv-bits", "8", "--kv-zones", "--kv-evict", "nan"]) }
         #expect(KVBitsSetting.zones(true, evicting: 0.5) == KVZones.standard.evicting(0.5))
         #expect(KVBitsSetting.zones(true, evicting: 0.5)?.evictedMiddleFraction == 0.5)
         #expect(KVBitsSetting.zones(false, evicting: 0.5) == nil)

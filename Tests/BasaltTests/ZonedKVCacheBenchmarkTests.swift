@@ -262,7 +262,12 @@ struct ZonedKVCacheBenchmarkTests {
     }
 
     func run(repo: String, directory: URL, steps: Set<String>, corpus: String?, log: Log) async {
-        let engineZones = KVZones.standard.evicting(Double(Self.env["BASALT_ZONED_ENGINE_EVICT"] ?? "0") ?? 0)
+        let engineEvict = Double(Self.env["BASALT_ZONED_ENGINE_EVICT"] ?? "0") ?? .nan
+        guard KVZones.evictionFractions.contains(engineEvict) else {
+            log.error("\(repo): BASALT_ZONED_ENGINE_EVICT must be a fraction in 0...0.9, got \(Self.env["BASALT_ZONED_ENGINE_EVICT"] ?? "")")
+            return
+        }
+        let engineZones = KVZones.standard.evicting(engineEvict)
         let engine = MLXInferenceEngine(gpuCacheLimit: 0, kvPrecision: .k8v4, kvZones: engineZones)
         do {
             try await engine.load(modelPath: directory.path)

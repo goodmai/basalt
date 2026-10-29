@@ -26,11 +26,12 @@ struct MemoryCapTests {
     static func orchestrator(
         kvBudget: Int64?, promptTokens: Int? = nil, maxTokens: Int = 65_536, weightsBytes: UInt64 = 0,
         free: Int64 = 64 << 30, kvPrecision: KVPrecision? = nil, adaptiveKVPrecision: Bool = false, kvZones: KVZones? = nil,
-        modelTakesKVZones: Bool = true
+        modelTakesKVZones: Bool = true, modelTakesKVEviction: Bool = true
     ) async throws -> (ModelOrchestratorActor, MockInferenceEngine, URL) {
         let engine = MockInferenceEngine()
         await engine.setMemory(kvBudget: kvBudget, promptTokens: promptTokens)
         await engine.setSupportsKVZones(modelTakesKVZones)
+        await engine.setSupportsKVEviction(modelTakesKVEviction)
         let dir = try modelDirectory(weightsBytes: weightsBytes)
         let orchestrator = ModelOrchestratorActor(
             engine: engine, maxTokens: maxTokens, kvPrecision: kvPrecision, adaptiveKVPrecision: adaptiveKVPrecision, kvZones: kvZones,
@@ -197,15 +198,10 @@ struct MemoryCapTests {
 
     @Test("A model that prefills in one pass longer than the window is sized with every token kept: --kv-evict 0.5 no longer admits the 130k prompt")
     func evictionIgnoredForModelThatPrefillsUnchunked() async throws {
-        let engine = MockInferenceEngine()
-        await engine.setMemory(kvBudget: 7 * Self.gib, promptTokens: 130_000)
-        await engine.setSupportsKVEviction(false)
-        let dir = try Self.modelDirectory(weightsBytes: 0)
+        let (orchestrator, engine, dir) = try await Self.orchestrator(
+            kvBudget: 7 * Self.gib, promptTokens: 130_000, kvPrecision: .k8v4, kvZones: KVZones.standard.evicting(0.5),
+            modelTakesKVEviction: false)
         defer { try? FileManager.default.removeItem(at: dir) }
-        let orchestrator = ModelOrchestratorActor(
-            engine: engine, kvPrecision: .k8v4, kvZones: KVZones.standard.evicting(0.5), telemetry: TelemetryTracker())
-        try await orchestrator.loadModel(path: dir.path)
-        await orchestrator.setFreeMemoryProbe { 64 << 30 }
         await #expect(throws: BasaltError.self) {
             _ = try await orchestrator.generate(request: GenerationRequest(prompt: "long", maxTokens: 1_000))
         }
