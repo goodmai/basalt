@@ -75,6 +75,7 @@ let lockDirectory = "/private/tmp/basalt-gpu.lock"
 let pid = ProcessInfo.processInfo.processIdentifier
 let ownerLine = String(pid)
 let maxLoad = 8.0
+let maxIdleGPU = 35
 let stamp = ISO8601DateFormatter().string(from: Date())
 let logPath = repo + "/logs/speculative_lookup_bench-\(stamp.replacingOccurrences(of: ":", with: "")).log"
 try? FileManager.default.createDirectory(atPath: repo + "/logs", withIntermediateDirectories: true)
@@ -199,15 +200,26 @@ let signalSources = [SIGINT, SIGTERM, SIGHUP].map { signalNumber in
 struct Host {
     let load: Double
     let ciRunning: Bool
-    var quiet: Bool { load <= maxLoad && !ciRunning }
-    var text: String { String(format: "load=%.2f ci=%@", load, ciRunning ? "yes" : "no") }
+    let gpu: Int
+    var quiet: Bool { load <= maxLoad && !ciRunning && gpu <= maxIdleGPU }
+    var text: String { String(format: "load=%.2f ci=%@ gpu=%d%%", load, ciRunning ? "yes" : "no", gpu) }
+}
+
+func gpuUtilization() -> Int {
+    let output = run("/usr/sbin/ioreg", ["-r", "-d", "1", "-c", "IOAccelerator"]).output
+    guard let key = output.range(of: "\"Device Utilization %\"=") else { return 100 }
+    return Int(output[key.upperBound...].prefix { $0.isNumber }) ?? 100
 }
 
 func host() -> Host {
     let raw = run("/usr/sbin/sysctl", ["-n", "vm.loadavg"]).output
     let load = raw.split(separator: " ").compactMap { Double($0) }.first ?? .infinity
     let ci = run("/usr/bin/pgrep", ["-x", "Runner.Worker"]).status == 0
-    return Host(load: load, ciRunning: ci)
+    let gpu = (0 ..< 3).map { sample -> Int in
+        if sample > 0 { Thread.sleep(forTimeInterval: 1) }
+        return gpuUtilization()
+    }.max() ?? 100
+    return Host(load: load, ciRunning: ci, gpu: gpu)
 }
 
 func waitForQuietHost() {
@@ -370,7 +382,7 @@ for model in options.models {
 }
 
 summary.append("")
-summary.append("* a cell in the ratio was INVALID: σ above 3% of the mean, or load above \(maxLoad) or a CI job before or after it")
+summary.append("* a cell in the ratio was INVALID: σ above 3% of the mean, or load above \(maxLoad), a CI job or idle GPU utilization above \(maxIdleGPU)% before or after it")
 for line in summary { log("summary \(line)") }
 log("done failures=\(failures)")
 exit(failures == 0 ? 0 : 1)

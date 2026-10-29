@@ -1148,7 +1148,7 @@ public actor MLXInferenceEngine: InferenceEngine {
             }
             let fresh = speculativeLookup && params.kvBits == nil && !carriesMoreThanTokens(input)
                 ? try context.model.newCache(parameters: params) : []
-            guard PromptLookupTokenIterator.supports(fresh) else {
+            guard PromptLookupTokenIterator.supports(fresh, model: context.model) else {
                 let stream = try MLXLMCommon.generate(
                     input: input, parameters: params, context: context, components: components, tools: tools)
                 return GenerationLaunch(stream: stream, task: nil, cache: nil, reusedTokens: 0)
@@ -1195,7 +1195,7 @@ public actor MLXInferenceEngine: InferenceEngine {
                 stream: stream, task: task, cache: keepable ? head.kept : nil, reusedTokens: reused,
                 exactTokens: blended?.exactPrefix ?? Int.max)
         }
-        if speculativeLookup, PromptLookupTokenIterator.supports(cache.layers) {
+        if speculativeLookup, PromptLookupTokenIterator.supports(cache.layers, model: context.model) {
             return launching(try PromptLookupTokenIterator(
                 input: tail, context: input.text.tokens.asArray(Int.self), model: context.model, cache: cache.layers,
                 state: head.state, processor: processor, sampler: params.sampler(), prefill: params.prefill,
