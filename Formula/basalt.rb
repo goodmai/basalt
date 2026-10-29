@@ -1,8 +1,8 @@
 class Basalt < Formula
   desc "Local LLM inference server for Apple Silicon (MLX, MCP + REST)"
   homepage "https://github.com/goodmai/basalt"
-  url "https://github.com/goodmai/basalt/archive/refs/tags/v0.6.0.tar.gz"
-  sha256 "3fe4e945c58b11688c379e1e929d3391b3b3f16b561f42324fb7e5419ef785c2"
+  url "https://github.com/goodmai/basalt/archive/refs/tags/v0.7.0.tar.gz"
+  sha256 "16c7c2c9c3416167a3e38813973542dd911a13b143d00fc9e32148bb62ed5b1e"
   license "MIT"
   head "https://github.com/goodmai/basalt.git", branch: "main"
 
