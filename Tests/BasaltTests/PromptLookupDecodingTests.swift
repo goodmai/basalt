@@ -369,7 +369,7 @@ struct PromptLookupDecodingTests {
     }
 
     @Test("Through the engine a dense hybrid decodes the plain text with drafts, with and without a prompt cache; an expert-routing hybrid decodes without drafts",
-          arguments: ["hybrid", "lfm"])
+          arguments: ["hybrid", "nemotron", "lfm"])
     func engineHybridEquivalence(family: String) async throws {
         func engine(lookup: Bool) async throws -> MLXInferenceEngine {
             let engine = MLXInferenceEngine(promptCacheBytes: 1 << 26, speculativeLookup: lookup)
@@ -384,7 +384,7 @@ struct PromptLookupDecodingTests {
             let expected = try await plain.generate(request: request.withCacheKey(key))
             let actual = try await speculative.generate(request: request.withCacheKey(key))
             #expect(actual.generatedText == expected.generatedText)
-            #expect((actual.draftTokens != nil) == (family == "hybrid"))
+            #expect((actual.draftTokens != nil) == (family != "lfm"))
         }
     }
 
