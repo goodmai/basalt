@@ -94,6 +94,7 @@ public actor MLXInferenceEngine: InferenceEngine {
     private let cacheBlendRatio: Float?
     private(set) var cacheBlend: CacheBlendStore?
     private let speculativeLookup: Bool
+    private let speculativeRecycling: Bool
 
     public init(
         reasoningEffort: String? = nil,
@@ -107,9 +108,11 @@ public actor MLXInferenceEngine: InferenceEngine {
         minP: Float? = nil,
         seed: UInt64? = nil,
         cacheBlendRatio: Float? = nil,
-        speculativeLookup: Bool = false
+        speculativeLookup: Bool = false,
+        speculativeRecycling: Bool = false
     ) {
         self.speculativeLookup = speculativeLookup
+        self.speculativeRecycling = speculativeRecycling
         self.reasoningEffort = reasoningEffort
         self.gpuCacheLimit = gpuCacheLimit
         self.kvPrecision = kvPrecision
@@ -838,7 +841,7 @@ public actor MLXInferenceEngine: InferenceEngine {
                         input: input, lease: lease, keepsCache: namespace != nil, boundary: boundary,
                         blend: namespace.flatMap { space in blend.map { ($0, space) } },
                         params: params, components: constrained, tools: forcedTool == nil ? toolSpecs : nil,
-                        context: context, speculativeLookup: speculativeLookup,
+                        context: context, speculativeLookup: speculativeLookup, speculativeRecycling: speculativeRecycling,
                         kvZones: zones, kvPrecision: zonedPrecision)
                 }
             } catch {
@@ -1133,7 +1136,8 @@ public actor MLXInferenceEngine: InferenceEngine {
         input: LMInput, lease: PromptCacheLease?, keepsCache: Bool, boundary: Int,
         blend: (store: CacheBlendStore, namespace: String)? = nil,
         params: GenerateParameters, components: GenerationComponents,
-        tools: [ToolSpec]?, context: ModelContext, speculativeLookup: Bool = false, kvZones: KVZones? = nil,
+        tools: [ToolSpec]?, context: ModelContext, speculativeLookup: Bool = false, speculativeRecycling: Bool = false,
+        kvZones: KVZones? = nil,
         kvPrecision: KVPrecision? = nil
     ) throws -> GenerationLaunch {
         guard keepsCache else {
@@ -1153,7 +1157,7 @@ public actor MLXInferenceEngine: InferenceEngine {
             let iterator = try PromptLookupTokenIterator(
                 input: input, context: input.text.tokens.asArray(Int.self), model: context.model, cache: fresh,
                 processor: components.logitProcessor(parameters: params), sampler: params.sampler(),
-                prefill: params.prefill, maxTokens: params.maxTokens)
+                prefill: params.prefill, maxTokens: params.maxTokens, recyclesTokens: speculativeRecycling)
             let (stream, task) = generateTask(
                 promptTokenCount: input.text.tokens.dim(-1), modelConfiguration: context.configuration,
                 tokenizer: context.tokenizer, iterator: iterator, tools: tools, toolCallPolicy: params.toolCallPolicy)
@@ -1195,7 +1199,7 @@ public actor MLXInferenceEngine: InferenceEngine {
             return launching(try PromptLookupTokenIterator(
                 input: tail, context: input.text.tokens.asArray(Int.self), model: context.model, cache: cache.layers,
                 state: head.state, processor: processor, sampler: params.sampler(), prefill: params.prefill,
-                maxTokens: params.maxTokens))
+                maxTokens: params.maxTokens, recyclesTokens: speculativeRecycling))
         }
         return launching(try TokenIterator(
             input: tail, model: context.model, cache: cache.layers, state: head.state,

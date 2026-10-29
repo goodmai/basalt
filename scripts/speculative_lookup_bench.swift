@@ -3,24 +3,27 @@ import Foundation
 
 let usage = """
     Usage:
-      ./scripts/speculative_lookup_bench.swift [--models repo,repo] [--runs N] [--tokens N] [--variant label=binary]...
+      ./scripts/speculative_lookup_bench.swift [--models repo,repo] [--workloads name,name] [--runs N] [--tokens N] [--variant label=binary]...
 
-    Prompt-lookup speculative decoding against plain decoding, per model:
-    workloads code edit and prose, temperatures 0 and 0.7, lookup off and on.
+    Prompt-lookup speculative decoding against plain decoding, per model: workloads
+    code edit, prose and reasoning, temperatures 0 and 0.7, lookup off, on, and on
+    with Token Recycling.
     Each model runs every cell once in order and once in reverse, and every
     ratio is taken between cells of the same pass, so host drift cancels.
 
     Options:
       --models     comma-separated HF repo ids (default: \(Options().models.joined(separator: ",")))
+      --workloads  comma-separated workloads from benchmarks/speculative-lookup (default: \(Options().workloads.joined(separator: ",")))
       --runs       timed iterations per cell (default: 3)
       --tokens     tokens generated per iteration (default: 300)
       --variant    another PerformanceBenchmark binary, run with lookup on next to the one built
-                   from this checkout; labels are unique and not on or off
+                   from this checkout; labels are unique and not on, off or recycling
       -h, --help   show this help
     """
 
 struct Options {
     var models = ["mlx-community/Qwen3-4B-4bit", "mlx-community/Meta-Llama-3.1-8B-Instruct-4bit"]
+    var workloads = ["code", "prose", "reasoning"]
     var runs = 3
     var tokens = 300
     var variants: [(label: String, binary: String)] = []
@@ -36,11 +39,14 @@ func parse(_ arguments: [String]) -> Options? {
         case "--models":
             options.models = value.split(separator: ",").map { trimmed(String($0)) }.filter { !$0.isEmpty }
             guard !options.models.isEmpty else { return nil }
+        case "--workloads":
+            options.workloads = value.split(separator: ",").map { trimmed(String($0)) }.filter { !$0.isEmpty }
+            guard !options.workloads.isEmpty, Set(options.workloads).count == options.workloads.count else { return nil }
         case "--runs": guard let runs = Int(value), runs > 0 else { return nil }; options.runs = runs
         case "--tokens": guard let tokens = Int(value), tokens > 0 else { return nil }; options.tokens = tokens
         case "--variant":
             let parts = value.split(separator: "=", maxSplits: 1).map(String.init)
-            guard parts.count == 2, !["on", "off"].contains(parts[0]),
+            guard parts.count == 2, !["on", "off", "recycling"].contains(parts[0]),
                   !options.variants.contains(where: { $0.label == parts[0] })
             else { return nil }
             options.variants.append((parts[0], parts[1]))
@@ -244,6 +250,7 @@ func measure(_ cell: Cell, model: String, binary: String, prompt: String, pass: 
     var arguments = ["-m", model, "-i", String(options.runs), "-t", String(options.tokens), "-p", prompt,
                      "--temperature", cell.temperature, "--seed", "1", "--reasoning-effort", "none", "--print-output"]
     if cell.mode != "off" { arguments.append("--speculative-lookup") }
+    if cell.mode == "recycling" { arguments.append("--speculative-recycling") }
     let step = "model=\(model) pass=\(pass) \(cell.label)"
     let before = host()
     let result = run(binary, arguments, in: releaseDirectory)
@@ -296,7 +303,7 @@ for variant in options.variants where !FileManager.default.isExecutableFile(atPa
 }
 
 var prompts: [String: String] = [:]
-for workload in ["code", "prose"] {
+for workload in options.workloads {
     let path = repo + "/benchmarks/speculative-lookup/\(workload).txt"
     guard let text = try? String(contentsOfFile: path, encoding: .utf8) else {
         fail("workload \(workload)", "missing \(path)")
@@ -306,9 +313,9 @@ for workload in ["code", "prose"] {
 }
 
 var cells: [Cell] = []
-for workload in ["code", "prose"] {
+for workload in options.workloads {
     for temperature in ["0", "0.7"] {
-        for mode in ["off", "on"] + options.variants.map(\.label) {
+        for mode in ["off", "on", "recycling"] + options.variants.map(\.label) {
             cells.append(Cell(workload: workload, temperature: temperature, mode: mode))
         }
     }
@@ -332,22 +339,23 @@ for model in options.models {
 
     summary.append("")
     summary.append("\(model) @ \(revision), commit \(commit.prefix(7)), \(chip) \(memory)GB, \(options.runs) runs × \(options.tokens) tokens per cell")
-    summary.append("| workload | T | on / off (pass 1, pass 2) | drafts, pass 1 | same text as off |"
+    summary.append("| workload | T | on / off (pass 1, pass 2) | recycling / on (pass 1, pass 2) | drafts on, pass 1 | drafts recycling, pass 1 | same text as off |"
         + options.variants.map { " \($0.label) / on (pass 1, pass 2) |" }.joined())
-    summary.append("|---|---|---|---|---|" + String(repeating: "---|", count: options.variants.count))
-    for workload in ["code", "prose"] {
+    summary.append("|---|---|---|---|---|---|---|" + String(repeating: "---|", count: options.variants.count))
+    for workload in options.workloads {
         for temperature in ["0", "0.7"] {
             func cell(_ mode: String) -> Cell { Cell(workload: workload, temperature: temperature, mode: mode) }
             func pair(_ mode: String, over base: String) -> String {
                 [1, 2].map { ratio(results[$0]?[cell(mode)], results[$0]?[cell(base)]) }.joined(separator: ", ")
             }
-            let lookupModes = ["on"] + options.variants.map(\.label)
+            let lookupModes = ["on", "recycling"] + options.variants.map(\.label)
             let sameText = [1, 2].allSatisfy { pass in
                 guard let off = results[pass]?[cell("off")] else { return false }
                 return lookupModes.allSatisfy { results[pass]?[cell($0)]?.output == off.output }
             }
             let alpha = results[1]?[cell("on")]?.accepted ?? "n/a"
-            summary.append("| \(workload) | \(temperature) | \(pair("on", over: "off")) | \(alpha) | \(sameText) |"
+            let recycledAlpha = results[1]?[cell("recycling")]?.accepted ?? "n/a"
+            summary.append("| \(workload) | \(temperature) | \(pair("on", over: "off")) | \(pair("recycling", over: "on")) | \(alpha) | \(recycledAlpha) | \(sameText) |"
                 + options.variants.map { " \(pair($0.label, over: "on")) |" }.joined())
         }
     }

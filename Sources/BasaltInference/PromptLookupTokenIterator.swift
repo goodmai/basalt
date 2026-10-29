@@ -5,6 +5,7 @@ import MLXLMCommon
 struct PromptLookupTokenIterator: TokenIteratorProtocol {
     static let draftLimit = 16
     static let ngramSizes = [5, 4, 3]
+    static let recycledDraftLimit = 6
 
     let model: any LanguageModel
     let cache: [KVCache]
@@ -12,12 +13,17 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
     var processor: LogitProcessor?
     let sampler: LogitSampler
     let maxTokens: Int?
+    let recyclesTokens: Bool
     var tokenCount = 0
     var promptPrefillTime: TimeInterval = 0
 
     private var history: [Int]
-    private var inFlight: MLXArray?
-    private var backoff = DraftBackoff()
+    private var inFlight: DecodedStep?
+    private(set) var recycling = TokenRecyclingTable(vocabularySize: 0)
+    private(set) var recycledRounds = 0
+    private(set) var recycledDraftTokens = 0
+    private(set) var acceptedRecycledDrafts = 0
+    private var backoffs = DrafterBackoffs()
     private var pending: [Int] = []
     private var pendingIndex = 0
     private var rounds = 0
@@ -32,8 +38,10 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
 
     init(
         input: LMInput, context: [Int], model: any LanguageModel, cache: [KVCache], state: LMOutput.State? = nil,
-        processor: LogitProcessor?, sampler: LogitSampler, prefill: PrefillParameters, maxTokens: Int?
+        processor: LogitProcessor?, sampler: LogitSampler, prefill: PrefillParameters, maxTokens: Int?,
+        recyclesTokens: Bool = false
     ) throws {
+        self.recyclesTokens = recyclesTokens
         self.model = model
         self.cache = cache
         self.state = state
@@ -65,7 +73,25 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
             state = output.state
             logits = output.logits
         }
-        accept([sample(logits[0..., -1, 0...]).item(Int.self)])
+        let last = logits[0..., -1, 0...]
+        let token = sample(last).item(Int.self)
+        if recyclesTokens {
+            recycling = TokenRecyclingTable(vocabularySize: last.dim(-1))
+            recycle(after: [history[history.count - 1]], successors: [argMax(last, axis: -1).item(Int.self)])
+        }
+        accept([token])
+    }
+
+    private mutating func recycle(after fed: [Int], successors: [Int]) {
+        for (token, successor) in zip(fed, successors) { recycling.record(token, successor: successor) }
+    }
+
+    private mutating func confirm(_ step: DecodedStep) -> Int {
+        let token = step.token.item(Int.self)
+        if let successor = step.successor {
+            recycle(after: [history[history.count - 1]], successors: [successor.item(Int.self)])
+        }
+        return token
     }
 
     private mutating func forward(_ input: LMInput.Text) -> LMOutput {
@@ -107,42 +133,58 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
 
     private mutating func advance() {
         let remaining = maxTokens.map { $0 - tokenCount } ?? Int.max
-        let draft = backoff.allowsDraft && state == nil
-            ? Self.draft(after: history, limit: Swift.min(Self.draftLimit, remaining - 1)) : []
+        let looksUp = backoffs.lookup.allowsDraft && state == nil
+        let recycles = recyclesTokens && backoffs.recycling.allowsDraft && state == nil
+        let draft = looksUp ? Self.draft(after: history, limit: Swift.min(Self.draftLimit, remaining - 1)) : []
         switch (inFlight, draft.isEmpty) {
-        case (let token?, true):
-            emit(token, lookingAhead: remaining > 1)
-        case (let token?, false):
+        case (let step?, true) where recycles && recycling.predicts(after: history[history.count - 1]):
+            if recycling.chain(from: step.token.item(Int.self), limit: 1).isEmpty {
+                emit(step, lookingAhead: remaining > 1)
+            } else {
+                inFlight = nil
+                accept([confirm(step)])
+            }
+        case (let step?, true):
+            emit(step, lookingAhead: remaining > 1)
+        case (let step?, false):
             inFlight = nil
-            let confirmed = token.item(Int.self)
-            if confirmed != draft[0] { backoff.record(acceptedDrafts: 0) }
+            let confirmed = confirm(step)
+            if confirmed != draft[0] { backoffs.lookup.record(acceptedDrafts: 0) }
             accept([confirmed])
-        case (nil, true):
-            emit(step(MLXArray([Int32(history[history.count - 1])])), lookingAhead: remaining > 1)
         case (nil, false):
-            speculate(draft)
+            speculate(draft, recycled: false)
+        case (nil, true):
+            let recycled = recycles
+                ? recycling.chain(from: history[history.count - 1], limit: Swift.min(Self.recycledDraftLimit, remaining - 1))
+                : []
+            if recycled.isEmpty {
+                emit(step(MLXArray([Int32(history[history.count - 1])])), lookingAhead: remaining > 1)
+            } else {
+                speculate(recycled, recycled: true)
+            }
         }
     }
 
-    private mutating func step(_ token: MLXArray) -> MLXArray {
+    private mutating func step(_ token: MLXArray) -> DecodedStep {
         verifyCalls += 1
         verified += 1
-        return sample(forward(LMInput.Text(tokens: token)).logits[0..., -1, 0...])
+        let logits = forward(LMInput.Text(tokens: token)).logits[0..., -1, 0...]
+        return DecodedStep(token: sample(logits), successor: recyclesTokens ? argMax(logits, axis: -1) : nil)
     }
 
-    private mutating func emit(_ token: MLXArray, lookingAhead: Bool) {
+    private mutating func emit(_ current: DecodedStep, lookingAhead: Bool) {
         if lookingAhead {
-            let next = step(token)
-            asyncEval([next] + cache.flatMap { $0.state })
+            let next = step(current.token)
+            asyncEval([next.token] + [next.successor].compactMap { $0 } + cache.flatMap { $0.state })
             inFlight = next
         } else {
             inFlight = nil
         }
-        backoff.tick()
-        accept([token.item(Int.self)])
+        backoffs.tick()
+        accept([confirm(current)])
     }
 
-    private mutating func speculate(_ draft: [Int]) {
+    private mutating func speculate(_ draft: [Int], recycled: Bool) {
         let fed = [history[history.count - 1]] + draft
         let logits = forward(LMInput.Text(tokens: MLXArray(fed.map(Int32.init))))
             .logits[0, 0..., 0...]
@@ -154,17 +196,26 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
                 emitted.append(token)
                 if index == draft.count || token != draft[index] { break }
             }
+            if recyclesTokens { recycle(after: fed, successors: tokens) }
         } else {
+            let successors = recyclesTokens ? argMax(logits, axis: -1) : nil
+            if let successors { asyncEval(successors) }
             for index in 0 ... draft.count {
                 let token = sample(logits[index ..< index + 1]).item(Int.self)
                 emitted.append(token)
                 if index == draft.count || token != draft[index] { break }
             }
+            if let successors { recycle(after: fed, successors: successors.asArray(Int.self)) }
         }
 
         let acceptedDrafts = emitted.count - 1
         trimPromptCache(cache, numTokens: draft.count - acceptedDrafts)
-        backoff.record(acceptedDrafts: acceptedDrafts)
+        if recycled {
+            recycledRounds += 1
+            recycledDraftTokens += draft.count
+            acceptedRecycledDrafts += acceptedDrafts
+        }
+        backoffs.recordRound(recycled: recycled, acceptedDrafts: acceptedDrafts)
         rounds += 1
         drafted += draft.count
         accepted += acceptedDrafts
@@ -182,6 +233,71 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
         tokenCount += 1
         pendingIndex += 1
         return pending[pendingIndex - 1]
+    }
+}
+
+struct DecodedStep {
+    let token: MLXArray
+    let successor: MLXArray?
+}
+
+struct TokenRecyclingTable {
+    static let confirmationsToDraft: UInt8 = 2
+
+    private var successors: [Int32]
+    private var confirmations: [UInt8]
+
+    init(vocabularySize: Int) {
+        successors = Array(repeating: 0, count: vocabularySize)
+        confirmations = Array(repeating: 0, count: vocabularySize)
+    }
+
+    var byteCount: Int { successors.count * MemoryLayout<Int32>.size + confirmations.count }
+
+    mutating func record(_ token: Int, successor: Int) {
+        guard successors.indices.contains(token) else { return }
+        if successors[token] == Int32(successor) {
+            confirmations[token] = Swift.min(confirmations[token] &+ 1, Self.confirmationsToDraft)
+        } else {
+            successors[token] = Int32(successor)
+            confirmations[token] = 1
+        }
+    }
+
+    func predicts(after token: Int) -> Bool {
+        successors.indices.contains(token) && confirmations[token] >= Self.confirmationsToDraft
+            && !chain(from: Int(successors[token]), limit: 1).isEmpty
+    }
+
+    func chain(from token: Int, limit: Int) -> [Int] {
+        var chain: [Int] = []
+        var current = token
+        while chain.count < limit, successors.indices.contains(current), confirmations[current] >= Self.confirmationsToDraft {
+            current = Int(successors[current])
+            chain.append(current)
+        }
+        return chain
+    }
+}
+
+struct DrafterBackoffs {
+    var lookup = DraftBackoff()
+    var recycling = DraftBackoff()
+
+    mutating func tick() {
+        lookup.tick()
+        recycling.tick()
+    }
+
+    mutating func recordRound(recycled: Bool, acceptedDrafts: Int) {
+        for _ in 0 ... acceptedDrafts {
+            if recycled { lookup.tick() } else { recycling.tick() }
+        }
+        if recycled {
+            recycling.record(acceptedDrafts: acceptedDrafts)
+        } else {
+            lookup.record(acceptedDrafts: acceptedDrafts)
+        }
     }
 }
 

@@ -45,12 +45,12 @@ enum LookupFixture {
 
     static func lookup(
         _ model: any LanguageModel, prompt: [Int] = prompt, maxTokens: Int = 64,
-        processor: LogitProcessor? = nil, sampler: LogitSampler = ArgMaxSampler()
+        processor: LogitProcessor? = nil, sampler: LogitSampler = ArgMaxSampler(), recycling: Bool = false
     ) throws -> (tokens: [Int], iterator: PromptLookupTokenIterator, cache: [KVCache]) {
         let cache = try model.newCache(parameters: nil)
         var iterator = try PromptLookupTokenIterator(
             input: LMInput(tokens: MLXArray(prompt.map(Int32.init))), context: prompt, model: model, cache: cache,
-            processor: processor, sampler: sampler, prefill: .init(), maxTokens: maxTokens)
+            processor: processor, sampler: sampler, prefill: .init(), maxTokens: maxTokens, recyclesTokens: recycling)
         var tokens: [Int] = []
         while let token = iterator.next() { tokens.append(token) }
         return (tokens, iterator, cache)

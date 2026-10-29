@@ -1,0 +1,1 @@
+A train leaves Lyon at 09:40 and travels at 120 km/h. A second train leaves Paris, 460 km away, at 10:10 on the same line towards Lyon at 150 km/h. Work out step by step, showing every intermediate calculation, at what time and how far from Lyon the two trains meet, then check the answer by computing the distance each train has covered.
