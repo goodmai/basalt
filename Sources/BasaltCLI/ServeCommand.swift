@@ -85,7 +85,7 @@ struct ServeCommand: AsyncParsableCommand {
 
     @Flag(
         name: .customLong("speculative-lookup"),
-        help: "Draft up to 16 tokens per step by matching the last 3-5 tokens against the prompt and output, verified in one forward pass (faster when the answer copies its context, slower on free prose; greedy output can differ at floating-point near-ties; attention-only models without --kv-bits)"
+        help: "Draft up to 16 tokens per step by matching the last 3-5 tokens against the prompt and output, verified in one forward pass (faster when the answer copies its context, slower on free prose; greedy output can differ at floating-point near-ties; attention-only models and dense recurrent hybrids such as Qwen3.5 or Nemotron-H, without --kv-bits)"
     )
     var speculativeLookup = false
 

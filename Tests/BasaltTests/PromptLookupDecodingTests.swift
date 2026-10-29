@@ -294,7 +294,7 @@ struct PromptLookupDecodingTests {
     func guardAdmitsDenseHybridsOnly(family: String, admitted: Bool) throws {
         let model = try LookupFixture.model(family)
         #expect(PromptLookupTokenIterator.supports(try model.newCache(parameters: nil), model: model) == admitted)
-        #expect(PromptLookupTokenIterator.routesExperts(model) == family.contains("moe") || family == "lfm")
+        #expect(PromptLookupTokenIterator.routesExperts(model) == ["lfm", "hybrid-moe"].contains(family))
         let slidingWindow: [KVCache] = [RotatingKVCache(maxSize: 64), KVCacheSimple()]
         #expect(!PromptLookupTokenIterator.supports(slidingWindow, model: model))
         #expect(!PromptLookupTokenIterator.supports([], model: model))
