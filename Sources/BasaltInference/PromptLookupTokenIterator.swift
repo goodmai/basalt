@@ -18,7 +18,7 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
 
     private var history: [Int]
     private var inFlight: DecodedStep?
-    private(set) var recycling: TokenRecyclingTable?
+    private(set) var recycling = TokenRecyclingTable(vocabularySize: 0)
     private(set) var recycledRounds = 0
     private(set) var acceptedRecycledDrafts = 0
     private var lookupBackoff = DraftBackoff()
@@ -71,19 +71,19 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
             logits = output.logits
         }
         let last = logits[0..., -1, 0...]
+        recycling = TokenRecyclingTable(vocabularySize: last.dim(-1))
         let token = sample(last).item(Int.self)
-        recycle(after: [history[history.count - 1]], successors: [argMax(last, axis: -1).item(Int.self)], vocabularySize: last.dim(-1))
+        recycle(after: [history[history.count - 1]], successors: [argMax(last, axis: -1).item(Int.self)])
         accept([token])
     }
 
-    private mutating func recycle(after fed: [Int], successors: [Int], vocabularySize: Int) {
-        if recycling == nil { recycling = TokenRecyclingTable(vocabularySize: vocabularySize) }
-        for (token, successor) in zip(fed, successors) { recycling?.record(token, successor: successor) }
+    private mutating func recycle(after fed: [Int], successors: [Int]) {
+        for (token, successor) in zip(fed, successors) { recycling.record(token, successor: successor) }
     }
 
     private mutating func confirm(_ step: DecodedStep) -> Int {
         let token = step.token.item(Int.self)
-        recycle(after: [history[history.count - 1]], successors: [step.successor.item(Int.self)], vocabularySize: step.vocabularySize)
+        recycle(after: [history[history.count - 1]], successors: [step.successor.item(Int.self)])
         return token
     }
 
@@ -127,12 +127,14 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
     private mutating func advance() {
         let remaining = maxTokens.map { $0 - tokenCount } ?? Int.max
         let looksUp = lookupBackoff.allowsDraft && state == nil
-        let recycles = recyclingBackoff.allowsDraft && state == nil && recycling != nil
+        let recycles = recyclingBackoff.allowsDraft && state == nil
         let draft = looksUp ? Self.draft(after: history, limit: Swift.min(Self.draftLimit, remaining - 1)) : []
         switch (inFlight, draft.isEmpty) {
         case (let step?, true) where recycles && remaining > 2:
             inFlight = nil
-            accept([confirm(step)])
+            let confirmed = confirm(step)
+            if recycling.chain(from: confirmed, limit: 1).isEmpty { lookAhead(from: step.token) }
+            accept([confirmed])
         case (let step?, true):
             emit(step, lookingAhead: remaining > 1)
         case (let step?, false):
@@ -144,7 +146,7 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
             speculate(draft, recycled: false)
         case (nil, true):
             let recycled = recycles
-                ? recycling?.chain(from: history[history.count - 1], limit: Swift.min(Self.recycledDraftLimit, remaining - 1)) ?? []
+                ? recycling.chain(from: history[history.count - 1], limit: Swift.min(Self.recycledDraftLimit, remaining - 1))
                 : []
             if recycled.isEmpty {
                 emit(step(MLXArray([Int32(history[history.count - 1])])), lookingAhead: remaining > 1)
@@ -158,20 +160,26 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
         verifyCalls += 1
         verified += 1
         let logits = forward(LMInput.Text(tokens: token)).logits[0..., -1, 0...]
-        return DecodedStep(token: sample(logits), successor: argMax(logits, axis: -1), vocabularySize: logits.dim(-1))
+        return DecodedStep(token: sample(logits), successor: argMax(logits, axis: -1))
     }
 
     private mutating func emit(_ current: DecodedStep, lookingAhead: Bool) {
         if lookingAhead {
-            let next = step(current.token)
-            asyncEval([next.token, next.successor] + cache.flatMap { $0.state })
-            inFlight = next
+            lookAhead(from: current.token)
         } else {
             inFlight = nil
+            lookupBackoff.tick()
+            recyclingBackoff.tick()
         }
+        accept([confirm(current)])
+    }
+
+    private mutating func lookAhead(from token: MLXArray) {
+        let next = step(token)
+        asyncEval([next.token, next.successor] + cache.flatMap { $0.state })
+        inFlight = next
         lookupBackoff.tick()
         recyclingBackoff.tick()
-        accept([confirm(current)])
     }
 
     private mutating func speculate(_ draft: [Int], recycled: Bool) {
@@ -197,15 +205,13 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
             }
             successors = argmaxes.asArray(Int.self)
         }
-        recycle(after: fed, successors: successors, vocabularySize: logits.dim(-1))
+        recycle(after: fed, successors: successors)
 
         let acceptedDrafts = emitted.count - 1
+        trimPromptCache(cache, numTokens: draft.count - acceptedDrafts)
         if recycled {
             recycledRounds += 1
             acceptedRecycledDrafts += acceptedDrafts
-        }
-        trimPromptCache(cache, numTokens: draft.count - acceptedDrafts)
-        if recycled {
             recyclingBackoff.record(acceptedDrafts: acceptedDrafts)
         } else {
             lookupBackoff.record(acceptedDrafts: acceptedDrafts)
@@ -233,7 +239,6 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
 struct DecodedStep {
     let token: MLXArray
     let successor: MLXArray
-    let vocabularySize: Int
 }
 
 struct TokenRecyclingTable {
