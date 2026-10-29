@@ -469,6 +469,19 @@ extension ZonedKVCacheTests {
         #expect(Self.maxDifference(chunkRows, expected) == 0)
     }
 
+    @Test("After a chunk longer than the window kept its own tokens, the next migrations evict the backlog and the share returns to the fraction")
+    func backlogFromLongChunkIsEvictedLater() {
+        let cache = ZonedKVCache(zones: Self.evicting, precision: .q8)
+        Self.fed(cache, 30, seed: 181)
+        let chunk = Self.tokens(20, seed: 183)
+        _ = cache.update(keys: chunk, values: chunk)
+        let behind = cache.quantizedCount - Self.evicting.keptMiddleTokens(cache.quantizedCount + cache.evictedCount)
+        #expect(behind > 0, "the fixture must leave a backlog")
+        Self.fed(cache, 24, seed: 185)
+        #expect(cache.quantizedCount == Self.evicting.keptMiddleTokens(cache.quantizedCount + cache.evictedCount))
+        #expect(cache.offset == 74)
+    }
+
     @Test("With eviction off the cache keeps every token, as before")
     func zeroFractionEvictsNothing() {
         let cache = ZonedKVCache(zones: Self.zones.evicting(0), precision: .q8)
