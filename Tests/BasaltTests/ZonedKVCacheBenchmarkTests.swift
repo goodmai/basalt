@@ -9,7 +9,7 @@ import MLXLMCommon
 @Suite("Zoned KV cache benchmark on real models", .serialized)
 struct ZonedKVCacheBenchmarkTests {
     enum Mode: CustomStringConvertible, CaseIterable {
-        case fp16, uniform8, uniform4, zoned8, zoned4, zonedK8V4, zonedK8V4H
+        case fp16, uniform8, uniform4, zoned8, zoned4, zonedK8V4, zonedK8V4H, zonedK8V4Evict25, zonedK8V4Evict50
 
         var description: String {
             switch self {
@@ -20,6 +20,8 @@ struct ZonedKVCacheBenchmarkTests {
             case .zoned4: "zoned-q4"
             case .zonedK8V4: "zoned-k8v4"
             case .zonedK8V4H: "zoned-k8v4h"
+            case .zonedK8V4Evict25: "zoned-k8v4-evict25"
+            case .zonedK8V4Evict50: "zoned-k8v4-evict50"
             }
         }
 
@@ -28,7 +30,7 @@ struct ZonedKVCacheBenchmarkTests {
             case .fp16: nil
             case .uniform8, .zoned8: .q8
             case .uniform4, .zoned4: .q4
-            case .zonedK8V4: .k8v4
+            case .zonedK8V4, .zonedK8V4Evict25, .zonedK8V4Evict50: .k8v4
             case .zonedK8V4H: .k8v4h
             }
         }
@@ -36,6 +38,8 @@ struct ZonedKVCacheBenchmarkTests {
         var zones: KVZones? {
             switch self {
             case .zoned8, .zoned4, .zonedK8V4, .zonedK8V4H: .standard
+            case .zonedK8V4Evict25: KVZones.standard.evicting(0.25)
+            case .zonedK8V4Evict50: KVZones.standard.evicting(0.5)
             default: nil
             }
         }
@@ -124,7 +128,8 @@ struct ZonedKVCacheBenchmarkTests {
     }
 
     static func acquire(_ lock: String, log: Log) throws -> String {
-        let owner = "\(ProcessInfo.processInfo.processIdentifier) \(UUID().uuidString)"
+        let owner = String(ProcessInfo.processInfo.processIdentifier)
+        reclaimIfStale(lock, log: log)
         guard (try? FileManager.default.createDirectory(atPath: lock, withIntermediateDirectories: false)) != nil else {
             let holder = (try? String(contentsOfFile: lock + "/owner", encoding: .utf8)) ?? "unknown"
             throw StepFailure(description: "gpu lock \(lock) is held by \(holder); start the run once it is free")
@@ -132,6 +137,14 @@ struct ZonedKVCacheBenchmarkTests {
         try owner.write(toFile: lock + "/owner", atomically: true, encoding: .utf8)
         log.line("LOCKED \(lock) owner=\(owner)")
         return owner
+    }
+
+    static func reclaimIfStale(_ lock: String, log: Log) {
+        guard let holder = try? String(contentsOfFile: lock + "/owner", encoding: .utf8),
+              let pid = Int32(holder.trimmingCharacters(in: .whitespacesAndNewlines)),
+              kill(pid, 0) != 0, errno == ESRCH else { return }
+        try? FileManager.default.removeItem(atPath: lock)
+        log.line("RECLAIMED \(lock) from pid \(pid), which no longer runs")
     }
 
     static func release(_ lock: String, owner: String, log: Log) {
@@ -202,7 +215,7 @@ struct ZonedKVCacheBenchmarkTests {
         let stamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "")
         try FileManager.default.createDirectory(atPath: "logs", withIntermediateDirectories: true)
         let log = Log(url: URL(fileURLWithPath: Self.env["BASALT_ZONED_LOG"] ?? "logs/zoned-kv-bench-\(stamp).log"))
-        let lock = Self.env["BASALT_GPU_LOCK"] ?? "/private/tmp/claude-501/basalt-gpu.lock"
+        let lock = Self.env["BASALT_GPU_LOCK"] ?? "/private/tmp/basalt-gpu.lock"
         let steps = Set(Self.list("BASALT_ZONED_STEPS", default: "mem,ppl,passkey"))
         let corpusPath = Self.env["BASALT_ZONED_CORPUS"]
         let corpus = corpusPath.flatMap { try? String(contentsOfFile: $0, encoding: .utf8) }

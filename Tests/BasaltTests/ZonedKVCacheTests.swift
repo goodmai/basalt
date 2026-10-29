@@ -375,6 +375,139 @@ struct ZonedKVCacheEngineTests {
     }
 }
 
+extension ZonedKVCacheTests {
+    static let evicting = zones.evicting(0.5)
+
+    static func scaledTokens(_ count: Int, seed: UInt64, scales: [[Float]]) -> MLXArray {
+        let perToken = MLXArray(scales.flatMap { $0 }, [1, kvHeads, count, 1]).asType(.float16)
+        return tokens(count, seed: seed) * perToken
+    }
+
+    static func lowestNormRows(_ keys: MLXArray, head: Int, among rows: Range<Int>, keeping kept: Int) -> [Int] {
+        let norms = (keys[0, head, rows, 0...].asType(.float32).square().sum(axis: -1)).asArray(Float.self)
+        return Array(norms.indices.sorted { norms[$0] < norms[$1] }.prefix(kept)).sorted().map { $0 + rows.lowerBound }
+    }
+
+    @Test("Eviction keeps, per KV head, the middle tokens whose keys have the lowest L2 norm, in position order, and quantizes only them")
+    func evictionKeepsLowestKeyNormRowsPerHead() {
+        let cache = ZonedKVCache(zones: Self.evicting, precision: .q8)
+        let scales: [[Float]] = [
+            (0..<20).map { Float(1 + ($0 * 7) % 20) / 4 },
+            (0..<20).map { Float(20 - ($0 * 3) % 20) / 4 },
+        ]
+        let keys = Self.scaledTokens(20, seed: 101, scales: scales)
+        let values = Self.tokens(20, seed: 102)
+        let (k, v) = cache.update(keys: keys, values: values)
+        #expect(Self.counts(cache) == [4, 4, 8] as [Int])
+        #expect(cache.evictedCount == 4)
+        #expect(cache.storedCount == 16)
+        #expect(cache.offset == 20)
+        #expect(k.shape == [1, Self.kvHeads, 16, Self.dim] && v.shape == k.shape)
+        var keptSets = [[Int]]()
+        for head in 0..<Self.kvHeads {
+            let kept = Self.lowestNormRows(keys, head: head, among: 4..<12, keeping: 4)
+            keptSets.append(kept)
+            let rows = MLXArray(kept.map(Int32.init))
+            let expectedKeys = Self.roundTripped(keys[0..., head..<(head + 1), 0..., 0...].take(rows, axis: 2), bits: 8)
+            let expectedValues = Self.roundTripped(values[0..., head..<(head + 1), 0..., 0...].take(rows, axis: 2), bits: 8)
+            #expect(Self.maxDifference(k[0..., head..<(head + 1), 4..<8, 0...], expectedKeys) == 0)
+            #expect(Self.maxDifference(v[0..., head..<(head + 1), 4..<8, 0...], expectedValues) == 0)
+        }
+        #expect(keptSets[0] != keptSets[1], "the fixture must give the two heads different keep sets")
+        #expect(Self.maxDifference(k[.ellipsis, ..<4, 0...], keys[.ellipsis, ..<4, 0...]) == 0)
+        #expect(Self.maxDifference(k[.ellipsis, 8..., 0...], keys[.ellipsis, 12..., 0...]) == 0)
+    }
+
+    @Test("The evicted share of the middle stays exactly the configured fraction across uneven migrations, and offset counts every token seen",
+          arguments: [0.25, 0.5, 0.9])
+    func evictedShareIsExactAcrossMigrations(fraction: Double) {
+        let zones = Self.zones.evicting(fraction)
+        let cache = ZonedKVCache(zones: zones, precision: .q4)
+        var seen = 0
+        for (step, count) in [3, 12, 1, 30, 5, 7, 64, 2].enumerated() {
+            _ = cache.update(keys: Self.tokens(count, seed: UInt64(200 + step)), values: Self.tokens(count, seed: UInt64(300 + step)))
+            seen += count
+            let middleSeen = cache.quantizedCount + cache.evictedCount
+            #expect(cache.quantizedCount == zones.keptMiddleTokens(middleSeen))
+            #expect(cache.offset == seen)
+            #expect(cache.storedCount == seen - cache.evictedCount)
+        }
+        #expect(cache.evictedCount == Int((Double(cache.quantizedCount + cache.evictedCount) * fraction).rounded(.down)))
+        #expect(cache.evictedCount > 0)
+    }
+
+    @Test("With eviction off the cache keeps every token, as before")
+    func zeroFractionEvictsNothing() {
+        let cache = ZonedKVCache(zones: Self.zones.evicting(0), precision: .q8)
+        _ = cache.update(keys: Self.tokens(46, seed: 111), values: Self.tokens(46, seed: 112))
+        #expect(Self.counts(cache) == [4, 34, 8] as [Int])
+        #expect(cache.evictedCount == 0)
+        #expect(cache.isTrimmable)
+    }
+
+    @Test("After eviction, decode attention over the kept tokens equals fused attention over the same kept keys and values", arguments: precisions)
+    func decodeAfterEvictionMatchesFusedReference(precision: KVPrecision) {
+        let cache = ZonedKVCache(zones: Self.evicting, precision: precision)
+        _ = cache.update(keys: Self.tokens(37, seed: 121), values: Self.tokens(37, seed: 122))
+        let (newKey, newValue) = (Self.tokens(1, seed: 123), Self.tokens(1, seed: 124))
+        let reference = cache.copy()
+        let (allKeys, allValues) = reference.update(keys: newKey, values: newValue)
+        let q = Self.queries(1, seed: 125)
+        let expected = MLXFast.scaledDotProductAttention(queries: q, keys: allKeys, values: allValues, scale: 0.125, mask: .none)
+        let got = cache.updateAndAttend(queries: q, keys: newKey, values: newValue, scale: 0.125, mask: .none)
+        #expect(cache.evictedCount > 0)
+        #expect(allKeys.dim(2) == cache.storedCount)
+        #expect(Self.maxDifference(got, expected) < 2e-3)
+    }
+
+    @Test("After eviction, an array mask spans the stored tokens, not the logical offset, and prefill through it equals the causal reference even when the same update evicts")
+    func arrayMaskAfterEvictionSpansStoredTokens() {
+        let cache = ZonedKVCache(zones: Self.evicting, precision: .q8)
+        _ = cache.update(keys: Self.tokens(30, seed: 131), values: Self.tokens(30, seed: 132))
+        #expect(cache.evictedCount > 0)
+        guard case .array(let mask) = cache.makeMask(n: 5, windowSize: nil, returnArray: true) else {
+            Issue.record("returnArray asks for an array mask")
+            return
+        }
+        #expect(mask.shape == [5, cache.storedCount + 5])
+        let (keys, values, q) = (Self.tokens(5, seed: 133), Self.tokens(5, seed: 134), Self.queries(5, seed: 135))
+        let reference = cache.copy()
+        let (allKeys, allValues) = reference.update(keys: keys, values: values)
+        let expected = MLXFast.scaledDotProductAttention(queries: q, keys: allKeys, values: allValues, scale: 0.125, mask: .causal)
+        let got = cache.updateAndAttend(queries: q, keys: keys, values: values, scale: 0.125, mask: .array(mask))
+        #expect(Self.maxDifference(got, expected) == 0)
+    }
+
+    @Test("Once tokens are evicted the cache is not trimmable and a trim never reaches past the recent window")
+    func evictedCacheTrimsOnlyTheWindow() {
+        let cache = ZonedKVCache(zones: Self.evicting, precision: .q8)
+        _ = cache.update(keys: Self.tokens(30, seed: 141), values: Self.tokens(30, seed: 142))
+        let (window, middle, offset) = (cache.windowCount, cache.quantizedCount, cache.offset)
+        #expect(!cache.isTrimmable)
+        #expect(cache.trim(window + 5) == window)
+        #expect(cache.quantizedCount == middle)
+        #expect(cache.offset == offset - window)
+    }
+
+    @Test("A copy keeps the evicted count, so its next RoPE position is the same")
+    func copyKeepsEvictedCount() {
+        let cache = ZonedKVCache(zones: Self.evicting, precision: .q8)
+        _ = cache.update(keys: Self.tokens(30, seed: 151), values: Self.tokens(30, seed: 152))
+        let copied = cache.copy()
+        #expect(copied.offset == cache.offset)
+        #expect((copied as? ZonedKVCache)?.evictedCount == cache.evictedCount)
+    }
+
+    @Test("RoPE rotates dimension pairs, so post-RoPE key norms rank tokens the same as pre-RoPE norms")
+    func ropePreservesKeyNorms() {
+        let keys = Self.tokens(32, seed: 161).asType(.float32)
+        let rotated = MLXFast.RoPE(keys, dimensions: Self.dim, traditional: false, base: 10_000, scale: 1, offset: 4_000)
+        let norms = { (x: MLXArray) in sqrt(x.square().sum(axis: -1)) }
+        #expect(Self.maxDifference(norms(keys), norms(rotated)) < 1e-3)
+        #expect(argSort(norms(keys), axis: -1).asArray(Int32.self) == argSort(norms(rotated), axis: -1).asArray(Int32.self))
+    }
+}
+
 final class SelfAttendingModel: Module, LLMModel {
     var loraLayers: [Module] { [] }
 

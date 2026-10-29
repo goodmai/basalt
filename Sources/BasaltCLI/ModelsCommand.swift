@@ -351,8 +351,11 @@ struct CheckSubcommand: AsyncParsableCommand {
     @Flag(name: .customLong("kv-zones"), help: KVBitsSetting.zonesHelp)
     var kvZones: Bool = false
 
+    @Option(name: .customLong("kv-evict"), help: KVBitsSetting.evictHelp)
+    var kvEvict: Double?
+
     func validate() throws {
-        try KVBitsSetting.validate(zones: kvZones, bits: kvBits)
+        try KVBitsSetting.validate(zones: kvZones, bits: kvBits, evict: kvEvict)
     }
 
     mutating func run() async throws {
@@ -379,7 +382,7 @@ struct CheckSubcommand: AsyncParsableCommand {
             throw ValidationError("Pass a model repo ID, or --system for a hardware check.")
         }
         let evaluator = MemoryEvaluator()
-        let assessment = await evaluator.evaluate(modelId: id, kvPrecision: kvBits?.budgetPrecision, kvZones: KVBitsSetting.zones(kvZones))
+        let assessment = await evaluator.evaluate(modelId: id, kvPrecision: kvBits?.budgetPrecision, kvZones: KVBitsSetting.zones(kvZones, evicting: kvEvict))
 
         if json {
             try printJSON(assessment)

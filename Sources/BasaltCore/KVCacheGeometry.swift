@@ -168,7 +168,8 @@ public struct KVCacheGeometry: Sendable, Equatable {
         let t = Double(max(0, tokens))
         let windowed = window > 0 ? min(t, Double(window)) : t
         let exact = kvPrecision == nil ? t : min(t, Double(zones?.maxFullPrecisionTokens ?? 0))
-        let growing = exact * bytesPerToken(nil) + (t - exact) * bytesPerToken(kvPrecision)
+        let middle = Double(zones?.keptMiddleTokens(Int(t - exact)) ?? Int(t - exact))
+        let growing = exact * bytesPerToken(nil) + middle * bytesPerToken(kvPrecision)
         return Int64(growing + windowedElementsPerToken * windowed * Self.activationBytes) + fixedStateBytes
     }
 
@@ -207,7 +208,7 @@ public struct KVCacheGeometry: Sendable, Equatable {
         let uniform = maxTokens(fitting: budget, kvPrecision: kvPrecision)
         guard kvPrecision != nil, let zones, uniform < Int(Int32.max) else { return uniform }
         var fits = min(uniform, maxTokens(fitting: budget))
-        var tooMany = uniform + 1
+        var tooMany = Int(min(Double(uniform) / (1 - zones.evictedMiddleFraction), Double(Int32.max))) + 1
         while tooMany - fits > 1 {
             let mid = fits + (tooMany - fits) / 2
             if bytes(tokens: mid, kvPrecision: kvPrecision, zones: zones) <= budget { fits = mid } else { tooMany = mid }
@@ -279,15 +280,27 @@ public struct KVZones: Sendable, Equatable {
     public let sinkTokens: Int
     public let windowTokens: Int
     public let migrationStep: Int
+    public let evictedMiddleFraction: Double
 
     public static let standard = KVZones(sinkTokens: 64, windowTokens: 1024, migrationStep: 256)
+    public static let evictionFractions = 0.0...0.9
 
-    public init(sinkTokens: Int, windowTokens: Int, migrationStep: Int) {
+    public init(sinkTokens: Int, windowTokens: Int, migrationStep: Int, evictedMiddleFraction: Double = 0) {
         precondition(sinkTokens >= 0 && windowTokens >= 0 && migrationStep > 0, "KV zones need non-negative sizes and a positive migration step")
+        precondition(Self.evictionFractions.contains(evictedMiddleFraction), "KV zones evict between 0 and 90% of the middle")
         self.sinkTokens = sinkTokens
         self.windowTokens = windowTokens
         self.migrationStep = migrationStep
+        self.evictedMiddleFraction = evictedMiddleFraction
+    }
+
+    public func evicting(_ fraction: Double) -> KVZones {
+        KVZones(sinkTokens: sinkTokens, windowTokens: windowTokens, migrationStep: migrationStep, evictedMiddleFraction: fraction)
     }
 
     public var maxFullPrecisionTokens: Int { sinkTokens + windowTokens + migrationStep - 1 }
+
+    public func keptMiddleTokens(_ middle: Int) -> Int {
+        middle - Int((Double(middle) * evictedMiddleFraction).rounded(.down))
+    }
 }
