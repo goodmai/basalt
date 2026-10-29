@@ -178,6 +178,23 @@ struct MemoryCapTests {
         #expect(sent.maxTokens == 1_000)
     }
 
+    @Test("--kv-evict 0.5 admits a 130k prompt that zoned k8v4 alone refuses on 7 GiB: the room counts only the kept half of the middle")
+    func evictingHalfTheMiddleAdmitsLongerPrompt() async throws {
+        let request = GenerationRequest(prompt: "long", maxTokens: 1_000)
+        let (full, fullEngine, fullDir) = try await Self.orchestrator(
+            kvBudget: 7 * Self.gib, promptTokens: 130_000, kvPrecision: .k8v4, kvZones: .standard)
+        defer { try? FileManager.default.removeItem(at: fullDir) }
+        await #expect(throws: BasaltError.self) { _ = try await full.generate(request: request) }
+        #expect(await fullEngine.getRequests().isEmpty)
+        let (evicting, engine, dir) = try await Self.orchestrator(
+            kvBudget: 7 * Self.gib, promptTokens: 130_000, kvPrecision: .k8v4, kvZones: KVZones.standard.evicting(0.5))
+        defer { try? FileManager.default.removeItem(at: dir) }
+        _ = try await evicting.generate(request: request)
+        let sent = try #require(await engine.getLastRequest())
+        #expect(sent.kvPrecision == .k8v4)
+        #expect(sent.maxTokens == 1_000)
+    }
+
     @Test("A model whose attention bypasses the zoned cache is sized as uniform --kv-bits even with --kv-zones: the 45k prompt is refused again")
     func zonesIgnoredForModelThatUpdatesItself() async throws {
         let (orchestrator, engine, dir) = try await Self.orchestrator(
