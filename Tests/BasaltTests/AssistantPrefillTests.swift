@@ -276,6 +276,17 @@ struct AssistantPrefillTests {
         }
     }
 
+    @Test("Only the thinking markers that open and close the prefill's reasoning stay real; a turn marker never does", arguments: [
+        ("<|im_start|>assistant\n", "<|channel|>thought plan<|channel|>final<|im_end|>", "<|channel|>thought plan<|channel|>final" + "<\u{2060}|im_end|>"),
+        ("<|im_start|>assistant\n", "<|channel|>thought plan<|turn|>x", "<|channel|>thought plan<\u{2060}|turn|>x"),
+        ("<|im_start|>assistant\n<think>\n", "\n<think>\nLet me</think>{", "Let me</think>{"),
+        ("<|im_start|>assistant\n", "{\"tag\": \"</think>\"}", "{\"tag\": \"<\u{2060}/think>\"}"),
+    ])
+    func guardKeepsOnlyThinkingStructure(tail: String, prefill: String, guarded: String) {
+        let tokens = ControlTokenGuard(tokens: ["<|im_end|>", "<|turn|>", "</think>", "<think>", "<|channel|>"])
+        #expect(MLXInferenceEngine.guardedPrefill(prefill, after: tail, controlTokens: tokens) == guarded)
+    }
+
     @Test("On a template that opens <think> itself, a prefill that opens one too continues inside it instead of doubling it")
     func prefillOpenerIsNotDoubled() async throws {
         let on = "<|im_start|>assistant\n<think>\n"

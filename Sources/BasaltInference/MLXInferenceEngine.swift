@@ -503,6 +503,7 @@ public actor MLXInferenceEngine: InferenceEngine {
     static let thinkingOpeners = ["<think>", "<|channel>thought", "<|channel|>thought", "[THINK]"]
     static let thinkingClosers = ["</think>", "<channel|>", "<|channel|>", "<|turn|>", "[/THINK]"]
     static let strayThinkingClosers = ["</think>", "<channel|>", "[/THINK]"]
+    static let prefillThinkingClosers = ["</think>", "<channel|>", "<|channel|>", "[/THINK]"]
     static let thinkingMarkerHoldback = (thinkingOpeners + thinkingClosers).map(\.count).max()! - 1
 
     static func firstMarker(_ markers: [String], in text: some StringProtocol) -> Range<String.Index>? {
@@ -533,7 +534,7 @@ public actor MLXInferenceEngine: InferenceEngine {
         var kept = ""
         while true {
             if inside {
-                guard let closer = firstMarker(strayThinkingClosers, in: rest) else { return kept + controlTokens.neutralize(String(rest)) }
+                guard let closer = firstMarker(prefillThinkingClosers, in: rest) else { return kept + controlTokens.neutralize(String(rest)) }
                 kept += controlTokens.neutralize(String(rest[..<closer.lowerBound])) + rest[closer]
                 rest = rest[closer.upperBound...]
                 inside = false
