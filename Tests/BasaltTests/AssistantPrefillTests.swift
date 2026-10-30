@@ -658,11 +658,18 @@ struct AssistantPrefillRealModelTests {
         let opening = sentence.generatedText.drop(while: \.isWhitespace)
         verdict("sentence-prefill", !opening.isEmpty && opening.first?.isUppercase != true && !opening.hasPrefix("Sure") && sentence.reasoningText == nil,
                 "continuation \(sentence.generatedText.debugDescription)")
+        let thinkingPrefill = repo.contains("gemma") ? "<|channel>thought\nThe user wants" : "<think>\nThe user wants"
+        var thinkingRequest = request(Self.sentenceQuestion, prefill: thinkingPrefill)
+        thinkingRequest = thinkingRequest.withMaxTokens(400)
+        let thinking = try await log.step("thinking-prefill") { try await engine.generate(request: thinkingRequest) }
+        let reasoning = thinking.reasoningText ?? ""
+        verdict("thinking-prefill", !reasoning.isEmpty && !reasoning.contains("<think>") && !reasoning.contains("<|channel>"),
+                "reasoning \(reasoning.prefix(160).debugDescription) answer \(thinking.generatedText.prefix(160).debugDescription) finish \(thinking.finishReason)")
         log.record("result", "\(failures.isEmpty ? "all passed" : "\(failures.count) failed") \(log.host())")
         return failures
     }
 
-    @Test("A {\"name\": prefill continues valid JSON, with and without json_object, and Sure, here continues the sentence",
+    @Test("A {\"name\": prefill continues valid JSON, with and without json_object, Sure, here continues the sentence, and a thinking prefill continues the reasoning",
           .enabled(if: !models.isEmpty, "set BASALT_E2E=1 (BASALT_E2E_PREFILL_MODELS: comma-separated cached repo ids)"))
     func prefillsContinueOnRealModels() async throws {
         var failures: [String] = []
