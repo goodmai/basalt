@@ -524,7 +524,7 @@ extension ModelRouter: CloudFallback {
         guard let messages = request.messages, !messages.isEmpty else {
             return [.init(role: "user", content: request.prompt)]
         }
-        return messages.map { message in
+        return (ChatMessageInput.splittingPrefill(messages)?.turns ?? messages).map { message in
             switch message.role {
             case .tool:
                 return .init(role: "user", content: "Result of \(message.toolName ?? "the tool"): \(message.text)")

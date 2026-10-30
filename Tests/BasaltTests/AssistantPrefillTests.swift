@@ -304,6 +304,20 @@ struct AssistantPrefillTests {
         #expect(outcome.text == "It is 391.")
     }
 
+    @Test("A prefill that is only the opener the template already wrote adds nothing and continues the reasoning")
+    func prefillOfOnlyTheOpenerAddsNothing() async throws {
+        let on = "<|im_start|>assistant\n<think>\n"
+        let messages = [ChatMessageInput(role: .user, text: "weather and time"), ChatMessageInput(role: .assistant, text: "<think>\n")]
+        let prompt = "<|im_start|>user\nweather and time<|im_end|>\n" + on
+        let (engine, recorder) = try await Prefill.scripted(
+            "plan</think>It is 391.", prompt: prompt, thinkingOn: on, thinkingOff: "<|im_start|>assistant\n<think>\n\n</think>\n\n")
+        let result = try await engine.generate(request: Prefill.request(messages, maxTokens: 40))
+        let rendered = try #require(recorder.last).text
+        #expect(result.promptTokens == rendered.unicodeScalars.count)
+        #expect(result.reasoningText == "plan")
+        #expect(result.generatedText == "It is 391.")
+    }
+
     @Test("A prefill that already answered is constrained from its first generated token, even with thinking on")
     func answeredPrefillConstrainsAtOnce() {
         #expect(MLXInferenceEngine.constraintPhase(thinkingDisabled: false, endsInsideThinking: false, prefillAnswered: true) == .constrained)

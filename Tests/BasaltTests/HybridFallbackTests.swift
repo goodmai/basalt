@@ -201,7 +201,7 @@ struct ModelRouterCloudFallbackTests {
         #expect(await !router.knowsPrice(of: "qwen3-235b"))
     }
 
-    @Test("Chat turns reach the cloud with their roles; tool turns become readable text")
+    @Test("Chat turns reach the cloud with their roles; tool turns become readable text, an empty trailing assistant turn is dropped as it is locally")
     func cloudMessages() {
         let request = GenerationRequest(prompt: "flat", messages: [
             ChatMessageInput(role: .system, text: "be brief"),
@@ -214,5 +214,8 @@ struct ModelRouterCloudFallbackTests {
         #expect(messages[2].content == "get_weather({})")
         #expect(messages[3].content == "Result of get_weather: sunny")
         #expect(ModelRouter.cloudMessages(GenerationRequest(prompt: "flat")).map(\.content) == ["flat"])
+        let emptyPrefill = GenerationRequest(prompt: "flat", messages: [
+            ChatMessageInput(role: .user, text: "weather?"), ChatMessageInput(role: .assistant, text: "")])
+        #expect(ModelRouter.cloudMessages(emptyPrefill).map(\.role) == ["user"])
     }
 }
