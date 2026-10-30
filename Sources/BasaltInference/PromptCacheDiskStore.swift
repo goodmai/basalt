@@ -275,9 +275,14 @@ public struct PromptCacheDiskStore: Sendable {
         guard Self.isReadable(file) else { return false }
         let size = Int64((try? FileManager.default.attributesOfItem(atPath: file.path)[.size] as? Int) ?? 0)
         let intact = (try? ModelInspector.readSafetensors(at: file, fileSize: size).get()) != nil
-        guard error is PromptCacheDiskError || !intact else { return false }
+        guard !intact || !Self.isTransient(error) else { return false }
         discard(entry)
         return true
+    }
+
+    static func isTransient(_ error: any Error) -> Bool {
+        let domain = (error as NSError).domain
+        return error is POSIXError || domain == NSPOSIXErrorDomain || domain == NSCocoaErrorDomain
     }
 
     mutating func discard(_ entry: PromptCacheDiskEntry) {

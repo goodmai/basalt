@@ -530,6 +530,11 @@ struct PromptCacheDiskTests {
         #expect(discarded3)
         #expect(!FileManager.default.fileExists(atPath: file.path))
 
+        struct CorruptMetadata: Error {}
+        let rejected = try entry(Array(100..<140))
+        let rejectedRemoved = store.discardIfBroken(rejected, after: CorruptMetadata())
+        #expect(rejectedRemoved)
+
         let cut = try entry(Array(50..<90))
         let handle = try FileHandle(forWritingTo: directory.appendingPathComponent(cut.name))
         try handle.truncate(atOffset: UInt64(cut.bytes / 2))
