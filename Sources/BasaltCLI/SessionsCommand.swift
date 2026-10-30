@@ -1,13 +1,14 @@
 import Foundation
 import ArgumentParser
 import BasaltCore
+import BasaltInference
 
 @available(macOS 10.15, macCatalyst 13, iOS 13, tvOS 13, watchOS 6, *)
 struct SessionsCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "sessions",
         abstract: "Read the local session log without loading a model.",
-        subcommands: [List.self, Show.self, Stats.self]
+        subcommands: [List.self, Show.self, Stats.self, Prune.self]
     )
 
     struct Location: ParsableArguments {
@@ -85,6 +86,35 @@ struct SessionsCommand: AsyncParsableCommand {
             print("responses: \(responses.count) (\(ok.count) ok, \(responses.count - ok.count) other)")
             print("tokens: \(prompt) prompt (\(cached) cached), \(completion) completion")
             print(String(format: "mean: %.1f tok/s, %d ms to first token", tps, ttft))
+        }
+    }
+
+    struct Prune: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(
+            abstract: "Delete persisted prompt-cache files past their retention, beyond a size cap, and leftovers of interrupted writes.")
+        @Option(name: .customLong("prompt-cache-dir"), help: "Directory of the persisted prompt cache (default: ~/.basalt/prompt-cache)")
+        var directory: String?
+        @Option(name: .customLong("prompt-cache-disk-days"), help: "Delete files unused for this many days (default: 7)")
+        var retentionDays: Int = 7
+        @Option(name: .customLong("prompt-cache-disk-mb"), help: "Then delete the least recently used files until at most this many MB remain (default: no cap; 0 deletes every file)")
+        var megabytes: Int?
+
+        func validate() throws {
+            guard retentionDays >= 0, (megabytes ?? 0) >= 0 else {
+                throw ValidationError("--prompt-cache-disk-days and --prompt-cache-disk-mb must not be negative")
+            }
+        }
+
+        mutating func run() async throws {
+            let url = PromptCacheDiskOptions.url(directory)
+            guard FileManager.default.fileExists(atPath: url.path) else {
+                print("No prompt cache in \(url.path)")
+                return
+            }
+            let store = PromptCacheDiskStore(
+                directory: url, byteQuota: megabytes.map { Int64(min($0, 1 << 30)) << 20 } ?? .max, retentionDays: retentionDays)
+            let removed = try store.prune()
+            print("Removed \(removed.files) files (\(removed.bytes >> 20) MB) from \(url.path)")
         }
     }
 }

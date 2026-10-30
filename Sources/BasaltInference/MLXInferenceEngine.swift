@@ -96,6 +96,10 @@ public actor MLXInferenceEngine: InferenceEngine {
     private(set) var cacheBlend: CacheBlendStore?
     private let speculativeLookup: Bool
     private let speculativeRecycling: Bool
+    private(set) var promptCacheDisk: PromptCacheDiskStore?
+    private var modelFingerprint: String?
+    private var modelDescription = ""
+    private var modelCacheLayout: [String]?
 
     public init(
         reasoningEffort: String? = nil,
@@ -110,8 +114,10 @@ public actor MLXInferenceEngine: InferenceEngine {
         seed: UInt64? = nil,
         cacheBlendRatio: Float? = nil,
         speculativeLookup: Bool = false,
-        speculativeRecycling: Bool = false
+        speculativeRecycling: Bool = false,
+        promptCacheDisk: PromptCacheDiskStore? = nil
     ) {
+        self.promptCacheDisk = promptCacheDisk
         self.speculativeLookup = speculativeLookup
         self.speculativeRecycling = speculativeRecycling
         self.reasoningEffort = reasoningEffort
@@ -155,9 +161,13 @@ public actor MLXInferenceEngine: InferenceEngine {
 
     func attach(
         _ container: ModelContainer, profile: any ModelProfile = GenericProfile(),
-        samplingDefaults: SamplingDefaults = SamplingDefaults(), controlTokens: ControlTokenGuard = .none
+        samplingDefaults: SamplingDefaults = SamplingDefaults(), controlTokens: ControlTokenGuard = .none,
+        fingerprint: String? = nil, modelDescription: String = ""
     ) {
         self.container = container
+        modelFingerprint = fingerprint
+        self.modelDescription = modelDescription
+        modelCacheLayout = nil
         self.controlTokens = controlTokens
         grammarVocabulary = nil
         idleGrammars = [:]
@@ -258,6 +268,7 @@ public actor MLXInferenceEngine: InferenceEngine {
             // Setting container to nil drops all ARC references to the ModelContainer,
             // releasing the underlying MLXArray tensors and Metal buffers.
             if container != nil {
+                await persistPromptCache(within: Self.modelSwitchPersistDeadline)
                 container = nil
                 promptCaches.removeAll()
                 cacheBlend = nil
@@ -310,7 +321,9 @@ public actor MLXInferenceEngine: InferenceEngine {
             attach(try await loadModelContainer(from: directory, using: DefaultTokenizerLoader()),
                    profile: ModelProfileRegistry.profile(forModelAt: modelPath),
                    samplingDefaults: SamplingDefaults(generationConfig: ModelCache.generationConfig(at: directory)),
-                   controlTokens: ControlTokenGuard(modelDirectory: directory))
+                   controlTokens: ControlTokenGuard(modelDirectory: directory),
+                   fingerprint: promptCacheDisk == nil ? nil : PromptCacheDiskStore.fingerprint(modelDirectory: directory),
+                   modelDescription: modelPath)
             await probeKVZones()
             logger.info("Sampling defaults from generation_config.json: \(samplingDefaults)")
             
@@ -819,6 +832,9 @@ public actor MLXInferenceEngine: InferenceEngine {
             }
             let promptTokens = lmInput.text.tokens.asArray(Int.self)
             let namespace = carriesMoreThanTokens || epoch != modelEpoch ? nil : promptCacheNamespace(for: request)
+            if let namespace {
+                await restoreFromDisk(namespace, prompt: promptTokens, container: container, epoch: epoch)
+            }
             let lease = namespace.flatMap { promptCaches.lease($0, for: promptTokens) }
             let boundary = namespace == nil
                 ? promptTokens.count - 1
@@ -1121,6 +1137,63 @@ public actor MLXInferenceEngine: InferenceEngine {
     private func promptCacheNamespace(for request: GenerationRequest) -> String? {
         guard promptCaches.byteBudget > 0, (request.kvPrecision ?? kvPrecision) == nil else { return nil }
         return request.cacheKey
+    }
+
+    static let modelSwitchPersistDeadline = Duration.seconds(10)
+
+    private func cacheLayout(_ container: ModelContainer, epoch: Int) async -> [String]? {
+        if let modelCacheLayout { return modelCacheLayout }
+        let layout = try? await container.perform { try $0.model.newCache(parameters: nil).map(PromptCacheDiskStore.layoutName) }
+        if epoch == modelEpoch {
+            modelCacheLayout = layout
+        }
+        return layout
+    }
+
+    private func restoreFromDisk(_ namespace: String, prompt: [Int], container: ModelContainer, epoch: Int) async {
+        guard promptCacheDisk != nil, modelFingerprint != nil,
+              promptCaches.storedPrefix(of: prompt, in: namespace) < prompt.count - 1,
+              let layout = await cacheLayout(container, epoch: epoch),
+              epoch == modelEpoch, let fingerprint = modelFingerprint,
+              let hit = promptCacheDisk?.longestPrefix(
+                fingerprint: fingerprint, namespace: namespace, of: Array(prompt.dropLast()),
+                longerThan: promptCaches.storedPrefix(of: prompt, in: namespace), maxBytes: promptCaches.byteBudget)
+        else { return }
+        let started = ContinuousClock.now
+        do {
+            guard let cache = try promptCacheDisk?.load(hit.entry, layout: layout) else { return }
+            promptCaches.store(namespace, tokens: Array(hit.entry.tokens.prefix(hit.usable)), cache: cache)
+            let seconds = (ContinuousClock.now - started).inSeconds
+            logger.info(String(
+                format: "Restored %d of %d stored prompt tokens from disk: %.1f MB in %.3f s (%.2f GB/s)",
+                hit.usable, hit.entry.tokens.count, Double(hit.entry.bytes) / 1e6, seconds,
+                Double(hit.entry.bytes) / 1e9 / max(seconds, 1e-9)))
+        } catch {
+            logger.warn("Removing prompt-cache file \(hit.entry.name) that cannot be restored: \(error)")
+            promptCacheDisk?.discard(hit.entry)
+        }
+    }
+
+    public func persistPromptCache(within deadline: Duration) async {
+        guard promptCacheDisk != nil, let fingerprint = modelFingerprint else { return }
+        let started = ContinuousClock.now
+        var written: Set<String> = []
+        var skipped = 0
+        for path in promptCaches.storedPathsByRecency() {
+            guard ContinuousClock.now - started < deadline else {
+                skipped += 1
+                continue
+            }
+            guard let lease = promptCaches.lease(path.namespace, for: path.tokens + [0]) else { continue }
+            if lease.reusedTokens > 0, let name = promptCacheDisk?.store(
+                fingerprint: fingerprint, model: modelDescription, namespace: path.namespace,
+                tokens: Array(path.tokens.prefix(lease.reusedTokens)), cache: lease.cache, keeping: written) {
+                written.insert(name)
+            }
+            promptCaches.release(lease)
+        }
+        logger.info("Persisted \(written.count) prompt-cache paths in \(String(format: "%.2f", (ContinuousClock.now - started).inSeconds)) s"
+            + (skipped > 0 ? "; \(skipped) colder paths skipped past the \(deadline) deadline" : ""))
     }
 
     private func keep(

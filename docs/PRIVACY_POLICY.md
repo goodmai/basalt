@@ -25,5 +25,7 @@ Gem **does not** collect telemetry, analytics, crash reports, or usage statistic
 
 Choose with `--session-log full|meta|off`; the server prints the mode and directory at start. In `full` mode private keys and API tokens found in prompts and replies are replaced by `[REDACTED:*]` before they are written (best effort; `--session-log-redact off` disables it). HTTP headers (`Authorization`, `x-api-key`) are never recorded, and a request that fails to decode is logged only by its size. Files older than 14 days, and the oldest beyond 1 GB in total, are deleted at start (`--session-log-retention-days`, `--session-log-max-total-mb`).
 
+**Persisted prompt cache (opt-in).** With `--prompt-cache-disk-mb N` (on `serve` and `chat`, default `0`, off) the model's prompt cache, the KV tensors computed from your conversations, is written to `~/.basalt/prompt-cache/` (`--prompt-cache-dir`; directory `0700`, files `0600`) so a resumed session skips the prefill. Each file is the conversation in another encoding: its token ids are stored too, and redaction (`[REDACTED:*]`) cannot apply to it. It is therefore refused unless `--session-log full`, the mode that already keeps the conversation on disk. Files are bounded by `N` MB, deleted after `--prompt-cache-disk-days` (7) without use, and `basalt sessions prune` (or deleting the directory) removes them at any time.
+
 ## 5. Third-Party Access
 No third party has access to your data through Gem. We do not use third-party tracking libraries or APIs that exfiltrate data.

@@ -36,6 +36,12 @@ struct ChatCommand: AsyncParsableCommand {
     @Option(name: .customLong("session-log-dir"), help: "Directory of the session log (default: ~/.basalt/sessions)")
     var sessionLogDir: String?
 
+    @OptionGroup var promptCacheDisk: PromptCacheDiskOptions
+
+    func validate() throws {
+        try promptCacheDisk.validate(sessionLog: sessionLog)
+    }
+
     static func request(_ prompt: String, history: [ChatMessageInput], maxTokens: Int, sessionId: String) -> GenerationRequest {
         GenerationRequest(prompt: prompt, maxTokens: maxTokens, messages: history + [ChatMessageInput(role: .user, text: prompt)])
             .withCacheKey(cacheKey(sessionId))
@@ -77,7 +83,7 @@ struct ChatCommand: AsyncParsableCommand {
 
         let resolvedPath = try await resolveModelPath()
 
-        let engine = MLXInferenceEngine()
+        let engine = MLXInferenceEngine(promptCacheDisk: try promptCacheDisk.store())
         let orchestrator = ModelOrchestratorActor(engine: engine, maxTokens: maxTokens, sessionLog: writer)
 
         log("Loading model from \(bold(resolvedPath))…")
@@ -116,11 +122,11 @@ struct ChatCommand: AsyncParsableCommand {
                     log(dim("Tokens: \(stats.promptTokens) in / \(stats.completionTokens) out | TPS: \(String(format: "%.2f", stats.tokensPerSecond)) | TTFT: \(String(format: "%.3fs", stats.timeToFirstToken))"))
                 }
             } catch {
-                await writer?.close()
+                await orchestrator.shutdown()
                 log("\(red("Error:")) \(error.localizedDescription)")
                 throw ExitCode.failure
             }
-            await writer?.close()
+            await orchestrator.shutdown()
             return
         }
 
@@ -129,7 +135,7 @@ struct ChatCommand: AsyncParsableCommand {
         
         let controller = ChatController(orchestrator: orchestrator, maxTokens: maxTokens, sessionId: sessionId, history: history)
         await controller.start()
-        await writer?.close()
+        await orchestrator.shutdown()
         
         // Ensure raw mode is cleanly disabled when returning to bash
         let terminal = TerminalManager()

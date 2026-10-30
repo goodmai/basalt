@@ -118,9 +118,9 @@ public actor ModelInspector {
                 case .failure(let problem):
                     errors.append("\(problem.message): \(name)")
                     shardValid = false
-                case .success(let shardTensors):
-                    tensors.merge(shardTensors) { first, _ in first }
-                    detectedDtypes.formUnion(shardTensors.values.map(\.dtype))
+                case .success(let header):
+                    tensors.merge(header.tensors) { first, _ in first }
+                    detectedDtypes.formUnion(header.tensors.values.map(\.dtype))
                 }
             }
 
@@ -251,20 +251,25 @@ public actor ModelInspector {
         return (dir, modelIdOrPath)
     }
 
-    struct Tensor: Equatable, Sendable {
-        let dtype: String
-        let shape: [Int]
-        let end: Int
+    package struct Tensor: Equatable, Sendable {
+        package let dtype: String
+        package let shape: [Int]
+        package let end: Int
     }
 
-    struct ShardProblem: Error {
-        let message: String
+    package struct SafetensorsHeader: Sendable {
+        package let tensors: [String: Tensor]
+        package let metadata: [String: String]
+    }
+
+    package struct ShardProblem: Error {
+        package let message: String
     }
 
     /// Parses a safetensors header (8-byte LE length + JSON) and checks the file is complete:
     /// the data section must end exactly where the largest tensor offset says. A truncated
     /// download keeps an intact header, so only this check catches it.
-    static func readSafetensors(at url: URL, fileSize: Int64) -> Result<[String: Tensor], ShardProblem> {
+    package static func readSafetensors(at url: URL, fileSize: Int64) -> Result<SafetensorsHeader, ShardProblem> {
         guard fileSize >= 8, let handle = try? FileHandle(forReadingFrom: url) else {
             return .failure(.init(message: "Unreadable safetensors file"))
         }
@@ -299,7 +304,7 @@ public actor ModelInspector {
         guard expected == fileSize else {
             return .failure(.init(message: "Truncated or oversized shard (\(fileSize) bytes, header expects \(expected))"))
         }
-        return .success(tensors)
+        return .success(SafetensorsHeader(tensors: tensors, metadata: json["__metadata__"] as? [String: String] ?? [:]))
     }
 
     /// Bits per quantized layer, measured from each packed U32 weight and its scales.

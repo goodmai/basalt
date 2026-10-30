@@ -71,6 +71,8 @@ struct ServeCommand: AsyncParsableCommand {
     )
     var promptCacheMB: Int?
 
+    @OptionGroup var promptCacheDisk: PromptCacheDiskOptions
+
     @Flag(
         name: .customLong("cache-blend"),
         help: "Reuse the KV of prompt chunks (split after blank lines) in any order, recomputing only the most deviating tokens (CacheBlend, approximate; Llama and Qwen3 only; takes half the prompt-cache budget)"
@@ -379,6 +381,10 @@ struct ServeCommand: AsyncParsableCommand {
             throw ValidationError("--cache-blend-ratio must be between 0 and 1, got \(cacheBlendRatio)")
         }
         try KVBitsSetting.validate(zones: kvZones, bits: kvBits, evict: kvEvict)
+        try promptCacheDisk.validate(sessionLog: sessionLog)
+        guard promptCacheDisk.megabytes == 0 || promptCacheMB != 0 else {
+            throw ValidationError("--prompt-cache-disk-mb persists the in-memory prompt cache, which --prompt-cache-mb 0 turns off")
+        }
     }
 
     mutating func run() async throws {
@@ -473,7 +479,8 @@ struct ServeCommand: AsyncParsableCommand {
             seed: seed,
             cacheBlendRatio: cacheBlend ? min(max(0, cacheBlendRatio), 1) : nil,
             speculativeLookup: speculativeLookup,
-            speculativeRecycling: speculativeRecycling
+            speculativeRecycling: speculativeRecycling,
+            promptCacheDisk: try promptCacheDisk.store()
         )
         let sessionLogWriter = Self.sessionLogWriter(
             mode: sessionLog, directory: sessionLogDir, retentionDays: sessionLogRetentionDays, maxTotalMB: sessionLogMaxTotalMB,

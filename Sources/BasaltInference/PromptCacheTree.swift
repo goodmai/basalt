@@ -186,6 +186,21 @@ struct PromptCacheTree: Sendable {
         return found
     }
 
+    func storedPathsByRecency() -> [(namespace: String, tokens: [Int])] {
+        var found: [(namespace: String, tokens: [Int], lastUse: Int)] = []
+        for (namespace, root) in roots {
+            var pending: [(node: PromptCacheNode, prefix: [Int])] = [(root, [])]
+            while let (node, prefix) = pending.popLast() {
+                let tokens = prefix + node.tokens
+                if node.children.isEmpty, !node.tokens.isEmpty {
+                    found.append((namespace, tokens, node.lastUse))
+                }
+                pending.append(contentsOf: node.children.values.map { ($0, tokens) })
+            }
+        }
+        return found.sorted { $0.lastUse > $1.lastUse }.map { ($0.namespace, $0.tokens) }
+    }
+
     static func walk(from root: PromptCacheNode, along tokens: [Int]) -> [Step] {
         var path: [Step] = []
         var node = root
