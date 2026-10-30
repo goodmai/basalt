@@ -183,6 +183,7 @@ public actor ModelOrchestratorActor {
 
     public func shutdown(deadline: Duration = .seconds(5)) async {
         await gate.shutdown(deadline: deadline)
+        await engine.persistPromptCache(within: deadline)
         await sessionLog?.close()
     }
 

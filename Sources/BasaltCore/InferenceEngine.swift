@@ -12,6 +12,7 @@ public protocol InferenceEngine: Sendable {
     var supportsKVZones: Bool { get async }
     var supportsKVEviction: Bool { get async }
     func promptTokenCount(for request: GenerationRequest) async -> Int?
+    func persistPromptCache(within deadline: Duration) async
 }
 
 extension InferenceEngine {
@@ -19,4 +20,5 @@ extension InferenceEngine {
     public var supportsKVZones: Bool { get async { true } }
     public var supportsKVEviction: Bool { get async { true } }
     public func promptTokenCount(for request: GenerationRequest) async -> Int? { nil }
+    public func persistPromptCache(within deadline: Duration) async {}
 }
