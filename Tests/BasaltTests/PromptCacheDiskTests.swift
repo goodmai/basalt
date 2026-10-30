@@ -100,13 +100,17 @@ struct PromptCacheDiskTests {
         tree.release(memory)
     }
 
-    @Test("Hybrid snapshot path (recurrent layers and attention KV) saved and loaded gives bit-identical next-token logits to the in-memory lease")
-    func hybridRoundTripIsBitExact() throws {
+    @Test("Snapshot path of a Qwen3.5-style hybrid (recurrent layers) and a Gemma-style sliding-window model (RotatingKVCache) saved and loaded gives bit-identical next-token logits to the in-memory lease",
+          arguments: ["qwen35", "gemma3"])
+    func snapshotRoundTripIsBitExact(kind: String) throws {
         let directory = DiskFixture.directory()
         defer { try? FileManager.default.removeItem(at: directory) }
-        let model = try TinyHybrid.make()
+        let model: any LanguageModel = kind == "qwen35" ? try TinyHybrid.make() : try TinySliding.make()
         let prompt = TinyModel.tokens(Conversation.firstTurn)
-        let kept = try TinyHybrid.snapshotted(model, prompt)
+        let head = try HybridPrefixSnapshot.prefillHead(
+            MLXArray(prompt.map(Int32.init)), into: PromptCache(try model.newCache(parameters: nil)),
+            reused: 0, boundary: prompt.count - 1, model: model, prefill: PrefillParameters(stepSize: 16))
+        let kept = try #require(head.kept)
         var tree = PromptCacheTree(byteBudget: 1 << 26)
         tree.store("ns", tokens: Array(prompt.dropLast()), cache: kept)
         let memory = try tree.required("ns", for: prompt)
@@ -121,7 +125,7 @@ struct PromptCacheDiskTests {
         let entry = try #require(entryFound)
         let loaded = try reader.load(entry, layout: layout)
         #expect(loaded.isSnapshot(of: prefix.count))
-        #expect(loaded.layers.contains { $0 is ArraysCache })
+        #expect(loaded.layers.contains { kind == "qwen35" ? $0 is ArraysCache : $0 is RotatingKVCache })
 
         let fromDisk = DiskFixture.nextLogits(model, prompt[prefix.count], loaded)
         let fromMemory = DiskFixture.nextLogits(model, prompt[prefix.count], memory.cache)
@@ -276,7 +280,46 @@ struct PromptCacheDiskTests {
         let reweighted = PromptCacheDiskStore.fingerprint(modelDirectory: model)
         #expect(reweighted != retemplated)
         try write("config.json", "{\"a\": 1}")
-        #expect(PromptCacheDiskStore.fingerprint(modelDirectory: model) != reweighted)
+        let reconfigured = PromptCacheDiskStore.fingerprint(modelDirectory: model)
+        #expect(reconfigured != reweighted)
+        try write("model.safetensors", "12346")
+        #expect(PromptCacheDiskStore.fingerprint(modelDirectory: model) != reconfigured)
+    }
+
+    @Test("Weights of the same size but different content give another fingerprint: by blob name in an HF snapshot, by sampled content elsewhere")
+    func fingerprintTracksSameSizeWeights() throws {
+        let root = DiskFixture.directory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let blobs = root.appendingPathComponent("blobs")
+        try FileManager.default.createDirectory(at: blobs, withIntermediateDirectories: true)
+        func snapshot(_ name: String, blob: String, bytes: UInt8) throws -> URL {
+            let directory = root.appendingPathComponent("snapshots/\(name)")
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            try Data("{}".utf8).write(to: directory.appendingPathComponent("config.json"))
+            try Data(repeating: bytes, count: 4096).write(to: blobs.appendingPathComponent(blob))
+            try FileManager.default.createSymbolicLink(
+                atPath: directory.appendingPathComponent("model.safetensors").path, withDestinationPath: "../../blobs/\(blob)")
+            return directory
+        }
+        let base = try snapshot("a", blob: String(repeating: "a", count: 64), bytes: 1)
+        let tuned = try snapshot("b", blob: String(repeating: "b", count: 64), bytes: 1)
+        let copy = try snapshot("c", blob: String(repeating: "a", count: 64), bytes: 1)
+        #expect(PromptCacheDiskStore.fingerprint(modelDirectory: base) != PromptCacheDiskStore.fingerprint(modelDirectory: tuned))
+        #expect(PromptCacheDiskStore.fingerprint(modelDirectory: base) == PromptCacheDiskStore.fingerprint(modelDirectory: copy))
+
+        let plain = root.appendingPathComponent("plain")
+        try FileManager.default.createDirectory(at: plain, withIntermediateDirectories: true)
+        try Data("{}".utf8).write(to: plain.appendingPathComponent("config.json"))
+        let weights = plain.appendingPathComponent("model.safetensors")
+        try Data(repeating: 1, count: 3 << 20).write(to: weights)
+        let modified = try #require(try FileManager.default.attributesOfItem(atPath: weights.path)[.modificationDate] as? Date)
+        let before = PromptCacheDiskStore.fingerprint(modelDirectory: plain)
+        let handle = try FileHandle(forWritingTo: weights)
+        try handle.seek(toOffset: UInt64((3 << 20) - 10))
+        try handle.write(contentsOf: Data(repeating: 2, count: 10))
+        try handle.close()
+        try FileManager.default.setAttributes([.modificationDate: modified], ofItemAtPath: weights.path)
+        #expect(PromptCacheDiskStore.fingerprint(modelDirectory: plain) != before)
     }
 
     @Test("A stored file is 0600 in a 0700 directory, and no temporary file is left or ever visible to a lookup")
@@ -284,6 +327,7 @@ struct PromptCacheDiskTests {
         let directory = DiskFixture.directory()
         defer { try? FileManager.default.removeItem(at: directory) }
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o755])
+        try Data().write(to: directory.appendingPathComponent(".lock"))
         let interrupted = directory.appendingPathComponent(".tmp-interrupted.safetensors")
         try Data(repeating: 7, count: 100).write(to: interrupted)
         let tokens = [5, 6, 7, 8]
@@ -349,6 +393,197 @@ struct PromptCacheDiskTests {
         #expect(usable("hybrid", Array(0..<99) + [999]) == nil)
         #expect(usable("hybrid", stored + [7]) == 100)
         #expect(store.entries().first { $0.name == dense }?.servesAnyPrefix == true)
+    }
+
+    @Test("A longer path of the same model and namespace replaces the files it supersedes, but not unrelated or protected ones")
+    func longerPathSupersedesItsPrefix() throws {
+        let directory = DiskFixture.directory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let model = try TinyModel.make()
+        var store = DiskFixture.store(directory)
+        func put(_ namespace: String, _ tokens: [Int], keeping: Set<String> = []) throws -> String {
+            let found = store.store(
+                fingerprint: "fp", model: "m", namespace: namespace, tokens: tokens,
+                cache: try DiskFixture.prefilled(model, tokens), keeping: keeping)
+            return try #require(found)
+        }
+        let turn1 = Array(0..<100)
+        let first = try put("chat", turn1)
+        let strict = try put("chat", turn1 + [7, 7])
+        #expect(!store.entries().contains { $0.name == first })
+        let unrelated = try put("chat", [200, 201, 202])
+        let otherNamespace = try put("other", Array(turn1.prefix(50)))
+        let turn2 = Array(turn1.prefix(96)) + Array(300..<400)
+        let second = try put("chat", turn2)
+        let names = Set(store.entries().map(\.name))
+        #expect(names == [unrelated, otherNamespace, second])
+        #expect(!names.contains(strict))
+
+        let kept = try put("other", Array(turn1.prefix(50)) + [1], keeping: [otherNamespace])
+        #expect(Set(store.entries().map(\.name)).isSuperset(of: [otherNamespace, kept]))
+    }
+
+    @Test("Two chat runs that persist a growing conversation leave one file, not one per run")
+    func resumedChatKeepsOneFile() async throws {
+        let directory = DiskFixture.directory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        var history: [ChatMessageInput] = []
+        for turn in ["list the files", "and the tests"] {
+            let engine = try await DiskFixture.dense(DiskFixture.store(directory))
+            let reply = try await engine.generate(request: ChatCommand.request(turn, history: history, maxTokens: 6, sessionId: "chat-g"))
+            await engine.persistPromptCache(within: .seconds(30))
+            history += [ChatMessageInput(role: .user, text: turn), ChatMessageInput(role: .assistant, text: reply.generatedText)]
+        }
+        #expect(DiskFixture.files(directory).count == 1)
+    }
+
+    @Test("Shutdown persistence skips a path whose write cannot finish before the deadline instead of overrunning it")
+    func persistenceRespectsDeadline() async throws {
+        let directory = DiskFixture.directory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let engine = try await DiskFixture.dense(DiskFixture.store(directory))
+        _ = try await engine.generate(request: greedy(String(repeating: "abcd ", count: 600), key: "shared", maxTokens: 2))
+        await engine.persistPromptCache(within: .microseconds(500))
+        #expect(DiskFixture.files(directory).isEmpty)
+        await engine.persistPromptCache(within: .seconds(30))
+        #expect(DiskFixture.files(directory).count == 1)
+    }
+
+    @Test("A file that cannot be opened right now is skipped and kept, not deleted as corrupt")
+    func unreadableFileIsKept() throws {
+        let directory = DiskFixture.directory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        var store = DiskFixture.store(directory)
+        let tokens = Array(0..<40)
+        let found = store.store(fingerprint: "fp", model: "m", namespace: "ns", tokens: tokens, cache: try DiskFixture.prefilled(try TinyModel.make(), tokens))
+        let name = try #require(found)
+        let file = directory.appendingPathComponent(name)
+        try FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: file.path)
+        var reader = DiskFixture.store(directory)
+        #expect(reader.longestPrefix(fingerprint: "fp", namespace: "ns", of: tokens + [1], longerThan: 0, maxBytes: 1 << 26) == nil)
+        #expect(FileManager.default.fileExists(atPath: file.path))
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
+        #expect(reader.longestPrefix(fingerprint: "fp", namespace: "ns", of: tokens + [1], longerThan: 0, maxBytes: 1 << 26)?.usable == 40)
+    }
+
+    @Test("A file cut short after its header was read makes load throw, so the request falls back to a prefill instead of crashing in MLX")
+    func readFailureAtLoadThrows() throws {
+        let directory = DiskFixture.directory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let model = try TinyModel.make()
+        var store = DiskFixture.store(directory)
+        let tokens = Array(0..<40)
+        _ = store.store(fingerprint: "fp", model: "m", namespace: "ns", tokens: tokens, cache: try DiskFixture.prefilled(model, tokens))
+        let hit = store.longestPrefix(fingerprint: "fp", namespace: "ns", of: tokens + [1], longerThan: 0, maxBytes: 1 << 26)
+        let entry = try #require(hit?.entry)
+        let handle = try FileHandle(forWritingTo: directory.appendingPathComponent(entry.name))
+        try handle.truncate(atOffset: UInt64(entry.bytes / 2))
+        try handle.close()
+        #expect(throws: (any Error).self) {
+            _ = try store.load(entry, layout: try model.newCache(parameters: nil).map(PromptCacheDiskStore.layoutName))
+        }
+    }
+
+    @Test("load reads the whole file before it returns, so a read error surfaces inside the restore fallback and not later during prefill")
+    func loadMaterialisesTheFile() throws {
+        let directory = DiskFixture.directory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let model = try TinyModel.make()
+        var store = DiskFixture.store(directory)
+        let tokens = Array(0..<40)
+        let original = try DiskFixture.prefilled(model, tokens)
+        _ = store.store(fingerprint: "fp", model: "m", namespace: "ns", tokens: tokens, cache: original)
+        let hit = store.longestPrefix(fingerprint: "fp", namespace: "ns", of: tokens + [1], longerThan: 0, maxBytes: 1 << 26)
+        let entry = try #require(hit?.entry)
+        let loaded = try store.load(entry, layout: try model.newCache(parameters: nil).map(PromptCacheDiskStore.layoutName))
+        let handle = try FileHandle(forWritingTo: directory.appendingPathComponent(entry.name))
+        try handle.truncate(atOffset: 0)
+        try handle.close()
+        for (disk, memory) in zip(loaded.layers, original.layers) {
+            for (a, b) in zip(disk.state, memory.state) {
+                #expect(DiskFixture.identical(a, b))
+            }
+        }
+    }
+
+    @Test("After a failed load a file is removed only when it is broken: a layout mismatch or a truncated file, not an unreadable one")
+    func failedLoadRemovesOnlyBrokenFiles() throws {
+        let directory = DiskFixture.directory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        var store = DiskFixture.store(directory)
+        let model = try TinyModel.make()
+        func entry(_ tokens: [Int]) throws -> PromptCacheDiskEntry {
+            _ = store.store(fingerprint: "fp", model: "m", namespace: "ns", tokens: tokens, cache: try DiskFixture.prefilled(model, tokens))
+            let found = store.entries().first { $0.tokens == tokens }
+            return try #require(found)
+        }
+        let locked = try entry(Array(0..<40))
+        let file = directory.appendingPathComponent(locked.name)
+        try FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: file.path)
+        let discarded1 = store.discardIfBroken(locked, after: POSIXError(.EACCES))
+        #expect(!discarded1)
+        #expect(FileManager.default.fileExists(atPath: file.path))
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
+        let discarded2 = store.discardIfBroken(locked, after: POSIXError(.EIO))
+        #expect(!discarded2)
+        let discarded3 = store.discardIfBroken(locked, after: PromptCacheDiskError.unusable("layout"))
+        #expect(discarded3)
+        #expect(!FileManager.default.fileExists(atPath: file.path))
+
+        let cut = try entry(Array(50..<90))
+        let handle = try FileHandle(forWritingTo: directory.appendingPathComponent(cut.name))
+        try handle.truncate(atOffset: UInt64(cut.bytes / 2))
+        try handle.close()
+        let discarded4 = store.discardIfBroken(cut, after: POSIXError(.EIO))
+        #expect(discarded4)
+    }
+
+    @Test("A pre-existing --prompt-cache-dir with other files is refused and left as it was; an empty one or a store directory is used")
+    func foreignDirectoryIsRefused() throws {
+        let directory = DiskFixture.directory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o755])
+        try Data("mine".utf8).write(to: directory.appendingPathComponent("notes.txt"))
+        let store = DiskFixture.store(directory)
+        #expect(throws: (any Error).self) { try store.prune() }
+        #expect(throws: (any Error).self) { _ = try ServeCommand.parse(["--prompt-cache-dir", directory.path, "--prompt-cache-disk-mb", "1"]).promptCacheDisk.store() }
+        #expect(DiskFixture.permissions(directory) == 0o755)
+
+        let empty = DiskFixture.directory()
+        defer { try? FileManager.default.removeItem(at: empty) }
+        try FileManager.default.createDirectory(at: empty, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o755])
+        try DiskFixture.store(empty).prune()
+        #expect(DiskFixture.permissions(empty) == 0o700)
+        try Data("later".utf8).write(to: empty.appendingPathComponent("notes.txt"))
+        #expect(throws: Never.self) { try DiskFixture.store(empty).prune() }
+    }
+
+    @Test("A partial dense restore stores only the used tokens, and the tree counts exactly their bytes")
+    func partialRestoreAccountsUsedBytes() async throws {
+        let directory = DiskFixture.directory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let model = try TinyModel.make()
+        let stored = Array(0..<100)
+        var store = DiskFixture.store(directory)
+        _ = store.store(fingerprint: "fp-1", model: "m", namespace: "shared", tokens: stored, cache: try DiskFixture.prefilled(model, stored))
+        let engine = await DiskFixture.engine(model, id: "tiny-llama", disk: store)
+        let usable = 70
+        _ = try await engine.generate(request: GenerationRequest(
+            prompt: String(String.UnicodeScalarView(stored.prefix(usable).compactMap { UnicodeScalar($0) })) + "zz",
+            maxTokens: 1, temperature: 0, cacheKey: "shared"))
+        let tree = await engine.promptCaches
+        let path = try #require(tree.storedPathsByRecency().first)
+        #expect(path.tokens.prefix(usable).elementsEqual(stored.prefix(usable)))
+        var nodes = Array(tree.roots.values)
+        var storedTokens = 0
+        var storedBytes = 0
+        while let node = nodes.popLast() {
+            storedTokens += node.tokens.count
+            storedBytes += node.bytes
+            nodes.append(contentsOf: node.children.values)
+        }
+        #expect(tree.byteCount == storedBytes)
+        #expect(storedBytes == storedTokens * TinyModel.cacheBytesPerToken)
     }
 
     @Test("prune drops files past their retention, then the least recently used beyond the cap")

@@ -6,7 +6,7 @@ import BasaltInference
 struct PromptCacheDiskOptions: ParsableArguments {
     @Option(
         name: .customLong("prompt-cache-disk-mb"),
-        help: "Persist the prompt cache to disk on shutdown, model switch and chat exit, up to this many MB, so a resumed session skips the prefill (default: 0, off; needs --session-log full: the files are the conversation as KV tensors and cannot be redacted)"
+        help: "Persist the prompt cache to disk on shutdown, model switch and chat exit, up to this many MB, so a resumed session skips the prefill; at shutdown the hottest paths that fit the drain deadline at an assumed 1 GB/s are written, the rest skipped (default: 0, off; needs --session-log full: the files are the conversation as KV tensors and cannot be redacted)"
     )
     var megabytes: Int = 0
 

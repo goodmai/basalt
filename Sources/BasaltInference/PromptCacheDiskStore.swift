@@ -75,11 +75,35 @@ public struct PromptCacheDiskStore: Sendable {
             let name = file.lastPathComponent
             let resolved = file.resolvingSymlinksInPath()
             if file.pathExtension == fileExtension {
-                let size = (try? resolved.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? -1
-                hasher.update(data: Data("weights \(name) \(size)\n".utf8))
+                hasher.update(data: Data("weights \(name) \(weightIdentity(file, resolved: resolved))\n".utf8))
             } else if modelDescriptionFiles.contains(name), let contents = try? Data(contentsOf: resolved) {
                 hasher.update(data: Data("file \(name) \(hex(SHA256.hash(data: contents)))\n".utf8))
             }
+        }
+        return hex(hasher.finalize())
+    }
+
+    static let sampledWeightBytes = 1 << 20
+    static let assumedWriteBytesPerSecond: Double = 1e9
+
+    static func weightIdentity(_ file: URL, resolved: URL) -> String {
+        let attributes = (try? FileManager.default.attributesOfItem(atPath: resolved.path)) ?? [:]
+        let size = (attributes[.size] as? Int) ?? -1
+        if resolved != file, resolved.deletingLastPathComponent().lastPathComponent == "blobs" {
+            return "blob \(resolved.lastPathComponent) \(size)"
+        }
+        let modified = (attributes[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
+        let inode = (attributes[.systemFileNumber] as? Int) ?? 0
+        return "file \(size) \(modified) \(inode) \(sampledContentHash(resolved, size: size))"
+    }
+
+    static func sampledContentHash(_ file: URL, size: Int) -> String {
+        guard let handle = try? FileHandle(forReadingFrom: file) else { return "unreadable" }
+        defer { try? handle.close() }
+        var hasher = SHA256()
+        hasher.update(data: (try? handle.read(upToCount: sampledWeightBytes)) ?? Data())
+        if size > sampledWeightBytes, (try? handle.seek(toOffset: UInt64(max(sampledWeightBytes, size - sampledWeightBytes)))) != nil {
+            hasher.update(data: (try? handle.read(upToCount: sampledWeightBytes)) ?? Data())
         }
         return hex(hasher.finalize())
     }
@@ -98,8 +122,19 @@ public struct PromptCacheDiskStore: Sendable {
     }
 
     func prepareDirectory() throws {
+        var isDirectory: ObjCBool = false
+        if FileManager.default.fileExists(atPath: directory.path, isDirectory: &isDirectory) {
+            let contents = isDirectory.boolValue ? try FileManager.default.contentsOfDirectory(atPath: directory.path) : []
+            guard isDirectory.boolValue, contents.isEmpty || contents.contains(Self.lockName) else {
+                throw PromptCacheDiskError.unusable(
+                    "\(directory.path) already holds other files and is not a basalt prompt-cache directory; point --prompt-cache-dir at a new or empty directory")
+            }
+        }
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
+        let marker = open(url(Self.lockName).path, O_CREAT | O_WRONLY | O_CLOEXEC, 0o600)
+        guard marker >= 0 else { throw PromptCacheDiskError.unusable("cannot create \(url(Self.lockName).path): errno \(errno)") }
+        close(marker)
     }
 
     func withExclusiveLock<T>(_ body: () throws -> T) throws -> T {
@@ -144,10 +179,18 @@ public struct PromptCacheDiskStore: Sendable {
         headers = headers.filter { cached in files.contains { $0.name == cached.key && $0.bytes == cached.value.bytes } }
         return files.compactMap { file in
             if let cached = headers[file.name] { return cached.entry }
+            guard Self.isReadable(url(file.name)) else { return nil }
             let entry = readEntry(file)
             headers[file.name] = (file.bytes, entry)
             return entry
         }
+    }
+
+    static func isReadable(_ file: URL) -> Bool {
+        let descriptor = open(file.path, O_RDONLY | O_CLOEXEC)
+        guard descriptor >= 0 else { return false }
+        close(descriptor)
+        return true
     }
 
     private func readEntry(_ file: StoredFile) -> PromptCacheDiskEntry? {
@@ -214,6 +257,7 @@ public struct PromptCacheDiskStore: Sendable {
         }
         let cache = PromptCache(snapshot.cache)
         cache.state = snapshot.state
+        try checkedEval(cache.layers.flatMap { $0.innerState() }.map { $0 as Any })
         guard cache.tokenCount >= entry.tokens.count, cache.isSharable || cache.isSnapshot(of: entry.tokens.count) else {
             throw PromptCacheDiskError.unusable("holds \(cache.tokenCount) tokens in a layout the prompt cache cannot lease for \(entry.tokens.count)")
         }
@@ -223,6 +267,17 @@ public struct PromptCacheDiskStore: Sendable {
 
     static func layoutName(_ layer: KVCache) -> String {
         String(describing: type(of: layer))
+    }
+
+    @discardableResult
+    mutating func discardIfBroken(_ entry: PromptCacheDiskEntry, after error: any Error) -> Bool {
+        let file = url(entry.name)
+        guard Self.isReadable(file) else { return false }
+        let size = Int64((try? FileManager.default.attributesOfItem(atPath: file.path)[.size] as? Int) ?? 0)
+        let intact = (try? ModelInspector.readSafetensors(at: file, fileSize: size).get()) != nil
+        guard error is PromptCacheDiskError || !intact else { return false }
+        discard(entry)
+        return true
     }
 
     mutating func discard(_ entry: PromptCacheDiskEntry) {
@@ -275,11 +330,29 @@ public struct PromptCacheDiskStore: Sendable {
                 guard rename(temporary.path, final.path) == 0 else {
                     throw PromptCacheDiskError.unusable("rename failed: errno \(errno)")
                 }
+                if cache.isSharable {
+                    removeSuperseded(by: tokens, fingerprint: fingerprint, namespace: namespace, keeping: kept.union([name]))
+                }
                 return name
             }
         } catch {
             logger.warn("Could not persist \(tokens.count) prompt tokens to \(directory.path): \(error)")
             return nil
+        }
+    }
+
+    static let supersededTailTokens = 64
+
+    static func supersedes(_ tokens: [Int], _ older: PromptCacheDiskEntry) -> Bool {
+        older.servesAnyPrefix && older.tokens.count < tokens.count
+            && zip(older.tokens, tokens).prefix { $0 == $1 }.count
+                >= max(older.tokens.count - supersededTailTokens, (older.tokens.count + 1) / 2)
+    }
+
+    private mutating func removeSuperseded(by tokens: [Int], fingerprint: String, namespace: String, keeping kept: Set<String>) {
+        for older in entries() where older.fingerprint == fingerprint && older.namespace == namespace
+            && !kept.contains(older.name) && Self.supersedes(tokens, older) {
+            discard(older)
         }
     }
 

@@ -1169,8 +1169,8 @@ public actor MLXInferenceEngine: InferenceEngine {
                 hit.usable, hit.entry.tokens.count, Double(hit.entry.bytes) / 1e6, seconds,
                 Double(hit.entry.bytes) / 1e9 / max(seconds, 1e-9)))
         } catch {
-            logger.warn("Removing prompt-cache file \(hit.entry.name) that cannot be restored: \(error)")
-            promptCacheDisk?.discard(hit.entry)
+            let removed = promptCacheDisk?.discardIfBroken(hit.entry, after: error) == true
+            logger.warn("Prompt-cache file \(hit.entry.name) could not be restored (\(removed ? "removed" : "kept, the error may be transient")): \(error)")
         }
     }
 
@@ -1185,6 +1185,13 @@ public actor MLXInferenceEngine: InferenceEngine {
                 continue
             }
             guard let lease = promptCaches.lease(path.namespace, for: path.tokens + [0]) else { continue }
+            let expectedWrite = Double(PromptCacheDiskStore.estimatedBytes(of: lease.cache, tokens: lease.reusedTokens))
+                / PromptCacheDiskStore.assumedWriteBytesPerSecond
+            guard ContinuousClock.now - started + .seconds(expectedWrite) <= deadline else {
+                promptCaches.release(lease)
+                skipped += 1
+                continue
+            }
             if lease.reusedTokens > 0, let name = promptCacheDisk?.store(
                 fingerprint: fingerprint, model: modelDescription, namespace: path.namespace,
                 tokens: Array(path.tokens.prefix(lease.reusedTokens)), cache: lease.cache, keeping: written) {
@@ -1193,7 +1200,7 @@ public actor MLXInferenceEngine: InferenceEngine {
             promptCaches.release(lease)
         }
         logger.info("Persisted \(written.count) prompt-cache paths in \(String(format: "%.2f", (ContinuousClock.now - started).inSeconds)) s"
-            + (skipped > 0 ? "; \(skipped) colder paths skipped past the \(deadline) deadline" : ""))
+            + (skipped > 0 ? "; \(skipped) paths skipped that could not be written within the \(deadline) deadline" : ""))
     }
 
     private func keep(
