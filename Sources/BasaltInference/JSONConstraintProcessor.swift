@@ -83,10 +83,20 @@ final class GrammarSession: Sendable {
                 progress.committed += 1
             } catch {
                 progress.failed = true
-                GemLogger(module: "JSONConstraint").warn("grammar refused sampled token \(id), the session will not be pooled: \(error)")
+                GemLogger(module: "JSONConstraint").warn("grammar refused token \(id), the session will not be pooled: \(error)")
             }
         }
     }
+
+    func accepts(_ ids: [Int]) -> Bool {
+        for id in ids {
+            commit(id)
+            guard progress.withLock({ !$0.failed }) else { return false }
+        }
+        return true
+    }
+
+    var committedTokens: Int32 { progress.withLock { $0.committed } }
 
     func mask() -> MaskResult? {
         progress.withLock { $0.retired ? nil : try? grammar.computeMask() }

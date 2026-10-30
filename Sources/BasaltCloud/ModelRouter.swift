@@ -524,7 +524,7 @@ extension ModelRouter: CloudFallback {
         guard let messages = request.messages, !messages.isEmpty else {
             return [.init(role: "user", content: request.prompt)]
         }
-        return messages.map { message in
+        return (ChatMessageInput.splittingPrefill(messages)?.turns ?? messages).map { message in
             switch message.role {
             case .tool:
                 return .init(role: "user", content: "Result of \(message.toolName ?? "the tool"): \(message.text)")
@@ -539,7 +539,8 @@ extension ModelRouter: CloudFallback {
 
     public func assess(_ request: GenerationRequest) async -> CloudAssessment? {
         guard cloudClient != nil, let cloudModel = fallbackCloudModel,
-              request.tools?.isEmpty ?? true, request.responseFormat == nil
+              request.tools?.isEmpty ?? true, request.responseFormat == nil,
+              ChatMessageInput.splittingPrefill(request.messages ?? [])?.prefill.isEmpty ?? true
         else { return nil }
         let context = RoutingContext(request)
         if let costTracker, await costTracker.isExhausted(scopes: context.budgetScopes) { return nil }

@@ -164,12 +164,15 @@ struct ModelRouterCloudFallbackTests {
             strategy: .cloudOnly, costTracker: tracker, fallbackCloudModel: "openai/gpt-4-turbo")
     }
 
-    @Test("No assessment without a cloud client, with tools or a response format, or once the budget is exhausted")
+    @Test("No assessment without a cloud client, with tools, a response format or an assistant prefill, or once the budget is exhausted")
     func noAssessment() async throws {
         let offline = try router(client: false)
         let online = try router()
         #expect(await offline.assess(GenerationRequest(prompt: "hi")) == nil)
         #expect(await online.assess(GenerationRequest(prompt: "hi", tools: [ToolDefinition(name: "t")])) == nil)
+        let prefilled = [ChatMessageInput(role: .user, text: "hi"), ChatMessageInput(role: .assistant, text: "{")]
+        #expect(await online.assess(GenerationRequest(prompt: "hi", messages: prefilled)) == nil)
+        #expect(await online.assess(GenerationRequest(prompt: "hi", messages: [prefilled[0]])) != nil)
         let file = FileManager.default.temporaryDirectory.appendingPathComponent("cost-\(UUID().uuidString).json")
         defer { try? FileManager.default.removeItem(at: file) }
         let tracker = try CostTracker(storageURL: file, budget: .init(dailyLimit: 1, monthlyLimit: 10))
@@ -198,7 +201,7 @@ struct ModelRouterCloudFallbackTests {
         #expect(await !router.knowsPrice(of: "qwen3-235b"))
     }
 
-    @Test("Chat turns reach the cloud with their roles; tool turns become readable text")
+    @Test("Chat turns reach the cloud with their roles; tool turns become readable text, an empty trailing assistant turn is dropped as it is locally")
     func cloudMessages() {
         let request = GenerationRequest(prompt: "flat", messages: [
             ChatMessageInput(role: .system, text: "be brief"),
@@ -211,5 +214,8 @@ struct ModelRouterCloudFallbackTests {
         #expect(messages[2].content == "get_weather({})")
         #expect(messages[3].content == "Result of get_weather: sunny")
         #expect(ModelRouter.cloudMessages(GenerationRequest(prompt: "flat")).map(\.content) == ["flat"])
+        let emptyPrefill = GenerationRequest(prompt: "flat", messages: [
+            ChatMessageInput(role: .user, text: "weather?"), ChatMessageInput(role: .assistant, text: "")])
+        #expect(ModelRouter.cloudMessages(emptyPrefill).map(\.role) == ["user"])
     }
 }

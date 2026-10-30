@@ -503,25 +503,66 @@ public actor MLXInferenceEngine: InferenceEngine {
     static let thinkingOpeners = ["<think>", "<|channel>thought", "<|channel|>thought", "[THINK]"]
     static let thinkingClosers = ["</think>", "<channel|>", "<|channel|>", "<|turn|>", "[/THINK]"]
     static let strayThinkingClosers = ["</think>", "<channel|>", "[/THINK]"]
+    static let prefillThinkingClosers = ["</think>", "<channel|>", "<|channel|>", "[/THINK]"]
     static let thinkingMarkerHoldback = (thinkingOpeners + thinkingClosers).map(\.count).max()! - 1
 
     static func firstMarker(_ markers: [String], in text: some StringProtocol) -> Range<String.Index>? {
         markers.compactMap { text.range(of: $0) }.min { $0.lowerBound < $1.lowerBound }
     }
 
+    static func opensThinking(_ prefill: String) -> Bool {
+        let start = prefill.drop(while: \.isWhitespace)
+        return thinkingOpeners.contains { start.hasPrefix($0) }
+    }
+
     static func endsInsideThinking(_ rendered: String, assistantPrefix: String = "") -> Bool {
+        answerAfterThinking(rendered, assistantPrefix: assistantPrefix) == nil
+    }
+
+    static func tailOpensThinking(_ rendered: String) -> Bool {
         var tail = Substring(rendered)
         while tail.last?.isWhitespace == true { tail.removeLast() }
-        var inside = thinkingOpeners.contains { tail.hasSuffix($0) }
-        var rest = Substring(assistantPrefix)
+        return thinkingOpeners.contains { tail.hasSuffix($0) }
+    }
+
+    static func guardedPrefill(_ prefill: String, after renderedTail: String, controlTokens: ControlTokenGuard) -> String {
+        var inside = tailOpensThinking(renderedTail)
+        var rest = Substring(prefill)
+        if inside, let opener = thinkingOpeners.first(where: { rest.drop(while: \.isWhitespace).hasPrefix($0) }) {
+            rest = rest.drop(while: \.isWhitespace).dropFirst(opener.count).drop(while: \.isNewline)
+        }
+        var kept = ""
         while true {
             if inside {
-                guard let closer = firstMarker(thinkingClosers, in: rest) else { return true }
+                guard let closer = firstMarker(prefillThinkingClosers, in: rest) else { return kept + controlTokens.neutralize(String(rest)) }
+                kept += controlTokens.neutralize(String(rest[..<closer.lowerBound])) + rest[closer]
                 rest = rest[closer.upperBound...]
                 inside = false
             } else {
                 let start = rest.drop(while: \.isWhitespace)
-                guard let opener = thinkingOpeners.first(where: { start.hasPrefix($0) }) else { return false }
+                guard let opener = thinkingOpeners.first(where: { start.hasPrefix($0) }) else { return kept + controlTokens.neutralize(String(rest)) }
+                kept += rest[..<start.startIndex] + opener
+                rest = start.dropFirst(opener.count)
+                inside = true
+            }
+        }
+    }
+
+    static func constraintPhase(thinkingDisabled: Bool, endsInsideThinking: Bool, prefillAnswered: Bool) -> JSONConstraintProcessor.Phase {
+        thinkingDisabled || prefillAnswered ? .constrained : endsInsideThinking ? .reasoning : .awaitingAnswer
+    }
+
+    static func answerAfterThinking(_ rendered: String, assistantPrefix: String = "") -> Substring? {
+        var inside = tailOpensThinking(rendered)
+        var rest = Substring(assistantPrefix)
+        while true {
+            if inside {
+                guard let closer = firstMarker(thinkingClosers, in: rest) else { return nil }
+                rest = rest[closer.upperBound...]
+                inside = false
+            } else {
+                let start = rest.drop(while: \.isWhitespace)
+                guard let opener = thinkingOpeners.first(where: { start.hasPrefix($0) }) else { return start }
                 rest = start.dropFirst(opener.count)
                 inside = true
             }
@@ -764,14 +805,16 @@ public actor MLXInferenceEngine: InferenceEngine {
         let scansToolCallText = profile.writesToolCallsAsText && request.tools?.isEmpty == false
         var makeInput: @Sendable (String) -> UserInput
         var template: String?
-        let policy = Self.reasoningPolicy(request: request, defaultReasoningEffort: reasoningEffort)
-        let turns = request.messages.flatMap { $0.isEmpty ? nil : profile.turns(controlTokens.neutralize($0), for: policy) }
+        let continued = request.messages.flatMap(ChatMessageInput.splittingPrefill)
+        let prefill = continued.flatMap { $0.prefill.isEmpty ? nil : $0.prefill }
+        let requestedPolicy = Self.reasoningPolicy(request: request, defaultReasoningEffort: reasoningEffort)
+        let policy = prefill.map { Self.opensThinking($0) ? requestedPolicy : .disabled } ?? requestedPolicy
+        let turns = (continued?.turns ?? request.messages).flatMap {
+            $0.isEmpty ? nil : profile.turns(controlTokens.neutralize($0), for: policy)
+        }
         var lastText: String
-        let context = Self.buildTemplateContext(
-            request: request,
-            defaultReasoningEffort: reasoningEffort,
-            profile: profile
-        )
+        let templateContext = profile.templateContext(for: policy)
+        let context = templateContext.isEmpty ? nil : templateContext
         if turns == nil, request.prompt.contains("<|turn|>") || request.prompt.contains("<|channel|>") {
             makeInput = { UserInput(prompt: $0) }
             template = "raw"
@@ -822,7 +865,15 @@ public actor MLXInferenceEngine: InferenceEngine {
             logger.trace("Input prepared. Starting MLX generation...")
             let renderedCount = rendered.text.tokens.dim(-1)
             let carriesMoreThanTokens = Self.carriesMoreThanTokens(rendered)
-            let assistantPrefix = carriesMoreThanTokens ? nil : request.assistantPrefix.flatMap { $0.isEmpty ? nil : $0 }
+            if carriesMoreThanTokens, prefill != nil {
+                throw BasaltError.invalidRequestStructure(
+                    details: "a trailing assistant message cannot be continued on a prompt that carries media")
+            }
+            let echoedPrefix = carriesMoreThanTokens || prefill != nil ? nil : request.assistantPrefix.flatMap { $0.isEmpty ? nil : $0 }
+            let tailIds = Array(rendered.text.tokens.asArray(Int.self).suffix(16))
+            let renderedTail = await container.perform { $0.tokenizer.decode(tokenIds: tailIds, skipSpecialTokens: false) }
+            let controlTokens = controlTokens
+            let assistantPrefix = prefill.map { Self.guardedPrefill($0, after: renderedTail, controlTokens: controlTokens) } ?? echoedPrefix
             let lmInput: LMInput
             if let assistantPrefix {
                 let ids = await container.perform { $0.tokenizer.encode(text: assistantPrefix, addSpecialTokens: false) }
@@ -831,6 +882,16 @@ public actor MLXInferenceEngine: InferenceEngine {
                 lmInput = rendered
             }
             let promptTokens = lmInput.text.tokens.asArray(Int.self)
+            let answerAfterThinking = Self.answerAfterThinking(renderedTail, assistantPrefix: assistantPrefix ?? "")
+            let promptEndsWithThinking = answerAfterThinking == nil
+            let prefixAnswer = String(answerAfterThinking ?? "")
+            if let constraint, !prefixAnswer.isEmpty {
+                let ids = await container.perform { $0.tokenizer.encode(text: prefixAnswer, addSpecialTokens: false) }
+                guard constraint.session.accepts(ids) else {
+                    throw BasaltError.invalidRequestStructure(
+                        details: "the assistant prefill is not a valid start of the requested JSON output")
+                }
+            }
             let namespace = carriesMoreThanTokens || epoch != modelEpoch ? nil : promptCacheNamespace(for: request)
             if let namespace {
                 await restoreFromDisk(namespace, prompt: promptTokens, container: container, epoch: epoch)
@@ -840,13 +901,11 @@ public actor MLXInferenceEngine: InferenceEngine {
                 ? promptTokens.count - 1
                 : await snapshotBoundary(renderedCount, container: container, epoch: epoch, template: template, makeInput)
             let blend = epoch == modelEpoch && modelIsHybrid == false ? cacheBlend : nil
-            let renderedTail = await container.perform {
-                $0.tokenizer.decode(tokenIds: Array(promptTokens.prefix(renderedCount).suffix(16)), skipSpecialTokens: false)
-            }
-            let promptEndsWithThinking = Self.endsInsideThinking(renderedTail, assistantPrefix: assistantPrefix ?? "")
             let masked = Self.constraining(
                 components, with: constraint,
-                phase: policy == .disabled ? .constrained : promptEndsWithThinking ? .reasoning : .awaitingAnswer)
+                phase: Self.constraintPhase(
+                    thinkingDisabled: policy == .disabled, endsInsideThinking: promptEndsWithThinking,
+                    prefillAnswered: !prefixAnswer.isEmpty))
             let constrained = shaping.map { masked.appendingLogitProcessor($0) } ?? masked
             let forcedTool = constraint?.toolName
             let speculativeLookup = request.speculativeLookup ?? speculativeLookup
@@ -883,11 +942,11 @@ public actor MLXInferenceEngine: InferenceEngine {
                     var buffer = ""
                     var isThinking = promptEndsWithThinking
                     var gate = ToolCallGate(request: request)
-                    if let assistantPrefix { continuation.yield(.text(assistantPrefix)) }
+                    if let echoedPrefix { continuation.yield(.text(echoedPrefix)) }
 
                     var toolCallScanner = scansToolCallText ? NemotronToolCallScanner() : nil
                     var reasoningText = ""
-                    var forcedToolArguments = ""
+                    var forcedToolArguments = prefixAnswer
                     func emitReasoning(_ text: String) {
                         reasoningText += text
                         continuation.yield(.reasoning(text))
@@ -996,8 +1055,10 @@ public actor MLXInferenceEngine: InferenceEngine {
                     if let forcedTool, (try? JSONSerialization.jsonObject(with: Data(arguments.utf8))) is [String: Any] {
                         admit([.toolCall(ToolCallOutput(
                             id: "call_\(UUID().uuidString.prefix(24))", name: forcedTool, arguments: arguments))])
-                    } else if forcedTool != nil, !arguments.isEmpty {
-                        continuation.yield(.text(arguments))
+                    } else if forcedTool != nil {
+                        let continued = String(forcedToolArguments.dropFirst(prefixAnswer.count))
+                            .trimmingCharacters(in: .whitespacesAndNewlines)
+                        if !continued.isEmpty { continuation.yield(.text(continued)) }
                     }
                     let completed = !(Task.isCancelled || stoppedAfterCall)
                     await Self.settle(launch, cancelled: !completed)
