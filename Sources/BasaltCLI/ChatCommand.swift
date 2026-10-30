@@ -38,8 +38,13 @@ struct ChatCommand: AsyncParsableCommand {
 
     static func request(_ prompt: String, history: [ChatMessageInput], maxTokens: Int, sessionId: String) -> GenerationRequest {
         GenerationRequest(prompt: prompt, maxTokens: maxTokens, messages: history + [ChatMessageInput(role: .user, text: prompt)])
+            .withCacheKey(cacheKey(sessionId))
             .withRouting(sessionId: sessionId, budgetKey: nil)
             .withOrigin(RequestOrigin(source: "cli", endpoint: "chat", stream: true))
+    }
+
+    static func cacheKey(_ sessionId: String) -> String {
+        "cli:" + sessionId
     }
 
     static func resumed(_ id: String, in directory: URL) throws -> (session: String, history: [ChatMessageInput]) {
