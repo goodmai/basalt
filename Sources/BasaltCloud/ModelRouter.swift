@@ -539,7 +539,8 @@ extension ModelRouter: CloudFallback {
 
     public func assess(_ request: GenerationRequest) async -> CloudAssessment? {
         guard cloudClient != nil, let cloudModel = fallbackCloudModel,
-              request.tools?.isEmpty ?? true, request.responseFormat == nil
+              request.tools?.isEmpty ?? true, request.responseFormat == nil,
+              ChatMessageInput.splittingPrefill(request.messages ?? [])?.prefill.isEmpty ?? true
         else { return nil }
         let context = RoutingContext(request)
         if let costTracker, await costTracker.isExhausted(scopes: context.budgetScopes) { return nil }

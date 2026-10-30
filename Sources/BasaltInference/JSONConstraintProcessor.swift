@@ -89,9 +89,14 @@ final class GrammarSession: Sendable {
     }
 
     func accepts(_ ids: [Int]) -> Bool {
-        ids.forEach(commit)
-        return progress.withLock { !$0.failed }
+        for id in ids {
+            commit(id)
+            guard progress.withLock({ !$0.failed }) else { return false }
+        }
+        return true
     }
+
+    var committedTokens: Int32 { progress.withLock { $0.committed } }
 
     func mask() -> MaskResult? {
         progress.withLock { $0.retired ? nil : try? grammar.computeMask() }

@@ -518,10 +518,41 @@ public actor MLXInferenceEngine: InferenceEngine {
         answerAfterThinking(rendered, assistantPrefix: assistantPrefix) == nil
     }
 
-    static func answerAfterThinking(_ rendered: String, assistantPrefix: String = "") -> Substring? {
+    static func tailOpensThinking(_ rendered: String) -> Bool {
         var tail = Substring(rendered)
         while tail.last?.isWhitespace == true { tail.removeLast() }
-        var inside = thinkingOpeners.contains { tail.hasSuffix($0) }
+        return thinkingOpeners.contains { tail.hasSuffix($0) }
+    }
+
+    static func guardedPrefill(_ prefill: String, after renderedTail: String, controlTokens: ControlTokenGuard) -> String {
+        var inside = tailOpensThinking(renderedTail)
+        var rest = Substring(prefill)
+        if inside, let opener = thinkingOpeners.first(where: { rest.drop(while: \.isWhitespace).hasPrefix($0) }) {
+            rest = rest.drop(while: \.isWhitespace).dropFirst(opener.count).drop(while: \.isNewline)
+        }
+        var kept = ""
+        while true {
+            if inside {
+                guard let closer = firstMarker(strayThinkingClosers, in: rest) else { return kept + controlTokens.neutralize(String(rest)) }
+                kept += controlTokens.neutralize(String(rest[..<closer.lowerBound])) + rest[closer]
+                rest = rest[closer.upperBound...]
+                inside = false
+            } else {
+                let start = rest.drop(while: \.isWhitespace)
+                guard let opener = thinkingOpeners.first(where: { start.hasPrefix($0) }) else { return kept + controlTokens.neutralize(String(rest)) }
+                kept += rest[..<start.startIndex] + opener
+                rest = start.dropFirst(opener.count)
+                inside = true
+            }
+        }
+    }
+
+    static func constraintPhase(thinkingDisabled: Bool, endsInsideThinking: Bool, prefillAnswered: Bool) -> JSONConstraintProcessor.Phase {
+        thinkingDisabled || prefillAnswered ? .constrained : endsInsideThinking ? .reasoning : .awaitingAnswer
+    }
+
+    static func answerAfterThinking(_ rendered: String, assistantPrefix: String = "") -> Substring? {
+        var inside = tailOpensThinking(rendered)
         var rest = Substring(assistantPrefix)
         while true {
             if inside {
@@ -838,7 +869,10 @@ public actor MLXInferenceEngine: InferenceEngine {
                     details: "a trailing assistant message cannot be continued on a prompt that carries media")
             }
             let echoedPrefix = carriesMoreThanTokens || prefill != nil ? nil : request.assistantPrefix.flatMap { $0.isEmpty ? nil : $0 }
-            let assistantPrefix = prefill ?? echoedPrefix
+            let tailIds = Array(rendered.text.tokens.asArray(Int.self).suffix(16))
+            let renderedTail = await container.perform { $0.tokenizer.decode(tokenIds: tailIds, skipSpecialTokens: false) }
+            let controlTokens = controlTokens
+            let assistantPrefix = prefill.map { Self.guardedPrefill($0, after: renderedTail, controlTokens: controlTokens) } ?? echoedPrefix
             let lmInput: LMInput
             if let assistantPrefix {
                 let ids = await container.perform { $0.tokenizer.encode(text: assistantPrefix, addSpecialTokens: false) }
@@ -847,9 +881,6 @@ public actor MLXInferenceEngine: InferenceEngine {
                 lmInput = rendered
             }
             let promptTokens = lmInput.text.tokens.asArray(Int.self)
-            let renderedTail = await container.perform {
-                $0.tokenizer.decode(tokenIds: Array(promptTokens.prefix(renderedCount).suffix(16)), skipSpecialTokens: false)
-            }
             let answerAfterThinking = Self.answerAfterThinking(renderedTail, assistantPrefix: assistantPrefix ?? "")
             let promptEndsWithThinking = answerAfterThinking == nil
             let prefixAnswer = String(answerAfterThinking ?? "")
@@ -871,8 +902,9 @@ public actor MLXInferenceEngine: InferenceEngine {
             let blend = epoch == modelEpoch && modelIsHybrid == false ? cacheBlend : nil
             let masked = Self.constraining(
                 components, with: constraint,
-                phase: policy == .disabled || !prefixAnswer.isEmpty ? .constrained
-                    : promptEndsWithThinking ? .reasoning : .awaitingAnswer)
+                phase: Self.constraintPhase(
+                    thinkingDisabled: policy == .disabled, endsInsideThinking: promptEndsWithThinking,
+                    prefillAnswered: !prefixAnswer.isEmpty))
             let constrained = shaping.map { masked.appendingLogitProcessor($0) } ?? masked
             let forcedTool = constraint?.toolName
             let speculativeLookup = request.speculativeLookup ?? speculativeLookup
@@ -1022,8 +1054,10 @@ public actor MLXInferenceEngine: InferenceEngine {
                     if let forcedTool, (try? JSONSerialization.jsonObject(with: Data(arguments.utf8))) is [String: Any] {
                         admit([.toolCall(ToolCallOutput(
                             id: "call_\(UUID().uuidString.prefix(24))", name: forcedTool, arguments: arguments))])
-                    } else if forcedTool != nil, !arguments.isEmpty {
-                        continuation.yield(.text(arguments))
+                    } else if forcedTool != nil {
+                        let continued = String(forcedToolArguments.dropFirst(prefixAnswer.count))
+                            .trimmingCharacters(in: .whitespacesAndNewlines)
+                        if !continued.isEmpty { continuation.yield(.text(continued)) }
                     }
                     let completed = !(Task.isCancelled || stoppedAfterCall)
                     await Self.settle(launch, cancelled: !completed)
