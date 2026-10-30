@@ -1180,10 +1180,6 @@ public actor MLXInferenceEngine: InferenceEngine {
         var written: Set<String> = []
         var skipped = 0
         for path in promptCaches.storedPathsByRecency() {
-            guard ContinuousClock.now - started < deadline else {
-                skipped += 1
-                continue
-            }
             guard let lease = promptCaches.lease(path.namespace, for: path.tokens + [0]) else { continue }
             let expectedWrite = Double(PromptCacheDiskStore.estimatedBytes(of: lease.cache, tokens: lease.reusedTokens))
                 / PromptCacheDiskStore.assumedWriteBytesPerSecond
