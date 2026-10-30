@@ -42,6 +42,12 @@ public struct ChatMessageInput: Codable, Sendable, Equatable {
             .joined(separator: "\n\n")
     }
 
+    public static func splittingPrefill(_ messages: [ChatMessageInput]) -> (turns: [ChatMessageInput], prefill: String)? {
+        let trailing = messages.reversed().prefix { $0.role == .assistant && $0.toolCalls?.isEmpty != false }
+        guard !trailing.isEmpty, trailing.count < messages.count else { return nil }
+        return (Array(messages.dropLast(trailing.count)), trailing.reversed().map(\.text).joined())
+    }
+
     public static func leadingSystem(_ messages: [ChatMessageInput]) -> [ChatMessageInput] {
         let firstUser = messages.firstIndex { $0.role == .user } ?? messages.endIndex
         let leading = joined(messages[..<firstUser].filter { $0.role == .system }.map(\.text))
