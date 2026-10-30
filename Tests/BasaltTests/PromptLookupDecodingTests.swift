@@ -6,6 +6,23 @@ import MLXLLM
 @testable import BasaltCore
 @testable import BasaltInference
 
+final class GreedyMarginRecorder: LogitProcessor, @unchecked Sendable {
+    var margins: [Float] = []
+    var rows: [MLXArray] = []
+
+    func prompt(_ prompt: MLXArray) {}
+
+    func process(logits: MLXArray) -> MLXArray {
+        let row = logits.reshaped([-1]).asType(.float32)
+        let top = MLX.sorted(row)[(-2)...]
+        rows.append(row)
+        margins.append((top[1] - top[0]).item(Float.self))
+        return logits
+    }
+
+    func didSample(token: MLXArray) {}
+}
+
 final class ScriptedSampler: LogitSampler {
     let script: [Int]
     private var position = 0
@@ -87,7 +104,7 @@ enum TinyNemotronH {
         """
 
     static func make() throws -> NemotronHModel {
-        let model = try withRandomState(MLXRandom.RandomState(seed: 11)) {
+        let model = try withRandomState(MLXRandom.RandomState(seed: 30)) {
             NemotronHModel(try JSONDecoder().decode(NemotronHConfiguration.self, from: Data(config.utf8)))
         }
         eval(model)
@@ -158,6 +175,23 @@ struct PromptLookupDecodingTests {
         #expect(telemetry.targetModelCallCount < tokens.count)
         #expect(telemetry.targetVerifiedTokenCount
             == telemetry.draftTokenCount + telemetry.targetModelCallCount - iterator.replayRounds)
+    }
+
+    @Test("A recurrent fixture's greedy path has no near-tie that the verify forward's chunked scan could flip",
+          arguments: ["nemotron", "hybrid", "lfm-dense"], ["tokens", "code"])
+    func recurrentFixturesHaveNoNearTie(family: String, prompt: String) throws {
+        let model = try LookupFixture.model(family)
+        let input = prompt == "code"
+            ? ByteTokenizer().encode(text: LookupFixture.code, addSpecialTokens: false) + [ByteTokenizer.endOfUserTurn]
+            : LookupFixture.prompt
+        let recorder = GreedyMarginRecorder()
+        let tokens = try LookupFixture.baseline(model, prompt: input, maxTokens: prompt == "code" ? 48 : 64, processor: recorder)
+        let parallel = model(MLXArray((input + tokens).map(Int32.init))[.newAxis], cache: try model.newCache(parameters: nil))
+            .asType(.float32)[0]
+        let drift = recorder.rows.enumerated()
+            .map { MLX.abs(parallel[input.count - 1 + $0.offset] - $0.element).max().item(Float.self) }.max() ?? 0
+        let margin = try #require(recorder.margins.min())
+        #expect(margin > 4 * drift, "\(family) \(prompt): smallest top-2 margin \(margin), step against one-pass drift \(drift)")
     }
 
     @Test("When the output copies a long span of the prompt, a verify round drafts more than 8 tokens on average")
