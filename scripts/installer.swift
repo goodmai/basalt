@@ -94,7 +94,8 @@ if buildResult.status != 0 && !isDryRun {
     exit(1)
 }
 
-let binPath = ".build/release/Basalt"
+let binDirResult = runCommand("/usr/bin/swift", args: ["build", "-c", "release", "--show-bin-path"])
+let binPath = (binDirResult.output.isEmpty ? "." : binDirResult.output) + "/Basalt"
 let fm = FileManager.default
 
 if !fm.fileExists(atPath: binPath) && !isDryRun {

@@ -1,8 +1,9 @@
 name: MLX metallib
 description: >
   Restore or compile MLX's Metal kernels. MLX aborts the whole test process when it
-  cannot find a metallib, and a SwiftPM build produces none. Cached on Package.resolved:
-  it only changes when mlx-swift does, and compiling the kernels is the slowest step.
+  cannot find mlx.metallib next to the binary, and Swift Build only compiles the 10
+  generated Cmlx shaders (mlx-swift excludes the other 36 kernel .metal files). Cached
+  on Package.resolved: it only changes when mlx-swift does, and compiling is the slowest step.
 runs:
   using: composite
   steps:

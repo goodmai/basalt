@@ -21,7 +21,7 @@ jobs:
     name: brew style + audit
     # Hosted on purpose: `brew tap` on the self-hosted runner would change the
     # owner's own Homebrew installation.
-    runs-on: macos-15
+    runs-on: xcode-27
     timeout-minutes: 15
 
     steps:

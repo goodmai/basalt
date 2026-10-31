@@ -153,4 +153,116 @@ struct ScriptsTests {
         let status = runScript("scripts/installer.swift", args: ["--dry-run", "--non-interactive", "--verbose"])
         #expect(status == 0)
     }
+
+    @Test("build_metal.swift places mlx.metallib into swift build --show-bin-path directories instead of .build/debug")
+    func testBuildMetalUsesShowBinPath() throws {
+        let fm = FileManager.default
+        let repo = fm.temporaryDirectory.appendingPathComponent("build-metal-\(UUID().uuidString)")
+        defer { try? fm.removeItem(at: repo) }
+        let kernelDir = repo.appendingPathComponent(".build/checkouts/mlx-swift/Source/Cmlx/mlx/mlx/backend/metal/kernels")
+        let customDebug = repo.appendingPathComponent(".build/out/Products/Debug")
+        let customRelease = repo.appendingPathComponent(".build/out/Products/Release")
+        let binDir = repo.appendingPathComponent("bin")
+        for dir in [kernelDir, customRelease, binDir] {
+            try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        }
+        let kernel = kernelDir.appendingPathComponent("noop.metal")
+        try Data("#include <metal_stdlib>\nusing namespace metal;\nkernel void noop() {}\n".utf8).write(to: kernel)
+        try fm.setAttributes([.modificationDate: Date().addingTimeInterval(-120)], ofItemAtPath: kernel.path)
+        try Data("metallib".utf8).write(to: repo.appendingPathComponent("default.metallib"))
+
+        let swiftShim = binDir.appendingPathComponent("swift")
+        let shimScript = """
+        #!/bin/bash
+        if [ "$1" = "build" ] && [ "$2" = "-c" ] && [ "$4" = "--show-bin-path" ]; then
+          if [ "$3" = "debug" ]; then
+            echo "\(customDebug.path)"
+          else
+            echo "\(customRelease.path)"
+          fi
+          exit 0
+        fi
+        exec /usr/bin/swift "$@"
+        """
+        try Data(shimScript.utf8).write(to: swiftShim)
+        try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: swiftShim.path)
+
+        let scriptURL = URL(fileURLWithPath: fm.currentDirectoryPath).appendingPathComponent("scripts/build_metal.swift")
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/usr/bin/swift")
+        task.arguments = [scriptURL.path, "--skip-unsupported"]
+        task.currentDirectoryURL = repo
+        var env = ProcessInfo.processInfo.environment
+        env["PATH"] = "\(binDir.path):\(env["PATH"] ?? "/usr/bin:/bin")"
+        task.environment = env
+        task.standardOutput = FileHandle.nullDevice
+        try task.run()
+        task.waitUntilExit()
+
+        #expect(task.terminationStatus == 0)
+        #expect(fm.fileExists(atPath: customDebug.appendingPathComponent("mlx.metallib").path))
+        #expect(fm.fileExists(atPath: customRelease.appendingPathComponent("mlx.metallib").path))
+        #expect(!fm.fileExists(atPath: repo.appendingPathComponent(".build/debug/mlx.metallib").path))
+    }
+
+    @Test("xcode-toolchain action resolves symlinks before filtering release candidates and enforces Swift 6.4+")
+    func testXcodeToolchainSelectionSkipsSymlinkedRC() throws {
+        let fm = FileManager.default
+        let actionPath = URL(fileURLWithPath: fm.currentDirectoryPath)
+            .appendingPathComponent(".github/actions/xcode-toolchain/action.yml")
+        let yaml = try String(contentsOf: actionPath, encoding: .utf8)
+        let lines = yaml.components(separatedBy: "\n")
+        let runIdx = try #require(lines.firstIndex(where: { $0.trimmingCharacters(in: .whitespaces) == "run: |" }))
+        let script = lines[(runIdx + 1)...]
+            .map { $0.hasPrefix("        ") ? String($0.dropFirst(8)) : $0 }
+            .joined(separator: "\n")
+
+        let temp = fm.temporaryDirectory.resolvingSymlinksInPath()
+            .appendingPathComponent("xcode-action-\(UUID().uuidString)")
+        defer { try? fm.removeItem(at: temp) }
+        let apps = temp.appendingPathComponent("Applications")
+        let gaDev = apps.appendingPathComponent("Xcode_27.1.app/Contents/Developer")
+        let rcApp = apps.appendingPathComponent("Xcode_27.2_Release_Candidate.app")
+        let rcDev = rcApp.appendingPathComponent("Contents/Developer")
+        let binDir = temp.appendingPathComponent("bin")
+        for dir in [gaDev, rcDev, binDir] {
+            try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        }
+        try fm.createSymbolicLink(
+            at: apps.appendingPathComponent("Xcode_27.2.app"),
+            withDestinationURL: rcApp
+        )
+        let envFile = temp.appendingPathComponent("github_env")
+        try Data().write(to: envFile)
+
+        let swiftShim = binDir.appendingPathComponent("swift")
+        try Data("#!/bin/bash\necho \"Apple Swift version ${FAKE_SWIFT_VER:-6.4.2} (swiftlang-6.4.2)\"\n".utf8).write(to: swiftShim)
+        try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: swiftShim.path)
+
+        func runAction(swiftVersion: String) throws -> Int32 {
+            let task = Process()
+            task.executableURL = URL(fileURLWithPath: "/bin/bash")
+            task.arguments = ["-euo", "pipefail", "-c", script]
+            var env = ProcessInfo.processInfo.environment
+            env["XCODE_APPS_DIR"] = apps.path
+            env["GITHUB_ENV"] = envFile.path
+            env["FAKE_SWIFT_VER"] = swiftVersion
+            env["PATH"] = "\(binDir.path):/usr/bin:/bin"
+            task.environment = env
+            task.standardOutput = FileHandle.nullDevice
+            task.standardError = FileHandle.nullDevice
+            try task.run()
+            task.waitUntilExit()
+            return task.terminationStatus
+        }
+
+        #expect(try runAction(swiftVersion: "6.4.2") == 0)
+        let writtenEnv = try String(contentsOf: envFile, encoding: .utf8)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        #expect(writtenEnv.hasPrefix("DEVELOPER_DIR="))
+        let selectedDev = URL(fileURLWithPath: String(writtenEnv.dropFirst("DEVELOPER_DIR=".count)))
+            .resolvingSymlinksInPath().path
+        #expect(selectedDev == gaDev.resolvingSymlinksInPath().path)
+        #expect(try runAction(swiftVersion: "6.3.3") != 0)
+    }
 }

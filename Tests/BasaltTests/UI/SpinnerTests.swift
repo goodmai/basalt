@@ -13,16 +13,12 @@ struct SpinnerTests {
     
     @Test("Spinner can be created with default style")
     func testSpinnerCreation() async {
-        let spinner = Spinner()
-        // Just verify it initializes without crashing
-        #expect(true)
+        _ = Spinner()
     }
     
     @Test("Spinner can be created with custom style and message")
     func testSpinnerWithCustomStyle() async {
-        let spinner = Spinner(style: .dots, message: "Loading...")
-        // Verify initialization
-        #expect(true)
+        _ = Spinner(style: .dots, message: "Loading...")
     }
     
     @Test("Spinner styles have correct frame counts")

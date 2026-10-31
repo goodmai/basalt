@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Upgrading
+- Building from source (Homebrew included) now requires Xcode 27.0+ (Swift 6.4) on macOS 26.6+ (Tahoe) (#185). The built binary's deployment target stays macOS 15 (Sequoia). SwiftPM 6.4 uses Swift Build as the default build backend, so build artifact paths come from `swift build [-c release] --show-bin-path` instead of hard-coded `.build/debug` and `.build/release` directories.
+
 ### Performance
 - Opt-in disk tier for the prompt cache, `--prompt-cache-disk-mb` on `serve` and `chat` (#174): on graceful shutdown, before a model switch and when `basalt chat` exits, the hottest prompt-cache branches are written with mlx-swift-lm's `savePromptCache` (dense KV and hybrid snapshots with their model state), and the first request of a resumed session or restarted server restores the longest matching prefix from disk instead of prefilling it. A file is tied to the model's weights (HF blob names, or sampled content, mtime and inode outside the HF cache), config, tokenizer and chat template, the basalt version and the cache format; any mismatch, a truncated file or a different layer layout falls back to a normal prefill. Files are atomic (temp + fsync + rename), `0600` in a `0700` directory that must be new, empty or already a prompt-cache directory, bounded by the quota with LRU eviction, a longer path of a conversation replaces the shorter files it covers, shutdown writes only what fits its deadline at an assumed 1 GB/s, expire after `--prompt-cache-disk-days`, and `basalt sessions prune` cleans them offline. Refused with `--session-log meta` or `off`.
 - `basalt chat` now reuses the prompt cache between turns (#174): its requests had no cache key, so every turn prefilled the whole history again.

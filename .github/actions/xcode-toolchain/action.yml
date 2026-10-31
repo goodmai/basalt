@@ -1,17 +1,32 @@
 name: Xcode toolchain
 description: >
-  Point DEVELOPER_DIR at the newest installed Xcode. mlx-swift-lm's manifest needs tools 6.3,
-  and the runner's xcode-select default can be older.
+  Point DEVELOPER_DIR at the newest released Xcode and verify Swift 6.4+.
+  Package.swift declares swift-tools-version 6.4, and a runner's xcode-select
+  default or a symlinked Release Candidate can point elsewhere.
 runs:
   using: composite
   steps:
     - shell: bash
       run: |
-        # Released Xcodes only: on hosted images `Xcode_26.5_beta` sorts above 26.4.1.
-        LATEST_XCODE=$(ls -d /Applications/Xcode*.app 2>/dev/null | grep -viE 'beta|_rc|release.candidate' | sort -V | tail -n 1)
+        # Resolve symlinks before filtering: on the `xcode-27` image `/Applications/Xcode_27.2.app`
+        # is a symlink to `Xcode_27.2_Release_Candidate.app` and would otherwise survive the filter.
+        APPS_DIR="${XCODE_APPS_DIR:-/Applications}"
+        LATEST_XCODE=$(
+          for app in "$APPS_DIR"/Xcode*.app; do
+            [ -e "$app" ] && realpath "$app"
+          done | grep -viE 'beta|_rc|release.candidate' | sort -uV | tail -n 1
+        )
         if [ -n "$LATEST_XCODE" ] && [ -d "$LATEST_XCODE/Contents/Developer" ]; then
-          echo "DEVELOPER_DIR=$LATEST_XCODE/Contents/Developer" >> $GITHUB_ENV
+          if [ -n "${GITHUB_ENV:-}" ]; then
+            echo "DEVELOPER_DIR=$LATEST_XCODE/Contents/Developer" >> "$GITHUB_ENV"
+          fi
           export DEVELOPER_DIR="$LATEST_XCODE/Contents/Developer"
         fi
-        echo "Active Swift version:"
-        swift --version
+        echo "Selected Xcode: ${LATEST_XCODE:-default}"
+        VERSION_OUT=$(swift --version 2>&1)
+        echo "$VERSION_OUT"
+        SWIFT_VER=$(echo "$VERSION_OUT" | grep -oE 'Swift version [0-9]+\.[0-9]+' | awk '{print $3}')
+        if [ -z "$SWIFT_VER" ] || [ "$(printf '6.4\n%s\n' "$SWIFT_VER" | sort -V | head -n 1)" != "6.4" ]; then
+          echo "::error::Swift 6.4+ is required (found '${SWIFT_VER:-unknown}' in ${LATEST_XCODE:-system default})"
+          exit 1
+        fi

@@ -40,9 +40,29 @@ if args.contains("--dry-run") {
     exit(0)
 }
 
+func binPath(configuration: String) -> String {
+    let task = Process()
+    let pipe = Pipe()
+    task.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+    task.arguments = ["swift", "build", "-c", configuration, "--show-bin-path"]
+    task.standardOutput = pipe
+    task.standardError = FileHandle.nullDevice
+    try? task.run()
+    let data = pipe.fileHandleForReading.readDataToEndOfFile()
+    task.waitUntilExit()
+    let path = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    guard task.terminationStatus == 0, !path.isEmpty else {
+        log("Could not determine \(configuration) bin path via swift build --show-bin-path", level: .error)
+        exit(1)
+    }
+    return path
+}
+
 let kernelDir = ".build/checkouts/mlx-swift/Source/Cmlx/mlx/mlx/backend/metal/kernels"
 let genKernelDir = ".build/checkouts/mlx-swift/Source/Cmlx/mlx-generated/metal"
-let outputDir = ".build/debug"
+let debugBinDir = binPath(configuration: "debug")
+let releaseBinDir = binPath(configuration: "release")
+let outputDir = debugBinDir
 let tempDir = ".build/metal_temp"
 let metalLibPath = "\(outputDir)/default.metallib"
 
@@ -66,7 +86,7 @@ func atomicCopy(_ src: String, to dst: String) {
 /// build dir where it is missing or older than `source`.
 func placeColocated(from source: String) {
     let sourceDate = getModificationDate(of: source)
-    for buildDir in [".build/debug", ".build/release"] where fm.fileExists(atPath: buildDir) {
+    for buildDir in [debugBinDir, releaseBinDir] where fm.fileExists(atPath: buildDir) {
         let colocated = "\(buildDir)/mlx.metallib"
         if let have = getModificationDate(of: colocated), let want = sourceDate, have >= want { continue }
         atomicCopy(source, to: colocated)

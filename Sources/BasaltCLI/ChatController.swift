@@ -124,7 +124,7 @@ actor ChatController {
                         }
                         
                         await terminal.printOutput("\n")
-                        if !Task.isCancelled { await self.record(finalPrompt, reply) }
+                        if !Task.isCancelled { self.record(finalPrompt, reply) }
                     } catch {
                         await terminal.updateInfo(debug: TerminalUI.error("Error: \(error.localizedDescription)"))
                     }

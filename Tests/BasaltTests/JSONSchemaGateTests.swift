@@ -223,7 +223,8 @@ struct JSONSchemaGateTests {
     func byteOrderMarkIsSkipped() throws {
         let body = Data(#"{"response_format": {"type": "json_object"}}"#.utf8)
         let marked = Data([0xEF, 0xBB, 0xBF]) + body
-        #expect(try #require(OrderedJSON.parse(marked, keeping: ["response_format"])) == OrderedJSON.parse(body, keeping: ["response_format"]))
+        let parsed = try #require(OrderedJSON.parse(marked, keeping: ["response_format"]))
+        #expect(parsed == OrderedJSON.parse(body, keeping: ["response_format"]))
     }
 }
 

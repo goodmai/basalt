@@ -3,7 +3,7 @@ import Foundation
 /// URLProtocol stub keyed by host, so tests running in parallel each own their responses:
 /// give every test its own host (`StubURLProtocol.host()`), register a handler for it, and pass
 /// `StubURLProtocol.configuration` to the client under test.
-final class StubURLProtocol: URLProtocol, @unchecked Sendable {
+final class StubURLProtocol: URLProtocol {
     typealias Handler = @Sendable (URLRequest, Data?) -> (status: Int, headers: [String: String], body: Data)
 
     private static let lock = NSLock()

@@ -104,12 +104,8 @@ struct ClipboardManagerTests {
         let manager = ClipboardManager()
         
         do {
-            let text = try await manager.paste()
-            // Should return some string (might be empty)
-            #expect(text != nil)
+            _ = try await manager.paste()
         } catch ClipboardError.toolNotAvailable {
-            // Acceptable
-            #expect(true)
         }
     }
     
@@ -137,15 +133,11 @@ struct ClipboardManagerTests {
     func testMissingToolError() async {
         let manager = ClipboardManager()
         
-        // Should not crash even if tool is missing
         do {
             try await manager.copy("test")
         } catch ClipboardError.toolNotAvailable {
-            // Expected error
-            #expect(true)
         } catch {
-            // Unexpected error
-            #expect(false, "Unexpected error: \(error)")
+            Issue.record("Unexpected error: \(error)")
         }
     }
     
