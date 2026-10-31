@@ -15,6 +15,8 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
     let sampler: LogitSampler
     let maxTokens: Int?
     let recyclesTokens: Bool
+    let speculativeLookup: Bool
+    let grammarJumpForward: Bool
     let replaysRejections: Bool
     var tokenCount = 0
     var promptPrefillTime: TimeInterval = 0
@@ -25,6 +27,7 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
     private(set) var recycledRounds = 0
     private(set) var recycledDraftTokens = 0
     private(set) var acceptedRecycledDrafts = 0
+    private(set) var forcedTokensCount = 0
     private var backoffs = DrafterBackoffs()
     private var pending: [Int] = []
     private var pendingIndex = 0
@@ -52,9 +55,11 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
     init(
         input: LMInput, context: [Int], model: any LanguageModel, cache: [KVCache], state: LMOutput.State? = nil,
         processor: LogitProcessor?, sampler: LogitSampler, prefill: PrefillParameters, maxTokens: Int?,
-        recyclesTokens: Bool = false
+        recyclesTokens: Bool = false, speculativeLookup: Bool = true, grammarJumpForward: Bool = false
     ) throws {
         self.recyclesTokens = recyclesTokens
+        self.speculativeLookup = speculativeLookup
+        self.grammarJumpForward = grammarJumpForward
         self.replaysRejections = Self.isReplayableHybrid(cache)
         self.model = model
         self.cache = cache
@@ -69,10 +74,30 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
     }
 
     var speculativeDecodingTelemetry: SpeculativeDecodingTelemetry? {
-        rounds == 0 ? nil : SpeculativeDecodingTelemetry(
+        rounds == 0 && forcedTokensCount == 0 ? nil : SpeculativeDecodingTelemetry(
             roundCount: rounds, draftTokenCount: drafted, acceptedDraftTokenCount: accepted,
             targetModelCallCount: verifyCalls, draftModelCallCount: 0,
             targetVerifiedTokenCount: verified, emittedTokenCount: tokenCount)
+    }
+
+    private mutating func takeForcedTokens() -> [Int] {
+        guard grammarJumpForward else { return [] }
+        if var source = processor as? ForcedTokenSource {
+            let tokens = source.takeForcedTokens()
+            processor = source
+            return tokens
+        }
+        return []
+    }
+
+    private mutating func didSampleForced(_ token: Int) {
+        let arr = MLXArray([Int32(token)])
+        if var source = processor as? ForcedTokenSource {
+            source.didSampleForced(arr)
+            processor = source
+        } else {
+            processor?.didSample(token: arr)
+        }
     }
 
     private mutating func prepare(input: LMInput, prefill: PrefillParameters) throws {
@@ -171,7 +196,52 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
 
     private mutating func advance() {
         let remaining = maxTokens.map { $0 - tokenCount } ?? Int.max
-        let looksUp = backoffs.lookup.allowsDraft && state == nil
+        guard remaining > 0 else { return }
+
+        let forced = takeForcedTokens()
+        if !forced.isEmpty {
+            let lastToken: Int
+            let emittedPrefix: [Int]
+            if let step = inFlight {
+                inFlight = nil
+                lastToken = confirm(step)
+                emittedPrefix = [lastToken]
+            } else {
+                lastToken = history[history.count - 1]
+                emittedPrefix = []
+            }
+
+            let spanLimit = Swift.min(forced.count, remaining - emittedPrefix.count - 1)
+            if spanLimit <= 0 {
+                if !emittedPrefix.isEmpty {
+                    accept(emittedPrefix)
+                }
+                return
+            }
+
+            let forcedSpan = Array(forced.prefix(spanLimit))
+            let fed = [lastToken] + forcedSpan
+            verifyCalls += 1
+            verified += fed.count
+            forcedTokensCount += forcedSpan.count
+
+            for id in forcedSpan {
+                didSampleForced(id)
+            }
+
+            let logits = forward(LMInput.Text(tokens: MLXArray(fed.map(Int32.init))))
+                .logits[0, 0..., 0...]
+            let nextToken = sample(logits[fed.count - 1 ..< fed.count]).item(Int.self)
+
+            if recyclesTokens {
+                recycle(after: [forcedSpan.last ?? lastToken], successors: [argMax(logits[fed.count - 1 ..< fed.count], axis: -1).item(Int.self)])
+            }
+
+            accept(emittedPrefix + forcedSpan + [nextToken])
+            return
+        }
+
+        let looksUp = speculativeLookup && backoffs.lookup.allowsDraft && state == nil
         let recycles = recyclesTokens && backoffs.recycling.allowsDraft && state == nil
         let limit = replaysRejections && backoffs.lookup.probing ? Self.replayedProbeLimit : backoffs.lookup.draftLimit
         let draft = looksUp ? Self.draft(after: history, limit: Swift.min(limit, remaining - 1)) : []

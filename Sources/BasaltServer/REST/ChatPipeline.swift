@@ -18,6 +18,7 @@ struct ChatPipeline: Sendable {
         var presencePenalty: Double?
         var repetitionPenalty: Double?
         var speculativeLookup: Bool?
+        var grammarJumpForward: Bool?
     }
 
     struct Prepared: Sendable {
@@ -105,6 +106,7 @@ struct ChatPipeline: Sendable {
             thinkingBudget: thinkingBudget,
             responseFormat: responseFormat
         ).withSpeculativeLookup(sampling.speculativeLookup)
+            .withGrammarJumpForward(sampling.grammarJumpForward)
             .routed(by: headers).withOrigin(RequestOrigin(source: source, endpoint: endpoint, stream: stream))
         do {
             _ = try request.validated()

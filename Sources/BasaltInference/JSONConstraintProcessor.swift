@@ -29,13 +29,19 @@ struct ReasoningMarkers: Sendable {
     }
 }
 
+protocol ForcedTokenSource: LogitProcessor {
+    mutating func takeForcedTokens() -> [Int]
+    mutating func didSampleForced(_ token: MLXArray)
+}
+
 final class GrammarVocabulary: Sendable {
     let tokenizer: GrammarTokenizer
     let pieces: [[UInt8]]
     let stopTokens: Set<Int>
     let markers: ReasoningMarkers
+    let hostTokenizer: (any Tokenizer)?
 
-    init(pieces: [String], vocabType: VocabType, stopTokens: Set<Int>, markers: ReasoningMarkers) throws {
+    init(pieces: [String], vocabType: VocabType, stopTokens: Set<Int>, markers: ReasoningMarkers, hostTokenizer: (any Tokenizer)? = nil) throws {
         let pieces = pieces + Array(repeating: "", count: max(0, (stopTokens.max() ?? -1) + 1 - pieces.count))
         var grammarPieces = pieces
         let reserved = stopTokens.union(markers.openers).union(markers.closers.filter { $0.count == 1 }.joined())
@@ -45,6 +51,7 @@ final class GrammarVocabulary: Sendable {
         self.pieces = pieces.map { Array($0.utf8) }
         self.stopTokens = stopTokens
         self.markers = markers
+        self.hostTokenizer = hostTokenizer
     }
 
     convenience init(context: ModelContext) throws {
@@ -53,7 +60,8 @@ final class GrammarVocabulary: Sendable {
         let pastGap = (extracted.vocab.count..<max(extracted.vocab.count, (stopTokens.max() ?? -1) + 1))
             .map { context.tokenizer.convertIdToToken($0) ?? "" }
         try self.init(pieces: extracted.vocab + pastGap, vocabType: extracted.vocabType,
-                      stopTokens: stopTokens, markers: ReasoningMarkers(tokenizer: context.tokenizer))
+                      stopTokens: stopTokens, markers: ReasoningMarkers(tokenizer: context.tokenizer),
+                      hostTokenizer: context.tokenizer)
     }
 
     var size: Int { pieces.count }
@@ -64,28 +72,55 @@ final class GrammarSession: Sendable {
         var committed: Int32 = 0
         var failed = false
         var retired = false
+        var pendingForced: [Int] = []
+        var totalForced: Int = 0
     }
 
     let schema: String
+    let poolKey: String
     private let grammar: GrammarConstraint
     private let progress = Mutex(Progress())
 
-    init(schema: String, grammar: GrammarConstraint) {
+    init(schema: String, grammar: GrammarConstraint, poolKey: String? = nil) {
         self.schema = schema
         self.grammar = grammar
+        self.poolKey = poolKey ?? schema
     }
 
     func commit(_ id: Int) {
         progress.withLock { progress in
             guard !progress.retired else { return }
             do {
-                _ = try grammar.commitToken(Int32(id))
-                progress.committed += 1
+                let result = try grammar.commitToken(Int32(id))
+                let ffCount = Int32(result.tokens.count)
+                progress.committed += 1 + ffCount
+                if ffCount > 0 {
+                    let ff = result.tokens.map(Int.init)
+                    progress.pendingForced.append(contentsOf: ff)
+                    progress.totalForced += ff.count
+                }
             } catch {
                 progress.failed = true
                 BasaltLogger(module: "JSONConstraint").warn("grammar refused token \(id), the session will not be pooled: \(error)")
             }
         }
+    }
+
+    func takeForcedTokens() -> [Int] {
+        progress.withLock { progress in
+            guard !progress.pendingForced.isEmpty else { return [] }
+            let tokens = progress.pendingForced
+            progress.pendingForced.removeAll(keepingCapacity: true)
+            return tokens
+        }
+    }
+
+    var totalForcedTokens: Int {
+        progress.withLock { $0.totalForced }
+    }
+
+    var fastForwardDisagreementCount: Int {
+        grammar.fastForwardDisagreementCount
     }
 
     func accepts(_ ids: [Int]) -> Bool {
@@ -112,7 +147,7 @@ final class GrammarSession: Sendable {
     }
 }
 
-struct JSONConstraintProcessor: LogitProcessor {
+struct JSONConstraintProcessor: LogitProcessor, ForcedTokenSource {
     enum Phase: Sendable {
         case awaitingAnswer
         case reasoning
@@ -187,6 +222,13 @@ struct JSONConstraintProcessor: LogitProcessor {
         readSampledToken()
         progress.unread = token
     }
+
+    mutating func takeForcedTokens() -> [Int] {
+        readSampledToken()
+        return progress.session.takeForcedTokens()
+    }
+
+    mutating func didSampleForced(_ token: MLXArray) {}
 
     private func readSampledToken() {
         guard let token = progress.unread else { return }

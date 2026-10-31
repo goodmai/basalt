@@ -163,6 +163,7 @@ struct AnthropicController: Sendable {
         let reasoningEffort: String?
         let topK: Int?
         let speculativeLookup: Bool?
+        let grammarJumpForward: Bool?
 
         enum CodingKeys: String, CodingKey {
             case model, messages, system, temperature, stream, thinking
@@ -173,6 +174,7 @@ struct AnthropicController: Sendable {
             case reasoningEffort = "reasoning_effort"
             case topK = "top_k"
             case speculativeLookup = "speculative_lookup"
+            case grammarJumpForward = "grammar_jump_forward"
         }
     }
 
@@ -241,7 +243,7 @@ struct AnthropicController: Sendable {
                 maxTokens: maxTokens,
                 sampling: .init(temperature: dto.temperature, topP: dto.topP, minP: dto.minP,
                                 dynamicTemperature: dto.dynamicTemperature, topK: dto.topK,
-                                speculativeLookup: dto.speculativeLookup),
+                                speculativeLookup: dto.speculativeLookup, grammarJumpForward: dto.grammarJumpForward),
                 reasoningEffort: Self.reasoningEffort(dto), tools: tools,
                 thinkingBudget: dto.thinking?.type == "enabled" ? dto.thinking?.budgetTokens : nil,
                 responseFormat: nil, model: dto.model, stream: dto.stream == true)

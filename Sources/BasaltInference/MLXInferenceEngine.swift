@@ -96,10 +96,12 @@ public actor MLXInferenceEngine: InferenceEngine {
     private(set) var cacheBlend: CacheBlendStore?
     private let speculativeLookup: Bool
     private let speculativeRecycling: Bool
+    private let grammarJumpForward: Bool
     private(set) var promptCacheDisk: PromptCacheDiskStore?
     private var modelFingerprint: String?
     private var modelDescription = ""
     private var modelCacheLayout: [String]?
+    private var modelSupportsMultiTokenForward: Bool?
 
     public init(
         reasoningEffort: String? = nil,
@@ -115,11 +117,13 @@ public actor MLXInferenceEngine: InferenceEngine {
         cacheBlendRatio: Float? = nil,
         speculativeLookup: Bool = false,
         speculativeRecycling: Bool = false,
+        grammarJumpForward: Bool = false,
         promptCacheDisk: PromptCacheDiskStore? = nil
     ) {
         self.promptCacheDisk = promptCacheDisk
         self.speculativeLookup = speculativeLookup
         self.speculativeRecycling = speculativeRecycling
+        self.grammarJumpForward = grammarJumpForward
         self.reasoningEffort = reasoningEffort
         self.gpuCacheLimit = gpuCacheLimit
         self.kvPrecision = kvPrecision
@@ -168,6 +172,7 @@ public actor MLXInferenceEngine: InferenceEngine {
         modelFingerprint = fingerprint
         self.modelDescription = modelDescription
         modelCacheLayout = nil
+        modelSupportsMultiTokenForward = nil
         self.controlTokens = controlTokens
         grammarVocabulary = nil
         idleGrammars = [:]
@@ -455,7 +460,9 @@ public actor MLXInferenceEngine: InferenceEngine {
             toolCalls: toolCalls.isEmpty ? nil : toolCalls,
             reasoningTokens: finalResponse.reasoningTokens,
             draftTokens: finalResponse.draftTokens,
-            acceptedDraftTokens: finalResponse.acceptedDraftTokens
+            acceptedDraftTokens: finalResponse.acceptedDraftTokens,
+            forcedTokens: finalResponse.forcedTokens,
+            modelCalls: finalResponse.modelCalls
         )
     }
 
@@ -629,6 +636,7 @@ public actor MLXInferenceEngine: InferenceEngine {
         let session: GrammarSession
         let vocabulary: GrammarVocabulary
         let toolName: String?
+        let fastForward: Bool
     }
 
     static let grammarSchemaLimit = 16
@@ -652,12 +660,22 @@ public actor MLXInferenceEngine: InferenceEngine {
         case .failure(let error): return try unconstrained(error.reason)
         }
         guard !vocabulary.stopTokens.isEmpty else { return try unconstrained("the model declares no stop token to end the document") }
+        let fastForwardRequested = request.grammarJumpForward ?? grammarJumpForward
+        let fastForward: Bool
+        if fastForwardRequested, let container {
+            fastForward = await supportsMultiTokenForward(container, epoch: epoch)
+        } else {
+            fastForward = false
+        }
+        let poolKey = schema + (fastForward ? ":ff" : "")
         let grammar: GrammarConstraint
-        if epoch == modelEpoch, let idle = idleGrammars[schema]?.popLast() {
+        if epoch == modelEpoch, let idle = idleGrammars[poolKey]?.popLast() {
             grammar = idle
         } else {
             do {
-                grammar = try GrammarConstraint(tokenizer: vocabulary.tokenizer, jsonSchema: schema)
+                grammar = try GrammarConstraint(
+                    tokenizer: vocabulary.tokenizer, jsonSchema: schema,
+                    fastForward: fastForward, hostTokenizer: fastForward ? vocabulary.hostTokenizer : nil)
             } catch GrammarError.invalidJSONSchema(let message) {
                 return try unconstrained(message)
             } catch {
@@ -665,16 +683,17 @@ public actor MLXInferenceEngine: InferenceEngine {
             }
         }
         return OutputConstraint(
-            session: GrammarSession(schema: schema, grammar: grammar), vocabulary: vocabulary, toolName: forcedTool?.name)
+            session: GrammarSession(schema: schema, grammar: grammar, poolKey: poolKey), vocabulary: vocabulary,
+            toolName: forcedTool?.name, fastForward: fastForward)
     }
 
     func recycle(_ session: GrammarSession, epoch: Int) {
         guard epoch == modelEpoch, let grammar = session.rewound() else { return }
-        idleGrammarRecency.removeAll { $0 == session.schema }
-        idleGrammarRecency.append(session.schema)
+        idleGrammarRecency.removeAll { $0 == session.poolKey }
+        idleGrammarRecency.append(session.poolKey)
         if idleGrammarRecency.count > Self.grammarSchemaLimit { idleGrammars[idleGrammarRecency.removeFirst()] = nil }
-        guard idleGrammars[session.schema, default: []].count < Self.idleGrammarsPerSchema else { return }
-        idleGrammars[session.schema, default: []].append(grammar)
+        guard idleGrammars[session.poolKey, default: []].count < Self.idleGrammarsPerSchema else { return }
+        idleGrammars[session.poolKey, default: []].append(grammar)
     }
 
     struct ConstraintUnavailable: Error {
@@ -722,7 +741,7 @@ public actor MLXInferenceEngine: InferenceEngine {
 
         var components = GenerationComponents()
         if let presencePenalty = request.presencePenalty.map(Float.init), presencePenalty != 0 {
-            components = components.appendingLogitProcessor {
+            components = components.appendingBasaltProcessor {
                 GeneratedTokensPresencePenalty(penalty: presencePenalty, window: Self.presenceContextSize)
             }
         }
@@ -910,10 +929,11 @@ public actor MLXInferenceEngine: InferenceEngine {
                 phase: Self.constraintPhase(
                     thinkingDisabled: policy == .disabled, endsInsideThinking: promptEndsWithThinking,
                     prefillAnswered: !prefixAnswer.isEmpty))
-            let constrained = shaping.map { masked.appendingLogitProcessor($0) } ?? masked
+            let constrained = shaping.map { masked.appendingBasaltProcessor($0) } ?? masked
             let forcedTool = constraint?.toolName
             let speculativeLookup = request.speculativeLookup ?? speculativeLookup
-            let expertRouting = speculativeLookup ? await routesExperts(container, epoch: epoch) : true
+            let jumpForward = constraint?.fastForward == true
+            let expertRouting = (speculativeLookup || jumpForward) ? await routesExperts(container, epoch: epoch) : true
             let zones = modelAttendsThroughZones ? (modelPrefillsInChunks ? kvZones : kvZones?.evicting(0)) : nil
             let zonedPrecision = zones == nil ? nil : request.kvPrecision ?? kvPrecision
             let launch: GenerationLaunch
@@ -924,6 +944,7 @@ public actor MLXInferenceEngine: InferenceEngine {
                         blend: namespace.flatMap { space in blend.map { ($0, space) } },
                         params: params, components: constrained, tools: forcedTool == nil ? toolSpecs : nil,
                         context: context, speculativeLookup: speculativeLookup, speculativeRecycling: speculativeRecycling,
+                        grammarJumpForward: jumpForward,
                         routesExperts: expertRouting, kvZones: zones, kvPrecision: zonedPrecision)
                 }
             } catch {
@@ -1100,7 +1121,9 @@ public actor MLXInferenceEngine: InferenceEngine {
                                 : (lastInfo?.generationTokenCount ?? 0) >= requestedMaxTokens ? .length : .stop,
                             reasoningTokens: reasoningTokens,
                             draftTokens: lastInfo?.speculativeDecodingTelemetry?.draftTokenCount,
-                            acceptedDraftTokens: lastInfo?.speculativeDecodingTelemetry?.acceptedDraftTokenCount
+                            acceptedDraftTokens: lastInfo?.speculativeDecodingTelemetry?.acceptedDraftTokenCount,
+                            forcedTokens: constraint?.fastForward == true ? constraint?.session.totalForcedTokens : nil,
+                            modelCalls: lastInfo?.speculativeDecodingTelemetry?.targetModelCallCount
                         )
                         continuation.yield(.metadata(metadata))
                     }
@@ -1124,7 +1147,7 @@ public actor MLXInferenceEngine: InferenceEngine {
         _ components: GenerationComponents, with constraint: OutputConstraint?, phase: JSONConstraintProcessor.Phase
     ) -> GenerationComponents {
         guard let constraint else { return components }
-        return components.appendingLogitProcessor {
+        return components.appendingBasaltProcessor {
             JSONConstraintProcessor(session: constraint.session, vocabulary: constraint.vocabulary, phase: phase)
         }
     }
@@ -1169,6 +1192,18 @@ public actor MLXInferenceEngine: InferenceEngine {
             modelRoutesExperts = routes
         }
         return routes
+    }
+
+    private func supportsMultiTokenForward(_ container: ModelContainer, epoch: Int) async -> Bool {
+        if epoch == modelEpoch, let known = modelSupportsMultiTokenForward { return known }
+        let supports = await container.perform { context in
+            let cache = try? context.model.newCache(parameters: nil)
+            return cache.map { PromptLookupTokenIterator.supports($0, routesExperts: PromptLookupTokenIterator.routesExperts(context.model)) } ?? false
+        }
+        if epoch == modelEpoch {
+            modelSupportsMultiTokenForward = supports
+        }
+        return supports
     }
 
     private func snapshotBoundary(
@@ -1286,6 +1321,7 @@ public actor MLXInferenceEngine: InferenceEngine {
         blend: (store: CacheBlendStore, namespace: String)? = nil,
         params: GenerateParameters, components: GenerationComponents,
         tools: [ToolSpec]?, context: ModelContext, speculativeLookup: Bool = false, speculativeRecycling: Bool = false,
+        grammarJumpForward: Bool = false,
         routesExperts: Bool = true, kvZones: KVZones? = nil,
         kvPrecision: KVPrecision? = nil
     ) throws -> GenerationLaunch {
@@ -1295,7 +1331,8 @@ public actor MLXInferenceEngine: InferenceEngine {
                     input: input, cache: zoned.cache, parameters: zoned.params, context: context, components: components, tools: tools)
                 return GenerationLaunch(stream: stream, task: nil, cache: nil, reusedTokens: 0)
             }
-            let fresh = speculativeLookup && params.kvBits == nil && !carriesMoreThanTokens(input)
+            let usesPromptLookupIterator = (speculativeLookup || grammarJumpForward)
+            let fresh = usesPromptLookupIterator && params.kvBits == nil && !carriesMoreThanTokens(input)
                 ? try context.model.newCache(parameters: params) : []
             guard PromptLookupTokenIterator.supports(fresh, routesExperts: routesExperts) else {
                 let stream = try MLXLMCommon.generate(
@@ -1305,8 +1342,9 @@ public actor MLXInferenceEngine: InferenceEngine {
             try components.validate(parameters: params)
             let iterator = try PromptLookupTokenIterator(
                 input: input, context: input.text.tokens.asArray(Int.self), model: context.model, cache: fresh,
-                processor: components.logitProcessor(parameters: params), sampler: params.sampler(),
-                prefill: params.prefill, maxTokens: params.maxTokens, recyclesTokens: speculativeRecycling)
+                processor: components.makeProcessor(parameters: params), sampler: params.sampler(),
+                prefill: params.prefill, maxTokens: params.maxTokens, recyclesTokens: speculativeRecycling,
+                speculativeLookup: speculativeLookup, grammarJumpForward: grammarJumpForward)
             let (stream, task) = generateTask(
                 promptTokenCount: input.text.tokens.dim(-1), modelConfiguration: context.configuration,
                 tokenizer: context.tokenizer, iterator: iterator, tools: tools, toolCallPolicy: params.toolCallPolicy)
@@ -1332,7 +1370,7 @@ public actor MLXInferenceEngine: InferenceEngine {
             ?? HybridPrefixSnapshot.prefillHead(
                 input.text.tokens, into: cache, reused: reused, boundary: boundary, model: context.model, prefill: params.prefill)
         let tail = LMInput(tokens: input.text.tokens[.ellipsis, head.start...])
-        let processor = components.logitProcessor(parameters: params).map {
+        let processor = components.makeProcessor(parameters: params).map {
             PromptAnchoredProcessor(base: $0, prompt: input.text.tokens)
         }
         func launching(_ iterator: some TokenIteratorProtocol) -> GenerationLaunch {
@@ -1344,11 +1382,12 @@ public actor MLXInferenceEngine: InferenceEngine {
                 stream: stream, task: task, cache: keepable ? head.kept : nil, reusedTokens: reused,
                 exactTokens: blended?.exactPrefix ?? Int.max)
         }
-        if speculativeLookup, PromptLookupTokenIterator.supports(cache.layers, routesExperts: routesExperts) {
+        if (speculativeLookup || grammarJumpForward), PromptLookupTokenIterator.supports(cache.layers, routesExperts: routesExperts) {
             return launching(try PromptLookupTokenIterator(
                 input: tail, context: input.text.tokens.asArray(Int.self), model: context.model, cache: cache.layers,
                 state: head.state, processor: processor, sampler: params.sampler(), prefill: params.prefill,
-                maxTokens: params.maxTokens, recyclesTokens: speculativeRecycling))
+                maxTokens: params.maxTokens, recyclesTokens: speculativeRecycling,
+                speculativeLookup: speculativeLookup, grammarJumpForward: grammarJumpForward))
         }
         return launching(try TokenIterator(
             input: tail, model: context.model, cache: cache.layers, state: head.state,
@@ -1374,7 +1413,7 @@ struct GeneratedTokensPresencePenalty: LogitProcessor {
     }
 }
 
-struct PromptAnchoredProcessor: LogitProcessor {
+struct PromptAnchoredProcessor: LogitProcessor, ForcedTokenSource {
     var base: any LogitProcessor
     let prompt: MLXArray
 
@@ -1388,5 +1427,106 @@ struct PromptAnchoredProcessor: LogitProcessor {
 
     mutating func didSample(token: MLXArray) {
         base.didSample(token: token)
+    }
+
+    mutating func takeForcedTokens() -> [Int] {
+        if var source = base as? ForcedTokenSource {
+            let tokens = source.takeForcedTokens()
+            base = source
+            return tokens
+        }
+        return []
+    }
+
+    mutating func didSampleForced(_ token: MLXArray) {
+        if var source = base as? ForcedTokenSource {
+            source.didSampleForced(token)
+            base = source
+        } else {
+            base.didSample(token: token)
+        }
+    }
+}
+
+struct BasaltChainedLogitProcessor: LogitProcessor, ForcedTokenSource {
+    var processors: [any LogitProcessor]
+
+    init(processors: [any LogitProcessor]) {
+        self.processors = processors
+    }
+
+    mutating func prompt(_ prompt: MLXArray) {
+        for index in processors.indices {
+            processors[index].prompt(prompt)
+        }
+    }
+
+    func process(logits: MLXArray) -> MLXArray {
+        processors.reduce(logits) { $1.process(logits: $0) }
+    }
+
+    mutating func didSample(token: MLXArray) {
+        for index in processors.indices {
+            processors[index].didSample(token: token)
+        }
+    }
+
+    mutating func takeForcedTokens() -> [Int] {
+        var result: [Int] = []
+        for index in processors.indices {
+            if var source = processors[index] as? ForcedTokenSource {
+                result.append(contentsOf: source.takeForcedTokens())
+                processors[index] = source
+            }
+        }
+        return result
+    }
+
+    mutating func didSampleForced(_ token: MLXArray) {
+        for index in processors.indices {
+            if var source = processors[index] as? ForcedTokenSource {
+                source.didSampleForced(token)
+                processors[index] = source
+            } else {
+                processors[index].didSample(token: token)
+            }
+        }
+    }
+}
+
+extension GenerationComponents {
+    func appendingBasaltProcessor(
+        _ factory: @escaping @Sendable () -> any LogitProcessor
+    ) -> GenerationComponents {
+        let existingFactory = logitProcessorFactory
+        return GenerationComponents(
+            logitProcessorFactory: {
+                guard let existing = existingFactory?() else {
+                    return factory()
+                }
+                if let chained = existing as? BasaltChainedLogitProcessor {
+                    return BasaltChainedLogitProcessor(processors: chained.processors + [factory()])
+                }
+                return BasaltChainedLogitProcessor(processors: [existing, factory()])
+            },
+            parameterValidator: parameterValidator)
+    }
+
+    func makeProcessor(parameters: GenerateParameters) -> (any LogitProcessor)? {
+        let penalty = parameters.processor()
+        let custom = logitProcessorFactory?()
+        switch (penalty, custom) {
+        case (nil, nil):
+            return nil
+        case (let p?, nil):
+            return p
+        case (nil, let c?):
+            return c
+        case (let p?, let c?):
+            if let chained = c as? BasaltChainedLogitProcessor {
+                return BasaltChainedLogitProcessor(processors: [p] + chained.processors)
+            }
+            return BasaltChainedLogitProcessor(processors: [p, c])
+        }
     }
 }

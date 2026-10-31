@@ -153,6 +153,7 @@ struct OpenAIController: Sendable {
         let repetitionPenalty: Double?
         let thinkingBudget: Int?
         let speculativeLookup: Bool?
+        let grammarJumpForward: Bool?
         let streamOptions: StreamOptions?
 
         struct StreamOptions: Codable, Sendable {
@@ -176,6 +177,7 @@ struct OpenAIController: Sendable {
             case repetitionPenalty = "repetition_penalty"
             case thinkingBudget = "thinking_budget"
             case speculativeLookup = "speculative_lookup"
+            case grammarJumpForward = "grammar_jump_forward"
         }
     }
 
@@ -203,6 +205,7 @@ struct OpenAIController: Sendable {
         let repetitionPenalty: Double?
         let thinkingBudget: Int?
         let speculativeLookup: Bool?
+        let grammarJumpForward: Bool?
 
         struct ReasoningConfig: Codable, Sendable {
             let effort: String?
@@ -224,6 +227,7 @@ struct OpenAIController: Sendable {
             case repetitionPenalty = "repetition_penalty"
             case thinkingBudget = "thinking_budget"
             case speculativeLookup = "speculative_lookup"
+            case grammarJumpForward = "grammar_jump_forward"
         }
     }
 
@@ -401,7 +405,7 @@ struct OpenAIController: Sendable {
                 sampling: .init(temperature: dto.temperature, topP: dto.topP, minP: dto.minP,
                                 dynamicTemperature: dto.dynamicTemperature, topK: dto.topK,
                                 presencePenalty: dto.presencePenalty, repetitionPenalty: dto.repetitionPenalty,
-                                speculativeLookup: dto.speculativeLookup),
+                                speculativeLookup: dto.speculativeLookup, grammarJumpForward: dto.grammarJumpForward),
                 reasoningEffort: dto.reasoningEffort, tools: tools, thinkingBudget: dto.thinkingBudget,
                 responseFormat: format, model: dto.model, stream: dto.stream == true)
             if dto.stream == true { try await pipeline.admitStream(prepared.request) }
@@ -474,7 +478,7 @@ struct OpenAIController: Sendable {
                 sampling: .init(temperature: dto.temperature, topP: dto.topP, minP: dto.minP,
                                 dynamicTemperature: dto.dynamicTemperature, topK: dto.topK,
                                 presencePenalty: dto.presencePenalty, repetitionPenalty: dto.repetitionPenalty,
-                                speculativeLookup: dto.speculativeLookup),
+                                speculativeLookup: dto.speculativeLookup, grammarJumpForward: dto.grammarJumpForward),
                 reasoningEffort: dto.effectiveReasoningEffort, tools: tools, thinkingBudget: dto.thinkingBudget,
                 responseFormat: format, model: dto.model, stream: dto.stream == true)
             if dto.stream == true { try await pipeline.admitStream(prepared.request) }

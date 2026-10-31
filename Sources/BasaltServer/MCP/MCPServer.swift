@@ -247,7 +247,8 @@ public final class MCPServer: Service, Sendable {
                         "topP":        ["type": "number",  "description": "Nucleus sampling p (default: the model's generation_config, else 0.9)"],
                         "minP":        ["type": "number",  "description": "Min-P 0–1, overrides the server default (0 = off)"],
                         "dynamicTemperature": ["type": "boolean", "description": "Entropy-based dynamic temperature (EDT)"],
-                        "speculativeLookup": ["type": "boolean", "description": "Prompt-lookup speculative decoding for this call; unset takes serve --speculative-lookup"]
+                        "speculativeLookup": ["type": "boolean", "description": "Prompt-lookup speculative decoding for this call; unset takes serve --speculative-lookup"],
+                        "grammarJumpForward": ["type": "boolean", "description": "Grammar jump-forward constrained decoding for this call; unset takes serve --grammar-jump-forward"]
                     ]
                 ])
             ),
@@ -284,7 +285,8 @@ public final class MCPServer: Service, Sendable {
                         "topP":        ["type": "number",  "description": "Nucleus sampling p (default: the model's generation_config, else 0.9)"],
                         "minP":        ["type": "number",  "description": "Min-P 0–1, overrides the server default (0 = off)"],
                         "dynamicTemperature": ["type": "boolean", "description": "Entropy-based dynamic temperature (EDT)"],
-                        "speculativeLookup": ["type": "boolean", "description": "Prompt-lookup speculative decoding for this call; unset takes serve --speculative-lookup"]
+                        "speculativeLookup": ["type": "boolean", "description": "Prompt-lookup speculative decoding for this call; unset takes serve --speculative-lookup"],
+                        "grammarJumpForward": ["type": "boolean", "description": "Grammar jump-forward constrained decoding for this call; unset takes serve --grammar-jump-forward"]
                     ]
                 ])
             ),
@@ -668,6 +670,11 @@ public final class MCPServer: Service, Sendable {
             writeError(id: id, code: -32602, message: "speculativeLookup must be a boolean")
             return
         }
+        let grammarJumpForward = args?["grammarJumpForward"].flatMap { $0 is NSNull ? nil : $0 }
+        if let grammarJumpForward, !Self.isJSONBoolean(grammarJumpForward) {
+            writeError(id: id, code: -32602, message: "grammarJumpForward must be a boolean")
+            return
+        }
 
         let request = GenerationRequest(
             prompt: prompt,
@@ -678,6 +685,7 @@ public final class MCPServer: Service, Sendable {
             dynamicTemperature: args?["dynamicTemperature"] as? Bool,
             cacheKey: PromptCacheKey.resolve(isService: false)
         ).withSpeculativeLookup(speculativeLookup as? Bool)
+            .withGrammarJumpForward(grammarJumpForward as? Bool)
             .withOrigin(RequestOrigin(source: "mcp", endpoint: "tools/call generate", stream: false))
         
         do {
