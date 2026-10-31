@@ -229,6 +229,18 @@ else
 fi
 echo ""
 
+# 11. GitHub Actions third-party action pinning
+echo "1️⃣1️⃣ Checking third-party GitHub Actions are pinned to full commit SHAs..."
+UNPINNED_ACTIONS=$(grep -En 'uses:[[:space:]]+[^.].*@v[0-9]' .github/workflows/*.yml .github/actions/*/action.yml 2>/dev/null || true)
+if [ -n "$UNPINNED_ACTIONS" ]; then
+    echo -e "${RED}❌ FAIL: Unpinned third-party actions found (must use 40-character commit SHAs):${NC}"
+    echo "$UNPINNED_ACTIONS"
+    ISSUES_FOUND=$((ISSUES_FOUND + 1))
+else
+    echo -e "${GREEN}✅ PASS: All third-party GitHub Actions pinned to full commit SHAs${NC}"
+fi
+echo ""
+
 # Summary
 echo "=============================="
 echo "📊 Audit Summary"
@@ -236,7 +248,7 @@ echo "=============================="
 if [ $ISSUES_FOUND -eq 0 ]; then
     echo -e "${GREEN}✅ PASS: All security checks passed!${NC}"
     echo ""
-    echo "Security score: 10/10 🏆"
+    echo "Security score: 11/11 🏆"
     exit 0
 else
     echo -e "${RED}❌ FAIL: $ISSUES_FOUND security issues found${NC}"

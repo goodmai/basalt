@@ -121,10 +121,41 @@ func findMetalFiles(in directory: String) -> [String] {
     return files
 }
 
+func findHeaderFiles(in directory: String) -> [String] {
+    var files: [String] = []
+    guard let enumerator = fm.enumerator(atPath: directory) else { return files }
+    for case let file as String in enumerator {
+        if file.hasSuffix(".h") {
+            files.append(directory + "/" + file)
+        }
+    }
+    return files
+}
+
+func readMlxRevision() -> String? {
+    guard let data = try? Data(contentsOf: URL(fileURLWithPath: "Package.resolved")),
+          let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+          let pins = json["pins"] as? [[String: Any]] else {
+        return nil
+    }
+    for pin in pins {
+        if let identity = pin["identity"] as? String, identity == "mlx-swift",
+           let state = pin["state"] as? [String: Any],
+           let revision = state["revision"] as? String {
+            return revision
+        }
+    }
+    return nil
+}
+
+let revisionStampPath = "\(outputDir)/.mlx_revision"
 var metalFiles = findMetalFiles(in: kernelDir)
+var headerFiles = findHeaderFiles(in: kernelDir)
 if fm.fileExists(atPath: genKernelDir) {
     metalFiles.append(contentsOf: findMetalFiles(in: genKernelDir))
+    headerFiles.append(contentsOf: findHeaderFiles(in: genKernelDir))
 }
+let currentRevision = readMlxRevision()
 
 if !fm.fileExists(atPath: metalLibPath) && fm.fileExists(atPath: "default.metallib") {
     try? fm.createDirectory(atPath: outputDir, withIntermediateDirectories: true)
@@ -134,13 +165,15 @@ if !fm.fileExists(atPath: metalLibPath) && fm.fileExists(atPath: "default.metall
 // Check if metallib exists and is newer than all .metal files
 if fm.fileExists(atPath: metalLibPath),
    let metalLibDate = getModificationDate(of: metalLibPath) {
-    let allSourcesNewer = metalFiles.allSatisfy { metalFile in
-        if let metalDate = getModificationDate(of: metalFile) {
-            return metalDate < metalLibDate
+    let cachedRevision = try? String(contentsOfFile: revisionStampPath, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)
+    let revisionMatches = currentRevision == nil || cachedRevision == currentRevision
+    let allSourcesNewer = (metalFiles + headerFiles).allSatisfy { file in
+        if let fileDate = getModificationDate(of: file) {
+            return fileDate < metalLibDate
         }
         return true
     }
-    if allSourcesNewer && !metalFiles.isEmpty {
+    if allSourcesNewer && revisionMatches && !metalFiles.isEmpty {
         // The library is current, but the colocated copies may not be (a run cancelled
         // mid-placement, a wiped build dir): restore them before declaring success.
         placeColocated(from: metalLibPath)
@@ -252,6 +285,10 @@ placeColocated(from: stagedLib)
 guard rename(stagedLib, metalLibPath) == 0 else {
     log("Could not place \(metalLibPath): \(String(cString: strerror(errno)))", level: .error)
     exit(1)
+}
+
+if let currentRevision {
+    try? currentRevision.write(toFile: revisionStampPath, atomically: true, encoding: .utf8)
 }
 
 log("Successfully built \(outputDir)/default.metallib, copied to root and next to the binaries", level: .info)

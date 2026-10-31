@@ -22,7 +22,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           # build/test run dependency code under a contents: write job: no token is left in
@@ -59,13 +59,30 @@ jobs:
           echo "v$TAG matches the source"
 
       - name: Build
-        run: swift build -c release
+        run: swift build -c release -Xswiftc -warnings-as-errors
 
       - name: MLX Metal kernels
         uses: ./.github/actions/mlx-metallib
 
+      - name: Generate Software Bill of Materials (SBOM)
+        run: |
+          mkdir -p sboms
+          swift package generate-sbom --sbom-spec cyclonedx --sbom-spec spdx --sbom-output-dir sboms
+          ls -la sboms
+
       - name: Test
-        run: swift test --no-parallel
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          COMMIT_SHA="${{ github.sha }}"
+          UNIT_TESTS_STATUS=$(gh api "repos/${{ github.repository }}/commits/${COMMIT_SHA}/check-runs" \
+            --jq '.check_runs[] | select(.name == "Swift Tests" or .name == "Unit Tests") | .conclusion' | grep "^success$" | head -n 1 || true)
+          if [ "$UNIT_TESTS_STATUS" = "success" ]; then
+            echo "Unit tests already green on commit ${COMMIT_SHA} — skipping redundant debug rebuild."
+          else
+            echo "No green Unit Tests check-run found on commit ${COMMIT_SHA} — running test suite fallback."
+            swift test --no-parallel
+          fi
 
       # No prebuilt binary is published: the binary alone is useless without the
       # Metal library beside it, and a 130 MB metallib in every release is not
@@ -81,9 +98,10 @@ jobs:
       # Published before the formula step: a failing formula push must never leave a tag
       # without its Release (the verify step below still turns the run red).
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3
         with:
           generate_release_notes: true
+          files: sboms/*
           body: |
             ## Basalt ${{ steps.pkg.outputs.version }}
 

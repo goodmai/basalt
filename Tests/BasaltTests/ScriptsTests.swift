@@ -293,4 +293,124 @@ struct ScriptsTests {
         #expect(try runAction(swiftVersion: "6.3.3") != 0)
         #expect(try runAction(swiftVersion: "6.4.2", swiftOut: "xcrun: error: unable to find utility") != 0)
     }
+
+    @Test("build_metal.swift rebuilds when a header is newer than metallib or when Package.resolved revision drifts")
+    func testBuildMetalFreshnessWithHeadersAndRevision() throws {
+        let fm = FileManager.default
+        let repo = fm.temporaryDirectory.appendingPathComponent("build-metal-fresh-\(UUID().uuidString)")
+        defer { try? fm.removeItem(at: repo) }
+        let kernelDir = repo.appendingPathComponent(".build/checkouts/mlx-swift/Source/Cmlx/mlx/mlx/backend/metal/kernels")
+        let debugDir = repo.appendingPathComponent(".build/out/Products/Debug")
+        let binDir = repo.appendingPathComponent("bin")
+        for dir in [kernelDir, debugDir, binDir] {
+            try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        }
+        let metalFile = kernelDir.appendingPathComponent("noop.metal")
+        let headerFile = kernelDir.appendingPathComponent("types.h")
+        try Data("#include <metal_stdlib>\nusing namespace metal;\nkernel void noop() {}\n".utf8).write(to: metalFile)
+        try Data("#pragma once\n".utf8).write(to: headerFile)
+        try fm.setAttributes([.modificationDate: Date().addingTimeInterval(-200)], ofItemAtPath: metalFile.path)
+        try fm.setAttributes([.modificationDate: Date().addingTimeInterval(-200)], ofItemAtPath: headerFile.path)
+
+        func writePackageResolved(revision: String) throws {
+            let json = """
+            {
+              "pins": [
+                {
+                  "identity": "mlx-swift",
+                  "state": {
+                    "revision": "\(revision)",
+                    "version": "0.32.3"
+                  }
+                }
+              ]
+            }
+            """
+            try Data(json.utf8).write(to: repo.appendingPathComponent("Package.resolved"))
+        }
+
+        try writePackageResolved(revision: "rev-alpha")
+        try Data("metallib-content".utf8).write(to: repo.appendingPathComponent("default.metallib"))
+
+        let swiftShim = binDir.appendingPathComponent("swift")
+        let shimScript = """
+        #!/bin/bash
+        if [ "$1" = "build" ] && [[ " $* " == *" --show-bin-path "* ]]; then
+          echo "\(debugDir.path)"
+          exit 0
+        fi
+        exec /usr/bin/swift "$@"
+        """
+        try Data(shimScript.utf8).write(to: swiftShim)
+        try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: swiftShim.path)
+
+        let scriptURL = URL(fileURLWithPath: fm.currentDirectoryPath).appendingPathComponent("scripts/build_metal.swift")
+        func runBuildMetal() -> (status: Int32, output: String) {
+            let task = Process()
+            let pipe = Pipe()
+            task.executableURL = URL(fileURLWithPath: "/usr/bin/swift")
+            task.arguments = [scriptURL.path, "--skip-unsupported", "--verbose"]
+            task.currentDirectoryURL = repo
+            var env = ProcessInfo.processInfo.environment
+            env["PATH"] = "\(binDir.path):\(env["PATH"] ?? "/usr/bin:/bin")"
+            task.environment = env
+            task.standardOutput = pipe
+            task.standardError = pipe
+            try? task.run()
+            task.waitUntilExit()
+            let out = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+            return (task.terminationStatus, out)
+        }
+
+        let firstRun = runBuildMetal()
+        #expect(firstRun.status == 0)
+        let stampFile = debugDir.appendingPathComponent(".mlx_revision")
+        #expect(fm.fileExists(atPath: stampFile.path))
+        #expect((try? String(contentsOf: stampFile, encoding: .utf8)) == "rev-alpha")
+
+        let secondRun = runBuildMetal()
+        #expect(secondRun.status == 0)
+        #expect(secondRun.output.contains("Metal shaders up to date, skipping rebuild"))
+
+        try fm.setAttributes([.modificationDate: Date().addingTimeInterval(50)], ofItemAtPath: headerFile.path)
+        let headerTouchedRun = runBuildMetal()
+        #expect(headerTouchedRun.status == 0)
+        #expect(!headerTouchedRun.output.contains("Metal shaders up to date, skipping rebuild"))
+
+        try writePackageResolved(revision: "rev-beta")
+        let revisionChangedRun = runBuildMetal()
+        #expect(revisionChangedRun.status == 0)
+        #expect(!revisionChangedRun.output.contains("Metal shaders up to date, skipping rebuild"))
+        #expect((try? String(contentsOf: stampFile, encoding: .utf8)) == "rev-beta")
+    }
+
+    @Test("All third-party GitHub Actions across workflows are pinned to 40-character SHAs")
+    func testAllGitHubActionsPinnedToSHAs() throws {
+        let fm = FileManager.default
+        let root = URL(fileURLWithPath: fm.currentDirectoryPath)
+        let workflows = try fm.contentsOfDirectory(at: root.appendingPathComponent(".github/workflows"), includingPropertiesForKeys: nil)
+            .filter { $0.pathExtension == "yml" || $0.pathExtension == "yaml" }
+        let compositeActions = [
+            root.appendingPathComponent(".github/actions/mlx-metallib/action.yml"),
+            root.appendingPathComponent(".github/actions/xcode-toolchain/action.yml")
+        ]
+
+        let hex40Pattern = try Regex("^[0-9a-f]{40}$")
+        for file in workflows + compositeActions {
+            guard fm.fileExists(atPath: file.path) else { continue }
+            let content = try String(contentsOf: file, encoding: .utf8)
+            let lines = content.components(separatedBy: "\n")
+            for (idx, line) in lines.enumerated() {
+                let trimmed = line.trimmingCharacters(in: .whitespaces)
+                guard trimmed.hasPrefix("uses:") || trimmed.hasPrefix("- uses:") else { continue }
+                let afterUses = trimmed.components(separatedBy: "uses:").last?.trimmingCharacters(in: .whitespaces) ?? ""
+                let actionPart = afterUses.components(separatedBy: "#").first?.trimmingCharacters(in: .whitespaces) ?? ""
+                if actionPart.hasPrefix("./") { continue }
+                let parts = actionPart.components(separatedBy: "@")
+                #expect(parts.count == 2, "Unversioned action on line \(idx + 1) in \(file.lastPathComponent): \(trimmed)")
+                let sha = parts[1]
+                #expect(sha.contains(hex40Pattern), "Action not pinned to 40-char SHA on line \(idx + 1) in \(file.lastPathComponent): \(sha)")
+            }
+        }
+    }
 }

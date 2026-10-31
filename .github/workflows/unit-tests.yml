@@ -36,7 +36,7 @@ jobs:
       # Same-repo PRs (dependabot included) can leave edited dependency checkouts in .build,
       # so a later green run vouches for test results only — nothing built here is shipped.
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           clean: false
 
@@ -47,7 +47,7 @@ jobs:
         run: xcrun metal --version >/dev/null 2>&1 || xcodebuild -downloadComponent MetalToolchain
 
       - name: Build tests
-        run: swift build --build-tests
+        run: swift build --build-tests -Xswiftc -warnings-as-errors
 
       - name: MLX Metal kernels
         uses: ./.github/actions/mlx-metallib
