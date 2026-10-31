@@ -918,6 +918,7 @@ public actor MLXInferenceEngine: InferenceEngine {
                 await restoreFromDisk(namespace, prompt: promptTokens, container: container, epoch: epoch)
             }
             let lease: PromptCacheLease? = if let namespace { promptCaches.lease(namespace, for: promptTokens) } else { nil }
+            let fork = namespace.map { promptCaches.storedPrefix(of: promptTokens, in: $0) }
             let reuse: (cache: PromptCache, reusedTokens: Int)? = switch lease {
             case let held?: (held.cache, held.reusedTokens)
             case nil: nil
@@ -941,7 +942,7 @@ public actor MLXInferenceEngine: InferenceEngine {
             do {
                 launch = try await container.perform(nonSendable: lmInput) { context, input in
                     try Self.launch(
-                        input: input, reuse: reuse, keepsCache: namespace != nil, boundary: boundary,
+                        input: input, reuse: reuse, fork: fork, keepsCache: namespace != nil, boundary: boundary,
                         blend: namespace.flatMap { space in blend.map { ($0, space) } },
                         params: params, components: constrained, tools: forcedTool == nil ? toolSpecs : nil,
                         context: context, speculativeLookup: speculativeLookup, speculativeRecycling: speculativeRecycling,
@@ -1089,9 +1090,9 @@ public actor MLXInferenceEngine: InferenceEngine {
                     let completed = !(Task.isCancelled || stoppedAfterCall)
                     await Self.settle(launch, cancelled: !completed)
                     if completed, let session = constraint?.session { await self.recycle(session, epoch: epoch) }
-                    await self.keep(launch.cache, tokens: Array(promptTokens.prefix(launch.exactTokens)), namespace: namespace, releasing: leaseSlot, epoch: epoch)
-
-                    // End of stream - send metadata
+                    await self.keep(
+                        launch.cache, fork: launch.fork, tokens: Array(promptTokens.prefix(launch.exactTokens)),
+                        namespace: namespace, releasing: leaseSlot, epoch: epoch)
                     if !Task.isCancelled {
                         let generationTime = (clock.now - startTime).inSeconds
                         let timeToFirstToken = firstTokenAt.map { ($0 - startTime).inSeconds } ?? 0
@@ -1169,6 +1170,7 @@ public actor MLXInferenceEngine: InferenceEngine {
         let stream: AsyncStream<Generation>
         let task: Task<Void, Never>?
         let cache: PromptCache?
+        var fork: PromptCache? = nil
         let reusedTokens: Int
         var exactTokens = Int.max
     }
@@ -1302,10 +1304,14 @@ public actor MLXInferenceEngine: InferenceEngine {
     }
 
     private func keep(
-        _ cache: PromptCache?, tokens: [Int], namespace: String?, releasing lease: PromptCacheLeaseSlot, epoch: Int
+        _ cache: PromptCache?, fork: PromptCache? = nil, tokens: [Int], namespace: String?,
+        releasing lease: PromptCacheLeaseSlot, epoch: Int
     ) {
         _ = lease.take()
         guard epoch == modelEpoch, let namespace else { return }
+        if let fork {
+            promptCaches.store(namespace, tokens: Array(tokens.prefix(fork.tokenCount)), cache: fork)
+        }
         if let cache {
             promptCaches.store(namespace, tokens: Array(tokens.prefix(cache.tokenCount)), cache: cache)
         }
@@ -1321,7 +1327,7 @@ public actor MLXInferenceEngine: InferenceEngine {
     }
 
     static func launch(
-        input: LMInput, reuse: (cache: PromptCache, reusedTokens: Int)?, keepsCache: Bool, boundary: Int,
+        input: LMInput, reuse: (cache: PromptCache, reusedTokens: Int)?, fork: Int? = nil, keepsCache: Bool, boundary: Int,
         blend: (store: CacheBlendStore, namespace: String)? = nil,
         params: GenerateParameters, components: GenerationComponents,
         tools: [ToolSpec]?, context: ModelContext, speculativeLookup: Bool = false, speculativeRecycling: Bool = false,
@@ -1370,9 +1376,9 @@ public actor MLXInferenceEngine: InferenceEngine {
             BasaltLogger(module: "CacheBlend").info(
                 "Blended \(blended.tokens) prompt tokens: \(blended.reused) from cached chunks, \(blended.recomputed) of them recomputed")
         }
-        let head = try blended.map { (kept: $0.cache, start: reused + $0.tokens, state: $0.cache.state) }
+        let head = try blended.map { (fork: nil as PromptCache?, kept: $0.cache as PromptCache?, start: reused + $0.tokens, state: $0.cache.state) }
             ?? HybridPrefixSnapshot.prefillHead(
-                input.text.tokens, into: cache, reused: reused, boundary: boundary, model: context.model, prefill: params.prefill)
+                input.text.tokens, into: cache, reused: reused, fork: fork, boundary: boundary, model: context.model, prefill: params.prefill)
         let tail = LMInput(tokens: input.text.tokens[.ellipsis, head.start...])
         let processor = components.makeProcessor(parameters: params).map {
             PromptAnchoredProcessor(base: $0, prompt: input.text.tokens)
@@ -1383,8 +1389,8 @@ public actor MLXInferenceEngine: InferenceEngine {
                 promptTokenCount: input.text.tokens.dim(-1) - reused, modelConfiguration: context.configuration,
                 tokenizer: context.tokenizer, iterator: iterator, tools: tools, toolCallPolicy: params.toolCallPolicy)
             return GenerationLaunch(
-                stream: stream, task: task, cache: keepable ? head.kept : nil, reusedTokens: reused,
-                exactTokens: blended?.exactPrefix ?? Int.max)
+                stream: stream, task: task, cache: keepable ? head.kept : nil, fork: keepable ? head.fork : nil,
+                reusedTokens: reused, exactTokens: blended?.exactPrefix ?? Int.max)
         }
         if (speculativeLookup || grammarJumpForward), PromptLookupTokenIterator.supports(cache.layers, routesExperts: routesExperts) {
             return launching(try PromptLookupTokenIterator(

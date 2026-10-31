@@ -50,23 +50,31 @@ struct RecurrentSnapshot {
 
 enum HybridPrefixSnapshot {
     static func prefillHead(
-        _ prompt: MLXArray, into cache: PromptCache, reused: Int, boundary: Int,
+        _ prompt: MLXArray, into cache: PromptCache, reused: Int, fork: Int? = nil, boundary: Int,
         model: any LanguageModel, prefill: PrefillParameters
-    ) throws -> (kept: PromptCache?, start: Int, state: LMOutput.State?) {
-        guard cache.isHybrid else { return (cache, reused, cache.state) }
-        guard boundary > reused, boundary < prompt.dim(-1) else { return (nil, reused, cache.state) }
-        let head = LMInput(tokens: prompt[.ellipsis, reused ..< boundary])
+    ) throws -> (fork: PromptCache?, kept: PromptCache?, start: Int, state: LMOutput.State?) {
+        guard cache.isHybrid else { return (nil, cache, reused, cache.state) }
+        guard boundary > reused, boundary < prompt.dim(-1) else { return (nil, nil, reused, cache.state) }
         var state = cache.state
-        switch try model.prepare(head, cache: cache.layers, state: state, prefill: prefill) {
-        case .tokens(let rest):
-            if rest.tokens.size > 0 {
-                state = model(rest[text: .newAxis], cache: cache.layers, state: state).state ?? state
+        func advance(_ range: Range<Int>) throws -> PromptCache {
+            let slice = LMInput(tokens: prompt[.ellipsis, range])
+            switch try model.prepare(slice, cache: cache.layers, state: state, prefill: prefill) {
+            case .tokens(let rest):
+                if rest.tokens.size > 0 {
+                    state = model(rest[text: .newAxis], cache: cache.layers, state: state).state ?? state
+                }
+            case .logits(let output):
+                state = output.state ?? state
             }
-        case .logits(let output):
-            state = output.state ?? state
+            eval(cache.layers.flatMap { $0.innerState() })
+            return cache.snapshot(at: range.upperBound, state: state)
         }
-        eval(cache.layers.flatMap { $0.innerState() })
-        return (cache.snapshot(at: boundary, state: state), boundary, state)
+        if let fork, fork > reused, fork < boundary {
+            let forked = try advance(reused ..< fork)
+            let kept = try advance(fork ..< boundary)
+            return (forked, kept, boundary, state)
+        }
+        return (nil, try advance(reused ..< boundary), boundary, state)
     }
 
     static func templateSuffixLength(_ container: ModelContainer, _ makeInput: @Sendable (String) -> UserInput) async -> Int {

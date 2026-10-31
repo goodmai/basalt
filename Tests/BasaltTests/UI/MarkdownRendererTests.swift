@@ -288,6 +288,16 @@ struct SyntaxHighlighterTests {
         #expect(!highlighted.isEmpty)
         #expect(highlighted.contains("func") || highlighted.contains("hello"))
     }
+
+    @Test("Highlight Swift multiline comments on earlier lines")
+    func testSwiftMultilineCommentHighlighting() {
+        let previous = TerminalUI.colorsEnabled
+        TerminalUI.colorsEnabled = true
+        defer { TerminalUI.colorsEnabled = previous }
+        let code = "// first\nlet x = 1"
+        let highlighted = SyntaxHighlighter.highlight(code, language: .swift)
+        #expect(highlighted.contains(TerminalUI.dim("// first")))
+    }
     
     @Test("Highlight Python code")
     func testPythonHighlighting() {

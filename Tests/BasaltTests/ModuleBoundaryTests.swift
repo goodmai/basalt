@@ -64,10 +64,15 @@ struct ModuleBoundaryTests {
     @Test("The built CLI binary does not dynamically link AppKit, SwiftUI or Cocoa (#65)")
     func binaryFreeOfUIFrameworks() throws {
         let repoRoot = Self.sources.deletingLastPathComponent()
-        let releaseBin = repoRoot.appendingPathComponent(".build/out/Products/Release/basalt")
-        let debugBin = repoRoot.appendingPathComponent(".build/out/Products/Debug/basalt")
-        let targetBin = FileManager.default.fileExists(atPath: releaseBin.path) ? releaseBin : (FileManager.default.fileExists(atPath: debugBin.path) ? debugBin : nil)
-        guard let bin = targetBin else { return }
+        let candidates = [
+            ".build/out/Products/Release/Basalt",
+            ".build/out/Products/Release/basalt",
+            ".build/out/Products/Debug/Basalt",
+            ".build/out/Products/Debug/basalt",
+            ".build/release/Basalt",
+            ".build/debug/Basalt",
+        ].map(repoRoot.appendingPathComponent)
+        guard let bin = candidates.first(where: { FileManager.default.fileExists(atPath: $0.path) }) else { return }
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/otool")
         process.arguments = ["-L", bin.path]

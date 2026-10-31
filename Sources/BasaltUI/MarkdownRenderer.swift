@@ -267,12 +267,10 @@ public struct SyntaxHighlighter: Sendable {
         }
     }
     
-    // MARK: - Language-Specific Highlighters
-    
     private static func highlightSwift(_ code: String) -> String {
         var highlighted = code
         highlighted = highlighted.replacingOccurrences(
-            of: "(//.*$)",
+            of: "(?m)(//.*$)",
             with: TerminalUI.dim("$1"),
             options: .regularExpression
         )

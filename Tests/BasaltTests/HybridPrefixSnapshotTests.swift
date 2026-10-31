@@ -313,7 +313,56 @@ struct HybridPrefixSnapshotTests {
         let fullOther = try await engine.generate(request: greedy(Conversation.otherUser, key: nil))
         #expect(other.cachedPromptTokens == 0)
         #expect(other.generatedText == fullOther.generatedText)
+
+        let thirdPrompt = "[System]: You are a coding agent. Tools: run_command.\n\n[User]: run the tests"
+        let shared = commonPrefix(first, TinyModel.tokens(Conversation.otherUser))
+        #expect(commonPrefix(first, TinyModel.tokens(thirdPrompt)) == shared)
+        let third = try await engine.generate(request: greedy(thirdPrompt, key: "ns"))
+        let fullThird = try await engine.generate(request: greedy(thirdPrompt, key: nil))
+        #expect(third.cachedPromptTokens == shared)
+        #expect(third.generatedText == fullThird.generatedText)
         #expect(pinCount(await engine.promptCaches) == 0)
+    }
+
+    @Test("Two prompts diverging mid-leaf materialize a snapshot at the fork so a third prompt with the same prefix leases it (#95)")
+    func divergingPromptsMaterializeForkSnapshot() throws {
+        let model = try TinyHybrid.make()
+        let first = TinyModel.tokens(Conversation.firstTurn)
+        let second = TinyModel.tokens(Conversation.otherUser)
+        let third = TinyModel.tokens("[System]: You are a coding agent. Tools: run_command.\n\n[User]: run the tests")
+        let shared = commonPrefix(first, second)
+        #expect(shared > 40)
+        #expect(shared < first.count - 1)
+        #expect(commonPrefix(first, third) == shared)
+
+        var tree = PromptCacheTree(byteBudget: 1 << 30)
+        tree.store("ns", tokens: Array(first.dropLast()), cache: try TinyHybrid.snapshotted(model, first))
+        #expect(tree.lease("ns", for: second) == nil)
+
+        let fork = tree.storedPrefix(of: second, in: "ns")
+        #expect(fork == shared)
+        let head = try HybridPrefixSnapshot.prefillHead(
+            MLXArray(second.map(Int32.init)), into: PromptCache(try model.newCache(parameters: nil)),
+            reused: 0, fork: fork, boundary: second.count - 1, model: model, prefill: PrefillParameters(stepSize: 16))
+        let forkCache = try #require(head.fork)
+        let keptCache = try #require(head.kept)
+        #expect(forkCache.tokenCount == shared)
+        #expect(forkCache.isSnapshot(of: shared))
+        #expect(keptCache.tokenCount == second.count - 1)
+
+        tree.store("ns", tokens: Array(second.prefix(forkCache.tokenCount)), cache: forkCache)
+        tree.store("ns", tokens: Array(second.dropLast()), cache: keptCache)
+
+        let lease = try tree.required("ns", for: third)
+        #expect(lease.reusedTokens == shared)
+        #expect(lease.cache.layers.allSatisfy { $0.offset == shared })
+        let full = model(TinyHybrid.row(third), cache: try model.newCache(parameters: nil))
+        let expected = full[0..., shared..., 0...]
+        let tail = model(TinyHybrid.row(Array(third[shared...])), cache: lease.cache.layers)
+        eval(tail)
+        _ = consume lease
+        #expect(allClose(tail, expected, rtol: 1e-4, atol: 1e-4).item(Bool.self))
+        #expect(pinCount(tree) == 0)
     }
 
     @Test("A snapshot node left with one child after an eviction is not merged away, so its restore point survives")
