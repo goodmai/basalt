@@ -97,7 +97,7 @@ struct PromptCacheDiskTests {
         let fromDisk = DiskFixture.nextLogits(model, prompt.last!, loaded)
         let fromMemory = DiskFixture.nextLogits(model, prompt.last!, memory.cache)
         #expect(DiskFixture.identical(fromDisk, fromMemory))
-        tree.release(memory)
+        _ = consume memory
     }
 
     @Test("Snapshot path of a Qwen3.5-style hybrid (recurrent layers) and a Gemma-style sliding-window model (RotatingKVCache) saved and loaded gives bit-identical next-token logits to the in-memory lease",
@@ -130,7 +130,7 @@ struct PromptCacheDiskTests {
         let fromDisk = DiskFixture.nextLogits(model, prompt[prefix.count], loaded)
         let fromMemory = DiskFixture.nextLogits(model, prompt[prefix.count], memory.cache)
         #expect(DiskFixture.identical(fromDisk, fromMemory))
-        tree.release(memory)
+        _ = consume memory
     }
 
     @Test("A server restart with the disk tier resumes the conversation from disk with the output of an uninterrupted run",

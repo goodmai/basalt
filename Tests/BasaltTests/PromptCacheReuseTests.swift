@@ -124,13 +124,16 @@ func commonPrefix(_ a: [Int], _ b: [Int]) -> Int {
 
 extension PromptCacheTree {
     mutating func required(_ namespace: String, for prompt: [Int]) throws -> PromptCacheLease {
-        let lease = lease(namespace, for: prompt)
-        return try #require(lease)
+        var opt = lease(namespace, for: prompt)
+        guard let l = opt.take() else {
+            struct MissingLease: Error {}
+            throw MissingLease()
+        }
+        return l
     }
 
     mutating func touch(_ namespace: String, _ prompt: [Int]) throws {
-        let lease = try required(namespace, for: prompt)
-        release(lease)
+        _ = try required(namespace, for: prompt)
     }
 }
 
@@ -362,7 +365,7 @@ struct PromptCacheReuseTests {
         let launch = try await container.perform { context in
             let input = LMInput(tokens: MLXArray(TinyModel.tokens(Conversation.firstTurn).map(Int32.init)))
             return try MLXInferenceEngine.launch(
-                input: input, lease: nil, keepsCache: true, boundary: input.text.tokens.size - 1,
+                input: input, reuse: nil, keepsCache: true, boundary: input.text.tokens.size - 1,
                 params: GenerateParameters(maxTokens: longRun, temperature: 0),
                 components: GenerationComponents(), tools: nil, context: context)
         }
@@ -473,7 +476,7 @@ struct PromptCacheTreeTests {
         return cache
     }
 
-    func ids(_ lease: PromptCacheLease, part: Int = 0, layer: Int = 0) -> [Int] {
+    func ids(_ lease: borrowing PromptCacheLease, part: Int = 0, layer: Int = 0) -> [Int] {
         lease.cache.layers[layer].state[part][0, 0, 0..., 0].asArray(Float.self).map(Int.init)
     }
 
@@ -493,16 +496,19 @@ struct PromptCacheTreeTests {
         #expect(lease.reusedTokens == 7)
         #expect(ids(lease) == Array(0..<5) + [100, 101])
         #expect(ids(lease, part: 1) == (Array(0..<5) + [100, 101]).map { $0 + 1 })
-        tree.release(lease)
+        _ = consume lease
 
         let whole = try tree.required("ns", for: a)
         #expect(whole.reusedTokens == a.count - 1)
         #expect(ids(whole) == Array(0..<9))
-        tree.release(whole)
+        _ = consume whole
 
-        #expect(tree.lease("ns", for: [7, 7, 7]) == nil)
-        #expect(tree.lease("other", for: a) == nil)
-        #expect(tree.lease("ns", for: [0]) == nil)
+        let noLease1 = tree.lease("ns", for: [7, 7, 7]) == nil
+        #expect(noLease1)
+        let noLease2 = tree.lease("other", for: a) == nil
+        #expect(noLease2)
+        let noLease3 = tree.lease("ns", for: [0]) == nil
+        #expect(noLease3)
         #expect(pinCount(tree) == 0)
     }
 
@@ -524,7 +530,7 @@ struct PromptCacheTreeTests {
             #expect(ids(lease, layer: layer) == expected, "layer \(layer)")
             #expect(ids(lease, part: 1, layer: layer) == expected.map { $0 + 1 }, "layer \(layer)")
         }
-        tree.release(lease)
+        _ = consume lease
     }
 
     @Test("An unevaluated lease still reads the old buffers after the leased node is split under it")
@@ -541,7 +547,7 @@ struct PromptCacheTreeTests {
             #expect(ids(lease, layer: layer) == expected, "layer \(layer)")
             #expect(ids(lease, part: 1, layer: layer) == expected.map { $0 + 1 }, "layer \(layer)")
         }
-        tree.release(lease)
+        _ = consume lease
     }
 
     @Test("Removing a leaf merges its parent with the only child left, so no one-child chains build up")
@@ -565,13 +571,13 @@ struct PromptCacheTreeTests {
         #expect(tree.leafCount == 2)
         #expect(tree.leafCount == tree.leaves().count)
         #expect(tree.byteCount == (b.count + c.count) * 2 * Self.bytesPerToken)
-        tree.release(held)
+        _ = consume held
 
         let lease = try tree.required("ns", for: b + [99])
         for layer in 0..<2 {
             #expect(ids(lease, layer: layer) == b.map { $0 + layer * Self.layerStride }, "layer \(layer)")
         }
-        tree.release(lease)
+        _ = consume lease
     }
 
     @Test("A branch the leaf cap would drop is refused before anything is split or copied")
@@ -589,7 +595,7 @@ struct PromptCacheTreeTests {
         #expect(node.layers[0][0] === before)
         #expect(Set(tree.roots.keys) == ["ns"])
         #expect(tree.leafCount == 1)
-        tree.release(held)
+        _ = consume held
     }
 
     @Test("A namespace whose last branch is evicted leaves no root behind")
@@ -681,7 +687,7 @@ struct PromptCacheTreeTests {
         #expect(tree.storedPrefix(of: c, in: "ns") == 0)
         #expect(tree.byteCount == 300 * Self.bytesPerToken)
 
-        tree.release(inUse)
+        _ = consume inUse
         tree.store("ns", tokens: c, cache: cache(c))
         #expect(tree.storedPrefix(of: a, in: "ns") == 0)
     }
@@ -696,7 +702,7 @@ struct PromptCacheTreeTests {
         #expect(tree.storedPrefix(of: a, in: "ns") == 100)
         #expect(tree.storedPrefix(of: b, in: "ns") == 0)
         #expect(tree.byteCount == 100 * Self.bytesPerToken)
-        tree.release(inUse)
+        _ = consume inUse
     }
 
     @Test("An interior node is kept while it has children; it goes once it is a leaf again")
@@ -791,9 +797,9 @@ struct PromptCacheTreeTests {
         }
         #expect(tree.leafCount == 3)
         #expect(tree.leafCount == tree.leaves().count)
-        for lease in [heldA, heldC, heldD] {
-            tree.release(lease)
-        }
+        _ = consume heldA
+        _ = consume heldC
+        _ = consume heldD
     }
 
     @Test("The leaf count follows splits, extensions, evictions and namespaces without walking the tree")
@@ -818,5 +824,31 @@ struct PromptCacheTreeTests {
         var tree = PromptCacheTree(byteBudget: 0)
         tree.store("ns", tokens: [1], cache: cache([1]))
         #expect(tree.roots.isEmpty)
+    }
+
+    @Test("Dropping a PromptCacheLease without manual release automatically decrements node pins so eviction works")
+    func leaseAutoReleasesOnScopeExit() throws {
+        var tree = PromptCacheTree(byteBudget: 100 * Self.bytesPerToken)
+        let a = branch(1, 100)
+        tree.store("ns", tokens: a, cache: cache(a))
+        #expect(pinCount(tree) == 0)
+
+        func throwDuringLease() throws {
+            struct DummyError: Error {}
+            let lease = try tree.required("ns", for: a)
+            #expect(pinCount(tree) == 1)
+            _ = lease
+            throw DummyError()
+        }
+
+        #expect(throws: (any Error).self) {
+            try throwDuringLease()
+        }
+        #expect(pinCount(tree) == 0)
+
+        let b = branch(2, 100)
+        tree.store("ns", tokens: b, cache: cache(b))
+        #expect(tree.storedPrefix(of: a, in: "ns") == 0)
+        #expect(tree.storedPrefix(of: b, in: "ns") == 100)
     }
 }

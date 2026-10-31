@@ -896,7 +896,12 @@ public actor MLXInferenceEngine: InferenceEngine {
             if let namespace {
                 await restoreFromDisk(namespace, prompt: promptTokens, container: container, epoch: epoch)
             }
-            let lease = namespace.flatMap { promptCaches.lease($0, for: promptTokens) }
+            let lease: PromptCacheLease? = if let namespace { promptCaches.lease(namespace, for: promptTokens) } else { nil }
+            let reuse: (cache: PromptCache, reusedTokens: Int)? = switch lease {
+            case let held?: (held.cache, held.reusedTokens)
+            case nil: nil
+            }
+            let leaseSlot = PromptCacheLeaseSlot(lease)
             let boundary = namespace == nil
                 ? promptTokens.count - 1
                 : await snapshotBoundary(renderedCount, container: container, epoch: epoch, template: template, makeInput)
@@ -916,14 +921,14 @@ public actor MLXInferenceEngine: InferenceEngine {
             do {
                 launch = try await container.perform(nonSendable: lmInput) { context, input in
                     try Self.launch(
-                        input: input, lease: lease, keepsCache: namespace != nil, boundary: boundary,
+                        input: input, reuse: reuse, keepsCache: namespace != nil, boundary: boundary,
                         blend: namespace.flatMap { space in blend.map { ($0, space) } },
                         params: params, components: constrained, tools: forcedTool == nil ? toolSpecs : nil,
                         context: context, speculativeLookup: speculativeLookup, speculativeRecycling: speculativeRecycling,
                         routesExperts: expertRouting, kvZones: zones, kvPrecision: zonedPrecision)
                 }
             } catch {
-                keep(nil, tokens: promptTokens, namespace: namespace, releasing: lease, epoch: epoch)
+                keep(nil, tokens: promptTokens, namespace: namespace, releasing: leaseSlot, epoch: epoch)
                 throw error
             }
             let mlxStream = launch.stream
@@ -1063,7 +1068,7 @@ public actor MLXInferenceEngine: InferenceEngine {
                     let completed = !(Task.isCancelled || stoppedAfterCall)
                     await Self.settle(launch, cancelled: !completed)
                     if completed, let session = constraint?.session { await self.recycle(session, epoch: epoch) }
-                    await self.keep(launch.cache, tokens: Array(promptTokens.prefix(launch.exactTokens)), namespace: namespace, releasing: lease, epoch: epoch)
+                    await self.keep(launch.cache, tokens: Array(promptTokens.prefix(launch.exactTokens)), namespace: namespace, releasing: leaseSlot, epoch: epoch)
 
                     // End of stream - send metadata
                     if !Task.isCancelled {
@@ -1245,7 +1250,6 @@ public actor MLXInferenceEngine: InferenceEngine {
             let expectedWrite = Double(PromptCacheDiskStore.estimatedBytes(of: lease.cache, tokens: lease.reusedTokens))
                 / PromptCacheDiskStore.assumedWriteBytesPerSecond
             guard ContinuousClock.now - started + .seconds(expectedWrite) <= deadline else {
-                promptCaches.release(lease)
                 skipped += 1
                 continue
             }
@@ -1254,19 +1258,16 @@ public actor MLXInferenceEngine: InferenceEngine {
                 tokens: Array(path.tokens.prefix(lease.reusedTokens)), cache: lease.cache, keeping: written) {
                 written.insert(name)
             }
-            promptCaches.release(lease)
         }
         logger.info("Persisted \(written.count) prompt-cache paths in \(String(format: "%.2f", (ContinuousClock.now - started).inSeconds)) s"
             + (skipped > 0 ? "; \(skipped) paths skipped that could not be written within the \(deadline) deadline" : ""))
     }
 
     private func keep(
-        _ cache: PromptCache?, tokens: [Int], namespace: String?, releasing lease: PromptCacheLease?, epoch: Int
+        _ cache: PromptCache?, tokens: [Int], namespace: String?, releasing lease: PromptCacheLeaseSlot, epoch: Int
     ) {
+        _ = lease.take()
         guard epoch == modelEpoch, let namespace else { return }
-        if let lease {
-            promptCaches.release(lease)
-        }
         if let cache {
             promptCaches.store(namespace, tokens: Array(tokens.prefix(cache.tokenCount)), cache: cache)
         }
@@ -1282,7 +1283,7 @@ public actor MLXInferenceEngine: InferenceEngine {
     }
 
     static func launch(
-        input: LMInput, lease: PromptCacheLease?, keepsCache: Bool, boundary: Int,
+        input: LMInput, reuse: (cache: PromptCache, reusedTokens: Int)?, keepsCache: Bool, boundary: Int,
         blend: (store: CacheBlendStore, namespace: String)? = nil,
         params: GenerateParameters, components: GenerationComponents,
         tools: [ToolSpec]?, context: ModelContext, speculativeLookup: Bool = false, speculativeRecycling: Bool = false,
@@ -1313,8 +1314,8 @@ public actor MLXInferenceEngine: InferenceEngine {
             return GenerationLaunch(stream: stream, task: task, cache: nil, reusedTokens: 0)
         }
         try components.validate(parameters: params)
-        var cache = try lease?.cache ?? PromptCache(context.model.newCache(parameters: params))
-        let reused = lease?.reusedTokens ?? 0
+        var cache = try reuse?.cache ?? PromptCache(context.model.newCache(parameters: params))
+        let reused = reuse?.reusedTokens ?? 0
         let blended = cache.isHybrid ? nil : blend.flatMap {
             $0.store.extend(
                 cache, prompt: input.text.tokens.asArray(Int.self), from: reused, namespace: $0.namespace,

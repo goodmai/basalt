@@ -1,5 +1,6 @@
 #!/usr/bin/env swift
 import Foundation
+import Synchronization
 
 let usage = """
     Usage:
@@ -86,9 +87,44 @@ guard let logHandle = FileHandle(forWritingAtPath: logPath) else {
     print("FAIL cannot open the log file \(logPath)")
     exit(1)
 }
-let state = NSLock()
-nonisolated(unsafe) var lockHeld = false
-nonisolated(unsafe) var child: Process?
+struct BenchLockGuard: ~Copyable {
+    let path: String
+    let pid: String
+    private var isArmed: Bool
+
+    init(path: String, pid: String) {
+        self.path = path
+        self.pid = pid
+        self.isArmed = true
+    }
+
+    mutating func release() -> Bool {
+        guard isArmed else { return false }
+        isArmed = false
+        let owner = lockOwner()
+        guard owner == pid else { return false }
+        unlink(path + "/owner")
+        rmdir(path)
+        return true
+    }
+
+    deinit {
+        if isArmed {
+            let owner = lockOwner()
+            if owner == pid {
+                unlink(path + "/owner")
+                rmdir(path)
+            }
+        }
+    }
+}
+
+final class BenchProcessState: Sendable {
+    let child = Mutex<Process?>(nil)
+    let gpuGuard = Mutex<BenchLockGuard?>(nil)
+}
+
+let benchState = BenchProcessState()
 var failures = 0
 
 func log(_ line: String) {
@@ -116,8 +152,8 @@ func run(_ executable: String, _ arguments: [String], in directory: String = rep
     let pipe = Pipe()
     process.standardOutput = pipe
     process.standardError = pipe
-    state.withLock { child = process }
-    defer { state.withLock { child = nil } }
+    benchState.child.withLock { $0 = process }
+    defer { benchState.child.withLock { $0 = nil } }
     do { try process.run() } catch { return (-1, "\(error)") }
     let data = pipe.fileHandleForReading.readDataToEndOfFile()
     process.waitUntilExit()
@@ -152,17 +188,12 @@ func resolveReleaseDirectory() -> String {
 }
 
 func releaseLock() {
-    state.withLock {
-        guard lockHeld else { return }
-        lockHeld = false
-        let owner = lockOwner()
-        guard owner == ownerLine else {
-            fail("release lock", "held by someone else, left untouched: owner=\(owner)")
-            return
-        }
-        unlink(lockDirectory + "/owner")
-        rmdir(lockDirectory)
+    var g = benchState.gpuGuard.withLock { $0.take() }
+    guard g != nil else { return }
+    if g?.release() == true {
         log("lock released")
+    } else {
+        fail("release lock", "held by someone else, left untouched")
     }
 }
 
@@ -181,7 +212,7 @@ func reclaimIfStale(owner: String) -> Bool {
 func acquireLock() {
     var waiting = false
     while true {
-        let taken: Bool = state.withLock {
+        let taken: Bool = benchState.gpuGuard.withLock { slot in
             guard mkdir(lockDirectory, 0o755) == 0 else { return false }
             do {
                 try ownerLine.write(toFile: lockDirectory + "/owner", atomically: true, encoding: .utf8)
@@ -190,7 +221,7 @@ func acquireLock() {
                 fail("lock", "cannot write the owner file: \(error)")
                 exit(1)
             }
-            lockHeld = true
+            slot = BenchLockGuard(path: lockDirectory, pid: ownerLine)
             return true
         }
         if taken {
@@ -212,7 +243,7 @@ let signalSources = [SIGINT, SIGTERM, SIGHUP].map { signalNumber in
     signal(signalNumber, SIG_IGN)
     let source = DispatchSource.makeSignalSource(signal: signalNumber, queue: .global())
     source.setEventHandler {
-        if let running = state.withLock({ child }) {
+        if let running = benchState.child.withLock({ $0 }) {
             running.terminate()
             running.waitUntilExit()
         }

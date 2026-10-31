@@ -373,7 +373,7 @@ struct ZonedKVCacheEngineTests {
                 parameters: exact, context: context)
             return try [Self.zones, nil].map { zones in
                 try MLXInferenceEngine.launch(
-                    input: input, lease: nil, keepsCache: false, boundary: Self.prompt.count - 1, params: params,
+                    input: input, reuse: nil, keepsCache: false, boundary: Self.prompt.count - 1, params: params,
                     components: GenerationComponents(), tools: nil, context: context, kvZones: zones,
                     kvPrecision: zones == nil ? nil : .q4)
             } + [MLXInferenceEngine.GenerationLaunch(stream: reference, task: nil, cache: nil, reusedTokens: 0)]
