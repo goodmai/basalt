@@ -60,4 +60,25 @@ struct ModuleBoundaryTests {
             #expect(!source.contains("\"/tmp"), "\(file.lastPathComponent) references a fixed /tmp path")
         }
     }
+
+    @Test("The built CLI binary does not dynamically link AppKit, SwiftUI or Cocoa (#65)")
+    func binaryFreeOfUIFrameworks() throws {
+        let repoRoot = Self.sources.deletingLastPathComponent()
+        let releaseBin = repoRoot.appendingPathComponent(".build/out/Products/Release/basalt")
+        let debugBin = repoRoot.appendingPathComponent(".build/out/Products/Debug/basalt")
+        let targetBin = FileManager.default.fileExists(atPath: releaseBin.path) ? releaseBin : (FileManager.default.fileExists(atPath: debugBin.path) ? debugBin : nil)
+        guard let bin = targetBin else { return }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/otool")
+        process.arguments = ["-L", bin.path]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        try process.run()
+        process.waitUntilExit()
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        let output = String(data: data, encoding: .utf8) ?? ""
+        #expect(!output.contains("AppKit.framework"), "basalt binary links AppKit.framework")
+        #expect(!output.contains("SwiftUI.framework"), "basalt binary links SwiftUI.framework")
+        #expect(!output.contains("Cocoa.framework"), "basalt binary links Cocoa.framework")
+    }
 }

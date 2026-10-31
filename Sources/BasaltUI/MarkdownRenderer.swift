@@ -1,6 +1,5 @@
 import Foundation
 import Markdown
-import Splash
 import BasaltCore
 
 /// Epic 16.3: Markdown Rendering & Syntax Highlighting
@@ -271,9 +270,42 @@ public struct SyntaxHighlighter: Sendable {
     // MARK: - Language-Specific Highlighters
     
     private static func highlightSwift(_ code: String) -> String {
-        // Use Splash for Swift syntax highlighting
-        let highlighter = Splash.SyntaxHighlighter(format: ANSIOutputFormat())
-        return highlighter.highlight(code)
+        var highlighted = code
+        highlighted = highlighted.replacingOccurrences(
+            of: "(//.*$)",
+            with: TerminalUI.dim("$1"),
+            options: .regularExpression
+        )
+        highlighted = highlighted.replacingOccurrences(
+            of: "\"([^\"]*)\"",
+            with: TerminalUI.success("\"$1\""),
+            options: .regularExpression
+        )
+        let keywords = [
+            "func", "class", "struct", "enum", "protocol", "extension",
+            "let", "var", "import", "return", "if", "else", "guard",
+            "for", "in", "while", "repeat", "switch", "case", "default",
+            "try", "catch", "throw", "throws", "async", "await", "actor",
+            "public", "private", "fileprivate", "internal", "open", "static",
+            "mutating", "nonisolated", "isolated", "override", "final", "where",
+            "self", "Self", "init", "deinit", "subscript", "typealias", "some", "any"
+        ]
+        for keyword in keywords {
+            highlighted = highlighted.replacingOccurrences(
+                of: "\\b\(keyword)\\b",
+                with: TerminalUI.bold(keyword),
+                options: .regularExpression
+            )
+        }
+        let types = ["String", "Int", "Double", "Float", "Bool", "Array", "Dictionary", "Set", "Optional", "Result", "Task", "URL", "Data", "Error"]
+        for type in types {
+            highlighted = highlighted.replacingOccurrences(
+                of: "\\b\(type)\\b",
+                with: TerminalUI.warning(type),
+                options: .regularExpression
+            )
+        }
+        return highlighted
     }
     
     private static func highlightPython(_ code: String) -> String {
@@ -350,54 +382,5 @@ public struct SyntaxHighlighter: Sendable {
         }
         
         return highlighted
-    }
-}
-
-// MARK: - Splash ANSI Output Format
-
-struct ANSIOutputFormat: Splash.OutputFormat {
-    func makeBuilder() -> ANSIOutputBuilder {
-        ANSIOutputBuilder()
-    }
-}
-
-struct ANSIOutputBuilder: Splash.OutputBuilder {
-    private var output = ""
-    
-    mutating func addToken(_ token: String, ofType type: TokenType) {
-        switch type {
-        case .keyword:
-            output += TerminalUI.bold(token)
-        case .string:
-            output += TerminalUI.success(token)
-        case .number:
-            output += TerminalUI.info(token)
-        case .comment:
-            output += TerminalUI.dim(token)
-        case .type:
-            output += TerminalUI.warning(token)
-        case .call:
-            output += TerminalUI.info(token)
-        case .property:
-            output += token
-        case .dotAccess:
-            output += token
-        case .preprocessing:
-            output += TerminalUI.dim(token)
-        default:
-            output += token
-        }
-    }
-    
-    mutating func addPlainText(_ text: String) {
-        output += text
-    }
-    
-    mutating func addWhitespace(_ whitespace: String) {
-        output += whitespace
-    }
-    
-    func build() -> String {
-        return output
     }
 }
