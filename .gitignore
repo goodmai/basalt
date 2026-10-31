@@ -31,8 +31,7 @@ logs/
 # AI assistant files
 .claude/*
 !.claude/skills/
-.claude/skills/*
-!.claude/skills/basalt-model-runs/
+CLAUDE.local.md
 .gemini.md
 
 # Test files
@@ -106,7 +105,6 @@ docs-static/
 # Assistant/tooling config — local to a contributor's machine
 GEMINI.md
 .gemini/
-CLAUDE.md
 Swift-Agent-Skills/
 
 # Internal planning docs and generated checklists
