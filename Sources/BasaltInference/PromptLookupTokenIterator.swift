@@ -34,6 +34,7 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
     private var verified = 0
     private var verifyCalls = 0
     private(set) var replayRounds = 0
+    private var evalTargets: [MLXArray] = []
 
     static func supports(_ cache: [KVCache], routesExperts: Bool) -> Bool {
         PromptCache(cache).isSharable || (isReplayableHybrid(cache) && !routesExperts)
@@ -92,7 +93,7 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
             recycling = TokenRecyclingTable(vocabularySize: last.dim(-1))
             recycle(after: [history[history.count - 1]], successors: [argMax(last, axis: -1).item(Int.self)])
         }
-        accept([token])
+        acceptOne(token)
     }
 
     private mutating func recycle(after fed: [Int], successors: [Int]) {
@@ -128,17 +129,41 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
         pendingIndex = 0
     }
 
+    private mutating func acceptOne(_ token: Int) {
+        history.append(token)
+        pending.removeAll(keepingCapacity: true)
+        pending.append(token)
+        pendingIndex = 0
+    }
+
     static func draft(after history: [Int], limit: Int) -> [Int] {
-        for n in ngramSizes where history.count > n {
-            let suffix = history[(history.count - n)...]
+        let span = history.span
+        let count = span.count
+        for n in ngramSizes where count > n {
+            let suffixStart = count - n
+            let firstSuffix = span[suffixStart]
+            let lastSuffix = span[count - 1]
             var match: Int?
-            for start in stride(from: history.count - n - 1, through: 0, by: -1)
-            where history[start ..< start + n].elementsEqual(suffix) {
-                match = start
-                if start + n + limit <= history.count { break }
+            for start in stride(from: suffixStart - 1, through: 0, by: -1) {
+                if span[start] != firstSuffix || span[start + n - 1] != lastSuffix {
+                    continue
+                }
+                var matched = true
+                for offset in 1 ..< n - 1 {
+                    if span[start + offset] != span[suffixStart + offset] {
+                        matched = false
+                        break
+                    }
+                }
+                if matched {
+                    match = start
+                    if start + n + limit <= count { break }
+                }
             }
             if let match {
-                return Array(history[(match + n) ..< Swift.min(match + n + limit, history.count)])
+                let draftStart = match + n
+                let draftEnd = Swift.min(draftStart + limit, count)
+                return Array(history[draftStart ..< draftEnd])
             }
         }
         return []
@@ -156,7 +181,7 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
                 emit(step, lookingAhead: remaining > 1)
             } else {
                 inFlight = nil
-                accept([confirm(step)])
+                acceptOne(confirm(step))
             }
         case (let step?, true):
             emit(step, lookingAhead: remaining > 1)
@@ -164,7 +189,7 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
             inFlight = nil
             let confirmed = confirm(step)
             if confirmed != draft[0] { backoffs.lookup.record(acceptedDrafts: 0) }
-            accept([confirmed])
+            acceptOne(confirmed)
         case (nil, false):
             speculate(draft, recycled: false)
         case (nil, true):
@@ -189,13 +214,21 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
     private mutating func emit(_ current: DecodedStep, lookingAhead: Bool) {
         if lookingAhead {
             let next = step(current.token)
-            asyncEval([next.token] + [next.successor].compactMap { $0 } + cache.flatMap { $0.state })
+            evalTargets.removeAll(keepingCapacity: true)
+            evalTargets.append(next.token)
+            if let successor = next.successor { evalTargets.append(successor) }
+            for layer in cache {
+                for state in layer.state {
+                    evalTargets.append(state)
+                }
+            }
+            asyncEval(evalTargets)
             inFlight = next
         } else {
             inFlight = nil
         }
         backoffs.tick()
-        accept([confirm(current)])
+        acceptOne(confirm(current))
     }
 
     private mutating func speculate(_ draft: [Int], recycled: Bool) {

@@ -24,9 +24,9 @@ struct ModelInspectorTests {
             "\"\(t.name)\": {\"dtype\": \"\(t.dtype)\", \"shape\": \(t.shape), \"data_offsets\": [\(i * 8), \((i + 1) * 8)]}"
         }.joined(separator: ", ")
         let header = Data("{\(entries)}".utf8)
-        var len = (headerLenOverride ?? UInt64(header.count)).littleEndian
-        var data = Data()
-        withUnsafeBytes(of: &len) { data.append(contentsOf: $0) }
+        let len = (headerLenOverride ?? UInt64(header.count)).littleEndian
+        let lenBytes: [UInt8] = (0..<8).map { UInt8((len >> ($0 * 8)) & 0xff) }
+        var data = Data(lenBytes)
         data.append(header)
         data.append(Data(repeating: 0, count: tensors.count * 8 - truncateBy))
         try data.write(to: url)
