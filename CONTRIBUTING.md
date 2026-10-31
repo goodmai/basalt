@@ -77,6 +77,6 @@ Measure more than one model family. A claim about speed or quality names the mod
 
 - One issue per PR; link it with `Closes #N`.
 - `swift build --build-tests` and `swift test` pass locally with no new warnings (run `./scripts/build_metal.swift --skip-unsupported` once if MLX reports a missing metallib).
-- A test that guards against nondeterminism (sampling parity, speculative exactness, concurrency) runs with repetitions (`swift test` per-test-case repetitions, ST-0024) before it is trusted.
+- A test that guards against nondeterminism (sampling parity, speculative exactness, concurrency) runs with repetitions (ST-0024: `swift test --maximum-repetitions 10 --repeat-until fail --filter <SuiteName>`) before it is trusted.
 - Behaviour changes come with a test that fails without the change.
 - Claims that need a real model (speed, output quality) are marked as unverified in the PR unless they were measured; measured ones name the models and link the runner's log (see Real-model runs).

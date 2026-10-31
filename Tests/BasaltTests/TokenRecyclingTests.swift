@@ -79,7 +79,7 @@ struct TokenRecyclingTests {
         let run = try LookupFixture.lookup(
             try TinyQwen3.make(), prompt: Self.freshPrompt, maxTokens: cycles.count,
             sampler: ScriptedSampler(cycles), recycling: true)
-        #expect(run.tokens == cycles)
+        expectTokenSequence(run.tokens, cycles)
         #expect(run.iterator.acceptedRecycledDrafts == 0)
         #expect(run.iterator.recycledRounds > 0)
         #expect(run.iterator.recycledRounds <= 8)
@@ -111,7 +111,7 @@ struct TokenRecyclingTests {
         let model = try LookupFixture.model(family)
         let expected = try LookupFixture.baseline(model, prompt: Self.freshPrompt)
         let run = try LookupFixture.lookup(model, prompt: Self.freshPrompt, recycling: true)
-        #expect(run.tokens == expected)
+        expectTokenSequence(run.tokens, expected)
         #expect(run.iterator.acceptedRecycledDrafts > 0)
         let telemetry = try #require(run.iterator.speculativeDecodingTelemetry)
         #expect(telemetry.targetModelCallCount < run.tokens.count)
@@ -125,7 +125,7 @@ struct TokenRecyclingTests {
         var recycledRounds = 0
         for maxTokens in 2 ... 64 {
             let run = try LookupFixture.lookup(model, prompt: Self.freshPrompt, maxTokens: maxTokens, recycling: true)
-            #expect(run.tokens == Array(expected.prefix(maxTokens)))
+            expectTokenSequence(run.tokens, Array(expected.prefix(maxTokens)))
             #expect(run.cache.allSatisfy { $0.offset == Self.freshPrompt.count + maxTokens - 1 }, "budget \(maxTokens)")
             recycledRounds += run.iterator.recycledRounds
         }
@@ -140,7 +140,7 @@ struct TokenRecyclingTests {
             let script = Array(greedy.prefix(maxTokens - 1)) + [249]
             let run = try LookupFixture.lookup(
                 model, prompt: Self.freshPrompt, maxTokens: maxTokens, sampler: ScriptedSampler(script), recycling: true)
-            #expect(run.tokens == script)
+            expectTokenSequence(run.tokens, script)
             #expect(run.cache.allSatisfy { $0.offset == Self.freshPrompt.count + maxTokens - 1 }, "budget \(maxTokens)")
         }
     }
@@ -177,7 +177,7 @@ struct TokenRecyclingTests {
             model, prompt: Self.freshPrompt, maxTokens: maxTokens, processor: processor(), sampler: sampler(seed: 12)) != expected)
         let run = try LookupFixture.lookup(
             model, prompt: Self.freshPrompt, maxTokens: maxTokens, processor: processor(), sampler: sampler(), recycling: true)
-        #expect(run.tokens == expected)
+        expectTokenSequence(run.tokens, expected)
         #expect(run.iterator.acceptedRecycledDrafts > 0)
     }
 }

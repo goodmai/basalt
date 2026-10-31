@@ -1,4 +1,5 @@
-import XCTest
+import Foundation
+import Testing
 @testable import BasaltCore
 @testable import BasaltInference
 @testable import BasaltCloud
@@ -6,11 +7,9 @@ import XCTest
 @testable import BasaltUI
 @testable import BasaltCLI
 
-final class AgentCapabilityAnalyzerTests: XCTestCase {
-    
-    // MARK: - Test Sample Files
-    
-    let agentsMdContent = """
+@Suite("Agent capability analyzer parsing")
+struct AgentCapabilityAnalyzerTests {
+    private static let agentsMdContent = """
     # Agent Capabilities
 
     ## Tool: calculate_math
@@ -26,8 +25,8 @@ final class AgentCapabilityAnalyzerTests: XCTestCase {
       - start_line (Int, optional): Starting line.
     Return Type: String
     """
-    
-    let geminiMdContent = """
+
+    private static let geminiMdContent = """
     <available_skills>
       <skill>
         <name>skill-creator</name>
@@ -41,84 +40,80 @@ final class AgentCapabilityAnalyzerTests: XCTestCase {
       </skill>
     </available_skills>
     """
-    
-    // MARK: - Setup
-    
-    var agentsMdURL: URL!
-    var geminiMdURL: URL!
-    
-    override func setUp() {
-        super.setUp()
-        let tempDir = FileManager.default.temporaryDirectory
-        
-        agentsMdURL = tempDir.appendingPathComponent("agents.md")
-        geminiMdURL = tempDir.appendingPathComponent("gemini.md")
-        
-        try! agentsMdContent.write(to: agentsMdURL, atomically: true, encoding: .utf8)
-        try! geminiMdContent.write(to: geminiMdURL, atomically: true, encoding: .utf8)
-    }
-    
-    override func tearDown() {
-        try? FileManager.default.removeItem(at: agentsMdURL)
-        try? FileManager.default.removeItem(at: geminiMdURL)
-        super.tearDown()
-    }
-    
-    // MARK: - Tests
-    
-    func testParseAgentsMd() async throws {
-        let analyzer = AgentCapabilityAnalyzer()
-        let caps = try await analyzer.parse(file: agentsMdURL)
-        
-        XCTAssertEqual(caps.count, 2)
-        XCTAssertEqual(caps[0].source, .agentsMd)
-        XCTAssertEqual(caps[0].name, "calculate_math")
-        XCTAssertEqual(caps[0].description, "Calculates arithmetic expressions safely.")
-        XCTAssertEqual(caps[0].returnType, "Number")
-        XCTAssertEqual(caps[0].parameters.count, 1)
-        XCTAssertEqual(caps[0].parameters[0].name, "expression")
-        XCTAssertEqual(caps[0].parameters[0].type, "String")
-        XCTAssertTrue(caps[0].parameters[0].isRequired)
-        
-        XCTAssertEqual(caps[1].name, "file_reader")
-        XCTAssertEqual(caps[1].parameters.count, 2)
-        XCTAssertEqual(caps[1].parameters[1].name, "start_line")
-        XCTAssertEqual(caps[1].parameters[1].type, "Int")
-        XCTAssertFalse(caps[1].parameters[1].isRequired)
-    }
-    
-    func testParseGeminiMd() async throws {
-        let analyzer = AgentCapabilityAnalyzer()
-        let caps = try await analyzer.parse(file: geminiMdURL)
-        
-        XCTAssertEqual(caps.count, 2)
-        XCTAssertEqual(caps[0].source, .geminiMd)
-        XCTAssertEqual(caps[0].name, "skill-creator")
-        XCTAssertEqual(caps[0].description, "Guide for creating effective skills.")
-        XCTAssertNil(caps[0].returnType)
+
+    private static func scratchDirectory() throws -> URL {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("basalt-test-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
     }
 
-    func testParseClaudeSkill() async throws {
-        let tempDir = FileManager.default.temporaryDirectory
-        let claudeURL = tempDir.appendingPathComponent("claude-skill.md")
-        try! "placeholder".write(to: claudeURL, atomically: true, encoding: .utf8)
-        defer { try? FileManager.default.removeItem(at: claudeURL) }
-        
+    @Test("Parse agents.md capabilities")
+    func parseAgentsMd() async throws {
+        let dir = try Self.scratchDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let url = dir.appendingPathComponent("agents.md")
+        try Self.agentsMdContent.write(to: url, atomically: true, encoding: .utf8)
+
         let analyzer = AgentCapabilityAnalyzer()
-        let caps = try await analyzer.parse(file: claudeURL)
-        
-        XCTAssertTrue(caps.isEmpty)
+        let caps = try await analyzer.parse(file: url)
+
+        #expect(caps.count == 2)
+        #expect(caps[0].source == .agentsMd)
+        #expect(caps[0].name == "calculate_math")
+        #expect(caps[0].description == "Calculates arithmetic expressions safely.")
+        #expect(caps[0].returnType == "Number")
+        #expect(caps[0].parameters.count == 1)
+        #expect(caps[0].parameters[0].name == "expression")
+        #expect(caps[0].parameters[0].type == "String")
+        #expect(caps[0].parameters[0].isRequired)
+
+        #expect(caps[1].name == "file_reader")
+        #expect(caps[1].parameters.count == 2)
+        #expect(caps[1].parameters[1].name == "start_line")
+        #expect(caps[1].parameters[1].type == "Int")
+        #expect(!caps[1].parameters[1].isRequired)
     }
 
-    func testParseUnknown() async throws {
-        let tempDir = FileManager.default.temporaryDirectory
-        let unknownURL = tempDir.appendingPathComponent("unknown.md")
-        try! "placeholder".write(to: unknownURL, atomically: true, encoding: .utf8)
-        defer { try? FileManager.default.removeItem(at: unknownURL) }
-        
+    @Test("Parse gemini.md capabilities")
+    func parseGeminiMd() async throws {
+        let dir = try Self.scratchDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let url = dir.appendingPathComponent("gemini.md")
+        try Self.geminiMdContent.write(to: url, atomically: true, encoding: .utf8)
+
         let analyzer = AgentCapabilityAnalyzer()
-        let caps = try await analyzer.parse(file: unknownURL)
-        
-        XCTAssertTrue(caps.isEmpty)
+        let caps = try await analyzer.parse(file: url)
+
+        #expect(caps.count == 2)
+        #expect(caps[0].source == .geminiMd)
+        #expect(caps[0].name == "skill-creator")
+        #expect(caps[0].description == "Guide for creating effective skills.")
+        #expect(caps[0].returnType == nil)
+    }
+
+    @Test("Parse claude skill placeholder")
+    func parseClaudeSkill() async throws {
+        let dir = try Self.scratchDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let url = dir.appendingPathComponent("claude-skill.md")
+        try "placeholder".write(to: url, atomically: true, encoding: .utf8)
+
+        let analyzer = AgentCapabilityAnalyzer()
+        let caps = try await analyzer.parse(file: url)
+
+        #expect(caps.isEmpty)
+    }
+
+    @Test("Parse unknown file format")
+    func parseUnknown() async throws {
+        let dir = try Self.scratchDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let url = dir.appendingPathComponent("unknown.md")
+        try "placeholder".write(to: url, atomically: true, encoding: .utf8)
+
+        let analyzer = AgentCapabilityAnalyzer()
+        let caps = try await analyzer.parse(file: url)
+
+        #expect(caps.isEmpty)
     }
 }

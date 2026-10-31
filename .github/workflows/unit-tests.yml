@@ -54,3 +54,6 @@ jobs:
 
       - name: Run unit tests
         run: swift test
+
+      - name: Concurrency & Flake Repetition Gate (ST-0024)
+        run: swift test --skip-build --filter 'GenerationGateTests|PriorityAndPrefillCancellationTests|ServerDrainTests|TokenRecyclingTests|PromptLookupDecodingTests' --maximum-repetitions 10 --repeat-until fail
