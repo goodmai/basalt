@@ -1,4 +1,5 @@
-import XCTest
+import Foundation
+import Testing
 import ArgumentParser
 @testable import BasaltCore
 @testable import BasaltInference
@@ -7,34 +8,27 @@ import ArgumentParser
 @testable import BasaltUI
 @testable import BasaltCLI
 
-final class CloudCommandTests: XCTestCase {
-    
-    override func setUp() {
-        super.setUp()
-        // Clean up test config files if needed
+@Suite("Cloud CLI commands")
+struct CloudCommandTests {
+    private static func cleanup() {
         let configURL = CloudCommand.configURL()
         try? FileManager.default.removeItem(at: configURL)
         let costURL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".gem/cost.json")
         try? FileManager.default.removeItem(at: costURL)
     }
-    
-    override func tearDown() {
-        // Clean up test config files
-        let configURL = CloudCommand.configURL()
-        try? FileManager.default.removeItem(at: configURL)
-        let costURL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".gem/cost.json")
-        try? FileManager.default.removeItem(at: costURL)
-        super.tearDown()
-    }
-    
-    func testCloudConfigure() async throws {
+
+    @Test("Cloud configure command persists settings")
+    func cloudConfigure() async throws {
+        Self.cleanup()
+        defer { Self.cleanup() }
+
         var command = try CloudCommand.Configure.parse(["--api-key", "test-key", "--daily-budget", "10.0", "--monthly-budget", "100.0"])
         try await command.run()
-        
+
         let config = CloudCommand.loadConfig()
-        XCTAssertNotNil(config)
-        XCTAssertEqual(config?.apiKey, "test-key")
-        XCTAssertEqual(config?.dailyBudget, 10.0)
-        XCTAssertEqual(config?.monthlyBudget, 100.0)
+        #expect(config != nil)
+        #expect(config?.apiKey == "test-key")
+        #expect(config?.dailyBudget == 10.0)
+        #expect(config?.monthlyBudget == 100.0)
     }
 }

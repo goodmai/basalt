@@ -168,7 +168,7 @@ struct PromptLookupDecodingTests {
         let model = try LookupFixture.model(family)
         let expected = try LookupFixture.baseline(model)
         let (tokens, iterator, _) = try LookupFixture.lookup(model)
-        #expect(tokens == expected)
+        expectTokenSequence(tokens, expected)
         let telemetry = try #require(iterator.speculativeDecodingTelemetry)
         #expect(telemetry.acceptedDraftTokenCount > 0)
         #expect(telemetry.emittedTokenCount == tokens.count)
@@ -198,7 +198,7 @@ struct PromptLookupDecodingTests {
     func draftsRunPastEightTokens() throws {
         let continuation = (0 ..< 64).map { LookupFixture.unit[(4 + $0) % LookupFixture.unit.count] }
         let run = try LookupFixture.lookup(try TinyLlama.make(), sampler: ScriptedSampler(continuation))
-        #expect(run.tokens == continuation)
+        expectTokenSequence(run.tokens, continuation)
         let telemetry = try #require(run.iterator.speculativeDecodingTelemetry)
         #expect(telemetry.draftTokenCount > 8 * telemetry.roundCount)
     }
@@ -209,7 +209,7 @@ struct PromptLookupDecodingTests {
         let continuation = (0 ..< 12).map { LookupFixture.unit[(4 + $0) % LookupFixture.unit.count] }
         let run = try LookupFixture.lookup(
             try LookupFixture.model(family), maxTokens: continuation.count, sampler: ScriptedSampler(continuation))
-        #expect(run.tokens == continuation)
+        expectTokenSequence(run.tokens, continuation)
         let telemetry = try #require(run.iterator.speculativeDecodingTelemetry)
         #expect(telemetry.roundCount == rounds)
         #expect(telemetry.draftTokenCount == drafted)
@@ -230,7 +230,7 @@ struct PromptLookupDecodingTests {
         let unit = LookupFixture.unit
         let script = (0 ..< 6).flatMap { round in Array(unit[4 ..< 8]) + [240 + round] + Array(unit[0 ..< 4]) }
         let run = try LookupFixture.lookup(model, maxTokens: maxTokens, sampler: ScriptedSampler(script))
-        #expect(run.tokens == Array(script.prefix(maxTokens)))
+        expectTokenSequence(run.tokens, Array(script.prefix(maxTokens)))
         #expect(run.iterator.replayRounds > 0)
         let telemetry = try #require(run.iterator.speculativeDecodingTelemetry)
         #expect(telemetry.targetVerifiedTokenCount
@@ -271,7 +271,7 @@ struct PromptLookupDecodingTests {
         let run = try LookupFixture.lookup(
             try LookupFixture.model(family), prompt: prompt, maxTokens: maxTokens,
             sampler: ScriptedSampler((0 ..< maxTokens).map { 10 + $0 }))
-        #expect(run.tokens == (0 ..< maxTokens).map { 10 + $0 })
+        expectTokenSequence(run.tokens, (0 ..< maxTokens).map { 10 + $0 })
         #expect(run.iterator.speculativeDecodingTelemetry == nil)
         #expect(run.cache.filter { $0 is KVCacheSimple }.allSatisfy { $0.offset == prompt.count + maxTokens - 1 })
     }
@@ -290,7 +290,7 @@ struct PromptLookupDecodingTests {
         }
         let expected = try LookupFixture.baseline(model, processor: processor(), sampler: sampler())
         let actual = try LookupFixture.lookup(model, processor: processor(), sampler: sampler())
-        #expect(actual.tokens == expected)
+        expectTokenSequence(actual.tokens, expected)
         #expect(try #require(actual.iterator.speculativeDecodingTelemetry).acceptedDraftTokenCount > 0)
     }
 
@@ -314,7 +314,7 @@ struct PromptLookupDecodingTests {
         let expected = try LookupFixture.baseline(model, maxTokens: maxTokens, processor: processor(), sampler: sampler())
         #expect(try LookupFixture.baseline(model, maxTokens: maxTokens, processor: processor(), sampler: sampler(seed: 12)) != expected)
         let actual = try LookupFixture.lookup(model, maxTokens: maxTokens, processor: processor(), sampler: sampler())
-        #expect(actual.tokens == expected)
+        expectTokenSequence(actual.tokens, expected)
         #expect(try #require(actual.iterator.speculativeDecodingTelemetry).acceptedDraftTokenCount > 0)
     }
 
@@ -459,7 +459,7 @@ struct PromptLookupDecodingTests {
             let run = try LookupFixture.lookup(
                 try LookupFixture.model(family), prompt: [200, 201, 202, 203, 204], maxTokens: cycles.count,
                 sampler: ScriptedSampler(cycles))
-            #expect(run.tokens == cycles)
+            expectTokenSequence(run.tokens, cycles)
             let telemetry = try #require(run.iterator.speculativeDecodingTelemetry)
             return (telemetry.roundCount, telemetry.acceptedDraftTokenCount)
         }
@@ -475,7 +475,7 @@ struct PromptLookupDecodingTests {
         let run = try LookupFixture.lookup(
             try LookupFixture.model(family), prompt: [200, 201, 202, 203, 204], maxTokens: cycles.count,
             sampler: ScriptedSampler(cycles))
-        #expect(run.tokens == cycles)
+        expectTokenSequence(run.tokens, cycles)
         let telemetry = try #require(run.iterator.speculativeDecodingTelemetry)
         #expect(telemetry.acceptedDraftTokenCount == 0)
         #expect(telemetry.roundCount <= 6)
