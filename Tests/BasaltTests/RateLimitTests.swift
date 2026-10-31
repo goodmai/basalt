@@ -68,8 +68,8 @@ struct RateLimitTests {
         #expect(throws: Never.self) { _ = try ServeCommand.parse(["--rate-limit", "0"]) }
     }
 
-    private func router(rateLimit: Int) throws -> Router<BasicRequestContext> {
-        let config = try ServerConfig(modelPath: "stub", host: "0.0.0.0", apiKey: "k-123", rateLimitPerMinute: rateLimit)
+    private func router(rateLimit: Int, burst: Int? = nil, virtualKeys: [VirtualKey] = []) throws -> Router<BasicRequestContext> {
+        let config = try ServerConfig(modelPath: "stub", host: "0.0.0.0", apiKey: "k-123", rateLimitPerMinute: rateLimit, rateBurst: burst, virtualKeys: virtualKeys)
         return RESTServer(orchestrator: ModelOrchestratorActor(engine: MockInferenceEngine()), config: config).makeRouter()
     }
 
@@ -126,5 +126,81 @@ struct RateLimitTests {
             return code.isEmpty
         }
         #expect(stubs.isEmpty, "\(stubs.map(\.lastPathComponent))")
+    }
+
+    @Test("Separate rate burst enforces burst limit while rate limit budget remains (#62)")
+    func testSeparateRateBurst() async throws {
+        let app = Application(router: try router(rateLimit: 6, burst: 2))
+        try await app.test(.router) { client in
+            let auth: HTTPFields = [.authorization: "Bearer k-123"]
+            for _ in 0..<2 {
+                let status = try await client.execute(uri: "/v1/models", method: .get, headers: auth) { $0.status }
+                #expect(status == .ok)
+            }
+            let (status, retryAfter) = try await client.execute(uri: "/v1/models", method: .get, headers: auth) {
+                ($0.status, $0.headers[.retryAfter])
+            }
+            #expect(status == .tooManyRequests)
+            #expect(retryAfter != nil)
+        }
+    }
+
+    @Test("Per-client token buckets isolate clients: client B has 0% rejections when client A exhausts budget (#62)")
+    func testPerClientIsolation() async throws {
+        let vkA = VirtualKey(key: "virtual-key-client-a", id: "client-a")
+        let vkB = VirtualKey(key: "virtual-key-client-b", id: "client-b")
+        let app = Application(router: try router(rateLimit: 6, burst: 2, virtualKeys: [vkA, vkB]))
+        try await app.test(.router) { client in
+            let authA: HTTPFields = [.authorization: "Bearer virtual-key-client-a"]
+            let authB: HTTPFields = [.authorization: "Bearer virtual-key-client-b"]
+
+            for _ in 0..<2 {
+                let status = try await client.execute(uri: "/v1/models", method: .get, headers: authA) { $0.status }
+                #expect(status == .ok)
+            }
+            let statusA = try await client.execute(uri: "/v1/models", method: .get, headers: authA) { $0.status }
+            #expect(statusA == .tooManyRequests)
+
+            for _ in 0..<2 {
+                let status = try await client.execute(uri: "/v1/models", method: .get, headers: authB) { $0.status }
+                #expect(status == .ok)
+            }
+        }
+    }
+
+    @Test("Bounded memory eviction prunes clients so key count stays within maxClients (#62)")
+    func testBoundedMemoryEviction() async throws {
+        let limiter = RateLimiterState(capacity: 5, refillPerSecond: 1, maxEntries: 4)
+        for i in 0..<20 {
+            _ = limiter.take(clientKey: "client-\(i)", now: Double(i))
+        }
+        #expect(limiter.clientCount <= 4)
+    }
+
+    @Test("resolveRateBurst defaults to min(rateLimit, 10) or explicit positive value (#62)")
+    func testResolveRateBurst() throws {
+        #expect(ServerConfig.resolveRateBurst(rateLimit: nil, requestedBurst: nil) == nil)
+        #expect(ServerConfig.resolveRateBurst(rateLimit: 0, requestedBurst: nil) == nil)
+        #expect(ServerConfig.resolveRateBurst(rateLimit: 120, requestedBurst: nil) == 10)
+        #expect(ServerConfig.resolveRateBurst(rateLimit: 120, requestedBurst: 25) == 25)
+        #expect(ServerConfig.resolveRateBurst(rateLimit: 2, requestedBurst: nil) == 2)
+        #expect(ServerConfig.resolveRateBurst(rateLimit: 120, requestedBurst: 0) == nil)
+    }
+
+    @Test("rate_burst comes from --config when the flag is absent; a negative flag is rejected (#62)")
+    func testRateBurstFromConfigAndValidation() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let file = dir.appendingPathComponent("config.json")
+        try Data(#"{"rate_limit": 30, "rate_burst": 5}"#.utf8).write(to: file)
+        #expect(try ServeCommand.resolveNetwork(cliPort: nil, cliHost: nil, cliApiKey: nil, configFile: file.path).rateBurst == 5)
+        #expect(try ServeCommand.resolveNetwork(cliPort: nil, cliHost: nil, cliApiKey: nil, cliRateBurst: 8, configFile: file.path).rateBurst == 8)
+        do {
+            _ = try ServeCommand.parse(["--rate-burst=-1"])
+            Issue.record("a negative --rate-burst must be rejected")
+        } catch {
+            #expect(ServeCommand.message(for: error).contains("must be 0"))
+        }
     }
 }
