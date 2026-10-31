@@ -446,7 +446,12 @@ struct PromptCacheDiskTests {
         await engine.persistPromptCache(within: .microseconds(500))
         #expect(DiskFixture.files(directory).isEmpty)
         await engine.persistPromptCache(within: .seconds(30))
-        #expect(DiskFixture.files(directory).count == 1)
+        let file = try #require(DiskFixture.files(directory).first)
+        let stale = Date(timeIntervalSinceNow: -120)
+        try FileManager.default.setAttributes([.modificationDate: stale], ofItemAtPath: file.path)
+        await engine.persistPromptCache(within: .microseconds(500))
+        let refreshed = try #require(try FileManager.default.attributesOfItem(atPath: file.path)[.modificationDate] as? Date)
+        #expect(refreshed > stale)
     }
 
     @Test("A file that cannot be opened right now is skipped and kept, not deleted as corrupt")

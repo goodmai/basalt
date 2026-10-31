@@ -278,6 +278,20 @@ struct ConstrainedDecodingEngineTests {
         #expect(res1.forcedTokens == nil)
         #expect(res2.forcedTokens == nil)
     }
+
+    @Test("Grammar jump forward respects small maxTokens budgets inside forced spans without crashing or misaligning the grammar")
+    func grammarJumpForwardBudgetBoundaries() async throws {
+        let engine = try await ConstrainedModel.engine()
+        for maxTokens in 1 ... 8 {
+            let req = ConstrainedModel.request(
+                format: .jsonSchema(ConstrainedModel.schema), thinking: false, maxTokens: maxTokens
+            ).withGrammarJumpForward(true)
+            let res = try await engine.generate(request: req)
+            #expect(res.completionTokens == maxTokens)
+            #expect((res.forcedTokens ?? 0) <= res.completionTokens)
+            #expect(res.finishReason == .length)
+        }
+    }
 }
 
 enum SchemaCheck {
@@ -403,6 +417,26 @@ struct JSONConstraintProcessorTests {
         #expect(session.totalForcedTokens == forced.count)
         let pooled = try #require(session.rewound())
         #expect(try pooled.computeMask().mask == pristine)
+    }
+
+    @Test("Fast-forward session accepts a valid prefill that spans forced tokens and rejects an invalid one")
+    func fastForwardAcceptsPrefillAcrossForcedSpan() throws {
+        let tokenizer = JSONPieceTokenizer()
+        let vocabulary = try GrammarVocabulary(
+            pieces: (0..<256).map { tokenizer.convertIdToToken($0)! }, vocabType: .raw, stopTokens: [JSONPieceTokenizer.endOfText],
+            markers: ReasoningMarkers(openers: [JSONPieceTokenizer.open], closers: [[JSONPieceTokenizer.close]]),
+            hostTokenizer: tokenizer)
+        let schema = try JSONSchemaGate.prepare(ConstrainedModel.schema, strict: true).schema
+        let validSession = GrammarSession(
+            schema: schema,
+            grammar: try GrammarConstraint(tokenizer: vocabulary.tokenizer, jsonSchema: schema, fastForward: true, hostTokenizer: tokenizer))
+        #expect(validSession.accepts(Array(#"{"mode":"#.utf8).map(Int.init)))
+        #expect(validSession.totalForcedTokens == 0)
+
+        let invalidSession = GrammarSession(
+            schema: schema,
+            grammar: try GrammarConstraint(tokenizer: vocabulary.tokenizer, jsonSchema: schema, fastForward: true, hostTokenizer: tokenizer))
+        #expect(!invalidSession.accepts(Array(#"{"fast":"#.utf8).map(Int.init)))
     }
 }
 

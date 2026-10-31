@@ -30,7 +30,7 @@ struct ReasoningMarkers: Sendable {
 }
 
 protocol ForcedTokenSource: LogitProcessor {
-    mutating func takeForcedTokens() -> [Int]
+    mutating func takeForcedTokens(limit: Int) -> [Int]
     mutating func didSampleForced(_ token: MLXArray)
 }
 
@@ -95,9 +95,7 @@ final class GrammarSession: Sendable {
                 let ffCount = Int32(result.tokens.count)
                 progress.committed += 1 + ffCount
                 if ffCount > 0 {
-                    let ff = result.tokens.map(Int.init)
-                    progress.pendingForced.append(contentsOf: ff)
-                    progress.totalForced += ff.count
+                    progress.pendingForced.append(contentsOf: result.tokens.map(Int.init))
                 }
             } catch {
                 progress.failed = true
@@ -106,11 +104,13 @@ final class GrammarSession: Sendable {
         }
     }
 
-    func takeForcedTokens() -> [Int] {
+    func takeForcedTokens(limit: Int = .max) -> [Int] {
         progress.withLock { progress in
-            guard !progress.pendingForced.isEmpty else { return [] }
-            let tokens = progress.pendingForced
+            guard !progress.pendingForced.isEmpty, limit > 0 else { return [] }
+            let count = min(progress.pendingForced.count, limit)
+            let tokens = Array(progress.pendingForced.prefix(count))
             progress.pendingForced.removeAll(keepingCapacity: true)
+            progress.totalForced += tokens.count
             return tokens
         }
     }
@@ -125,6 +125,19 @@ final class GrammarSession: Sendable {
 
     func accepts(_ ids: [Int]) -> Bool {
         for id in ids {
+            let consumedForced = progress.withLock { progress -> Bool? in
+                guard !progress.pendingForced.isEmpty else { return nil }
+                guard progress.pendingForced.first == id else {
+                    progress.failed = true
+                    return false
+                }
+                progress.pendingForced.removeFirst()
+                return true
+            }
+            if let consumedForced {
+                if !consumedForced { return false }
+                continue
+            }
             commit(id)
             guard progress.withLock({ !$0.failed }) else { return false }
         }
@@ -223,9 +236,9 @@ struct JSONConstraintProcessor: LogitProcessor, ForcedTokenSource {
         progress.unread = token
     }
 
-    mutating func takeForcedTokens() -> [Int] {
+    mutating func takeForcedTokens(limit: Int = .max) -> [Int] {
         readSampledToken()
-        return progress.session.takeForcedTokens()
+        return progress.session.takeForcedTokens(limit: limit)
     }
 
     mutating func didSampleForced(_ token: MLXArray) {}

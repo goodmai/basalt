@@ -1,0 +1,5 @@
+{
+  "name": "Basalt Inspector & PR Audit",
+  "description": "Interactive architecture explorer, PR regression audit dashboard, and test runner for the Basalt Swift MLX inference engine.",
+  "requestFramePermissions": []
+}

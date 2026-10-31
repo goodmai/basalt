@@ -642,7 +642,7 @@ public actor MLXInferenceEngine: InferenceEngine {
     static let grammarSchemaLimit = 16
     static let idleGrammarsPerSchema = 4
 
-    func outputConstraint(for request: GenerationRequest) async throws(BasaltError) -> OutputConstraint? {
+    func outputConstraint(for request: GenerationRequest, allowsFastForward: Bool = true) async throws(BasaltError) -> OutputConstraint? {
         let forcedTool = request.toolChoice?.forcedTool.flatMap { name in request.tools?.first { $0.name == name } }
         let format = forcedTool.map { $0.parametersJSON.map { .jsonSchema($0) } ?? .jsonObject } ?? request.responseFormat
         guard let format else { return nil }
@@ -660,7 +660,7 @@ public actor MLXInferenceEngine: InferenceEngine {
         case .failure(let error): return try unconstrained(error.reason)
         }
         guard !vocabulary.stopTokens.isEmpty else { return try unconstrained("the model declares no stop token to end the document") }
-        let fastForwardRequested = request.grammarJumpForward ?? grammarJumpForward
+        let fastForwardRequested = allowsFastForward && (request.grammarJumpForward ?? grammarJumpForward)
         let fastForward: Bool
         if fastForwardRequested, let container {
             fastForward = await supportsMultiTokenForward(container, epoch: epoch)
@@ -816,7 +816,8 @@ public actor MLXInferenceEngine: InferenceEngine {
 
         let requestedMaxTokens = request.maxTokens ?? 1024
         let (params, unbudgeted, shaping) = sampling(for: request)
-        let constraint = try await outputConstraint(for: request)
+        let zones = modelAttendsThroughZones ? (modelPrefillsInChunks ? kvZones : kvZones?.evicting(0)) : nil
+        let zonedPrecision = zones == nil ? nil : request.kvPrecision ?? kvPrecision
 
         let toolSpecs = Self.toolSpecs(request.tools)
         let declaredTools = Set(request.tools?.map(\.name) ?? [])
@@ -903,6 +904,9 @@ public actor MLXInferenceEngine: InferenceEngine {
             let answerAfterThinking = Self.answerAfterThinking(renderedTail, assistantPrefix: assistantPrefix ?? "")
             let promptEndsWithThinking = answerAfterThinking == nil
             let prefixAnswer = String(answerAfterThinking ?? "")
+            let namespace = carriesMoreThanTokens || epoch != modelEpoch ? nil : promptCacheNamespace(for: request)
+            let allowsFastForward = params.kvBits == nil && zonedPrecision == nil && !carriesMoreThanTokens
+            let constraint = try await outputConstraint(for: request, allowsFastForward: allowsFastForward)
             if let constraint, !prefixAnswer.isEmpty {
                 let ids = await container.perform { $0.tokenizer.encode(text: prefixAnswer, addSpecialTokens: false) }
                 guard constraint.session.accepts(ids) else {
@@ -910,7 +914,6 @@ public actor MLXInferenceEngine: InferenceEngine {
                         details: "the assistant prefill is not a valid start of the requested JSON output")
                 }
             }
-            let namespace = carriesMoreThanTokens || epoch != modelEpoch ? nil : promptCacheNamespace(for: request)
             if let namespace {
                 await restoreFromDisk(namespace, prompt: promptTokens, container: container, epoch: epoch)
             }
@@ -934,8 +937,6 @@ public actor MLXInferenceEngine: InferenceEngine {
             let speculativeLookup = request.speculativeLookup ?? speculativeLookup
             let jumpForward = constraint?.fastForward == true
             let expertRouting = (speculativeLookup || jumpForward) ? await routesExperts(container, epoch: epoch) : true
-            let zones = modelAttendsThroughZones ? (modelPrefillsInChunks ? kvZones : kvZones?.evicting(0)) : nil
-            let zonedPrecision = zones == nil ? nil : request.kvPrecision ?? kvPrecision
             let launch: GenerationLaunch
             do {
                 launch = try await container.perform(nonSendable: lmInput) { context, input in
@@ -1281,15 +1282,18 @@ public actor MLXInferenceEngine: InferenceEngine {
         var skipped = 0
         for path in promptCaches.storedPathsByRecency() {
             guard let lease = promptCaches.lease(path.namespace, for: path.tokens + [0]) else { continue }
-            let expectedWrite = Double(PromptCacheDiskStore.estimatedBytes(of: lease.cache, tokens: lease.reusedTokens))
+            let tokens = Array(path.tokens.prefix(lease.reusedTokens))
+            guard !tokens.isEmpty else { continue }
+            let alreadyOnDisk = promptCacheDisk?.has(fingerprint: fingerprint, namespace: path.namespace, tokens: tokens) == true
+            let expectedWrite = alreadyOnDisk ? 0 : Double(PromptCacheDiskStore.estimatedBytes(of: lease.cache, tokens: tokens.count))
                 / PromptCacheDiskStore.assumedWriteBytesPerSecond
             guard ContinuousClock.now - started + .seconds(expectedWrite) <= deadline else {
                 skipped += 1
                 continue
             }
-            if lease.reusedTokens > 0, let name = promptCacheDisk?.store(
+            if let name = promptCacheDisk?.store(
                 fingerprint: fingerprint, model: modelDescription, namespace: path.namespace,
-                tokens: Array(path.tokens.prefix(lease.reusedTokens)), cache: lease.cache, keeping: written) {
+                tokens: tokens, cache: lease.cache, keeping: written) {
                 written.insert(name)
             }
         }
@@ -1429,9 +1433,9 @@ struct PromptAnchoredProcessor: LogitProcessor, ForcedTokenSource {
         base.didSample(token: token)
     }
 
-    mutating func takeForcedTokens() -> [Int] {
+    mutating func takeForcedTokens(limit: Int) -> [Int] {
         if var source = base as? ForcedTokenSource {
-            let tokens = source.takeForcedTokens()
+            let tokens = source.takeForcedTokens(limit: limit)
             base = source
             return tokens
         }
@@ -1471,11 +1475,11 @@ struct BasaltChainedLogitProcessor: LogitProcessor, ForcedTokenSource {
         }
     }
 
-    mutating func takeForcedTokens() -> [Int] {
+    mutating func takeForcedTokens(limit: Int) -> [Int] {
         var result: [Int] = []
-        for index in processors.indices {
+        for index in processors.indices where result.count < limit {
             if var source = processors[index] as? ForcedTokenSource {
-                result.append(contentsOf: source.takeForcedTokens())
+                result.append(contentsOf: source.takeForcedTokens(limit: limit - result.count))
                 processors[index] = source
             }
         }

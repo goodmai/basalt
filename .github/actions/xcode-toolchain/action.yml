@@ -13,7 +13,7 @@ runs:
           for app in "$APPS_DIR"/Xcode*.app; do
             [ -e "$app" ] || continue
             resolved=$(realpath "$app")
-            printf '%s\n' "$resolved" | grep -qiE 'beta|_rc|release.candidate' && continue
+            printf '%s\n%s\n' "$(basename "$app")" "$(basename "$resolved")" | grep -qiE 'beta|_rc|release.candidate' && continue
             ver=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$resolved/Contents/Info.plist" 2>/dev/null || true)
             if [ -z "$ver" ]; then
               ver=$(basename "$resolved" .app | grep -oE '[0-9]+(\.[0-9]+)*' | head -n 1 || true)

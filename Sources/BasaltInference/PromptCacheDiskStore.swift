@@ -311,6 +311,10 @@ public struct PromptCacheDiskStore: Sendable {
         Int64(cache.byteCount + tokens * 8 + cache.layers.count * 512 + (64 << 10))
     }
 
+    func has(fingerprint: String, namespace: String, tokens: [Int]) -> Bool {
+        FileManager.default.fileExists(atPath: url(Self.fileName(fingerprint: fingerprint, namespace: namespace, tokens: tokens)).path)
+    }
+
     @discardableResult
     mutating func store(
         fingerprint: String, model: String, namespace: String, tokens: [Int], cache: PromptCache, keeping kept: Set<String> = []

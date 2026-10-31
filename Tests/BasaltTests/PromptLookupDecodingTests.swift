@@ -448,8 +448,9 @@ struct PromptLookupDecodingTests {
             while !backoffs.lookup.allowsDraft { backoffs.tick() }
         }
         #expect(pauses == [4, 8, 16, 32, 64, 128, 256, 256])
-        backoffs.recordRound(recycled: false, acceptedDrafts: 2, replayed: true)
+        backoffs.recordRound(recycled: false, acceptedDrafts: 2, draftCount: 4, replayed: true)
         #expect(backoffs.lookup.allowsDraft)
+        #expect(backoffs.lookup.draftLimit == 4)
     }
 
     @Test("A low-yield draft on a dense model backs off and shrinks the draft limit rather than resetting pause (#172)")
@@ -500,6 +501,9 @@ struct PromptLookupDecodingTests {
 
     @Test("PromptLookupTokenIterator.draft produces expected matches across varied history lengths")
     func draftEquivalenceAcrossHistoryLengths() {
+        let baseHistory = [42, 43, 44, 45, 46, 42, 43, 44, 45, 46]
+        #expect(PromptLookupTokenIterator.draft(after: baseHistory, limit: 0).isEmpty)
+        #expect(PromptLookupTokenIterator.draft(after: baseHistory, limit: -1).isEmpty)
         for length in [1, 2, 3, 4, 5, 10, 64, 256, 1024, 4096] {
             let pattern = [42, 43, 44, 45, 46]
             let history = Array(repeating: pattern, count: length / 5 + 1).flatMap { $0 }

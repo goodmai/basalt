@@ -28,6 +28,7 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
     private(set) var recycledDraftTokens = 0
     private(set) var acceptedRecycledDrafts = 0
     private(set) var forcedTokensCount = 0
+    private var queuedForced: [Int] = []
     private var backoffs = DrafterBackoffs()
     private var pending: [Int] = []
     private var pendingIndex = 0
@@ -80,10 +81,14 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
             targetVerifiedTokenCount: verified, emittedTokenCount: tokenCount)
     }
 
-    private mutating func takeForcedTokens() -> [Int] {
-        guard grammarJumpForward else { return [] }
+    private mutating func takeForcedTokens(limit: Int) -> [Int] {
+        guard grammarJumpForward, limit > 0 else { return [] }
+        if !queuedForced.isEmpty {
+            defer { queuedForced.removeAll(keepingCapacity: true) }
+            return Array(queuedForced.prefix(limit))
+        }
         if var source = processor as? ForcedTokenSource {
-            let tokens = source.takeForcedTokens()
+            let tokens = source.takeForcedTokens(limit: limit)
             processor = source
             return tokens
         }
@@ -113,9 +118,33 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
             logits = output.logits
         }
         let last = logits[0..., -1, 0...]
-        let token = sample(last).item(Int.self)
         if recyclesTokens {
             recycling = TokenRecyclingTable(vocabularySize: last.dim(-1))
+        }
+        let needed = maxTokens ?? Int.max
+        let forced = takeForcedTokens(limit: needed)
+        if !forced.isEmpty {
+            forcedTokensCount += forced.count
+            for id in forced {
+                didSampleForced(id)
+            }
+            if forced.count >= needed {
+                accept(forced)
+                return
+            }
+            verifyCalls += 1
+            verified += forced.count
+            let forcedLogits = forward(LMInput.Text(tokens: MLXArray(forced.map(Int32.init))))
+                .logits[0, 0..., 0...]
+            let nextToken = sample(forcedLogits[forced.count - 1 ..< forced.count]).item(Int.self)
+            if recyclesTokens {
+                recycle(after: forced, successors: argMax(forcedLogits, axis: -1).asArray(Int.self))
+            }
+            accept(forced + [nextToken])
+            return
+        }
+        let token = sample(last).item(Int.self)
+        if recyclesTokens {
             recycle(after: [history[history.count - 1]], successors: [argMax(last, axis: -1).item(Int.self)])
         }
         acceptOne(token)
@@ -162,6 +191,7 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
     }
 
     static func draft(after history: [Int], limit: Int) -> [Int] {
+        guard limit > 0 else { return [] }
         let span = history.span
         let count = span.count
         for n in ngramSizes where count > n {
@@ -198,46 +228,26 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
         let remaining = maxTokens.map { $0 - tokenCount } ?? Int.max
         guard remaining > 0 else { return }
 
-        let forced = takeForcedTokens()
+        let forced = takeForcedTokens(limit: remaining)
         if !forced.isEmpty {
-            let lastToken: Int
-            let emittedPrefix: [Int]
-            if let step = inFlight {
-                inFlight = nil
-                lastToken = confirm(step)
-                emittedPrefix = [lastToken]
-            } else {
-                lastToken = history[history.count - 1]
-                emittedPrefix = []
-            }
-
-            let spanLimit = Swift.min(forced.count, remaining - emittedPrefix.count - 1)
-            if spanLimit <= 0 {
-                if !emittedPrefix.isEmpty {
-                    accept(emittedPrefix)
-                }
-                return
-            }
-
-            let forcedSpan = Array(forced.prefix(spanLimit))
-            let fed = [lastToken] + forcedSpan
-            verifyCalls += 1
-            verified += fed.count
-            forcedTokensCount += forcedSpan.count
-
-            for id in forcedSpan {
+            forcedTokensCount += forced.count
+            for id in forced {
                 didSampleForced(id)
             }
-
+            if forced.count >= remaining {
+                accept(forced)
+                return
+            }
+            let fed = [history[history.count - 1]] + forced
+            verifyCalls += 1
+            verified += fed.count
             let logits = forward(LMInput.Text(tokens: MLXArray(fed.map(Int32.init))))
                 .logits[0, 0..., 0...]
             let nextToken = sample(logits[fed.count - 1 ..< fed.count]).item(Int.self)
-
             if recyclesTokens {
-                recycle(after: [forcedSpan.last ?? lastToken], successors: [argMax(logits[fed.count - 1 ..< fed.count], axis: -1).item(Int.self)])
+                recycle(after: fed, successors: argMax(logits, axis: -1).asArray(Int.self))
             }
-
-            accept(emittedPrefix + forcedSpan + [nextToken])
+            accept(forced + [nextToken])
             return
         }
 
@@ -282,7 +292,7 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
     }
 
     private mutating func emit(_ current: DecodedStep, lookingAhead: Bool) {
-        if lookingAhead {
+        if lookingAhead && !grammarJumpForward {
             let next = step(current.token)
             evalTargets.removeAll(keepingCapacity: true)
             evalTargets.append(next.token)
@@ -319,15 +329,22 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
         } else {
             let successors = recyclesTokens ? argMax(logits, axis: -1) : nil
             if let successors { asyncEval(successors) }
+            let remaining = maxTokens.map { $0 - tokenCount } ?? Int.max
             for index in 0 ... draft.count {
                 let token = sample(logits[index ..< index + 1]).item(Int.self)
                 emitted.append(token)
                 if index == draft.count || token != draft[index] { break }
+                let forced = takeForcedTokens(limit: remaining - emitted.count)
+                if !forced.isEmpty {
+                    queuedForced = forced
+                    break
+                }
             }
-            if let successors { recycle(after: fed, successors: successors.asArray(Int.self)) }
+            if let successors { recycle(after: Array(fed.prefix(emitted.count)), successors: Array(successors.asArray(Int.self).prefix(emitted.count))) }
         }
 
         let acceptedDrafts = emitted.count - 1
+        let matchedDrafts = queuedForced.isEmpty ? acceptedDrafts : acceptedDrafts + 1
         let replays = !recurrent.isEmpty && acceptedDrafts < draft.count
         if recurrent.isEmpty {
             trimPromptCache(cache, numTokens: draft.count - acceptedDrafts)
@@ -347,7 +364,7 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
             recycledDraftTokens += draft.count
             acceptedRecycledDrafts += acceptedDrafts
         }
-        backoffs.recordRound(recycled: recycled, acceptedDrafts: acceptedDrafts, draftCount: draft.count, replayed: replays)
+        backoffs.recordRound(recycled: recycled, acceptedDrafts: matchedDrafts, draftCount: draft.count, replayed: replays)
         rounds += 1
         drafted += draft.count
         accepted += acceptedDrafts
@@ -458,10 +475,11 @@ struct DraftBackoff {
             isProfitable = acceptedDrafts >= 3
                 || (drafted <= 2 && acceptedDrafts >= 1)
                 || (Double(acceptedDrafts) / Double(drafted) >= 0.25)
-            if acceptedDrafts <= 1 {
+            let matched = pauseScale > 1 ? acceptedDrafts + 1 : acceptedDrafts
+            if !isProfitable || matched <= 1 {
                 draftLimit = Self.minDraftLimit
             } else {
-                draftLimit = Swift.min(Self.maxDraftLimit, Swift.max(Self.minDraftLimit, acceptedDrafts + 2))
+                draftLimit = Swift.min(Self.maxDraftLimit, Swift.max(Self.minDraftLimit, matched + 2))
             }
         } else {
             isProfitable = acceptedDrafts > 0
