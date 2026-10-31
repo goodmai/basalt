@@ -14,7 +14,7 @@ runs:
       shell: bash
       run: echo "version=$(xcrun --sdk macosx --show-sdk-version)" >> "$GITHUB_OUTPUT"
     - id: cache
-      uses: actions/cache@v6
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.0.2
       with:
         path: default.metallib
         key: metallib-${{ runner.arch }}-sdk${{ steps.sdk.outputs.version }}-${{ hashFiles('Package.resolved', 'scripts/build_metal.swift') }}

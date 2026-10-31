@@ -19,7 +19,7 @@ jobs:
     
     steps:
       - name: Checkout code
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Configure Swift toolchain
         uses: ./.github/actions/xcode-toolchain
@@ -67,12 +67,20 @@ jobs:
             echo "(audit did not run)" >> security-report.md
           fi
       
+      - name: Generate Software Bill of Materials (SBOM)
+        run: |
+          mkdir -p sboms
+          swift package generate-sbom --sbom-spec cyclonedx --sbom-spec spdx --sbom-output-dir sboms || true
+          ls -la sboms
+
       - name: Upload Security Report
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.0
         with:
           name: security-audit-report
-          path: security-report.md
+          path: |
+            security-report.md
+            sboms/*
           retention-days: 30
       
       # No "✅ passed" PR comment: it added one comment per push, and the check status
@@ -89,13 +97,13 @@ jobs:
     
     steps:
       - name: Checkout code
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Configure Swift toolchain
         uses: ./.github/actions/xcode-toolchain
 
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@v4
+        uses: github/codeql-action/init@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4
         with:
           languages: swift
       
@@ -103,6 +111,6 @@ jobs:
         run: swift build
       
       - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@v4
+        uses: github/codeql-action/analyze@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4
         with:
           category: "/language:swift"
