@@ -480,4 +480,41 @@ struct PromptLookupDecodingTests {
         #expect(telemetry.acceptedDraftTokenCount == 0)
         #expect(telemetry.roundCount <= 6)
     }
+
+    @Test("PromptLookupTokenIterator.draft produces expected matches across varied history lengths")
+    func draftEquivalenceAcrossHistoryLengths() {
+        for length in [1, 2, 3, 4, 5, 10, 64, 256, 1024, 4096] {
+            let pattern = [42, 43, 44, 45, 46]
+            let history = Array(repeating: pattern, count: length / 5 + 1).flatMap { $0 }
+            let draft = PromptLookupTokenIterator.draft(after: Array(history.prefix(length)), limit: 8)
+            if length > 5 {
+                #expect(!draft.isEmpty)
+            }
+        }
+    }
+
+    @Test("Micro-benchmark for Span-based draft scanning across 4k and 16k token histories")
+    func draftMicroBenchmark() {
+        for size in [4096, 16384] {
+            let missHistory = Array(0 ..< size)
+            let missDraft = PromptLookupTokenIterator.draft(after: missHistory, limit: 16)
+            #expect(missDraft.isEmpty)
+
+            let hitHistory = (0 ..< size).map { $0 % 64 }
+            let hitDraft = PromptLookupTokenIterator.draft(after: hitHistory, limit: 16)
+            #expect(!hitDraft.isEmpty)
+
+            if ProcessInfo.processInfo.environment["BASALT_BENCH"] == "1" {
+                let t0 = CFAbsoluteTimeGetCurrent()
+                for _ in 0 ..< 100 { _ = PromptLookupTokenIterator.draft(after: missHistory, limit: 16) }
+                let missUs = (CFAbsoluteTimeGetCurrent() - t0) * 10000
+
+                let t1 = CFAbsoluteTimeGetCurrent()
+                for _ in 0 ..< 100 { _ = PromptLookupTokenIterator.draft(after: hitHistory, limit: 16) }
+                let hitUs = (CFAbsoluteTimeGetCurrent() - t1) * 10000
+
+                print("[BENCH] size=\(size) miss=\(String(format: "%.1f", missUs))µs hit=\(String(format: "%.1f", hitUs))µs")
+            }
+        }
+    }
 }

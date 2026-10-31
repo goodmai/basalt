@@ -235,9 +235,9 @@ struct MCPServerTests {
         // Create dummy safetensors file with 8-byte header len
         let headerJSON = "{\"weight\": {\"dtype\": \"F16\", \"shape\": [2, 2], \"data_offsets\": [0, 8]}}"
         let headerData = headerJSON.data(using: .utf8)!
-        var dummyData = Data()
-        var headerLen = UInt64(headerData.count).littleEndian
-        withUnsafeBytes(of: &headerLen) { dummyData.append(contentsOf: $0) }
+        let headerLen = UInt64(headerData.count).littleEndian
+        let lenBytes: [UInt8] = (0..<8).map { UInt8((headerLen >> ($0 * 8)) & 0xff) }
+        var dummyData = Data(lenBytes)
         dummyData.append(headerData)
         dummyData.append(Data(repeating: 0, count: 8))
         try dummyData.write(to: tempDir.appendingPathComponent("model.safetensors"))

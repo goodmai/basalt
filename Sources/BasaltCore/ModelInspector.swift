@@ -278,7 +278,8 @@ public actor ModelInspector {
         guard let lenData = try? handle.read(upToCount: 8), lenData.count == 8 else {
             return .failure(.init(message: "Invalid or corrupted safetensors header"))
         }
-        let headerLen = lenData.withUnsafeBytes { $0.loadUnaligned(as: UInt64.self).littleEndian }
+        let raw = RawSpan(elements: Array(lenData).span)
+        let headerLen = raw.load(fromByteOffset: 0, as: UInt64.self).littleEndian
         // The format caps the JSON header at 100 MB; a corrupt length must not make us read
         // a multi-GB shard into memory.
         guard headerLen > 0, headerLen <= 100_000_000, headerLen <= UInt64(fileSize - 8),
