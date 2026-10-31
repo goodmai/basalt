@@ -526,33 +526,62 @@ struct ServeCommand: AsyncParsableCommand {
             log("Cloud fallback → \(bold(fallback.model)) at \(fallback.baseURL.absoluteString)")
         }
 
-        // Default: REST only. MCP stdio can be added with --mcp.
-        // When --mcp is set without --rest, MCP still starts alongside REST.
-        let startREST = !mcp || rest || (!mcp && !rest)
+        let startREST = !mcp || rest
         let startMCP  = mcp
 
         if startREST { log("REST → http://\(config.host):\(config.restPort)") }
         if startMCP  { log("MCP → JSON-RPC 2.0 on stdin/stdout") }
 
+        let mcpServer = startMCP ? MCPServer(
+            orchestrator: orchestrator,
+            modelId: resolvedPath.split(separator: "/").last.map(String.init),
+            library: HarnessExperienceLibrary(rootDirectory: HarnessExperienceLibrary.defaultRoot)
+        ) : nil
+
+        try await Self.runServers(
+            orchestrator: orchestrator,
+            config: config,
+            startREST: startREST,
+            mcpServer: mcpServer,
+            statsInterval: stats ? min(max(1, statsInterval), 86_400) : nil
+        )
+    }
+
+    package static func runServers(
+        orchestrator: ModelOrchestratorActor,
+        config: ServerConfig,
+        startREST: Bool,
+        mcpServer: MCPServer?,
+        statsInterval: Int? = nil,
+        shutdownDeadline: Duration = .seconds(5),
+        handleSignals: Bool = true
+    ) async throws {
+        defer {
+            await withTaskCancellationShield {
+                await orchestrator.shutdown(deadline: shutdownDeadline)
+            }
+        }
         try await withThrowingTaskGroup(of: Void.self) { group in
             if startREST {
-                let restServer = RESTServer(orchestrator: orchestrator, config: config)
+                let restServer = RESTServer(
+                    orchestrator: orchestrator,
+                    config: config,
+                    shutdownDeadline: shutdownDeadline,
+                    handleSignals: handleSignals
+                )
                 group.addTask { try await restServer.run() }
             }
-            if startMCP {
-                let mcpServer = MCPServer(
-                    orchestrator: orchestrator,
-                    modelId: resolvedPath.split(separator: "/").last.map(String.init),
-                    library: HarnessExperienceLibrary(rootDirectory: HarnessExperienceLibrary.defaultRoot)
-                )
-                group.addTask { await mcpServer.run() }
+            if let mcpServer {
+                if startREST {
+                    group.addTask { await mcpServer.run() }
+                } else {
+                    group.addTask {
+                        try await mcpServer.runServiceGroup(shutdownDeadline: shutdownDeadline, handleSignals: handleSignals)
+                    }
+                }
             }
-            if stats {
-                // Clamped to a day: Task.sleep would trap on an interval too large for UInt64 ns.
-                let interval = min(max(1, statsInterval), 86_400)
+            if let interval = statsInterval {
                 group.addTask {
-                    // Exit quietly on shutdown: a CancellationError from sleep must not surface
-                    // as the serve command's error once the group is cancelled.
                     while (try? await Task.sleep(for: .seconds(interval))) != nil {
                         let snapshot = await orchestrator.telemetrySnapshot()
                         fputs("\(snapshot.formattedStatsLine)\n", stderr)
@@ -564,9 +593,6 @@ struct ServeCommand: AsyncParsableCommand {
         }
     }
 
-    // MARK: — Network resolution
-
-    /// ~/.gem/config.json is what `onboard` writes; serve reads it without --config so those values apply.
     static func defaultConfigFileIfPresent() -> String? {
         let url = ServerConfig.defaultConfigFileURL
         return FileManager.default.fileExists(atPath: url.path) ? url.path : nil

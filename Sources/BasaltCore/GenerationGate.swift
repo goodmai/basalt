@@ -20,6 +20,7 @@ public actor GenerationGate {
     private var exclusiveQueue: [CheckedContinuation<Void, Never>] = []
     private var closed = false
     private var nextId = 0
+    private(set) var drainPolls = 0
 
     public init(maxConcurrent: Int = 1, maxQueue: Int = 8) {
         self.maxConcurrent = max(1, maxConcurrent)
@@ -97,8 +98,11 @@ public actor GenerationGate {
         for waiter in waiting { waiter.continuation.resume(throwing: BasaltError.serverBusy(retryAfterSeconds: nil)) }
         let clock = ContinuousClock()
         let end = clock.now + deadline
-        while !running.isEmpty, clock.now < end {
-            try? await Task.sleep(for: .milliseconds(20))
+        await withTaskCancellationShield {
+            while !running.isEmpty, clock.now < end {
+                drainPolls += 1
+                try? await Task.sleep(for: .milliseconds(20))
+            }
         }
         for cancel in running.values { cancel() }
     }

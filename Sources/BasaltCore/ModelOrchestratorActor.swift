@@ -31,6 +31,7 @@ public actor ModelOrchestratorActor {
     public let gate: GenerationGate
     public let sessionLog: SessionLogWriter?
     private var pendingSwitch: (modelId: String, task: Task<Void, Error>)?
+    private var shutdownTask: Task<Void, Never>?
     private var cloudFallback: (any CloudFallback)?
     private var arbiter = HybridArbiter()
     private var freeMemory: @Sendable () -> Int64 = { SystemProfiler.availableSystemMemory() }
@@ -182,12 +183,22 @@ public actor ModelOrchestratorActor {
     }
 
     public func shutdown(deadline: Duration = .seconds(5)) async {
-        await gate.shutdown(deadline: deadline)
-        await engine.persistPromptCache(within: deadline)
-        await sessionLog?.close()
+        let task: Task<Void, Never>
+        if let existing = shutdownTask {
+            task = existing
+        } else {
+            task = Task {
+                await withTaskCancellationShield {
+                    await self.gate.shutdown(deadline: deadline)
+                    await self.engine.persistPromptCache(within: deadline)
+                    await self.sessionLog?.close()
+                }
+            }
+            shutdownTask = task
+        }
+        await withTaskCancellationShield { await task.value }
     }
 
-    /// Info string for logging / health checks.
     public var modelInfo: String {
         currentModelId.isEmpty
             ? URL(fileURLWithPath: currentModelPath).lastPathComponent
@@ -246,6 +257,11 @@ public actor ModelOrchestratorActor {
         let validated = try await capped(request)
         let queued = ContinuousClock.now
         let ticket = try await admitted(request.priority)
+        defer {
+            await withTaskCancellationShield {
+                await gate.release(ticket)
+            }
+        }
         let queueWait = ContinuousClock.now - queued
         let seconds = timeout(for: validated)
         let work = Task { try await self.withTimeout(seconds: seconds) { try await self.engine.generate(request: validated) } }
@@ -254,24 +270,17 @@ public actor ModelOrchestratorActor {
         await self.telemetry.requestStarted()
         do {
             let response = try await withTaskCancellationHandler { try await work.value } onCancel: { work.cancel() }
-            await gate.release(ticket)
             await self.telemetry.requestFinished(with: response)
             return (response, queueWait)
         } catch let error as BasaltError {
-            await gate.release(ticket)
             await self.telemetry.requestFinished()
             throw error
         } catch {
-            await gate.release(ticket)
             await self.telemetry.requestFinished()
             throw BasaltError.inferenceError("Generation error: \(error)")
         }
     }
 
-    // MARK: — Generate (streaming)
-
-    /// Returns a filtered AsyncStream. Strips `<think>…</think>` blocks.
-    /// If `modelId` differs from the currently loaded model, switches first.
     public func generateStream(
         request: GenerationRequest,
         modelId: String? = nil

@@ -4,27 +4,29 @@ import ServiceLifecycle
 import Logging
 import BasaltCore
 
-// MARK: — Hummingbird 2.x REST Server (plain HTTP/1.1 + SSE)
-
-/// Configures and runs the HTTP server on the configured port.
-/// Blocks until shutdown (Ctrl-C / SIGTERM).
 package struct RESTServer: Sendable {
 
     let orchestrator: ModelOrchestratorActor
     let config: ServerConfig
 
     let shutdownDeadline: Duration
+    let handleSignals: Bool
 
-    package init(orchestrator: ModelOrchestratorActor, config: ServerConfig, shutdownDeadline: Duration = .seconds(5)) {
+    package init(
+        orchestrator: ModelOrchestratorActor,
+        config: ServerConfig,
+        shutdownDeadline: Duration = .seconds(5),
+        handleSignals: Bool = true
+    ) {
         self.orchestrator = orchestrator
         self.config = config
         self.shutdownDeadline = shutdownDeadline
+        self.handleSignals = handleSignals
     }
 
     package func run() async throws {
         let router = makeRouter()
 
-        // Suppress Hummingbird's own verbose logging; our GemLogger handles app-level logs.
         var logger = Logger(label: "Gem")
         logger.logLevel = .warning
 
@@ -54,7 +56,7 @@ package struct RESTServer: Sendable {
                 .init(service: app),
                 .init(service: drain, successTerminationBehavior: .gracefullyShutdownGroup),
             ],
-            gracefulShutdownSignals: [.sigterm, .sigint],
+            gracefulShutdownSignals: handleSignals ? [.sigterm, .sigint] : [],
             logger: logger
         ))
         try await group.run()
