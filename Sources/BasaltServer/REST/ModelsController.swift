@@ -242,10 +242,6 @@ struct ModelsController: Sendable {
     }
 
     private func makeErrorResponse(status: HTTPResponse.Status, message: String) -> Response {
-        makeJSONResponse(["error": ["message": message, "type": "invalid_request_error"]], status: status)
+        ProviderErrorResponse.response(status: status, message: message, shape: .openAI)
     }
-}
-
-private extension HTTPResponse.Status {
-    init(code: Int) { self = HTTPResponse.Status(code: code, reasonPhrase: "") }
 }

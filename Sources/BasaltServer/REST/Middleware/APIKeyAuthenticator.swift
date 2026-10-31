@@ -74,14 +74,10 @@ public struct APIKeyAuthenticator<Context: RequestContext>: RouterMiddleware {
             }
         }
 
-        // Unauthorized
-        let json = "{\"error\": \"Unauthorized: missing or invalid API key.\", \"code\": 401}"
-        var buffer = ByteBuffer()
-        buffer.writeString(json)
-        return Response(
+        return ProviderErrorResponse.response(
             status: .unauthorized,
-            headers: [.contentType: "application/json", .wwwAuthenticate: "Bearer"],
-            body: ResponseBody(byteBuffer: buffer)
+            message: "Unauthorized: missing or invalid API key.",
+            path: request.uri.path
         )
     }
 }
