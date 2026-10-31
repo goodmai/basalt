@@ -30,28 +30,100 @@ struct TokenBucket: Sendable {
     }
 }
 
+final class RateLimiterState: Sendable {
+    struct Entry: Sendable {
+        var bucket: TokenBucket
+        var lastAccess: Double
+    }
+    let mutex: Mutex<[String: Entry]>
+    let capacity: Double
+    let refillPerSecond: Double
+    let maxEntries: Int
+
+    init(capacity: Double, refillPerSecond: Double, maxEntries: Int = 4096) {
+        self.capacity = capacity
+        self.refillPerSecond = refillPerSecond
+        self.maxEntries = maxEntries
+        self.mutex = Mutex([:])
+    }
+
+    func take(clientKey: String, now: Double) -> Double? {
+        mutex.withLock { entries in
+            if entries[clientKey] == nil && entries.count >= maxEntries {
+                entries = entries.filter { _, entry in
+                    now - entry.lastAccess < 60.0
+                }
+                if entries.count >= maxEntries {
+                    let sortedKeys = entries.sorted { $0.value.lastAccess < $1.value.lastAccess }
+                    let dropCount = max(1, entries.count - (maxEntries * 3 / 4))
+                    for i in 0..<dropCount {
+                        entries.removeValue(forKey: sortedKeys[i].key)
+                    }
+                }
+            }
+
+            var entry = entries[clientKey] ?? Entry(
+                bucket: TokenBucket(capacity: capacity, refillPerSecond: refillPerSecond, now: now),
+                lastAccess: now
+            )
+            entry.lastAccess = now
+            let wait = entry.bucket.take(now: now)
+            entries[clientKey] = entry
+            return wait
+        }
+    }
+
+    var clientCount: Int {
+        mutex.withLock { $0.count }
+    }
+}
+
 /// Rejects requests with 429 once the server-wide budget of `requestsPerMinute` is spent.
 /// Mounted after the authenticator, so unauthenticated traffic is refused with 401 before
 /// it can drain the budget of the key holder.
-// The burst equals the per-minute budget: it caps sustained load on the single GPU (excess
-// requests queue on the model actor), it does not smooth bursts.
-// ponytail: one bucket for the whole server, no fairness between clients; per-key or
-// per-address buckets if several clients ever share one server.
 public struct RateLimitMiddleware<Context: RequestContext>: RouterMiddleware {
-    // Mutex is ~Copyable; a class reference keeps the middleware copyable and the bucket shared.
-    private final class SharedBucket: Sendable {
-        let mutex: Mutex<TokenBucket>
-        init(_ bucket: TokenBucket) { mutex = Mutex(bucket) }
-    }
-    private let bucket: SharedBucket
+    private let limiter: RateLimiterState
     private let clock: @Sendable () -> Double
 
-    public init(requestsPerMinute: Int, clock: @escaping @Sendable () -> Double = {
-        ProcessInfo.processInfo.systemUptime
-    }) {
+    public init(
+        requestsPerMinute: Int,
+        burst: Int? = nil,
+        maxClients: Int = 4096,
+        clock: @escaping @Sendable () -> Double = {
+            ProcessInfo.processInfo.systemUptime
+        }
+    ) {
         let perMinute = Double(max(1, requestsPerMinute))
+        let burstCapacity = Double(max(1, burst ?? max(1, min(requestsPerMinute, 10))))
         self.clock = clock
-        self.bucket = SharedBucket(TokenBucket(capacity: perMinute, refillPerSecond: perMinute / 60, now: clock()))
+        self.limiter = RateLimiterState(
+            capacity: burstCapacity,
+            refillPerSecond: perMinute / 60,
+            maxEntries: maxClients
+        )
+    }
+
+    package var clientCount: Int {
+        limiter.clientCount
+    }
+
+    private func clientKey(from request: Request) -> String {
+        if let budgetKey = request.headers[APIKeyAuthenticator<Context>.budgetKeyHeader] {
+            return budgetKey
+        }
+        if let authHeader = request.headers[.authorization] {
+            let parts = authHeader.split(separator: " ", maxSplits: 1)
+            if parts.count == 2 && parts[0].lowercased() == "bearer" {
+                return String(parts[1])
+            }
+        }
+        if let customKey = request.headers[values: HTTPField.Name("x-api-key")!].first {
+            return customKey
+        }
+        if let forwarded = request.headers[values: HTTPField.Name("x-forwarded-for")!].first {
+            return forwarded.split(separator: ",").first?.trimmingCharacters(in: .whitespaces) ?? forwarded
+        }
+        return "127.0.0.1"
     }
 
     public func handle(
@@ -63,14 +135,15 @@ public struct RateLimitMiddleware<Context: RequestContext>: RouterMiddleware {
             return try await next(request, context)
         }
         let now = clock()
-        guard let wait = bucket.mutex.withLock({ $0.take(now: now) }) else {
+        let key = clientKey(from: request)
+        guard let wait = limiter.take(clientKey: key, now: now) else {
             return try await next(request, context)
         }
         return ProviderErrorResponse.response(
             status: .tooManyRequests,
             message: "Rate limit exceeded.",
             path: request.uri.path,
-            retryAfter: String(Int(wait.rounded(.up)))
+            retryAfter: String(max(1, Int(wait.rounded(.up))))
         )
     }
 }

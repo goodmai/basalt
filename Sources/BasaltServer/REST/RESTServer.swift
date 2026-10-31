@@ -44,7 +44,8 @@ package struct RESTServer: Sendable {
             log("API key protection: DISABLED (loopback open access)")
         }
         if let limit = config.rateLimitPerMinute {
-            log("Rate limit: \(limit) requests/minute (429 beyond it)")
+            let burstStr = config.rateBurst.map { ", burst \($0)" } ?? ""
+            log("Rate limit: \(limit) requests/minute\(burstStr) (429 beyond it)")
         } else {
             log("Rate limit: DISABLED")
         }
@@ -92,7 +93,7 @@ package struct RESTServer: Sendable {
         }
         // After the authenticator: a request without the key never spends the budget.
         if let limit = config.rateLimitPerMinute {
-            router.add(middleware: RateLimitMiddleware(requestsPerMinute: limit))
+            router.add(middleware: RateLimitMiddleware(requestsPerMinute: limit, burst: config.rateBurst))
         }
         router.add(middleware: JSONNestingLimitMiddleware())
         router.add(middleware: RetryAfterMiddleware())

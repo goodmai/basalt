@@ -42,6 +42,7 @@ public struct ServerConfig: Sendable {
     public let apiKey:      String?
     /// Server-wide request budget; nil means no rate limit.
     public let rateLimitPerMinute: Int?
+    public let rateBurst: Int?
     public let allowedOrigins: [String]
     public let virtualKeys: [VirtualKey]
 
@@ -54,7 +55,7 @@ public struct ServerConfig: Sendable {
 
     /// System configuration keys managed by CLI/server options.
     public static let systemKeys: Set<String> = [
-        "exe", "args", "port", "host", "api_key", "model", "model_path", "max_tokens", "log_level"
+        "exe", "args", "port", "host", "api_key", "model", "model_path", "max_tokens", "log_level", "rate_limit", "rate_burst"
     ]
 
     /// Default path for the persistent JSON server configuration.
@@ -96,6 +97,7 @@ public struct ServerConfig: Sendable {
         apiKey:    String?   = nil,
         autoGenerateKeyIfMissing: Bool = false,
         rateLimitPerMinute: Int? = nil,
+        rateBurst: Int? = nil,
         allowedOrigins: [String] = [],
         virtualKeys: [VirtualKey] = []
     ) throws {
@@ -112,12 +114,21 @@ public struct ServerConfig: Sendable {
             host: host, apiKey: apiKey, autoGenerateKeyIfMissing: autoGenerateKeyIfMissing
         ).key
         self.rateLimitPerMinute = Self.resolveRateLimit(host: host, requested: rateLimitPerMinute)
+        self.rateBurst = Self.resolveRateBurst(rateLimit: self.rateLimitPerMinute, requestedBurst: rateBurst)
     }
 
     /// Off loopback a rate limit is on by default; an explicit 0 turns it off anywhere.
     public static func resolveRateLimit(host: String, requested: Int?) -> Int? {
         let limit = requested ?? (isLoopback(host: host) ? nil : defaultRateLimitPerMinute)
         return limit.flatMap { $0 > 0 ? $0 : nil }
+    }
+
+    public static func resolveRateBurst(rateLimit: Int?, requestedBurst: Int?) -> Int? {
+        guard let limit = rateLimit, limit > 0 else { return nil }
+        if let requested = requestedBurst {
+            return requested > 0 ? requested : nil
+        }
+        return max(1, min(limit, 10))
     }
 
     /// The one place the exposure rule lives: a non-loopback bind needs a non-empty key,

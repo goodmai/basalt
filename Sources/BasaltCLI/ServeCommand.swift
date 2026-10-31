@@ -124,6 +124,12 @@ struct ServeCommand: AsyncParsableCommand {
     var rateLimit: Int?
 
     @Option(
+        name: .customLong("rate-burst"),
+        help: "Maximum burst of requests allowed before 429 (default: min(rate-limit, 10); 0 disables burst capping)"
+    )
+    var rateBurst: Int?
+
+    @Option(
         name: .customLong("allow-origin"),
         help: "Browser origin allowed to call the API besides loopback ones, e.g. https://app.example:3000 (repeatable; also allowed_origins in ~/.gem/config.json)"
     )
@@ -377,6 +383,9 @@ struct ServeCommand: AsyncParsableCommand {
         if let rateLimit, rateLimit < 0 {
             throw ValidationError("--rate-limit must be 0 (off) or a positive number of requests per minute, got \(rateLimit)")
         }
+        if let rateBurst, rateBurst < 0 {
+            throw ValidationError("--rate-burst must be 0 (off) or a positive number, got \(rateBurst)")
+        }
         guard (0...1).contains(cacheBlendRatio) else {
             throw ValidationError("--cache-blend-ratio must be between 0 and 1, got \(cacheBlendRatio)")
         }
@@ -425,6 +434,7 @@ struct ServeCommand: AsyncParsableCommand {
             cliPort: port, cliHost: host,
             cliApiKey: apiKey ?? ProcessInfo.processInfo.environment["BASALT_API_KEY"],
             cliRateLimit: rateLimit,
+            cliRateBurst: rateBurst,
             cliAllowedOrigins: allowOrigins,
             configFile: configFile ?? Self.defaultConfigFileIfPresent()
         )
@@ -455,6 +465,7 @@ struct ServeCommand: AsyncParsableCommand {
             logLevel:  logLevel,
             apiKey:    access.key,
             rateLimitPerMinute: network.rateLimit,
+            rateBurst: network.rateBurst,
             allowedOrigins: network.allowedOrigins,
             virtualKeys: network.virtualKeys
         )
@@ -606,9 +617,10 @@ struct ServeCommand: AsyncParsableCommand {
         cliHost: String?,
         cliApiKey: String?,
         cliRateLimit: Int? = nil,
+        cliRateBurst: Int? = nil,
         cliAllowedOrigins: [String] = [],
         configFile: String?
-    ) throws -> (port: Int, host: String, apiKey: String?, rateLimit: Int?, allowedOrigins: [String], virtualKeys: [VirtualKey]) {
+    ) throws -> (port: Int, host: String, apiKey: String?, rateLimit: Int?, rateBurst: Int?, allowedOrigins: [String], virtualKeys: [VirtualKey]) {
         var dict: [String: Any] = [:]
         if let configFile {
             let url = URL(fileURLWithPath: (configFile as NSString).expandingTildeInPath)
@@ -634,6 +646,10 @@ struct ServeCommand: AsyncParsableCommand {
             // Same rule as the flag: a negative value is an error, never a silent "off".
             throw ValidationError("rate_limit must be 0 (off) or a positive number of requests per minute, got \(rateLimit)")
         }
+        let rateBurst = try cliRateBurst ?? value("rate_burst", as: Int.self)
+        if let rateBurst, rateBurst < 0 {
+            throw ValidationError("rate_burst must be 0 (off) or a positive number, got \(rateBurst)")
+        }
         let allowedOrigins = try cliAllowedOrigins + (value("allowed_origins", as: [String].self) ?? [])
         for origin in allowedOrigins where RequestGuardMiddleware.parseOrigin(origin) == nil {
             throw ValidationError("allowed origin must be scheme://host[:port]: http or https, no path, no trailing slash, no wildcard; got \(origin)")
@@ -656,6 +672,7 @@ struct ServeCommand: AsyncParsableCommand {
             host: try cliHost ?? value("host", as: String.self) ?? "127.0.0.1",
             apiKey: try cliKey ?? value("api_key", as: String.self),
             rateLimit: rateLimit,
+            rateBurst: rateBurst,
             allowedOrigins: allowedOrigins,
             virtualKeys: virtualKeys
         )
