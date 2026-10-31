@@ -17,16 +17,14 @@ public struct JSONNestingLimitMiddleware<Context: RequestContext>: RouterMiddlew
         var request = request
         let body = try await request.collectBody(upTo: Self.bodyLimit)
         let bytes = Data(body.readableBytesView)
-        guard !bytes.contains(0) else { return Self.badRequest("the request body is not UTF-8 JSON") }
+        guard !bytes.contains(0) else { return Self.badRequest("the request body is not UTF-8 JSON", path: request.uri.path) }
         guard JSONNesting.depth(of: bytes) <= Self.depthLimit else {
-            return Self.badRequest("the request body nests deeper than \(Self.depthLimit) JSON levels")
+            return Self.badRequest("the request body nests deeper than \(Self.depthLimit) JSON levels", path: request.uri.path)
         }
         return try await next(request, context)
     }
 
-    static func badRequest(_ message: String) -> Response {
-        var buffer = ByteBuffer()
-        buffer.writeString("{\"error\": {\"message\": \"\(message)\", \"code\": 400}}")
-        return Response(status: .badRequest, headers: [.contentType: "application/json"], body: ResponseBody(byteBuffer: buffer))
+    static func badRequest(_ message: String, path: String = "/v1/chat/completions") -> Response {
+        ProviderErrorResponse.response(status: .badRequest, message: message, path: path)
     }
 }

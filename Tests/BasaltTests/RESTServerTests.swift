@@ -20,14 +20,14 @@ struct RESTServerTests {
         let orchestrator: ModelOrchestratorActor
     }
 
-    private func setup(load: Bool = true, reasoning: String? = nil, failGenerate: Bool = false) async throws -> Setup {
+    private func setup(load: Bool = true, reasoning: String? = nil, failGenerate: Bool = false, apiKey: String? = nil) async throws -> Setup {
         let engine = MockInferenceEngine()
         await engine.setMockReasoning(reasoning)
         await engine.setShouldFailOnGenerate(failGenerate)
         // A budget above any request here, so the RAM-dependent cap never rewrites max_tokens.
         let orch = ModelOrchestratorActor(engine: engine, maxTokens: 65536, telemetry: TelemetryTracker())
         if load { try await orch.loadModel(path: "mock") }
-        let server = RESTServer(orchestrator: orch, config: try ServerConfig(modelPath: "org/mock-model"))
+        let server = RESTServer(orchestrator: orch, config: try ServerConfig(modelPath: "org/mock-model", apiKey: apiKey))
         return Setup(app: Application(router: server.makeRouter()), engine: engine, orchestrator: orch)
     }
 
@@ -333,8 +333,9 @@ struct RESTServerTests {
             try await client.execute(uri: "/v1/messages", method: .post, headers: [.contentType: "application/json"],
                                      body: ByteBuffer(string: #"{"messages": [{"role": "user", "content": "hi"}]}"#)) { res in
                 #expect(res.status.code == BasaltError.inferenceHardwareFailure(reason: "").httpStatus)
+                #expect(res.headers[.retryAfter] == "1")
                 let body = try json(res.body)
-                #expect((body["error"] as? [String: Any])?["type"] as? String == "api_error")
+                #expect((body["error"] as? [String: Any])?["type"] as? String == "overloaded_error")
             }
         }
     }
@@ -607,5 +608,115 @@ struct RESTServerTests {
             }
         }
         #expect(await s.orchestrator.currentModelId == "org/mock-model")
+    }
+
+    @Test("Router delivers provider-shaped envelopes for each BasaltError on /v1/messages (#76)")
+    func routerAnthropicErrorEnvelopes() async throws {
+        let s = try await setup(failGenerate: true)
+        let errors: [(BasaltError, Int, String, String?)] = [
+            (.modelNotFound(identifier: "m"), 404, "not_found_error", nil),
+            (.modelNotCached(identifier: "m"), 404, "not_found_error", nil),
+            (.authenticationFailed(details: "d"), 401, "authentication_error", nil),
+            (.invalidRequestStructure(details: "d"), 400, "invalid_request_error", nil),
+            (.modelConfigurationInvalid(path: "p", reason: "r"), 422, "invalid_request_error", nil),
+            (.contextLengthExceeded(maxTokens: 10, requested: 20), 413, "invalid_request_error", nil),
+            (.rateLimitExceeded(retryAfter: "9"), 429, "rate_limit_error", "9"),
+            (.modelSwitching(from: "a", to: "b"), 503, "overloaded_error", "1"),
+            (.serverBusy(retryAfterSeconds: 3), 503, "overloaded_error", "3"),
+            (.inferenceHardwareFailure(reason: "r"), 503, "overloaded_error", "1"),
+            (.outOfMemory(requestedMB: 100, availableMB: 10), 507, "overloaded_error", "1"),
+            (.weightsCorrupted(path: "p", reason: "r"), 500, "api_error", nil),
+            (.modelInferenceError(details: "d"), 502, "api_error", nil),
+            (.inferenceError("msg"), 500, "api_error", nil)
+        ]
+
+        let body = ByteBuffer(string: #"{"max_tokens": 10, "messages": [{"role": "user", "content": "hi"}]}"#)
+
+        try await s.app.test(.router) { client in
+            for (err, expectedStatus, expectedType, expectedRetryAfter) in errors {
+                await s.engine.setGenerateError(err)
+                try await client.execute(uri: "/v1/messages", method: .post, headers: Self.jsonHeaders, body: body) { res in
+                    #expect(res.status.code == expectedStatus, "BasaltError \(err) -> \(res.status.code)")
+                    if let expectedRetryAfter {
+                        #expect(res.headers[.retryAfter] == expectedRetryAfter)
+                    } else {
+                        #expect(res.headers[.retryAfter] == nil)
+                    }
+                    let obj = try json(res.body)
+                    #expect(obj["type"] as? String == "error")
+                    let errObj = try #require(obj["error"] as? [String: Any])
+                    #expect(errObj["type"] as? String == expectedType)
+                    #expect(errObj["message"] != nil)
+                }
+            }
+        }
+    }
+
+    @Test("Router auth failures return provider-specific error shapes and 401 with WWW-Authenticate (#76)")
+    func routerAuthErrorEnvelopes() async throws {
+        let s = try await setup(apiKey: "secret-token")
+
+        try await s.app.test(.router) { client in
+            try await client.execute(uri: "/v1/messages", method: .post, headers: Self.jsonHeaders, body: ByteBuffer(string: #"{"messages": [{"role": "user", "content": "hi"}]}"#)) { res in
+                #expect(res.status == .unauthorized)
+                #expect(res.headers[.wwwAuthenticate] == "Bearer")
+                let obj = try json(res.body)
+                #expect(obj["type"] as? String == "error")
+                let errObj = try #require(obj["error"] as? [String: Any])
+                #expect(errObj["type"] as? String == "authentication_error")
+            }
+
+            try await client.execute(uri: "/v1/chat/completions", method: .post, headers: Self.jsonHeaders, body: ByteBuffer(string: #"{"messages": [{"role": "user", "content": "hi"}]}"#)) { res in
+                #expect(res.status == .unauthorized)
+                #expect(res.headers[.wwwAuthenticate] == "Bearer")
+                let obj = try json(res.body)
+                #expect(obj["type"] as? String == "error")
+                let errObj = try #require(obj["error"] as? [String: Any])
+                #expect(errObj["type"] as? String == "authentication_error")
+            }
+
+            try await client.execute(uri: "/api/v1/generate", method: .post, headers: Self.jsonHeaders, body: ByteBuffer(string: #"{"prompt": "hi"}"#)) { res in
+                #expect(res.status == .unauthorized)
+                #expect(res.headers[.wwwAuthenticate] == "Bearer")
+                let obj = try json(res.body)
+                #expect(obj["code"] as? Int == 401)
+                #expect(obj["error"] != nil)
+            }
+        }
+    }
+
+    @Test("Router streaming pre-first-token uncached model failures return 404 without SSE (#76)")
+    func routerStreamingPreTokenUncachedModel() async throws {
+        let s = try await setup(failGenerate: true)
+        await s.engine.setGenerateError(.modelNotCached(identifier: "org/missing-model"))
+
+        let endpoints: [(String, String, ProviderErrorShape)] = [
+            ("/v1/messages", #"{"max_tokens": 10, "stream": true, "messages": [{"role": "user", "content": "hi"}]}"#, .anthropic),
+            ("/v1/chat/completions", #"{"stream": true, "messages": [{"role": "user", "content": "hi"}]}"#, .openAI),
+            ("/v1/responses", #"{"stream": true, "input": "hi"}"#, .openAI),
+        ]
+
+        try await s.app.test(.router) { client in
+            for (uri, payload, shape) in endpoints {
+                try await client.execute(uri: uri, method: .post, headers: Self.jsonHeaders, body: ByteBuffer(string: payload)) { res in
+                    #expect(res.status == .notFound, "endpoint \(uri) should return 404")
+                    #expect(res.headers[.contentType] != "text/event-stream", "endpoint \(uri) must not send SSE content type")
+                    let obj = try json(res.body)
+                    switch shape {
+                    case .anthropic:
+                        #expect(obj["type"] as? String == "error")
+                        let errObj = try #require(obj["error"] as? [String: Any])
+                        #expect(errObj["type"] as? String == "not_found_error")
+                    case .openAI:
+                        #expect(obj["type"] as? String == "error")
+                        let errObj = try #require(obj["error"] as? [String: Any])
+                        #expect(errObj["type"] as? String == "invalid_request_error")
+                    case .native:
+                        #expect(obj["code"] as? Int == 404)
+                        #expect(obj["error"] != nil)
+                    }
+                }
+            }
+        }
     }
 }

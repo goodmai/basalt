@@ -226,8 +226,7 @@ struct AnthropicController: Sendable {
     @Sendable
     func messages(request: Request, context: BasicRequestContext) async throws -> Response {
         let pipeline = ChatPipeline(orchestrator: orchestrator, label: "Anthropic", source: "anthropic", endpoint: "/v1/messages") { status, message in
-            Self.errorResponse(status: status, message: message,
-                               type: status == .serviceUnavailable ? "overloaded_error" : "invalid_request_error")
+            ProviderErrorResponse.response(status: status, message: message, shape: .anthropic)
         }
         return try await pipeline.handle(request) { data in
             let dto = try pipeline.decode(MessagesRequest.self, from: data, failure: "Decode error")
@@ -251,7 +250,12 @@ struct AnthropicController: Sendable {
             let requestedModel = prepared.requestedModel
 
             if dto.stream == true {
-                return streamMessagesResponse(genRequest: genRequest, model: dto.model ?? modelId, requestedModel: requestedModel)
+                do {
+                    let stream = try await orchestrator.generateStream(request: genRequest, modelId: requestedModel)
+                    return streamMessagesResponse(stream: stream, model: dto.model ?? modelId)
+                } catch {
+                    return ProviderErrorResponse.response(for: error, path: "/v1/messages")
+                }
             }
 
             do {
@@ -267,29 +271,25 @@ struct AnthropicController: Sendable {
                     usage: .init(result)
                 )
                 return try jsonResponse(status: .ok, body: response)
-            } catch let err as BasaltError {
-                return errorResponse(
-                    status: HTTPResponse.Status(code: err.httpStatus),
-                    message: ModelsController.publicMessage(for: err),
-                    type: "api_error"
-                )
+            } catch {
+                return ProviderErrorResponse.response(for: error, path: "/v1/messages")
             }
         }
     }
 
     // MARK: — Streaming (Anthropic SSE format)
 
-    private func streamMessagesResponse(genRequest: GenerationRequest, model: String, requestedModel: String? = nil) -> Response {
+    private func streamMessagesResponse(stream: AsyncStream<StreamChunk>, model: String) -> Response {
         let headers: HTTPFields = [
             .contentType: "text/event-stream",
             .cacheControl: "no-cache",
             .connection: "keep-alive"
         ]
-        let body = ResponseBody(asyncSequence: anthropicSSEStream(genRequest: genRequest, model: model, requestedModel: requestedModel))
+        let body = ResponseBody(asyncSequence: anthropicSSEStream(stream: stream, model: model))
         return Response(status: .ok, headers: headers, body: body)
     }
 
-    private func anthropicSSEStream(genRequest: GenerationRequest, model: String, requestedModel: String? = nil) -> AsyncStream<ByteBuffer> {
+    private func anthropicSSEStream(stream: AsyncStream<StreamChunk>, model: String) -> AsyncStream<ByteBuffer> {
         AsyncStream { continuation in
             let task = Task {
                 let msgId = "msg_\(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(24))"
@@ -368,41 +368,40 @@ struct AnthropicController: Sendable {
                 var outputTokens = 0
                 var final: GenerationResponse?
 
-                do {
-                    let stream = try await orchestrator.generateStream(request: genRequest, modelId: requestedModel)
-                    for await chunk in stream {
-                        switch chunk {
-                        case .toolCall(let call):
-                            outputTokens += 1
-                            emitToolUse(call)
-                        case .text(let text):
-                            outputTokens += 1
-                            if calledTools, openBlock == nil, text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { continue }
-                            open("text")
-                            send("content_block_delta", [
-                                "type": "content_block_delta",
-                                "index": openBlock!.index,
-                                "delta": ["type": "text_delta", "text": text]
-                            ])
-                        case .reasoning(let reasoning):
-                            outputTokens += 1
-                            guard openBlock?.type != "text", !calledTools else { continue }
-                            open("thinking")
-                            send("content_block_delta", [
-                                "type": "content_block_delta",
-                                "index": openBlock!.index,
-                                "delta": ["type": "thinking_delta", "thinking": reasoning]
-                            ])
-                        case .metadata(let meta):
-                            final = meta
-                        }
+                for await chunk in stream {
+                    switch chunk {
+                    case .toolCall(let call):
+                        outputTokens += 1
+                        emitToolUse(call)
+                    case .text(let text):
+                        outputTokens += 1
+                        if calledTools, openBlock == nil, text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { continue }
+                        open("text")
+                        send("content_block_delta", [
+                            "type": "content_block_delta",
+                            "index": openBlock!.index,
+                            "delta": ["type": "text_delta", "text": text]
+                        ])
+                    case .reasoning(let reasoning):
+                        outputTokens += 1
+                        guard openBlock?.type != "text", !calledTools else { continue }
+                        open("thinking")
+                        send("content_block_delta", [
+                            "type": "content_block_delta",
+                            "index": openBlock!.index,
+                            "delta": ["type": "thinking_delta", "thinking": reasoning]
+                        ])
+                    case .metadata(let meta):
+                        final = meta
                     }
-                } catch {
+                }
+
+                if final?.finishReason == .error {
                     let errPayload: [String: Any] = [
                         "type": "error",
                         "error": [
                             "type": "api_error",
-                            "message": ModelsController.publicMessage(for: error)
+                            "message": ModelsController.modelUnavailable
                         ]
                     ]
                     if let json = try? JSONSerialization.data(withJSONObject: errPayload),
@@ -530,20 +529,7 @@ struct AnthropicController: Sendable {
     }
 
     static func errorResponse(status: HTTPResponse.Status, message: String, type errorType: String) -> Response {
-        let body: [String: Any] = [
-            "type": "error",
-            "error": ["type": errorType, "message": message]
-        ]
-        let data = (try? JSONSerialization.data(withJSONObject: body)) ?? Data()
-        var buf = ByteBuffer()
-        buf.writeBytes(data)
-        return Response(status: status, headers: [.contentType: "application/json"], body: ResponseBody(byteBuffer: buf))
-    }
-}
-
-private extension HTTPResponse.Status {
-    init(code: Int) {
-        self = HTTPResponse.Status(code: code, reasonPhrase: "")
+        ProviderErrorResponse.response(status: status, message: message, shape: .anthropic)
     }
 }
 

@@ -66,12 +66,11 @@ public struct RateLimitMiddleware<Context: RequestContext>: RouterMiddleware {
         guard let wait = bucket.mutex.withLock({ $0.take(now: now) }) else {
             return try await next(request, context)
         }
-        var buffer = ByteBuffer()
-        buffer.writeString("{\"error\": \"Rate limit exceeded.\", \"code\": 429}")
-        return Response(
+        return ProviderErrorResponse.response(
             status: .tooManyRequests,
-            headers: [.contentType: "application/json", .retryAfter: String(Int(wait.rounded(.up)))],
-            body: ResponseBody(byteBuffer: buffer)
+            message: "Rate limit exceeded.",
+            path: request.uri.path,
+            retryAfter: String(Int(wait.rounded(.up)))
         )
     }
 }

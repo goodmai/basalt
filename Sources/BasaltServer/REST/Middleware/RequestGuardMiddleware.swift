@@ -73,23 +73,18 @@ public struct RequestGuardMiddleware: RouterMiddleware {
         next: (Request, Context) async throws -> Response
     ) async throws -> Response {
         guard allowsHost(request) else {
-            return Self.reject(.forbidden, "Forbidden: Host header is not allowed for this server.")
+            return Self.reject(.forbidden, "Forbidden: Host header is not allowed for this server.", path: request.uri.path)
         }
         guard allowsOrigin(request) else {
-            return Self.reject(.forbidden, "Forbidden: cross-origin requests are not allowed (see allowed_origins).")
+            return Self.reject(.forbidden, "Forbidden: cross-origin requests are not allowed (see allowed_origins).", path: request.uri.path)
         }
         if request.method == .post, !Self.isJSON(request) {
-            return Self.reject(.unsupportedMediaType, "Content-Type must be application/json.")
+            return Self.reject(.unsupportedMediaType, "Content-Type must be application/json.", path: request.uri.path)
         }
         return try await next(request, context)
     }
 
-    private static func reject(_ status: HTTPResponse.Status, _ message: String) -> Response {
-        let body = (try? JSONSerialization.data(withJSONObject: ["error": message, "code": status.code])) ?? Data()
-        return Response(
-            status: status,
-            headers: [.contentType: "application/json"],
-            body: ResponseBody(byteBuffer: ByteBuffer(bytes: body))
-        )
+    private static func reject(_ status: HTTPResponse.Status, _ message: String, path: String) -> Response {
+        ProviderErrorResponse.response(status: status, message: message, path: path)
     }
 }

@@ -409,8 +409,13 @@ struct OpenAIController: Sendable {
             let requestedModel = prepared.requestedModel
 
             if dto.stream == true {
-                return streamResponse(genRequest: genRequest, model: dto.model ?? modelId, requestedModel: requestedModel,
-                                      includeUsage: dto.streamOptions?.includeUsage == true)
+                do {
+                    let stream = try await orchestrator.generateStream(request: genRequest, modelId: requestedModel)
+                    return streamResponse(stream: stream, model: dto.model ?? modelId,
+                                          includeUsage: dto.streamOptions?.includeUsage == true)
+                } catch {
+                    return ProviderErrorResponse.response(for: error, path: "/v1/chat/completions")
+                }
             }
 
             do {
@@ -441,10 +446,7 @@ struct OpenAIController: Sendable {
                 let encoded = try JSONEncoder().encode(response)
                 return makeDataResponse(encoded)
             } catch {
-                fputs("🔴 [OpenAI] generate failed: \(error)\n", stderr)
-                let code = (error as? BasaltError)?.httpStatus ?? 500
-                return makeErrorResponse(status: HTTPResponse.Status(code: code),
-                                         message: ModelsController.publicMessage(for: error), code: code)
+                return ProviderErrorResponse.response(for: error, path: "/v1/chat/completions")
             }
         }
     }
@@ -480,7 +482,12 @@ struct OpenAIController: Sendable {
             let requestedModel = prepared.requestedModel
 
             if dto.stream == true {
-                return streamResponses(genRequest: genRequest, model: dto.model ?? modelId, requestedModel: requestedModel)
+                do {
+                    let stream = try await orchestrator.generateStream(request: genRequest, modelId: requestedModel)
+                    return streamResponses(stream: stream, model: dto.model ?? modelId)
+                } catch {
+                    return ProviderErrorResponse.response(for: error, path: "/v1/responses")
+                }
             }
 
             do {
@@ -517,9 +524,7 @@ struct OpenAIController: Sendable {
                 let encoded = try JSONEncoder().encode(response)
                 return makeDataResponse(encoded)
             } catch {
-                let code = (error as? BasaltError)?.httpStatus ?? 500
-                return makeErrorResponse(status: HTTPResponse.Status(code: code),
-                                         message: ModelsController.publicMessage(for: error), code: code)
+                return ProviderErrorResponse.response(for: error, path: "/v1/responses")
             }
         }
     }
@@ -530,22 +535,26 @@ struct OpenAIController: Sendable {
     func generateRaw(request: Request, context: BasicRequestContext) async throws -> Response {
         let buffer = try await request.body.collect(upTo: 4 * 1024 * 1024)
         let data = Data(buffer.readableBytesView)
+        let dto: GenerationRequest
         do {
-            let dto = PromptCacheKey.scoped(try JSONDecoder().decode(GenerationRequest.self, from: data)).routed(by: request.headers)
+            dto = PromptCacheKey.scoped(try JSONDecoder().decode(GenerationRequest.self, from: data)).routed(by: request.headers)
                 .withOrigin(RequestOrigin(source: "generate", endpoint: "/v1/generate", stream: false))
+        } catch {
+            return ProviderErrorResponse.response(status: .badRequest, message: ModelsController.publicMessage(for: error), error: error, shape: .openAI)
+        }
+        do {
             let result = try await orchestrator.generate(request: dto)
             let encoded = try JSONEncoder().encode(result)
             return makeDataResponse(encoded)
         } catch {
-            return makeErrorResponse(status: .badRequest,
-                                     message: ModelsController.publicMessage(for: error), code: 400)
+            return ProviderErrorResponse.response(for: error, path: "/v1/generate")
         }
     }
 
     // MARK: — Streaming
 
     private func streamResponse(
-        genRequest: GenerationRequest, model: String, requestedModel: String? = nil, includeUsage: Bool
+        stream: AsyncStream<StreamChunk>, model: String, includeUsage: Bool
     ) -> Response {
         Response(
             status: .ok,
@@ -555,12 +564,12 @@ struct OpenAIController: Sendable {
                 .connection: "keep-alive"
             ],
             body: ResponseBody(asyncSequence: sseStream(
-                genRequest: genRequest, model: model, requestedModel: requestedModel, includeUsage: includeUsage))
+                stream: stream, model: model, includeUsage: includeUsage))
         )
     }
 
     private func sseStream(
-        genRequest: GenerationRequest, model: String, requestedModel: String? = nil, includeUsage: Bool
+        stream: AsyncStream<StreamChunk>, model: String, includeUsage: Bool
     ) -> AsyncStream<ByteBuffer> {
         AsyncStream { continuation in
             let task = Task {
@@ -583,35 +592,27 @@ struct OpenAIController: Sendable {
                 }
                 var toolCallCount = 0
                 var final: GenerationResponse?
-                do {
-                    let stream = try await orchestrator.generateStream(request: genRequest, modelId: requestedModel)
-                    for await chunk in stream {
-                        switch chunk {
-                        case .toolCall(let call):
-                            send(delta: ["role": "assistant", "tool_calls": [[
-                                "index": toolCallCount, "id": call.id, "type": "function",
-                                "function": ["name": call.name, "arguments": call.arguments]
-                            ] as [String: Any]]])
-                            toolCallCount += 1
-                        case .text(let text):
-                            if toolCallCount > 0, text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { continue }
-                            send(delta: ["role": "assistant", "content": text])
-                        case .reasoning(let reasoning):
-                            send(delta: ["role": "assistant", "reasoning": reasoning, "reasoning_content": reasoning])
-                        case .metadata(let meta):
-                            final = meta
-                        }
+                for await chunk in stream {
+                    switch chunk {
+                    case .toolCall(let call):
+                        send(delta: ["role": "assistant", "tool_calls": [[
+                            "index": toolCallCount, "id": call.id, "type": "function",
+                            "function": ["name": call.name, "arguments": call.arguments]
+                        ] as [String: Any]]])
+                        toolCallCount += 1
+                    case .text(let text):
+                        if toolCallCount > 0, text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { continue }
+                        send(delta: ["role": "assistant", "content": text])
+                    case .reasoning(let reasoning):
+                        send(delta: ["role": "assistant", "reasoning": reasoning, "reasoning_content": reasoning])
+                    case .metadata(let meta):
+                        final = meta
                     }
-                    send(delta: [:], finish: Self.finishReason(final?.finishReason, calledTools: toolCallCount > 0))
-                    if includeUsage, let final {
-                        send(["choices": [] as [Any], "usage": Self.chatUsage(final)])
-                    }
-                    var done2 = ByteBuffer(); done2.writeString("data: [DONE]\n\n")
-                    continuation.yield(done2)
-                } catch {
+                }
+                if final?.finishReason == .error {
                     let errPayload: [String: Any] = [
                         "error": [
-                            "message": ModelsController.publicMessage(for: error),
+                            "message": ModelsController.modelUnavailable,
                             "type": "server_error"
                         ]
                     ]
@@ -621,6 +622,13 @@ struct OpenAIController: Sendable {
                         buf.writeString("event: error\ndata: \(str)\n\n")
                         continuation.yield(buf)
                     }
+                } else {
+                    send(delta: [:], finish: Self.finishReason(final?.finishReason, calledTools: toolCallCount > 0))
+                    if includeUsage, let final {
+                        send(["choices": [] as [Any], "usage": Self.chatUsage(final)])
+                    }
+                    var done2 = ByteBuffer(); done2.writeString("data: [DONE]\n\n")
+                    continuation.yield(done2)
                 }
                 continuation.finish()
             }
@@ -629,7 +637,7 @@ struct OpenAIController: Sendable {
         }
     }
 
-    private func streamResponses(genRequest: GenerationRequest, model: String, requestedModel: String? = nil) -> Response {
+    private func streamResponses(stream: AsyncStream<StreamChunk>, model: String) -> Response {
         Response(
             status: .ok,
             headers: [
@@ -637,7 +645,7 @@ struct OpenAIController: Sendable {
                 .cacheControl: "no-cache",
                 .connection: "keep-alive"
             ],
-            body: ResponseBody(asyncSequence: sseResponsesStream(genRequest: genRequest, model: model, requestedModel: requestedModel))
+            body: ResponseBody(asyncSequence: sseResponsesStream(stream: stream, model: model))
         )
     }
 
@@ -650,7 +658,7 @@ struct OpenAIController: Sendable {
     /// there; there is no `[DONE]` sentinel in this protocol. Streaming the reasoning also keeps
     /// the connection alive while a model thinks for minutes — Codex drops a stream that stays
     /// silent past its idle timeout.
-    private func sseResponsesStream(genRequest: GenerationRequest, model: String, requestedModel: String? = nil) -> AsyncStream<ByteBuffer> {
+    private func sseResponsesStream(stream: AsyncStream<StreamChunk>, model: String) -> AsyncStream<ByteBuffer> {
         AsyncStream { continuation in
             let task = Task {
                 let id = "resp_\(UUID().uuidString)"
@@ -742,42 +750,43 @@ struct OpenAIController: Sendable {
 
                 send("response.created", ["response": responseObject(status: "in_progress", output: [])])
 
-                do {
-                    let stream = try await orchestrator.generateStream(request: genRequest, modelId: requestedModel)
-                    for await chunk in stream {
-                        switch chunk {
-                        case .text(let delta):
-                            // Whitespace the template leaves after a tool call is not an answer.
-                            if messageIndex == nil, completed.contains(where: { $0["type"] as? String == "function_call" }),
-                               delta.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                                continue
-                            }
-                            let index = openMessage()
-                            text += delta
-                            send("response.output_text.delta", [
-                                "item_id": messageId, "output_index": index, "content_index": 0, "delta": delta
-                            ])
-                        case .reasoning(let delta):
-                            // Reasoning after the answer started has no item to go to; drop it.
-                            guard messageIndex == nil, completed.isEmpty else { continue }
-                            if reasoning == nil {
-                                send("response.output_item.added", ["output_index": 0, "item": [
-                                    "id": reasoningId, "type": "reasoning", "summary": [] as [Any], "content": [] as [Any]
-                                ] as [String: Any]])
-                                reasoning = ""
-                            }
-                            reasoning! += delta
-                            send("response.reasoning_text.delta", [
-                                "item_id": reasoningId, "output_index": 0, "content_index": 0, "delta": delta
-                            ])
-                        case .toolCall(let call):
-                            emitToolCall(call)
-                        case .metadata(let meta):
-                            final = meta
+                for await chunk in stream {
+                    switch chunk {
+                    case .text(let delta):
+                        if messageIndex == nil, completed.contains(where: { $0["type"] as? String == "function_call" }),
+                           delta.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                            continue
                         }
+                        let index = openMessage()
+                        text += delta
+                        send("response.output_text.delta", [
+                            "item_id": messageId, "output_index": index, "content_index": 0, "delta": delta
+                        ])
+                    case .reasoning(let delta):
+                        guard messageIndex == nil, completed.isEmpty else { continue }
+                        if reasoning == nil {
+                            send("response.output_item.added", ["output_index": 0, "item": [
+                                "id": reasoningId, "type": "reasoning", "summary": [] as [Any], "content": [] as [Any]
+                            ] as [String: Any]])
+                            reasoning = ""
+                        }
+                        reasoning! += delta
+                        send("response.reasoning_text.delta", [
+                            "item_id": reasoningId, "output_index": 0, "content_index": 0, "delta": delta
+                        ])
+                    case .toolCall(let call):
+                        emitToolCall(call)
+                    case .metadata(let meta):
+                        final = meta
                     }
-                    if Task.isCancelled { continuation.finish(); return }
+                }
+                if Task.isCancelled { continuation.finish(); return }
 
+                if final?.finishReason == .error {
+                    send("response.failed", ["response": responseObject(status: "failed", output: [], extra: [
+                        "error": ["code": "server_error", "message": ModelsController.modelUnavailable]
+                    ])])
+                } else {
                     closeReasoning()
                     // A turn that only called tools carries no message; any other turn has one,
                     // even an empty one.
@@ -794,10 +803,6 @@ struct OpenAIController: Sendable {
                         "output_tokens_details": ["reasoning_tokens": final?.reasoningTokens ?? 0]]
                     send("response.completed", ["response": responseObject(status: "completed", output: completed, extra: [
                         "usage": usage
-                    ])])
-                } catch {
-                    send("response.failed", ["response": responseObject(status: "failed", output: [], extra: [
-                        "error": ["code": "server_error", "message": ModelsController.publicMessage(for: error)]
                     ])])
                 }
                 continuation.finish()
@@ -957,16 +962,7 @@ struct OpenAIController: Sendable {
     }
 
     static func makeErrorResponse(status: HTTPResponse.Status, message: String, code: Int) -> Response {
-        let body: [String: Any] = ["type": "error",
-                                   "error": ["type": "invalid_request_error", "message": message] as [String: Any]]
-        let data = (try? JSONSerialization.data(withJSONObject: body)) ?? Data()
-        var buf = ByteBuffer(); buf.writeBytes(data)
-        return Response(status: status, headers: [.contentType: "application/json"],
-                        body: ResponseBody(byteBuffer: buf))
+        ProviderErrorResponse.response(status: status, message: message, shape: .openAI)
     }
-}
-
-private extension HTTPResponse.Status {
-    init(code: Int) { self = HTTPResponse.Status(code: code, reasonPhrase: "") }
 }
 

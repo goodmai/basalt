@@ -28,12 +28,8 @@ struct GenerateController: Sendable {
         do {
             let result = try await orchestrator.generate(request: dto)
             return try jsonResponse(status: .ok, body: result)
-        } catch let err as BasaltError {
-            return errorResponse(
-                status: HTTPResponse.Status(code: err.httpStatus),
-                message: ModelsController.publicMessage(for: err),
-                code: err.httpStatus
-            )
+        } catch {
+            return ProviderErrorResponse.response(for: error, path: "/api/v1/generate")
         }
     }
 
@@ -52,12 +48,9 @@ struct GenerateController: Sendable {
             return errorResponse(status: .badRequest, message: "Invalid JSON: \(error.localizedDescription)", code: 400)
         }
         if let refusal = await orchestrator.admissionRefusal(for: dto) {
-            return errorResponse(
-                status: HTTPResponse.Status(code: refusal.httpStatus),
-                message: ModelsController.publicMessage(for: refusal), code: refusal.httpStatus)
+            return ProviderErrorResponse.response(for: refusal, path: "/api/v1/generate/stream")
         }
 
-        // Create Server-Sent Events (SSE) response
         let response = Response(
             status: .ok,
             headers: [
@@ -66,41 +59,26 @@ struct GenerateController: Sendable {
                 .connection: "keep-alive"
             ]
         )
-        
-        // Create streaming body
         let body = ResponseBody(asyncSequence: sseStream(dto: dto))
-        
-        return Response(
-            status: response.status,
-            headers: response.headers,
-            body: body
-        )
+        return Response(status: response.status, headers: response.headers, body: body)
     }
-    
-    // MARK: — SSE Stream Helper
-    
+
     private func sseStream(dto: GenerationRequest) -> AsyncStream<ByteBuffer> {
         AsyncStream { continuation in
             let task = Task {
                 do {
                     let stream = try await orchestrator.generateStream(request: dto)
-                    
                     for await chunk in stream {
-                        // Format as Server-Sent Event
                         let event = formatSSE(chunk: chunk)
                         var buffer = ByteBuffer()
                         buffer.writeString(event)
                         continuation.yield(buffer)
                     }
-                    
-                    // Send final [DONE] message
                     var doneBuffer = ByteBuffer()
                     doneBuffer.writeString("data: [DONE]\n\n")
                     continuation.yield(doneBuffer)
-                    
                     continuation.finish()
                 } catch {
-                    // Send error event
                     let errPayload: [String: Any] = ["error": ModelsController.publicMessage(for: error)]
                     if let json = try? JSONSerialization.data(withJSONObject: errPayload),
                        let str = String(data: json, encoding: .utf8) {
@@ -112,7 +90,6 @@ struct GenerateController: Sendable {
                     continuation.finish()
                 }
             }
-            // A client that disconnects cancels the generation instead of leaving it running.
             continuation.onTermination = { _ in task.cancel() }
         }
     }
@@ -156,21 +133,6 @@ struct GenerateController: Sendable {
     }
 
     private func errorResponse(status: HTTPResponse.Status, message: String, code: Int) -> Response {
-        let envelope = ErrorResponse(error: message, code: code)
-        let data = (try? JSONEncoder().encode(envelope)) ?? Data()
-        var buffer = ByteBuffer()
-        buffer.writeBytes(data)
-        return Response(
-            status: status,
-            headers: [.contentType: "application/json"],
-            body: ResponseBody(byteBuffer: buffer)
-        )
-    }
-}
-
-// HTTPResponse.Status from raw code
-private extension HTTPResponse.Status {
-    init(code: Int) {
-        self = HTTPResponse.Status(code: code, reasonPhrase: "")
+        ProviderErrorResponse.response(status: status, message: message, shape: .native)
     }
 }
