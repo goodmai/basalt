@@ -1,6 +1,31 @@
 import Foundation
 import Darwin
+import Synchronization
 @testable import BasaltCore
+
+public struct GPULockGuard: ~Copyable, Sendable {
+    public let path: String
+    public let pid: Int32
+    private var isArmed: Bool
+
+    public init(path: String, pid: Int32) {
+        self.path = path
+        self.pid = pid
+        self.isArmed = true
+    }
+
+    public mutating func release() -> Bool {
+        guard isArmed else { return false }
+        isArmed = false
+        return ModelRunLog.release(path, pid: pid)
+    }
+
+    deinit {
+        if isArmed {
+            _ = ModelRunLog.release(path, pid: pid)
+        }
+    }
+}
 
 enum GPULockClaim: Equatable {
     case taken
@@ -14,13 +39,13 @@ struct GPULockError: Error, CustomStringConvertible {
     var description: String { "\(path): \(String(cString: strerror(code)))" }
 }
 
-final class ModelRunLog: @unchecked Sendable {
+final class ModelRunLog: Sendable {
     static let gpuLock = ProcessInfo.processInfo.environment["BASALT_GPU_LOCK"] ?? "/private/tmp/basalt-gpu.lock"
 
     let url: URL
     let model: String
-    private let state = NSLock()
-    private var held: String?
+    private let logLock = Mutex<Void>(())
+    private let heldGuard = Mutex<GPULockGuard?>(nil)
 
     init(_ runner: String, modelPath: String) async throws {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
@@ -47,7 +72,7 @@ final class ModelRunLog: @unchecked Sendable {
     func record(_ step: String, _ detail: String) {
         let line = "\(Date().ISO8601Format()) \(model) \(step) \(detail)\n"
         print(line, terminator: "")
-        state.withLock {
+        logLock.withLock { _ in
             let descriptor = open(url.path, O_WRONLY | O_CREAT | O_APPEND, 0o644)
             guard descriptor >= 0 else { return }
             _ = line.withCString { write(descriptor, $0, strlen($0)) }
@@ -79,15 +104,12 @@ final class ModelRunLog: @unchecked Sendable {
     }
 
     func releaseGPU() {
-        let releasing = state.withLock { () -> String? in
-            defer { held = nil }
-            return held
-        }
-        guard let releasing else { return }
-        if Self.release(releasing, pid: getpid()) {
-            record("gpu-release", releasing)
+        guard var g = heldGuard.withLock({ $0.take() }) else { return }
+        let path = g.path
+        if g.release() {
+            record("gpu-release", path)
         } else {
-            record("FAIL gpu-release", "\(releasing) is no longer owned by \(getpid()), left in place")
+            record("FAIL gpu-release", "\(path) is no longer owned by \(getpid()), left in place")
         }
     }
 
@@ -95,7 +117,7 @@ final class ModelRunLog: @unchecked Sendable {
         do {
             switch try Self.claim(Self.gpuLock, pid: getpid()) {
             case .taken:
-                state.withLock { held = Self.gpuLock }
+                heldGuard.withLock { $0 = GPULockGuard(path: Self.gpuLock, pid: getpid()) }
                 record("gpu-acquire", Self.gpuLock)
             case .busy(let owner):
                 record("FAIL gpu-busy", "\(Self.gpuLock) held by \(owner ?? "no owner file yet"); a test does not wait for the GPU, relaunch it when the lock is free")

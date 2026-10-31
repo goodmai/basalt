@@ -61,12 +61,15 @@ struct HybridPrefixDriftTests {
                 model: model, prefill: prefill)
             var tree = PromptCacheTree(byteBudget: 1 << 34)
             tree.store("shared", tokens: Array(ids1.prefix(b1)), cache: try #require(turn1.kept))
-            let leased = tree.lease("shared", for: ids2)
-            let lease = try #require(leased)
+            var leased = tree.lease("shared", for: ids2)
+            guard let lease = leased.take() else {
+                throw BasaltError.inferenceError("Expected lease for shared prefix")
+            }
             let reused = lease.reusedTokens
             let turn2 = try HybridPrefixSnapshot.prefillHead(
                 tokens2, into: lease.cache, reused: reused, boundary: b2, model: model, prefill: prefill)
             let a = try Self.lastLogits(tokens2, from: b2, cache: lease.cache, state: turn2.state, model: model)
+            _ = consume lease
 
             let one = PromptCache(try model.newCache(parameters: nil))
             let b = try Self.lastLogits(tokens2, from: 0, cache: one, state: nil, model: model)
@@ -82,7 +85,6 @@ struct HybridPrefixDriftTests {
                 tokens2, from: 0, cache: PromptCache(try model.newCache(parameters: nil)), state: nil, model: model,
                 prefill: PrefillParameters(stepSize: 256))
             eval(a, b, c, d)
-            tree.release(lease)
             return (
                 reused: reused,
                 ac: abs(a - c).max().item(Float.self),
@@ -128,13 +130,19 @@ struct HybridPrefixDriftTests {
             for tokens in prompts {
                 let ids = tokens.asArray(Int.self)
                 let boundary = tokens.dim(-1) - suffix
-                let lease = tree.lease("session", for: ids)
-                let cache = try lease?.cache ?? PromptCache(model.newCache(parameters: nil))
-                let reused = lease?.reusedTokens ?? 0
+                var leaseOpt = tree.lease("session", for: ids)
+                let cache: PromptCache
+                let reused: Int
+                if let lease = leaseOpt.take() {
+                    cache = lease.cache
+                    reused = lease.reusedTokens
+                } else {
+                    cache = try PromptCache(model.newCache(parameters: nil))
+                    reused = 0
+                }
                 let head = try HybridPrefixSnapshot.prefillHead(
                     tokens, into: cache, reused: reused, boundary: boundary, model: model, prefill: prefill)
                 tree.store("session", tokens: Array(ids.prefix(boundary)), cache: try #require(head.kept))
-                lease.map { tree.release($0) }
                 let restored = try Self.lastLogits(tokens, from: boundary, cache: cache, state: head.state, model: model)
 
                 let cut = try HybridPrefixSnapshot.prefillHead(

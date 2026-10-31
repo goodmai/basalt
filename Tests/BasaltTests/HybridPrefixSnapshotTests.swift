@@ -135,14 +135,14 @@ struct SlidingWindowSnapshotTests {
         #expect(lease.reusedTokens == boundary)
         let tailTokens = TinyHybrid.row(Array(second[boundary...]))
         let tail = model(tailTokens, cache: lease.cache.layers)
-        tree.release(lease)
+        _ = consume lease
         #expect(tail.shape == expected.shape)
         #expect(allClose(tail, expected, rtol: 1e-4, atol: 5e-3).item(Bool.self))
 
         let again = try tree.required("ns", for: second)
         let unrestored = again.cache.layers.map { $0 is RotatingKVCache ? RotatingKVCache(maxSize: TinySliding.window) : $0 }
         let control = model(tailTokens, cache: unrestored)
-        tree.release(again)
+        _ = consume again
         #expect(!allClose(control, expected, rtol: 1e-4, atol: 5e-3).item(Bool.self))
         #expect(pinCount(tree) == 0)
     }
@@ -205,7 +205,7 @@ struct HybridPrefixSnapshotTests {
         #expect(lease.cache.layers.allSatisfy { $0.offset == boundary })
         let tail = model(tailTokens, cache: lease.cache.layers)
         eval(tail)
-        tree.release(lease)
+        _ = consume lease
         #expect(tail.shape == expected.shape)
         #expect(allClose(tail, expected, rtol: 1e-4, atol: 1e-4).item(Bool.self))
         #expect(TinyHybrid.recurrentStates(tree) == stored)
@@ -213,7 +213,7 @@ struct HybridPrefixSnapshotTests {
         let again = try tree.required("ns", for: second)
         let unrestored = again.cache.layers.map { $0 is MambaCache ? MambaCache() : $0 }
         let control = model(tailTokens, cache: unrestored)
-        tree.release(again)
+        _ = consume again
         #expect(!allClose(control, expected, rtol: 1e-4, atol: 1e-4).item(Bool.self))
         #expect(TinyHybrid.recurrentStates(tree) == stored)
         #expect(pinCount(tree) == 0)
@@ -225,10 +225,20 @@ struct HybridPrefixSnapshotTests {
         let first = TinyModel.tokens(Conversation.firstTurn)
         var tree = PromptCacheTree(byteBudget: 1 << 30)
         tree.store("ns", tokens: Array(first.dropLast()), cache: try TinyHybrid.snapshotted(model, first))
-        #expect(tree.lease("ns", for: TinyModel.tokens(Conversation.otherUser)) == nil)
-        #expect(tree.lease("ns", for: TinyModel.tokens(Conversation.otherBranch)) == nil)
-        #expect(tree.lease("ns", for: Array(first.prefix(first.count - 2)) + [42, 43]) == nil)
-        #expect(tree.lease("ns", for: first)?.reusedTokens == first.count - 1)
+        let noLease1 = tree.lease("ns", for: TinyModel.tokens(Conversation.otherUser)) == nil
+        #expect(noLease1)
+        let noLease2 = tree.lease("ns", for: TinyModel.tokens(Conversation.otherBranch)) == nil
+        #expect(noLease2)
+        let noLease3 = tree.lease("ns", for: Array(first.prefix(first.count - 2)) + [42, 43]) == nil
+        #expect(noLease3)
+        var matchedLease = tree.lease("ns", for: first)
+        let reused: Int?
+        if let lease = matchedLease.take() {
+            reused = lease.reusedTokens
+        } else {
+            reused = nil
+        }
+        #expect(reused == first.count - 1)
     }
 
     @Test("A live hybrid cache, whose recurrent state sits past the stored tokens, is never stored")
@@ -273,7 +283,7 @@ struct HybridPrefixSnapshotTests {
         tree.store("ns", tokens: Array(first.dropLast()), cache: try #require(head.kept))
         let lease = try tree.required("ns", for: TinyModel.tokens(Conversation.afterToolCall))
         #expect(lease.cache.state != nil)
-        tree.release(lease)
+        _ = consume lease
     }
 
     func reuseOnEngine(vision: Bool) async throws {
@@ -319,7 +329,7 @@ struct HybridPrefixSnapshotTests {
         #expect(tree.byteCount == tree.leaves().reduce(0) { $0 + $1.bytes } + (tree.roots["ns"]?.children[p[0]]?.bytes ?? 0))
         let lease = try tree.required("ns", for: head + [30, 31])
         #expect(lease.reusedTokens == p.count - 1)
-        tree.release(lease)
+        _ = consume lease
     }
 
     @Test("A split head without a snapshot never outlives its branches as an unrestorable leaf")
@@ -392,17 +402,23 @@ struct HybridPrefixSnapshotTests {
             #expect(tree.byteCount <= (prompt.count - 1) * TinyHybrid.attentionBytesPerToken + 2 * recurrent)
             #expect(tree.byteCount == bytes)
             let next = index + 1 < turns.count ? turns[index + 1] : prompt + [7, 7]
-            let lease = tree.lease("ns", for: next)
-            #expect(lease?.reusedTokens == prompt.count - 1)
-            if let lease {
-                tree.release(lease)
+            var lease = tree.lease("ns", for: next)
+            let nextReused: Int?
+            if let l = lease.take() {
+                nextReused = l.reusedTokens
+            } else {
+                nextReused = nil
             }
+            #expect(nextReused == prompt.count - 1)
             if index > 0 {
-                let edited = tree.lease("ns", for: turns[index - 1] + [9, 9])
-                #expect(edited?.reusedTokens == turns[index - 1].count - 1)
-                if let edited {
-                    tree.release(edited)
+                var edited = tree.lease("ns", for: turns[index - 1] + [9, 9])
+                let editedReused: Int?
+                if let ed = edited.take() {
+                    editedReused = ed.reusedTokens
+                } else {
+                    editedReused = nil
                 }
+                #expect(editedReused == turns[index - 1].count - 1)
             }
         }
     }

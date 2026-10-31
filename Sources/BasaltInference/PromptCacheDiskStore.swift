@@ -137,14 +137,31 @@ public struct PromptCacheDiskStore: Sendable {
         close(marker)
     }
 
+    private struct FlockFile: ~Copyable {
+        let descriptor: Int32
+
+        init(path: String) throws(PromptCacheDiskError) {
+            let fd = open(path, O_CREAT | O_RDWR | O_CLOEXEC, 0o600)
+            guard fd >= 0 else { throw PromptCacheDiskError.unusable("cannot open \(path): errno \(errno)") }
+            guard flock(fd, LOCK_EX) == 0 else {
+                close(fd)
+                throw PromptCacheDiskError.unusable("cannot lock \(path): errno \(errno)")
+            }
+            self.descriptor = fd
+        }
+
+        deinit {
+            flock(descriptor, LOCK_UN)
+            close(descriptor)
+        }
+    }
+
     func withExclusiveLock<T>(_ body: () throws -> T) throws -> T {
         try prepareDirectory()
-        let descriptor = open(url(Self.lockName).path, O_CREAT | O_RDWR | O_CLOEXEC, 0o600)
-        guard descriptor >= 0 else { throw PromptCacheDiskError.unusable("cannot open \(url(Self.lockName).path): errno \(errno)") }
-        defer { close(descriptor) }
-        guard flock(descriptor, LOCK_EX) == 0 else { throw PromptCacheDiskError.unusable("cannot lock \(directory.path): errno \(errno)") }
-        defer { flock(descriptor, LOCK_UN) }
-        return try body()
+        let lock = try FlockFile(path: url(Self.lockName).path)
+        let result = try body()
+        _ = consume lock
+        return result
     }
 
     struct StoredFile {

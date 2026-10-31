@@ -58,4 +58,30 @@ struct ModelRunLogTests {
         }
         #expect(!FileManager.default.fileExists(atPath: path))
     }
+
+    @Test("GPULockGuard releases the lock on scope exit without manual release")
+    func guardAutoReleasesOnScopeExit() throws {
+        let path = try Self.scratch()
+        #expect(try ModelRunLog.claim(path, pid: getpid()) == .taken)
+        #expect(FileManager.default.fileExists(atPath: path))
+        do {
+            let lockGuard = GPULockGuard(path: path, pid: getpid())
+            _ = lockGuard
+        }
+        #expect(!FileManager.default.fileExists(atPath: path))
+    }
+
+    @Test("GPULockGuard explicit release unlinks once, and deinit does not repeat it")
+    func guardExplicitReleaseIsIdempotentWithDeinit() throws {
+        let path = try Self.scratch()
+        #expect(try ModelRunLog.claim(path, pid: getpid()) == .taken)
+        var lockGuard = GPULockGuard(path: path, pid: getpid())
+        let first = lockGuard.release()
+        #expect(first)
+        #expect(!FileManager.default.fileExists(atPath: path))
+        let second = lockGuard.release()
+        #expect(!second)
+        _ = consume lockGuard
+        #expect(!FileManager.default.fileExists(atPath: path))
+    }
 }
