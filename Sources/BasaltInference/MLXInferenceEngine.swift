@@ -31,7 +31,7 @@ public actor MLXInferenceEngine: InferenceEngine {
     /// defaults that the caller did not override.
     private var profile: any ModelProfile = GenericProfile()
     private var samplingDefaults = SamplingDefaults()
-    private let logger = GemLogger(module: "MLXInferenceEngine")
+    private let logger = BasaltLogger(module: "MLXInferenceEngine")
 
     /// Chat-template knob for models with a reasoning budget (Qwen3.8: xhigh | medium | low).
     /// Left nil the template picks its own default — for Qwen3.8 that is `xhigh`, which
@@ -251,8 +251,7 @@ public actor MLXInferenceEngine: InferenceEngine {
         guard modelPath.hasPrefix("/") || modelPath.hasPrefix(".") else {
             // HF repo ID без локального кэша — сообщаем пользователю
             throw .modelNotFound(
-                identifier: "'\(modelPath)' не найден в локальном кэше. " +
-                "Сначала загрузите: Gem models download \(modelPath)"
+                identifier: "'\(modelPath)' not found in local cache. Run: basalt models download \(modelPath)"
             )
         }
 
@@ -765,7 +764,7 @@ public actor MLXInferenceEngine: InferenceEngine {
             return components
         }
         guard let transition = budgetTransition(for: reasoning, profile: profile) else {
-            GemLogger(module: "MLXInferenceEngine").info(
+            BasaltLogger(module: "MLXInferenceEngine").info(
                 "thinking_budget ignored: \(type(of: profile)) declares no budget transition for \(reasoning.endDelimiter)")
             return components
         }
@@ -1045,7 +1044,7 @@ public actor MLXInferenceEngine: InferenceEngine {
                                 callID: rejection.callID, rawText: rejection.rawTextPreview,
                                 truncated: rejection.isPreviewTruncated, declaredTools: declaredTools)
                             if case .text = chunk {
-                                GemLogger(module: "MLXInferenceEngine").warn("Tool call rejected: \(rejection.reason.rawValue)")
+                                BasaltLogger(module: "MLXInferenceEngine").warn("Tool call rejected: \(rejection.reason.rawValue)")
                             }
                             if let chunk = gate.admit(chunk) { continuation.yield(chunk) }
                             if gate.isSaturated { await stopAfterCall(); break tokens }
@@ -1326,7 +1325,7 @@ public actor MLXInferenceEngine: InferenceEngine {
             cache = blended.cache
         }
         if let blended, blended.reused > 0 {
-            GemLogger(module: "CacheBlend").info(
+            BasaltLogger(module: "CacheBlend").info(
                 "Blended \(blended.tokens) prompt tokens: \(blended.reused) from cached chunks, \(blended.recomputed) of them recomputed")
         }
         let head = try blended.map { (kept: $0.cache, start: reused + $0.tokens, state: $0.cache.state) }

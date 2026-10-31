@@ -115,7 +115,7 @@ public final class MCPServer: Service, Sendable {
     }
 
     package func runServiceGroup(shutdownDeadline: Duration = .seconds(5), handleSignals: Bool = true) async throws {
-        var logger = Logger(label: "Gem")
+        var logger = Logger(label: "Basalt")
         logger.logLevel = .warning
         let drain = GenerationDrainService(orchestrator: orchestrator, deadline: shutdownDeadline)
         let group = ServiceGroup(configuration: .init(
@@ -181,7 +181,7 @@ public final class MCPServer: Service, Sendable {
         let result = InitializeResult(
             protocolVersion: "2024-11-05",
             capabilities: ["tools": [:]],
-            serverInfo: .init(name: "Gem", version: HealthResponse.version)
+            serverInfo: .init(name: "Basalt", version: HealthResponse.version)
         )
         writeResult(id: id, result: result)
     }
@@ -231,6 +231,43 @@ public final class MCPServer: Service, Sendable {
                     "required": ["modelId"],
                     "properties": [
                         "modelId": ["type": "string", "description": "Model ID in local cache to switch to"]
+                    ]
+                ])
+            ),
+            Tool(
+                name: "basalt_generate",
+                description: "Generate text using the locally-running model via MLX.",
+                inputSchema: AnyCodable([
+                    "type": "object",
+                    "required": ["prompt"],
+                    "properties": [
+                        "prompt":      ["type": "string",  "description": "Input prompt"],
+                        "maxTokens":   ["type": "integer", "description": "Max tokens to generate (default 65536)"],
+                        "temperature": ["type": "number",  "description": "Sampling temperature 0–2 (default: the model's generation_config, else 0.7)"],
+                        "topP":        ["type": "number",  "description": "Nucleus sampling p (default: the model's generation_config, else 0.9)"],
+                        "minP":        ["type": "number",  "description": "Min-P 0–1, overrides the server default (0 = off)"],
+                        "dynamicTemperature": ["type": "boolean", "description": "Entropy-based dynamic temperature (EDT)"],
+                        "speculativeLookup": ["type": "boolean", "description": "Prompt-lookup speculative decoding for this call; unset takes serve --speculative-lookup"]
+                    ]
+                ])
+            ),
+            Tool(
+                name: "basalt_status",
+                description: "Returns the health and readiness status of the inference engine.",
+                inputSchema: AnyCodable(["type": "object", "properties": [:]])
+            ),
+            Tool(
+                name: "basalt_add_knowledge",
+                description: "Store a lesson in the persistent Harness Experience Library (~/.basalt/harness-library/<domain>/): EXPERIENCE.md, entries.json and the domain INDEX.md that future harness_optimize proposers read. Limits: topic 200 characters, cue 500, domain 64, content 32 KiB, 1000 entries.",
+                inputSchema: AnyCodable([
+                    "type": "object",
+                    "required": ["topic", "content"],
+                    "properties": [
+                        "topic": ["type": "string", "description": "Subject of the knowledge"],
+                        "content": ["type": "string", "description": "Detailed information to store"],
+                        "domain": ["type": "string", "description": "Optional domain bucket in the Experience Library"],
+                        "cue": ["type": "string", "description": "Optional trigger cue for retrieving this lesson"],
+                        "confidence": ["type": "string", "enum": ["low", "medium", "high"], "description": "Confidence level (default medium)"]
                     ]
                 ])
             ),
@@ -358,9 +395,9 @@ public final class MCPServer: Service, Sendable {
             await callInspectModel(id: id, args: arguments)
         case "switch_model":
             await callSwitchModel(id: id, args: arguments)
-        case "gemma_generate":
+        case "basalt_generate", "gemma_generate":
             await callGenerate(id: id, args: arguments)
-        case "gemma_status":
+        case "basalt_status", "gemma_status":
             let health = await orchestrator.healthSnapshot(modelId: modelId)
             let result = [
                 "content": [[
@@ -369,7 +406,7 @@ public final class MCPServer: Service, Sendable {
                 ]]
             ]
             writeResult(id: id, result: result)
-        case "gemma_add_knowledge":
+        case "basalt_add_knowledge", "gemma_add_knowledge":
             await callAddKnowledge(id: id, args: arguments)
         case "harness_validate":
             callHarnessValidate(id: id, args: arguments)

@@ -19,7 +19,7 @@ public actor ModelOrchestratorActor {
     /// count — see `timeout(for:)`.
     private let generationTimeoutSeconds: UInt64 = 300  // 5 minutes
 
-    private let logger = GemLogger(module: "ModelOrchestrator")
+    private let logger = BasaltLogger(module: "ModelOrchestrator")
 
     /// Filesystem path of the loaded model.
     private var currentModelPath: String = ""
@@ -383,7 +383,7 @@ public actor ModelOrchestratorActor {
                 do {
                     for try await chunk in source { continuation.yield(chunk) }
                 } catch {
-                    GemLogger(module: "ModelOrchestrator").warn("Cloud stream failed mid-way: \(error)")
+                    BasaltLogger(module: "ModelOrchestrator").warn("Cloud stream failed mid-way: \(error)")
                     continuation.yield(.metadata(GenerationResponse(
                         generatedText: "", promptTokens: 0, completionTokens: 0, tokensPerSecond: 0,
                         generationTime: 0, timeToFirstToken: 0,

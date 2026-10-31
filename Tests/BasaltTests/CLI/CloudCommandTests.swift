@@ -13,7 +13,7 @@ struct CloudCommandTests {
     private static func cleanup() {
         let configURL = CloudCommand.configURL()
         try? FileManager.default.removeItem(at: configURL)
-        let costURL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".gem/cost.json")
+        let costURL = CloudCommand.costURL()
         try? FileManager.default.removeItem(at: costURL)
     }
 

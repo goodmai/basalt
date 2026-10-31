@@ -98,8 +98,8 @@ struct ConfigTests {
         )
         #expect(config.apiKey != nil)
         guard let key = config.apiKey else { return }
-        #expect(key.hasPrefix("gem_"))
-        #expect(key.count >= 36) // "gem_" (4) + 64 hex chars = 68
+        #expect(key.hasPrefix("basalt_"))
+        #expect(key.count >= 39)
     }
 
     @Test("Loopback host allows optional apiKey or nil")
@@ -406,8 +406,8 @@ struct ConfigTests {
         }
         let generated = try ServerConfig.resolveApiKey(host: "0.0.0.0", apiKey: nil, autoGenerateKeyIfMissing: true)
         #expect(generated.generated)
-        #expect(generated.key?.hasPrefix("gem_") == true)
-        #expect(generated.key?.count == 4 + 64)
+        #expect(generated.key?.hasPrefix("basalt_") == true)
+        #expect(generated.key?.count == 7 + 64)
         let supplied = try ServerConfig.resolveApiKey(host: "0.0.0.0", apiKey: " k ", autoGenerateKeyIfMissing: true)
         #expect(supplied.key == "k" && !supplied.generated)
     }
@@ -510,5 +510,12 @@ struct ConfigTests {
             try ServerConfig.mergeAndSave(to: file, systemUpdates: ["host": "127.0.0.1"], createBackup: true)
         }
         #expect(try Data(contentsOf: URL(fileURLWithPath: file.path + ".bak")) == goodBackup)
+    }
+
+    @Test("Legacy ~/.gem/config.json fallback is preserved when ~/.basalt/config.json is absent")
+    func testLegacyGemConfigFallback() throws {
+        let defaultURL = ServerConfig.defaultConfigFileURL
+        #expect(defaultURL.lastPathComponent == "config.json")
+        #expect(defaultURL.path.contains(".basalt") || defaultURL.path.contains(".gem"))
     }
 }

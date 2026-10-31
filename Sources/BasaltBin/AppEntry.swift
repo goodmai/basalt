@@ -8,7 +8,7 @@ struct AppEntry {
     static func main() {
         // Execute the CLI asynchronously with proper run loop management
         Task {
-            await GemCLI.main()
+            await BasaltCLI.main()
             Darwin.exit(0)
         }
 

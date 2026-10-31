@@ -64,7 +64,7 @@ struct ChatCommand: AsyncParsableCommand {
     }
 
     // MARK: — Run
-    private static let logger = GemLogger(module: "ChatCommand")
+    private static let logger = BasaltLogger(module: "ChatCommand")
 
     mutating func run() async throws {
         Self.logger.trace("ChatCommand started.")
@@ -131,7 +131,7 @@ struct ChatCommand: AsyncParsableCommand {
         }
 
         log("Model ready. Type 'exit' or 'quit' to stop.")
-        print("\n--- Gemma Chat ---")
+        print("\n--- Basalt Chat ---")
         
         let controller = ChatController(orchestrator: orchestrator, maxTokens: maxTokens, sessionId: sessionId, history: history)
         await controller.start()

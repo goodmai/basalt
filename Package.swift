@@ -14,6 +14,8 @@ let package = Package(
         .package(url: "https://github.com/hummingbird-project/hummingbird", from: "2.28.0"),
         .package(url: "https://github.com/apple/swift-argument-parser",    from: "1.8.2"),
         .package(url: "https://github.com/swift-server/swift-service-lifecycle", from: "2.12.0"),
+        .package(url: "https://github.com/apple/swift-http-types.git",     from: "1.4.0"),
+        .package(url: "https://github.com/apple/swift-log.git",            from: "1.6.2"),
         // Provides the `Tokenizers` module used by MLXHuggingFace macros
         .package(url: "https://github.com/huggingface/swift-transformers",  from: "1.3.5"),
         .package(url: "https://github.com/huggingface/swift-jinja.git",     from: "2.5.1"),
@@ -72,6 +74,8 @@ let package = Package(
                 "BasaltCore", "BasaltHarness",
                 .product(name: "ServiceLifecycle", package: "swift-service-lifecycle"),
                 .product(name: "Hummingbird",   package: "hummingbird"),
+                .product(name: "HTTPTypes",     package: "swift-http-types"),
+                .product(name: "Logging",       package: "swift-log"),
             ],
             path: "Sources/BasaltServer",
             swiftSettings: swiftSettings

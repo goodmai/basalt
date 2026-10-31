@@ -28,11 +28,28 @@ public struct CloudCommand: AsyncParsableCommand {
     
     public static func configURL() -> URL {
         let home = FileManager.default.homeDirectoryForCurrentUser
-        return home.appendingPathComponent(".gem/cloud.json")
+        let basaltPath = home.appendingPathComponent(".basalt/cloud.json")
+        if FileManager.default.fileExists(atPath: basaltPath.path) {
+            return basaltPath
+        }
+        let legacyPath = home.appendingPathComponent(".gem/cloud.json")
+        if FileManager.default.fileExists(atPath: legacyPath.path) {
+            return legacyPath
+        }
+        return basaltPath
     }
     
     public static func costURL() -> URL {
-        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".gem/cost.json")
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let basaltPath = home.appendingPathComponent(".basalt/cost.json")
+        if FileManager.default.fileExists(atPath: basaltPath.path) {
+            return basaltPath
+        }
+        let legacyPath = home.appendingPathComponent(".gem/cost.json")
+        if FileManager.default.fileExists(atPath: legacyPath.path) {
+            return legacyPath
+        }
+        return basaltPath
     }
 
     public static func loadConfig() -> CloudConfig? {

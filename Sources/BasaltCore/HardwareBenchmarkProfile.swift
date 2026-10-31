@@ -101,7 +101,15 @@ public actor HardwareBenchmarkProfileStore {
 
     public static var defaultProfilePath: String {
         let home = FileManager.default.homeDirectoryForCurrentUser
-        return home.appendingPathComponent(".gem/hardware_profile.json").path
+        let basaltPath = home.appendingPathComponent(".basalt/hardware_profile.json").path
+        if FileManager.default.fileExists(atPath: basaltPath) {
+            return basaltPath
+        }
+        let legacyPath = home.appendingPathComponent(".gem/hardware_profile.json").path
+        if FileManager.default.fileExists(atPath: legacyPath) {
+            return legacyPath
+        }
+        return basaltPath
     }
 
     private let profilePath: String

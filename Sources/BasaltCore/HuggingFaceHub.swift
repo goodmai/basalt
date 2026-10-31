@@ -104,6 +104,10 @@ public struct ModelCache: Sendable {
         return modelRoot.appendingPathComponent("snapshots/main")
     }
 
+    package static func claudeLocalId(from hfId: String) -> String {
+        "claude-local/" + hfId.replacingOccurrences(of: "/", with: "--")
+    }
+
     /// Inverse of `ModelsController.claudeLocalId` — strips the `claude-local/` prefix and
     /// restores the "/" separator. Plain HF IDs (or aliases) pass through unchanged.
     package static func hfRepoId(from modelId: String) -> String {

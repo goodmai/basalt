@@ -83,7 +83,7 @@ final class GrammarSession: Sendable {
                 progress.committed += 1
             } catch {
                 progress.failed = true
-                GemLogger(module: "JSONConstraint").warn("grammar refused token \(id), the session will not be pooled: \(error)")
+                BasaltLogger(module: "JSONConstraint").warn("grammar refused token \(id), the session will not be pooled: \(error)")
             }
         }
     }

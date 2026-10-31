@@ -20,7 +20,7 @@ public actor TerminalManager {
     private var isRawMode = false
     
     private var inputBuffer: String = ""
-    private var promptText: String = "Gemma > "
+    private var promptText: String = "Basalt > "
     private var isBusy: Bool = false
     private var debugInfo: String = "Ready"
     
@@ -118,7 +118,7 @@ public actor TerminalManager {
 
     public func setBusy(_ busy: Bool) {
         self.isBusy = busy
-        self.promptText = busy ? "Gemma (busy) > " : "Gemma > "
+        self.promptText = busy ? "Basalt (busy) > " : "Basalt > "
         refreshLine()
     }
     

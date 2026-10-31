@@ -27,7 +27,7 @@ package struct RESTServer: Sendable {
     package func run() async throws {
         let router = makeRouter()
 
-        var logger = Logger(label: "Gem")
+        var logger = Logger(label: "Basalt")
         logger.logLevel = .warning
 
         let app = Application(
