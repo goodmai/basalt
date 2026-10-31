@@ -79,12 +79,14 @@ public struct GenerationRequest: Codable, Sendable {
     public private(set) var budgetKey: String? = nil
     public private(set) var origin: RequestOrigin = .unspecified
     public private(set) var speculativeLookup: Bool? = nil
+    public private(set) var grammarJumpForward: Bool? = nil
     public private(set) var kvPrecision: KVPrecision? = nil
 
     enum CodingKeys: String, CodingKey {
         case prompt, maxTokens, temperature, topP, minP, dynamicTemperature, enableThinking, reasoningEffort
         case isServiceRequest, tools, toolChoice, cacheKey, messages
         case topK, presencePenalty, repetitionPenalty, thinkingBudget, responseFormat, speculativeLookup
+        case grammarJumpForward = "grammar_jump_forward"
     }
 
     public init(
@@ -174,6 +176,12 @@ public struct GenerationRequest: Codable, Sendable {
     public func withSpeculativeLookup(_ speculativeLookup: Bool?) -> GenerationRequest {
         var copy = self
         copy.speculativeLookup = speculativeLookup
+        return copy
+    }
+
+    public func withGrammarJumpForward(_ grammarJumpForward: Bool?) -> GenerationRequest {
+        var copy = self
+        copy.grammarJumpForward = grammarJumpForward
         return copy
     }
 
@@ -332,6 +340,8 @@ public struct GenerationResponse: Codable, Sendable {
     public let reasoningTokens: Int?
     public let draftTokens: Int?
     public let acceptedDraftTokens: Int?
+    public let forcedTokens: Int?
+    public let modelCalls: Int?
 
     public init(
         generatedText: String,
@@ -347,7 +357,9 @@ public struct GenerationResponse: Codable, Sendable {
         toolCalls: [ToolCallOutput]? = nil,
         reasoningTokens: Int? = nil,
         draftTokens: Int? = nil,
-        acceptedDraftTokens: Int? = nil
+        acceptedDraftTokens: Int? = nil,
+        forcedTokens: Int? = nil,
+        modelCalls: Int? = nil
     ) {
         self.generatedText = generatedText
         self.reasoningText = reasoningText
@@ -363,12 +375,14 @@ public struct GenerationResponse: Codable, Sendable {
         self.reasoningTokens = reasoningTokens
         self.draftTokens = draftTokens
         self.acceptedDraftTokens = acceptedDraftTokens
+        self.forcedTokens = forcedTokens
+        self.modelCalls = modelCalls
     }
 
     enum CodingKeys: String, CodingKey {
         case generatedText, reasoningText, promptTokens, cachedPromptTokens, completionTokens
         case tokensPerSecond, generationTime, timeToFirstToken, memory, finishReason, toolCalls, reasoningTokens
-        case draftTokens, acceptedDraftTokens
+        case draftTokens, acceptedDraftTokens, forcedTokens, modelCalls
     }
 
     public init(from decoder: Decoder) throws {
@@ -387,6 +401,8 @@ public struct GenerationResponse: Codable, Sendable {
         reasoningTokens = try c.decodeIfPresent(Int.self, forKey: .reasoningTokens)
         draftTokens = try c.decodeIfPresent(Int.self, forKey: .draftTokens)
         acceptedDraftTokens = try c.decodeIfPresent(Int.self, forKey: .acceptedDraftTokens)
+        forcedTokens = try c.decodeIfPresent(Int.self, forKey: .forcedTokens)
+        modelCalls = try c.decodeIfPresent(Int.self, forKey: .modelCalls)
     }
 
     public struct MemoryUsage: Codable, Sendable {

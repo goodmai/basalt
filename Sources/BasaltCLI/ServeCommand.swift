@@ -97,6 +97,12 @@ struct ServeCommand: AsyncParsableCommand {
     )
     var speculativeRecycling = false
 
+    @Flag(
+        name: .customLong("grammar-jump-forward"),
+        help: "Feed XGrammar-forced spans in one forward pass during constrained decoding (opt-in; JSON schema and forced tool calls)"
+    )
+    var grammarJumpForward = false
+
     // Optional so an explicit `--port 8080` can be told apart from "not passed":
     // precedence is CLI > --config file > default.
     @Option(name: .shortAndLong, help: "REST API port (default: 8080)")
@@ -491,6 +497,7 @@ struct ServeCommand: AsyncParsableCommand {
             cacheBlendRatio: cacheBlend ? min(max(0, cacheBlendRatio), 1) : nil,
             speculativeLookup: speculativeLookup,
             speculativeRecycling: speculativeRecycling,
+            grammarJumpForward: grammarJumpForward,
             promptCacheDisk: try promptCacheDisk.store()
         )
         let sessionLogWriter = Self.sessionLogWriter(

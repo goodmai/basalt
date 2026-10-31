@@ -239,6 +239,45 @@ struct ConstrainedDecodingEngineTests {
             _ = try await engine.generate(request: ConstrainedModel.request(format: .jsonSchema(ConstrainedModel.schema)))
         }
     }
+
+    @Test("Grammar jump forward reduces model calls, validates against schema, and records forced tokens")
+    func grammarJumpForwardExecution() async throws {
+        let engine = try await ConstrainedModel.engine()
+        let baseRequest = ConstrainedModel.request(format: .jsonSchema(ConstrainedModel.schema), maxTokens: 300)
+        let plain = try await engine.generate(request: baseRequest)
+        #expect(try ConstrainedModel.isValid(plain.generatedText))
+
+        let ffRequest = baseRequest.withGrammarJumpForward(true)
+        let fast = try await engine.generate(request: ffRequest)
+        #expect(try ConstrainedModel.isValid(fast.generatedText))
+        #expect(fast.forcedTokens ?? 0 > 0)
+        #expect((fast.modelCalls ?? Int.max) < plain.completionTokens)
+    }
+
+    @Test("Grammar jump forward interplay with presence penalty preserves schema validity and records tokens")
+    func grammarJumpForwardWithPresencePenalty() async throws {
+        let engine = try await ConstrainedModel.engine()
+        let baseReq = ConstrainedModel.request(format: .jsonSchema(ConstrainedModel.schema), thinking: false, maxTokens: 300)
+        let req = GenerationRequest(
+            prompt: baseReq.prompt, maxTokens: baseReq.maxTokens, temperature: 0,
+            enableThinking: false, presencePenalty: 0.5, responseFormat: baseReq.responseFormat
+        ).withGrammarJumpForward(true)
+        let res = try await engine.generate(request: req)
+        #expect(try ConstrainedModel.isValid(res.generatedText), "Text: \(res.generatedText), finish: \(res.finishReason)")
+        #expect(res.forcedTokens ?? 0 > 0)
+    }
+
+    @Test("When grammarJumpForward is false, execution is bit-identical to default unflagged request")
+    func grammarJumpForwardDefaultEquivalence() async throws {
+        let engine = try await ConstrainedModel.engine()
+        let req1 = ConstrainedModel.request(format: .jsonSchema(ConstrainedModel.schema), maxTokens: 200)
+        let req2 = req1.withGrammarJumpForward(false)
+        let res1 = try await engine.generate(request: req1)
+        let res2 = try await engine.generate(request: req2)
+        #expect(res1.generatedText == res2.generatedText)
+        #expect(res1.forcedTokens == nil)
+        #expect(res2.forcedTokens == nil)
+    }
 }
 
 enum SchemaCheck {
@@ -346,6 +385,24 @@ struct JSONConstraintProcessorTests {
         session.commit(Int(UInt8(ascii: "{")))
         session.commit(Int(UInt8(ascii: "q")))
         #expect(session.rewound() == nil)
+    }
+
+    @Test("Fast-forward rewound: pooled grammar after fast-forward matches freshly compiled grammar mask")
+    func fastForwardRewind() throws {
+        let tokenizer = JSONPieceTokenizer()
+        let vocabulary = try GrammarVocabulary(
+            pieces: (0..<256).map { tokenizer.convertIdToToken($0)! }, vocabType: .raw, stopTokens: [JSONPieceTokenizer.endOfText],
+            markers: ReasoningMarkers(openers: [JSONPieceTokenizer.open], closers: [[JSONPieceTokenizer.close]]),
+            hostTokenizer: tokenizer)
+        let schema = try JSONSchemaGate.prepare(ConstrainedModel.schema, strict: true).schema
+        let grammar = try GrammarConstraint(tokenizer: vocabulary.tokenizer, jsonSchema: schema, fastForward: true, hostTokenizer: tokenizer)
+        let pristine = try grammar.computeMask().mask
+        let session = GrammarSession(schema: schema, grammar: grammar, poolKey: schema + ":ff")
+        session.commit(Int(UInt8(ascii: "{")))
+        let forced = session.takeForcedTokens()
+        #expect(session.totalForcedTokens == forced.count)
+        let pooled = try #require(session.rewound())
+        #expect(try pooled.computeMask().mask == pristine)
     }
 }
 
