@@ -14,10 +14,7 @@ concurrency:
 jobs:
   release:
     name: Build and Release
-    # macos-26: its default Xcode (26.4+) ships Swift 6.3, which mlx-swift's manifest
-    # (tools-version 6.3) and hummingbird 2.27 (6.2) require. v0.3.0's first run failed on
-    # macos-15 at dependency resolution.
-    runs-on: macos-26
+    runs-on: xcode-27
     timeout-minutes: 60
     permissions:
       contents: write
@@ -35,7 +32,6 @@ jobs:
       - name: Configure Swift toolchain
         uses: ./.github/actions/xcode-toolchain
 
-      # Xcode 26 ships the Metal compiler as a separate component; build_metal.swift needs it.
       - name: Metal toolchain
         run: xcrun metal --version >/dev/null 2>&1 || xcodebuild -downloadComponent MetalToolchain
 
@@ -93,10 +89,11 @@ jobs:
 
             ```bash
             brew tap goodmai/basalt https://github.com/${{ github.repository }}
+            brew trust goodmai/basalt
             brew install goodmai/basalt/basalt
             ```
 
-            Builds from source: Xcode 26.4+ (Swift 6.3) and a macOS it runs on, Apple Silicon.
+            Builds from source: Xcode 27.0+ (Swift 6.4) and macOS 27+, Apple Silicon.
 
             **Source tarball SHA256**: `${{ steps.pkg.outputs.tarball_sha }}`
         env:

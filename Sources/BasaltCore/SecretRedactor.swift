@@ -1,7 +1,7 @@
 import Foundation
 
 public enum SecretRedactor {
-    nonisolated(unsafe) static let patterns: [(label: String, regex: NSRegularExpression)] = [
+    static let patterns: [(label: String, regex: NSRegularExpression)] = [
         ("anthropic_key", #"sk-ant-[A-Za-z0-9_\-]{20,}"#),
         ("openai_key", #"sk-[A-Za-z0-9_\-]{20,}"#),
         ("github_token", #"(?:gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{40,})"#),

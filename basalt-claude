@@ -33,7 +33,6 @@ done
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-BINARY="$SCRIPT_DIR/.build/release/basalt"
 GEM_DIR="$HOME/.basalt"
 PID_FILE="$GEM_DIR/server.pid"
 LOG_FILE="$GEM_DIR/server.log"
@@ -57,15 +56,17 @@ if [[ -f "$PID_FILE" ]]; then
   rm -f "$PID_FILE"
 fi
 
-# ── Build ─────────────────────────────────────────────────────────────────────
-# Always rebuild by default — Swift incremental compilation skips unchanged files.
-# Use --no-build only if you're certain nothing changed.
 if $BUILD; then
   info "Building basalt (incremental)…"
   cd "$SCRIPT_DIR"
-  swift build -c release 2>&1 | tail -5   # show last 5 lines of build output
+  swift build -c release 2>&1 | tail -5
+  ./scripts/build_metal.swift
+  BIN_DIR="$(swift build -c release --show-bin-path)"
+  BINARY="$BIN_DIR/Basalt"
   ok "Build done ✓"
 else
+  BIN_DIR="$(cd "$SCRIPT_DIR" && swift build -c release --show-bin-path)"
+  BINARY="$BIN_DIR/Basalt"
   [[ -f "$BINARY" ]] || { err "Binary not found and --no-build set. Run without --no-build first."; exit 1; }
   log "Skipping build (--no-build)."
 fi

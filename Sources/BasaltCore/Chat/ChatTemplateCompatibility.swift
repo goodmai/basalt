@@ -4,13 +4,13 @@ public enum ChatTemplateCompatibility {
     static let reservedLoopVariable = "call"
     static let renamedLoopVariable = "call_item"
 
-    nonisolated(unsafe) private static let jinjaSegment = try! NSRegularExpression(
+    private static let jinjaSegment = try! NSRegularExpression(
         pattern: #"\{[{%].*?[%}]\}"#, options: .dotMatchesLineSeparators)
-    nonisolated(unsafe) private static let loopOpening = try! NSRegularExpression(pattern: #"^\{%[-+]?\s*for\s+(.+?)\s+in\b"#)
-    nonisolated(unsafe) private static let loopClosing = try! NSRegularExpression(pattern: #"^\{%[-+]?\s*endfor\b"#)
-    nonisolated(unsafe) private static let stringLiteral = try! NSRegularExpression(
+    private static let loopOpening = try! NSRegularExpression(pattern: #"^\{%[-+]?\s*for\s+(.+?)\s+in\b"#)
+    private static let loopClosing = try! NSRegularExpression(pattern: #"^\{%[-+]?\s*endfor\b"#)
+    private static let stringLiteral = try! NSRegularExpression(
         pattern: #"'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*""#, options: .dotMatchesLineSeparators)
-    nonisolated(unsafe) private static let reservedIdentifier = try! NSRegularExpression(
+    private static let reservedIdentifier = try! NSRegularExpression(
         pattern: #"(?<![\w.])"# + reservedLoopVariable + #"(?!\w)"#)
     public static func renamingReservedLoopVariables(_ template: String) -> String {
         let source = template as NSString

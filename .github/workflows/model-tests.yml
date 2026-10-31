@@ -32,6 +32,9 @@ jobs:
 
       - name: Configure Swift toolchain
         uses: ./.github/actions/xcode-toolchain
+
+      - name: Metal toolchain
+        run: xcrun metal --version >/dev/null 2>&1 || xcodebuild -downloadComponent MetalToolchain
         
       # No actions/cache for ~/.cache/huggingface: on the self-hosted runner that directory
       # already persists, and uploading multi-GB weights to the Actions cache only evicts

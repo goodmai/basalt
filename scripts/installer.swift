@@ -94,7 +94,12 @@ if buildResult.status != 0 && !isDryRun {
     exit(1)
 }
 
-let binPath = ".build/release/Basalt"
+let binDirResult = runCommand("/usr/bin/swift", args: ["build", "-c", "release", "--show-bin-path"])
+if (binDirResult.status != 0 || binDirResult.output.isEmpty) && !isDryRun {
+    log("❌ Error: Could not determine release build directory.", level: .error)
+    exit(1)
+}
+let binPath = binDirResult.output + "/Basalt"
 let fm = FileManager.default
 
 if !fm.fileExists(atPath: binPath) && !isDryRun {

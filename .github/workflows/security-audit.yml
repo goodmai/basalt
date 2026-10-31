@@ -13,17 +13,17 @@ on:
 jobs:
   security-audit:
     name: Security & Dependency Audit
-    runs-on: macos-15
+    runs-on: xcode-27
     permissions:
       contents: read
     
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
-      
-      # No setup-swift: it pins an older toolchain than mlx-swift-lm's manifest
-      # requires (tools 6.1), and every `swift package` call then fails to
-      # resolve. The runner's own Xcode toolchain is newer and works.
+
+      - name: Configure Swift toolchain
+        uses: ./.github/actions/xcode-toolchain
+
       - name: Install dependencies
         run: |
           brew install jq
@@ -55,10 +55,6 @@ jobs:
           swift --version >> security-report.md 2>&1 || true
           echo "" >> security-report.md
           echo "## Dependencies" >> security-report.md
-          # Degrades instead of failing the job: the runner's toolchain is older
-          # than mlx-swift's manifest declares (tools 6.3), so resolution can
-          # fail here even though the release workflow builds fine. A report
-          # that cannot draw a dependency tree is still a report.
           swift package show-dependencies >> security-report.md 2>&1 \
             || echo "(dependency tree unavailable: $(swift --version 2>&1 | head -1))" >> security-report.md
           echo "" >> security-report.md
@@ -84,14 +80,8 @@ jobs:
 
   codeql-analysis:
     name: CodeQL Security Analysis
-    # Manual only. CodeQL ships its own Swift toolchain — 6.1.0 in action 2.26.4
-    # — and mlx-swift's manifest declares tools 6.3.0, so the extractor's build
-    # step cannot resolve the package at all. (The release job builds on macos-26 with
-    # Xcode 26.4+, Swift 6.3; this one would need the same plus a newer extractor.) Re-enable on push once
-    # the extractor catches up; until then a job that is red on every commit
-    # only teaches people to ignore the red.
     if: github.event_name == 'workflow_dispatch'
-    runs-on: macos-15
+    runs-on: xcode-27
     permissions:
       actions: read
       contents: read
@@ -100,7 +90,10 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
-      
+
+      - name: Configure Swift toolchain
+        uses: ./.github/actions/xcode-toolchain
+
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v4
         with:

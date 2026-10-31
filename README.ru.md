@@ -44,7 +44,8 @@
 
 ```bash
 brew tap goodmai/basalt https://github.com/goodmai/basalt
-brew install goodmai/basalt/basalt          # сборка из исходников, нужен Xcode 26.4+
+brew trust goodmai/basalt
+brew install goodmai/basalt/basalt          # сборка из исходников, нужен Xcode 27.0+ (macOS 27+)
 
 basalt onboard                              # подберёт модель под ваш Mac и скачает её
 basalt serve --model mlx-community/Qwen3.5-4B-4bit --rest
@@ -63,9 +64,9 @@ ANTHROPIC_BASE_URL=http://localhost:8080 ANTHROPIC_AUTH_TOKEN=local claude
 
 | | |
 |---|---|
-| **macOS** | 15+ (Sequoia) |
-| **Xcode / Swift** | 26.4+ / Swift 6.3 |
-| **Metal toolchain** | `xcodebuild -downloadComponent MetalToolchain` — в Xcode 26 компилятор Metal ставится отдельно, без него ядра MLX не собрать |
+| **macOS** | 27+ |
+| **Xcode / Swift** | 27.0+ / Swift 6.4 |
+| **Metal toolchain** | `xcodebuild -downloadComponent MetalToolchain` — в Xcode компилятор Metal ставится отдельно, без него ядра MLX не собрать |
 | **Железо** | Apple Silicon M1–M4, Unified Memory |
 | **Диск** | 2–30 ГБ в зависимости от модели |
 
@@ -81,8 +82,9 @@ brew install goodmai/basalt/basalt
 ```
 
 URL в `tap` указывается явно, потому что репозиторий называется не
-`homebrew-basalt`. Бутылки нет: формула собирает из исходников, поэтому нужен
-Xcode 26.4+ и Metal toolchain — в Xcode 26 он качается отдельно:
+`homebrew-basalt`. На Homebrew 7+ команда `brew trust goodmai/basalt` разрешает
+сторонний tap. Бутылки нет: формула собирает из исходников, поэтому нужен
+Xcode 27.0+ (macOS 27+) и Metal toolchain — он качается отдельно:
 
 ```bash
 xcodebuild -downloadComponent MetalToolchain
@@ -96,7 +98,7 @@ xcodebuild -downloadComponent MetalToolchain
 1. `swift build -c release` — сам сервер.
 2. `scripts/build_metal.swift` — компилирует Metal-ядра MLX и кладёт
    `mlx.metallib` рядом с бинарём в `libexec`. SwiftPM-сборка mlx-swift не
-   содержит metallib, а запасной путь поиска у MLX считается от рабочей
+   содержит полного metallib, а запасной путь поиска у MLX считается от рабочей
    директории — без этого шага `basalt` работает только из папки, где лежит
    библиотека. Этот шаг и занимает основное время установки.
 
@@ -116,19 +118,20 @@ cd basalt
 swift build -c release
 
 # Компиляция Metal-ядер MLX. Нужна один раз на каждый checkout: SwiftPM-сборка
-# mlx-swift не содержит metallib, и без него первый же вызов инференса падает с
-# "Failed to load the default metallib". Скрипт кладёт библиотеку рядом с
-# бинарём, поэтому он работает из любой директории.
+# mlx-swift не содержит полного metallib, и без него первый же вызов инференса
+# падает с "Failed to load the default metallib". Скрипт кладёт библиотеку рядом
+# с бинарём, поэтому он работает из любой директории.
 ./scripts/build_metal.swift
+BIN="$(swift build -c release --show-bin-path)/Basalt"
 
 # Интерактивный чат
-.build/release/basalt chat --model mlx-community/Qwen3.5-4B-4bit
+"$BIN" chat --model mlx-community/Qwen3.5-4B-4bit
 
 # REST-сервер на :8080 (совместим с OpenAI и Anthropic)
-.build/release/basalt serve --model mlx-community/Qwen3.5-4B-4bit --rest
+"$BIN" serve --model mlx-community/Qwen3.5-4B-4bit --rest
 
 # MCP stdio сервер (для Claude Desktop / Cursor)
-.build/release/basalt serve --model mlx-community/gemma-4-e4b-it-4bit --mcp
+"$BIN" serve --model mlx-community/gemma-4-e4b-it-4bit --mcp
 ```
 
 ### Лаунчер одной командой: `./basalt-claude`
@@ -363,7 +366,7 @@ curl -N http://127.0.0.1:8080/api/v1/generate/stream \
 
 ```bash
 # Запускаем Basalt
-.build/release/basalt serve --model mlx-community/Qwen3.5-4B-4bit --rest
+"$(swift build -c release --show-bin-path)/Basalt" serve --model mlx-community/Qwen3.5-4B-4bit --rest
 
 # В другом терминале — переменные видит только этот процесс claude
 ANTHROPIC_BASE_URL=http://127.0.0.1:8080 \
@@ -412,10 +415,10 @@ Claude Code (v2.1.126+) при старте дёргает `GET /v1/models` и �
 
 ```bash
 # Крупная модель (abliterated / MoE)
-.build/release/basalt serve --model AutisticAF/Huihui-Qwen3.8-27B-abliterated-mlx-4Bit --rest
+"$(swift build -c release --show-bin-path)/Basalt" serve --model AutisticAF/Huihui-Qwen3.8-27B-abliterated-mlx-4Bit --rest
 
 # Или быстрая кодовая
-.build/release/basalt serve --model mlx-community/Qwen2.5-Coder-7B-Instruct-4bit --rest
+"$(swift build -c release --show-bin-path)/Basalt" serve --model mlx-community/Qwen2.5-Coder-7B-Instruct-4bit --rest
 ```
 
 ### 2. Подключить OpenCode

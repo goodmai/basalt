@@ -73,7 +73,6 @@ guard let options = parse(Array(CommandLine.arguments.dropFirst())) else {
 
 let repo = URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL
     .deletingLastPathComponent().deletingLastPathComponent().path
-let releaseDirectory = repo + "/.build/release"
 let lockDirectory = "/private/tmp/basalt-gpu.lock"
 let pid = ProcessInfo.processInfo.processIdentifier
 let ownerLine = String(pid)
@@ -126,6 +125,31 @@ func run(_ executable: String, _ arguments: [String], in directory: String = rep
 }
 
 func trimmed(_ text: String) -> String { text.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+func resolveReleaseDirectory() -> String {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/swift")
+    process.arguments = ["build", "-c", "release", "--show-bin-path"]
+    process.currentDirectoryURL = URL(fileURLWithPath: repo)
+    let out = Pipe()
+    let err = Pipe()
+    process.standardOutput = out
+    process.standardError = err
+    do { try process.run() } catch {
+        fail("show-bin-path", "\(error)")
+        exit(1)
+    }
+    let data = out.fileHandleForReading.readDataToEndOfFile()
+    let errData = err.fileHandleForReading.readDataToEndOfFile()
+    process.waitUntilExit()
+    let path = trimmed(String(decoding: data, as: UTF8.self))
+    let errText = trimmed(String(decoding: errData, as: UTF8.self))
+    guard process.terminationStatus == 0, !path.isEmpty else {
+        fail("show-bin-path", "swift build -c release --show-bin-path exited with \(process.terminationStatus): \(errText)")
+        exit(1)
+    }
+    return path
+}
 
 func releaseLock() {
     state.withLock {
@@ -325,6 +349,7 @@ for product in ["PerformanceBenchmark", "Basalt"] {
         exit(1)
     }
 }
+let releaseDirectory = resolveReleaseDirectory()
 let benchmark = releaseDirectory + "/PerformanceBenchmark"
 for variant in options.variants where !FileManager.default.isExecutableFile(atPath: variant.binary) {
     fail("variant \(variant.label)", "not an executable: \(variant.binary)")

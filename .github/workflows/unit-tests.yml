@@ -43,6 +43,9 @@ jobs:
       - name: Configure Swift toolchain
         uses: ./.github/actions/xcode-toolchain
 
+      - name: Metal toolchain
+        run: xcrun metal --version >/dev/null 2>&1 || xcodebuild -downloadComponent MetalToolchain
+
       - name: Build tests
         run: swift build --build-tests
 

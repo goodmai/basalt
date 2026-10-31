@@ -44,7 +44,8 @@ Two transports share a single actor instance — **MCP stdio** for IDE integrati
 
 ```bash
 brew tap goodmai/basalt https://github.com/goodmai/basalt
-brew install goodmai/basalt/basalt          # builds from source, needs Xcode 26.4+
+brew trust goodmai/basalt
+brew install goodmai/basalt/basalt          # builds from source, needs Xcode 27.0+ (macOS 27+)
 
 basalt onboard                              # picks a model that fits your Mac and downloads it
 basalt serve --model mlx-community/Qwen3.5-4B-4bit --rest
@@ -63,9 +64,9 @@ Local 4B–9B models are not a drop-in replacement for a frontier model — they
 
 | | |
 |---|---|
-| **macOS** | 15+ (Sequoia) |
-| **Xcode / Swift** | 26.4+ / Swift 6.3 |
-| **Metal toolchain** | `xcodebuild -downloadComponent MetalToolchain` — Xcode 26 ships the Metal compiler separately, and MLX's kernels cannot be built without it |
+| **macOS** | 27+ |
+| **Xcode / Swift** | 27.0+ / Swift 6.4 |
+| **Metal toolchain** | `xcodebuild -downloadComponent MetalToolchain` — Xcode ships the Metal compiler separately, and MLX's kernels cannot be built without it |
 | **Hardware** | Apple Silicon M1–M4, Unified Memory |
 | **Disk** | 2–30 GB depending on model |
 
@@ -81,8 +82,9 @@ brew install goodmai/basalt/basalt
 ```
 
 The tap needs the explicit URL because the repository is not named
-`homebrew-basalt`. There is no bottle: the formula builds from source, so Xcode
-26.4+ must be installed, along with the Metal toolchain — on Xcode 26 that is a
+`homebrew-basalt`. On Homebrew 7+, `brew trust goodmai/basalt` authorizes the
+third-party tap. There is no bottle: the formula builds from source, so Xcode
+27.0+ (macOS 27+) must be installed, along with the Metal toolchain — a
 separate download:
 
 ```bash
@@ -97,7 +99,7 @@ The build does two things, and both matter:
 1. `swift build -c release` — the server itself.
 2. `scripts/build_metal.swift` — compiles MLX's Metal kernels and puts
    `mlx.metallib` next to the binary in `libexec`. A SwiftPM build of mlx-swift
-   ships no metallib, and MLX's fallback lookup is relative to the working
+   ships no complete metallib, and MLX's fallback lookup is relative to the working
    directory, so without this step `basalt` only runs from the directory holding
    the library. Expect this step to dominate the install time.
 
@@ -117,19 +119,20 @@ cd basalt
 swift build -c release
 
 # Compile the MLX Metal kernels. Required once per checkout: a SwiftPM build of
-# mlx-swift ships no metallib, and without it the first inference call fails
-# with "Failed to load the default metallib". The script places it next to the
-# built binary, so the binary works from any directory.
+# mlx-swift ships no complete metallib, and without it the first inference call
+# fails with "Failed to load the default metallib". The script places it next to
+# the built binary, so the binary works from any directory.
 ./scripts/build_metal.swift
+BIN="$(swift build -c release --show-bin-path)/Basalt"
 
 # Interactive chat
-.build/release/basalt chat --model mlx-community/Qwen3.5-4B-4bit
+"$BIN" chat --model mlx-community/Qwen3.5-4B-4bit
 
 # REST server on :8080 (OpenAI + Anthropic compatible)
-.build/release/basalt serve --model mlx-community/Qwen3.5-4B-4bit --rest
+"$BIN" serve --model mlx-community/Qwen3.5-4B-4bit --rest
 
 # MCP stdio server (for Claude Desktop / Cursor)
-.build/release/basalt serve --model mlx-community/gemma-4-e4b-it-4bit --mcp
+"$BIN" serve --model mlx-community/gemma-4-e4b-it-4bit --mcp
 ```
 
 ### One-command launcher: `./basalt-claude`
@@ -367,7 +370,7 @@ Visit `http://localhost:8080/swagger` for interactive API docs.
 
 ```bash
 # Start Basalt
-.build/release/basalt serve --model mlx-community/Qwen3.5-4B-4bit --rest
+"$(swift build -c release --show-bin-path)/Basalt" serve --model mlx-community/Qwen3.5-4B-4bit --rest
 
 # In another terminal — scope vars only to this claude process
 ANTHROPIC_BASE_URL=http://localhost:8080 \
@@ -418,10 +421,10 @@ Start Basalt with your desired local model (e.g. Huihui Qwen3.8 Abliterated, Ex0
 
 ```bash
 # High capability (Abliterated / MoE)
-.build/release/basalt serve --model AutisticAF/Huihui-Qwen3.8-27B-abliterated-mlx-4Bit --rest
+"$(swift build -c release --show-bin-path)/Basalt" serve --model AutisticAF/Huihui-Qwen3.8-27B-abliterated-mlx-4Bit --rest
 
 # Or fast coding model
-.build/release/basalt serve --model mlx-community/Qwen2.5-Coder-7B-Instruct-4bit --rest
+"$(swift build -c release --show-bin-path)/Basalt" serve --model mlx-community/Qwen2.5-Coder-7B-Instruct-4bit --rest
 ```
 
 ### 2. Connect OpenCode
@@ -495,7 +498,7 @@ Add to your MCP config (`~/.config/claude/claude_desktop_config.json`):
 {
   "mcpServers": {
     "basalt": {
-      "command": "/path/to/.build/release/basalt",
+      "command": "/path/to/basalt",
       "args": ["serve", "--model", "mlx-community/Qwen3.5-4B-4bit", "--mcp"]
     }
   }
