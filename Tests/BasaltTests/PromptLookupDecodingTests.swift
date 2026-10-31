@@ -452,6 +452,23 @@ struct PromptLookupDecodingTests {
         #expect(backoffs.lookup.allowsDraft)
     }
 
+    @Test("A low-yield draft on a dense model backs off and shrinks the draft limit rather than resetting pause (#172)")
+    func lowYieldDraftsBackOff() {
+        var backoff = DraftBackoff()
+        #expect(backoff.draftLimit == 16)
+        backoff.record(acceptedDrafts: 1, drafted: 16)
+        #expect(!backoff.allowsDraft)
+        #expect(backoff.pause == 1)
+        #expect(backoff.draftLimit == 2)
+        while !backoff.allowsDraft { backoff.tick() }
+        backoff.record(acceptedDrafts: 0, drafted: 2)
+        #expect(backoff.pause == 2)
+        while !backoff.allowsDraft { backoff.tick() }
+        backoff.record(acceptedDrafts: 4, drafted: 4)
+        #expect(backoff.allowsDraft)
+        #expect(backoff.draftLimit == 6)
+    }
+
     @Test("On a hybrid a round that accepts one draft and then replays does not pay for its extra forward, so lookup backs off; a dense model keeps drafting")
     func hybridBacksOffWhenTheReplayEatsTheGain() throws {
         let cycles = (0 ..< 20).flatMap { [1, 2, 3, 4, 5, 20 + $0] }

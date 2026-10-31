@@ -173,7 +173,7 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
         let remaining = maxTokens.map { $0 - tokenCount } ?? Int.max
         let looksUp = backoffs.lookup.allowsDraft && state == nil
         let recycles = recyclesTokens && backoffs.recycling.allowsDraft && state == nil
-        let limit = replaysRejections && backoffs.lookup.probing ? Self.replayedProbeLimit : Self.draftLimit
+        let limit = replaysRejections && backoffs.lookup.probing ? Self.replayedProbeLimit : backoffs.lookup.draftLimit
         let draft = looksUp ? Self.draft(after: history, limit: Swift.min(limit, remaining - 1)) : []
         switch (inFlight, draft.isEmpty) {
         case (let step?, true) where recycles && recycling.predicts(after: history[history.count - 1]):
@@ -277,7 +277,7 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
             recycledDraftTokens += draft.count
             acceptedRecycledDrafts += acceptedDrafts
         }
-        backoffs.recordRound(recycled: recycled, acceptedDrafts: acceptedDrafts, replayed: replays)
+        backoffs.recordRound(recycled: recycled, acceptedDrafts: acceptedDrafts, draftCount: draft.count, replayed: replays)
         rounds += 1
         drafted += draft.count
         accepted += acceptedDrafts
@@ -351,16 +351,16 @@ struct DrafterBackoffs {
         recycling.tick()
     }
 
-    mutating func recordRound(recycled: Bool, acceptedDrafts: Int, replayed: Bool) {
+    mutating func recordRound(recycled: Bool, acceptedDrafts: Int, draftCount: Int = 0, replayed: Bool) {
         for _ in 0 ... acceptedDrafts {
             if recycled { lookup.tick() } else { recycling.tick() }
         }
         let paidDrafts = replayed ? acceptedDrafts - 1 : acceptedDrafts
         let pauseScale = replayed ? DraftBackoff.replayPauseScale : 1
         if recycled {
-            recycling.record(acceptedDrafts: paidDrafts, pauseScale: pauseScale)
+            recycling.record(acceptedDrafts: paidDrafts, drafted: draftCount, pauseScale: pauseScale)
         } else {
-            lookup.record(acceptedDrafts: paidDrafts, pauseScale: pauseScale)
+            lookup.record(acceptedDrafts: paidDrafts, drafted: draftCount, pauseScale: pauseScale)
         }
     }
 }
@@ -368,9 +368,12 @@ struct DrafterBackoffs {
 struct DraftBackoff {
     static let longestPause = 64
     static let replayPauseScale = 4
+    static let maxDraftLimit = 16
+    static let minDraftLimit = 2
 
     private(set) var pause = 0
     private(set) var probing = true
+    private(set) var draftLimit = maxDraftLimit
     private var nextPause = 1
 
     var allowsDraft: Bool { pause == 0 }
@@ -379,9 +382,22 @@ struct DraftBackoff {
         pause = Swift.max(0, pause - 1)
     }
 
-    mutating func record(acceptedDrafts: Int, pauseScale: Int = 1) {
-        probing = acceptedDrafts <= 0
-        if acceptedDrafts > 0 {
+    mutating func record(acceptedDrafts: Int, drafted: Int = 0, pauseScale: Int = 1) {
+        let isProfitable: Bool
+        if drafted > 0 {
+            isProfitable = acceptedDrafts >= 3
+                || (drafted <= 2 && acceptedDrafts >= 1)
+                || (Double(acceptedDrafts) / Double(drafted) >= 0.25)
+            if acceptedDrafts <= 1 {
+                draftLimit = Self.minDraftLimit
+            } else {
+                draftLimit = Swift.min(Self.maxDraftLimit, Swift.max(Self.minDraftLimit, acceptedDrafts + 2))
+            }
+        } else {
+            isProfitable = acceptedDrafts > 0
+        }
+        probing = !isProfitable
+        if isProfitable {
             nextPause = 1
         } else {
             pause = nextPause * pauseScale
