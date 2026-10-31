@@ -40,38 +40,51 @@ if args.contains("--dry-run") {
     exit(0)
 }
 
-func binPath(configuration: String) -> String {
+func queryBinPath(configuration: String, buildSystem: String? = nil) -> (path: String, stderr: String, status: Int32) {
     let task = Process()
-    let pipe = Pipe()
+    let outPipe = Pipe()
+    let errPipe = Pipe()
     task.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-    task.arguments = ["swift", "build", "-c", configuration, "--show-bin-path"]
-    task.standardOutput = pipe
-    task.standardError = FileHandle.nullDevice
+    var command = ["swift", "build", "-c", configuration, "--disable-sandbox", "--show-bin-path"]
+    if let buildSystem {
+        command += ["--build-system", buildSystem]
+    }
+    task.arguments = command
+    task.standardOutput = outPipe
+    task.standardError = errPipe
     try? task.run()
-    let data = pipe.fileHandleForReading.readDataToEndOfFile()
+    let outData = outPipe.fileHandleForReading.readDataToEndOfFile()
+    let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
     task.waitUntilExit()
-    let path = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-    guard task.terminationStatus == 0, !path.isEmpty else {
-        log("Could not determine \(configuration) bin path via swift build --show-bin-path", level: .error)
+    let path = String(data: outData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    let stderrText = String(data: errData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    return (path, stderrText, task.terminationStatus)
+}
+
+func binPath(configuration: String) -> String {
+    let result = queryBinPath(configuration: configuration)
+    guard result.status == 0, !result.path.isEmpty else {
+        log("Could not determine \(configuration) bin path via swift build --show-bin-path: \(result.stderr)", level: .error)
         exit(1)
     }
-    return path
+    return result.path
 }
 
 let kernelDir = ".build/checkouts/mlx-swift/Source/Cmlx/mlx/mlx/backend/metal/kernels"
 let genKernelDir = ".build/checkouts/mlx-swift/Source/Cmlx/mlx-generated/metal"
 let debugBinDir = binPath(configuration: "debug")
 let releaseBinDir = binPath(configuration: "release")
+let nativeBinDirs = ["debug", "release"].compactMap { cfg -> String? in
+    let res = queryBinPath(configuration: cfg, buildSystem: "native")
+    return res.status == 0 && !res.path.isEmpty ? res.path : nil
+}
+let colocatedDirs = Array(Set([debugBinDir, releaseBinDir] + nativeBinDirs)).sorted()
 let outputDir = debugBinDir
 let tempDir = ".build/metal_temp"
 let metalLibPath = "\(outputDir)/default.metallib"
 
 let fm = FileManager.default
 
-// MARK: — Check if metallib is up to date
-
-/// Copies through a sibling temp file and rename(2), so `dst` is either the old file or the
-/// complete new one.
 func atomicCopy(_ src: String, to dst: String) {
     let staging = dst + ".partial"
     try? fm.removeItem(atPath: staging)
@@ -82,11 +95,9 @@ func atomicCopy(_ src: String, to dst: String) {
     }
 }
 
-/// MLX looks for `mlx.metallib` next to the binary first: (re)place it in every existing
-/// build dir where it is missing or older than `source`.
 func placeColocated(from source: String) {
     let sourceDate = getModificationDate(of: source)
-    for buildDir in [debugBinDir, releaseBinDir] where fm.fileExists(atPath: buildDir) {
+    for buildDir in colocatedDirs where fm.fileExists(atPath: buildDir) {
         let colocated = "\(buildDir)/mlx.metallib"
         if let have = getModificationDate(of: colocated), let want = sourceDate, have >= want { continue }
         atomicCopy(source, to: colocated)
@@ -151,8 +162,6 @@ try? fm.removeItem(atPath: tempDir)
 try? fm.createDirectory(atPath: tempDir, withIntermediateDirectories: true)
 try? fm.createDirectory(atPath: outputDir, withIntermediateDirectories: true)
 
-// Xcode 26 ships the Metal compiler as a downloadable component. Without it
-// every kernel fails with the same opaque error, so say it once, up front.
 let probe = Process()
 probe.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
 probe.arguments = ["metal", "--version"]

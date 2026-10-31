@@ -56,13 +56,11 @@ if [[ -f "$PID_FILE" ]]; then
   rm -f "$PID_FILE"
 fi
 
-# ── Build ─────────────────────────────────────────────────────────────────────
-# Always rebuild by default — Swift incremental compilation skips unchanged files.
-# Use --no-build only if you're certain nothing changed.
 if $BUILD; then
   info "Building basalt (incremental)…"
   cd "$SCRIPT_DIR"
-  swift build -c release 2>&1 | tail -5   # show last 5 lines of build output
+  swift build -c release 2>&1 | tail -5
+  ./scripts/build_metal.swift
   BIN_DIR="$(swift build -c release --show-bin-path)"
   BINARY="$BIN_DIR/Basalt"
   ok "Build done ✓"

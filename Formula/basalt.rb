@@ -6,15 +6,11 @@ class Basalt < Formula
   license "MIT"
   head "https://github.com/goodmai/basalt.git", branch: "main"
 
-  # Swift 6.4: Package.swift declares swift-tools-version 6.4 (Xcode 27 runs on macOS 26.6+).
   depends_on xcode: ["27.0", :build]
   depends_on arch: :arm64
-  depends_on macos: :tahoe
+  depends_on macos: :golden_gate
 
   def install
-    # Xcode ships the Metal compiler as a separately downloaded component,
-    # and there is no way around needing it: a SwiftPM build of mlx-swift ships
-    # no complete metallib, so the kernels have to be compiled here.
     unless quiet_system("xcrun", "metal", "--version")
       odie <<~EOS
         The Metal toolchain is not installed, so MLX's kernels cannot be built.
@@ -25,12 +21,9 @@ class Basalt < Formula
     end
 
     system "swift", "build", "-c", "release", "--disable-sandbox"
-    # Leaves mlx.metallib next to the binary — the first path MLX searches.
-    # Without it the first inference call dies with
-    # "Failed to load the default metallib".
     system "./scripts/build_metal.swift"
 
-    bin_path = Utils.safe_popen_read("swift", "build", "-c", "release", "--show-bin-path").chomp
+    bin_path = Utils.safe_popen_read("swift", "build", "-c", "release", "--disable-sandbox", "--show-bin-path").chomp
     libexec.install "#{bin_path}/Basalt" => "basalt"
     libexec.install "#{bin_path}/mlx.metallib"
     (bin/"basalt").write_env_script libexec/"basalt", {}

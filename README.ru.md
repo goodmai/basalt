@@ -44,7 +44,8 @@
 
 ```bash
 brew tap goodmai/basalt https://github.com/goodmai/basalt
-brew install goodmai/basalt/basalt          # сборка из исходников, нужен Xcode 27.0+ (macOS 26.6+)
+brew trust goodmai/basalt
+brew install goodmai/basalt/basalt          # сборка из исходников, нужен Xcode 27.0+ (macOS 27+)
 
 basalt onboard                              # подберёт модель под ваш Mac и скачает её
 basalt serve --model mlx-community/Qwen3.5-4B-4bit --rest
@@ -63,7 +64,7 @@ ANTHROPIC_BASE_URL=http://localhost:8080 ANTHROPIC_AUTH_TOKEN=local claude
 
 | | |
 |---|---|
-| **macOS** | 15+ (Sequoia) для запуска; 26.6+ (Tahoe) для сборки из исходников (Xcode 27) |
+| **macOS** | 27+ |
 | **Xcode / Swift** | 27.0+ / Swift 6.4 |
 | **Metal toolchain** | `xcodebuild -downloadComponent MetalToolchain` — в Xcode компилятор Metal ставится отдельно, без него ядра MLX не собрать |
 | **Железо** | Apple Silicon M1–M4, Unified Memory |
@@ -81,8 +82,9 @@ brew install goodmai/basalt/basalt
 ```
 
 URL в `tap` указывается явно, потому что репозиторий называется не
-`homebrew-basalt`. Бутылки нет: формула собирает из исходников, поэтому нужен
-Xcode 27.0+ (macOS 26.6+) и Metal toolchain — он качается отдельно:
+`homebrew-basalt`. На Homebrew 7+ команда `brew trust goodmai/basalt` разрешает
+сторонний tap. Бутылки нет: формула собирает из исходников, поэтому нужен
+Xcode 27.0+ (macOS 27+) и Metal toolchain — он качается отдельно:
 
 ```bash
 xcodebuild -downloadComponent MetalToolchain

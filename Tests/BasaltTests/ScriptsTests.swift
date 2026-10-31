@@ -162,8 +162,10 @@ struct ScriptsTests {
         let kernelDir = repo.appendingPathComponent(".build/checkouts/mlx-swift/Source/Cmlx/mlx/mlx/backend/metal/kernels")
         let customDebug = repo.appendingPathComponent(".build/out/Products/Debug")
         let customRelease = repo.appendingPathComponent(".build/out/Products/Release")
+        let nativeDebug = repo.appendingPathComponent(".build/arm64-apple-macosx/debug")
+        let nativeRelease = repo.appendingPathComponent(".build/arm64-apple-macosx/release")
         let binDir = repo.appendingPathComponent("bin")
-        for dir in [kernelDir, customRelease, binDir] {
+        for dir in [kernelDir, customRelease, nativeDebug, binDir] {
             try fm.createDirectory(at: dir, withIntermediateDirectories: true)
         }
         let kernel = kernelDir.appendingPathComponent("noop.metal")
@@ -174,8 +176,14 @@ struct ScriptsTests {
         let swiftShim = binDir.appendingPathComponent("swift")
         let shimScript = """
         #!/bin/bash
-        if [ "$1" = "build" ] && [ "$2" = "-c" ] && [ "$4" = "--show-bin-path" ]; then
-          if [ "$3" = "debug" ]; then
+        if [ "$1" = "build" ] && [[ " $* " == *" --show-bin-path "* ]]; then
+          if [[ " $* " == *" --build-system native "* ]]; then
+            if [[ " $* " == *" -c debug "* ]]; then
+              echo "\(nativeDebug.path)"
+            else
+              echo "\(nativeRelease.path)"
+            fi
+          elif [[ " $* " == *" -c debug "* ]]; then
             echo "\(customDebug.path)"
           else
             echo "\(customRelease.path)"
@@ -202,6 +210,8 @@ struct ScriptsTests {
         #expect(task.terminationStatus == 0)
         #expect(fm.fileExists(atPath: customDebug.appendingPathComponent("mlx.metallib").path))
         #expect(fm.fileExists(atPath: customRelease.appendingPathComponent("mlx.metallib").path))
+        #expect(fm.fileExists(atPath: nativeDebug.appendingPathComponent("mlx.metallib").path))
+        #expect(!fm.fileExists(atPath: nativeRelease.appendingPathComponent("mlx.metallib").path))
         #expect(!fm.fileExists(atPath: repo.appendingPathComponent(".build/debug/mlx.metallib").path))
     }
 
@@ -221,13 +231,26 @@ struct ScriptsTests {
             .appendingPathComponent("xcode-action-\(UUID().uuidString)")
         defer { try? fm.removeItem(at: temp) }
         let apps = temp.appendingPathComponent("Applications")
-        let gaDev = apps.appendingPathComponent("Xcode_27.1.app/Contents/Developer")
+        let rcOnlyApps = temp.appendingPathComponent("RCOnlyApplications")
+        let olderDev = apps.appendingPathComponent("Xcode_26.6.app/Contents/Developer")
+        let gaApp = apps.appendingPathComponent("Xcode.app")
+        let gaDev = gaApp.appendingPathComponent("Contents/Developer")
         let rcApp = apps.appendingPathComponent("Xcode_27.2_Release_Candidate.app")
         let rcDev = rcApp.appendingPathComponent("Contents/Developer")
+        let rcOnlyDev = rcOnlyApps.appendingPathComponent("Xcode_27.2_Release_Candidate.app/Contents/Developer")
         let binDir = temp.appendingPathComponent("bin")
-        for dir in [gaDev, rcDev, binDir] {
+        for dir in [olderDev, gaDev, rcDev, rcOnlyDev, binDir] {
             try fm.createDirectory(at: dir, withIntermediateDirectories: true)
         }
+        func writePlist(app: URL, version: String) throws {
+            let plist: [String: Any] = ["CFBundleShortVersionString": version]
+            let data = try PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0)
+            try data.write(to: app.appendingPathComponent("Contents/Info.plist"))
+        }
+        try writePlist(app: apps.appendingPathComponent("Xcode_26.6.app"), version: "26.6")
+        try writePlist(app: gaApp, version: "27.1")
+        try writePlist(app: rcApp, version: "27.2")
+        try writePlist(app: rcOnlyApps.appendingPathComponent("Xcode_27.2_Release_Candidate.app"), version: "27.2")
         try fm.createSymbolicLink(
             at: apps.appendingPathComponent("Xcode_27.2.app"),
             withDestinationURL: rcApp
@@ -236,17 +259,18 @@ struct ScriptsTests {
         try Data().write(to: envFile)
 
         let swiftShim = binDir.appendingPathComponent("swift")
-        try Data("#!/bin/bash\necho \"Apple Swift version ${FAKE_SWIFT_VER:-6.4.2} (swiftlang-6.4.2)\"\n".utf8).write(to: swiftShim)
+        try Data("#!/bin/bash\necho \"${FAKE_SWIFT_OUT:-Apple Swift version ${FAKE_SWIFT_VER:-6.4.2} (swiftlang-6.4.2)}\"\n".utf8).write(to: swiftShim)
         try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: swiftShim.path)
 
-        func runAction(swiftVersion: String) throws -> Int32 {
+        func runAction(appsDir: URL = apps, swiftVersion: String, swiftOut: String? = nil) throws -> Int32 {
             let task = Process()
             task.executableURL = URL(fileURLWithPath: "/bin/bash")
             task.arguments = ["-euo", "pipefail", "-c", script]
             var env = ProcessInfo.processInfo.environment
-            env["XCODE_APPS_DIR"] = apps.path
+            env["XCODE_APPS_DIR"] = appsDir.path
             env["GITHUB_ENV"] = envFile.path
             env["FAKE_SWIFT_VER"] = swiftVersion
+            if let swiftOut { env["FAKE_SWIFT_OUT"] = swiftOut }
             env["PATH"] = "\(binDir.path):/usr/bin:/bin"
             task.environment = env
             task.standardOutput = FileHandle.nullDevice
@@ -263,6 +287,10 @@ struct ScriptsTests {
         let selectedDev = URL(fileURLWithPath: String(writtenEnv.dropFirst("DEVELOPER_DIR=".count)))
             .resolvingSymlinksInPath().path
         #expect(selectedDev == gaDev.resolvingSymlinksInPath().path)
+        try Data().write(to: envFile)
+        #expect(try runAction(appsDir: rcOnlyApps, swiftVersion: "6.4.2") == 0)
+        #expect(try String(contentsOf: envFile, encoding: .utf8).isEmpty)
         #expect(try runAction(swiftVersion: "6.3.3") != 0)
+        #expect(try runAction(swiftVersion: "6.4.2", swiftOut: "xcrun: error: unable to find utility") != 0)
     }
 }

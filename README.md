@@ -44,7 +44,8 @@ Two transports share a single actor instance — **MCP stdio** for IDE integrati
 
 ```bash
 brew tap goodmai/basalt https://github.com/goodmai/basalt
-brew install goodmai/basalt/basalt          # builds from source, needs Xcode 27.0+ (macOS 26.6+)
+brew trust goodmai/basalt
+brew install goodmai/basalt/basalt          # builds from source, needs Xcode 27.0+ (macOS 27+)
 
 basalt onboard                              # picks a model that fits your Mac and downloads it
 basalt serve --model mlx-community/Qwen3.5-4B-4bit --rest
@@ -63,7 +64,7 @@ Local 4B–9B models are not a drop-in replacement for a frontier model — they
 
 | | |
 |---|---|
-| **macOS** | 15+ (Sequoia) runtime; 26.6+ (Tahoe) to build from source (Xcode 27) |
+| **macOS** | 27+ |
 | **Xcode / Swift** | 27.0+ / Swift 6.4 |
 | **Metal toolchain** | `xcodebuild -downloadComponent MetalToolchain` — Xcode ships the Metal compiler separately, and MLX's kernels cannot be built without it |
 | **Hardware** | Apple Silicon M1–M4, Unified Memory |
@@ -81,8 +82,9 @@ brew install goodmai/basalt/basalt
 ```
 
 The tap needs the explicit URL because the repository is not named
-`homebrew-basalt`. There is no bottle: the formula builds from source, so Xcode
-27.0+ (macOS 26.6+) must be installed, along with the Metal toolchain — a
+`homebrew-basalt`. On Homebrew 7+, `brew trust goodmai/basalt` authorizes the
+third-party tap. There is no bottle: the formula builds from source, so Xcode
+27.0+ (macOS 27+) must be installed, along with the Metal toolchain — a
 separate download:
 
 ```bash

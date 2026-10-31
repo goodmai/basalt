@@ -1,14 +1,15 @@
 import Foundation
+import Synchronization
 
-/// URLProtocol stub keyed by host, so tests running in parallel each own their responses:
-/// give every test its own host (`StubURLProtocol.host()`), register a handler for it, and pass
-/// `StubURLProtocol.configuration` to the client under test.
 final class StubURLProtocol: URLProtocol {
     typealias Handler = @Sendable (URLRequest, Data?) -> (status: Int, headers: [String: String], body: Data)
 
-    private static let lock = NSLock()
-    nonisolated(unsafe) private static var handlers: [String: Handler] = [:]
-    nonisolated(unsafe) private static var requests: [String: [(URLRequest, Data?)]] = [:]
+    private struct State: Sendable {
+        var handlers: [String: Handler] = [:]
+        var requests: [String: [(URLRequest, Data?)]] = [:]
+    }
+
+    private static let state = Mutex(State())
 
     static var configuration: URLSessionConfiguration {
         let config = URLSessionConfiguration.ephemeral
@@ -16,16 +17,14 @@ final class StubURLProtocol: URLProtocol {
         return config
     }
 
-    /// A fresh host with `handler` behind it.
     static func host(_ handler: @escaping Handler) -> String {
         let host = "stub-\(UUID().uuidString.lowercased()).test"
-        lock.withLock { handlers[host] = handler }
+        state.withLock { $0.handlers[host] = handler }
         return host
     }
 
-    /// Requests seen for `host`, with their bodies.
     static func requests(for host: String) -> [(URLRequest, Data?)] {
-        lock.withLock { requests[host] ?? [] }
+        state.withLock { $0.requests[host] ?? [] }
     }
 
     override class func canInit(with request: URLRequest) -> Bool { true }
@@ -34,9 +33,9 @@ final class StubURLProtocol: URLProtocol {
     override func startLoading() {
         let host = request.url?.host ?? ""
         let body = request.httpBody ?? request.httpBodyStream.map(Self.read)
-        let handler = Self.lock.withLock { () -> Handler? in
-            Self.requests[host, default: []].append((request, body))
-            return Self.handlers[host]
+        let handler = Self.state.withLock { state -> Handler? in
+            state.requests[host, default: []].append((request, body))
+            return state.handlers[host]
         }
         guard let handler, let url = request.url else {
             client?.urlProtocol(self, didFailWithError: URLError(.cannotFindHost))

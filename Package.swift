@@ -6,7 +6,7 @@ let swiftSettings: [SwiftSetting] = [.swiftLanguageMode(.v6)]
 let package = Package(
     name: "Basalt",
     platforms: [
-        .macOS(.v15)
+        .macOS(.v27)
     ],
     dependencies: [
         .package(url: "https://github.com/ml-explore/mlx-swift",     from: "0.32.3"),

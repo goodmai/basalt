@@ -8,13 +8,18 @@ runs:
   steps:
     - shell: bash
       run: |
-        # Resolve symlinks before filtering: on the `xcode-27` image `/Applications/Xcode_27.2.app`
-        # is a symlink to `Xcode_27.2_Release_Candidate.app` and would otherwise survive the filter.
         APPS_DIR="${XCODE_APPS_DIR:-/Applications}"
         LATEST_XCODE=$(
           for app in "$APPS_DIR"/Xcode*.app; do
-            [ -e "$app" ] && realpath "$app"
-          done | grep -viE 'beta|_rc|release.candidate' | sort -uV | tail -n 1
+            [ -e "$app" ] || continue
+            resolved=$(realpath "$app")
+            printf '%s\n' "$resolved" | grep -qiE 'beta|_rc|release.candidate' && continue
+            ver=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$resolved/Contents/Info.plist" 2>/dev/null || true)
+            if [ -z "$ver" ]; then
+              ver=$(basename "$resolved" .app | grep -oE '[0-9]+(\.[0-9]+)*' | head -n 1 || true)
+            fi
+            printf '%s\t%s\n' "${ver:-0}" "$resolved"
+          done | sort -V -k1,1 | tail -n 1 | cut -f2-
         )
         if [ -n "$LATEST_XCODE" ] && [ -d "$LATEST_XCODE/Contents/Developer" ]; then
           if [ -n "${GITHUB_ENV:-}" ]; then
@@ -23,9 +28,9 @@ runs:
           export DEVELOPER_DIR="$LATEST_XCODE/Contents/Developer"
         fi
         echo "Selected Xcode: ${LATEST_XCODE:-default}"
-        VERSION_OUT=$(swift --version 2>&1)
+        VERSION_OUT=$(swift --version 2>&1 || true)
         echo "$VERSION_OUT"
-        SWIFT_VER=$(echo "$VERSION_OUT" | grep -oE 'Swift version [0-9]+\.[0-9]+' | awk '{print $3}')
+        SWIFT_VER=$(printf '%s\n' "$VERSION_OUT" | grep -oE 'Swift version [0-9]+\.[0-9]+' | awk '{print $3}' || true)
         if [ -z "$SWIFT_VER" ] || [ "$(printf '6.4\n%s\n' "$SWIFT_VER" | sort -V | head -n 1)" != "6.4" ]; then
           echo "::error::Swift 6.4+ is required (found '${SWIFT_VER:-unknown}' in ${LATEST_XCODE:-system default})"
           exit 1

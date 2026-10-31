@@ -55,7 +55,6 @@ jobs:
           swift --version >> security-report.md 2>&1 || true
           echo "" >> security-report.md
           echo "## Dependencies" >> security-report.md
-          # Degrades instead of failing the job if package resolution is unavailable.
           swift package show-dependencies >> security-report.md 2>&1 \
             || echo "(dependency tree unavailable: $(swift --version 2>&1 | head -1))" >> security-report.md
           echo "" >> security-report.md
@@ -81,12 +80,6 @@ jobs:
 
   codeql-analysis:
     name: CodeQL Security Analysis
-    # Manual only. CodeQL ships its own Swift toolchain — 6.1.0 in action 2.26.4
-    # — and Package.swift declares tools 6.4, so the extractor's build
-    # step cannot resolve the package at all. (The release job builds on xcode-27 with
-    # Xcode 27.0+, Swift 6.4; this one would need the same plus a newer extractor.) Re-enable on push once
-    # the extractor catches up; until then a job that is red on every commit
-    # only teaches people to ignore the red.
     if: github.event_name == 'workflow_dispatch'
     runs-on: xcode-27
     permissions:
@@ -97,7 +90,10 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
-      
+
+      - name: Configure Swift toolchain
+        uses: ./.github/actions/xcode-toolchain
+
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v4
         with:

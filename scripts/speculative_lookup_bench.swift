@@ -128,27 +128,28 @@ func trimmed(_ text: String) -> String { text.trimmingCharacters(in: .whitespace
 
 func resolveReleaseDirectory() -> String {
     let process = Process()
-    process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-    process.arguments = ["swift", "build", "-c", "release", "--show-bin-path"]
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/swift")
+    process.arguments = ["build", "-c", "release", "--show-bin-path"]
     process.currentDirectoryURL = URL(fileURLWithPath: repo)
     let out = Pipe()
+    let err = Pipe()
     process.standardOutput = out
-    process.standardError = FileHandle.nullDevice
+    process.standardError = err
     do { try process.run() } catch {
         fail("show-bin-path", "\(error)")
         exit(1)
     }
     let data = out.fileHandleForReading.readDataToEndOfFile()
+    let errData = err.fileHandleForReading.readDataToEndOfFile()
     process.waitUntilExit()
     let path = trimmed(String(decoding: data, as: UTF8.self))
+    let errText = trimmed(String(decoding: errData, as: UTF8.self))
     guard process.terminationStatus == 0, !path.isEmpty else {
-        fail("show-bin-path", "swift build -c release --show-bin-path exited with \(process.terminationStatus)")
+        fail("show-bin-path", "swift build -c release --show-bin-path exited with \(process.terminationStatus): \(errText)")
         exit(1)
     }
     return path
 }
-
-let releaseDirectory = resolveReleaseDirectory()
 
 func releaseLock() {
     state.withLock {
@@ -348,6 +349,7 @@ for product in ["PerformanceBenchmark", "Basalt"] {
         exit(1)
     }
 }
+let releaseDirectory = resolveReleaseDirectory()
 let benchmark = releaseDirectory + "/PerformanceBenchmark"
 for variant in options.variants where !FileManager.default.isExecutableFile(atPath: variant.binary) {
     fail("variant \(variant.label)", "not an executable: \(variant.binary)")
