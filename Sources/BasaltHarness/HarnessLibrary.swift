@@ -45,7 +45,7 @@ public struct HarnessExperienceLibrary: Sendable {
 
     public let rootDirectory: URL
     public let limits: HarnessLibraryLimits
-    private let logger = GemLogger(module: "HarnessLibrary")
+    private let logger = BasaltLogger(module: "HarnessLibrary")
 
     public init(rootDirectory: URL, limits: HarnessLibraryLimits = HarnessLibraryLimits()) {
         self.rootDirectory = rootDirectory

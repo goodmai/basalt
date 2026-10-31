@@ -509,7 +509,7 @@ public actor SessionLogWriter {
         guard !disabled else { return }
         disabled = true
         pending.removeAll()
-        GemLogger(module: "SessionLog").warn("Session log disabled until restart: \(reason)")
+        BasaltLogger(module: "SessionLog").warn("Session log disabled until restart: \(reason)")
     }
 
     public static func applyRetention(directory: URL, days: Int, maxTotalBytes: Int64, now: Date = Date()) {

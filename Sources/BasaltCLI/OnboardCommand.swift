@@ -29,7 +29,7 @@ struct OnboardCommand: AsyncParsableCommand {
     @Flag(name: .long, help: "Show system profile only (no interactive setup)")
     var profileOnly: Bool = false
 
-    @Option(name: .customLong("config-path"), help: "Path to server configuration JSON file to update (default: ~/.gem/config.json)")
+    @Option(name: .customLong("config-path"), help: "Path to server configuration JSON file to update (default: ~/.basalt/config.json)")
     var configPath: String?
     
     func run() async throws {

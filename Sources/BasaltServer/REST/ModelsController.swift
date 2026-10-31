@@ -169,7 +169,7 @@ struct ModelsController: Sendable {
     /// model discovery filter accepts:
     ///   "mlx-community/Qwen3.5-4B-4bit"  →  "claude-local/mlx-community--Qwen3.5-4B-4bit"
     static func claudeLocalId(from hfId: String) -> String {
-        "claude-local/" + hfId.replacingOccurrences(of: "/", with: "--")
+        ModelCache.claudeLocalId(from: hfId)
     }
 
     private func claudeLocalId(from hfId: String) -> String {

@@ -117,7 +117,7 @@ struct MessageRow: View {
                     .cornerRadius(16)
             } else {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Gemma")
+                    Text("Basalt")
                         .font(.caption)
                         .foregroundColor(.secondary)
                     

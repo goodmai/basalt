@@ -8,7 +8,7 @@ struct GenerateController: Sendable {
 
     let orchestrator: ModelOrchestratorActor
     let modelId: String?
-    private let logger = GemLogger(module: "GenerateController")
+    private let logger = BasaltLogger(module: "GenerateController")
 
     // MARK: — POST /api/v1/generate
 

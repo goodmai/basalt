@@ -38,7 +38,7 @@ struct MCPServerTests {
         #expect(output.count == 1)
         #expect(output[0].contains("\"jsonrpc\":\"2.0\""))
         #expect(output[0].contains("\"result\":"))
-        #expect(output[0].contains("Gem"))
+        #expect(output[0].contains("Basalt"))
     }
 
     @Test("tools/list returns available tools")
@@ -65,6 +65,8 @@ struct MCPServerTests {
         
         let output = await capturer.lines
         #expect(output.count == 1)
+        #expect(output[0].contains("basalt_generate"))
+        #expect(output[0].contains("basalt_status"))
         #expect(output[0].contains("gemma_generate"))
         #expect(output[0].contains("gemma_status"))
         #expect(output[0].contains("\"name\":\"status\""))

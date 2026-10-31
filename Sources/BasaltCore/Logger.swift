@@ -1,19 +1,22 @@
 import Foundation
 
-public enum GemLogLevel: Int, Comparable, Sendable {
+public enum BasaltLogLevel: Int, Comparable, Sendable {
     case trace = 0
     case debug
     case info
     case warn
     case error
     
-    public static func < (lhs: GemLogLevel, rhs: GemLogLevel) -> Bool {
+    public static func < (lhs: BasaltLogLevel, rhs: BasaltLogLevel) -> Bool {
         return lhs.rawValue < rhs.rawValue
     }
 }
 
-public struct GemLogger: Sendable {
-    public static nonisolated(unsafe) var globalLevel: GemLogLevel = .info
+public typealias GemLogLevel = BasaltLogLevel
+public typealias GemLogger = BasaltLogger
+
+public struct BasaltLogger: Sendable {
+    public static nonisolated(unsafe) var globalLevel: BasaltLogLevel = .info
     
     public let module: String
     
@@ -49,10 +52,10 @@ public struct GemLogger: Sendable {
         }
     }()
     
-    public func log(_ level: GemLogLevel, _ message: String, file: String = #file, function: String = #function, line: Int = #line) {
-        guard level >= GemLogger.globalLevel else { return }
+    public func log(_ level: BasaltLogLevel, _ message: String, file: String = #file, function: String = #function, line: Int = #line) {
+        guard level >= BasaltLogger.globalLevel else { return }
         
-        let dateStr = GemLogger.dateFormatter.string(from: Date())
+        let dateStr = BasaltLogger.dateFormatter.string(from: Date())
         let levelStr: String
         switch level {
         case .trace: levelStr = "🔘 TRACE"
@@ -68,7 +71,7 @@ public struct GemLogger: Sendable {
         // Always write to stderr — stdout is reserved for MCP JSON-RPC in stdio mode
         fputs(formatted + "\n", stderr)
         
-        if let url = GemLogger.logFileURL {
+        if let url = BasaltLogger.logFileURL {
             let logData = (formatted + "\n").data(using: .utf8)
             if FileManager.default.fileExists(atPath: url.path) {
                 if let fileHandle = try? FileHandle(forWritingTo: url) {

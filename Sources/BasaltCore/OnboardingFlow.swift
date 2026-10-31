@@ -39,12 +39,16 @@ public actor OnboardingFlow {
     }
     
     public init(
-        configPath: String = "~/.gem/onboarding.json",
-        serverConfigPath: String = "~/.gem/config.json"
+        configPath: String = "~/.basalt/onboarding.json",
+        serverConfigPath: String = "~/.basalt/config.json"
     ) {
         self.profiler = SystemProfiler()
-        self.configPath = (configPath as NSString).expandingTildeInPath
-        self.serverConfigPath = (serverConfigPath as NSString).expandingTildeInPath
+        let resolvedConfig = (configPath as NSString).expandingTildeInPath
+        let legacyConfig = ("~/.gem/onboarding.json" as NSString).expandingTildeInPath
+        self.configPath = (!FileManager.default.fileExists(atPath: resolvedConfig) && FileManager.default.fileExists(atPath: legacyConfig) && configPath == "~/.basalt/onboarding.json") ? legacyConfig : resolvedConfig
+        let resolvedServerConfig = (serverConfigPath as NSString).expandingTildeInPath
+        let legacyServerConfig = ("~/.gem/config.json" as NSString).expandingTildeInPath
+        self.serverConfigPath = (!FileManager.default.fileExists(atPath: resolvedServerConfig) && FileManager.default.fileExists(atPath: legacyServerConfig) && serverConfigPath == "~/.basalt/config.json") ? legacyServerConfig : resolvedServerConfig
     }
     
     /// Launch arguments for the chosen model: only the `--model` value is replaced, so flags the

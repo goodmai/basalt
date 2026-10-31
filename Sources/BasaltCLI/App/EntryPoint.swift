@@ -7,11 +7,11 @@ import BasaltCore
 
 // Добавлен атрибут @available для корректной работы swift-argument-parser
 @available(macOS 10.15, macCatalyst 13, iOS 13, tvOS 13, watchOS 6, *)
-public struct GemCLI: AsyncParsableCommand {
+public struct BasaltCLI: AsyncParsableCommand {
     public init() {}
     public static let configuration = CommandConfiguration(
         commandName: "basalt",
-        abstract: "Local Gemma 4 inference — dual-interface server (MCP + REST/A2A)",
+        abstract: "Local MLX inference server — dual-interface (MCP + REST/A2A)",
         discussion: """
         QUICK START
           basalt onboard                                      🆕 First-time setup wizard
@@ -81,3 +81,5 @@ public struct GemCLI: AsyncParsableCommand {
         defaultSubcommand: ChatCommand.self
     )
 }
+
+public typealias GemCLI = BasaltCLI

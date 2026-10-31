@@ -59,7 +59,7 @@ public struct PromptCacheDiskStore: Sendable {
     public let byteQuota: Int64
     public let retentionDays: Int
     private var headers: [String: (bytes: Int64, entry: PromptCacheDiskEntry?)] = [:]
-    private let logger = GemLogger(module: "PromptCacheDisk")
+    private let logger = BasaltLogger(module: "PromptCacheDisk")
 
     public init(directory: URL = Self.defaultDirectory, byteQuota: Int64, retentionDays: Int) {
         self.directory = directory

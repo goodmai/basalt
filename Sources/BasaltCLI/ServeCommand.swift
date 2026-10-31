@@ -131,13 +131,13 @@ struct ServeCommand: AsyncParsableCommand {
 
     @Option(
         name: .customLong("allow-origin"),
-        help: "Browser origin allowed to call the API besides loopback ones, e.g. https://app.example:3000 (repeatable; also allowed_origins in ~/.gem/config.json)"
+        help: "Browser origin allowed to call the API besides loopback ones, e.g. https://app.example:3000 (repeatable; also allowed_origins in ~/.basalt/config.json)"
     )
     var allowOrigins: [String] = []
 
     @Option(
         name: .customLong("config"),
-        help: "Path to JSON server configuration file (default: ~/.gem/config.json when it exists)"
+        help: "Path to JSON server configuration file (default: ~/.basalt/config.json when it exists)"
     )
     var configFile: String?
 
@@ -239,7 +239,7 @@ struct ServeCommand: AsyncParsableCommand {
 
     // MARK: — Run
 
-    private static let logger = GemLogger(module: "ServeCommand")
+    private static let logger = BasaltLogger(module: "ServeCommand")
     private static let defaultModel = "AutisticAF/Huihui-Qwen3.8-27B-abliterated-mlx-4Bit"
 
     struct CloudFallbackSettings: Equatable {
@@ -472,10 +472,10 @@ struct ServeCommand: AsyncParsableCommand {
 
         // Apply log level from config
         switch config.logLevel {
-        case .debug: GemLogger.globalLevel = .debug
-        case .info:  GemLogger.globalLevel = .info
-        case .warn:  GemLogger.globalLevel = .warn
-        case .error: GemLogger.globalLevel = .error
+        case .debug: BasaltLogger.globalLevel = .debug
+        case .info:  BasaltLogger.globalLevel = .info
+        case .warn:  BasaltLogger.globalLevel = .warn
+        case .error: BasaltLogger.globalLevel = .error
         }
 
         // Shared inference engine + orchestrator

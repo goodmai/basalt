@@ -101,7 +101,7 @@ actor ChatController {
                         let stream = try await orchestrator.generateStream(request: request)
                         var reply = ""
                         
-                        await terminal.printOutput("\n" + TerminalUI.info("Gemma:") + " ")
+                        await terminal.printOutput("\n" + TerminalUI.info("Basalt:") + " ")
                         
                         for try await chunk in stream {
                             if Task.isCancelled {

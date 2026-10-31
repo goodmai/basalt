@@ -877,7 +877,7 @@ struct OpenAIController: Sendable {
                 throw InvalidResponseFormat(message: "response_format: \(error.message)")
             }
             if !prepared.relaxations.isEmpty {
-                GemLogger(module: "OpenAIController").info(
+                BasaltLogger(module: "OpenAIController").info(
                     "response_format without strict: \(prepared.relaxations.joined(separator: "; "))")
             }
             return requested

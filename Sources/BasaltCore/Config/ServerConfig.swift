@@ -60,9 +60,16 @@ public struct ServerConfig: Sendable {
 
     /// Default path for the persistent JSON server configuration.
     public static var defaultConfigFileURL: URL {
-        FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".gem")
-            .appendingPathComponent("config.json")
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let basaltPath = home.appendingPathComponent(".basalt").appendingPathComponent("config.json")
+        if FileManager.default.fileExists(atPath: basaltPath.path) {
+            return basaltPath
+        }
+        let legacyPath = home.appendingPathComponent(".gem").appendingPathComponent("config.json")
+        if FileManager.default.fileExists(atPath: legacyPath.path) {
+            return legacyPath
+        }
+        return basaltPath
     }
 
     /// Determines whether the given host is a local loopback interface.
@@ -77,7 +84,7 @@ public struct ServerConfig: Sendable {
     }
 
     /// Generates a cryptographically strong pseudo-random token suitable for an API key.
-    public static func generateCryptographicallyStrongToken(prefix: String = "gem_") throws -> String {
+    public static func generateCryptographicallyStrongToken(prefix: String = "basalt_") throws -> String {
         var bytes = [UInt8](repeating: 0, count: 32)
         let status = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
         guard status == errSecSuccess else {
