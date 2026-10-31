@@ -203,4 +203,9 @@ actor MockInferenceEngine: InferenceEngine {
     }
 
     var isLoaded: Bool { loaded }
+    private(set) var persistCount = 0
+
+    func persistPromptCache(within deadline: Duration) async {
+        persistCount += 1
+    }
 }

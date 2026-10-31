@@ -1,17 +1,9 @@
 import Foundation
+import Logging
+import ServiceLifecycle
+import Synchronization
 import BasaltCore
 import BasaltHarness
-
-// MARK: — MCP over stdio (JSON-RPC 2.0, newline-delimited)
-//
-// Протокол: каждое сообщение — один JSON-объект, завершённый '\n'.
-// Поток: initialize → initialized → tools/list → tools/call
-//
-// Инструменты:
-//   gemma_generate  — генерация текста
-//   gemma_status    — статус модели
-
-// MARK: — JSON-RPC primitives
 
 private struct RawMessage: Codable {
     let jsonrpc: String
@@ -49,30 +41,7 @@ private struct RPCError: Codable, Sendable {
     let message: String
 }
 
-// MARK: — stdio AsyncSequence (non-blocking)
-
-private struct StdinLines: AsyncSequence, Sendable {
-    typealias Element = String
-
-    struct AsyncIterator: AsyncIteratorProtocol {
-        mutating func next() async -> String? {
-            await withCheckedContinuation { continuation in
-                // readLine() is blocking — dispatch to global pool
-                // to avoid starving the cooperative thread pool.
-                DispatchQueue.global(qos: .userInitiated).async {
-                    continuation.resume(returning: readLine(strippingNewline: true))
-                }
-            }
-        }
-    }
-
-    func makeAsyncIterator() -> AsyncIterator { AsyncIterator() }
-}
-
-// MARK: — MCP Server
-
-public final class MCPServer: Sendable {
-
+public final class MCPServer: Service, Sendable {
     private let orchestrator: ModelOrchestratorActor
     private let modelId: String?
     private let library: HarnessExperienceLibrary?
@@ -80,10 +49,11 @@ public final class MCPServer: Sendable {
     private let harnessLimits: HarnessLoadLimits
     private let encoder: JSONEncoder = {
         let e = JSONEncoder()
-        e.outputFormatting = [.sortedKeys]  // stable output: AGENTS.md / AI_SETUP.md show sorted keys
+        e.outputFormatting = [.sortedKeys]
         return e
     }()
     private let decoder = JSONDecoder()
+    private let makeInput: @Sendable () -> AsyncStream<String>
     private let writer: @Sendable (String) -> Void
 
     public init(
@@ -99,19 +69,65 @@ public final class MCPServer: Sendable {
         self.library = library
         self.harnessRoots = harnessRoots
         self.harnessLimits = harnessLimits
+        self.makeInput = Self.stdinStream
         self.writer = writer
     }
 
-    // MARK: — Run loop
+    package init(
+        orchestrator: ModelOrchestratorActor,
+        modelId: String? = nil,
+        library: HarnessExperienceLibrary? = nil,
+        harnessRoots: [URL] = HarnessLoader.allowedRoots(),
+        harnessLimits: HarnessLoadLimits = .standard,
+        input: AsyncStream<String>,
+        writer: @Sendable @escaping (String) -> Void = { print($0); fflush(stdout) }
+    ) {
+        self.orchestrator = orchestrator
+        self.modelId = modelId
+        self.library = library
+        self.harnessRoots = harnessRoots
+        self.harnessLimits = harnessLimits
+        self.makeInput = { input }
+        self.writer = writer
+    }
+
+    private static func stdinStream() -> AsyncStream<String> {
+        AsyncStream { continuation in
+            let stopped = Atomic<Bool>(false)
+            continuation.onTermination = { _ in
+                stopped.store(true, ordering: .relaxed)
+            }
+            Thread.detachNewThread {
+                while !stopped.load(ordering: .relaxed), let line = readLine(strippingNewline: true) {
+                    if case .terminated = continuation.yield(line) { break }
+                }
+                continuation.finish()
+            }
+        }
+    }
 
     public func run() async {
-        for await line in StdinLines() {
+        for await line in makeInput().cancelOnGracefulShutdown() {
+            guard !Task.isCancelled && !Task.isShuttingDownGracefully else { break }
             guard !line.isEmpty else { continue }
             await dispatch(line)
         }
     }
 
-    // MARK: — Dispatch
+    package func runServiceGroup(shutdownDeadline: Duration = .seconds(5), handleSignals: Bool = true) async throws {
+        var logger = Logger(label: "Gem")
+        logger.logLevel = .warning
+        let drain = GenerationDrainService(orchestrator: orchestrator, deadline: shutdownDeadline)
+        let group = ServiceGroup(configuration: .init(
+            services: [
+                .init(service: self, successTerminationBehavior: .gracefullyShutdownGroup),
+                .init(service: drain, successTerminationBehavior: .gracefullyShutdownGroup),
+            ],
+            gracefulShutdownSignals: handleSignals ? [.sigterm, .sigint] : [],
+            logger: logger
+        ))
+        try await group.run()
+    }
 
     internal func dispatch(_ line: String) async {
         guard let data = line.data(using: .utf8),
