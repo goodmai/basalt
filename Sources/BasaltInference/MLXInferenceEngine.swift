@@ -281,6 +281,7 @@ public actor MLXInferenceEngine: InferenceEngine {
             if container != nil {
                 await persistPromptCache(within: Self.modelSwitchPersistDeadline)
                 container = nil
+                mtpDrafter = nil
                 promptCaches.removeAll()
                 cacheBlend = nil
                 modelEpoch += 1
@@ -331,9 +332,12 @@ public actor MLXInferenceEngine: InferenceEngine {
 
             let loaded = try await loadModelContainer(from: directory, using: DefaultTokenizerLoader())
             try await loaded.perform { try PrismHadamard.prepareLoaded($0.model) }
-            mtpDrafter = nil
             if mtp {
-                mtpDrafter = try await loaded.perform { try MTPSidecar.load(directory: directory, target: $0.model) }
+                do {
+                    mtpDrafter = try await loaded.perform { try MTPSidecar.load(directory: directory, target: $0.model) }
+                } catch {
+                    logger.warn("--mtp: the MTP head of \(modelPath) did not load (\(error.localizedDescription)); decoding stays plain")
+                }
                 if let mtpDrafter {
                     logger.info("MTP head loaded from \(mtpDrafter.source); greedy requests without constraints, lookup or --kv-bits draft with it")
                 } else {
