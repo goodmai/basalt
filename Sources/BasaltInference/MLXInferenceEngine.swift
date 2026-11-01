@@ -244,6 +244,9 @@ public actor MLXInferenceEngine: InferenceEngine {
             let config = try JSONDecoder.json5().decode(MiniMaxConfiguration.self, from: data)
             return MiniMaxModel(config)
         }
+        await LLMTypeRegistry.shared.registerModelType(PrismHadamard.modelType) { data in
+            try PrismHadamard.model(configuration: data)
+        }
     }
 
     // MARK: — Load
@@ -322,7 +325,9 @@ public actor MLXInferenceEngine: InferenceEngine {
                 }
             }
 
-            attach(try await loadModelContainer(from: directory, using: DefaultTokenizerLoader()),
+            let loaded = try await loadModelContainer(from: directory, using: DefaultTokenizerLoader())
+            try await loaded.perform { try PrismHadamard.prepareLoaded($0.model) }
+            attach(loaded,
                    profile: ModelProfileRegistry.profile(forModelAt: modelPath),
                    samplingDefaults: SamplingDefaults(generationConfig: ModelCache.generationConfig(at: directory)),
                    controlTokens: ControlTokenGuard(modelDirectory: directory),
