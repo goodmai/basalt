@@ -109,7 +109,7 @@ final class GrammarSession: Sendable {
             guard !progress.pendingForced.isEmpty, limit > 0 else { return [] }
             let count = min(progress.pendingForced.count, limit)
             let tokens = Array(progress.pendingForced.prefix(count))
-            progress.pendingForced.removeAll(keepingCapacity: true)
+            progress.pendingForced.removeFirst(count)
             progress.totalForced += tokens.count
             return tokens
         }

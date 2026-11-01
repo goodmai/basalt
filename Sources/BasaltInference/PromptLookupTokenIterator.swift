@@ -340,7 +340,7 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
                     break
                 }
             }
-            if let successors { recycle(after: Array(fed.prefix(emitted.count)), successors: Array(successors.asArray(Int.self).prefix(emitted.count))) }
+            if let successors { recycle(after: fed, successors: successors.asArray(Int.self)) }
         }
 
         let acceptedDrafts = emitted.count - 1

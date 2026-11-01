@@ -337,7 +337,8 @@ struct HybridPrefixSnapshotTests {
 
         var tree = PromptCacheTree(byteBudget: 1 << 30)
         tree.store("ns", tokens: Array(first.dropLast()), cache: try TinyHybrid.snapshotted(model, first))
-        #expect(tree.lease("ns", for: second) == nil)
+        let noLease = tree.lease("ns", for: second) == nil
+        #expect(noLease)
 
         let fork = tree.storedPrefix(of: second, in: "ns")
         #expect(fork == shared)
