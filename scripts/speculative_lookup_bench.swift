@@ -4,7 +4,7 @@ import Synchronization
 
 let usage = """
     Usage:
-      ./scripts/speculative_lookup_bench.swift [--models repo,repo] [--workloads name,name] [--modes off,on,recycling] [--runs N] [--tokens N] [--max-idle-gpu PERCENT] [--variant label=binary]...
+      ./scripts/speculative_lookup_bench.swift [--models repo,repo] [--workloads name,name] [--modes off,on,recycling,mtp] [--runs N] [--tokens N] [--max-idle-gpu PERCENT] [--variant label=binary]...
 
     Prompt-lookup speculative decoding against plain decoding, per model: workloads
     code edit, prose and reasoning, temperatures 0 and 0.7, lookup off, on, and on
@@ -15,7 +15,7 @@ let usage = """
     Options:
       --models     comma-separated HF repo ids (default: \(Options().models.joined(separator: ",")))
       --workloads  comma-separated workloads from benchmarks/speculative-lookup (default: \(Options().workloads.joined(separator: ",")))
-      --modes      comma-separated lookup modes from off, on, recycling; off and on are required (default: off,on,recycling)
+      --modes      comma-separated modes from off, on, recycling, mtp (MTP head); off and on are required (default: off,on,recycling)
       --runs       timed iterations per cell (default: 3)
       --tokens     tokens generated per iteration (default: 300)
       --max-idle-gpu  a cell waits until GPU utilization, the highest of 3 samples a second apart, is at most this percent (default: 35)
@@ -49,7 +49,7 @@ func parse(_ arguments: [String]) -> Options? {
             guard !options.workloads.isEmpty, Set(options.workloads).count == options.workloads.count else { return nil }
         case "--modes":
             options.modes = value.split(separator: ",").map { trimmed(String($0)) }.filter { !$0.isEmpty }
-            guard Set(options.modes).count == options.modes.count, Set(options.modes).isSubset(of: ["off", "on", "recycling"]),
+            guard Set(options.modes).count == options.modes.count, Set(options.modes).isSubset(of: ["off", "on", "recycling", "mtp"]),
                   options.modes.contains("off"), options.modes.contains("on")
             else { return nil }
         case "--runs": guard let runs = Int(value), runs > 0 else { return nil }; options.runs = runs
@@ -333,7 +333,7 @@ struct Measurement {
 func measure(_ cell: Cell, model: String, binary: String, prompt: String, pass: Int) -> Measurement? {
     var arguments = ["-m", model, "-i", String(options.runs), "-t", String(options.tokens), "-p", prompt,
                      "--temperature", cell.temperature, "--seed", "1", "--reasoning-effort", "none", "--print-output"]
-    if cell.mode != "off" { arguments.append("--speculative-lookup") }
+    if cell.mode == "mtp" { arguments.append("--mtp") } else if cell.mode != "off" { arguments.append("--speculative-lookup") }
     if cell.mode == "recycling" { arguments.append("--speculative-recycling") }
     let step = "model=\(model) pass=\(pass) \(cell.label)"
     let before = host()
@@ -424,9 +424,9 @@ for model in options.models {
 
     summary.append("")
     summary.append("\(model) @ \(revision), commit \(commit.prefix(7)), \(chip) \(memory)GB, \(options.runs) runs × \(options.tokens) tokens per cell")
-    summary.append("| workload | T | on / off (pass 1, pass 2) | recycling / on (pass 1, pass 2) | drafts on, pass 1 | drafts recycling, pass 1 | same text as off |"
+    summary.append("| workload | T | on / off (pass 1, pass 2) | recycling / on (pass 1, pass 2) | mtp / off (pass 1, pass 2) | drafts on, pass 1 | drafts recycling, pass 1 | drafts mtp, pass 1 | same text as off |"
         + options.variants.map { " \($0.label) / on (pass 1, pass 2) |" }.joined())
-    summary.append("|---|---|---|---|---|---|---|" + String(repeating: "---|", count: options.variants.count))
+    summary.append("|---|---|---|---|---|---|---|---|---|" + String(repeating: "---|", count: options.variants.count))
     for workload in options.workloads {
         for temperature in ["0", "0.7"] {
             func cell(_ mode: String) -> Cell { Cell(workload: workload, temperature: temperature, mode: mode) }
@@ -434,14 +434,15 @@ for model in options.models {
                 guard cells.contains(cell(mode)) else { return "not run" }
                 return [1, 2].map { ratio(results[$0]?[cell(mode)], results[$0]?[cell(base)]) }.joined(separator: ", ")
             }
-            let lookupModes = options.modes.filter { $0 != "off" } + options.variants.map(\.label)
+            let lookupModes = options.modes.filter { $0 != "off" && cells.contains(cell($0)) } + options.variants.map(\.label)
             let sameText = [1, 2].allSatisfy { pass in
                 guard let off = results[pass]?[cell("off")] else { return false }
                 return lookupModes.allSatisfy { results[pass]?[cell($0)]?.output == off.output }
             }
             let alpha = results[1]?[cell("on")]?.accepted ?? "n/a"
             let recycledAlpha = options.modes.contains("recycling") ? results[1]?[cell("recycling")]?.accepted ?? "n/a" : "not run"
-            summary.append("| \(workload) | \(temperature) | \(pair("on", over: "off")) | \(pair("recycling", over: "on")) | \(alpha) | \(recycledAlpha) | \(sameText) |"
+            let mtpAlpha = cells.contains(cell("mtp")) ? results[1]?[cell("mtp")]?.accepted ?? "n/a" : "not run"
+            summary.append("| \(workload) | \(temperature) | \(pair("on", over: "off")) | \(pair("recycling", over: "on")) | \(pair("mtp", over: "off")) | \(alpha) | \(recycledAlpha) | \(mtpAlpha) | \(sameText) |"
                 + options.variants.map { " \(pair($0.label, over: "on")) |" }.joined())
         }
     }

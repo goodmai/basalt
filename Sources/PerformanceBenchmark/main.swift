@@ -64,6 +64,9 @@ struct Benchmark: AsyncParsableCommand {
     @Flag(name: .customLong("speculative-recycling"), help: "With --speculative-lookup, also draft recycled argmax successors when no n-gram matches")
     var speculativeRecycling: Bool = false
 
+    @Flag(name: .customLong("mtp"), help: "Draft with the model's MTP head (mtp.safetensors)")
+    var mtp: Bool = false
+
     @Flag(name: .customLong("grammar-jump-forward"), help: "Feed XGrammar-forced spans in one forward pass during constrained decoding")
     var grammarJumpForward: Bool = false
 
@@ -100,7 +103,7 @@ struct Benchmark: AsyncParsableCommand {
             kvZones: kvZones ? .standard : nil,
             repetitionPenalty: repetitionPenalty,
             topK: topK, minP: minP, seed: seed, speculativeLookup: speculativeLookup,
-            speculativeRecycling: speculativeRecycling, grammarJumpForward: grammarJumpForward)
+            speculativeRecycling: speculativeRecycling, mtp: mtp, grammarJumpForward: grammarJumpForward)
         let orchestrator = ModelOrchestratorActor(engine: engine, maxTokens: tokens, kvPrecision: kvBits, kvZones: kvZones ? .standard : nil)
 
         print("Loading model…", terminator: ""); fflush(stdout)
@@ -145,7 +148,7 @@ struct Benchmark: AsyncParsableCommand {
         printStats(label: "TPS",          samples: tpsSamples,     unit: "tok/s")
         printStats(label: "TTFT",         samples: ttftSamples,     unit: "s")
         printStats(label: "GenTime",      samples: genTimeSamples,  unit: "s")
-        if speculativeLookup {
+        if speculativeLookup || mtp {
             let rate = draftTokens == 0 ? 0 : Double(acceptedDraftTokens) / Double(draftTokens)
             print(String(format: "  Drafts      accepted %d of %d (α = %.3f)", acceptedDraftTokens, draftTokens, rate))
         }
