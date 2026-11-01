@@ -55,4 +55,21 @@ struct KVReservationTests {
         _ = await GenerationGateTests.drain(second)
         #expect(await GenerationGateTests.eventually { await orchestrator.kvReservations.isEmpty })
     }
+
+    @Test("A stream the client abandons releases its reservation")
+    func abandonedStreamReleases() async throws {
+        let engine = MockInferenceEngine()
+        let orchestrator = Self.orchestrator(engine)
+        try await orchestrator.loadModel(path: "m")
+        await engine.setMemory(kvBudget: 1 << 40, promptTokens: 100)
+        await engine.setArtificialDelay(5)
+        let reader = Task {
+            let stream = try await orchestrator.generateStream(request: GenerationRequest(prompt: "abandoned", maxTokens: 100))
+            for await _ in stream {}
+        }
+        #expect(await GenerationGateTests.eventually { await orchestrator.kvReservations.count == 1 })
+        reader.cancel()
+        #expect(await GenerationGateTests.eventually { await orchestrator.kvReservations.isEmpty })
+        #expect(await GenerationGateTests.eventually { await orchestrator.gate.inFlight == 0 })
+    }
 }

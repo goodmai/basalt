@@ -84,9 +84,10 @@ enum MTPSidecar {
     static func file(in directory: URL) -> URL? {
         let config = ModelCache.config(at: directory)
         let declared = (config?["mlx_lm_extra_tensors"] as? [String: Any])?["mtp_file"] as? String
+        let root = directory.standardizedFileURL.path + "/"
         return ([declared].compactMap { $0 } + ["mtp.safetensors", "mtp/weights.safetensors"])
-            .map { directory.appending(path: $0) }
-            .first { FileManager.default.fileExists(atPath: $0.path) }
+            .map { directory.appending(path: $0).standardizedFileURL }
+            .first { $0.path.hasPrefix(root) && FileManager.default.fileExists(atPath: $0.path) }
     }
 
     static func quantization(of weights: [String: MLXArray], hiddenSize: Int) throws -> (groupSize: Int, bits: Int)? {
@@ -103,15 +104,17 @@ enum MTPSidecar {
     }
 
     static func load(directory: URL, target: any LanguageModel) throws -> MTPDrafter? {
-        guard target is Qwen35Model, let url = file(in: directory) else { return nil }
+        guard target is Qwen35Model || target is Qwen35TextModel, let url = file(in: directory) else { return nil }
         let data = try Data(contentsOf: directory.appending(component: "config.json"))
-        let configuration = try JSONDecoder.json5().decode(Qwen35Configuration.self, from: data)
-        let textConfig = (try JSONSerialization.jsonObject(with: data) as? [String: Any])?["text_config"] as? [String: Any]
-        guard let hiddenSize = textConfig?["hidden_size"] as? Int else { throw MTPSidecarError.malformed("config.json has no text_config.hidden_size") }
+        let root = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        let textConfig = root?["text_config"] as? [String: Any] ?? root
+        guard let hiddenSize = textConfig?["hidden_size"] as? Int else { throw MTPSidecarError.malformed("config.json has no hidden_size") }
         var weights = try loadArrays(url: url)
         guard let norm = weights["mtp.norm.weight"] else { throw MTPSidecarError.malformed("\(url.lastPathComponent) has no mtp.norm.weight") }
         let preconvertedNorms = norm.asType(.float32).mean().item(Float.self) > 0.5
-        let model = Qwen35MTPDraftModel(configuration, preconvertedNorms: preconvertedNorms)
+        let model = target is Qwen35Model
+            ? Qwen35MTPDraftModel(try JSONDecoder.json5().decode(Qwen35Configuration.self, from: data), preconvertedNorms: preconvertedNorms)
+            : Qwen35MTPDraftModel(try JSONDecoder.json5().decode(Qwen35TextConfiguration.self, from: data), preconvertedNorms: preconvertedNorms)
         weights = model.sanitize(weights: weights)
         if let quantization = try quantization(of: weights, hiddenSize: hiddenSize) {
             quantize(model: model) { path, _ in

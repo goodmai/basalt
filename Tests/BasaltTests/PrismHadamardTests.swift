@@ -159,6 +159,27 @@ struct MTPSidecarTests {
         try Data(#"{"mlx_lm_extra_tensors": {"mtp_file": "head.safetensors"}}"#.utf8).write(to: directory.appending(path: "config.json"))
         try Data().write(to: directory.appending(path: "head.safetensors"))
         #expect(MTPSidecar.file(in: directory)?.lastPathComponent == "head.safetensors")
+        try Data(#"{"mlx_lm_extra_tensors": {"mtp_file": "../outside.safetensors"}}"#.utf8).write(to: directory.appending(path: "config.json"))
+        try Data().write(to: directory.deletingLastPathComponent().appending(path: "outside.safetensors"))
+        defer { try? FileManager.default.removeItem(at: directory.deletingLastPathComponent().appending(path: "outside.safetensors")) }
+        #expect(MTPSidecar.file(in: directory)?.lastPathComponent == "mtp.safetensors")
+    }
+
+    @Test("A head saved next to the config loads for VLM-style and text-only Qwen3.5 targets", arguments: [false, true])
+    func loadsSidecar(textOnly: Bool) throws {
+        let directory = FileManager.default.temporaryDirectory.appending(path: "mtp-load-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let config = textOnly ? TinyHybrid.config : TinyPrism.config()
+        try Data(config.utf8).write(to: directory.appending(path: "config.json"))
+        let head = withRandomState(MLXRandom.RandomState(seed: 3)) {
+            Qwen35MTPDraftModel(try! JSONDecoder.json5().decode(Qwen35TextConfiguration.self, from: Data(TinyHybrid.config.utf8)))
+        }
+        try save(arrays: Dictionary(uniqueKeysWithValues: head.parameters().flattened()), url: directory.appending(path: "mtp.safetensors"))
+        let target: any LanguageModel = textOnly ? try TinyHybrid.make() : try TinyPrism.base()
+        let drafter = try #require(try MTPSidecar.load(directory: directory, target: target))
+        #expect(drafter.model is GreedyDraftingMTPDrafter)
+        #expect(!drafter.model.requiresGreedySampling)
     }
 
     @Test("At T > 0 the MTP iterator keeps speculating and samples the same distribution as plain decoding")

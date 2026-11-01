@@ -434,7 +434,8 @@ for model in options.models {
                 guard cells.contains(cell(mode)) else { return "not run" }
                 return [1, 2].map { ratio(results[$0]?[cell(mode)], results[$0]?[cell(base)]) }.joined(separator: ", ")
             }
-            let lookupModes = options.modes.filter { $0 != "off" && cells.contains(cell($0)) } + options.variants.map(\.label)
+            let lookupModes = options.modes.filter { $0 != "off" && ($0 != "mtp" || temperature == "0") && cells.contains(cell($0)) }
+                + options.variants.map(\.label)
             let sameText = [1, 2].allSatisfy { pass in
                 guard let off = results[pass]?[cell("off")] else { return false }
                 return lookupModes.allSatisfy { results[pass]?[cell($0)]?.output == off.output }
