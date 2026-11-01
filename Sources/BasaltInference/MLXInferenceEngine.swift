@@ -335,16 +335,17 @@ public actor MLXInferenceEngine: InferenceEngine {
             if mtp {
                 do {
                     mtpDrafter = try await loaded.perform { try MTPSidecar.load(directory: directory, target: $0.model) }
+                    if let mtpDrafter {
+                        logger.info("MTP head loaded from \(mtpDrafter.source); requests without constraints, lookup or --kv-bits and prompts up to \(Self.mtpPromptLimit) tokens draft with it")
+                        if speculativeLookup {
+                            logger.warn("--mtp with --speculative-lookup: lookup wins, so the MTP head drafts only for requests that set speculative_lookup to false")
+                        }
+                    } else {
+                        logger.warn("--mtp: \(modelPath) has no MTP head this build can use (Qwen3.5-family target plus mtp.safetensors); decoding stays plain")
+                    }
                 } catch {
+                    mtpDrafter = nil
                     logger.warn("--mtp: the MTP head of \(modelPath) did not load (\(error.localizedDescription)); decoding stays plain")
-                }
-                if mtpDrafter != nil, speculativeLookup {
-                    logger.warn("--mtp with --speculative-lookup: lookup wins, so the MTP head drafts only for requests that set speculative_lookup to false")
-                }
-                if let mtpDrafter {
-                    logger.info("MTP head loaded from \(mtpDrafter.source); requests without constraints, lookup or --kv-bits and prompts up to \(Self.mtpPromptLimit) tokens draft with it")
-                } else {
-                    logger.warn("--mtp: \(modelPath) has no MTP head this build can use (Qwen3.5-family target plus mtp.safetensors); decoding stays plain")
                 }
             }
             attach(loaded,

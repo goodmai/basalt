@@ -104,10 +104,11 @@ struct ZonedKVCacheBenchmarkTests {
         process.arguments = arguments
         let pipe = Pipe()
         process.standardOutput = pipe
-        process.standardError = Pipe()
+        process.standardError = FileHandle.nullDevice
         guard (try? process.run()) != nil else { return "unknown" }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
-        return String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+        return String(decoding: data, as: UTF8.self)
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 

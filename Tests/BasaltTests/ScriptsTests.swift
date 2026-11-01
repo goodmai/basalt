@@ -357,8 +357,9 @@ struct ScriptsTests {
             task.standardOutput = pipe
             task.standardError = pipe
             try? task.run()
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
             task.waitUntilExit()
-            let out = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+            let out = String(data: data, encoding: .utf8) ?? ""
             return (task.terminationStatus, out)
         }
 
