@@ -131,3 +131,39 @@ struct PrismHadamardTests {
         #expect(await LLMTypeRegistry.shared.contains(PrismHadamard.modelType))
     }
 }
+
+@Suite("MTP head sidecar (mtp.safetensors)")
+struct MTPSidecarTests {
+    @Test("Bits and group size come from the packed fc shapes")
+    func inferredQuantization() throws {
+        let weights = ["mtp.fc.weight": MLXArray.zeros([64, 16], dtype: .uint32), "mtp.fc.scales": MLXArray.zeros([64, 2], dtype: .float16)]
+        let quantization = try #require(try MTPSidecar.quantization(of: weights, hiddenSize: 64))
+        #expect(quantization.groupSize == 64 && quantization.bits == 4)
+        #expect(try MTPSidecar.quantization(of: ["mtp.fc.weight": MLXArray.zeros([64, 128])], hiddenSize: 64) == nil)
+        #expect(throws: MTPSidecarError.self) {
+            try MTPSidecar.quantization(of: ["mtp.fc.weight": MLXArray.zeros([64, 7], dtype: .uint32), "mtp.fc.scales": MLXArray.zeros([64, 2])], hiddenSize: 64)
+        }
+    }
+
+    @Test("The sidecar named by mlx_lm_extra_tensors wins, then mtp.safetensors, then mtp/weights.safetensors")
+    func sidecarLookup() throws {
+        let directory = FileManager.default.temporaryDirectory.appending(path: "mtp-sidecar-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory.appending(path: "mtp"), withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try Data("{}".utf8).write(to: directory.appending(path: "config.json"))
+        #expect(MTPSidecar.file(in: directory) == nil)
+        try Data().write(to: directory.appending(path: "mtp/weights.safetensors"))
+        #expect(MTPSidecar.file(in: directory)?.lastPathComponent == "weights.safetensors")
+        try Data().write(to: directory.appending(path: "mtp.safetensors"))
+        #expect(MTPSidecar.file(in: directory)?.lastPathComponent == "mtp.safetensors")
+        try Data(#"{"mlx_lm_extra_tensors": {"mtp_file": "head.safetensors"}}"#.utf8).write(to: directory.appending(path: "config.json"))
+        try Data().write(to: directory.appending(path: "head.safetensors"))
+        #expect(MTPSidecar.file(in: directory)?.lastPathComponent == "head.safetensors")
+    }
+
+    @Test("Only Qwen3.5-family targets get a drafter")
+    func nonQwenTarget() throws {
+        let model = try TinyHybrid.make()
+        #expect(try MTPSidecar.load(directory: FileManager.default.temporaryDirectory, target: model) == nil)
+    }
+}

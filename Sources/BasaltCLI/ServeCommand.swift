@@ -98,6 +98,12 @@ struct ServeCommand: AsyncParsableCommand {
     var speculativeRecycling = false
 
     @Flag(
+        name: .customLong("mtp"),
+        help: "Draft one token per step with the model's multi-token-prediction head (mtp.safetensors, e.g. MTPLX packs of Qwen3.5/3.8 and Bonsai 2), verified in one forward pass; greedy requests without JSON constraints, speculative lookup, --kv-bits or --kv-zones; no prompt-cache reuse"
+    )
+    var mtp = false
+
+    @Flag(
         name: .customLong("grammar-jump-forward"),
         help: "Feed XGrammar-forced spans in one forward pass during constrained decoding (opt-in; JSON schema and forced tool calls)"
     )
@@ -497,6 +503,7 @@ struct ServeCommand: AsyncParsableCommand {
             cacheBlendRatio: cacheBlend ? min(max(0, cacheBlendRatio), 1) : nil,
             speculativeLookup: speculativeLookup,
             speculativeRecycling: speculativeRecycling,
+            mtp: mtp,
             grammarJumpForward: grammarJumpForward,
             promptCacheDisk: try promptCacheDisk.store()
         )
