@@ -339,7 +339,7 @@ public actor MLXInferenceEngine: InferenceEngine {
                     logger.warn("--mtp: the MTP head of \(modelPath) did not load (\(error.localizedDescription)); decoding stays plain")
                 }
                 if let mtpDrafter {
-                    logger.info("MTP head loaded from \(mtpDrafter.source); greedy requests without constraints, lookup or --kv-bits draft with it")
+                    logger.info("MTP head loaded from \(mtpDrafter.source); requests without constraints, lookup or --kv-bits draft with it")
                 } else {
                     logger.warn("--mtp: \(modelPath) has no MTP head this build can use (Qwen3.5-family target plus mtp.safetensors); decoding stays plain")
                 }
@@ -960,7 +960,7 @@ public actor MLXInferenceEngine: InferenceEngine {
             let speculativeLookup = request.speculativeLookup ?? speculativeLookup
             let jumpForward = constraint?.fastForward == true
             let expertRouting = (speculativeLookup || jumpForward) ? await routesExperts(container, epoch: epoch) : true
-            let drafter = constraint == nil && params.temperature == 0 && !speculativeLookup && zones == nil && params.kvBits == nil
+            let drafter = constraint == nil && !speculativeLookup && zones == nil && params.kvBits == nil
                 ? mtpDrafter : nil
             let launch: GenerationLaunch
             do {

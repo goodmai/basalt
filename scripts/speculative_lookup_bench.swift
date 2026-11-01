@@ -15,7 +15,7 @@ let usage = """
     Options:
       --models     comma-separated HF repo ids (default: \(Options().models.joined(separator: ",")))
       --workloads  comma-separated workloads from benchmarks/speculative-lookup (default: \(Options().workloads.joined(separator: ",")))
-      --modes      comma-separated modes from off, on, recycling, mtp (MTP head, T=0 only); off and on are required (default: off,on,recycling)
+      --modes      comma-separated modes from off, on, recycling, mtp (MTP head); off and on are required (default: off,on,recycling)
       --runs       timed iterations per cell (default: 3)
       --tokens     tokens generated per iteration (default: 300)
       --max-idle-gpu  a cell waits until GPU utilization, the highest of 3 samples a second apart, is at most this percent (default: 35)
@@ -400,7 +400,7 @@ for workload in options.workloads {
 var cells: [Cell] = []
 for workload in options.workloads {
     for temperature in ["0", "0.7"] {
-        for mode in options.modes + options.variants.map(\.label) where mode != "mtp" || temperature == "0" {
+        for mode in options.modes + options.variants.map(\.label) {
             cells.append(Cell(workload: workload, temperature: temperature, mode: mode))
         }
     }

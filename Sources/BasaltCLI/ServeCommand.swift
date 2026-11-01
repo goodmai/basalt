@@ -99,7 +99,7 @@ struct ServeCommand: AsyncParsableCommand {
 
     @Flag(
         name: .customLong("mtp"),
-        help: "Draft one token per step with the model's multi-token-prediction head (mtp.safetensors, e.g. MTPLX packs of Qwen3.5/3.8 and Bonsai 2), verified in one forward pass; greedy requests without JSON constraints, speculative lookup, --kv-bits or --kv-zones; no prompt-cache reuse"
+        help: "Draft one token per step with the model's multi-token-prediction head (mtp.safetensors, e.g. MTPLX packs of Qwen3.5/3.8 and Bonsai 2), verified in one forward pass and exact at any temperature (greedy drafts, the target samples every token); requests without JSON constraints, speculative lookup, --kv-bits or --kv-zones; no prompt-cache reuse"
     )
     var mtp = false
 

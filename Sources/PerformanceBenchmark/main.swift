@@ -64,7 +64,7 @@ struct Benchmark: AsyncParsableCommand {
     @Flag(name: .customLong("speculative-recycling"), help: "With --speculative-lookup, also draft recycled argmax successors when no n-gram matches")
     var speculativeRecycling: Bool = false
 
-    @Flag(name: .customLong("mtp"), help: "Draft with the model's MTP head (mtp.safetensors) at temperature 0")
+    @Flag(name: .customLong("mtp"), help: "Draft with the model's MTP head (mtp.safetensors)")
     var mtp: Bool = false
 
     @Flag(name: .customLong("grammar-jump-forward"), help: "Feed XGrammar-forced spans in one forward pass during constrained decoding")

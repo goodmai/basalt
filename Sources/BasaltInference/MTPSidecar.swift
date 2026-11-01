@@ -15,6 +15,61 @@ final class MTPDrafter: @unchecked Sendable {
     }
 }
 
+final class GreedyDraftingMTPDrafter: Module, StatefulMTPDrafterModel {
+    let inner: any StatefulMTPDrafterModel
+    private let argMax = ArgMaxSampler()
+
+    init(_ inner: any StatefulMTPDrafterModel) {
+        self.inner = inner
+        super.init()
+    }
+
+    var maximumBlockSize: Int? { inner.maximumBlockSize }
+    var requiresSharedTargetKV: Bool { inner.requiresSharedTargetKV }
+    var requiresPromptPrefill: Bool { inner.requiresPromptPrefill }
+    var requiresGreedySampling: Bool { false }
+
+    func sanitize(weights: [String: MLXArray]) -> [String: MLXArray] { inner.sanitize(weights: weights) }
+
+    func makeState(parameters: GenerateParameters?) -> MTPDrafterState { inner.makeState(parameters: parameters) }
+
+    func prepareDrafterState(
+        target: any LanguageModel, promptTokens: MLXArray, targetHidden: MLXArray, firstBonus: MLXArray,
+        positionDeltas: MLXArray?, state: inout MTPDrafterState, sampler _: any LogitSampler
+    ) {
+        inner.prepareDrafterState(
+            target: target, promptTokens: promptTokens, targetHidden: targetHidden, firstBonus: firstBonus,
+            positionDeltas: positionDeltas, state: &state, sampler: argMax)
+    }
+
+    func draftBlock(
+        target: any LanguageModel, lastToken: MLXArray, lastHidden: MLXArray, sharedKV: [String: (MLXArray, MLXArray)],
+        positionDeltas: MLXArray?, queryOffset: Int, blockSize: Int, sampler _: any LogitSampler
+    ) -> MLXArray {
+        inner.draftBlock(
+            target: target, lastToken: lastToken, lastHidden: lastHidden, sharedKV: sharedKV, positionDeltas: positionDeltas,
+            queryOffset: queryOffset, blockSize: blockSize, sampler: argMax)
+    }
+
+    func draftBlock(
+        target: any LanguageModel, lastToken: MLXArray, lastHidden: MLXArray, sharedKV: [String: (MLXArray, MLXArray)],
+        positionDeltas: MLXArray?, queryOffset: Int, blockSize: Int, state: inout MTPDrafterState, sampler _: any LogitSampler
+    ) -> MLXArray {
+        inner.draftBlock(
+            target: target, lastToken: lastToken, lastHidden: lastHidden, sharedKV: sharedKV, positionDeltas: positionDeltas,
+            queryOffset: queryOffset, blockSize: blockSize, state: &state, sampler: argMax)
+    }
+
+    func commitDrafterState(
+        target: any LanguageModel, targetHidden: MLXArray, draftTokens: MLXArray, acceptedCount: Int, finalToken: MLXArray,
+        positionDeltas: MLXArray?, state: inout MTPDrafterState, sampler _: any LogitSampler
+    ) {
+        inner.commitDrafterState(
+            target: target, targetHidden: targetHidden, draftTokens: draftTokens, acceptedCount: acceptedCount,
+            finalToken: finalToken, positionDeltas: positionDeltas, state: &state, sampler: argMax)
+    }
+}
+
 enum MTPSidecarError: LocalizedError, Equatable {
     case malformed(String)
 
@@ -65,6 +120,6 @@ enum MTPSidecar {
         }
         try model.update(parameters: ModuleParameters.unflattened(weights), verify: [.all])
         eval(model)
-        return MTPDrafter(model: model, source: url.path)
+        return MTPDrafter(model: GreedyDraftingMTPDrafter(model), source: url.path)
     }
 }

@@ -161,6 +161,41 @@ struct MTPSidecarTests {
         #expect(MTPSidecar.file(in: directory)?.lastPathComponent == "head.safetensors")
     }
 
+    @Test("At T > 0 the MTP iterator keeps speculating and samples the same distribution as plain decoding")
+    func exactAtTemperature() throws {
+        let target = try TinyPrism.base()
+        let configuration = try JSONDecoder.json5().decode(MLXLLM.Qwen35Configuration.self, from: Data(TinyPrism.config().utf8))
+        let drafter = withRandomState(MLXRandom.RandomState(seed: 11)) { GreedyDraftingMTPDrafter(Qwen35MTPDraftModel(configuration)) }
+        eval(drafter)
+        let prompt = LMInput(tokens: MLXArray([5, 9, 5, 9, 5, 9, 5].map(Int32.init)))
+        let parameters = GenerateParameters(maxTokens: 3, temperature: 0.03)
+        let runs = 300
+        var speculative: [[Int]: Int] = [:]
+        var plain: [[Int]: Int] = [:]
+        var control: [[Int]: Int] = [:]
+        var proposed = 0
+        for run in 0 ..< runs {
+            MLXRandom.seed(UInt64(run))
+            var mtp = try MTPSpeculativeTokenIterator(input: prompt, mainModel: target, drafter: drafter, parameters: parameters, blockSize: 2)
+            var tokens: [Int] = []
+            while let token = mtp.next() { tokens.append(token) }
+            proposed += mtp.proposedCount
+            #expect(mtp.passthroughReason == nil)
+            speculative[tokens, default: 0] += 1
+            MLXRandom.seed(UInt64(50_000 + run))
+            plain[Array(IteratorSequence(try TokenIterator(input: prompt, model: target, parameters: parameters))), default: 0] += 1
+            MLXRandom.seed(UInt64(90_000 + run))
+            control[Array(IteratorSequence(try TokenIterator(input: prompt, model: target, parameters: parameters))), default: 0] += 1
+        }
+        #expect(proposed >= runs)
+        func distance(_ a: [[Int]: Int], _ b: [[Int]: Int]) -> Double {
+            Set(a.keys).union(b.keys).map { abs(Double(a[$0, default: 0] - b[$0, default: 0])) }.reduce(0, +) / Double(2 * runs)
+        }
+        let noise = distance(plain, control)
+        #expect(Set(plain.keys).count > 1, "the continuation must be random for the comparison to mean anything")
+        #expect(distance(speculative, plain) < noise + 0.08, "total variation \(distance(speculative, plain)) against \(noise) between two plain samples")
+    }
+
     @Test("Only Qwen3.5-family targets get a drafter")
     func nonQwenTarget() throws {
         let model = try TinyHybrid.make()
