@@ -1,11 +1,18 @@
 # Changelog
 
-## Unreleased
+## 0.8.0 — 2026-11-01
 
-### Upgrading
+### Upgrading from 0.7.0
 - Building and running Basalt (Homebrew included; Homebrew 7+ requires `brew trust goodmai/basalt`) now targets macOS 27+ with Xcode 27.0+ (Swift 6.4) (#185), unlocking the full Swift 6.4 standard library directly without back-deployment fallbacks. SwiftPM 6.4 uses Swift Build as the default build backend, so build artifact paths come from `swift build [-c release] --show-bin-path` instead of hard-coded `.build/debug` and `.build/release` directories.
+- `--rate-limit` is now per client instead of server-wide (#62): each virtual key, bearer token, `x-api-key` or client address gets its own bucket, with `--rate-burst` (default `min(rate, 10)`, `0` off) for the instantaneous burst. The table holds at most 4096 clients and evicts idle ones first.
+- A streaming request that fails before its first token (uncached model, failed switch) now gets its HTTP status and a provider error body instead of `200` plus an SSE error event (#76). Errors on every endpoint use the provider's envelope (`/v1/messages` Anthropic, `/v1/*` OpenAI, `/api/v1/*` native), 429 and 503 carry `Retry-After`, and 401 carries `WWW-Authenticate: Bearer`.
+- MCP tools are now `basalt_generate`, `basalt_status` and `basalt_add_knowledge`; the `gemma_*` names stay as aliases (#64). Config and profile files live in `~/.basalt/`, read from `~/.gem/` when the new file is missing, and new API keys start with `basalt_`. `GemLogger`, `GemLogLevel` and `GemCLI` are typealiases of their `Basalt*` names.
 
 ### Performance
+- Opt-in grammar jump-forward for constrained decoding, `serve --grammar-jump-forward` or `grammar_jump_forward` per request (#175): tokens the JSON grammar forces are fed in one multi-token forward instead of one step each, respecting `max_tokens` inside a forced span. Off by default with output identical to 0.7.0; not used with `--kv-bits`, `--kv-zones`, rotating caches (Gemma 4) or hybrids with expert routing.
+- Prompt lookup backs off on low-yield drafts (#172): a round counts as profitable only with 3+ accepted tokens or a 25% acceptance rate, and the draft limit shrinks to 2 after a miss and grows with acceptances, so reasoning-style text on dense models no longer runs 17-token verifies that accept one.
+- Prompt-lookup drafting scans the history through a `Span` with an anchor-token filter, about 6× faster on a 4k–16k-token miss, and emitting a token no longer allocates (#190).
+- On recurrent hybrids the prompt cache also keeps a snapshot where a new prompt diverges from a cached one, so a third prompt sharing that prefix reuses it instead of prefilling it again.
 - Opt-in disk tier for the prompt cache, `--prompt-cache-disk-mb` on `serve` and `chat` (#174): on graceful shutdown, before a model switch and when `basalt chat` exits, the hottest prompt-cache branches are written with mlx-swift-lm's `savePromptCache` (dense KV and hybrid snapshots with their model state), and the first request of a resumed session or restarted server restores the longest matching prefix from disk instead of prefilling it. A file is tied to the model's weights (HF blob names, or sampled content, mtime and inode outside the HF cache), config, tokenizer and chat template, the basalt version and the cache format; any mismatch, a truncated file or a different layer layout falls back to a normal prefill. Files are atomic (temp + fsync + rename), `0600` in a `0700` directory that must be new, empty or already a prompt-cache directory, bounded by the quota with LRU eviction, a longer path of a conversation replaces the shorter files it covers, shutdown writes only what fits its deadline at an assumed 1 GB/s, expire after `--prompt-cache-disk-days`, and `basalt sessions prune` cleans them offline. Refused with `--session-log meta` or `off`.
 - `basalt chat` now reuses the prompt cache between turns (#174): its requests had no cache key, so every turn prefilled the whole history again.
 - Prompt lookup on dense recurrent hybrids (#162): Qwen3.5/Ornith (GatedDelta), Nemotron-H (Mamba-2) and dense LFM2 (short conv).
@@ -19,6 +26,16 @@
 
 ### Memory
 - Experimental `--kv-evict F` with `--kv-zones` (on `serve` and `models check`) (#43): as tokens migrate from the recent window into the zoned cache's quantized middle, each full-attention layer drops the fraction `F` of them whose keys have the largest L2 norm, per KV head, before quantizing (arXiv:2406.11430). Fast attention stays on; `KVCacheGeometry`, `models check` and the orchestrator's room count only the kept tokens. After a 16k prompt with k8v4, Qwen3-4B holds 0.89 GB of KV at 0.25 and 0.66 GB at 0.5 instead of 1.11 GB. Quality drops: perplexity 6.71 / 7.04 against 6.56 on Qwen3-4B, 9.06 / 9.52 against 8.75 on LFM2.5-8B, unchanged on Ornith-1.5-9B; 16k passkey at five depths 4/5 at both fractions on Qwen3-4B (5/5 without), 4/5 and 3/5 on Ornith (4/5 without). Gemma 4 is excluded with the zones, and a model that prefills more than the recent window in one pass (checked at load) keeps every token and is sized so; `models check` and `serve --dry-run` print the fraction the budget assumes.
+
+### Fixes
+- `basalt serve --mcp` without `--rest` now persists the prompt cache and closes the session log when stdin closes or on SIGTERM/SIGINT, and shutdown runs once and is shielded from cancellation in every serve mode (#187).
+- Token Recycling learns from every position of a verify forward again, and forced grammar tokens left over when `max_tokens` cuts a span are no longer dropped (#202).
+- Prompt cache leases, the disk-cache `flock` and the GPU lock are single-owner (`~Copyable`) values released exactly once (#188); safetensors headers are parsed without unsafe pointers (#190).
+- An already-persisted prompt-cache file costs nothing against the shutdown deadline; it is only touched.
+
+### Build and CI
+- The CLI binary no longer links AppKit, CoreText or SwiftUI: Splash is replaced by a built-in highlighter, and a test checks the linkage (#65).
+- GitHub Actions are pinned to commit SHAs, releases ship CycloneDX and SPDX SBOMs, the metallib rebuilds when headers or the mlx-swift revision change, and builds fail on warnings (#63). Tests are Swift Testing only, with a 10× repetition gate on the concurrency and speculative suites (#189).
 
 ### Chat templates and API
 - A conversation that ends with an assistant message is continued instead of answered in a new turn (#98), on `/v1/messages`, `/v1/chat/completions` and `/v1/responses`: the earlier turns get the thinking-off generation prompt, the assistant text follows it unclosed (the shape of transformers' `continue_final_message`, checked on six cached templates), and the response holds only the continuation, as on the Anthropic API. The prefill is committed into a `response_format` or forced-tool grammar, so `{` plus a schema is one document; a prefill that opens a thinking block keeps thinking on (its leading `<think>` is dropped where the template already opened one). Control tokens in a prefill are neutralized, so it cannot forge a turn, and a prefilled request never goes to `--cloud-fallback`. Checked locally on Qwen3-4B, Ornith-1.5-9B and Gemma 4 12B: `{"name":` continues into valid JSON and `Sure, here` continues the sentence.
