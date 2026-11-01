@@ -15,6 +15,7 @@ public actor ModelOrchestratorActor {
     private var modelTakesKVZones = true
     private var modelTakesKVEviction = true
     private var kvGeometry = KVCacheGeometry(parameterProxy: 4)
+    private(set) var kvReservations: [Int: Int64] = [:]
     /// Floor for the generation watchdog. The real budget scales with the token
     /// count — see `timeout(for:)`.
     private let generationTimeoutSeconds: UInt64 = 300  // 5 minutes
@@ -254,12 +255,13 @@ public actor ModelOrchestratorActor {
         try await autoSwitch(to: modelId)
 
         logger.trace("generate: \(request.prompt.prefix(60))…")
-        let validated = try await capped(request)
+        let (validated, promptTokens) = try await capped(request)
         let queued = ContinuousClock.now
         let ticket = try await admitted(request.priority)
+        try await reserveKV(ticket, promptTokens: promptTokens, for: validated)
         defer {
             await withTaskCancellationShield {
-                await gate.release(ticket)
+                await finish(ticket)
             }
         }
         let queueWait = ContinuousClock.now - queued
@@ -328,9 +330,10 @@ public actor ModelOrchestratorActor {
         try await autoSwitch(to: modelId)
 
         logger.trace("generateStream start")
-        let validated = try await capped(request)
+        let (validated, promptTokens) = try await capped(request)
         let queued = ContinuousClock.now
         let ticket = try await admitted(request.priority)
+        try await reserveKV(ticket, promptTokens: promptTokens, for: validated)
         let queueWait = ContinuousClock.now - queued
 
         await self.telemetry.requestStarted()
@@ -341,11 +344,11 @@ public actor ModelOrchestratorActor {
             await gate.onCancel(ticket) { setup.cancel() }
             stream = try await withTaskCancellationHandler { try await setup.value } onCancel: { setup.cancel() }
         } catch let error as BasaltError {
-            await gate.release(ticket)
+            await finish(ticket)
             await self.telemetry.requestFinished()
             throw error
         } catch {
-            await gate.release(ticket)
+            await finish(ticket)
             await self.telemetry.requestFinished()
             throw BasaltError.inferenceError("Stream setup error: \(error)")
         }
@@ -368,7 +371,7 @@ public actor ModelOrchestratorActor {
                         continuation.yield(.toolCall(call))
                     }
                 }
-                await gate.release(ticket)
+                await self.finish(ticket)
                 await telemetry.requestFinished(with: result)
                 continuation.finish()
             }
@@ -496,7 +499,7 @@ public actor ModelOrchestratorActor {
         return fits.first { $0.fitting >= wantedTokens } ?? fits.max { $0.fitting < $1.fitting }!
     }
 
-    private func capped(_ request: GenerationRequest) async throws(BasaltError) -> GenerationRequest {
+    private func capped(_ request: GenerationRequest) async throws(BasaltError) -> (request: GenerationRequest, promptTokens: Int) {
         let (room, fitting, promptTokens, kvPrecision) = await generationRoom(for: request)
         guard room > 0 else {
             throw .contextLengthExceeded(maxTokens: fitting, requested: promptTokens + 1)
@@ -510,7 +513,25 @@ public actor ModelOrchestratorActor {
             logger.warn("Token request (\(req)) > budget (\(cap): --max-tokens \(maxTokens), memory room \(room)). Capping.")
             v = v.withMaxTokens(cap)
         }
-        return v
+        return (v, promptTokens)
+    }
+
+    func reserveKV(_ ticket: Int, promptTokens: Int, for request: GenerationRequest) async throws(BasaltError) {
+        let budget = await kvBudgetBytes()
+        let zones = modelTakesKVZones ? (modelTakesKVEviction ? kvZones : kvZones?.evicting(0)) : nil
+        let bytes = kvGeometry.bytes(tokens: promptTokens + (request.maxTokens ?? maxTokens), kvPrecision: request.kvPrecision, zones: zones)
+        let others = kvReservations.values.reduce(0, +)
+        guard others == 0 || others + bytes <= budget else {
+            await gate.release(ticket)
+            logger.warn("Refused with 503: this request needs \(bytes >> 20) MB of KV cache and \(kvReservations.count) running requests hold \(others >> 20) MB of the \(budget >> 20) MB room; retry when one finishes.")
+            throw .serverBusy(retryAfterSeconds: 1)
+        }
+        kvReservations[ticket] = bytes
+    }
+
+    func finish(_ ticket: Int) async {
+        kvReservations[ticket] = nil
+        await gate.release(ticket)
     }
 
     public func setFreeMemoryProbe(_ probe: @escaping @Sendable () -> Int64) {

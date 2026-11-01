@@ -96,6 +96,8 @@ public actor MLXInferenceEngine: InferenceEngine {
     private(set) var cacheBlend: CacheBlendStore?
     private let speculativeLookup: Bool
     private let speculativeRecycling: Bool
+    private let mtp: Bool
+    private var mtpDrafter: MTPDrafter?
     private let grammarJumpForward: Bool
     private(set) var promptCacheDisk: PromptCacheDiskStore?
     private var modelFingerprint: String?
@@ -117,12 +119,14 @@ public actor MLXInferenceEngine: InferenceEngine {
         cacheBlendRatio: Float? = nil,
         speculativeLookup: Bool = false,
         speculativeRecycling: Bool = false,
+        mtp: Bool = false,
         grammarJumpForward: Bool = false,
         promptCacheDisk: PromptCacheDiskStore? = nil
     ) {
         self.promptCacheDisk = promptCacheDisk
         self.speculativeLookup = speculativeLookup
         self.speculativeRecycling = speculativeRecycling
+        self.mtp = mtp
         self.grammarJumpForward = grammarJumpForward
         self.reasoningEffort = reasoningEffort
         self.gpuCacheLimit = gpuCacheLimit
@@ -244,6 +248,9 @@ public actor MLXInferenceEngine: InferenceEngine {
             let config = try JSONDecoder.json5().decode(MiniMaxConfiguration.self, from: data)
             return MiniMaxModel(config)
         }
+        await LLMTypeRegistry.shared.registerModelType(PrismHadamard.modelType) { data in
+            try PrismHadamard.model(configuration: data)
+        }
     }
 
     // MARK: — Load
@@ -274,6 +281,7 @@ public actor MLXInferenceEngine: InferenceEngine {
             if container != nil {
                 await persistPromptCache(within: Self.modelSwitchPersistDeadline)
                 container = nil
+                mtpDrafter = nil
                 promptCaches.removeAll()
                 cacheBlend = nil
                 modelEpoch += 1
@@ -322,7 +330,21 @@ public actor MLXInferenceEngine: InferenceEngine {
                 }
             }
 
-            attach(try await loadModelContainer(from: directory, using: DefaultTokenizerLoader()),
+            let loaded = try await loadModelContainer(from: directory, using: DefaultTokenizerLoader())
+            try await loaded.perform { try PrismHadamard.prepareLoaded($0.model) }
+            if mtp {
+                do {
+                    mtpDrafter = try await loaded.perform { try MTPSidecar.load(directory: directory, target: $0.model) }
+                } catch {
+                    logger.warn("--mtp: the MTP head of \(modelPath) did not load (\(error.localizedDescription)); decoding stays plain")
+                }
+                if let mtpDrafter {
+                    logger.info("MTP head loaded from \(mtpDrafter.source); requests without constraints, lookup or --kv-bits draft with it")
+                } else {
+                    logger.warn("--mtp: \(modelPath) has no MTP head this build can use (Qwen3.5-family target plus mtp.safetensors); decoding stays plain")
+                }
+            }
+            attach(loaded,
                    profile: ModelProfileRegistry.profile(forModelAt: modelPath),
                    samplingDefaults: SamplingDefaults(generationConfig: ModelCache.generationConfig(at: directory)),
                    controlTokens: ControlTokenGuard(modelDirectory: directory),
@@ -938,6 +960,8 @@ public actor MLXInferenceEngine: InferenceEngine {
             let speculativeLookup = request.speculativeLookup ?? speculativeLookup
             let jumpForward = constraint?.fastForward == true
             let expertRouting = (speculativeLookup || jumpForward) ? await routesExperts(container, epoch: epoch) : true
+            let drafter = constraint == nil && !speculativeLookup && zones == nil && params.kvBits == nil
+                ? mtpDrafter : nil
             let launch: GenerationLaunch
             do {
                 launch = try await container.perform(nonSendable: lmInput) { context, input in
@@ -947,7 +971,7 @@ public actor MLXInferenceEngine: InferenceEngine {
                         params: params, components: constrained, tools: forcedTool == nil ? toolSpecs : nil,
                         context: context, speculativeLookup: speculativeLookup, speculativeRecycling: speculativeRecycling,
                         grammarJumpForward: jumpForward,
-                        routesExperts: expertRouting, kvZones: zones, kvPrecision: zonedPrecision)
+                        routesExperts: expertRouting, kvZones: zones, kvPrecision: zonedPrecision, mtpDrafter: drafter)
                 }
             } catch {
                 keep(nil, tokens: promptTokens, namespace: namespace, releasing: leaseSlot, epoch: epoch)
@@ -1333,8 +1357,18 @@ public actor MLXInferenceEngine: InferenceEngine {
         tools: [ToolSpec]?, context: ModelContext, speculativeLookup: Bool = false, speculativeRecycling: Bool = false,
         grammarJumpForward: Bool = false,
         routesExperts: Bool = true, kvZones: KVZones? = nil,
-        kvPrecision: KVPrecision? = nil
+        kvPrecision: KVPrecision? = nil,
+        mtpDrafter: MTPDrafter? = nil
     ) throws -> GenerationLaunch {
+        if let mtpDrafter, !carriesMoreThanTokens(input) {
+            let iterator = try MTPSpeculativeTokenIterator(
+                input: input, mainModel: context.model, drafter: mtpDrafter.model, parameters: params, blockSize: 2,
+                components: components)
+            let (stream, task) = generateTask(
+                promptTokenCount: input.text.tokens.dim(-1), modelConfiguration: context.configuration,
+                tokenizer: context.tokenizer, iterator: iterator, tools: tools, toolCallPolicy: params.toolCallPolicy)
+            return GenerationLaunch(stream: stream, task: task, cache: nil, reusedTokens: 0)
+        }
         guard keepsCache else {
             if let zoned = try zonedCache(params: params, zones: kvZones, precision: kvPrecision, model: context.model) {
                 let stream = try MLXLMCommon.generate(
