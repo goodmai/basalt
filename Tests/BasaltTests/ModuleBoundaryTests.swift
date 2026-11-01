@@ -79,8 +79,8 @@ struct ModuleBoundaryTests {
         let pipe = Pipe()
         process.standardOutput = pipe
         try process.run()
-        process.waitUntilExit()
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
         let output = String(data: data, encoding: .utf8) ?? ""
         #expect(!output.contains("AppKit.framework"), "basalt binary links AppKit.framework")
         #expect(!output.contains("SwiftUI.framework"), "basalt binary links SwiftUI.framework")
