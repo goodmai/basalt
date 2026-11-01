@@ -1,4 +1,5 @@
 import Foundation
+import BasaltCore
 import MLX
 import MLXLLM
 import MLXLMCommon
@@ -30,6 +31,7 @@ struct SignedBlockHadamard: Sendable, Equatable {
 final class HadamardQuantizedLinear: QuantizedLinear {
     let rotation: SignedBlockHadamard
     let signs: MLXArray
+    var ternary: TernaryMatmul?
 
     init(replacing linear: Linear, quantization: PrismHadamardManifest.Quantization, rotation: SignedBlockHadamard) {
         let (outputs, inputs) = linear.shape
@@ -45,7 +47,8 @@ final class HadamardQuantizedLinear: QuantizedLinear {
     }
 
     override func callAsFunction(_ x: MLXArray) -> MLXArray {
-        super.callAsFunction(rotation.forward(x, signs: signs))
+        let rotated = rotation.forward(x, signs: signs)
+        return ternary?(rotated, weight: weight, scales: scales) ?? super.callAsFunction(rotated)
     }
 }
 
@@ -189,8 +192,33 @@ enum PrismHadamard {
                   !rotatedPaths.contains(owner) else { return nil }
             return (key, value.asType(.float16))
         }
-        guard !cast.isEmpty else { return }
-        try model.update(parameters: ModuleParameters.unflattened(cast), verify: [.noUnusedKeys])
-        eval(cast.map(\.1))
+        if !cast.isEmpty {
+            try model.update(parameters: ModuleParameters.unflattened(cast), verify: [.noUnusedKeys])
+            eval(cast.map(\.1))
+        }
+        armTernaryMatmul(rotated.compactMap { $0.1 as? HadamardQuantizedLinear })
+    }
+
+    static func armTernaryMatmul(_ layers: [HadamardQuantizedLinear], environment: [String: String] = ProcessInfo.processInfo.environment) {
+        let logger = BasaltLogger(module: "PrismHadamard")
+        let plans = layers.map { TernaryMatmul($0, environment: environment) }
+        guard let index = plans.firstIndex(where: { $0 != nil }), let plan = plans[index] else {
+            logger.info("Ternary matmul kernel off: no rotated layer is a 2-bit group-128 ternary pack (or BASALT_TERNARY_MATMUL=0)")
+            return
+        }
+        let probe = layers[index]
+        let worst = [1, 2, 4].map { rows in
+            let x = MLXRandom.normal([rows, plan.inputs], key: MLXRandom.key(UInt64(rows))).asType(.float16)
+            let expected = quantizedMM(x, probe.weight, scales: probe.scales, biases: probe.biases, transpose: true, groupSize: 128, bits: 2)
+            guard let actual = plan(x, weight: probe.weight, scales: probe.scales) else { return Float.infinity }
+            let error = abs(actual.asType(.float32) - expected.asType(.float32)).max().item(Float.self)
+            return error / max(abs(expected).max().item(Float.self), .leastNormalMagnitude)
+        }.max() ?? .infinity
+        guard worst <= TernaryMatmul.tolerance else {
+            logger.info("Ternary matmul kernel off: self-check relative error \(worst) exceeds \(TernaryMatmul.tolerance)")
+            return
+        }
+        for (layer, plan) in zip(layers, plans) { layer.ternary = plan }
+        logger.info("Ternary matmul kernel on for \(plans.count { $0 != nil }) of \(layers.count) rotated linear layers (self-check relative error \(worst))")
     }
 }

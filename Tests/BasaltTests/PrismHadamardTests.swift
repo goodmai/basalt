@@ -92,8 +92,29 @@ struct PrismHadamardTests {
         #expect(parameters["language_model.model.layers.0.linear_attn.A_log"]?.dtype == .float32)
         #expect(parameters["language_model.lm_head.signs"]?.dtype == .float32)
         #expect(parameters["language_model.lm_head.scales"]?.dtype == .float16)
+        #expect(packed.leafModules().flattened().compactMap { $0.1 as? HadamardQuantizedLinear }.allSatisfy { $0.ternary == nil })
         let logits = packed(MLXArray([1, 2, 3].map(Int32.init))[.newAxis], cache: nil)
         #expect(logits.dtype == .float16)
+    }
+
+    @Test("A 2-bit ternary rotated layer is armed with the kernel after the self-check and computes what stock does")
+    func ternaryLayerArmed() throws {
+        let packed = TernaryPack.make(outputs: 64, inputs: 256, seed: 9)
+        let rotation = try #require(SignedBlockHadamard(blockSize: 64, width: 256))
+        let layer = HadamardQuantizedLinear(
+            replacing: Linear(256, 64, bias: false), quantization: .init(groupSize: 128, bits: 2, mode: "affine"), rotation: rotation)
+        let signs = MLXRandom.bernoulli(0.5, [256], key: MLXRandom.key(2)).asType(.float32) * 2 - 1
+        try layer.update(
+            parameters: ModuleParameters.unflattened([
+                ("weight", packed.weight), ("scales", packed.scales), ("biases", packed.biases), ("signs", signs),
+            ]), verify: [.all])
+        PrismHadamard.armTernaryMatmul([layer], environment: ["BASALT_TERNARY_MATMUL": "1"])
+        #expect(layer.ternary != nil)
+        let x = MLXRandom.normal([1, 2, 256], key: MLXRandom.key(3)).asType(.float16)
+        let expected = TernaryPack.stock(rotation.forward(x, signs: signs), packed)
+        let actual = layer(x)
+        #expect(actual.shape == [1, 2, 64])
+        #expect(abs(actual.asType(.float32) - expected.asType(.float32)).max().item(Float.self) <= abs(expected).max().item(Float.self) * TernaryMatmul.tolerance)
     }
 
     @Test("Signs other than ±1 are refused at load")
