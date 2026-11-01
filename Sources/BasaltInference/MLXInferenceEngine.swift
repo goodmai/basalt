@@ -338,8 +338,11 @@ public actor MLXInferenceEngine: InferenceEngine {
                 } catch {
                     logger.warn("--mtp: the MTP head of \(modelPath) did not load (\(error.localizedDescription)); decoding stays plain")
                 }
+                if mtpDrafter != nil, speculativeLookup {
+                    logger.warn("--mtp with --speculative-lookup: lookup wins, so the MTP head drafts only for requests that set speculative_lookup to false")
+                }
                 if let mtpDrafter {
-                    logger.info("MTP head loaded from \(mtpDrafter.source); requests without constraints, lookup or --kv-bits draft with it")
+                    logger.info("MTP head loaded from \(mtpDrafter.source); requests without constraints, lookup or --kv-bits and prompts up to \(Self.mtpPromptLimit) tokens draft with it")
                 } else {
                     logger.warn("--mtp: \(modelPath) has no MTP head this build can use (Qwen3.5-family target plus mtp.safetensors); decoding stays plain")
                 }
@@ -936,10 +939,13 @@ public actor MLXInferenceEngine: InferenceEngine {
                         details: "the assistant prefill is not a valid start of the requested JSON output")
                 }
             }
-            if let namespace {
+            let speculativeLookup = request.speculativeLookup ?? speculativeLookup
+            let drafter = constraint == nil && !speculativeLookup && zones == nil && params.kvBits == nil
+                && promptTokens.count <= Self.mtpPromptLimit ? mtpDrafter : nil
+            if let namespace, drafter == nil {
                 await restoreFromDisk(namespace, prompt: promptTokens, container: container, epoch: epoch)
             }
-            let lease: PromptCacheLease? = if let namespace { promptCaches.lease(namespace, for: promptTokens) } else { nil }
+            let lease: PromptCacheLease? = if let namespace, drafter == nil { promptCaches.lease(namespace, for: promptTokens) } else { nil }
             let fork = namespace.map { promptCaches.storedPrefix(of: promptTokens, in: $0) }
             let reuse: (cache: PromptCache, reusedTokens: Int)? = switch lease {
             case let held?: (held.cache, held.reusedTokens)
@@ -957,11 +963,8 @@ public actor MLXInferenceEngine: InferenceEngine {
                     prefillAnswered: !prefixAnswer.isEmpty))
             let constrained = shaping.map { masked.appendingBasaltProcessor($0) } ?? masked
             let forcedTool = constraint?.toolName
-            let speculativeLookup = request.speculativeLookup ?? speculativeLookup
             let jumpForward = constraint?.fastForward == true
             let expertRouting = (speculativeLookup || jumpForward) ? await routesExperts(container, epoch: epoch) : true
-            let drafter = constraint == nil && !speculativeLookup && zones == nil && params.kvBits == nil
-                ? mtpDrafter : nil
             let launch: GenerationLaunch
             do {
                 launch = try await container.perform(nonSendable: lmInput) { context, input in
@@ -1118,8 +1121,8 @@ public actor MLXInferenceEngine: InferenceEngine {
                         launch.cache, fork: launch.fork, tokens: Array(promptTokens.prefix(launch.exactTokens)),
                         namespace: namespace, releasing: leaseSlot, epoch: epoch)
                     if !Task.isCancelled {
-                        let generationTime = (clock.now - startTime).inSeconds
-                        let timeToFirstToken = firstTokenAt.map { ($0 - startTime).inSeconds } ?? 0
+                        let generationTime = (clock.now - startTime).inSeconds + launch.prefillSeconds
+                        let timeToFirstToken = (firstTokenAt.map { ($0 - startTime).inSeconds } ?? 0) + launch.prefillSeconds
                         let mem = Memory.snapshot()
                         let reasoning = reasoningText
                         let reasoningTokens = reasoning.isEmpty ? nil : await container.perform {
@@ -1197,7 +1200,10 @@ public actor MLXInferenceEngine: InferenceEngine {
         var fork: PromptCache? = nil
         let reusedTokens: Int
         var exactTokens = Int.max
+        var prefillSeconds: TimeInterval = 0
     }
+
+    static let mtpPromptLimit = 8192
 
     static func drainCompletionInfo(_ generations: inout AsyncStream<Generation>.Iterator) async -> GenerateCompletionInfo? {
         var info: GenerateCompletionInfo?
@@ -1367,7 +1373,7 @@ public actor MLXInferenceEngine: InferenceEngine {
             let (stream, task) = generateTask(
                 promptTokenCount: input.text.tokens.dim(-1), modelConfiguration: context.configuration,
                 tokenizer: context.tokenizer, iterator: iterator, tools: tools, toolCallPolicy: params.toolCallPolicy)
-            return GenerationLaunch(stream: stream, task: task, cache: nil, reusedTokens: 0)
+            return GenerationLaunch(stream: stream, task: task, cache: nil, reusedTokens: 0, prefillSeconds: iterator.promptPrefillTime)
         }
         guard keepsCache else {
             if let zoned = try zonedCache(params: params, zones: kvZones, precision: kvPrecision, model: context.model) {
