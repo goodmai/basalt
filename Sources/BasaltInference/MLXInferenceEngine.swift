@@ -203,7 +203,8 @@ public actor MLXInferenceEngine: InferenceEngine {
         }
         return MemoryLimits(
             cacheLimitBytes: gpuCacheLimit.map { Self.cacheLimit($0, under: appliedMemoryDirective) },
-            promptCacheBudgetBytes: promptCaches.byteBudget, promptCacheEvictions: promptCaches.evictions)
+            promptCacheBudgetBytes: promptCaches.byteBudget, promptCacheBytes: promptCaches.byteCount,
+            promptCacheEvictions: promptCaches.evictions)
     }
 
     static func cacheLimit(_ relaxed: Int, under directive: MemoryDirective) -> Int {

@@ -77,11 +77,13 @@ public struct MemoryState: Sendable, Equatable {
 public struct MemoryLimits: Sendable, Equatable, Codable {
     public let cacheLimitBytes: Int?
     public let promptCacheBudgetBytes: Int
+    public let promptCacheBytes: Int
     public let promptCacheEvictions: Int
 
-    public init(cacheLimitBytes: Int?, promptCacheBudgetBytes: Int, promptCacheEvictions: Int) {
+    public init(cacheLimitBytes: Int?, promptCacheBudgetBytes: Int, promptCacheBytes: Int = 0, promptCacheEvictions: Int) {
         self.cacheLimitBytes = cacheLimitBytes
         self.promptCacheBudgetBytes = promptCacheBudgetBytes
+        self.promptCacheBytes = promptCacheBytes
         self.promptCacheEvictions = promptCacheEvictions
     }
 }

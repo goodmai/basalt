@@ -260,7 +260,7 @@ struct MemoryCoordinatorTests {
         #expect(encoded["step"] as? Int == 2)
         #expect((encoded["limits"] as? [String: Any])?["promptCacheEvictions"] as? Int == 0)
         #expect(encoded["refusedAdmissions"] as? Int == 0)
-        #expect(snapshot.formattedStatsLine.contains("Memory: warning step 2, cache limit 128.0 MB"))
+        #expect(snapshot.formattedStatsLine.contains("Memory: warning step 2, cache limit 128.0 MB, prompt cache 0 B of 256.0 MB, evicted 0"))
         #expect(try JSONDecoder().decode(ServerTelemetrySnapshot.self, from: JSONEncoder().encode(snapshot)) == snapshot)
 
         let uncoordinated = try await Self.orchestrator(MockInferenceEngine())

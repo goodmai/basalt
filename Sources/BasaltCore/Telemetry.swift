@@ -81,7 +81,7 @@ public struct MemoryTelemetry: Codable, Sendable, Equatable {
 
     var formattedStats: String {
         let applied = limits.map {
-            ", cache limit \($0.cacheLimitBytes.map { formatBytes(Int64($0)) } ?? "MLX default"), prompt cache \(formatBytes(Int64($0.promptCacheBudgetBytes))), evicted \($0.promptCacheEvictions)"
+            ", cache limit \($0.cacheLimitBytes.map { formatBytes(Int64($0)) } ?? "MLX default"), prompt cache \(formatBytes(Int64($0.promptCacheBytes))) of \(formatBytes(Int64($0.promptCacheBudgetBytes))), evicted \($0.promptCacheEvictions)"
         } ?? ""
         return "Memory: \(pressure.rawValue) step \(step.rawValue)\(applied), refused \(refusedAdmissions)"
     }
