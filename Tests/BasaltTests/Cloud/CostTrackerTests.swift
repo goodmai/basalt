@@ -16,6 +16,23 @@ struct CostTrackerTests {
         return fileURL
     }
     
+    @Test("An unreadable usage file is moved aside, never silently overwritten with zero spend (#213)")
+    func corruptUsageFilePreserved() async throws {
+        let fileURL = createTempFile()
+        try Data("{not json".utf8).write(to: fileURL)
+        defer { try? FileManager.default.removeItem(at: fileURL) }
+        let tracker = try CostTracker(storageURL: fileURL, budget: .init(dailyLimit: 10, monthlyLimit: 100))
+        #expect(await tracker.getStats().dailyUsage == 0)
+        let directory = fileURL.deletingLastPathComponent()
+        let aside = try FileManager.default.contentsOfDirectory(atPath: directory.path)
+            .filter { $0.hasPrefix(fileURL.lastPathComponent + ".corrupt-") }
+        #expect(aside.count == 1)
+        for name in aside {
+            #expect(try String(contentsOf: directory.appendingPathComponent(name), encoding: .utf8) == "{not json")
+            try? FileManager.default.removeItem(at: directory.appendingPathComponent(name))
+        }
+    }
+
     @Test("Record usage within budget succeeds")
     func testRecordUsageWithinBudget() async throws {
         let fileURL = createTempFile()

@@ -70,13 +70,15 @@ public actor CostTracker: Sendable {
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         }
         
-        // Load existing stats if available
-        var loadedStats: UsageStats
-        if let data = try? Data(contentsOf: storageURL),
-           let decoded = try? JSONDecoder().decode(UsageStats.self, from: data) {
-            loadedStats = decoded
-        } else {
-            loadedStats = UsageStats()
+        var loadedStats = UsageStats()
+        if let data = try? Data(contentsOf: storageURL) {
+            do {
+                loadedStats = try JSONDecoder().decode(UsageStats.self, from: data)
+            } catch {
+                let aside = storageURL.appendingPathExtension("corrupt-\(Int(Date().timeIntervalSince1970))")
+                try? FileManager.default.moveItem(at: storageURL, to: aside)
+                fputs("[CostTracker] usage file unreadable (\(error.localizedDescription)); moved to \(aside.lastPathComponent), counting spend from zero\n", stderr)
+            }
         }
         
         let (currentDay, currentMonth) = UsageStats.currentDateStrings()
@@ -189,7 +191,7 @@ public actor CostTracker: Sendable {
         }
         
         if changed {
-            try? save()
+            do { try save() } catch { log("cannot save usage: \(error.localizedDescription)") }
         }
     }
     

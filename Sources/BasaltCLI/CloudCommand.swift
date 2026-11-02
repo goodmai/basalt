@@ -54,7 +54,12 @@ public struct CloudCommand: AsyncParsableCommand {
 
     public static func loadConfig() -> CloudConfig? {
         guard let data = try? Data(contentsOf: configURL()) else { return nil }
-        return try? JSONDecoder().decode(CloudConfig.self, from: data)
+        do {
+            return try JSONDecoder().decode(CloudConfig.self, from: data)
+        } catch {
+            fputs("[cloud] \(configURL().path) is unreadable (\(error.localizedDescription)); cloud fallback stays off until it is fixed or rewritten with `basalt cloud configure`\n", stderr)
+            return nil
+        }
     }
 
     public struct Configure: AsyncParsableCommand {
