@@ -1319,7 +1319,7 @@ public actor MLXInferenceEngine: InferenceEngine {
     }
 
     private func batchedDecoder(_ container: ModelContainer, epoch: Int) async -> BatchedDecoder? {
-        guard batchSlots > 1, epoch == modelEpoch else { return nil }
+        guard batchSlots > 1, epoch == modelEpoch, appliedMemoryDirective < .tight else { return nil }
         if let batchDecoder { return batchDecoder }
         let slots = batchSlots
         let made = await container.perform { BatchedDecoder(model: $0.model, slots: slots) }

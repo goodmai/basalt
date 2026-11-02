@@ -11,7 +11,8 @@ final class BatchKVCache: KVCache {
     var isTrimmable: Bool { false }
 
     var ropeOffset: RoPEOffset {
-        .batch(MLXArray(leftPadding.map { Int32(offset - $0) }))
+        if let first = leftPadding.first, leftPadding.allSatisfy({ $0 == first }) { return .scalar(offset - first) }
+        return .batch(MLXArray(leftPadding.map { Int32(offset - $0) }))
     }
 
     func innerState() -> [MLXArray] { [keys, values].compactMap { $0 } }

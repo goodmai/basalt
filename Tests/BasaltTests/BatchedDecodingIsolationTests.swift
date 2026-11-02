@@ -313,4 +313,16 @@ struct BatchedRoutingTests {
         _ = try await engine.generate(request: ConstrainedModel.request(format: nil, maxTokens: 4))
         #expect(await engine.batchedRows == 1)
     }
+
+    @Test("Under tight memory pressure a plain request decodes on its own; back at relaxed it batches again")
+    func pressureStopsJoining() async throws {
+        let engine = MLXInferenceEngine(batchSlots: 4)
+        await engine.attach(try ConstrainedModel.container())
+        _ = await engine.apply(.tight)
+        _ = try await engine.generate(request: ConstrainedModel.request(format: nil, maxTokens: 4))
+        #expect(await engine.batchedRows == 0)
+        _ = await engine.apply(.relaxed)
+        _ = try await engine.generate(request: ConstrainedModel.request(format: nil, maxTokens: 4))
+        #expect(await engine.batchedRows == 1)
+    }
 }

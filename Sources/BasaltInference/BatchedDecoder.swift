@@ -97,7 +97,9 @@ final class BatchedDecoder: @unchecked Sendable {
         }
         guard let feed = pending else { return }
         let logits = model(feed.reshaped(rows.count, 1), cache: layers)[0..., -1, 0...]
-        let next = concatenated(rows.indices.map { rows[$0].sample(logits[$0 ..< $0 + 1]) })
+        let next = rows.allSatisfy(\.isPlainGreedy)
+            ? argMax(logits, axis: -1)
+            : concatenated(rows.indices.map { rows[$0].sample(logits[$0 ..< $0 + 1]) })
         asyncEval([next] + layers.flatMap(\.state))
         let tokens = feed.asArray(Int.self)
         pending = next
@@ -144,6 +146,8 @@ private final class BatchRow {
         self.maxTokens = maxTokens
         self.stopTokens = stopTokens
     }
+
+    var isPlainGreedy: Bool { processor == nil && sampler is ArgMaxSampler }
 
     func sample(_ logits: MLXArray) -> MLXArray {
         let token = sampler.sample(logits: processor?.process(logits: logits) ?? logits)
