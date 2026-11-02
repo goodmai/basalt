@@ -86,14 +86,29 @@ struct PromptCacheTree: Sendable {
 
     let byteBudget: Int
     let leafLimit: Int
+    let anchorLimit: Int
     private(set) var roots: [String: PromptCacheNode] = [:]
     private(set) var byteCount = 0
     private(set) var leafCount = 0
     private var clock = 0
 
-    init(byteBudget: Int, leafLimit: Int = PromptCacheTree.maxLeaves) {
+    init(byteBudget: Int, leafLimit: Int = PromptCacheTree.maxLeaves, anchorLimit: Int = 1) {
         self.byteBudget = byteBudget
         self.leafLimit = leafLimit
+        self.anchorLimit = anchorLimit
+    }
+
+    var anchorUsage: (count: Int, bytes: Int) {
+        var usage = (count: 0, bytes: 0)
+        var pending = Array(roots.values)
+        while let node = pending.popLast() {
+            if !node.children.isEmpty, let snapshot = node.snapshot {
+                usage.count += 1
+                usage.bytes += snapshot.bytes
+            }
+            pending.append(contentsOf: node.children.values)
+        }
+        return usage
     }
 
     func storedPrefix(of tokens: [Int], in namespace: String) -> Int {
@@ -165,20 +180,24 @@ struct PromptCacheTree: Sendable {
 
     private mutating func retireSnapshots(above node: PromptCacheNode) {
         guard node.snapshot != nil else { return }
-        var keptParent = false
+        var kept = 0
         var current = node.parent
         while let ancestor = current, !ancestor.tokens.isEmpty {
             current = ancestor.parent
-            guard let snapshot = ancestor.snapshot else { continue }
-            guard keptParent else {
-                keptParent = true
+            guard ancestor.snapshot != nil else { continue }
+            guard kept == anchorLimit else {
+                kept += 1
                 continue
             }
             guard ancestor.children.count == 1, ancestor.pins == 0 else { continue }
-            ancestor.snapshot = nil
-            byteCount -= snapshot.bytes
-            merge(ancestor)
+            dropSnapshot(ancestor)
         }
+    }
+
+    private mutating func dropSnapshot(_ node: PromptCacheNode) {
+        byteCount -= node.snapshot?.bytes ?? 0
+        node.snapshot = nil
+        merge(node)
     }
 
     mutating func removeAll() {
@@ -290,9 +309,29 @@ struct PromptCacheTree: Sendable {
         attach(child, to: grandparent)
     }
 
+    private func evictionVictim() -> PromptCacheNode? {
+        var victim: (node: PromptCacheNode, rank: (Int, Int, Int))?
+        var pending = roots.values.map { (node: $0, depth: 0) }
+        while let (node, depth) = pending.popLast() {
+            let reach = depth + node.tokens.count
+            pending.append(contentsOf: node.children.values.map { ($0, reach) })
+            let isLeaf = node.children.isEmpty
+            guard node.pins == 0, !node.tokens.isEmpty, isLeaf || (node.snapshot != nil && byteCount > byteBudget)
+            else { continue }
+            let rank = (node.lastUse, isLeaf ? 1 : 0, reach)
+            if victim.map({ rank < $0.rank }) ?? true {
+                victim = (node, rank)
+            }
+        }
+        return victim?.node
+    }
+
     private mutating func evict() {
-        while byteCount > byteBudget || leafCount > leafLimit,
-              let victim = leaves().filter({ $0.pins == 0 }).min(by: { $0.lastUse < $1.lastUse }) {
+        while byteCount > byteBudget || leafCount > leafLimit, let victim = evictionVictim() {
+            guard victim.children.isEmpty else {
+                dropSnapshot(victim)
+                continue
+            }
             let bytesPerToken = max(1, victim.bytes / victim.tokens.count)
             let keep = leafCount > leafLimit
                 ? 0 : victim.tokens.count - (byteCount - byteBudget + bytesPerToken - 1) / bytesPerToken
