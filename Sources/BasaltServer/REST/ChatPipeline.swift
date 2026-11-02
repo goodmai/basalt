@@ -121,7 +121,7 @@ struct ChatPipeline: Sendable {
             isServiceRequest: service.isService,
             tools: tools.tools,
             toolChoice: tools.choice,
-            cacheKey: PromptCacheKey.resolve(isService: service.isService),
+            cacheKey: PromptCacheKey.resolve(isService: service.isService, headers: headers),
             messages: service.prompt == prompt ? chat : nil,
             topK: sampling.topK,
             presencePenalty: sampling.presencePenalty,
