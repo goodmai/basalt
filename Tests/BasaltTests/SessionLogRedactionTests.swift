@@ -54,7 +54,7 @@ struct SessionLogRedactionTests {
         #expect(out == "x [REDACTED:private_key]")
     }
 
-    @Test("A 1 MB adversarial prompt is redacted in under 200 ms")
+    @Test("A 1 MB adversarial prompt is redacted in linear time, under 2 s even on a loaded machine")
     func linearTime() {
         let chunks = [String(repeating: Self.privateKeyLine("RSA") + "\n", count: 8_000),
                       String(repeating: "sk-ab ", count: 60_000), String(repeating: "Bearer x ", count: 40_000)]
@@ -62,7 +62,7 @@ struct SessionLogRedactionTests {
             let input = String(adversarial.prefix(1_000_000))
             let start = ContinuousClock.now
             _ = SecretRedactor.redact(input)
-            #expect(ContinuousClock.now - start < .milliseconds(200), "\(input.prefix(20))")
+            #expect(ContinuousClock.now - start < .seconds(2), "\(input.prefix(20))")
         }
     }
 

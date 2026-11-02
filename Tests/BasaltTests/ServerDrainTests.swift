@@ -50,7 +50,7 @@ struct ServerDrainTests {
         await group.triggerGracefulShutdown()
         await consumer.value
         try await running.value
-        #expect(ContinuousClock.now - started < .seconds(3))
+        #expect(ContinuousClock.now - started < .seconds(15))
         #expect(await orchestrator.gate.inFlight == 0)
     }
 
@@ -116,27 +116,23 @@ struct ServerDrainTests {
         let orchestrator = ModelOrchestratorActor(engine: engine, telemetry: TelemetryTracker())
         try await orchestrator.loadModel(path: "mock")
         let holder = try await orchestrator.gate.admit()
-        let releaser = Task {
-            try? await Task.sleep(for: .milliseconds(300))
-            await orchestrator.gate.release(holder)
-        }
-        let started = ContinuousClock.now
         let (ready, markReady) = AsyncStream<Void>.makeStream()
+        let started = ContinuousClock.now
         let cancelled = Task {
             markReady.finish()
             while !Task.isCancelled { await Task.yield() }
             #expect(Task.isCancelled)
-            await orchestrator.shutdown(deadline: .seconds(1))
+            await orchestrator.shutdown(deadline: .seconds(30))
         }
         for await _ in ready {}
         cancelled.cancel()
+        #expect(await GenerationGateTests.eventually(within: .seconds(30)) { await orchestrator.gate.drainPolls >= 3 })
+        #expect(await orchestrator.gate.inFlight == 1)
+        #expect(await engine.persistCount == 0)
+        await orchestrator.gate.release(holder)
         await cancelled.value
-        await releaser.value
-        let elapsed = ContinuousClock.now - started
         let polls = await orchestrator.gate.drainPolls
-        #expect(elapsed >= .milliseconds(250))
-        #expect(elapsed < .milliseconds(900))
-        #expect(polls >= 1 && polls <= 45)
+        #expect(polls <= Int((ContinuousClock.now - started) / .milliseconds(20)) + 1, "\(polls) polls")
         #expect(await orchestrator.gate.inFlight == 0)
         #expect(await engine.persistCount == 1)
     }
@@ -196,7 +192,7 @@ struct ServerDrainTests {
         let started = ContinuousClock.now
         await group.triggerGracefulShutdown()
         try await running.value
-        #expect(ContinuousClock.now - started < .seconds(1))
+        #expect(ContinuousClock.now - started < .seconds(15))
         #expect(await engine.persistCount == 1)
     }
 

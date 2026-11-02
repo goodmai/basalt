@@ -226,6 +226,7 @@ struct ScriptsTests {
         let script = lines[(runIdx + 1)...]
             .map { $0.hasPrefix("        ") ? String($0.dropFirst(8)) : $0 }
             .joined(separator: "\n")
+        #expect(!script.contains("| grep -q"), "under pipefail an early-exiting grep -q can fail the pipeline with EPIPE and let a release candidate through")
 
         let temp = fm.temporaryDirectory.resolvingSymlinksInPath()
             .appendingPathComponent("xcode-action-\(UUID().uuidString)")

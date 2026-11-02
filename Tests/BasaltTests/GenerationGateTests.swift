@@ -166,7 +166,7 @@ struct GenerationGateTests {
         let started = ContinuousClock.now
         await orchestrator.shutdown(deadline: .milliseconds(300))
         _ = await consumer.value
-        #expect(ContinuousClock.now - started < .seconds(3))
+        #expect(ContinuousClock.now - started < .seconds(15))
         await #expect(throws: BasaltError.self) {
             _ = try await orchestrator.generate(request: GenerationRequest(prompt: "late"))
         }

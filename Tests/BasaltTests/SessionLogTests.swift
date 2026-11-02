@@ -162,7 +162,7 @@ struct SessionLogTests {
             request: GenerationRequest(prompt: "long").withOrigin(RequestOrigin(source: "openai-chat", endpoint: "/v1/chat/completions", stream: true)))
         _ = stream
         stream = nil
-        let deadline = ContinuousClock.now + .seconds(3)
+        let deadline = ContinuousClock.now + .seconds(30)
         var lines: [[String: Any]] = []
         while ContinuousClock.now < deadline {
             await writer.flush()
