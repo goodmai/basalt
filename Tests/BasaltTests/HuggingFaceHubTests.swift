@@ -134,3 +134,38 @@ struct HuggingFaceHubTests {
         try? FileManager.default.removeItem(at: destDir)
     }
 }
+
+@Suite("Untrusted names from the Hub and the CLI (#213)")
+struct HubNameValidationTests {
+    @Test("Repo ids are owner/name of letters, digits, '-', '_' and '.'", arguments: [
+        ("mlx-community/Qwen3-4B-4bit", true), ("prism-ml/Ternary-Bonsai-2-27B-mlx-2bit", true), ("gpt2", true),
+        ("owner/name with space", false), ("../etc/passwd", false), ("owner/../x", false), ("owner/.hidden", false),
+        ("a/b/c", false), ("", false), ("owner/", false), ("owner/naïve", false), ("owner/x?y", false),
+    ])
+    func repoIds(id: String, valid: Bool) {
+        #expect(HuggingFaceHub.isRepoId(id) == valid)
+    }
+
+    @Test("Remote file names must stay inside the model directory", arguments: [
+        ("model.safetensors", true), ("mtp/weights.safetensors", true), ("optiq/mtp.safetensors", true),
+        ("../outside", false), ("a/../../b", false), ("/etc/passwd", false), ("a//b", false), ("./x", false), ("a\\b", false),
+    ])
+    func remotePaths(path: String, valid: Bool) {
+        #expect(HuggingFaceHub.isRelativePath(path) == valid)
+    }
+
+    @Test("modelDetails refuses an invalid repo id before any request instead of crashing")
+    func invalidRepoIdThrows() async {
+        await #expect(throws: HFError.self) { try await HuggingFaceHub().modelDetails(repoId: "owner/name with space") }
+    }
+}
+
+@Suite("Clipboard subprocess I/O (#213)")
+struct ClipboardPipeTests {
+    @Test("A command whose output outgrows the pipe buffer returns instead of deadlocking", .timeLimit(.minutes(1)))
+    func largeOutput() async throws {
+        let text = String(repeating: "0123456789abcdef", count: 64 * 1024)
+        let echoed = try await ClipboardManager().runClipboardCommand(["/bin/cat"], input: text)
+        #expect(echoed == text)
+    }
+}

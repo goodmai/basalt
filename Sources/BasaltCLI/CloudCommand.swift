@@ -71,6 +71,11 @@ public struct CloudCommand: AsyncParsableCommand {
         
         public init() {}
         
+        static func askBudget(_ prompt: String, default fallback: Double) -> Double {
+            print(prompt, terminator: "")
+            return readLine().flatMap(Double.init) ?? fallback
+        }
+
         public mutating func run() async throws {
             var finalApiKey = apiKey ?? ProcessInfo.processInfo.environment["OPENROUTER_API_KEY"] ?? ""
             if finalApiKey.isEmpty {
@@ -80,27 +85,10 @@ public struct CloudCommand: AsyncParsableCommand {
                 }
             }
             
-            var finalDaily = dailyBudget
-            if finalDaily == nil {
-                print("Enter Daily Budget limit (USD) [5.0]: ", terminator: "")
-                if let input = readLine(), let val = Double(input) {
-                    finalDaily = val
-                } else {
-                    finalDaily = 5.0
-                }
-            }
-            
-            var finalMonthly = monthlyBudget
-            if finalMonthly == nil {
-                print("Enter Monthly Budget limit (USD) [50.0]: ", terminator: "")
-                if let input = readLine(), let val = Double(input) {
-                    finalMonthly = val
-                } else {
-                    finalMonthly = 50.0
-                }
-            }
-            
-            let config = CloudConfig(apiKey: finalApiKey, dailyBudget: finalDaily!, monthlyBudget: finalMonthly!)
+            let finalDaily = dailyBudget ?? Self.askBudget("Enter Daily Budget limit (USD) [5.0]: ", default: 5.0)
+            let finalMonthly = monthlyBudget ?? Self.askBudget("Enter Monthly Budget limit (USD) [50.0]: ", default: 50.0)
+
+            let config = CloudConfig(apiKey: finalApiKey, dailyBudget: finalDaily, monthlyBudget: finalMonthly)
             
             let url = CloudCommand.configURL()
             let dir = url.deletingLastPathComponent()

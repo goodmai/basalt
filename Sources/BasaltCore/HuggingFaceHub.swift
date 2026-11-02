@@ -259,9 +259,11 @@ package actor HuggingFaceHub {
 
     /// Detailed info for a single repo including file list.
     package func modelDetails(repoId: String) async throws -> HFModelDetails {
-        let url = URL(string: "\(apiURL)/models/\(repoId)")!
+        guard Self.isRepoId(repoId), let url = URL(string: "\(apiURL)/models/\(repoId)") else {
+            throw HFError.invalidRepoId(repoId)
+        }
         let (data, response) = try await session.data(from: url)
-        
+
         switch (response as? HTTPURLResponse)?.statusCode {
         case 200:
             return try JSONDecoder().decode(HFModelDetails.self, from: data)
@@ -288,7 +290,7 @@ package actor HuggingFaceHub {
         try FileManager.default.createDirectory(at: destDir, withIntermediateDirectories: true)
 
         let filesToDownload = siblings.map(\.rfilename).filter { name in
-            guard !name.hasSuffix(".gguf") else { return false }
+            guard Self.isRelativePath(name), !name.hasSuffix(".gguf") else { return false }
             guard let subfolder else { return true }
             return name.hasPrefix("\(subfolder)/")
         }
@@ -300,7 +302,10 @@ package actor HuggingFaceHub {
             for filename in filesToDownload {
                 group.addTask {
                     let dest = destDir.appendingPathComponent(filename)
-                    let fileURL = URL(string: "\(self.baseURL)/\(repoId)/resolve/main/\(filename)")!
+                    guard let path = filename.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed),
+                          let fileURL = URL(string: "\(self.baseURL)/\(repoId)/resolve/main/\(path)") else {
+                        throw HFError.downloadFailed(filename)
+                    }
                     
                     // Retry loop
                     var success = false
@@ -467,8 +472,24 @@ package actor HuggingFaceHub {
 
 // MARK: — Errors
 
+extension HuggingFaceHub {
+    package static func isRepoId(_ id: String) -> Bool {
+        let parts = id.split(separator: "/", omittingEmptySubsequences: false)
+        return (1 ... 2).contains(parts.count) && parts.allSatisfy { part in
+            !part.isEmpty && part.first != "." && part.count <= 96
+                && part.unicodeScalars.allSatisfy { CharacterSet.alphanumerics.contains($0) && $0.isASCII || "-_.".unicodeScalars.contains($0) }
+        }
+    }
+
+    package static func isRelativePath(_ path: String) -> Bool {
+        let parts = path.split(separator: "/", omittingEmptySubsequences: false)
+        return !path.contains("\\") && !path.contains("\0") && parts.allSatisfy { !$0.isEmpty && $0 != "." && $0 != ".." }
+    }
+}
+
 package enum HFError: Error, LocalizedError {
     case invalidURL
+    case invalidRepoId(String)
     case apiError(code: Int)
     case modelNotFound(String)
     case downloadFailed(String)
@@ -476,6 +497,7 @@ package enum HFError: Error, LocalizedError {
     package var errorDescription: String? {
         switch self {
         case .invalidURL:              return "Invalid HuggingFace URL."
+        case .invalidRepoId(let id):   return "Not a HuggingFace repo id: \(id) (expected owner/name with letters, digits, '-', '_' or '.')"
         case .apiError(let code):      return "HuggingFace API error: HTTP \(code)"
         case .modelNotFound(let id):   return "Model not found: \(id)"
         case .downloadFailed(let f):   return "Download failed: \(f)"

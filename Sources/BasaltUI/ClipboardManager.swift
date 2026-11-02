@@ -169,7 +169,7 @@ public actor ClipboardManager {
     // MARK: - Process Execution
     
     /// Run clipboard command with optional input
-    private func runClipboardCommand(_ command: [String], input: String? = nil) async throws -> String {
+    func runClipboardCommand(_ command: [String], input: String? = nil) async throws -> String {
         guard !command.isEmpty else {
             throw ClipboardError.operationFailed("Empty command")
         }
@@ -194,24 +194,20 @@ public actor ClipboardManager {
         do {
             try process.run()
             
-            // Write input if provided
-            if let input = input {
-                let inputData = Data(input.utf8)
-                try inputPipe.fileHandleForWriting.write(contentsOf: inputData)
-                try inputPipe.fileHandleForWriting.close()
+            if let input {
+                let writer = inputPipe.fileHandleForWriting
+                let data = Data(input.utf8)
+                Thread.detachNewThread {
+                    try? writer.write(contentsOf: data)
+                    try? writer.close()
+                }
             }
-            
-            process.waitUntilExit()
-            
-            // Check exit status
-            guard process.terminationStatus == 0 else {
-                let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
-                let errorMessage = String(data: errorData, encoding: .utf8) ?? "Unknown error"
-                throw ClipboardError.operationFailed(errorMessage)
-            }
-            
-            // Read output
             let outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
+            let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
+            process.waitUntilExit()
+            guard process.terminationStatus == 0 else {
+                throw ClipboardError.operationFailed(String(data: errorData, encoding: .utf8) ?? "Unknown error")
+            }
             return String(data: outputData, encoding: .utf8) ?? ""
             
         } catch let error as ClipboardError {
