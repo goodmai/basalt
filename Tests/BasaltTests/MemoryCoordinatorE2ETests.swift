@@ -19,8 +19,8 @@ struct MemoryCoordinatorE2ETests {
             + (0..<words).map { "\(vocabulary[($0 * 7 + seed) % vocabulary.count])\(($0 + seed) % 97)" }.joined(separator: " ")
     }
 
-    static func cached(_ prompt: String, maxTokens: Int = 16) -> GenerationRequest {
-        GenerationRequest(prompt: prompt, maxTokens: maxTokens, temperature: 0, cacheKey: "agent")
+    static func cached(_ prompt: String, maxTokens: Int = 16, key: String = "agent") -> GenerationRequest {
+        GenerationRequest(prompt: prompt, maxTokens: maxTokens, temperature: 0, cacheKey: key)
     }
 
     static func cold(_ prompt: String, maxTokens: Int = 16) -> GenerationRequest {
@@ -61,17 +61,18 @@ struct MemoryCoordinatorE2ETests {
         return Rig(engine: engine, orchestrator: orchestrator, source: source, time: time, coordinator: coordinator)
     }
 
-    @Test("A warning evicts least recently used prompts down to a quarter of the budget; the kept prompt answers as before the pressure and the evicted one as when it was first stored",
+    @Test("A warning evicts least recently used prompts down to a quarter of the budget; the kept prompt answers as before the pressure and the evicted one like a fresh store with the same reused head",
           .enabled(if: modelPath != nil, "set BASALT_E2E=1 and BASALT_E2E_MEMORY_MODEL_PATH"))
     func warningEvictsLeastRecentlyUsed() async throws {
         let rig = try await Self.rig()
         let documents = (0..<4).map { Self.document($0, words: 600) }
-        var filledAnswers: [String] = []
-        for document in documents { filledAnswers.append(try await rig.orchestrator.generate(request: Self.cached(document)).generatedText) }
+        for document in documents { _ = try await rig.orchestrator.generate(request: Self.cached(document)) }
         let filled = await rig.tree
         try #require(filled.byteCount > Self.budget / 4, "four prompts must outgrow the tight budget, got \(filled.byteCount) bytes")
-        let evictionsBefore = filled.evictions
+        for document in documents[1...] { _ = try await rig.orchestrator.generate(request: Self.cached(document, key: "probe")) }
+        let sameSplit = try await rig.orchestrator.generate(request: Self.cached(documents[0], key: "probe"))
         let warmReuse = try await rig.orchestrator.generate(request: Self.cached(documents[3])).generatedText
+        let evictionsBefore = await rig.tree.evictions
 
         #expect(await rig.pressure(.warning))
         let tight = await rig.tree
@@ -81,13 +82,15 @@ struct MemoryCoordinatorE2ETests {
         let reported = try #require(await rig.orchestrator.telemetrySnapshot().memory?.limits)
         #expect(reported.promptCacheBytes == tight.byteCount && reported.promptCacheBudgetBytes == tight.byteBudget)
 
-        var reusedTokens: [Int] = []
-        for (document, expected) in [(documents[3], warmReuse), (documents[0], filledAnswers[0])] {
-            let reused = try await rig.orchestrator.generate(request: Self.cached(document))
-            reusedTokens.append(reused.cachedPromptTokens)
-            #expect(reused.generatedText == expected, "cached \(reused.cachedPromptTokens)/\(reused.promptTokens): \(reused.generatedText.debugDescription) vs \(expected.debugDescription)")
+        var reused: [GenerationResponse] = []
+        for document in [documents[3], documents[0]] {
+            reused.append(try await rig.orchestrator.generate(request: Self.cached(document)))
             #expect(await rig.tree.byteCount <= Self.budget / 4)
         }
+        #expect(reused[0].generatedText == warmReuse)
+        #expect(sameSplit.cachedPromptTokens == reused[1].cachedPromptTokens)
+        #expect(reused[1].generatedText == sameSplit.generatedText)
+        let reusedTokens = reused.map(\.cachedPromptTokens)
         #expect(reusedTokens[0] > reusedTokens[1], "newest kept \(reusedTokens[0]) tokens, oldest \(reusedTokens[1])")
         await rig.orchestrator.shutdown()
     }
