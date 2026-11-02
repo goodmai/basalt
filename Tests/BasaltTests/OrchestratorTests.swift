@@ -150,7 +150,7 @@ struct OrchestratorTests {
         let orch = ModelOrchestratorActor(engine: engine)
         try await orch.loadModel(path: "model")
         await engine.setArtificialDelay(0.05)
-        let gate = await orch.gate
+        let gate = orch.gate
         let capacity = gate.maxConcurrent + gate.maxQueue
         #expect(capacity == 9)
 

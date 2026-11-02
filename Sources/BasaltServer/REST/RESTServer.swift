@@ -8,6 +8,7 @@ package struct RESTServer: Sendable {
 
     let orchestrator: ModelOrchestratorActor
     let config: ServerConfig
+    let embeddings: (any EmbeddingEngine)?
 
     let shutdownDeadline: Duration
     let handleSignals: Bool
@@ -15,11 +16,13 @@ package struct RESTServer: Sendable {
     package init(
         orchestrator: ModelOrchestratorActor,
         config: ServerConfig,
+        embeddings: (any EmbeddingEngine)? = nil,
         shutdownDeadline: Duration = .seconds(5),
         handleSignals: Bool = true
     ) {
         self.orchestrator = orchestrator
         self.config = config
+        self.embeddings = embeddings
         self.shutdownDeadline = shutdownDeadline
         self.handleSignals = handleSignals
     }
@@ -72,7 +75,8 @@ package struct RESTServer: Sendable {
             generateController:  GenerateController(orchestrator: orchestrator, modelId: defaultId),
             openAIController:    OpenAIController(orchestrator: orchestrator, modelId: defaultId),
             anthropicController: AnthropicController(orchestrator: orchestrator, modelId: defaultId),
-            modelsController:    ModelsController(orchestrator: orchestrator, defaultModelId: defaultId)
+            modelsController:    ModelsController(orchestrator: orchestrator, defaultModelId: defaultId, embeddingModels: embeddings?.models ?? []),
+            embeddingsController: EmbeddingsController(engine: embeddings, gate: orchestrator.gate)
         )
     }
 
@@ -80,7 +84,8 @@ package struct RESTServer: Sendable {
         generateController:  GenerateController,
         openAIController:    OpenAIController,
         anthropicController: AnthropicController,
-        modelsController:    ModelsController
+        modelsController:    ModelsController,
+        embeddingsController: EmbeddingsController
     ) -> Router<BasicRequestContext> {
         let router = Router(context: BasicRequestContext.self)
 
@@ -118,6 +123,8 @@ package struct RESTServer: Sendable {
         oai.post("/responses",        use: openAIController.responses)       // OpenAI Responses API (Codex/Cursor)
         oai.post("/generate",         use: openAIController.generateRaw)  // raw prompt
         oai.post("/messages",         use: anthropicController.messages)     // Anthropic SSE
+        oai.post("/embeddings",       use: embeddingsController.embeddings)
+        oai.post("/rerank",           use: embeddingsController.rerank)
 
         // ── Swagger UI ──────────────────────────────────────────────────────────
         router.get("/swagger") { _, _ -> Response in
@@ -162,7 +169,9 @@ package struct RESTServer: Sendable {
                 "/v1/models/load":         { "post": { "summary": "Hot-swap model at runtime" } },
                 "/v1/chat/completions":    { "post": { "summary": "OpenAI-compatible chat completions" } },
                 "/v1/responses":           { "post": { "summary": "OpenAI Responses API (Codex/Cursor)" } },
-                "/v1/messages":            { "post": { "summary": "Anthropic-compatible messages API" } }
+                "/v1/messages":            { "post": { "summary": "Anthropic-compatible messages API" } },
+                "/v1/embeddings":          { "post": { "summary": "OpenAI-compatible embeddings (serve --embedding-model)" } },
+                "/v1/rerank":              { "post": { "summary": "Cohere/Jina-compatible rerank (serve --rerank-model)" } }
               }
             }
             """

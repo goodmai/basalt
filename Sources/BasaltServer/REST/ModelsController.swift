@@ -45,6 +45,7 @@ struct ModelsController: Sendable {
 
     let orchestrator: ModelOrchestratorActor
     let defaultModelId: String
+    var embeddingModels: [EmbeddingModelInfo] = []
 
     // MARK: — GET /v1/models
 
@@ -55,7 +56,7 @@ struct ModelsController: Sendable {
     /// `display_name` carries the original HuggingFace repo ID for readability.
     @Sendable
     func listModels(request: Request, context: BasicRequestContext) async throws -> Response {
-        let cached   = await orchestrator.cachedModels()
+        let cached   = await orchestrator.cachedModels().filter { model in !embeddingModels.contains { $0.id == model.id } }
         let loadedId = await orchestrator.currentModelId
         let now      = Int(Date().timeIntervalSince1970)
 
@@ -90,6 +91,9 @@ struct ModelsController: Sendable {
             }
         }
 
+        entries += embeddingModels.map {
+            ["id": $0.id, "object": "model", "created": now, "owned_by": "basalt", "is_loaded": true, "task": $0.task.rawValue]
+        }
         return makeJSONResponse(["object": "list", "data": entries])
     }
 
