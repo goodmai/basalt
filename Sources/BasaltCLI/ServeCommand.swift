@@ -748,7 +748,7 @@ enum KVBitsSetting: Equatable, ExpressibleByArgument {
     }
 
     var budgetPrecision: KVPrecision? {
-        fixedPrecision ?? KVCacheGeometry.adaptiveKVPrecisionLadder.last!
+        fixedPrecision ?? KVCacheGeometry.adaptiveKVPrecisionLadder.last ?? nil
     }
 
     static let zonesHelp = ArgumentHelp(

@@ -249,7 +249,8 @@ enum ContrastiveSelector {
     static func parseLabel(_ text: String, labels: [String]) -> String? {
         let cleaned = HarnessText.withoutThinking(text)
         guard let match = cleaned.range(of: #"BEST:\s*([A-Z])\b"#, options: [.regularExpression, .backwards]) else { return nil }
-        let label = String(cleaned[match].last!)
+        guard let last = cleaned[match].last else { return nil }
+        let label = String(last)
         return labels.contains(label) ? label : nil
     }
 
@@ -311,18 +312,22 @@ enum HarnessProposal {
     }
 
     static func view(_ base: HarnessTree, spec: HarnessSurfaceSpec) -> HarnessView {
-        let paths = base.files.keys.sorted()
-        let editable = paths.filter { spec.owns($0) && base.files[$0]!.utf8.count <= maxFileBytes }
-            .sorted { (spec.instructionFiles.contains($0) ? 0 : 1, base.files[$0]!.count, $0) < (spec.instructionFiles.contains($1) ? 0 : 1, base.files[$1]!.count, $1) }
+        let files = base.files
+        let paths = files.keys.sorted()
+        let editableSet = Set(paths.filter { spec.owns($0) && files[$0, default: ""].utf8.count <= maxFileBytes })
+        let editable = editableSet.sorted {
+            (spec.instructionFiles.contains($0) ? 0 : 1, files[$0, default: ""].count, $0)
+                < (spec.instructionFiles.contains($1) ? 0 : 1, files[$1, default: ""].count, $1)
+        }
         var remaining = maxHarnessPromptChars
         var shown: [String: String] = [:]
-        for path in editable + paths.filter({ !editable.contains($0) }) {
-            let content = base.files[path]!
-            let limit = min(remaining, editable.contains(path) ? content.count : readOnlyExcerptChars)
-            shown[path] = String(content.prefix(limit))
-            remaining -= shown[path]!.count
+        for path in editable + paths.filter({ !editableSet.contains($0) }) {
+            let content = files[path, default: ""]
+            let excerpt = String(content.prefix(min(remaining, editableSet.contains(path) ? content.count : readOnlyExcerptChars)))
+            shown[path] = excerpt
+            remaining -= excerpt.count
         }
-        let truncated = Set(paths.filter { shown[$0]!.count < base.files[$0]!.count })
+        let truncated = Set(paths.filter { shown[$0, default: ""].count < files[$0, default: ""].count })
         let block = paths.map { path in
             fenced(path, shown[path]!, truncated: truncated.contains(path))
         }.joined(separator: "\n")

@@ -249,8 +249,8 @@ struct Benchmark: AsyncParsableCommand {
         guard !samples.isEmpty else { return }
         let n    = Double(samples.count)
         let mean = samples.reduce(0, +) / n
-        let minV = samples.min()!
-        let maxV = samples.max()!
+        let minV = samples.min() ?? 0
+        let maxV = samples.max() ?? 0
         let variance = samples.map { ($0 - mean) * ($0 - mean) }.reduce(0, +) / n
         let stdDev = sqrt(variance)
 

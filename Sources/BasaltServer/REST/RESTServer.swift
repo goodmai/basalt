@@ -84,7 +84,6 @@ package struct RESTServer: Sendable {
     ) -> Router<BasicRequestContext> {
         let router = Router(context: BasicRequestContext.self)
 
-        // Minimal request logging (method + path only, goes to stderr via GemLogger)
         router.add(middleware: LogRequestsMiddleware(.info))
         router.add(middleware: RequestGuardMiddleware(bindHost: config.host, bindPort: config.restPort, allowedOrigins: config.allowedOrigins))
 

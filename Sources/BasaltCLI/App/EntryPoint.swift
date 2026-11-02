@@ -5,7 +5,6 @@ import BasaltCore
 
 // No @main here — entry point is Sources/BasaltBin/main.swift
 
-// Добавлен атрибут @available для корректной работы swift-argument-parser
 @available(macOS 10.15, macCatalyst 13, iOS 13, tvOS 13, watchOS 6, *)
 public struct BasaltCLI: AsyncParsableCommand {
     public init() {}

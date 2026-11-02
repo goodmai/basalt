@@ -327,9 +327,10 @@ struct AnthropicController: Sendable {
                 // inside a text block is something SDKs drop or reject.
                 var openBlock: (index: Int, type: String)?
                 var nextIndex = 0
-                func open(_ type: String) {
+                @discardableResult
+                func open(_ type: String) -> Int {
                     if let current = openBlock {
-                        if current.type == type { return }
+                        if current.type == type { return current.index }
                         send("content_block_stop", ["type": "content_block_stop", "index": current.index])
                     }
                     let block: [String: Any] = type == "thinking"
@@ -338,16 +339,17 @@ struct AnthropicController: Sendable {
                     send("content_block_start", ["type": "content_block_start", "index": nextIndex, "content_block": block])
                     openBlock = (nextIndex, type)
                     nextIndex += 1
+                    return nextIndex - 1
                 }
 
                 var calledTools = false
                 func emitToolUse(_ call: ToolCallOutput) {
                     let note = Self.objectInput(call.arguments) == nil ? Self.nonObjectNote(call) : nil
                     if let note {
-                        open("text")
+                        let index = open("text")
                         send("content_block_delta", [
                             "type": "content_block_delta",
-                            "index": openBlock!.index,
+                            "index": index,
                             "delta": ["type": "text_delta", "text": note]
                         ])
                     }
@@ -378,19 +380,19 @@ struct AnthropicController: Sendable {
                     case .text(let text):
                         outputTokens += 1
                         if calledTools, openBlock == nil, text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { continue }
-                        open("text")
+                        let index = open("text")
                         send("content_block_delta", [
                             "type": "content_block_delta",
-                            "index": openBlock!.index,
+                            "index": index,
                             "delta": ["type": "text_delta", "text": text]
                         ])
                     case .reasoning(let reasoning):
                         outputTokens += 1
                         guard openBlock?.type != "text", !calledTools else { continue }
-                        open("thinking")
+                        let index = open("thinking")
                         send("content_block_delta", [
                             "type": "content_block_delta",
-                            "index": openBlock!.index,
+                            "index": index,
                             "delta": ["type": "thinking_delta", "thinking": reasoning]
                         ])
                     case .metadata(let meta):
@@ -417,8 +419,8 @@ struct AnthropicController: Sendable {
                 }
 
                 if openBlock != nil || !calledTools {
-                    open("text")
-                    send("content_block_stop", ["type": "content_block_stop", "index": openBlock!.index])
+                    let index = open("text")
+                    send("content_block_stop", ["type": "content_block_stop", "index": index])
                 }
 
                 // message_delta
