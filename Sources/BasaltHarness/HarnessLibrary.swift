@@ -107,7 +107,11 @@ public struct HarnessExperienceLibrary: Sendable {
                 throw HarnessLibraryError.io("cannot write the library: \(error.localizedDescription)")
             }
             let index = Self.renderIndex(domain: domainSlug, entries: entries.filter { $0.domain == domainSlug })
-            try? Data(index.utf8).write(to: domainDir.appendingPathComponent("INDEX.md"), options: .atomic)
+            do {
+                try Data(index.utf8).write(to: domainDir.appendingPathComponent("INDEX.md"), options: .atomic)
+            } catch {
+                BasaltLogger(module: "HarnessLibrary").warn("INDEX.md for \(domainSlug) not updated: \(error.localizedDescription)")
+            }
             return entry
         } }
     }

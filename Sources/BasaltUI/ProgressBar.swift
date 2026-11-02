@@ -26,6 +26,7 @@ public struct ProgressBar: Sendable {
     public let style: Style
     public private(set) var currentMessage: String?
     
+    private let now: @Sendable () -> Date
     private var startTime: Date
     private var lastUpdateTime: Date
     private var lastUpdateCurrent: Int
@@ -45,7 +46,7 @@ public struct ProgressBar: Sendable {
     
     /// Estimated speed (units per second)
     public var estimatedSpeed: Double {
-        let elapsed = Date().timeIntervalSince(startTime)
+        let elapsed = now().timeIntervalSince(startTime)
         guard elapsed > 0 else { return 0 }
         return Double(current) / elapsed
     }
@@ -64,14 +65,16 @@ public struct ProgressBar: Sendable {
     public init(
         total: Int,
         title: String = "",
-        style: Style = .default
+        style: Style = .default,
+        now: @escaping @Sendable () -> Date = Date.init
     ) {
+        self.now = now
         self.total = total
         self.current = 0
         self.title = title
         self.style = style
-        self.startTime = Date()
-        self.lastUpdateTime = Date()
+        self.startTime = now()
+        self.lastUpdateTime = now()
         self.lastUpdateCurrent = 0
     }
     
@@ -81,7 +84,7 @@ public struct ProgressBar: Sendable {
     public mutating func update(current: Int, message: String? = nil) {
         self.current = min(current, total)
         self.currentMessage = message
-        self.lastUpdateTime = Date()
+        self.lastUpdateTime = now()
         self.lastUpdateCurrent = current
     }
     

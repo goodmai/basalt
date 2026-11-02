@@ -88,7 +88,7 @@ public struct BasaltLogger: Sendable {
                     fileHandle.closeFile()
                 }
             } else {
-                try? logData?.write(to: url)
+                do { try logData?.write(to: url) } catch { fputs("[logger] cannot write \(url.path): \(error.localizedDescription)\n", stderr) }
             }
         }
     }

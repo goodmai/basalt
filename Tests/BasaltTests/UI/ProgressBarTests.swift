@@ -1,4 +1,5 @@
 import Testing
+import Synchronization
 import Foundation
 @testable import BasaltCore
 @testable import BasaltInference
@@ -165,32 +166,19 @@ struct ProgressBarTests {
     
     // MARK: - Speed Calculation Tests
     
-    @Test("Calculate speed from time delta")
-    func testSpeedCalculation() async {
-        var progress = ProgressBar(total: 1000)
-        
+    @Test("Speed and time remaining follow the clock, not wall time")
+    func speedFollowsClock() {
+        let clock = Mutex(Date(timeIntervalSinceReferenceDate: 1_024))
+        var progress = ProgressBar(total: 1000, now: { clock.withLock { $0 } })
         progress.update(current: 0)
-        
-        // Simulate 100 units in ~0.1 seconds
-        try? await Task.sleep(for: .milliseconds(100))
+        clock.withLock { $0 += 0.125 }
         progress.update(current: 100)
-        
-        let speed = progress.estimatedSpeed
-        // Speed should be > 0 (units per second)
-        #expect(speed >= 0)
-    }
-    
-    @Test("Estimate time remaining")
-    func testTimeRemaining() async {
-        var progress = ProgressBar(total: 1000)
-        
-        progress.update(current: 0)
-        try? await Task.sleep(for: .milliseconds(50))
+        #expect(progress.estimatedSpeed == 800)
+        #expect(progress.estimatedTimeRemaining == 1.125)
+        clock.withLock { $0 += 0.375 }
         progress.update(current: 250)
-        
-        let remaining = progress.estimatedTimeRemaining
-        // Should have some estimate
-        #expect(remaining >= 0)
+        #expect(progress.estimatedSpeed == 500)
+        #expect(progress.estimatedTimeRemaining == 1.5)
     }
     
     // MARK: - Format Tests
