@@ -1,22 +1,13 @@
-// MODULE: OnboardingFlow
-// OWNER: AI Assistant
-// STATUS: IN_PROGRESS
-// LAST_MODIFIED: 2025-04-28
-// TODO: Add model download with progress bar
-// TODO: Add scheduled benchmark support
 
 import Foundation
 import BasaltCore
 
-/// Interactive onboarding flow for first-time users
-/// Guides users through system profiling, model recommendation, and initial setup
 public actor OnboardingFlow {
     
     private let profiler: SystemProfiler
     private let configPath: String
     private let serverConfigPath: String
     
-    /// Onboarding state persisted to disk
     public struct OnboardingState: Codable, Sendable {
         public let completed: Bool
         public let completedAt: Date?
@@ -52,8 +43,6 @@ public actor OnboardingFlow {
         self.serverConfigPath = (!FileManager.default.fileExists(atPath: resolvedServerConfig) && FileManager.default.fileExists(atPath: legacyServerConfig) && serverConfigPath == "~/.basalt/config.json") ? legacyServerConfig : resolvedServerConfig
     }
     
-    /// Launch arguments for the chosen model: only the `--model` value is replaced, so flags the
-    /// user added to `args` (e.g. --max-tokens) survive a re-run of onboarding.
     static func launchArgs(existing: [String]?, model: String) -> [String] {
         guard var args = existing, !args.isEmpty else { return ["serve", "--model", model] }
         if let i = args.firstIndex(of: "--model"), i + 1 < args.count {
@@ -64,7 +53,6 @@ public actor OnboardingFlow {
         return args
     }
 
-    /// Check if onboarding has been completed
     public func isCompleted() -> Bool {
         guard let state = loadState() else {
             return false
@@ -72,7 +60,6 @@ public actor OnboardingFlow {
         return state.completed
     }
     
-    /// Run interactive onboarding flow
     public func run() async throws {
         print("")
         print("╔══════════════════════════════════════════════════════════════════════╗")
@@ -84,7 +71,6 @@ public actor OnboardingFlow {
         print("╚══════════════════════════════════════════════════════════════════════╝")
         print("")
         
-        // Step 1: Detect system resources
         print("🔍 Detecting system resources...")
         let resources = await profiler.detectResources()
         
@@ -101,7 +87,6 @@ public actor OnboardingFlow {
         print("  └─────────────────────────────────────────────────")
         print("")
         
-        // Step 2: Recommend model
         let recommendation = await profiler.recommendModel(resources: resources)
         
         print("✨ Recommended Model:")
@@ -114,7 +99,6 @@ public actor OnboardingFlow {
         print("  └─────────────────────────────────────────────────")
         print("")
         
-        // Step 3: Ask user preference
         print("🎯 Setup Options:")
         print("  1️⃣  Quick Start - Download and test recommended model now (~5 min)")
         print("  2️⃣  Custom Model - I'll specify my own model")
@@ -169,7 +153,6 @@ public actor OnboardingFlow {
             selectedModel = recommendation.modelId
         }
         
-        // Step 4: Save onboarding state
         let state = OnboardingState(
             completed: true,
             completedAt: Date(),
@@ -180,14 +163,11 @@ public actor OnboardingFlow {
         
         try saveState(state)
 
-        // Step 5: Non-destructive server configuration update
         let chosenModel = selectedModel ?? recommendation.modelId
         let serverConfigURL = URL(fileURLWithPath: serverConfigPath)
-        // Absolute path: argv[0] may be relative to wherever onboard happened to run.
         let exe = Bundle.main.executablePath ?? ProcessInfo.processInfo.arguments.first ?? "basalt"
         do {
             let existingArgs = (try? ServerConfig.load(from: serverConfigURL))?["args"] as? [String]
-            // host/port are defaults, not updates: a re-run must not undo a user's edit.
             try ServerConfig.mergeAndSave(
                 to: serverConfigURL,
                 systemUpdates: [
@@ -215,15 +195,12 @@ public actor OnboardingFlow {
         print("")
     }
     
-    /// Reset onboarding state (for testing or re-running)
     public func reset() throws {
         let url = URL(fileURLWithPath: configPath)
         try? FileManager.default.removeItem(at: url)
     }
     
-    // MARK: - Private Helpers
     
-    /// Load onboarding state from disk
     private func loadState() -> OnboardingState? {
         let url = URL(fileURLWithPath: configPath)
         
@@ -236,11 +213,9 @@ public actor OnboardingFlow {
         return state
     }
     
-    /// Save onboarding state to disk
     private func saveState(_ state: OnboardingState) throws {
         let url = URL(fileURLWithPath: configPath)
         
-        // Create directory if needed
         let directory = url.deletingLastPathComponent()
         if !FileManager.default.fileExists(atPath: directory.path) {
             try FileManager.default.createDirectory(
