@@ -87,7 +87,7 @@ struct TelemetryTests {
         let stream = try await orch.generateStream(request: GenerationRequest(prompt: "hi", maxTokens: 8))
         #expect(await tracker.snapshot().activeRequests == 1)
         for await _ in stream {}
-        try? await Task.sleep(for: .milliseconds(20))
+        #expect(await GenerationGateTests.eventually { await tracker.snapshot().totalRequests == 1 })
 
         let after = await tracker.snapshot()
         #expect(after.totalRequests == 1)
@@ -181,24 +181,19 @@ struct TelemetryTests {
         // One streamed and one plain request: the orchestrator's own counters used to miss the stream.
         let stream = try await orch.generateStream(request: GenerationRequest(prompt: "hi", maxTokens: 8))
         for await _ in stream {}
-        try? await Task.sleep(for: .milliseconds(20))
+        #expect(await GenerationGateTests.eventually { await tracker.snapshot().totalRequests == 1 })
         _ = try await orch.generate(request: GenerationRequest(prompt: "hi", maxTokens: 8))
         let expected = await tracker.snapshot()
 
-        actor OutputCapturer {
-            var lines: [String] = []
-            func capture(_ line: String) { lines.append(line) }
-        }
         let capturer = OutputCapturer()
         let server = MCPServer(orchestrator: orch) { line in
-            Task { await capturer.capture(line) }
+            capturer.capture(line)
         }
         await server.dispatch("""
         {"jsonrpc": "2.0", "id": 77, "method": "tools/call", "params": {"name": "status", "arguments": {}}}
         """)
-        try? await Task.sleep(for: .milliseconds(50))
 
-        let output = await capturer.lines
+        let output = capturer.lines
         #expect(output.count == 1)
         let outer = try #require(try JSONSerialization.jsonObject(with: Data(output[0].utf8)) as? [String: Any])
         let content = try #require((outer["result"] as? [String: Any])?["content"] as? [[String: Any]])
