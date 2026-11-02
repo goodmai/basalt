@@ -670,6 +670,28 @@ struct PromptCacheTreeTests {
         #expect(tree.storedPrefix(of: c, in: "ns") == 100)
     }
 
+    @Test("Shrinking the budget under memory pressure evicts least recently used leaves now, counts them, keeps leased ones, and stores nothing at 0 (#220)")
+    func rebudgetEvictsAtOnce() throws {
+        var tree = PromptCacheTree(byteBudget: 1 << 30)
+        let a = branch(1, 100), b = branch(2, 100), c = branch(3, 100)
+        for prompt in [a, b, c] {
+            tree.store("ns", tokens: prompt, cache: cache(prompt))
+        }
+        tree.rebudget(200 * Self.bytesPerToken)
+        #expect(tree.byteCount == 200 * Self.bytesPerToken)
+        #expect(tree.storedPrefix(of: a, in: "ns") == 0)
+        #expect(tree.evictions == 1)
+
+        let held = try tree.required("ns", for: c + [0])
+        tree.rebudget(0)
+        #expect(tree.storedPrefix(of: b, in: "ns") == 0)
+        #expect(tree.storedPrefix(of: c, in: "ns") == 100)
+        #expect(tree.evictions == 2)
+        tree.store("ns", tokens: a, cache: cache(a))
+        #expect(tree.storedPrefix(of: a, in: "ns") == 0)
+        _ = consume held
+    }
+
     @Test("A leased node is never evicted, even when it is the least recently used")
     func leasedNodeIsProtected() throws {
         var tree = PromptCacheTree(byteBudget: 300 * Self.bytesPerToken)

@@ -14,6 +14,7 @@ public protocol InferenceEngine: Sendable {
     var hybridAnchorUsage: (count: Int, bytes: Int64)? { get async }
     func promptTokenCount(for request: GenerationRequest) async -> Int?
     func persistPromptCache(within deadline: Duration) async
+    func apply(_ directive: MemoryDirective) async -> MemoryLimits?
 }
 
 extension InferenceEngine {
@@ -23,4 +24,5 @@ extension InferenceEngine {
     public var hybridAnchorUsage: (count: Int, bytes: Int64)? { get async { nil } }
     public func promptTokenCount(for request: GenerationRequest) async -> Int? { nil }
     public func persistPromptCache(within deadline: Duration) async {}
+    public func apply(_ directive: MemoryDirective) async -> MemoryLimits? { nil }
 }

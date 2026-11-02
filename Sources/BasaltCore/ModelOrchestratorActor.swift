@@ -36,6 +36,10 @@ public actor ModelOrchestratorActor {
     private var cloudFallback: (any CloudFallback)?
     private var arbiter = HybridArbiter()
     private var freeMemory: @Sendable () -> Int64 = { SystemProfiler.availableSystemMemory() }
+    private var memory: MemoryCoordinator?
+    private var memoryTask: Task<Void, Never>?
+    private var memoryLimits: MemoryLimits?
+    private var memoryRefusals = 0
 
     // MARK: — Init
 
@@ -177,13 +181,45 @@ public actor ModelOrchestratorActor {
     }
 
     public func admissionRefusal(for request: GenerationRequest) async -> BasaltError? {
+        let directive = await memory?.sample().directive ?? .relaxed
         if await cloudFallbackReason(for: request) != nil { return nil }
         if let refusal = await gate.refusal(for: request.priority) { return refusal }
         let (room, fitting, promptTokens, _) = await generationRoom(for: request)
+        if let refusal = memoryRefusal(directive, promptTokens: promptTokens, room: room) { return refusal }
         return room > 0 ? nil : .contextLengthExceeded(maxTokens: fitting, requested: promptTokens + 1)
     }
 
+    public func coordinateMemory(with coordinator: MemoryCoordinator) async {
+        memoryTask?.cancel()
+        memory = coordinator
+        await coordinator.sample()
+        await applyMemoryDirective()
+        memoryTask = Task {
+            async let sampling: Void = coordinator.run()
+            for await state in coordinator.changes {
+                logger.info("Memory pressure \(state.sample.pressure.rawValue), \(state.sample.availableBytes >> 20) MB available: directive \(state.directive)")
+                guard await gate.inFlight == 0 else { continue }
+                await applyMemoryDirective()
+            }
+            await sampling
+        }
+    }
+
+    private func applyMemoryDirective() async {
+        guard let memory else { return }
+        let directive = await memory.state.directive
+        if let limits = await engine.apply(directive) { memoryLimits = limits }
+    }
+
+    private func memoryRefusal(_ directive: MemoryDirective, promptTokens: Int, room: Int) -> BasaltError? {
+        guard directive.limitsAdmission, promptTokens >= MemoryDirective.longContextTokens || room <= 0 else { return nil }
+        memoryRefusals += 1
+        logger.warn("Refused with 503: critical memory pressure, and this request needs \(promptTokens) prompt tokens with room for \(max(0, room)) more; retry in \(MemoryDirective.retryAfterSeconds) s.")
+        return .memoryPressure(retryAfterSeconds: MemoryDirective.retryAfterSeconds)
+    }
+
     public func shutdown(deadline: Duration = .seconds(5)) async {
+        memoryTask?.cancel()
         let task: Task<Void, Never>
         if let existing = shutdownTask {
             task = existing
@@ -259,6 +295,7 @@ public actor ModelOrchestratorActor {
         let queued = ContinuousClock.now
         let ticket = try await admitted(request.priority)
         try await reserveKV(ticket, promptTokens: promptTokens, for: validated)
+        await applyMemoryDirective()
         defer {
             await withTaskCancellationShield {
                 await finish(ticket)
@@ -334,6 +371,7 @@ public actor ModelOrchestratorActor {
         let queued = ContinuousClock.now
         let ticket = try await admitted(request.priority)
         try await reserveKV(ticket, promptTokens: promptTokens, for: validated)
+        await applyMemoryDirective()
         let queueWait = ContinuousClock.now - queued
 
         await self.telemetry.requestStarted()
@@ -417,6 +455,9 @@ public actor ModelOrchestratorActor {
         let anchors = await engine.hybridAnchorUsage
         snapshot.hybridAnchors = anchors?.count
         snapshot.hybridAnchorBytes = anchors?.bytes
+        if let memory {
+            snapshot.memory = MemoryTelemetry(state: await memory.state, limits: memoryLimits, refusedAdmissions: memoryRefusals)
+        }
         return snapshot
     }
 
@@ -481,8 +522,13 @@ public actor ModelOrchestratorActor {
     }
 
     func kvBudgetBytes() async -> Int64 {
-        if let engineBudget = await engine.kvMemoryBudgetBytes { return engineBudget }
-        return Int64(Double(freeMemory()) * TokenBudgetCalculator.safetyMargin)
+        let budget = if let engineBudget = await engine.kvMemoryBudgetBytes {
+            engineBudget
+        } else {
+            Int64(Double(freeMemory()) * TokenBudgetCalculator.safetyMargin)
+        }
+        guard let state = await memory?.state, state.directive.limitsAdmission else { return budget }
+        return min(budget, Int64(Double(state.sample.availableBytes) * TokenBudgetCalculator.safetyMargin))
     }
 
     func generationRoom(
@@ -504,7 +550,9 @@ public actor ModelOrchestratorActor {
     }
 
     private func capped(_ request: GenerationRequest) async throws(BasaltError) -> (request: GenerationRequest, promptTokens: Int) {
+        let directive = await memory?.sample().directive ?? .relaxed
         let (room, fitting, promptTokens, kvPrecision) = await generationRoom(for: request)
+        if let refusal = memoryRefusal(directive, promptTokens: promptTokens, room: room) { throw refusal }
         guard room > 0 else {
             throw .contextLengthExceeded(maxTokens: fitting, requested: promptTokens + 1)
         }
@@ -535,6 +583,7 @@ public actor ModelOrchestratorActor {
 
     func finish(_ ticket: Int) async {
         kvReservations[ticket] = nil
+        await applyMemoryDirective()
         await gate.release(ticket)
     }
 

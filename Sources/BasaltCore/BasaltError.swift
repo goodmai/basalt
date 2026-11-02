@@ -25,6 +25,7 @@ public enum BasaltError: Error, Sendable, LocalizedError {
     /// Model switch is in progress — used for 503 responses.
     case modelSwitching(from: String, to: String)
     case serverBusy(retryAfterSeconds: Int?)
+    case memoryPressure(retryAfterSeconds: Int)
 
     // MARK: — LocalizedError
     public var errorDescription: String? {
@@ -58,6 +59,8 @@ public enum BasaltError: Error, Sendable, LocalizedError {
         case .serverBusy(let retryAfter):
             return retryAfter.map { "Server is busy: every generation slot and queue place is taken. Retry in \($0) s." }
                 ?? "Server is shutting down."
+        case .memoryPressure(let retryAfter):
+            return "The machine is under critical memory pressure: long prompts are refused until it eases. Retry in \(retryAfter) s."
         }
     }
 
@@ -78,6 +81,7 @@ public enum BasaltError: Error, Sendable, LocalizedError {
         case .modelNotCached:           return 404
         case .modelSwitching:           return 503  // Service Unavailable — retry
         case .serverBusy:               return 503
+        case .memoryPressure:           return 503
         }
     }
 }
