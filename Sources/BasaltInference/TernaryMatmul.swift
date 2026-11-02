@@ -77,11 +77,20 @@ struct TernaryMatmul: Sendable {
             const device half* srow = scales + row0 * G;
             for (int base = int(lane) * P; base < KW; base += 32 * P) {
                 float xv[M][16 * P];
+                float xsum[M][P];
                 for (int m = 0; m < M; m++) {
                     const device half4* xs = (const device half4*)(x + m * KW * 16 + base * 16);
-                    for (int i = 0; i < 4 * P; i++) {
-                        float4 v = float4(xs[i]);
-                        xv[m][4 * i] = v.x; xv[m][4 * i + 1] = v.y; xv[m][4 * i + 2] = v.z; xv[m][4 * i + 3] = v.w;
+                    for (int p = 0; p < P; p++) {
+                        float total = 0.0f;
+                        for (int i = 0; i < 4; i++) {
+                            float4 v = float4(xs[4 * p + i]);
+                            total += v.x + v.y + v.z + v.w;
+                            xv[m][16 * p + 4 * i] = v.x;
+                            xv[m][16 * p + 4 * i + 1] = v.y * 0.25f;
+                            xv[m][16 * p + 4 * i + 2] = v.z * 0.0625f;
+                            xv[m][16 * p + 4 * i + 3] = v.w * 0.015625f;
+                        }
+                        xsum[m][p] = total;
                     }
                 }
                 const int g = base / 8;
@@ -89,11 +98,16 @@ struct TernaryMatmul: Sendable {
                     float part[M];
                     for (int m = 0; m < M; m++) part[m] = 0.0f;
                     for (int p = 0; p < P; p++) {
-                        const uint32_t word = wrow[r * KW + base + p];
-                        for (int j = 0; j < 16; j++) {
-                            const float c = float((word >> (2 * j)) & 3u) - 1.0f;
-                            for (int m = 0; m < M; m++) part[m] = fma(c, xv[m][16 * p + j], part[m]);
+                        const uchar4 bytes = as_type<uchar4>(wrow[r * KW + base + p]);
+                        for (int i = 0; i < 4; i++) {
+                            const uint b = bytes[i];
+                            const float c0 = float(b & 0x03u), c1 = float(b & 0x0cu), c2 = float(b & 0x30u), c3 = float(b & 0xc0u);
+                            for (int m = 0; m < M; m++) {
+                                const int k = 16 * p + 4 * i;
+                                part[m] = fma(c0, xv[m][k], fma(c1, xv[m][k + 1], fma(c2, xv[m][k + 2], fma(c3, xv[m][k + 3], part[m]))));
+                            }
                         }
+                        for (int m = 0; m < M; m++) part[m] -= xsum[m][p];
                     }
                     const float s = float(srow[r * G + g]);
                     for (int m = 0; m < M; m++) acc[m][r] = fma(s, part[m], acc[m][r]);
