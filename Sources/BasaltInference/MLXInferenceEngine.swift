@@ -1201,6 +1201,19 @@ public actor MLXInferenceEngine: InferenceEngine {
 
     static let mtpPromptLimit = 8192
 
+    static func handOff<T: TokenIteratorProtocol>(
+        promptTokenCount: Int, modelConfiguration: ModelConfiguration, tokenizer: any MLXLMCommon.Tokenizer,
+        iterator: consuming T, tools: [ToolSpec]?, toolCallPolicy: ToolCallPolicy
+    ) -> (AsyncStream<Generation>, Task<Void, Never>, TimeInterval) {
+        let started = ContinuousClock.now
+        Stream.defaultStream.synchronize()
+        let prefill = (ContinuousClock.now - started).inSeconds
+        let (stream, task) = generateTask(
+            promptTokenCount: promptTokenCount, modelConfiguration: modelConfiguration, tokenizer: tokenizer,
+            iterator: iterator, tools: tools, toolCallPolicy: toolCallPolicy)
+        return (stream, task, prefill)
+    }
+
     static func drainCompletionInfo(_ generations: inout AsyncStream<Generation>.Iterator) async -> GenerateCompletionInfo? {
         var info: GenerateCompletionInfo?
         while let generation = await generations.next() {
@@ -1366,24 +1379,29 @@ public actor MLXInferenceEngine: InferenceEngine {
             let iterator = try MTPSpeculativeTokenIterator(
                 input: input, mainModel: context.model, drafter: mtpDrafter.model, parameters: params, blockSize: 2,
                 components: components)
-            let (stream, task) = generateTask(
+            let (stream, task, prefill) = Self.handOff(
                 promptTokenCount: input.text.tokens.dim(-1), modelConfiguration: context.configuration,
                 tokenizer: context.tokenizer, iterator: iterator, tools: tools, toolCallPolicy: params.toolCallPolicy)
-            return GenerationLaunch(stream: stream, task: task, cache: nil, reusedTokens: 0, prefillSeconds: iterator.promptPrefillTime)
+            return GenerationLaunch(stream: stream, task: task, cache: nil, reusedTokens: 0, prefillSeconds: iterator.promptPrefillTime + prefill)
         }
         guard keepsCache else {
             if let zoned = try zonedCache(params: params, zones: kvZones, precision: kvPrecision, model: context.model) {
-                let stream = try MLXLMCommon.generate(
-                    input: input, cache: zoned.cache, parameters: zoned.params, context: context, components: components, tools: tools)
-                return GenerationLaunch(stream: stream, task: nil, cache: nil, reusedTokens: 0)
+                let iterator = try TokenIterator(
+                    input: input, model: context.model, cache: zoned.cache, parameters: zoned.params, components: components)
+                let (stream, task, prefill) = Self.handOff(
+                    promptTokenCount: input.text.tokens.dim(-1), modelConfiguration: context.configuration,
+                    tokenizer: context.tokenizer, iterator: iterator, tools: tools, toolCallPolicy: zoned.params.toolCallPolicy)
+                return GenerationLaunch(stream: stream, task: task, cache: nil, reusedTokens: 0, prefillSeconds: prefill)
             }
             let usesPromptLookupIterator = (speculativeLookup || grammarJumpForward)
             let fresh = usesPromptLookupIterator && params.kvBits == nil && !carriesMoreThanTokens(input)
                 ? try context.model.newCache(parameters: params) : []
             guard PromptLookupTokenIterator.supports(fresh, routesExperts: routesExperts) else {
-                let stream = try MLXLMCommon.generate(
-                    input: input, parameters: params, context: context, components: components, tools: tools)
-                return GenerationLaunch(stream: stream, task: nil, cache: nil, reusedTokens: 0)
+                let iterator = try TokenIterator(input: input, model: context.model, parameters: params, components: components)
+                let (stream, task, prefill) = Self.handOff(
+                    promptTokenCount: input.text.tokens.dim(-1), modelConfiguration: context.configuration,
+                    tokenizer: context.tokenizer, iterator: iterator, tools: tools, toolCallPolicy: params.toolCallPolicy)
+                return GenerationLaunch(stream: stream, task: task, cache: nil, reusedTokens: 0, prefillSeconds: prefill)
             }
             try components.validate(parameters: params)
             let iterator = try PromptLookupTokenIterator(
@@ -1391,10 +1409,10 @@ public actor MLXInferenceEngine: InferenceEngine {
                 processor: components.makeProcessor(parameters: params), sampler: params.sampler(),
                 prefill: params.prefill, maxTokens: params.maxTokens, recyclesTokens: speculativeRecycling,
                 speculativeLookup: speculativeLookup, grammarJumpForward: grammarJumpForward)
-            let (stream, task) = generateTask(
+            let (stream, task, prefill) = Self.handOff(
                 promptTokenCount: input.text.tokens.dim(-1), modelConfiguration: context.configuration,
                 tokenizer: context.tokenizer, iterator: iterator, tools: tools, toolCallPolicy: params.toolCallPolicy)
-            return GenerationLaunch(stream: stream, task: task, cache: nil, reusedTokens: 0)
+            return GenerationLaunch(stream: stream, task: task, cache: nil, reusedTokens: 0, prefillSeconds: prefill)
         }
         try components.validate(parameters: params)
         var cache = try reuse?.cache ?? PromptCache(context.model.newCache(parameters: params))
@@ -1421,12 +1439,12 @@ public actor MLXInferenceEngine: InferenceEngine {
         }
         func launching(_ iterator: some TokenIteratorProtocol) -> GenerationLaunch {
             let keepable = iterator.state == nil || cache.isHybrid
-            let (stream, task) = generateTask(
+            let (stream, task, prefill) = Self.handOff(
                 promptTokenCount: input.text.tokens.dim(-1) - reused, modelConfiguration: context.configuration,
                 tokenizer: context.tokenizer, iterator: iterator, tools: tools, toolCallPolicy: params.toolCallPolicy)
             return GenerationLaunch(
                 stream: stream, task: task, cache: keepable ? head.kept : nil, fork: keepable ? head.fork : nil,
-                reusedTokens: reused, exactTokens: blended?.exactPrefix ?? Int.max)
+                reusedTokens: reused, exactTokens: blended?.exactPrefix ?? Int.max, prefillSeconds: prefill)
         }
         if (speculativeLookup || grammarJumpForward), PromptLookupTokenIterator.supports(cache.layers, routesExperts: routesExperts) {
             return launching(try PromptLookupTokenIterator(
