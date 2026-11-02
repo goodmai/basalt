@@ -6,6 +6,7 @@
 // TODO: Add scheduled benchmark support
 
 import Foundation
+import BasaltCore
 
 /// Interactive onboarding flow for first-time users
 /// Guides users through system profiling, model recommendation, and initial setup
@@ -76,7 +77,7 @@ public actor OnboardingFlow {
         print("")
         print("╔══════════════════════════════════════════════════════════════════════╗")
         print("║                                                                      ║")
-        print("║                 🚀 Welcome to Gem! 🚀                        ║")
+        print("║                 🚀 Welcome to Basalt! 🚀                     ║")
         print("║                                                                      ║")
         print("║            Your Local LLM Inference Server for Apple Silicon        ║")
         print("║                                                                      ║")
@@ -136,7 +137,7 @@ public actor OnboardingFlow {
             print("")
             print("📥 Next steps:")
             print("  1. Download model: mlx_lm.download(\"\(recommendation.modelId)\")")
-            print("  2. Start server:   Gem serve --model \(recommendation.modelId)")
+            print("  2. Start server:   basalt serve --model \(recommendation.modelId)")
             print("")
             
         case "2":
@@ -153,13 +154,13 @@ public actor OnboardingFlow {
             print("")
             print("📥 Next steps:")
             print("  1. Download model: mlx_lm.download(\"\(customModel)\")")
-            print("  2. Start server:   Gem serve --model \(customModel)")
+            print("  2. Start server:   basalt serve --model \(customModel)")
             print("")
             
         case "3":
             print("")
             print("⏭️  Skipping setup. You can run onboarding again with:")
-            print("   Gem onboard")
+            print("   basalt onboard")
             print("")
             selectedModel = nil
             
@@ -205,10 +206,10 @@ public actor OnboardingFlow {
         print("✅ Onboarding completed!")
         print("")
         print("📚 Helpful commands:")
-        print("  • List models:     Gem list-models")
-        print("  • Start server:    Gem serve --model <model-id>")
-        print("  • Run benchmark:   Gem benchmark --model <model-id>")
-        print("  • Get help:        Gem --help")
+        print("  • List models:     basalt models list")
+        print("  • Start server:    basalt serve --model <model-id>")
+        print("  • Check fit:       basalt models check <model-id>")
+        print("  • Get help:        basalt --help")
         print("")
         print("🎉 Happy inferencing!")
         print("")

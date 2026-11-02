@@ -53,7 +53,6 @@ public enum ResponseFormat: Codable, Sendable, Equatable {
     }
 }
 
-/// Единый DTO для генерации — используется и в MCP, и в REST (A2A).
 public struct GenerationRequest: Codable, Sendable {
     public let prompt: String
     public private(set) var maxTokens: Int?

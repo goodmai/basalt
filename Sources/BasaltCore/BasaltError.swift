@@ -1,7 +1,5 @@
 import Foundation
 
-// Алгебраический тип ошибок — полное множество состояний отказа системы.
-// E_total = E_io ∪ E_memory ∪ E_inference ∪ E_protocol
 public enum BasaltError: Error, Sendable, LocalizedError {
     // MARK: — IO / Model loading
     case modelNotFound(identifier: String)

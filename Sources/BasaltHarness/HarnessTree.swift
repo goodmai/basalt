@@ -320,14 +320,14 @@ public enum HarnessLoader {
         var kept: [String: String] = [:]
         var skipped: [HarnessSkippedFile] = []
         var totalBytes = 0
-        for path in files.keys.sorted() {
-            let size = files[path]!.utf8.count
+        for (path, content) in files.sorted(by: { $0.key < $1.key }) {
+            let size = content.utf8.count
             totalBytes += size
             guard totalBytes <= limits.maxTotalBytes else { throw HarnessLoadError.tooManyBytes(limit: limits.maxTotalBytes) }
             if size > limits.maxFileBytes {
                 skipped.append(HarnessSkippedFile(path: path, reason: "\(size) bytes exceeds the \(limits.maxFileBytes)-byte file limit"))
             } else {
-                kept[path] = files[path]
+                kept[path] = content
             }
         }
         return LoadedHarness(tree: HarnessTree(files: kept), skipped: skipped)

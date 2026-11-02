@@ -772,9 +772,8 @@ struct OpenAIController: Sendable {
                             send("response.output_item.added", ["output_index": 0, "item": [
                                 "id": reasoningId, "type": "reasoning", "summary": [] as [Any], "content": [] as [Any]
                             ] as [String: Any]])
-                            reasoning = ""
                         }
-                        reasoning! += delta
+                        reasoning = (reasoning ?? "") + delta
                         send("response.reasoning_text.delta", [
                             "item_id": reasoningId, "output_index": 0, "content_index": 0, "delta": delta
                         ])

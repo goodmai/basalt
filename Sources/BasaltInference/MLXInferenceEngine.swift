@@ -21,8 +21,6 @@ private extension Duration {
 
 // MARK: — Real implementation
 
-/// Actor-изолированный MLX inference engine.
-/// Все Metal/MLX вызовы выполняются из одного контекста — нет гонок на GPU command queue.
 public actor MLXInferenceEngine: InferenceEngine {
 
     private(set) var container: ModelContainer?
@@ -258,10 +256,7 @@ public actor MLXInferenceEngine: InferenceEngine {
     public func load(modelPath: String) async throws(BasaltError) {
         logger.trace("Loading model from path: \(modelPath)")
         await Self.registerAliases()
-        // ServeCommand всегда передаёт абсолютный локальный путь после разрешения кэша.
-        // Если путь не начинается с "/" — это нераспознанный формат.
         guard modelPath.hasPrefix("/") || modelPath.hasPrefix(".") else {
-            // HF repo ID без локального кэша — сообщаем пользователю
             throw .modelNotFound(
                 identifier: "'\(modelPath)' not found in local cache. Run: basalt models download \(modelPath)"
             )
