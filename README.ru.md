@@ -36,7 +36,8 @@
 
 - **Один сервер, два транспорта.** REST отвечает по OpenAI *и* Anthropic (`/v1/messages`), MCP stdio подключается к Claude Desktop и Cursor, а все маршруты генерации умеют стримить по SSE. Все они делят один актор модели — ничего не грузится дважды.
 - **Claude Code на локальной модели в две строки.** Задайте `ANTHROPIC_BASE_URL` и запустите `claude` — ваш настоящий API-ключ не затрагивается. См. [интеграцию с Claude Code](#интеграция-с-claude-code).
-- **Быстро на ноутбуке.** На Mac с 24 ГБ: ~110 ток/с на Gemma 4 E2B, ~92 ток/с на Qwen3.5-4B, ~37 ток/с на 9B, ~12 ток/с на 27B.
+- **Быстро на ноутбуке.** Замерено для 0.8 на M4 Pro с 24 ГБ: ~80–89 ток/с на Qwen3-4B, а 27B-модель (Ternary Bonsai 2) занимает 7,4 ГБ и даёт ~21 ток/с, ~26 ток/с с MTP-головой и ~31–38 ток/с с prompt lookup на правках кода ([полная таблица](#проверенные-модели)).
+- **Весь локальный стек.** Чат, вызовы инструментов, вывод по JSON-схеме, `/v1/embeddings` и `/v1/rerank` с одного сервера, так что агентам для кода и RAG-клиентам ничего не нужно из облака.
 - **Чистый Swift.** Только SwiftPM — без Node, Python и Docker в рантайме.
 - **Честные цифры.** В таблице моделей есть и то, что *не заработало* (мусорный вывод, OOM). Лестница бенчмарков запускает код самой модели на входах, которых не было в промпте, — правдоподобный неверный ответ не проходит.
 
@@ -223,6 +224,21 @@ chmod +x ./basalt-claude
 
 ---
 
+## Возможности кратко
+
+Каждое ускорение включается флагом и оставляет жадный вывод идентичным, если в строке не сказано иное. Цифры: M4 Pro 24 ГБ на зарядке, release-сборка.
+
+| Возможность | Флаг | Что делает | Замерено |
+|---|---|---|---|
+| Prompt lookup (спекулятивное декодирование) | `serve --speculative-lookup` | драфтит до 16 токенов, скопированных из промпта или вывода, проверяет за один прямой проход | 1,84–2,66× на правках кода (Bonsai 2 27B); ~1,0× на прозе |
+| Драфт MTP-головой | `serve --mtp` | драфтит головой multi-token-prediction модели (`mtp.safetensors`, например пакеты MTPLX); точно при любой температуре | 1,22× на коде, 1,07× на прозе (Bonsai 2 27B); TTFT на длинных промптах выше (пока без переиспользования prompt-кэша, #207) |
+| Ternary Bonsai 2 | (автоматически) | грузит тернарные чекпоинты с поворотом Адамара (`prism_hadamard_qwen35`) | 27B-модель в 7,4 ГБ |
+| Эмбеддинги и реранк | `serve --embedding-model`, `--rerank-model` | OpenAI `/v1/embeddings`, Cohere/Jina `/v1/rerank` рядом с чат-моделью | bge-small 229–299 текстов/с, Qwen3-Embedding-0.6B 20 текстов/с (батч 32) |
+| Prompt-кэш на диске | `serve --prompt-cache-disk-mb N` | возобновлённая сессия или перезапущенный сервер восстанавливает самый длинный совпадающий префикс вместо префилла | — |
+| Квантование и зоны KV-кэша | `serve --kv-bits 4\|8\|auto\|k8v4`, `--kv-zones` | вмещает более длинный контекст в ту же память | пик на промпте 16k 1,03 ГБ против 3,11 ГБ (Qwen3-4B, 4-битные зоны) |
+| Параллельные запросы | `serve --max-concurrent N` | каждый запрос резервирует свою долю KV; не влезающий получает 503 `Retry-After` вместо нехватки памяти | — |
+| Сэмплеры DRY и XTC (экспериментально) | `serve --experimental-samplers` | поля запроса `dry_*` / `xtc_*` | не средство от петель: на 2-битной модели DRY прячет петли за испорченными фактами (#177) |
+
 ## Проверенные модели
 
 Модели скачиваются с HuggingFace и кэшируются в `~/.cache/huggingface/hub/`.
@@ -231,6 +247,26 @@ chmod +x ./basalt-claude
 basalt models download mlx-community/Qwen3.5-4B-4bit
 basalt models download ornith-ai/Ornith-1.5-9B-MLX-4bit
 ```
+
+### Замерено для 0.8
+
+M4 Pro, 24 ГБ, адаптер 68 Вт, release-сборка, жадное декодирование, ноябрь 2026.
+
+| Модель | Параметры | Активная память | Декодирование, ток/с | Примечания |
+|---|---|---|---|---|
+| `mlx-community/Qwen3-4B-4bit` | 4B | ~2,2 ГБ | 78–89 | плотная; работают prompt lookup и все режимы KV |
+| `Youssofal/Ternary-Bonsai-2-27B-MTPLX-Optimized-Speed` | 27B тернарная | 7,4 ГБ | 20,9–21,5 обычно · 25,8 с `--mtp` на коде · 31–38 с `--speculative-lookup` на коде | гибрид (Gated DeltaNet); MTP-голова от Qwen3.8-27B |
+| `lukaskremla/Qwen3.8-27B-3bit-MLX-TextOnly` | 27B | не замерялась | 15–19 | гибрид |
+| `lukaskremla/Qwen3.8-27B-2bit-MLX-TextOnly` | 27B | не замерялась | 18–22 | на части промптов зацикливается (3 из 8); `RepetitionGuard` их останавливает |
+
+| Модель эмбеддингов / реранка | Задача | Замерено |
+|---|---|---|
+| `mlx-community/bge-small-en-v1.5-bf16` | эмбеддинги (384) | 229–299 текстов/с, батч 32 × ~240 токенов |
+| `mlx-community/Qwen3-Embedding-0.6B-8bit` | эмбеддинги (1024) | 20 текстов/с, тот же батч |
+| `mlx-community/Qwen3-Reranker-0.6B-4bit` | реранк | известные пары ранжируются верно |
+| `jinaai/jina-reranker-v3-mlx` | реранк | известные пары ранжируются верно |
+
+### Более ранние отчёты (для 0.8 не перемерялись)
 
 | Модель | Параметры | RAM | Статус на Mac с 24 ГБ |
 |---|---|---|---|
@@ -359,6 +395,41 @@ curl -N http://127.0.0.1:8080/api/v1/generate/stream \
 Интерактивная документация — `http://127.0.0.1:8080/swagger`.
 
 ---
+
+## Подключение из ваших инструментов
+
+basalt говорит на трёх клиентских протоколах сразу, так что берите тот, который уже использует ваш инструмент.
+
+| Клиент | Эндпоинт | Настройка |
+|---|---|---|
+| Любой клиент OpenAI (Python/JS SDK, Continue, Cline, aider) | `http://localhost:8080/v1` | base URL и любой API-ключ на loopback |
+| OpenCode | `/v1/chat/completions` | см. [интеграцию с OpenCode](#интеграция-с-opencode) |
+| Claude Code в терминале | `/v1/messages` (Anthropic) | см. [интеграцию с Claude Code](#интеграция-с-claude-code) |
+| Claude Desktop, Cursor | MCP stdio | см. [MCP](#mcp-claude-desktop--cursor) |
+
+Один сервер на всех, с нужными дополнениями:
+
+```bash
+basalt serve --rest --model Youssofal/Ternary-Bonsai-2-27B-MTPLX-Optimized-Speed --mtp \
+  --embedding-model mlx-community/bge-small-en-v1.5-bf16 \
+  --rerank-model mlx-community/Qwen3-Reranker-0.6B-4bit
+```
+
+Официальный Python SDK OpenAI работает без изменений (проверено на `openai` 3.19.2):
+
+```python
+from openai import OpenAI
+client = OpenAI(base_url="http://localhost:8080/v1", api_key="local")
+reply = client.chat.completions.create(model="basalt", messages=[{"role": "user", "content": "Привет"}])
+vectors = client.embeddings.create(model="basalt", input=["первый текст", "второй текст"])
+```
+
+Реранк в формате Cohere/Jina:
+
+```bash
+curl -s http://localhost:8080/v1/rerank -H "Content-Type: application/json" \
+  -d '{"query": "столица Франции", "documents": ["Париж — столица Франции.", "Берлин находится в Германии."], "top_n": 1}'
+```
 
 ## Интеграция с Claude Code
 

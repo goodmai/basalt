@@ -36,7 +36,8 @@ Two transports share a single actor instance — **MCP stdio** for IDE integrati
 
 - **One server, two transports.** REST speaks OpenAI *and* Anthropic (`/v1/messages`), MCP stdio plugs into Claude Desktop and Cursor, and every generation route can stream over SSE. They share a single model actor, so nothing loads twice.
 - **Claude Code on a local model in two lines.** Set `ANTHROPIC_BASE_URL` and run `claude` — your real API key is never touched. See [Claude Code Integration](#claude-code-integration).
-- **Fast on a laptop.** On a 24 GB Mac: ~110 tok/s on Gemma 4 E2B, ~92 tok/s on Qwen3.5-4B, ~37 tok/s on a 9B, ~12 tok/s on a 27B ([full table](#verified-models)).
+- **Fast on a laptop.** Measured for 0.8 on an M4 Pro with 24 GB: ~80–89 tok/s on Qwen3-4B, and a 27B model (Ternary Bonsai 2) in 7.4 GB at ~21 tok/s, ~26 tok/s with its MTP head and ~31–38 tok/s with prompt lookup on code edits ([full table](#verified-models)).
+- **A whole local stack.** Chat, tool calls, JSON-schema output, `/v1/embeddings` and `/v1/rerank` from one server, so coding agents and RAG clients need nothing in the cloud.
 - **Pure Swift.** SwiftPM only — no Node, no Python, no Docker at runtime. Metal kernels compiled once, `mlx.metallib` shipped next to the binary.
 - **Honest numbers.** The model table lists what *broke* too (gibberish output, OOM). The benchmark ladder executes the model's own code against inputs the prompt never showed, so a plausible-looking wrong answer still fails ([Benchmarks](#benchmarks)).
 
@@ -225,6 +226,21 @@ Privacy: all clients share one prefix tree, and `cached_tokens` reveals how many
 
 ---
 
+## Features at a glance
+
+Every speed-up is opt-in and keeps greedy output identical unless the row says otherwise. Numbers: M4 Pro 24 GB on power, release build.
+
+| Feature | Flag | What it does | Measured |
+|---|---|---|---|
+| Prompt lookup (speculative decoding) | `serve --speculative-lookup` | drafts up to 16 tokens copied from the prompt or output, verified in one forward | 1.84–2.66× on code edits (Bonsai 2 27B); ~1.0× on prose |
+| MTP head drafting | `serve --mtp` | drafts with the model's multi-token-prediction head (`mtp.safetensors`, e.g. MTPLX packs); exact at any temperature | 1.22× on code, 1.07× on prose (Bonsai 2 27B); TTFT on long prompts is higher (no prompt-cache reuse yet, #207) |
+| Ternary Bonsai 2 | (automatic) | loads Hadamard-rotated ternary checkpoints (`prism_hadamard_qwen35`) | 27B model in 7.4 GB |
+| Embeddings and rerank | `serve --embedding-model`, `--rerank-model` | OpenAI `/v1/embeddings`, Cohere/Jina `/v1/rerank` next to the chat model | bge-small 229–299 texts/s, Qwen3-Embedding-0.6B 20 texts/s (batch 32) |
+| Prompt cache on disk | `serve --prompt-cache-disk-mb N` | a resumed session or restarted server restores the longest matching prefix instead of prefilling it | — |
+| KV cache quantization and zones | `serve --kv-bits 4\|8\|auto\|k8v4`, `--kv-zones` | fits longer contexts in the same memory | 16k prompt peak 1.03 GB vs 3.11 GB (Qwen3-4B, 4-bit zones) |
+| Concurrent requests | `serve --max-concurrent N` | each running request reserves its KV room; one that does not fit gets 503 `Retry-After` instead of an out-of-memory | — |
+| DRY and XTC samplers (experimental) | `serve --experimental-samplers` | `dry_*` / `xtc_*` request fields | not an anti-loop tool: on a 2-bit model DRY hides loops behind corrupted facts (#177) |
+
 ## Verified Models
 
 Models are downloaded from HuggingFace and cached in `~/.cache/huggingface/hub/`.
@@ -234,6 +250,26 @@ huggingface-cli download mlx-community/Qwen3.5-4B-4bit
 huggingface-cli download mlx-community/gemma-4-e4b-it-4bit
 ```
 
+### Measured for 0.8
+
+M4 Pro, 24 GB, on a 68 W adapter, release build, greedy decoding, November 2026.
+
+| Model | Params | Active memory | Decode, tok/s | Notes |
+|---|---|---|---|---|
+| `mlx-community/Qwen3-4B-4bit` | 4B | ~2.2 GB | 78–89 | dense; prompt lookup and every KV mode apply |
+| `Youssofal/Ternary-Bonsai-2-27B-MTPLX-Optimized-Speed` | 27B ternary | 7.4 GB | 20.9–21.5 plain · 25.8 with `--mtp` on code · 31–38 with `--speculative-lookup` on code | hybrid (Gated DeltaNet); MTP head from Qwen3.8-27B |
+| `lukaskremla/Qwen3.8-27B-3bit-MLX-TextOnly` | 27B | not measured | 15–19 | hybrid |
+| `lukaskremla/Qwen3.8-27B-2bit-MLX-TextOnly` | 27B | not measured | 18–22 | loops on some prompts (3 of 8); `RepetitionGuard` stops them |
+
+| Embedding / rerank model | Task | Measured |
+|---|---|---|
+| `mlx-community/bge-small-en-v1.5-bf16` | embeddings (384-d) | 229–299 texts/s, batch 32 × ~240 tokens |
+| `mlx-community/Qwen3-Embedding-0.6B-8bit` | embeddings (1024-d) | 20 texts/s, same batch |
+| `mlx-community/Qwen3-Reranker-0.6B-4bit` | rerank | known pairs ranked correctly |
+| `jinaai/jina-reranker-v3-mlx` | rerank | known pairs ranked correctly |
+
+### Earlier reports (not re-measured for 0.8)
+
 | Model | Params | RAM | Status on 24GB Mac |
 |---|---|---|---|
 | `mlx-community/gemma-4-e2b-it-4bit` | 2B | 2.7 GB | ✅ ~110 TPS |
@@ -241,7 +277,6 @@ huggingface-cli download mlx-community/gemma-4-e4b-it-4bit
 | `mlx-community/Qwen3.5-4B-4bit` | 4B | 2.3 GB | ✅ ~92 TPS |
 | `mlx-community/Qwen2.5-Coder-7B-Instruct-4bit` | 7B | 4.1 GB | ✅ ~60 TPS |
 | `mlx-community/Qwen3.5-9B-OptiQ-4bit` | 9B | 5.8 GB | ✅ ~37 TPS |
-| `Youssofal/Ternary-Bonsai-2-27B-MTPLX-Optimized-Speed` (ternary, MTP head) | 27B | 7.4 GB | ✅ ~21 TPS, ~26 TPS with `--mtp` on code edits |
 | `AutisticAF/Huihui-Qwen3.8-27B-abliterated-mlx-4Bit` | 27B | 15.2 GB | ✅ ~12 TPS (Abliterated) |
 | `Ex0bit/MYTHOS-26B-A4B-PRISM-PRO-DQ-MLX` | 26B MoE | 14.5 GB | ✅ ~14 TPS (Dynamic Quant) |
 | `Ex0bit/Qwen3.6-35B-A3B-PRISM-MLX-NVFP4` | 35B MoE | 20.5 GB | ✅ ~8 TPS (NVFP4) |
@@ -364,6 +399,41 @@ Each event is a `data: {...}` line; the stream ends with `data: [DONE]`. A failu
 Visit `http://localhost:8080/swagger` for interactive API docs.
 
 ---
+
+## Use it from your tools
+
+basalt speaks three client protocols at once, so pick whatever your tool already uses.
+
+| Client | Endpoint | Setup |
+|---|---|---|
+| Any OpenAI client (Python/JS SDK, Continue, Cline, aider) | `http://localhost:8080/v1` | base URL + any API key on loopback |
+| OpenCode | `/v1/chat/completions` | see [OpenCode Integration](#opencode-integration) |
+| Claude Code in the terminal | `/v1/messages` (Anthropic) | see [Claude Code Integration](#claude-code-integration) |
+| Claude Desktop, Cursor | MCP stdio | see [MCP Integration](#mcp-integration-claude-desktop--cursor) |
+
+Start one server for all of them, with the extras you want:
+
+```bash
+basalt serve --rest --model Youssofal/Ternary-Bonsai-2-27B-MTPLX-Optimized-Speed --mtp \
+  --embedding-model mlx-community/bge-small-en-v1.5-bf16 \
+  --rerank-model mlx-community/Qwen3-Reranker-0.6B-4bit
+```
+
+The official OpenAI Python SDK works unchanged (checked with `openai` 3.19.2):
+
+```python
+from openai import OpenAI
+client = OpenAI(base_url="http://localhost:8080/v1", api_key="local")
+reply = client.chat.completions.create(model="basalt", messages=[{"role": "user", "content": "Hello"}])
+vectors = client.embeddings.create(model="basalt", input=["first text", "second text"])
+```
+
+Rerank uses the Cohere/Jina shape:
+
+```bash
+curl -s http://localhost:8080/v1/rerank -H "Content-Type: application/json" \
+  -d '{"query": "capital of France", "documents": ["Paris is the capital of France.", "Berlin is in Germany."], "top_n": 1}'
+```
 
 ## Claude Code Integration
 
