@@ -84,9 +84,9 @@ enum ConstrainedModel {
 
     static func engine(
         opensThinking: Bool = false, profile: any ModelProfile = GenericProfile(), endsText: Bool = true,
-        tokenizer: (any MLXLMCommon.Tokenizer)? = nil
+        tokenizer: (any MLXLMCommon.Tokenizer)? = nil, experimentalSamplers: Bool = false
     ) async throws -> MLXInferenceEngine {
-        let engine = MLXInferenceEngine()
+        let engine = MLXInferenceEngine(experimentalSamplers: experimentalSamplers)
         await engine.attach(try container(opensThinking: opensThinking, tokenizer: tokenizer ?? JSONPieceTokenizer(endsText: endsText)),
                             profile: profile)
         return engine
@@ -129,13 +129,31 @@ struct ConstrainedDecodingEngineTests {
 
     @Test("An aggressive DRY penalty never beats the schema: every document stays valid (#177)", arguments: [0.8, 5.0, 1000.0])
     func dryKeepsTheConstraint(multiplier: Double) async throws {
-        let engine = try await ConstrainedModel.engine()
+        let engine = try await ConstrainedModel.engine(experimentalSamplers: true)
         let request = GenerationRequest(
             prompt: "Report the mode.", maxTokens: 300, temperature: 0, responseFormat: .jsonSchema(ConstrainedModel.schema),
             dryMultiplier: multiplier, dryAllowedLength: 1)
         let result = try await engine.generate(request: request)
         #expect(try ConstrainedModel.isValid(result.generatedText), "\(result.generatedText)")
         #expect(result.finishReason == .stop)
+    }
+
+    @Test("Without --experimental-samplers a DRY or XTC field is refused before generation, not silently ignored")
+    func experimentalSamplersAreGated() async throws {
+        let engine = try await ConstrainedModel.engine()
+        for request in [
+            GenerationRequest(prompt: "Report the mode.", maxTokens: 8, temperature: 0, dryMultiplier: 0.8),
+            GenerationRequest(prompt: "Report the mode.", maxTokens: 8, temperature: 0.7, xtcProbability: 0.5),
+        ] {
+            do {
+                _ = try await engine.generate(request: request)
+                Issue.record("an experimental sampler field was accepted without the flag")
+            } catch {
+                guard case .invalidRequestStructure(let details) = error else { Issue.record("expected 400, got \(error)"); continue }
+                #expect(details.contains("--experimental-samplers"))
+            }
+        }
+        _ = try await engine.generate(request: GenerationRequest(prompt: "Report the mode.", maxTokens: 8, temperature: 0))
     }
 
     @Test("json_object yields a JSON object")

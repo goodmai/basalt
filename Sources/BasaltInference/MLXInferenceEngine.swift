@@ -96,6 +96,7 @@ public actor MLXInferenceEngine: InferenceEngine {
     private let speculativeLookup: Bool
     private let speculativeRecycling: Bool
     private let mtp: Bool
+    private let experimentalSamplers: Bool
     private var mtpDrafter: MTPDrafter?
     private let grammarJumpForward: Bool
     private(set) var promptCacheDisk: PromptCacheDiskStore?
@@ -119,6 +120,7 @@ public actor MLXInferenceEngine: InferenceEngine {
         speculativeLookup: Bool = false,
         speculativeRecycling: Bool = false,
         mtp: Bool = false,
+        experimentalSamplers: Bool = false,
         grammarJumpForward: Bool = false,
         promptCacheDisk: PromptCacheDiskStore? = nil
     ) {
@@ -126,6 +128,7 @@ public actor MLXInferenceEngine: InferenceEngine {
         self.speculativeLookup = speculativeLookup
         self.speculativeRecycling = speculativeRecycling
         self.mtp = mtp
+        self.experimentalSamplers = experimentalSamplers
         self.grammarJumpForward = grammarJumpForward
         self.reasoningEffort = reasoningEffort
         self.gpuCacheLimit = gpuCacheLimit
@@ -864,6 +867,10 @@ public actor MLXInferenceEngine: InferenceEngine {
         let epoch = modelEpoch
 
         let requestedMaxTokens = request.maxTokens ?? 1024
+        if request.usesExperimentalSamplers, !experimentalSamplers {
+            throw .invalidRequestStructure(
+                details: "dry_* and xtc_* are experimental (DRY can turn a detectable loop into one with corrupted facts on low-bit models); start the server with --experimental-samplers to use them")
+        }
         let (params, unbudgeted, shaping, exclusion) = sampling(for: request, breakers: await sequenceBreakerIds(for: request))
         let zones = modelAttendsThroughZones ? (modelPrefillsInChunks ? kvZones : kvZones?.evicting(0)) : nil
         let zonedPrecision = zones == nil ? nil : request.kvPrecision ?? kvPrecision

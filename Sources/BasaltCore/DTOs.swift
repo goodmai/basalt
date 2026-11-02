@@ -151,6 +151,11 @@ public struct GenerationRequest: Codable, Sendable {
 
     /// The same request with another token budget. Kept next to the stored properties so a new
     /// field cannot be forgotten by a caller that rebuilds the request field by field.
+    public var usesExperimentalSamplers: Bool {
+        dryMultiplier != nil || dryBase != nil || dryAllowedLength != nil || drySequenceBreakers != nil
+            || xtcThreshold != nil || xtcProbability != nil
+    }
+
     public func withMaxTokens(_ maxTokens: Int) -> GenerationRequest {
         var copy = self
         copy.maxTokens = maxTokens

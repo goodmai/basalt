@@ -106,7 +106,7 @@ struct Benchmark: AsyncParsableCommand {
             kvZones: kvZones ? .standard : nil,
             repetitionPenalty: repetitionPenalty,
             topK: topK, minP: minP, seed: seed, speculativeLookup: speculativeLookup,
-            speculativeRecycling: speculativeRecycling, mtp: mtp, grammarJumpForward: grammarJumpForward)
+            speculativeRecycling: speculativeRecycling, mtp: mtp, experimentalSamplers: dryMultiplier != nil, grammarJumpForward: grammarJumpForward)
         let orchestrator = ModelOrchestratorActor(engine: engine, maxTokens: tokens, kvPrecision: kvBits, kvZones: kvZones ? .standard : nil)
 
         print("Loading model…", terminator: ""); fflush(stdout)

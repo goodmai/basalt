@@ -104,6 +104,12 @@ struct ServeCommand: AsyncParsableCommand {
     var mtp = false
 
     @Flag(
+        name: .customLong("experimental-samplers"),
+        help: "Accept the experimental dry_* (DRY repetition penalty) and xtc_* (exclude top choices) request fields. Measured on a 2-bit Qwen3.8, DRY turned a verbatim loop that RepetitionGuard stops into a loop with corrupted numbers that runs to max_tokens; on models that do not loop it changed nothing. Without this flag those fields are refused with 400"
+    )
+    var experimentalSamplers = false
+
+    @Flag(
         name: .customLong("grammar-jump-forward"),
         help: "Feed XGrammar-forced spans in one forward pass during constrained decoding (opt-in; JSON schema and forced tool calls)"
     )
@@ -504,6 +510,7 @@ struct ServeCommand: AsyncParsableCommand {
             speculativeLookup: speculativeLookup,
             speculativeRecycling: speculativeRecycling,
             mtp: mtp,
+            experimentalSamplers: experimentalSamplers,
             grammarJumpForward: grammarJumpForward,
             promptCacheDisk: try promptCacheDisk.store()
         )
