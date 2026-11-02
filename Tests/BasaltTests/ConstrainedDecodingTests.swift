@@ -127,6 +127,17 @@ struct ConstrainedDecodingEngineTests {
         #expect(constrained.completionTokens < 300)
     }
 
+    @Test("An aggressive DRY penalty never beats the schema: every document stays valid (#177)", arguments: [0.8, 5.0, 1000.0])
+    func dryKeepsTheConstraint(multiplier: Double) async throws {
+        let engine = try await ConstrainedModel.engine()
+        let request = GenerationRequest(
+            prompt: "Report the mode.", maxTokens: 300, temperature: 0, responseFormat: .jsonSchema(ConstrainedModel.schema),
+            dryMultiplier: multiplier, dryAllowedLength: 1)
+        let result = try await engine.generate(request: request)
+        #expect(try ConstrainedModel.isValid(result.generatedText), "\(result.generatedText)")
+        #expect(result.finishReason == .stop)
+    }
+
     @Test("json_object yields a JSON object")
     func jsonObject() async throws {
         let engine = try await ConstrainedModel.engine()
