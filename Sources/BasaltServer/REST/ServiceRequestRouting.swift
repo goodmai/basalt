@@ -3,10 +3,6 @@ import HTTPTypes
 import BasaltCore
 
 extension ServiceRequestDetector {
-    /// Shared by every generation endpoint: classify the request (`x-service-request: true` says so
-    /// explicitly, otherwise the heuristic decides), and compact its prompt only when the client
-    /// opts in with `x-compact-prompt: true` or `x-service-request: true` — rewriting a prompt on a
-    /// guess would silently corrupt ordinary traffic.
     static func prepare(prompt: String, maxTokens: Int?, headers: HTTPFields) -> (prompt: String, isService: Bool) {
         let declared = headers.isFlagTrue("x-service-request")
         let isService = declared || isTitleOrServiceRequest(prompt: prompt, maxTokens: maxTokens)
@@ -24,12 +20,17 @@ extension HTTPFields {
 
 enum PromptCacheKey {
     static let shared = "shared"
+    static let clientPrefix = "key:"
+    static let maxClientKeyBytes = 256
+    static var header: HTTPField.Name { HTTPField.Name("x-basalt-cache-key")! }
 
-    static func resolve(isService: Bool) -> String? {
-        isService ? nil : shared
+    static func resolve(isService: Bool, headers: HTTPFields = [:]) -> String? {
+        guard !isService else { return nil }
+        guard let key = headers[header], !key.isEmpty, key.utf8.count <= maxClientKeyBytes else { return shared }
+        return clientPrefix + key
     }
 
-    static func scoped(_ request: GenerationRequest) -> GenerationRequest {
-        request.withCacheKey(resolve(isService: request.isServiceRequest == true))
+    static func scoped(_ request: GenerationRequest, headers: HTTPFields) -> GenerationRequest {
+        request.withCacheKey(resolve(isService: request.isServiceRequest == true, headers: headers))
     }
 }

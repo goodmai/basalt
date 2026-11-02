@@ -473,6 +473,34 @@ struct HybridPrefixSnapshotTests {
         }
     }
 
+    @Test("Two client namespaces holding the same conversation keep their own snapshots: one growing never retires or evicts the other's within budget (#88)")
+    func clientNamespacesKeepTheirOwnSnapshots() throws {
+        let model = try TinyHybrid.make()
+        let opening = TinyModel.tokens(Conversation.firstTurn)
+        let turns = (0..<4).map { turn in opening + (0..<(turn * 20)).map { 100 + $0 % 50 } }
+        var tree = PromptCacheTree(byteBudget: 1 << 30)
+        tree.store("key:a", tokens: Array(opening.dropLast()), cache: try TinyHybrid.snapshotted(model, opening))
+        #expect(tree.storedPrefix(of: opening, in: "key:b") == 0)
+        for prompt in turns {
+            tree.store("key:b", tokens: Array(prompt.dropLast()), cache: try TinyHybrid.snapshotted(model, prompt))
+        }
+        func snapshots(_ namespace: String) -> Int {
+            var count = 0
+            var pending = tree.roots[namespace].map { [$0] } ?? []
+            while let node = pending.popLast() {
+                count += node.snapshot == nil ? 0 : 1
+                pending.append(contentsOf: node.children.values)
+            }
+            return count
+        }
+        #expect(snapshots("key:a") == 1)
+        #expect(snapshots("key:b") == 2)
+        let lease = try tree.required("key:a", for: opening + [9, 9])
+        #expect(lease.reusedTokens == opening.count - 1)
+        _ = consume lease
+        #expect(pinCount(tree) == 0)
+    }
+
     @Test("The snapshot boundary is the end of the request text: the template's suffix after it is measured, not assumed")
     func templateSuffixIsMeasured() async throws {
         let container = ModelContainer(context: ModelContext(

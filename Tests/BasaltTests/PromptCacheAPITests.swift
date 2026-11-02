@@ -88,6 +88,65 @@ struct PromptCacheAPITests {
         }
     }
 
+    static let keyedRequests = [
+        ("/v1/chat/completions", #"{"messages": [{"role": "user", "content": "hi"}]}"#),
+        ("/v1/responses", #"{"input": "hi"}"#),
+        ("/v1/messages", #"{"max_tokens": 64, "messages": [{"role": "user", "content": "hi"}]}"#),
+        ("/api/v1/generate", #"{"prompt": "hi"}"#),
+        ("/api/v1/generate/stream", #"{"prompt": "hi"}"#),
+        ("/v1/generate", #"{"prompt": "hi"}"#),
+    ]
+
+    @Test("X-Basalt-Cache-Key opens a namespace of its own on every generation endpoint, apart from the shared tree and from other keys (#88)")
+    func cacheKeyHeaderSelectsClientNamespace() async throws {
+        for (uri, body) in Self.keyedRequests {
+            let alice = try await post(uri, body, headers: header("x-basalt-cache-key", "agent-a"))
+            let bob = try await post(uri, body, headers: header("X-Basalt-Cache-Key", "agent-b"))
+            let crafted = try await post(uri, body, headers: header("x-basalt-cache-key", PromptCacheKey.shared))
+            #expect(alice.sent?.cacheKey == "key:agent-a", "\(uri)")
+            #expect(bob.sent?.cacheKey == "key:agent-b", "\(uri)")
+            #expect(crafted.sent?.cacheKey == "key:shared", "\(uri)")
+            #expect(crafted.sent?.cacheKey != PromptCacheKey.shared, "\(uri)")
+        }
+    }
+
+    @Test("The header wins over a prompt_cache_key in the body (#88)")
+    func cacheKeyHeaderWinsOverBody() async throws {
+        let requests = [
+            ("/v1/chat/completions", #"{"prompt_cache_key": "codex-1", "messages": [{"role": "user", "content": "hi"}]}"#),
+            ("/v1/responses", #"{"prompt_cache_key": "codex-2", "input": "hi"}"#),
+        ]
+        for (uri, body) in requests {
+            let result = try await post(uri, body, headers: header("x-basalt-cache-key", "agent-a"))
+            #expect(result.sent?.cacheKey == "key:agent-a", "\(uri)")
+        }
+    }
+
+    @Test("A service request bypasses the prompt cache whatever cache key it carries (#88)")
+    func serviceRequestWithKeyHasNoNamespace() async throws {
+        var headers = header("x-basalt-cache-key", "agent-a")
+        headers[HTTPField.Name("x-service-request")!] = "true"
+        for (uri, body) in Self.keyedRequests {
+            let declared = body.replacingOccurrences(of: #"{"prompt""#, with: #"{"isServiceRequest": true, "prompt""#)
+            let result = try await post(uri, declared, headers: headers)
+            #expect(result.sent?.cacheKey == nil, "\(uri)")
+        }
+    }
+
+    @Test("An empty or over-long cache key is ignored and the request lands in the shared tree; 256 bytes is still a key (#88)",
+          arguments: [
+            ("", PromptCacheKey.shared),
+            (String(repeating: "k", count: 257), PromptCacheKey.shared),
+            (String(repeating: "é", count: 129), PromptCacheKey.shared),
+            (String(repeating: "k", count: 256), "key:" + String(repeating: "k", count: 256)),
+          ])
+    func invalidCacheKeyFallsBackToShared(key: String, expected: String) async throws {
+        for (uri, body) in Self.keyedRequests {
+            let result = try await post(uri, body, headers: header("x-basalt-cache-key", key))
+            #expect(result.sent?.cacheKey == expected, "\(uri)")
+        }
+    }
+
     @Test("A service request (thread title) never touches the prompt cache")
     func serviceRequestHasNoKey() async throws {
         let result = try await post("/v1/messages",
