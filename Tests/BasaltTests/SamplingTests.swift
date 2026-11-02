@@ -102,7 +102,7 @@ struct EngineSamplingTests {
         let edt = factory()
         #expect(edt.baseTemperature == 0.9)
 
-        let (params, _, shaping) = await MLXInferenceEngine(minP: 0.1).sampling(
+        let (params, _, shaping, _) = await MLXInferenceEngine(minP: 0.1).sampling(
             for: GenerationRequest(prompt: "p", temperature: 0.9, topP: 0.8, dynamicTemperature: true))
         #expect(params.topP == 1 && params.minP == 0)
         let moved = try #require(shaping?())
@@ -154,5 +154,99 @@ struct EngineSamplingTests {
         #expect(h == 0 && h.sign == .plus)
         let t = cold.temperature(entropy: EntropyDynamicTemperature.entropy(oneHot), repetition: 0).item(Float.self)
         #expect(t <= 0.01 + 1e-6, "a confident token must not jump to the ceiling")
+    }
+}
+
+@Suite("DRY penalty and XTC (#177)")
+struct DRYAndXTCTests {
+
+    private func dryLogits(_ history: [Int], breakers: Set<Int> = [], vocabulary: Int = 8) -> [Float] {
+        var dry = DRYPenalty(multiplier: 0.8, base: 1.75, allowedLength: 2, breakers: breakers)
+        dry.prompt(MLXArray(history.dropLast().map(Int32.init)))
+        dry.didSample(token: MLXArray([Int32(history[history.count - 1])]))
+        return dry.process(logits: MLXArray.zeros([1, vocabulary], type: Float32.self)).asArray(Float.self)
+    }
+
+    private func expectOnly(_ logits: [Float], token: Int, penalty: Float) {
+        for (id, value) in logits.enumerated() {
+            #expect(abs(value - (id == token ? -penalty : 0)) < 1e-5, "token \(id): \(value)")
+        }
+    }
+
+    @Test("On A B C D E A B C, DRY lowers only D, by m·b^(3−2), reading the last sampled token after the fact")
+    func penalisesTheContinuation() {
+        expectOnly(dryLogits([1, 2, 3, 4, 5, 1, 2, 3]), token: 4, penalty: 0.8 * 1.75)
+    }
+
+    @Test("A breaker inside the repeated run shortens the match: between B and C it falls below the allowed length, between A and B it drops to b^0")
+    func breakersCutTheMatch() {
+        expectOnly(dryLogits([1, 2, 6, 3, 4, 5, 1, 2, 6, 3]), token: 4, penalty: 0.8 * 1.75 * 1.75)
+        expectOnly(dryLogits([1, 2, 6, 3, 4, 5, 1, 2, 6, 3], breakers: [6]), token: 4, penalty: 0)
+        expectOnly(dryLogits([1, 6, 2, 3, 4, 5, 1, 6, 2, 3], breakers: [6]), token: 4, penalty: 0.8)
+    }
+
+    @Test("A run shorter than the allowed length and a history without repeats are left alone")
+    func shortRunsPass() {
+        expectOnly(dryLogits([1, 4, 5, 1]), token: 4, penalty: 0)
+        expectOnly(dryLogits([1, 2, 3, 4, 5, 6, 7]), token: 4, penalty: 0)
+    }
+
+    @Test("A copy keeps its own history")
+    func copyIsIndependent() {
+        var original = DRYPenalty(multiplier: 0.8, breakers: [])
+        original.prompt(MLXArray([Int32(1), 2, 3, 4, 5, 1, 2]))
+        var copy = original.copy()
+        copy.didSample(token: MLXArray([Int32(7)]))
+        original.didSample(token: MLXArray([Int32(3)]))
+        let logits = MLXArray.zeros([1, 8], type: Float32.self)
+        expectOnly(original.process(logits: logits).asArray(Float.self), token: 4, penalty: 0.8 * 1.75)
+        expectOnly(copy.process(logits: logits).asArray(Float.self), token: 4, penalty: 0)
+    }
+
+    private let distribution = log(MLXArray([Float(0.4), 0.3, 0.2, 0.05, 0.05])).reshaped(1, -1)
+
+    @Test("XTC at p = 1, τ = 0.1 masks every token above τ except the least likely of them")
+    func excludesTopChoices() {
+        let out = ExcludeTopChoices(threshold: 0.1, probability: 1, seed: 1).process(logits: distribution).asArray(Float.self)
+        let original = distribution.asArray(Float.self)
+        #expect(out[0] == -.infinity && out[1] == -.infinity)
+        #expect(Array(out[2...]) == Array(original[2...]))
+    }
+
+    @Test("XTC at p = 0 leaves the logits unchanged; with one token above τ there is nothing to exclude")
+    func probabilityZeroIsIdentity() {
+        let original = distribution.asArray(Float.self)
+        #expect(ExcludeTopChoices(threshold: 0.1, probability: 0, seed: 1).process(logits: distribution).asArray(Float.self) == original)
+        #expect(ExcludeTopChoices(threshold: 0.35, probability: 1, seed: 1).process(logits: distribution).asArray(Float.self) == original)
+    }
+
+    @Test("XTC with the same seed excludes on the same steps; the draws are not constant")
+    func seededDrawsRepeat() {
+        func draws(seed: UInt64) -> [Bool] {
+            let xtc = ExcludeTopChoices(threshold: 0.1, probability: 0.5, seed: seed)
+            return (0 ..< 32).map { _ in xtc.process(logits: distribution)[0, 0].item(Float.self) == -.infinity }
+        }
+        let first = draws(seed: 9)
+        #expect(first == draws(seed: 9))
+        #expect(Set(first).count == 2)
+    }
+
+    @Test("With every DRY and XTC field unset no processor is appended; DRY needs a positive multiplier, XTC a positive probability and T > 0")
+    func wiring() async throws {
+        let engine = MLXInferenceEngine(seed: 5)
+        let plain = await engine.sampling(for: GenerationRequest(prompt: "p"))
+        #expect(plain.1.logitProcessorFactory == nil && plain.exclusion == nil)
+        let inert = await engine.sampling(for: GenerationRequest(
+            prompt: "p", dryMultiplier: 0, dryBase: 2, dryAllowedLength: 3, drySequenceBreakers: ["x"], xtcThreshold: 0.2))
+        #expect(inert.1.logitProcessorFactory == nil && inert.exclusion == nil)
+        #expect(await engine.sampling(for: GenerationRequest(prompt: "p", temperature: 0, xtcProbability: 1)).exclusion == nil)
+
+        let on = await engine.sampling(
+            for: GenerationRequest(prompt: "p", temperature: 0.7, dryMultiplier: 0.8, xtcProbability: 0.5), breakers: [9])
+        let dry = try #require(on.1.logitProcessorFactory?() as? DRYPenalty)
+        #expect(dry.multiplier == 0.8 && dry.base == DRYPenalty.defaultBase
+            && dry.allowedLength == DRYPenalty.defaultAllowedLength && dry.breakers == [9])
+        let xtc = try #require(on.exclusion?())
+        #expect(xtc.threshold == ExcludeTopChoices.defaultThreshold && xtc.probability == 0.5)
     }
 }

@@ -88,6 +88,7 @@ public actor MLXInferenceEngine: InferenceEngine {
     private var modelRoutesExperts: Bool?
     private var templateSuffixes: [String: Int] = [:]
     private var grammarVocabulary: Result<GrammarVocabulary, ConstraintUnavailable>?
+    private var sequenceBreakers: (strings: [String], ids: Set<Int>)?
     private(set) var idleGrammars: [String: [GrammarConstraint]] = [:]
     private var idleGrammarRecency: [String] = []
     private let cacheBlendRatio: Float?
@@ -177,6 +178,7 @@ public actor MLXInferenceEngine: InferenceEngine {
         modelSupportsMultiTokenForward = nil
         self.controlTokens = controlTokens
         grammarVocabulary = nil
+        sequenceBreakers = nil
         idleGrammars = [:]
         idleGrammarRecency = []
         self.profile = profile
@@ -743,7 +745,10 @@ public actor MLXInferenceEngine: InferenceEngine {
         return ids
     }
 
-    func sampling(for request: GenerationRequest) -> (GenerateParameters, GenerationComponents, shaping: (@Sendable () -> EntropyDynamicTemperature)?) {
+    func sampling(for request: GenerationRequest, breakers: Set<Int> = []) -> (
+        GenerateParameters, GenerationComponents, shaping: (@Sendable () -> EntropyDynamicTemperature)?,
+        exclusion: (@Sendable () -> ExcludeTopChoices)?
+    ) {
         let temperature = Float(request.temperature ?? samplingDefaults.temperature ?? 0.7)
         var params = GenerateParameters(
             maxTokens: request.maxTokens ?? 1024,
@@ -766,6 +771,19 @@ public actor MLXInferenceEngine: InferenceEngine {
                 GeneratedTokensPresencePenalty(penalty: presencePenalty, window: Self.presenceContextSize)
             }
         }
+        if let multiplier = request.dryMultiplier.map(Float.init), multiplier > 0 {
+            let base = request.dryBase.map(Float.init) ?? DRYPenalty.defaultBase
+            let allowedLength = request.dryAllowedLength ?? DRYPenalty.defaultAllowedLength
+            components = components.appendingBasaltProcessor {
+                DRYPenalty(multiplier: multiplier, base: base, allowedLength: allowedLength, breakers: breakers)
+            }
+        }
+        var exclusion: (@Sendable () -> ExcludeTopChoices)?
+        if let probability = request.xtcProbability.map(Float.init), probability > 0, temperature > 0 {
+            let threshold = request.xtcThreshold.map(Float.init) ?? ExcludeTopChoices.defaultThreshold
+            let seed = seed
+            exclusion = { ExcludeTopChoices(threshold: threshold, probability: probability, seed: seed) }
+        }
         var shaping: (@Sendable () -> EntropyDynamicTemperature)?
         if request.dynamicTemperature == true, temperature > 0 {
             let (topP, minP) = (params.topP, params.minP)
@@ -773,7 +791,17 @@ public actor MLXInferenceEngine: InferenceEngine {
             params.topP = 1
             params.minP = 0
         }
-        return (params, components, shaping)
+        return (params, components, shaping, exclusion)
+    }
+
+    func sequenceBreakerIds(for request: GenerationRequest) async -> Set<Int> {
+        guard (request.dryMultiplier ?? 0) > 0, let container else { return [] }
+        let strings = request.drySequenceBreakers ?? DRYPenalty.defaultSequenceBreakers
+        if let sequenceBreakers, sequenceBreakers.strings == strings { return sequenceBreakers.ids }
+        let epoch = modelEpoch
+        let ids = await container.perform { DRYPenalty.breakerIds(strings, tokenizer: $0.tokenizer) }
+        if epoch == modelEpoch { sequenceBreakers = (strings, ids) }
+        return ids
     }
 
     static let liquidReasoning = ReasoningConfig(
@@ -836,7 +864,7 @@ public actor MLXInferenceEngine: InferenceEngine {
         let epoch = modelEpoch
 
         let requestedMaxTokens = request.maxTokens ?? 1024
-        let (params, unbudgeted, shaping) = sampling(for: request)
+        let (params, unbudgeted, shaping, exclusion) = sampling(for: request, breakers: await sequenceBreakerIds(for: request))
         let zones = modelAttendsThroughZones ? (modelPrefillsInChunks ? kvZones : kvZones?.evicting(0)) : nil
         let zonedPrecision = zones == nil ? nil : request.kvPrecision ?? kvPrecision
 
@@ -957,7 +985,8 @@ public actor MLXInferenceEngine: InferenceEngine {
                 phase: Self.constraintPhase(
                     thinkingDisabled: policy == .disabled, endsInsideThinking: promptEndsWithThinking,
                     prefillAnswered: !prefixAnswer.isEmpty))
-            let constrained = shaping.map { masked.appendingBasaltProcessor($0) } ?? masked
+            let excluded = exclusion.map { masked.appendingBasaltProcessor($0) } ?? masked
+            let constrained = shaping.map { excluded.appendingBasaltProcessor($0) } ?? excluded
             let forcedTool = constraint?.toolName
             let jumpForward = constraint?.fastForward == true
             let expertRouting = (speculativeLookup || jumpForward) ? await routesExperts(container, epoch: epoch) : true
