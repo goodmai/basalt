@@ -1,5 +1,6 @@
 import Foundation
 import BasaltCore
+import Synchronization
 
 public struct HarnessKnowledgeEntry: Codable, Sendable, Equatable {
     public let slug: String
@@ -114,7 +115,7 @@ public struct HarnessExperienceLibrary: Sendable {
     public func query(_ text: String? = nil, domain: String? = nil) async throws -> [HarnessKnowledgeEntry] {
         let needle = text?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
         let domainSlug = domain.flatMap { $0.isEmpty ? nil : Self.slugify($0) }
-        return try await on(Self.readers) { try loadEntries(quarantineCorrupt: false) }.filter { entry in
+        return try await Task.detached { try loadEntries(quarantineCorrupt: false) }.value.filter { entry in
             if let domainSlug, entry.domain != domainSlug { return false }
             return needle.isEmpty || [entry.topic, entry.cue, entry.content].contains { $0.lowercased().contains(needle) }
         }
@@ -130,28 +131,24 @@ public struct HarnessExperienceLibrary: Sendable {
         if !condition { throw HarnessLibraryError.invalidArgument(message) }
     }
 
-    private static let readers = DispatchQueue(label: "basalt.harness-library.readers", attributes: .concurrent)
-    private static let writerRegistry = NSLock()
-    nonisolated(unsafe) private static var writers: [String: DispatchQueue] = [:]
+    private actor WriterLane {
+        func run<T: Sendable>(_ body: @Sendable () throws -> T) throws -> T { try body() }
+    }
 
-    private static func writerQueue(for root: URL) -> DispatchQueue {
+    private static let lanes = Mutex<[String: WriterLane]>([:])
+
+    private static func lane(for root: URL) -> WriterLane {
         let key = root.standardizedFileURL.path
-        return writerRegistry.withLock {
-            if let queue = writers[key] { return queue }
-            let queue = DispatchQueue(label: "basalt.harness-library.writer:\(key)")
-            writers[key] = queue
-            return queue
+        return lanes.withLock { lanes in
+            if let lane = lanes[key] { return lane }
+            let lane = WriterLane()
+            lanes[key] = lane
+            return lane
         }
     }
 
     private func onWriterQueue<T: Sendable>(_ body: @escaping @Sendable () throws -> T) async throws -> T {
-        try await on(Self.writerQueue(for: rootDirectory), body)
-    }
-
-    private func on<T: Sendable>(_ queue: DispatchQueue, _ body: @escaping @Sendable () throws -> T) async throws -> T {
-        try await withCheckedThrowingContinuation { continuation in
-            queue.async { continuation.resume(with: Result { try body() }) }
-        }
+        try await Self.lane(for: rootDirectory).run(body)
     }
 
     private func withLock<T>(_ body: () throws -> T) throws -> T {

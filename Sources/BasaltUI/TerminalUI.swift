@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 @preconcurrency import Rainbow
 
 #if canImport(Darwin)
@@ -57,7 +58,7 @@ public enum TerminalUI: Sendable {
     
     /// Legacy synchronous accessor for backwards compatibility
     /// Note: In production, prefer using Configuration.shared async/await
-    public nonisolated(unsafe) static var colorsEnabled: Bool = {
+    private static let colorSetting = Mutex<Bool>({
         // Check NO_COLOR environment variable
         if ProcessInfo.processInfo.environment["NO_COLOR"] != nil {
             return false
@@ -74,7 +75,12 @@ public enum TerminalUI: Sendable {
         #else
         return false
         #endif
-    }()
+    }())
+
+    public static var colorsEnabled: Bool {
+        get { colorSetting.withLock { $0 } }
+        set { colorSetting.withLock { $0 = newValue } }
+    }
     
     // MARK: - TTY Detection
     

@@ -322,7 +322,7 @@ public struct TableRenderer: Sendable {
 // MARK: - Table Builder
 
 /// Builder pattern for constructing tables
-public class TableBuilder: @unchecked Sendable {
+public final class TableBuilder {
     private var headers: [String] = []
     private var rows: [[String]] = []
     private var alignments: [TableRenderer.ColumnAlignment] = []

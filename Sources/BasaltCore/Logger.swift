@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 
 public enum BasaltLogLevel: Int, Comparable, Sendable {
     case trace = 0
@@ -16,7 +17,12 @@ public typealias GemLogLevel = BasaltLogLevel
 public typealias GemLogger = BasaltLogger
 
 public struct BasaltLogger: Sendable {
-    public static nonisolated(unsafe) var globalLevel: BasaltLogLevel = .info
+    private static let level = Mutex(BasaltLogLevel.info)
+
+    public static var globalLevel: BasaltLogLevel {
+        get { level.withLock { $0 } }
+        set { level.withLock { $0 = newValue } }
+    }
     
     public let module: String
     
