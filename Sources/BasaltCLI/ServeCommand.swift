@@ -36,6 +36,18 @@ struct ServeCommand: AsyncParsableCommand {
     var quant: String?
 
     @Option(
+        name: .customLong("embedding-model"),
+        help: "Embedding model served on /v1/embeddings next to the chat model: repo ID (resolved from the Hugging Face cache like --model) or local path; BERT, RoBERTa, XLM-RoBERTa, DistilBERT, NomicBERT, Qwen3-Embedding or LFM2.5-Embedding"
+    )
+    var embeddingModel: String?
+
+    @Option(
+        name: .customLong("rerank-model"),
+        help: "Reranker served on /v1/rerank next to the chat model: repo ID or local path of an encoder cross-encoder, Qwen3-Reranker or Jina reranker (its name must contain \"rerank\")"
+    )
+    var rerankModel: String?
+
+    @Option(
         name: .customLong("reasoning-effort"),
         help: "Chat-template reasoning budget (Qwen3.8: xhigh | medium | low), or `none` to disable thinking entirely"
     )
@@ -524,6 +536,8 @@ struct ServeCommand: AsyncParsableCommand {
             engine: engine, maxTokens: config.maxTokens, kvPrecision: kvBits?.fixedPrecision, adaptiveKVPrecision: kvBits == .auto,
             kvZones: KVBitsSetting.zones(kvZones, evicting: kvEvict), gate: GenerationGate(maxConcurrent: maxConcurrent, maxQueue: maxQueue), sessionLog: sessionLogWriter)
 
+        let embeddings = try await loadEmbeddings()
+
         log("Loading model from \(bold(resolvedPath))…")
         do {
             try await orchestrator.loadModel(path: resolvedPath)
@@ -575,8 +589,25 @@ struct ServeCommand: AsyncParsableCommand {
             config: config,
             startREST: startREST,
             mcpServer: mcpServer,
+            embeddings: embeddings,
             statsInterval: stats ? min(max(1, statsInterval), 86_400) : nil
         )
+    }
+
+    private func loadEmbeddings() async throws -> EmbeddingService? {
+        guard embeddingModel != nil || rerankModel != nil else { return nil }
+        func source(_ id: String?) async throws -> (id: String, directory: URL)? {
+            guard let id else { return nil }
+            return (id, URL(fileURLWithPath: try await resolvedPath(id, quant: nil)))
+        }
+        do {
+            let service = try await EmbeddingService(embeddingModel: try await source(embeddingModel), rerankModel: try await source(rerankModel))
+            log("Serving \(service.models.map { "\($0.id) (\($0.task.rawValue))" }.joined(separator: ", "))")
+            return service
+        } catch let error as BasaltError {
+            log("\(red("[error]")) \(error.localizedDescription)")
+            throw ExitCode.failure
+        }
     }
 
     package static func runServers(
@@ -584,6 +615,7 @@ struct ServeCommand: AsyncParsableCommand {
         config: ServerConfig,
         startREST: Bool,
         mcpServer: MCPServer?,
+        embeddings: (any EmbeddingEngine)? = nil,
         statsInterval: Int? = nil,
         shutdownDeadline: Duration = .seconds(5),
         handleSignals: Bool = true
@@ -598,6 +630,7 @@ struct ServeCommand: AsyncParsableCommand {
                 let restServer = RESTServer(
                     orchestrator: orchestrator,
                     config: config,
+                    embeddings: embeddings,
                     shutdownDeadline: shutdownDeadline,
                     handleSignals: handleSignals
                 )
@@ -706,7 +739,11 @@ struct ServeCommand: AsyncParsableCommand {
 
         let modelId = model ?? Self.defaultModel
         if model == nil { log("No model specified — using default: \(dim(modelId))") }
-        guard modelId.contains("/") else { return modelId }  // treat as local path
+        return try await resolvedPath(modelId, quant: quant)
+    }
+
+    private func resolvedPath(_ modelId: String, quant: String?) async throws -> String {
+        guard modelId.contains("/") else { return modelId }
 
         let snapshot = ModelCache.cacheDir(for: modelId)
 

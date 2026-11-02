@@ -19,7 +19,7 @@ struct RequestGuardTests {
         let orch = ModelOrchestratorActor(engine: MockInferenceEngine(), maxTokens: 65536, telemetry: TelemetryTracker())
         try await orch.loadModel(path: "mock")
         let config = try ServerConfig(modelPath: "org/mock-model", host: host, apiKey: apiKey, allowedOrigins: origins)
-        return Application(router: RESTServer(orchestrator: orch, config: config).makeRouter())
+        return Application(router: RESTServer(orchestrator: orch, config: config, embeddings: StubEmbeddingEngine()).makeRouter())
     }
 
     private func post(
@@ -203,6 +203,26 @@ struct RequestGuardTests {
         #expect(!allows("https://ui.example"))
         #expect(!allows("https://app.example:8443"))
         #expect(RequestGuardMiddleware.parseOrigin("http://*") == nil)
+    }
+
+    @Test("/v1/embeddings and /v1/rerank need the API key off loopback and refuse cross-origin pages and non-JSON bodies")
+    func embeddingRoutesBehindPerimeter() async throws {
+        let routes = [("/v1/embeddings", #"{"input": "a"}"#), ("/v1/rerank", #"{"query": "q", "documents": ["a"]}"#)]
+        try await app(host: "192.168.1.5", apiKey: "k-1").test(.router) { (client) async throws in
+            for (uri, body) in routes {
+                #expect(try await post(client, uri, body) == .unauthorized, "\(uri)")
+                #expect(try await post(client, uri, body, headers: [.contentType: "application/json", .authorization: "Bearer wrong"]) == .unauthorized, "\(uri)")
+                #expect(try await post(client, uri, body, headers: [.contentType: "application/json", .authorization: "Bearer k-1"]) == .ok, "\(uri)")
+            }
+        }
+        try await app().test(.router) { (client) async throws in
+            for (uri, body) in routes {
+                #expect(try await post(client, uri, body) == .ok, "\(uri)")
+                #expect(try await post(client, uri, body, headers: [.contentType: "application/json", .origin: "https://evil.example"]) == .forbidden, "\(uri)")
+                #expect(try await post(client, uri, body, headers: [.contentType: "application/json", Self.host: "evil.example"]) == .forbidden, "\(uri)")
+                #expect(try await post(client, uri, body, headers: [.contentType: "text/plain"]) == .unsupportedMediaType, "\(uri)")
+            }
+        }
     }
 
     @Test("The Swagger page pins its unpkg assets with Subresource Integrity")

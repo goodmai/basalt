@@ -29,7 +29,7 @@ public actor ModelOrchestratorActor {
     /// Empty string means nothing has been loaded yet.
     public private(set) var currentModelId: String = ""
 
-    public let gate: GenerationGate
+    nonisolated public let gate: GenerationGate
     public let sessionLog: SessionLogWriter?
     private var pendingSwitch: (modelId: String, task: Task<Void, Error>)?
     private var shutdownTask: Task<Void, Never>?

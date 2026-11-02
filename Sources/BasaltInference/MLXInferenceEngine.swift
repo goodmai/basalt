@@ -19,6 +19,42 @@ private extension Duration {
     }
 }
 
+struct TokenizerBridge: MLXLMCommon.Tokenizer {
+    private let upstream: any Tokenizers.Tokenizer
+    init(_ upstream: any Tokenizers.Tokenizer) { self.upstream = upstream }
+    func encode(text: String, addSpecialTokens: Bool) -> [Int] {
+        upstream.encode(text: text, addSpecialTokens: addSpecialTokens)
+    }
+    func decode(tokenIds: [Int], skipSpecialTokens: Bool) -> String {
+        upstream.decode(tokens: tokenIds, skipSpecialTokens: skipSpecialTokens)
+    }
+    func convertTokenToId(_ token: String) -> Int? { upstream.convertTokenToId(token) }
+    func convertIdToToken(_ id: Int) -> String? { upstream.convertIdToToken(id) }
+    var bosToken: String? { upstream.bosToken }
+    var eosToken: String? { upstream.eosToken }
+    var unknownToken: String? { upstream.unknownToken }
+    func applyChatTemplate(
+        messages: [[String: any Sendable]],
+        tools: [[String: any Sendable]]?,
+        additionalContext: [String: any Sendable]?
+    ) throws -> [Int] {
+        do {
+            return try upstream.applyChatTemplate(
+                messages: messages, tools: tools, additionalContext: additionalContext)
+        } catch Tokenizers.TokenizerError.missingChatTemplate {
+            throw MLXLMCommon.TokenizerError.missingChatTemplate
+        } catch {
+            throw error
+        }
+    }
+}
+
+struct DefaultTokenizerLoader: TokenizerLoader {
+    func load(from directory: URL) async throws -> any MLXLMCommon.Tokenizer {
+        TokenizerBridge(try await MLXInferenceEngine.upstreamTokenizer(at: directory))
+    }
+}
+
 // MARK: — Real implementation
 
 public actor MLXInferenceEngine: InferenceEngine {
@@ -293,42 +329,6 @@ public actor MLXInferenceEngine: InferenceEngine {
             // and pushes large models (27B @ 4-bit ≈ 16 GB) into swap on 24 GB Macs.
             // ponytail: fixed 512 MB cap; make it a --gpu-cache flag if a workload needs more.
             if let gpuCacheLimit { Memory.cacheLimit = gpuCacheLimit }
-
-            struct TokenizerBridge: MLXLMCommon.Tokenizer {
-                private let upstream: any Tokenizers.Tokenizer
-                init(_ upstream: any Tokenizers.Tokenizer) { self.upstream = upstream }
-                func encode(text: String, addSpecialTokens: Bool) -> [Int] {
-                    upstream.encode(text: text, addSpecialTokens: addSpecialTokens)
-                }
-                func decode(tokenIds: [Int], skipSpecialTokens: Bool) -> String {
-                    upstream.decode(tokens: tokenIds, skipSpecialTokens: skipSpecialTokens)
-                }
-                func convertTokenToId(_ token: String) -> Int? { upstream.convertTokenToId(token) }
-                func convertIdToToken(_ id: Int) -> String? { upstream.convertIdToToken(id) }
-                var bosToken: String? { upstream.bosToken }
-                var eosToken: String? { upstream.eosToken }
-                var unknownToken: String? { upstream.unknownToken }
-                func applyChatTemplate(
-                    messages: [[String: any Sendable]],
-                    tools: [[String: any Sendable]]?,
-                    additionalContext: [String: any Sendable]?
-                ) throws -> [Int] {
-                    do {
-                        return try upstream.applyChatTemplate(
-                            messages: messages, tools: tools, additionalContext: additionalContext)
-                    } catch Tokenizers.TokenizerError.missingChatTemplate {
-                        throw MLXLMCommon.TokenizerError.missingChatTemplate
-                    } catch {
-                        throw error
-                    }
-                }
-            }
-
-            struct DefaultTokenizerLoader: TokenizerLoader {
-                func load(from directory: URL) async throws -> any MLXLMCommon.Tokenizer {
-                    TokenizerBridge(try await MLXInferenceEngine.upstreamTokenizer(at: directory))
-                }
-            }
 
             let loaded = try await loadModelContainer(from: directory, using: DefaultTokenizerLoader())
             try await loaded.perform { try PrismHadamard.prepareLoaded($0.model) }
