@@ -64,6 +64,9 @@ struct Benchmark: AsyncParsableCommand {
     @Flag(name: .customLong("speculative-recycling"), help: "With --speculative-lookup, also draft recycled argmax successors when no n-gram matches")
     var speculativeRecycling: Bool = false
 
+    @Option(name: .customLong("dry-multiplier"), help: "DRY repetition penalty multiplier (off when unset)")
+    var dryMultiplier: Double?
+
     @Flag(name: .customLong("mtp"), help: "Draft with the model's MTP head (mtp.safetensors)")
     var mtp: Bool = false
 
@@ -103,7 +106,7 @@ struct Benchmark: AsyncParsableCommand {
             kvZones: kvZones ? .standard : nil,
             repetitionPenalty: repetitionPenalty,
             topK: topK, minP: minP, seed: seed, speculativeLookup: speculativeLookup,
-            speculativeRecycling: speculativeRecycling, mtp: mtp, grammarJumpForward: grammarJumpForward)
+            speculativeRecycling: speculativeRecycling, mtp: mtp, experimentalSamplers: dryMultiplier != nil, grammarJumpForward: grammarJumpForward)
         let orchestrator = ModelOrchestratorActor(engine: engine, maxTokens: tokens, kvPrecision: kvBits, kvZones: kvZones ? .standard : nil)
 
         print("Loading model…", terminator: ""); fflush(stdout)
@@ -126,6 +129,7 @@ struct Benchmark: AsyncParsableCommand {
         var ttftSamples:     [Double] = []
         var genTimeSamples:  [Double] = []
         var draftTokens = 0
+        var finishReasons: [String: Int] = [:]
         var acceptedDraftTokens = 0
 
         print("  #     TPS         TTFT (s)    Time (s)")
@@ -134,6 +138,7 @@ struct Benchmark: AsyncParsableCommand {
         for i in 1...iterations {
             let r = try await orchestrator.generate(request: request())
             draftTokens += r.draftTokens ?? 0
+            finishReasons["\(r.finishReason)", default: 0] += 1
             acceptedDraftTokens += r.acceptedDraftTokens ?? 0
 
             tpsSamples.append(r.tokensPerSecond)
@@ -148,6 +153,7 @@ struct Benchmark: AsyncParsableCommand {
         printStats(label: "TPS",          samples: tpsSamples,     unit: "tok/s")
         printStats(label: "TTFT",         samples: ttftSamples,     unit: "s")
         printStats(label: "GenTime",      samples: genTimeSamples,  unit: "s")
+        print("  Finish      " + finishReasons.sorted { $0.key < $1.key }.map { "\($0.key) \($0.value)" }.joined(separator: ", "))
         if speculativeLookup || mtp {
             let rate = draftTokens == 0 ? 0 : Double(acceptedDraftTokens) / Double(draftTokens)
             print(String(format: "  Drafts      accepted %d of %d (α = %.3f)", acceptedDraftTokens, draftTokens, rate))
@@ -218,7 +224,7 @@ struct Benchmark: AsyncParsableCommand {
     }
 
     private func request() -> GenerationRequest {
-        GenerationRequest(prompt: prompt, maxTokens: tokens, temperature: temperature)
+        GenerationRequest(prompt: prompt, maxTokens: tokens, temperature: temperature, dryMultiplier: dryMultiplier)
             .withGrammarJumpForward(grammarJumpForward)
             .withOrigin(RequestOrigin(source: "benchmark", endpoint: "PerformanceBenchmark", stream: false))
     }

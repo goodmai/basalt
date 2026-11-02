@@ -19,6 +19,25 @@ struct ChatPipeline: Sendable {
         var repetitionPenalty: Double?
         var speculativeLookup: Bool?
         var grammarJumpForward: Bool?
+        var antiRepetition = AntiRepetition()
+    }
+
+    struct AntiRepetition: Decodable, Sendable {
+        var dryMultiplier: Double?
+        var dryBase: Double?
+        var dryAllowedLength: Int?
+        var drySequenceBreakers: [String]?
+        var xtcThreshold: Double?
+        var xtcProbability: Double?
+
+        enum CodingKeys: String, CodingKey {
+            case dryMultiplier = "dry_multiplier"
+            case dryBase = "dry_base"
+            case dryAllowedLength = "dry_allowed_length"
+            case drySequenceBreakers = "dry_sequence_breakers"
+            case xtcThreshold = "xtc_threshold"
+            case xtcProbability = "xtc_probability"
+        }
     }
 
     struct Prepared: Sendable {
@@ -74,6 +93,10 @@ struct ChatPipeline: Sendable {
         }
     }
 
+    func antiRepetition(in data: Data) throws -> AntiRepetition {
+        try decode(AntiRepetition.self, from: data, failure: "Invalid DRY or XTC parameter")
+    }
+
     func responseFormat(in data: Data) throws -> ResponseFormat? {
         do { return try OpenAIController.responseFormat(fromRequestBody: data) } catch {
             throw rejection(.badRequest, error.message)
@@ -104,7 +127,13 @@ struct ChatPipeline: Sendable {
             presencePenalty: sampling.presencePenalty,
             repetitionPenalty: sampling.repetitionPenalty,
             thinkingBudget: thinkingBudget,
-            responseFormat: responseFormat
+            responseFormat: responseFormat,
+            dryMultiplier: sampling.antiRepetition.dryMultiplier,
+            dryBase: sampling.antiRepetition.dryBase,
+            dryAllowedLength: sampling.antiRepetition.dryAllowedLength,
+            drySequenceBreakers: sampling.antiRepetition.drySequenceBreakers,
+            xtcThreshold: sampling.antiRepetition.xtcThreshold,
+            xtcProbability: sampling.antiRepetition.xtcProbability
         ).withSpeculativeLookup(sampling.speculativeLookup)
             .withGrammarJumpForward(sampling.grammarJumpForward)
             .routed(by: headers).withOrigin(RequestOrigin(source: source, endpoint: endpoint, stream: stream))

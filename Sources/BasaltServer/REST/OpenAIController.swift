@@ -405,7 +405,8 @@ struct OpenAIController: Sendable {
                 sampling: .init(temperature: dto.temperature, topP: dto.topP, minP: dto.minP,
                                 dynamicTemperature: dto.dynamicTemperature, topK: dto.topK,
                                 presencePenalty: dto.presencePenalty, repetitionPenalty: dto.repetitionPenalty,
-                                speculativeLookup: dto.speculativeLookup, grammarJumpForward: dto.grammarJumpForward),
+                                speculativeLookup: dto.speculativeLookup, grammarJumpForward: dto.grammarJumpForward,
+                                antiRepetition: try pipeline.antiRepetition(in: data)),
                 reasoningEffort: dto.reasoningEffort, tools: tools, thinkingBudget: dto.thinkingBudget,
                 responseFormat: format, model: dto.model, stream: dto.stream == true)
             if dto.stream == true { try await pipeline.admitStream(prepared.request) }
@@ -478,7 +479,8 @@ struct OpenAIController: Sendable {
                 sampling: .init(temperature: dto.temperature, topP: dto.topP, minP: dto.minP,
                                 dynamicTemperature: dto.dynamicTemperature, topK: dto.topK,
                                 presencePenalty: dto.presencePenalty, repetitionPenalty: dto.repetitionPenalty,
-                                speculativeLookup: dto.speculativeLookup, grammarJumpForward: dto.grammarJumpForward),
+                                speculativeLookup: dto.speculativeLookup, grammarJumpForward: dto.grammarJumpForward,
+                                antiRepetition: try pipeline.antiRepetition(in: data)),
                 reasoningEffort: dto.effectiveReasoningEffort, tools: tools, thinkingBudget: dto.thinkingBudget,
                 responseFormat: format, model: dto.model, stream: dto.stream == true)
             if dto.stream == true { try await pipeline.admitStream(prepared.request) }

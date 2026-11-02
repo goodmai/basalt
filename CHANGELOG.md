@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+### Experimental
+- DRY repetition penalty and XTC sampling, request fields `dry_multiplier`, `dry_base`, `dry_allowed_length`, `dry_sequence_breakers`, `xtc_threshold`, `xtc_probability` (camelCase on `/api/v1/generate`), accepted only with `serve --experimental-samplers` and refused with 400 otherwise (#177). DRY penalizes the token that would extend a sequence the model already wrote (its own output only: with the prompt in its history it broke verbatim code edits); XTC removes the likeliest tokens with probability p at T > 0. Measured on an M4 Pro: decode speed unchanged (1.02–1.035×), JSON constraints still win, code edits still parse on Qwen3-4B and Bonsai 2 27B. Not an anti-loop tool: on a 2-bit Qwen3.8, DRY turned a verbatim loop that `RepetitionGuard` stops into one with corrupted numbers that runs to `max_tokens`; on models that do not loop it changed nothing.
+
 ## 0.8.0 — 2026-11-01
 
 ### Upgrading from 0.7.0

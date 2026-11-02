@@ -80,12 +80,19 @@ public struct GenerationRequest: Codable, Sendable {
     public private(set) var speculativeLookup: Bool? = nil
     public private(set) var grammarJumpForward: Bool? = nil
     public private(set) var kvPrecision: KVPrecision? = nil
+    public private(set) var dryMultiplier: Double? = nil
+    public private(set) var dryBase: Double? = nil
+    public private(set) var dryAllowedLength: Int? = nil
+    public private(set) var drySequenceBreakers: [String]? = nil
+    public private(set) var xtcThreshold: Double? = nil
+    public private(set) var xtcProbability: Double? = nil
 
     enum CodingKeys: String, CodingKey {
         case prompt, maxTokens, temperature, topP, minP, dynamicTemperature, enableThinking, reasoningEffort
         case isServiceRequest, tools, toolChoice, cacheKey, messages
         case topK, presencePenalty, repetitionPenalty, thinkingBudget, responseFormat, speculativeLookup
         case grammarJumpForward = "grammar_jump_forward"
+        case dryMultiplier, dryBase, dryAllowedLength, drySequenceBreakers, xtcThreshold, xtcProbability
     }
 
     public init(
@@ -107,7 +114,13 @@ public struct GenerationRequest: Codable, Sendable {
         presencePenalty: Double? = nil,
         repetitionPenalty: Double? = nil,
         thinkingBudget: Int? = nil,
-        responseFormat: ResponseFormat? = nil
+        responseFormat: ResponseFormat? = nil,
+        dryMultiplier: Double? = nil,
+        dryBase: Double? = nil,
+        dryAllowedLength: Int? = nil,
+        drySequenceBreakers: [String]? = nil,
+        xtcThreshold: Double? = nil,
+        xtcProbability: Double? = nil
     ) {
         self.prompt = prompt
         self.maxTokens = maxTokens
@@ -128,10 +141,21 @@ public struct GenerationRequest: Codable, Sendable {
         self.repetitionPenalty = repetitionPenalty
         self.thinkingBudget = thinkingBudget
         self.responseFormat = responseFormat
+        self.dryMultiplier = dryMultiplier
+        self.dryBase = dryBase
+        self.dryAllowedLength = dryAllowedLength
+        self.drySequenceBreakers = drySequenceBreakers
+        self.xtcThreshold = xtcThreshold
+        self.xtcProbability = xtcProbability
     }
 
     /// The same request with another token budget. Kept next to the stored properties so a new
     /// field cannot be forgotten by a caller that rebuilds the request field by field.
+    public var usesExperimentalSamplers: Bool {
+        dryMultiplier != nil || dryBase != nil || dryAllowedLength != nil || drySequenceBreakers != nil
+            || xtcThreshold != nil || xtcProbability != nil
+    }
+
     public func withMaxTokens(_ maxTokens: Int) -> GenerationRequest {
         var copy = self
         copy.maxTokens = maxTokens
@@ -186,6 +210,7 @@ public struct GenerationRequest: Codable, Sendable {
 
     public static let maximumTokens = 131_072
     public static let thinkingTransitionHeadroom = 64
+    public static let maximumSequenceBreakers = 32
 
     public static func thinkingAnswerReserve(maxTokens: Int) -> Int {
         min(512, maxTokens / 4)
@@ -208,6 +233,14 @@ public struct GenerationRequest: Codable, Sendable {
         try Self.require(presencePenalty, in: -2.0...2.0, "presence_penalty must be in [-2.0, 2.0]")
         try Self.require(repetitionPenalty, in: Double.leastNonzeroMagnitude...2.0, "repetition_penalty must be in (0.0, 2.0]")
         try Self.require(thinkingBudget, in: 0...Self.maximumTokens, "thinking_budget must be in [0, \(Self.maximumTokens)]")
+        try Self.require(dryMultiplier, in: 0.0...Double.greatestFiniteMagnitude, "dry_multiplier must be >= 0")
+        try Self.require(dryBase, in: 1.0...Double.greatestFiniteMagnitude, "dry_base must be >= 1")
+        try Self.require(dryAllowedLength, in: 1...Int.max, "dry_allowed_length must be >= 1")
+        if let drySequenceBreakers, drySequenceBreakers.count > Self.maximumSequenceBreakers || drySequenceBreakers.contains(where: \.isEmpty) {
+            throw .invalidRequestStructure(details: "dry_sequence_breakers must hold at most \(Self.maximumSequenceBreakers) non-empty strings")
+        }
+        try Self.require(xtcThreshold, in: 0.0...1.0, "xtc_threshold must be in [0.0, 1.0]")
+        try Self.require(xtcProbability, in: 0.0...1.0, "xtc_probability must be in [0.0, 1.0]")
         if thinkingBudget != nil, !requestDisablesThinking, maxT - Self.thinkingAnswerReserve(maxTokens: maxT) < Self.thinkingTransitionHeadroom {
             throw .invalidRequestStructure(details:
                 "max_tokens \(maxT) cannot hold the thinking_budget transition (\(Self.thinkingTransitionHeadroom) tokens) and an answer reserve of min(512, max_tokens/4)")

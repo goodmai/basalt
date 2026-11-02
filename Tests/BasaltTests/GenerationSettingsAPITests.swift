@@ -192,6 +192,52 @@ struct GenerationSettingsAPITests {
         #expect(await engine.lastRequest?.speculativeLookup == true)
     }
 
+    @Test("DRY and XTC fields reach the engine from every chat endpoint",
+          arguments: ["/v1/chat/completions", "/v1/responses", "/v1/messages"])
+    func antiRepetitionReachesTheEngine(_ uri: String) async throws {
+        let (app, engine) = try await app()
+        try await post(app, uri, #"""
+            {"messages": [{"role": "user", "content": "hi"}], "input": "hi", "dry_multiplier": 0.8, "dry_base": 1.5,
+             "dry_allowed_length": 3, "dry_sequence_breakers": ["\n", ";"], "xtc_threshold": 0.2, "xtc_probability": 0.4}
+            """#) { #expect($0.status == .ok) }
+        let sent = try #require(await engine.lastRequest)
+        #expect(sent.dryMultiplier == 0.8 && sent.dryBase == 1.5 && sent.dryAllowedLength == 3)
+        #expect(sent.drySequenceBreakers == ["\n", ";"])
+        #expect(sent.xtcThreshold == 0.2 && sent.xtcProbability == 0.4)
+    }
+
+    @Test("The raw generate endpoint takes the DRY and XTC fields in camelCase")
+    func rawGenerateTakesAntiRepetition() async throws {
+        let (app, engine) = try await app()
+        try await post(app, "/v1/generate", #"{"prompt": "hi", "dryMultiplier": 0.8, "xtcProbability": 0.4}"#) {
+            #expect($0.status == .ok)
+        }
+        #expect(await engine.lastRequest?.dryMultiplier == 0.8)
+        #expect(await engine.lastRequest?.xtcProbability == 0.4)
+    }
+
+    @Test("An out-of-range DRY or XTC value is a 400 before a stream opens", arguments: [
+        "/v1/chat/completions", "/v1/responses", "/v1/messages",
+    ], [
+        #""dry_multiplier": -1"#, #""dry_base": 0.5"#, #""dry_allowed_length": 0"#, #""dry_sequence_breakers": [""]"#,
+        #""dry_sequence_breakers": "\n""#, #""xtc_threshold": 1.5"#, #""xtc_probability": -0.1"#,
+    ])
+    func outOfRangeAntiRepetitionIsRejected(_ uri: String, _ field: String) async throws {
+        let (app, engine) = try await app()
+        try await post(app, uri, #"""
+            {"messages": [{"role": "user", "content": "hi"}], "input": "hi", "max_tokens": 100, "stream": true, \#(field)}
+            """#) { #expect($0.status == .badRequest) }
+        #expect(await engine.lastRequest == nil)
+    }
+
+    @Test("The raw generate endpoint rejects an out-of-range DRY or XTC value",
+          arguments: [#""dryMultiplier": -1"#, #""xtcProbability": 2"#])
+    func rawGenerateRejectsOutOfRangeAntiRepetition(_ field: String) async throws {
+        let (app, engine) = try await app()
+        try await post(app, "/v1/generate", #"{"prompt": "hi", \#(field)}"#) { #expect($0.status == .badRequest) }
+        #expect(await engine.lastRequest == nil)
+    }
+
     @Test("A speculative_lookup that is not a boolean is a 400 before a stream opens",
           arguments: ["/v1/chat/completions", "/v1/responses", "/v1/messages"])
     func nonBooleanSpeculativeLookupIsRejected(_ uri: String) async throws {

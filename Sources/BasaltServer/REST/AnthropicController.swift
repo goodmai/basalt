@@ -243,7 +243,8 @@ struct AnthropicController: Sendable {
                 maxTokens: maxTokens,
                 sampling: .init(temperature: dto.temperature, topP: dto.topP, minP: dto.minP,
                                 dynamicTemperature: dto.dynamicTemperature, topK: dto.topK,
-                                speculativeLookup: dto.speculativeLookup, grammarJumpForward: dto.grammarJumpForward),
+                                speculativeLookup: dto.speculativeLookup, grammarJumpForward: dto.grammarJumpForward,
+                                antiRepetition: try pipeline.antiRepetition(in: data)),
                 reasoningEffort: Self.reasoningEffort(dto), tools: tools,
                 thinkingBudget: dto.thinking?.type == "enabled" ? dto.thinking?.budgetTokens : nil,
                 responseFormat: nil, model: dto.model, stream: dto.stream == true)

@@ -294,6 +294,18 @@ struct PromptLookupDecodingTests {
         #expect(try #require(actual.iterator.speculativeDecodingTelemetry).acceptedDraftTokenCount > 0)
     }
 
+    @Test("DRY on: lookup on and off emit the same tokens, DRY changes the output, and drafts are still accepted",
+          arguments: ["llama", "hybrid"])
+    func dryParity(family: String) throws {
+        let model = try LookupFixture.model(family)
+        func dry() -> LogitProcessor { DRYPenalty(multiplier: 0.2, allowedLength: 6, breakers: []) }
+        let expected = try LookupFixture.baseline(model, processor: dry())
+        #expect(expected != (try LookupFixture.baseline(model)))
+        let actual = try LookupFixture.lookup(model, processor: dry())
+        expectTokenSequence(actual.tokens, expected)
+        #expect(try #require(actual.iterator.speculativeDecodingTelemetry).acceptedDraftTokenCount > 0)
+    }
+
     @Test("A seeded sampler at T > 0 draws exactly the plain decoder's tokens with lookup on, with no processor or a stateful one past its warm-up, and drafts are accepted",
           arguments: ["llama", "hybrid"], ["none", "repetition", "entropy"])
     func seededSamplerParity(family: String, shaping: String) throws {
