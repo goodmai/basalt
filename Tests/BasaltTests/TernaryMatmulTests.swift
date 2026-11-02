@@ -125,3 +125,14 @@ struct TernaryMatmulBenchmark {
         }
     }
 }
+
+@Suite("Ternary matmul geometry override (#229)")
+struct TernaryMatmulGeometryTests {
+    @Test("BASALT_TERNARY_MATMUL_GEOMETRY parses rows,simdgroups,words and falls back on anything else")
+    func parse() {
+        #expect(TernaryMatmul.Geometry("2,8,4") == TernaryMatmul.Geometry(rows: 2, simdgroups: 8, words: 4))
+        #expect(TernaryMatmul.Geometry(nil) == TernaryMatmul.Geometry())
+        #expect(TernaryMatmul.Geometry("3,2,1") == TernaryMatmul.Geometry())
+        #expect(TernaryMatmul.Geometry("4,2") == TernaryMatmul.Geometry())
+    }
+}

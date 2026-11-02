@@ -4,11 +4,33 @@ import MLXNN
 
 struct TernaryMatmul: Sendable {
     static let maxRows = 4
-    static let rowsPerSimdgroup = 4
-    static let wordsPerThread = 1
-    static let simdgroups = 2
-    static let rowsPerThreadgroup = rowsPerSimdgroup * simdgroups
+    static let geometry = Geometry(ProcessInfo.processInfo.environment["BASALT_TERNARY_MATMUL_GEOMETRY"])
+    static var rowsPerSimdgroup: Int { geometry.rows }
+    static var wordsPerThread: Int { geometry.words }
+    static var simdgroups: Int { geometry.simdgroups }
+    static var rowsPerThreadgroup: Int { rowsPerSimdgroup * simdgroups }
     static let tolerance: Float = 1.0 / 256
+
+    struct Geometry: Sendable, Equatable {
+        let rows: Int
+        let simdgroups: Int
+        let words: Int
+
+        init(rows: Int = 4, simdgroups: Int = 2, words: Int = 1) {
+            self.rows = rows
+            self.simdgroups = simdgroups
+            self.words = words
+        }
+
+        init(_ spec: String?) {
+            let parts = (spec ?? "").split(separator: ",").compactMap { Int($0) }
+            guard parts.count == 3, [1, 2, 4, 8].contains(parts[0]), [1, 2, 4, 8].contains(parts[1]), [1, 2, 4, 8].contains(parts[2]) else {
+                self.init()
+                return
+            }
+            self.init(rows: parts[0], simdgroups: parts[1], words: parts[2])
+        }
+    }
 
     let inputs: Int
     let outputs: Int
