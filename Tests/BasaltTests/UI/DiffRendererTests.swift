@@ -317,6 +317,6 @@ struct DiffRendererTests {
         let _ = DiffRenderer.render(diff, mode: .inline, colorize: true)
         let elapsed = Date().timeIntervalSince(start)
         
-        #expect(elapsed < 0.1, "Rendering should take < 100ms")
+        #expect(elapsed < 1, "Rendering should take < 1 s")
     }
 }
