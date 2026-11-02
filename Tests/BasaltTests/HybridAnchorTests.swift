@@ -167,6 +167,20 @@ struct HybridAnchorTests {
         #expect(telemetry.hybridAnchorBytes == nil)
     }
 
+    @Test("A sliding-window model keeps its stable-boundary snapshot but takes no anchors: its snapshot is a whole window, not a recurrent state")
+    func slidingWindowTakesNoAnchors() async throws {
+        func snapshotCount(anchors: Int) async throws -> (count: Int, cached: Int) {
+            let engine = try await TinySliding.engine(hybridAnchors: anchors)
+            _ = try await engine.generate(request: AgentTrace.request(AgentTrace.messages(thinking: true), key: "ns"))
+            let resumed = try await engine.generate(request: AgentTrace.request(AgentTrace.messages(thinking: false), key: "ns"))
+            return (AgentTrace.snapshots(await engine.promptCaches).anchors.count, resumed.cachedPromptTokens)
+        }
+        let withAnchors = try await snapshotCount(anchors: 8)
+        let without = try await snapshotCount(anchors: 0)
+        #expect(withAnchors.count == without.count)
+        #expect(withAnchors.cached == without.cached)
+    }
+
     @Test("Anchors closer than the minimum spacing to a kept anchor or to the stable boundary are skipped")
     func closeAnchorsAreSkipped() async throws {
         let messages = AgentTrace.messages(thinking: false, firstAnswer: 100, firstTool: 100, question: 100)

@@ -127,6 +127,7 @@ public actor MLXInferenceEngine: InferenceEngine {
     private let hybridAnchors: Int
     private var modelEpoch = 0
     private var modelIsHybrid: Bool?
+    private var modelHasRecurrentState: Bool?
     private var modelRoutesExperts: Bool?
     private var templateSuffixes: [String: Int] = [:]
     private var grammarVocabulary: Result<GrammarVocabulary, ConstraintUnavailable>?
@@ -241,6 +242,7 @@ public actor MLXInferenceEngine: InferenceEngine {
         cacheBlend = cacheBlendRatio.map { CacheBlendStore(ratio: $0, byteBudget: blendBytes) }
         modelEpoch += 1
         modelIsHybrid = nil
+        modelHasRecurrentState = nil
         modelRoutesExperts = nil
         templateSuffixes = [:]
         logger.info("Prompt cache budget: \(promptCaches.byteBudget >> 20) MB")
@@ -996,7 +998,7 @@ public actor MLXInferenceEngine: InferenceEngine {
             let boundary = namespace == nil
                 ? promptTokens.count - 1
                 : await snapshotBoundary(renderedCount, container: container, epoch: epoch, template: template, makeInput)
-            let anchors = namespace != nil && drafter == nil && modelIsHybrid == true
+            let anchors = namespace != nil && drafter == nil && modelHasRecurrentState == true
                 ? await anchorOffsets(
                     anchorTurns, prompt: promptTokens, reused: reuse?.reusedTokens ?? 0, boundary: boundary,
                     container: container, tools: toolSpecs, context: context)
@@ -1307,10 +1309,14 @@ public actor MLXInferenceEngine: InferenceEngine {
         if let known = modelIsHybrid {
             hybrid = known
         } else {
-            hybrid = (try? await container.perform { PromptCache(try $0.model.newCache(parameters: nil)).isHybrid })
-                ?? false
+            let kinds = (try? await container.perform { context -> (hybrid: Bool, recurrent: Bool) in
+                let cache = try context.model.newCache(parameters: nil)
+                return (PromptCache(cache).isHybrid, cache.contains { $0 is MambaCache })
+            }) ?? (hybrid: false, recurrent: false)
+            hybrid = kinds.hybrid
             if epoch == modelEpoch {
-                modelIsHybrid = hybrid
+                modelIsHybrid = kinds.hybrid
+                modelHasRecurrentState = kinds.recurrent
             }
         }
         guard hybrid else { return count - 1 }

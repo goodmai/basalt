@@ -87,8 +87,8 @@ enum TinySliding {
         return model
     }
 
-    static func engine() async throws -> MLXInferenceEngine {
-        let engine = MLXInferenceEngine(promptCacheBytes: 1 << 30)
+    static func engine(hybridAnchors: Int = 8) async throws -> MLXInferenceEngine {
+        let engine = MLXInferenceEngine(promptCacheBytes: 1 << 30, hybridAnchors: hybridAnchors)
         await engine.attach(ModelContainer(context: ModelContext(
             configuration: ModelConfiguration(id: "tiny-gemma3"),
             model: try make(),
