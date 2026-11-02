@@ -103,6 +103,8 @@ public actor MLXInferenceEngine: InferenceEngine {
     private let gpuCacheLimit: Int?
 
     private(set) var promptCaches: PromptCacheTree
+    private var promptCacheFullBudget: Int
+    private(set) var appliedMemoryDirective = MemoryDirective.relaxed
     private var kvMemoryBudget: Int64?
     private var controlTokens = ControlTokenGuard.none
 
@@ -187,6 +189,25 @@ public actor MLXInferenceEngine: InferenceEngine {
         self.configuredPromptCacheBytes = promptCacheBytes
         self.cacheBlendRatio = cacheBlendRatio
         self.promptCaches = PromptCacheTree(byteBudget: promptCacheBytes ?? 0, anchorLimit: max(1, hybridAnchors))
+        self.promptCacheFullBudget = promptCacheBytes ?? 0
+    }
+
+    public func apply(_ directive: MemoryDirective) async -> MemoryLimits? {
+        if directive != appliedMemoryDirective {
+            if let gpuCacheLimit { Memory.cacheLimit = Self.cacheLimit(gpuCacheLimit, under: directive) }
+            if directive > appliedMemoryDirective, directive.clearsCache { Memory.clearCache() }
+            let evictedBefore = promptCaches.evictions
+            promptCaches.rebudget(Int(Double(promptCacheFullBudget) * directive.promptCacheShare))
+            logger.info("Memory directive \(appliedMemoryDirective) → \(directive): prompt cache \(promptCaches.byteBudget >> 20) MB, \(promptCaches.evictions - evictedBefore) nodes evicted")
+            appliedMemoryDirective = directive
+        }
+        return MemoryLimits(
+            cacheLimitBytes: gpuCacheLimit.map { Self.cacheLimit($0, under: appliedMemoryDirective) },
+            promptCacheBudgetBytes: promptCaches.byteBudget, promptCacheEvictions: promptCaches.evictions)
+    }
+
+    static func cacheLimit(_ relaxed: Int, under directive: MemoryDirective) -> Int {
+        Int(Double(relaxed) * directive.cacheLimitShare)
     }
 
     func probeKVZones() async {
@@ -239,6 +260,8 @@ public actor MLXInferenceEngine: InferenceEngine {
         modelPrefillsInChunks = false
         let blendBytes = cacheBlendRatio == nil ? 0 : budget / 2
         promptCaches = PromptCacheTree(byteBudget: budget - blendBytes, anchorLimit: max(1, hybridAnchors))
+        promptCacheFullBudget = budget - blendBytes
+        appliedMemoryDirective = .relaxed
         cacheBlend = cacheBlendRatio.map { CacheBlendStore(ratio: $0, byteBudget: blendBytes) }
         modelEpoch += 1
         modelIsHybrid = nil

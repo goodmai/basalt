@@ -222,6 +222,12 @@ struct ServeCommand: AsyncParsableCommand {
     @Flag(name: .customLong("no-cloud-fallback"), help: "Never switch to the cloud fallback, even if the config enables it")
     var noCloudFallback = false
 
+    @Flag(
+        name: .customLong("no-memory-coordinator"),
+        help: "Keep the load-time memory limits: do not shrink the MLX allocator cache and prompt cache, or refuse long prompts, when macOS reports memory pressure"
+    )
+    var noMemoryCoordinator = false
+
     @Option(
         name: .customLong("router-params"),
         help: "JSON with trained Bradley–Terry router parameters (strongEmbedding, weakEmbedding, weights, projection); enables the capability reason of the cloud fallback (also cloud_fallback.router_params)"
@@ -558,6 +564,7 @@ struct ServeCommand: AsyncParsableCommand {
             }
             log("\(yellow("[warn]")) \(error.localizedDescription) — running in stub mode.")
         }
+        if !noMemoryCoordinator { await orchestrator.coordinateMemory(with: MemoryCoordinator()) }
 
         if let fallback = try Self.resolveCloudFallback(
             cliModel: cloudFallback, cliBaseURL: cloudBaseURL, cliDisabled: noCloudFallback,

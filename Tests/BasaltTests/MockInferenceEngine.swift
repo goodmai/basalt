@@ -50,6 +50,14 @@ actor MockInferenceEngine: InferenceEngine {
 
     func promptTokenCount(for request: GenerationRequest) async -> Int? { mockPromptTokens }
 
+    var appliedDirectives: [MemoryDirective] = []
+
+    func apply(_ directive: MemoryDirective) async -> MemoryLimits? {
+        appliedDirectives.append(directive)
+        return MemoryLimits(cacheLimitBytes: Int(Double(512 << 20) * directive.cacheLimitShare),
+                            promptCacheBudgetBytes: Int(Double(1 << 30) * directive.promptCacheShare), promptCacheEvictions: 0)
+    }
+
     func setMockFinishReason(_ reason: GenerationResponse.FinishReason) {
         self.mockFinishReason = reason
     }

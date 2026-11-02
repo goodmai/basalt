@@ -84,12 +84,13 @@ struct PromptCacheTree: Sendable {
 
     static let maxLeaves = 4096
 
-    let byteBudget: Int
+    private(set) var byteBudget: Int
     let leafLimit: Int
     let anchorLimit: Int
     private(set) var roots: [String: PromptCacheNode] = [:]
     private(set) var byteCount = 0
     private(set) var leafCount = 0
+    private(set) var evictions = 0
     private var clock = 0
 
     init(byteBudget: Int, leafLimit: Int = PromptCacheTree.maxLeaves, anchorLimit: Int = 1) {
@@ -198,6 +199,11 @@ struct PromptCacheTree: Sendable {
         byteCount -= node.snapshot?.bytes ?? 0
         node.snapshot = nil
         merge(node)
+    }
+
+    mutating func rebudget(_ bytes: Int) {
+        byteBudget = max(0, bytes)
+        evict()
     }
 
     mutating func removeAll() {
@@ -328,6 +334,7 @@ struct PromptCacheTree: Sendable {
 
     private mutating func evict() {
         while byteCount > byteBudget || leafCount > leafLimit, let victim = evictionVictim() {
+            evictions += 1
             guard victim.children.isEmpty else {
                 dropSnapshot(victim)
                 continue

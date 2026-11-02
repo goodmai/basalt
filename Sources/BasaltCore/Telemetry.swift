@@ -23,6 +23,7 @@ public struct ServerTelemetrySnapshot: Codable, Sendable, Equatable {
     public let gpuName: String
     public var hybridAnchors: Int?
     public var hybridAnchorBytes: Int64?
+    public var memory: MemoryTelemetry?
 
     public init(
         timestamp: Date = Date(),
@@ -59,6 +60,30 @@ public struct ServerTelemetrySnapshot: Codable, Sendable, Equatable {
         let ttft = String(format: "%.2f", timeToFirstToken)
         let ram = String(format: "%.1f", availableRAMGB)
         return "[stats] \(tps) tok/s | TTFT: \(ttft)s | RAM avail: \(ram)/\(totalRAMGB) GB | Model: \(modelRAMMB) MB | GPU active: \(formatBytes(gpuActiveBytes)) (peak \(formatBytes(gpuPeakBytes))) | Active: \(activeRequests) | Requests: \(totalRequests)"
+            + (memory.map { " | \($0.formattedStats)" } ?? "")
+    }
+}
+
+public struct MemoryTelemetry: Codable, Sendable, Equatable {
+    public let pressure: MemoryPressure
+    public let availableBytes: Int64
+    public let step: MemoryDirective
+    public let limits: MemoryLimits?
+    public let refusedAdmissions: Int
+
+    public init(state: MemoryState, limits: MemoryLimits?, refusedAdmissions: Int) {
+        pressure = state.sample.pressure
+        availableBytes = state.sample.availableBytes
+        step = state.directive
+        self.limits = limits
+        self.refusedAdmissions = refusedAdmissions
+    }
+
+    var formattedStats: String {
+        let applied = limits.map {
+            ", cache limit \($0.cacheLimitBytes.map { formatBytes(Int64($0)) } ?? "MLX default"), prompt cache \(formatBytes(Int64($0.promptCacheBudgetBytes))), evicted \($0.promptCacheEvictions)"
+        } ?? ""
+        return "Memory: \(pressure.rawValue) step \(step.rawValue)\(applied), refused \(refusedAdmissions)"
     }
 }
 

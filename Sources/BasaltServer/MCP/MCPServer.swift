@@ -770,6 +770,7 @@ public final class MCPServer: Service, Sendable {
         case .modelNotCached:           return -32010
         case .modelSwitching:           return -32011
         case .serverBusy:               return -32012
+        case .memoryPressure:           return -32013
         case .modelConfigurationInvalid: return -32012
         }
     }

@@ -124,6 +124,8 @@ package enum ProviderErrorResponse: Sendable {
                 return r ?? "1"
             case .serverBusy(let s):
                 return s.map(String.init) ?? "1"
+            case .memoryPressure(let s):
+                return String(s)
             case .modelSwitching, .inferenceHardwareFailure, .outOfMemory:
                 return "1"
             default:
@@ -148,7 +150,7 @@ package enum ProviderErrorResponse: Sendable {
                 return "authentication_error"
             case .rateLimitExceeded:
                 return "rate_limit_error"
-            case .modelSwitching, .serverBusy, .inferenceHardwareFailure, .outOfMemory:
+            case .modelSwitching, .serverBusy, .memoryPressure, .inferenceHardwareFailure, .outOfMemory:
                 return "overloaded_error"
             case .weightsCorrupted, .modelInferenceError, .inferenceError:
                 return "api_error"
@@ -181,7 +183,7 @@ package enum ProviderErrorResponse: Sendable {
             case .modelNotFound, .modelNotCached, .invalidRequestStructure,
                  .modelConfigurationInvalid, .contextLengthExceeded:
                 return "invalid_request_error"
-            case .modelSwitching, .serverBusy, .inferenceHardwareFailure,
+            case .modelSwitching, .serverBusy, .memoryPressure, .inferenceHardwareFailure,
                  .outOfMemory, .weightsCorrupted, .modelInferenceError, .inferenceError:
                 return "server_error"
             }

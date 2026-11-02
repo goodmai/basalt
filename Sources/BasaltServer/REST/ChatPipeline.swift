@@ -5,7 +5,7 @@ import BasaltCore
 
 struct ChatPipeline: Sendable {
     struct Rejection: Error {
-        let response: Response
+        var response: Response
         let message: String
     }
 
@@ -149,7 +149,9 @@ struct ChatPipeline: Sendable {
 
     func admitStream(_ request: GenerationRequest) async throws {
         if let refusal = await orchestrator.admissionRefusal(for: request) {
-            throw rejection(HTTPResponse.Status(code: refusal.httpStatus, reasonPhrase: ""), ModelsController.publicMessage(for: refusal))
+            var refused = rejection(HTTPResponse.Status(code: refusal.httpStatus, reasonPhrase: ""), ModelsController.publicMessage(for: refusal))
+            if case .memoryPressure(let seconds) = refusal { refused.response.headers[.retryAfter] = String(seconds) }
+            throw refused
         }
     }
 }
