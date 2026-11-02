@@ -1,4 +1,5 @@
 import Testing
+import Synchronization
 import Foundation
 @testable import BasaltCore
 @testable import BasaltInference
@@ -15,14 +16,10 @@ struct MCPServerTests {
         let engine = MockInferenceEngine()
         let orch = ModelOrchestratorActor(engine: engine)
         
-        actor OutputCapturer {
-            var lines: [String] = []
-            func capture(_ line: String) { lines.append(line) }
-        }
         let capturer = OutputCapturer()
         
         let server = MCPServer(orchestrator: orch) { line in
-            Task { await capturer.capture(line) }
+            capturer.capture(line)
         }
         
         let request = """
@@ -31,10 +28,8 @@ struct MCPServerTests {
         
         await server.dispatch(request)
         
-        // Wait a bit for the Task in the writer closure to finish
-        try? await Task.sleep(for: .milliseconds(50))
         
-        let output = await capturer.lines
+        let output = capturer.lines
         #expect(output.count == 1)
         #expect(output[0].contains("\"jsonrpc\":\"2.0\""))
         #expect(output[0].contains("\"result\":"))
@@ -46,14 +41,10 @@ struct MCPServerTests {
         let engine = MockInferenceEngine()
         let orch = ModelOrchestratorActor(engine: engine)
         
-        actor OutputCapturer {
-            var lines: [String] = []
-            func capture(_ line: String) { lines.append(line) }
-        }
         let capturer = OutputCapturer()
         
         let server = MCPServer(orchestrator: orch) { line in
-            Task { await capturer.capture(line) }
+            capturer.capture(line)
         }
         
         let request = """
@@ -61,9 +52,8 @@ struct MCPServerTests {
         """
         
         await server.dispatch(request)
-        try? await Task.sleep(for: .milliseconds(50))
         
-        let output = await capturer.lines
+        let output = capturer.lines
         #expect(output.count == 1)
         #expect(output[0].contains("basalt_generate"))
         #expect(output[0].contains("basalt_status"))
@@ -79,19 +69,14 @@ struct MCPServerTests {
     @Test("playwright_screenshot is gone: a url carrying Python never reaches an interpreter")
     func screenshotToolIsRemoved() async throws {
         let orch = ModelOrchestratorActor(engine: MockInferenceEngine())
-        actor OutputCapturer {
-            var lines: [String] = []
-            func capture(_ line: String) { lines.append(line) }
-        }
         let capturer = OutputCapturer()
-        let server = MCPServer(orchestrator: orch) { line in Task { await capturer.capture(line) } }
+        let server = MCPServer(orchestrator: orch) { line in capturer.capture(line) }
         let marker = NSTemporaryDirectory() + "basalt-pwned-\(UUID().uuidString)"
         let url = "'); import os; os.system('touch \(marker)')#"
         let call: [String: Any] = ["jsonrpc": "2.0", "id": 9, "method": "tools/call",
                                    "params": ["name": "playwright_screenshot", "arguments": ["url": url]]]
         await server.dispatch(String(decoding: try JSONSerialization.data(withJSONObject: call), as: UTF8.self))
-        try? await Task.sleep(for: .milliseconds(200))
-        let output = await capturer.lines
+        let output = capturer.lines
         #expect(output.count == 1)
         #expect(output[0].contains("-32601"))
         #expect(!FileManager.default.fileExists(atPath: marker))
@@ -102,14 +87,10 @@ struct MCPServerTests {
         let engine = MockInferenceEngine()
         let orch = ModelOrchestratorActor(engine: engine)
         
-        actor OutputCapturer {
-            var lines: [String] = []
-            func capture(_ line: String) { lines.append(line) }
-        }
         let capturer = OutputCapturer()
         
         let server = MCPServer(orchestrator: orch) { line in
-            Task { await capturer.capture(line) }
+            capturer.capture(line)
         }
         
         let request = """
@@ -117,9 +98,8 @@ struct MCPServerTests {
         """
         
         await server.dispatch(request)
-        try? await Task.sleep(for: .milliseconds(50))
         
-        let output = await capturer.lines
+        let output = capturer.lines
         #expect(output.count == 1)
         #expect(output[0].contains("status=initializing")) // because it's not loaded in mock yet
     }
@@ -131,7 +111,7 @@ struct MCPServerTests {
         
         let capturer = OutputCapturer()
         let server = MCPServer(orchestrator: orch) { line in
-            Task { await capturer.capture(line) }
+            capturer.capture(line)
         }
         
         let request = """
@@ -139,9 +119,8 @@ struct MCPServerTests {
         """
         
         await server.dispatch(request)
-        try? await Task.sleep(for: .milliseconds(50))
         
-        let output = await capturer.lines
+        let output = capturer.lines
         #expect(output.count == 1)
         #expect(output[0].contains("status"))
         #expect(output[0].contains("ready"))
@@ -156,14 +135,13 @@ struct MCPServerTests {
 
         let capturer = OutputCapturer()
         let server = MCPServer(orchestrator: orch) { line in
-            Task { await capturer.capture(line) }
+            capturer.capture(line)
         }
         await server.dispatch("""
         {"jsonrpc": "2.0", "id": 11, "method": "tools/call", "params": {"name": "status", "arguments": {"modelId": "org/other-model"}}}
         """)
-        try? await Task.sleep(for: .milliseconds(50))
 
-        let output = await capturer.lines
+        let output = capturer.lines
         #expect(output.count == 1)
         let outer = try #require(try JSONSerialization.jsonObject(with: Data(output[0].utf8)) as? [String: Any])
         let content = try #require((outer["result"] as? [String: Any])?["content"] as? [[String: Any]])
@@ -180,11 +158,10 @@ struct MCPServerTests {
         for args in [#""not json at all""#, "[1, 2]", "42"] {
             let capturer = OutputCapturer()
             let server = MCPServer(orchestrator: orch) { line in
-                Task { await capturer.capture(line) }
+                capturer.capture(line)
             }
             await server.dispatch(#"{"jsonrpc": "2.0", "id": 5, "method": "tools/call", "params": {"name": "inspect_model", "arguments": "# + args + "}}")
-            try? await Task.sleep(for: .milliseconds(50))
-            let output = await capturer.lines
+            let output = capturer.lines
             #expect(output.count == 1)
             #expect(output.first?.contains("-32602") == true, "\(args): \(output)")
         }
@@ -197,7 +174,7 @@ struct MCPServerTests {
         
         let capturer = OutputCapturer()
         let server = MCPServer(orchestrator: orch) { line in
-            Task { await capturer.capture(line) }
+            capturer.capture(line)
         }
         
         let request = """
@@ -205,9 +182,8 @@ struct MCPServerTests {
         """
         
         await server.dispatch(request)
-        try? await Task.sleep(for: .milliseconds(50))
         
-        let output = await capturer.lines
+        let output = capturer.lines
         #expect(output.count == 1)
         #expect(output[0].contains("totalRAMGB"))
         #expect(output[0].contains("availableRAMBytes"))
@@ -221,7 +197,7 @@ struct MCPServerTests {
         
         let capturer = OutputCapturer()
         let server = MCPServer(orchestrator: orch) { line in
-            Task { await capturer.capture(line) }
+            capturer.capture(line)
         }
 
         // Create temporary valid dummy model dir
@@ -249,9 +225,8 @@ struct MCPServerTests {
         """
         
         await server.dispatch(request)
-        try? await Task.sleep(for: .milliseconds(100))
         
-        let output = await capturer.lines
+        let output = capturer.lines
         #expect(output.count == 1)
         #expect(output[0].contains("intact"))
         #expect(output[0].contains("detectedBitWidth"))
@@ -266,14 +241,13 @@ struct MCPServerTests {
         let orch = ModelOrchestratorActor(engine: MockInferenceEngine())
         let capturer = OutputCapturer()
         let server = MCPServer(orchestrator: orch) { line in
-            Task { await capturer.capture(line) }
+            capturer.capture(line)
         }
         await server.dispatch("""
         {"jsonrpc": "2.0", "id": 14, "method": "tools/call", "params": {"name": "switch_model", "arguments": {"modelId": "\(dir.path)"}}}
         """)
-        try? await Task.sleep(for: .milliseconds(50))
         #expect(await orch.currentModelId == dir.path)
-        #expect(await capturer.lines.first?.contains("Successfully switched") == true)
+        #expect(capturer.lines.first?.contains("Successfully switched") == true)
     }
 
     @Test("tools/call (switch_model) fails with error code when model is not cached")
@@ -283,7 +257,7 @@ struct MCPServerTests {
         
         let capturer = OutputCapturer()
         let server = MCPServer(orchestrator: orch) { line in
-            Task { await capturer.capture(line) }
+            capturer.capture(line)
         }
         
         let request = """
@@ -291,9 +265,8 @@ struct MCPServerTests {
         """
         
         await server.dispatch(request)
-        try? await Task.sleep(for: .milliseconds(50))
         
-        let output = await capturer.lines
+        let output = capturer.lines
         #expect(output.count == 1)
         #expect(output[0].contains("-32010")) // modelNotCached code
     }
@@ -304,13 +277,12 @@ struct MCPServerTests {
     func testInvalidJSON() async throws {
         let capturer = OutputCapturer()
         let server = MCPServer(orchestrator: ModelOrchestratorActor(engine: MockInferenceEngine())) { line in
-            Task { await capturer.capture(line) }
+            capturer.capture(line)
         }
         
         await server.dispatch("not a json")
-        try? await Task.sleep(for: .milliseconds(50))
         
-        let output = await capturer.lines
+        let output = capturer.lines
         #expect(output.count == 1)
         #expect(output[0].contains("-32700")) // Parse error code
     }
@@ -319,15 +291,14 @@ struct MCPServerTests {
     func testUnknownMethod() async throws {
         let capturer = OutputCapturer()
         let server = MCPServer(orchestrator: ModelOrchestratorActor(engine: MockInferenceEngine())) { line in
-            Task { await capturer.capture(line) }
+            capturer.capture(line)
         }
         
         await server.dispatch("""
         {"jsonrpc": "2.0", "id": 99, "method": "unknown/method", "params": {}}
         """)
-        try? await Task.sleep(for: .milliseconds(50))
         
-        let output = await capturer.lines
+        let output = capturer.lines
         #expect(output.count == 1)
         #expect(output[0].contains("-32601")) // Method not found
     }
@@ -336,15 +307,14 @@ struct MCPServerTests {
     func testMissingToolName() async throws {
         let capturer = OutputCapturer()
         let server = MCPServer(orchestrator: ModelOrchestratorActor(engine: MockInferenceEngine())) { line in
-            Task { await capturer.capture(line) }
+            capturer.capture(line)
         }
 
         await server.dispatch("""
         {"jsonrpc": "2.0", "id": 100, "method": "tools/call", "params": {"arguments": {}}}
         """)
-        try? await Task.sleep(for: .milliseconds(50))
 
-        let output = await capturer.lines
+        let output = capturer.lines
         #expect(output[0].contains("-32602")) // Invalid params
     }
 
@@ -358,7 +328,7 @@ struct MCPServerTests {
 
         let capturer = OutputCapturer()
         let server = MCPServer(orchestrator: orch) { line in
-            Task { await capturer.capture(line) }
+            capturer.capture(line)
         }
 
         let request = """
@@ -366,9 +336,8 @@ struct MCPServerTests {
         """
 
         await server.dispatch(request)
-        try? await Task.sleep(for: .milliseconds(100))
 
-        let output = await capturer.lines
+        let output = capturer.lines
         #expect(output.count >= 1)
         #expect(output[0].contains("\"result\""))
         #expect(output[0].contains("content"))
@@ -410,16 +379,21 @@ struct MCPServerTests {
         try await orch.loadModel(path: "test-model")
         let capturer = OutputCapturer()
         let server = MCPServer(orchestrator: orch) { line in
-            Task { await capturer.capture(line) }
+            capturer.capture(line)
         }
         await server.dispatch(#"{"jsonrpc": "2.0", "id": 7, "method": "tools/call", "params": {"name": "gemma_generate", "arguments": {"prompt": "Hello", "speculativeLookup": \#(value)}}}"#)
-        try? await Task.sleep(for: .milliseconds(50))
-        #expect(await capturer.lines.first?.contains("-32602") == true)
+        #expect(capturer.lines.first?.contains("-32602") == true)
         #expect(await engine.lastRequest == nil)
     }
 
-    private actor OutputCapturer {
-        var lines: [String] = []
-        func capture(_ line: String) { lines.append(line) }
+}
+
+final class OutputCapturer: Sendable {
+    private let captured = Mutex<[String]>([])
+
+    func capture(_ line: String) {
+        captured.withLock { $0.append(line) }
     }
+
+    var lines: [String] { captured.withLock { $0 } }
 }
