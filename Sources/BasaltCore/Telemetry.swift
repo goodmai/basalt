@@ -21,6 +21,8 @@ public struct ServerTelemetrySnapshot: Codable, Sendable, Equatable {
     public let modelRAMMB: Int
     public let chipModel: String
     public let gpuName: String
+    public var hybridAnchors: Int?
+    public var hybridAnchorBytes: Int64?
 
     public init(
         timestamp: Date = Date(),

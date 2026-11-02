@@ -107,6 +107,11 @@ public actor MLXInferenceEngine: InferenceEngine {
     private var controlTokens = ControlTokenGuard.none
 
     public var kvMemoryBudgetBytes: Int64? { kvMemoryBudget }
+    public var hybridAnchorUsage: (count: Int, bytes: Int64)? {
+        guard modelIsHybrid == true else { return nil }
+        let usage = promptCaches.anchorUsage
+        return (usage.count, Int64(usage.bytes))
+    }
     public var supportsKVZones: Bool { modelAttendsThroughZones }
     public var supportsKVEviction: Bool { modelPrefillsInChunks }
     private var modelAttendsThroughZones = false
@@ -119,8 +124,10 @@ public actor MLXInferenceEngine: InferenceEngine {
         return await container.perform { $0.tokenizer.encode(text: text, addSpecialTokens: false).count }
     }
     private let configuredPromptCacheBytes: Int?
+    private let hybridAnchors: Int
     private var modelEpoch = 0
     private var modelIsHybrid: Bool?
+    private var modelHasRecurrentState: Bool?
     private var modelRoutesExperts: Bool?
     private var templateSuffixes: [String: Int] = [:]
     private var grammarVocabulary: Result<GrammarVocabulary, ConstraintUnavailable>?
@@ -158,8 +165,10 @@ public actor MLXInferenceEngine: InferenceEngine {
         mtp: Bool = false,
         experimentalSamplers: Bool = false,
         grammarJumpForward: Bool = false,
-        promptCacheDisk: PromptCacheDiskStore? = nil
+        promptCacheDisk: PromptCacheDiskStore? = nil,
+        hybridAnchors: Int = 8
     ) {
+        self.hybridAnchors = hybridAnchors
         self.promptCacheDisk = promptCacheDisk
         self.speculativeLookup = speculativeLookup
         self.speculativeRecycling = speculativeRecycling
@@ -177,7 +186,7 @@ public actor MLXInferenceEngine: InferenceEngine {
         self.seed = seed
         self.configuredPromptCacheBytes = promptCacheBytes
         self.cacheBlendRatio = cacheBlendRatio
-        self.promptCaches = PromptCacheTree(byteBudget: promptCacheBytes ?? 0)
+        self.promptCaches = PromptCacheTree(byteBudget: promptCacheBytes ?? 0, anchorLimit: max(1, hybridAnchors))
     }
 
     func probeKVZones() async {
@@ -229,10 +238,11 @@ public actor MLXInferenceEngine: InferenceEngine {
         modelAttendsThroughZones = false
         modelPrefillsInChunks = false
         let blendBytes = cacheBlendRatio == nil ? 0 : budget / 2
-        promptCaches = PromptCacheTree(byteBudget: budget - blendBytes)
+        promptCaches = PromptCacheTree(byteBudget: budget - blendBytes, anchorLimit: max(1, hybridAnchors))
         cacheBlend = cacheBlendRatio.map { CacheBlendStore(ratio: $0, byteBudget: blendBytes) }
         modelEpoch += 1
         modelIsHybrid = nil
+        modelHasRecurrentState = nil
         modelRoutesExperts = nil
         templateSuffixes = [:]
         logger.info("Prompt cache budget: \(promptCaches.byteBudget >> 20) MB")
@@ -888,6 +898,7 @@ public actor MLXInferenceEngine: InferenceEngine {
             $0.isEmpty ? nil : profile.turns(controlTokens.neutralize($0), for: policy)
         }
         var lastText: String
+        var anchorTurns: [ChatMessageInput] = []
         let templateContext = profile.templateContext(for: policy)
         let context = templateContext.isEmpty ? nil : templateContext
         if turns == nil, request.prompt.contains("<|turn|>") || request.prompt.contains("<|channel|>") {
@@ -895,9 +906,9 @@ public actor MLXInferenceEngine: InferenceEngine {
             template = "raw"
             lastText = request.prompt
         } else {
+            anchorTurns = turns ?? profile.turns(controlTokens.neutralize([ChatMessageInput(role: .user, text: request.prompt)]), for: policy)
             (makeInput, template, lastText) = Self.chatInput(
-                turns ?? profile.turns(controlTokens.neutralize([ChatMessageInput(role: .user, text: request.prompt)]), for: policy),
-                normalisation: "native", tools: toolSpecs, context: context)
+                anchorTurns, normalisation: "native", tools: toolSpecs, context: context)
         }
 
         do {
@@ -922,6 +933,7 @@ public actor MLXInferenceEngine: InferenceEngine {
                 var previous = turns
                 for (step, messages) in Self.templateFallbacks(turns ?? []) where prepared == nil && messages != previous {
                     previous = messages
+                    anchorTurns = messages
                     (makeInput, template, lastText) = Self.chatInput(
                         messages, normalisation: step, tools: toolSpecs, context: context)
                     do {
@@ -986,6 +998,11 @@ public actor MLXInferenceEngine: InferenceEngine {
             let boundary = namespace == nil
                 ? promptTokens.count - 1
                 : await snapshotBoundary(renderedCount, container: container, epoch: epoch, template: template, makeInput)
+            let anchors = namespace != nil && drafter == nil && modelHasRecurrentState == true
+                ? await anchorOffsets(
+                    anchorTurns, prompt: promptTokens, reused: reuse?.reusedTokens ?? 0, boundary: boundary,
+                    container: container, tools: toolSpecs, context: context)
+                : []
             let blend = epoch == modelEpoch && modelIsHybrid == false ? cacheBlend : nil
             let masked = Self.constraining(
                 components, with: constraint,
@@ -1001,7 +1018,7 @@ public actor MLXInferenceEngine: InferenceEngine {
             do {
                 launch = try await container.perform(nonSendable: lmInput) { context, input in
                     try Self.launch(
-                        input: input, reuse: reuse, fork: fork, keepsCache: namespace != nil, boundary: boundary,
+                        input: input, reuse: reuse, cuts: (fork.map { [$0] } ?? []) + anchors, keepsCache: namespace != nil, boundary: boundary,
                         blend: namespace.flatMap { space in blend.map { ($0, space) } },
                         params: params, components: constrained, tools: forcedTool == nil ? toolSpecs : nil,
                         context: context, speculativeLookup: speculativeLookup, speculativeRecycling: speculativeRecycling,
@@ -1150,7 +1167,7 @@ public actor MLXInferenceEngine: InferenceEngine {
                     await Self.settle(launch, cancelled: !completed)
                     if completed, let session = constraint?.session { await self.recycle(session, epoch: epoch) }
                     await self.keep(
-                        launch.cache, fork: launch.fork, tokens: Array(promptTokens.prefix(launch.exactTokens)),
+                        launch.cache, anchors: launch.anchors, tokens: Array(promptTokens.prefix(launch.exactTokens)),
                         namespace: namespace, releasing: leaseSlot, epoch: epoch)
                     if !Task.isCancelled {
                         let generationTime = (clock.now - startTime).inSeconds + launch.prefillSeconds
@@ -1229,7 +1246,7 @@ public actor MLXInferenceEngine: InferenceEngine {
         let stream: AsyncStream<Generation>
         let task: Task<Void, Never>?
         let cache: PromptCache?
-        var fork: PromptCache? = nil
+        var anchors: [PromptCache] = []
         let reusedTokens: Int
         var exactTokens = Int.max
         var prefillSeconds: TimeInterval = 0
@@ -1292,10 +1309,14 @@ public actor MLXInferenceEngine: InferenceEngine {
         if let known = modelIsHybrid {
             hybrid = known
         } else {
-            hybrid = (try? await container.perform { PromptCache(try $0.model.newCache(parameters: nil)).isHybrid })
-                ?? false
+            let kinds = (try? await container.perform { context -> (hybrid: Bool, recurrent: Bool) in
+                let cache = try context.model.newCache(parameters: nil)
+                return (PromptCache(cache).isHybrid, cache.contains { $0 is MambaCache })
+            }) ?? (hybrid: false, recurrent: false)
+            hybrid = kinds.hybrid
             if epoch == modelEpoch {
-                modelIsHybrid = hybrid
+                modelIsHybrid = kinds.hybrid
+                modelHasRecurrentState = kinds.recurrent
             }
         }
         guard hybrid else { return count - 1 }
@@ -1310,6 +1331,26 @@ public actor MLXInferenceEngine: InferenceEngine {
             templateSuffixes[template] = suffix
         }
         return count - suffix
+    }
+
+    private func anchorOffsets(
+        _ turns: [ChatMessageInput], prompt: [Int], reused: Int, boundary: Int,
+        container: ModelContainer, tools: [ToolSpec]?, context: [String: any Sendable]?
+    ) async -> [Int] {
+        var found: [Int] = []
+        let spacing = HybridPrefixSnapshot.minAnchorSpacing
+        guard boundary - reused >= 2 * spacing else { return found }
+        for prefix in HybridPrefixSnapshot.anchorPrefixes(turns) where found.count < hybridAnchors {
+            guard let rendered = try? await container.prepare(
+                input: UserInput(chat: Self.chat(prefix, lastText: prefix.last?.text ?? ""), tools: tools, additionalContext: context))
+            else { continue }
+            let offset = zip(prompt, rendered.text.tokens.asArray(Int.self)).prefix { $0 == $1 }.count
+            guard offset - reused >= spacing else { break }
+            if boundary - offset >= spacing, found.allSatisfy({ abs($0 - offset) >= spacing }) {
+                found.append(offset)
+            }
+        }
+        return found
     }
 
     private func promptCacheNamespace(for request: GenerationRequest) -> String? {
@@ -1379,13 +1420,16 @@ public actor MLXInferenceEngine: InferenceEngine {
     }
 
     private func keep(
-        _ cache: PromptCache?, fork: PromptCache? = nil, tokens: [Int], namespace: String?,
+        _ cache: PromptCache?, anchors: [PromptCache] = [], tokens: [Int], namespace: String?,
         releasing lease: PromptCacheLeaseSlot, epoch: Int
     ) {
         _ = lease.take()
         guard epoch == modelEpoch, let namespace else { return }
-        if let fork {
-            promptCaches.store(namespace, tokens: Array(tokens.prefix(fork.tokenCount)), cache: fork)
+        for anchor in anchors {
+            promptCaches.store(namespace, tokens: Array(tokens.prefix(anchor.tokenCount)), cache: anchor)
+        }
+        if let bytes = anchors.first.flatMap(RecurrentSnapshot.init(of:))?.bytes {
+            logger.info("Recurrent snapshots before the boundary at prompt tokens \(anchors.map(\.tokenCount)): \(bytes >> 10) KB each")
         }
         if let cache {
             promptCaches.store(namespace, tokens: Array(tokens.prefix(cache.tokenCount)), cache: cache)
@@ -1402,7 +1446,7 @@ public actor MLXInferenceEngine: InferenceEngine {
     }
 
     static func launch(
-        input: LMInput, reuse: (cache: PromptCache, reusedTokens: Int)?, fork: Int? = nil, keepsCache: Bool, boundary: Int,
+        input: LMInput, reuse: (cache: PromptCache, reusedTokens: Int)?, cuts: [Int] = [], keepsCache: Bool, boundary: Int,
         blend: (store: CacheBlendStore, namespace: String)? = nil,
         params: GenerateParameters, components: GenerationComponents,
         tools: [ToolSpec]?, context: ModelContext, speculativeLookup: Bool = false, speculativeRecycling: Bool = false,
@@ -1466,9 +1510,9 @@ public actor MLXInferenceEngine: InferenceEngine {
             BasaltLogger(module: "CacheBlend").info(
                 "Blended \(blended.tokens) prompt tokens: \(blended.reused) from cached chunks, \(blended.recomputed) of them recomputed")
         }
-        let head = try blended.map { (fork: nil as PromptCache?, kept: $0.cache as PromptCache?, start: reused + $0.tokens, state: $0.cache.state) }
+        let head = try blended.map { (anchors: [PromptCache](), kept: $0.cache as PromptCache?, start: reused + $0.tokens, state: $0.cache.state) }
             ?? HybridPrefixSnapshot.prefillHead(
-                input.text.tokens, into: cache, reused: reused, fork: fork, boundary: boundary, model: context.model, prefill: params.prefill)
+                input.text.tokens, into: cache, reused: reused, cuts: cuts, boundary: boundary, model: context.model, prefill: params.prefill)
         let tail = LMInput(tokens: input.text.tokens[.ellipsis, head.start...])
         let processor = components.makeProcessor(parameters: params).map {
             PromptAnchoredProcessor(base: $0, prompt: input.text.tokens)
@@ -1479,7 +1523,7 @@ public actor MLXInferenceEngine: InferenceEngine {
                 promptTokenCount: input.text.tokens.dim(-1) - reused, modelConfiguration: context.configuration,
                 tokenizer: context.tokenizer, iterator: iterator, tools: tools, toolCallPolicy: params.toolCallPolicy)
             return GenerationLaunch(
-                stream: stream, task: task, cache: keepable ? head.kept : nil, fork: keepable ? head.fork : nil,
+                stream: stream, task: task, cache: keepable ? head.kept : nil, anchors: keepable ? head.anchors : [],
                 reusedTokens: reused, exactTokens: blended?.exactPrefix ?? Int.max, prefillSeconds: prefill)
         }
         if (speculativeLookup || grammarJumpForward), PromptLookupTokenIterator.supports(cache.layers, routesExperts: routesExperts) {

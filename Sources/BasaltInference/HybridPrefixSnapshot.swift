@@ -1,6 +1,7 @@
 import Foundation
 import MLX
 import MLXLMCommon
+import BasaltCore
 
 extension KVCache {
     var isSnapshotOnly: Bool {
@@ -50,11 +51,11 @@ struct RecurrentSnapshot {
 
 enum HybridPrefixSnapshot {
     static func prefillHead(
-        _ prompt: MLXArray, into cache: PromptCache, reused: Int, fork: Int? = nil, boundary: Int,
+        _ prompt: MLXArray, into cache: PromptCache, reused: Int, cuts: [Int] = [], boundary: Int,
         model: any LanguageModel, prefill: PrefillParameters
-    ) throws -> (fork: PromptCache?, kept: PromptCache?, start: Int, state: LMOutput.State?) {
-        guard cache.isHybrid else { return (nil, cache, reused, cache.state) }
-        guard boundary > reused, boundary < prompt.dim(-1) else { return (nil, nil, reused, cache.state) }
+    ) throws -> (anchors: [PromptCache], kept: PromptCache?, start: Int, state: LMOutput.State?) {
+        guard cache.isHybrid else { return ([], cache, reused, cache.state) }
+        guard boundary > reused, boundary < prompt.dim(-1) else { return ([], nil, reused, cache.state) }
         var state = cache.state
         func advance(_ range: Range<Int>) throws -> PromptCache {
             let slice = LMInput(tokens: prompt[.ellipsis, range])
@@ -69,12 +70,26 @@ enum HybridPrefixSnapshot {
             eval(cache.layers.flatMap { $0.innerState() })
             return cache.snapshot(at: range.upperBound, state: state)
         }
-        if let fork, fork > reused, fork < boundary {
-            let forked = try advance(reused ..< fork)
-            let kept = try advance(fork ..< boundary)
-            return (forked, kept, boundary, state)
+        var start = reused
+        var anchors: [PromptCache] = []
+        for cut in cuts.sorted() where cut > start && cut < boundary {
+            anchors.append(try advance(start ..< cut))
+            start = cut
         }
-        return (nil, try advance(reused ..< boundary), boundary, state)
+        return (anchors, try advance(start ..< boundary), boundary, state)
+    }
+
+    static let minAnchorSpacing = 512
+
+    static func anchorPrefixes(_ turns: [ChatMessageInput]) -> [[ChatMessageInput]] {
+        turns.indices.dropFirst().reversed().flatMap { index -> [[ChatMessageInput]] in
+            let head = Array(turns[..<index])
+            let opensAssistant = turns[index].role == .assistant || turns[index - 1].role == .tool
+            let reasoning = turns[index].role == .assistant
+                ? MLXInferenceEngine.firstMarker(MLXInferenceEngine.strayThinkingClosers, in: turns[index].text) : nil
+            return (opensAssistant ? [head] : [])
+                + (reasoning.map { [head + [ChatMessageInput(role: .assistant, text: String(turns[index].text[..<$0.upperBound]))]] } ?? [])
+        }
     }
 
     static func templateSuffixLength(_ container: ModelContainer, _ makeInput: @Sendable (String) -> UserInput) async -> Int {

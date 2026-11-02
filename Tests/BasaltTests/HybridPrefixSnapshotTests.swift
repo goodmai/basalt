@@ -36,8 +36,8 @@ enum TinyHybrid {
         return model
     }
 
-    static func engine(promptCacheBytes: Int? = nil, vision: Bool = false) async throws -> MLXInferenceEngine {
-        let engine = MLXInferenceEngine(promptCacheBytes: promptCacheBytes)
+    static func engine(promptCacheBytes: Int? = nil, vision: Bool = false, hybridAnchors: Int = 8) async throws -> MLXInferenceEngine {
+        let engine = MLXInferenceEngine(promptCacheBytes: promptCacheBytes, hybridAnchors: hybridAnchors)
         await engine.attach(ModelContainer(context: ModelContext(
             configuration: ModelConfiguration(id: "tiny-qwen35"),
             model: vision ? try makeVision() : try make(),
@@ -87,8 +87,8 @@ enum TinySliding {
         return model
     }
 
-    static func engine() async throws -> MLXInferenceEngine {
-        let engine = MLXInferenceEngine(promptCacheBytes: 1 << 30)
+    static func engine(hybridAnchors: Int = 8) async throws -> MLXInferenceEngine {
+        let engine = MLXInferenceEngine(promptCacheBytes: 1 << 30, hybridAnchors: hybridAnchors)
         await engine.attach(ModelContainer(context: ModelContext(
             configuration: ModelConfiguration(id: "tiny-gemma3"),
             model: try make(),
@@ -344,8 +344,8 @@ struct HybridPrefixSnapshotTests {
         #expect(fork == shared)
         let head = try HybridPrefixSnapshot.prefillHead(
             MLXArray(second.map(Int32.init)), into: PromptCache(try model.newCache(parameters: nil)),
-            reused: 0, fork: fork, boundary: second.count - 1, model: model, prefill: PrefillParameters(stepSize: 16))
-        let forkCache = try #require(head.fork)
+            reused: 0, cuts: [fork], boundary: second.count - 1, model: model, prefill: PrefillParameters(stepSize: 16))
+        let forkCache = try #require(head.anchors.first)
         let keptCache = try #require(head.kept)
         #expect(forkCache.tokenCount == shared)
         #expect(forkCache.isSnapshot(of: shared))

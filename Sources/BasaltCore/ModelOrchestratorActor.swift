@@ -413,7 +413,11 @@ public actor ModelOrchestratorActor {
     // MARK: — Telemetry
 
     public func telemetrySnapshot() async -> ServerTelemetrySnapshot {
-        await telemetry.snapshot()
+        var snapshot = await telemetry.snapshot()
+        let anchors = await engine.hybridAnchorUsage
+        snapshot.hybridAnchors = anchors?.count
+        snapshot.hybridAnchorBytes = anchors?.bytes
+        return snapshot
     }
 
     // MARK: — Model catalogue

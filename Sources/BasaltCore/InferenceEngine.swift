@@ -11,6 +11,7 @@ public protocol InferenceEngine: Sendable {
     var kvMemoryBudgetBytes: Int64? { get async }
     var supportsKVZones: Bool { get async }
     var supportsKVEviction: Bool { get async }
+    var hybridAnchorUsage: (count: Int, bytes: Int64)? { get async }
     func promptTokenCount(for request: GenerationRequest) async -> Int?
     func persistPromptCache(within deadline: Duration) async
 }
@@ -19,6 +20,7 @@ extension InferenceEngine {
     public var kvMemoryBudgetBytes: Int64? { get async { nil } }
     public var supportsKVZones: Bool { get async { true } }
     public var supportsKVEviction: Bool { get async { true } }
+    public var hybridAnchorUsage: (count: Int, bytes: Int64)? { get async { nil } }
     public func promptTokenCount(for request: GenerationRequest) async -> Int? { nil }
     public func persistPromptCache(within deadline: Duration) async {}
 }
