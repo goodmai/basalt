@@ -149,6 +149,8 @@ public actor MLXInferenceEngine: InferenceEngine {
     private var modelDescription = ""
     private var modelCacheLayout: [String]?
     private var modelSupportsMultiTokenForward: Bool?
+    private let batchSlots: Int
+    private var batchDecoder: BatchedDecoder?
 
     public init(
         reasoningEffort: String? = nil,
@@ -168,9 +170,11 @@ public actor MLXInferenceEngine: InferenceEngine {
         experimentalSamplers: Bool = false,
         grammarJumpForward: Bool = false,
         promptCacheDisk: PromptCacheDiskStore? = nil,
-        hybridAnchors: Int = 8
+        hybridAnchors: Int = 8,
+        batchSlots: Int = 1
     ) {
         self.hybridAnchors = hybridAnchors
+        self.batchSlots = max(1, batchSlots)
         self.promptCacheDisk = promptCacheDisk
         self.speculativeLookup = speculativeLookup
         self.speculativeRecycling = speculativeRecycling
@@ -246,6 +250,7 @@ public actor MLXInferenceEngine: InferenceEngine {
         self.modelDescription = modelDescription
         modelCacheLayout = nil
         modelSupportsMultiTokenForward = nil
+        batchDecoder = nil
         self.controlTokens = controlTokens
         grammarVocabulary = nil
         sequenceBreakers = nil
@@ -351,6 +356,7 @@ public actor MLXInferenceEngine: InferenceEngine {
             if container != nil {
                 await persistPromptCache(within: Self.modelSwitchPersistDeadline)
                 container = nil
+                batchDecoder = nil
                 mtpDrafter = nil
                 promptCaches.removeAll()
                 cacheBlend = nil
@@ -773,6 +779,10 @@ public actor MLXInferenceEngine: InferenceEngine {
         return loaded
     }
 
+    static func batchStopTokens(_ context: ModelContext) -> Set<Int> {
+        stopTokenIds(context).union(context.tokenizer.unknownTokenId.map { [$0] } ?? [])
+    }
+
     static func stopTokenIds(_ context: ModelContext) -> Set<Int> {
         var ids = context.configuration.eosTokenIds
         if let eos = context.tokenizer.eosTokenId { ids.insert(eos) }
@@ -1038,12 +1048,16 @@ public actor MLXInferenceEngine: InferenceEngine {
             let forcedTool = constraint?.toolName
             let jumpForward = constraint?.fastForward == true
             let expertRouting = (speculativeLookup || jumpForward) ? await routesExperts(container, epoch: epoch) : true
+            let blending = namespace.flatMap { space in blend.map { ($0, space) } }
+            let batchable = constraint == nil && request.toolChoice?.forcedTool == nil && !speculativeLookup && drafter == nil
+                && blending == nil && params.kvBits == nil && zonedPrecision == nil && !carriesMoreThanTokens
+            let batch = batchable ? await batchedDecoder(container, epoch: epoch) : nil
             let launch: GenerationLaunch
             do {
                 launch = try await container.perform(nonSendable: lmInput) { context, input in
                     try Self.launch(
                         input: input, reuse: reuse, cuts: (fork.map { [$0] } ?? []) + anchors, keepsCache: namespace != nil, boundary: boundary,
-                        blend: namespace.flatMap { space in blend.map { ($0, space) } },
+                        blend: blending, batch: batch,
                         params: params, components: constrained, tools: forcedTool == nil ? toolSpecs : nil,
                         context: context, speculativeLookup: speculativeLookup, speculativeRecycling: speculativeRecycling,
                         grammarJumpForward: jumpForward,
@@ -1304,6 +1318,19 @@ public actor MLXInferenceEngine: InferenceEngine {
         await launch.task?.value
     }
 
+    private func batchedDecoder(_ container: ModelContainer, epoch: Int) async -> BatchedDecoder? {
+        guard batchSlots > 1, epoch == modelEpoch else { return nil }
+        if let batchDecoder { return batchDecoder }
+        let slots = batchSlots
+        let made = await container.perform { BatchedDecoder(model: $0.model, slots: slots) }
+        guard epoch == modelEpoch else { return nil }
+        if let batchDecoder { return batchDecoder }
+        batchDecoder = made
+        return made
+    }
+
+    var batchedRows: Int { batchDecoder?.admittedRows ?? 0 }
+
     private func routesExperts(_ container: ModelContainer, epoch: Int) async -> Bool {
         if epoch == modelEpoch, let known = modelRoutesExperts { return known }
         let routes = await container.perform { PromptLookupTokenIterator.routesExperts($0.model) }
@@ -1471,7 +1498,7 @@ public actor MLXInferenceEngine: InferenceEngine {
 
     static func launch(
         input: LMInput, reuse: (cache: PromptCache, reusedTokens: Int)?, cuts: [Int] = [], keepsCache: Bool, boundary: Int,
-        blend: (store: CacheBlendStore, namespace: String)? = nil,
+        blend: (store: CacheBlendStore, namespace: String)? = nil, batch: BatchedDecoder? = nil,
         params: GenerateParameters, components: GenerationComponents,
         tools: [ToolSpec]?, context: ModelContext, speculativeLookup: Bool = false, speculativeRecycling: Bool = false,
         grammarJumpForward: Bool = false,
@@ -1496,6 +1523,20 @@ public actor MLXInferenceEngine: InferenceEngine {
                     promptTokenCount: input.text.tokens.dim(-1), modelConfiguration: context.configuration,
                     tokenizer: context.tokenizer, iterator: iterator, tools: tools, toolCallPolicy: zoned.params.toolCallPolicy)
                 return GenerationLaunch(stream: stream, task: task, cache: nil, reusedTokens: 0, prefillSeconds: prefill)
+            }
+            if let batch, let layers = BatchedTokenIterator.plainLayers(try context.model.newCache(parameters: params)),
+               let seat = batch.seat() {
+                try components.validate(parameters: params)
+                let iterator = try BatchedTokenIterator(
+                    input: input, model: context.model, layers: layers, processor: components.logitProcessor(parameters: params),
+                    sampler: params.sampler(), prefill: params.prefill, maxTokens: params.maxTokens,
+                    stopTokens: batchStopTokens(context), seat: seat)
+                let prefillTime = iterator.promptPrefillTime
+                let (stream, task, prefill) = Self.handOff(
+                    promptTokenCount: input.text.tokens.dim(-1), modelConfiguration: context.configuration,
+                    tokenizer: context.tokenizer, iterator: iterator, tools: tools, toolCallPolicy: params.toolCallPolicy)
+                return GenerationLaunch(
+                    stream: stream, task: task, cache: nil, reusedTokens: 0, prefillSeconds: prefillTime + prefill)
             }
             let usesPromptLookupIterator = (speculativeLookup || grammarJumpForward)
             let fresh = usesPromptLookupIterator && params.kvBits == nil && !carriesMoreThanTokens(input)
@@ -1549,6 +1590,11 @@ public actor MLXInferenceEngine: InferenceEngine {
             return GenerationLaunch(
                 stream: stream, task: task, cache: keepable ? head.kept : nil, anchors: keepable ? head.anchors : [],
                 reusedTokens: reused, exactTokens: blended?.exactPrefix ?? Int.max, prefillSeconds: prefill)
+        }
+        if let batch, head.state == nil, let layers = BatchedTokenIterator.plainLayers(cache.layers), let seat = batch.seat() {
+            return launching(try BatchedTokenIterator(
+                input: tail, model: context.model, layers: layers, processor: processor, sampler: params.sampler(),
+                prefill: params.prefill, maxTokens: params.maxTokens, stopTokens: batchStopTokens(context), seat: seat))
         }
         if (speculativeLookup || grammarJumpForward), PromptLookupTokenIterator.supports(cache.layers, routesExperts: routesExperts) {
             return launching(try PromptLookupTokenIterator(

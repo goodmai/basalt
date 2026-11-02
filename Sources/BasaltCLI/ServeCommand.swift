@@ -184,6 +184,12 @@ struct ServeCommand: AsyncParsableCommand {
     var maxConcurrent: Int = 1
 
     @Option(
+        name: .customLong("batch-slots"),
+        help: "Generations decoded together in one batched forward, on models whose KV cache is plain attention in every layer; needs --max-concurrent 2 or more (default: 1, off)"
+    )
+    var batchSlots: Int = 1
+
+    @Option(
         name: .customLong("max-queue"),
         help: "Requests waiting for a generation slot; beyond it the server answers 503 with Retry-After (default: 8)"
     )
@@ -419,6 +425,9 @@ struct ServeCommand: AsyncParsableCommand {
         guard maxConcurrent >= 1 else {
             throw ValidationError("--max-concurrent must be at least 1, got \(maxConcurrent)")
         }
+        guard batchSlots >= 1 else {
+            throw ValidationError("--batch-slots must be at least 1, got \(batchSlots)")
+        }
         guard maxQueue >= 0 else {
             throw ValidationError("--max-queue must be 0 or more, got \(maxQueue)")
         }
@@ -537,8 +546,12 @@ struct ServeCommand: AsyncParsableCommand {
             experimentalSamplers: experimentalSamplers,
             grammarJumpForward: grammarJumpForward,
             promptCacheDisk: try promptCacheDisk.store(),
-            hybridAnchors: max(0, hybridAnchors)
+            hybridAnchors: max(0, hybridAnchors),
+            batchSlots: maxConcurrent >= 2 ? batchSlots : 1
         )
+        if batchSlots > 1, maxConcurrent < 2 {
+            log("\(yellow("[warn]")) --batch-slots \(batchSlots) has no effect with --max-concurrent \(maxConcurrent): only one generation runs at a time")
+        }
         let sessionLogWriter = Self.sessionLogWriter(
             mode: sessionLog, directory: sessionLogDir, retentionDays: sessionLogRetentionDays, maxTotalMB: sessionLogMaxTotalMB,
             redacts: sessionLogRedact == .on, idleMinutes: sessionIdleMinutes)

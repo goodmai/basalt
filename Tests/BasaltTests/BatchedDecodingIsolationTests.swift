@@ -1,0 +1,316 @@
+import Foundation
+import Testing
+import MLX
+import MLXLMCommon
+import MLXLLM
+@testable import BasaltCore
+@testable import BasaltInference
+@testable import BasaltCLI
+
+enum BatchFixture {
+    static let lengths = [5, 17, 8, 11]
+
+    static func prompt(_ length: Int, seed: Int) -> [Int] {
+        (0 ..< length).map { ($0 * 31 + seed * 17) % 250 + 1 }
+    }
+
+    static var prompts: [[Int]] { lengths.enumerated().map { prompt($1, seed: $0) } }
+
+    static func row(_ tokens: [Int]) -> MLXArray {
+        MLXArray(tokens.map(Int32.init)).reshaped(1, -1)
+    }
+
+    static func prefilled(_ model: LlamaModel, _ prompt: [Int]) throws -> [KVCacheSimple] {
+        let layers = try #require(BatchedTokenIterator.plainLayers(try model.newCache(parameters: nil)))
+        eval(model(row(prompt), cache: layers))
+        return layers
+    }
+
+    static func soloGreedy(_ model: LlamaModel, _ prompt: [Int], steps: Int) throws -> [Int] {
+        let cache = try model.newCache(parameters: nil)
+        var next = argMax(model(row(prompt), cache: cache)[0, -1], axis: -1)
+        var tokens: [Int] = []
+        for _ in 0 ..< steps {
+            tokens.append(next.item(Int.self))
+            next = argMax(model(next.reshaped(1, 1), cache: cache)[0, -1], axis: -1)
+        }
+        return tokens
+    }
+
+    static func text(_ tokens: [Int]) -> String {
+        ByteTokenizer().decode(tokenIds: tokens, skipSpecialTokens: false)
+    }
+
+    static func launch(
+        _ decoder: BatchedDecoder, _ model: LlamaModel, _ prompt: [Int], maxTokens: Int, stop: Set<Int> = []
+    ) throws -> (stream: AsyncStream<Generation>, task: Task<Void, Never>) {
+        let seat = try #require(decoder.seat())
+        let iterator = try BatchedTokenIterator(
+            input: LMInput(tokens: MLXArray(prompt.map(Int32.init))), model: model,
+            layers: try #require(BatchedTokenIterator.plainLayers(try model.newCache(parameters: nil))), processor: nil,
+            sampler: GenerateParameters(temperature: 0).sampler(), prefill: PrefillParameters(), maxTokens: maxTokens,
+            stopTokens: stop, seat: seat)
+        var configuration = ModelConfiguration(id: "tiny-llama")
+        configuration.eosTokenIds = stop
+        let (stream, task, _) = MLXInferenceEngine.handOff(
+            promptTokenCount: prompt.count, modelConfiguration: configuration, tokenizer: ByteTokenizer(),
+            iterator: iterator, tools: nil, toolCallPolicy: ToolCallPolicy())
+        return (stream, task)
+    }
+
+    static func collect(_ stream: AsyncStream<Generation>, upTo limit: Int = .max) async -> String {
+        var text = ""
+        for await generation in stream {
+            if case .chunk(let chunk) = generation { text += chunk }
+            if text.unicodeScalars.count >= limit { break }
+        }
+        return text
+    }
+
+    static func engine(_ model: any LanguageModel, id: String, batchSlots: Int, processor: any UserInputProcessor = ByteInputProcessor())
+        async -> MLXInferenceEngine
+    {
+        let engine = MLXInferenceEngine(batchSlots: batchSlots)
+        await engine.attach(ModelContainer(context: ModelContext(
+            configuration: ModelConfiguration(id: id), model: model, processor: processor, tokenizer: ByteTokenizer())))
+        return engine
+    }
+
+    static func request(_ index: Int, maxTokens: Int = 32) -> GenerationRequest {
+        let text = String(String.UnicodeScalarView(prompts[index].compactMap(UnicodeScalar.init)))
+        return greedy(text, key: index.isMultiple(of: 2) ? "batch-\(index)" : nil, maxTokens: maxTokens)
+    }
+}
+
+@Suite("BatchKVCache keeps every row's attention equal to its own cache (#240)", .serialized)
+struct BatchKVCacheTests {
+
+    final class Solo {
+        let cache: [KVCache]
+        let model: LlamaModel
+
+        init(_ model: LlamaModel, _ prompt: [Int]) throws {
+            self.model = model
+            cache = try model.newCache(parameters: nil)
+            eval(model(BatchFixture.row(prompt), cache: cache))
+        }
+
+        func step(_ token: Int) -> MLXArray {
+            model(MLXArray([Int32(token)]).reshaped(1, 1), cache: cache)[0, -1]
+        }
+    }
+
+    static func expectRowsMatch(_ batched: MLXArray, _ solo: [MLXArray]) {
+        for (index, alone) in solo.enumerated() {
+            let row = batched[index]
+            #expect(allClose(row, alone, atol: 1e-4).item(Bool.self), "row \(index) logits differ")
+            #expect(argMax(row).item(Int.self) == argMax(alone).item(Int.self), "row \(index) picks another token")
+        }
+    }
+
+    static func batchStep(_ model: LlamaModel, _ layers: [BatchKVCache], _ tokens: [Int]) -> MLXArray {
+        model(MLXArray(tokens.map(Int32.init)).reshaped(-1, 1), cache: layers)[0..., -1]
+    }
+
+    @Test("Rows of different lengths merged into one batch give the logits each row gets alone")
+    func mergedRowsMatchSolo() throws {
+        let model = try TinyModel.make()
+        let prompts = BatchFixture.prompts
+        let fed = [7, 42, 99, 3]
+        let solo = try prompts.map { try Solo(model, $0) }
+        let rows = try prompts.map { try BatchFixture.prefilled(model, $0) }
+        let layers = rows[0].indices.map { layer in
+            let batch = BatchKVCache()
+            batch.append(rows.map { $0[layer] })
+            return batch
+        }
+        #expect(layers[0].leftPadding == BatchFixture.lengths.map { 17 - $0 })
+        Self.expectRowsMatch(Self.batchStep(model, layers, fed), zip(solo, fed).map { $0.step($1) })
+    }
+
+    @Test("Retiring the longest row trims the padding every remaining row shares, and a row joining later still matches")
+    func filterJoinTrim() throws {
+        let model = try TinyModel.make()
+        let prompts = BatchFixture.prompts
+        let solo = try prompts.map { try Solo(model, $0) }
+        let first = try prompts.prefix(3).map { try BatchFixture.prefilled(model, $0) }
+        let layers = first[0].indices.map { layer in
+            let batch = BatchKVCache()
+            batch.append(first.map { $0[layer] })
+            return batch
+        }
+        Self.expectRowsMatch(Self.batchStep(model, layers, [11, 12, 13]), [solo[0].step(11), solo[1].step(12), solo[2].step(13)])
+
+        for layer in layers { layer.filter(rows: [0, 2]) }
+        #expect(layers[0].leftPadding == [3, 0])
+        #expect(layers[0].offset == 9)
+
+        let joining = try BatchFixture.prefilled(model, prompts[3])
+        for (index, layer) in layers.enumerated() { layer.append([joining[index]]) }
+        #expect(layers[0].leftPadding == [5, 2, 0])
+        Self.expectRowsMatch(Self.batchStep(model, layers, [21, 23, 24]), [solo[0].step(21), solo[2].step(23), solo[3].step(24)])
+
+        for layer in layers { layer.filter(rows: [2]) }
+        #expect(layers[0].leftPadding == [0])
+        #expect(layers[0].offset == 12)
+        Self.expectRowsMatch(Self.batchStep(model, layers, [31]), [solo[3].step(31)])
+    }
+}
+
+@Suite("Batched decode gives each row the tokens it gets alone (#240)", .serialized)
+struct BatchedDecoderTests {
+
+    @Test("Four prompts of different lengths decoded together match their solo greedy decode for 32 steps", .timeLimit(.minutes(1)))
+    func fourRowsMatchSolo() async throws {
+        let model = try TinyModel.make()
+        let expected = try BatchFixture.prompts.map { BatchFixture.text(try BatchFixture.soloGreedy(model, $0, steps: 32)) }
+        let decoder = BatchedDecoder(model: model, slots: 4)
+        let launches = try BatchFixture.prompts.map { try BatchFixture.launch(decoder, model, $0, maxTokens: 32) }
+        var produced: [String] = []
+        for launch in launches { produced.append(await BatchFixture.collect(launch.stream)) }
+        #expect(produced == expected)
+        #expect(decoder.admittedRows == 4)
+    }
+
+    @Test("A row joining mid-flight and rows retiring on EOS or max tokens leave the other rows' tokens unchanged",
+          .timeLimit(.minutes(1)))
+    func joinAndRetire() async throws {
+        let model = try TinyModel.make()
+        let prompts = BatchFixture.prompts
+        let solo = try prompts.map { try BatchFixture.soloGreedy(model, $0, steps: 48) }
+        let stop = solo[2][3]
+        let decoder = BatchedDecoder(model: model, slots: 4)
+
+        let long = try BatchFixture.launch(decoder, model, prompts[0], maxTokens: 48)
+        let short = try BatchFixture.launch(decoder, model, prompts[1], maxTokens: 5)
+        let stopping = try BatchFixture.launch(decoder, model, prompts[2], maxTokens: 48, stop: [stop])
+        var longIterator = long.stream.makeAsyncIterator()
+        var head = ""
+        while head.unicodeScalars.count < 8, let generation = await longIterator.next() {
+            if case .chunk(let chunk) = generation { head += chunk }
+        }
+        let late = try BatchFixture.launch(decoder, model, prompts[3], maxTokens: 32)
+
+        var rest = ""
+        while let generation = await longIterator.next() {
+            if case .chunk(let chunk) = generation { rest += chunk }
+        }
+        #expect(head + rest == BatchFixture.text(solo[0]))
+        #expect(await BatchFixture.collect(short.stream) == BatchFixture.text(Array(solo[1].prefix(5))))
+        let stopAt = try #require(solo[2].firstIndex(of: stop))
+        #expect(await BatchFixture.collect(stopping.stream) == BatchFixture.text(Array(solo[2].prefix(stopAt))))
+        #expect(await BatchFixture.collect(late.stream) == BatchFixture.text(Array(solo[3].prefix(32))))
+    }
+
+    @Test("Cancelling one row stops only that row", .timeLimit(.minutes(1)))
+    func cancellingOneRow() async throws {
+        let model = try TinyModel.make()
+        let prompts = BatchFixture.prompts
+        let expected = BatchFixture.text(try BatchFixture.soloGreedy(model, prompts[0], steps: 40))
+        let decoder = BatchedDecoder(model: model, slots: 2)
+        let kept = try BatchFixture.launch(decoder, model, prompts[0], maxTokens: 40)
+        let cancelled = try BatchFixture.launch(decoder, model, prompts[1], maxTokens: 1_000_000)
+
+        #expect(await BatchFixture.collect(cancelled.stream, upTo: 4).unicodeScalars.count == 4)
+        cancelled.task.cancel()
+        await cancelled.task.value
+        #expect(await BatchFixture.collect(kept.stream) == expected)
+        await kept.task.value
+        let seats = [decoder.seat(), decoder.seat()]
+        #expect(seats.allSatisfy { $0 != nil })
+    }
+}
+
+@Suite("Engine and orchestrator route only plain-attention requests to the batch (#240)", .serialized)
+struct BatchedRoutingTests {
+
+    static func solo(_ count: Int) async throws -> [String] {
+        let engine = await BatchFixture.engine(try TinyModel.make(), id: "tiny-llama", batchSlots: 1)
+        var texts: [String] = []
+        for index in 0 ..< count { texts.append(try await engine.generate(request: BatchFixture.request(index)).generatedText) }
+        return texts
+    }
+
+    struct Reply: Sendable {
+        let text: String
+        let metadata: GenerationResponse
+    }
+
+    static func concurrently(_ orchestrator: ModelOrchestratorActor, count: Int) async throws -> [Reply] {
+        try await withThrowingTaskGroup(of: (Int, Reply).self) { group in
+            for index in 0 ..< count {
+                group.addTask {
+                    let request = BatchFixture.request(index)
+                    guard index.isMultiple(of: 2) else {
+                        let response = try await orchestrator.generate(request: request)
+                        return (index, Reply(text: response.generatedText, metadata: response))
+                    }
+                    var text = ""
+                    var metadata: GenerationResponse?
+                    for await chunk in try await orchestrator.generateStream(request: request) {
+                        switch chunk {
+                        case .text(let piece): text += piece
+                        case .metadata(let final): metadata = final
+                        case .reasoning, .toolCall: break
+                        }
+                    }
+                    return (index, Reply(text: text, metadata: try #require(metadata)))
+                }
+            }
+            var replies: [Int: Reply] = [:]
+            for try await (index, reply) in group { replies[index] = reply }
+            return (0 ..< count).compactMap { replies[$0] }
+        }
+    }
+
+    @Test("With 4 batch slots and 4 concurrent generations, streaming or not, each request gets its solo output and telemetry",
+          .timeLimit(.minutes(1)))
+    func orchestratorBatchesFourRequests() async throws {
+        let expected = try await Self.solo(4)
+        let engine = await BatchFixture.engine(try TinyModel.make(), id: "tiny-llama", batchSlots: 4)
+        let orchestrator = ModelOrchestratorActor(engine: engine, telemetry: TelemetryTracker(), gate: GenerationGate(maxConcurrent: 4))
+        let responses = try await Self.concurrently(orchestrator, count: 4)
+        #expect(responses.map(\.text) == expected)
+        #expect(responses.allSatisfy { $0.metadata.completionTokens == 32 && $0.metadata.tokensPerSecond > 0 && $0.metadata.timeToFirstToken > 0 })
+        #expect(await engine.batchedRows == 4)
+    }
+
+    @Test("With 1 batch slot, concurrent generations decode on their own as before", .timeLimit(.minutes(1)))
+    func singleSlotIsUnchanged() async throws {
+        let expected = try await Self.solo(4)
+        let engine = await BatchFixture.engine(try TinyModel.make(), id: "tiny-llama", batchSlots: 1)
+        let orchestrator = ModelOrchestratorActor(engine: engine, telemetry: TelemetryTracker(), gate: GenerationGate(maxConcurrent: 4))
+        #expect(try await Self.concurrently(orchestrator, count: 4).map(\.text) == expected)
+        #expect(await engine.batchedRows == 0)
+    }
+
+    @Test("serve --batch-slots defaults to 1 and refuses 0")
+    func batchSlotsOption() throws {
+        #expect(try ServeCommand.parse([]).batchSlots == 1)
+        #expect(try ServeCommand.parse(["--batch-slots", "4", "--max-concurrent", "4"]).batchSlots == 4)
+        #expect(throws: (any Error).self) { _ = try ServeCommand.parse(["--batch-slots", "0"]) }
+    }
+
+    @Test("Hybrid and sliding-window models keep the serialized path")
+    func hybridAndRotatingStaySolo() async throws {
+        for engine in [
+            await BatchFixture.engine(try TinyHybrid.make(), id: "tiny-qwen35", batchSlots: 4),
+            await BatchFixture.engine(try TinySliding.make(), id: "tiny-gemma3", batchSlots: 4),
+        ] {
+            let reply = try await engine.generate(request: BatchFixture.request(1, maxTokens: 6))
+            #expect(reply.completionTokens == 6)
+            #expect(await engine.batchedRows == 0)
+        }
+    }
+
+    @Test("A request with a response format keeps the serialized path; the same engine batches a plain one")
+    func grammarStaysSolo() async throws {
+        let engine = MLXInferenceEngine(batchSlots: 4)
+        await engine.attach(try ConstrainedModel.container())
+        let constrained = try await engine.generate(request: ConstrainedModel.request(format: .jsonSchema(ConstrainedModel.schema)))
+        #expect(try ConstrainedModel.isValid(constrained.generatedText))
+        #expect(await engine.batchedRows == 0)
+        _ = try await engine.generate(request: ConstrainedModel.request(format: nil, maxTokens: 4))
+        #expect(await engine.batchedRows == 1)
+    }
+}
