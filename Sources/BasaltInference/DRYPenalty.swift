@@ -49,7 +49,8 @@ struct DRYPenalty: LogitProcessor {
     }
 
     mutating func prompt(_ prompt: MLXArray) {
-        history.tokens = Array(prompt.asArray(Int.self).suffix(Self.window))
+        history.tokens.removeAll(keepingCapacity: true)
+        history.unread = nil
     }
 
     func process(logits: MLXArray) -> MLXArray {

@@ -162,8 +162,8 @@ struct DRYAndXTCTests {
 
     private func dryLogits(_ history: [Int], breakers: Set<Int> = [], vocabulary: Int = 8) -> [Float] {
         var dry = DRYPenalty(multiplier: 0.8, base: 1.75, allowedLength: 2, breakers: breakers)
-        dry.prompt(MLXArray(history.dropLast().map(Int32.init)))
-        dry.didSample(token: MLXArray([Int32(history[history.count - 1])]))
+        dry.prompt(MLXArray([Int32(0)]))
+        for token in history { dry.didSample(token: MLXArray([Int32(token)])) }
         return dry.process(logits: MLXArray.zeros([1, vocabulary], type: Float32.self)).asArray(Float.self)
     }
 
@@ -191,10 +191,18 @@ struct DRYAndXTCTests {
         expectOnly(dryLogits([1, 2, 3, 4, 5, 6, 7]), token: 4, penalty: 0)
     }
 
+    @Test("Copying the prompt is free: only the model's own output counts as history, so a verbatim edit is not pushed off its source")
+    func promptIsNotHistory() {
+        var dry = DRYPenalty(multiplier: 0.8, base: 1.75, allowedLength: 2, breakers: [])
+        dry.prompt(MLXArray([1, 2, 3, 4, 5, 1, 2].map(Int32.init)))
+        dry.didSample(token: MLXArray([Int32(3)]))
+        expectOnly(dry.process(logits: MLXArray.zeros([1, 8], type: Float32.self)).asArray(Float.self), token: 4, penalty: 0)
+    }
+
     @Test("A copy keeps its own history")
     func copyIsIndependent() {
         var original = DRYPenalty(multiplier: 0.8, breakers: [])
-        original.prompt(MLXArray([Int32(1), 2, 3, 4, 5, 1, 2]))
+        for token in [1, 2, 3, 4, 5, 1, 2] { original.didSample(token: MLXArray([Int32(token)])) }
         var copy = original.copy()
         copy.didSample(token: MLXArray([Int32(7)]))
         original.didSample(token: MLXArray([Int32(3)]))
