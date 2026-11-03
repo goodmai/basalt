@@ -10,7 +10,7 @@ let package = Package(
     ],
     dependencies: [
         .package(url: "https://github.com/ml-explore/mlx-swift",     from: "0.32.3"),
-        .package(url: "https://github.com/goodmai/mlx-swift-lm",      revision: "4477b9b3fcaf4a472b64bfecaa82760704b322c5"),
+        .package(url: "https://github.com/goodmai/mlx-swift-lm",      revision: "ab32ebc508162ce242449ebc3e2c0ee5aa3c0b5e"),
         .package(url: "https://github.com/hummingbird-project/hummingbird", from: "2.28.0"),
         .package(url: "https://github.com/apple/swift-argument-parser",    from: "1.8.2"),
         .package(url: "https://github.com/swift-server/swift-service-lifecycle", from: "2.12.0"),

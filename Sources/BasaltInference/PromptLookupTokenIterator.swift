@@ -18,6 +18,7 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
     let speculativeLookup: Bool
     let grammarJumpForward: Bool
     let replaysRejections: Bool
+    let stagesRounds: Bool
     var tokenCount = 0
     var promptPrefillTime: TimeInterval = 0
 
@@ -41,7 +42,15 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
     private var evalTargets: [MLXArray] = []
 
     static func supports(_ cache: [KVCache], routesExperts: Bool) -> Bool {
-        PromptCache(cache).isSharable || (isReplayableHybrid(cache) && !routesExperts)
+        PromptCache(cache).isSharable || stagesRounds(cache) || (isReplayableHybrid(cache) && !routesExperts)
+    }
+
+    static func stagesRounds(_ cache: [KVCache]) -> Bool {
+        guard cache.contains(where: { $0 is RotatingKVCache }) else { return false }
+        let storage = KVCacheStorage(cache)
+        guard let round = storage.beginRound(maximumPositions: draftLimit + 1) else { return false }
+        storage.rollback(round)
+        return true
     }
 
     static func isReplayableHybrid(_ cache: [KVCache]) -> Bool {
@@ -62,6 +71,7 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
         self.speculativeLookup = speculativeLookup
         self.grammarJumpForward = grammarJumpForward
         self.replaysRejections = Self.isReplayableHybrid(cache)
+        self.stagesRounds = !PromptCache(cache).isSharable && !replaysRejections && Self.stagesRounds(cache)
         self.model = model
         self.cache = cache
         self.state = state
@@ -162,9 +172,10 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
         return token
     }
 
-    private mutating func forward(_ input: LMInput.Text) -> LMOutput {
-        let output = withPreparedCache(cache, lengths: input.sequenceLengths) {
-            model(input[text: .newAxis], cache: cache, state: state)
+    private mutating func forward(_ input: LMInput.Text, through layers: [KVCache]? = nil) -> LMOutput {
+        let layers = layers ?? cache
+        let output = withPreparedCache(layers, lengths: input.sequenceLengths) {
+            model(input[text: .newAxis], cache: layers, state: state)
         }
         state = output.state
         return output
@@ -315,7 +326,9 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
         let fed = [history[history.count - 1]] + draft
         let recurrent = cache.compactMap { $0 as? MambaCache }
         let checkpoints = recurrent.map { (conv: $0[0], state: $0[1], offset: $0.offset) }
-        let logits = forward(LMInput.Text(tokens: MLXArray(fed.map(Int32.init))))
+        let storage = stagesRounds ? KVCacheStorage(cache) : nil
+        let round = storage?.beginRound(maximumPositions: fed.count)
+        let logits = forward(LMInput.Text(tokens: MLXArray(fed.map(Int32.init))), through: round?.caches)
             .logits[0, 0..., 0...]
 
         var emitted: [Int] = []
@@ -346,7 +359,9 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
         let acceptedDrafts = emitted.count - 1
         let matchedDrafts = queuedForced.isEmpty ? acceptedDrafts : acceptedDrafts + 1
         let replays = !recurrent.isEmpty && acceptedDrafts < draft.count
-        if recurrent.isEmpty {
+        if let storage, let round {
+            storage.commit(round, retaining: acceptedDrafts + 1)
+        } else if recurrent.isEmpty {
             trimPromptCache(cache, numTokens: draft.count - acceptedDrafts)
         } else if replays {
             for layer in cache where layer.isTrimmable { layer.trim(fed.count) }
