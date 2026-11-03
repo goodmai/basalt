@@ -235,7 +235,7 @@ Every speed-up is opt-in and keeps greedy output identical unless the row says o
 | Feature | Flag | What it does | Measured |
 |---|---|---|---|
 | Prompt lookup (speculative decoding) | `serve --speculative-lookup` | drafts up to 16 tokens copied from the prompt or output, verified in one forward | 1.84–2.66× on code edits (Bonsai 2 27B); ~1.0× on prose |
-| MTP head drafting | `serve --mtp` | drafts with the model's multi-token-prediction head (`mtp.safetensors`, e.g. MTPLX packs); exact at any temperature | 1.22× on code, 1.07× on prose (Bonsai 2 27B); TTFT on long prompts is higher (no prompt-cache reuse yet, #207) |
+| MTP head drafting | `serve --mtp [--mtp-block N]` | drafts with the model's multi-token-prediction head (`mtp.safetensors`, e.g. MTPLX packs); exact at any temperature. `--mtp-block 4` drafts three tokens per round on Qwen3.5-family targets | block 2: 1.22× on code, 1.10× on prose; block 4: 1.64× on code, 0.71× on prose (Bonsai 2 27B, T=0.7); TTFT on long prompts is higher (no prompt-cache reuse yet, #207) |
 | Ternary Bonsai 2 | (automatic) | loads Hadamard-rotated ternary checkpoints (`prism_hadamard_qwen35`) | 27B model in 7.4 GB |
 | Embeddings and rerank | `serve --embedding-model`, `--rerank-model` | OpenAI `/v1/embeddings`, Cohere/Jina `/v1/rerank` next to the chat model | bge-small 229–299 texts/s, Qwen3-Embedding-0.6B 20 texts/s (batch 32) |
 | Prompt cache on disk | `serve --prompt-cache-disk-mb N` | a resumed session or restarted server restores the longest matching prefix instead of prefilling it | — |
