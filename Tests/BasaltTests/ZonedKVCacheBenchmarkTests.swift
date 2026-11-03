@@ -1,5 +1,6 @@
 import Foundation
 import CryptoKit
+import Synchronization
 import Testing
 import MLX
 import MLXLMCommon
@@ -10,6 +11,7 @@ import MLXLMCommon
 struct ZonedKVCacheBenchmarkTests {
     enum Mode: CustomStringConvertible, CaseIterable {
         case fp16, uniform8, uniform4, zoned8, zoned4, zonedK8V4, zonedK8V4H, zonedK8V4Evict25, zonedK8V4Evict50
+        case headSplit25, headSplit375, headSplit50
 
         var description: String {
             switch self {
@@ -22,12 +24,24 @@ struct ZonedKVCacheBenchmarkTests {
             case .zonedK8V4H: "zoned-k8v4h"
             case .zonedK8V4Evict25: "zoned-k8v4-evict25"
             case .zonedK8V4Evict50: "zoned-k8v4-evict50"
+            case .headSplit25: "head-split-25"
+            case .headSplit375: "head-split-37.5"
+            case .headSplit50: "head-split-50"
+            }
+        }
+
+        var headRatio: Double? {
+            switch self {
+            case .headSplit25: 0.25
+            case .headSplit375: 0.375
+            case .headSplit50: 0.5
+            default: nil
             }
         }
 
         var precision: KVPrecision? {
             switch self {
-            case .fp16: nil
+            case .fp16, .headSplit25, .headSplit375, .headSplit50: nil
             case .uniform8, .zoned8: .q8
             case .uniform4, .zoned4: .q4
             case .zonedK8V4, .zonedK8V4Evict25, .zonedK8V4Evict50: .k8v4
@@ -199,8 +213,18 @@ struct ZonedKVCacheBenchmarkTests {
         log.line("UNQUIET \(marker)")
     }
 
-    static func cache(_ mode: Mode, _ model: any LanguageModel) throws -> [any KVCache] {
+    static let headScores = Mutex<[ObjectIdentifier: [[Float]]]>([:])
+
+    static func cache(_ mode: Mode, _ context: ModelContext) throws -> [any KVCache] {
+        let model = context.model
         let fresh = try model.newCache(parameters: nil)
+        if let ratio = mode.headRatio {
+            let key = ObjectIdentifier(model as AnyObject)
+            let known = headScores.withLock { $0[key] }
+            let scores = try known ?? KVHeadClassifier.scores(model: model, tokenizer: context.tokenizer)
+            if known == nil { headScores.withLock { $0[key] = scores } }
+            return KVHeadMask.classify(scores: scores, ratio: ratio).replacingFullAttention(fresh)
+        }
         guard let zones = mode.zones, let precision = mode.precision else { return fresh }
         return ZonedKVCache.replacingFullAttention(fresh, zones: zones, precision: precision)
     }
@@ -210,8 +234,8 @@ struct ZonedKVCacheBenchmarkTests {
     ) throws -> (iterator: TokenIterator, cache: [any KVCache]?) {
         var parameters = GenerateParameters(maxTokens: maxTokens, temperature: 0)
         let input = LMInput(tokens: MLXArray(tokens))
-        guard mode.zones == nil else {
-            let cache = try Self.cache(mode, context.model)
+        guard mode.zones == nil, mode.headRatio == nil else {
+            let cache = try Self.cache(mode, context)
             return (try TokenIterator(input: input, model: context.model, cache: cache, parameters: parameters), cache)
         }
         parameters.kvBits = mode.precision?.keyBits
@@ -429,7 +453,7 @@ struct ZonedKVCacheBenchmarkTests {
         let total = tokens.count - 1
         let prefix = total / 2
         let chunk = 512
-        var cache = try Self.cache(mode, context.model)
+        var cache = try Self.cache(mode, context)
         var start = 0
         while start < prefix {
             let end = min(prefix, start + chunk)

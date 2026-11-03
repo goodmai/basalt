@@ -52,6 +52,9 @@ struct Benchmark: AsyncParsableCommand {
     @Flag(name: .customLong("kv-zones"), help: "Keep the first and last tokens of each full-attention layer fp16 and quantize the middle")
     var kvZones: Bool = false
 
+    @Option(name: .customLong("kv-head-split"), help: "Experimental: keep the whole context in this share of KV heads, sinks and a recent window in the rest")
+    var kvHeadSplit: Double?
+
     @Option(name: .customLong("repetition-penalty"), help: "Penalty on recently emitted tokens, e.g. 1.1 (default: off)")
     var repetitionPenalty: Float?
 
@@ -107,6 +110,7 @@ struct Benchmark: AsyncParsableCommand {
             gpuCacheLimit: gpuCacheMB.map { $0 == 0 ? nil : $0 << 20 } ?? (512 << 20),
             kvPrecision: kvBits,
             kvZones: kvZones ? .standard : nil,
+            kvHeadSplit: kvHeadSplit,
             repetitionPenalty: repetitionPenalty,
             topK: topK, minP: minP, seed: seed, speculativeLookup: speculativeLookup,
             speculativeRecycling: speculativeRecycling, mtp: mtp, mtpBlockSize: mtpBlock, experimentalSamplers: dryMultiplier != nil, grammarJumpForward: grammarJumpForward)

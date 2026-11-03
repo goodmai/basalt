@@ -74,6 +74,9 @@ struct ServeCommand: AsyncParsableCommand {
     @Option(name: .customLong("kv-evict"), help: KVBitsSetting.evictHelp)
     var kvEvict: Double?
 
+    @Option(name: .customLong("kv-head-split"), help: ArgumentHelp("Experimental: keep the whole context only in this share (0.05...1) of the KV heads of each full-attention layer, the heads that read facts from the middle of a long prompt (scored once per model on a synthetic passkey set, cached in ~/.basalt/head-scores); the other heads keep 128 sink and 256 recent tokens (DuoAttention). Not with --kv-bits or --kv-zones, and only for requests without a prompt-cache namespace, like --kv-zones"))
+    var kvHeadSplit: Double?
+
     @Option(name: .customLong("repetition-penalty"), help: "Penalty on recently emitted tokens, e.g. 1.1 (default: off)")
     var repetitionPenalty: Float?
 
@@ -447,6 +450,10 @@ struct ServeCommand: AsyncParsableCommand {
             throw ValidationError("--cache-blend-ratio must be between 0 and 1, got \(cacheBlendRatio)")
         }
         try KVBitsSetting.validate(zones: kvZones, bits: kvBits, evict: kvEvict)
+        if let kvHeadSplit {
+            guard (0.05 ... 1).contains(kvHeadSplit) else { throw ValidationError("--kv-head-split takes a share of heads in 0.05...1") }
+            guard kvBits == nil, !kvZones else { throw ValidationError("--kv-head-split does not combine with --kv-bits or --kv-zones") }
+        }
         try promptCacheDisk.validate(sessionLog: sessionLog)
         guard promptCacheDisk.megabytes == 0 || promptCacheMB != 0 else {
             throw ValidationError("--prompt-cache-disk-mb persists the in-memory prompt cache, which --prompt-cache-mb 0 turns off")
@@ -541,6 +548,7 @@ struct ServeCommand: AsyncParsableCommand {
             promptCacheBytes: promptCacheMB.map { min(max(0, $0), 1 << 30) << 20 },
             kvPrecision: kvBits?.fixedPrecision,
             kvZones: KVBitsSetting.zones(kvZones, evicting: kvEvict),
+            kvHeadSplit: kvHeadSplit,
             repetitionPenalty: repetitionPenalty,
             topK: topK,
             minP: minP,

@@ -81,6 +81,8 @@ public actor MLXInferenceEngine: InferenceEngine {
     /// costs accuracy on short prompts for no memory benefit.
     private let quantizedKVStart: Int
     private let kvZones: KVZones?
+    private let kvHeadSplit: Double?
+    private(set) var kvHeadMask: KVHeadMask?
 
     /// Multiplicative penalty on recently emitted tokens. Left nil, nothing damps
     /// a degenerate loop: a 2-bit model answered "127 + 458" by repeating the
@@ -161,6 +163,7 @@ public actor MLXInferenceEngine: InferenceEngine {
         kvPrecision: KVPrecision? = nil,
         quantizedKVStart: Int = KVCacheGeometry.defaultQuantizedKVStart,
         kvZones: KVZones? = nil,
+        kvHeadSplit: Double? = nil,
         repetitionPenalty: Float? = nil,
         topK: Int? = nil,
         minP: Float? = nil,
@@ -190,6 +193,7 @@ public actor MLXInferenceEngine: InferenceEngine {
         self.kvPrecision = kvPrecision
         self.quantizedKVStart = quantizedKVStart
         self.kvZones = kvZones
+        self.kvHeadSplit = kvHeadSplit
         self.repetitionPenalty = repetitionPenalty
         self.topK = topK
         self.minP = minP
@@ -217,6 +221,27 @@ public actor MLXInferenceEngine: InferenceEngine {
 
     static func cacheLimit(_ relaxed: Int, under directive: MemoryDirective) -> Int {
         Int(Double(relaxed) * directive.cacheLimitShare)
+    }
+
+    func probeKVHeads(directory: URL) async {
+        kvHeadMask = nil
+        guard let ratio = kvHeadSplit, let container else { return }
+        guard (try? await container.perform({ try ZonedKVCache.modelAttendsThroughCache($0.model) })) == true else {
+            logger.warn("--kv-head-split does not apply to this model: its attention does not go through the cache")
+            return
+        }
+        do {
+            let scores = try await KVHeadClassifier.loadOrScore(directory: directory, container: container)
+            guard KVHeadMask.isConcentrated(scores) else {
+                logger.warn("--kv-head-split does not apply to this model: most of its attention heads read the middle of a long prompt (the median head scores above \(KVHeadMask.concentration) of the top one, as on Qwen3.5 hybrids whose few attention layers all retrieve), so dropping any of them loses facts; the KV cache stays dense")
+                return
+            }
+            kvHeadMask = KVHeadMask.classify(scores: scores, ratio: ratio)
+            let kept = kvHeadMask?.retrieval.map(\.count).reduce(0, +) ?? 0
+            logger.info("KV head split: \(kept) of \(scores.map(\.count).reduce(0, +)) KV heads keep the whole context; the rest keep \(HeadSplitKVCache.sinkTokens) sink and \(HeadSplitKVCache.windowTokens) recent tokens")
+        } catch {
+            logger.warn("--kv-head-split: scoring the heads failed (\(error.localizedDescription)); the KV cache stays dense")
+        }
     }
 
     func probeKVZones() async {
@@ -405,6 +430,7 @@ public actor MLXInferenceEngine: InferenceEngine {
                    fingerprint: promptCacheDisk == nil ? nil : PromptCacheDiskStore.fingerprint(modelDirectory: directory),
                    modelDescription: modelPath)
             await probeKVZones()
+            await probeKVHeads(directory: directory)
             logger.info("Sampling defaults from generation_config.json: \(samplingDefaults)")
             
             // Dynamic config inspection
@@ -929,6 +955,7 @@ public actor MLXInferenceEngine: InferenceEngine {
         }
         let (params, unbudgeted, shaping, exclusion) = sampling(for: request, breakers: await sequenceBreakerIds(for: request))
         let zones = modelAttendsThroughZones ? (modelPrefillsInChunks ? kvZones : kvZones?.evicting(0)) : nil
+        let headMask = zones == nil && request.kvPrecision == nil && kvPrecision == nil ? kvHeadMask : nil
         let zonedPrecision = zones == nil ? nil : request.kvPrecision ?? kvPrecision
 
         let toolSpecs = Self.toolSpecs(request.tools)
@@ -1084,7 +1111,8 @@ public actor MLXInferenceEngine: InferenceEngine {
                         params: params, components: constrained, tools: forcedTool == nil ? toolSpecs : nil,
                         context: context, speculativeLookup: speculativeLookup, speculativeRecycling: speculativeRecycling,
                         grammarJumpForward: jumpForward,
-                        routesExperts: expertRouting, kvZones: zones, kvPrecision: zonedPrecision, mtpDrafter: drafter, mtpBlockSize: mtpBlockSize,
+                        routesExperts: expertRouting, kvZones: zones, kvHeadMask: headMask, kvPrecision: zonedPrecision,
+                        mtpDrafter: drafter, mtpBlockSize: mtpBlockSize,
                         mtpPrefix: mtpPrefix) }
                 }
             } catch {
@@ -1537,7 +1565,7 @@ public actor MLXInferenceEngine: InferenceEngine {
         params: GenerateParameters, components: GenerationComponents,
         tools: [ToolSpec]?, context: ModelContext, speculativeLookup: Bool = false, speculativeRecycling: Bool = false,
         grammarJumpForward: Bool = false,
-        routesExperts: Bool = true, kvZones: KVZones? = nil,
+        routesExperts: Bool = true, kvZones: KVZones? = nil, kvHeadMask: KVHeadMask? = nil,
         kvPrecision: KVPrecision? = nil,
         mtpDrafter: MTPDrafter? = nil, mtpBlockSize: Int = 4, mtpPrefix: MTPPrefix? = nil
     ) throws -> GenerationLaunch {
@@ -1583,6 +1611,14 @@ public actor MLXInferenceEngine: InferenceEngine {
                 mtpPrefix: kept?.prefix)
         }
         guard keepsCache else {
+            if let kvHeadMask, params.kvBits == nil {
+                let cache = kvHeadMask.replacingFullAttention(try context.model.newCache(parameters: params))
+                let iterator = try TokenIterator(input: input, model: context.model, cache: cache, parameters: params, components: components)
+                let (stream, task, prefill) = Self.handOff(
+                    promptTokenCount: input.text.tokens.dim(-1), modelConfiguration: context.configuration,
+                    tokenizer: context.tokenizer, iterator: iterator, tools: tools, toolCallPolicy: params.toolCallPolicy)
+                return GenerationLaunch(stream: stream, task: task, cache: nil, reusedTokens: 0, prefillSeconds: prefill)
+            }
             if let zoned = try zonedCache(params: params, zones: kvZones, precision: kvPrecision, model: context.model) {
                 let iterator = try TokenIterator(
                     input: input, model: context.model, cache: zoned.cache, parameters: zoned.params, components: components)
