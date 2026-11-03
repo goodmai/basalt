@@ -7,7 +7,7 @@ let usage = """
       ./scripts/speculative_lookup_bench.swift [--models repo,repo] [--workloads name,name] [--modes off,on,recycling,mtp] [--runs N] [--tokens N] [--max-idle-gpu PERCENT] [--variant label=binary]...
 
     Prompt-lookup speculative decoding against plain decoding, per model: workloads
-    code edit, prose and reasoning, temperatures 0 and 0.7, lookup off, on, and on
+    code edit, prose and reasoning at temperature 0.7, lookup off, on, and on
     with Token Recycling.
     Each model runs every cell once in order and once in reverse, and every
     ratio is taken between cells of the same pass, so host drift cancels.
@@ -25,7 +25,7 @@ let usage = """
     """
 
 struct Options {
-    var models = ["mlx-community/Qwen3-4B-4bit", "mlx-community/Meta-Llama-3.1-8B-Instruct-4bit"]
+    var models = ["mlx-community/Qwen3-4B-4bit", "ornith-ai/Ornith-1.5-9B-MLX-4bit"]
     var workloads = ["code", "prose", "reasoning"]
     var modes = ["off", "on", "recycling"]
     var runs = 3
@@ -397,9 +397,11 @@ for workload in options.workloads {
     prompts[workload] = text
 }
 
+let temperatures = ["0.7"]
+
 var cells: [Cell] = []
 for workload in options.workloads {
-    for temperature in ["0", "0.7"] {
+    for temperature in temperatures {
         for mode in options.modes + options.variants.map(\.label) {
             cells.append(Cell(workload: workload, temperature: temperature, mode: mode))
         }
@@ -428,7 +430,7 @@ for model in options.models {
         + options.variants.map { " \($0.label) / on (pass 1, pass 2) |" }.joined())
     summary.append("|---|---|---|---|---|---|---|---|---|" + String(repeating: "---|", count: options.variants.count))
     for workload in options.workloads {
-        for temperature in ["0", "0.7"] {
+        for temperature in temperatures {
             func cell(_ mode: String) -> Cell { Cell(workload: workload, temperature: temperature, mode: mode) }
             func pair(_ mode: String, over base: String) -> String {
                 guard cells.contains(cell(mode)) else { return "not run" }
