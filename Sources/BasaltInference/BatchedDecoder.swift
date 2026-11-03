@@ -11,7 +11,7 @@ final class BatchedDecoder: @unchecked Sendable {
     private var looping = false
     private var admitted = 0
     private var rows: [BatchRow] = []
-    private var layers: [BatchKVCache] = []
+    private var layers: [KVCache] = []
     private var pending: MLXArray?
     private var steps = 0
 
@@ -21,6 +21,10 @@ final class BatchedDecoder: @unchecked Sendable {
     }
 
     var admittedRows: Int { signal.withLock { admitted } }
+
+    func exclusively<T>(_ body: () throws -> T) rethrows -> T {
+        try ModelEvaluationLock.lock(for: model).withLock(body)
+    }
 
     func seat() -> BatchSeat? {
         signal.withLock {
@@ -83,24 +87,38 @@ final class BatchedDecoder: @unchecked Sendable {
             pending = nil
             return
         }
-        for layer in layers { layer.filter(rows: kept) }
+        let index = MLXArray(kept.map(Int32.init))
+        for layer in layers {
+            (layer as? BatchKVCache)?.filter(rows: kept)
+            (layer as? ArraysCache)?.filter(batchIndices: index)
+        }
         pending = pending?[MLXArray(kept.map(Int32.init))]
     }
 
     private func step(admitting arrivals: [BatchRow]) {
         if !arrivals.isEmpty {
-            if layers.isEmpty { layers = arrivals[0].layers.map { _ in BatchKVCache() } }
-            for (index, layer) in layers.enumerated() { layer.append(arrivals.map { $0.layers[index] }) }
+            if layers.isEmpty { layers = arrivals[0].layers.map { $0 is ArraysCache ? $0 : BatchKVCache() } }
+            for (index, layer) in layers.enumerated() {
+                let joining = arrivals.map { $0.layers[index] }
+                if let recurrent = layer as? ArraysCache {
+                    for case let row as ArraysCache in joining where row !== recurrent { recurrent.extend(other: row) }
+                } else {
+                    (layer as? BatchKVCache)?.append(joining.compactMap { $0 as? KVCacheSimple })
+                }
+            }
             for row in arrivals { row.layers = [] }
             pending = concatenated((pending.map { [$0] } ?? []) + arrivals.map(\.first))
             rows += arrivals
         }
         guard let feed = pending else { return }
-        let logits = model(feed.reshaped(rows.count, 1), cache: layers)[0..., -1, 0...]
-        let next = rows.allSatisfy(\.isPlainGreedy)
-            ? argMax(logits, axis: -1)
-            : concatenated(rows.indices.map { rows[$0].sample(logits[$0 ..< $0 + 1]) })
-        asyncEval([next] + layers.flatMap(\.state))
+        let next = exclusively {
+            let logits = model(feed.reshaped(rows.count, 1), cache: layers)[0..., -1, 0...]
+            let next = rows.allSatisfy(\.isPlainGreedy)
+                ? argMax(logits, axis: -1)
+                : concatenated(rows.indices.map { rows[$0].sample(logits[$0 ..< $0 + 1]) })
+            asyncEval([next] + layers.flatMap { $0.innerState() })
+            return next
+        }
         let tokens = feed.asArray(Int.self)
         pending = next
         steps += 1
@@ -125,7 +143,7 @@ final class BatchSeat {
 
 private final class BatchRow {
     let first: MLXArray
-    var layers: [KVCacheSimple]
+    var layers: [KVCache]
     var processor: (any LogitProcessor)?
     let sampler: any LogitSampler
     let maxTokens: Int?
@@ -136,7 +154,7 @@ private final class BatchRow {
     var abandoned = false
 
     init(
-        first: MLXArray, layers: [KVCacheSimple], processor: (any LogitProcessor)?, sampler: any LogitSampler,
+        first: MLXArray, layers: [KVCache], processor: (any LogitProcessor)?, sampler: any LogitSampler,
         maxTokens: Int?, stopTokens: Set<Int>
     ) {
         self.first = first
@@ -163,7 +181,7 @@ private final class BatchRow {
     }
 }
 
-struct BatchedTokenIterator: TokenIteratorProtocol {
+struct BatchedTokenIterator: SelfSerializingTokenIterator {
     private let seat: BatchSeat
     private let row: BatchRow
     private var joined = false
@@ -171,26 +189,30 @@ struct BatchedTokenIterator: TokenIteratorProtocol {
     let maxTokens: Int?
     let promptPrefillTime: TimeInterval
 
-    static func plainLayers(_ cache: [KVCache]) -> [KVCacheSimple]? {
-        let layers = cache.compactMap { type(of: $0) == KVCacheSimple.self ? $0 as? KVCacheSimple : nil }
-        return layers.isEmpty || layers.count < cache.count ? nil : layers
+    static func batchableLayers(_ cache: [KVCache]) -> [KVCache]? {
+        let batchable = !cache.isEmpty && cache.contains { type(of: $0) == KVCacheSimple.self }
+            && cache.allSatisfy { type(of: $0) == KVCacheSimple.self || $0 is ArraysCache }
+        return batchable ? cache : nil
     }
 
     init(
-        input: LMInput, model: any LanguageModel, layers: [KVCacheSimple], processor: (any LogitProcessor)?,
+        input: LMInput, model: any LanguageModel, layers: [KVCache], processor: (any LogitProcessor)?,
         sampler: any LogitSampler, prefill: PrefillParameters, maxTokens: Int?, stopTokens: Set<Int>, seat: BatchSeat
     ) throws {
         let started = ContinuousClock.now
         var processor = processor
         processor?.prompt(input.text.tokens)
-        let logits = switch try model.prepare(input, cache: layers, state: nil, prefill: prefill) {
-        case .tokens(let rest): model(rest[text: .newAxis], cache: layers, state: nil).logits
-        case .logits(let output): output.logits
+        let first = try seat.decoder.exclusively {
+            let logits = switch try model.prepare(input, cache: layers, state: nil, prefill: prefill) {
+            case .tokens(let rest): model(rest[text: .newAxis], cache: layers, state: nil).logits
+            case .logits(let output): output.logits
+            }
+            let last = logits[0..., -1, 0...]
+            let first = sampler.sample(logits: processor?.process(logits: last) ?? last)
+            eval([first] + layers.flatMap { $0.innerState() })
+            return first
         }
-        let last = logits[0..., -1, 0...]
-        let first = sampler.sample(logits: processor?.process(logits: last) ?? last)
         processor?.didSample(token: first)
-        asyncEval(first)
         row = BatchRow(
             first: first, layers: layers, processor: processor, sampler: sampler, maxTokens: maxTokens, stopTokens: stopTokens)
         seat.row = row

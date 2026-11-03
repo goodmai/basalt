@@ -21,6 +21,7 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
     let stagesRounds: Bool
     var tokenCount = 0
     var promptPrefillTime: TimeInterval = 0
+    var evaluatedModel: (any LanguageModel)? { model }
 
     private var history: [Int]
     private var inFlight: DecodedStep?

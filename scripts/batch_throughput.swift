@@ -1,4 +1,5 @@
 #!/usr/bin/env swift
+import CryptoKit
 import Foundation
 
 let usage = """
@@ -7,7 +8,8 @@ let usage = """
 
     Aggregate decode throughput of a running `basalt serve` at several concurrency levels.
     Each run sends N different greedy chat requests at once and divides the completion
-    tokens the server reports by the wall time until the last one answered. Start the
+    tokens the server reports by the wall time until the last one answered. Every answer's
+    SHA-256 (reasoning plus answer) is logged per request, so passes with different --batch-slots can be compared. Start the
     server yourself, once with --batch-slots 1 and once with --batch-slots N, both with
     --max-concurrent at least the highest level, and give each pass its own --label.
     """
@@ -75,10 +77,15 @@ func shell(_ arguments: [String]) -> String {
 
 struct Reply: Decodable {
     struct Usage: Decodable { let completion_tokens: Int }
+    struct Choice: Decodable {
+        struct Message: Decodable { let content: String?; let reasoning_content: String? }
+        let message: Message
+    }
     let usage: Usage
+    let choices: [Choice]
 }
 
-func complete(_ index: Int) async throws -> Int {
+func complete(_ index: Int, concurrency: Int, run: Int) async throws -> Int {
     var request = URLRequest(url: URL(string: options.url + "/v1/chat/completions")!)
     request.httpMethod = "POST"
     request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -96,7 +103,12 @@ func complete(_ index: Int) async throws -> Int {
         throw NSError(domain: "batch_throughput", code: (response as? HTTPURLResponse)?.statusCode ?? -1,
                       userInfo: [NSLocalizedDescriptionKey: String(decoding: data.prefix(300), as: UTF8.self)])
     }
-    return try JSONDecoder().decode(Reply.self, from: data).usage.completion_tokens
+    let reply = try JSONDecoder().decode(Reply.self, from: data)
+    let message = reply.choices.first?.message
+    let text = (message?.reasoning_content ?? "") + "\u{0}" + (message?.content ?? "")
+    let digest = SHA256.hash(data: Data(text.utf8)).map { String(format: "%02x", $0) }.joined().prefix(16)
+    log("text label=\(options.label) concurrency=\(concurrency) run=\(run) request=\(index) sha256=\(digest)")
+    return reply.usage.completion_tokens
 }
 
 log("label=\(options.label) url=\(options.url) commit=\(shell(["git", "-C", repo, "rev-parse", "--short", "HEAD"])) chip=\(shell(["sysctl", "-n", "machdep.cpu.brand_string"])) memory=\(shell(["sysctl", "-n", "hw.memsize"])) tokens=\(options.tokens)")
@@ -106,7 +118,7 @@ for concurrency in options.concurrency {
         let started = ContinuousClock.now
         do {
             let tokens = try await withThrowingTaskGroup(of: Int.self) { group in
-                for index in 0 ..< concurrency { group.addTask { try await complete(index) } }
+                for index in 0 ..< concurrency { group.addTask { try await complete(index, concurrency: concurrency, run: run) } }
                 return try await group.reduce(0, +)
             }
             let seconds = (ContinuousClock.now - started) / .seconds(1)
