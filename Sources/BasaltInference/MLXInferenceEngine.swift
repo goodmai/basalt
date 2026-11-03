@@ -528,7 +528,9 @@ public actor MLXInferenceEngine: InferenceEngine {
             draftTokens: finalResponse.draftTokens,
             acceptedDraftTokens: finalResponse.acceptedDraftTokens,
             forcedTokens: finalResponse.forcedTokens,
-            modelCalls: finalResponse.modelCalls
+            modelCalls: finalResponse.modelCalls,
+            toolCallRepairs: finalResponse.toolCallRepairs,
+            toolCallRejections: finalResponse.toolCallRejections
         )
     }
 
@@ -1141,6 +1143,8 @@ public actor MLXInferenceEngine: InferenceEngine {
                     var stoppedAfterCall = false
                     var repetition = constraint == nil ? RepetitionGuard() : nil
                     var stoppedOnRepetition = false
+                    var toolCallRepairs = 0
+                    var toolCallRejections = 0
                     var generations = mlxStream.makeAsyncIterator()
                     func stopAfterCall() async {
                         if let task = launch.task {
@@ -1180,7 +1184,10 @@ public actor MLXInferenceEngine: InferenceEngine {
                                 reason: rejection.reason.rawValue, toolName: rejection.toolName,
                                 callID: rejection.callID, rawText: rejection.rawTextPreview,
                                 truncated: rejection.isPreviewTruncated, declaredTools: declaredTools)
-                            if case .text = chunk {
+                            if case .toolCall = chunk {
+                                toolCallRepairs += 1
+                            } else {
+                                toolCallRejections += 1
                                 BasaltLogger(module: "MLXInferenceEngine").warn("Tool call rejected: \(rejection.reason.rawValue)")
                             }
                             if let chunk = gate.admit(chunk) { continuation.yield(chunk) }
@@ -1230,16 +1237,15 @@ public actor MLXInferenceEngine: InferenceEngine {
                                 activeBytes: mem.activeMemory,
                                 cacheBytes: mem.cacheMemory
                             ),
-                            // Was hardcoded to .stop, so a generation cut off at the
-                            // token ceiling reported a clean finish and truncation went
-                            // unnoticed by every caller.
                             finishReason: stoppedOnRepetition ? .repetition
                                 : (lastInfo?.generationTokenCount ?? 0) >= requestedMaxTokens ? .length : .stop,
                             reasoningTokens: reasoningTokens,
                             draftTokens: lastInfo?.speculativeDecodingTelemetry?.draftTokenCount,
                             acceptedDraftTokens: lastInfo?.speculativeDecodingTelemetry?.acceptedDraftTokenCount,
                             forcedTokens: constraint?.fastForward == true ? constraint?.session.totalForcedTokens : nil,
-                            modelCalls: lastInfo?.speculativeDecodingTelemetry?.targetModelCallCount
+                            modelCalls: lastInfo?.speculativeDecodingTelemetry?.targetModelCallCount,
+                            toolCallRepairs: toolCallRepairs,
+                            toolCallRejections: toolCallRejections
                         )
                         continuation.yield(.metadata(metadata))
                     }

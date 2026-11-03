@@ -1,4 +1,5 @@
 import Foundation
+import BasaltCore
 
 public struct BradleyTerryRouter: Sendable, Codable {
     public let strongEmbedding: [Double]
@@ -36,14 +37,14 @@ public struct BradleyTerryRouter: Sendable, Codable {
 
     public var featureCount: Int { projection[0].count }
 
-    public func strongWinProbability(for prompt: String) -> Double {
+    public func strongWinProbability(for prompt: String, escalationBias: Double = 0) -> Double {
         let features = Self.hashedFeatures(prompt, count: featureCount)
         var logit = 0.0
         for i in weights.indices {
             let projected = zip(projection[i], features).reduce(0.0) { $0 + $1.0 * $1.1 }
             logit += weights[i] * (strongEmbedding[i] - weakEmbedding[i]) * projected
         }
-        return 1 / (1 + exp(-logit))
+        return 1 / (1 + exp(-(logit + escalationBias)))
     }
 
     public static func hashedFeatures(_ text: String, count: Int) -> [Double] {
@@ -113,5 +114,73 @@ public struct StickyRoutingPolicy: Sendable {
 
     public func model(for tier: Tier) -> String {
         tier == .strong ? strongModel : weakModel
+    }
+}
+
+public struct RoutingOutcomeBias: Sendable, Codable, Equatable {
+    public enum Bucket: String, Sendable, Codable, CodingKeyRepresentable {
+        case toolUse
+        case general
+
+        public init(_ request: GenerationRequest) {
+            self = request.tools?.isEmpty == false ? .toolUse : .general
+        }
+    }
+
+    public struct Entry: Sendable, Codable, Equatable {
+        public let beta: Double
+        public let updated: Date
+    }
+
+    public static let eta = 0.1
+    public static let betaMax = 0.5
+    public static let halfLife: TimeInterval = 3_600
+
+    public private(set) var models: [String: [Bucket: Entry]] = [:]
+
+    public init() {}
+
+    public static func failed(_ request: GenerationRequest, _ response: GenerationResponse) -> Bool? {
+        switch response.finishReason {
+        case .error: nil
+        case .repetition: true
+        case .length where request.maxTokens == nil: true
+        case .stop, .length: response.toolCallRepairs + response.toolCallRejections > 0
+        }
+    }
+
+    public func beta(model: String, bucket: Bucket, at now: Date) -> Double {
+        guard let entry = models[model]?[bucket] else { return 0 }
+        return entry.beta * exp2(-max(0, now.timeIntervalSince(entry.updated)) / Self.halfLife)
+    }
+
+    public mutating func record(failed: Bool, model: String, bucket: Bucket, at now: Date) {
+        let step = failed ? Self.eta : -Self.eta / 4
+        let next = min(max(beta(model: model, bucket: bucket, at: now) + step, 0), Self.betaMax)
+        var buckets = models[model] ?? [:]
+        buckets[bucket] = next > 0 ? Entry(beta: next, updated: now) : nil
+        models[model] = buckets.isEmpty ? nil : buckets
+    }
+
+    public func snapshot(at now: Date) -> [String: [String: Double]] {
+        Dictionary(uniqueKeysWithValues: models.map { model, buckets in
+            (model, Dictionary(uniqueKeysWithValues: buckets.keys.map { ($0.rawValue, beta(model: model, bucket: $0, at: now)) }))
+        })
+    }
+
+    public static func load(from url: URL) -> RoutingOutcomeBias {
+        guard let data = try? Data(contentsOf: url) else { return RoutingOutcomeBias() }
+        do {
+            return try JSONDecoder().decode(RoutingOutcomeBias.self, from: data)
+        } catch {
+            fputs("[RoutingOutcomeBias] \(url.path) is unreadable (\(error.localizedDescription)); starting without escalation bias\n", stderr)
+            return RoutingOutcomeBias()
+        }
+    }
+
+    public func save(to url: URL) throws {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        try encoder.encode(self).write(to: url, options: .atomic)
     }
 }

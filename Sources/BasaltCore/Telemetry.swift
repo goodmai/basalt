@@ -24,6 +24,7 @@ public struct ServerTelemetrySnapshot: Codable, Sendable, Equatable {
     public var hybridAnchors: Int?
     public var hybridAnchorBytes: Int64?
     public var memory: MemoryTelemetry?
+    public var routingBias: [String: [String: Double]]?
 
     public init(
         timestamp: Date = Date(),

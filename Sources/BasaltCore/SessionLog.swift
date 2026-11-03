@@ -132,11 +132,14 @@ public enum SessionLogRecord {
         let memory: Memory?
         let output: Output
         let toolCallsCount: Int
+        let toolCallRepairs: Int?
+        let toolCallRejections: Int?
         let error: String?
 
         enum CodingKeys: String, CodingKey {
             case v, type, ts, session, requestId = "request_id", status, finishReason = "finish_reason"
             case tokens, timing, memory, output, toolCallsCount = "tool_calls_count", error
+            case toolCallRepairs = "tool_call_repairs", toolCallRejections = "tool_call_rejections"
         }
     }
 
@@ -376,7 +379,8 @@ public actor SessionLogWriter {
                 text: mode == .full ? scrub(result.text) : nil,
                 reasoning: mode == .full && !result.reasoning.isEmpty ? scrub(result.reasoning) : nil,
                 toolCalls: mode == .full && !result.toolCalls.isEmpty ? (redacts ? SecretRedactor.redact(result.toolCalls) : result.toolCalls) : nil),
-            toolCallsCount: result.toolCalls.count, error: error)
+            toolCallsCount: result.toolCalls.count, toolCallRepairs: meta?.toolCallRepairs,
+            toolCallRejections: meta?.toolCallRejections, error: error)
         append(record, session: record.session)
     }
 

@@ -52,6 +52,10 @@ public struct CloudCommand: AsyncParsableCommand {
         return basaltPath
     }
 
+    public static func routerBiasURL(nextTo costURL: URL = costURL()) -> URL {
+        costURL.deletingLastPathComponent().appendingPathComponent("router-bias.json")
+    }
+
     public static func loadConfig() -> CloudConfig? {
         guard let data = try? Data(contentsOf: configURL()) else { return nil }
         do {
@@ -204,6 +208,15 @@ public struct CloudCommand: AsyncParsableCommand {
             } else {
                 for (model, cost) in stats.modelBreakdown {
                     print("  - \(model): $\(String(format: "%.4f", cost))")
+                }
+            }
+            let bias = RoutingOutcomeBias.load(from: CloudCommand.routerBiasURL(nextTo: url)).snapshot(at: Date())
+            if !bias.isEmpty {
+                print("\nRouter escalation bias β (decays toward 0):")
+                for (model, buckets) in bias.sorted(by: { $0.key < $1.key }) {
+                    for (bucket, beta) in buckets.sorted(by: { $0.key < $1.key }) {
+                        print("  - \(model) [\(bucket)]: \(String(format: "%.3f", beta))")
+                    }
                 }
             }
         }

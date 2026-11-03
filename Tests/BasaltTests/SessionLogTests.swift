@@ -74,6 +74,22 @@ struct SessionLogTests {
         #expect(lines.first?["type"] as? String == "session_start")
     }
 
+    @Test("response records carry tool_call_repairs and tool_call_rejections next to finish_reason")
+    func toolCallRepairCounts() async throws {
+        let dir = Self.tempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let writer = SessionLogWriter(mode: .meta, directory: dir, defaultSession: "test")
+        let response = GenerationResponse(
+            generatedText: "x", promptTokens: 1, completionTokens: 1, tokensPerSecond: 1, generationTime: 1, timeToFirstToken: 0,
+            memory: .init(peakBytes: 0, activeBytes: 0, cacheBytes: 0), finishReason: .stop, toolCallRepairs: 2, toolCallRejections: 1)
+        await writer.logResponse(GenerationRequest(prompt: "p"), id: "req_1", status: "ok", result: SessionLogResult(response), queueWait: .zero)
+        await writer.flush()
+        let record = try #require(try Self.lines(in: dir).first { $0["type"] as? String == "response" })
+        #expect(record["finish_reason"] as? String == "stop")
+        #expect(record["tool_call_repairs"] as? Int == 2)
+        #expect(record["tool_call_rejections"] as? Int == 1)
+    }
+
     @Test("Only the orchestrator and the shared pipeline write the log, never a controller")
     func controllersStayThin() throws {
         let server = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()

@@ -391,7 +391,7 @@ struct ServeCommand: AsyncParsableCommand {
                 policy: StickyRoutingPolicy(
                     strongModel: settings.model, weakModel: "local",
                     threshold: settings.costThreshold ?? 0.5, cacheStickinessPenalty: settings.cacheStickiness ?? 0.1),
-                scorer: scorer)
+                scorer: scorer, outcomeBiasURL: CloudCommand.routerBiasURL(nextTo: costURL))
         } else {
             costRouting = nil
         }
