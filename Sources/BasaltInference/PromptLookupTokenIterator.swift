@@ -356,7 +356,15 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
                 layer[1] = checkpoint.state
                 layer.offset = checkpoint.offset
             }
-            _ = forward(LMInput.Text(tokens: MLXArray(fed[...acceptedDrafts].map(Int32.init))))
+            let remaining = maxTokens.map { $0 - tokenCount } ?? Int.max
+            let fusesNext = !grammarJumpForward && queuedForced.isEmpty && emitted.count < remaining
+            let replayed = Array(fed[...acceptedDrafts]) + (fusesNext ? [emitted[emitted.count - 1]] : [])
+            let logits = forward(LMInput.Text(tokens: MLXArray(replayed.map(Int32.init)))).logits[0..., -1, 0...]
+            if fusesNext {
+                let next = DecodedStep(token: sample(logits), successor: recyclesTokens ? argMax(logits, axis: -1) : nil)
+                asyncEval([next.token] + (next.successor.map { [$0] } ?? []))
+                inFlight = next
+            }
             replayRounds += 1
             verifyCalls += 1
         }
