@@ -71,7 +71,7 @@ public actor ModelOrchestratorActor {
 
     func cloudFallbackReason(for request: GenerationRequest) async -> CloudFallbackReason? {
         guard let cloudFallback, request.isServiceRequest != true,
-              let assessment = await cloudFallback.assess(request)
+              let assessment = await cloudFallback.assess(request, localModel: routingModelKey)
         else { return nil }
         let promptTokens = Self.estimatedTokens(Self.budgetedText(request))
         let wanted = promptTokens + (request.maxTokens ?? 0)
@@ -236,6 +236,10 @@ public actor ModelOrchestratorActor {
         await withTaskCancellationShield { await task.value }
     }
 
+    var routingModelKey: String {
+        "\(modelInfo)@\(URL(fileURLWithPath: currentModelPath).lastPathComponent)"
+    }
+
     public var modelInfo: String {
         currentModelId.isEmpty
             ? URL(fileURLWithPath: currentModelPath).lastPathComponent
@@ -310,6 +314,7 @@ public actor ModelOrchestratorActor {
         do {
             let response = try await withTaskCancellationHandler { try await work.value } onCancel: { work.cancel() }
             await self.telemetry.requestFinished(with: response)
+            await cloudFallback?.recordLocalOutcome(request, response: response, localModel: routingModelKey)
             return (response, queueWait)
         } catch let error as BasaltError {
             await self.telemetry.requestFinished()
@@ -393,6 +398,8 @@ public actor ModelOrchestratorActor {
 
         let telemetry = self.telemetry
         let gate = self.gate
+        let cloudFallback = self.cloudFallback
+        let localModel = routingModelKey
         return (AsyncStream<StreamChunk> { continuation in
             let task = Task.detached {
                 var result: GenerationResponse?
@@ -411,6 +418,7 @@ public actor ModelOrchestratorActor {
                 }
                 await self.finish(ticket)
                 await telemetry.requestFinished(with: result)
+                if let result { await cloudFallback?.recordLocalOutcome(request, response: result, localModel: localModel) }
                 continuation.finish()
             }
             Task { await gate.onCancel(ticket) { task.cancel() } }
@@ -458,6 +466,7 @@ public actor ModelOrchestratorActor {
         if let memory {
             snapshot.memory = MemoryTelemetry(state: await memory.state, limits: memoryLimits, refusedAdmissions: memoryRefusals)
         }
+        snapshot.routingBias = await cloudFallback?.routingBias
         return snapshot
     }
 

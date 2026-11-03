@@ -367,13 +367,14 @@ public struct GenerationResponse: Codable, Sendable {
     public let timeToFirstToken: Double
     public let memory: MemoryUsage
     public let finishReason: FinishReason
-    /// Functions the model called, in order; nil when it called none.
     public let toolCalls: [ToolCallOutput]?
     public let reasoningTokens: Int?
     public let draftTokens: Int?
     public let acceptedDraftTokens: Int?
     public let forcedTokens: Int?
     public let modelCalls: Int?
+    public let toolCallRepairs: Int
+    public let toolCallRejections: Int
 
     public init(
         generatedText: String,
@@ -391,7 +392,9 @@ public struct GenerationResponse: Codable, Sendable {
         draftTokens: Int? = nil,
         acceptedDraftTokens: Int? = nil,
         forcedTokens: Int? = nil,
-        modelCalls: Int? = nil
+        modelCalls: Int? = nil,
+        toolCallRepairs: Int = 0,
+        toolCallRejections: Int = 0
     ) {
         self.generatedText = generatedText
         self.reasoningText = reasoningText
@@ -409,12 +412,14 @@ public struct GenerationResponse: Codable, Sendable {
         self.acceptedDraftTokens = acceptedDraftTokens
         self.forcedTokens = forcedTokens
         self.modelCalls = modelCalls
+        self.toolCallRepairs = toolCallRepairs
+        self.toolCallRejections = toolCallRejections
     }
 
     enum CodingKeys: String, CodingKey {
         case generatedText, reasoningText, promptTokens, cachedPromptTokens, completionTokens
         case tokensPerSecond, generationTime, timeToFirstToken, memory, finishReason, toolCalls, reasoningTokens
-        case draftTokens, acceptedDraftTokens, forcedTokens, modelCalls
+        case draftTokens, acceptedDraftTokens, forcedTokens, modelCalls, toolCallRepairs, toolCallRejections
     }
 
     public init(from decoder: Decoder) throws {
@@ -435,6 +440,8 @@ public struct GenerationResponse: Codable, Sendable {
         acceptedDraftTokens = try c.decodeIfPresent(Int.self, forKey: .acceptedDraftTokens)
         forcedTokens = try c.decodeIfPresent(Int.self, forKey: .forcedTokens)
         modelCalls = try c.decodeIfPresent(Int.self, forKey: .modelCalls)
+        toolCallRepairs = try c.decodeIfPresent(Int.self, forKey: .toolCallRepairs) ?? 0
+        toolCallRejections = try c.decodeIfPresent(Int.self, forKey: .toolCallRejections) ?? 0
     }
 
     public struct MemoryUsage: Codable, Sendable {

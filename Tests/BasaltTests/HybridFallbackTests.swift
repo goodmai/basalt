@@ -16,7 +16,9 @@ actor StubCloud: CloudFallback {
         failsOnCall = onCall
     }
 
-    func assess(_ request: GenerationRequest) async -> CloudAssessment? { assessment }
+    func assess(_ request: GenerationRequest, localModel: String) async -> CloudAssessment? { assessment }
+    func recordLocalOutcome(_ request: GenerationRequest, response: GenerationResponse, localModel: String) async {}
+    var routingBias: [String: [String: Double]]? { nil }
 
     func generate(_ request: GenerationRequest) async throws -> GenerationResponse {
         calls += 1
@@ -168,17 +170,17 @@ struct ModelRouterCloudFallbackTests {
     func noAssessment() async throws {
         let offline = try router(client: false)
         let online = try router()
-        #expect(await offline.assess(GenerationRequest(prompt: "hi")) == nil)
-        #expect(await online.assess(GenerationRequest(prompt: "hi", tools: [ToolDefinition(name: "t")])) == nil)
+        #expect(await offline.assess(GenerationRequest(prompt: "hi"), localModel: "local") == nil)
+        #expect(await online.assess(GenerationRequest(prompt: "hi", tools: [ToolDefinition(name: "t")]), localModel: "local") == nil)
         let prefilled = [ChatMessageInput(role: .user, text: "hi"), ChatMessageInput(role: .assistant, text: "{")]
-        #expect(await online.assess(GenerationRequest(prompt: "hi", messages: prefilled)) == nil)
-        #expect(await online.assess(GenerationRequest(prompt: "hi", messages: [prefilled[0]])) != nil)
+        #expect(await online.assess(GenerationRequest(prompt: "hi", messages: prefilled), localModel: "local") == nil)
+        #expect(await online.assess(GenerationRequest(prompt: "hi", messages: [prefilled[0]]), localModel: "local") != nil)
         let file = FileManager.default.temporaryDirectory.appendingPathComponent("cost-\(UUID().uuidString).json")
         defer { try? FileManager.default.removeItem(at: file) }
         let tracker = try CostTracker(storageURL: file, budget: .init(dailyLimit: 1, monthlyLimit: 10))
         _ = try? await tracker.recordUsage(model: "m", cost: 1)
         let broke = try router(tracker: tracker)
-        #expect(await broke.assess(GenerationRequest(prompt: "hi")) == nil)
+        #expect(await broke.assess(GenerationRequest(prompt: "hi"), localModel: "local") == nil)
     }
 
     @Test("The assessment prices the request and reports the remaining budget")
@@ -188,7 +190,7 @@ struct ModelRouterCloudFallbackTests {
         let tracker = try CostTracker(storageURL: file, budget: .init(dailyLimit: 5, monthlyLimit: 50))
         try await tracker.recordUsage(model: "m", cost: 1)
         let funded = try router(tracker: tracker)
-        let assessment = try #require(await funded.assess(GenerationRequest(prompt: "hi", maxTokens: 1_000)))
+        let assessment = try #require(await funded.assess(GenerationRequest(prompt: "hi", maxTokens: 1_000), localModel: "local"))
         #expect(abs(assessment.estimatedCost - 1_000 / 1_000_000.0 * 30) < 1e-9)
         #expect(assessment.remainingBudget == 4)
         #expect(assessment.capabilityGap == 0)

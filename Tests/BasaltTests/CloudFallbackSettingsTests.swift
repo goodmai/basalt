@@ -75,4 +75,33 @@ struct CloudFallbackSettingsTests {
         #expect(throws: ValidationError.self) { try resolve(file: config(#"{"cloud_fallback": {"model": 3}}"#)) }
         #expect(throws: ValidationError.self) { try resolve(file: config(#"{"cloud_fallback": "on"}"#)) }
     }
+
+    @Test("The routing outcome bias is kept next to the cost file only with router params, and read back on the next start")
+    func outcomeBiasPersistence() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("bias-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let params = dir.appendingPathComponent("bt.json")
+        try Data(#"{"strongEmbedding":[2],"weakEmbedding":[0],"weights":[1],"projection":[[1,-1]]}"#.utf8).write(to: params)
+        let costURL = dir.appendingPathComponent("cost.json")
+        let biasURL = CloudCommand.routerBiasURL(nextTo: costURL)
+        let request = GenerationRequest(prompt: "p", tools: [ToolDefinition(name: "t")])
+        let failing = BradleyTerryRouterTests.response(.repetition)
+        let base = ServeCommand.CloudFallbackSettings(model: "big", baseURL: URL(string: "http://127.0.0.1:9/v1")!, apiKey: "", localContextLimit: nil)
+        var routed = base
+        routed.routerParams = params
+        let orchestrator = ModelOrchestratorActor(engine: MockInferenceEngine())
+
+        let plain = try await ServeCommand.cloudFallbackRouter(base, orchestrator: orchestrator, costURL: costURL)
+        await plain.recordLocalOutcome(request, response: failing, localModel: "qwen@abc")
+        #expect(!FileManager.default.fileExists(atPath: biasURL.path))
+        #expect(await plain.routingBias == nil)
+
+        let first = try await ServeCommand.cloudFallbackRouter(routed, orchestrator: orchestrator, costURL: costURL)
+        await first.recordLocalOutcome(request, response: failing, localModel: "qwen@abc")
+        #expect(FileManager.default.fileExists(atPath: biasURL.path))
+        let restarted = try await ServeCommand.cloudFallbackRouter(routed, orchestrator: orchestrator, costURL: costURL)
+        let beta = try #require(await restarted.routingBias?["qwen@abc"]?["toolUse"])
+        #expect(beta > 0.9 * RoutingOutcomeBias.eta && beta <= RoutingOutcomeBias.eta)
+    }
 }

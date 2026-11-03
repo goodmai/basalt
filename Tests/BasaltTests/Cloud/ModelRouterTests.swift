@@ -332,4 +332,58 @@ struct ModelRouterTests {
         #expect(response.generatedText == "Mock response")
         #expect(await cloudCalls(client) == 0)
     }
+
+    @Test("Failing local tool-use turns move a borderline auto request to the cloud model; general requests stay local")
+    func failingOutcomesEscalate() async throws {
+        let router = ModelRouter(
+            localOrchestrator: ModelOrchestratorActor(engine: MockInferenceEngine()), cloudClient: nil,
+            costRouting: .init(policy: StickyRoutingPolicy(strongModel: "gpt-4", weakModel: "small-local"), scorer: try BradleyTerryRouterTests.borderlineScorer())
+        )
+        let tool = GenerationRequest(prompt: BradleyTerryRouterTests.hardWord, tools: [ToolDefinition(name: "t")])
+        let general = GenerationRequest(prompt: BradleyTerryRouterTests.hardWord)
+        #expect(await router.resolveModel(nil, request: tool, context: .init()) == "small-local")
+        for _ in 0..<3 {
+            await router.recordLocalOutcome(tool, response: BradleyTerryRouterTests.response(.repetition), localModel: "small-local")
+        }
+        #expect(await router.resolveModel(nil, request: tool, context: .init()) == "gpt-4")
+        #expect(await router.resolveModel(nil, request: general, context: .init()) == "small-local")
+        #expect(try #require(await router.routingBias?["small-local"]?["toolUse"]) <= RoutingOutcomeBias.betaMax)
+    }
+
+    @Test("Without failing outcomes the capability gap is exactly the scorer's win probability, as before the bias existed")
+    func noOutcomesKeepRouting() async throws {
+        let router = ModelRouter(
+            localOrchestrator: ModelOrchestratorActor(engine: MockInferenceEngine()), cloudClient: try unreachableCloudClient(),
+            costRouting: try costRouting(), fallbackCloudModel: "gpt-4"
+        )
+        let request = GenerationRequest(prompt: BradleyTerryRouterTests.hardWord)
+        let expected = try BradleyTerryRouterTests.scorer().strongWinProbability(for: request.prompt)
+        #expect(try #require(await router.assess(request, localModel: "m")).capabilityGap == expected)
+        await router.recordLocalOutcome(request, response: BradleyTerryRouterTests.response(.stop), localModel: "m")
+        #expect(try #require(await router.assess(request, localModel: "m")).capabilityGap == expected)
+        #expect(await router.routingBias == [:])
+    }
+
+    @Test("The orchestrator reports every local turn, streamed or not, to the router under the model id and snapshot revision")
+    func orchestratorReportsOutcomes() async throws {
+        let engine = MockInferenceEngine()
+        await engine.setMockFinishReason(.repetition)
+        let orchestrator = ModelOrchestratorActor(engine: engine, telemetry: TelemetryTracker())
+        try await orchestrator.loadModel(path: "/models/qwen/snapshots/abc123")
+        await orchestrator.setModelId("qwen")
+        let client = try unreachableCloudClient()
+        let router = ModelRouter(
+            localOrchestrator: orchestrator, cloudClient: client,
+            costRouting: try costRouting(), fallbackCloudModel: "gpt-4"
+        )
+        await orchestrator.setCloudFallback(router, freeMemory: { 64 << 30 })
+        let request = GenerationRequest(prompt: "p", tools: [ToolDefinition(name: "t")])
+        _ = try await orchestrator.generate(request: request)
+        for await _ in try await orchestrator.generateStream(request: request) {}
+        let beta = try #require(await router.routingBias?["qwen@abc123"]?["toolUse"])
+        #expect(beta > RoutingOutcomeBias.eta && beta <= 2 * RoutingOutcomeBias.eta)
+        let reported = try #require(await orchestrator.telemetrySnapshot().routingBias?["qwen@abc123"]?["toolUse"])
+        #expect(reported > RoutingOutcomeBias.eta && reported <= beta)
+        #expect(await cloudCalls(client) == 0)
+    }
 }

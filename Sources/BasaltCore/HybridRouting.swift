@@ -21,7 +21,9 @@ public struct CloudAssessment: Sendable, Equatable {
 }
 
 public protocol CloudFallback: Sendable {
-    func assess(_ request: GenerationRequest) async -> CloudAssessment?
+    func assess(_ request: GenerationRequest, localModel: String) async -> CloudAssessment?
+    func recordLocalOutcome(_ request: GenerationRequest, response: GenerationResponse, localModel: String) async
+    var routingBias: [String: [String: Double]]? { get async }
     func generate(_ request: GenerationRequest) async throws -> GenerationResponse
     func generateStream(_ request: GenerationRequest) async throws -> AsyncThrowingStream<StreamChunk, Error>
 }

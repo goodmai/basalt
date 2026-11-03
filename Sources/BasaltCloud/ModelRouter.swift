@@ -60,10 +60,12 @@ public actor ModelRouter: Sendable {
     public struct CostRouting: Sendable {
         public let policy: StickyRoutingPolicy
         public let scorer: BradleyTerryRouter
+        public let outcomeBiasURL: URL?
 
-        public init(policy: StickyRoutingPolicy, scorer: BradleyTerryRouter) {
+        public init(policy: StickyRoutingPolicy, scorer: BradleyTerryRouter, outcomeBiasURL: URL? = nil) {
             self.policy = policy
             self.scorer = scorer
+            self.outcomeBiasURL = outcomeBiasURL
         }
     }
 
@@ -84,6 +86,7 @@ public actor ModelRouter: Sendable {
     private let localFallbackModel: String?
     private let fallbackCloudModel: String?
     private var sessionRoutes: [String: SessionRoute] = [:]
+    private var outcomeBias: RoutingOutcomeBias
     
     public init(
         localOrchestrator: ModelOrchestratorActor,
@@ -103,8 +106,7 @@ public actor ModelRouter: Sendable {
         self.costTracker = costTracker
         self.localFallbackModel = localFallbackModel
         self.fallbackCloudModel = fallbackCloudModel
-        
-        // Pre-populate registry with known models
+        self.outcomeBias = costRouting?.outcomeBiasURL.map(RoutingOutcomeBias.load(from:)) ?? RoutingOutcomeBias()
         self.modelRegistry = Self.defaultModels()
     }
     
@@ -201,18 +203,21 @@ public actor ModelRouter: Sendable {
 
     func resolveModel(_ preferredModel: String?, request: GenerationRequest, context: RoutingContext) -> String {
         let modelId = preferredModel ?? "auto"
-        guard modelId == "auto", let costRouting, let decision = stickyTier(request: request, context: context) else {
+        guard modelId == "auto", let costRouting,
+              let decision = stickyTier(request: request, context: context, localModel: costRouting.policy.weakModel)
+        else {
             return modelId
         }
         return costRouting.policy.model(for: decision.tier)
     }
 
     private func stickyTier(
-        request: GenerationRequest, context: RoutingContext
+        request: GenerationRequest, context: RoutingContext, localModel: String
     ) -> (tier: StickyRoutingPolicy.Tier, strongWinProbability: Double)? {
         guard let costRouting else { return nil }
         let previous = context.sessionId.flatMap { sessionRoutes[$0] }
-        let probability = costRouting.scorer.strongWinProbability(for: request.prompt)
+        let bias = outcomeBias.beta(model: localModel, bucket: .init(request), at: Date())
+        let probability = costRouting.scorer.strongWinProbability(for: request.prompt, escalationBias: bias)
         let tier = costRouting.policy.tier(
             strongWinProbability: probability,
             previous: previous?.tier,
@@ -223,6 +228,24 @@ public actor ModelRouter: Sendable {
             sessionRoutes[sessionId] = SessionRoute(tier: tier, promptTokens: request.prompt.utf8.count / 4)
         }
         return (tier, probability)
+    }
+
+    public func recordLocalOutcome(_ request: GenerationRequest, response: GenerationResponse, localModel: String) {
+        guard let costRouting, request.isServiceRequest != true,
+              let failed = RoutingOutcomeBias.failed(request, response)
+        else { return }
+        let before = outcomeBias
+        outcomeBias.record(failed: failed, model: localModel, bucket: .init(request), at: Date())
+        guard outcomeBias != before, let url = costRouting.outcomeBiasURL else { return }
+        do {
+            try outcomeBias.save(to: url)
+        } catch {
+            log("Saving the routing outcome bias to \(url.path) failed: \(error)")
+        }
+    }
+
+    public var routingBias: [String: [String: Double]]? {
+        costRouting == nil ? nil : outcomeBias.snapshot(at: Date())
     }
 
     private func requireCloudClient() throws -> OpenRouterClient {
@@ -537,7 +560,7 @@ extension ModelRouter: CloudFallback {
         }
     }
 
-    public func assess(_ request: GenerationRequest) async -> CloudAssessment? {
+    public func assess(_ request: GenerationRequest, localModel: String) async -> CloudAssessment? {
         guard cloudClient != nil, let cloudModel = fallbackCloudModel,
               request.tools?.isEmpty ?? true, request.responseFormat == nil,
               ChatMessageInput.splittingPrefill(request.messages ?? [])?.prefill.isEmpty ?? true
@@ -545,7 +568,7 @@ extension ModelRouter: CloudFallback {
         let context = RoutingContext(request)
         if let costTracker, await costTracker.isExhausted(scopes: context.budgetScopes) { return nil }
         let completionTokens = request.maxTokens ?? 1_024
-        let gap = stickyTier(request: request, context: context).map { $0.tier == .strong ? $0.strongWinProbability : 0 } ?? 0
+        let gap = stickyTier(request: request, context: context, localModel: localModel).map { $0.tier == .strong ? $0.strongWinProbability : 0 } ?? 0
         return CloudAssessment(
             capabilityGap: gap,
             estimatedCost: estimateCost(model: cloudModel, promptTokens: request.prompt.utf8.count / 4, completionTokens: completionTokens),

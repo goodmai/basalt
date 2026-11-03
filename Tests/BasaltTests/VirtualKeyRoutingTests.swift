@@ -130,10 +130,10 @@ struct VirtualKeyRoutingTests {
             settings, orchestrator: ModelOrchestratorActor(engine: MockInferenceEngine()),
             virtualKeys: [VirtualKey(key: "vk-team-a-0123456789", id: "team-a", maxBudget: 0)], costURL: costURL)
         let plain = GenerationRequest(prompt: "hi")
-        #expect(await router.assess(plain) != nil)
-        #expect(await router.assess(plain.withRouting(sessionId: nil, budgetKey: "team-a")) == nil)
-        #expect(await router.assess(plain.withRouting(sessionId: nil, budgetKey: "team-b")) != nil)
-        #expect(await router.assess(plain.withRouting(sessionId: "s1", budgetKey: nil)) == nil)
+        #expect(await router.assess(plain, localModel: "local") != nil)
+        #expect(await router.assess(plain.withRouting(sessionId: nil, budgetKey: "team-a"), localModel: "local") == nil)
+        #expect(await router.assess(plain.withRouting(sessionId: nil, budgetKey: "team-b"), localModel: "local") != nil)
+        #expect(await router.assess(plain.withRouting(sessionId: "s1", budgetKey: nil), localModel: "local") == nil)
     }
 
     @Test("router_params turn on the capability reason; a threshold without parameters is an error")
@@ -150,8 +150,8 @@ struct VirtualKeyRoutingTests {
         defer { try? FileManager.default.removeItem(at: costURL) }
         let router = try await ServeCommand.cloudFallbackRouter(
             settings, orchestrator: ModelOrchestratorActor(engine: MockInferenceEngine()), costURL: costURL)
-        let hard = try #require(await router.assess(GenerationRequest(prompt: BradleyTerryRouterTests.hardWord)))
-        let easy = try #require(await router.assess(GenerationRequest(prompt: BradleyTerryRouterTests.easyWord)))
+        let hard = try #require(await router.assess(GenerationRequest(prompt: BradleyTerryRouterTests.hardWord), localModel: "local"))
+        let easy = try #require(await router.assess(GenerationRequest(prompt: BradleyTerryRouterTests.easyWord), localModel: "local"))
         #expect(hard.capabilityGap > 0.8)
         #expect(easy.capabilityGap == 0)
 
