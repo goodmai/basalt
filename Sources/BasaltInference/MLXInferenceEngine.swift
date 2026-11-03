@@ -141,6 +141,7 @@ public actor MLXInferenceEngine: InferenceEngine {
     private let speculativeLookup: Bool
     private let speculativeRecycling: Bool
     private let mtp: Bool
+    private let mtpBlockSize: Int
     private let experimentalSamplers: Bool
     private var mtpDrafter: MTPDrafter?
     private let grammarJumpForward: Bool
@@ -167,6 +168,7 @@ public actor MLXInferenceEngine: InferenceEngine {
         speculativeLookup: Bool = false,
         speculativeRecycling: Bool = false,
         mtp: Bool = false,
+        mtpBlockSize: Int = 2,
         experimentalSamplers: Bool = false,
         grammarJumpForward: Bool = false,
         promptCacheDisk: PromptCacheDiskStore? = nil,
@@ -179,6 +181,7 @@ public actor MLXInferenceEngine: InferenceEngine {
         self.speculativeLookup = speculativeLookup
         self.speculativeRecycling = speculativeRecycling
         self.mtp = mtp
+        self.mtpBlockSize = max(2, mtpBlockSize)
         self.experimentalSamplers = experimentalSamplers
         self.grammarJumpForward = grammarJumpForward
         self.reasoningEffort = reasoningEffort
@@ -1063,7 +1066,7 @@ public actor MLXInferenceEngine: InferenceEngine {
                         params: params, components: constrained, tools: forcedTool == nil ? toolSpecs : nil,
                         context: context, speculativeLookup: speculativeLookup, speculativeRecycling: speculativeRecycling,
                         grammarJumpForward: jumpForward,
-                        routesExperts: expertRouting, kvZones: zones, kvPrecision: zonedPrecision, mtpDrafter: drafter)
+                        routesExperts: expertRouting, kvZones: zones, kvPrecision: zonedPrecision, mtpDrafter: drafter, mtpBlockSize: mtpBlockSize)
                 }
             } catch {
                 keep(nil, tokens: promptTokens, namespace: namespace, releasing: leaseSlot, epoch: epoch)
@@ -1510,11 +1513,11 @@ public actor MLXInferenceEngine: InferenceEngine {
         grammarJumpForward: Bool = false,
         routesExperts: Bool = true, kvZones: KVZones? = nil,
         kvPrecision: KVPrecision? = nil,
-        mtpDrafter: MTPDrafter? = nil
+        mtpDrafter: MTPDrafter? = nil, mtpBlockSize: Int = 2
     ) throws -> GenerationLaunch {
         if let mtpDrafter, !carriesMoreThanTokens(input) {
             let iterator = try MTPSpeculativeTokenIterator(
-                input: input, mainModel: context.model, drafter: mtpDrafter.model, parameters: params, blockSize: 2,
+                input: input, mainModel: context.model, drafter: mtpDrafter.model, parameters: params, blockSize: mtpBlockSize,
                 components: components)
             let (stream, task, prefill) = Self.handOff(
                 promptTokenCount: input.text.tokens.dim(-1), modelConfiguration: context.configuration,

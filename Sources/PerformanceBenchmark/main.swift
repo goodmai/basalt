@@ -70,6 +70,9 @@ struct Benchmark: AsyncParsableCommand {
     @Flag(name: .customLong("mtp"), help: "Draft with the model's MTP head (mtp.safetensors)")
     var mtp: Bool = false
 
+    @Option(name: .customLong("mtp-block"), help: "With --mtp, tokens per verify round, the target's own plus N-1 drafted (default 2)")
+    var mtpBlock = 2
+
     @Flag(name: .customLong("grammar-jump-forward"), help: "Feed XGrammar-forced spans in one forward pass during constrained decoding")
     var grammarJumpForward: Bool = false
 
@@ -106,7 +109,7 @@ struct Benchmark: AsyncParsableCommand {
             kvZones: kvZones ? .standard : nil,
             repetitionPenalty: repetitionPenalty,
             topK: topK, minP: minP, seed: seed, speculativeLookup: speculativeLookup,
-            speculativeRecycling: speculativeRecycling, mtp: mtp, experimentalSamplers: dryMultiplier != nil, grammarJumpForward: grammarJumpForward)
+            speculativeRecycling: speculativeRecycling, mtp: mtp, mtpBlockSize: mtpBlock, experimentalSamplers: dryMultiplier != nil, grammarJumpForward: grammarJumpForward)
         let orchestrator = ModelOrchestratorActor(engine: engine, maxTokens: tokens, kvPrecision: kvBits, kvZones: kvZones ? .standard : nil)
 
         print("Loading model…", terminator: ""); fflush(stdout)

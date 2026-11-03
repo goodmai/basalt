@@ -121,6 +121,12 @@ struct ServeCommand: AsyncParsableCommand {
     )
     var mtp = false
 
+    @Option(
+        name: .customLong("mtp-block"),
+        help: "With --mtp, tokens per verify round: one the target already chose plus N-1 drafted by the MTP head (default 2; Qwen3.5-family targets rewind up to 7 drafted tokens)"
+    )
+    var mtpBlock = 2
+
     @Flag(
         name: .customLong("experimental-samplers"),
         help: "Accept the experimental dry_* (DRY repetition penalty) and xtc_* (exclude top choices) request fields. Measured on a 2-bit Qwen3.8, DRY turned a verbatim loop that RepetitionGuard stops into a loop with corrupted numbers that runs to max_tokens; on models that do not loop it changed nothing. Without this flag those fields are refused with 400"
@@ -543,6 +549,7 @@ struct ServeCommand: AsyncParsableCommand {
             speculativeLookup: speculativeLookup,
             speculativeRecycling: speculativeRecycling,
             mtp: mtp,
+            mtpBlockSize: mtpBlock,
             experimentalSamplers: experimentalSamplers,
             grammarJumpForward: grammarJumpForward,
             promptCacheDisk: try promptCacheDisk.store(),
