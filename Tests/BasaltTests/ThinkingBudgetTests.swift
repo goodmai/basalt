@@ -69,7 +69,7 @@ enum ThinkingModel {
         let engine = MLXInferenceEngine()
         await engine.attach(ModelContainer(context: ModelContext(
             configuration: ModelConfiguration(id: "tiny-qwen", reasoningConfig: reasoning),
-            model: try withRandomState(MLXRandom.RandomState(seed: 56)) { try TinyModel.make() },
+            model: try TinyModel.make(),
             processor: ThinkInputProcessor(),
             tokenizer: ThinkTokenizer())), profile: profile)
         return engine

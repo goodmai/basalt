@@ -66,46 +66,6 @@ struct VisionStyleInputProcessor: UserInputProcessor {
     }
 }
 
-enum TinyModel {
-    static let config = """
-        {"hidden_size": 64, "num_hidden_layers": 2, "intermediate_size": 128,
-         "num_attention_heads": 4, "num_key_value_heads": 2, "rms_norm_eps": 1e-5,
-         "vocab_size": 256, "rope_theta": 10000.0, "tie_word_embeddings": false}
-        """
-
-    static let weightScale: Float = 4
-
-    static func make() throws -> LlamaModel {
-        let model = try withRandomState(MLXRandom.RandomState(seed: 56)) { LlamaModel(try JSONDecoder().decode(LlamaConfiguration.self, from: Data(config.utf8))) }
-        model.update(parameters: model.parameters().mapValues { $0 * weightScale })
-        eval(model)
-        return model
-    }
-
-    static func container(processor: any UserInputProcessor = ByteInputProcessor()) throws -> ModelContainer {
-        ModelContainer(context: ModelContext(
-            configuration: ModelConfiguration(id: "tiny-llama"),
-            model: try make(),
-            processor: processor,
-            tokenizer: ByteTokenizer()))
-    }
-
-    static let cacheBytesPerToken = 2 * 2 * 16 * 4 * 2
-
-    static func engine(
-        promptCacheBytes: Int? = nil, repetitionPenalty: Float? = nil,
-        processor: any UserInputProcessor = ByteInputProcessor()
-    ) async throws -> MLXInferenceEngine {
-        let engine = MLXInferenceEngine(promptCacheBytes: promptCacheBytes, repetitionPenalty: repetitionPenalty)
-        await engine.attach(try container(processor: processor))
-        return engine
-    }
-
-    static func tokens(_ prompt: String) -> [Int] {
-        ByteTokenizer().encode(text: prompt, addSpecialTokens: false) + [ByteTokenizer.endOfUserTurn]
-    }
-}
-
 enum Conversation {
     static let firstTurn = "[System]: You are a coding agent. Tools: run_command.\n\n[User]: list the files"
     static let afterToolCall = firstTurn

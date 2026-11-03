@@ -59,7 +59,7 @@ enum AgentTrace {
     }
 
     static func recurrentBytes() throws -> Int {
-        try #require(RecurrentSnapshot(of: try TinyHybrid.snapshotted(try TinyHybrid.make(), TinyModel.tokens(Conversation.firstTurn)))).bytes
+        try #require(RecurrentSnapshot(of: try TinyHybrid.snapshotted(try TinyModel.make(.qwen35), TinyModel.tokens(Conversation.firstTurn)))).bytes
     }
 }
 
@@ -95,7 +95,7 @@ struct HybridAnchorTests {
 
     @Test("A chain keeps at most N anchors, the deepest; over budget the oldest anchors go before the stable boundary")
     func anchorsAreCappedAndEvictedBeforeTheBoundary() throws {
-        let model = try TinyHybrid.make()
+        let model = try TinyModel.make(.qwen35)
         let prompt = (0..<300).map { 1 + ($0 * 37 + $0 / 9) % 250 }
         let cuts = [40, 80, 120, 160, 200, 240]
         let head = try HybridPrefixSnapshot.prefillHead(

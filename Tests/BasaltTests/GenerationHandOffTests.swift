@@ -8,7 +8,7 @@ import MLXLMCommon
 struct GenerationHandOffTests {
     static func context() throws -> ModelContext {
         ModelContext(
-            configuration: ModelConfiguration(id: "tiny-qwen35"), model: try TinyHybrid.make(),
+            configuration: ModelConfiguration(id: "tiny-qwen35"), model: try TinyModel.make(.qwen35),
             processor: ByteInputProcessor(), tokenizer: ByteTokenizer())
     }
 

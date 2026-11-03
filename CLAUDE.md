@@ -56,6 +56,7 @@ All code modifications must pass these deterministic CLI verification gates befo
 ## 4. Non-Negotiable Code & Test Constraints
 - **Zero Code Comments (`CONTRIBUTING.md`)**: Do not add `//`, `///`, or `/* */` comments in Swift code; remove surrounding comments when modifying code. Verify with `python3 scripts/check_no_new_comments.py origin/main`.
 - **Testing Standard**: Use the modern `Testing` module (`import Testing`, `@Suite`, `@Test`, `#expect`, `#require`). Never create new `XCTestCase` classes. No arbitrary `Task.sleep` in unit tests; use deterministic continuations or clock injection.
+- **Kernel Admission Rule (#228)**: A custom kernel or new decode path lands only with (a) a parity test against the stock MLX graph on a tiny fixture from `TinyModel.make(_:)` (`Tests/BasaltTests/Fixtures/TinyModels.swift`): exact for token ids and expert indices, within a stated float tolerance for logits and weights; and (b) no mocked engine below `BasaltServer` (`MockInferenceEngine` is for REST/controller tests only). A new architecture gets a `TinyModel.Family` case, not a suite-local builder.
 - **Memory & Ownership (Swift 6.4)**:
   - Prefer `InlineArray` and `Span` / `RawSpan` over heap arrays and unsafe pointers.
   - Prefer `UniqueBox` and `UniqueArray` (SE-0517/0527) for single-owner heap buffers to eliminate ARC and Copy-on-Write (CoW) overhead.

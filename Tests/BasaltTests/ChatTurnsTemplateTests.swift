@@ -144,7 +144,7 @@ struct ChatTurnsTemplateTests {
 
     @Test("On a hybrid model the snapshot sits at the end of the last user turn's text, so turn 2 reuses all but the generation-prompt suffix")
     func secondTurnReusesSnapshotOnHybridModel() async throws {
-        let engine = await Self.engine(try TinyHybrid.make())
+        let engine = await Self.engine(try TinyModel.make(.qwen35))
         let turn1 = try await engine.generate(request: Self.request(Self.firstTurn, key: "ns"))
         #expect(turn1.cachedPromptTokens == 0)
 
