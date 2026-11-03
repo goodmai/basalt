@@ -23,6 +23,15 @@ A lock held across a suspension point can be released on a different thread, or 
 ## Raw `Thread`
 A `Thread {}` has no task-local values, no cancellation, and its own MLX default stream. It is justified for a loop that must block (the batch decoder waits on a condition between steps). Check: who stops it, what happens to waiters when it exits, and that it never touches actor state directly.
 
+## Reading Thread Sanitizer on MLX
+`swift test --sanitize=thread` on anything that evaluates MLX arrays prints dozens of reports from MLX's Metal backend: command-buffer completion handlers, `scheduler::notify_task_completion`, `MetalAllocator`, fences. Metal orders these in ways TSan cannot see, and they appear even in single-threaded test setup.
+
+What to do with them:
+- Group the reports by the top frame.
+- Set aside the ones whose stacks are MLX/Metal internals plus a basalt frame that merely called `eval`.
+- What remains, reports where both sides touch basalt state (a decoder's rows, a cache array, an engine property), are the real findings.
+- Say how many you triaged and how.
+
 ## Tests for races
 - Prefer a deterministic interleaving (a condition or continuation the test controls) over sleeps.
 - A tiny-model test that passes without the fix proves nothing about the fix; say what reproduces it on a real model (server under `--max-concurrent`, batch on a compiled model) and run that.
