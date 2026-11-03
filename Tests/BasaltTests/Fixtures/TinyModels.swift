@@ -7,7 +7,7 @@ import MLXLLM
 
 enum TinyModel {
     enum Family: String, CaseIterable, Sendable {
-        case llama, llama4Layers, qwen3, qwen35, qwen35Moe, gemma3, gemma4, qwen3Moe, sigmoidMoe, nemotronH, lfm2, lfm2Moe, prism
+        case llama, llama4Layers, qwen3, qwen35, qwen35Moe, gemma3, gemma4, gemma4Moe, qwen3Moe, sigmoidMoe, nemotronH, lfm2, lfm2Moe, prism
 
         func model(_ config: Data) throws -> any LanguageModel {
             let decoder = JSONDecoder.json5()
@@ -16,7 +16,7 @@ enum TinyModel {
             case .qwen3: Qwen3Model(try decoder.decode(Qwen3Configuration.self, from: config))
             case .qwen35, .qwen35Moe: Qwen35TextModel(try decoder.decode(Qwen35TextConfiguration.self, from: config))
             case .gemma3: Gemma3TextModel(try decoder.decode(Gemma3TextConfiguration.self, from: config))
-            case .gemma4: Gemma4TextModel(try decoder.decode(Gemma4TextConfiguration.self, from: config))
+            case .gemma4, .gemma4Moe: Gemma4TextModel(try decoder.decode(Gemma4TextConfiguration.self, from: config))
             case .qwen3Moe: Qwen3MoEModel(try decoder.decode(Qwen3MoEConfiguration.self, from: config))
             case .sigmoidMoe, .nemotronH: NemotronHModel(try decoder.decode(NemotronHConfiguration.self, from: config))
             case .lfm2: LFM2Model(try decoder.decode(LFM2Configuration.self, from: config))
@@ -31,7 +31,7 @@ enum TinyModel {
             case .llama4Layers, .qwen3: 36
             case .qwen35, .qwen35Moe: 79
             case .gemma3: 103
-            case .gemma4, .qwen3Moe, .sigmoidMoe: 228
+            case .gemma4, .gemma4Moe, .qwen3Moe, .sigmoidMoe: 228
             case .nemotronH: 30
             case .lfm2: 97
             case .lfm2Moe: 83
@@ -42,7 +42,7 @@ enum TinyModel {
         var weightScale: Float {
             switch self {
             case .llama, .gemma3: 4
-            case .llama4Layers, .qwen3, .gemma4, .qwen35, .qwen35Moe, .qwen3Moe, .sigmoidMoe, .nemotronH, .lfm2, .lfm2Moe, .prism: 1
+            case .llama4Layers, .qwen3, .gemma4, .gemma4Moe, .qwen35, .qwen35Moe, .qwen3Moe, .sigmoidMoe, .nemotronH, .lfm2, .lfm2Moe, .prism: 1
             }
         }
 
@@ -82,6 +82,9 @@ enum TinyModel {
                  "vocab_size_per_layer_input": 256, "sliding_window": \(slidingWindow), "sliding_window_pattern": 2,
                  "use_double_wide_mlp": false, "rms_norm_eps": 1e-6}
                 """
+            case .gemma4Moe: Self.gemma4.config.replacingOccurrences(
+                of: "\"rms_norm_eps\": 1e-6}",
+                with: "\"rms_norm_eps\": 1e-6, \"enable_moe_block\": true, \"num_experts\": 8, \"top_k_experts\": 2, \"moe_intermediate_size\": 32}")
             case .qwen3Moe: """
                 {"model_type": "qwen3_moe", "hidden_size": 64, "num_hidden_layers": 4, "intermediate_size": 128,
                  "num_attention_heads": 4, "num_key_value_heads": 2, "head_dim": 16, "rms_norm_eps": 1e-5,
