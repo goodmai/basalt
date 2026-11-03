@@ -86,7 +86,7 @@ struct PromptLookupDecodingTests {
     }
 
     @Test("Greedy decoding with prompt lookup emits exactly the plain decoder's tokens, and drafts are accepted",
-          arguments: [TinyModel.Family.llama4Layers, .qwen3, .qwen35, .lfm2Moe, .nemotronH, .lfm2])
+          arguments: [TinyModel.Family.llama4Layers, .qwen3, .qwen35, .lfm2Moe, .nemotronH, .lfm2, .gemma4])
     func greedyEquivalence(family: TinyModel.Family) throws {
         let model = try TinyModel.make(family)
         let expected = try LookupFixture.baseline(model)
@@ -146,6 +146,24 @@ struct PromptLookupDecodingTests {
         #expect(tokens.count == 48)
         #expect(try #require(iterator.speculativeDecodingTelemetry).rejectedDraftTokenCount > 0)
         #expect(cache.allSatisfy { $0.offset == LookupFixture.prompt.count + tokens.count - 1 })
+    }
+
+    @Test("On a sliding-window model rejected drafts that cross the window's wrap point leave the ring as plain decoding would: the next-token logits match a plain prefill of the same tokens (#161)")
+    func slidingWindowRollback() throws {
+        let model = try TinyModel.make(.gemma4)
+        let unit = LookupFixture.unit
+        let script = (0 ..< 6).flatMap { round in Array(unit[4 ..< 8]) + [240 + round] + Array(unit[0 ..< 4]) }
+        let run = try LookupFixture.lookup(model, maxTokens: script.count, sampler: ScriptedSampler(script))
+        expectTokenSequence(run.tokens, script)
+        #expect(run.iterator.stagesRounds)
+        #expect(try #require(run.iterator.speculativeDecodingTelemetry).rejectedDraftTokenCount > 0)
+        #expect(LookupFixture.prompt.count + run.tokens.count > 2 * TinyModel.slidingWindow)
+        let last = MLXArray([Int32(run.tokens[run.tokens.count - 1])])[.newAxis]
+        let staged = model(last, cache: run.cache)[0, -1]
+        let reference = try model.newCache(parameters: nil)
+        eval(model(MLXArray((LookupFixture.prompt + run.tokens.dropLast()).map(Int32.init))[.newAxis], cache: reference))
+        let plain = model(last, cache: reference)[0, -1]
+        #expect(allClose(staged, plain, atol: 1e-4).item(Bool.self))
     }
 
     static func rejectingRun(_ family: TinyModel.Family, maxTokens: Int) throws -> (model: any LanguageModel, run: (tokens: [Int], iterator: PromptLookupTokenIterator, cache: [KVCache]), reference: [KVCache]) {
@@ -325,15 +343,16 @@ struct PromptLookupDecodingTests {
         #expect(speculative.draftTokens != nil)
     }
 
-    @Test("Lookup admits attention-only caches and dense recurrent hybrids; hybrids that route tokens to experts and sliding-window caches stay on plain decoding",
-          arguments: [(TinyModel.Family.qwen3, true), (TinyModel.Family.qwen35, true), (TinyModel.Family.nemotronH, true), (TinyModel.Family.lfm2, true), (TinyModel.Family.lfm2Moe, false), (TinyModel.Family.qwen35Moe, false)])
+    @Test("Lookup admits attention-only caches, dense recurrent hybrids and sliding-window caches that stage rounds; hybrids that route tokens to experts stay on plain decoding",
+          arguments: [(TinyModel.Family.qwen3, true), (TinyModel.Family.qwen35, true), (TinyModel.Family.nemotronH, true), (TinyModel.Family.lfm2, true), (TinyModel.Family.gemma4, true), (TinyModel.Family.lfm2Moe, false), (TinyModel.Family.qwen35Moe, false)])
     func guardAdmitsDenseHybridsOnly(family: TinyModel.Family, admitted: Bool) throws {
         let model = try TinyModel.make(family)
         let routesExperts = PromptLookupTokenIterator.routesExperts(model)
         #expect(routesExperts == [.lfm2Moe, .qwen35Moe].contains(family))
         #expect(PromptLookupTokenIterator.supports(try model.newCache(parameters: nil), routesExperts: routesExperts) == admitted)
         let slidingWindow: [KVCache] = [RotatingKVCache(maxSize: 64), KVCacheSimple()]
-        #expect(!PromptLookupTokenIterator.supports(slidingWindow, routesExperts: false))
+        #expect(PromptLookupTokenIterator.supports(slidingWindow, routesExperts: false))
+        #expect(!PromptLookupTokenIterator.supports(slidingWindow, routesExperts: true))
         #expect(!PromptLookupTokenIterator.supports([], routesExperts: false))
     }
 
