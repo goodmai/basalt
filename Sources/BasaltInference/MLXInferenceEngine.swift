@@ -168,7 +168,7 @@ public actor MLXInferenceEngine: InferenceEngine {
         speculativeLookup: Bool = false,
         speculativeRecycling: Bool = false,
         mtp: Bool = false,
-        mtpBlockSize: Int = 2,
+        mtpBlockSize: Int = 4,
         experimentalSamplers: Bool = false,
         grammarJumpForward: Bool = false,
         promptCacheDisk: PromptCacheDiskStore? = nil,
@@ -1513,7 +1513,7 @@ public actor MLXInferenceEngine: InferenceEngine {
         grammarJumpForward: Bool = false,
         routesExperts: Bool = true, kvZones: KVZones? = nil,
         kvPrecision: KVPrecision? = nil,
-        mtpDrafter: MTPDrafter? = nil, mtpBlockSize: Int = 2
+        mtpDrafter: MTPDrafter? = nil, mtpBlockSize: Int = 4
     ) throws -> GenerationLaunch {
         if let mtpDrafter, !carriesMoreThanTokens(input) {
             let iterator = try MTPSpeculativeTokenIterator(

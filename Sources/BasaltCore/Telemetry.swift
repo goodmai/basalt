@@ -2,10 +2,6 @@ import Foundation
 
 // MARK: — Telemetry & Observability (Epic 16 / Issue #30)
 
-/// Real-time telemetry snapshot shared by `serve --stats`, `GET /api/v1/stats`
-/// and MCP `status`. Every field has a producer on the serving path; metrics the engine cannot
-/// measure yet (KV size, parked conversations, speculative acceptance) are left out rather than
-/// reported as zeros.
 public struct ServerTelemetrySnapshot: Codable, Sendable, Equatable {
     public let timestamp: Date
     public let tokensPerSecond: Double
@@ -25,6 +21,8 @@ public struct ServerTelemetrySnapshot: Codable, Sendable, Equatable {
     public var hybridAnchorBytes: Int64?
     public var memory: MemoryTelemetry?
     public var routingBias: [String: [String: Double]]?
+    public var draftTokens: Int?
+    public var acceptedDraftTokens: Int?
 
     public init(
         timestamp: Date = Date(),
@@ -62,6 +60,7 @@ public struct ServerTelemetrySnapshot: Codable, Sendable, Equatable {
         let ram = String(format: "%.1f", availableRAMGB)
         return "[stats] \(tps) tok/s | TTFT: \(ttft)s | RAM avail: \(ram)/\(totalRAMGB) GB | Model: \(modelRAMMB) MB | GPU active: \(formatBytes(gpuActiveBytes)) (peak \(formatBytes(gpuPeakBytes))) | Active: \(activeRequests) | Requests: \(totalRequests)"
             + (memory.map { " | \($0.formattedStats)" } ?? "")
+            + (draftTokens.map { " | Drafts: \(acceptedDraftTokens ?? 0) of \($0) accepted" } ?? "")
     }
 }
 
@@ -100,6 +99,8 @@ public actor TelemetryTracker {
     private var gpuActiveBytes: Int64 = 0
     private var gpuPeakBytes: Int64 = 0
     private var modelRAMMB: Int = 0
+    private var draftTokens = 0
+    private var acceptedDraftTokens = 0
     /// Chip, GPU and total RAM never change for the process: probed once, not on every tick.
     private var hardware: SystemProfiler.SystemResources?
 
@@ -112,6 +113,8 @@ public actor TelemetryTracker {
         lastTTFT = response.timeToFirstToken
         gpuActiveBytes = Int64(response.memory.activeBytes)
         gpuPeakBytes = Int64(response.memory.peakBytes)
+        draftTokens += response.draftTokens ?? 0
+        acceptedDraftTokens += response.acceptedDraftTokens ?? 0
     }
 
     public func setModelMemory(mb: Int) {
@@ -137,7 +140,7 @@ public actor TelemetryTracker {
         }
         let availGB = Double(await profiler.currentAvailableRAM()) / 1_073_741_824.0
 
-        return ServerTelemetrySnapshot(
+        var snapshot = ServerTelemetrySnapshot(
             timestamp: Date(),
             tokensPerSecond: lastTokensPerSecond,
             timeToFirstToken: lastTTFT,
@@ -152,5 +155,10 @@ public actor TelemetryTracker {
             chipModel: hw.chipModel,
             gpuName: hw.gpuName
         )
+        if draftTokens > 0 {
+            snapshot.draftTokens = draftTokens
+            snapshot.acceptedDraftTokens = acceptedDraftTokens
+        }
+        return snapshot
     }
 }

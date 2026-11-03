@@ -70,8 +70,8 @@ struct Benchmark: AsyncParsableCommand {
     @Flag(name: .customLong("mtp"), help: "Draft with the model's MTP head (mtp.safetensors)")
     var mtp: Bool = false
 
-    @Option(name: .customLong("mtp-block"), help: "With --mtp, tokens per verify round, the target's own plus N-1 drafted (default 2)")
-    var mtpBlock = 2
+    @Option(name: .customLong("mtp-block"), help: "With --mtp, the largest verify round, the target's own token plus up to N-1 drafted (default 4)")
+    var mtpBlock = 4
 
     @Flag(name: .customLong("grammar-jump-forward"), help: "Feed XGrammar-forced spans in one forward pass during constrained decoding")
     var grammarJumpForward: Bool = false
