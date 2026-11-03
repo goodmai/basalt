@@ -62,6 +62,7 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
         self.speculativeLookup = speculativeLookup
         self.grammarJumpForward = grammarJumpForward
         self.replaysRejections = Self.isReplayableHybrid(cache)
+        backoffs = DrafterBackoffs(minYield: replaysRejections ? DraftBackoff.replayedMinYield : DraftBackoff.denseMinYield)
         self.model = model
         self.cache = cache
         self.state = state
@@ -430,8 +431,13 @@ struct TokenRecyclingTable {
 }
 
 struct DrafterBackoffs {
-    var lookup = DraftBackoff()
-    var recycling = DraftBackoff()
+    var lookup: DraftBackoff
+    var recycling: DraftBackoff
+
+    init(minYield: Double = DraftBackoff.denseMinYield) {
+        lookup = DraftBackoff(minYield: minYield)
+        recycling = DraftBackoff(minYield: minYield)
+    }
 
     mutating func tick() {
         lookup.tick()
@@ -457,11 +463,19 @@ struct DraftBackoff {
     static let replayPauseScale = 4
     static let maxDraftLimit = 16
     static let minDraftLimit = 2
+    static let denseMinYield = 0.25
+    static let replayedMinYield = 0.75
+
+    let minYield: Double
 
     private(set) var pause = 0
     private(set) var probing = true
     private(set) var draftLimit = maxDraftLimit
     private var nextPause = 1
+
+    init(minYield: Double = denseMinYield) {
+        self.minYield = minYield
+    }
 
     var allowsDraft: Bool { pause == 0 }
 
@@ -474,7 +488,7 @@ struct DraftBackoff {
         if drafted > 0 {
             isProfitable = acceptedDrafts >= 3
                 || (drafted <= 2 && acceptedDrafts >= 1)
-                || (Double(acceptedDrafts) / Double(drafted) >= 0.25)
+                || (Double(acceptedDrafts) / Double(drafted) >= minYield)
             let matched = pauseScale > 1 ? acceptedDrafts + 1 : acceptedDrafts
             if !isProfitable || matched <= 1 {
                 draftLimit = Self.minDraftLimit

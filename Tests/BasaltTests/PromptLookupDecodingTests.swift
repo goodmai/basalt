@@ -482,6 +482,21 @@ struct PromptLookupDecodingTests {
         #expect(backoff.draftLimit == 6)
     }
 
+    @Test("A hybrid pays a replay forward on every rejection, so a round must keep three quarters of its drafts to count as profitable; a dense model needs a quarter (#241)")
+    func hybridNeedsTwiceTheYield() {
+        var dense = DraftBackoff()
+        var hybrid = DraftBackoff(minYield: DraftBackoff.replayedMinYield)
+        dense.record(acceptedDrafts: 1, drafted: 4, pauseScale: DraftBackoff.replayPauseScale)
+        hybrid.record(acceptedDrafts: 1, drafted: 4, pauseScale: DraftBackoff.replayPauseScale)
+        #expect(dense.allowsDraft)
+        #expect(hybrid.pause == DraftBackoff.replayPauseScale)
+        hybrid.record(acceptedDrafts: 2, drafted: 4, pauseScale: DraftBackoff.replayPauseScale)
+        #expect(!hybrid.allowsDraft)
+        while !hybrid.allowsDraft { hybrid.tick() }
+        hybrid.record(acceptedDrafts: 3, drafted: 4, pauseScale: DraftBackoff.replayPauseScale)
+        #expect(hybrid.allowsDraft)
+    }
+
     @Test("On a hybrid a round that accepts one draft and then replays does not pay for its extra forward, so lookup backs off; a dense model keeps drafting")
     func hybridBacksOffWhenTheReplayEatsTheGain() throws {
         let cycles = (0 ..< 20).flatMap { [1, 2, 3, 4, 5, 20 + $0] }

@@ -13,6 +13,8 @@ The rule is in CONTRIBUTING.md, "Real-model runs". This is how to follow it.
 2. Quality, memory or behaviour on a real model is an env-gated Swift test: `@Test(.enabled(if: modelPath != nil, "set BASALT_E2E=1 and BASALT_E2E_<X>_MODEL_PATH"))`, following `CacheBlendQualityTests` and `HybridPrefixDriftTests`. Run it with `swift test --filter <Suite>`.
 3. Anything that fits neither goes in `scripts/<name>.swift` (see `scripts/build_metal.swift`).
 
+Measure speed at the temperature the workload is used with. Code edits, prose and reasoning run at the model's sampling temperature (0.7 in `scripts/speculative_lookup_bench.swift`), not greedy: a greedy cell is deterministic, so it helps when debugging a drafter, but it is not the number a speculative-decoding claim rests on.
+
 Bash only starts one of these. Don't write `for model in …; do …; done | tail`, and don't decide pass/fail with grep.
 
 ## What the runner does
@@ -31,7 +33,7 @@ Cover at least two families for any speed or quality claim, plus one model the f
 
 | Class | Cached examples | Use for |
 |---|---|---|
-| Dense, all `KVCacheSimple` | `mlx-community/Qwen3-4B-4bit`, `mlx-community/Meta-Llama-3.1-8B-Instruct-4bit` | CacheBlend, prompt lookup, KV quantization |
+| Dense, all `KVCacheSimple` | `mlx-community/Qwen3-4B-4bit` | CacheBlend, prompt lookup, KV quantization |
 | Sliding window + full attention, attention calls `cache.update` | `mlx-community/gemma-4-12B-it-qat-4bit` | KV cache layouts, fallback paths |
 | Hybrid linear/full attention (qwen3_5) | `ornith-ai/Ornith-1.5-9B-MLX-4bit`, `lukaskremla/Qwen3.8-27B-3bit-MLX-TextOnly` | hybrid snapshots, fallback paths |
 | Hybrid conv/SSM + attention | `LiquidAI/LFM2.5-8B-A1B-MLX-4bit`, `mlx-community/NVIDIA-Nemotron-3-Nano-4B-4bit` | hybrid snapshots, fallback paths |
