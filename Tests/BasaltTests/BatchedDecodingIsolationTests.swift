@@ -21,7 +21,7 @@ enum BatchFixture {
     }
 
     static func prefilled(_ model: any LanguageModel, _ prompt: [Int]) throws -> [KVCacheSimple] {
-        let layers = try #require(BatchedTokenIterator.plainLayers(try model.newCache(parameters: nil)))
+        let layers = try model.newCache(parameters: nil).compactMap { $0 as? KVCacheSimple }
         eval(model(row(prompt), cache: layers))
         return layers
     }
@@ -47,7 +47,7 @@ enum BatchFixture {
         let seat = try #require(decoder.seat())
         let iterator = try BatchedTokenIterator(
             input: LMInput(tokens: MLXArray(prompt.map(Int32.init))), model: model,
-            layers: try #require(BatchedTokenIterator.plainLayers(try model.newCache(parameters: nil))), processor: nil,
+            layers: try #require(BatchedTokenIterator.batchableLayers(try model.newCache(parameters: nil))), processor: nil,
             sampler: GenerateParameters(temperature: 0).sampler(), prefill: PrefillParameters(), maxTokens: maxTokens,
             stopTokens: stop, seat: seat)
         var configuration = ModelConfiguration(id: "tiny-llama")
@@ -160,9 +160,10 @@ struct BatchKVCacheTests {
 @Suite("Batched decode gives each row the tokens it gets alone (#240)", .serialized)
 struct BatchedDecoderTests {
 
-    @Test("Four prompts of different lengths decoded together match their solo greedy decode for 32 steps", .timeLimit(.minutes(1)))
-    func fourRowsMatchSolo() async throws {
-        let model = try TinyModel.make()
+    @Test("Four prompts of different lengths decoded together match their solo greedy decode for 32 steps, on plain attention and on recurrent hybrids",
+          .timeLimit(.minutes(1)), arguments: [TinyModel.Family.llama, .qwen35, .nemotronH, .lfm2])
+    func fourRowsMatchSolo(family: TinyModel.Family) async throws {
+        let model = try TinyModel.make(family)
         let expected = try BatchFixture.prompts.map { BatchFixture.text(try BatchFixture.soloGreedy(model, $0, steps: 32)) }
         let decoder = BatchedDecoder(model: model, slots: 4)
         let launches = try BatchFixture.prompts.map { try BatchFixture.launch(decoder, model, $0, maxTokens: 32) }
@@ -172,10 +173,10 @@ struct BatchedDecoderTests {
         #expect(decoder.admittedRows == 4)
     }
 
-    @Test("A row joining mid-flight and rows retiring on EOS or max tokens leave the other rows' tokens unchanged",
-          .timeLimit(.minutes(1)))
-    func joinAndRetire() async throws {
-        let model = try TinyModel.make()
+    @Test("A row joining mid-flight and rows retiring on EOS or max tokens leave the other rows' tokens unchanged, on plain attention and on recurrent hybrids",
+          .timeLimit(.minutes(1)), arguments: [TinyModel.Family.llama, .qwen35, .nemotronH, .lfm2])
+    func joinAndRetire(family: TinyModel.Family) async throws {
+        let model = try TinyModel.make(family)
         let prompts = BatchFixture.prompts
         let solo = try prompts.map { try BatchFixture.soloGreedy(model, $0, steps: 48) }
         let stop = solo[2][3]
@@ -202,9 +203,9 @@ struct BatchedDecoderTests {
         #expect(await BatchFixture.collect(late.stream) == BatchFixture.text(Array(solo[3].prefix(32))))
     }
 
-    @Test("Cancelling one row stops only that row", .timeLimit(.minutes(1)))
-    func cancellingOneRow() async throws {
-        let model = try TinyModel.make()
+    @Test("Cancelling one row stops only that row", .timeLimit(.minutes(1)), arguments: [TinyModel.Family.llama, .qwen35])
+    func cancellingOneRow(family: TinyModel.Family) async throws {
+        let model = try TinyModel.make(family)
         let prompts = BatchFixture.prompts
         let expected = BatchFixture.text(try BatchFixture.soloGreedy(model, prompts[0], steps: 40))
         let decoder = BatchedDecoder(model: model, slots: 2)
@@ -221,11 +222,11 @@ struct BatchedDecoderTests {
     }
 }
 
-@Suite("Engine and orchestrator route only plain-attention requests to the batch (#240)", .serialized)
+@Suite("Engine and orchestrator route plain-attention and recurrent-hybrid requests to the batch (#240, #255)", .serialized)
 struct BatchedRoutingTests {
 
-    static func solo(_ count: Int) async throws -> [String] {
-        let engine = await BatchFixture.engine(try TinyModel.make(), id: "tiny-llama", batchSlots: 1)
+    static func solo(_ count: Int, family: TinyModel.Family = .llama) async throws -> [String] {
+        let engine = await BatchFixture.engine(try TinyModel.make(family), id: "tiny-\(family)", batchSlots: 1)
         var texts: [String] = []
         for index in 0 ..< count { texts.append(try await engine.generate(request: BatchFixture.request(index)).generatedText) }
         return texts
@@ -263,11 +264,11 @@ struct BatchedRoutingTests {
         }
     }
 
-    @Test("With 4 batch slots and 4 concurrent generations, streaming or not, each request gets its solo output and telemetry",
-          .timeLimit(.minutes(1)))
-    func orchestratorBatchesFourRequests() async throws {
-        let expected = try await Self.solo(4)
-        let engine = await BatchFixture.engine(try TinyModel.make(), id: "tiny-llama", batchSlots: 4)
+    @Test("With 4 batch slots and 4 concurrent generations, streaming or not, each request gets its solo output and telemetry, on plain attention and on recurrent hybrids",
+          .timeLimit(.minutes(1)), arguments: [TinyModel.Family.llama, .qwen35, .nemotronH, .lfm2])
+    func orchestratorBatchesFourRequests(family: TinyModel.Family) async throws {
+        let expected = try await Self.solo(4, family: family)
+        let engine = await BatchFixture.engine(try TinyModel.make(family), id: "tiny-\(family)", batchSlots: 4)
         let orchestrator = ModelOrchestratorActor(engine: engine, telemetry: TelemetryTracker(), gate: GenerationGate(maxConcurrent: 4))
         let responses = try await Self.concurrently(orchestrator, count: 4)
         #expect(responses.map(\.text) == expected)
@@ -275,10 +276,11 @@ struct BatchedRoutingTests {
         #expect(await engine.batchedRows == 4)
     }
 
-    @Test("With 1 batch slot, concurrent generations decode on their own as before", .timeLimit(.minutes(1)))
-    func singleSlotIsUnchanged() async throws {
-        let expected = try await Self.solo(4)
-        let engine = await BatchFixture.engine(try TinyModel.make(), id: "tiny-llama", batchSlots: 1)
+    @Test("With 1 batch slot, concurrent generations decode on their own as before; on a model with compiled traces they no longer race each other",
+          .timeLimit(.minutes(1)), arguments: [TinyModel.Family.llama, .qwen35])
+    func singleSlotIsUnchanged(family: TinyModel.Family) async throws {
+        let expected = try await Self.solo(4, family: family)
+        let engine = await BatchFixture.engine(try TinyModel.make(family), id: "tiny-\(family)", batchSlots: 1)
         let orchestrator = ModelOrchestratorActor(engine: engine, telemetry: TelemetryTracker(), gate: GenerationGate(maxConcurrent: 4))
         #expect(try await Self.concurrently(orchestrator, count: 4).map(\.text) == expected)
         #expect(await engine.batchedRows == 0)
@@ -291,11 +293,10 @@ struct BatchedRoutingTests {
         #expect(throws: (any Error).self) { _ = try ServeCommand.parse(["--batch-slots", "0"]) }
     }
 
-    @Test("Hybrid and sliding-window models keep the serialized path")
-    func hybridAndRotatingStaySolo() async throws {
+    @Test("Sliding-window models keep the serialized path")
+    func rotatingStaysSolo() async throws {
         for engine in [
-            await BatchFixture.engine(try TinyModel.make(.qwen35), id: "tiny-qwen35", batchSlots: 4),
-            await BatchFixture.engine(try TinyModel.make(.gemma3), id: "tiny-gemma3", batchSlots: 4),
+            await BatchFixture.engine(try TinyModel.make(.gemma4), id: "tiny-gemma4", batchSlots: 4),
         ] {
             let reply = try await engine.generate(request: BatchFixture.request(1, maxTokens: 6))
             #expect(reply.completionTokens == 6)

@@ -1078,14 +1078,14 @@ public actor MLXInferenceEngine: InferenceEngine {
             let launch: GenerationLaunch
             do {
                 launch = try await container.perform(nonSendable: lmInput) { context, input in
-                    try Self.launch(
+                    try ModelEvaluationLock.lock(for: context.model).withLock { try Self.launch(
                         input: input, reuse: reuse, cuts: (fork.map { [$0] } ?? []) + anchors, keepsCache: namespace != nil, boundary: boundary,
                         blend: blending, batch: batch,
                         params: params, components: constrained, tools: forcedTool == nil ? toolSpecs : nil,
                         context: context, speculativeLookup: speculativeLookup, speculativeRecycling: speculativeRecycling,
                         grammarJumpForward: jumpForward,
                         routesExperts: expertRouting, kvZones: zones, kvPrecision: zonedPrecision, mtpDrafter: drafter, mtpBlockSize: mtpBlockSize,
-                        mtpPrefix: mtpPrefix)
+                        mtpPrefix: mtpPrefix) }
                 }
             } catch {
                 keep(nil, tokens: promptTokens, namespace: namespace, releasing: leaseSlot, epoch: epoch)
@@ -1591,7 +1591,7 @@ public actor MLXInferenceEngine: InferenceEngine {
                     tokenizer: context.tokenizer, iterator: iterator, tools: tools, toolCallPolicy: zoned.params.toolCallPolicy)
                 return GenerationLaunch(stream: stream, task: task, cache: nil, reusedTokens: 0, prefillSeconds: prefill)
             }
-            if let batch, let layers = BatchedTokenIterator.plainLayers(try context.model.newCache(parameters: params)),
+            if let batch, let layers = BatchedTokenIterator.batchableLayers(try context.model.newCache(parameters: params)),
                let seat = batch.seat() {
                 try components.validate(parameters: params)
                 let iterator = try BatchedTokenIterator(
@@ -1658,7 +1658,7 @@ public actor MLXInferenceEngine: InferenceEngine {
                 stream: stream, task: task, cache: keepable ? head.kept : nil, anchors: keepable ? head.anchors : [],
                 reusedTokens: reused, exactTokens: blended?.exactPrefix ?? Int.max, prefillSeconds: prefill)
         }
-        if let batch, head.state == nil, let layers = BatchedTokenIterator.plainLayers(cache.layers), let seat = batch.seat() {
+        if let batch, head.state == nil, let layers = BatchedTokenIterator.batchableLayers(cache.layers), let seat = batch.seat() {
             return launching(try BatchedTokenIterator(
                 input: tail, model: context.model, layers: layers, processor: processor, sampler: params.sampler(),
                 prefill: params.prefill, maxTokens: params.maxTokens, stopTokens: batchStopTokens(context), seat: seat))
