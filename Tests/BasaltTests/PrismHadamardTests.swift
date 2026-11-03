@@ -17,19 +17,11 @@ enum TinyPrism {
             {"model_type": "prism_hadamard_qwen35", "schema_version": \(schema), "base_model_type": "qwen3_5",
              "tensor_namespace": "mlx-vlm-qwen3_5", "gdn_activation_layout": "grouped",
              "quantization": {"bits": 8, "group_size": 32, "mode": "affine"},
-             "modules": [\(entries)], "text_config": \(TinyHybrid.config)}
+             "modules": [\(entries)], "text_config": \(TinyModel.Family.qwen35.config)}
             """
     }
 
-    static func base() throws -> MLXLLM.Qwen35Model {
-        let model = try withRandomState(MLXRandom.RandomState(seed: 7)) {
-            MLXLLM.Qwen35Model(try JSONDecoder.json5().decode(MLXLLM.Qwen35Configuration.self, from: Data(config().utf8)))
-        }
-        eval(model)
-        return model
-    }
-
-    static func packed(from base: MLXLLM.Qwen35Model) throws -> (model: MLXLLM.Qwen35Model, signs: [String: MLXArray]) {
+    static func packed(from base: any LanguageModel) throws -> (model: MLXLLM.Qwen35Model, signs: [String: MLXArray]) {
         let model = try PrismHadamard.model(configuration: Data(config().utf8))
         var parameters = Dictionary(uniqueKeysWithValues: base.parameters().flattened())
         var signs: [String: MLXArray] = [:]
@@ -66,7 +58,7 @@ struct PrismHadamardTests {
 
     @Test("A model loaded from rotated weights computes the same logits as the unrotated model")
     func rotatedModelMatchesBase() throws {
-        let base = try TinyPrism.base()
+        let base = try TinyModel.make(.prism)
         let (packed, _) = try TinyPrism.packed(from: base)
         let leaves = Dictionary(uniqueKeysWithValues: packed.leafModules().flattened())
         #expect(leaves["language_model.lm_head"] is HadamardQuantizedLinear)
@@ -84,7 +76,7 @@ struct PrismHadamardTests {
 
     @Test("After loading, floating weights outside the rotated modules run in float16, A_log and the signs stay float32")
     func preparedDTypes() throws {
-        let (packed, _) = try TinyPrism.packed(from: try TinyPrism.base())
+        let (packed, _) = try TinyPrism.packed(from: try TinyModel.make(.prism))
         try PrismHadamard.prepareLoaded(packed)
         let parameters = Dictionary(uniqueKeysWithValues: packed.parameters().flattened())
         #expect(parameters["language_model.model.norm.weight"]?.dtype == .float16)
@@ -98,7 +90,7 @@ struct PrismHadamardTests {
 
     @Test("Signs other than ±1 are refused at load")
     func invalidSigns() throws {
-        let (packed, signs) = try TinyPrism.packed(from: try TinyPrism.base())
+        let (packed, signs) = try TinyPrism.packed(from: try TinyModel.make(.prism))
         let path = "language_model.model.layers.1.self_attn.q_proj"
         let broken = try #require(signs[path]) * 2
         try packed.update(parameters: ModuleParameters.unflattened([(path + ".signs", broken)]), verify: [.noUnusedKeys])
@@ -107,7 +99,7 @@ struct PrismHadamardTests {
 
     @Test("A model without rotated modules is left alone by the post-load step")
     func plainModelUntouched() throws {
-        let base = try TinyPrism.base()
+        let base = try TinyModel.make(.prism)
         try PrismHadamard.prepareLoaded(base)
         #expect(Dictionary(uniqueKeysWithValues: base.parameters().flattened())["language_model.model.norm.weight"]?.dtype == .float32)
     }
@@ -170,13 +162,13 @@ struct MTPSidecarTests {
         let directory = FileManager.default.temporaryDirectory.appending(path: "mtp-load-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
-        let config = textOnly ? TinyHybrid.config : TinyPrism.config()
+        let config = textOnly ? TinyModel.Family.qwen35.config : TinyPrism.config()
         try Data(config.utf8).write(to: directory.appending(path: "config.json"))
         let head = withRandomState(MLXRandom.RandomState(seed: 3)) {
-            Qwen35MTPDraftModel(try! JSONDecoder.json5().decode(Qwen35TextConfiguration.self, from: Data(TinyHybrid.config.utf8)))
+            Qwen35MTPDraftModel(try! JSONDecoder.json5().decode(Qwen35TextConfiguration.self, from: Data(TinyModel.Family.qwen35.config.utf8)))
         }
         try save(arrays: Dictionary(uniqueKeysWithValues: head.parameters().flattened()), url: directory.appending(path: "mtp.safetensors"))
-        let target: any LanguageModel = textOnly ? try TinyHybrid.make() : try TinyPrism.base()
+        let target: any LanguageModel = textOnly ? try TinyModel.make(.qwen35) : try TinyModel.make(.prism)
         let drafter = try #require(try MTPSidecar.load(directory: directory, target: target))
         #expect(drafter.model is GreedyDraftingMTPDrafter)
         #expect(!drafter.model.requiresGreedySampling)
@@ -184,7 +176,7 @@ struct MTPSidecarTests {
 
     @Test("At T > 0 the MTP iterator keeps speculating and samples the same distribution as plain decoding")
     func exactAtTemperature() throws {
-        let target = try TinyPrism.base()
+        let target = try TinyModel.make(.prism)
         let configuration = try JSONDecoder.json5().decode(MLXLLM.Qwen35Configuration.self, from: Data(TinyPrism.config().utf8))
         let drafter = withRandomState(MLXRandom.RandomState(seed: 11)) { GreedyDraftingMTPDrafter(Qwen35MTPDraftModel(configuration)) }
         eval(drafter)
@@ -219,7 +211,7 @@ struct MTPSidecarTests {
 
     @Test("Only Qwen3.5-family targets get a drafter")
     func nonQwenTarget() throws {
-        let model = try TinyHybrid.make()
+        let model = try TinyModel.make(.qwen35)
         #expect(try MTPSidecar.load(directory: FileManager.default.temporaryDirectory, target: model) == nil)
     }
 }

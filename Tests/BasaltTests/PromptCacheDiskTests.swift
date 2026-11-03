@@ -42,7 +42,7 @@ enum DiskFixture {
     }
 
     static func hybrid(_ disk: PromptCacheDiskStore?, fingerprint: String = "fp-1") async throws -> MLXInferenceEngine {
-        await engine(try TinyHybrid.make(), id: "tiny-qwen35", disk: disk, fingerprint: fingerprint)
+        await engine(try TinyModel.make(.qwen35), id: "tiny-qwen35", disk: disk, fingerprint: fingerprint)
     }
 
     static func prefilled(_ model: any LanguageModel, _ tokens: [Int]) throws -> PromptCache {
@@ -105,7 +105,7 @@ struct PromptCacheDiskTests {
     func snapshotRoundTripIsBitExact(kind: String) throws {
         let directory = DiskFixture.directory()
         defer { try? FileManager.default.removeItem(at: directory) }
-        let model: any LanguageModel = kind == "qwen35" ? try TinyHybrid.make() : try TinySliding.make()
+        let model: any LanguageModel = kind == "qwen35" ? try TinyModel.make(.qwen35) : try TinyModel.make(.gemma3)
         let prompt = TinyModel.tokens(Conversation.firstTurn)
         let head = try HybridPrefixSnapshot.prefillHead(
             MLXArray(prompt.map(Int32.init)), into: PromptCache(try model.newCache(parameters: nil)),
@@ -380,7 +380,7 @@ struct PromptCacheDiskTests {
         var store = DiskFixture.store(directory)
         let denseFound = store.store(fingerprint: "fp", model: "m", namespace: "dense", tokens: stored, cache: try DiskFixture.prefilled(try TinyModel.make(), stored))
         let dense = try #require(denseFound)
-        let hybridCache = try TinyHybrid.snapshotted(try TinyHybrid.make(), stored + [100])
+        let hybridCache = try TinyHybrid.snapshotted(try TinyModel.make(.qwen35), stored + [100])
         let hybridFound = store.store(fingerprint: "fp", model: "m", namespace: "hybrid", tokens: stored, cache: hybridCache)
         _ = try #require(hybridFound)
         func usable(_ namespace: String, _ prompt: [Int], stored memory: Int = 0) -> Int? {

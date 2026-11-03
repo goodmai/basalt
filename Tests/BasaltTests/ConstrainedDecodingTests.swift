@@ -95,7 +95,7 @@ enum ConstrainedModel {
     static func container(opensThinking: Bool = false, tokenizer: any MLXLMCommon.Tokenizer = JSONPieceTokenizer()) throws -> ModelContainer {
         ModelContainer(context: ModelContext(
             configuration: ModelConfiguration(id: "tiny-json", reasoningConfig: QwenReasoningProtocol.tagged),
-            model: try withRandomState(MLXRandom.RandomState(seed: 56)) { try TinyModel.make() },
+            model: try TinyModel.make(),
             processor: JSONPieceInputProcessor(opensThinking: opensThinking), tokenizer: tokenizer))
     }
 

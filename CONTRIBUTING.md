@@ -57,6 +57,15 @@ Only directives the toolchain reads are allowed: `// swift-tools-version:` on th
 
 Existing comments are removed when the code around them changes; a change does not add new ones — and a line that is moved or re-indented counts as added, so its old comment goes with the move. CI enforces this for Swift on every pull request (other languages follow the same rule by review): `scripts/check_no_new_comments.py` lexes each changed Swift file (strings, multi-line and raw strings, interpolation, nested block comments, `/regex/` and `#/regex/#` literals) and fails when a comment lands on an added line. A renamed file counts as added in full.
 
+## Tiny models and kernel admission
+
+Unit tests run real model code with random weights, not mocks. `TinyModel.make(_:)` (`Tests/BasaltTests/Fixtures/TinyModels.swift`) builds every fixture the same way: a shrunk real config, a fixed seed, `prepare()` and `eval` as the loader does. A test that needs another architecture adds a `TinyModel.Family` case there, with a greedy and a prompt-cache test in `TinyModelFixtureTests`, rather than a builder of its own.
+
+A custom kernel or a new decode path lands only with:
+
+- a parity test against the stock MLX graph on a tiny fixture: exact for token ids and expert indices, within a stated float tolerance for logits and weights;
+- no mocked engine below `BasaltServer`. `MockInferenceEngine` is for REST and controller tests.
+
 ## Real-model runs
 
 Anything that loads a real model — a benchmark, a quality or memory measurement, a passkey check, a parity run — runs from Swift: `PerformanceBenchmark`, a Swift test gated on `BASALT_E2E*` environment variables, or a `scripts/*.swift` runner. A shell script may only launch it; it does not loop over models, parse output or decide pass/fail.

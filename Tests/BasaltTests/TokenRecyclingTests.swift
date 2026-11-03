@@ -68,7 +68,7 @@ struct TokenRecyclingTests {
 
     @Test("With recycling off, prompt lookup keeps no table and drafts nothing from recycled successors")
     func offByDefault() throws {
-        let run = try LookupFixture.lookup(try TinyLlama.make(), prompt: Self.freshPrompt)
+        let run = try LookupFixture.lookup(try TinyModel.make(.llama4Layers), prompt: Self.freshPrompt)
         #expect(run.iterator.recycling.byteCount == 0)
         #expect(run.iterator.recycledRounds == 0)
     }
@@ -77,7 +77,7 @@ struct TokenRecyclingTests {
     func rejectedRecycledDraftsBackOff() throws {
         let cycles = (0 ..< 26).flatMap { [1, 2, 3, 4, 10 + $0] }
         let run = try LookupFixture.lookup(
-            try TinyQwen3.make(), prompt: Self.freshPrompt, maxTokens: cycles.count,
+            try TinyModel.make(.qwen3), prompt: Self.freshPrompt, maxTokens: cycles.count,
             sampler: ScriptedSampler(cycles), recycling: true)
         expectTokenSequence(run.tokens, cycles)
         #expect(run.iterator.acceptedRecycledDrafts == 0)
@@ -106,9 +106,9 @@ struct TokenRecyclingTests {
     }
 
     @Test("With no n-gram in the prompt to look up, greedy decoding drafts from recycled successors, accepts them, and emits exactly the plain decoder's tokens",
-          arguments: ["llama", "qwen3"])
-    func greedyEquivalence(family: String) throws {
-        let model = try LookupFixture.model(family)
+          arguments: [TinyModel.Family.llama4Layers, .qwen3])
+    func greedyEquivalence(family: TinyModel.Family) throws {
+        let model = try TinyModel.make(family)
         let expected = try LookupFixture.baseline(model, prompt: Self.freshPrompt)
         let run = try LookupFixture.lookup(model, prompt: Self.freshPrompt, recycling: true)
         expectTokenSequence(run.tokens, expected)
@@ -120,7 +120,7 @@ struct TokenRecyclingTests {
 
     @Test("Recycled drafts never run past the token budget: at every budget the output is the plain decoder's prefix and the cache holds the prompt and every emitted token but the last")
     func budgetBoundary() throws {
-        let model = try TinyLlama.make()
+        let model = try TinyModel.make(.llama4Layers)
         let expected = try LookupFixture.baseline(model, prompt: Self.freshPrompt, maxTokens: 64)
         var recycledRounds = 0
         for maxTokens in 2 ... 64 {
@@ -134,7 +134,7 @@ struct TokenRecyclingTests {
 
     @Test("When the last token of the budget breaks a confirmed recycled chain, it is emitted without feeding it to the model")
     func noLookAheadPastTheBudgetWhenTheChainBreaks() throws {
-        let model = try TinyLlama.make()
+        let model = try TinyModel.make(.llama4Layers)
         let greedy = try LookupFixture.baseline(model, prompt: Self.freshPrompt, maxTokens: 64)
         for maxTokens in 2 ... 64 {
             let script = Array(greedy.prefix(maxTokens - 1)) + [249]
@@ -147,7 +147,7 @@ struct TokenRecyclingTests {
 
     @Test("Rejected recycled drafts are rolled back: the cache holds the prompt and every emitted token but the last")
     func rollback() throws {
-        let run = try LookupFixture.lookup(try TinyLlama.make(), prompt: Self.freshPrompt, maxTokens: 64, recycling: true)
+        let run = try LookupFixture.lookup(try TinyModel.make(.llama4Layers), prompt: Self.freshPrompt, maxTokens: 64, recycling: true)
         let telemetry = try #require(run.iterator.speculativeDecodingTelemetry)
         #expect(run.iterator.recycledDraftTokens > run.iterator.acceptedRecycledDrafts)
         #expect(telemetry.rejectedDraftTokenCount > 0)
@@ -157,7 +157,7 @@ struct TokenRecyclingTests {
     @Test("A seeded sampler at T > 0, alone or with a stateful processor, draws exactly the plain decoder's tokens while recycled drafts are accepted",
           arguments: ["none", "repetition", "entropy"])
     func seededSamplerParity(shaping: String) throws {
-        let model = try TinyLlama.make()
+        let model = try TinyModel.make(.llama4Layers)
         let maxTokens = EntropyDynamicTemperature.minTokens + EntropyDynamicTemperature.readbackLag + 64
         func processor() -> LogitProcessor? {
             switch shaping {

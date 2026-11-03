@@ -40,18 +40,6 @@ enum LookupFixture {
     static let prompt = Array(repeating: unit, count: 6).joined() + Array(unit.prefix(4))
     static let code = String(repeating: "func add(a: Int, b: Int) -> Int { a + b }\n", count: 6) + "func add("
 
-    static func model(_ family: String) throws -> any LanguageModel {
-        switch family {
-        case "llama": try TinyLlama.make()
-        case "hybrid": try TinyHybrid.make()
-        case "lfm": try TinyLFM2MoE.make()
-        case "hybrid-moe": try TinyHybrid.makeMoE()
-        case "nemotron": try TinyNemotronH.make()
-        case "lfm-dense": try TinyLFM2.make()
-        default: try TinyQwen3.make()
-        }
-    }
-
     static func baseline(
         _ model: any LanguageModel, prompt: [Int] = prompt, maxTokens: Int = 64,
         processor: LogitProcessor? = nil, sampler: LogitSampler = ArgMaxSampler()
@@ -64,7 +52,7 @@ enum LookupFixture {
 
     static func byteContainer() throws -> ModelContainer {
         ModelContainer(context: ModelContext(
-            configuration: ModelConfiguration(id: "tiny-llama-4"), model: try TinyLlama.make(),
+            configuration: ModelConfiguration(id: "tiny-llama-4"), model: try TinyModel.make(.llama4Layers),
             processor: ByteInputProcessor(), tokenizer: ByteTokenizer()))
     }
 
@@ -79,71 +67,6 @@ enum LookupFixture {
         var tokens: [Int] = []
         while let token = iterator.next() { tokens.append(token) }
         return (tokens, iterator, cache)
-    }
-}
-
-extension TinyHybrid {
-    static func makeMoE() throws -> Qwen35TextModel {
-        let moe = config.replacingOccurrences(
-            of: "\"tie_word_embeddings\": false",
-            with: "\"tie_word_embeddings\": false, \"num_experts\": 4, \"num_experts_per_tok\": 2, \"moe_intermediate_size\": 32, \"shared_expert_intermediate_size\": 32")
-        let model = try withRandomState(MLXRandom.RandomState(seed: 79)) {
-            Qwen35TextModel(try JSONDecoder().decode(Qwen35TextConfiguration.self, from: Data(moe.utf8)))
-        }
-        eval(model)
-        return model
-    }
-}
-
-enum TinyNemotronH {
-    static let config = """
-        {"model_type": "nemotron_h", "vocab_size": 256, "hidden_size": 64, "num_hidden_layers": 4,
-         "num_attention_heads": 4, "num_key_value_heads": 2, "head_dim": 16, "mamba_num_heads": 4,
-         "mamba_head_dim": 16, "ssm_state_size": 16, "conv_kernel": 4, "n_groups": 2, "intermediate_size": 128,
-         "hybrid_override_pattern": "M*M-", "layer_norm_epsilon": 1e-5, "tie_word_embeddings": true}
-        """
-
-    static func make() throws -> NemotronHModel {
-        let model = try withRandomState(MLXRandom.RandomState(seed: 30)) {
-            NemotronHModel(try JSONDecoder().decode(NemotronHConfiguration.self, from: Data(config.utf8)))
-        }
-        eval(model)
-        return model
-    }
-}
-
-enum TinyLFM2 {
-    static let config = """
-        {"model_type": "lfm2", "vocab_size": 256, "hidden_size": 64, "num_hidden_layers": 4,
-         "num_attention_heads": 4, "num_key_value_heads": 2, "norm_eps": 1e-5, "conv_L_cache": 3,
-         "block_dim": 64, "block_ff_dim": 128, "block_multiple_of": 16,
-         "layer_types": ["conv", "full_attention", "conv", "full_attention"]}
-        """
-
-    static func make() throws -> LFM2Model {
-        let model = try withRandomState(MLXRandom.RandomState(seed: 97)) {
-            LFM2Model(try JSONDecoder().decode(LFM2Configuration.self, from: Data(config.utf8)))
-        }
-        eval(model)
-        return model
-    }
-}
-
-enum TinyLFM2MoE {
-    static let config = """
-        {"model_type": "lfm2_moe", "vocab_size": 256, "hidden_size": 64, "intermediate_size": 128,
-         "moe_intermediate_size": 32, "num_hidden_layers": 4, "num_experts": 4, "num_experts_per_tok": 2,
-         "norm_topk_prob": true, "num_attention_heads": 4, "num_key_value_heads": 2,
-         "max_position_embeddings": 4096, "use_expert_bias": true, "num_dense_layers": 1, "norm_eps": 1e-5,
-         "conv_bias": false, "conv_L_cache": 3, "layer_types": ["conv", "full_attention", "conv", "full_attention"]}
-        """
-
-    static func make() throws -> LFM2MoEModel {
-        let model = try withRandomState(MLXRandom.RandomState(seed: 83)) {
-            LFM2MoEModel(try JSONDecoder().decode(LFM2MoEConfiguration.self, from: Data(config.utf8)))
-        }
-        eval(model)
-        return model
     }
 }
 
@@ -163,9 +86,9 @@ struct PromptLookupDecodingTests {
     }
 
     @Test("Greedy decoding with prompt lookup emits exactly the plain decoder's tokens, and drafts are accepted",
-          arguments: ["llama", "qwen3", "hybrid", "lfm", "nemotron", "lfm-dense"])
-    func greedyEquivalence(family: String) throws {
-        let model = try LookupFixture.model(family)
+          arguments: [TinyModel.Family.llama4Layers, .qwen3, .qwen35, .lfm2Moe, .nemotronH, .lfm2])
+    func greedyEquivalence(family: TinyModel.Family) throws {
+        let model = try TinyModel.make(family)
         let expected = try LookupFixture.baseline(model)
         let (tokens, iterator, _) = try LookupFixture.lookup(model)
         expectTokenSequence(tokens, expected)
@@ -178,9 +101,9 @@ struct PromptLookupDecodingTests {
     }
 
     @Test("A recurrent fixture's greedy path has no near-tie that the verify forward's chunked scan could flip",
-          arguments: ["nemotron", "hybrid", "lfm-dense"], ["tokens", "code"])
-    func recurrentFixturesHaveNoNearTie(family: String, prompt: String) throws {
-        let model = try LookupFixture.model(family)
+          arguments: [TinyModel.Family.nemotronH, .qwen35, .lfm2], ["tokens", "code"])
+    func recurrentFixturesHaveNoNearTie(family: TinyModel.Family, prompt: String) throws {
+        let model = try TinyModel.make(family)
         let input = prompt == "code"
             ? ByteTokenizer().encode(text: LookupFixture.code, addSpecialTokens: false) + [ByteTokenizer.endOfUserTurn]
             : LookupFixture.prompt
@@ -197,18 +120,18 @@ struct PromptLookupDecodingTests {
     @Test("When the output copies a long span of the prompt, a verify round drafts more than 8 tokens on average")
     func draftsRunPastEightTokens() throws {
         let continuation = (0 ..< 64).map { LookupFixture.unit[(4 + $0) % LookupFixture.unit.count] }
-        let run = try LookupFixture.lookup(try TinyLlama.make(), sampler: ScriptedSampler(continuation))
+        let run = try LookupFixture.lookup(try TinyModel.make(.llama4Layers), sampler: ScriptedSampler(continuation))
         expectTokenSequence(run.tokens, continuation)
         let telemetry = try #require(run.iterator.speculativeDecodingTelemetry)
         #expect(telemetry.draftTokenCount > 8 * telemetry.roundCount)
     }
 
     @Test("A hybrid's first draft is a 4-token probe, and only an accepted probe opens the full draft limit; a dense model drafts the full limit at once",
-          arguments: [("qwen3", 1, 10), ("hybrid", 2, 9)])
-    func hybridProbesBeforeLongDrafts(family: String, rounds: Int, drafted: Int) throws {
+          arguments: [(TinyModel.Family.qwen3, 1, 10), (TinyModel.Family.qwen35, 2, 9)])
+    func hybridProbesBeforeLongDrafts(family: TinyModel.Family, rounds: Int, drafted: Int) throws {
         let continuation = (0 ..< 12).map { LookupFixture.unit[(4 + $0) % LookupFixture.unit.count] }
         let run = try LookupFixture.lookup(
-            try LookupFixture.model(family), maxTokens: continuation.count, sampler: ScriptedSampler(continuation))
+            try TinyModel.make(family), maxTokens: continuation.count, sampler: ScriptedSampler(continuation))
         expectTokenSequence(run.tokens, continuation)
         let telemetry = try #require(run.iterator.speculativeDecodingTelemetry)
         #expect(telemetry.roundCount == rounds)
@@ -218,15 +141,15 @@ struct PromptLookupDecodingTests {
 
     @Test("Rejected drafts are rolled back: the cache holds the prompt and every emitted token but the last")
     func rollback() throws {
-        let model = try TinyQwen3.make()
+        let model = try TinyModel.make(.qwen3)
         let (tokens, iterator, cache) = try LookupFixture.lookup(model, maxTokens: 48)
         #expect(tokens.count == 48)
         #expect(try #require(iterator.speculativeDecodingTelemetry).rejectedDraftTokenCount > 0)
         #expect(cache.allSatisfy { $0.offset == LookupFixture.prompt.count + tokens.count - 1 })
     }
 
-    static func rejectingRun(_ family: String, maxTokens: Int) throws -> (model: any LanguageModel, run: (tokens: [Int], iterator: PromptLookupTokenIterator, cache: [KVCache]), reference: [KVCache]) {
-        let model = try LookupFixture.model(family)
+    static func rejectingRun(_ family: TinyModel.Family, maxTokens: Int) throws -> (model: any LanguageModel, run: (tokens: [Int], iterator: PromptLookupTokenIterator, cache: [KVCache]), reference: [KVCache]) {
+        let model = try TinyModel.make(family)
         let unit = LookupFixture.unit
         let script = (0 ..< 6).flatMap { round in Array(unit[4 ..< 8]) + [240 + round] + Array(unit[0 ..< 4]) }
         let run = try LookupFixture.lookup(model, maxTokens: maxTokens, sampler: ScriptedSampler(script))
@@ -242,8 +165,8 @@ struct PromptLookupDecodingTests {
     }
 
     @Test("On a hybrid model a rejected draft restores the recurrent state and replays the accepted prefix, also when the budget clips a draft: every recurrent slot matches a plain prefill of the same tokens",
-          arguments: ["hybrid", "lfm", "lfm-dense"], [54, 7, 13])
-    func hybridRejectionRestoresRecurrentState(family: String, maxTokens: Int) throws {
+          arguments: [TinyModel.Family.qwen35, .lfm2Moe, .lfm2], [54, 7, 13])
+    func hybridRejectionRestoresRecurrentState(family: TinyModel.Family, maxTokens: Int) throws {
         let (_, run, reference) = try Self.rejectingRun(family, maxTokens: maxTokens)
         for (live, plain) in zip(run.cache, reference) {
             guard let live = live as? MambaCache, let plain = plain as? MambaCache else { continue }
@@ -257,7 +180,7 @@ struct PromptLookupDecodingTests {
 
     @Test("On Nemotron-H a rejected draft restores the Mamba state: after the replays the next-token logits match a plain prefill of the same tokens. Its chunked-prefill SSM state is not comparable slot by slot")
     func nemotronRejectionRestoresMambaState() throws {
-        let (model, run, reference) = try Self.rejectingRun("nemotron", maxTokens: 54)
+        let (model, run, reference) = try Self.rejectingRun(.nemotronH, maxTokens: 54)
         let last = MLXArray([Int32(try #require(run.tokens.last))])[.newAxis]
         let replayed = model(last, cache: run.cache)[0, -1].asType(.float32)
         let prefilled = model(last, cache: reference)[0, -1].asType(.float32)
@@ -265,11 +188,11 @@ struct PromptLookupDecodingTests {
     }
 
     @Test("Without drafts, the last token of the budget is not fed to the model: no look-ahead forward is thrown away",
-          arguments: ["qwen3", "hybrid"], [1, 2, 17])
-    func noLookAheadAtTheBudget(family: String, maxTokens: Int) throws {
+          arguments: [TinyModel.Family.qwen3, .qwen35], [1, 2, 17])
+    func noLookAheadAtTheBudget(family: TinyModel.Family, maxTokens: Int) throws {
         let prompt = [200, 201, 202, 203, 204]
         let run = try LookupFixture.lookup(
-            try LookupFixture.model(family), prompt: prompt, maxTokens: maxTokens,
+            try TinyModel.make(family), prompt: prompt, maxTokens: maxTokens,
             sampler: ScriptedSampler((0 ..< maxTokens).map { 10 + $0 }))
         expectTokenSequence(run.tokens, (0 ..< maxTokens).map { 10 + $0 })
         #expect(run.iterator.speculativeDecodingTelemetry == nil)
@@ -277,9 +200,9 @@ struct PromptLookupDecodingTests {
     }
 
     @Test("A stateful logit processor and a seeded sampler see the same calls as in plain decoding",
-          arguments: [("llama", "repetition"), ("llama", "entropy"), ("hybrid", "repetition")])
-    func processorAndSamplerParity(family: String, shaping: String) throws {
-        let model = try LookupFixture.model(family)
+          arguments: [(TinyModel.Family.llama4Layers, "repetition"), (TinyModel.Family.llama4Layers, "entropy"), (TinyModel.Family.qwen35, "repetition")])
+    func processorAndSamplerParity(family: TinyModel.Family, shaping: String) throws {
+        let model = try TinyModel.make(family)
         func processor() -> LogitProcessor {
             shaping == "repetition"
                 ? RepetitionContext(repetitionPenalty: 1.1, repetitionContextSize: 16)
@@ -295,9 +218,9 @@ struct PromptLookupDecodingTests {
     }
 
     @Test("DRY on: lookup on and off emit the same tokens, DRY changes the output, and drafts are still accepted",
-          arguments: ["llama", "hybrid"])
-    func dryParity(family: String) throws {
-        let model = try LookupFixture.model(family)
+          arguments: [TinyModel.Family.llama4Layers, .qwen35])
+    func dryParity(family: TinyModel.Family) throws {
+        let model = try TinyModel.make(family)
         func dry() -> LogitProcessor { DRYPenalty(multiplier: 0.2, allowedLength: 6, breakers: []) }
         let expected = try LookupFixture.baseline(model, processor: dry())
         #expect(expected != (try LookupFixture.baseline(model)))
@@ -307,9 +230,9 @@ struct PromptLookupDecodingTests {
     }
 
     @Test("A seeded sampler at T > 0 draws exactly the plain decoder's tokens with lookup on, with no processor or a stateful one past its warm-up, and drafts are accepted",
-          arguments: ["llama", "hybrid"], ["none", "repetition", "entropy"])
-    func seededSamplerParity(family: String, shaping: String) throws {
-        let model = try LookupFixture.model(family)
+          arguments: [TinyModel.Family.llama4Layers, .qwen35], ["none", "repetition", "entropy"])
+    func seededSamplerParity(family: TinyModel.Family, shaping: String) throws {
+        let model = try TinyModel.make(family)
         let maxTokens = EntropyDynamicTemperature.minTokens + EntropyDynamicTemperature.readbackLag + 64
         func processor() -> LogitProcessor? {
             switch shaping {
@@ -403,11 +326,11 @@ struct PromptLookupDecodingTests {
     }
 
     @Test("Lookup admits attention-only caches and dense recurrent hybrids; hybrids that route tokens to experts and sliding-window caches stay on plain decoding",
-          arguments: [("qwen3", true), ("hybrid", true), ("nemotron", true), ("lfm-dense", true), ("lfm", false), ("hybrid-moe", false)])
-    func guardAdmitsDenseHybridsOnly(family: String, admitted: Bool) throws {
-        let model = try LookupFixture.model(family)
+          arguments: [(TinyModel.Family.qwen3, true), (TinyModel.Family.qwen35, true), (TinyModel.Family.nemotronH, true), (TinyModel.Family.lfm2, true), (TinyModel.Family.lfm2Moe, false), (TinyModel.Family.qwen35Moe, false)])
+    func guardAdmitsDenseHybridsOnly(family: TinyModel.Family, admitted: Bool) throws {
+        let model = try TinyModel.make(family)
         let routesExperts = PromptLookupTokenIterator.routesExperts(model)
-        #expect(routesExperts == ["lfm", "hybrid-moe"].contains(family))
+        #expect(routesExperts == [.lfm2Moe, .qwen35Moe].contains(family))
         #expect(PromptLookupTokenIterator.supports(try model.newCache(parameters: nil), routesExperts: routesExperts) == admitted)
         let slidingWindow: [KVCache] = [RotatingKVCache(maxSize: 64), KVCacheSimple()]
         #expect(!PromptLookupTokenIterator.supports(slidingWindow, routesExperts: false))
@@ -415,12 +338,12 @@ struct PromptLookupDecodingTests {
     }
 
     @Test("Through the engine a dense hybrid decodes the plain text with drafts, with and without a prompt cache; an expert-routing hybrid decodes without drafts",
-          arguments: ["hybrid", "nemotron", "lfm"])
-    func engineHybridEquivalence(family: String) async throws {
+          arguments: [TinyModel.Family.qwen35, .nemotronH, .lfm2Moe])
+    func engineHybridEquivalence(family: TinyModel.Family) async throws {
         func engine(lookup: Bool) async throws -> MLXInferenceEngine {
             let engine = MLXInferenceEngine(promptCacheBytes: 1 << 26, speculativeLookup: lookup)
             await engine.attach(ModelContainer(context: ModelContext(
-                configuration: ModelConfiguration(id: "tiny-\(family)"), model: try LookupFixture.model(family),
+                configuration: ModelConfiguration(id: "tiny-\(family)"), model: try TinyModel.make(family),
                 processor: ByteInputProcessor(), tokenizer: ByteTokenizer())))
             return engine
         }
@@ -430,7 +353,7 @@ struct PromptLookupDecodingTests {
             let expected = try await plain.generate(request: request.withCacheKey(key))
             let actual = try await speculative.generate(request: request.withCacheKey(key))
             #expect(actual.generatedText == expected.generatedText)
-            #expect((actual.draftTokens != nil) == (family != "lfm"))
+            #expect((actual.draftTokens != nil) == (family != .lfm2Moe))
         }
     }
 
@@ -485,25 +408,25 @@ struct PromptLookupDecodingTests {
     @Test("On a hybrid a round that accepts one draft and then replays does not pay for its extra forward, so lookup backs off; a dense model keeps drafting")
     func hybridBacksOffWhenTheReplayEatsTheGain() throws {
         let cycles = (0 ..< 20).flatMap { [1, 2, 3, 4, 5, 20 + $0] }
-        func rounds(_ family: String) throws -> (rounds: Int, accepted: Int) {
+        func rounds(_ family: TinyModel.Family) throws -> (rounds: Int, accepted: Int) {
             let run = try LookupFixture.lookup(
-                try LookupFixture.model(family), prompt: [200, 201, 202, 203, 204], maxTokens: cycles.count,
+                try TinyModel.make(family), prompt: [200, 201, 202, 203, 204], maxTokens: cycles.count,
                 sampler: ScriptedSampler(cycles))
             expectTokenSequence(run.tokens, cycles)
             let telemetry = try #require(run.iterator.speculativeDecodingTelemetry)
             return (telemetry.roundCount, telemetry.acceptedDraftTokenCount)
         }
-        let (dense, hybrid) = (try rounds("qwen3"), try rounds("hybrid"))
+        let (dense, hybrid) = (try rounds(.qwen3), try rounds(.qwen35))
         #expect(dense.accepted == dense.rounds)
         #expect(hybrid.rounds * 2 <= dense.rounds)
     }
 
     @Test("When every draft past its first token is rejected, lookup backs off instead of verifying each match, and the output is unchanged",
-          arguments: ["qwen3", "hybrid"])
-    func rejectedDraftsBackOff(family: String) throws {
+          arguments: [TinyModel.Family.qwen3, .qwen35])
+    func rejectedDraftsBackOff(family: TinyModel.Family) throws {
         let cycles = (0 ..< 26).flatMap { [1, 2, 3, 4, 10 + $0] }
         let run = try LookupFixture.lookup(
-            try LookupFixture.model(family), prompt: [200, 201, 202, 203, 204], maxTokens: cycles.count,
+            try TinyModel.make(family), prompt: [200, 201, 202, 203, 204], maxTokens: cycles.count,
             sampler: ScriptedSampler(cycles))
         expectTokenSequence(run.tokens, cycles)
         let telemetry = try #require(run.iterator.speculativeDecodingTelemetry)

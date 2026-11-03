@@ -8,23 +8,8 @@ import MLXVLM
 @testable import BasaltInference
 
 enum TinyHybrid {
-    static let config = """
-        {"model_type": "qwen3_5_text", "hidden_size": 64, "num_hidden_layers": 4, "intermediate_size": 128,
-         "num_attention_heads": 4, "num_key_value_heads": 2, "head_dim": 16,
-         "linear_num_value_heads": 4, "linear_num_key_heads": 2,
-         "linear_key_head_dim": 16, "linear_value_head_dim": 16, "linear_conv_kernel_dim": 4,
-         "full_attention_interval": 2, "rms_norm_eps": 1e-5, "vocab_size": 256,
-         "tie_word_embeddings": false}
-        """
-
-    static func make() throws -> Qwen35TextModel {
-        let model = try withRandomState(MLXRandom.RandomState(seed: 79)) { Qwen35TextModel(try JSONDecoder().decode(Qwen35TextConfiguration.self, from: Data(config.utf8))) }
-        eval(model)
-        return model
-    }
-
     static let visionConfig = """
-        {"model_type": "qwen3_5", "text_config": \(config),
+        {"model_type": "qwen3_5", "text_config": \(TinyModel.Family.qwen35.config),
          "vision_config": {"model_type": "qwen3_5", "depth": 1, "hidden_size": 16, "intermediate_size": 32,
           "out_hidden_size": 64, "num_heads": 2, "patch_size": 2, "spatial_merge_size": 2,
           "temporal_patch_size": 2, "num_position_embeddings": 16}}
@@ -40,7 +25,7 @@ enum TinyHybrid {
         let engine = MLXInferenceEngine(promptCacheBytes: promptCacheBytes, hybridAnchors: hybridAnchors)
         await engine.attach(ModelContainer(context: ModelContext(
             configuration: ModelConfiguration(id: "tiny-qwen35"),
-            model: vision ? try makeVision() : try make(),
+            model: vision ? try makeVision() : try TinyModel.make(.qwen35),
             processor: ByteInputProcessor(),
             tokenizer: ByteTokenizer())))
         return engine
@@ -56,7 +41,7 @@ enum TinyHybrid {
         MLXArray(tokens.map(Int32.init)).reshaped(1, -1)
     }
 
-    static func snapshotted(_ model: Qwen35TextModel, _ prompt: [Int]) throws -> PromptCache {
+    static func snapshotted(_ model: any LanguageModel, _ prompt: [Int]) throws -> PromptCache {
         let head = try HybridPrefixSnapshot.prefillHead(
             MLXArray(prompt.map(Int32.init)), into: PromptCache(try model.newCache(parameters: nil)),
             reused: 0, boundary: prompt.count - 1, model: model, prefill: PrefillParameters(stepSize: 16))
@@ -72,26 +57,11 @@ enum TinyHybrid {
 }
 
 enum TinySliding {
-    static let window = 8
-
-    static let config = """
-        {"model_type": "gemma3_text", "hidden_size": 64, "num_hidden_layers": 4, "intermediate_size": 128,
-         "num_attention_heads": 4, "num_key_value_heads": 2, "head_dim": 16, "vocab_size": 256,
-         "sliding_window": \(window), "sliding_window_pattern": 2, "query_pre_attn_scalar": 16}
-        """
-
-    static func make() throws -> Gemma3TextModel {
-        let model = try withRandomState(MLXRandom.RandomState(seed: 103)) { Gemma3TextModel(try JSONDecoder().decode(Gemma3TextConfiguration.self, from: Data(config.utf8))) }
-        model.update(parameters: model.parameters().mapValues { $0 * 4 })
-        eval(model)
-        return model
-    }
-
     static func engine(hybridAnchors: Int = 8) async throws -> MLXInferenceEngine {
         let engine = MLXInferenceEngine(promptCacheBytes: 1 << 30, hybridAnchors: hybridAnchors)
         await engine.attach(ModelContainer(context: ModelContext(
             configuration: ModelConfiguration(id: "tiny-gemma3"),
-            model: try make(),
+            model: try TinyModel.make(.gemma3),
             processor: ByteInputProcessor(),
             tokenizer: ByteTokenizer())))
         return engine
@@ -103,7 +73,7 @@ struct SlidingWindowSnapshotTests {
 
     @Test("A Gemma-style cache mixes rotating and plain attention layers and is restored from snapshots")
     func slidingCacheIsHybrid() throws {
-        let cache = PromptCache(try TinySliding.make().newCache(parameters: nil))
+        let cache = PromptCache(try TinyModel.make(.gemma3).newCache(parameters: nil))
         #expect(cache.layers.contains { $0 is RotatingKVCache })
         #expect(cache.isHybrid)
         #expect(!cache.isSharable)
@@ -112,11 +82,11 @@ struct SlidingWindowSnapshotTests {
     @Test("A rotating snapshot wrapped by one-token writes, shallowly after a chunked head or deeply after a one-token head, restored and prefilled in chunks gives the logits of a full prefill",
           arguments: [16, 1])
     func restoredWrappedWindowMatchesFullPrefill(stepSize: Int) throws {
-        let model = try TinySliding.make()
+        let model = try TinyModel.make(.gemma3)
         let first = TinyModel.tokens(Conversation.firstTurn)
         let second = TinyModel.tokens(Conversation.afterToolCall)
         let boundary = first.count - 1
-        #expect(boundary > 4 * TinySliding.window)
+        #expect(boundary > 4 * TinyModel.slidingWindow)
 
         let head = try HybridPrefixSnapshot.prefillHead(
             MLXArray(first.map(Int32.init)), into: PromptCache(try model.newCache(parameters: nil)),
@@ -140,7 +110,7 @@ struct SlidingWindowSnapshotTests {
         #expect(allClose(tail, expected, rtol: 1e-4, atol: 5e-3).item(Bool.self))
 
         let again = try tree.required("ns", for: second)
-        let unrestored = again.cache.layers.map { $0 is RotatingKVCache ? RotatingKVCache(maxSize: TinySliding.window) : $0 }
+        let unrestored = again.cache.layers.map { $0 is RotatingKVCache ? RotatingKVCache(maxSize: TinyModel.slidingWindow) : $0 }
         let control = model(tailTokens, cache: unrestored)
         _ = consume again
         #expect(!allClose(control, expected, rtol: 1e-4, atol: 5e-3).item(Bool.self))
@@ -173,7 +143,7 @@ struct HybridPrefixSnapshotTests {
 
     @Test("A Qwen3.5-style cache mixes Mamba and plain attention layers and is recognised as hybrid")
     func tinyModelIsHybrid() throws {
-        let cache = PromptCache(try TinyHybrid.make().newCache(parameters: nil))
+        let cache = PromptCache(try TinyModel.make(.qwen35).newCache(parameters: nil))
         #expect(cache.layers.contains { $0 is MambaCache })
         #expect(cache.layers.contains { $0 is KVCacheSimple })
         #expect(cache.isHybrid)
@@ -182,7 +152,7 @@ struct HybridPrefixSnapshotTests {
 
     @Test("Restoring the snapshot and prefilling the tail gives the logits of a full prefill; skipping the SSM restore does not")
     func restoredSnapshotMatchesFullPrefill() throws {
-        let model = try TinyHybrid.make()
+        let model = try TinyModel.make(.qwen35)
         let first = TinyModel.tokens(Conversation.firstTurn)
         let second = TinyModel.tokens(Conversation.afterToolCall)
         let boundary = first.count - 1
@@ -221,7 +191,7 @@ struct HybridPrefixSnapshotTests {
 
     @Test("A prompt that does not extend the snapshot's tokens gets no lease and is prefilled in full")
     func nonPrefixFallsBackToFullPrefill() throws {
-        let model = try TinyHybrid.make()
+        let model = try TinyModel.make(.qwen35)
         let first = TinyModel.tokens(Conversation.firstTurn)
         var tree = PromptCacheTree(byteBudget: 1 << 30)
         tree.store("ns", tokens: Array(first.dropLast()), cache: try TinyHybrid.snapshotted(model, first))
@@ -243,7 +213,7 @@ struct HybridPrefixSnapshotTests {
 
     @Test("A live hybrid cache, whose recurrent state sits past the stored tokens, is never stored")
     func liveHybridCacheIsRefused() throws {
-        let model = try TinyHybrid.make()
+        let model = try TinyModel.make(.qwen35)
         let first = TinyModel.tokens(Conversation.firstTurn)
         let cache = PromptCache(try model.newCache(parameters: nil))
         _ = model(TinyHybrid.row(first), cache: cache.layers)
@@ -256,7 +226,7 @@ struct HybridPrefixSnapshotTests {
 
     @Test("Eviction removes a snapshot leaf whole instead of trimming it past its recurrent state")
     func evictionDropsSnapshotLeavesWhole() throws {
-        let model = try TinyHybrid.make()
+        let model = try TinyModel.make(.qwen35)
         let first = TinyModel.tokens(Conversation.firstTurn)
         let snapshot = try TinyHybrid.snapshotted(model, first)
         var tree = PromptCacheTree(byteBudget: TinyHybrid.storedBytes(snapshot, tokens: first.count - 1) - 1)
@@ -326,7 +296,7 @@ struct HybridPrefixSnapshotTests {
 
     @Test("Two prompts diverging mid-leaf materialize a snapshot at the fork so a third prompt with the same prefix leases it (#95)")
     func divergingPromptsMaterializeForkSnapshot() throws {
-        let model = try TinyHybrid.make()
+        let model = try TinyModel.make(.qwen35)
         let first = TinyModel.tokens(Conversation.firstTurn)
         let second = TinyModel.tokens(Conversation.otherUser)
         let third = TinyModel.tokens("[System]: You are a coding agent. Tools: run_command.\n\n[User]: run the tests")
@@ -368,7 +338,7 @@ struct HybridPrefixSnapshotTests {
 
     @Test("A snapshot node left with one child after an eviction is not merged away, so its restore point survives")
     func snapshotNodeIsNotMerged() throws {
-        let model = try TinyHybrid.make()
+        let model = try TinyModel.make(.qwen35)
         let p = TinyModel.tokens(Conversation.firstTurn)
         let head = Array(p.dropLast())
         var tree = PromptCacheTree(byteBudget: 1 << 30, leafLimit: 2)
@@ -384,7 +354,7 @@ struct HybridPrefixSnapshotTests {
 
     @Test("A split head without a snapshot never outlives its branches as an unrestorable leaf")
     func noStrandedHeadAfterEviction() throws {
-        let model = try TinyHybrid.make()
+        let model = try TinyModel.make(.qwen35)
         let head = Array(TinyModel.tokens(Conversation.firstTurn).dropLast())
         var tree = PromptCacheTree(byteBudget: 1 << 30, leafLimit: 1)
         for prompt in [head + [10, 11, 12], head + [20, 21, 22], Array(200..<220)] {
@@ -397,7 +367,7 @@ struct HybridPrefixSnapshotTests {
 
     @Test("The snapshot copies only the recurrent layers; the live attention rows below b survive buffer growth bitwise")
     func snapshotSharesLiveAttention() throws {
-        let model = try TinyHybrid.make()
+        let model = try TinyModel.make(.qwen35)
         let prompt = TinyModel.tokens(Conversation.firstTurn)
         let boundary = prompt.count - 1
         let live = PromptCache(try model.newCache(parameters: nil))
@@ -431,7 +401,7 @@ struct HybridPrefixSnapshotTests {
 
     @Test("A growing conversation keeps only the last two snapshots on its chain, so the deepest survives a tight budget")
     func growingConversationRetiresOldSnapshots() throws {
-        let model = try TinyHybrid.make()
+        let model = try TinyModel.make(.qwen35)
         let opening = TinyModel.tokens(Conversation.firstTurn)
         let turns = (0..<6).map { turn in opening + (0..<(turn * 20)).map { 100 + $0 % 50 } }
         let recurrent = try #require(RecurrentSnapshot(of: try TinyHybrid.snapshotted(model, opening))).bytes
@@ -475,7 +445,7 @@ struct HybridPrefixSnapshotTests {
 
     @Test("Two client namespaces holding the same conversation keep their own snapshots: one growing never retires or evicts the other's within budget (#88)")
     func clientNamespacesKeepTheirOwnSnapshots() throws {
-        let model = try TinyHybrid.make()
+        let model = try TinyModel.make(.qwen35)
         let opening = TinyModel.tokens(Conversation.firstTurn)
         let turns = (0..<4).map { turn in opening + (0..<(turn * 20)).map { 100 + $0 % 50 } }
         var tree = PromptCacheTree(byteBudget: 1 << 30)
@@ -505,7 +475,7 @@ struct HybridPrefixSnapshotTests {
     func templateSuffixIsMeasured() async throws {
         let container = ModelContainer(context: ModelContext(
             configuration: ModelConfiguration(id: "tiny-qwen35"),
-            model: try TinyHybrid.make(),
+            model: try TinyModel.make(.qwen35),
             processor: SuffixedInputProcessor(),
             tokenizer: ByteTokenizer()))
         let suffix = await HybridPrefixSnapshot.templateSuffixLength(container) {

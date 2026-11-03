@@ -25,20 +25,6 @@ struct ParagraphTokenizer: MLXLMCommon.Tokenizer {
     ) throws -> [Int] { [] }
 }
 
-enum TinyQwen3 {
-    static let config = """
-        {"hidden_size": 64, "num_hidden_layers": 4, "intermediate_size": 128,
-         "num_attention_heads": 4, "num_key_value_heads": 2, "head_dim": 16, "rms_norm_eps": 1e-5,
-         "vocab_size": 256, "rope_theta": 10000.0, "tie_word_embeddings": false}
-        """
-
-    static func make() throws -> Qwen3Model {
-        let model = try withRandomState(MLXRandom.RandomState(seed: 36)) { Qwen3Model(try JSONDecoder().decode(Qwen3Configuration.self, from: Data(config.utf8))) }
-        eval(model)
-        return model
-    }
-}
-
 enum Files {
     static func chunk(_ seed: Int, length: Int = 24) -> [Int] {
         (0 ..< length - 1).map { 1 + ($0 * 37 + seed * 101) % 250 } + [ParagraphTokenizer.paragraph]
@@ -52,23 +38,8 @@ enum Files {
     static let reusable = files.joined().count
 }
 
-enum TinyLlama {
-    static let traditional = "\"rope_traditional\": true, "
-    static let llama3 = """
-        "rope_scaling": {"rope_type": "llama3", "factor": 8.0, "low_freq_factor": 1.0, "high_freq_factor": 4.0,
-         "original_max_position_embeddings": 64}, "max_position_embeddings": 512,
-        """
-
-    static func make(_ extra: String = "") throws -> LlamaModel {
-        let config = TinyModel.config.replacingOccurrences(of: "\"num_hidden_layers\": 2", with: "\(extra)\"num_hidden_layers\": 4")
-        let model = try withRandomState(MLXRandom.RandomState(seed: 36)) { LlamaModel(try JSONDecoder().decode(LlamaConfiguration.self, from: Data(config.utf8))) }
-        eval(model)
-        return model
-    }
-}
-
 func blendModels() throws -> [any LanguageModel] {
-    [try TinyLlama.make(), try TinyQwen3.make()]
+    [try TinyModel.make(.llama4Layers), try TinyModel.make(.qwen3)]
 }
 
 func fullLogits(_ model: any LanguageModel, _ prompt: [Int]) throws -> MLXArray {
@@ -120,7 +91,7 @@ struct CacheBlendTests {
 
     @Test("A SentencePiece-style tokenizer that emits one newline per token still finds the reordered files")
     func singleNewlineTokensStillChunk() throws {
-        let model = try TinyLlama.make()
+        let model = try TinyModel.make(.llama4Layers)
         let pieces = ParagraphTokenizer(newline: "\n")
         let doubled = { (tokens: [Int]) in tokens.flatMap { $0 == ParagraphTokenizer.paragraph ? [0, 0] : [$0] } }
         let store = CacheBlendStore(ratio: 0.5, byteBudget: 1 << 30)
@@ -179,7 +150,7 @@ struct CacheBlendTests {
         #expect(CacheBlendStore.blends(reused: 100, count: 100, offset: 16284, ratio: 0.5))
         #expect(!CacheBlendStore.blends(reused: 100, count: 100, offset: 16285, ratio: 0.5))
 
-        let model = try TinyLlama.make()
+        let model = try TinyModel.make(.llama4Layers)
         let store = try primed(model, ratio: 0.5)
         let mostlyNew = Files.header + Files.files[0] + (5 ... 9).flatMap { Files.chunk($0) } + Files.question
         let (_, outcome) = try blendedLogits(model, store: store, mostlyNew)
@@ -189,7 +160,11 @@ struct CacheBlendTests {
 
     @Test("Un-rotating natively stored keys is exact for traditional RoPE and llama3 scaling too")
     func unrotationCoversRopeVariants() throws {
-        for model in [try TinyLlama.make(TinyLlama.traditional), try TinyLlama.make(TinyLlama.llama3)] {
+        let llama3 = """
+            "rope_scaling": {"rope_type": "llama3", "factor": 8.0, "low_freq_factor": 1.0, "high_freq_factor": 4.0,
+             "original_max_position_embeddings": 64}, "max_position_embeddings": 512,
+            """
+        for model in [try TinyModel.make(.llama4Layers, adding: "\"rope_traditional\": true, "), try TinyModel.make(.llama4Layers, adding: llama3)] {
             let (logits, outcome) = try blendedLogits(model, store: try primed(model, ratio: 0), Files.original)
             #expect(outcome.reused == Files.reusable)
             #expect(allClose(logits, try fullLogits(model, Files.original), rtol: 1e-3, atol: 1e-3).item(Bool.self))
@@ -249,7 +224,7 @@ struct CacheBlendTests {
 
     @Test("Uncached and short chunks are recomputed, only long misses are stored, and the byte budget evicts and refuses")
     func missesAreRecomputedAndStoredWithinBudget() throws {
-        let model = try TinyLlama.make()
+        let model = try TinyModel.make(.llama4Layers)
         let store = try primed(model, ratio: 0)
         #expect(store.chunkCount == Files.files.count)
         let changed = Files.header + Files.chunk(9) + Files.files[0] + Files.question
@@ -290,10 +265,10 @@ struct CacheBlendTests {
 
     @Test("A hybrid SSM model never blends: the snapshot path serves it and the chunk store stays empty")
     func hybridModelsNeverBlend() async throws {
-        #expect(CacheBlendModel(try TinyHybrid.make()) == nil)
+        #expect(CacheBlendModel(try TinyModel.make(.qwen35)) == nil)
         let engine = MLXInferenceEngine(promptCacheBytes: 1 << 26, cacheBlendRatio: 0.15)
         await engine.attach(ModelContainer(context: ModelContext(
-            configuration: ModelConfiguration(id: "tiny-qwen35"), model: try TinyHybrid.make(),
+            configuration: ModelConfiguration(id: "tiny-qwen35"), model: try TinyModel.make(.qwen35),
             processor: ByteInputProcessor(), tokenizer: ByteTokenizer())))
         _ = try await engine.generate(request: greedy(Conversation.firstTurn, key: "ns"))
         let reused = try await engine.generate(request: greedy(Conversation.afterToolCall, key: "ns"))

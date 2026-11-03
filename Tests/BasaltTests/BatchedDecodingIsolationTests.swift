@@ -20,13 +20,13 @@ enum BatchFixture {
         MLXArray(tokens.map(Int32.init)).reshaped(1, -1)
     }
 
-    static func prefilled(_ model: LlamaModel, _ prompt: [Int]) throws -> [KVCacheSimple] {
+    static func prefilled(_ model: any LanguageModel, _ prompt: [Int]) throws -> [KVCacheSimple] {
         let layers = try #require(BatchedTokenIterator.plainLayers(try model.newCache(parameters: nil)))
         eval(model(row(prompt), cache: layers))
         return layers
     }
 
-    static func soloGreedy(_ model: LlamaModel, _ prompt: [Int], steps: Int) throws -> [Int] {
+    static func soloGreedy(_ model: any LanguageModel, _ prompt: [Int], steps: Int) throws -> [Int] {
         let cache = try model.newCache(parameters: nil)
         var next = argMax(model(row(prompt), cache: cache)[0, -1], axis: -1)
         var tokens: [Int] = []
@@ -42,7 +42,7 @@ enum BatchFixture {
     }
 
     static func launch(
-        _ decoder: BatchedDecoder, _ model: LlamaModel, _ prompt: [Int], maxTokens: Int, stop: Set<Int> = []
+        _ decoder: BatchedDecoder, _ model: any LanguageModel, _ prompt: [Int], maxTokens: Int, stop: Set<Int> = []
     ) throws -> (stream: AsyncStream<Generation>, task: Task<Void, Never>) {
         let seat = try #require(decoder.seat())
         let iterator = try BatchedTokenIterator(
@@ -87,9 +87,9 @@ struct BatchKVCacheTests {
 
     final class Solo {
         let cache: [KVCache]
-        let model: LlamaModel
+        let model: any LanguageModel
 
-        init(_ model: LlamaModel, _ prompt: [Int]) throws {
+        init(_ model: any LanguageModel, _ prompt: [Int]) throws {
             self.model = model
             cache = try model.newCache(parameters: nil)
             eval(model(BatchFixture.row(prompt), cache: cache))
@@ -108,7 +108,7 @@ struct BatchKVCacheTests {
         }
     }
 
-    static func batchStep(_ model: LlamaModel, _ layers: [BatchKVCache], _ tokens: [Int]) -> MLXArray {
+    static func batchStep(_ model: any LanguageModel, _ layers: [BatchKVCache], _ tokens: [Int]) -> MLXArray {
         model(MLXArray(tokens.map(Int32.init)).reshaped(-1, 1), cache: layers)[0..., -1]
     }
 
@@ -294,8 +294,8 @@ struct BatchedRoutingTests {
     @Test("Hybrid and sliding-window models keep the serialized path")
     func hybridAndRotatingStaySolo() async throws {
         for engine in [
-            await BatchFixture.engine(try TinyHybrid.make(), id: "tiny-qwen35", batchSlots: 4),
-            await BatchFixture.engine(try TinySliding.make(), id: "tiny-gemma3", batchSlots: 4),
+            await BatchFixture.engine(try TinyModel.make(.qwen35), id: "tiny-qwen35", batchSlots: 4),
+            await BatchFixture.engine(try TinyModel.make(.gemma3), id: "tiny-gemma3", batchSlots: 4),
         ] {
             let reply = try await engine.generate(request: BatchFixture.request(1, maxTokens: 6))
             #expect(reply.completionTokens == 6)
