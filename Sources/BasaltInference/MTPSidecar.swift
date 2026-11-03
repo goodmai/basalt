@@ -15,6 +15,24 @@ final class MTPDrafter: @unchecked Sendable {
     }
 }
 
+struct MTPPrefix: @unchecked Sendable {
+    let layers: [KVCache]
+    let nextPosition: Int
+    let carryHidden: MLXArray
+
+    init?(_ state: MTPDrafterState) {
+        guard let carryHidden = state.carryHidden else { return nil }
+        layers = state.cache.map { $0.copy() }
+        nextPosition = state.nextPosition
+        self.carryHidden = carryHidden
+        eval(layers.flatMap { $0.innerState() } + [carryHidden])
+    }
+
+    var state: MTPDrafterState {
+        MTPDrafterState(cache: layers.map { $0.copy() }, nextPosition: nextPosition, carryHidden: carryHidden)
+    }
+}
+
 final class GreedyDraftingMTPDrafter: Module, StatefulMTPDrafterModel {
     let inner: any StatefulMTPDrafterModel
     private let argMax = ArgMaxSampler()
@@ -34,7 +52,7 @@ final class GreedyDraftingMTPDrafter: Module, StatefulMTPDrafterModel {
     func makeState(parameters: GenerateParameters?) -> MTPDrafterState { inner.makeState(parameters: parameters) }
 
     func prepareDrafterState(
-        target: any LanguageModel, promptTokens: MLXArray, targetHidden: MLXArray, firstBonus: MLXArray,
+        target: any LanguageModel, promptTokens: MLXArray, targetHidden: MLXArray, firstBonus: MLXArray?,
         positionDeltas: MLXArray?, state: inout MTPDrafterState, sampler _: any LogitSampler
     ) {
         inner.prepareDrafterState(

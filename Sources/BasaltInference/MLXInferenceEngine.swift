@@ -103,6 +103,7 @@ public actor MLXInferenceEngine: InferenceEngine {
     private let gpuCacheLimit: Int?
 
     private(set) var promptCaches: PromptCacheTree
+    private(set) var mtpPrefixes: [(namespace: String, tokens: [Int], prefix: MTPPrefix)] = []
     private var promptCacheFullBudget: Int
     private(set) var appliedMemoryDirective = MemoryDirective.relaxed
     private var kvMemoryBudget: Int64?
@@ -243,6 +244,10 @@ public actor MLXInferenceEngine: InferenceEngine {
         }
     }
 
+    func useMTPDrafter(_ drafter: MTPDrafter?) {
+        mtpDrafter = drafter
+    }
+
     func attach(
         _ container: ModelContainer, profile: any ModelProfile = GenericProfile(),
         samplingDefaults: SamplingDefaults = SamplingDefaults(), controlTokens: ControlTokenGuard = .none,
@@ -269,6 +274,7 @@ public actor MLXInferenceEngine: InferenceEngine {
         modelPrefillsInChunks = false
         let blendBytes = cacheBlendRatio == nil ? 0 : budget / 2
         promptCaches = PromptCacheTree(byteBudget: budget - blendBytes, anchorLimit: max(1, hybridAnchors))
+        mtpPrefixes.removeAll()
         promptCacheFullBudget = budget - blendBytes
         appliedMemoryDirective = .relaxed
         cacheBlend = cacheBlendRatio.map { CacheBlendStore(ratio: $0, byteBudget: blendBytes) }
@@ -362,6 +368,7 @@ public actor MLXInferenceEngine: InferenceEngine {
                 batchDecoder = nil
                 mtpDrafter = nil
                 promptCaches.removeAll()
+                mtpPrefixes.removeAll()
                 cacheBlend = nil
                 modelEpoch += 1
                 Memory.clearCache()   // flush MLX's internal memory allocator cache
@@ -1027,7 +1034,18 @@ public actor MLXInferenceEngine: InferenceEngine {
             if let namespace, drafter == nil {
                 await restoreFromDisk(namespace, prompt: promptTokens, container: container, epoch: epoch)
             }
-            let lease: PromptCacheLease? = if let namespace, drafter == nil { promptCaches.lease(namespace, for: promptTokens) } else { nil }
+            var lease: PromptCacheLease? = if let namespace { promptCaches.lease(namespace, for: promptTokens) } else { nil }
+            var storedPrefix: MTPPrefix?
+            if drafter != nil, let namespace {
+                let leased = switch lease {
+                case let held?: held.reusedTokens
+                case nil: 0
+                }
+                let prefix = Array(promptTokens.prefix(leased))
+                storedPrefix = mtpPrefixes.last { $0.namespace == namespace && $0.tokens == prefix }?.prefix
+                if leased > 0, storedPrefix == nil { lease = nil }
+            }
+            let mtpPrefix = storedPrefix
             let fork = namespace.map { promptCaches.storedPrefix(of: promptTokens, in: $0) }
             let reuse: (cache: PromptCache, reusedTokens: Int)? = switch lease {
             case let held?: (held.cache, held.reusedTokens)
@@ -1066,7 +1084,8 @@ public actor MLXInferenceEngine: InferenceEngine {
                         params: params, components: constrained, tools: forcedTool == nil ? toolSpecs : nil,
                         context: context, speculativeLookup: speculativeLookup, speculativeRecycling: speculativeRecycling,
                         grammarJumpForward: jumpForward,
-                        routesExperts: expertRouting, kvZones: zones, kvPrecision: zonedPrecision, mtpDrafter: drafter, mtpBlockSize: mtpBlockSize)
+                        routesExperts: expertRouting, kvZones: zones, kvPrecision: zonedPrecision, mtpDrafter: drafter, mtpBlockSize: mtpBlockSize,
+                        mtpPrefix: mtpPrefix)
                 }
             } catch {
                 keep(nil, tokens: promptTokens, namespace: namespace, releasing: leaseSlot, epoch: epoch)
@@ -1216,7 +1235,7 @@ public actor MLXInferenceEngine: InferenceEngine {
                     if completed, let session = constraint?.session { await self.recycle(session, epoch: epoch) }
                     await self.keep(
                         launch.cache, anchors: launch.anchors, tokens: Array(promptTokens.prefix(launch.exactTokens)),
-                        namespace: namespace, releasing: leaseSlot, epoch: epoch)
+                        namespace: namespace, releasing: leaseSlot, epoch: epoch, mtpPrefix: launch.mtpPrefix)
                     if !Task.isCancelled {
                         let generationTime = (clock.now - startTime).inSeconds + launch.prefillSeconds
                         let timeToFirstToken = (firstTokenAt.map { ($0 - startTime).inSeconds } ?? 0) + launch.prefillSeconds
@@ -1297,9 +1316,11 @@ public actor MLXInferenceEngine: InferenceEngine {
         let reusedTokens: Int
         var exactTokens = Int.max
         var prefillSeconds: TimeInterval = 0
+        var mtpPrefix: MTPPrefix?
     }
 
     static let mtpPromptLimit = 8192
+    static let mtpPrefixLimit = 4
 
     static func handOff<T: TokenIteratorProtocol>(
         promptTokenCount: Int, modelConfiguration: ModelConfiguration, tokenizer: any MLXLMCommon.Tokenizer,
@@ -1481,7 +1502,7 @@ public actor MLXInferenceEngine: InferenceEngine {
 
     private func keep(
         _ cache: PromptCache?, anchors: [PromptCache] = [], tokens: [Int], namespace: String?,
-        releasing lease: PromptCacheLeaseSlot, epoch: Int
+        releasing lease: PromptCacheLeaseSlot, epoch: Int, mtpPrefix: MTPPrefix? = nil
     ) {
         _ = lease.take()
         guard epoch == modelEpoch, let namespace else { return }
@@ -1493,6 +1514,11 @@ public actor MLXInferenceEngine: InferenceEngine {
         }
         if let cache {
             promptCaches.store(namespace, tokens: Array(tokens.prefix(cache.tokenCount)), cache: cache)
+            if let mtpPrefix {
+                mtpPrefixes.removeAll { $0.namespace == namespace }
+                mtpPrefixes.append((namespace, Array(tokens.prefix(cache.tokenCount)), mtpPrefix))
+                mtpPrefixes = Array(mtpPrefixes.suffix(Self.mtpPrefixLimit))
+            }
         }
     }
 
@@ -1513,16 +1539,48 @@ public actor MLXInferenceEngine: InferenceEngine {
         grammarJumpForward: Bool = false,
         routesExperts: Bool = true, kvZones: KVZones? = nil,
         kvPrecision: KVPrecision? = nil,
-        mtpDrafter: MTPDrafter? = nil, mtpBlockSize: Int = 4
+        mtpDrafter: MTPDrafter? = nil, mtpBlockSize: Int = 4, mtpPrefix: MTPPrefix? = nil
     ) throws -> GenerationLaunch {
         if let mtpDrafter, !carriesMoreThanTokens(input) {
+            let started = ContinuousClock.now
+            let reused = reuse?.reusedTokens ?? 0
+            let stateful = mtpDrafter.model as? any StatefulMTPDrafterModel
+            let staged = keepsCache && stateful != nil && boundary >= reused && boundary < input.text.tokens.dim(-1)
+            var cache: PromptCache?
+            var drafterState: MTPDrafterState?
+            var kept: (cache: PromptCache, prefix: MTPPrefix)?
+            if staged, let stateful {
+                let prompt = try reuse?.cache ?? PromptCache(context.model.newCache(parameters: params))
+                var state = mtpPrefix?.state ?? stateful.makeState(parameters: params)
+                if boundary > reused {
+                    let head = input.text.tokens[.ellipsis, reused ..< boundary]
+                    var emit = LMOutput.State()
+                    emit[mtpEmitFlagKey] = true
+                    let output = context.model(LMInput.Text(tokens: head)[text: .newAxis], cache: prompt.layers, state: emit)
+                    if let hidden = output.state?[mtpLastHiddenStatesKey] {
+                        stateful.prepareDrafterState(
+                            target: context.model, promptTokens: head, targetHidden: hidden, firstBonus: nil,
+                            positionDeltas: nil, state: &state, sampler: ArgMaxSampler())
+                    }
+                    eval(prompt.layers.flatMap { $0.innerState() } + state.cache.flatMap { $0.innerState() })
+                    kept = MTPPrefix(state).map { (prompt.snapshot(at: boundary, state: nil), $0) }
+                }
+                cache = prompt
+                drafterState = state
+            }
+            let start = staged ? boundary : 0
+            let headSeconds = (ContinuousClock.now - started).inSeconds
             let iterator = try MTPSpeculativeTokenIterator(
-                input: input, mainModel: context.model, drafter: mtpDrafter.model, parameters: params, blockSize: mtpBlockSize,
-                components: components)
+                input: LMInput(tokens: input.text.tokens[.ellipsis, start...]), mainModel: context.model,
+                drafter: mtpDrafter.model, mainCache: cache?.layers, drafterState: drafterState, parameters: params,
+                blockSize: mtpBlockSize, components: components)
             let (stream, task, prefill) = Self.handOff(
-                promptTokenCount: input.text.tokens.dim(-1), modelConfiguration: context.configuration,
+                promptTokenCount: input.text.tokens.dim(-1) - start, modelConfiguration: context.configuration,
                 tokenizer: context.tokenizer, iterator: iterator, tools: tools, toolCallPolicy: params.toolCallPolicy)
-            return GenerationLaunch(stream: stream, task: task, cache: nil, reusedTokens: 0, prefillSeconds: iterator.promptPrefillTime + prefill)
+            return GenerationLaunch(
+                stream: stream, task: task, cache: kept?.cache, reusedTokens: staged ? reused : 0,
+                prefillSeconds: headSeconds + iterator.promptPrefillTime + prefill,
+                mtpPrefix: kept?.prefix)
         }
         guard keepsCache else {
             if let zoned = try zonedCache(params: params, zones: kvZones, precision: kvPrecision, model: context.model) {
