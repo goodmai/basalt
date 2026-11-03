@@ -350,6 +350,20 @@ struct ModelRouterTests {
         #expect(try #require(await router.routingBias?["small-local"]?["toolUse"]) <= RoutingOutcomeBias.betaMax)
     }
 
+    @Test("The auto route reads β under the local model key the orchestrator reports, not the policy's \"local\" placeholder")
+    func autoRouteUsesReportedModelKey() async throws {
+        let router = ModelRouter(
+            localOrchestrator: ModelOrchestratorActor(engine: MockInferenceEngine()), cloudClient: nil,
+            costRouting: .init(policy: StickyRoutingPolicy(strongModel: "big", weakModel: "local"), scorer: try BradleyTerryRouterTests.borderlineScorer())
+        )
+        let tool = GenerationRequest(prompt: BradleyTerryRouterTests.hardWord, tools: [ToolDefinition(name: "t")])
+        #expect(await router.resolveModel(nil, request: tool, context: .init()) == "local")
+        for _ in 0..<3 {
+            await router.recordLocalOutcome(tool, response: BradleyTerryRouterTests.response(.repetition), localModel: "qwen@abc")
+        }
+        #expect(await router.resolveModel(nil, request: tool, context: .init()) == "big")
+    }
+
     @Test("Without failing outcomes the capability gap is exactly the scorer's win probability, as before the bias existed")
     func noOutcomesKeepRouting() async throws {
         let router = ModelRouter(

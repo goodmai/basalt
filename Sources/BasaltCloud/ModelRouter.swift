@@ -87,6 +87,7 @@ public actor ModelRouter: Sendable {
     private let fallbackCloudModel: String?
     private var sessionRoutes: [String: SessionRoute] = [:]
     private var outcomeBias: RoutingOutcomeBias
+    private var lastLocalModel: String?
     
     public init(
         localOrchestrator: ModelOrchestratorActor,
@@ -204,7 +205,7 @@ public actor ModelRouter: Sendable {
     func resolveModel(_ preferredModel: String?, request: GenerationRequest, context: RoutingContext) -> String {
         let modelId = preferredModel ?? "auto"
         guard modelId == "auto", let costRouting,
-              let decision = stickyTier(request: request, context: context, localModel: costRouting.policy.weakModel)
+              let decision = stickyTier(request: request, context: context, localModel: lastLocalModel ?? costRouting.policy.weakModel)
         else {
             return modelId
         }
@@ -231,6 +232,7 @@ public actor ModelRouter: Sendable {
     }
 
     public func recordLocalOutcome(_ request: GenerationRequest, response: GenerationResponse, localModel: String) {
+        lastLocalModel = localModel
         guard let costRouting, request.isServiceRequest != true,
               let failed = RoutingOutcomeBias.failed(request, response)
         else { return }
@@ -561,6 +563,7 @@ extension ModelRouter: CloudFallback {
     }
 
     public func assess(_ request: GenerationRequest, localModel: String) async -> CloudAssessment? {
+        lastLocalModel = localModel
         guard cloudClient != nil, let cloudModel = fallbackCloudModel,
               request.tools?.isEmpty ?? true, request.responseFormat == nil,
               ChatMessageInput.splittingPrefill(request.messages ?? [])?.prefill.isEmpty ?? true
