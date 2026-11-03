@@ -168,6 +168,8 @@ public struct ModelCache: Sendable {
         return (try? JSONSerialization.jsonObject(with: data, options: .json5Allowed)) as? [String: Any]
     }
 
+    package static let quantFolders = ["4bit", "8bit", "6bit", "2bit", "bf16", "fp16"]
+
     /// Resolves a repo ID (plus optional quantization subfolder) to a loadable
     /// directory, or nil when nothing usable is cached.
     ///
@@ -191,7 +193,7 @@ public struct ModelCache: Sendable {
         }
         if hasUsableConfig(at: snapshot) { return snapshot }
 
-        for folder in ["4bit", "8bit", "6bit", "2bit", "bf16", "fp16"] {
+        for folder in quantFolders {
             let target = snapshot.appendingPathComponent(folder)
             if hasUsableConfig(at: target) { return target }
         }
@@ -204,10 +206,13 @@ public struct ModelCache: Sendable {
 package actor HuggingFaceHub {
 
     private let session: URLSession
-    private let baseURL = "https://huggingface.co"
-    private let apiURL  = "https://huggingface.co/api"
+    private let baseURL: String
+    private let apiURL: String
+    package private(set) var bytesFetched = 0
 
-    package init(configuration: URLSessionConfiguration = .default) {
+    package init(configuration: URLSessionConfiguration = .default, endpoint: String = "https://huggingface.co") {
+        baseURL = endpoint
+        apiURL = endpoint + "/api"
         let config = configuration
         config.timeoutIntervalForRequest  = 30
         // Wall-clock budget for one file, not for the whole transfer. A 5 GB shard
@@ -263,6 +268,7 @@ package actor HuggingFaceHub {
             throw HFError.invalidRepoId(repoId)
         }
         let (data, response) = try await session.data(from: url)
+        bytesFetched += data.count
 
         switch (response as? HTTPURLResponse)?.statusCode {
         case 200:
@@ -270,6 +276,39 @@ package actor HuggingFaceHub {
         default:
             throw HFError.modelNotFound(repoId)
         }
+    }
+
+    package func fetch(repoId: String, path: String, range: ClosedRange<Int>? = nil) async throws -> (data: Data, fileSize: Int64) {
+        guard Self.isRepoId(repoId), Self.isRelativePath(path),
+              let encoded = path.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed),
+              let url = URL(string: "\(baseURL)/\(repoId)/resolve/main/\(encoded)") else {
+            throw HFError.invalidRepoId("\(repoId)/\(path)")
+        }
+        var request = URLRequest(url: url)
+        if let range { request.setValue("bytes=\(range.lowerBound)-\(range.upperBound)", forHTTPHeaderField: "Range") }
+
+        let (bytes, response) = try await session.bytes(for: request)
+        let http = response as? HTTPURLResponse
+        guard http?.statusCode == (range == nil ? 200 : 206) else {
+            bytes.task.cancel()
+            if http?.statusCode == 404 { throw HFError.modelNotFound("\(repoId)/\(path)") }
+            throw HFError.apiError(code: http?.statusCode ?? -1)
+        }
+        var data = Data()
+        for try await byte in bytes.prefix(range?.count ?? .max) { data.append(byte) }
+        bytesFetched += data.count
+        let total = http?.value(forHTTPHeaderField: "Content-Range")?.split(separator: "/").last.flatMap { Int64($0) }
+        return (data, range == nil ? Int64(data.count) : total ?? -1)
+    }
+
+    package func safetensorsHeader(repoId: String, path: String) async throws -> Result<ModelInspector.SafetensorsHeader, ModelInspector.ShardProblem> {
+        let (prefix, fileSize) = try await fetch(repoId: repoId, path: path, range: 0 ... 7)
+        guard let length = ModelInspector.safetensorsHeaderLength(prefix, fileSize: fileSize) else {
+            return .failure(.malformedHeader)
+        }
+        let (header, _) = try await fetch(repoId: repoId, path: path, range: 8 ... 7 + length)
+        guard header.count == length else { return .failure(.malformedHeader) }
+        return ModelInspector.parseSafetensorsHeader(header, fileSize: fileSize)
     }
 
     // MARK: — Download
