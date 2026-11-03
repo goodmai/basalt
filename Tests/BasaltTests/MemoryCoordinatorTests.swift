@@ -270,23 +270,19 @@ struct MemoryCoordinatorTests {
         await orchestrator.shutdown()
     }
 
-    @Test("The MLX engine applies a directive on its own actor: allocator cache limit and prompt-cache budget follow the step, and relaxed restores them")
+    @Test("The MLX engine applies a directive on its own actor: the reported cache limit and prompt-cache budget follow the step, and relaxed restores them; the global Memory.cacheLimit is not asserted because parallel tests that load a model set it too")
     func engineAppliesTheDirective() async {
         let engine = MLXInferenceEngine(gpuCacheLimit: 512 << 20, promptCacheBytes: 1 << 30)
-        let before = Memory.cacheLimit
         #expect(await engine.apply(.relaxed) == MemoryLimits(cacheLimitBytes: 512 << 20, promptCacheBudgetBytes: 1 << 30, promptCacheEvictions: 0))
-        #expect(Memory.cacheLimit == before)
 
         let tight = await engine.apply(.tight)
         #expect(tight?.cacheLimitBytes == 128 << 20)
         #expect(tight?.promptCacheBudgetBytes == 256 << 20)
-        #expect(Memory.cacheLimit == 128 << 20)
         #expect(await engine.appliedMemoryDirective == .tight)
 
         #expect(await engine.apply(.critical)?.promptCacheBudgetBytes == 0)
         let relaxed = await engine.apply(.relaxed)
         #expect(relaxed?.cacheLimitBytes == 512 << 20)
         #expect(relaxed?.promptCacheBudgetBytes == 1 << 30)
-        #expect(Memory.cacheLimit == 512 << 20)
     }
 }
