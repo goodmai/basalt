@@ -47,6 +47,26 @@ struct TelemetryTests {
         #expect(after.totalRequests == 1)
     }
 
+    @Test("Draft and accepted tokens add up across requests and stay out of the snapshot until a request drafts")
+    func draftTelemetryAggregates() async {
+        let tracker = TelemetryTracker()
+        await tracker.requestFinished(with: response(tokens: 10, tps: 1, ttft: 0, active: 0, peak: 0))
+        let plain = await tracker.snapshot()
+        #expect(plain.draftTokens == nil)
+        #expect(!plain.formattedStatsLine.contains("Drafts"))
+
+        for (drafted, accepted) in [(12, 9), (8, 2)] {
+            await tracker.requestFinished(with: GenerationResponse(
+                generatedText: "x", promptTokens: 3, completionTokens: 10, tokensPerSecond: 1, generationTime: 1,
+                timeToFirstToken: 0, memory: .init(peakBytes: 0, activeBytes: 0, cacheBytes: 0), finishReason: .stop,
+                draftTokens: drafted, acceptedDraftTokens: accepted))
+        }
+        let drafted = await tracker.snapshot()
+        #expect(drafted.draftTokens == 20)
+        #expect(drafted.acceptedDraftTokens == 11)
+        #expect(drafted.formattedStatsLine.contains("Drafts: 11 of 20 accepted"))
+    }
+
     @Test("formattedStatsLine shows only measured metrics")
     func testFormattedStatsLine() {
         let line = ServerTelemetrySnapshot(

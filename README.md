@@ -235,7 +235,7 @@ Every speed-up is opt-in and keeps greedy output identical unless the row says o
 | Feature | Flag | What it does | Measured |
 |---|---|---|---|
 | Prompt lookup (speculative decoding) | `serve --speculative-lookup` | drafts up to 16 tokens copied from the prompt or output, verified in one forward | 1.84–2.66× on code edits (Bonsai 2 27B); ~1.0× on prose |
-| MTP head drafting | `serve --mtp [--mtp-block N]` | drafts with the model's multi-token-prediction head (`mtp.safetensors`, e.g. MTPLX packs); exact at any temperature. `--mtp-block 4` drafts three tokens per round on Qwen3.5-family targets | block 2: 1.22× on code, 1.10× on prose; block 4: 1.64× on code, 0.71× on prose (Bonsai 2 27B, T=0.7); TTFT on long prompts is higher (no prompt-cache reuse yet, #207) |
+| MTP head drafting | `serve --mtp [--mtp-block N]` | drafts with the model's multi-token-prediction head (`mtp.safetensors`, e.g. MTPLX packs); exact at any temperature. Rounds start at one drafted token and grow up to N−1 (default 4) after four fully accepted rounds; a rejection drops back to one | 1.30× on code, 1.04× on prose, 1.26× on reasoning (Bonsai 2 27B, T=0.7); TTFT on long prompts is higher (no prompt-cache reuse yet, #207) |
 | Ternary Bonsai 2 | (automatic) | loads Hadamard-rotated ternary checkpoints (`prism_hadamard_qwen35`) | 27B model in 7.4 GB |
 | Embeddings and rerank | `serve --embedding-model`, `--rerank-model` | OpenAI `/v1/embeddings`, Cohere/Jina `/v1/rerank` next to the chat model | bge-small 229–299 texts/s, Qwen3-Embedding-0.6B 20 texts/s (batch 32) |
 | Prompt cache on disk | `serve --prompt-cache-disk-mb N` | a resumed session or restarted server restores the longest matching prefix instead of prefilling it | — |
@@ -259,7 +259,7 @@ M4 Pro, 24 GB, on a 68 W adapter, release build, greedy decoding, November 2026.
 | Model | Params | Active memory | Decode, tok/s | Notes |
 |---|---|---|---|---|
 | `mlx-community/Qwen3-4B-4bit` | 4B | ~2.2 GB | 78–89 | dense; prompt lookup and every KV mode apply |
-| `Youssofal/Ternary-Bonsai-2-27B-MTPLX-Optimized-Speed` | 27B ternary | 7.4 GB | 20.9–21.5 plain · 25.8 with `--mtp` on code · 31–38 with `--speculative-lookup` on code | hybrid (Gated DeltaNet); MTP head from Qwen3.8-27B |
+| `Youssofal/Ternary-Bonsai-2-27B-MTPLX-Optimized-Speed` | 27B ternary | 7.4 GB | 20.9–21.5 plain · 27.1 with `--mtp` on code · 31–38 with `--speculative-lookup` on code | hybrid (Gated DeltaNet); MTP head from Qwen3.8-27B |
 | `lukaskremla/Qwen3.8-27B-3bit-MLX-TextOnly` | 27B | not measured | 15–19 | hybrid |
 | `lukaskremla/Qwen3.8-27B-2bit-MLX-TextOnly` | 27B | not measured | 18–22 | loops on some prompts (3 of 8); `RepetitionGuard` stops them |
 

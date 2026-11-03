@@ -117,15 +117,15 @@ struct ServeCommand: AsyncParsableCommand {
 
     @Flag(
         name: .customLong("mtp"),
-        help: "Draft one token per step with the model's multi-token-prediction head (mtp.safetensors, e.g. MTPLX packs of Qwen3.5/3.8 and Bonsai 2), verified in one forward pass and exact at any temperature (greedy drafts, the target samples every token); requests without JSON constraints, speculative lookup, --kv-bits or --kv-zones and prompts up to 8192 tokens (prefilled in one forward, no prompt-cache reuse)"
+        help: "Draft with the model's multi-token-prediction head (mtp.safetensors, e.g. MTPLX packs of Qwen3.5/3.8 and Bonsai 2), verified in one forward pass and exact at any temperature (greedy drafts, the target samples every token); requests without JSON constraints, speculative lookup, --kv-bits or --kv-zones and prompts up to 8192 tokens (prefilled in one forward, no prompt-cache reuse)"
     )
     var mtp = false
 
     @Option(
         name: .customLong("mtp-block"),
-        help: "With --mtp, tokens per verify round: one the target already chose plus N-1 drafted by the MTP head (default 2; Qwen3.5-family targets rewind up to 7 drafted tokens)"
+        help: "With --mtp, the largest verify round: one token the target already chose plus up to N-1 drafted by the MTP head. Rounds start at one drafted token, grow by one after four fully accepted rounds and drop back to one on a rejection (default 4; Qwen3.5-family targets rewind up to 7 drafted tokens, others clamp to their limit; 2 drafts one token every round)"
     )
-    var mtpBlock = 2
+    var mtpBlock = 4
 
     @Flag(
         name: .customLong("experimental-samplers"),
