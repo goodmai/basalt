@@ -5,7 +5,7 @@ import MLXLMCommon
 @testable import BasaltCore
 @testable import BasaltInference
 
-@Suite("Hybrid prefix reuse on a real model: restored snapshot versus one- and two-phase prefill (#79)", .serialized)
+@Suite("Hybrid and sliding-window prefix reuse on a real model: restored snapshot versus one- and two-phase prefill (#79, #247)", .serialized)
 struct HybridPrefixDriftTests {
     static var modelPath: String? {
         let env = ProcessInfo.processInfo.environment
