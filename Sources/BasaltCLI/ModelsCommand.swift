@@ -1,6 +1,7 @@
 import Foundation
 import ArgumentParser
 import BasaltCore
+import BasaltInference
 
 // MARK: — models (subcommand group)
 
@@ -345,6 +346,9 @@ struct CheckSubcommand: AsyncParsableCommand {
     @Flag(name: .long, help: "Output in machine-readable JSON format")
     var json: Bool = false
 
+    @Flag(name: .long, help: "Before any download: fetch only the safetensors headers, build the model shape-only and render the chat template")
+    var deep: Bool = false
+
     @Option(name: .customLong("kv-bits"), help: "Size the context budget for `serve --kv-bits` (4, 8, k8v4, k8v4h or auto)")
     var kvBits: KVBitsSetting?
 
@@ -383,11 +387,22 @@ struct CheckSubcommand: AsyncParsableCommand {
         }
         let evaluator = MemoryEvaluator()
         let assessment = await evaluator.evaluate(modelId: id, kvPrecision: kvBits?.budgetPrecision, kvZones: KVBitsSetting.zones(kvZones, evicting: kvEvict))
+        let deepCheck: ModelDeepCheck?
+        do {
+            deepCheck = deep ? try await ModelDeepCheck.run(repoId: id, hub: HuggingFaceHub()) : nil
+        } catch {
+            printError("--deep: \(error.localizedDescription)")
+            throw ExitCode.failure
+        }
+        let passed = assessment.fitsInMemory && deepCheck?.passed != false
 
         if json {
-            try printJSON(assessment)
-            // AGENTS.md "Feasible?" step keys on the exit status, like inspect does.
-            if !assessment.fitsInMemory { throw ExitCode.failure }
+            if let deepCheck {
+                try printJSON(DeepCheckOutput(fit: assessment, deep: deepCheck))
+            } else {
+                try printJSON(assessment)
+            }
+            if !passed { throw ExitCode.failure }
             return
         }
 
@@ -414,10 +429,34 @@ struct CheckSubcommand: AsyncParsableCommand {
             print(green("  ✓ Feasible: Model fits within system memory budget."))
         } else {
             print(red("  ❌ Insufficient Memory: Model exceeds available memory!"))
-            print()
-            throw ExitCode.failure
         }
+        if let deepCheck { printDeepCheck(deepCheck) }
         print()
+        if !passed { throw ExitCode.failure }
+    }
+
+    private struct DeepCheckOutput: Encodable {
+        let fit: MemoryAssessment
+        let deep: ModelDeepCheck
+    }
+
+    private func printDeepCheck(_ check: ModelDeepCheck) {
+        let source = check.folder.map { "\(check.repoId)/\($0)" } ?? check.repoId
+        print()
+        print("  Deep check:      \(source), headers only (\(formatBytes(Int64(check.bytesFetched))) fetched)")
+        print("  Load:            " + (check.load.isEmpty
+            ? green("✓ \(check.modelType ?? "model"): \(check.tensors) tensors in \(check.shards) shard(s) match the model")
+            : red("❌ \(check.load.count) problem(s)")))
+        printProblems(check.load)
+        print("  Chat template:   " + (check.template.isEmpty
+            ? green("✓ renders a system prompt, tools, a tool call and its result")
+            : red("❌ does not render")))
+        printProblems(check.template)
+    }
+
+    private func printProblems(_ problems: [String]) {
+        for problem in problems.prefix(20) { print(red("    • \(problem)")) }
+        if problems.count > 20 { print(red("    … \(problems.count - 20) more, --json lists all")) }
     }
 }
 

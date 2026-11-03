@@ -170,6 +170,7 @@ chmod +x ./basalt-claude
 | `basalt models info <repo-id>` | size, quantization, context window |
 | `basalt models cache` | what is on disk, and how much of it |
 | `basalt models check <repo-id>` | will it fit in memory (non-zero exit when it does not) |
+| `basalt models check --deep <repo-id>` | also, before downloading: fetch only the safetensors headers (a few hundred KB), build the model shape-only against them and render the chat template; lists missing, unexpected or mis-shaped tensors, an unsupported `model_type` or a template error, and exits non-zero |
 | `basalt models inspect <repo-id>` | verify a cached model is complete and measure its real bit width |
 | `basalt cloud configure` | OpenRouter fallback for what does not fit locally |
 | `basalt cloud cost` | spend so far on the cloud fallback |
