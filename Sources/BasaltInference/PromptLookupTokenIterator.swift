@@ -42,7 +42,7 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
     private var evalTargets: [MLXArray] = []
 
     static func supports(_ cache: [KVCache], routesExperts: Bool) -> Bool {
-        PromptCache(cache).isSharable || (!routesExperts && (isReplayableHybrid(cache) || stagesRounds(cache)))
+        PromptCache(cache).isSharable || stagesRounds(cache) || (isReplayableHybrid(cache) && !routesExperts)
     }
 
     static func stagesRounds(_ cache: [KVCache]) -> Bool {

@@ -86,7 +86,7 @@ struct PromptLookupDecodingTests {
     }
 
     @Test("Greedy decoding with prompt lookup emits exactly the plain decoder's tokens, and drafts are accepted",
-          arguments: [TinyModel.Family.llama4Layers, .qwen3, .qwen35, .lfm2Moe, .nemotronH, .lfm2, .gemma4])
+          arguments: [TinyModel.Family.llama4Layers, .qwen3, .qwen35, .lfm2Moe, .nemotronH, .lfm2, .gemma4, .gemma4Moe])
     func greedyEquivalence(family: TinyModel.Family) throws {
         let model = try TinyModel.make(family)
         let expected = try LookupFixture.baseline(model)
@@ -343,16 +343,16 @@ struct PromptLookupDecodingTests {
         #expect(speculative.draftTokens != nil)
     }
 
-    @Test("Lookup admits attention-only caches, dense recurrent hybrids and sliding-window caches that stage rounds; hybrids that route tokens to experts stay on plain decoding",
-          arguments: [(TinyModel.Family.qwen3, true), (TinyModel.Family.qwen35, true), (TinyModel.Family.nemotronH, true), (TinyModel.Family.lfm2, true), (TinyModel.Family.gemma4, true), (TinyModel.Family.lfm2Moe, false), (TinyModel.Family.qwen35Moe, false)])
+    @Test("Lookup admits attention-only caches, dense recurrent hybrids and sliding-window caches that stage rounds, with or without expert routing; recurrent hybrids that route tokens to experts stay on plain decoding",
+          arguments: [(TinyModel.Family.qwen3, true), (TinyModel.Family.qwen35, true), (TinyModel.Family.nemotronH, true), (TinyModel.Family.lfm2, true), (TinyModel.Family.gemma4, true), (TinyModel.Family.gemma4Moe, true), (TinyModel.Family.lfm2Moe, false), (TinyModel.Family.qwen35Moe, false)])
     func guardAdmitsDenseHybridsOnly(family: TinyModel.Family, admitted: Bool) throws {
         let model = try TinyModel.make(family)
         let routesExperts = PromptLookupTokenIterator.routesExperts(model)
-        #expect(routesExperts == [.lfm2Moe, .qwen35Moe].contains(family))
+        #expect(routesExperts == [.lfm2Moe, .qwen35Moe, .gemma4Moe].contains(family))
         #expect(PromptLookupTokenIterator.supports(try model.newCache(parameters: nil), routesExperts: routesExperts) == admitted)
         let slidingWindow: [KVCache] = [RotatingKVCache(maxSize: 64), KVCacheSimple()]
         #expect(PromptLookupTokenIterator.supports(slidingWindow, routesExperts: false))
-        #expect(!PromptLookupTokenIterator.supports(slidingWindow, routesExperts: true))
+        #expect(PromptLookupTokenIterator.supports(slidingWindow, routesExperts: true))
         #expect(!PromptLookupTokenIterator.supports([], routesExperts: false))
     }
 
