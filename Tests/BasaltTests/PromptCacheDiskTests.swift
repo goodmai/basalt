@@ -72,7 +72,7 @@ struct PromptCacheDiskTests {
         let model = try TinyModel.make()
         let prompt = TinyModel.tokens(Conversation.firstTurn)
         let prefix = Array(prompt.dropLast())
-        var tree = PromptCacheTree(byteBudget: 1 << 26)
+        var tree = PromptCacheTree(byteBudget: ByteCount(1 << 26))
         tree.store("ns", tokens: prefix, cache: try DiskFixture.prefilled(model, prefix))
         let memory = try tree.required("ns", for: prompt)
         #expect(memory.reusedTokens == prefix.count)
@@ -82,7 +82,7 @@ struct PromptCacheDiskTests {
 
         var reader = DiskFixture.store(directory)
         let layout = try model.newCache(parameters: nil).map(PromptCacheDiskStore.layoutName)
-        let entryFound = reader.longestPrefix(fingerprint: "fp", namespace: "ns", of: prefix, longerThan: 0, maxBytes: 1 << 26)?.entry
+        let entryFound = reader.longestPrefix(fingerprint: "fp", namespace: "ns", of: prefix, longerThan: 0, maxBytes: ByteCount(1 << 26))?.entry
         let entry = try #require(entryFound)
         #expect(entry.tokens == prefix)
         let loaded = try reader.load(entry, layout: layout)
@@ -111,7 +111,7 @@ struct PromptCacheDiskTests {
             MLXArray(prompt.map(Int32.init)), into: PromptCache(try model.newCache(parameters: nil)),
             plan: CachedPrompt(boundary: prompt.count - 1), model: model, prefill: PrefillParameters(stepSize: 16))
         let kept = try #require(head.kept)
-        var tree = PromptCacheTree(byteBudget: 1 << 26)
+        var tree = PromptCacheTree(byteBudget: ByteCount(1 << 26))
         tree.store("ns", tokens: Array(prompt.dropLast()), cache: kept)
         let memory = try tree.required("ns", for: prompt)
         #expect(memory.cache.isHybrid)
@@ -121,7 +121,7 @@ struct PromptCacheDiskTests {
         #expect(writer.store(fingerprint: "fp", model: "tiny", namespace: "ns", tokens: prefix, cache: memory.cache) != nil)
         var reader = DiskFixture.store(directory)
         let layout = try model.newCache(parameters: nil).map(PromptCacheDiskStore.layoutName)
-        let entryFound = reader.longestPrefix(fingerprint: "fp", namespace: "ns", of: prefix, longerThan: 0, maxBytes: 1 << 26)?.entry
+        let entryFound = reader.longestPrefix(fingerprint: "fp", namespace: "ns", of: prefix, longerThan: 0, maxBytes: ByteCount(1 << 26))?.entry
         let entry = try #require(entryFound)
         let loaded = try reader.load(entry, layout: layout)
         #expect(loaded.isSnapshot(of: prefix.count))
@@ -248,7 +248,7 @@ struct PromptCacheDiskTests {
         let notes = directory.appendingPathComponent("notes.txt")
         try Data("keep".utf8).write(to: notes)
 
-        #expect(store.longestPrefix(fingerprint: "fp", namespace: "ns", of: tokens + [4], longerThan: 0, maxBytes: 1 << 26) == nil)
+        #expect(store.longestPrefix(fingerprint: "fp", namespace: "ns", of: tokens + [4], longerThan: 0, maxBytes: ByteCount(1 << 26)) == nil)
         #expect(FileManager.default.fileExists(atPath: otherFormat.path))
         #expect(!FileManager.default.fileExists(atPath: corrupt.path))
         try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSinceNow: -86_400)], ofItemAtPath: weights.path)
@@ -384,7 +384,7 @@ struct PromptCacheDiskTests {
         let hybridFound = store.store(fingerprint: "fp", model: "m", namespace: "hybrid", tokens: stored, cache: hybridCache)
         _ = try #require(hybridFound)
         func usable(_ namespace: String, _ prompt: [Int], stored memory: Int = 0) -> Int? {
-            store.longestPrefix(fingerprint: "fp", namespace: namespace, of: prompt, longerThan: memory, maxBytes: 1 << 26)?.usable
+            store.longestPrefix(fingerprint: "fp", namespace: namespace, of: prompt, longerThan: memory, maxBytes: ByteCount(1 << 26))?.usable
         }
         #expect(usable("dense", Array(0..<60) + [999]) == 60)
         #expect(usable("dense", Array(0..<10) + [999]) == nil)
@@ -465,10 +465,10 @@ struct PromptCacheDiskTests {
         let file = directory.appendingPathComponent(name)
         try FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: file.path)
         var reader = DiskFixture.store(directory)
-        #expect(reader.longestPrefix(fingerprint: "fp", namespace: "ns", of: tokens + [1], longerThan: 0, maxBytes: 1 << 26) == nil)
+        #expect(reader.longestPrefix(fingerprint: "fp", namespace: "ns", of: tokens + [1], longerThan: 0, maxBytes: ByteCount(1 << 26)) == nil)
         #expect(FileManager.default.fileExists(atPath: file.path))
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
-        #expect(reader.longestPrefix(fingerprint: "fp", namespace: "ns", of: tokens + [1], longerThan: 0, maxBytes: 1 << 26)?.usable == 40)
+        #expect(reader.longestPrefix(fingerprint: "fp", namespace: "ns", of: tokens + [1], longerThan: 0, maxBytes: ByteCount(1 << 26))?.usable == 40)
     }
 
     @Test("A file cut short after its header was read makes load throw, so the request falls back to a prefill instead of crashing in MLX")
@@ -479,7 +479,7 @@ struct PromptCacheDiskTests {
         var store = DiskFixture.store(directory)
         let tokens = Array(0..<40)
         _ = store.store(fingerprint: "fp", model: "m", namespace: "ns", tokens: tokens, cache: try DiskFixture.prefilled(model, tokens))
-        let hit = store.longestPrefix(fingerprint: "fp", namespace: "ns", of: tokens + [1], longerThan: 0, maxBytes: 1 << 26)
+        let hit = store.longestPrefix(fingerprint: "fp", namespace: "ns", of: tokens + [1], longerThan: 0, maxBytes: ByteCount(1 << 26))
         let entry = try #require(hit?.entry)
         let handle = try FileHandle(forWritingTo: directory.appendingPathComponent(entry.name))
         try handle.truncate(atOffset: UInt64(entry.bytes / 2))
@@ -498,7 +498,7 @@ struct PromptCacheDiskTests {
         let tokens = Array(0..<40)
         let original = try DiskFixture.prefilled(model, tokens)
         _ = store.store(fingerprint: "fp", model: "m", namespace: "ns", tokens: tokens, cache: original)
-        let hit = store.longestPrefix(fingerprint: "fp", namespace: "ns", of: tokens + [1], longerThan: 0, maxBytes: 1 << 26)
+        let hit = store.longestPrefix(fingerprint: "fp", namespace: "ns", of: tokens + [1], longerThan: 0, maxBytes: ByteCount(1 << 26))
         let entry = try #require(hit?.entry)
         let loaded = try store.load(entry, layout: try model.newCache(parameters: nil).map(PromptCacheDiskStore.layoutName))
         let handle = try FileHandle(forWritingTo: directory.appendingPathComponent(entry.name))
@@ -582,7 +582,7 @@ struct PromptCacheDiskTests {
             prompt: String(String.UnicodeScalarView(stored.prefix(usable).compactMap { UnicodeScalar($0) })) + "zz",
             maxTokens: 1, temperature: 0, cacheKey: "shared"))
         let (newest, total, storedTokens, storedBytes) = await engine.readPromptCaches { tree in
-            var (nodes, tokens, bytes) = (Array(tree.roots.values), 0, 0)
+            var (nodes, tokens, bytes) = (Array(tree.roots.values), 0, ByteCount.zero)
             while let node = nodes.popLast() {
                 tokens += node.tokens.count
                 bytes += node.bytes
@@ -593,7 +593,7 @@ struct PromptCacheDiskTests {
         let path = try #require(newest)
         #expect(path.tokens.prefix(usable).elementsEqual(stored.prefix(usable)))
         #expect(total == storedBytes)
-        #expect(storedBytes == storedTokens * TinyModel.cacheBytesPerToken)
+        #expect(storedBytes == ByteCount(storedTokens * TinyModel.cacheBytesPerToken))
     }
 
     @Test("prune drops files past their retention, then the least recently used beyond the cap")

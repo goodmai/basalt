@@ -206,7 +206,7 @@ extension PromptCacheDiskStore {
     }
 
     mutating func longestPrefix(
-        fingerprint: String, namespace: String, of prompt: [Int], longerThan stored: Int, maxBytes: Int
+        fingerprint: String, namespace: String, of prompt: [Int], longerThan stored: Int, maxBytes: ByteCount
     ) -> (entry: PromptCacheDiskEntry, usable: Int)? {
         PromptCacheDiskSelection.longestPrefix(
             in: entries(), fingerprint: fingerprint, namespace: namespace, of: prompt, longerThan: stored, maxBytes: maxBytes)
@@ -255,7 +255,7 @@ extension PromptCacheDiskStore {
     }
 
     static func estimatedBytes(of cache: PromptCache, tokens: Int) -> Int64 {
-        Int64(cache.byteCount + tokens * 8 + cache.layers.count * 512 + (64 << 10))
+        (cache.byteCount + ByteCount(tokens * 8 + cache.layers.count * 512 + (64 << 10))).rawValue
     }
 
     func has(fingerprint: String, namespace: String, tokens: [Int]) -> Bool {

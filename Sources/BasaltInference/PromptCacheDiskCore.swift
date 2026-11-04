@@ -1,5 +1,6 @@
 import Foundation
 import CryptoKit
+import BasaltCore
 
 extension PromptCacheDiskStore {
     static func hex(_ digest: some Sequence<UInt8>) -> String {
@@ -127,10 +128,10 @@ enum PromptCacheDiskSelection {
     static let supersededTailTokens = 64
 
     static func longestPrefix(
-        in entries: [PromptCacheDiskEntry], fingerprint: String, namespace: String, of prompt: [Int], longerThan stored: Int, maxBytes: Int
+        in entries: [PromptCacheDiskEntry], fingerprint: String, namespace: String, of prompt: [Int], longerThan stored: Int, maxBytes: ByteCount
     ) -> (entry: PromptCacheDiskEntry, usable: Int)? {
         entries
-            .filter { $0.fingerprint == fingerprint && $0.namespace == namespace && $0.bytes <= Int64(maxBytes) }
+            .filter { $0.fingerprint == fingerprint && $0.namespace == namespace && $0.bytes <= maxBytes.rawValue }
             .map { (entry: $0, usable: $0.usableTokens(for: prompt)) }
             .filter { $0.usable > stored && PromptCacheDiskStore.worthLoading($0.usable, of: $0.entry.tokens.count) }
             .max { ($0.usable, -$0.entry.bytes) < ($1.usable, -$1.entry.bytes) }

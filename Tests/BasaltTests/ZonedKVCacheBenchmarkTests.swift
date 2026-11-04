@@ -320,7 +320,7 @@ struct ZonedKVCacheBenchmarkTests {
             log.error("\(repo): no container or KV geometry after load")
             return
         }
-        let room = Int64(PromptCacheBudget.gpuWorkingSet()) - Int64(Memory.activeMemory)
+        let room = PromptCacheBudget.gpuWorkingSet().rawValue - Int64(Memory.activeMemory)
         let zonesApply = (try? await container.perform { try ZonedKVCache.modelAttendsThroughCache($0.model) }) ?? false
         log.line("PROBE \(repo) zonesApply=\(zonesApply) model=\(await container.perform { String(describing: type(of: $0.model)) })")
         log.line("GEOMETRY \(repo) fp16BytesPerToken=\(geometry.bytes(tokens: TokenCount(1_000)).rawValue / 1_000) window=\(geometry.window) roomAfterWeights=\(room)")

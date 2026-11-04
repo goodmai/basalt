@@ -112,7 +112,7 @@ public actor MLXInferenceEngine: InferenceEngine {
     private var launches: [Int: GenerationLaunch] = [:]
     private var leaseCount = 0
     private(set) var mtpPrefixes: [(namespace: String, tokens: [Int], prefix: MTPPrefix)] = []
-    private var promptCacheFullBudget: Int
+    private var promptCacheFullBudget: ByteCount
     private(set) var appliedMemoryDirective = MemoryDirective.relaxed
     private var kvMemoryBudget: Int64?
     private var controlTokens = ControlTokenGuard.none
@@ -121,7 +121,7 @@ public actor MLXInferenceEngine: InferenceEngine {
     public var hybridAnchorUsage: (count: Int, bytes: Int64)? {
         guard modelIsHybrid == true else { return nil }
         let usage = promptCaches.anchorUsage
-        return (usage.count, Int64(usage.bytes))
+        return (usage.count, usage.bytes.rawValue)
     }
     public var supportsKVZones: Bool { modelAttendsThroughZones }
     public var supportsKVEviction: Bool { modelPrefillsInChunks }
@@ -134,7 +134,7 @@ public actor MLXInferenceEngine: InferenceEngine {
         let text = request.messages.map { ChatMessageInput.plainText($0) } ?? request.prompt
         return await container.perform { $0.tokenizer.encode(text: text, addSpecialTokens: false).count }
     }
-    private let configuredPromptCacheBytes: Int?
+    private let configuredPromptCacheBytes: ByteCount?
     private let hybridAnchors: Int
     private var modelEpoch = 0
     private var modelIsHybrid: Bool?
@@ -208,10 +208,10 @@ public actor MLXInferenceEngine: InferenceEngine {
         self.topK = topK
         self.minP = minP
         self.seed = seed
-        self.configuredPromptCacheBytes = promptCacheBytes
+        self.configuredPromptCacheBytes = promptCacheBytes.map { ByteCount($0) }
         self.cacheBlendRatio = cacheBlendRatio
-        self.promptCaches = PromptCacheTree(byteBudget: promptCacheBytes ?? 0, anchorLimit: max(1, hybridAnchors))
-        self.promptCacheFullBudget = promptCacheBytes ?? 0
+        self.promptCaches = PromptCacheTree(byteBudget: ByteCount(promptCacheBytes ?? 0), anchorLimit: max(1, hybridAnchors))
+        self.promptCacheFullBudget = ByteCount(promptCacheBytes ?? 0)
     }
 
     public func apply(_ directive: MemoryDirective) async -> MemoryLimits? {
@@ -219,13 +219,13 @@ public actor MLXInferenceEngine: InferenceEngine {
             if let gpuCacheLimit { Memory.cacheLimit = Self.cacheLimit(gpuCacheLimit, under: directive) }
             if directive > appliedMemoryDirective, directive.clearsCache { Memory.clearCache() }
             let evictedBefore = promptCaches.evictions
-            promptCaches.rebudget(Int(Double(promptCacheFullBudget) * directive.promptCacheShare))
-            logger.info("Memory directive \(appliedMemoryDirective) → \(directive): prompt cache \(promptCaches.byteBudget >> 20) MB, \(promptCaches.evictions - evictedBefore) nodes evicted")
+            promptCaches.rebudget(ByteCount(Int64(Double(promptCacheFullBudget.rawValue) * directive.promptCacheShare)))
+            logger.info("Memory directive \(appliedMemoryDirective) → \(directive): prompt cache \(promptCaches.byteBudget.rawValue >> 20) MB, \(promptCaches.evictions - evictedBefore) nodes evicted")
             appliedMemoryDirective = directive
         }
         return MemoryLimits(
             cacheLimitBytes: gpuCacheLimit.map { Self.cacheLimit($0, under: appliedMemoryDirective) },
-            promptCacheBudgetBytes: promptCaches.byteBudget, promptCacheBytes: promptCaches.byteCount,
+            promptCacheBudgetBytes: Int(promptCaches.byteBudget.rawValue), promptCacheBytes: Int(promptCaches.byteCount.rawValue),
             promptCacheEvictions: promptCaches.evictions)
     }
 
@@ -277,7 +277,7 @@ public actor MLXInferenceEngine: InferenceEngine {
     func wireWorkingSet() async {
         await releaseWiredMemory()
         guard wiresWorkingSet else { return }
-        let ticket = WiredMemoryTicket(size: PromptCacheBudget.gpuWorkingSet(), policy: WiredMaxPolicy(), kind: .active)
+        let ticket = WiredMemoryTicket(size: Int(PromptCacheBudget.gpuWorkingSet().rawValue), policy: WiredMaxPolicy(), kind: .active)
         let applied = await ticket.start()
         wiredTicket = ticket
         logger.info("Wired memory limit: \(applied >> 20) MB, Metal's recommended working set, while the model is loaded (--no-wired-limit leaves the system default)")
@@ -335,9 +335,9 @@ public actor MLXInferenceEngine: InferenceEngine {
         self.profile = profile
         self.samplingDefaults = samplingDefaults
         let workingSet = PromptCacheBudget.gpuWorkingSet()
-        let weights = Memory.activeMemory
+        let weights = ByteCount(Memory.activeMemory)
         let budget = configuredPromptCacheBytes ?? PromptCacheBudget.automatic(workingSet: workingSet, weights: weights)
-        kvMemoryBudget = Int64(max(0, workingSet - weights - budget))
+        kvMemoryBudget = max(0, workingSet - weights - budget).rawValue
         modelAttendsThroughZones = false
         modelPrefillsInChunks = false
         let blendBytes = cacheBlendRatio == nil ? 0 : budget / 2
@@ -345,13 +345,13 @@ public actor MLXInferenceEngine: InferenceEngine {
         mtpPrefixes.removeAll()
         promptCacheFullBudget = budget - blendBytes
         appliedMemoryDirective = .relaxed
-        cacheBlend = cacheBlendRatio.map { CacheBlendStore(ratio: $0, byteBudget: blendBytes) }
+        cacheBlend = cacheBlendRatio.map { CacheBlendStore(ratio: $0, byteBudget: Int(blendBytes.rawValue)) }
         modelEpoch += 1
         modelIsHybrid = nil
         modelHasRecurrentState = nil
         modelRoutesExperts = nil
         templateSuffixes = [:]
-        logger.info("Prompt cache budget: \(promptCaches.byteBudget >> 20) MB")
+        logger.info("Prompt cache budget: \(promptCaches.byteBudget.rawValue >> 20) MB")
     }
 
     private static let aliasRegistration = Task {
@@ -974,8 +974,8 @@ public actor MLXInferenceEngine: InferenceEngine {
                         let metadata = GenerationResponse(
                             generatedText: "", 
                             reasoningText: nil,
-                            promptTokens: lastInfo.map { reusedTokens + $0.promptTokenCount } ?? promptTokens.count,
-                            cachedPromptTokens: reusedTokens,
+                            promptTokens: lastInfo.map { reusedTokens.rawValue + $0.promptTokenCount } ?? promptTokens.count,
+                            cachedPromptTokens: reusedTokens.rawValue,
                             completionTokens: lastInfo?.generationTokenCount ?? tokenCount,
                             tokensPerSecond: lastInfo?.tokensPerSecond ?? 0,
                             generationTime: generationTime,
@@ -1039,8 +1039,8 @@ public actor MLXInferenceEngine: InferenceEngine {
         let task: Task<Void, Never>?
         let cache: PromptCache?
         var anchors: [PromptCache] = []
-        let reusedTokens: Int
-        var exactTokens = Int.max
+        let reusedTokens: TokenCount
+        var exactTokens = TokenCount(Int.max)
         var prefillSeconds: TimeInterval = 0
         var mtpPrefix: MTPPrefix?
     }
@@ -1229,12 +1229,12 @@ public actor MLXInferenceEngine: InferenceEngine {
         leases[lease] = nil
         let launch = launches.removeValue(forKey: lease)
         guard epoch == modelEpoch, let namespace, let launch else { return }
-        let (tokens, anchors) = (Array(prompt.prefix(launch.exactTokens)), launch.anchors)
+        let (tokens, anchors) = (Array(prompt.prefix(launch.exactTokens.rawValue)), launch.anchors)
         for anchor in anchors {
             promptCaches.store(namespace, tokens: Array(tokens.prefix(anchor.tokenCount)), cache: anchor)
         }
         if let bytes = anchors.first.flatMap(RecurrentSnapshot.init(of:))?.bytes {
-            logger.info("Recurrent snapshots before the boundary at prompt tokens \(anchors.map(\.tokenCount)): \(bytes >> 10) KB each")
+            logger.info("Recurrent snapshots before the boundary at prompt tokens \(anchors.map(\.tokenCount)): \(bytes.rawValue >> 10) KB each")
         }
         if let cache = launch.cache {
             promptCaches.store(namespace, tokens: Array(tokens.prefix(cache.tokenCount)), cache: cache)

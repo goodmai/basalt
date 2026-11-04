@@ -33,8 +33,8 @@ enum TinyHybrid {
 
     static let attentionBytesPerToken = 2 * 2 * 2 * 16 * 4
 
-    static func storedBytes(_ snapshot: PromptCache, tokens: Int) -> Int {
-        tokens * attentionBytesPerToken + (RecurrentSnapshot(of: snapshot)?.bytes ?? 0)
+    static func storedBytes(_ snapshot: PromptCache, tokens: Int) -> ByteCount {
+        ByteCount(tokens * attentionBytesPerToken) + (RecurrentSnapshot(of: snapshot)?.bytes ?? 0)
     }
 
     static func row(_ tokens: [Int]) -> MLXArray {
@@ -95,7 +95,7 @@ struct SlidingWindowSnapshotTests {
         let rotating = kept.layers.compactMap { $0 as? RotatingKVCache }
         #expect(!rotating.isEmpty)
         #expect(rotating.allSatisfy { $0.metaState.last == "true" })
-        var tree = PromptCacheTree(byteBudget: 1 << 30)
+        var tree = PromptCacheTree(byteBudget: ByteCount(1 << 30))
         tree.store("ns", tokens: Array(first.prefix(boundary)), cache: kept)
         #expect(tree.leaves().count == 1)
 
@@ -158,7 +158,7 @@ struct HybridPrefixSnapshotTests {
         let boundary = first.count - 1
         #expect(Array(second.prefix(boundary)) == Array(first.prefix(boundary)))
 
-        var tree = PromptCacheTree(byteBudget: 1 << 30)
+        var tree = PromptCacheTree(byteBudget: ByteCount(1 << 30))
         let snapshot = try TinyHybrid.snapshotted(model, first)
         #expect(snapshot.tokenCount == boundary)
         tree.store("ns", tokens: Array(first.prefix(boundary)), cache: snapshot)
@@ -193,7 +193,7 @@ struct HybridPrefixSnapshotTests {
     func nonPrefixFallsBackToFullPrefill() throws {
         let model = try TinyModel.make(.qwen35)
         let first = TinyModel.tokens(Conversation.firstTurn)
-        var tree = PromptCacheTree(byteBudget: 1 << 30)
+        var tree = PromptCacheTree(byteBudget: ByteCount(1 << 30))
         tree.store("ns", tokens: Array(first.dropLast()), cache: try TinyHybrid.snapshotted(model, first))
         let noLease1 = tree.lease("ns", for: TinyModel.tokens(Conversation.otherUser)) == nil
         #expect(noLease1)
@@ -218,7 +218,7 @@ struct HybridPrefixSnapshotTests {
         let cache = PromptCache(try model.newCache(parameters: nil))
         _ = model(TinyHybrid.row(first), cache: cache.layers)
         eval(cache.layers.flatMap { $0.innerState() })
-        var tree = PromptCacheTree(byteBudget: 1 << 30)
+        var tree = PromptCacheTree(byteBudget: ByteCount(1 << 30))
         tree.store("ns", tokens: Array(first.dropLast()), cache: cache)
         #expect(tree.byteCount == 0)
         #expect(tree.leaves().isEmpty)
@@ -249,7 +249,7 @@ struct HybridPrefixSnapshotTests {
             MLXArray(first.map(Int32.init)), into: PromptCache(try model.newCache(parameters: nil)),
             plan: CachedPrompt(boundary: first.count - 1), model: model, prefill: PrefillParameters(stepSize: 16))
         #expect(head.state != nil)
-        var tree = PromptCacheTree(byteBudget: 1 << 30)
+        var tree = PromptCacheTree(byteBudget: ByteCount(1 << 30))
         tree.store("ns", tokens: Array(first.dropLast()), cache: try #require(head.kept))
         let lease = try tree.required("ns", for: TinyModel.tokens(Conversation.afterToolCall))
         #expect(lease.cache.state != nil)
@@ -305,7 +305,7 @@ struct HybridPrefixSnapshotTests {
         #expect(shared < first.count - 1)
         #expect(commonPrefix(first, third) == shared)
 
-        var tree = PromptCacheTree(byteBudget: 1 << 30)
+        var tree = PromptCacheTree(byteBudget: ByteCount(1 << 30))
         tree.store("ns", tokens: Array(first.dropLast()), cache: try TinyHybrid.snapshotted(model, first))
         let noLease = tree.lease("ns", for: second) == nil
         #expect(noLease)
@@ -341,7 +341,7 @@ struct HybridPrefixSnapshotTests {
         let model = try TinyModel.make(.qwen35)
         let p = TinyModel.tokens(Conversation.firstTurn)
         let head = Array(p.dropLast())
-        var tree = PromptCacheTree(byteBudget: 1 << 30, leafLimit: 2)
+        var tree = PromptCacheTree(byteBudget: ByteCount(1 << 30), leafLimit: 2)
         for prompt in [p, head + [10, 11, 12], head + [20, 21, 22], Array(200..<220)] {
             tree.store("ns", tokens: Array(prompt.dropLast()), cache: try TinyHybrid.snapshotted(model, prompt))
         }
@@ -356,7 +356,7 @@ struct HybridPrefixSnapshotTests {
     func noStrandedHeadAfterEviction() throws {
         let model = try TinyModel.make(.qwen35)
         let head = Array(TinyModel.tokens(Conversation.firstTurn).dropLast())
-        var tree = PromptCacheTree(byteBudget: 1 << 30, leafLimit: 1)
+        var tree = PromptCacheTree(byteBudget: ByteCount(1 << 30), leafLimit: 1)
         for prompt in [head + [10, 11, 12], head + [20, 21, 22], Array(200..<220)] {
             tree.store("ns", tokens: Array(prompt.dropLast()), cache: try TinyHybrid.snapshotted(model, prompt))
             #expect(tree.leaves().count == 1)
@@ -406,12 +406,12 @@ struct HybridPrefixSnapshotTests {
         let turns = (0..<6).map { turn in opening + (0..<(turn * 20)).map { 100 + $0 % 50 } }
         let recurrent = try #require(RecurrentSnapshot(of: try TinyHybrid.snapshotted(model, opening))).bytes
         let deepest = turns.last!.count - 1
-        let budget = deepest * TinyHybrid.attentionBytesPerToken + recurrent * 5 / 2
+        let budget = ByteCount(deepest * TinyHybrid.attentionBytesPerToken) + recurrent * 5 / 2
         var tree = PromptCacheTree(byteBudget: budget)
         for (index, prompt) in turns.enumerated() {
             tree.store("ns", tokens: Array(prompt.dropLast()), cache: try TinyHybrid.snapshotted(model, prompt))
             var snapshots = 0
-            var bytes = 0
+            var bytes = ByteCount.zero
             var pending = Array(tree.roots.values)
             while let node = pending.popLast() {
                 snapshots += node.snapshot == nil ? 0 : 1
@@ -419,7 +419,7 @@ struct HybridPrefixSnapshotTests {
                 pending.append(contentsOf: node.children.values)
             }
             #expect(snapshots == min(index + 1, 2))
-            #expect(tree.byteCount <= (prompt.count - 1) * TinyHybrid.attentionBytesPerToken + 2 * recurrent)
+            #expect(tree.byteCount <= ByteCount((prompt.count - 1) * TinyHybrid.attentionBytesPerToken) + recurrent * 2)
             #expect(tree.byteCount == bytes)
             let next = index + 1 < turns.count ? turns[index + 1] : prompt + [7, 7]
             var lease = tree.lease("ns", for: next)
@@ -448,7 +448,7 @@ struct HybridPrefixSnapshotTests {
         let model = try TinyModel.make(.qwen35)
         let opening = TinyModel.tokens(Conversation.firstTurn)
         let turns = (0..<4).map { turn in opening + (0..<(turn * 20)).map { 100 + $0 % 50 } }
-        var tree = PromptCacheTree(byteBudget: 1 << 30)
+        var tree = PromptCacheTree(byteBudget: ByteCount(1 << 30))
         tree.store("key:a", tokens: Array(opening.dropLast()), cache: try TinyHybrid.snapshotted(model, opening))
         #expect(tree.storedPrefix(of: opening, in: "key:b") == 0)
         for prompt in turns {
