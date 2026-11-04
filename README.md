@@ -594,6 +594,8 @@ Available MCP tools:
 | `harness_validate` | Validate a Claude Code / opencode / AGENTS.md harness under the working directory or `BASALT_HARNESS_ROOTS` |
 | `harness_optimize` | One Harness² propose–probe–compose pass on the loaded model (also `basalt harness optimize`) |
 | `harness_library_query` | Search the Experience Library |
+| `model_describe`, `model_tensors`, `model_tensor`, `kv_inspect`, `trace_run` | Model X-ray (read-only, background priority): layer anatomy, parameter list and bounded tensor statistics, the prompt-cache tree, one capture run of a prompt (#328) |
+| `intervene`, `weights_delta`, `overlays_list`, `overlay_undo`, `experiment_compare` | Sandboxed experiments, only with `serve --research-tools`: steering, head/expert ablation and weight deltas as undoable in-memory overlays for research calls only, compared before/after (#328) |
 
 ---
 

@@ -2,7 +2,7 @@ import Foundation
 import os
 
 public actor ModelOrchestratorActor {
-    private let engine: any InferenceEngine
+    let engine: any InferenceEngine
     private var kv: KVPlanner
     private var reservations = KVReservations()
     private var modelSizeMB: Int = 4000
@@ -300,7 +300,7 @@ extension ModelOrchestratorActor {
         return (validated, room.promptTokens)
     }
 
-    private func admitted(_ priority: RequestPriority) async throws(BasaltError) -> Int {
+    func admitted(_ priority: RequestPriority) async throws(BasaltError) -> Int {
         do {
             return try await gate.admit(priority: priority)
         } catch {

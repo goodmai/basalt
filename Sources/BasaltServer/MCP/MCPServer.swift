@@ -11,6 +11,7 @@ public final class MCPServer: Service, Sendable {
     private let library: HarnessExperienceLibrary?
     private let harnessRoots: [URL]
     private let harnessLimits: HarnessLoadLimits
+    private let researchTools: Bool
     private let makeInput: @Sendable () -> AsyncStream<String>
     private let writer: @Sendable (String) -> Void
 
@@ -27,6 +28,7 @@ public final class MCPServer: Service, Sendable {
         self.library = library
         self.harnessRoots = harnessRoots
         self.harnessLimits = harnessLimits
+        self.researchTools = false
         self.makeInput = Self.stdinStream
         self.writer = writer
     }
@@ -42,8 +44,24 @@ public final class MCPServer: Service, Sendable {
         self.library = nil
         self.harnessRoots = HarnessLoader.allowedRoots()
         self.harnessLimits = .standard
+        self.researchTools = false
         self.makeInput = { input }
         self.writer = writer
+    }
+
+    private init(_ server: MCPServer, researchTools: Bool) {
+        orchestrator = server.orchestrator
+        modelId = server.modelId
+        library = server.library
+        harnessRoots = server.harnessRoots
+        harnessLimits = server.harnessLimits
+        self.researchTools = researchTools
+        makeInput = server.makeInput
+        writer = server.writer
+    }
+
+    public func withResearchTools(_ enabled: Bool) -> MCPServer {
+        MCPServer(self, researchTools: enabled)
     }
 }
 
@@ -91,7 +109,7 @@ extension MCPServer {
         case .failed(let id, let failure): writer(MCPWire.error(id: id, failure))
         case .ignored: break
         case .initialize(let id): writer(MCPWire.result(id: id, MCPInitializeResult.current))
-        case .toolsList(let id): writer(MCPWire.result(id: id, MCPToolCatalog.list))
+        case .toolsList(let id): writer(MCPWire.result(id: id, MCPToolCatalog.catalog(researchTools: researchTools)))
         case .toolsCall(let id, let params): await handleToolsCall(id: id, params: params)
         }
     }
@@ -119,6 +137,38 @@ extension MCPServer {
         case .harnessValidate: try validateHarness(args)
         case .harnessLibraryQuery: try await queryLibrary(args)
         case .harnessOptimize: try await optimizeHarness(args)
+        case .research(let tool): try await research(tool, args)
+        }
+    }
+
+    private func research(_ tool: ResearchTool, _ args: [String: Any]?) async throws(MCPFailure) -> ToolResult {
+        guard researchTools || !tool.isExperiment else {
+            throw .methodNotFound("\(tool.rawValue) is an experiment tool: start the server with serve --research-tools to use it")
+        }
+        let call = try ResearchCall(tool, args)
+        do throws(BasaltError) {
+            return try await orchestrator.research { model throws(BasaltError) in try await call.run(on: model) }
+        } catch {
+            throw MCPFailure(error)
+        }
+    }
+}
+
+extension ResearchCall {
+    func run(on model: any ModelResearch) async throws(BasaltError) -> ToolResult {
+        switch self {
+        case .describe: return .json(try await model.anatomy())
+        case .tensors(let filter): return .json(try await model.tensors(matching: filter))
+        case .tensor(let request): return .json(try await model.tensor(request))
+        case .promptCache(let namespace): return .json(await model.promptCacheReport(namespace: namespace))
+        case .trace(let request): return .json(try await model.trace(request))
+        case .intervene(let intervention): return .json(try await model.intervene(intervention))
+        case .delta(let delta): return .json(try await model.applyDelta(delta))
+        case .overlays: return .json(await model.overlays())
+        case .undo(let overlay):
+            try await model.undo(overlay)
+            return .text("Overlay \(overlay) undone")
+        case .compare(let request): return .json(try await model.compare(request))
         }
     }
 }
