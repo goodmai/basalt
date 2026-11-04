@@ -7,13 +7,13 @@ import MLXLLM
 
 enum TinyModel {
     enum Family: String, CaseIterable, Sendable {
-        case llama, llama4Layers, qwen3, qwen35, qwen35Moe, gemma3, gemma4, gemma4Moe, qwen3Moe, sigmoidMoe, nemotronH, lfm2, lfm2Moe, prism
+        case llama, llama4Layers, qwen3, qwen3HeadDim32, qwen35, qwen35Moe, gemma3, gemma4, gemma4Moe, qwen3Moe, sigmoidMoe, nemotronH, lfm2, lfm2Moe, prism
 
         func model(_ config: Data) throws -> any LanguageModel {
             let decoder = JSONDecoder.json5()
             return switch self {
             case .llama, .llama4Layers: LlamaModel(try decoder.decode(LlamaConfiguration.self, from: config))
-            case .qwen3: Qwen3Model(try decoder.decode(Qwen3Configuration.self, from: config))
+            case .qwen3, .qwen3HeadDim32: Qwen3Model(try decoder.decode(Qwen3Configuration.self, from: config))
             case .qwen35, .qwen35Moe: Qwen35TextModel(try decoder.decode(Qwen35TextConfiguration.self, from: config))
             case .gemma3: Gemma3TextModel(try decoder.decode(Gemma3TextConfiguration.self, from: config))
             case .gemma4, .gemma4Moe: Gemma4TextModel(try decoder.decode(Gemma4TextConfiguration.self, from: config))
@@ -28,7 +28,7 @@ enum TinyModel {
         var seed: UInt64 {
             switch self {
             case .llama: 56
-            case .llama4Layers, .qwen3: 36
+            case .llama4Layers, .qwen3, .qwen3HeadDim32: 36
             case .qwen35, .qwen35Moe: 79
             case .gemma3: 103
             case .gemma4, .gemma4Moe, .qwen3Moe, .sigmoidMoe: 228
@@ -42,7 +42,7 @@ enum TinyModel {
         var weightScale: Float {
             switch self {
             case .llama, .gemma3: 4
-            case .llama4Layers, .qwen3, .gemma4, .gemma4Moe, .qwen35, .qwen35Moe, .qwen3Moe, .sigmoidMoe, .nemotronH, .lfm2, .lfm2Moe, .prism: 1
+            case .llama4Layers, .qwen3, .qwen3HeadDim32, .gemma4, .gemma4Moe, .qwen35, .qwen35Moe, .qwen3Moe, .sigmoidMoe, .nemotronH, .lfm2, .lfm2Moe, .prism: 1
             }
         }
 
@@ -59,6 +59,7 @@ enum TinyModel {
                  "num_attention_heads": 4, "num_key_value_heads": 2, "head_dim": 16, "rms_norm_eps": 1e-5,
                  "vocab_size": 256, "rope_theta": 10000.0, "tie_word_embeddings": false}
                 """
+            case .qwen3HeadDim32: Self.qwen3.config.replacingOccurrences(of: "\"head_dim\": 16", with: "\"head_dim\": 32")
             case .qwen35: """
                 {"model_type": "qwen3_5_text", "hidden_size": 64, "num_hidden_layers": 4, "intermediate_size": 128,
                  "num_attention_heads": 4, "num_key_value_heads": 2, "head_dim": 16,

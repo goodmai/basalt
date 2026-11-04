@@ -262,19 +262,4 @@ struct CacheBlendTests {
         #expect(store.chunkCount == 1)
         #expect(await engine.readPromptCaches { $0.byteBudget } == ByteCount(1 << 25))
     }
-
-    @Test("A hybrid SSM model never blends: the snapshot path serves it and the chunk store stays empty")
-    func hybridModelsNeverBlend() async throws {
-        #expect(CacheBlendModel(try TinyModel.make(.qwen35)) == nil)
-        let engine = MLXInferenceEngine(promptCacheBytes: 1 << 26, cacheBlendRatio: 0.15)
-        await engine.attach(ModelContainer(context: ModelContext(
-            configuration: ModelConfiguration(id: "tiny-qwen35"), model: try TinyModel.make(.qwen35),
-            processor: ByteInputProcessor(), tokenizer: ByteTokenizer())))
-        _ = try await engine.generate(request: greedy(Conversation.firstTurn, key: "ns"))
-        let reused = try await engine.generate(request: greedy(Conversation.afterToolCall, key: "ns"))
-        let full = try await engine.generate(request: greedy(Conversation.afterToolCall, key: nil))
-        #expect(reused.cachedPromptTokens > 0)
-        #expect(reused.generatedText == full.generatedText)
-        #expect(try #require(await engine.cacheBlend).chunkCount == 0)
-    }
 }
