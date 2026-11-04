@@ -40,6 +40,27 @@ On the per-token path (sampling, logit processors, speculative drafting, constra
 - **Fix the cause where all callers meet**, not the symptom on the path the bug report names.
 - **Opt-in until measured.** A behaviour that is not proven at least as fast and as exact as the current one ships off by default behind a flag, with its numbers in the PR.
 
+## Size and complexity
+
+Measured with lizard, which reports per function the cyclomatic complexity (CCN), the lines of code without blanks and comments, and the parameter count: `uvx lizard==1.24.0 -l swift -C 15 -L 60 -a 6 <files>`.
+
+| Unit | Limit |
+|---|---|
+| Function | CCN ≤ 15 (aim for ≤ 10), ≤ 60 lines of code, ≤ 6 parameters |
+| File | ≤ 600 lines (aim for ≤ 400) |
+
+- **New code stays within the limits.** Tests follow the function limits; a test file may be longer than 600 lines.
+- **Code already over a limit does not get worse.** On 2026-11-04 that was 6 files over 600 lines, 20 functions over CCN 15 and 20 over 60 lines (#284). A change that touches one of them must not make it longer or more complex. A change that adds a branch to one first splits it.
+- **Split along the seams the code already has.** A `switch` case or an engine mode becomes its own function or type, and a stage of a long function becomes a method named after what it does. Cutting a function into `part1`/`part2` to get under the number does not count.
+- **Use the Swift 6.4 tools when touching code.**
+  - A lock or `@unchecked Sendable` becomes `Mutex` or an actor.
+  - A resource that is released by hand becomes a `~Copyable` value.
+  - Teardown gets `withTaskCancellationShield` and `defer { await … }`.
+  - An internal `throws` becomes typed.
+  - Byte parsing moves to `RawSpan`.
+
+  The rules are in "Types first" and "Performance" above. Leave the code you touch closer to them.
+
 ## No comments in code
 
 Code carries no comments: no `//`, `///`, `/* */`, no `// MARK:`, no commented-out code. Names, types and small functions say what the code does; tests say what it must keep doing.
@@ -85,6 +106,7 @@ Measure more than one model family. A claim about speed or quality names the mod
 ## Pull requests
 
 - One issue per PR; link it with `Closes #N`.
+- No function or file over the limits in "Size and complexity", and none already over them grown.
 - `swift build --build-tests` and `swift test` pass locally with no new warnings (run `./scripts/build_metal.swift --skip-unsupported` once if MLX reports a missing metallib).
 - A test that guards against nondeterminism (sampling parity, speculative exactness, concurrency) runs with repetitions (ST-0024: `swift test --maximum-repetitions 10 --repeat-until fail --filter <SuiteName>`) before it is trusted.
 - Behaviour changes come with a test that fails without the change.

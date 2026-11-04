@@ -74,5 +74,6 @@ All code modifications must pass these deterministic CLI verification gates befo
 ## 5. Pre-Completion Definition of Done (DoD)
 1. Target architecture and module boundaries comply with `swift-64-architecture` and `ponytail`.
 2. Zero warnings on `swift build -Xswiftc -warnings-as-errors` and zero new comments (`check_no_new_comments.py`).
-3. All unit and parameterized `@Test` suites pass under `swift test --parallel`.
-4. Self-review completed against `swift-64-pr-review` (5 Gates) and `ponytail-review`.
+3. No new function over CCN 15 / 60 lines of code / 6 parameters and no file over 600 lines; nothing already over a limit grows (`uvx lizard==1.24.0 -l swift -C 15 -L 60 -a 6 <files>`, CONTRIBUTING "Size and complexity").
+4. All unit and parameterized `@Test` suites pass under `swift test --parallel`.
+5. Self-review completed against `swift-64-pr-review` (5 Gates) and `ponytail-review`.
