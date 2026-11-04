@@ -35,6 +35,22 @@ struct CachedPrompt {
     var blend: (store: CacheBlendStore, namespace: String)?
 }
 
+struct LaunchOptions {
+    var params: GenerateParameters
+    var components = GenerationComponents()
+    var tools: [ToolSpec]?
+    var keepsCache = false
+    var batch: BatchedDecoder?
+    var lookup = LookupOptions()
+    var kvZones: KVZones?
+    var kvHeadMask: KVHeadMask?
+    var questTopK: Int?
+    var kvPrecision: KVPrecision?
+    var mtp = false
+    var mtpBlockSize = 4
+    var mtpPrefix: MTPPrefix?
+}
+
 struct MTPRequest {
     var drafter: any MTPDrafterModel
     var blockSize: Int

@@ -360,9 +360,8 @@ struct ZonedKVCacheEngineTests {
                 parameters: exact, context: context)
             return try [Self.zones, nil].map { zones in
                 try MLXInferenceEngine.launch(
-                    input: input, reuse: nil, keepsCache: false, boundary: Self.prompt.count - 1, params: params,
-                    components: GenerationComponents(), tools: nil, context: context, kvZones: zones,
-                    kvPrecision: zones == nil ? nil : .q4).stream
+                    input: input, prompt: CachedPrompt(boundary: Self.prompt.count - 1),
+                    options: LaunchOptions(params: params, kvZones: zones, kvPrecision: zones == nil ? nil : .q4), context: context).stream
             } + [reference]
         }
         var texts = [String]()

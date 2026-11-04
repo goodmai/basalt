@@ -326,9 +326,8 @@ struct PromptCacheReuseTests {
         let launch = try await container.performSending(nonSendable: ()) { context, _ in
             let input = LMInput(tokens: MLXArray(TinyModel.tokens(Conversation.firstTurn).map(Int32.init)))
             return try MLXInferenceEngine.launch(
-                input: input, reuse: nil, keepsCache: true, boundary: input.text.tokens.size - 1,
-                params: GenerateParameters(maxTokens: longRun, temperature: 0),
-                components: GenerationComponents(), tools: nil, context: context)
+                input: input, prompt: CachedPrompt(boundary: input.text.tokens.size - 1),
+                options: LaunchOptions(params: GenerateParameters(maxTokens: longRun, temperature: 0), keepsCache: true), context: context)
         }
         var iterator = launch.stream.makeAsyncIterator()
         _ = await iterator.next()

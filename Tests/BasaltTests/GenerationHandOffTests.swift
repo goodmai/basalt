@@ -15,8 +15,8 @@ struct GenerationHandOffTests {
     @Test("A launch without a prompt cache hands back its decode task, so cancelling the request stops decoding", .timeLimit(.minutes(1)))
     func plainLaunchStopsOnCancel() async throws {
         let launch = try MLXInferenceEngine.launch(
-            input: LMInput(tokens: MLXArray([5, 9, 5, 9, 5].map(Int32.init))), reuse: nil, keepsCache: false, boundary: 4,
-            params: GenerateParameters(maxTokens: 100_000, temperature: 0), components: .init(), tools: nil, context: try Self.context())
+            input: LMInput(tokens: MLXArray([5, 9, 5, 9, 5].map(Int32.init))), prompt: CachedPrompt(boundary: 4),
+            options: LaunchOptions(params: GenerateParameters(maxTokens: 100_000, temperature: 0)), context: try Self.context())
         let task = try #require(launch.task)
         #expect(launch.prefillSeconds >= 0)
         await MLXInferenceEngine.settle(launch.task, cancelled: true)
@@ -26,8 +26,8 @@ struct GenerationHandOffTests {
     @Test("A launch that keeps its prompt cache reports the prefill it ran before decoding started")
     func cachedLaunchReportsPrefill() async throws {
         let launch = try MLXInferenceEngine.launch(
-            input: LMInput(tokens: MLXArray(Array(repeating: [5, 9, 7], count: 64).flatMap { $0 }.map(Int32.init))), reuse: nil,
-            keepsCache: true, boundary: 190, params: GenerateParameters(maxTokens: 4, temperature: 0), components: .init(), tools: nil,
+            input: LMInput(tokens: MLXArray(Array(repeating: [5, 9, 7], count: 64).flatMap { $0 }.map(Int32.init))),
+            prompt: CachedPrompt(boundary: 190), options: LaunchOptions(params: GenerateParameters(maxTokens: 4, temperature: 0), keepsCache: true),
             context: try Self.context())
         #expect(launch.prefillSeconds > 0)
         await MLXInferenceEngine.settle(launch.task, cancelled: false)
@@ -39,9 +39,8 @@ struct GenerationHandOffTests {
         let context = try Self.context()
         let started = ContinuousClock.now
         let launch = try MLXInferenceEngine.launch(
-            input: LMInput(tokens: MLXArray((0 ..< 3000).map { Int32(1 + $0 % 200) })), reuse: nil,
-            keepsCache: keepsCache, boundary: 2999, params: GenerateParameters(maxTokens: 1, temperature: 0), components: .init(),
-            tools: nil, context: context)
+            input: LMInput(tokens: MLXArray((0 ..< 3000).map { Int32(1 + $0 % 200) })), prompt: CachedPrompt(boundary: 2999),
+            options: LaunchOptions(params: GenerateParameters(maxTokens: 1, temperature: 0), keepsCache: keepsCache), context: context)
         let wall = (ContinuousClock.now - started) / .seconds(1)
         #expect(launch.prefillSeconds >= wall * 0.9)
         await MLXInferenceEngine.settle(launch.task, cancelled: false)

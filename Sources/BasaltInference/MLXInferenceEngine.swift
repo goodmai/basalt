@@ -856,19 +856,20 @@ public actor MLXInferenceEngine: InferenceEngine {
             let batchable = constraint == nil && request.toolChoice?.forcedTool == nil && !speculativeLookup && !drafts
                 && blending == nil && params.kvBits == nil && zonedPrecision == nil && !carriesMoreThanTokens
             let batch = batchable ? await batchedDecoder(container, epoch: epoch) : nil
+            let options = LaunchOptions(
+                params: params, components: constrained, tools: forcedTool == nil ? toolSpecs : nil, keepsCache: namespace != nil,
+                batch: batch, lookup: LookupOptions(
+                    speculative: speculativeLookup, recycling: speculativeRecycling, jumpForward: jumpForward, routesExperts: expertRouting),
+                kvZones: zones, kvHeadMask: headMask, questTopK: questBlocks, kvPrecision: zonedPrecision,
+                mtp: drafts, mtpBlockSize: mtpBlockSize, mtpPrefix: mtpPrefix)
+            let cuts = (fork.map { [$0] } ?? []) + anchors
             let launch: GenerationLaunch
             do {
                 launch = try await container.performSending(nonSendable: (lmInput, reuse)) { context, values in
-                    let (input, reuse) = values
-                    return try ModelEvaluationLock.lock(for: context.model).withLock { try Self.launch(
-                        input: input, reuse: reuse, cuts: (fork.map { [$0] } ?? []) + anchors, keepsCache: namespace != nil, boundary: boundary,
-                        blend: blending, batch: batch,
-                        params: params, components: constrained, tools: forcedTool == nil ? toolSpecs : nil,
-                        context: context, speculativeLookup: speculativeLookup, speculativeRecycling: speculativeRecycling,
-                        grammarJumpForward: jumpForward,
-                        routesExperts: expertRouting, kvZones: zones, kvHeadMask: headMask, questTopK: questBlocks, kvPrecision: zonedPrecision,
-                        mtp: drafts, mtpBlockSize: mtpBlockSize,
-                        mtpPrefix: mtpPrefix) }
+                    let prompt = CachedPrompt(reuse: values.1, cuts: cuts, boundary: boundary, blend: blending)
+                    return try ModelEvaluationLock.lock(for: context.model).withLock {
+                        try Self.launch(input: values.0, prompt: prompt, options: options, context: context)
+                    }
                 }
             } catch {
                 keep(tokens: promptTokens, namespace: namespace, releasing: leaseID, epoch: epoch)
@@ -1281,30 +1282,21 @@ extension MLXInferenceEngine {
         return leaseCount
     }
 
-    static func launch(
-        input: LMInput, reuse: (cache: PromptCache, reusedTokens: Int)?, cuts: [Int] = [], keepsCache: Bool, boundary: Int,
-        blend: (store: CacheBlendStore, namespace: String)? = nil, batch: BatchedDecoder? = nil,
-        params: GenerateParameters, components: GenerationComponents,
-        tools: [ToolSpec]?, context: ModelContext, speculativeLookup: Bool = false, speculativeRecycling: Bool = false,
-        grammarJumpForward: Bool = false,
-        routesExperts: Bool = true, kvZones: KVZones? = nil, kvHeadMask: KVHeadMask? = nil, questTopK: Int? = nil,
-        kvPrecision: KVPrecision? = nil,
-        mtp: Bool = false, mtpBlockSize: Int = 4, mtpPrefix: MTPPrefix? = nil
-    ) throws -> GenerationLaunch {
-        let start = GenerationLauncher(input: input, params: params, components: components, tools: tools, context: context, started: .now)
-        if mtp, let drafter = context.mtpDrafter, !carriesMoreThanTokens(input) {
+    static func launch(input: LMInput, prompt: CachedPrompt, options: LaunchOptions, context: ModelContext) throws -> GenerationLaunch {
+        let start = GenerationLauncher(
+            input: input, params: options.params, components: options.components, tools: options.tools, context: context, started: .now)
+        if options.mtp, let drafter = context.mtpDrafter, !carriesMoreThanTokens(input) {
             return try start.mtp(
-                MTPRequest(drafter: drafter, blockSize: mtpBlockSize, prefix: mtpPrefix),
-                prompt: CachedPrompt(reuse: reuse, boundary: boundary), keepsCache: keepsCache)
+                MTPRequest(drafter: drafter, blockSize: options.mtpBlockSize, prefix: options.mtpPrefix), prompt: prompt,
+                keepsCache: options.keepsCache)
         }
-        let lookup = LookupOptions(
-            speculative: speculativeLookup, recycling: speculativeRecycling, jumpForward: grammarJumpForward, routesExperts: routesExperts)
-        guard keepsCache else {
+        guard options.keepsCache else {
             let plan = FreshCache.plan(
-                kvBitsSet: params.kvBits != nil, headMask: kvHeadMask, questTopK: questTopK, zones: kvZones, precision: kvPrecision)
-            return try start.fresh(plan, batch: batch, lookup: lookup)
+                kvBitsSet: options.params.kvBits != nil, headMask: options.kvHeadMask, questTopK: options.questTopK,
+                zones: options.kvZones, precision: options.kvPrecision)
+            return try start.fresh(plan, batch: options.batch, lookup: options.lookup)
         }
-        return try start.cached(CachedPrompt(reuse: reuse, cuts: cuts, boundary: boundary, blend: blend), batch: batch, lookup: lookup)
+        return try start.cached(prompt, batch: options.batch, lookup: options.lookup)
     }
 }
 
