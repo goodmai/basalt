@@ -101,6 +101,9 @@ struct Benchmark: AsyncParsableCommand {
         if let conflict = KVPrecision.flagConflict(kvBitsSet: kvBits != nil, fixed: kvBits, zones: kvZones) {
             throw ValidationError(conflict)
         }
+        if let questTopK, !(1 ... 4096).contains(questTopK) {
+            throw ValidationError("--quest-top-k takes a number of blocks in 1...4096")
+        }
     }
 
     func run() async throws {

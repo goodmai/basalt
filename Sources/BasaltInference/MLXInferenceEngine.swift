@@ -254,8 +254,13 @@ public actor MLXInferenceEngine: InferenceEngine {
     func probeQuest() async {
         questApplies = false
         guard let questTopK, let container else { return }
-        guard (try? await container.perform({ try QuestKVCache.modelAttendsThroughCache($0.model) })) == true else {
-            logger.warn("--quest-top-k does not apply to this model: its full-attention layers read the whole cache through cache.update (Gemma 4 does), so they cannot attend to a selection of blocks; attention stays dense")
+        do {
+            guard try await container.perform({ try QuestKVCache.modelAttendsThroughCache($0.model) }) else {
+                logger.warn("--quest-top-k does not apply to this model: its full-attention layers read the whole cache through cache.update (Gemma 4 does), so they cannot attend to a selection of blocks; attention stays dense")
+                return
+            }
+        } catch {
+            logger.warn("--quest-top-k: probing the model failed (\(error.localizedDescription)); attention stays dense")
             return
         }
         questApplies = true
