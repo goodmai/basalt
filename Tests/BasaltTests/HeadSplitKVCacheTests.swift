@@ -8,14 +8,17 @@ struct HeadSplitKVCacheTests {
     static let kvHeads = 4, groups = 2, dim = 16
     static let scale = Float(0.25)
 
+    static func normal(_ shape: [Int], _ seed: UInt64) -> MLXArray {
+        MLXRandom.normal(shape, key: MLXRandom.key(seed))
+    }
+
     static func feed(_ cache: HeadSplitKVCache, tokens: Int, chunk: Int, seed: UInt64) -> (keys: MLXArray, values: MLXArray) {
-        MLXRandom.seed(seed)
-        let keys = MLXRandom.normal([1, kvHeads, tokens, dim])
-        let values = MLXRandom.normal([1, kvHeads, tokens, dim])
+        let keys = normal([1, kvHeads, tokens, dim], seed)
+        let values = normal([1, kvHeads, tokens, dim], seed + 1)
         var start = 0
         while start < tokens {
             let end = min(tokens, start + chunk)
-            let queries = MLXRandom.normal([1, kvHeads * groups, end - start, dim])
+            let queries = normal([1, kvHeads * groups, end - start, dim], seed + 2 + UInt64(start))
             eval(cache.updateAndAttend(
                 queries: queries, keys: keys[.ellipsis, start ..< end, 0...], values: values[.ellipsis, start ..< end, 0...],
                 scale: scale, mask: end - start == 1 ? .none : .causal))
@@ -45,10 +48,9 @@ struct HeadSplitKVCacheTests {
     func decodeMatchesReference(retrieval: [Int], context: Int) {
         let cache = HeadSplitKVCache(retrieval: retrieval)
         let (keys, values) = Self.feed(cache, tokens: context, chunk: 128, seed: 7)
-        MLXRandom.seed(11)
-        let queries = MLXRandom.normal([1, Self.kvHeads * Self.groups, 1, Self.dim])
-        let newKey = MLXRandom.normal([1, Self.kvHeads, 1, Self.dim])
-        let newValue = MLXRandom.normal([1, Self.kvHeads, 1, Self.dim])
+        let queries = Self.normal([1, Self.kvHeads * Self.groups, 1, Self.dim], 11)
+        let newKey = Self.normal([1, Self.kvHeads, 1, Self.dim], 12)
+        let newValue = Self.normal([1, Self.kvHeads, 1, Self.dim], 13)
         let streamed = (retrieval.count < Self.kvHeads ? cache.streamingTokens : context) + 1
         let output = cache.updateAndAttend(queries: queries, keys: newKey, values: newValue, scale: Self.scale, mask: .none)
         let allKeys = concatenated([keys, newKey], axis: 2), allValues = concatenated([values, newValue], axis: 2)
@@ -107,10 +109,34 @@ struct HeadSplitKVCacheTests {
         #expect(KVHeadMask.classify(scores: [[0.1, 0.2]], ratio: 0).retrieval == [[]])
     }
 
-    @Test("Head scores cover every full-attention layer and KV head of a model, with the needle's attention mass")
+    @Test("Ablation scores cover every full-attention layer and KV head of a model: the drop in the answer's log-probability when that head keeps only sinks and a window")
     func classifierScoresEveryHead() throws {
-        let scores = try KVHeadClassifier.scores(model: try TinyModel.make(.llama), tokenizer: ByteTokenizer(), length: 256)
-        #expect(scores.count == 2)
-        #expect(scores.allSatisfy { $0.count == 2 && $0.allSatisfy { $0.isFinite && $0 >= 0 && $0 <= 3.0001 } })
+        let model = try TinyModel.make(.qwen3)
+        let layers = try model.newCache(parameters: nil).filter { type(of: $0) == KVCacheSimple.self }.count
+        let scores = try KVHeadClassifier.scores(model: model, tokenizer: ByteTokenizer(), length: 512)
+        #expect(scores.count == layers)
+        #expect(scores.allSatisfy { !$0.isEmpty && $0.allSatisfy { $0.isFinite && $0 >= 0 } })
+    }
+}
+
+@Suite("A head-split cache built from a dense one attends like the cache that saw every token (#270)")
+struct HeadSplitFromDenseTests {
+    @Test("Splitting a filled dense cache and decoding one step equals the per-head reference, with grouped queries")
+    func splittingMatchesReference() {
+        let dense = KVCacheSimple()
+        let keys = HeadSplitKVCacheTests.normal([1, HeadSplitKVCacheTests.kvHeads, 700, HeadSplitKVCacheTests.dim], 5)
+        let values = HeadSplitKVCacheTests.normal([1, HeadSplitKVCacheTests.kvHeads, 700, HeadSplitKVCacheTests.dim], 6)
+        _ = dense.update(keys: keys, values: values)
+        let cache = HeadSplitKVCache(splitting: dense, retrieval: [0, 2, 3])
+        let queries = HeadSplitKVCacheTests.normal([1, HeadSplitKVCacheTests.kvHeads * HeadSplitKVCacheTests.groups, 1, HeadSplitKVCacheTests.dim], 7)
+        let newKey = HeadSplitKVCacheTests.normal([1, HeadSplitKVCacheTests.kvHeads, 1, HeadSplitKVCacheTests.dim], 8)
+        let newValue = HeadSplitKVCacheTests.normal([1, HeadSplitKVCacheTests.kvHeads, 1, HeadSplitKVCacheTests.dim], 9)
+        let output = cache.updateAndAttend(queries: queries, keys: newKey, values: newValue, scale: HeadSplitKVCacheTests.scale, mask: .none)
+        let expected = HeadSplitKVCacheTests.reference(
+            queries: queries, keys: concatenated([keys, newKey], axis: 2), values: concatenated([values, newValue], axis: 2),
+            retrieval: [0, 2, 3], streamed: HeadSplitKVCache.sinkTokens + HeadSplitKVCache.windowTokens + 1)
+        #expect(output.shape == expected.shape)
+        #expect(allClose(output, expected, atol: 1e-5).item(Bool.self))
+        #expect(cache.offset == 701)
     }
 }
