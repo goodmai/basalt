@@ -18,7 +18,7 @@ let legacyTypeTarget = 450
 let lizard = (ProcessInfo.processInfo.environment["LIZARD"] ?? "uvx --quiet lizard==1.24.0").split(separator: " ").map(String.init)
 
 @discardableResult
-func run(_ arguments: [String], input: String? = nil) throws -> String {
+func run(_ arguments: [String]) throws -> String {
     let process = Process()
     process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
     process.arguments = arguments
@@ -27,6 +27,7 @@ func run(_ arguments: [String], input: String? = nil) throws -> String {
     process.standardError = FileHandle.nullDevice
     try process.run()
     let data = output.fileHandleForReading.readDataToEndOfFile()
+    try output.fileHandleForReading.close()
     process.waitUntilExit()
     guard process.terminationStatus == 0 else { throw CocoaError(.executableLoad) }
     return String(decoding: data, as: UTF8.self)
