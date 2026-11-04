@@ -68,7 +68,19 @@ All code modifications must pass these deterministic CLI verification gates befo
   - Use `defer { await cleanup() }` (SE-0493) for deterministic async resource teardown.
   - Wrap critical rollback/flush logic in `withTaskCancellationShield` (SE-0504).
   - Re-validate actor state after every `await` suspension point (actor reentrancy guard).
-  - **Banned Primitives**: `DispatchQueue`, `DispatchSemaphore`, `NSLock` across async boundaries, `ObservableObject` / `@Published`, and unjustified `@unchecked Sendable` or `nonisolated(unsafe)`.
+  - **Banned Primitives**:
+    - `DispatchQueue`, `DispatchSemaphore`;
+    - `NSLock`/`NSCondition`/`os_unfair_lock`;
+    - `Task.detached`;
+    - `ObservableObject` / `@Published`;
+    - `@unchecked Sendable` and `nonisolated(unsafe)`.
+
+    Each needs a written reason. The site list only shrinks (#300).
+  - **Race-free by construction (#300)**:
+    - state changes are synchronous reducers in the value core, with no `await` inside;
+    - results applied after an `await` check an epoch or generation token;
+    - shared state is released by `consuming` methods on its owning actor, never in a `deinit`;
+    - MLX objects never leave their owner.
 
 ---
 
