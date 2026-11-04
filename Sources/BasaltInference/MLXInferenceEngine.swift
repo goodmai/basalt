@@ -28,7 +28,7 @@ public actor MLXInferenceEngine: InferenceEngine {
     /// Chat-template knob for models with a reasoning budget (Qwen3.8: xhigh | medium | low).
     /// Left nil the template picks its own default — for Qwen3.8 that is `xhigh`, which
     /// can spend the whole token budget thinking and never emit an answer.
-    private let reasoningEffort: String?
+    let reasoningEffort: String?
 
     let kvPrecision: KVPrecision?
     let quantizedKVStart: Int
@@ -63,9 +63,9 @@ public actor MLXInferenceEngine: InferenceEngine {
     private let cacheBlendRatio: Float?
     private(set) var cacheBlend: CacheBlendStore?
     let speculativeLookup: Bool
-    private let speculativeRecycling: Bool
+    let speculativeRecycling: Bool
     let mtp: Bool
-    private let mtpBlockSize: Int
+    let mtpBlockSize: Int
     private let experimentalSamplers: Bool
     let grammarJumpForward: Bool
     public var kvMemoryBudgetBytes: Int64? { kvMemoryBudget }
@@ -130,7 +130,6 @@ public actor MLXInferenceEngine: InferenceEngine {
             throw .inferenceHardwareFailure(reason: "MLX engine not initialized — call load() first")
         }
         let epoch = modelEpoch
-
         if request.usesExperimentalSamplers, !experimentalSamplers {
             throw .invalidRequestStructure(
                 details: "dry_* and xtc_* are experimental (DRY can turn a detectable loop into one with corrupted facts on low-bit models); start the server with --experimental-samplers to use them")
@@ -140,191 +139,65 @@ public actor MLXInferenceEngine: InferenceEngine {
             kvPrecision: kvPrecision, kvZones: kvZones, attendsThroughZones: modelAttendsThroughZones, prefillsInChunks: modelPrefillsInChunks,
             kvHeadMask: kvHeadMask, questTopK: questApplies ? questTopK : nil, speculativeLookup: speculativeLookup,
             capabilities: modelFacts.capabilities)
-
         let toolSpecs = Self.toolSpecs(request.tools)
-        let scansToolCallText = profile.writesToolCallsAsText && request.tools?.isEmpty == false
-        var makeInput: @Sendable (String) -> UserInput
-        var template: String?
-        let continued = request.messages.flatMap(ChatMessageInput.splittingPrefill)
-        let prefill = continued.flatMap { $0.prefill.isEmpty ? nil : $0.prefill }
-        let requestedPolicy = Self.reasoningPolicy(request: request, defaultReasoningEffort: reasoningEffort)
-        let policy = prefill.map { Self.opensThinking($0) ? requestedPolicy : .disabled } ?? requestedPolicy
-        let turns = (continued?.turns ?? request.messages).flatMap {
-            $0.isEmpty ? nil : profile.turns(controlTokens.neutralize($0), for: policy)
-        }
-        var lastText: String
-        var anchorTurns: [ChatMessageInput] = []
-        let templateContext = profile.templateContext(for: policy)
-        let context = templateContext.isEmpty ? nil : templateContext
-        if turns == nil, request.prompt.contains("<|turn|>") || request.prompt.contains("<|channel|>") {
-            makeInput = { UserInput(prompt: $0) }
-            template = "raw"
-            lastText = request.prompt
-        } else {
-            anchorTurns = turns ?? profile.turns(controlTokens.neutralize([ChatMessageInput(role: .user, text: request.prompt)]), for: policy)
-            (makeInput, template, lastText) = Self.chatInput(
-                anchorTurns, normalisation: "native", tools: toolSpecs, context: context)
-        }
-
         do {
-            let components: GenerationComponents
-            if let budget = request.thinkingBudget, policy != .disabled {
-                let profile = profile
-                components = try await container.perform { context in
-                    try Self.applyingThinkingBudget(
-                        budget, to: unbudgeted, parameters: params,
-                        reasoning: context.configuration.reasoningConfig, tokenizer: context.tokenizer, profile: profile)
-                }
-            } else {
-                components = unbudgeted
-            }
-            try faults.check(.tokenize)
-            let rendered: LMInput
-            do {
-                rendered = try await container.prepare(input: makeInput(lastText))
-            } catch where turns != nil && Self.isTemplateRefusal(error) {
-                let nativeRefusal = error
-                var refusal = error
-                var prepared: LMInput?
-                var previous = turns
-                for (step, messages) in Self.templateFallbacks(turns ?? []) where prepared == nil && messages != previous {
-                    previous = messages
-                    anchorTurns = messages
-                    (makeInput, template, lastText) = Self.chatInput(
-                        messages, normalisation: step, tools: toolSpecs, context: context)
-                    do {
-                        prepared = try await container.prepare(input: makeInput(lastText))
-                        logger.info("Chat template refused native turns (\(Self.briefly(nativeRefusal))); rendered with \(step) turns")
-                    } catch where Self.isTemplateRefusal(error) {
-                        refusal = error
-                    }
-                }
-                guard let prepared else {
-                    throw BasaltError.invalidRequestStructure(
-                        details: "Chat template rejected the conversation: \(Self.briefly(nativeRefusal)); after normalising: \(Self.briefly(refusal))")
-                }
-                rendered = prepared
-            }
-            logger.trace("Input prepared. Starting MLX generation...")
-            let renderedCount = rendered.text.tokens.dim(-1)
-            let carriesMoreThanTokens = Self.carriesMoreThanTokens(rendered)
-            if carriesMoreThanTokens, prefill != nil {
-                throw BasaltError.invalidRequestStructure(
-                    details: "a trailing assistant message cannot be continued on a prompt that carries media")
-            }
-            let echoedPrefix = carriesMoreThanTokens || prefill != nil ? nil : request.assistantPrefix.flatMap { $0.isEmpty ? nil : $0 }
-            let tailIds = Array(rendered.text.tokens.asArray(Int.self).suffix(16))
-            let renderedTail = await container.perform { $0.tokenizer.decode(tokenIds: tailIds, skipSpecialTokens: false) }
-            let controlTokens = controlTokens
-            let assistantPrefix = prefill.map { Self.guardedPrefill($0, after: renderedTail, controlTokens: controlTokens) } ?? echoedPrefix
-            let lmInput: LMInput
-            if let assistantPrefix {
-                let ids = await container.perform { $0.tokenizer.encode(text: assistantPrefix, addSpecialTokens: false) }
-                lmInput = Self.appending(ids, to: rendered)
-            } else {
-                lmInput = rendered
-            }
-            let promptTokens = lmInput.text.tokens.asArray(Int.self)
-            let answerAfterThinking = Self.answerAfterThinking(renderedTail, assistantPrefix: assistantPrefix ?? "")
-            let promptEndsWithThinking = answerAfterThinking == nil
-            let prefixAnswer = String(answerAfterThinking ?? "")
+            let rendered = try await render(request, tools: toolSpecs, container: container)
+            let components = try await budgeted(unbudgeted, request, rendered.policy, params: params, container: container)
+            let prompt = try await promptInput(rendered, request: request, container: container)
             let namespace = GenerationPlan.cacheNamespace(
-                request, settings, cacheEnabled: promptCaches.byteBudget > 0 && !modelModified, carriesMoreThanTokens: carriesMoreThanTokens, sameEpoch: epoch == modelEpoch)
-            let constraint = try await outputConstraint(
-                for: request, allowsFastForward: GenerationPlan.plainPrompt(request, settings, carriesMoreThanTokens: carriesMoreThanTokens))
-            if let constraint, !prefixAnswer.isEmpty {
-                let ids = await container.perform { $0.tokenizer.encode(text: prefixAnswer, addSpecialTokens: false) }
-                guard constraint.session.accepts(ids) else {
-                    throw BasaltError.invalidRequestStructure(
-                        details: "the assistant prefill is not a valid start of the requested JSON output")
-                }
-            }
+                request, settings, cacheEnabled: promptCaches.byteBudget > 0 && !modelModified,
+                carriesMoreThanTokens: prompt.carriesMoreThanTokens, sameEpoch: epoch == modelEpoch)
+            let constraint = try await checkedConstraint(request, settings, prompt, container: container)
             try faults.check(.snapshotBoundary)
             let boundary = namespace == nil
-                ? promptTokens.count - 1
-                : await snapshotBoundary(renderedCount, container: container, epoch: epoch, template: template, makeInput)
+                ? prompt.tokens.count - 1
+                : await snapshotBoundary(prompt.renderedCount, container: container, epoch: epoch, template: rendered.template, rendered.makeInput)
             let plan = GenerationPlan.make(request, settings, GenerationPlan.Facts(
-                namespace: namespace, promptTokens: promptTokens.count, carriesMoreThanTokens: carriesMoreThanTokens,
+                namespace: namespace, promptTokens: prompt.tokens.count, carriesMoreThanTokens: prompt.carriesMoreThanTokens,
                 constrained: constraint != nil, hasMTPDrafter: hasMTPDrafter, blendAvailable: cacheBlend != nil,
                 modelIsHybrid: modelIsHybrid, modelHasRecurrentState: modelHasRecurrentState))
             if let namespace, !plan.drafts {
                 try faults.check(.restoreFromDisk)
-                await restoreFromDisk(namespace, prompt: promptTokens, container: container, epoch: epoch)
+                await restoreFromDisk(namespace, prompt: prompt.tokens, container: container, epoch: epoch)
             }
-            var lease: PromptCacheLease? = if let namespace { promptCaches.lease(namespace, for: promptTokens) } else { nil }
-            var storedPrefix: MTPPrefix?
-            if plan.drafts, let namespace {
-                let leased = switch lease {
-                case let held?: held.reusedTokens
-                case nil: 0
-                }
-                let prefix = Array(promptTokens.prefix(leased))
-                storedPrefix = mtpPrefixes.last { $0.namespace == namespace && $0.tokens == prefix }?.prefix
-                if leased > 0, storedPrefix == nil { lease = nil }
-            }
-            let mtpPrefix = storedPrefix
-            let fork = namespace.map { promptCaches.storedPrefix(of: promptTokens, in: $0) }
-            let reuse: (cache: PromptCache, reusedTokens: Int)? = switch lease {
-            case let held?: (held.cache, held.reusedTokens)
-            case nil: nil
-            }
-            try faults.check(.anchorOffsets)
-            let leaseID = hold(lease)
+            let claim = try claimCache(namespace, drafts: plan.drafts, tokens: prompt.tokens)
             let anchors = plan.findsAnchors
                 ? await anchorOffsets(
-                    anchorTurns, AnchorSearch(prompt: promptTokens, reused: reuse?.reusedTokens ?? 0, boundary: boundary, limit: hybridAnchors),
-                    container: container, tools: toolSpecs, context: context)
+                    rendered.anchorTurns,
+                    AnchorSearch(prompt: prompt.tokens, reused: claim.reuse?.reusedTokens ?? 0, boundary: boundary, limit: hybridAnchors),
+                    container: container, tools: toolSpecs, context: rendered.context)
                 : []
-            let blending = plan.blends && epoch == modelEpoch ? namespace.flatMap { space in cacheBlend.map { ($0, space) } } : nil
-            let masked = Self.constraining(
-                components, with: constraint,
-                phase: Self.constraintPhase(
-                    thinkingDisabled: policy == .disabled, endsInsideThinking: promptEndsWithThinking,
-                    prefillAnswered: !prefixAnswer.isEmpty))
-            let excluded = exclusion.map { masked.appendingBasaltProcessor($0) } ?? masked
             let (constrained, alarm) = NonFiniteLogitGuard.guarding(
-                shaping.map { excluded.appendingBasaltProcessor($0) } ?? excluded, temperature: params.temperature)
-            let forcedTool = constraint?.toolName
-            let jumpForward = constraint?.fastForward == true
-            let expertRouting = (plan.speculativeLookup || jumpForward) ? await routesExperts(container, epoch: epoch) : true
-            let batch = plan.batchable ? await batchedDecoder(container, epoch: epoch) : nil
-            let options = LaunchOptions(
-                params: params, components: constrained, tools: forcedTool == nil ? toolSpecs : nil, keepsCache: namespace != nil,
-                batch: batch, lookup: LookupOptions(
-                    speculative: plan.speculativeLookup, recycling: speculativeRecycling, jumpForward: jumpForward, routesExperts: expertRouting),
-                kvZones: plan.kvZones, kvHeadMask: plan.kvHeadMask, questTopK: plan.questTopK, kvPrecision: plan.kvPrecision,
-                mtp: plan.drafts, mtpBlockSize: mtpBlockSize, mtpPrefix: mtpPrefix)
-            let cuts = (fork.map { [$0] } ?? []) + anchors
+                Self.shaped(components, constraint, rendered.policy, prompt, shaping: shaping, exclusion: exclusion),
+                temperature: params.temperature)
+            var options = LaunchOptions(
+                params: params, components: constrained, tools: constraint?.toolName == nil ? toolSpecs : nil, keepsCache: namespace != nil)
+            await route(&options, plan, jumpForward: constraint?.fastForward == true, mtpPrefix: claim.mtpPrefix, container: container, epoch: epoch)
+            let blend = plan.blends && epoch == modelEpoch ? namespace.flatMap { space in cacheBlend.map { ($0, space) } } : nil
+            let cached = CachedPrompt(reuse: claim.reuse, cuts: (claim.fork.map { [$0] } ?? []) + anchors, boundary: boundary, blend: blend)
             let launch: GenerationLaunch
             do {
-                try faults.check(.launch)
-                launch = try await container.performEvaluating(nonSendable: (lmInput, reuse)) { context, values in
-                    let prompt = CachedPrompt(reuse: values.1, cuts: cuts, boundary: boundary, blend: blending)
-                    return try Self.launch(input: values.0, prompt: prompt, options: options, context: context)
-                }
+                launch = try await launching(prompt.input, cached, options: options, container: container)
             } catch {
-                keep(tokens: promptTokens, namespace: namespace, releasing: leaseID, epoch: epoch)
+                keep(tokens: prompt.tokens, namespace: namespace, releasing: claim.leaseID, epoch: epoch)
                 throw error
             }
-            launches[leaseID] = launch
+            launches[claim.leaseID] = launch
             let relay = GenerationRelay(GenerationRelay.Setup(
-                request: request, promptTokens: promptTokens.count, reusedTokens: launch.reusedTokens.rawValue, alarm: alarm,
-                controlTokens: controlTokens.tokens, startsThinking: promptEndsWithThinking, scansToolCallText: scansToolCallText,
-                echoedPrefix: echoedPrefix, forcedTool: forcedTool, prefixAnswer: prefixAnswer,
+                request: request, promptTokens: prompt.tokens.count, reusedTokens: launch.reusedTokens.rawValue, alarm: alarm,
+                controlTokens: controlTokens.tokens, startsThinking: prompt.endsWithThinking,
+                scansToolCallText: profile.writesToolCallsAsText && request.tools?.isEmpty == false,
+                echoedPrefix: prompt.echoedPrefix, forcedTool: constraint?.toolName, prefixAnswer: prompt.prefixAnswer,
                 guardsRepetition: constraint == nil, draftSource: plan.draftSource))
             let inputs = RelayInputs(
                 stream: launch.stream, task: launch.task, prefillSeconds: launch.prefillSeconds,
-                promptTokens: promptTokens, namespace: namespace, leaseID: leaseID, epoch: epoch, constraint: constraint,
+                promptTokens: prompt.tokens, namespace: namespace, leaseID: claim.leaseID, epoch: epoch, constraint: constraint,
                 container: container, faults: faults)
-
             return AsyncStream<StreamChunk> { continuation in
                 let task = Task { @concurrent in
                     await self.relay(relay, inputs, into: continuation)
                 }
-
-                continuation.onTermination = { _ in
-                    task.cancel()
-                }
+                continuation.onTermination = { _ in task.cancel() }
             }
         } catch let err as BasaltError {
             throw err
@@ -411,7 +284,7 @@ extension MLXInferenceEngine {
 
     func dropPromptCaches() { promptCaches.removeAll(); mtpPrefixes.removeAll() }
 
-    fileprivate func hold(_ lease: consuming PromptCacheLease?) -> Int {
+    func hold(_ lease: consuming PromptCacheLease?) -> Int {
         leaseCount += 1
         leases[leaseCount] = PromptCacheLeaseSlot(lease)
         return leaseCount
