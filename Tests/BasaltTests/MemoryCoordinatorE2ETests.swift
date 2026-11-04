@@ -48,7 +48,7 @@ struct MemoryCoordinatorE2ETests {
         }
 
         var tree: (byteBudget: Int, byteCount: Int, evictions: Int) {
-            get async { await engine.readPromptCaches { ($0.byteBudget, $0.byteCount, $0.evictions) } }
+            get async { await engine.readPromptCaches { (Int($0.byteBudget.rawValue), Int($0.byteCount.rawValue), $0.evictions) } }
         }
     }
 

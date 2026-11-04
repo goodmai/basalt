@@ -35,8 +35,24 @@ struct CachedPrompt {
     var blend: (store: CacheBlendStore, namespace: String)?
 }
 
+struct LaunchOptions {
+    var params: GenerateParameters
+    var components = GenerationComponents()
+    var tools: [ToolSpec]?
+    var keepsCache = false
+    var batch: BatchedDecoder?
+    var lookup = LookupOptions()
+    var kvZones: KVZones?
+    var kvHeadMask: KVHeadMask?
+    var questTopK: Int?
+    var kvPrecision: KVPrecision?
+    var mtp = false
+    var mtpBlockSize = 4
+    var mtpPrefix: MTPPrefix?
+}
+
 struct MTPRequest {
-    var drafter: MTPDrafter
+    var drafter: any MTPDrafterModel
     var blockSize: Int
     var prefix: MTPPrefix?
 }
@@ -81,7 +97,7 @@ struct GenerationLauncher {
 
     func stock(batch: BatchedDecoder?, lookup: LookupOptions) throws -> MLXInferenceEngine.GenerationLaunch {
         let model = context.model
-        if let batch, let layers = BatchedTokenIterator.batchableLayers(try model.newCache(parameters: params)), let seat = batch.seat() {
+        if let batch, let layers = BatchedTokenIterator.batchableLayers(try model.newCache(parameters: params)), let seat = batch.seat(in: context) {
             try components.validate(parameters: params)
             return uncached(try BatchedTokenIterator(
                 input: input, model: model, layers: layers,
@@ -103,7 +119,7 @@ struct GenerationLauncher {
     func mtp(_ request: MTPRequest, prompt: CachedPrompt, keepsCache: Bool) throws -> MLXInferenceEngine.GenerationLaunch {
         let (reuse, boundary) = (prompt.reuse, prompt.boundary)
         let reused = reuse?.reusedTokens ?? 0
-        let stateful = request.drafter.model as? any StatefulMTPDrafterModel
+        let stateful = request.drafter as? any StatefulMTPDrafterModel
         let staged = keepsCache && stateful != nil && boundary >= reused && boundary < input.text.tokens.dim(-1)
         var cache: PromptCache?
         var drafterState: MTPDrafterState?
@@ -120,11 +136,11 @@ struct GenerationLauncher {
         let start = staged ? boundary : 0
         let iterator = try MTPSpeculativeTokenIterator(
             input: LMInput(tokens: input.text.tokens[.ellipsis, start...]), mainModel: context.model,
-            drafter: request.drafter.model, mainCache: cache?.layers, drafterState: drafterState, parameters: params,
+            drafter: request.drafter, mainCache: cache?.layers, drafterState: drafterState, parameters: params,
             blockSize: request.blockSize, components: components)
         let (stream, task, prefill) = handing(iterator, promptTokens: input.text.tokens.dim(-1) - start)
         return MLXInferenceEngine.GenerationLaunch(
-            stream: stream, task: task, cache: kept?.cache, reusedTokens: staged ? reused : 0,
+            stream: stream, task: task, cache: kept?.cache, reusedTokens: TokenCount(staged ? reused : 0),
             prefillSeconds: prefill, mtpPrefix: kept?.prefix)
     }
 
@@ -174,9 +190,9 @@ struct GenerationLauncher {
             let (stream, task, prefill) = handing(iterator, promptTokens: input.text.tokens.dim(-1) - reused)
             return MLXInferenceEngine.GenerationLaunch(
                 stream: stream, task: task, cache: keepable ? head.kept : nil, anchors: keepable ? head.anchors : [],
-                reusedTokens: reused, exactTokens: blended?.exactPrefix ?? Int.max, prefillSeconds: prefill)
+                reusedTokens: TokenCount(reused), exactTokens: TokenCount(blended?.exactPrefix ?? Int.max), prefillSeconds: prefill)
         }
-        if let batch, head.state == nil, let layers = BatchedTokenIterator.batchableLayers(cache.layers), let seat = batch.seat() {
+        if let batch, head.state == nil, let layers = BatchedTokenIterator.batchableLayers(cache.layers), let seat = batch.seat(in: context) {
             return launching(try BatchedTokenIterator(
                 input: tail, model: context.model, layers: layers, decoding: DecodingSettings(processor: processor, parameters: params),
                 stopTokens: MLXInferenceEngine.batchStopTokens(context), seat: seat))

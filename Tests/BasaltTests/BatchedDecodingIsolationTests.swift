@@ -42,9 +42,9 @@ enum BatchFixture {
     }
 
     static func launch(
-        _ decoder: BatchedDecoder, _ model: any LanguageModel, _ prompt: [Int], maxTokens: Int, stop: Set<Int> = []
+        _ core: BatchCore, _ model: any LanguageModel, _ prompt: [Int], maxTokens: Int, stop: Set<Int> = []
     ) throws -> (stream: AsyncStream<Generation>, task: Task<Void, Never>) {
-        let seat = try #require(decoder.seat())
+        let seat = try #require(core.decoder.seat(on: core))
         let iterator = try BatchedTokenIterator(
             input: LMInput(tokens: MLXArray(prompt.map(Int32.init))), model: model,
             layers: try #require(BatchedTokenIterator.batchableLayers(try model.newCache(parameters: nil))),
@@ -166,12 +166,12 @@ struct BatchedDecoderTests {
     func fourRowsMatchSolo(family: TinyModel.Family) async throws {
         let model = try TinyModel.make(family)
         let expected = try BatchFixture.prompts.map { BatchFixture.text(try BatchFixture.soloGreedy(model, $0, steps: 32)) }
-        let decoder = BatchedDecoder(model: model, slots: 4)
-        let launches = try BatchFixture.prompts.map { try BatchFixture.launch(decoder, model, $0, maxTokens: 32) }
+        let core = BatchCore(model: model, slots: 4)
+        let launches = try BatchFixture.prompts.map { try BatchFixture.launch(core, model, $0, maxTokens: 32) }
         var produced: [String] = []
         for launch in launches { produced.append(await BatchFixture.collect(launch.stream)) }
         #expect(produced == expected)
-        #expect(decoder.admittedRows == 4)
+        #expect(core.decoder.admittedRows == 4)
     }
 
     @Test("A row joining mid-flight and rows retiring on EOS or max tokens leave the other rows' tokens unchanged, on plain attention and on recurrent hybrids",
@@ -181,17 +181,17 @@ struct BatchedDecoderTests {
         let prompts = BatchFixture.prompts
         let solo = try prompts.map { try BatchFixture.soloGreedy(model, $0, steps: 48) }
         let stop = solo[2][3]
-        let decoder = BatchedDecoder(model: model, slots: 4)
+        let core = BatchCore(model: model, slots: 4)
 
-        let long = try BatchFixture.launch(decoder, model, prompts[0], maxTokens: 48)
-        let short = try BatchFixture.launch(decoder, model, prompts[1], maxTokens: 5)
-        let stopping = try BatchFixture.launch(decoder, model, prompts[2], maxTokens: 48, stop: [stop])
+        let long = try BatchFixture.launch(core, model, prompts[0], maxTokens: 48)
+        let short = try BatchFixture.launch(core, model, prompts[1], maxTokens: 5)
+        let stopping = try BatchFixture.launch(core, model, prompts[2], maxTokens: 48, stop: [stop])
         var longIterator = long.stream.makeAsyncIterator()
         var head = ""
         while head.unicodeScalars.count < 8, let generation = await longIterator.next() {
             if case .chunk(let chunk) = generation { head += chunk }
         }
-        let late = try BatchFixture.launch(decoder, model, prompts[3], maxTokens: 32)
+        let late = try BatchFixture.launch(core, model, prompts[3], maxTokens: 32)
 
         var rest = ""
         while let generation = await longIterator.next() {
@@ -209,16 +209,16 @@ struct BatchedDecoderTests {
         let model = try TinyModel.make(family)
         let prompts = BatchFixture.prompts
         let expected = BatchFixture.text(try BatchFixture.soloGreedy(model, prompts[0], steps: 40))
-        let decoder = BatchedDecoder(model: model, slots: 2)
-        let kept = try BatchFixture.launch(decoder, model, prompts[0], maxTokens: 40)
-        let cancelled = try BatchFixture.launch(decoder, model, prompts[1], maxTokens: 1_000_000)
+        let core = BatchCore(model: model, slots: 2)
+        let kept = try BatchFixture.launch(core, model, prompts[0], maxTokens: 40)
+        let cancelled = try BatchFixture.launch(core, model, prompts[1], maxTokens: 1_000_000)
 
         #expect(await BatchFixture.collect(cancelled.stream, upTo: 4).unicodeScalars.count == 4)
         cancelled.task.cancel()
         await cancelled.task.value
         #expect(await BatchFixture.collect(kept.stream) == expected)
         await kept.task.value
-        let seats = [decoder.seat(), decoder.seat()]
+        let seats = [core.decoder.seat(on: core), core.decoder.seat(on: core)]
         #expect(seats.allSatisfy { $0 != nil })
     }
 }

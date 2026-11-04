@@ -1,8 +1,9 @@
 import Foundation
 import MLX
 import MLXLMCommon
+import BasaltCore
 
-final class PromptCache: @unchecked Sendable {
+final class PromptCache {
     let layers: [KVCache]
     var state: LMOutput.State?
 
@@ -14,9 +15,9 @@ final class PromptCache: @unchecked Sendable {
         layers.map(\.offset).min() ?? 0
     }
 
-    var byteCount: Int {
-        layers.reduce(0) { total, layer in
-            total + layer.innerState().reduce(0) { $0 + $1.nbytes }
+    var byteCount: ByteCount {
+        layers.reduce(ByteCount.zero) { total, layer in
+            total + ByteCount(layer.innerState().reduce(0) { $0 + $1.nbytes })
         }
     }
 
@@ -26,12 +27,12 @@ final class PromptCache: @unchecked Sendable {
 }
 
 enum PromptCacheBudget {
-    static func automatic(workingSet: Int, weights: Int) -> Int {
+    static func automatic(workingSet: ByteCount, weights: ByteCount) -> ByteCount {
         max(0, workingSet - weights) / 2
     }
 
-    static func gpuWorkingSet() -> Int {
-        GPU.maxRecommendedWorkingSetBytes() ?? Int(ProcessInfo.processInfo.physicalMemory) / 4 * 3
+    static func gpuWorkingSet() -> ByteCount {
+        ByteCount(GPU.maxRecommendedWorkingSetBytes() ?? Int(ProcessInfo.processInfo.physicalMemory) / 4 * 3)
     }
 }
 
@@ -50,8 +51,8 @@ final class PromptCacheNode {
         self.lastUse = lastUse
     }
 
-    var bytes: Int {
-        layers.joined().reduce(0) { $0 + $1.nbytes }
+    var bytes: ByteCount {
+        ByteCount(layers.joined().reduce(0) { $0 + $1.nbytes })
             + (snapshot?.bytes ?? 0)
     }
 }
@@ -79,23 +80,23 @@ struct PromptCacheTree {
 
     static let maxLeaves = 4096
 
-    private(set) var byteBudget: Int
+    private(set) var byteBudget: ByteCount
     let leafLimit: Int
     let anchorLimit: Int
     private(set) var roots: [String: PromptCacheNode] = [:]
-    private(set) var byteCount = 0
+    private(set) var byteCount: ByteCount = 0
     private(set) var leafCount = 0
     private(set) var evictions = 0
     private var clock = 0
 
-    init(byteBudget: Int, leafLimit: Int = PromptCacheTree.maxLeaves, anchorLimit: Int = 1) {
+    init(byteBudget: ByteCount, leafLimit: Int = PromptCacheTree.maxLeaves, anchorLimit: Int = 1) {
         self.byteBudget = byteBudget
         self.leafLimit = leafLimit
         self.anchorLimit = anchorLimit
     }
 
-    var anchorUsage: (count: Int, bytes: Int) {
-        var usage = (count: 0, bytes: 0)
+    var anchorUsage: (count: Int, bytes: ByteCount) {
+        var usage = (count: 0, bytes: ByteCount.zero)
         var pending = Array(roots.values)
         while let node = pending.popLast() {
             if !node.children.isEmpty, let snapshot = node.snapshot {
@@ -196,7 +197,7 @@ struct PromptCacheTree {
         merge(node)
     }
 
-    mutating func rebudget(_ bytes: Int) {
+    mutating func rebudget(_ bytes: ByteCount) {
         byteBudget = max(0, bytes)
         evict()
     }
@@ -334,9 +335,9 @@ struct PromptCacheTree {
                 dropSnapshot(victim)
                 continue
             }
-            let bytesPerToken = max(1, victim.bytes / victim.tokens.count)
+            let bytesPerToken = max(1, victim.bytes.rawValue / Int64(victim.tokens.count))
             let keep = leafCount > leafLimit
-                ? 0 : victim.tokens.count - (byteCount - byteBudget + bytesPerToken - 1) / bytesPerToken
+                ? 0 : victim.tokens.count - Int(((byteCount - byteBudget).rawValue + bytesPerToken - 1) / bytesPerToken)
             let before = victim.bytes
             if keep > 0, victim.snapshot == nil {
                 victim.layers = Self.slice(victim.layers, 0..<keep)

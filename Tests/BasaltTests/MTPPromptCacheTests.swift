@@ -70,8 +70,9 @@ struct MTPPromptCacheTests {
     func warmTurnReusesPrefix() async throws {
         func engine() async throws -> MLXInferenceEngine {
             let engine = MLXInferenceEngine(promptCacheBytes: 1 << 30, mtp: true)
-            await engine.attach(try TinyModel.container(.qwen35))
-            await engine.useMTPDrafter(MTPDrafter(model: GreedyDraftingMTPDrafter(try Self.head()), source: "tiny"))
+            let container = try TinyModel.container(.qwen35)
+            await engine.attach(container)
+            await engine.useMTPDrafter(in: container) { _ in try? GreedyDraftingMTPDrafter(Self.head()) }
             return engine
         }
         let warm = try await engine()

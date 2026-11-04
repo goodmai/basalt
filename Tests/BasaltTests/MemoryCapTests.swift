@@ -259,7 +259,7 @@ struct MemoryCapTests {
         #expect(await engine.kvMemoryBudgetBytes == nil)
         await engine.attach(try TinyModel.container())
         let budget = try #require(await engine.kvMemoryBudgetBytes)
-        let workingSet = Int64(PromptCacheBudget.gpuWorkingSet())
+        let workingSet = PromptCacheBudget.gpuWorkingSet().rawValue
         #expect(budget > 0)
         #expect(budget <= workingSet - (64 << 20))
         #expect(await engine.promptTokenCount(for: GenerationRequest(prompt: "abcd")) == 4)

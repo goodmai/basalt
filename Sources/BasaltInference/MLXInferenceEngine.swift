@@ -109,9 +109,10 @@ public actor MLXInferenceEngine: InferenceEngine {
 
     private var promptCaches: PromptCacheTree
     private var leases: [Int: PromptCacheLeaseSlot] = [:]
+    private var launches: [Int: GenerationLaunch] = [:]
     private var leaseCount = 0
     private(set) var mtpPrefixes: [(namespace: String, tokens: [Int], prefix: MTPPrefix)] = []
-    private var promptCacheFullBudget: Int
+    private var promptCacheFullBudget: ByteCount
     private(set) var appliedMemoryDirective = MemoryDirective.relaxed
     private var kvMemoryBudget: Int64?
     private var controlTokens = ControlTokenGuard.none
@@ -120,7 +121,7 @@ public actor MLXInferenceEngine: InferenceEngine {
     public var hybridAnchorUsage: (count: Int, bytes: Int64)? {
         guard modelIsHybrid == true else { return nil }
         let usage = promptCaches.anchorUsage
-        return (usage.count, Int64(usage.bytes))
+        return (usage.count, usage.bytes.rawValue)
     }
     public var supportsKVZones: Bool { modelAttendsThroughZones }
     public var supportsKVEviction: Bool { modelPrefillsInChunks }
@@ -133,7 +134,7 @@ public actor MLXInferenceEngine: InferenceEngine {
         let text = request.messages.map { ChatMessageInput.plainText($0) } ?? request.prompt
         return await container.perform { $0.tokenizer.encode(text: text, addSpecialTokens: false).count }
     }
-    private let configuredPromptCacheBytes: Int?
+    private let configuredPromptCacheBytes: ByteCount?
     private let hybridAnchors: Int
     private var modelEpoch = 0
     private var modelIsHybrid: Bool?
@@ -151,7 +152,7 @@ public actor MLXInferenceEngine: InferenceEngine {
     private let mtp: Bool
     private let mtpBlockSize: Int
     private let experimentalSamplers: Bool
-    private var mtpDrafter: MTPDrafter?
+    private var hasMTPDrafter = false
     private let grammarJumpForward: Bool
     private(set) var promptCacheDisk: PromptCacheDiskStore?
     private var modelFingerprint: String?
@@ -207,10 +208,10 @@ public actor MLXInferenceEngine: InferenceEngine {
         self.topK = topK
         self.minP = minP
         self.seed = seed
-        self.configuredPromptCacheBytes = promptCacheBytes
+        self.configuredPromptCacheBytes = promptCacheBytes.map { ByteCount($0) }
         self.cacheBlendRatio = cacheBlendRatio
-        self.promptCaches = PromptCacheTree(byteBudget: promptCacheBytes ?? 0, anchorLimit: max(1, hybridAnchors))
-        self.promptCacheFullBudget = promptCacheBytes ?? 0
+        self.promptCaches = PromptCacheTree(byteBudget: ByteCount(promptCacheBytes ?? 0), anchorLimit: max(1, hybridAnchors))
+        self.promptCacheFullBudget = ByteCount(promptCacheBytes ?? 0)
     }
 
     public func apply(_ directive: MemoryDirective) async -> MemoryLimits? {
@@ -218,13 +219,13 @@ public actor MLXInferenceEngine: InferenceEngine {
             if let gpuCacheLimit { Memory.cacheLimit = Self.cacheLimit(gpuCacheLimit, under: directive) }
             if directive > appliedMemoryDirective, directive.clearsCache { Memory.clearCache() }
             let evictedBefore = promptCaches.evictions
-            promptCaches.rebudget(Int(Double(promptCacheFullBudget) * directive.promptCacheShare))
-            logger.info("Memory directive \(appliedMemoryDirective) → \(directive): prompt cache \(promptCaches.byteBudget >> 20) MB, \(promptCaches.evictions - evictedBefore) nodes evicted")
+            promptCaches.rebudget(ByteCount(Int64(Double(promptCacheFullBudget.rawValue) * directive.promptCacheShare)))
+            logger.info("Memory directive \(appliedMemoryDirective) → \(directive): prompt cache \(promptCaches.byteBudget.rawValue >> 20) MB, \(promptCaches.evictions - evictedBefore) nodes evicted")
             appliedMemoryDirective = directive
         }
         return MemoryLimits(
             cacheLimitBytes: gpuCacheLimit.map { Self.cacheLimit($0, under: appliedMemoryDirective) },
-            promptCacheBudgetBytes: promptCaches.byteBudget, promptCacheBytes: promptCaches.byteCount,
+            promptCacheBudgetBytes: Int(promptCaches.byteBudget.rawValue), promptCacheBytes: Int(promptCaches.byteCount.rawValue),
             promptCacheEvictions: promptCaches.evictions)
     }
 
@@ -276,7 +277,7 @@ public actor MLXInferenceEngine: InferenceEngine {
     func wireWorkingSet() async {
         await releaseWiredMemory()
         guard wiresWorkingSet else { return }
-        let ticket = WiredMemoryTicket(size: PromptCacheBudget.gpuWorkingSet(), policy: WiredMaxPolicy(), kind: .active)
+        let ticket = WiredMemoryTicket(size: Int(PromptCacheBudget.gpuWorkingSet().rawValue), policy: WiredMaxPolicy(), kind: .active)
         let applied = await ticket.start()
         wiredTicket = ticket
         logger.info("Wired memory limit: \(applied >> 20) MB, Metal's recommended working set, while the model is loaded (--no-wired-limit leaves the system default)")
@@ -315,10 +316,6 @@ public actor MLXInferenceEngine: InferenceEngine {
         }
     }
 
-    func useMTPDrafter(_ drafter: MTPDrafter?) {
-        mtpDrafter = drafter
-    }
-
     func attach(
         _ container: ModelContainer, profile: any ModelProfile = GenericProfile(),
         samplingDefaults: SamplingDefaults = SamplingDefaults(), controlTokens: ControlTokenGuard = .none,
@@ -338,9 +335,9 @@ public actor MLXInferenceEngine: InferenceEngine {
         self.profile = profile
         self.samplingDefaults = samplingDefaults
         let workingSet = PromptCacheBudget.gpuWorkingSet()
-        let weights = Memory.activeMemory
+        let weights = ByteCount(Memory.activeMemory)
         let budget = configuredPromptCacheBytes ?? PromptCacheBudget.automatic(workingSet: workingSet, weights: weights)
-        kvMemoryBudget = Int64(max(0, workingSet - weights - budget))
+        kvMemoryBudget = max(0, workingSet - weights - budget).rawValue
         modelAttendsThroughZones = false
         modelPrefillsInChunks = false
         let blendBytes = cacheBlendRatio == nil ? 0 : budget / 2
@@ -348,13 +345,13 @@ public actor MLXInferenceEngine: InferenceEngine {
         mtpPrefixes.removeAll()
         promptCacheFullBudget = budget - blendBytes
         appliedMemoryDirective = .relaxed
-        cacheBlend = cacheBlendRatio.map { CacheBlendStore(ratio: $0, byteBudget: blendBytes) }
+        cacheBlend = cacheBlendRatio.map { CacheBlendStore(ratio: $0, byteBudget: Int(blendBytes.rawValue)) }
         modelEpoch += 1
         modelIsHybrid = nil
         modelHasRecurrentState = nil
         modelRoutesExperts = nil
         templateSuffixes = [:]
-        logger.info("Prompt cache budget: \(promptCaches.byteBudget >> 20) MB")
+        logger.info("Prompt cache budget: \(promptCaches.byteBudget.rawValue >> 20) MB")
     }
 
     private static let aliasRegistration = Task {
@@ -429,7 +426,7 @@ public actor MLXInferenceEngine: InferenceEngine {
         container = nil
         await releaseWiredMemory()
         batchDecoder = nil
-        mtpDrafter = nil
+        hasMTPDrafter = false
         promptCaches.removeAll()
         mtpPrefixes.removeAll()
         cacheBlend = nil
@@ -438,23 +435,6 @@ public actor MLXInferenceEngine: InferenceEngine {
         logger.info("Previous model unloaded, GPU cache cleared.")
     }
 
-    func loadMTPDrafter(for loaded: ModelContainer, directory: URL, modelPath: String) async {
-        do {
-            mtpDrafter = try await loaded.perform { try MTPSidecar.load(directory: directory, target: $0.model) }
-        } catch {
-            mtpDrafter = nil
-            logger.warn("--mtp: the MTP head of \(modelPath) did not load (\(error.localizedDescription)); decoding stays plain")
-            return
-        }
-        guard let mtpDrafter else {
-            logger.warn("--mtp: \(modelPath) has no MTP head this build can use (Qwen3.5-family target plus mtp.safetensors); decoding stays plain")
-            return
-        }
-        logger.info("MTP head loaded from \(mtpDrafter.source); requests without constraints, lookup or --kv-bits and prompts up to \(Self.mtpPromptLimit) tokens draft with it")
-        if speculativeLookup {
-            logger.warn("--mtp with --speculative-lookup: lookup wins, so the MTP head drafts only for requests that set speculative_lookup to false")
-        }
-    }
 
     static func loadFailure(_ error: any Error, modelPath: String) async -> BasaltError {
         switch error as? ModelFactoryError {
@@ -806,14 +786,14 @@ public actor MLXInferenceEngine: InferenceEngine {
                 }
             }
             let speculativeLookup = request.speculativeLookup ?? speculativeLookup
-            let drafter = constraint == nil && !speculativeLookup && zones == nil && params.kvBits == nil
-                && promptTokens.count <= Self.mtpPromptLimit ? mtpDrafter : nil
-            if let namespace, drafter == nil {
+            let drafts = constraint == nil && !speculativeLookup && zones == nil && params.kvBits == nil
+                && promptTokens.count <= Self.mtpPromptLimit && hasMTPDrafter
+            if let namespace, !drafts {
                 await restoreFromDisk(namespace, prompt: promptTokens, container: container, epoch: epoch)
             }
             var lease: PromptCacheLease? = if let namespace { promptCaches.lease(namespace, for: promptTokens) } else { nil }
             var storedPrefix: MTPPrefix?
-            if drafter != nil, let namespace {
+            if drafts, let namespace {
                 let leased = switch lease {
                 case let held?: held.reusedTokens
                 case nil: 0
@@ -832,7 +812,7 @@ public actor MLXInferenceEngine: InferenceEngine {
             let boundary = namespace == nil
                 ? promptTokens.count - 1
                 : await snapshotBoundary(renderedCount, container: container, epoch: epoch, template: template, makeInput)
-            let anchors = namespace != nil && drafter == nil && modelHasRecurrentState == true
+            let anchors = namespace != nil && !drafts && modelHasRecurrentState == true
                 ? await anchorOffsets(
                     anchorTurns, prompt: promptTokens, reused: reuse?.reusedTokens ?? 0, boundary: boundary,
                     container: container, tools: toolSpecs, context: context)
@@ -849,27 +829,30 @@ public actor MLXInferenceEngine: InferenceEngine {
             let jumpForward = constraint?.fastForward == true
             let expertRouting = (speculativeLookup || jumpForward) ? await routesExperts(container, epoch: epoch) : true
             let blending = namespace.flatMap { space in blend.map { ($0, space) } }
-            let batchable = constraint == nil && request.toolChoice?.forcedTool == nil && !speculativeLookup && drafter == nil
+            let batchable = constraint == nil && request.toolChoice?.forcedTool == nil && !speculativeLookup && !drafts
                 && blending == nil && params.kvBits == nil && zonedPrecision == nil && !carriesMoreThanTokens
             let batch = batchable ? await batchedDecoder(container, epoch: epoch) : nil
+            let options = LaunchOptions(
+                params: params, components: constrained, tools: forcedTool == nil ? toolSpecs : nil, keepsCache: namespace != nil,
+                batch: batch, lookup: LookupOptions(
+                    speculative: speculativeLookup, recycling: speculativeRecycling, jumpForward: jumpForward, routesExperts: expertRouting),
+                kvZones: zones, kvHeadMask: headMask, questTopK: questBlocks, kvPrecision: zonedPrecision,
+                mtp: drafts, mtpBlockSize: mtpBlockSize, mtpPrefix: mtpPrefix)
+            let cuts = (fork.map { [$0] } ?? []) + anchors
             let launch: GenerationLaunch
             do {
-                launch = try await container.perform(nonSendable: lmInput) { context, input in
-                    try ModelEvaluationLock.lock(for: context.model).withLock { try Self.launch(
-                        input: input, reuse: reuse, cuts: (fork.map { [$0] } ?? []) + anchors, keepsCache: namespace != nil, boundary: boundary,
-                        blend: blending, batch: batch,
-                        params: params, components: constrained, tools: forcedTool == nil ? toolSpecs : nil,
-                        context: context, speculativeLookup: speculativeLookup, speculativeRecycling: speculativeRecycling,
-                        grammarJumpForward: jumpForward,
-                        routesExperts: expertRouting, kvZones: zones, kvHeadMask: headMask, questTopK: questBlocks, kvPrecision: zonedPrecision,
-                        mtpDrafter: drafter, mtpBlockSize: mtpBlockSize,
-                        mtpPrefix: mtpPrefix) }
+                launch = try await container.performSending(nonSendable: (lmInput, reuse)) { context, values in
+                    let prompt = CachedPrompt(reuse: values.1, cuts: cuts, boundary: boundary, blend: blending)
+                    return try ModelEvaluationLock.lock(for: context.model).withLock {
+                        try Self.launch(input: values.0, prompt: prompt, options: options, context: context)
+                    }
                 }
             } catch {
-                keep(nil, tokens: promptTokens, namespace: namespace, releasing: leaseID, epoch: epoch)
+                keep(tokens: promptTokens, namespace: namespace, releasing: leaseID, epoch: epoch)
                 throw error
             }
-            let mlxStream = launch.stream
+            let (mlxStream, mlxTask, reusedTokens, prefillSeconds) = (launch.stream, launch.task, launch.reusedTokens, launch.prefillSeconds)
+            launches[leaseID] = launch
 
             return AsyncStream<StreamChunk> { continuation in
                 let task = Task.detached {
@@ -915,7 +898,7 @@ public actor MLXInferenceEngine: InferenceEngine {
                     var toolCallRejections = 0
                     var generations = mlxStream.makeAsyncIterator()
                     func stopAfterCall() async {
-                        if let task = launch.task {
+                        if let task = mlxTask {
                             task.cancel()
                             lastInfo = await Self.drainCompletionInfo(&generations) ?? lastInfo
                         } else {
@@ -976,12 +959,12 @@ public actor MLXInferenceEngine: InferenceEngine {
                         if !continued.isEmpty { continuation.yield(.text(continued)) }
                     }
                     let completed = !(Task.isCancelled || stoppedAfterCall)
-                    await Self.settle(launch, cancelled: !completed)
+                    await Self.settle(mlxTask, cancelled: !completed)
                     if completed, let session = constraint?.session { await self.recycle(session, epoch: epoch) }
-                    await self.keep(launch, tokens: promptTokens, namespace: namespace, releasing: leaseID, epoch: epoch)
+                    await self.keep(tokens: promptTokens, namespace: namespace, releasing: leaseID, epoch: epoch)
                     if !Task.isCancelled {
-                        let generationTime = (clock.now - startTime).inSeconds + launch.prefillSeconds
-                        let timeToFirstToken = (firstTokenAt.map { ($0 - startTime).inSeconds } ?? 0) + launch.prefillSeconds
+                        let generationTime = (clock.now - startTime).inSeconds + prefillSeconds
+                        let timeToFirstToken = (firstTokenAt.map { ($0 - startTime).inSeconds } ?? 0) + prefillSeconds
                         let mem = Memory.snapshot()
                         let reasoning = reasoningText
                         let reasoningTokens = reasoning.isEmpty ? nil : await container.perform {
@@ -991,8 +974,8 @@ public actor MLXInferenceEngine: InferenceEngine {
                         let metadata = GenerationResponse(
                             generatedText: "", 
                             reasoningText: nil,
-                            promptTokens: lastInfo.map { launch.reusedTokens + $0.promptTokenCount } ?? promptTokens.count,
-                            cachedPromptTokens: launch.reusedTokens,
+                            promptTokens: lastInfo.map { reusedTokens.rawValue + $0.promptTokenCount } ?? promptTokens.count,
+                            cachedPromptTokens: reusedTokens.rawValue,
                             completionTokens: lastInfo?.generationTokenCount ?? tokenCount,
                             tokensPerSecond: lastInfo?.tokensPerSecond ?? 0,
                             generationTime: generationTime,
@@ -1051,13 +1034,13 @@ public actor MLXInferenceEngine: InferenceEngine {
         return LMInput(tokens: concatenated([tokens, extra], axis: -1))
     }
 
-    struct GenerationLaunch: Sendable {
+    struct GenerationLaunch {
         let stream: AsyncStream<Generation>
         let task: Task<Void, Never>?
         let cache: PromptCache?
         var anchors: [PromptCache] = []
-        let reusedTokens: Int
-        var exactTokens = Int.max
+        let reusedTokens: TokenCount
+        var exactTokens = TokenCount(Int.max)
         var prefillSeconds: TimeInterval = 0
         var mtpPrefix: MTPPrefix?
     }
@@ -1085,18 +1068,18 @@ public actor MLXInferenceEngine: InferenceEngine {
         return info
     }
 
-    static func settle(_ launch: GenerationLaunch, cancelled: Bool) async {
-        if cancelled { launch.task?.cancel() }
-        await launch.task?.value
+    static func settle(_ task: Task<Void, Never>?, cancelled: Bool) async {
+        if cancelled { task?.cancel() }
+        await task?.value
     }
 
     private func batchedDecoder(_ container: ModelContainer, epoch: Int) async -> BatchedDecoder? {
         guard batchSlots > 1, epoch == modelEpoch, appliedMemoryDirective < .tight else { return nil }
         if let batchDecoder { return batchDecoder }
         let slots = batchSlots
-        let made = await container.perform { BatchedDecoder(model: $0.model, slots: slots) }
+        await container.update { if $0.batch == nil { $0.batch = BatchCore(model: $0.model, slots: slots) } }
+        let made = await container.perform { ($0.batch as? BatchCore)?.decoder }
         guard epoch == modelEpoch else { return nil }
-        if let batchDecoder { return batchDecoder }
         batchDecoder = made
         return made
     }
@@ -1242,15 +1225,16 @@ public actor MLXInferenceEngine: InferenceEngine {
             + (skipped > 0 ? "; \(skipped) paths skipped that could not be written within the \(deadline) deadline" : ""))
     }
 
-    private func keep(_ launch: GenerationLaunch?, tokens prompt: [Int], namespace: String?, releasing lease: Int, epoch: Int) {
+    private func keep(tokens prompt: [Int], namespace: String?, releasing lease: Int, epoch: Int) {
         leases[lease] = nil
+        let launch = launches.removeValue(forKey: lease)
         guard epoch == modelEpoch, let namespace, let launch else { return }
-        let (tokens, anchors) = (Array(prompt.prefix(launch.exactTokens)), launch.anchors)
+        let (tokens, anchors) = (Array(prompt.prefix(launch.exactTokens.rawValue)), launch.anchors)
         for anchor in anchors {
             promptCaches.store(namespace, tokens: Array(tokens.prefix(anchor.tokenCount)), cache: anchor)
         }
         if let bytes = anchors.first.flatMap(RecurrentSnapshot.init(of:))?.bytes {
-            logger.info("Recurrent snapshots before the boundary at prompt tokens \(anchors.map(\.tokenCount)): \(bytes >> 10) KB each")
+            logger.info("Recurrent snapshots before the boundary at prompt tokens \(anchors.map(\.tokenCount)): \(bytes.rawValue >> 10) KB each")
         }
         if let cache = launch.cache {
             promptCaches.store(namespace, tokens: Array(tokens.prefix(cache.tokenCount)), cache: cache)
@@ -1264,6 +1248,31 @@ public actor MLXInferenceEngine: InferenceEngine {
 }
 
 extension MLXInferenceEngine {
+    func useMTPDrafter(in container: ModelContainer, _ make: @Sendable (ModelContext) -> (any MTPDrafterModel)?) async {
+        await container.update { $0.mtpDrafter = make($0) }
+        hasMTPDrafter = await container.perform { $0.mtpDrafter != nil }
+    }
+
+    func loadMTPDrafter(for loaded: ModelContainer, directory: URL, modelPath: String) async {
+        let logger = self.logger, speculativeLookup = self.speculativeLookup
+        await useMTPDrafter(in: loaded) { context in
+            do {
+                guard let drafter = try MTPSidecar.load(directory: directory, target: context.model) else {
+                    logger.warn("--mtp: \(modelPath) has no MTP head this build can use (Qwen3.5-family target plus mtp.safetensors); decoding stays plain")
+                    return nil
+                }
+                logger.info("MTP head loaded from \(MTPSidecar.file(in: directory)?.path ?? modelPath); requests without constraints, lookup or --kv-bits and prompts up to \(Self.mtpPromptLimit) tokens draft with it")
+                if speculativeLookup {
+                    logger.warn("--mtp with --speculative-lookup: lookup wins, so the MTP head drafts only for requests that set speculative_lookup to false")
+                }
+                return drafter
+            } catch {
+                logger.warn("--mtp: the MTP head of \(modelPath) did not load (\(error.localizedDescription)); decoding stays plain")
+                return nil
+            }
+        }
+    }
+
     func readPromptCaches<R: Sendable>(_ read: @Sendable (PromptCacheTree) throws -> R) rethrows -> R {
         try read(promptCaches)
     }
@@ -1274,30 +1283,21 @@ extension MLXInferenceEngine {
         return leaseCount
     }
 
-    static func launch(
-        input: LMInput, reuse: (cache: PromptCache, reusedTokens: Int)?, cuts: [Int] = [], keepsCache: Bool, boundary: Int,
-        blend: (store: CacheBlendStore, namespace: String)? = nil, batch: BatchedDecoder? = nil,
-        params: GenerateParameters, components: GenerationComponents,
-        tools: [ToolSpec]?, context: ModelContext, speculativeLookup: Bool = false, speculativeRecycling: Bool = false,
-        grammarJumpForward: Bool = false,
-        routesExperts: Bool = true, kvZones: KVZones? = nil, kvHeadMask: KVHeadMask? = nil, questTopK: Int? = nil,
-        kvPrecision: KVPrecision? = nil,
-        mtpDrafter: MTPDrafter? = nil, mtpBlockSize: Int = 4, mtpPrefix: MTPPrefix? = nil
-    ) throws -> GenerationLaunch {
-        let start = GenerationLauncher(input: input, params: params, components: components, tools: tools, context: context, started: .now)
-        if let mtpDrafter, !carriesMoreThanTokens(input) {
+    static func launch(input: LMInput, prompt: CachedPrompt, options: LaunchOptions, context: ModelContext) throws -> GenerationLaunch {
+        let start = GenerationLauncher(
+            input: input, params: options.params, components: options.components, tools: options.tools, context: context, started: .now)
+        if options.mtp, let drafter = context.mtpDrafter, !carriesMoreThanTokens(input) {
             return try start.mtp(
-                MTPRequest(drafter: mtpDrafter, blockSize: mtpBlockSize, prefix: mtpPrefix),
-                prompt: CachedPrompt(reuse: reuse, boundary: boundary), keepsCache: keepsCache)
+                MTPRequest(drafter: drafter, blockSize: options.mtpBlockSize, prefix: options.mtpPrefix), prompt: prompt,
+                keepsCache: options.keepsCache)
         }
-        let lookup = LookupOptions(
-            speculative: speculativeLookup, recycling: speculativeRecycling, jumpForward: grammarJumpForward, routesExperts: routesExperts)
-        guard keepsCache else {
+        guard options.keepsCache else {
             let plan = FreshCache.plan(
-                kvBitsSet: params.kvBits != nil, headMask: kvHeadMask, questTopK: questTopK, zones: kvZones, precision: kvPrecision)
-            return try start.fresh(plan, batch: batch, lookup: lookup)
+                kvBitsSet: options.params.kvBits != nil, headMask: options.kvHeadMask, questTopK: options.questTopK,
+                zones: options.kvZones, precision: options.kvPrecision)
+            return try start.fresh(plan, batch: options.batch, lookup: options.lookup)
         }
-        return try start.cached(CachedPrompt(reuse: reuse, cuts: cuts, boundary: boundary, blend: blend), batch: batch, lookup: lookup)
+        return try start.cached(prompt, batch: options.batch, lookup: options.lookup)
     }
 }
 

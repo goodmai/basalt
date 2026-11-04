@@ -128,7 +128,7 @@ struct PromptCacheReuseTests {
 
         let firstCache = PromptCache(try model.newCache(parameters: nil))
         _ = model(MLXArray((first + [7, 8, 9]).map(Int32.init)).reshaped(1, -1), cache: firstCache.layers)
-        var tree = PromptCacheTree(byteBudget: 1 << 30)
+        var tree = PromptCacheTree(byteBudget: ByteCount(1 << 30))
         tree.store("ns", tokens: first, cache: firstCache)
 
         let lease = try tree.required("ns", for: second)
@@ -234,7 +234,7 @@ struct PromptCacheReuseTests {
             for prompt in [a, b, az] {
                 #expect(tree.storedPrefix(of: prompt, in: "ns") == prompt.count)
             }
-            #expect(tree.byteCount == (az.count + 1 + b.count - commonPrefix(a, b)) * TinyModel.cacheBytesPerToken)
+            #expect(tree.byteCount == ByteCount((az.count + 1 + b.count - commonPrefix(a, b)) * TinyModel.cacheBytesPerToken))
             #expect(pinCount(tree) == 0)
         }
     }
@@ -258,7 +258,7 @@ struct PromptCacheReuseTests {
         #expect(anonymous.cachedPromptTokens == 0)
         let (keys, bytes) = await engine.readPromptCaches { (Set($0.roots.keys), $0.byteCount) }
         #expect(keys == ["alice", "bob"])
-        #expect(bytes == 2 * TinyModel.tokens(Conversation.firstTurn).count * TinyModel.cacheBytesPerToken)
+        #expect(bytes == ByteCount(2 * TinyModel.tokens(Conversation.firstTurn).count * TinyModel.cacheBytesPerToken))
     }
 
     @Test("A zero budget or a quantized KV cache disables reuse")
@@ -311,7 +311,7 @@ struct PromptCacheReuseTests {
         let (prefix, pins, bytes) = await engine.readPromptCaches { ($0.storedPrefix(of: prompt, in: "ns"), pinCount($0), $0.byteCount) }
         #expect(prefix == prompt.count)
         #expect(pins == 0)
-        #expect(bytes == (prompt.count + other.count - commonPrefix(prompt, other)) * TinyModel.cacheBytesPerToken)
+        #expect(bytes == ByteCount((prompt.count + other.count - commonPrefix(prompt, other)) * TinyModel.cacheBytesPerToken))
 
         let reused = try await engine.generate(request: greedy(Conversation.afterToolCall, key: "ns"))
         let full = try await engine.generate(request: greedy(Conversation.afterToolCall, key: nil))
@@ -323,17 +323,16 @@ struct PromptCacheReuseTests {
     func settlingACancelledLaunchStopsGeneration() async throws {
         let longRun = 3000
         let container = try TinyModel.container()
-        let launch = try await container.perform { context in
+        let launch = try await container.performSending(nonSendable: ()) { context, _ in
             let input = LMInput(tokens: MLXArray(TinyModel.tokens(Conversation.firstTurn).map(Int32.init)))
             return try MLXInferenceEngine.launch(
-                input: input, reuse: nil, keepsCache: true, boundary: input.text.tokens.size - 1,
-                params: GenerateParameters(maxTokens: longRun, temperature: 0),
-                components: GenerationComponents(), tools: nil, context: context)
+                input: input, prompt: CachedPrompt(boundary: input.text.tokens.size - 1),
+                options: LaunchOptions(params: GenerateParameters(maxTokens: longRun, temperature: 0), keepsCache: true), context: context)
         }
         var iterator = launch.stream.makeAsyncIterator()
         _ = await iterator.next()
 
-        await MLXInferenceEngine.settle(launch, cancelled: true)
+        await MLXInferenceEngine.settle(launch.task, cancelled: true)
 
         let cache = try #require(launch.cache)
         let promptCount = TinyModel.tokens(Conversation.firstTurn).count
@@ -364,7 +363,7 @@ struct PromptCacheReuseTests {
         _ = try await engine.generate(request: greedy(Conversation.firstTurn, key: "ns"))
         _ = try await engine.generate(request: greedy(Conversation.otherBranch, key: "ns"))
         let (bytes, kept) = await engine.readPromptCaches { ($0.byteCount, $0.storedPrefix(of: TinyModel.tokens(Conversation.afterToolCall), in: "ns")) }
-        #expect(bytes <= budget)
+        #expect(bytes <= ByteCount(budget))
         #expect(kept > 40)
         #expect(kept < firstCount - 1)
 
@@ -379,16 +378,16 @@ struct PromptCacheReuseTests {
         let engine = try await TinyModel.engine()
         _ = try await engine.generate(request: greedy(Conversation.firstTurn, key: "ns", maxTokens: 40))
         let (bytes, leafBytes) = await engine.readPromptCaches { ($0.byteCount, $0.leaves().reduce(0) { $0 + $1.bytes }) }
-        #expect(bytes == TinyModel.tokens(Conversation.firstTurn).count * TinyModel.cacheBytesPerToken)
+        #expect(bytes == ByteCount(TinyModel.tokens(Conversation.firstTurn).count * TinyModel.cacheBytesPerToken))
         #expect(bytes == leafBytes)
     }
 
     @Test("The automatic budget is half of what the GPU's recommended working set leaves after the weights")
     func automaticBudget() {
-        let gib = 1 << 30
-        #expect(PromptCacheBudget.automatic(workingSet: 24 * gib, weights: 5 * gib) == 19 * gib / 2)
-        #expect(PromptCacheBudget.automatic(workingSet: 18 * gib, weights: 16 * gib) == gib)
-        #expect(PromptCacheBudget.automatic(workingSet: 12 * gib, weights: 14 * gib) == 0)
+        let gib = ByteCount(1 << 30)
+        #expect(PromptCacheBudget.automatic(workingSet: gib * 24, weights: gib * 5) == gib * 19 / 2)
+        #expect(PromptCacheBudget.automatic(workingSet: gib * 18, weights: gib * 16) == gib)
+        #expect(PromptCacheBudget.automatic(workingSet: gib * 12, weights: gib * 14) == 0)
         #expect(PromptCacheBudget.gpuWorkingSet() > 0)
     }
 
@@ -446,7 +445,7 @@ struct PromptCacheTreeTests {
 
     @Test("A lease assembles the matched prefix across split nodes in order and always leaves one token to prefill")
     func leaseAssemblesThePrefix() throws {
-        var tree = PromptCacheTree(byteBudget: 1 << 30)
+        var tree = PromptCacheTree(byteBudget: ByteCount(1 << 30))
         let a = Array(0..<10)
         let b = Array(0..<5) + [100, 101, 102]
         tree.store("ns", tokens: a, cache: cache(a))
@@ -474,14 +473,14 @@ struct PromptCacheTreeTests {
 
     @Test("With several layers, split and assembly keep every layer's own keys and values in order")
     func multiLayerSplitAndAssembly() throws {
-        var tree = PromptCacheTree(byteBudget: 1 << 30)
+        var tree = PromptCacheTree(byteBudget: ByteCount(1 << 30))
         let a = Array(0..<10)
         let b = Array(0..<4) + [50, 51, 52]
         let c = Array(0..<4) + [50, 60, 61]
         for prompt in [a, b, c] {
             tree.store("ns", tokens: prompt, cache: cache(prompt, layers: 3))
         }
-        #expect(tree.byteCount == (10 + 3 + 2) * 3 * Self.bytesPerToken)
+        #expect(tree.byteCount == ByteCount((10 + 3 + 2) * 3 * Self.bytesPerToken))
         let lease = try tree.required("ns", for: c + [99])
         #expect(lease.reusedTokens == c.count)
         #expect(lease.cache.layers.count == 3)
@@ -495,7 +494,7 @@ struct PromptCacheTreeTests {
 
     @Test("An unevaluated lease still reads the old buffers after the leased node is split under it")
     func leaseSurvivesASplitOfItsNode() throws {
-        var tree = PromptCacheTree(byteBudget: 1 << 30)
+        var tree = PromptCacheTree(byteBudget: ByteCount(1 << 30))
         let a = Array(0..<10)
         tree.store("ns", tokens: a, cache: cache(a, layers: 2))
         let lease = try tree.required("ns", for: a + [99])
@@ -512,7 +511,7 @@ struct PromptCacheTreeTests {
 
     @Test("Removing a leaf merges its parent with the only child left, so no one-child chains build up")
     func removalMergesSingleChildParents() throws {
-        var tree = PromptCacheTree(byteBudget: 1 << 30, leafLimit: 2)
+        var tree = PromptCacheTree(byteBudget: ByteCount(1 << 30), leafLimit: 2)
         let a = Array(0..<10)
         let b = Array(0..<5) + [70, 71]
         tree.store("ns", tokens: a, cache: cache(a, layers: 2))
@@ -526,11 +525,11 @@ struct PromptCacheTreeTests {
         #expect(merged.tokens == b)
         #expect(merged.children.isEmpty)
         #expect(merged === held.pinned)
-        #expect(merged.bytes == b.count * 2 * Self.bytesPerToken)
+        #expect(merged.bytes == ByteCount(b.count * 2 * Self.bytesPerToken))
         #expect(tree.storedPrefix(of: a, in: "ns") == 5)
         #expect(tree.leafCount == 2)
         #expect(tree.leafCount == tree.leaves().count)
-        #expect(tree.byteCount == (b.count + c.count) * 2 * Self.bytesPerToken)
+        #expect(tree.byteCount == ByteCount((b.count + c.count) * 2 * Self.bytesPerToken))
         _ = consume held
 
         let lease = try tree.required("ns", for: b + [99])
@@ -542,7 +541,7 @@ struct PromptCacheTreeTests {
 
     @Test("A branch the leaf cap would drop is refused before anything is split or copied")
     func capRefusesBeforeSplitting() throws {
-        var tree = PromptCacheTree(byteBudget: 1 << 30, leafLimit: 1)
+        var tree = PromptCacheTree(byteBudget: ByteCount(1 << 30), leafLimit: 1)
         let a = Array(0..<10)
         tree.store("ns", tokens: a, cache: cache(a))
         let held = try tree.required("ns", for: a)
@@ -560,7 +559,7 @@ struct PromptCacheTreeTests {
 
     @Test("A namespace whose last branch is evicted leaves no root behind")
     func emptyNamespacesAreRemoved() {
-        var tree = PromptCacheTree(byteBudget: 100 * Self.bytesPerToken)
+        var tree = PromptCacheTree(byteBudget: ByteCount(100 * Self.bytesPerToken))
         let a = branch(1, 100), b = branch(2, 100)
         tree.store("first", tokens: a, cache: cache(a))
         tree.store("second", tokens: b, cache: cache(b))
@@ -569,30 +568,30 @@ struct PromptCacheTreeTests {
             tree.store("ns\(index)", tokens: a, cache: cache(a))
         }
         #expect(Set(tree.roots.keys) == ["ns19"])
-        #expect(tree.byteCount == 100 * Self.bytesPerToken)
+        #expect(tree.byteCount == ByteCount(100 * Self.bytesPerToken))
     }
 
     @Test("A shared prefix is stored once; splitting keeps the byte count exact")
     func sharedPrefixIsCountedOnce() throws {
-        var tree = PromptCacheTree(byteBudget: 1 << 30)
+        var tree = PromptCacheTree(byteBudget: ByteCount(1 << 30))
         let a = Array(0..<100)
         let b = Array(0..<60) + Array(500..<540)
         tree.store("ns", tokens: a, cache: cache(a))
-        #expect(tree.byteCount == 100 * Self.bytesPerToken)
+        #expect(tree.byteCount == ByteCount(100 * Self.bytesPerToken))
         tree.store("ns", tokens: b, cache: cache(b))
-        #expect(tree.byteCount == 140 * Self.bytesPerToken)
-        #expect(tree.byteCount == tree.leaves().reduce(0) { $0 + $1.bytes } + 60 * Self.bytesPerToken)
+        #expect(tree.byteCount == ByteCount(140 * Self.bytesPerToken))
+        #expect(tree.byteCount == tree.leaves().reduce(0) { $0 + $1.bytes } + ByteCount(60 * Self.bytesPerToken))
         tree.store("ns", tokens: Array(0..<30), cache: cache(Array(0..<30)))
-        #expect(tree.byteCount == 140 * Self.bytesPerToken)
+        #expect(tree.byteCount == ByteCount(140 * Self.bytesPerToken))
         let shared = try #require(tree.roots["ns"]?.children[0])
         #expect(shared.tokens == Array(0..<60))
-        #expect(shared.bytes == 60 * Self.bytesPerToken)
+        #expect(shared.bytes == ByteCount(60 * Self.bytesPerToken))
         #expect(Set(shared.children.keys) == [60, 500])
     }
 
     @Test("Rotating, chunked or live recurrent layers and caches shorter than their prompt are not stored")
     func onlyPlainConsistentCachesAreStored() {
-        var tree = PromptCacheTree(byteBudget: 1 << 30)
+        var tree = PromptCacheTree(byteBudget: ByteCount(1 << 30))
         tree.store("ns", tokens: [1, 2], cache: PromptCache([MambaCache()]))
         tree.store("ns", tokens: [1, 2], cache: PromptCache([RotatingKVCache(maxSize: 64)]))
         tree.store("ns", tokens: [1, 2], cache: PromptCache([ChunkedKVCache(chunkSize: 64)]))
@@ -603,14 +602,14 @@ struct PromptCacheTreeTests {
 
     @Test("Over budget the least recently used leaf goes first")
     func evictionIsLeastRecentlyUsedFirst() throws {
-        var tree = PromptCacheTree(byteBudget: 300 * Self.bytesPerToken)
+        var tree = PromptCacheTree(byteBudget: ByteCount(300 * Self.bytesPerToken))
         let a = branch(1, 100), b = branch(2, 100), c = branch(3, 100), d = branch(4, 100)
         for prompt in [a, b, c] {
             tree.store("ns", tokens: prompt, cache: cache(prompt))
         }
         try tree.touch("ns", a)
         tree.store("ns", tokens: d, cache: cache(d))
-        #expect(tree.byteCount == 300 * Self.bytesPerToken)
+        #expect(tree.byteCount == ByteCount(300 * Self.bytesPerToken))
         #expect(tree.storedPrefix(of: b, in: "ns") == 0)
         for prompt in [a, c, d] {
             #expect(tree.storedPrefix(of: prompt, in: "ns") == 100)
@@ -619,12 +618,12 @@ struct PromptCacheTreeTests {
 
     @Test("Eviction trims a leaf from its end just enough, keeping its head")
     func evictionTrimsTheLeafTail() {
-        var tree = PromptCacheTree(byteBudget: 250 * Self.bytesPerToken)
+        var tree = PromptCacheTree(byteBudget: ByteCount(250 * Self.bytesPerToken))
         let a = branch(1, 100), b = branch(2, 100), c = branch(3, 100)
         for prompt in [a, b, c] {
             tree.store("ns", tokens: prompt, cache: cache(prompt))
         }
-        #expect(tree.byteCount == 250 * Self.bytesPerToken)
+        #expect(tree.byteCount == ByteCount(250 * Self.bytesPerToken))
         #expect(tree.storedPrefix(of: a, in: "ns") == 50)
         #expect(tree.storedPrefix(of: b, in: "ns") == 100)
         #expect(tree.storedPrefix(of: c, in: "ns") == 100)
@@ -632,13 +631,13 @@ struct PromptCacheTreeTests {
 
     @Test("Shrinking the budget under memory pressure evicts least recently used leaves now, counts them, keeps leased ones, and stores nothing at 0 (#220)")
     func rebudgetEvictsAtOnce() throws {
-        var tree = PromptCacheTree(byteBudget: 1 << 30)
+        var tree = PromptCacheTree(byteBudget: ByteCount(1 << 30))
         let a = branch(1, 100), b = branch(2, 100), c = branch(3, 100)
         for prompt in [a, b, c] {
             tree.store("ns", tokens: prompt, cache: cache(prompt))
         }
-        tree.rebudget(200 * Self.bytesPerToken)
-        #expect(tree.byteCount == 200 * Self.bytesPerToken)
+        tree.rebudget(ByteCount(200 * Self.bytesPerToken))
+        #expect(tree.byteCount == ByteCount(200 * Self.bytesPerToken))
         #expect(tree.storedPrefix(of: a, in: "ns") == 0)
         #expect(tree.evictions == 1)
 
@@ -654,7 +653,7 @@ struct PromptCacheTreeTests {
 
     @Test("A leased node is never evicted, even when it is the least recently used")
     func leasedNodeIsProtected() throws {
-        var tree = PromptCacheTree(byteBudget: 300 * Self.bytesPerToken)
+        var tree = PromptCacheTree(byteBudget: ByteCount(300 * Self.bytesPerToken))
         let a = branch(1, 100), b = branch(2, 100), c = branch(3, 100), d = branch(4, 100), e = branch(5, 100)
         for prompt in [a, b, c] {
             tree.store("ns", tokens: prompt, cache: cache(prompt))
@@ -667,7 +666,7 @@ struct PromptCacheTreeTests {
         #expect(tree.storedPrefix(of: a, in: "ns") == 100)
         #expect(tree.storedPrefix(of: b, in: "ns") == 0)
         #expect(tree.storedPrefix(of: c, in: "ns") == 0)
-        #expect(tree.byteCount == 300 * Self.bytesPerToken)
+        #expect(tree.byteCount == ByteCount(300 * Self.bytesPerToken))
 
         _ = consume inUse
         tree.store("ns", tokens: c, cache: cache(c))
@@ -676,20 +675,20 @@ struct PromptCacheTreeTests {
 
     @Test("When every leaf is in use the tree trims the new branch rather than evict a leased node")
     func everythingLeasedKeepsTheLeasedNode() throws {
-        var tree = PromptCacheTree(byteBudget: 100 * Self.bytesPerToken)
+        var tree = PromptCacheTree(byteBudget: ByteCount(100 * Self.bytesPerToken))
         let a = branch(1, 100), b = branch(2, 100)
         tree.store("ns", tokens: a, cache: cache(a))
         let inUse = try tree.required("ns", for: a)
         tree.store("ns", tokens: b, cache: cache(b))
         #expect(tree.storedPrefix(of: a, in: "ns") == 100)
         #expect(tree.storedPrefix(of: b, in: "ns") == 0)
-        #expect(tree.byteCount == 100 * Self.bytesPerToken)
+        #expect(tree.byteCount == ByteCount(100 * Self.bytesPerToken))
         _ = consume inUse
     }
 
     @Test("An interior node is kept while it has children; it goes once it is a leaf again")
     func interiorNodesStayWhileTheyHaveChildren() {
-        var tree = PromptCacheTree(byteBudget: 200 * Self.bytesPerToken)
+        var tree = PromptCacheTree(byteBudget: ByteCount(200 * Self.bytesPerToken))
         let prefix = branch(1, 50)
         let x = prefix + Array(2000..<2050), y = prefix + Array(3000..<3050)
         tree.store("ns", tokens: x, cache: cache(x))
@@ -698,26 +697,26 @@ struct PromptCacheTreeTests {
         tree.store("ns", tokens: q, cache: cache(q))
         #expect(tree.storedPrefix(of: x, in: "ns") == 50)
         #expect(tree.storedPrefix(of: y, in: "ns") == 100)
-        #expect(tree.byteCount == 200 * Self.bytesPerToken)
+        #expect(tree.byteCount == ByteCount(200 * Self.bytesPerToken))
 
         let r = branch(8, 100)
         tree.store("ns", tokens: r, cache: cache(r))
         #expect(tree.storedPrefix(of: y, in: "ns") == 0)
         #expect(tree.storedPrefix(of: q, in: "ns") == 100)
         #expect(tree.storedPrefix(of: r, in: "ns") == 100)
-        #expect(tree.byteCount == 200 * Self.bytesPerToken)
+        #expect(tree.byteCount == ByteCount(200 * Self.bytesPerToken))
     }
 
     @Test("A prompt larger than the whole budget keeps the longest head that fits")
     func oversizedPromptKeepsItsHead() throws {
-        var tree = PromptCacheTree(byteBudget: 300 * Self.bytesPerToken)
+        var tree = PromptCacheTree(byteBudget: ByteCount(300 * Self.bytesPerToken))
         let small = branch(1, 100)
         tree.store("ns", tokens: small, cache: cache(small))
         let huge = branch(2, 600)
         tree.store("ns", tokens: huge, cache: cache(huge))
         #expect(tree.storedPrefix(of: huge, in: "ns") == 300)
         #expect(tree.storedPrefix(of: small, in: "ns") == 0)
-        #expect(tree.byteCount == 300 * Self.bytesPerToken)
+        #expect(tree.byteCount == ByteCount(300 * Self.bytesPerToken))
         let lease = try tree.required("ns", for: huge)
         #expect(lease.reusedTokens == 300)
         #expect(ids(lease) == Array(huge.prefix(300)))
@@ -725,19 +724,19 @@ struct PromptCacheTreeTests {
 
     @Test("Namespaces share the budget but never a prefix")
     func namespacesShareTheBudgetOnly() {
-        var tree = PromptCacheTree(byteBudget: 150 * Self.bytesPerToken)
+        var tree = PromptCacheTree(byteBudget: ByteCount(150 * Self.bytesPerToken))
         let a = branch(1, 100)
         tree.store("alice", tokens: a, cache: cache(a))
         tree.store("bob", tokens: a, cache: cache(a))
         #expect(tree.storedPrefix(of: a, in: "alice") == 50)
         #expect(tree.storedPrefix(of: a, in: "bob") == 100)
         #expect(tree.storedPrefix(of: a, in: "carol") == 0)
-        #expect(tree.byteCount == 150 * Self.bytesPerToken)
+        #expect(tree.byteCount == ByteCount(150 * Self.bytesPerToken))
     }
 
     @Test("Beyond the leaf cap the oldest free leaves go first, whatever the byte budget")
     func leafCapEvictsTheOldestLeaves() {
-        var tree = PromptCacheTree(byteBudget: 1 << 30, leafLimit: 8)
+        var tree = PromptCacheTree(byteBudget: ByteCount(1 << 30), leafLimit: 8)
         #expect(PromptCacheTree(byteBudget: 1).leafLimit == PromptCacheTree.maxLeaves)
         #expect(PromptCacheTree.maxLeaves == 4096)
         let prompts = (1...13).map { branch($0, 10) }
@@ -746,7 +745,7 @@ struct PromptCacheTreeTests {
             #expect(tree.leafCount == tree.leaves().count)
         }
         #expect(tree.leafCount == 8)
-        #expect(tree.byteCount == 8 * 10 * Self.bytesPerToken)
+        #expect(tree.byteCount == ByteCount(8 * 10 * Self.bytesPerToken))
         for prompt in prompts.prefix(5) {
             #expect(tree.storedPrefix(of: prompt, in: "ns") == 0)
         }
@@ -757,7 +756,7 @@ struct PromptCacheTreeTests {
 
     @Test("The leaf cap never evicts a leased leaf, and skips a new branch when every leaf is leased")
     func leafCapKeepsLeasedLeaves() throws {
-        var tree = PromptCacheTree(byteBudget: 1 << 30, leafLimit: 3)
+        var tree = PromptCacheTree(byteBudget: ByteCount(1 << 30), leafLimit: 3)
         let a = branch(1, 10), b = branch(2, 10), c = branch(3, 10), d = branch(4, 10), e = branch(5, 10)
         for prompt in [a, b, c] {
             tree.store("ns", tokens: prompt, cache: cache(prompt))
@@ -786,7 +785,7 @@ struct PromptCacheTreeTests {
 
     @Test("The leaf count follows splits, extensions, evictions and namespaces without walking the tree")
     func leafCountStaysExact() {
-        var tree = PromptCacheTree(byteBudget: 120 * Self.bytesPerToken)
+        var tree = PromptCacheTree(byteBudget: ByteCount(120 * Self.bytesPerToken))
         let a = Array(0..<40)
         let steps: [(String, [Int])] = [
             ("ns", a), ("ns", Array(0..<20) + Array(500..<520)), ("ns", a + Array(900..<910)),
@@ -795,7 +794,7 @@ struct PromptCacheTreeTests {
         for (namespace, prompt) in steps {
             tree.store(namespace, tokens: prompt, cache: cache(prompt))
             #expect(tree.leafCount == tree.leaves().count, "\(namespace) \(prompt.count)")
-            #expect(tree.byteCount <= 120 * Self.bytesPerToken)
+            #expect(tree.byteCount <= ByteCount(120 * Self.bytesPerToken))
         }
         tree.removeAll()
         #expect(tree.leafCount == 0)
@@ -810,7 +809,7 @@ struct PromptCacheTreeTests {
 
     @Test("Dropping a PromptCacheLease without manual release automatically decrements node pins so eviction works")
     func leaseAutoReleasesOnScopeExit() throws {
-        var tree = PromptCacheTree(byteBudget: 100 * Self.bytesPerToken)
+        var tree = PromptCacheTree(byteBudget: ByteCount(100 * Self.bytesPerToken))
         let a = branch(1, 100)
         tree.store("ns", tokens: a, cache: cache(a))
         #expect(pinCount(tree) == 0)
@@ -832,5 +831,19 @@ struct PromptCacheTreeTests {
         tree.store("ns", tokens: b, cache: cache(b))
         #expect(tree.storedPrefix(of: a, in: "ns") == 0)
         #expect(tree.storedPrefix(of: b, in: "ns") == 100)
+    }
+}
+
+extension PromptCacheTreeTests {
+    @Test("The budget, the byte count and rebudget are ByteCount, so a token count cannot stand in for bytes (#304)")
+    func budgetIsTypedInBytes() {
+        var tree = PromptCacheTree(byteBudget: ByteCount(100 * Self.bytesPerToken))
+        let a = branch(1, 100)
+        tree.store("ns", tokens: a, cache: cache(a))
+        let full: ByteCount = tree.byteCount
+        #expect(full == tree.byteBudget)
+        tree.rebudget(full / 2)
+        #expect(tree.byteCount == ByteCount(50 * Self.bytesPerToken))
+        #expect(tree.storedPrefix(of: a, in: "ns") == 50)
     }
 }

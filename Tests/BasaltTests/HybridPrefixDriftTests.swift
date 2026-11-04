@@ -59,7 +59,7 @@ struct HybridPrefixDriftTests {
             let turn1 = try HybridPrefixSnapshot.prefillHead(
                 tokens1, into: PromptCache(try model.newCache(parameters: nil)), plan: CachedPrompt(boundary: b1),
                 model: model, prefill: prefill)
-            var tree = PromptCacheTree(byteBudget: 1 << 34)
+            var tree = PromptCacheTree(byteBudget: ByteCount(1 << 34))
             tree.store("shared", tokens: Array(ids1.prefix(b1)), cache: try #require(turn1.kept))
             var leased = tree.lease("shared", for: ids2)
             guard let lease = leased.take() else {
@@ -123,7 +123,7 @@ struct HybridPrefixDriftTests {
         let rows = try await container.perform(nonSendable: prompts) { context, prompts in
             let model = context.model
             let prefill = GenerateParameters().prefill
-            var tree = PromptCacheTree(byteBudget: 1 << 34)
+            var tree = PromptCacheTree(byteBudget: ByteCount(1 << 34))
             let reference = PromptCache(try model.newCache(parameters: nil))
             var previous = 0
             var rows: [(reused: Int, expected: Int, restoredVsCuts: Float, restoredVsOnePhase: Float, sameTop: Bool)] = []

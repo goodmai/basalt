@@ -36,6 +36,14 @@ extension Tagged where RawValue: Numeric {
     public static func * (lhs: Self, rhs: RawValue) -> Self { Self(lhs.rawValue * rhs) }
 }
 
+extension Tagged where RawValue: BinaryInteger {
+    public init(_ value: some BinaryInteger) {
+        self.init(rawValue: RawValue(value))
+    }
+
+    public static func / (lhs: Self, rhs: RawValue) -> Self { Self(lhs.rawValue / rhs) }
+}
+
 extension Tagged: Codable where RawValue: Codable {
     public init(from decoder: any Decoder) throws {
         self.init(try decoder.singleValueContainer().decode(RawValue.self))
