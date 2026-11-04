@@ -150,6 +150,19 @@ struct ProviderErrorResponseTests {
         }
     }
 
+    @Test("Anthropic error type for a bare status", arguments: [
+        (400, "invalid_request_error"), (401, "authentication_error"), (403, "permission_error"),
+        (404, "not_found_error"), (422, "invalid_request_error"), (429, "rate_limit_error"),
+        (500, "api_error"), (502, "api_error"), (503, "overloaded_error"), (504, "api_error"),
+        (507, "overloaded_error"), (529, "overloaded_error"),
+    ])
+    func anthropicStatusMapping(code: Int, expectedType: String) async throws {
+        let res = ProviderErrorResponse.response(status: HTTPResponse.Status(code: code), message: "m", shape: .anthropic)
+        let obj = try #require(try JSONSerialization.jsonObject(with: try await extractData(res)) as? [String: Any])
+        let errorObj = try #require(obj["error"] as? [String: Any])
+        #expect(errorObj["type"] as? String == expectedType)
+    }
+
     @Test("OpenAI error shape has top-level type and nested message, type")
     func openAIErrorMapping() async throws {
         let res429 = ProviderErrorResponse.response(status: .tooManyRequests, message: "Limit", shape: .openAI, retryAfter: "12")

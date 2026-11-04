@@ -34,17 +34,14 @@ public final class MCPServer: Service, Sendable {
     package init(
         orchestrator: ModelOrchestratorActor,
         modelId: String? = nil,
-        library: HarnessExperienceLibrary? = nil,
-        harnessRoots: [URL] = HarnessLoader.allowedRoots(),
-        harnessLimits: HarnessLoadLimits = .standard,
         input: AsyncStream<String>,
-        writer: @Sendable @escaping (String) -> Void = { print($0); fflush(stdout) }
+        writer: @Sendable @escaping (String) -> Void
     ) {
         self.orchestrator = orchestrator
         self.modelId = modelId
-        self.library = library
-        self.harnessRoots = harnessRoots
-        self.harnessLimits = harnessLimits
+        self.library = nil
+        self.harnessRoots = HarnessLoader.allowedRoots()
+        self.harnessLimits = .standard
         self.makeInput = { input }
         self.writer = writer
     }

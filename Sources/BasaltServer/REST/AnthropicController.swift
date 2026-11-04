@@ -20,11 +20,11 @@ extension AnthropicController {
             if let problem = dto.thinkingBudgetProblem { throw pipeline.rejection(.badRequest, problem) }
             let tools = try pipeline.tools(in: data)
             let stream = dto.stream == true
-            let prepared = try pipeline.prepare(
-                chat: Self.chatMessages(system: dto.system, messages: dto.messages), headers: request.headers,
+            let prepared = try pipeline.prepare(ChatPipeline.Input(
+                chat: Self.chatMessages(system: dto.system, messages: dto.messages),
                 maxTokens: dto.effectiveMaxTokens, sampling: dto.sampling(try pipeline.antiRepetition(in: data)),
                 reasoningEffort: dto.effectiveReasoningEffort, tools: tools, thinkingBudget: dto.thinkingBudget,
-                responseFormat: nil, model: dto.model, stream: stream)
+                responseFormat: nil, model: dto.model, stream: stream), headers: request.headers)
             if stream { try await pipeline.admitStream(prepared.request) }
             let model = dto.model ?? modelId
             return await pipeline.respond(to: prepared, stream: stream) { chunks in

@@ -142,31 +142,29 @@ package enum ProviderErrorResponse: Sendable {
         status: HTTPResponse.Status,
         error: (any Error)?
     ) -> String {
-        if let basalt = error as? BasaltError {
-            switch basalt {
-            case .modelNotFound, .modelNotCached:
-                return "not_found_error"
-            case .authenticationFailed:
-                return "authentication_error"
-            case .rateLimitExceeded:
-                return "rate_limit_error"
-            case .modelSwitching, .serverBusy, .memoryPressure, .inferenceHardwareFailure, .outOfMemory:
-                return "overloaded_error"
-            case .weightsCorrupted, .modelInferenceError, .inferenceError:
-                return "api_error"
-            case .invalidRequestStructure, .modelConfigurationInvalid, .contextLengthExceeded:
-                return "invalid_request_error"
-            }
-        }
-        switch status.code {
-        case 401: return "authentication_error"
-        case 403: return "permission_error"
-        case 404: return "not_found_error"
-        case 429: return "rate_limit_error"
-        case 503, 529, 507: return "overloaded_error"
-        case 500, 502: return "api_error"
-        default:
-            return status.code >= 500 ? "api_error" : "invalid_request_error"
+        if let basalt = error as? BasaltError { return anthropicErrorType(basalt) }
+        return anthropicStatusTypes[status.code] ?? (status.code >= 500 ? "api_error" : "invalid_request_error")
+    }
+
+    private static let anthropicStatusTypes = [
+        401: "authentication_error", 403: "permission_error", 404: "not_found_error", 429: "rate_limit_error",
+        503: "overloaded_error", 507: "overloaded_error", 529: "overloaded_error",
+    ]
+
+    private static func anthropicErrorType(_ basalt: BasaltError) -> String {
+        switch basalt {
+        case .modelNotFound, .modelNotCached:
+            return "not_found_error"
+        case .authenticationFailed:
+            return "authentication_error"
+        case .rateLimitExceeded:
+            return "rate_limit_error"
+        case .modelSwitching, .serverBusy, .memoryPressure, .inferenceHardwareFailure, .outOfMemory:
+            return "overloaded_error"
+        case .weightsCorrupted, .modelInferenceError, .inferenceError:
+            return "api_error"
+        case .invalidRequestStructure, .modelConfigurationInvalid, .contextLengthExceeded:
+            return "invalid_request_error"
         }
     }
 
