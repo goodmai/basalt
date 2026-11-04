@@ -265,7 +265,7 @@ struct HybridPrefixSnapshotTests {
         let (prefix, bytes, leaves) = await engine.readPromptCaches { ($0.storedPrefix(of: first, in: "ns"), $0.byteCount, $0.leaves().map { ($0.bytes, $0.snapshot != nil) }) }
         #expect(prefix == first.count - 1)
         #expect(bytes == leaves.reduce(0) { $0 + $1.0 })
-        #expect(leaves.allSatisfy(\.1))
+        #expect(leaves.allSatisfy { $0.1 })
 
         let turn2 = try await engine.generate(request: greedy(Conversation.afterToolCall, key: "ns"))
         let full2 = try await engine.generate(request: greedy(Conversation.afterToolCall, key: nil))

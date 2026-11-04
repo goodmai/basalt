@@ -57,7 +57,7 @@ struct HybridPrefixDriftTests {
             let ids2 = tokens2.asArray(Int.self)
 
             let turn1 = try HybridPrefixSnapshot.prefillHead(
-                tokens1, into: PromptCache(try model.newCache(parameters: nil)), reused: 0, boundary: b1,
+                tokens1, into: PromptCache(try model.newCache(parameters: nil)), plan: CachedPrompt(boundary: b1),
                 model: model, prefill: prefill)
             var tree = PromptCacheTree(byteBudget: 1 << 34)
             tree.store("shared", tokens: Array(ids1.prefix(b1)), cache: try #require(turn1.kept))
