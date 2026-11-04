@@ -23,6 +23,14 @@ struct PromptInput {
     var prefixAnswer: String
 }
 
+struct RelayRoute {
+    var namespace: String?
+    var leaseID: Int
+    var epoch: ModelEpoch
+    var container: ModelContainer
+    var alarm: NonFiniteLogitAlarm
+}
+
 struct CacheClaim {
     var leaseID: Int
     var reuse: (cache: PromptCache, reusedTokens: Int)?
@@ -180,6 +188,58 @@ extension MLXInferenceEngine {
         try faults.check(.launch)
         return try await container.performEvaluating(nonSendable: (input, prompt)) { context, values in
             try Self.launch(input: values.0, prompt: values.1, options: options, context: context)
+        }
+    }
+
+    var planSettings: GenerationPlan.Settings {
+        GenerationPlan.Settings(
+            kvPrecision: kvPrecision, kvZones: kvZones, attendsThroughZones: modelAttendsThroughZones, prefillsInChunks: modelPrefillsInChunks,
+            kvHeadMask: kvHeadMask, questTopK: questApplies ? questTopK : nil, speculativeLookup: speculativeLookup,
+            capabilities: modelFacts.capabilities)
+    }
+
+    func checkedSampling(_ request: GenerationRequest) async throws(BasaltError) -> (
+        GenerateParameters, GenerationComponents, shaping: (@Sendable () -> EntropyDynamicTemperature)?,
+        exclusion: (@Sendable () -> ExcludeTopChoices)?
+    ) {
+        if request.usesExperimentalSamplers, !experimentalSamplers {
+            throw .invalidRequestStructure(
+                details: "dry_* and xtc_* are experimental (DRY can turn a detectable loop into one with corrupted facts on low-bit models); start the server with --experimental-samplers to use them")
+        }
+        return sampling(for: request, breakers: await sequenceBreakerIds(for: request))
+    }
+
+    func boundary(_ namespace: String?, _ prompt: PromptInput, _ rendered: RenderedPrompt, container: ModelContainer, epoch: ModelEpoch) async throws -> Int {
+        try faults.check(.snapshotBoundary)
+        guard namespace != nil else { return prompt.tokens.count - 1 }
+        return await snapshotBoundary(prompt.renderedCount, container: container, epoch: epoch, template: rendered.template, rendered.makeInput)
+    }
+
+    func restoreIfNeeded(_ namespace: String?, drafts: Bool, tokens: [Int], container: ModelContainer, epoch: ModelEpoch) async throws {
+        guard let namespace, !drafts else { return }
+        try faults.check(.restoreFromDisk)
+        await restoreFromDisk(namespace, prompt: tokens, container: container, epoch: epoch)
+    }
+
+    func relayStream(
+        _ launch: GenerationLaunch, _ request: GenerationRequest, _ prompt: PromptInput, _ constraint: OutputConstraint?, _ plan: GenerationPlan,
+        route: RelayRoute
+    ) -> AsyncStream<StreamChunk> {
+        let relay = GenerationRelay(GenerationRelay.Setup(
+            request: request, promptTokens: prompt.tokens.count, reusedTokens: launch.reusedTokens.rawValue, alarm: route.alarm,
+            controlTokens: controlTokens.tokens, startsThinking: prompt.endsWithThinking,
+            scansToolCallText: profile.writesToolCallsAsText && request.tools?.isEmpty == false,
+            echoedPrefix: prompt.echoedPrefix, forcedTool: constraint?.toolName, prefixAnswer: prompt.prefixAnswer,
+            guardsRepetition: constraint == nil, draftSource: plan.draftSource))
+        let inputs = RelayInputs(
+            stream: launch.stream, task: launch.task, prefillSeconds: launch.prefillSeconds,
+            promptTokens: prompt.tokens, namespace: route.namespace, leaseID: route.leaseID, epoch: route.epoch, constraint: constraint,
+            container: route.container, faults: faults)
+        return AsyncStream<StreamChunk> { continuation in
+            let task = Task { @concurrent in
+                await self.relay(relay, inputs, into: continuation)
+            }
+            continuation.onTermination = { _ in task.cancel() }
         }
     }
 }

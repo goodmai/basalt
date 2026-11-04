@@ -66,7 +66,7 @@ public actor MLXInferenceEngine: InferenceEngine {
     let speculativeRecycling: Bool
     let mtp: Bool
     let mtpBlockSize: Int
-    private let experimentalSamplers: Bool
+    let experimentalSamplers: Bool
     let grammarJumpForward: Bool
     public var kvMemoryBudgetBytes: Int64? { kvMemoryBudget }
     var promptCacheDisk: PromptCacheDiskStore?
@@ -130,15 +130,8 @@ public actor MLXInferenceEngine: InferenceEngine {
             throw .inferenceHardwareFailure(reason: "MLX engine not initialized — call load() first")
         }
         let epoch = modelEpoch
-        if request.usesExperimentalSamplers, !experimentalSamplers {
-            throw .invalidRequestStructure(
-                details: "dry_* and xtc_* are experimental (DRY can turn a detectable loop into one with corrupted facts on low-bit models); start the server with --experimental-samplers to use them")
-        }
-        let (params, unbudgeted, shaping, exclusion) = sampling(for: request, breakers: await sequenceBreakerIds(for: request))
-        let settings = GenerationPlan.Settings(
-            kvPrecision: kvPrecision, kvZones: kvZones, attendsThroughZones: modelAttendsThroughZones, prefillsInChunks: modelPrefillsInChunks,
-            kvHeadMask: kvHeadMask, questTopK: questApplies ? questTopK : nil, speculativeLookup: speculativeLookup,
-            capabilities: modelFacts.capabilities)
+        let (params, unbudgeted, shaping, exclusion) = try await checkedSampling(request)
+        let settings = planSettings
         let toolSpecs = Self.toolSpecs(request.tools)
         do {
             let rendered = try await render(request, tools: toolSpecs, container: container)
@@ -148,25 +141,16 @@ public actor MLXInferenceEngine: InferenceEngine {
                 request, settings, cacheEnabled: promptCaches.byteBudget > 0 && !modelModified,
                 carriesMoreThanTokens: prompt.carriesMoreThanTokens, sameEpoch: epoch == modelEpoch)
             let constraint = try await checkedConstraint(request, settings, prompt, container: container)
-            try faults.check(.snapshotBoundary)
-            let boundary = namespace == nil
-                ? prompt.tokens.count - 1
-                : await snapshotBoundary(prompt.renderedCount, container: container, epoch: epoch, template: rendered.template, rendered.makeInput)
+            let boundary = try await boundary(namespace, prompt, rendered, container: container, epoch: epoch)
             let plan = GenerationPlan.make(request, settings, GenerationPlan.Facts(
                 namespace: namespace, promptTokens: prompt.tokens.count, carriesMoreThanTokens: prompt.carriesMoreThanTokens,
                 constrained: constraint != nil, hasMTPDrafter: hasMTPDrafter, blendAvailable: cacheBlend != nil,
                 modelIsHybrid: modelIsHybrid, modelHasRecurrentState: modelHasRecurrentState))
-            if let namespace, !plan.drafts {
-                try faults.check(.restoreFromDisk)
-                await restoreFromDisk(namespace, prompt: prompt.tokens, container: container, epoch: epoch)
-            }
+            try await restoreIfNeeded(namespace, drafts: plan.drafts, tokens: prompt.tokens, container: container, epoch: epoch)
             let claim = try claimCache(namespace, drafts: plan.drafts, tokens: prompt.tokens)
+            let search = AnchorSearch(prompt: prompt.tokens, reused: claim.reuse?.reusedTokens ?? 0, boundary: boundary, limit: hybridAnchors)
             let anchors = plan.findsAnchors
-                ? await anchorOffsets(
-                    rendered.anchorTurns,
-                    AnchorSearch(prompt: prompt.tokens, reused: claim.reuse?.reusedTokens ?? 0, boundary: boundary, limit: hybridAnchors),
-                    container: container, tools: toolSpecs, context: rendered.context)
-                : []
+                ? await anchorOffsets(rendered.anchorTurns, search, container: container, tools: toolSpecs, context: rendered.context) : []
             let (constrained, alarm) = NonFiniteLogitGuard.guarding(
                 Self.shaped(components, constraint, rendered.policy, prompt, shaping: shaping, exclusion: exclusion),
                 temperature: params.temperature)
@@ -183,22 +167,8 @@ public actor MLXInferenceEngine: InferenceEngine {
                 throw error
             }
             launches[claim.leaseID] = launch
-            let relay = GenerationRelay(GenerationRelay.Setup(
-                request: request, promptTokens: prompt.tokens.count, reusedTokens: launch.reusedTokens.rawValue, alarm: alarm,
-                controlTokens: controlTokens.tokens, startsThinking: prompt.endsWithThinking,
-                scansToolCallText: profile.writesToolCallsAsText && request.tools?.isEmpty == false,
-                echoedPrefix: prompt.echoedPrefix, forcedTool: constraint?.toolName, prefixAnswer: prompt.prefixAnswer,
-                guardsRepetition: constraint == nil, draftSource: plan.draftSource))
-            let inputs = RelayInputs(
-                stream: launch.stream, task: launch.task, prefillSeconds: launch.prefillSeconds,
-                promptTokens: prompt.tokens, namespace: namespace, leaseID: claim.leaseID, epoch: epoch, constraint: constraint,
-                container: container, faults: faults)
-            return AsyncStream<StreamChunk> { continuation in
-                let task = Task { @concurrent in
-                    await self.relay(relay, inputs, into: continuation)
-                }
-                continuation.onTermination = { _ in task.cancel() }
-            }
+            let route = RelayRoute(namespace: namespace, leaseID: claim.leaseID, epoch: epoch, container: container, alarm: alarm)
+            return relayStream(launch, request, prompt, constraint, plan, route: route)
         } catch let err as BasaltError {
             throw err
         } catch {
