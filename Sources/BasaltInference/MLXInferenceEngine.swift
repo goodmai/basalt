@@ -131,7 +131,6 @@ public actor MLXInferenceEngine: InferenceEngine {
         }
         let epoch = modelEpoch
 
-        let requestedMaxTokens = request.maxTokens ?? 1024
         if request.usesExperimentalSamplers, !experimentalSamplers {
             throw .invalidRequestStructure(
                 details: "dry_* and xtc_* are experimental (DRY can turn a detectable loop into one with corrupted facts on low-bit models); start the server with --experimental-samplers to use them")
@@ -143,7 +142,6 @@ public actor MLXInferenceEngine: InferenceEngine {
             capabilities: modelFacts.capabilities)
 
         let toolSpecs = Self.toolSpecs(request.tools)
-        let declaredTools = Set(request.tools?.map(\.name) ?? [])
         let scansToolCallText = profile.writesToolCallsAsText && request.tools?.isEmpty == false
         var makeInput: @Sendable (String) -> UserInput
         var template: String?
@@ -308,147 +306,20 @@ public actor MLXInferenceEngine: InferenceEngine {
                 keep(tokens: promptTokens, namespace: namespace, releasing: leaseID, epoch: epoch)
                 throw error
             }
-            let (mlxStream, mlxTask, reusedTokens, prefillSeconds) = (launch.stream, launch.task, launch.reusedTokens, launch.prefillSeconds)
             launches[leaseID] = launch
-            let injected = faults
+            let relay = GenerationRelay(GenerationRelay.Setup(
+                request: request, promptTokens: promptTokens.count, reusedTokens: launch.reusedTokens.rawValue, alarm: alarm,
+                controlTokens: controlTokens.tokens, startsThinking: promptEndsWithThinking, scansToolCallText: scansToolCallText,
+                echoedPrefix: echoedPrefix, forcedTool: forcedTool, prefixAnswer: prefixAnswer,
+                guardsRepetition: constraint == nil, draftSource: plan.draftSource))
+            let inputs = RelayInputs(
+                stream: launch.stream, task: launch.task, prefillSeconds: launch.prefillSeconds,
+                promptTokens: promptTokens, namespace: namespace, leaseID: leaseID, epoch: epoch, constraint: constraint,
+                container: container, faults: faults)
 
             return AsyncStream<StreamChunk> { continuation in
                 let task = Task.detached {
-                    let clock = ContinuousClock()
-                    let startTime = clock.now
-                    var lastInfo: GenerateCompletionInfo?
-                    var tokenCount = 0
-                    var firstTokenAt: ContinuousClock.Instant?
-                    var splitter = ThinkingSplitter(startsThinking: promptEndsWithThinking)
-                    var gate = ToolCallGate(request: request)
-                    if let echoedPrefix { continuation.yield(.text(echoedPrefix)) }
-
-                    var toolCallScanner = scansToolCallText ? NemotronToolCallScanner() : nil
-                    var reasoningText = ""
-                    var forcedToolArguments = prefixAnswer
-                    var health = DegenerateOutputDetector(controlTokens: controlTokens.tokens)
-                    func emitReasoning(_ text: String) {
-                        reasoningText += text
-                        continuation.yield(.reasoning(text))
-                    }
-                    func admit(_ chunks: [StreamChunk]) {
-                        for chunk in gate.admit(chunks) { continuation.yield(chunk) }
-                    }
-                    func emitText(_ text: String) {
-                        guard forcedTool == nil else { forcedToolArguments += text; return }
-                        guard var scanner = toolCallScanner else { continuation.yield(.text(text)); return }
-                        admit(scanner.feed(text))
-                        toolCallScanner = scanner
-                    }
-
-                    func route(_ segments: [ThinkingSplitter.Segment]) {
-                        for segment in segments {
-                            health.feed(segment)
-                            switch segment {
-                            case .reasoning(let text): emitReasoning(text)
-                            case .answer(let text): emitText(text)
-                            }
-                        }
-                    }
-
-                    var stoppedAfterCall = false
-                    var repetition = constraint == nil ? RepetitionGuard() : nil
-                    var stoppedOnRepetition = false
-                    var toolCallRepairs = 0
-                    var toolCallRejections = 0
-                    var generations = mlxStream.makeAsyncIterator()
-                    func stopAfterCall() async {
-                        if let task = mlxTask {
-                            task.cancel()
-                            lastInfo = await Self.drainCompletionInfo(&generations) ?? lastInfo
-                        } else {
-                            stoppedAfterCall = true
-                        }
-                    }
-                    tokens: while let generation = await generations.next() {
-                        if Task.isCancelled { break }
-                        tokenCount += 1
-                        switch generation {
-                        case .chunk(let text):
-                            if firstTokenAt == nil { firstTokenAt = clock.now }
-                            route(splitter.feed(text))
-                            if gate.isSaturated || alarm.isTripped { await stopAfterCall(); break tokens }
-                            if repetition?.shouldStop(after: text) == true {
-                                stoppedOnRepetition = true
-                                await stopAfterCall()
-                                break tokens
-                            }
-                        case .info(let info):
-                            lastInfo = info
-                        case .toolCall(let call):
-                            route(splitter.feed("", final: true))
-                            if let chunk = gate.admit(Self.toolCallOutput(call)) { continuation.yield(chunk) }
-                            if gate.isSaturated { await stopAfterCall(); break tokens }
-                        case .rejectedToolCall(let rejection):
-                            route(splitter.feed("", final: true))
-                            let chunk = Self.resolveRejectedToolCall(
-                                reason: rejection.reason.rawValue, toolName: rejection.toolName,
-                                callID: rejection.callID, rawText: rejection.rawTextPreview,
-                                truncated: rejection.isPreviewTruncated, declaredTools: declaredTools)
-                            if case .toolCall = chunk {
-                                toolCallRepairs += 1
-                            } else {
-                                toolCallRejections += 1
-                                BasaltLogger(module: "MLXInferenceEngine").warn("Tool call rejected: \(rejection.reason.rawValue)")
-                            }
-                            if let chunk = gate.admit(chunk) { continuation.yield(chunk) }
-                            if gate.isSaturated { await stopAfterCall(); break tokens }
-                        @unknown default:
-                            break
-                        }
-                    }
-                    route(splitter.feed("", final: true))
-                    admit(toolCallScanner?.finish() ?? [])
-                    let arguments = forcedToolArguments.trimmingCharacters(in: .whitespacesAndNewlines)
-                    if let forcedTool, (try? JSONSerialization.jsonObject(with: Data(arguments.utf8))) is [String: Any] {
-                        admit([.toolCall(ToolCallOutput(
-                            id: "call_\(UUID().uuidString.prefix(24))", name: forcedTool, arguments: arguments))])
-                    } else if forcedTool != nil {
-                        let continued = String(forcedToolArguments.dropFirst(prefixAnswer.count))
-                            .trimmingCharacters(in: .whitespacesAndNewlines)
-                        if !continued.isEmpty { continuation.yield(.text(continued)) }
-                    }
-                    let completed = injected.point != .settle && !(Task.isCancelled || stoppedAfterCall)
-                    await Self.settle(mlxTask, cancelled: !completed)
-                    if completed, let session = constraint?.session { await self.recycle(session, epoch: epoch) }
-                    await self.keep(tokens: promptTokens, namespace: alarm.isTripped ? nil : namespace, releasing: leaseID, epoch: epoch)
-                    if !Task.isCancelled, !injected.endsStream {
-                        let generationTime = (clock.now - startTime).inSeconds + prefillSeconds
-                        let timeToFirstToken = (firstTokenAt.map { ($0 - startTime).inSeconds } ?? 0) + prefillSeconds
-                        let mem = Memory.snapshot()
-                        let reasoning = reasoningText
-                        let reasoningTokens = reasoning.isEmpty ? nil : await container.perform {
-                            $0.tokenizer.encode(text: reasoning, addSpecialTokens: false).count
-                        }
-
-                        let metadata = GenerationResponse(
-                            generatedText: "", 
-                            reasoningText: nil,
-                            promptTokens: lastInfo.map { reusedTokens.rawValue + $0.promptTokenCount } ?? promptTokens.count,
-                            cachedPromptTokens: reusedTokens.rawValue,
-                            completionTokens: lastInfo?.generationTokenCount ?? tokenCount,
-                            tokensPerSecond: lastInfo?.tokensPerSecond ?? 0,
-                            generationTime: generationTime,
-                            timeToFirstToken: timeToFirstToken,
-                            memory: .init(peakBytes: mem.peakMemory, activeBytes: mem.activeMemory, cacheBytes: mem.cacheMemory),
-                            finishReason: alarm.isTripped ? .error : stoppedOnRepetition ? .repetition
-                                : (lastInfo?.generationTokenCount ?? 0) >= requestedMaxTokens ? .length : .stop,
-                            reasoningTokens: reasoningTokens,
-                            draftTokens: lastInfo?.speculativeDecodingTelemetry?.draftTokenCount,
-                            acceptedDraftTokens: lastInfo?.speculativeDecodingTelemetry?.acceptedDraftTokenCount,
-                            forcedTokens: constraint?.fastForward == true ? constraint?.session.totalForcedTokens : nil,
-                            modelCalls: lastInfo?.speculativeDecodingTelemetry?.targetModelCallCount,
-                            toolCallRepairs: toolCallRepairs,
-                            toolCallRejections: toolCallRejections
-                        ).reporting(degenerate: health.verdict(calledTools: gate.admitted > 0), draftSource: plan.draftSource, modelModified: await self.modelModified(since: leaseID))
-                        continuation.yield(.metadata(metadata))
-                    }
-                    continuation.finish()
+                    await self.relay(relay, inputs, into: continuation)
                 }
 
                 continuation.onTermination = { _ in
@@ -546,7 +417,7 @@ extension MLXInferenceEngine {
         return leaseCount
     }
 
-    private func keep(tokens prompt: [Int], namespace: String?, releasing lease: Int, epoch: ModelEpoch) {
+    func keep(tokens prompt: [Int], namespace: String?, releasing lease: Int, epoch: ModelEpoch) {
         leases[lease] = nil
         let launch = launches.removeValue(forKey: lease)
         guard epoch == modelEpoch, lease > modelFacts.cacheFence, faults.point != .keep, let namespace, let launch else { return }
