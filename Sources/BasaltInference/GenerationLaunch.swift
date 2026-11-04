@@ -140,7 +140,7 @@ struct GenerationLauncher {
             blockSize: request.blockSize, components: components)
         let (stream, task, prefill) = handing(iterator, promptTokens: input.text.tokens.dim(-1) - start)
         return MLXInferenceEngine.GenerationLaunch(
-            stream: stream, task: task, cache: kept?.cache, reusedTokens: staged ? reused : 0,
+            stream: stream, task: task, cache: kept?.cache, reusedTokens: TokenCount(staged ? reused : 0),
             prefillSeconds: prefill, mtpPrefix: kept?.prefix)
     }
 
@@ -190,7 +190,7 @@ struct GenerationLauncher {
             let (stream, task, prefill) = handing(iterator, promptTokens: input.text.tokens.dim(-1) - reused)
             return MLXInferenceEngine.GenerationLaunch(
                 stream: stream, task: task, cache: keepable ? head.kept : nil, anchors: keepable ? head.anchors : [],
-                reusedTokens: reused, exactTokens: blended?.exactPrefix ?? Int.max, prefillSeconds: prefill)
+                reusedTokens: TokenCount(reused), exactTokens: TokenCount(blended?.exactPrefix ?? Int.max), prefillSeconds: prefill)
         }
         if let batch, head.state == nil, let layers = BatchedTokenIterator.batchableLayers(cache.layers), let seat = batch.seat(in: context) {
             return launching(try BatchedTokenIterator(

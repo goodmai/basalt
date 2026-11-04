@@ -44,8 +44,8 @@ struct RecurrentSnapshot {
         state = cache.state
     }
 
-    var bytes: Int {
-        layers.values.flatMap { $0.innerState() }.reduce(0) { $0 + $1.nbytes }
+    var bytes: ByteCount {
+        ByteCount(layers.values.flatMap { $0.innerState() }.reduce(0) { $0 + $1.nbytes })
     }
 }
 

@@ -9,9 +9,9 @@ struct WiredLimitTests {
     func wireAndRelease() async {
         let engine = MLXInferenceEngine(wiresWorkingSet: true)
         await engine.wireWorkingSet()
-        #expect(await engine.wiredLimitBytes == PromptCacheBudget.gpuWorkingSet())
+        #expect(await engine.wiredLimitBytes == Int(PromptCacheBudget.gpuWorkingSet().rawValue))
         await engine.wireWorkingSet()
-        #expect(await engine.wiredLimitBytes == PromptCacheBudget.gpuWorkingSet())
+        #expect(await engine.wiredLimitBytes == Int(PromptCacheBudget.gpuWorkingSet().rawValue))
         await engine.releaseWiredMemory()
         #expect(await engine.wiredLimitBytes == nil)
     }

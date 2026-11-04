@@ -48,8 +48,8 @@ enum AgentTrace {
         return (anchors.sorted(), leaves.sorted())
     }
 
-    static func storedBytes(_ tree: PromptCacheTree) -> Int {
-        var total = 0
+    static func storedBytes(_ tree: PromptCacheTree) -> ByteCount {
+        var total = ByteCount.zero
         var pending = Array(tree.roots.values)
         while let node = pending.popLast() {
             total += node.bytes
@@ -58,7 +58,7 @@ enum AgentTrace {
         return total
     }
 
-    static func recurrentBytes() throws -> Int {
+    static func recurrentBytes() throws -> ByteCount {
         try #require(RecurrentSnapshot(of: try TinyHybrid.snapshotted(try TinyModel.make(.qwen35), TinyModel.tokens(Conversation.firstTurn)))).bytes
     }
 }
@@ -112,14 +112,14 @@ struct HybridAnchorTests {
             tree.store("ns", tokens: Array(prompt.dropLast()), cache: kept)
         }
 
-        var capped = PromptCacheTree(byteBudget: 1 << 30, anchorLimit: 3)
+        var capped = PromptCacheTree(byteBudget: ByteCount(1 << 30), anchorLimit: 3)
         stored(&capped)
         #expect(AgentTrace.snapshots(capped).anchors == [160, 200, 240])
         #expect(AgentTrace.snapshots(capped).leaves == [299])
         #expect(capped.byteCount == AgentTrace.storedBytes(capped))
 
         let recurrent = try AgentTrace.recurrentBytes()
-        let attention = (prompt.count - 1) * TinyHybrid.attentionBytesPerToken
+        let attention = ByteCount((prompt.count - 1) * TinyHybrid.attentionBytesPerToken)
         var tight = PromptCacheTree(byteBudget: attention + recurrent * 5 / 2, anchorLimit: 8)
         stored(&tight)
         #expect(AgentTrace.snapshots(tight).anchors == [240])
@@ -203,10 +203,10 @@ struct HybridAnchorTests {
         let recurrent = try AgentTrace.recurrentBytes()
         let usage = try #require(await engine.hybridAnchorUsage)
         #expect(usage.count == 3)
-        #expect(usage.bytes == Int64(3 * recurrent))
+        #expect(usage.bytes == (recurrent * 3).rawValue)
         let telemetry = await ModelOrchestratorActor(engine: engine, telemetry: TelemetryTracker()).telemetrySnapshot()
         #expect(telemetry.hybridAnchors == 3)
-        #expect(telemetry.hybridAnchorBytes == Int64(3 * recurrent))
+        #expect(telemetry.hybridAnchorBytes == (recurrent * 3).rawValue)
         let json = try #require(try JSONSerialization.jsonObject(with: JSONEncoder().encode(telemetry)) as? [String: Any])
         #expect(json["hybridAnchors"] as? Int == 3)
     }

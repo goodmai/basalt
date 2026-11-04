@@ -11,6 +11,8 @@ struct UnitsTests {
         #expect(prompt + reply == 1_024)
         #expect(prompt - reply < prompt)
         #expect(ByteCount(512) * 4 == 2_048)
+        #expect(ByteCount(2_048) / 4 == 512)
+        #expect(ByteCount(Int(4_096)) == 4_096)
         #expect(TokenCount.zero == 0)
         #expect([prompt, reply].max() == prompt)
     }
