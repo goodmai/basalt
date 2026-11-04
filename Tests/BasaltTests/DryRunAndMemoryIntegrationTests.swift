@@ -201,13 +201,13 @@ struct DryRunAndMemoryIntegrationTests {
         for precision in [KVPrecision.q8, .k8v4, .q4] {
             let held = try await container.perform { (context: ModelContext) in
                 let parameters = GenerateParameters(maxTokens: generated, temperature: 0)
-                let zoned = try #require(try MLXInferenceEngine.zonedCache(
-                    params: parameters, zones: .standard, precision: precision, model: context.model))
+                let cache = ZonedKVCache.replacingFullAttention(
+                    try context.model.newCache(parameters: parameters), zones: .standard, precision: precision)
                 Memory.clearCache()
                 let before = Memory.activeMemory
                 var iterator = try TokenIterator(
                     input: LMInput(tokens: MLXArray((0..<prompt).map { 1_000 + $0 * 7_919 % 20_000 })),
-                    model: context.model, cache: zoned.cache, parameters: zoned.params)
+                    model: context.model, cache: cache, parameters: parameters)
                 while iterator.next() != nil {}
                 Stream.gpu.synchronize()
                 Memory.clearCache()

@@ -343,19 +343,6 @@ struct ZonedKVCacheEngineTests {
         #expect(await engine.supportsKVEviction == applies)
     }
 
-    @Test("Zones apply only to a quantized request; the zoned request itself runs with kvBits cleared so MLX does not convert the cache again")
-    func zonedCacheNeedsBitsAndZones() throws {
-        let model = try LlamaModel(JSONDecoder().decode(LlamaConfiguration.self, from: Data(TinyModel.config.utf8)))
-        var params = GenerateParameters(maxTokens: 4, temperature: 0)
-        #expect(try MLXInferenceEngine.zonedCache(params: params, zones: Self.zones, precision: nil, model: model) == nil)
-        params.kvBits = 8
-        #expect(try MLXInferenceEngine.zonedCache(params: params, zones: nil, precision: .k8v4, model: model) == nil)
-        let zoned = try #require(try MLXInferenceEngine.zonedCache(params: params, zones: Self.zones, precision: .k8v4, model: model))
-        #expect(zoned.cache.allSatisfy { ($0 as? ZonedKVCache)?.precision == .k8v4 })
-        #expect(zoned.params.kvBits == nil)
-        #expect(zoned.params.maxTokens == 4)
-    }
-
     @Test("A quantized launch with zones generates on the zoned cache: the text of a direct zoned run, not the uniform-quantized one")
     func launchGeneratesOnZonedCache() async throws {
         let container = try Self.container()
