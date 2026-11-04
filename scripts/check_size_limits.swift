@@ -94,54 +94,94 @@ enum Lexeme {
     case blockComment
 }
 
-func codeOnly(_ source: String) -> [Character] {
-    let text = Array(source)
-    var out: [Character] = [], stack: [Lexeme] = [.code(parens: 0)], i = 0
-    func at(_ token: String) -> Bool { Array(token).enumerated().allSatisfy { i + $0.offset < text.count && text[i + $0.offset] == $0.element } }
-    while i < text.count {
-        let c = text[i]
-        switch stack[stack.count - 1] {
-        case .blockComment:
-            if at("*/") { stack.removeLast(); i += 2 } else if at("/*") { stack.append(.blockComment); i += 2 } else { out.append(c == "\n" ? c : " "); i += 1 }
-        case .string(let multiline, let hashes):
-            let closing = (multiline ? "\"\"\"" : "\"") + String(repeating: "#", count: hashes)
-            if c == "\\", at("\\" + String(repeating: "#", count: hashes) + "(") {
-                stack.append(.code(parens: 1))
-                i += 2 + hashes
-            } else if c == "\\" && hashes == 0 {
-                i += 2
-            } else if at(closing) {
-                stack.removeLast()
-                i += closing.count
-            } else {
-                out.append(c == "\n" ? c : " ")
-                i += 1
-            }
-        case .code(let parens):
-            if at("//") {
-                while i < text.count, text[i] != "\n" { i += 1 }
-            } else if at("/*") {
-                stack.append(.blockComment)
-                i += 2
-            } else if c == "#" || c == "\"" {
-                var hashes = 0
-                while i + hashes < text.count, text[i + hashes] == "#" { hashes += 1 }
-                let j = i + hashes
-                guard j < text.count, text[j] == "\"" else { out.append(c); i += 1; continue }
-                let multiline = j + 2 < text.count && text[j + 1] == "\"" && text[j + 2] == "\""
-                stack.append(.string(multiline: multiline, hashes: hashes))
-                i = j + (multiline ? 3 : 1)
-            } else if stack.count > 1, c == "(" || c == ")" {
-                let depth = parens + (c == "(" ? 1 : -1)
-                if depth == 0 { stack.removeLast() } else { stack[stack.count - 1] = .code(parens: depth) }
-                i += 1
-            } else {
-                out.append(c)
-                i += 1
-            }
+struct Lexer {
+    let text: [Character]
+    var out: [Character] = []
+    var stack: [Lexeme] = [.code(parens: 0)]
+    var i = 0
+
+    func at(_ token: String) -> Bool {
+        Array(token).enumerated().allSatisfy { i + $0.offset < text.count && text[i + $0.offset] == $0.element }
+    }
+
+    mutating func blank() {
+        out.append(text[i] == "\n" ? "\n" : " ")
+        i += 1
+    }
+
+    mutating func comment() {
+        if at("*/") {
+            stack.removeLast()
+            i += 2
+        } else if at("/*") {
+            stack.append(.blockComment)
+            i += 2
+        } else {
+            blank()
         }
     }
-    return out
+
+    mutating func string(multiline: Bool, hashes: Int) {
+        let pounds = String(repeating: "#", count: hashes)
+        let closing = (multiline ? "\"\"\"" : "\"") + pounds
+        if at("\\" + pounds + "(") {
+            stack.append(.code(parens: 1))
+            i += 2 + hashes
+        } else if hashes == 0, at("\\") {
+            i += 2
+        } else if at(closing) {
+            stack.removeLast()
+            i += closing.count
+        } else {
+            blank()
+        }
+    }
+
+    mutating func openString() -> Bool {
+        var hashes = 0
+        while i + hashes < text.count, text[i + hashes] == "#" { hashes += 1 }
+        let quote = i + hashes
+        guard quote < text.count, text[quote] == "\"" else { return false }
+        let multiline = quote + 2 < text.count && text[quote + 1] == "\"" && text[quote + 2] == "\""
+        stack.append(.string(multiline: multiline, hashes: hashes))
+        i = quote + (multiline ? 3 : 1)
+        return true
+    }
+
+    mutating func code(parens: Int) {
+        let c = text[i]
+        if at("//") {
+            while i < text.count, text[i] != "\n" { i += 1 }
+        } else if at("/*") {
+            stack.append(.blockComment)
+            i += 2
+        } else if (c == "#" || c == "\"") && openString() {
+            return
+        } else if stack.count > 1, c == "(" || c == ")" {
+            let depth = parens + (c == "(" ? 1 : -1)
+            if depth == 0 { stack.removeLast() } else { stack[stack.count - 1] = .code(parens: depth) }
+            i += 1
+        } else {
+            out.append(c)
+            i += 1
+        }
+    }
+
+    mutating func run() -> [Character] {
+        while i < text.count {
+            switch stack[stack.count - 1] {
+            case .blockComment: comment()
+            case .string(let multiline, let hashes): string(multiline: multiline, hashes: hashes)
+            case .code(let parens): code(parens: parens)
+            }
+        }
+        return out
+    }
+}
+
+func codeOnly(_ source: String) -> [Character] {
+    var lexer = Lexer(text: Array(source))
+    return lexer.run()
 }
 
 let declaration = try! Regex(#"^\s*(?:@[\w.]+(?:\([^)]*\))?\s+)*(?:(?:public|private|fileprivate|internal|package|open|final|indirect|nonisolated)\s+)*(struct|class|enum|actor|extension|protocol)\s+([A-Za-z_][\w.]*)"#)
