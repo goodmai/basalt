@@ -24,6 +24,25 @@ public struct HarnessLibraryLimits: Sendable, Equatable {
     public var maxLibraryBytes = 8 * 1024 * 1024
 
     public init() {}
+
+    func validate(
+        topic: String, cue: String, domain: String, content: String, confidence: String, delta: [String: String]?
+    ) throws(HarnessLibraryError) {
+        try Self.check(!topic.isEmpty && topic.count <= maxTopicChars, "topic must be 1...\(maxTopicChars) characters")
+        try Self.check(cue.count <= maxCueChars, "cue must be at most \(maxCueChars) characters")
+        try Self.check(domain.count <= maxDomainChars, "domain must be at most \(maxDomainChars) characters")
+        try Self.check(!content.isEmpty && content.utf8.count <= maxContentBytes, "content must be 1...\(maxContentBytes) bytes")
+        try Self.check(HarnessExperienceLibrary.confidences.contains(confidence), "confidence must be one of low, medium, high")
+        if let token = HarnessLeakGuard.forbiddenToken(in: topic + "\n" + cue) {
+            throw .invalidArgument("topic and cue reach the harness proposer and must not contain '\(token)'")
+        }
+        let deltaBytes = delta.map(HarnessExperienceLibrary.deltaBytes) ?? 0
+        try Self.check(deltaBytes <= maxDeltaBytes, "harness delta must be at most \(maxDeltaBytes) bytes")
+    }
+
+    private static func check(_ condition: Bool, _ message: String) throws(HarnessLibraryError) {
+        if !condition { throw .invalidArgument(message) }
+    }
 }
 
 public enum HarnessLibraryError: Error, Equatable, CustomStringConvertible {
@@ -68,17 +87,7 @@ public struct HarnessExperienceLibrary: Sendable {
         let topic = Self.singleLine(topic)
         let cue = Self.singleLine(cue.isEmpty ? topic : cue)
         let domainSlug = Self.slugify(domain.isEmpty ? "general" : domain)
-        try check(!topic.isEmpty && topic.count <= limits.maxTopicChars, "topic must be 1...\(limits.maxTopicChars) characters")
-        try check(cue.count <= limits.maxCueChars, "cue must be at most \(limits.maxCueChars) characters")
-        try check(domain.count <= limits.maxDomainChars, "domain must be at most \(limits.maxDomainChars) characters")
-        try check(!content.isEmpty && content.utf8.count <= limits.maxContentBytes, "content must be 1...\(limits.maxContentBytes) bytes")
-        try check(Self.confidences.contains(confidence), "confidence must be one of low, medium, high")
-        if let token = HarnessLeakGuard.forbiddenToken(in: topic + "\n" + cue) {
-            throw HarnessLibraryError.invalidArgument("topic and cue reach the harness proposer and must not contain '\(token)'")
-        }
-        let deltaBytes = delta.map(Self.deltaBytes) ?? 0
-        try check(deltaBytes <= limits.maxDeltaBytes, "harness delta must be at most \(limits.maxDeltaBytes) bytes")
-
+        try limits.validate(topic: topic, cue: cue, domain: domain, content: content, confidence: confidence, delta: delta)
         return try await onWriterQueue { try withLock {
             var entries = try loadEntries(quarantineCorrupt: true)
             guard entries.count < limits.maxEntries else {
@@ -110,16 +119,16 @@ public struct HarnessExperienceLibrary: Sendable {
             do {
                 try Data(index.utf8).write(to: domainDir.appendingPathComponent("INDEX.md"), options: .atomic)
             } catch {
-                BasaltLogger(module: "HarnessLibrary").warn("INDEX.md for \(domainSlug) not updated: \(error.localizedDescription)")
+                logger.warn("INDEX.md for \(domainSlug) not updated: \(error.localizedDescription)")
             }
             return entry
         } }
     }
 
-    public func query(_ text: String? = nil, domain: String? = nil) async throws -> [HarnessKnowledgeEntry] {
+    @concurrent public func query(_ text: String? = nil, domain: String? = nil) async throws -> [HarnessKnowledgeEntry] {
         let needle = text?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
         let domainSlug = domain.flatMap { $0.isEmpty ? nil : Self.slugify($0) }
-        return try await Task.detached { try loadEntries(quarantineCorrupt: false) }.value.filter { entry in
+        return try loadEntries(quarantineCorrupt: false).filter { entry in
             if let domainSlug, entry.domain != domainSlug { return false }
             return needle.isEmpty || [entry.topic, entry.cue, entry.content].contains { $0.lowercased().contains(needle) }
         }
@@ -129,10 +138,6 @@ public struct HarnessExperienceLibrary: Sendable {
         let domainSlug = Self.slugify(domain)
         let indexable = try await query(domain: domainSlug).filter { HarnessLeakGuard.forbiddenToken(in: $0.topic + "\n" + $0.cue) == nil }
         return Self.renderIndex(domain: domainSlug, entries: indexable)
-    }
-
-    private func check(_ condition: Bool, _ message: String) throws {
-        if !condition { throw HarnessLibraryError.invalidArgument(message) }
     }
 
     private actor WriterLane {
@@ -210,7 +215,9 @@ public struct HarnessExperienceLibrary: Sendable {
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         return encoder
     }()
+}
 
+extension HarnessExperienceLibrary {
     static func deltaBytes(_ delta: [String: String]) -> Int {
         delta.reduce(0) { $0 + $1.key.utf8.count + $1.value.utf8.count }
     }
