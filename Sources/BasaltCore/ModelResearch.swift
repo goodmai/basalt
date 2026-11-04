@@ -104,12 +104,24 @@ public struct PromptCacheReport: Sendable, Codable {
     public var bytes: ByteCount
     public var evictions: Int
     public var namespaces: [NamespaceReport]
+    public var leases = 0
+    public var launches: [LaunchCacheReport] = []
 
     public init(budget: ByteCount, bytes: ByteCount, evictions: Int, namespaces: [NamespaceReport]) {
         self.budget = budget
         self.bytes = bytes
         self.evictions = evictions
         self.namespaces = namespaces
+    }
+}
+
+public struct LaunchCacheReport: Sendable, Codable {
+    public var reusedTokens: Int
+    public var layers: [String]
+
+    public init(reusedTokens: Int, layers: [String]) {
+        self.reusedTokens = reusedTokens
+        self.layers = layers
     }
 }
 

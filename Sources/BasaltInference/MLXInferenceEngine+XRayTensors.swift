@@ -79,10 +79,12 @@ extension MLXInferenceEngine {
         let measured = TensorStatistics.measure(
             rows: view.rows, count: view.extent[0], rowElements: view.extent.dropFirst().reduce(1, *))
         let statistics = measured.statistics
-        return TensorReport(
+        var report = TensorReport(
             info: view.info, mean: Float(statistics.mean), std: statistics.std, min: statistics.min, max: statistics.max,
-            l2: statistics.l2, percentiles: measured.percentiles,
-            values: values(view, ranges: ranges, limit: min(request.maxValues, tensorValuesCap)))
+            l2: statistics.l2)
+        report.percentiles = measured.percentiles
+        report.values = values(view, ranges: ranges, limit: min(request.maxValues, tensorValuesCap))
+        return report
     }
 
     static func validated(_ slice: [Range<Int>]?, extent: [Int], name: String) throws(BasaltError) -> [Range<Int>] {
