@@ -32,4 +32,18 @@ struct GenerationHandOffTests {
         #expect(launch.prefillSeconds > 0)
         await MLXInferenceEngine.settle(launch, cancelled: false)
     }
+
+    @Test("A launch reports as prefill the whole time it took, including the prompt the iterator prefills when it is built (#277)",
+          arguments: [false, true])
+    func prefillCoversTheIterator(keepsCache: Bool) async throws {
+        let context = try Self.context()
+        let started = ContinuousClock.now
+        let launch = try MLXInferenceEngine.launch(
+            input: LMInput(tokens: MLXArray((0 ..< 3000).map { Int32(1 + $0 % 200) })), reuse: nil,
+            keepsCache: keepsCache, boundary: 2999, params: GenerateParameters(maxTokens: 1, temperature: 0), components: .init(),
+            tools: nil, context: context)
+        let wall = (ContinuousClock.now - started) / .seconds(1)
+        #expect(launch.prefillSeconds >= wall * 0.9)
+        await MLXInferenceEngine.settle(launch, cancelled: false)
+    }
 }
