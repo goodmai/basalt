@@ -66,7 +66,10 @@ extension MLXInferenceEngine {
         let result = await container.performEvaluating(nonSendable: ()) { context, _ in
             Result { () throws(BasaltError) -> TensorReport in try MLXInferenceEngine.report(request, model: context.model) }
         }
-        return try result.get()
+        switch result {
+        case .success(let report): return report
+        case .failure(let error): throw error
+        }
     }
 
     static func report(_ request: TensorRequest, model: Module) throws(BasaltError) -> TensorReport {

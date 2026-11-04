@@ -76,8 +76,8 @@ struct AnatomyScan: Sendable {
         for (path, array) in parameters where array.ndim == 3 && path.contains("switch") {
             if let index = Self.layerIndex(path) { experts[index] = array.dim(0) }
         }
-        var layers = (0 ..< ((modules.keys.max() ?? -1) + 1)).map {
-            Layer(mixer: modules[$0].flatMap(LayerMixer.init(modules:)), experts: experts[$0], heads: heads[$0] ?? Heads())
+        var layers = (0 ..< ((modules.keys.max() ?? -1) + 1)).map { index in
+            Layer(mixer: modules[index].flatMap { LayerMixer(modules: $0) }, experts: experts[index], heads: heads[index] ?? Heads())
         }
         Self.assign(caches, to: &layers)
         self.layers = layers

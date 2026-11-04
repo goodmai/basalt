@@ -33,7 +33,10 @@ extension MLXInferenceEngine {
             Result { () throws(BasaltError) in try Self.add(delta, to: context.model) }
         }
         var applied: AppliedDelta
-        do { applied = try written.get() } catch {
+        switch written {
+        case .success(let value):
+            applied = value
+        case .failure(let error):
             record(.learned(modelEpoch) { $0.deltas[delta.tensor] = nil })
             throw error
         }
@@ -50,9 +53,10 @@ extension MLXInferenceEngine {
     @discardableResult
     func undoDelta(_ id: OverlayID) async throws(BasaltError) -> Bool {
         guard let container, let (tensor, applied) = modelFacts.deltas.first(where: { $0.value.info?.id == id }) else { return false }
-        try await container.performEvaluating(nonSendable: applied) { context, applied in
+        let restored = await container.performEvaluating(nonSendable: applied) { context, applied in
             Result { () throws(BasaltError) in try Self.restore(applied, of: tensor, in: context.model) }
-        }.get()
+        }
+        if case .failure(let error) = restored { throw error }
         guard self.container === container else { return true }
         weightsChanged { $0.deltas[tensor] = nil }
         return true
