@@ -116,6 +116,7 @@ package struct RESTServer: Sendable {
         // Model management
         oai.get("/models",         use: modelsController.listModels)   // OpenAI list format
         oai.get("/models/current", use: modelsController.currentModel) // readiness + size
+        oai.get("/models/preview", use: modelsController.previewModel)
         oai.post("/models/load",   use: modelsController.loadModel)    // hot-swap at runtime
 
         // Generation
@@ -166,6 +167,7 @@ package struct RESTServer: Sendable {
                 "/v1/models":              { "get":  { "summary": "List cached models (OpenAI format)" } },
                 "/api/v1/stats":           { "get":  { "summary": "Telemetry of the serving process (same snapshot as serve --stats and MCP status)" } },
                 "/v1/models/current":      { "get":  { "summary": "Currently loaded model + status" } },
+                "/v1/models/preview":      { "get":  { "summary": "Memory a model would need, without loading it (?model_id=&context=)" } },
                 "/v1/models/load":         { "post": { "summary": "Hot-swap model at runtime" } },
                 "/v1/chat/completions":    { "post": { "summary": "OpenAI-compatible chat completions" } },
                 "/v1/responses":           { "post": { "summary": "OpenAI Responses API (Codex/Cursor)" } },

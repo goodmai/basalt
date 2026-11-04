@@ -9,8 +9,8 @@ let package = Package(
         .macOS(.v27)
     ],
     dependencies: [
-        .package(url: "https://github.com/ml-explore/mlx-swift",     from: "0.32.3"),
-        .package(url: "https://github.com/goodmai/mlx-swift-lm",      revision: "0ff3e17f1d903d849a01275c6e4a95732f53dc75"),
+        .package(url: "https://github.com/ml-explore/mlx-swift",     from: "0.33.0"),
+        .package(url: "https://github.com/goodmai/mlx-swift-lm",      revision: "cdfc2498dcb18d8d66f26775eba19899c22a1fab"),
         .package(url: "https://github.com/hummingbird-project/hummingbird", from: "2.28.0"),
         .package(url: "https://github.com/apple/swift-argument-parser",    from: "1.8.2"),
         .package(url: "https://github.com/swift-server/swift-service-lifecycle", from: "2.12.0"),

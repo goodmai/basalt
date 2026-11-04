@@ -120,6 +120,39 @@ struct ModelsController: Sendable {
         ])
     }
 
+    @Sendable
+    func previewModel(request: Request, context: BasicRequestContext) async throws -> Response {
+        guard let raw = request.uri.queryParameters.get("model_id"), !raw.isEmpty else {
+            return makeErrorResponse(status: .badRequest, message: "model_id is required, e.g. ?model_id=mlx-community/Qwen3-4B-4bit")
+        }
+        let modelId = hfRepoId(from: raw)
+        guard Self.isRepoId(modelId) else {
+            return makeErrorResponse(status: .badRequest, message: "model_id must be a Hugging Face repo id (org/name)")
+        }
+        let tokens = request.uri.queryParameters.get("context").flatMap { Int($0) }.map { min(max($0, 1), 1 << 20) } ?? 4096
+        let evaluator = MemoryEvaluator()
+        let empty = await evaluator.evaluate(modelId: modelId, contextLength: 0)
+        let thousand = await evaluator.evaluate(modelId: modelId, contextLength: 1_000)
+        let assessment = await evaluator.evaluate(modelId: modelId, contextLength: tokens)
+        var body: [String: Any] = [
+            "model_id": modelId,
+            "cached": FileManager.default.fileExists(atPath: ModelCache.cacheDir(for: modelId).path),
+            "context_tokens": tokens,
+            "weights_bytes": empty.requiredRAMBytes,
+            "kv_bytes_per_1k_tokens": thousand.requiredRAMBytes - empty.requiredRAMBytes,
+            "required_bytes": assessment.requiredRAMBytes,
+            "available_bytes": assessment.availableRAMBytes,
+            "total_bytes": assessment.totalPhysicalRAMBytes,
+            "fits": assessment.fitsInMemory,
+            "fit_level": String(describing: assessment.fitLevel),
+            "max_context_tokens": assessment.maxContextBudgetTokens,
+            "max_prompt_tokens": assessment.maxPromptBudgetTokens,
+        ]
+        body["warning"] = assessment.warning
+        body["recommendation"] = assessment.recommendation
+        return makeJSONResponse(body)
+    }
+
     // MARK: — POST /v1/models/load
 
     /// Hot-swap the loaded model.
