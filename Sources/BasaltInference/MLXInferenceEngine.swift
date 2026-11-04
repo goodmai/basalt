@@ -69,7 +69,7 @@ public actor MLXInferenceEngine: InferenceEngine {
     private let experimentalSamplers: Bool
     let grammarJumpForward: Bool
     public var kvMemoryBudgetBytes: Int64? { kvMemoryBudget }
-    private(set) var promptCacheDisk: PromptCacheDiskStore?
+    var promptCacheDisk: PromptCacheDiskStore?
     let batchSlots: Int
     var batchDecoder: BatchedDecoder?
 
