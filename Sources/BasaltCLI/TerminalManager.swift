@@ -180,7 +180,7 @@ public actor TerminalManager {
     
     nonisolated public func readEvents() -> AsyncStream<TerminalEvent> {
         return AsyncStream { continuation in
-            Task.detached {
+            Task {
                 await self.enableRawMode()
                 let handle = FileHandle.standardInput
                 var utf8Buffer = Data()
@@ -198,9 +198,6 @@ public actor TerminalManager {
                     }
                     
                     if byte == 27 {
-                        // Check for Esc vs Arrow sequence
-                        // We use a small hack: arrows are ESC+[+A/B/C/D
-                        // If we only get 27, it's Esc.
                         continuation.yield(.interrupt)
                         utf8Buffer.removeAll(); continue
                     }
@@ -208,8 +205,6 @@ public actor TerminalManager {
                     if byte == 10 || byte == 13 {
                         let currentBuffer = await self.inputBuffer
                         if !currentBuffer.isEmpty {
-                            // Before submitting, we need to finalize the input line in history
-                            // by moving the "Output Area" down.
                             await self.finalizeInputLine()
                             continuation.yield(.lineSubmitted(currentBuffer))
                             await self.clearBuffer()
