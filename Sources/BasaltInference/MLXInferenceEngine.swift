@@ -683,10 +683,9 @@ public actor MLXInferenceEngine: InferenceEngine {
                 details: "dry_* and xtc_* are experimental (DRY can turn a detectable loop into one with corrupted facts on low-bit models); start the server with --experimental-samplers to use them")
         }
         let (params, unbudgeted, shaping, exclusion) = sampling(for: request, breakers: await sequenceBreakerIds(for: request))
-        let zones = modelAttendsThroughZones ? (modelPrefillsInChunks ? kvZones : kvZones?.evicting(0)) : nil
-        let headMask = zones == nil && request.kvPrecision == nil && kvPrecision == nil ? kvHeadMask : nil
-        let questBlocks = zones == nil && request.kvPrecision == nil && kvPrecision == nil && headMask == nil && questApplies ? questTopK : nil
-        let zonedPrecision = zones == nil ? nil : request.kvPrecision ?? kvPrecision
+        let settings = GenerationPlan.Settings(
+            kvPrecision: kvPrecision, kvZones: kvZones, attendsThroughZones: modelAttendsThroughZones, prefillsInChunks: modelPrefillsInChunks,
+            kvHeadMask: kvHeadMask, questTopK: questApplies ? questTopK : nil, speculativeLookup: speculativeLookup)
 
         let toolSpecs = Self.toolSpecs(request.tools)
         let declaredTools = Set(request.tools?.map(\.name) ?? [])
@@ -775,9 +774,10 @@ public actor MLXInferenceEngine: InferenceEngine {
             let answerAfterThinking = Self.answerAfterThinking(renderedTail, assistantPrefix: assistantPrefix ?? "")
             let promptEndsWithThinking = answerAfterThinking == nil
             let prefixAnswer = String(answerAfterThinking ?? "")
-            let namespace = carriesMoreThanTokens || epoch != modelEpoch ? nil : promptCacheNamespace(for: request)
-            let allowsFastForward = params.kvBits == nil && zonedPrecision == nil && !carriesMoreThanTokens
-            let constraint = try await outputConstraint(for: request, allowsFastForward: allowsFastForward)
+            let namespace = GenerationPlan.cacheNamespace(
+                request, settings, cacheEnabled: promptCaches.byteBudget > 0, carriesMoreThanTokens: carriesMoreThanTokens, sameEpoch: epoch == modelEpoch)
+            let constraint = try await outputConstraint(
+                for: request, allowsFastForward: GenerationPlan.plainPrompt(request, settings, carriesMoreThanTokens: carriesMoreThanTokens))
             if let constraint, !prefixAnswer.isEmpty {
                 let ids = await container.perform { $0.tokenizer.encode(text: prefixAnswer, addSpecialTokens: false) }
                 guard constraint.session.accepts(ids) else {
@@ -785,15 +785,19 @@ public actor MLXInferenceEngine: InferenceEngine {
                         details: "the assistant prefill is not a valid start of the requested JSON output")
                 }
             }
-            let speculativeLookup = request.speculativeLookup ?? speculativeLookup
-            let drafts = constraint == nil && !speculativeLookup && zones == nil && params.kvBits == nil
-                && promptTokens.count <= Self.mtpPromptLimit && hasMTPDrafter
-            if let namespace, !drafts {
+            let boundary = namespace == nil
+                ? promptTokens.count - 1
+                : await snapshotBoundary(renderedCount, container: container, epoch: epoch, template: template, makeInput)
+            let plan = GenerationPlan.make(request, settings, GenerationPlan.Facts(
+                namespace: namespace, promptTokens: promptTokens.count, carriesMoreThanTokens: carriesMoreThanTokens,
+                constrained: constraint != nil, hasMTPDrafter: hasMTPDrafter, blendAvailable: cacheBlend != nil,
+                modelIsHybrid: modelIsHybrid, modelHasRecurrentState: modelHasRecurrentState))
+            if let namespace, !plan.drafts {
                 await restoreFromDisk(namespace, prompt: promptTokens, container: container, epoch: epoch)
             }
             var lease: PromptCacheLease? = if let namespace { promptCaches.lease(namespace, for: promptTokens) } else { nil }
             var storedPrefix: MTPPrefix?
-            if drafts, let namespace {
+            if plan.drafts, let namespace {
                 let leased = switch lease {
                 case let held?: held.reusedTokens
                 case nil: 0
@@ -809,15 +813,12 @@ public actor MLXInferenceEngine: InferenceEngine {
             case nil: nil
             }
             let leaseID = hold(lease)
-            let boundary = namespace == nil
-                ? promptTokens.count - 1
-                : await snapshotBoundary(renderedCount, container: container, epoch: epoch, template: template, makeInput)
-            let anchors = namespace != nil && !drafts && modelHasRecurrentState == true
+            let anchors = plan.findsAnchors
                 ? await anchorOffsets(
                     anchorTurns, prompt: promptTokens, reused: reuse?.reusedTokens ?? 0, boundary: boundary,
                     container: container, tools: toolSpecs, context: context)
                 : []
-            let blend = epoch == modelEpoch && modelIsHybrid == false ? cacheBlend : nil
+            let blending = plan.blends && epoch == modelEpoch ? namespace.flatMap { space in cacheBlend.map { ($0, space) } } : nil
             let masked = Self.constraining(
                 components, with: constraint,
                 phase: Self.constraintPhase(
@@ -827,17 +828,14 @@ public actor MLXInferenceEngine: InferenceEngine {
             let constrained = shaping.map { excluded.appendingBasaltProcessor($0) } ?? excluded
             let forcedTool = constraint?.toolName
             let jumpForward = constraint?.fastForward == true
-            let expertRouting = (speculativeLookup || jumpForward) ? await routesExperts(container, epoch: epoch) : true
-            let blending = namespace.flatMap { space in blend.map { ($0, space) } }
-            let batchable = constraint == nil && request.toolChoice?.forcedTool == nil && !speculativeLookup && !drafts
-                && blending == nil && params.kvBits == nil && zonedPrecision == nil && !carriesMoreThanTokens
-            let batch = batchable ? await batchedDecoder(container, epoch: epoch) : nil
+            let expertRouting = (plan.speculativeLookup || jumpForward) ? await routesExperts(container, epoch: epoch) : true
+            let batch = plan.batchable ? await batchedDecoder(container, epoch: epoch) : nil
             let options = LaunchOptions(
                 params: params, components: constrained, tools: forcedTool == nil ? toolSpecs : nil, keepsCache: namespace != nil,
                 batch: batch, lookup: LookupOptions(
-                    speculative: speculativeLookup, recycling: speculativeRecycling, jumpForward: jumpForward, routesExperts: expertRouting),
-                kvZones: zones, kvHeadMask: headMask, questTopK: questBlocks, kvPrecision: zonedPrecision,
-                mtp: drafts, mtpBlockSize: mtpBlockSize, mtpPrefix: mtpPrefix)
+                    speculative: plan.speculativeLookup, recycling: speculativeRecycling, jumpForward: jumpForward, routesExperts: expertRouting),
+                kvZones: plan.kvZones, kvHeadMask: plan.kvHeadMask, questTopK: plan.questTopK, kvPrecision: plan.kvPrecision,
+                mtp: plan.drafts, mtpBlockSize: mtpBlockSize, mtpPrefix: mtpPrefix)
             let cuts = (fork.map { [$0] } ?? []) + anchors
             let launch: GenerationLaunch
             do {
@@ -1157,11 +1155,6 @@ public actor MLXInferenceEngine: InferenceEngine {
             }
         }
         return found
-    }
-
-    private func promptCacheNamespace(for request: GenerationRequest) -> String? {
-        guard promptCaches.byteBudget > 0, (request.kvPrecision ?? kvPrecision) == nil else { return nil }
-        return request.cacheKey
     }
 
     static let modelSwitchPersistDeadline = Duration.seconds(10)
