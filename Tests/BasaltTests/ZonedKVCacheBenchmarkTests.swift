@@ -11,7 +11,7 @@ import MLXLMCommon
 struct ZonedKVCacheBenchmarkTests {
     enum Mode: CustomStringConvertible, CaseIterable {
         case fp16, uniform8, uniform4, zoned8, zoned4, zonedK8V4, zonedK8V4H, zonedK8V4Evict25, zonedK8V4Evict50
-        case headSplit25, headSplit375, headSplit50
+        case headSplit25, headSplit375, headSplit50, quest16, quest32
 
         var description: String {
             switch self {
@@ -27,6 +27,8 @@ struct ZonedKVCacheBenchmarkTests {
             case .headSplit25: "head-split-25"
             case .headSplit375: "head-split-37.5"
             case .headSplit50: "head-split-50"
+            case .quest16: "quest-16"
+            case .quest32: "quest-32"
             }
         }
 
@@ -39,9 +41,17 @@ struct ZonedKVCacheBenchmarkTests {
             }
         }
 
+        var questTopK: Int? {
+            switch self {
+            case .quest16: 16
+            case .quest32: 32
+            default: nil
+            }
+        }
+
         var precision: KVPrecision? {
             switch self {
-            case .fp16, .headSplit25, .headSplit375, .headSplit50: nil
+            case .fp16, .headSplit25, .headSplit375, .headSplit50, .quest16, .quest32: nil
             case .uniform8, .zoned8: .q8
             case .uniform4, .zoned4: .q4
             case .zonedK8V4, .zonedK8V4Evict25, .zonedK8V4Evict50: .k8v4
@@ -225,6 +235,7 @@ struct ZonedKVCacheBenchmarkTests {
             if known == nil { headScores.withLock { $0[key] = scores } }
             return KVHeadMask.classify(scores: scores, ratio: ratio).replacingFullAttention(fresh)
         }
+        if let topK = mode.questTopK { return QuestKVCache.replacingFullAttention(fresh, topK: topK) }
         guard let zones = mode.zones, let precision = mode.precision else { return fresh }
         return ZonedKVCache.replacingFullAttention(fresh, zones: zones, precision: precision)
     }
@@ -234,7 +245,7 @@ struct ZonedKVCacheBenchmarkTests {
     ) throws -> (iterator: TokenIterator, cache: [any KVCache]?) {
         var parameters = GenerateParameters(maxTokens: maxTokens, temperature: 0)
         let input = LMInput(tokens: MLXArray(tokens))
-        guard mode.zones == nil, mode.headRatio == nil else {
+        guard mode.zones == nil, mode.headRatio == nil, mode.questTopK == nil else {
             let cache = try Self.cache(mode, context)
             return (try TokenIterator(input: input, model: context.model, cache: cache, parameters: parameters), cache)
         }
