@@ -107,7 +107,9 @@ public actor MLXInferenceEngine: InferenceEngine {
     /// MLX buffer-cache ceiling in bytes. nil leaves MLX's own default.
     private let gpuCacheLimit: Int?
 
-    private(set) var promptCaches: PromptCacheTree
+    private var promptCaches: PromptCacheTree
+    private var leases: [Int: PromptCacheLeaseSlot] = [:]
+    private var leaseCount = 0
     private(set) var mtpPrefixes: [(namespace: String, tokens: [Int], prefix: MTPPrefix)] = []
     private var promptCacheFullBudget: Int
     private(set) var appliedMemoryDirective = MemoryDirective.relaxed
@@ -821,7 +823,7 @@ public actor MLXInferenceEngine: InferenceEngine {
             case let held?: (held.cache, held.reusedTokens)
             case nil: nil
             }
-            let leaseSlot = PromptCacheLeaseSlot(lease)
+            let leaseID = hold(lease)
             let boundary = namespace == nil
                 ? promptTokens.count - 1
                 : await snapshotBoundary(renderedCount, container: container, epoch: epoch, template: template, makeInput)
@@ -859,7 +861,7 @@ public actor MLXInferenceEngine: InferenceEngine {
                         mtpPrefix: mtpPrefix) }
                 }
             } catch {
-                keep(nil, tokens: promptTokens, namespace: namespace, releasing: leaseSlot, epoch: epoch)
+                keep(nil, tokens: promptTokens, namespace: namespace, releasing: leaseID, epoch: epoch)
                 throw error
             }
             let mlxStream = launch.stream
@@ -870,13 +872,8 @@ public actor MLXInferenceEngine: InferenceEngine {
                     let startTime = clock.now
                     var lastInfo: GenerateCompletionInfo?
                     var tokenCount = 0
-                    // Stamped on the first emitted chunk. Was hardcoded to 0, so every
-                    // benchmark reported TTFT 0.000 with zero variance — a constant
-                    // masquerading as a measurement, hiding all prefill cost.
                     var firstTokenAt: ContinuousClock.Instant?
-                    
-                    var buffer = ""
-                    var isThinking = promptEndsWithThinking
+                    var splitter = ThinkingSplitter(startsThinking: promptEndsWithThinking)
                     var gate = ToolCallGate(request: request)
                     if let echoedPrefix { continuation.yield(.text(echoedPrefix)) }
 
@@ -897,42 +894,15 @@ public actor MLXInferenceEngine: InferenceEngine {
                         toolCallScanner = scanner
                     }
 
-                    var trimsAnswerStart = false
-                    func emitAnswer(_ text: String) {
-                        guard trimsAnswerStart else { emitText(text); return }
-                        let visible = String(text.drop(while: \.isNewline))
-                        guard !visible.isEmpty else { return }
-                        trimsAnswerStart = false
-                        emitText(visible)
-                    }
-
-                    func processBuffer(final: Bool) {
-                        while !buffer.isEmpty {
-                            let boundary = isThinking
-                                ? Self.firstMarker(Self.thinkingClosers, in: buffer)
-                                : [Self.firstMarker(Self.thinkingOpeners, in: buffer), Self.firstMarker(Self.strayThinkingClosers, in: buffer)]
-                                    .compactMap { $0 }.min { $0.lowerBound < $1.lowerBound }
-                            guard let boundary else {
-                                let held = final ? 0 : Self.thinkingMarkerHoldback
-                                guard buffer.count > held else { break }
-                                let cut = buffer.index(buffer.endIndex, offsetBy: -held)
-                                let piece = String(buffer[..<cut])
-                                buffer.removeSubrange(..<cut)
-                                if isThinking { emitReasoning(piece) } else { emitAnswer(piece) }
-                                break
+                    func route(_ segments: [ThinkingSplitter.Segment]) {
+                        for segment in segments {
+                            switch segment {
+                            case .reasoning(let text): emitReasoning(text)
+                            case .answer(let text): emitText(text)
                             }
-                            let leading = String(buffer[..<boundary.lowerBound])
-                            let opensThinking = !isThinking && Self.thinkingOpeners.contains(String(buffer[boundary]))
-                            if !leading.isEmpty {
-                                if isThinking { emitReasoning(leading) } else { emitAnswer(leading) }
-                            }
-                            buffer.removeSubrange(..<boundary.upperBound)
-                            if buffer.hasPrefix("\n") { buffer.removeFirst() }
-                            if isThinking, !opensThinking { trimsAnswerStart = true }
-                            isThinking = opensThinking
                         }
                     }
-                    
+
                     var stoppedAfterCall = false
                     var repetition = constraint == nil ? RepetitionGuard() : nil
                     var stoppedOnRepetition = false
@@ -957,8 +927,7 @@ public actor MLXInferenceEngine: InferenceEngine {
                         switch generation {
                         case .chunk(let text):
                             if firstTokenAt == nil { firstTokenAt = clock.now }
-                            buffer.append(text)
-                            processBuffer(final: false)
+                            route(splitter.feed(text))
                             if gate.isSaturated { await stopAfterCall(); break tokens }
                             if repetition?.shouldStop(after: text) == true {
                                 stoppedOnRepetition = true
@@ -968,11 +937,11 @@ public actor MLXInferenceEngine: InferenceEngine {
                         case .info(let info):
                             lastInfo = info
                         case .toolCall(let call):
-                            processBuffer(final: true)
+                            route(splitter.feed("", final: true))
                             if let chunk = gate.admit(Self.toolCallOutput(call)) { continuation.yield(chunk) }
                             if gate.isSaturated { await stopAfterCall(); break tokens }
                         case .rejectedToolCall(let rejection):
-                            processBuffer(final: true)
+                            route(splitter.feed("", final: true))
                             let chunk = Self.resolveRejectedToolCall(
                                 reason: rejection.reason.rawValue, toolName: rejection.toolName,
                                 callID: rejection.callID, rawText: rejection.rawTextPreview,
@@ -990,7 +959,7 @@ public actor MLXInferenceEngine: InferenceEngine {
                         }
                     }
                     
-                    processBuffer(final: true)
+                    route(splitter.feed("", final: true))
                     admit(toolCallScanner?.finish() ?? [])
                     let arguments = forcedToolArguments.trimmingCharacters(in: .whitespacesAndNewlines)
                     if let forcedTool, (try? JSONSerialization.jsonObject(with: Data(arguments.utf8))) is [String: Any] {
@@ -1004,9 +973,7 @@ public actor MLXInferenceEngine: InferenceEngine {
                     let completed = !(Task.isCancelled || stoppedAfterCall)
                     await Self.settle(launch, cancelled: !completed)
                     if completed, let session = constraint?.session { await self.recycle(session, epoch: epoch) }
-                    await self.keep(
-                        launch.cache, anchors: launch.anchors, tokens: Array(promptTokens.prefix(launch.exactTokens)),
-                        namespace: namespace, releasing: leaseSlot, epoch: epoch, mtpPrefix: launch.mtpPrefix)
+                    await self.keep(launch, tokens: promptTokens, namespace: namespace, releasing: leaseID, epoch: epoch)
                     if !Task.isCancelled {
                         let generationTime = (clock.now - startTime).inSeconds + launch.prefillSeconds
                         let timeToFirstToken = (firstTokenAt.map { ($0 - startTime).inSeconds } ?? 0) + launch.prefillSeconds
@@ -1270,21 +1237,19 @@ public actor MLXInferenceEngine: InferenceEngine {
             + (skipped > 0 ? "; \(skipped) paths skipped that could not be written within the \(deadline) deadline" : ""))
     }
 
-    private func keep(
-        _ cache: PromptCache?, anchors: [PromptCache] = [], tokens: [Int], namespace: String?,
-        releasing lease: PromptCacheLeaseSlot, epoch: Int, mtpPrefix: MTPPrefix? = nil
-    ) {
-        _ = lease.take()
-        guard epoch == modelEpoch, let namespace else { return }
+    private func keep(_ launch: GenerationLaunch?, tokens prompt: [Int], namespace: String?, releasing lease: Int, epoch: Int) {
+        leases[lease] = nil
+        guard epoch == modelEpoch, let namespace, let launch else { return }
+        let (tokens, anchors) = (Array(prompt.prefix(launch.exactTokens)), launch.anchors)
         for anchor in anchors {
             promptCaches.store(namespace, tokens: Array(tokens.prefix(anchor.tokenCount)), cache: anchor)
         }
         if let bytes = anchors.first.flatMap(RecurrentSnapshot.init(of:))?.bytes {
             logger.info("Recurrent snapshots before the boundary at prompt tokens \(anchors.map(\.tokenCount)): \(bytes >> 10) KB each")
         }
-        if let cache {
+        if let cache = launch.cache {
             promptCaches.store(namespace, tokens: Array(tokens.prefix(cache.tokenCount)), cache: cache)
-            if let mtpPrefix {
+            if let mtpPrefix = launch.mtpPrefix {
                 mtpPrefixes.removeAll { $0.namespace == namespace }
                 mtpPrefixes.append((namespace, Array(tokens.prefix(cache.tokenCount)), mtpPrefix))
                 mtpPrefixes = Array(mtpPrefixes.suffix(Self.mtpPrefixLimit))
@@ -1294,6 +1259,16 @@ public actor MLXInferenceEngine: InferenceEngine {
 }
 
 extension MLXInferenceEngine {
+    func readPromptCaches<R: Sendable>(_ read: @Sendable (PromptCacheTree) throws -> R) rethrows -> R {
+        try read(promptCaches)
+    }
+
+    fileprivate func hold(_ lease: consuming PromptCacheLease?) -> Int {
+        leaseCount += 1
+        leases[leaseCount] = PromptCacheLeaseSlot(lease)
+        return leaseCount
+    }
+
     static func launch(
         input: LMInput, reuse: (cache: PromptCache, reusedTokens: Int)?, cuts: [Int] = [], keepsCache: Bool, boundary: Int,
         blend: (store: CacheBlendStore, namespace: String)? = nil, batch: BatchedDecoder? = nil,

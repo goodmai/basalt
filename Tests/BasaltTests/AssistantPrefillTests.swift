@@ -373,7 +373,7 @@ struct AssistantPrefillConstraintTests {
         }
         guard case .invalidRequestStructure(let details)? = error else { Issue.record("\(String(describing: error))"); return }
         #expect(details.contains("prefill"))
-        #expect(pinCount(await engine.promptCaches) == 0)
+        #expect(await engine.readPromptCaches(pinCount) == 0)
     }
 
     @Test("A forced tool call that does not assemble returns only the continuation as text, not the prefill again")
