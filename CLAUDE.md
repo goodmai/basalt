@@ -75,6 +75,6 @@ All code modifications must pass these deterministic CLI verification gates befo
 ## 5. Pre-Completion Definition of Done (DoD)
 1. Target architecture and module boundaries comply with `swift-64-architecture` and `ponytail`.
 2. Zero warnings on `swift build -Xswiftc -warnings-as-errors` and zero new comments (`swift scripts/check_no_new_comments.swift origin/main`).
-3. No new function over CCN 15 / 60 lines of code / 6 parameters, no type body over 200 lines of code, no extension over 150, no file over 600 lines; nothing already over a limit grows (`swift scripts/check_size_limits.swift origin/main --impact`, CONTRIBUTING "Size and complexity"). Code follows the value core / actor shell split (CONTRIBUTING "Value core, actor shell").
+3. No new function over CCN 15 / 60 lines of code / 6 parameters, no new type body over 200 lines of code (legacy types aim for ≤ 450), no extension over 150, no file over 600 lines; nothing already over a limit grows (`swift scripts/check_size_limits.swift origin/main --impact`, CONTRIBUTING "Size and complexity"). Code follows the value core / actor shell split (CONTRIBUTING "Value core, actor shell").
 4. All unit and parameterized `@Test` suites pass under `swift test --parallel`.
 5. Self-review completed against `swift-64-pr-review` (5 Gates) and `ponytail-review`.

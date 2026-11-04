@@ -47,12 +47,12 @@ Measured with lizard, which reports per function the cyclomatic complexity (CCN)
 | Unit | Limit |
 |---|---|
 | Function | CCN ≤ 15 (aim for ≤ 10), ≤ 60 lines of code, ≤ 6 parameters |
-| Type body (`struct`, `enum`, `class`, `actor`, `protocol`) | ≤ 200 lines of code: a core type or a state type |
+| Type body (`struct`, `enum`, `class`, `actor`, `protocol`) | New type: ≤ 200 lines of code (a core type or a state type). A type that existed on 2026-11-04 aims for ≤ 450. Any type over 200 must not grow. |
 | Extension body | ≤ 150 lines of code |
 | File | ≤ 600 lines (aim for ≤ 400) |
 
 - **CI enforces the ratchet**: `scripts/check_size_limits.swift` runs lizard on the base and head versions of every changed Swift file (`.github/workflows/size-limits.yml`). Run it locally with `swift scripts/check_size_limits.swift origin/main`; `--impact` adds the share of functions the change touched and the CCN sum and peak before and after, for the PR description.
-- **Type and extension bodies are counted** in lines of code (comments, strings and blank lines don't count) by the same script. On 2026-11-04, 21 types were over 200 lines and no extension was over 150 (`swift scripts/check_size_limits.swift --inventory` lists them). A type over the limit splits into a value core and an extension per concern, each extension within 150, not into a second type that shares the same state.
+- **Type and extension bodies are counted** in lines of code (comments, strings and blank lines don't count) by the same script. A type older than 2026-11-04 that is over 200 is legacy. It may stay up to 450 and only has to stop growing. Refactoring targets the legacy types over 450, which `swift scripts/check_size_limits.swift --inventory` lists. A type that needs to shrink splits into a value core plus one extension per concern, each extension within 150. It does not split into a second type that shares the same state.
 - **New code stays within the limits.** Tests follow the function limits; a test file may be longer than 600 lines.
 - **Code already over a limit does not get worse.** On 2026-11-04 that was 6 files over 600 lines, 20 functions over CCN 15 and 20 over 60 lines (#284). A change that touches one of them must not make it longer or more complex. A change that adds a branch to one first splits it.
 - **Split along the seams the code already has.** A `switch` case or an engine mode becomes its own function or type, and a stage of a long function becomes a method named after what it does. Cutting a function into `part1`/`part2` to get under the number does not count.
