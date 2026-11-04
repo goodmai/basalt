@@ -1563,16 +1563,9 @@ public actor MLXInferenceEngine: InferenceEngine {
             }
         }
     }
+}
 
-    static func zonedCache(
-        params: GenerateParameters, zones: KVZones?, precision: KVPrecision?, model: any LanguageModel
-    ) throws -> (cache: [any KVCache], params: GenerateParameters)? {
-        guard let zones, let precision else { return nil }
-        var exact = params
-        exact.kvBits = nil
-        return (ZonedKVCache.replacingFullAttention(try model.newCache(parameters: exact), zones: zones, precision: precision), exact)
-    }
-
+extension MLXInferenceEngine {
     static func launch(
         input: LMInput, reuse: (cache: PromptCache, reusedTokens: Int)?, cuts: [Int] = [], keepsCache: Bool, boundary: Int,
         blend: (store: CacheBlendStore, namespace: String)? = nil, batch: BatchedDecoder? = nil,
@@ -1583,144 +1576,20 @@ public actor MLXInferenceEngine: InferenceEngine {
         kvPrecision: KVPrecision? = nil,
         mtpDrafter: MTPDrafter? = nil, mtpBlockSize: Int = 4, mtpPrefix: MTPPrefix? = nil
     ) throws -> GenerationLaunch {
-        let started = ContinuousClock.now
+        let start = GenerationLauncher(input: input, params: params, components: components, tools: tools, context: context, started: .now)
         if let mtpDrafter, !carriesMoreThanTokens(input) {
-            let reused = reuse?.reusedTokens ?? 0
-            let stateful = mtpDrafter.model as? any StatefulMTPDrafterModel
-            let staged = keepsCache && stateful != nil && boundary >= reused && boundary < input.text.tokens.dim(-1)
-            var cache: PromptCache?
-            var drafterState: MTPDrafterState?
-            var kept: (cache: PromptCache, prefix: MTPPrefix)?
-            if staged, let stateful {
-                let prompt = try reuse?.cache ?? PromptCache(context.model.newCache(parameters: params))
-                var state = mtpPrefix?.state ?? stateful.makeState(parameters: params)
-                if boundary > reused {
-                    let head = input.text.tokens[.ellipsis, reused ..< boundary]
-                    var emit = LMOutput.State()
-                    emit[mtpEmitFlagKey] = true
-                    let output = context.model(LMInput.Text(tokens: head)[text: .newAxis], cache: prompt.layers, state: emit)
-                    if let hidden = output.state?[mtpLastHiddenStatesKey] {
-                        stateful.prepareDrafterState(
-                            target: context.model, promptTokens: head, targetHidden: hidden, firstBonus: nil,
-                            positionDeltas: nil, state: &state, sampler: ArgMaxSampler())
-                    }
-                    eval(prompt.layers.flatMap { $0.innerState() } + state.cache.flatMap { $0.innerState() })
-                    kept = MTPPrefix(state).map { (prompt.snapshot(at: boundary, state: nil), $0) }
-                }
-                cache = prompt
-                drafterState = state
-            }
-            let start = staged ? boundary : 0
-            let iterator = try MTPSpeculativeTokenIterator(
-                input: LMInput(tokens: input.text.tokens[.ellipsis, start...]), mainModel: context.model,
-                drafter: mtpDrafter.model, mainCache: cache?.layers, drafterState: drafterState, parameters: params,
-                blockSize: mtpBlockSize, components: components)
-            let (stream, task, prefill) = Self.handOff(
-                promptTokenCount: input.text.tokens.dim(-1) - start, modelConfiguration: context.configuration,
-                tokenizer: context.tokenizer, iterator: iterator, tools: tools, toolCallPolicy: params.toolCallPolicy, since: started)
-            return GenerationLaunch(
-                stream: stream, task: task, cache: kept?.cache, reusedTokens: staged ? reused : 0,
-                prefillSeconds: prefill,
-                mtpPrefix: kept?.prefix)
+            return try start.mtp(
+                MTPRequest(drafter: mtpDrafter, blockSize: mtpBlockSize, prefix: mtpPrefix),
+                prompt: CachedPrompt(reuse: reuse, boundary: boundary), keepsCache: keepsCache)
         }
+        let lookup = LookupOptions(
+            speculative: speculativeLookup, recycling: speculativeRecycling, jumpForward: grammarJumpForward, routesExperts: routesExperts)
         guard keepsCache else {
-            if params.kvBits == nil, let cache = try kvHeadMask.map({ $0.replacingFullAttention(try context.model.newCache(parameters: params)) })
-                ?? questTopK.map({ QuestKVCache.replacingFullAttention(try context.model.newCache(parameters: params), topK: $0) }) {
-                let iterator = try TokenIterator(input: input, model: context.model, cache: cache, parameters: params, components: components)
-                let (stream, task, prefill) = Self.handOff(
-                    promptTokenCount: input.text.tokens.dim(-1), modelConfiguration: context.configuration,
-                    tokenizer: context.tokenizer, iterator: iterator, tools: tools, toolCallPolicy: params.toolCallPolicy, since: started)
-                return GenerationLaunch(stream: stream, task: task, cache: nil, reusedTokens: 0, prefillSeconds: prefill)
-            }
-            if let zoned = try zonedCache(params: params, zones: kvZones, precision: kvPrecision, model: context.model) {
-                let iterator = try TokenIterator(
-                    input: input, model: context.model, cache: zoned.cache, parameters: zoned.params, components: components)
-                let (stream, task, prefill) = Self.handOff(
-                    promptTokenCount: input.text.tokens.dim(-1), modelConfiguration: context.configuration,
-                    tokenizer: context.tokenizer, iterator: iterator, tools: tools, toolCallPolicy: zoned.params.toolCallPolicy, since: started)
-                return GenerationLaunch(stream: stream, task: task, cache: nil, reusedTokens: 0, prefillSeconds: prefill)
-            }
-            if let batch, let layers = BatchedTokenIterator.batchableLayers(try context.model.newCache(parameters: params)),
-               let seat = batch.seat() {
-                try components.validate(parameters: params)
-                let iterator = try BatchedTokenIterator(
-                    input: input, model: context.model, layers: layers, processor: components.logitProcessor(parameters: params),
-                    sampler: params.sampler(), prefill: params.prefill, maxTokens: params.maxTokens,
-                    stopTokens: batchStopTokens(context), seat: seat)
-                let (stream, task, prefill) = Self.handOff(
-                    promptTokenCount: input.text.tokens.dim(-1), modelConfiguration: context.configuration,
-                    tokenizer: context.tokenizer, iterator: iterator, tools: tools, toolCallPolicy: params.toolCallPolicy, since: started)
-                return GenerationLaunch(
-                    stream: stream, task: task, cache: nil, reusedTokens: 0, prefillSeconds: prefill)
-            }
-            let usesPromptLookupIterator = (speculativeLookup || grammarJumpForward)
-            let fresh = usesPromptLookupIterator && params.kvBits == nil && !carriesMoreThanTokens(input)
-                ? try context.model.newCache(parameters: params) : []
-            guard PromptLookupTokenIterator.supports(fresh, routesExperts: routesExperts) else {
-                let iterator = try TokenIterator(input: input, model: context.model, parameters: params, components: components)
-                let (stream, task, prefill) = Self.handOff(
-                    promptTokenCount: input.text.tokens.dim(-1), modelConfiguration: context.configuration,
-                    tokenizer: context.tokenizer, iterator: iterator, tools: tools, toolCallPolicy: params.toolCallPolicy, since: started)
-                return GenerationLaunch(stream: stream, task: task, cache: nil, reusedTokens: 0, prefillSeconds: prefill)
-            }
-            try components.validate(parameters: params)
-            let iterator = try PromptLookupTokenIterator(
-                input: input, context: input.text.tokens.asArray(Int.self), model: context.model, cache: fresh,
-                processor: components.makeProcessor(parameters: params), sampler: params.sampler(),
-                prefill: params.prefill, maxTokens: params.maxTokens, recyclesTokens: speculativeRecycling,
-                speculativeLookup: speculativeLookup, grammarJumpForward: grammarJumpForward)
-            let (stream, task, prefill) = Self.handOff(
-                promptTokenCount: input.text.tokens.dim(-1), modelConfiguration: context.configuration,
-                tokenizer: context.tokenizer, iterator: iterator, tools: tools, toolCallPolicy: params.toolCallPolicy, since: started)
-            return GenerationLaunch(stream: stream, task: task, cache: nil, reusedTokens: 0, prefillSeconds: prefill)
+            let plan = FreshCache.plan(
+                kvBitsSet: params.kvBits != nil, headMask: kvHeadMask, questTopK: questTopK, zones: kvZones, precision: kvPrecision)
+            return try start.fresh(plan, batch: batch, lookup: lookup)
         }
-        try components.validate(parameters: params)
-        var cache = try reuse?.cache ?? PromptCache(context.model.newCache(parameters: params))
-        let reused = reuse?.reusedTokens ?? 0
-        let blended = cache.isHybrid ? nil : blend.flatMap {
-            $0.store.extend(
-                cache, prompt: input.text.tokens.asArray(Int.self), from: reused, namespace: $0.namespace,
-                model: context.model, tokenizer: context.tokenizer, prefillStep: params.prefill.stepSize ?? 512)
-        }
-        try Task.checkCancellation()
-        if let blended {
-            cache = blended.cache
-        }
-        if let blended, blended.reused > 0 {
-            BasaltLogger(module: "CacheBlend").info(
-                "Blended \(blended.tokens) prompt tokens: \(blended.reused) from cached chunks, \(blended.recomputed) of them recomputed")
-        }
-        let head = try blended.map { (anchors: [PromptCache](), kept: $0.cache as PromptCache?, start: reused + $0.tokens, state: $0.cache.state) }
-            ?? HybridPrefixSnapshot.prefillHead(
-                input.text.tokens, into: cache, reused: reused, cuts: cuts, boundary: boundary, model: context.model, prefill: params.prefill)
-        let tail = LMInput(tokens: input.text.tokens[.ellipsis, head.start...])
-        let processor = components.makeProcessor(parameters: params).map {
-            PromptAnchoredProcessor(base: $0, prompt: input.text.tokens)
-        }
-        func launching(_ iterator: some TokenIteratorProtocol) -> GenerationLaunch {
-            let keepable = iterator.state == nil || cache.isHybrid
-            let (stream, task, prefill) = Self.handOff(
-                promptTokenCount: input.text.tokens.dim(-1) - reused, modelConfiguration: context.configuration,
-                tokenizer: context.tokenizer, iterator: iterator, tools: tools, toolCallPolicy: params.toolCallPolicy, since: started)
-            return GenerationLaunch(
-                stream: stream, task: task, cache: keepable ? head.kept : nil, anchors: keepable ? head.anchors : [],
-                reusedTokens: reused, exactTokens: blended?.exactPrefix ?? Int.max, prefillSeconds: prefill)
-        }
-        if let batch, head.state == nil, let layers = BatchedTokenIterator.batchableLayers(cache.layers), let seat = batch.seat() {
-            return launching(try BatchedTokenIterator(
-                input: tail, model: context.model, layers: layers, processor: processor, sampler: params.sampler(),
-                prefill: params.prefill, maxTokens: params.maxTokens, stopTokens: batchStopTokens(context), seat: seat))
-        }
-        if (speculativeLookup || grammarJumpForward), PromptLookupTokenIterator.supports(cache.layers, routesExperts: routesExperts) {
-            return launching(try PromptLookupTokenIterator(
-                input: tail, context: input.text.tokens.asArray(Int.self), model: context.model, cache: cache.layers,
-                state: head.state, processor: processor, sampler: params.sampler(), prefill: params.prefill,
-                maxTokens: params.maxTokens, recyclesTokens: speculativeRecycling,
-                speculativeLookup: speculativeLookup, grammarJumpForward: grammarJumpForward))
-        }
-        return launching(try TokenIterator(
-            input: tail, model: context.model, cache: cache.layers, state: head.state,
-            processor: processor, sampler: params.sampler(), prefill: params.prefill, maxTokens: params.maxTokens))
+        return try start.cached(CachedPrompt(reuse: reuse, cuts: cuts, boundary: boundary, blend: blend), batch: batch, lookup: lookup)
     }
 }
 
