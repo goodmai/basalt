@@ -97,15 +97,6 @@ struct Benchmark: AsyncParsableCommand {
     @Flag(name: .customLong("share"), help: "Export benchmark results to JSON format suitable for sharing (bench --share)")
     var share: Bool = false
 
-    func validate() throws {
-        if let conflict = KVPrecision.flagConflict(kvBitsSet: kvBits != nil, fixed: kvBits, zones: kvZones) {
-            throw ValidationError(conflict)
-        }
-        if let questTopK, !(1 ... 4096).contains(questTopK) {
-            throw ValidationError("--quest-top-k takes a number of blocks in 1...4096")
-        }
-    }
-
     func run() async throws {
         if wiredLimit { MLXInferenceEngine.renewsResidency() }
         let resolvedPath = resolveModelPath()
@@ -286,5 +277,16 @@ struct Benchmark: AsyncParsableCommand {
     private func resolveModelPath() -> String {
         // Shared with `serve` so both agree on which weights are loaded.
         ModelCache.resolve(repoId: model, quant: quant)?.path ?? model
+    }
+}
+
+extension Benchmark {
+    func validate() throws {
+        if let conflict = KVPrecision.flagConflict(kvBitsSet: kvBits != nil, fixed: kvBits, zones: kvZones) {
+            throw ValidationError(conflict)
+        }
+        if let questTopK, !(1 ... 4096).contains(questTopK) {
+            throw ValidationError("--quest-top-k takes a number of blocks in 1...4096")
+        }
     }
 }
