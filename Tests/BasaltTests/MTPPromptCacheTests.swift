@@ -107,7 +107,7 @@ struct MTPPromptCacheTests {
             .appending(path: "benchmarks/speculative-lookup/code.txt"), encoding: .utf8)
         let second = code + "\n\n[Assistant]: Applied the rename.\n\n[Tool result]: build ok, 12 tests passed. Now add a doc line for limit."
         func request(_ prompt: String, key: String?) -> GenerationRequest {
-            GenerationRequest(prompt: prompt, maxTokens: 64, temperature: 0, reasoningEffort: "none", cacheKey: key)
+            GenerationRequest(prompt: prompt, maxTokens: 64, temperature: 0).with { $0.reasoningEffort = "none"; $0.cacheKey = key }
         }
         _ = try await engine.generate(request: request(code, key: "e2e"))
         let warm = try await engine.generate(request: request(second, key: "e2e"))

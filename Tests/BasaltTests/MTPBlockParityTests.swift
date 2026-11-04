@@ -25,7 +25,7 @@ struct MTPBlockParityTests {
         let engine = MLXInferenceEngine(mtp: mtp, mtpBlockSize: blockSize)
         try await engine.load(modelPath: try #require(modelPath))
         return try await engine.generate(request: GenerationRequest(
-            prompt: prompt, maxTokens: 160, temperature: 0, reasoningEffort: "none"))
+            prompt: prompt, maxTokens: 160, temperature: 0).with { $0.reasoningEffort = "none" })
     }
 
     @Test("Greedy text with MTP blocks 2, 3 and 4 equals the text without MTP, and each block drafts",

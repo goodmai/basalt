@@ -315,7 +315,7 @@ struct NemotronHTests {
         let tools = [ToolDefinition(name: "get_weather"), ToolDefinition(name: "get_time")]
         var scanner = NemotronToolCallScanner()
         let scanned = scanner.feed(Self.twoCalls + " Done.") + scanner.finish()
-        var single = ToolCallGate(request: GenerationRequest(prompt: "p", tools: tools, toolChoice: ToolChoice(parallel: false)))
+        var single = ToolCallGate(request: GenerationRequest(prompt: "p", tools: tools).with { $0.toolChoice = ToolChoice(parallel: false) })
         let emitted = single.admit(scanned)
         #expect(single.isSaturated)
         #expect(emitted.count == 2)
@@ -493,7 +493,11 @@ struct NemotronHTests {
     ) -> GenerationRequest {
         GenerationRequest(
             prompt: "weather and time", maxTokens: maxTokens, temperature: 0,
-            tools: tools, toolChoice: toolChoice, cacheKey: cacheKey, assistantPrefix: assistantPrefix)
+            tools: tools).with {
+            $0.toolChoice = toolChoice
+            $0.cacheKey = cacheKey
+            $0.assistantPrefix = assistantPrefix
+        }
     }
 
     static func chunks(_ engine: MLXInferenceEngine, _ request: GenerationRequest) async throws -> ScriptedOutcome {

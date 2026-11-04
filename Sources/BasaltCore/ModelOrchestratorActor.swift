@@ -22,9 +22,20 @@ public actor ModelOrchestratorActor {
     private var memoryLimits: MemoryLimits?
     private var memoryRefusals = 0
 
+    public struct KVOptions: Sendable {
+        let precision: KVPrecision?
+        let adaptive: Bool
+        let zones: KVZones?
+
+        public init(precision: KVPrecision? = nil, adaptive: Bool = false, zones: KVZones? = nil) {
+            self.precision = precision
+            self.adaptive = adaptive
+            self.zones = zones
+        }
+    }
+
     public init(
-        engine: any InferenceEngine, maxTokens: Int = 65_536, kvPrecision: KVPrecision? = nil, adaptiveKVPrecision: Bool = false,
-        kvZones: KVZones? = nil, telemetry: TelemetryTracker = .shared,
+        engine: any InferenceEngine, maxTokens: Int = 65_536, kv: KVOptions = KVOptions(), telemetry: TelemetryTracker = .shared,
         gate: GenerationGate = GenerationGate(), sessionLog: SessionLogWriter? = nil
     ) {
         self.gate = gate
@@ -32,8 +43,8 @@ public actor ModelOrchestratorActor {
         self.engine = engine
         self.kv = KVPlanner(
             maxTokens: maxTokens,
-            precisionLadder: adaptiveKVPrecision ? KVCacheGeometry.adaptiveKVPrecisionLadder : [kvPrecision],
-            zones: kvZones)
+            precisionLadder: kv.adaptive ? KVCacheGeometry.adaptiveKVPrecisionLadder : [kv.precision],
+            zones: kv.zones)
         self.telemetry = telemetry
     }
 

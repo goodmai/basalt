@@ -113,7 +113,7 @@ struct HybridFallbackTests {
     @Test("Service requests (titles, summaries) never go to the cloud")
     func serviceRequestsStayLocal() async throws {
         let orchestrator = try await orchestrator(StubCloud(Self.cheap), freeMemory: { 1 << 20 })
-        #expect(await orchestrator.cloudFallbackReason(for: GenerationRequest(prompt: "t", maxTokens: 4_096, isServiceRequest: true)) == nil)
+        #expect(await orchestrator.cloudFallbackReason(for: GenerationRequest(prompt: "t", maxTokens: 4_096).with { $0.isServiceRequest = true }) == nil)
     }
 
     @Test("A failing cloud call is answered locally")
@@ -164,7 +164,7 @@ struct ModelRouterCloudFallbackTests {
             cloudClient: client ? try OpenRouterClient(
                 config: .init(apiKey: "k", baseURL: URL(string: "http://127.0.0.1:9")!, timeout: 2, maxRetries: 0),
                 configuration: StubURLProtocol.configuration) : nil,
-            strategy: .cloudOnly, costTracker: tracker, fallbackCloudModel: "openai/gpt-4-turbo")
+            options: .init(strategy: .cloudOnly, costTracker: tracker, fallbackCloudModel: "openai/gpt-4-turbo"))
     }
 
     @Test("No assessment without a cloud client, with tools, a response format or an assistant prefill, or once the budget is exhausted")

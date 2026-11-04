@@ -162,8 +162,7 @@ extension ServeCommand {
             localOrchestrator: orchestrator,
             cloudClient: try OpenRouterClient(config: .init(
                 apiKey: settings.apiKey, baseURL: settings.baseURL, timeout: 120, maxRetries: 2)),
-            strategy: .cloudOnly, costRouting: costRouting, costTracker: tracker,
-            fallbackCloudModel: settings.model)
+            options: .init(strategy: .cloudOnly, costRouting: costRouting, costTracker: tracker, fallbackCloudModel: settings.model))
     }
 
     func attachCloudFallback(to orchestrator: ModelOrchestratorActor, virtualKeys: [VirtualKey]) async throws {

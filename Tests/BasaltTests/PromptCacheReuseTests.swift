@@ -75,7 +75,7 @@ enum Conversation {
 }
 
 func greedy(_ prompt: String, key: String?, maxTokens: Int = 12) -> GenerationRequest {
-    GenerationRequest(prompt: prompt, maxTokens: maxTokens, temperature: 0, cacheKey: key)
+    GenerationRequest(prompt: prompt, maxTokens: maxTokens, temperature: 0).with { $0.cacheKey = key }
 }
 
 func commonPrefix(_ a: [Int], _ b: [Int]) -> Int {
@@ -218,7 +218,10 @@ struct PromptCacheReuseTests {
     @Test("An assistant prefix on an all-ones-mask VLM prompt is appended and answered like on a plain text processor")
     func assistantPrefixWithAllOnesMask() async throws {
         let request = GenerationRequest(
-            prompt: Conversation.firstTurn, maxTokens: 12, temperature: 0, cacheKey: "ns", assistantPrefix: "{\"")
+            prompt: Conversation.firstTurn, maxTokens: 12, temperature: 0).with {
+            $0.cacheKey = "ns"
+            $0.assistantPrefix = "{\""
+        }
         let vision = try await TinyModel.engine(processor: VisionStyleInputProcessor(padsFirstToken: false))
         let plain = try await TinyModel.engine()
         let prefixed = try await vision.generate(request: request)

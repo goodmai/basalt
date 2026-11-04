@@ -68,7 +68,7 @@ struct PriorityAndPrefillCancellationTests {
     @Test("Requests get their priority from where they come from")
     func priorityFromOrigin() {
         func priority(_ source: String, service: Bool = false) -> RequestPriority {
-            GenerationRequest(prompt: "p", isServiceRequest: service)
+            GenerationRequest(prompt: "p").with { $0.isServiceRequest = service }
                 .withOrigin(RequestOrigin(source: source, endpoint: "", stream: false)).priority
         }
         #expect(priority("cli") == .interactive)
@@ -104,7 +104,7 @@ struct PriorityAndPrefillCancellationTests {
           arguments: [nil, 0.5] as [Float?])
     func prefillStopsOnCancel(cacheBlendRatio: Float?) async throws {
         let engine = try await Self.tinyEngine(cacheBlendRatio: cacheBlendRatio)
-        let request = GenerationRequest(prompt: Self.longPrompt, maxTokens: 4, temperature: 0, cacheKey: "cancelled")
+        let request = GenerationRequest(prompt: Self.longPrompt, maxTokens: 4, temperature: 0).with { $0.cacheKey = "cancelled" }
         let chunks = PrefillChunks()
         let streamed = await MLXInferenceEngine.$prefillProgress.withValue({ processed, total in
             if chunks.record(processed, total) == 2 { withUnsafeCurrentTask { $0?.cancel() } }

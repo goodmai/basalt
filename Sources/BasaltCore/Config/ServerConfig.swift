@@ -34,11 +34,11 @@ public struct VirtualKey: Sendable, Equatable {
 /// Server configuration — parsed from CLI arguments and configuration files.
 public struct ServerConfig: Sendable {
     public let modelPath:   String
-    public let modelId:     String?   // HF repo ID for display, e.g. "mlx-community/Qwen3.5-4B-4bit"
+    public var modelId:     String?
     public let restPort:    Int
     public let host:        String
-    public let maxTokens:   Int
-    public let logLevel:    LogLevel
+    public var maxTokens:   Int = 65536
+    public var logLevel:    LogLevel = .info
     public let apiKey:      String?
     /// Server-wide request budget; nil means no rate limit.
     public let rateLimitPerMinute: Int?
@@ -103,34 +103,43 @@ public struct ServerConfig: Sendable {
         return prefix + hex
     }
 
+    public struct Access: Sendable {
+        let autoGenerateKeyIfMissing: Bool
+        let rateLimitPerMinute: Int?
+        let rateBurst: Int?
+        let allowedOrigins: [String]
+        let virtualKeys: [VirtualKey]
+
+        public init(
+            autoGenerateKeyIfMissing: Bool = false, rateLimitPerMinute: Int? = nil, rateBurst: Int? = nil,
+            allowedOrigins: [String] = [], virtualKeys: [VirtualKey] = []
+        ) {
+            self.autoGenerateKeyIfMissing = autoGenerateKeyIfMissing
+            self.rateLimitPerMinute = rateLimitPerMinute
+            self.rateBurst = rateBurst
+            self.allowedOrigins = allowedOrigins
+            self.virtualKeys = virtualKeys
+        }
+    }
+
     public init(
         modelPath: String,
-        modelId:   String?   = nil,
         restPort:  Int       = 8080,
         host:      String    = "127.0.0.1",
-        maxTokens: Int       = 65536,
-        logLevel:  LogLevel  = .info,
         apiKey:    String?   = nil,
-        autoGenerateKeyIfMissing: Bool = false,
-        rateLimitPerMinute: Int? = nil,
-        rateBurst: Int? = nil,
-        allowedOrigins: [String] = [],
-        virtualKeys: [VirtualKey] = []
+        access:    Access    = Access()
     ) throws {
         self.modelPath = modelPath
-        self.modelId   = modelId
         self.restPort  = restPort
         self.host      = host
-        self.maxTokens = maxTokens
-        self.logLevel  = logLevel
-        self.allowedOrigins = allowedOrigins
-        self.virtualKeys = virtualKeys
+        self.allowedOrigins = access.allowedOrigins
+        self.virtualKeys = access.virtualKeys
 
         self.apiKey = try Self.resolveApiKey(
-            host: host, apiKey: apiKey, autoGenerateKeyIfMissing: autoGenerateKeyIfMissing
+            host: host, apiKey: apiKey, autoGenerateKeyIfMissing: access.autoGenerateKeyIfMissing
         ).key
-        self.rateLimitPerMinute = Self.resolveRateLimit(host: host, requested: rateLimitPerMinute)
-        self.rateBurst = Self.resolveRateBurst(rateLimit: self.rateLimitPerMinute, requestedBurst: rateBurst)
+        self.rateLimitPerMinute = Self.resolveRateLimit(host: host, requested: access.rateLimitPerMinute)
+        self.rateBurst = Self.resolveRateBurst(rateLimit: self.rateLimitPerMinute, requestedBurst: access.rateBurst)
     }
 
     /// Off loopback a rate limit is on by default; an explicit 0 turns it off anywhere.
@@ -254,12 +263,5 @@ public struct ServerConfig: Sendable {
 }
 
 extension ServerConfig {
-    /// Default path used when no --model flag is provided.
-    public static let development = try! ServerConfig(
-        modelPath: "./models/gemma-4-e2b-it-4bit",
-        restPort:  8080,
-        host:      "127.0.0.1",
-        maxTokens: 65536,
-        logLevel:  .info
-    )
+    public static let development = try! ServerConfig(modelPath: "./models/gemma-4-e2b-it-4bit")
 }

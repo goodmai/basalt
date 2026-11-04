@@ -31,7 +31,7 @@ enum AgentTrace {
     }
 
     static func request(_ messages: [ChatMessageInput], key: String?) -> GenerationRequest {
-        GenerationRequest(prompt: ChatMessageInput.plainText(messages), maxTokens: 12, temperature: 0, cacheKey: key, messages: messages)
+        GenerationRequest(prompt: ChatMessageInput.plainText(messages), maxTokens: 12, temperature: 0, messages: messages).with { $0.cacheKey = key }
     }
 
     static func snapshots(_ tree: PromptCacheTree) -> (anchors: [Int], leaves: [Int]) {

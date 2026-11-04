@@ -23,12 +23,11 @@ public struct BradleyTerryRouter: Sendable, Codable {
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        try self.init(
-            strongEmbedding: try container.decode([Double].self, forKey: .strongEmbedding),
-            weakEmbedding: try container.decode([Double].self, forKey: .weakEmbedding),
-            weights: try container.decode([Double].self, forKey: .weights),
-            projection: try container.decode([[Double]].self, forKey: .projection)
-        )
+        let strong = try container.decode([Double].self, forKey: .strongEmbedding)
+        let weak = try container.decode([Double].self, forKey: .weakEmbedding)
+        let weights = try container.decode([Double].self, forKey: .weights)
+        let projection = try container.decode([[Double]].self, forKey: .projection)
+        try self.init(strongEmbedding: strong, weakEmbedding: weak, weights: weights, projection: projection)
     }
 
     public static func load(from url: URL) throws -> BradleyTerryRouter {

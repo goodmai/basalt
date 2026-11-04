@@ -76,8 +76,11 @@ enum ThinkingModel {
     }
 
     static func request(budget: Int?, maxTokens: Int, key: String? = nil, effort: String? = nil) -> GenerationRequest {
-        GenerationRequest(prompt: prompt, maxTokens: maxTokens, temperature: 0, reasoningEffort: effort,
-                          cacheKey: key, thinkingBudget: budget)
+        GenerationRequest(prompt: prompt, maxTokens: maxTokens, temperature: 0).with {
+            $0.reasoningEffort = effort
+            $0.cacheKey = key
+            $0.thinkingBudget = budget
+        }
     }
 }
 
@@ -141,7 +144,7 @@ struct ThinkingBudgetEngineTests {
     @Test("The transition headroom is checked only when the request leaves thinking on")
     func headroomIsValidatedOnlyWithThinkingOn() throws {
         let tight = { (effort: String?, thinking: Bool?) in
-            GenerationRequest(prompt: "x", maxTokens: 50, enableThinking: thinking, reasoningEffort: effort, thinkingBudget: 10)
+            GenerationRequest(prompt: "x", maxTokens: 50).with { $0.enableThinking = thinking; $0.reasoningEffort = effort; $0.thinkingBudget = 10 }
         }
         #expect(throws: BasaltError.self) { try tight(nil, true).validated() }
         #expect(throws: BasaltError.self) { try tight("low", nil).validated() }

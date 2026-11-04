@@ -30,8 +30,7 @@ struct ModelRouterTests {
         return ModelRouter(
             localOrchestrator: orchestrator,
             cloudClient: client,
-            strategy: strategy,
-            mockAvailableRAM: mockRAM
+            options: .init(strategy: strategy, mockAvailableRAM: mockRAM)
         )
     }
     
@@ -42,7 +41,7 @@ struct ModelRouterTests {
         return ModelRouter(
             localOrchestrator: orchestrator,
             cloudClient: nil,
-            strategy: .auto
+            options: .init(strategy: .auto)
         )
     }
 
@@ -154,8 +153,7 @@ struct ModelRouterTests {
         let router = ModelRouter(
             localOrchestrator: orchestrator,
             cloudClient: nil,
-            strategy: .auto,
-            mockAvailableRAM: 1 * 1024 * 1024 * 1024
+            options: .init(strategy: .auto, mockAvailableRAM: 1 * 1024 * 1024 * 1024)
         )
         
         await router.registerLocalModel(id: "large-local", estimatedRAM: 4000)
@@ -250,7 +248,7 @@ struct ModelRouterTests {
     func warmSessionKeepsModel() async throws {
         let router = ModelRouter(
             localOrchestrator: ModelOrchestratorActor(engine: MockInferenceEngine()),
-            cloudClient: nil, costRouting: try costRouting()
+            cloudClient: nil, options: .init(costRouting: try costRouting())
         )
         let session = ModelRouter.RoutingContext(sessionId: "agent-1")
         let longEasy = GenerationRequest(prompt: Array(repeating: BradleyTerryRouterTests.easyWord, count: 8_000).joined(separator: " "))
@@ -275,7 +273,7 @@ struct ModelRouterTests {
         let client = try unreachableCloudClient()
         let router = ModelRouter(
             localOrchestrator: ModelOrchestratorActor(engine: engine), cloudClient: client,
-            costTracker: tracker, localFallbackModel: "small-local"
+            options: .init(costTracker: tracker, localFallbackModel: "small-local")
         )
         let request = GenerationRequest(prompt: "hi")
         let context = ModelRouter.RoutingContext(sessionId: "agent-1")
@@ -294,7 +292,7 @@ struct ModelRouterTests {
         await tracker.setMaxBudget(0, for: .virtualKey("team-a"))
         let client = try unreachableCloudClient()
         let router = ModelRouter(
-            localOrchestrator: ModelOrchestratorActor(engine: MockInferenceEngine()), cloudClient: client, costTracker: tracker
+            localOrchestrator: ModelOrchestratorActor(engine: MockInferenceEngine()), cloudClient: client, options: .init(costTracker: tracker)
         )
         await #expect(throws: BasaltError.self) {
             _ = try await router.route(request: GenerationRequest(prompt: "hi"), preferredModel: "gpt-4", context: .init(virtualKey: "team-a"))
@@ -308,7 +306,7 @@ struct ModelRouterTests {
         try await engine.load(modelPath: "small-local")
         let client = try unreachableCloudClient()
         let router = ModelRouter(
-            localOrchestrator: ModelOrchestratorActor(engine: engine), cloudClient: client, localFallbackModel: "small-local"
+            localOrchestrator: ModelOrchestratorActor(engine: engine), cloudClient: client, options: .init(localFallbackModel: "small-local")
         )
         let response = try await router.route(request: GenerationRequest(prompt: "hi"), preferredModel: "gpt-4")
         #expect(response.generatedText == "Mock response")
@@ -322,7 +320,7 @@ struct ModelRouterTests {
         let client = try unreachableCloudClient()
         let router = ModelRouter(
             localOrchestrator: ModelOrchestratorActor(engine: engine), cloudClient: client,
-            mockAvailableRAM: 16 * 1024 * 1024 * 1024, costRouting: try costRouting()
+            options: .init(mockAvailableRAM: 16 * 1024 * 1024 * 1024, costRouting: try costRouting())
         )
         await router.registerLocalModel(id: "small-local", estimatedRAM: 4000)
         let response = try await router.route(
@@ -337,7 +335,7 @@ struct ModelRouterTests {
     func failingOutcomesEscalate() async throws {
         let router = ModelRouter(
             localOrchestrator: ModelOrchestratorActor(engine: MockInferenceEngine()), cloudClient: nil,
-            costRouting: .init(policy: StickyRoutingPolicy(strongModel: "gpt-4", weakModel: "small-local"), scorer: try BradleyTerryRouterTests.borderlineScorer())
+            options: .init(costRouting: .init(policy: StickyRoutingPolicy(strongModel: "gpt-4", weakModel: "small-local"), scorer: try BradleyTerryRouterTests.borderlineScorer()))
         )
         let tool = GenerationRequest(prompt: BradleyTerryRouterTests.hardWord, tools: [ToolDefinition(name: "t")])
         let general = GenerationRequest(prompt: BradleyTerryRouterTests.hardWord)
@@ -354,7 +352,7 @@ struct ModelRouterTests {
     func autoRouteUsesReportedModelKey() async throws {
         let router = ModelRouter(
             localOrchestrator: ModelOrchestratorActor(engine: MockInferenceEngine()), cloudClient: nil,
-            costRouting: .init(policy: StickyRoutingPolicy(strongModel: "big", weakModel: "local"), scorer: try BradleyTerryRouterTests.borderlineScorer())
+            options: .init(costRouting: .init(policy: StickyRoutingPolicy(strongModel: "big", weakModel: "local"), scorer: try BradleyTerryRouterTests.borderlineScorer()))
         )
         let tool = GenerationRequest(prompt: BradleyTerryRouterTests.hardWord, tools: [ToolDefinition(name: "t")])
         #expect(await router.resolveModel(nil, request: tool, context: .init()) == "local")
@@ -368,7 +366,7 @@ struct ModelRouterTests {
     func noOutcomesKeepRouting() async throws {
         let router = ModelRouter(
             localOrchestrator: ModelOrchestratorActor(engine: MockInferenceEngine()), cloudClient: try unreachableCloudClient(),
-            costRouting: try costRouting(), fallbackCloudModel: "gpt-4"
+            options: .init(costRouting: try costRouting(), fallbackCloudModel: "gpt-4")
         )
         let request = GenerationRequest(prompt: BradleyTerryRouterTests.hardWord)
         let expected = try BradleyTerryRouterTests.scorer().strongWinProbability(for: request.prompt)
@@ -388,7 +386,7 @@ struct ModelRouterTests {
         let client = try unreachableCloudClient()
         let router = ModelRouter(
             localOrchestrator: orchestrator, cloudClient: client,
-            costRouting: try costRouting(), fallbackCloudModel: "gpt-4"
+            options: .init(costRouting: try costRouting(), fallbackCloudModel: "gpt-4")
         )
         await orchestrator.setCloudFallback(router, freeMemory: { 64 << 30 })
         let request = GenerationRequest(prompt: "p", tools: [ToolDefinition(name: "t")])

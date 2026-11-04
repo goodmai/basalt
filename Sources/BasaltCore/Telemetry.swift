@@ -1,19 +1,19 @@
 import Foundation
 
 public struct ServerTelemetrySnapshot: Codable, Sendable, Equatable {
-    public let timestamp: Date
-    public let tokensPerSecond: Double
-    public let timeToFirstToken: Double
-    public let totalRequests: Int
-    public let totalTokensGenerated: Int
-    public let activeRequests: Int
-    public let gpuActiveBytes: Int64
-    public let gpuPeakBytes: Int64
-    public let totalRAMGB: Int
-    public let availableRAMGB: Double
-    public let modelRAMMB: Int
-    public let chipModel: String
-    public let gpuName: String
+    public var timestamp = Date()
+    public var tokensPerSecond = 0.0
+    public var timeToFirstToken = 0.0
+    public var totalRequests = 0
+    public var totalTokensGenerated = 0
+    public var activeRequests = 0
+    public var gpuActiveBytes: Int64 = 0
+    public var gpuPeakBytes: Int64 = 0
+    public var totalRAMGB = 0
+    public var availableRAMGB = 0.0
+    public var modelRAMMB = 0
+    public var chipModel = "Apple Silicon"
+    public var gpuName = "Metal GPU"
     public var hybridAnchors: Int?
     public var hybridAnchorBytes: Int64?
     public var memory: MemoryTelemetry?
@@ -23,35 +23,7 @@ public struct ServerTelemetrySnapshot: Codable, Sendable, Equatable {
     public var health: HealthTelemetry?
     public var activeDeltas: [OverlayInfo]?
 
-    public init(
-        timestamp: Date = Date(),
-        tokensPerSecond: Double = 0.0,
-        timeToFirstToken: Double = 0.0,
-        totalRequests: Int = 0,
-        totalTokensGenerated: Int = 0,
-        activeRequests: Int = 0,
-        gpuActiveBytes: Int64 = 0,
-        gpuPeakBytes: Int64 = 0,
-        totalRAMGB: Int = 0,
-        availableRAMGB: Double = 0.0,
-        modelRAMMB: Int = 0,
-        chipModel: String = "Apple Silicon",
-        gpuName: String = "Metal GPU"
-    ) {
-        self.timestamp = timestamp
-        self.tokensPerSecond = tokensPerSecond
-        self.timeToFirstToken = timeToFirstToken
-        self.totalRequests = totalRequests
-        self.totalTokensGenerated = totalTokensGenerated
-        self.activeRequests = activeRequests
-        self.gpuActiveBytes = gpuActiveBytes
-        self.gpuPeakBytes = gpuPeakBytes
-        self.totalRAMGB = totalRAMGB
-        self.availableRAMGB = availableRAMGB
-        self.modelRAMMB = modelRAMMB
-        self.chipModel = chipModel
-        self.gpuName = gpuName
-    }
+    public init() {}
 
     public var formattedStatsLine: String {
         let tps = String(format: "%.1f", tokensPerSecond)
@@ -149,21 +121,19 @@ public actor TelemetryTracker {
         }
         let availGB = Double(await profiler.currentAvailableRAM()) / 1_073_741_824.0
 
-        var snapshot = ServerTelemetrySnapshot(
-            timestamp: Date(),
-            tokensPerSecond: lastTokensPerSecond,
-            timeToFirstToken: lastTTFT,
-            totalRequests: totalRequests,
-            totalTokensGenerated: totalTokens,
-            activeRequests: activeRequests,
-            gpuActiveBytes: gpuActiveBytes,
-            gpuPeakBytes: gpuPeakBytes,
-            totalRAMGB: hw.totalRAMGB,
-            availableRAMGB: (availGB * 10).rounded() / 10,
-            modelRAMMB: modelRAMMB,
-            chipModel: hw.chipModel,
-            gpuName: hw.gpuName
-        )
+        var snapshot = ServerTelemetrySnapshot()
+        snapshot.tokensPerSecond = lastTokensPerSecond
+        snapshot.timeToFirstToken = lastTTFT
+        snapshot.totalRequests = totalRequests
+        snapshot.totalTokensGenerated = totalTokens
+        snapshot.activeRequests = activeRequests
+        snapshot.gpuActiveBytes = gpuActiveBytes
+        snapshot.gpuPeakBytes = gpuPeakBytes
+        snapshot.totalRAMGB = hw.totalRAMGB
+        snapshot.availableRAMGB = (availGB * 10).rounded() / 10
+        snapshot.modelRAMMB = modelRAMMB
+        snapshot.chipModel = hw.chipModel
+        snapshot.gpuName = hw.gpuName
         if draftTokens > 0 {
             snapshot.draftTokens = draftTokens
             snapshot.acceptedDraftTokens = acceptedDraftTokens

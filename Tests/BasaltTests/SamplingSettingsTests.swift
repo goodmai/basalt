@@ -55,7 +55,7 @@ struct SamplingDefaultsTests {
     @Test("Request values win over the model's, the server's --top-k wins over generation_config")
     func requestOverrides() async throws {
         let engine = try await engine(defaults: modelDefaults)
-        let (params, _, _, _) = await engine.sampling(for: GenerationRequest(prompt: "p", temperature: 0.2, topP: 0.5, topK: 5))
+        let (params, _, _, _) = await engine.sampling(for: GenerationRequest(prompt: "p", temperature: 0.2, topP: 0.5).with { $0.topK = 5 })
         #expect(params.temperature == 0.2)
         #expect(params.topP == 0.5)
         #expect(params.topK == 5)
@@ -68,13 +68,13 @@ struct SamplingDefaultsTests {
     func repetitionPenalty() async throws {
         let engine = try await engine(defaults: SamplingDefaults(), repetitionPenalty: 1.1)
         #expect(await engine.sampling(for: GenerationRequest(prompt: "p")).0.repetitionPenalty == 1.1)
-        #expect(await engine.sampling(for: GenerationRequest(prompt: "p", repetitionPenalty: 1.05)).0.repetitionPenalty == 1.05)
+        #expect(await engine.sampling(for: GenerationRequest(prompt: "p").with { $0.repetitionPenalty = 1.05 }).0.repetitionPenalty == 1.05)
     }
 
     @Test("presence_penalty counts only generated tokens: the prompt, fed through the prompt-anchored processor, is not penalised")
     func presencePenaltySkipsThePrompt() async throws {
         let engine = try await engine(defaults: SamplingDefaults())
-        let (params, components, _, _) = await engine.sampling(for: GenerationRequest(prompt: "p", presencePenalty: 1.5))
+        let (params, components, _, _) = await engine.sampling(for: GenerationRequest(prompt: "p").with { $0.presencePenalty = 1.5 })
         #expect(params.presencePenalty == nil)
         var processor = PromptAnchoredProcessor(
             base: try #require(components.logitProcessor(parameters: params)), prompt: MLXArray([Int32(2), 3]))
@@ -114,24 +114,24 @@ struct SamplingRequestValidationTests {
     }
 
     @Test("Out-of-range sampling parameters are rejected as invalid requests", arguments: [
-        GenerationRequest(prompt: "p", topK: -1),
-        GenerationRequest(prompt: "p", presencePenalty: 2.5),
-        GenerationRequest(prompt: "p", presencePenalty: -3),
-        GenerationRequest(prompt: "p", repetitionPenalty: 0),
-        GenerationRequest(prompt: "p", repetitionPenalty: 2.5),
-        GenerationRequest(prompt: "p", thinkingBudget: -1),
-        GenerationRequest(prompt: "p", thinkingBudget: GenerationRequest.maximumTokens + 1),
+        GenerationRequest(prompt: "p").with { $0.topK = -1 },
+        GenerationRequest(prompt: "p").with { $0.presencePenalty = 2.5 },
+        GenerationRequest(prompt: "p").with { $0.presencePenalty = -3 },
+        GenerationRequest(prompt: "p").with { $0.repetitionPenalty = 0 },
+        GenerationRequest(prompt: "p").with { $0.repetitionPenalty = 2.5 },
+        GenerationRequest(prompt: "p").with { $0.thinkingBudget = -1 },
+        GenerationRequest(prompt: "p").with { $0.thinkingBudget = GenerationRequest.maximumTokens + 1 },
         GenerationRequest(prompt: "p", topP: 1.5),
-        GenerationRequest(prompt: "p", dryMultiplier: -0.1),
-        GenerationRequest(prompt: "p", dryMultiplier: .infinity),
-        GenerationRequest(prompt: "p", dryBase: 0.9),
-        GenerationRequest(prompt: "p", dryAllowedLength: 0),
-        GenerationRequest(prompt: "p", drySequenceBreakers: [""]),
-        GenerationRequest(prompt: "p", drySequenceBreakers: Array(repeating: "x", count: GenerationRequest.maximumSequenceBreakers + 1)),
-        GenerationRequest(prompt: "p", xtcThreshold: 1.1),
-        GenerationRequest(prompt: "p", xtcThreshold: -0.1),
-        GenerationRequest(prompt: "p", xtcProbability: 1.5),
-        GenerationRequest(prompt: "p", xtcProbability: .nan),
+        GenerationRequest(prompt: "p").with { $0.dryMultiplier = -0.1 },
+        GenerationRequest(prompt: "p").with { $0.dryMultiplier = .infinity },
+        GenerationRequest(prompt: "p").with { $0.dryBase = 0.9 },
+        GenerationRequest(prompt: "p").with { $0.dryAllowedLength = 0 },
+        GenerationRequest(prompt: "p").with { $0.drySequenceBreakers = [""] },
+        GenerationRequest(prompt: "p").with { $0.drySequenceBreakers = Array(repeating: "x", count: GenerationRequest.maximumSequenceBreakers + 1) },
+        GenerationRequest(prompt: "p").with { $0.xtcThreshold = 1.1 },
+        GenerationRequest(prompt: "p").with { $0.xtcThreshold = -0.1 },
+        GenerationRequest(prompt: "p").with { $0.xtcProbability = 1.5 },
+        GenerationRequest(prompt: "p").with { $0.xtcProbability = .nan },
     ])
     func rejectsOutOfRange(_ request: GenerationRequest) {
         #expect {
@@ -144,10 +144,10 @@ struct SamplingRequestValidationTests {
 
     @Test("thinking_budget needs max_tokens to hold the transition headroom after the answer reserve")
     func thinkingBudgetNeedsRoomInMaxTokens() throws {
-        _ = try GenerationRequest(prompt: "p", maxTokens: 85, thinkingBudget: 10).validated()
+        _ = try GenerationRequest(prompt: "p", maxTokens: 85).with { $0.thinkingBudget = 10 }.validated()
         _ = try GenerationRequest(prompt: "p", maxTokens: 84).validated()
         #expect {
-            _ = try GenerationRequest(prompt: "p", maxTokens: 84, thinkingBudget: 10).validated()
+            _ = try GenerationRequest(prompt: "p", maxTokens: 84).with { $0.thinkingBudget = 10 }.validated()
         } throws: { error in
             guard case .invalidRequestStructure(let details) = error as? BasaltError else { return false }
             return details.contains("thinking_budget")
@@ -156,11 +156,23 @@ struct SamplingRequestValidationTests {
 
     @Test("Boundary values are accepted")
     func acceptsBoundaries() throws {
-        _ = try GenerationRequest(prompt: "p", topK: 0, presencePenalty: -2, repetitionPenalty: 2, thinkingBudget: 0).validated()
-        _ = try GenerationRequest(prompt: "p", presencePenalty: 2, thinkingBudget: GenerationRequest.maximumTokens).validated()
-        _ = try GenerationRequest(prompt: "p", dryMultiplier: 0, dryBase: 1, dryAllowedLength: 1, drySequenceBreakers: [],
-                                  xtcThreshold: 0, xtcProbability: 0).validated()
-        _ = try GenerationRequest(prompt: "p", dryMultiplier: 0.8, dryBase: 1.75, dryAllowedLength: 2,
-                                  drySequenceBreakers: DRYPenalty.defaultSequenceBreakers, xtcThreshold: 1, xtcProbability: 1).validated()
+        _ = try GenerationRequest(prompt: "p").with { $0.topK = 0; $0.presencePenalty = -2; $0.repetitionPenalty = 2; $0.thinkingBudget = 0 }.validated()
+        _ = try GenerationRequest(prompt: "p").with { $0.presencePenalty = 2; $0.thinkingBudget = GenerationRequest.maximumTokens }.validated()
+        _ = try GenerationRequest(prompt: "p").with {
+            $0.dryMultiplier = 0
+            $0.dryBase = 1
+            $0.dryAllowedLength = 1
+            $0.drySequenceBreakers = []
+            $0.xtcThreshold = 0
+            $0.xtcProbability = 0
+        }.validated()
+        _ = try GenerationRequest(prompt: "p").with {
+            $0.dryMultiplier = 0.8
+            $0.dryBase = 1.75
+            $0.dryAllowedLength = 2
+            $0.drySequenceBreakers = DRYPenalty.defaultSequenceBreakers
+            $0.xtcThreshold = 1
+            $0.xtcProbability = 1
+        }.validated()
     }
 }

@@ -228,18 +228,27 @@ public actor SessionLogWriter {
     private var requestSessions: [String: String] = [:]
     private var resumedPaths: [String: URL] = [:]
 
+    public struct Idle: Sendable {
+        let timeout: TimeInterval
+        let clock: @Sendable () -> Date
+
+        public init(timeout: TimeInterval = 1_800, clock: @escaping @Sendable () -> Date = { Date() }) {
+            self.timeout = timeout
+            self.clock = clock
+        }
+    }
+
     public init(
         mode: SessionLogMode, directory: URL, bufferLimit: Int = 1_024, redacts: Bool = true,
-        defaultSession: String = SessionLogWriter.processSession(), idleTimeout: TimeInterval = 1_800,
-        clock: @escaping @Sendable () -> Date = { Date() }
+        defaultSession: String = SessionLogWriter.processSession(), idle: Idle = Idle()
     ) {
-        self.idleTimeout = idleTimeout
+        self.idleTimeout = idle.timeout
         self.mode = mode
         self.redacts = redacts
         self.directory = directory
         self.bufferLimit = bufferLimit
         self.defaultSession = defaultSession
-        self.clock = clock
+        self.clock = idle.clock
     }
 
     public var isEnabled: Bool { mode != .off && !disabled }

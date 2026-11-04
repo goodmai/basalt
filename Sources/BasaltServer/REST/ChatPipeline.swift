@@ -118,31 +118,32 @@ struct ChatPipeline: Sendable {
     func prepare(_ input: Input, headers: HTTPFields) throws -> Prepared {
         let prompt = ChatMessageInput.plainText(input.chat)
         let service = ServiceRequestDetector.prepare(prompt: prompt, maxTokens: input.maxTokens, headers: headers)
-        let request = GenerationRequest(
+        var built = GenerationRequest(
             prompt: service.prompt,
             maxTokens: input.maxTokens,
             temperature: input.sampling.temperature,
             topP: input.sampling.topP,
-            minP: input.sampling.minP,
-            dynamicTemperature: input.sampling.dynamicTemperature,
-            reasoningEffort: input.reasoningEffort,
-            isServiceRequest: service.isService,
             tools: input.tools.tools,
-            toolChoice: input.tools.choice,
-            cacheKey: PromptCacheKey.resolve(isService: service.isService, headers: headers),
-            messages: service.prompt == prompt ? input.chat : nil,
-            topK: input.sampling.topK,
-            presencePenalty: input.sampling.presencePenalty,
-            repetitionPenalty: input.sampling.repetitionPenalty,
-            thinkingBudget: input.thinkingBudget,
-            responseFormat: input.responseFormat,
-            dryMultiplier: input.sampling.antiRepetition.dryMultiplier,
-            dryBase: input.sampling.antiRepetition.dryBase,
-            dryAllowedLength: input.sampling.antiRepetition.dryAllowedLength,
-            drySequenceBreakers: input.sampling.antiRepetition.drySequenceBreakers,
-            xtcThreshold: input.sampling.antiRepetition.xtcThreshold,
-            xtcProbability: input.sampling.antiRepetition.xtcProbability
-        ).withSpeculativeLookup(input.sampling.speculativeLookup)
+            messages: service.prompt == prompt ? input.chat : nil
+        )
+        built.minP = input.sampling.minP
+        built.dynamicTemperature = input.sampling.dynamicTemperature
+        built.reasoningEffort = input.reasoningEffort
+        built.isServiceRequest = service.isService
+        built.toolChoice = input.tools.choice
+        built.cacheKey = PromptCacheKey.resolve(isService: service.isService, headers: headers)
+        built.topK = input.sampling.topK
+        built.presencePenalty = input.sampling.presencePenalty
+        built.repetitionPenalty = input.sampling.repetitionPenalty
+        built.thinkingBudget = input.thinkingBudget
+        built.responseFormat = input.responseFormat
+        built.dryMultiplier = input.sampling.antiRepetition.dryMultiplier
+        built.dryBase = input.sampling.antiRepetition.dryBase
+        built.dryAllowedLength = input.sampling.antiRepetition.dryAllowedLength
+        built.drySequenceBreakers = input.sampling.antiRepetition.drySequenceBreakers
+        built.xtcThreshold = input.sampling.antiRepetition.xtcThreshold
+        built.xtcProbability = input.sampling.antiRepetition.xtcProbability
+        let request = built.withSpeculativeLookup(input.sampling.speculativeLookup)
             .withGrammarJumpForward(input.sampling.grammarJumpForward)
             .routed(by: headers).withOrigin(RequestOrigin(source: source, endpoint: endpoint, stream: input.stream))
         do {

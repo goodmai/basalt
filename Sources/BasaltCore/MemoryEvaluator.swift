@@ -8,11 +8,11 @@ public struct MemoryAssessment: Sendable, Codable, Equatable {
     public let totalPhysicalRAMBytes: Int64
     public let fitsInMemory: Bool
     public let fitLevel: FitLevel
-    public let maxContextBudgetTokens: Int
-    public let maxPromptBudgetTokens: Int
-    public let warning: String?
-    public let recommendation: String?
-    public let memoryBudgetBytes: Int64
+    public var maxContextBudgetTokens = 0
+    public var maxPromptBudgetTokens = 0
+    public var warning: String?
+    public var recommendation: String?
+    public var memoryBudgetBytes: Int64 = 0
 
     public var requiredRAMFormatted: String {
         formatRAMBytes(requiredRAMBytes)
@@ -27,31 +27,16 @@ public struct MemoryAssessment: Sendable, Codable, Equatable {
     }
 
     public init(
-        modelId: String,
-        modelName: String,
-        requiredRAMBytes: Int64,
-        availableRAMBytes: Int64,
-        totalPhysicalRAMBytes: Int64,
-        fitsInMemory: Bool,
-        fitLevel: FitLevel,
-        maxContextBudgetTokens: Int,
-        maxPromptBudgetTokens: Int? = nil,
-        warning: String? = nil,
-        recommendation: String? = nil,
-        memoryBudgetBytes: Int64 = 0
+        modelId: String, modelName: String, requiredRAMBytes: Int64, availableRAMBytes: Int64, totalPhysicalRAMBytes: Int64,
+        fitLevel: FitLevel
     ) {
         self.modelId = modelId
         self.modelName = modelName
         self.requiredRAMBytes = requiredRAMBytes
         self.availableRAMBytes = availableRAMBytes
         self.totalPhysicalRAMBytes = totalPhysicalRAMBytes
-        self.fitsInMemory = fitsInMemory
+        self.fitsInMemory = fitLevel != .tooTight
         self.fitLevel = fitLevel
-        self.maxContextBudgetTokens = maxContextBudgetTokens
-        self.maxPromptBudgetTokens = maxPromptBudgetTokens ?? maxContextBudgetTokens
-        self.warning = warning
-        self.recommendation = recommendation
-        self.memoryBudgetBytes = memoryBudgetBytes
     }
 
     public var contextBudgetLine: String {
@@ -184,14 +169,17 @@ public actor MemoryEvaluator {
         } else {
             warning = nil
         }
-        return MemoryAssessment(
+        var result = MemoryAssessment(
             modelId: id, modelName: name, requiredRAMBytes: required, availableRAMBytes: resources.availableRAM,
-            totalPhysicalRAMBytes: resources.totalRAM, fitsInMemory: fits, fitLevel: level,
-            maxContextBudgetTokens: contextBudget(
-                budget: budget, weights: footprint.weights, kv: footprint.kv, kvPrecision: footprint.kvPrecision, kvZones: footprint.kvZones),
-            maxPromptBudgetTokens: promptBudget(
-                budget: budget, weights: footprint.weights, kv: footprint.kv, kvPrecision: footprint.kvPrecision, kvZones: footprint.kvZones),
-            warning: warning, recommendation: fits ? nil : recommendation, memoryBudgetBytes: budget)
+            totalPhysicalRAMBytes: resources.totalRAM, fitLevel: level)
+        result.maxContextBudgetTokens = contextBudget(
+            budget: budget, weights: footprint.weights, kv: footprint.kv, kvPrecision: footprint.kvPrecision, kvZones: footprint.kvZones)
+        result.maxPromptBudgetTokens = promptBudget(
+            budget: budget, weights: footprint.weights, kv: footprint.kv, kvPrecision: footprint.kvPrecision, kvZones: footprint.kvZones)
+        result.warning = warning
+        result.recommendation = fits ? nil : recommendation
+        result.memoryBudgetBytes = budget
+        return result
     }
 
     private func evaluateLocal(

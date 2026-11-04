@@ -152,9 +152,9 @@ struct GenerationResponseCodableTests {
 
     @Test("minP outside [0, 1] is rejected")
     func minPRange() throws {
-        #expect(throws: BasaltError.self) { try GenerationRequest(prompt: "hi", minP: 1.5).validated() }
-        #expect(throws: BasaltError.self) { try GenerationRequest(prompt: "hi", minP: -0.1).validated() }
-        #expect(try GenerationRequest(prompt: "hi", minP: 0).validated().minP == 0)
+        #expect(throws: BasaltError.self) { try GenerationRequest(prompt: "hi").with { $0.minP = 1.5 }.validated() }
+        #expect(throws: BasaltError.self) { try GenerationRequest(prompt: "hi").with { $0.minP = -0.1 }.validated() }
+        #expect(try GenerationRequest(prompt: "hi").with { $0.minP = 0 }.validated().minP == 0)
     }
 
     @Test("ErrorResponse Codable round-trip")
@@ -308,20 +308,20 @@ struct CodingAgentDTOTests {
     @Test("MLXInferenceEngine builds templateContext with request reasoningEffort")
     func buildTemplateContextFromRequest() {
         let qwen = QwenProfile()
-        let reqLow = GenerationRequest(prompt: "hello", reasoningEffort: "low")
+        let reqLow = GenerationRequest(prompt: "hello").with { $0.reasoningEffort = "low" }
         let ctxLow = MLXInferenceEngine.buildTemplateContext(request: reqLow, profile: qwen)
         #expect(ctxLow?["reasoning_effort"] as? String == "low")
 
-        let reqNone = GenerationRequest(prompt: "hello", reasoningEffort: "none")
+        let reqNone = GenerationRequest(prompt: "hello").with { $0.reasoningEffort = "none" }
         let ctxNone = MLXInferenceEngine.buildTemplateContext(request: reqNone, profile: qwen)
         #expect(ctxNone?["enable_thinking"] as? Bool == false)
 
-        let reqDisable = GenerationRequest(prompt: "hello", enableThinking: false)
+        let reqDisable = GenerationRequest(prompt: "hello").with { $0.enableThinking = false }
         let ctxDisable = MLXInferenceEngine.buildTemplateContext(request: reqDisable, profile: qwen)
         #expect(ctxDisable?["enable_thinking"] as? Bool == false)
 
         // Request-level effort overrides engine default
-        let reqHigh = GenerationRequest(prompt: "hello", reasoningEffort: "high")
+        let reqHigh = GenerationRequest(prompt: "hello").with { $0.reasoningEffort = "high" }
         let ctxOverride = MLXInferenceEngine.buildTemplateContext(
             request: reqHigh,
             defaultReasoningEffort: "low",

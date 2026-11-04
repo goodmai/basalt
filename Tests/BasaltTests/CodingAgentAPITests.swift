@@ -188,7 +188,7 @@ struct CodingAgentAPITests {
 
     @Test("Effort levels are mapped per template: Qwen gets xhigh/low, unknown templates the name as sent")
     func effortMappingPerProfile() {
-        let request = { (effort: String?) in GenerationRequest(prompt: "p", reasoningEffort: effort) }
+        let request = { (effort: String?) in GenerationRequest(prompt: "p").with { $0.reasoningEffort = effort } }
         let qwen = QwenProfile()
         #expect(MLXInferenceEngine.buildTemplateContext(request: request("high"), profile: qwen)?["reasoning_effort"] as? String == "xhigh")
         #expect(MLXInferenceEngine.buildTemplateContext(request: request("minimal"), profile: qwen)?["reasoning_effort"] as? String == "low")
@@ -307,12 +307,12 @@ struct CodingAgentAPITests {
                 == ["shell", "read", "\n[tool call to rm rejected: undeclared]"])
         var none = ToolCallGate(request: GenerationRequest(prompt: "p"))
         #expect(names([none.admit(call("shell"))]) == ["\n[tool call to shell rejected: undeclared]"])
-        var disabled = ToolCallGate(request: GenerationRequest(prompt: "p", tools: tools, toolChoice: ToolChoice(callsDisabled: true)))
+        var disabled = ToolCallGate(request: GenerationRequest(prompt: "p", tools: tools).with { $0.toolChoice = ToolChoice(callsDisabled: true) })
         #expect(names([disabled.admit(call("shell"))]) == ["\n[tool call to shell rejected: tool_choice is none]"])
-        var forced = ToolCallGate(request: GenerationRequest(prompt: "p", tools: tools, toolChoice: ToolChoice(forcedTool: "read")))
+        var forced = ToolCallGate(request: GenerationRequest(prompt: "p", tools: tools).with { $0.toolChoice = ToolChoice(forcedTool: "read") })
         #expect(names([forced.admit(call("shell")), forced.admit(call("read"))])
                 == ["\n[tool call to shell rejected: tool_choice is read]", "read"])
-        var single = ToolCallGate(request: GenerationRequest(prompt: "p", tools: tools, toolChoice: ToolChoice(parallel: false)))
+        var single = ToolCallGate(request: GenerationRequest(prompt: "p", tools: tools).with { $0.toolChoice = ToolChoice(parallel: false) })
         #expect(names([single.admit(call("shell")), single.admit(call("read"))]) == ["shell", "dropped"])
         var passthrough = ToolCallGate(request: GenerationRequest(prompt: "p"))
         #expect(names([passthrough.admit(StreamChunk.text("hi"))]) == ["hi"])

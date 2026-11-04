@@ -108,7 +108,7 @@ struct SamplerAndGreedyParityTests {
         let orchestrator = ModelOrchestratorActor(engine: MLXInferenceEngine())
         try await orchestrator.loadModel(path: path)
 
-        let request = GenerationRequest(prompt: prompt, maxTokens: 64, temperature: 0.0, topP: 1.0, enableThinking: false)
+        let request = GenerationRequest(prompt: prompt, maxTokens: 64, temperature: 0.0, topP: 1.0).with { $0.enableThinking = false }
         let first = try await orchestrator.generate(request: request)
         let second = try await orchestrator.generate(request: request)
 

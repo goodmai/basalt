@@ -79,8 +79,11 @@ enum Prefill {
 
     static func request(_ messages: [ChatMessageInput], key: String? = nil, thinking: Bool? = true, prefix: String? = nil, maxTokens: Int = 12) -> GenerationRequest {
         GenerationRequest(
-            prompt: ChatMessageInput.plainText(messages), maxTokens: maxTokens, temperature: 0, enableThinking: thinking,
-            cacheKey: key, messages: messages, assistantPrefix: prefix)
+            prompt: ChatMessageInput.plainText(messages), maxTokens: maxTokens, temperature: 0, messages: messages).with {
+            $0.enableThinking = thinking
+            $0.cacheKey = key
+            $0.assistantPrefix = prefix
+        }
     }
 
     static func engine(_ recorder: RenderRecorder, promptCacheBytes: Int? = nil) async throws -> MLXInferenceEngine {
@@ -343,8 +346,11 @@ struct AssistantPrefillConstraintTests {
     ) -> GenerationRequest {
         let messages = [ChatMessageInput(role: .user, text: "Report the mode."), ChatMessageInput(role: .assistant, text: prefill)]
         return GenerationRequest(
-            prompt: "Report the mode.", maxTokens: 300, temperature: 0, tools: tools, toolChoice: choice,
-            cacheKey: key, messages: messages, responseFormat: format)
+            prompt: "Report the mode.", maxTokens: 300, temperature: 0, tools: tools, messages: messages).with {
+            $0.toolChoice = choice
+            $0.cacheKey = key
+            $0.responseFormat = format
+        }
     }
 
     @Test("A schema-valid prefill is committed into the grammar, so prefill plus continuation is one valid document", arguments: [
@@ -630,8 +636,7 @@ struct AssistantPrefillRealModelTests {
     static func request(_ question: String, prefill: String, format: ResponseFormat? = nil) -> GenerationRequest {
         GenerationRequest(
             prompt: "", maxTokens: 96, temperature: 0,
-            messages: [ChatMessageInput(role: .user, text: question), ChatMessageInput(role: .assistant, text: prefill)],
-            responseFormat: format)
+            messages: [ChatMessageInput(role: .user, text: question), ChatMessageInput(role: .assistant, text: prefill)]).with { $0.responseFormat = format }
     }
 
     static func firstObject(_ text: String) -> [String: Any]? {

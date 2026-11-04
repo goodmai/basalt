@@ -33,12 +33,7 @@ struct FitScorerTests {
             family: .qwen,
             task: .chat,
             modality: .text,
-            ramMB: 2300,
-            contextWindow: 32768,
-            quantization: "4-bit",
-            quality: 0.85,
-            totalParameters: 4.0,
-            activeParameters: 4.0
+            spec: .init(ramMB: 2300, contextWindow: 32768, quantization: "4-bit", quality: 0.85, totalParameters: 4.0, activeParameters: 4.0)
         )
         
         let score = await scorer.score(model)
@@ -56,12 +51,7 @@ struct FitScorerTests {
             family: .qwen,
             task: .chat,
             modality: .text,
-            ramMB: 14500,
-            contextWindow: 32768,
-            quantization: "4-bit",
-            quality: 0.92,
-            totalParameters: 27.0,
-            activeParameters: 27.0
+            spec: .init(ramMB: 14500, contextWindow: 32768, quantization: "4-bit", quality: 0.92, totalParameters: 27.0, activeParameters: 27.0)
         )
         
         let score = await scorer.score(model)
@@ -81,12 +71,7 @@ struct FitScorerTests {
             family: .gemma,
             task: .chat,
             modality: .text,
-            ramMB: 14500,
-            contextWindow: 262144,
-            quantization: "4-bit",
-            quality: 0.93,
-            totalParameters: 26.0,
-            activeParameters: 4.0
+            spec: .init(ramMB: 14500, contextWindow: 262144, quantization: "4-bit", quality: 0.93, totalParameters: 26.0, activeParameters: 4.0)
         )
 
         // Dense model: 26B total parameters, 26B active parameters
@@ -96,12 +81,7 @@ struct FitScorerTests {
             family: .gemma,
             task: .chat,
             modality: .text,
-            ramMB: 14500,
-            contextWindow: 262144,
-            quantization: "4-bit",
-            quality: 0.93,
-            totalParameters: 26.0,
-            activeParameters: 26.0
+            spec: .init(ramMB: 14500, contextWindow: 262144, quantization: "4-bit", quality: 0.93, totalParameters: 26.0, activeParameters: 26.0)
         )
 
         #expect(moeModel.isMoE == true)
@@ -144,12 +124,7 @@ struct FitScorerTests {
             family: .qwen,
             task: .chat,
             modality: .text,
-            ramMB: 2300,
-            contextWindow: 32768,
-            quantization: "4-bit",
-            quality: 0.85,
-            totalParameters: 4.0,
-            activeParameters: 4.0
+            spec: .init(ramMB: 2300, contextWindow: 32768, quantization: "4-bit", quality: 0.85, totalParameters: 4.0, activeParameters: 4.0)
         )
 
         let score = await scorer.score(model)
@@ -168,12 +143,7 @@ struct FitScorerTests {
             family: .qwen,
             task: .code,
             modality: .text,
-            ramMB: 4100,
-            contextWindow: 128000,
-            quantization: "4-bit",
-            quality: 0.89,
-            totalParameters: 7.0,
-            activeParameters: 7.0
+            spec: .init(ramMB: 4100, contextWindow: 128000, quantization: "4-bit", quality: 0.89, totalParameters: 7.0, activeParameters: 7.0)
         )
 
         let result = ModelFitAnalyzer.evaluateQuantizations(model: model, resources: resources, benchmarkProfile: HardwareBenchmarkProfile())
@@ -269,12 +239,7 @@ struct FitScorerTests {
             family: .qwen,
             task: .code,
             modality: .text,
-            ramMB: 5000,
-            contextWindow: 32768,
-            quantization: "4-bit",
-            quality: 0.90,
-            totalParameters: 7.0,
-            activeParameters: 7.0
+            spec: .init(ramMB: 5000, contextWindow: 32768, quantization: "4-bit", quality: 0.90, totalParameters: 7.0, activeParameters: 7.0)
         )
 
         let result = ModelFitAnalyzer.evaluateQuantizations(
@@ -303,12 +268,7 @@ struct FitScorerTests {
             family: .llama,
             task: .chat,
             modality: .text,
-            ramMB: 40000,
-            contextWindow: 4096,
-            quantization: "4-bit",
-            quality: 0.95,
-            totalParameters: 70.0,
-            activeParameters: 70.0
+            spec: .init(ramMB: 40000, contextWindow: 4096, quantization: "4-bit", quality: 0.95, totalParameters: 70.0, activeParameters: 70.0)
         )
 
         let result = ModelFitAnalyzer.evaluateQuantizations(
@@ -347,12 +307,7 @@ struct FitScorerTests {
             family: .qwen,
             task: .code,
             modality: .text,
-            ramMB: 8000,
-            contextWindow: 32768,
-            quantization: "8-bit",
-            quality: 0.90,
-            totalParameters: 7.0,
-            activeParameters: 7.0
+            spec: .init(ramMB: 8000, contextWindow: 32768, quantization: "8-bit", quality: 0.90, totalParameters: 7.0, activeParameters: 7.0)
         )
 
         let score = await scorer.score(model8bit)
@@ -431,8 +386,9 @@ struct FitScorerTests {
         #expect(await roomy.score(small).optimalQuantization == "8-bit")
 
         let huge = ModelDefinition(id: "org/huge-400b", name: "Huge 400B", family: small.family, task: small.task,
-                                   modality: small.modality, ramMB: 220_000, contextWindow: 32768,
-                                   quantization: "4-bit", quality: 0.95, totalParameters: 400, activeParameters: 400)
+                                   modality: small.modality,
+                                   spec: .init(ramMB: 220_000, contextWindow: 32768, quantization: "4-bit", quality: 0.95,
+                                               totalParameters: 400, activeParameters: 400))
         let tight = FitScorer(profile: createMockResources(ramGB: 16, availableGB: 10, chip: "M2"),
                               benchmarkProfile: HardwareBenchmarkProfile())
         #expect(await tight.score(huge).optimalQuantization == nil)
@@ -461,8 +417,9 @@ struct FitScorerTests {
         #expect(FitScorer.kvReadGB(qwen, contextTokens: 0) == 0.01)
 
         let model = ModelDefinition(id: "nobody/uncached-model", name: "Uncached", family: .qwen,
-                                    task: .chat, modality: .text, ramMB: 4000, contextWindow: 32768,
-                                    quantization: "4bit", quality: 0.8, totalParameters: 7, activeParameters: 7)
+                                    task: .chat, modality: .text,
+                                    spec: .init(ramMB: 4000, contextWindow: 32768, quantization: "4bit", quality: 0.8,
+                                                totalParameters: 7, activeParameters: 7))
         let resources = createMockResources(ramGB: 32, availableGB: 24, chip: "M2 Max")
         let short = ModelFitAnalyzer.evaluateQuantizations(model: model, resources: resources, lMin: 4096,
                                                            benchmarkProfile: HardwareBenchmarkProfile())
