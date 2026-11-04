@@ -58,12 +58,7 @@ struct DefaultTokenizerLoader: TokenizerLoader {
 
 public actor MLXInferenceEngine: InferenceEngine {
 
-    private(set) var container: ModelContainer?
-
-    /// Resolved from the loaded model's config.json. Supplies per-family sampling
-    /// defaults that the caller did not override.
-    private var profile: any ModelProfile = GenericProfile()
-    private var samplingDefaults = SamplingDefaults()
+    private(set) var state = EngineState.unloaded(0)
     private let logger = BasaltLogger(module: "MLXInferenceEngine")
 
     /// Chat-template knob for models with a reasoning budget (Qwen3.8: xhigh | medium | low).
@@ -83,9 +78,7 @@ public actor MLXInferenceEngine: InferenceEngine {
     private let wiresWorkingSet: Bool
     private var wiredTicket: WiredMemoryTicket?
     private let kvHeadSplit: Double?
-    private(set) var kvHeadMask: KVHeadMask?
     private let questTopK: Int?
-    private(set) var questApplies = false
 
     /// Multiplicative penalty on recently emitted tokens. Left nil, nothing damps
     /// a degenerate loop: a 2-bit model answered "127 + 458" by repeating the
@@ -115,7 +108,6 @@ public actor MLXInferenceEngine: InferenceEngine {
     private var promptCacheFullBudget: ByteCount
     private(set) var appliedMemoryDirective = MemoryDirective.relaxed
     private var kvMemoryBudget: Int64?
-    private var controlTokens = ControlTokenGuard.none
 
     public var kvMemoryBudgetBytes: Int64? { kvMemoryBudget }
     public var hybridAnchorUsage: (count: Int, bytes: Int64)? {
@@ -125,9 +117,6 @@ public actor MLXInferenceEngine: InferenceEngine {
     }
     public var supportsKVZones: Bool { modelAttendsThroughZones }
     public var supportsKVEviction: Bool { modelPrefillsInChunks }
-    private var modelAttendsThroughZones = false
-    private var modelPrefillsInChunks = false
-    private(set) var valueRotationUnavailable = false
 
     public func promptTokenCount(for request: GenerationRequest) async -> Int? {
         guard let container else { return nil }
@@ -136,10 +125,6 @@ public actor MLXInferenceEngine: InferenceEngine {
     }
     private let configuredPromptCacheBytes: ByteCount?
     private let hybridAnchors: Int
-    private var modelEpoch = 0
-    private var modelIsHybrid: Bool?
-    private var modelHasRecurrentState: Bool?
-    private var modelRoutesExperts: Bool?
     private var templateSuffixes: [String: Int] = [:]
     private var grammarVocabulary: Result<GrammarVocabulary, ConstraintUnavailable>?
     private var sequenceBreakers: (strings: [String], ids: Set<Int>)?
@@ -152,13 +137,8 @@ public actor MLXInferenceEngine: InferenceEngine {
     private let mtp: Bool
     private let mtpBlockSize: Int
     private let experimentalSamplers: Bool
-    private var hasMTPDrafter = false
     private let grammarJumpForward: Bool
     private(set) var promptCacheDisk: PromptCacheDiskStore?
-    private var modelFingerprint: String?
-    private var modelDescription = ""
-    private var modelCacheLayout: [String]?
-    private var modelSupportsMultiTokenForward: Bool?
     private let batchSlots: Int
     private var batchDecoder: BatchedDecoder?
 
@@ -234,8 +214,8 @@ public actor MLXInferenceEngine: InferenceEngine {
     }
 
     func probeKVHeads(directory: URL) async {
-        kvHeadMask = nil
         guard let ratio = kvHeadSplit, let container else { return }
+        let epoch = modelEpoch
         guard (try? await container.perform({ try ZonedKVCache.modelAttendsThroughCache($0.model) })) == true else {
             logger.warn("--kv-head-split does not apply to this model: its attention does not go through the cache")
             return
@@ -246,8 +226,9 @@ public actor MLXInferenceEngine: InferenceEngine {
                 logger.warn("--kv-head-split does not apply to this model: no small set of heads carries its long-range recall (the median head's ablation score is above \(KVHeadMask.concentration) of the top one), so dropping any of them loses facts; the KV cache stays dense")
                 return
             }
-            kvHeadMask = KVHeadMask.classify(scores: scores, ratio: ratio)
-            let kept = kvHeadMask?.retrieval.map(\.count).reduce(0, +) ?? 0
+            let mask = KVHeadMask.classify(scores: scores, ratio: ratio)
+            state = .reduce(state, .learned(epoch) { $0.kvHeadMask = mask })
+            let kept = mask.retrieval.map(\.count).reduce(0, +)
             logger.info("KV head split: \(kept) of \(scores.map(\.count).reduce(0, +)) KV heads keep the whole context; the rest keep \(HeadSplitKVCache.sinkTokens) sink and \(HeadSplitKVCache.windowTokens) recent tokens")
         } catch {
             logger.warn("--kv-head-split: scoring the heads failed (\(error.localizedDescription)); the KV cache stays dense")
@@ -255,8 +236,8 @@ public actor MLXInferenceEngine: InferenceEngine {
     }
 
     func probeQuest() async {
-        questApplies = false
         guard let questTopK, let container else { return }
+        let epoch = modelEpoch
         do {
             guard try await container.perform({ try QuestKVCache.modelAttendsThroughCache($0.model) }) else {
                 logger.warn("--quest-top-k does not apply to this model: its full-attention layers read the whole cache through cache.update (Gemma 4 does), so they cannot attend to a selection of blocks; attention stays dense")
@@ -266,7 +247,7 @@ public actor MLXInferenceEngine: InferenceEngine {
             logger.warn("--quest-top-k: probing the model failed (\(error.localizedDescription)); attention stays dense")
             return
         }
-        questApplies = true
+        state = .reduce(state, .learned(epoch) { $0.questApplies = true })
         logger.info("Quest: a decode step attends to \(QuestKVCache.sinkTokens) sink tokens, the last \(QuestKVCache.windowTokens) or more, and the \(questTopK) best \(QuestKVCache.blockTokens)-token blocks between them")
     }
 
@@ -293,25 +274,30 @@ public actor MLXInferenceEngine: InferenceEngine {
 
     func probeKVZones() async {
         guard kvZones != nil, let container else { return }
+        let epoch = modelEpoch
         let precision = kvPrecision ?? .q8
         let probed = (try? await container.perform { try ZonedKVCache.probe($0.model, precision: precision) }) ?? (attendsThroughCache: false, rotatesValues: false)
-        modelAttendsThroughZones = probed.attendsThroughCache
-        if let zones = kvZones, zones.evictedMiddleFraction > 0, modelAttendsThroughZones {
+        let attends = probed.attendsThroughCache
+        var chunks = false
+        if let zones = kvZones, zones.evictedMiddleFraction > 0, attends {
             do {
-                modelPrefillsInChunks = try await container.perform {
+                chunks = try await container.perform {
                     try ZonedKVCache.prefillsWithinWindow($0.model, zones: zones, precision: precision, prefill: GenerateParameters().prefill)
                 }
-                if !modelPrefillsInChunks {
+                if !chunks {
                     logger.warn("--kv-evict does not apply to this model: it prefills a prompt longer than the recent window in one pass, so its zoned cache keeps every token and is sized that way.")
                 }
             } catch {
                 logger.warn("--kv-evict is off for this model: its prefill probe failed (\(error)), so its zoned cache keeps every token and is sized that way.")
             }
         }
-        valueRotationUnavailable = modelAttendsThroughZones && precision.rotatesValues && !probed.rotatesValues
-        if !modelAttendsThroughZones {
+        let rotationUnavailable = attends && precision.rotatesValues && !probed.rotatesValues
+        state = .reduce(state, .learned(epoch) {
+            ($0.attendsThroughZones, $0.prefillsInChunks, $0.valueRotationUnavailable) = (attends, chunks, rotationUnavailable)
+        })
+        if !attends {
             logger.warn("--kv-zones does not apply to this model: its attention reads the whole cache through update(), or its head dimension has no quantization group. Its quantized requests use uniform --kv-bits, k8v4 as 8-bit\((kvZones?.evictedMiddleFraction ?? 0) > 0 ? ", and --kv-evict keeps every token" : "").")
-        } else if valueRotationUnavailable {
+        } else if rotationUnavailable {
             logger.warn("--kv-bits \(precision) cannot rotate this model's value heads: the Hadamard transform is its own inverse only for head dimensions 2^k and 12·2^k. It runs as k8v4.")
         }
     }
@@ -321,37 +307,34 @@ public actor MLXInferenceEngine: InferenceEngine {
         samplingDefaults: SamplingDefaults = SamplingDefaults(), controlTokens: ControlTokenGuard = .none,
         fingerprint: String? = nil, modelDescription: String = ""
     ) {
-        self.container = container
-        modelFingerprint = fingerprint
-        self.modelDescription = modelDescription
-        modelCacheLayout = nil
-        modelSupportsMultiTokenForward = nil
+        state = .reduce(state, .loadStarted(path: modelDescription))
+        attach(container, facts: ModelFacts(
+            profile: profile, samplingDefaults: samplingDefaults, controlTokens: controlTokens,
+            fingerprint: fingerprint, description: modelDescription), epoch: modelEpoch)
+    }
+
+    @discardableResult
+    func attach(_ container: ModelContainer, facts: ModelFacts, epoch: ModelEpoch) -> Bool {
+        state = .reduce(state, .loadFinished(epoch, container, facts))
+        guard state.loaded?.epoch == epoch else { return false }
         batchDecoder = nil
-        self.controlTokens = controlTokens
         grammarVocabulary = nil
         sequenceBreakers = nil
         idleGrammars = [:]
         idleGrammarRecency = []
-        self.profile = profile
-        self.samplingDefaults = samplingDefaults
         let workingSet = PromptCacheBudget.gpuWorkingSet()
         let weights = ByteCount(Memory.activeMemory)
         let budget = configuredPromptCacheBytes ?? PromptCacheBudget.automatic(workingSet: workingSet, weights: weights)
         kvMemoryBudget = max(0, workingSet - weights - budget).rawValue
-        modelAttendsThroughZones = false
-        modelPrefillsInChunks = false
         let blendBytes = cacheBlendRatio == nil ? 0 : budget / 2
         promptCaches = PromptCacheTree(byteBudget: budget - blendBytes, anchorLimit: max(1, hybridAnchors))
         mtpPrefixes.removeAll()
         promptCacheFullBudget = budget - blendBytes
         appliedMemoryDirective = .relaxed
         cacheBlend = cacheBlendRatio.map { CacheBlendStore(ratio: $0, byteBudget: Int(blendBytes.rawValue)) }
-        modelEpoch += 1
-        modelIsHybrid = nil
-        modelHasRecurrentState = nil
-        modelRoutesExperts = nil
         templateSuffixes = [:]
         logger.info("Prompt cache budget: \(promptCaches.byteBudget.rawValue >> 20) MB")
+        return true
     }
 
     private static let aliasRegistration = Task {
@@ -397,18 +380,21 @@ public actor MLXInferenceEngine: InferenceEngine {
             throw .modelNotFound(identifier: modelPath)
         }
 
+        if container != nil { await unloadCurrentModel() }
+        state = .reduce(state, .loadStarted(path: modelPath))
+        let epoch = modelEpoch
         do {
-            if container != nil { await unloadCurrentModel() }
             if let gpuCacheLimit { Memory.cacheLimit = gpuCacheLimit }
             let loaded = try await loadModelContainer(from: directory, using: DefaultTokenizerLoader())
             try await loaded.perform { try PrismHadamard.prepareLoaded($0.model) }
-            if mtp { await loadMTPDrafter(for: loaded, directory: directory, modelPath: modelPath) }
-            attach(loaded,
-                   profile: ModelProfileRegistry.profile(forModelAt: modelPath),
-                   samplingDefaults: SamplingDefaults(generationConfig: ModelCache.generationConfig(at: directory)),
-                   controlTokens: ControlTokenGuard(modelDirectory: directory),
-                   fingerprint: promptCacheDisk == nil ? nil : PromptCacheDiskStore.fingerprint(modelDirectory: directory),
-                   modelDescription: modelPath)
+            let drafts = mtp ? await loadMTPDrafter(for: loaded, directory: directory, modelPath: modelPath) : false
+            let facts = ModelFacts(
+                profile: ModelProfileRegistry.profile(forModelAt: modelPath),
+                samplingDefaults: SamplingDefaults(generationConfig: ModelCache.generationConfig(at: directory)),
+                controlTokens: ControlTokenGuard(modelDirectory: directory),
+                fingerprint: promptCacheDisk == nil ? nil : PromptCacheDiskStore.fingerprint(modelDirectory: directory),
+                description: modelPath, hasMTPDrafter: drafts)
+            guard attach(loaded, facts: facts, epoch: epoch) else { return }
             await probeKVZones()
             await wireWorkingSet()
             await probeKVHeads(directory: directory)
@@ -417,20 +403,20 @@ public actor MLXInferenceEngine: InferenceEngine {
             for line in ModelCache.config(at: directory).map(architectureLines(config:)) ?? [] { logger.info(line) }
             logger.info("Model loaded and initialized successfully.")
         } catch {
-            throw await Self.loadFailure(error, modelPath: modelPath)
+            let failure = await Self.loadFailure(error, modelPath: modelPath)
+            state = .reduce(state, .loadFailed(epoch, failure))
+            throw failure
         }
     }
 
     func unloadCurrentModel() async {
         await persistPromptCache(within: Self.modelSwitchPersistDeadline)
-        container = nil
+        state = .reduce(state, .unloaded)
         await releaseWiredMemory()
         batchDecoder = nil
-        hasMTPDrafter = false
         promptCaches.removeAll()
         mtpPrefixes.removeAll()
         cacheBlend = nil
-        modelEpoch += 1
         Memory.clearCache()
         logger.info("Previous model unloaded, GPU cache cleared.")
     }
@@ -573,7 +559,7 @@ public actor MLXInferenceEngine: InferenceEngine {
             toolName: forcedTool?.name, fastForward: fastForward)
     }
 
-    func recycle(_ session: GrammarSession, epoch: Int) {
+    func recycle(_ session: GrammarSession, epoch: ModelEpoch) {
         guard epoch == modelEpoch, let grammar = session.rewound() else { return }
         idleGrammarRecency.removeAll { $0 == session.poolKey }
         idleGrammarRecency.append(session.poolKey)
@@ -1073,7 +1059,7 @@ public actor MLXInferenceEngine: InferenceEngine {
         await task?.value
     }
 
-    private func batchedDecoder(_ container: ModelContainer, epoch: Int) async -> BatchedDecoder? {
+    private func batchedDecoder(_ container: ModelContainer, epoch: ModelEpoch) async -> BatchedDecoder? {
         guard batchSlots > 1, epoch == modelEpoch, appliedMemoryDirective < .tight else { return nil }
         if let batchDecoder { return batchDecoder }
         let slots = batchSlots
@@ -1086,29 +1072,25 @@ public actor MLXInferenceEngine: InferenceEngine {
 
     var batchedRows: Int { batchDecoder?.admittedRows ?? 0 }
 
-    private func routesExperts(_ container: ModelContainer, epoch: Int) async -> Bool {
-        if epoch == modelEpoch, let known = modelRoutesExperts { return known }
+    private func routesExperts(_ container: ModelContainer, epoch: ModelEpoch) async -> Bool {
+        if epoch == modelEpoch, let known = modelFacts.routesExperts { return known }
         let routes = await container.perform { PromptLookupTokenIterator.routesExperts($0.model) }
-        if epoch == modelEpoch {
-            modelRoutesExperts = routes
-        }
+        state = .reduce(state, .learned(epoch) { $0.routesExperts = routes })
         return routes
     }
 
-    private func supportsMultiTokenForward(_ container: ModelContainer, epoch: Int) async -> Bool {
-        if epoch == modelEpoch, let known = modelSupportsMultiTokenForward { return known }
+    private func supportsMultiTokenForward(_ container: ModelContainer, epoch: ModelEpoch) async -> Bool {
+        if epoch == modelEpoch, let known = modelFacts.supportsMultiTokenForward { return known }
         let supports = await container.perform { context in
             let cache = try? context.model.newCache(parameters: nil)
             return cache.map { PromptLookupTokenIterator.supports($0, routesExperts: PromptLookupTokenIterator.routesExperts(context.model)) } ?? false
         }
-        if epoch == modelEpoch {
-            modelSupportsMultiTokenForward = supports
-        }
+        state = .reduce(state, .learned(epoch) { $0.supportsMultiTokenForward = supports })
         return supports
     }
 
     private func snapshotBoundary(
-        _ count: Int, container: ModelContainer, epoch: Int, template: String?,
+        _ count: Int, container: ModelContainer, epoch: ModelEpoch, template: String?,
         _ makeInput: @Sendable (String) -> UserInput
     ) async -> Int {
         let hybrid: Bool
@@ -1120,10 +1102,7 @@ public actor MLXInferenceEngine: InferenceEngine {
                 return (PromptCache(cache).isHybrid, cache.contains { $0 is MambaCache })
             }) ?? (hybrid: false, recurrent: false)
             hybrid = kinds.hybrid
-            if epoch == modelEpoch {
-                modelIsHybrid = kinds.hybrid
-                modelHasRecurrentState = kinds.recurrent
-            }
+            state = .reduce(state, .learned(epoch) { ($0.isHybrid, $0.hasRecurrentState) = (kinds.hybrid, kinds.recurrent) })
         }
         guard hybrid else { return count - 1 }
         if let template, let suffix = templateSuffixes[template] {
@@ -1166,16 +1145,14 @@ public actor MLXInferenceEngine: InferenceEngine {
 
     static let modelSwitchPersistDeadline = Duration.seconds(10)
 
-    private func cacheLayout(_ container: ModelContainer, epoch: Int) async -> [String]? {
-        if let modelCacheLayout { return modelCacheLayout }
+    private func cacheLayout(_ container: ModelContainer, epoch: ModelEpoch) async -> [String]? {
+        if let known = modelFacts.cacheLayout { return known }
         let layout = try? await container.perform { try $0.model.newCache(parameters: nil).map(PromptCacheDiskStore.layoutName) }
-        if epoch == modelEpoch {
-            modelCacheLayout = layout
-        }
+        state = .reduce(state, .learned(epoch) { $0.cacheLayout = layout })
         return layout
     }
 
-    private func restoreFromDisk(_ namespace: String, prompt: [Int], container: ModelContainer, epoch: Int) async {
+    private func restoreFromDisk(_ namespace: String, prompt: [Int], container: ModelContainer, epoch: ModelEpoch) async {
         guard promptCacheDisk != nil, modelFingerprint != nil,
               promptCaches.storedPrefix(of: prompt, in: namespace) < prompt.count - 1,
               let layout = await cacheLayout(container, epoch: epoch),
@@ -1225,7 +1202,7 @@ public actor MLXInferenceEngine: InferenceEngine {
             + (skipped > 0 ? "; \(skipped) paths skipped that could not be written within the \(deadline) deadline" : ""))
     }
 
-    private func keep(tokens prompt: [Int], namespace: String?, releasing lease: Int, epoch: Int) {
+    private func keep(tokens prompt: [Int], namespace: String?, releasing lease: Int, epoch: ModelEpoch) {
         leases[lease] = nil
         let launch = launches.removeValue(forKey: lease)
         guard epoch == modelEpoch, let namespace, let launch else { return }
@@ -1248,14 +1225,18 @@ public actor MLXInferenceEngine: InferenceEngine {
 }
 
 extension MLXInferenceEngine {
-    func useMTPDrafter(in container: ModelContainer, _ make: @Sendable (ModelContext) -> (any MTPDrafterModel)?) async {
+    @discardableResult
+    func useMTPDrafter(in container: ModelContainer, _ make: @Sendable (ModelContext) -> (any MTPDrafterModel)?) async -> Bool {
+        let epoch = modelEpoch
         await container.update { $0.mtpDrafter = make($0) }
-        hasMTPDrafter = await container.perform { $0.mtpDrafter != nil }
+        let drafts = await container.perform { $0.mtpDrafter != nil }
+        state = .reduce(state, .learned(epoch) { $0.hasMTPDrafter = drafts })
+        return drafts
     }
 
-    func loadMTPDrafter(for loaded: ModelContainer, directory: URL, modelPath: String) async {
+    func loadMTPDrafter(for loaded: ModelContainer, directory: URL, modelPath: String) async -> Bool {
         let logger = self.logger, speculativeLookup = self.speculativeLookup
-        await useMTPDrafter(in: loaded) { context in
+        return await useMTPDrafter(in: loaded) { context in
             do {
                 guard let drafter = try MTPSidecar.load(directory: directory, target: context.model) else {
                     logger.warn("--mtp: \(modelPath) has no MTP head this build can use (Qwen3.5-family target plus mtp.safetensors); decoding stays plain")
