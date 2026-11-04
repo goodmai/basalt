@@ -49,7 +49,7 @@ Measured with lizard, which reports per function the cyclomatic complexity (CCN)
 | Function | CCN ≤ 15 (aim for ≤ 10), ≤ 60 lines of code, ≤ 6 parameters |
 | File | ≤ 600 lines (aim for ≤ 400) |
 
-- **CI enforces the ratchet**: `scripts/check_size_limits.py` runs lizard on the base and head versions of every changed Swift file (`.github/workflows/size-limits.yml`). Run it locally with `python3 scripts/check_size_limits.py origin/main`.
+- **CI enforces the ratchet**: `scripts/check_size_limits.swift` runs lizard on the base and head versions of every changed Swift file (`.github/workflows/size-limits.yml`). Run it locally with `swift scripts/check_size_limits.swift origin/main`; `--impact` adds the share of functions the change touched and the CCN sum and peak before and after, for the PR description.
 - **New code stays within the limits.** Tests follow the function limits; a test file may be longer than 600 lines.
 - **Code already over a limit does not get worse.** On 2026-11-04 that was 6 files over 600 lines, 20 functions over CCN 15 and 20 over 60 lines (#284). A change that touches one of them must not make it longer or more complex. A change that adds a branch to one first splits it.
 - **Split along the seams the code already has.** A `switch` case or an engine mode becomes its own function or type, and a stage of a long function becomes a method named after what it does. Cutting a function into `part1`/`part2` to get under the number does not count.
