@@ -54,6 +54,13 @@ This is a report the user asked for, so give it in full.
      or test. Split by job, never by line count, and never into helpers that
      exist only to make a function shorter.
 
+### basalt refactor checks
+- **Duplication:** a block or report written twice. Flag the second copy and name the shared function that replaces both.
+- **Logic in the shell:** decisions inside an actor or stateful class that could be a pure function on a value (CONTRIBUTING "Value core, actor shell").
+- **Over a limit and grown:** run `swift scripts/check_size_limits.swift origin/main --impact`. It covers functions, types (200), extensions (150) and files (600).
+- **Width:** a new function with more than 6 parameters, where a small value carrying the request would do.
+- **Proof:** a refactor PR without its impact line, or engine code without a byte-identical greedy run against main.
+
 ## 3. Check before you report
 
 - Every finding needs a concrete case: "this input or situation leads to this
