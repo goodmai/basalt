@@ -1,0 +1,25 @@
+name: Size Limits
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  size-limits:
+    name: Size and complexity limits
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      LIZARD: pipx run --spec lizard==1.24.0 lizard
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Checker self-test
+        run: python3 scripts/check_size_limits_test.py
+      - name: No limit exceeded or grown
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: python3 scripts/check_size_limits.py "origin/$BASE_REF"
