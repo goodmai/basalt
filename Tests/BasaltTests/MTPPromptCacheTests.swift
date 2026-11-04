@@ -34,21 +34,27 @@ struct MTPPromptCacheTests {
 
         var full = head.makeState(parameters: nil)
         head.prepareDrafterState(
-            target: target, promptTokens: MLXArray(prompt.map(Int32.init)),
-            targetHidden: try Self.hidden(prompt, target, try target.newCache(parameters: nil)), firstBonus: bonus,
-            positionDeltas: nil, state: &full, sampler: sampler)
+            target: target,
+            input: MTPPrefillInput(
+                promptTokens: MLXArray(prompt.map(Int32.init)),
+                targetHidden: try Self.hidden(prompt, target, try target.newCache(parameters: nil)), firstBonus: bonus),
+            state: &full, sampler: sampler)
 
         var split = head.makeState(parameters: nil)
         let cache = try target.newCache(parameters: nil)
         let prefix = Array(prompt[..<cut]), tail = Array(prompt[cut...])
         head.prepareDrafterState(
-            target: target, promptTokens: MLXArray(prefix.map(Int32.init)), targetHidden: try Self.hidden(prefix, target, cache),
-            firstBonus: nil, positionDeltas: nil, state: &split, sampler: sampler)
+            target: target,
+            input: MTPPrefillInput(
+                promptTokens: MLXArray(prefix.map(Int32.init)), targetHidden: try Self.hidden(prefix, target, cache), firstBonus: nil),
+            state: &split, sampler: sampler)
         #expect(split.nextPosition == cut - 1)
         #expect(split.carryHidden != nil)
         head.prepareDrafterState(
-            target: target, promptTokens: MLXArray(tail.map(Int32.init)), targetHidden: try Self.hidden(tail, target, cache),
-            firstBonus: bonus, positionDeltas: nil, state: &split, sampler: sampler)
+            target: target,
+            input: MTPPrefillInput(
+                promptTokens: MLXArray(tail.map(Int32.init)), targetHidden: try Self.hidden(tail, target, cache), firstBonus: bonus),
+            state: &split, sampler: sampler)
 
         #expect(split.nextPosition == full.nextPosition)
         #expect(split.carryHidden == nil)

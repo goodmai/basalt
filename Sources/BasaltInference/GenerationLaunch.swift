@@ -137,8 +137,8 @@ struct GenerationLauncher {
         let output = context.model(LMInput.Text(tokens: head)[text: .newAxis], cache: prompt.layers, state: emit)
         if let hidden = output.state?[mtpLastHiddenStatesKey] {
             drafter.prepareDrafterState(
-                target: context.model, promptTokens: head, targetHidden: hidden, firstBonus: nil,
-                positionDeltas: nil, state: &state, sampler: ArgMaxSampler())
+                target: context.model, input: MTPPrefillInput(promptTokens: head, targetHidden: hidden, firstBonus: nil),
+                state: &state, sampler: ArgMaxSampler())
         }
         eval(prompt.layers.flatMap { $0.innerState() } + state.cache.flatMap { $0.innerState() })
         return MTPPrefix(state).map { (prompt.snapshot(at: tokens.upperBound, state: nil), $0) }
