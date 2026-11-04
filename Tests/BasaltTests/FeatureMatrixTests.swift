@@ -89,7 +89,7 @@ struct FeatureMatrixTests {
     @Test("A plain first turn, a cached first turn and a second turn reusing it decode the same greedy text with the feature on; the feature reports itself on exactly where it applies",
           .timeLimit(.minutes(1)), arguments: families, Feature.allCases)
     func featureLeavesGreedyOutputUnchanged(family: TinyModel.Family, feature: Feature) async throws {
-        await withKnownIssue("Nemotron-H diverges from the plain decoder intermittently in full parallel runs (#250)", isIntermittent: true) {
+        try await withKnownIssue("Nemotron-H diverges from the plain decoder intermittently in full parallel runs (#250)", isIntermittent: true) {
             let plain = try await Self.run(family, nil).replies
             let (engine, replies) = try await Self.run(family, feature)
             #expect(replies.map(\.generatedText) == plain.map(\.generatedText))
