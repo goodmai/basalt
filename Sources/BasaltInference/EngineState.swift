@@ -96,6 +96,7 @@ extension MLXInferenceEngine {
     var modelAttendsThroughZones: Bool { modelFacts.attendsThroughZones }
     var modelPrefillsInChunks: Bool { modelFacts.prefillsInChunks }
     public var supportsKVEviction: Bool { modelPrefillsInChunks }
+    public var supportsKVQuantization: Bool { modelFacts.capabilities.allows(.kvQuantization) }
     var valueRotationUnavailable: Bool { modelFacts.valueRotationUnavailable }
     var kvHeadMask: KVHeadMask? { modelFacts.kvHeadMask }
     var questApplies: Bool { modelFacts.questApplies }

@@ -6,6 +6,7 @@ struct ModelCapabilities: Equatable, Sendable {
         case promptCacheReuse = "prompt-cache reuse"
         case cacheBlend = "CacheBlend"
         case kvZones = "KV zones"
+        case kvQuantization = "KV quantization"
         case kvHeadSplit = "KV head split"
         case quest = "Quest"
         case grammarJumpForward = "grammar jump-forward"

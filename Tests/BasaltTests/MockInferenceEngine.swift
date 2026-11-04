@@ -48,6 +48,12 @@ actor MockInferenceEngine: InferenceEngine {
         mockSupportsKVEviction = supported
     }
 
+    var supportsKVQuantization = true
+
+    func setSupportsKVQuantization(_ supported: Bool) {
+        supportsKVQuantization = supported
+    }
+
     func promptTokenCount(for request: GenerationRequest) async -> Int? { mockPromptTokens }
 
     var appliedDirectives: [MemoryDirective] = []

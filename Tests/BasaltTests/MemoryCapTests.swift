@@ -264,4 +264,31 @@ struct MemoryCapTests {
         #expect(budget <= workingSet - (64 << 20))
         #expect(await engine.promptTokenCount(for: GenerationRequest(prompt: "abcd")) == 4)
     }
+
+    @Test("A family whose KV quantization is unverified keeps fp16: under --kv-bits 4 or auto the planner sizes the room for fp16 and sends no precision (#323)",
+          arguments: [(KVPrecision.q4, false), (nil, true)] as [(KVPrecision?, Bool)])
+    func unverifiedQuantizationPlansFP16(kvPrecision: KVPrecision?, adaptive: Bool) async throws {
+        let engine = MockInferenceEngine()
+        await engine.setMemory(kvBudget: 7 * Self.gib, promptTokens: 30_000)
+        await engine.setSupportsKVQuantization(false)
+        let dir = try Self.modelDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let orchestrator = ModelOrchestratorActor(
+            engine: engine, maxTokens: 131_072, kvPrecision: kvPrecision, adaptiveKVPrecision: adaptive, telemetry: TelemetryTracker())
+        try await orchestrator.loadModel(path: dir.path)
+        _ = try await orchestrator.generate(request: GenerationRequest(prompt: "long", maxTokens: 80_000))
+        let sent = try #require(await engine.getLastRequest())
+        #expect(sent.kvPrecision == nil)
+        #expect(sent.maxTokens == 50_972 - 30_000)
+    }
+
+    @Test("An unverified family's engine builds an fp16 KV cache under --kv-bits and reports quantization off to the planner (#323)",
+          arguments: [(ModelCapabilities.unrestricted, 4), (.conservative, nil)] as [(ModelCapabilities, Int?)])
+    func unverifiedQuantizationRunsFP16(capabilities: ModelCapabilities, bits: Int?) async throws {
+        let engine = MLXInferenceEngine(kvPrecision: .q4)
+        await engine.attach(try TinyModel.container(), capabilities: capabilities)
+        #expect(await engine.sampling(for: GenerationRequest(prompt: "p")).0.kvBits == bits)
+        #expect(await engine.sampling(for: GenerationRequest(prompt: "p").withKVPrecision(.q8)).0.kvBits == bits.map { _ in 8 })
+        #expect(await engine.supportsKVQuantization == (bits != nil))
+    }
 }
