@@ -211,3 +211,24 @@ struct HybridAnchorTests {
         #expect(json["hybridAnchors"] as? Int == 3)
     }
 }
+
+@Suite("Anchor offsets keep their distance from the reused prefix, from each other and from the stable boundary (#284)")
+struct AnchorSearchTests {
+    @Test("An offset too close to a kept anchor or the boundary is skipped, one too close to the reused prefix ends the search, and the limit stops it")
+    func spacing() {
+        let spacing = HybridPrefixSnapshot.minAnchorSpacing
+        let prompt = Array(0..<(10 * spacing))
+        var search = AnchorSearch(prompt: prompt, reused: 0, boundary: 8 * spacing, limit: 2)
+        #expect(search.hasRoom)
+        #expect(search.admit(Array(prompt.prefix(2 * spacing))))
+        #expect(search.admit(Array(prompt.prefix(2 * spacing + 1))))
+        #expect(search.admit(Array(prompt.prefix(7 * spacing + 1))))
+        #expect(search.found == [2 * spacing])
+        #expect(search.admit(Array(prompt.prefix(4 * spacing))))
+        #expect(search.found == [2 * spacing, 4 * spacing])
+        #expect(!search.wantsMore)
+        var resumed = AnchorSearch(prompt: prompt, reused: spacing, boundary: 8 * spacing, limit: 2)
+        #expect(!resumed.admit(Array(prompt.prefix(spacing + 1))))
+        #expect(!AnchorSearch(prompt: prompt, reused: 7 * spacing, boundary: 8 * spacing, limit: 2).hasRoom)
+    }
+}
