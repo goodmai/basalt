@@ -15,21 +15,30 @@ final class MTPDrafter: @unchecked Sendable {
     }
 }
 
-struct MTPPrefix: @unchecked Sendable {
-    let layers: [KVCache]
+struct MTPPrefix: Sendable {
+    let layers: [[MaterializedArray]]
     let nextPosition: Int
-    let carryHidden: MLXArray
+    let carryHidden: MaterializedArray
 
     init?(_ state: MTPDrafterState) {
-        guard let carryHidden = state.carryHidden else { return nil }
-        layers = state.cache.map { $0.copy() }
+        guard let carryHidden = state.carryHidden, state.cache.allSatisfy({ type(of: $0) == KVCacheSimple.self }) else {
+            return nil
+        }
+        let layers = state.cache.map(\.state)
+        eval(layers.joined() + [carryHidden])
+        self.layers = layers.map { $0.map { $0.materialized() } }
         nextPosition = state.nextPosition
-        self.carryHidden = carryHidden
-        eval(layers.flatMap { $0.innerState() } + [carryHidden])
+        self.carryHidden = carryHidden.materialized()
     }
 
     var state: MTPDrafterState {
-        MTPDrafterState(cache: layers.map { $0.copy() }, nextPosition: nextPosition, carryHidden: carryHidden)
+        MTPDrafterState(cache: layers.map(Self.cache), nextPosition: nextPosition, carryHidden: carryHidden[.ellipsis])
+    }
+
+    private static func cache(_ state: [MaterializedArray]) -> any KVCache {
+        let cache = KVCacheSimple()
+        if !state.isEmpty { cache.state = state.map { $0[.ellipsis] } }
+        return cache
     }
 }
 
