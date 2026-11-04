@@ -304,7 +304,7 @@ extension ModelOrchestratorActor {
         do {
             return try await gate.admit(priority: priority)
         } catch {
-            throw error as? BasaltError ?? .inferenceError("Cancelled while queued")
+            throw error as? BasaltError ?? .cancelled
         }
     }
 
@@ -449,7 +449,7 @@ extension ModelOrchestratorActor {
         let cloudFallback = self.cloudFallback
         let localModel = routingModelKey
         return AsyncStream<StreamChunk> { continuation in
-            let task = Task.detached {
+            let task = Task { @concurrent in
                 var result: GenerationResponse?
                 for await chunk in stream {
                     if case .metadata(let metadata) = chunk { result = metadata }

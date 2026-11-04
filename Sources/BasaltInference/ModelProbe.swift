@@ -228,6 +228,7 @@ extension MLXInferenceEngine {
 
     static func loadFailure(_ error: any Error, modelPath: String) async -> BasaltError {
         if let error = error as? BasaltError { return error }
+        if error is CancellationError { return .cancelled }
         switch error as? ModelFactoryError {
         case .configurationDecodingError?:
             return .modelConfigurationInvalid(path: modelPath, reason: error.localizedDescription)

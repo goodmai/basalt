@@ -29,7 +29,7 @@ struct FaultInjectionTests {
         #expect(await orchestrator.gate.checkInvariants(idle: true) == [])
     }
 
-    @Test("A fault at a suspension point of a request on a warm prompt cache fails it with a 503, and the next request answers like a fresh engine with no lease, pin or gate slot left behind",
+    @Test("A fault at a suspension point of a request on a warm prompt cache fails it with a 503, a cancellation as cancelled, and the next request answers like a fresh engine with no lease, pin or gate slot left behind",
           arguments: [FaultPlan.Point.tokenize, .snapshotBoundary, .restoreFromDisk, .anchorOffsets, .launch, .settle, .keep],
           FaultPlan.Fault.allCases)
     func requestFault(point: FaultPlan.Point, fault: FaultPlan.Fault) async throws {
@@ -38,13 +38,18 @@ struct FaultInjectionTests {
         _ = try await orchestrator.generate(request: Self.request())
         await engine.inject(FaultPlan(point: point, fault: fault))
         let failure = await #expect(throws: BasaltError.self) { try await orchestrator.generate(request: Self.request()) }
+        let endsStream = FaultPlan(point: point).endsStream
         let reason: String? = if case .inferenceHardwareFailure(let message)? = failure { message } else { nil }
-        #expect(reason != nil, "\(String(describing: failure))")
-        #expect((reason == "Stream finished without metadata") == FaultPlan(point: point).endsStream)
+        if fault == .cancellation, !endsStream {
+            #expect(failure.map(ModelOrchestratorActor.logStatus) == "cancelled", "\(String(describing: failure))")
+        } else {
+            #expect(reason != nil, "\(String(describing: failure))")
+            #expect((reason == "Stream finished without metadata") == endsStream)
+        }
         try await Self.expectRecovered(engine, orchestrator)
     }
 
-    @Test("A fault while unloading the old model or loading the new one fails the load, leaves no model, cache or gate hold behind, and the engine takes the next model",
+    @Test("A fault while unloading the old model or loading the new one fails the load as corrupted weights, a cancellation as cancelled, leaves no model, cache or gate hold behind, and the engine takes the next model",
           arguments: [FaultPlan.Point.unload, .load], FaultPlan.Fault.allCases)
     func loadFault(point: FaultPlan.Point, fault: FaultPlan.Fault) async throws {
         let engine = try await TinyModel.engine()
@@ -55,7 +60,8 @@ struct FaultInjectionTests {
         await engine.inject(FaultPlan(point: point, fault: fault))
         let failure = await #expect(throws: BasaltError.self) { try await orchestrator.loadModel(path: directory.path) }
         let corrupted = if case .weightsCorrupted? = failure { true } else { false }
-        #expect(corrupted, "\(String(describing: failure))")
+        let cancelled = failure.map(ModelOrchestratorActor.logStatus) == "cancelled"
+        #expect(fault == .cancellation ? cancelled : corrupted, "\(String(describing: failure))")
         #expect(await !engine.isLoaded)
         #expect(await engine.readPromptCaches { $0.roots.isEmpty })
         await engine.attach(try TinyModel.container())
