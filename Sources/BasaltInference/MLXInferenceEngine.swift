@@ -151,7 +151,7 @@ public actor MLXInferenceEngine: InferenceEngine {
     private let mtp: Bool
     private let mtpBlockSize: Int
     private let experimentalSamplers: Bool
-    private var mtpDrafter: MTPDrafter?
+    private var hasMTPDrafter = false
     private let grammarJumpForward: Bool
     private(set) var promptCacheDisk: PromptCacheDiskStore?
     private var modelFingerprint: String?
@@ -315,8 +315,9 @@ public actor MLXInferenceEngine: InferenceEngine {
         }
     }
 
-    func useMTPDrafter(_ drafter: MTPDrafter?) {
-        mtpDrafter = drafter
+    func useMTPDrafter(in container: ModelContainer, _ make: @Sendable (ModelContext) -> (any MTPDrafterModel)?) async {
+        await container.update { $0.mtpDrafter = make($0) }
+        hasMTPDrafter = await container.perform { $0.mtpDrafter != nil }
     }
 
     func attach(
@@ -429,7 +430,7 @@ public actor MLXInferenceEngine: InferenceEngine {
         container = nil
         await releaseWiredMemory()
         batchDecoder = nil
-        mtpDrafter = nil
+        hasMTPDrafter = false
         promptCaches.removeAll()
         mtpPrefixes.removeAll()
         cacheBlend = nil
@@ -439,20 +440,22 @@ public actor MLXInferenceEngine: InferenceEngine {
     }
 
     func loadMTPDrafter(for loaded: ModelContainer, directory: URL, modelPath: String) async {
-        do {
-            mtpDrafter = try await loaded.perform { try MTPSidecar.load(directory: directory, target: $0.model) }
-        } catch {
-            mtpDrafter = nil
-            logger.warn("--mtp: the MTP head of \(modelPath) did not load (\(error.localizedDescription)); decoding stays plain")
-            return
-        }
-        guard let mtpDrafter else {
-            logger.warn("--mtp: \(modelPath) has no MTP head this build can use (Qwen3.5-family target plus mtp.safetensors); decoding stays plain")
-            return
-        }
-        logger.info("MTP head loaded from \(mtpDrafter.source); requests without constraints, lookup or --kv-bits and prompts up to \(Self.mtpPromptLimit) tokens draft with it")
-        if speculativeLookup {
-            logger.warn("--mtp with --speculative-lookup: lookup wins, so the MTP head drafts only for requests that set speculative_lookup to false")
+        let logger = self.logger, speculativeLookup = self.speculativeLookup
+        await useMTPDrafter(in: loaded) { context in
+            do {
+                guard let drafter = try MTPSidecar.load(directory: directory, target: context.model) else {
+                    logger.warn("--mtp: \(modelPath) has no MTP head this build can use (Qwen3.5-family target plus mtp.safetensors); decoding stays plain")
+                    return nil
+                }
+                logger.info("MTP head loaded from \(MTPSidecar.file(in: directory)?.path ?? modelPath); requests without constraints, lookup or --kv-bits and prompts up to \(Self.mtpPromptLimit) tokens draft with it")
+                if speculativeLookup {
+                    logger.warn("--mtp with --speculative-lookup: lookup wins, so the MTP head drafts only for requests that set speculative_lookup to false")
+                }
+                return drafter
+            } catch {
+                logger.warn("--mtp: the MTP head of \(modelPath) did not load (\(error.localizedDescription)); decoding stays plain")
+                return nil
+            }
         }
     }
 
@@ -806,14 +809,14 @@ public actor MLXInferenceEngine: InferenceEngine {
                 }
             }
             let speculativeLookup = request.speculativeLookup ?? speculativeLookup
-            let drafter = constraint == nil && !speculativeLookup && zones == nil && params.kvBits == nil
-                && promptTokens.count <= Self.mtpPromptLimit ? mtpDrafter : nil
-            if let namespace, drafter == nil {
+            let drafts = constraint == nil && !speculativeLookup && zones == nil && params.kvBits == nil
+                && promptTokens.count <= Self.mtpPromptLimit && hasMTPDrafter
+            if let namespace, !drafts {
                 await restoreFromDisk(namespace, prompt: promptTokens, container: container, epoch: epoch)
             }
             var lease: PromptCacheLease? = if let namespace { promptCaches.lease(namespace, for: promptTokens) } else { nil }
             var storedPrefix: MTPPrefix?
-            if drafter != nil, let namespace {
+            if drafts, let namespace {
                 let leased = switch lease {
                 case let held?: held.reusedTokens
                 case nil: 0
@@ -832,7 +835,7 @@ public actor MLXInferenceEngine: InferenceEngine {
             let boundary = namespace == nil
                 ? promptTokens.count - 1
                 : await snapshotBoundary(renderedCount, container: container, epoch: epoch, template: template, makeInput)
-            let anchors = namespace != nil && drafter == nil && modelHasRecurrentState == true
+            let anchors = namespace != nil && !drafts && modelHasRecurrentState == true
                 ? await anchorOffsets(
                     anchorTurns, prompt: promptTokens, reused: reuse?.reusedTokens ?? 0, boundary: boundary,
                     container: container, tools: toolSpecs, context: context)
@@ -849,7 +852,7 @@ public actor MLXInferenceEngine: InferenceEngine {
             let jumpForward = constraint?.fastForward == true
             let expertRouting = (speculativeLookup || jumpForward) ? await routesExperts(container, epoch: epoch) : true
             let blending = namespace.flatMap { space in blend.map { ($0, space) } }
-            let batchable = constraint == nil && request.toolChoice?.forcedTool == nil && !speculativeLookup && drafter == nil
+            let batchable = constraint == nil && request.toolChoice?.forcedTool == nil && !speculativeLookup && !drafts
                 && blending == nil && params.kvBits == nil && zonedPrecision == nil && !carriesMoreThanTokens
             let batch = batchable ? await batchedDecoder(container, epoch: epoch) : nil
             let launch: GenerationLaunch
@@ -862,7 +865,7 @@ public actor MLXInferenceEngine: InferenceEngine {
                         context: context, speculativeLookup: speculativeLookup, speculativeRecycling: speculativeRecycling,
                         grammarJumpForward: jumpForward,
                         routesExperts: expertRouting, kvZones: zones, kvHeadMask: headMask, questTopK: questBlocks, kvPrecision: zonedPrecision,
-                        mtpDrafter: drafter, mtpBlockSize: mtpBlockSize,
+                        mtp: drafts, mtpBlockSize: mtpBlockSize,
                         mtpPrefix: mtpPrefix) }
                 }
             } catch {
@@ -1282,12 +1285,12 @@ extension MLXInferenceEngine {
         grammarJumpForward: Bool = false,
         routesExperts: Bool = true, kvZones: KVZones? = nil, kvHeadMask: KVHeadMask? = nil, questTopK: Int? = nil,
         kvPrecision: KVPrecision? = nil,
-        mtpDrafter: MTPDrafter? = nil, mtpBlockSize: Int = 4, mtpPrefix: MTPPrefix? = nil
+        mtp: Bool = false, mtpBlockSize: Int = 4, mtpPrefix: MTPPrefix? = nil
     ) throws -> GenerationLaunch {
         let start = GenerationLauncher(input: input, params: params, components: components, tools: tools, context: context, started: .now)
-        if let mtpDrafter, !carriesMoreThanTokens(input) {
+        if mtp, let drafter = context.mtpDrafter, !carriesMoreThanTokens(input) {
             return try start.mtp(
-                MTPRequest(drafter: mtpDrafter, blockSize: mtpBlockSize, prefix: mtpPrefix),
+                MTPRequest(drafter: drafter, blockSize: mtpBlockSize, prefix: mtpPrefix),
                 prompt: CachedPrompt(reuse: reuse, boundary: boundary), keepsCache: keepsCache)
         }
         let lookup = LookupOptions(

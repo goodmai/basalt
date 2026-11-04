@@ -5,16 +5,6 @@ import MLXLLM
 import MLXLMCommon
 import MLXNN
 
-final class MTPDrafter: @unchecked Sendable {
-    let model: any MTPDrafterModel
-    let source: String
-
-    init(model: any MTPDrafterModel, source: String) {
-        self.model = model
-        self.source = source
-    }
-}
-
 struct MTPPrefix: Sendable {
     let layers: [[MaterializedArray]]
     let nextPosition: Int
@@ -110,7 +100,7 @@ enum MTPSidecar {
         return (inputs / scales.dim(1), bits)
     }
 
-    static func load(directory: URL, target: any LanguageModel) throws -> MTPDrafter? {
+    static func load(directory: URL, target: any LanguageModel) throws -> (any MTPDrafterModel)? {
         guard target is Qwen35Model || target is Qwen35TextModel, let url = file(in: directory) else { return nil }
         let data = try Data(contentsOf: directory.appending(component: "config.json"))
         let root = try JSONSerialization.jsonObject(with: data) as? [String: Any]
@@ -130,6 +120,6 @@ enum MTPSidecar {
         }
         try model.update(parameters: ModuleParameters.unflattened(weights), verify: [.all])
         eval(model)
-        return MTPDrafter(model: GreedyDraftingMTPDrafter(model), source: url.path)
+        return GreedyDraftingMTPDrafter(model)
     }
 }
