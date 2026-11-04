@@ -477,59 +477,17 @@ struct ServeCommand: AsyncParsableCommand {
         let targetModel = model ?? modelPath ?? Self.defaultModel
 
         if dryRun {
-            let evaluator = MemoryEvaluator()
             log("🔍 Performing dry-run memory assessment for \(bold(targetModel))…")
-            let assessment = await evaluator.evaluate(
+            let assessment = await MemoryEvaluator().evaluate(
                 modelId: targetModel, kvPrecision: kvBits?.budgetPrecision, kvZones: KVBitsSetting.zones(kvZones, evicting: kvEvict))
-
-            fputs("\n  Model:           \(assessment.modelName) (\(assessment.modelId))\n", stderr)
-            fputs("  Required RAM:    \(assessment.requiredRAMFormatted)\n", stderr)
-            fputs("  Available RAM:   \(assessment.availableRAMFormatted)\n", stderr)
-            fputs("  Physical RAM:    \(assessment.totalRAMFormatted)\n", stderr)
-            fputs("  Fit Level:       \(assessment.fitLevel.emoji) \(assessment.fitLevel.rawValue)\n", stderr)
-            fputs("  Context Budget:  \(assessment.contextBudgetLine)\n", stderr)
-            if kvZones { fputs("  KV zones:        \(KVBitsSetting.zonesAssumption)\n", stderr) }
-            if let line = KVBitsSetting.evictionSizing(kvEvict) { fputs("  KV eviction:     \(line)\n", stderr) }
-            fputs("\n", stderr)
-
-            if let warning = assessment.warning {
-                fputs(red("  \(warning)") + "\n", stderr)
-            }
-            if let rec = assessment.recommendation {
-                fputs(yellow("  💡 Recommendation: \(rec)") + "\n", stderr)
-            }
-
-            if assessment.fitsInMemory {
-                fputs(green("  ✓ Dry-run passed: Model fits in memory budget.\n\n"), stderr)
-            } else {
-                fputs(red("  ❌ Dry-run warning: Model exceeds available RAM!\n\n"), stderr)
-            }
+            let lines = assessment.reportLines(
+                kvZones: kvZones, kvEvict: kvEvict,
+                fits: "✓ Dry-run passed: Model fits in memory budget.", exceeds: "❌ Dry-run warning: Model exceeds available RAM!")
+            fputs("\n" + (lines + ["", ""]).joined(separator: "\n"), stderr)
             return
         }
 
-        let network = try Self.resolveNetwork(
-            cliPort: port, cliHost: host,
-            cliApiKey: apiKey ?? ProcessInfo.processInfo.environment["BASALT_API_KEY"],
-            cliRateLimit: rateLimit,
-            cliRateBurst: rateBurst,
-            cliAllowedOrigins: allowOrigins,
-            configFile: configFile ?? Self.defaultConfigFileIfPresent()
-        )
-        // Settle the exposure rule before resolveModelPath(), which may download gigabytes.
-        let access: (key: String?, generated: Bool)
-        do {
-            access = try ServerConfig.resolveApiKey(
-                host: network.host, apiKey: network.apiKey, autoGenerateKeyIfMissing: autoGenerateKey
-            )
-        } catch ServerConfigError.missingApiKeyForNonLoopback(let badHost) {
-            log("\(red("Security error:")) Refusing to start on non-loopback interface '\(badHost)' without an API key.")
-            log("Pass \(bold("--api-key <secret>")) or \(bold("--auto-generate-key")) to enable access.")
-            throw ValidationError("Refusing to start on non-loopback interface '\(badHost)' without an API key. Pass --api-key <secret> or --auto-generate-key to protect external access.")
-        }
-        if access.generated, let generated = access.key {
-            log("⚠️  Binding to non-loopback address '\(network.host)' without explicit key.")
-            log("🔑 Auto-generated API key: \(bold(generated))")
-        }
+        let (network, apiKey) = try resolveAccess()
 
         let resolvedPath = try await resolveModelPath()
 
@@ -540,22 +498,15 @@ struct ServeCommand: AsyncParsableCommand {
             host:      network.host,
             maxTokens: maxTokens,
             logLevel:  logLevel,
-            apiKey:    access.key,
+            apiKey:    apiKey,
             rateLimitPerMinute: network.rateLimit,
             rateBurst: network.rateBurst,
             allowedOrigins: network.allowedOrigins,
             virtualKeys: network.virtualKeys
         )
 
-        // Apply log level from config
-        switch config.logLevel {
-        case .debug: BasaltLogger.globalLevel = .debug
-        case .info:  BasaltLogger.globalLevel = .info
-        case .warn:  BasaltLogger.globalLevel = .warn
-        case .error: BasaltLogger.globalLevel = .error
-        }
+        BasaltLogger.globalLevel = config.logLevel.basaltLevel
 
-        // Shared inference engine + orchestrator
         let engine       = MLXInferenceEngine(
             reasoningEffort: reasoningEffort,
             promptCacheBytes: promptCacheMB.map { min(max(0, $0), 1 << 30) << 20 },
@@ -594,40 +545,10 @@ struct ServeCommand: AsyncParsableCommand {
 
         let embeddings = try await loadEmbeddings()
 
-        log("Loading model from \(bold(resolvedPath))…")
-        do {
-            try await orchestrator.loadModel(path: resolvedPath)
-            // The repo id, not the resolved path, so MCP status reports what an agent asked for.
-            await orchestrator.setModelId(model ?? modelPath ?? Self.defaultModel)
-            log("Model ready.")
-        } catch {
-            if case .modelConfigurationInvalid = error {
-                log("\(red("[error]")) \(error.localizedDescription)")
-                throw ExitCode.failure
-            }
-            log("\(yellow("[warn]")) \(error.localizedDescription) — running in stub mode.")
-        }
+        try await load(orchestrator, from: resolvedPath)
         if !noMemoryCoordinator { await orchestrator.coordinateMemory(with: MemoryCoordinator()) }
 
-        if let fallback = try Self.resolveCloudFallback(
-            cliModel: cloudFallback, cliBaseURL: cloudBaseURL, cliDisabled: noCloudFallback,
-            cliLocalContextLimit: localContextLimit, cliRouterParams: routerParams, cliCostThreshold: costThreshold,
-            cliCacheStickiness: cacheStickiness, configFile: configFile ?? Self.defaultConfigFileIfPresent())
-        {
-            let router = try await Self.cloudFallbackRouter(fallback, orchestrator: orchestrator, virtualKeys: config.virtualKeys)
-            if OpenRouterClient.isOpenRouter(fallback.baseURL) {
-                do {
-                    try await router.syncCloudModels()
-                } catch {
-                    log("\(yellow("[warn]")) Could not fetch OpenRouter prices: \(error.localizedDescription)")
-                }
-            }
-            if await !router.knowsPrice(of: fallback.model) {
-                log("\(yellow("[warn]")) No price known for \(fallback.model): its cloud spend is counted as $0 and the budget does not limit it")
-            }
-            await orchestrator.setCloudFallback(router, arbiter: HybridArbiter(localContextLimit: fallback.localContextLimit))
-            log("Cloud fallback → \(bold(fallback.model)) at \(fallback.baseURL.absoluteString)")
-        }
+        try await attachCloudFallback(to: orchestrator, virtualKeys: config.virtualKeys)
 
         let startREST = !mcp || rest
         let startMCP  = mcp
@@ -649,6 +570,68 @@ struct ServeCommand: AsyncParsableCommand {
             embeddings: embeddings,
             statsInterval: stats ? min(max(1, statsInterval), 86_400) : nil
         )
+    }
+
+    func resolveAccess() throws -> (network: (port: Int, host: String, apiKey: String?, rateLimit: Int?, rateBurst: Int?, allowedOrigins: [String], virtualKeys: [VirtualKey]), apiKey: String?) {
+        let network = try Self.resolveNetwork(
+            cliPort: port, cliHost: host,
+            cliApiKey: apiKey ?? ProcessInfo.processInfo.environment["BASALT_API_KEY"],
+            cliRateLimit: rateLimit,
+            cliRateBurst: rateBurst,
+            cliAllowedOrigins: allowOrigins,
+            configFile: configFile ?? Self.defaultConfigFileIfPresent()
+        )
+        let access: (key: String?, generated: Bool)
+        do {
+            access = try ServerConfig.resolveApiKey(
+                host: network.host, apiKey: network.apiKey, autoGenerateKeyIfMissing: autoGenerateKey
+            )
+        } catch ServerConfigError.missingApiKeyForNonLoopback(let badHost) {
+            log("\(red("Security error:")) Refusing to start on non-loopback interface '\(badHost)' without an API key.")
+            log("Pass \(bold("--api-key <secret>")) or \(bold("--auto-generate-key")) to enable access.")
+            throw ValidationError("Refusing to start on non-loopback interface '\(badHost)' without an API key. Pass --api-key <secret> or --auto-generate-key to protect external access.")
+        }
+        if access.generated, let generated = access.key {
+            log("⚠️  Binding to non-loopback address '\(network.host)' without explicit key.")
+            log("🔑 Auto-generated API key: \(bold(generated))")
+        }
+        return (network, access.key)
+    }
+
+    func load(_ orchestrator: ModelOrchestratorActor, from path: String) async throws {
+        log("Loading model from \(bold(path))…")
+        do {
+            try await orchestrator.loadModel(path: path)
+            await orchestrator.setModelId(model ?? modelPath ?? Self.defaultModel)
+            log("Model ready.")
+        } catch {
+            if case .modelConfigurationInvalid = error {
+                log("\(red("[error]")) \(error.localizedDescription)")
+                throw ExitCode.failure
+            }
+            log("\(yellow("[warn]")) \(error.localizedDescription) — running in stub mode.")
+        }
+    }
+
+    func attachCloudFallback(to orchestrator: ModelOrchestratorActor, virtualKeys: [VirtualKey]) async throws {
+        guard let fallback = try Self.resolveCloudFallback(
+            cliModel: cloudFallback, cliBaseURL: cloudBaseURL, cliDisabled: noCloudFallback,
+            cliLocalContextLimit: localContextLimit, cliRouterParams: routerParams, cliCostThreshold: costThreshold,
+            cliCacheStickiness: cacheStickiness, configFile: configFile ?? Self.defaultConfigFileIfPresent())
+        else { return }
+        let router = try await Self.cloudFallbackRouter(fallback, orchestrator: orchestrator, virtualKeys: virtualKeys)
+        if OpenRouterClient.isOpenRouter(fallback.baseURL) {
+            do {
+                try await router.syncCloudModels()
+            } catch {
+                log("\(yellow("[warn]")) Could not fetch OpenRouter prices: \(error.localizedDescription)")
+            }
+        }
+        if await !router.knowsPrice(of: fallback.model) {
+            log("\(yellow("[warn]")) No price known for \(fallback.model): its cloud spend is counted as $0 and the budget does not limit it")
+        }
+        await orchestrator.setCloudFallback(router, arbiter: HybridArbiter(localContextLimit: fallback.localContextLimit))
+        log("Cloud fallback → \(bold(fallback.model)) at \(fallback.baseURL.absoluteString)")
     }
 
     private func loadEmbeddings() async throws -> EmbeddingService? {

@@ -365,20 +365,7 @@ struct CheckSubcommand: AsyncParsableCommand {
     mutating func run() async throws {
         if system {
             let report = await SystemProfiler().generateReport()
-            if json {
-                try printJSON(report)
-            } else {
-                print("\n🖥️  System Hardware Diagnostics:\n")
-                print("  Chip:            \(bold(report.chip))")
-                print("  Total RAM:       \(report.totalRAMGB) GB")
-                print("  Available RAM:   \(report.availableRAMGB) GB")
-                print("  GPU:             \(report.gpu) (\(report.gpuMemoryGB) GB working set)")
-                print("  CPU Cores:       \(report.cpuCores)")
-                print("  Disk Space:      \(report.diskSpaceGB) GB free")
-                print("  OS Version:      \(report.osVersion)")
-                print("  Compatibility:   \(report.compatible ? green("✓ Apple Silicon / Metal supported") : yellow("⚠️ Limited support"))")
-                print()
-            }
+            if json { try printJSON(report) } else { printSystemReport(report) }
             return
         }
 
@@ -406,33 +393,31 @@ struct CheckSubcommand: AsyncParsableCommand {
             return
         }
 
-        print("\n🔍 Evaluating memory feasibility for \(bold(id))…\n")
-        print("  Model:           \(assessment.modelName) (\(assessment.modelId))")
-        print("  Required RAM:    \(assessment.requiredRAMFormatted)")
-        print("  Available RAM:   \(assessment.availableRAMFormatted)")
-        print("  Physical RAM:    \(assessment.totalRAMFormatted)")
-        print("  Memory budget:   \(assessment.memoryBudgetFormatted) (Metal working set)")
-        print("  Fit Level:       \(assessment.fitLevel.emoji) \(assessment.fitLevel.rawValue)")
-        print("  Context Budget:  \(assessment.contextBudgetLine)")
-        if kvZones { print("  KV zones:        \(KVBitsSetting.zonesAssumption)") }
-        if let line = KVBitsSetting.evictionSizing(kvEvict) { print("  KV eviction:     \(line)") }
-        print()
-
-        if let warning = assessment.warning {
-            print((assessment.fitsInMemory ? yellow : red)("  \(warning)"))
-        }
-        if let rec = assessment.recommendation {
-            print(yellow("  💡 Recommendation: \(rec)"))
-        }
-
-        if assessment.fitsInMemory {
-            print(green("  ✓ Feasible: Model fits within system memory budget."))
-        } else {
-            print(red("  ❌ Insufficient Memory: Model exceeds available memory!"))
-        }
+        printAssessment(assessment, id: id)
         if let deepCheck { printDeepCheck(deepCheck) }
         print()
         if !passed { throw ExitCode.failure }
+    }
+
+    private func printSystemReport(_ report: SystemProfiler.HardwareDiagnosticReport) {
+        print("\n🖥️  System Hardware Diagnostics:\n")
+        print("  Chip:            \(bold(report.chip))")
+        print("  Total RAM:       \(report.totalRAMGB) GB")
+        print("  Available RAM:   \(report.availableRAMGB) GB")
+        print("  GPU:             \(report.gpu) (\(report.gpuMemoryGB) GB working set)")
+        print("  CPU Cores:       \(report.cpuCores)")
+        print("  Disk Space:      \(report.diskSpaceGB) GB free")
+        print("  OS Version:      \(report.osVersion)")
+        print("  Compatibility:   \(report.compatible ? green("✓ Apple Silicon / Metal supported") : yellow("⚠️ Limited support"))")
+        print()
+    }
+
+    private func printAssessment(_ assessment: MemoryAssessment, id: String) {
+        print("\n🔍 Evaluating memory feasibility for \(bold(id))…\n")
+        for line in assessment.reportLines(
+            kvZones: kvZones, kvEvict: kvEvict,
+            fits: "✓ Feasible: Model fits within system memory budget.", exceeds: "❌ Insufficient Memory: Model exceeds available memory!"
+        ) { print(line) }
     }
 
     private struct DeepCheckOutput: Encodable {
@@ -523,4 +508,23 @@ struct InspectSubcommand: AsyncParsableCommand {
     }
 }
 
-
+extension MemoryAssessment {
+    func reportLines(kvZones: Bool, kvEvict: Double?, fits: String, exceeds: String) -> [String] {
+        var lines = [
+            "  Model:           \(modelName) (\(modelId))",
+            "  Required RAM:    \(requiredRAMFormatted)",
+            "  Available RAM:   \(availableRAMFormatted)",
+            "  Physical RAM:    \(totalRAMFormatted)",
+            "  Memory budget:   \(memoryBudgetFormatted) (Metal working set)",
+            "  Fit Level:       \(fitLevel.emoji) \(fitLevel.rawValue)",
+            "  Context Budget:  \(contextBudgetLine)",
+        ]
+        if kvZones { lines.append("  KV zones:        \(KVBitsSetting.zonesAssumption)") }
+        if let line = KVBitsSetting.evictionSizing(kvEvict) { lines.append("  KV eviction:     \(line)") }
+        lines.append("")
+        if let warning { lines.append((fitsInMemory ? yellow : red)("  \(warning)")) }
+        if let recommendation { lines.append(yellow("  💡 Recommendation: \(recommendation)")) }
+        lines.append(fitsInMemory ? green("  \(fits)") : red("  \(exceeds)"))
+        return lines
+    }
+}

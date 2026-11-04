@@ -51,6 +51,15 @@ public struct ServerConfig: Sendable {
 
     public enum LogLevel: String, Sendable, CaseIterable {
         case debug, info, warn, error
+
+        public var basaltLevel: BasaltLogLevel {
+            switch self {
+            case .debug: .debug
+            case .info: .info
+            case .warn: .warn
+            case .error: .error
+            }
+        }
     }
 
     /// System configuration keys managed by CLI/server options.
