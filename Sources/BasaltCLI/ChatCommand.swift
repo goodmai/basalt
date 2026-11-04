@@ -77,8 +77,7 @@ struct ChatCommand: AsyncParsableCommand {
             (sessionId, history) = try Self.resumed(resume, in: logDirectory)
             log("Resuming \(bold(sessionId)) with \(history.count) earlier messages")
         }
-        let writer = ServeCommand.sessionLogWriter(
-            mode: sessionLog, directory: sessionLogDir, retentionDays: 14, maxTotalMB: 1024, defaultSession: sessionId)
+        let writer = ServeCommand.sessionLogWriter(mode: sessionLog, directory: sessionLogDir, defaultSession: sessionId)
         defer { if writer != nil { print("Resume with: basalt chat --resume \(sessionId)") } }
 
         let resolvedPath = try await resolveModelPath()
