@@ -55,80 +55,43 @@ public enum DiffFormat: Sendable, Equatable {
 public struct DiffParser: Sendable {
     public init() {}
     
-    /// Parse unified diff format (diff -u)
     public static func parseUnifiedDiff(_ diff: String) -> [DiffHunk] {
         guard !diff.isEmpty else { return [] }
-        
-        let lines = diff.components(separatedBy: .newlines)
         var hunks: [DiffHunk] = []
-        var currentOldFile: String?
-        var currentNewFile: String?
-        var currentHeader: String?
-        var currentLines: [DiffLine] = []
-        
-        for line in lines {
-            // File headers
+        var oldFile: String?
+        var newFile: String?
+        var header: String?
+        var lines: [DiffLine] = []
+        func flush() {
+            if let header, !lines.isEmpty { hunks.append(DiffHunk(oldFile: oldFile, newFile: newFile, header: header, lines: lines)) }
+        }
+        for line in diff.components(separatedBy: .newlines) {
             if line.hasPrefix("--- ") {
-                currentOldFile = String(line.dropFirst(4))
-                continue
+                oldFile = String(line.dropFirst(4))
             } else if line.hasPrefix("+++ ") {
-                currentNewFile = String(line.dropFirst(4))
+                newFile = String(line.dropFirst(4))
+            } else if line.hasPrefix("diff --git ") || line.hasPrefix("index ") {
                 continue
-            } else if line.hasPrefix("diff --git ") {
-                // Git-style header, skip
-                continue
-            } else if line.hasPrefix("index ") {
-                // Git index line, skip
-                continue
-            }
-            
-            // Hunk header
-            if line.hasPrefix("@@") {
-                // Save previous hunk if exists
-                if let header = currentHeader, !currentLines.isEmpty {
-                    hunks.append(DiffHunk(
-                        oldFile: currentOldFile,
-                        newFile: currentNewFile,
-                        header: header,
-                        lines: currentLines
-                    ))
-                }
-                
-                // Start new hunk
-                currentHeader = line
-                currentLines = []
-                continue
-            }
-            
-            // Diff lines (only process after we have a header)
-            guard currentHeader != nil else { continue }
-            
-            if line.hasPrefix("+") && !line.hasPrefix("+++") {
-                let text = String(line.dropFirst())
-                currentLines.append(DiffLine(type: .addition, text: text))
-            } else if line.hasPrefix("-") && !line.hasPrefix("---") {
-                let text = String(line.dropFirst())
-                currentLines.append(DiffLine(type: .deletion, text: text))
-            } else if line.hasPrefix(" ") {
-                let text = String(line.dropFirst())
-                currentLines.append(DiffLine(type: .context, text: text))
-            } else if !line.isEmpty {
-                // Treat non-empty lines without prefix as context
-                currentLines.append(DiffLine(type: .context, text: line))
+            } else if line.hasPrefix("@@") {
+                flush()
+                header = line
+                lines = []
+            } else if header != nil, let parsed = diffLine(line) {
+                lines.append(parsed)
             }
         }
-        
-        // Add final hunk
-        if let header = currentHeader, !currentLines.isEmpty {
-            hunks.append(DiffHunk(
-                oldFile: currentOldFile,
-                newFile: currentNewFile,
-                header: header,
-                lines: currentLines
-            ))
-        }
-        
+        flush()
         return hunks
+    }
+
+    static func diffLine(_ line: String) -> DiffLine? {
+        switch line.first {
+        case "+" where !line.hasPrefix("+++"): DiffLine(type: .addition, text: String(line.dropFirst()))
+        case "-" where !line.hasPrefix("---"): DiffLine(type: .deletion, text: String(line.dropFirst()))
+        case " ": DiffLine(type: .context, text: String(line.dropFirst()))
+        case nil: nil
+        default: DiffLine(type: .context, text: line)
+        }
     }
     
     /// Auto-detect diff format

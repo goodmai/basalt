@@ -58,6 +58,24 @@ struct DiffRendererTests {
         #expect(hunks[1].lines.count == 3)
     }
     
+    @Test("A body line keeps its kind; a +++ or --- without a space is context; an empty line is dropped",
+          arguments: [("+added", DiffLine(type: .addition, text: "added")), ("-gone", DiffLine(type: .deletion, text: "gone")),
+                      (" same", DiffLine(type: .context, text: "same")), ("+++x", DiffLine(type: .context, text: "+++x")),
+                      ("---x", DiffLine(type: .context, text: "---x")), ("plain", DiffLine(type: .context, text: "plain"))])
+    func bodyLineKinds(line: String, expected: DiffLine) {
+        #expect(DiffParser.diffLine(line) == expected)
+        #expect(DiffParser.diffLine("") == nil)
+    }
+
+    @Test("Lines before the first hunk header are ignored, and a hunk with no lines is not emitted")
+    func linesBeforeHeaderAndEmptyHunks() {
+        let hunks = DiffParser.parseUnifiedDiff("stray\n--- a/f\n+++ b/f\n@@ -1 +1 @@\n@@ -2 +2 @@\n+kept")
+        #expect(hunks.count == 1)
+        #expect(hunks.first?.header == "@@ -2 +2 @@")
+        #expect(hunks.first?.oldFile == "a/f")
+        #expect(hunks.first?.lines == [DiffLine(type: .addition, text: "kept")])
+    }
+
     @Test("Parse empty diff gracefully")
     func testParseEmptyDiff() async throws {
         let diff = ""
