@@ -1013,17 +1013,6 @@ public actor MLXInferenceEngine: InferenceEngine {
         return LMInput(tokens: concatenated([tokens, extra], axis: -1))
     }
 
-    struct GenerationLaunch {
-        let stream: AsyncStream<Generation>
-        let task: Task<Void, Never>?
-        let cache: PromptCache?
-        var anchors: [PromptCache] = []
-        let reusedTokens: TokenCount
-        var exactTokens = TokenCount(Int.max)
-        var prefillSeconds: TimeInterval = 0
-        var mtpPrefix: MTPPrefix?
-    }
-
     static let mtpPromptLimit = 8192
     static let mtpPrefixLimit = 4
 
@@ -1215,6 +1204,17 @@ public actor MLXInferenceEngine: InferenceEngine {
 extension MLXInferenceEngine {
     func record(_ event: EngineEvent) {
         state = .reduce(state, event)
+    }
+
+    struct GenerationLaunch {
+        let stream: AsyncStream<Generation>
+        let task: Task<Void, Never>?
+        let cache: PromptCache?
+        var anchors: [PromptCache] = []
+        let reusedTokens: TokenCount
+        var exactTokens = TokenCount(Int.max)
+        var prefillSeconds: TimeInterval = 0
+        var mtpPrefix: MTPPrefix?
     }
 
     @discardableResult
