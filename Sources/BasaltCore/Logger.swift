@@ -13,9 +13,6 @@ public enum BasaltLogLevel: Int, Comparable, Sendable {
     }
 }
 
-public typealias GemLogLevel = BasaltLogLevel
-public typealias GemLogger = BasaltLogger
-
 public struct BasaltLogger: Sendable {
     private static let level = Mutex(BasaltLogLevel.info)
 
