@@ -1,5 +1,6 @@
 import Foundation
 import MLX
+import Synchronization
 import MLXNN
 import MLXLLM
 import MLXLMCommon
@@ -20,7 +21,7 @@ struct CacheBlendLayer {
 
 struct CacheBlendSegment {
     let range: Range<Int>
-    let cached: [[MLXArray]]?
+    let cached: [[MaterializedArray]]?
 }
 
 struct CacheBlendPass {
@@ -203,14 +204,14 @@ struct CacheBlendOutcome {
     let exactPrefix: Int
 }
 
-final class CacheBlendStore: @unchecked Sendable {
+final class CacheBlendStore: Sendable {
     struct Key: Hashable {
         let namespace: String
         let tokens: [Int]
     }
 
     struct Entry {
-        let layers: [[MLXArray]]
+        let layers: [[MaterializedArray]]
         let bytes: Int
         var lastUse: Int
     }
@@ -224,20 +225,15 @@ final class CacheBlendStore: @unchecked Sendable {
 
     let ratio: Float
     let byteBudget: Int
-    private var state = State()
-    private let lock = NSLock()
-
-    private func withState<T>(_ body: (inout State) -> T) -> T {
-        lock.withLock { body(&state) }
-    }
+    private let state = Mutex(State())
 
     init(ratio: Float, byteBudget: Int) {
         self.ratio = ratio
         self.byteBudget = byteBudget
     }
 
-    var byteCount: Int { withState { $0.bytes } }
-    var chunkCount: Int { withState { $0.entries.count } }
+    var byteCount: Int { state.withLock { $0.bytes } }
+    var chunkCount: Int { state.withLock { $0.entries.count } }
 
     static let minimumChunk = 16
     static let maximumTokens = 16384
@@ -264,12 +260,12 @@ final class CacheBlendStore: @unchecked Sendable {
     }
 
     func chunks(_ tokens: [Int], tokenizer: any MLXLMCommon.Tokenizer) -> [Range<Int>] {
-        let known = withState { $0.texts }
+        let known = state.withLock { $0.texts }
         let decoded = Dictionary(uniqueKeysWithValues: Set(tokens).filter { known[$0] == nil }.map {
             ($0, tokenizer.decode(tokenIds: [$0], skipSpecialTokens: false))
         })
         if !decoded.isEmpty {
-            withState { state in state.texts.merge(decoded) { cached, _ in cached } }
+            state.withLock { state in state.texts.merge(decoded) { cached, _ in cached } }
         }
         return Self.chunks(tokens.map { known[$0] ?? decoded[$0] ?? "" })
     }
@@ -284,7 +280,7 @@ final class CacheBlendStore: @unchecked Sendable {
               cache.layers.count == blender.layers.count, cache.layers.allSatisfy({ $0 is KVCacheSimple })
         else { return nil }
         let ranges = chunks(Array(prompt[..<end]), tokenizer: tokenizer).filter { $0.upperBound > start }
-        let segments = withState { state in
+        let segments = state.withLock { state in
             ranges.map { range -> CacheBlendSegment in
                 let local = max(range.lowerBound, start) - start ..< range.upperBound - start
                 let key = Key(namespace: namespace, tokens: Array(prompt[range]))
@@ -330,14 +326,15 @@ final class CacheBlendStore: @unchecked Sendable {
                 }
             }
         }
-        let stored = zip(ranges, segments).compactMap { range, segment -> (Key, [[MLXArray]])? in
+        let fresh = zip(ranges, segments).compactMap { range, segment -> (Key, [[MLXArray]])? in
             guard storing, range.lowerBound >= start, range.count >= Self.minimumChunk, segment.cached == nil,
                   let sliced = layers(range)
             else { return nil }
             return (Key(namespace: namespace, tokens: Array(prompt[range])), sliced.map { $0.map { contiguous($0) } })
         }
-        eval(stored.flatMap { $0.1.joined() })
-        withState { state in
+        eval(fresh.flatMap { $0.1.joined() })
+        let stored = fresh.map { key, layers in (key, layers.map { $0.map { $0.materialized() } }) }
+        state.withLock { state in
             for (key, layers) in stored where state.entries[key] == nil {
                 let bytes = layers.joined().reduce(0) { $0 + $1.nbytes }
                 guard bytes <= byteBudget else { continue }
