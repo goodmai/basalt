@@ -1,0 +1,82 @@
+[
+  {
+    "commit" : "5738fe0",
+    "lines" : 6,
+    "md5" : "215288e4484fce966211afa936ca2a0e",
+    "mode" : "plain",
+    "model" : "lukaskremla/Qwen3.8-27B-3bit-MLX-TextOnly",
+    "revision" : "dc755c911a7716a1db15cd8df8bab46a9dcfffdc"
+  },
+  {
+    "commit" : "5738fe0",
+    "lines" : 6,
+    "md5" : "215288e4484fce966211afa936ca2a0e",
+    "mode" : "lookup",
+    "model" : "lukaskremla/Qwen3.8-27B-3bit-MLX-TextOnly",
+    "revision" : "dc755c911a7716a1db15cd8df8bab46a9dcfffdc"
+  },
+  {
+    "commit" : "5738fe0",
+    "lines" : 6,
+    "md5" : "215288e4484fce966211afa936ca2a0e",
+    "mode" : "zones",
+    "model" : "lukaskremla/Qwen3.8-27B-3bit-MLX-TextOnly",
+    "revision" : "dc755c911a7716a1db15cd8df8bab46a9dcfffdc"
+  },
+  {
+    "commit" : "5738fe0",
+    "lines" : 7,
+    "md5" : "f527b9adbfdf07f8a5ad3b40d519bfb6",
+    "mode" : "split",
+    "model" : "lukaskremla/Qwen3.8-27B-3bit-MLX-TextOnly",
+    "revision" : "dc755c911a7716a1db15cd8df8bab46a9dcfffdc"
+  },
+  {
+    "commit" : "5738fe0",
+    "lines" : 7,
+    "md5" : "5766add98f7540f75011331c5b0eed6d",
+    "mode" : "plain",
+    "model" : "mlx-community/gemma-4-26B-A4B-it-qat-4bit",
+    "revision" : "unknown"
+  },
+  {
+    "commit" : "5738fe0",
+    "lines" : 7,
+    "md5" : "5766add98f7540f75011331c5b0eed6d",
+    "mode" : "quest",
+    "model" : "mlx-community/gemma-4-26B-A4B-it-qat-4bit",
+    "revision" : "unknown"
+  },
+  {
+    "commit" : "5738fe0",
+    "lines" : 3,
+    "md5" : "df2463dc07f1bf60646a990cfa9b5afe",
+    "mode" : "plain",
+    "model" : "LiquidAI/LFM2.5-24B-A2B-MLX-4bit",
+    "revision" : "667408d494bde191c2cb9dd4f4549827816b9275"
+  },
+  {
+    "commit" : "5738fe0",
+    "lines" : 3,
+    "md5" : "df2463dc07f1bf60646a990cfa9b5afe",
+    "mode" : "lookup",
+    "model" : "LiquidAI/LFM2.5-24B-A2B-MLX-4bit",
+    "revision" : "667408d494bde191c2cb9dd4f4549827816b9275"
+  },
+  {
+    "commit" : "5738fe0",
+    "lines" : 6,
+    "md5" : "c1766f9c115e416926aa6d87c63069f3",
+    "mode" : "plain",
+    "model" : "Youssofal/Ternary-Bonsai-2-27B-MTPLX-Optimized-Speed",
+    "revision" : "03bd60bb82755f2446f5083426dca9708eb8e0fe"
+  },
+  {
+    "commit" : "5738fe0",
+    "lines" : 6,
+    "md5" : "c1766f9c115e416926aa6d87c63069f3",
+    "mode" : "mtp",
+    "model" : "Youssofal/Ternary-Bonsai-2-27B-MTPLX-Optimized-Speed",
+    "revision" : "03bd60bb82755f2446f5083426dca9708eb8e0fe"
+  }
+]
