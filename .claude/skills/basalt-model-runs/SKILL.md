@@ -29,7 +29,7 @@ Bash only starts one of these. Don't write `for model in …; do …; done | tai
 
 ## Which models
 
-Cover at least two families for any speed or quality claim, plus one model the feature must refuse:
+Cover at least two families for any speed or quality claim, plus one model the feature must refuse. Every model table includes a Gemma 4 of at least 12B (`gemma-4-12B-it-qat-4bit` or `gemma-4-26B-A4B-it-qat-4bit`); when the feature excludes Gemma 4, run it anyway and show the refusal or fallback. Llama is not used, neither for runs nor as the tiny test fixture:
 
 | Class | Cached examples | Use for |
 |---|---|---|

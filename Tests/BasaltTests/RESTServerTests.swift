@@ -454,6 +454,30 @@ struct RESTServerTests {
         }
     }
 
+    @Test("/v1/models/preview answers what a model would cost without loading it, and refuses a missing or non-repo id (#33)")
+    func previewModel() async throws {
+        let s = try await setup()
+        try await s.app.test(.router) { client in
+            try await client.execute(uri: "/v1/models/preview?model_id=mlx-community/Qwen3.6-27B-4bit&context=32000", method: .get) { res in
+                #expect(res.status == .ok)
+                let body = try json(res.body)
+                let weights = try #require(body["weights_bytes"] as? Int)
+                let perThousand = try #require(body["kv_bytes_per_1k_tokens"] as? Int)
+                #expect(weights > 0 && perThousand > 0)
+                #expect(body["required_bytes"] as? Int == weights + perThousand * 32)
+                #expect(body["context_tokens"] as? Int == 32000)
+                #expect(body["fits"] is Bool)
+                #expect(body["max_context_tokens"] is Int)
+            }
+            try await client.execute(uri: "/v1/models/preview?model_id=claude-local/mlx-community--Qwen3.6-27B-4bit", method: .get) { res in
+                let body = try json(res.body)
+                #expect(body["model_id"] as? String == "mlx-community/Qwen3.6-27B-4bit")
+            }
+            try await client.execute(uri: "/v1/models/preview", method: .get) { res in #expect(res.status == .badRequest) }
+            try await client.execute(uri: "/v1/models/preview?model_id=../../etc", method: .get) { res in #expect(res.status == .badRequest) }
+        }
+    }
+
     @Test("/v1/models/current reports the loaded model's discovery ID and readiness")
     func currentModel() async throws {
         let s = try await setup()

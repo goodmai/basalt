@@ -81,6 +81,8 @@ public actor MLXInferenceEngine: InferenceEngine {
     /// costs accuracy on short prompts for no memory benefit.
     private let quantizedKVStart: Int
     private let kvZones: KVZones?
+    private let wiresWorkingSet: Bool
+    private var wiredTicket: WiredMemoryTicket?
     private let kvHeadSplit: Double?
     private(set) var kvHeadMask: KVHeadMask?
 
@@ -177,8 +179,10 @@ public actor MLXInferenceEngine: InferenceEngine {
         grammarJumpForward: Bool = false,
         promptCacheDisk: PromptCacheDiskStore? = nil,
         hybridAnchors: Int = 8,
-        batchSlots: Int = 1
+        batchSlots: Int = 1,
+        wiresWorkingSet: Bool = false
     ) {
+        self.wiresWorkingSet = wiresWorkingSet
         self.hybridAnchors = hybridAnchors
         self.batchSlots = max(1, batchSlots)
         self.promptCacheDisk = promptCacheDisk
@@ -243,6 +247,27 @@ public actor MLXInferenceEngine: InferenceEngine {
             logger.warn("--kv-head-split: scoring the heads failed (\(error.localizedDescription)); the KV cache stays dense")
         }
     }
+
+    public static func renewsResidency() {
+        setenv("MLX_METAL_RESIDENCY_REFRESH_INTERVAL_MS", "1000", 0)
+    }
+
+    func wireWorkingSet() async {
+        await releaseWiredMemory()
+        guard wiresWorkingSet else { return }
+        let ticket = WiredMemoryTicket(size: PromptCacheBudget.gpuWorkingSet(), policy: WiredMaxPolicy(), kind: .active)
+        let applied = await ticket.start()
+        wiredTicket = ticket
+        logger.info("Wired memory limit: \(applied >> 20) MB, Metal's recommended working set, while the model is loaded (--no-wired-limit leaves the system default)")
+    }
+
+    func releaseWiredMemory() async {
+        guard let ticket = wiredTicket else { return }
+        wiredTicket = nil
+        _ = await ticket.end()
+    }
+
+    var wiredLimitBytes: Int? { wiredTicket?.size }
 
     func probeKVZones() async {
         guard kvZones != nil, let container else { return }
@@ -390,6 +415,7 @@ public actor MLXInferenceEngine: InferenceEngine {
             if container != nil {
                 await persistPromptCache(within: Self.modelSwitchPersistDeadline)
                 container = nil
+                await releaseWiredMemory()
                 batchDecoder = nil
                 mtpDrafter = nil
                 promptCaches.removeAll()
@@ -430,6 +456,7 @@ public actor MLXInferenceEngine: InferenceEngine {
                    fingerprint: promptCacheDisk == nil ? nil : PromptCacheDiskStore.fingerprint(modelDirectory: directory),
                    modelDescription: modelPath)
             await probeKVZones()
+            await wireWorkingSet()
             await probeKVHeads(directory: directory)
             logger.info("Sampling defaults from generation_config.json: \(samplingDefaults)")
             

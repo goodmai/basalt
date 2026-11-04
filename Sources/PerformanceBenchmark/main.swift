@@ -52,6 +52,9 @@ struct Benchmark: AsyncParsableCommand {
     @Flag(name: .customLong("kv-zones"), help: "Keep the first and last tokens of each full-attention layer fp16 and quantize the middle")
     var kvZones: Bool = false
 
+    @Flag(name: .customLong("wired-limit"), inversion: .prefixedNo, help: "Hold the wired memory limit at Metal's recommended working set while the model is loaded")
+    var wiredLimit: Bool = true
+
     @Option(name: .customLong("kv-head-split"), help: "Experimental: keep the whole context in this share of KV heads, sinks and a recent window in the rest")
     var kvHeadSplit: Double?
 
@@ -98,6 +101,7 @@ struct Benchmark: AsyncParsableCommand {
     }
 
     func run() async throws {
+        if wiredLimit { MLXInferenceEngine.renewsResidency() }
         let resolvedPath = resolveModelPath()
         print("Benchmark — model: \(model)")
         if resolvedPath != model {
@@ -113,7 +117,7 @@ struct Benchmark: AsyncParsableCommand {
             kvHeadSplit: kvHeadSplit,
             repetitionPenalty: repetitionPenalty,
             topK: topK, minP: minP, seed: seed, speculativeLookup: speculativeLookup,
-            speculativeRecycling: speculativeRecycling, mtp: mtp, mtpBlockSize: mtpBlock, experimentalSamplers: dryMultiplier != nil, grammarJumpForward: grammarJumpForward)
+            speculativeRecycling: speculativeRecycling, mtp: mtp, mtpBlockSize: mtpBlock, experimentalSamplers: dryMultiplier != nil, grammarJumpForward: grammarJumpForward, wiresWorkingSet: wiredLimit)
         let orchestrator = ModelOrchestratorActor(engine: engine, maxTokens: tokens, kvPrecision: kvBits, kvZones: kvZones ? .standard : nil)
 
         print("Loading model…", terminator: ""); fflush(stdout)

@@ -521,7 +521,7 @@ public actor ModelOrchestratorActor {
 
     static func watchdogSeconds(maxTokens: Int, promptTokens: Int, floor: UInt64 = 300) -> UInt64 {
         let decodeSeconds = UInt64(max(0, maxTokens)) / 4
-        let prefillSeconds = UInt64(max(0, promptTokens)) / 200
+        let prefillSeconds = UInt64(max(0, promptTokens)) / 50
         return max(floor, decodeSeconds + prefillSeconds)
     }
 
