@@ -841,11 +841,9 @@ public actor MLXInferenceEngine: InferenceEngine {
             let cuts = (fork.map { [$0] } ?? []) + anchors
             let launch: GenerationLaunch
             do {
-                launch = try await container.performSending(nonSendable: (lmInput, reuse)) { context, values in
+                launch = try await container.performEvaluating(nonSendable: (lmInput, reuse)) { context, values in
                     let prompt = CachedPrompt(reuse: values.1, cuts: cuts, boundary: boundary, blend: blending)
-                    return try ModelEvaluationLock.lock(for: context.model).withLock {
-                        try Self.launch(input: values.0, prompt: prompt, options: options, context: context)
-                    }
+                    return try Self.launch(input: values.0, prompt: prompt, options: options, context: context)
                 }
             } catch {
                 keep(tokens: promptTokens, namespace: namespace, releasing: leaseID, epoch: epoch)

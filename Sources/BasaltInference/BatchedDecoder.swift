@@ -24,7 +24,7 @@ final class BatchedDecoder: Sendable {
 
     fileprivate func leave(_ id: Int, from core: BatchCore) {
         guard mailbox.withLock({ $0.leave(id) }) else { return }
-        core.evaluation.withLock {
+        core.model.evaluating {
             if mailbox.withLock({ $0.seated == 0 }) { core.reset() }
         }
     }
@@ -32,7 +32,7 @@ final class BatchedDecoder: Sendable {
     fileprivate func take(_ id: Int, from core: BatchCore, joining arrival: BatchRow?) -> Int? {
         if arrival != nil { mailbox.withLock { $0.open(id) } }
         if mailbox.withLock({ $0.waits(id) }) {
-            core.evaluation.withLock {
+            core.model.evaluating {
                 var arrivals = arrival.map { [$0] } ?? []
                 while mailbox.withLock({ $0.waits(id) }), advance(core, admitting: arrivals) { arrivals = [] }
             }
@@ -97,8 +97,7 @@ private typealias BatchDelivery = (id: Int, token: Int, finished: Bool)
 
 final class BatchCore {
     let decoder: BatchedDecoder
-    fileprivate let evaluation: FairRecursiveLock
-    private let model: any LanguageModel
+    fileprivate let model: any LanguageModel
     private var rows: [BatchRow] = []
     private var layers: [KVCache] = []
     private var pending: MLXArray?
@@ -107,7 +106,6 @@ final class BatchCore {
     init(model: any LanguageModel, slots: Int) {
         self.model = model
         decoder = BatchedDecoder(slots: slots)
-        evaluation = ModelEvaluationLock.lock(for: model)
     }
 
     fileprivate var ids: [Int] { rows.map(\.id) }
@@ -247,7 +245,7 @@ struct BatchedTokenIterator: SelfSerializingTokenIterator {
         let started = ContinuousClock.now
         var decoding = decoding
         decoding.processor?.prompt(input.text.tokens)
-        let first = try seat.core.evaluation.withLock {
+        let first = try seat.core.model.evaluating {
             let logits = switch try model.prepare(input, cache: layers, state: nil, prefill: decoding.prefill) {
             case .tokens(let rest): model(rest[text: .newAxis], cache: layers, state: nil).logits
             case .logits(let output): output.logits
