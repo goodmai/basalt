@@ -64,9 +64,10 @@ func functions(in source: String?) throws -> [String: Metrics] {
         let fields = csvFields(row)
         guard fields.count >= 10, let nloc = Int(fields[0]), let ccn = Int(fields[1]), let params = Int(fields[3]),
               let line = Int(fields[9]) else { continue }
-        let metrics = Metrics(ccn: ccn, nloc: nloc, params: params, line: line)
-        if let known = found[fields[8]], (known.ccn, known.nloc, known.params) >= (ccn, nloc, params) { continue }
-        found[fields[8]] = metrics
+        let known = found[fields[8]]
+        found[fields[8]] = Metrics(
+            ccn: max(ccn, known?.ccn ?? 0), nloc: max(nloc, known?.nloc ?? 0), params: max(params, known?.params ?? 0),
+            line: known.map { $0.ccn >= ccn ? $0.line : line } ?? line)
     }
     return found
 }
