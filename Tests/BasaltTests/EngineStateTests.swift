@@ -19,6 +19,12 @@ struct EngineStateTests {
         .loadFinished(epoch, container, ModelFacts(description: path))
     }
 
+    func step(_ state: EngineState, _ event: EngineEvent, sourceLocation: SourceLocation = #_sourceLocation) -> EngineState {
+        let next = EngineState.reduce(state, event)
+        #expect(next.checkInvariants(after: state) == [], sourceLocation: sourceLocation)
+        return next
+    }
+
     func everyState() -> [EngineState] {
         [.unloaded(3), .loading(epoch: 3, path: "/a"), ready(3), .failed(epoch: 3, error: .modelNotFound(identifier: "/a"))]
     }
@@ -26,13 +32,13 @@ struct EngineStateTests {
     @Test("A load starts at the next epoch from every state")
     func loadStartsAtNextEpoch() {
         for state in everyState() {
-            #expect(EngineState.reduce(state, .loadStarted(path: "/b")).summary == "loading 4 /b")
+            #expect(step(state, .loadStarted(path: "/b")).summary == "loading 4 /b")
         }
     }
 
     @Test("A load that finishes at its own epoch becomes ready with its container and facts")
     func loadFinishes() throws {
-        let next = EngineState.reduce(.loading(epoch: 2, path: "/m"), finished(2))
+        let next = step(.loading(epoch: 2, path: "/m"), finished(2))
         let model = try #require(next.loaded)
         #expect(model.container === container)
         #expect(model.epoch == 2)
@@ -41,7 +47,7 @@ struct EngineStateTests {
 
     @Test("A load that fails at its own epoch records the error")
     func loadFails() {
-        let next = EngineState.reduce(.loading(epoch: 2, path: "/m"), .loadFailed(2, .modelNotFound(identifier: "/m")))
+        let next = step(.loading(epoch: 2, path: "/m"), .loadFailed(2, .modelNotFound(identifier: "/m")))
         #expect(next.summary == "failed 2")
         #expect(next.loaded == nil)
     }
@@ -50,16 +56,16 @@ struct EngineStateTests {
     func strayResultsAreIgnored() {
         for state in everyState() + [.loading(epoch: 4, path: "/b")] {
             let before = state.summary
-            #expect(EngineState.reduce(state, finished(2)).summary == before)
-            #expect(EngineState.reduce(state, .loadFailed(2, .modelNotFound(identifier: "/m"))).summary == before)
+            #expect(step(state, finished(2)).summary == before)
+            #expect(step(state, .loadFailed(2, .modelNotFound(identifier: "/m"))).summary == before)
         }
-        #expect(EngineState.reduce(ready(3), finished(3)).summary == "ready 3 /m")
+        #expect(step(ready(3), finished(3)).summary == "ready 3 /m")
     }
 
     @Test("Unloading bumps the epoch from every state")
     func unloadBumpsEpoch() {
         for state in everyState() {
-            #expect(EngineState.reduce(state, .unloaded).summary == "unloaded 4")
+            #expect(step(state, .unloaded).summary == "unloaded 4")
         }
     }
 
@@ -69,29 +75,29 @@ struct EngineStateTests {
 
     @Test("A fact learned for the loaded model is kept; one learned for an older model or while loading is dropped")
     func learnedFacts() {
-        #expect(EngineState.reduce(ready(3), hybrid(3)).loaded?.facts.isHybrid == true)
-        #expect(EngineState.reduce(ready(3), hybrid(2)).loaded?.facts.isHybrid == nil)
-        #expect(EngineState.reduce(.loading(epoch: 3, path: "/a"), hybrid(3)).summary == "loading 3 /a")
-        #expect(EngineState.reduce(.unloaded(3), hybrid(3)).summary == "unloaded 3")
+        #expect(step(ready(3), hybrid(3)).loaded?.facts.isHybrid == true)
+        #expect(step(ready(3), hybrid(2)).loaded?.facts.isHybrid == nil)
+        #expect(step(.loading(epoch: 3, path: "/a"), hybrid(3)).summary == "loading 3 /a")
+        #expect(step(.unloaded(3), hybrid(3)).summary == "unloaded 3")
     }
 
     @Test("A load started during another load wins; the first one's late result is dropped")
     func loadDuringLoad() {
-        let first = EngineState.reduce(.unloaded(0), .loadStarted(path: "/a"))
-        let second = EngineState.reduce(first, .loadStarted(path: "/b"))
+        let first = step(.unloaded(0), .loadStarted(path: "/a"))
+        let second = step(first, .loadStarted(path: "/b"))
         #expect(second.summary == "loading 2 /b")
-        let late = EngineState.reduce(second, finished(1, "/a"))
+        let late = step(second, finished(1, "/a"))
         #expect(late.summary == "loading 2 /b")
-        #expect(EngineState.reduce(late, .loadFailed(1, .modelNotFound(identifier: "/a"))).summary == "loading 2 /b")
-        #expect(EngineState.reduce(late, finished(2, "/b")).summary == "ready 2 /b")
+        #expect(step(late, .loadFailed(1, .modelNotFound(identifier: "/a"))).summary == "loading 2 /b")
+        #expect(step(late, finished(2, "/b")).summary == "ready 2 /b")
     }
 
     @Test("An unload during a load drops the load's result, success or failure")
     func unloadDuringLoad() {
-        let unloaded = EngineState.reduce(.loading(epoch: 1, path: "/a"), .unloaded)
+        let unloaded = step(.loading(epoch: 1, path: "/a"), .unloaded)
         #expect(unloaded.summary == "unloaded 2")
-        #expect(EngineState.reduce(unloaded, finished(1, "/a")).summary == "unloaded 2")
-        #expect(EngineState.reduce(unloaded, .loadFailed(1, .modelNotFound(identifier: "/a"))).summary == "unloaded 2")
+        #expect(step(unloaded, finished(1, "/a")).summary == "unloaded 2")
+        #expect(step(unloaded, .loadFailed(1, .modelNotFound(identifier: "/a"))).summary == "unloaded 2")
     }
 }
 

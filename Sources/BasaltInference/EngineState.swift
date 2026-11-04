@@ -21,6 +21,7 @@ struct ModelFacts: Sendable {
     var valueRotationUnavailable = false
     var kvHeadMask: KVHeadMask?
     var questApplies = false
+    var capabilities = ModelCapabilities.unrestricted
 }
 
 struct LoadedModel: Sendable {
@@ -52,6 +53,10 @@ enum EngineState: Sendable {
 
     var loaded: LoadedModel? {
         if case .ready(let model) = self { model } else { nil }
+    }
+
+    func checkInvariants(after previous: EngineState) -> [String] {
+        epoch < previous.epoch ? ["the epoch went back from \(previous.epoch) to \(epoch)"] : []
     }
 
     static func reduce(_ state: EngineState, _ event: EngineEvent) -> EngineState {

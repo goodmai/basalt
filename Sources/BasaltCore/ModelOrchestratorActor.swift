@@ -88,6 +88,7 @@ extension ModelOrchestratorActor {
         kv.takesZones = await engine.supportsKVZones
         kv.takesEviction = await engine.supportsKVEviction
         await self.telemetry.setModelMemory(mb: self.modelSizeMB)
+        await telemetry.setModel(URL(fileURLWithPath: path).lastPathComponent)
     }
 
     public func switchModel(to modelId: String) async throws(BasaltError) {

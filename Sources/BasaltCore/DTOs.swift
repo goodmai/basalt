@@ -173,7 +173,7 @@ public struct GenerationRequest: Codable, Sendable {
         switch origin.source {
         case "cli": return .interactive
         case "harness": return .toolValidation
-        case "benchmark": return .background
+        case "benchmark", "canary": return .background
         default: return isServiceRequest == true ? .toolValidation : .standard
         }
     }
@@ -375,6 +375,8 @@ public struct GenerationResponse: Codable, Sendable {
     public let modelCalls: Int?
     public let toolCallRepairs: Int
     public let toolCallRejections: Int
+    public private(set) var degenerate: DegenerateOutput?
+    public private(set) var draftSource: DraftSource?
 
     public init(
         generatedText: String,
@@ -416,10 +418,17 @@ public struct GenerationResponse: Codable, Sendable {
         self.toolCallRejections = toolCallRejections
     }
 
+    public func reporting(degenerate: DegenerateOutput?, draftSource: DraftSource?) -> GenerationResponse {
+        var copy = self
+        copy.degenerate = degenerate
+        copy.draftSource = draftSource
+        return copy
+    }
+
     enum CodingKeys: String, CodingKey {
         case generatedText, reasoningText, promptTokens, cachedPromptTokens, completionTokens
         case tokensPerSecond, generationTime, timeToFirstToken, memory, finishReason, toolCalls, reasoningTokens
-        case draftTokens, acceptedDraftTokens, forcedTokens, modelCalls, toolCallRepairs, toolCallRejections
+        case draftTokens, acceptedDraftTokens, forcedTokens, modelCalls, toolCallRepairs, toolCallRejections, degenerate, draftSource
     }
 
     public init(from decoder: Decoder) throws {
@@ -442,6 +451,8 @@ public struct GenerationResponse: Codable, Sendable {
         modelCalls = try c.decodeIfPresent(Int.self, forKey: .modelCalls)
         toolCallRepairs = try c.decodeIfPresent(Int.self, forKey: .toolCallRepairs) ?? 0
         toolCallRejections = try c.decodeIfPresent(Int.self, forKey: .toolCallRejections) ?? 0
+        degenerate = try c.decodeIfPresent(DegenerateOutput.self, forKey: .degenerate)
+        draftSource = try c.decodeIfPresent(DraftSource.self, forKey: .draftSource)
     }
 
     public struct MemoryUsage: Codable, Sendable {

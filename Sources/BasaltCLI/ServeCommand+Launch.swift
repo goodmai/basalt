@@ -10,6 +10,7 @@ struct ServerLaunch: Sendable {
     let mcpServer: MCPServer?
     var embeddings: (any EmbeddingEngine)? = nil
     var statsInterval: Int? = nil
+    var canaryInterval: Duration? = nil
     var shutdownDeadline: Duration = .seconds(5)
     var handleSignals = true
 }
@@ -25,6 +26,9 @@ extension ServeCommand {
         }
         guard maxQueue >= 0 else {
             throw ValidationError("--max-queue must be 0 or more, got \(maxQueue)")
+        }
+        if let canaryMinutes, !(1...10_080).contains(canaryMinutes) {
+            throw ValidationError("--canary-minutes must be between 1 and 10080, got \(canaryMinutes)")
         }
         try network.validateRates()
         guard (0...1).contains(cacheBlendRatio) else {
@@ -100,6 +104,9 @@ extension ServeCommand {
                         try await mcpServer.runServiceGroup(shutdownDeadline: launch.shutdownDeadline, handleSignals: launch.handleSignals)
                     }
                 }
+            }
+            if let interval = launch.canaryInterval {
+                group.addTask { await Canary.run(every: interval, on: orchestrator) }
             }
             if let interval = launch.statsInterval {
                 group.addTask {

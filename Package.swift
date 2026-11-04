@@ -10,7 +10,7 @@ let package = Package(
     ],
     dependencies: [
         .package(url: "https://github.com/ml-explore/mlx-swift",     from: "0.33.0"),
-        .package(url: "https://github.com/goodmai/mlx-swift-lm",      revision: "a64106b65c77b0244775a4d8d341da53abec5650"),
+        .package(url: "https://github.com/goodmai/mlx-swift-lm",      revision: "e8d647f56aa77a61089f80477dd2a30140737a9e"),
         .package(url: "https://github.com/hummingbird-project/hummingbird", from: "2.28.0"),
         .package(url: "https://github.com/apple/swift-argument-parser",    from: "1.8.2"),
         .package(url: "https://github.com/swift-server/swift-service-lifecycle", from: "2.12.0"),
@@ -136,6 +136,7 @@ let package = Package(
                 .product(name: "Jinja", package: "swift-jinja"),
             ],
             path: "Tests/BasaltTests",
+            exclude: ["Fixtures/ReferenceLogits"],
             swiftSettings: swiftSettings
         ),
         .executableTarget(
