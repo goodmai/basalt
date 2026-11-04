@@ -160,6 +160,12 @@ struct ServeCommand: AsyncParsableCommand {
     @Flag(help: "Start REST only, suppress MCP stdio")
     var rest: Bool = false
 
+    @Flag(
+        name: .customLong("research-tools"),
+        help: "With --mcp, also list and accept the experiment tools (intervene, weights_delta, overlays_list, overlay_undo, experiment_compare): temporary in-memory overlays with a TTL and undo; steering and ablation apply to research calls only, while a weight delta changes the live model, marks every response as modified and turns off prompt-cache reuse until it is undone; the weights on disk are never written (default: off; the read-only X-ray tools are always on)"
+    )
+    var researchTools = false
+
     @Flag(name: .customLong("dry-run"), help: "Perform a dry-run memory feasibility assessment and exit without starting the server")
     var dryRun: Bool = false
 
@@ -233,7 +239,7 @@ struct ServeCommand: AsyncParsableCommand {
             orchestrator: orchestrator,
             modelId: resolvedPath.split(separator: "/").last.map { String($0) },
             library: HarnessExperienceLibrary(rootDirectory: HarnessExperienceLibrary.defaultRoot)
-        ) : nil
+        ).withResearchTools(researchTools) : nil
 
         try await Self.runServers(
             ServerLaunch(

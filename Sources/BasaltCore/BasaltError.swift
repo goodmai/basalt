@@ -18,6 +18,7 @@ public enum BasaltError: Error, Sendable, LocalizedError {
 
     case inferenceError(String)
     case modelNotCached(identifier: String)
+    case modelNotLoaded
     case modelSwitching(from: String, to: String)
     case serverBusy(retryAfterSeconds: Int?)
     case memoryPressure(retryAfterSeconds: Int)
@@ -52,6 +53,8 @@ public enum BasaltError: Error, Sendable, LocalizedError {
             return "Inference error: \(msg)"
         case .modelNotCached(let id):
             return "Model '\(id)' is not in the local cache. Run: basalt models download \(id)"
+        case .modelNotLoaded:
+            return "No model is loaded yet."
         case .modelSwitching(let from, let to):
             return "Switching model from '\(from)' to '\(to)'. Retry in a few seconds."
         case .serverBusy(let retryAfter):
@@ -72,7 +75,7 @@ public enum BasaltError: Error, Sendable, LocalizedError {
         case .rateLimitExceeded(let retryAfter): (429, "rate_limit_error", "rate_limit_error", retryAfter ?? "1")
         case .weightsCorrupted, .inferenceError, .nonFiniteLogits: (500, "server_error", "api_error", nil)
         case .modelInferenceError: (502, "server_error", "api_error", nil)
-        case .inferenceHardwareFailure, .modelSwitching: (503, "server_error", "overloaded_error", "1")
+        case .inferenceHardwareFailure, .modelSwitching, .modelNotLoaded: (503, "server_error", "overloaded_error", "1")
         case .serverBusy(let seconds): (503, "server_error", "overloaded_error", seconds.map(String.init) ?? "1")
         case .memoryPressure(let seconds): (503, "server_error", "overloaded_error", String(seconds))
         case .outOfMemory: (507, "server_error", "overloaded_error", "1")

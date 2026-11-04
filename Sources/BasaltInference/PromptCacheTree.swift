@@ -368,3 +368,27 @@ extension PromptCacheTree {
         return problems
     }
 }
+
+extension PromptCacheTree {
+    func report(namespace: String?) -> PromptCacheReport {
+        PromptCacheReport(
+            budget: byteBudget, bytes: byteCount, evictions: evictions,
+            namespaces: roots.filter { namespace == nil || $0.key == namespace }.sorted { $0.key < $1.key }.map(Self.namespaceReport))
+    }
+
+    private static func namespaceReport(_ entry: (key: String, value: PromptCacheNode)) -> NamespaceReport {
+        var report = NamespaceReport(name: entry.key, nodes: 0, leaves: 0, tokens: 0, bytes: 0)
+        var pending = Array(entry.value.children.values)
+        while let node = pending.popLast() {
+            report.nodes += 1
+            report.leaves += node.children.isEmpty ? 1 : 0
+            report.tokens += node.tokens.count
+            report.bytes += node.bytes
+            report.snapshots += node.snapshot == nil ? 0 : 1
+            report.pinned += node.pins > 0 ? 1 : 0
+            report.lastUse = max(report.lastUse, node.lastUse)
+            pending.append(contentsOf: node.children.values)
+        }
+        return report
+    }
+}

@@ -162,3 +162,104 @@ enum MCPToolCatalog {
         ])
     }
 }
+
+extension MCPToolCatalog {
+    static func catalog(researchTools: Bool) -> MCPToolsList {
+        let research = ResearchTool.allCases.filter { researchTools || !$0.isExperiment }
+        return MCPToolsList(tools: list.tools + research.map { MCPToolDescriptor(name: $0.rawValue, description: $0.summary, inputSchema: $0.schema) })
+    }
+}
+
+extension ResearchTool {
+    var summary: String {
+        switch self {
+        case .modelDescribe: "Anatomy of the loaded model: type, quantization, parameter count and bytes, and per layer its kind (full attention, sliding window, linear attention, mamba, conv, mlp, moe), heads, KV heads, head dim, window, experts and KV-cache class."
+        case .modelTensors: "List the loaded model's parameters with shape, dtype and whether they are quantized, optionally filtered by a name substring."
+        case .modelTensor: "Statistics of one parameter tensor by name (mean, std, min, max, L2, percentiles of |x|), dequantized, with at most maxValues values of an optional slice. Never returns a whole tensor."
+        case .kvInspect: "The prompt-cache tree: budget, bytes, evictions and per namespace its nodes, leaves, tokens, bytes, recurrent snapshots, pins and last use."
+        case .traceRun: "One capture run of a prompt at background priority: per-layer hidden-state norms, logit lens, per-head attention for one position and MoE router choices, each bounded to topK."
+        case .intervene: "Experiment: add a steering vector to a layer's residual stream, or zero one attention head or one expert. Creates an overlay (id, 30 min TTL, undo) that applies to research calls only, never to user requests."
+        case .weightsDelta: "Experiment: a temporary in-memory delta on one tensor (optionally a slice), undoable; weights on disk are never written."
+        case .overlaysList: "Experiment: the active overlays with id, description, creation and expiry time."
+        case .overlayUndo: "Experiment: undo one overlay by id."
+        case .experimentCompare: "Experiment: greedy before/after on a prompt set with the given overlays: text, KL divergence of the logits and perplexity."
+        }
+    }
+
+    var schema: AnyCodable {
+        switch self {
+        case .modelDescribe, .overlaysList: Self.object([:])
+        case .modelTensors: Self.object(["filter": ["type": "string", "description": "Substring of the parameter name, e.g. layers.3.mlp (default: all)"]])
+        case .kvInspect: Self.object(["namespace": ["type": "string", "description": "Only this prompt-cache namespace (default: all)"]])
+        case .modelTensor: Self.object(Self.tensorProperties, required: ["name"])
+        case .traceRun: Self.object(Self.traceProperties, required: ["prompt"])
+        case .intervene: Self.object(Self.interveneProperties, required: ["kind", "layer"])
+        case .weightsDelta: Self.object(Self.deltaProperties, required: ["tensor"])
+        case .overlayUndo: Self.object(["id": ["type": "integer", "minimum": 0, "description": "Overlay id from intervene, weights_delta or overlays_list"]], required: ["id"])
+        case .experimentCompare: Self.object(Self.compareProperties, required: ["prompts"])
+        }
+    }
+
+    private static func object(_ properties: [String: Any], required: [String] = []) -> AnyCodable {
+        var schema: [String: Any] = ["type": "object", "properties": properties]
+        if !required.isEmpty { schema["required"] = required }
+        return AnyCodable(schema)
+    }
+
+    private static var slice: [String: Any] {
+        [
+            "type": "array", "description": "Half-open [start, end) range per leading dimension",
+            "items": ["type": "array", "items": ["type": "integer", "minimum": 0], "minItems": 2, "maxItems": 2],
+        ]
+    }
+
+    private static var numbers: [String: Any] { ["type": "array", "items": ["type": "number"], "minItems": 1] }
+
+    private static var tensorProperties: [String: Any] {
+        [
+            "name": ["type": "string", "description": "Parameter name as model_tensors lists it"],
+            "slice": slice,
+            "maxValues": ["type": "integer", "minimum": ResearchCall.maxValues.lowerBound, "maximum": ResearchCall.maxValues.upperBound, "description": "Values returned from the slice (default 256; 0 = statistics only)"],
+        ]
+    }
+
+    private static var traceProperties: [String: Any] {
+        [
+            "prompt": ["type": "string", "description": "Prompt to capture"],
+            "position": ["type": "integer", "minimum": 0, "description": "Token position to inspect (default: the last prompt token)"],
+            "layers": ["type": "array", "items": ["type": "integer", "minimum": 0], "description": "Layers to report (default: all)"],
+            "topK": ["type": "integer", "minimum": ResearchCall.topK.lowerBound, "maximum": ResearchCall.topK.upperBound, "description": "Entries per list (default 10)"],
+            "attention": ["type": "boolean", "description": "Per-head attention at position (default true)"],
+            "router": ["type": "boolean", "description": "MoE router choices (default true)"],
+            "logitLens": ["type": "boolean", "description": "Logit lens per layer (default true)"],
+        ]
+    }
+
+    private static var interveneProperties: [String: Any] {
+        [
+            "kind": ["type": "string", "enum": Intervention.kinds],
+            "layer": ["type": "integer", "minimum": 0],
+            "vector": numbers.merging(["description": "steer: vector of the hidden size added after the layer"]) { $1 },
+            "scale": ["type": "number", "description": "steer: factor on the vector (default 1)"],
+            "head": ["type": "integer", "minimum": 0, "description": "ablate_head: head to zero"],
+            "expert": ["type": "integer", "minimum": 0, "description": "ablate_expert: expert to zero"],
+        ]
+    }
+
+    private static var deltaProperties: [String: Any] {
+        [
+            "tensor": ["type": "string", "description": "Parameter name as model_tensors lists it"],
+            "slice": slice,
+            "values": numbers.merging(["description": "Added to the slice; one value is broadcast"]) { $1 },
+            "scale": ["type": "number", "description": "Factor on the values (default 1)"],
+        ]
+    }
+
+    private static var compareProperties: [String: Any] {
+        [
+            "prompts": ["type": "array", "items": ["type": "string"], "minItems": ResearchCall.comparePrompts.lowerBound, "maxItems": ResearchCall.comparePrompts.upperBound],
+            "overlays": ["type": "array", "items": ["type": "integer", "minimum": 0], "description": "Overlay ids applied on the after side (default: none)"],
+            "maxTokens": ["type": "integer", "minimum": ResearchCall.compareTokens.lowerBound, "maximum": ResearchCall.compareTokens.upperBound, "description": "Greedy tokens per side (default 32)"],
+        ]
+    }
+}

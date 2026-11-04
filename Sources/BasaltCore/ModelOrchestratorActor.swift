@@ -2,7 +2,7 @@ import Foundation
 import os
 
 public actor ModelOrchestratorActor {
-    private let engine: any InferenceEngine
+    let engine: any InferenceEngine
     private var kv: KVPlanner
     private var reservations = KVReservations()
     private var modelSizeMB: Int = 4000
@@ -168,8 +168,8 @@ extension ModelOrchestratorActor {
     public func telemetrySnapshot() async -> ServerTelemetrySnapshot {
         var snapshot = await telemetry.snapshot()
         let anchors = await engine.hybridAnchorUsage
-        snapshot.hybridAnchors = anchors?.count
-        snapshot.hybridAnchorBytes = anchors?.bytes
+        (snapshot.hybridAnchors, snapshot.hybridAnchorBytes) = (anchors?.count, anchors?.bytes)
+        snapshot.activeDeltas = await engine.activeDeltas
         if let memory {
             snapshot.memory = MemoryTelemetry(state: await memory.state, limits: memoryLimits, refusedAdmissions: memoryRefusals)
         }
@@ -300,7 +300,7 @@ extension ModelOrchestratorActor {
         return (validated, room.promptTokens)
     }
 
-    private func admitted(_ priority: RequestPriority) async throws(BasaltError) -> Int {
+    func admitted(_ priority: RequestPriority) async throws(BasaltError) -> Int {
         do {
             return try await gate.admit(priority: priority)
         } catch {

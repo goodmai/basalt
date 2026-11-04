@@ -105,6 +105,7 @@ public actor MLXInferenceEngine: InferenceEngine {
     private(set) var leases: [Int: PromptCacheLeaseSlot] = [:]
     private(set) var launches: [Int: GenerationLaunch] = [:]
     var faults = FaultPlan()
+    var experiments = (epoch: ModelEpoch(0), registry: OverlayRegistry())
     private var leaseCount = 0
     private(set) var mtpPrefixes: [(namespace: String, tokens: [Int], prefix: MTPPrefix)] = []
     private var promptCacheFullBudget: ByteCount
@@ -118,7 +119,6 @@ public actor MLXInferenceEngine: InferenceEngine {
         return (usage.count, usage.bytes.rawValue)
     }
     public var supportsKVZones: Bool { modelAttendsThroughZones }
-    public var supportsKVEviction: Bool { modelPrefillsInChunks }
 
     public func promptTokenCount(for request: GenerationRequest) async -> Int? {
         guard let container else { return nil }
@@ -420,13 +420,13 @@ public actor MLXInferenceEngine: InferenceEngine {
         state = .reduce(state, .unloaded)
         await releaseWiredMemory()
         batchDecoder = nil
-        promptCaches.removeAll()
-        mtpPrefixes.removeAll()
+        dropPromptCaches()
         cacheBlend = nil
         Memory.clearCache()
         logger.info("Previous model unloaded, GPU cache cleared.")
     }
 
+    func dropPromptCaches() { promptCaches.removeAll(); mtpPrefixes.removeAll() }
     static func upstreamTokenizer(at directory: URL) async throws -> any Tokenizers.Tokenizer {
         let configuration = LanguageModelConfigurationFromHub(modelFolder: directory)
         guard let tokenizerConfig = try await configuration.tokenizerConfig else {
@@ -494,7 +494,7 @@ public actor MLXInferenceEngine: InferenceEngine {
             modelCalls: finalResponse.modelCalls,
             toolCallRepairs: finalResponse.toolCallRepairs,
             toolCallRejections: finalResponse.toolCallRejections
-        ).reporting(degenerate: finalResponse.degenerate, draftSource: finalResponse.draftSource)
+        ).reporting(degenerate: finalResponse.degenerate, draftSource: finalResponse.draftSource, modelModified: finalResponse.modelModified)
     }
 
     static let presenceContextSize = 1024
@@ -758,7 +758,7 @@ public actor MLXInferenceEngine: InferenceEngine {
             let promptEndsWithThinking = answerAfterThinking == nil
             let prefixAnswer = String(answerAfterThinking ?? "")
             let namespace = GenerationPlan.cacheNamespace(
-                request, settings, cacheEnabled: promptCaches.byteBudget > 0, carriesMoreThanTokens: carriesMoreThanTokens, sameEpoch: epoch == modelEpoch)
+                request, settings, cacheEnabled: promptCaches.byteBudget > 0 && !modelModified, carriesMoreThanTokens: carriesMoreThanTokens, sameEpoch: epoch == modelEpoch)
             let constraint = try await outputConstraint(
                 for: request, allowsFastForward: GenerationPlan.plainPrompt(request, settings, carriesMoreThanTokens: carriesMoreThanTokens))
             if let constraint, !prefixAnswer.isEmpty {
@@ -929,7 +929,6 @@ public actor MLXInferenceEngine: InferenceEngine {
                             break
                         }
                     }
-                    
                     route(splitter.feed("", final: true))
                     admit(toolCallScanner?.finish() ?? [])
                     let arguments = forcedToolArguments.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -973,7 +972,7 @@ public actor MLXInferenceEngine: InferenceEngine {
                             modelCalls: lastInfo?.speculativeDecodingTelemetry?.targetModelCallCount,
                             toolCallRepairs: toolCallRepairs,
                             toolCallRejections: toolCallRejections
-                        ).reporting(degenerate: health.verdict(calledTools: gate.admitted > 0), draftSource: plan.draftSource)
+                        ).reporting(degenerate: health.verdict(calledTools: gate.admitted > 0), draftSource: plan.draftSource, modelModified: await self.modelModified(since: leaseID))
                         continuation.yield(.metadata(metadata))
                     }
                     continuation.finish()
@@ -1182,7 +1181,7 @@ public actor MLXInferenceEngine: InferenceEngine {
     private func keep(tokens prompt: [Int], namespace: String?, releasing lease: Int, epoch: ModelEpoch) {
         leases[lease] = nil
         let launch = launches.removeValue(forKey: lease)
-        guard epoch == modelEpoch, faults.point != .keep, let namespace, let launch else { return }
+        guard epoch == modelEpoch, lease > modelFacts.cacheFence, faults.point != .keep, let namespace, let launch else { return }
         let (tokens, anchors) = (Array(prompt.prefix(launch.exactTokens.rawValue)), launch.anchors)
         for anchor in anchors {
             promptCaches.store(namespace, tokens: Array(tokens.prefix(anchor.tokenCount)), cache: anchor)
@@ -1202,6 +1201,7 @@ public actor MLXInferenceEngine: InferenceEngine {
 }
 
 extension MLXInferenceEngine {
+    func record(_ event: EngineEvent) { state = .reduce(state, event) }
     struct GenerationLaunch {
         let stream: AsyncStream<Generation>
         let task: Task<Void, Never>?

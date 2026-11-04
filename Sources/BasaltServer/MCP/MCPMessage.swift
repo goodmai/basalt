@@ -67,7 +67,7 @@ struct MCPFailure: Error, Sendable, Equatable {
         case .modelInferenceError, .nonFiniteLogits: -32008
         case .inferenceError:           -32009
         case .modelNotCached:           -32010
-        case .modelSwitching:           -32011
+        case .modelSwitching, .modelNotLoaded: -32011
         case .serverBusy, .modelConfigurationInvalid, .modelProbeFailed: -32012
         case .memoryPressure:           -32013
         }
