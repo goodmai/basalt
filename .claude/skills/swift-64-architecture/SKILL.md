@@ -19,6 +19,8 @@ Evaluate the target module before proposing structure:
    - Use `@Observable` macro with `@MainActor` isolation. Never use legacy `ObservableObject`, `@Published`, `@StateObject`, or `@EnvironmentObject`.
    - Separate pure state reducers/intent handlers from side-effecting `Sendable` client dependencies.
 
+**Value core, actor shell (basalt rule, CONTRIBUTING "Value core, actor shell")**: every design puts decisions in a `Sendable` value core (structs, enums, pure functions, `mutating` on caller-owned values) and effects in a thin shell. The shell is an actor, or a type one actor owns, and depends on narrow protocols. Each piece of mutable state has exactly one owner. Thread safety follows from that layout, so a design that needs a lock or `@unchecked Sendable` is redesigned, not patched. Size limits: type body ≤ 200 lines of code, extension ≤ 150. A type that grows past 200 splits by moving logic into the core and one extension per concern, never into a second type sharing the same state.
+
 ## 2. SwiftPM 6.4 & Module Boundary Rules
 - **Strict Target Topology**: Enforce unidirectional dependencies (`Domain` <- `Application/UseCases` <- `Infrastructure/Adapters`). Cyclic target dependencies are forbidden.
 - **Module Disambiguation (SE-0491)**: When multiple imported modules expose conflicting symbols, always disambiguate explicitly using Swift 6.4 module selectors (`ModuleA::TypeName` or `Swift::Task`) rather than typealiases or wildcard workarounds.

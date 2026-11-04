@@ -78,4 +78,18 @@ result = check(before: ["Sources/Big.swift": big, "Tests/BigTests.swift": big],
 expect(result.status == 1 && result.output.contains("Sources/Big.swift: 701 lines > 600, was 700") && !result.output.contains("Tests/BigTests.swift"),
        "a long source file may not grow, a test file may", result.output)
 
+func type(_ kind: String, _ name: String, _ lines: Int) -> String {
+    "\(kind) \(name) {\n" + (0 ..< lines).map { "    var f\($0) = \"{ not a brace }\" // { nor this\n" }.joined() + "}\n"
+}
+
+result = check(before: [:], after: ["Sources/T.swift": type("struct", "Core", 200) + type("extension", "Core", 150)])
+expect(result.status == 0, "a type of 200 lines and an extension of 150 pass, braces in strings and comments ignored", result.output)
+result = check(before: [:], after: ["Sources/T.swift": type("actor", "Shell", 201) + type("extension", "Shell", 151)])
+expect(result.status == 1 && result.output.contains("actor Shell: 201 lines of code > 200")
+    && result.output.contains("extension Shell: 151 lines of code > 150"), "a new type over 200 or extension over 150 fails", result.output)
+result = check(before: ["Sources/T.swift": type("final class", "Legacy", 300)], after: ["Sources/T.swift": type("final class", "Legacy", 290)])
+expect(result.status == 0, "a type already over the limit may shrink", result.output)
+result = check(before: ["Sources/T.swift": type("final class", "Legacy", 300)], after: ["Sources/T.swift": type("final class", "Legacy", 301)])
+expect(result.status == 1 && result.output.contains("class Legacy: 301 lines of code > 200, was 300"), "a type already over the limit may not grow", result.output)
+
 exit(failures == 0 ? 0 : 1)

@@ -12,6 +12,8 @@ let maxCCN = 15
 let maxNLOC = 60
 let maxParams = 6
 let maxFileLines = 600
+let maxTypeLines = 200
+let maxExtensionLines = 150
 let lizard = (ProcessInfo.processInfo.environment["LIZARD"] ?? "uvx --quiet lizard==1.24.0").split(separator: " ").map(String.init)
 
 @discardableResult
@@ -85,7 +87,111 @@ func violations(path: String, before: [String: Metrics], after: [String: Metrics
     return hits
 }
 
+
+enum Lexeme {
+    case code(parens: Int)
+    case string(multiline: Bool, hashes: Int)
+    case blockComment
+}
+
+func codeOnly(_ source: String) -> [Character] {
+    let text = Array(source)
+    var out: [Character] = [], stack: [Lexeme] = [.code(parens: 0)], i = 0
+    func at(_ token: String) -> Bool { Array(token).enumerated().allSatisfy { i + $0.offset < text.count && text[i + $0.offset] == $0.element } }
+    while i < text.count {
+        let c = text[i]
+        switch stack[stack.count - 1] {
+        case .blockComment:
+            if at("*/") { stack.removeLast(); i += 2 } else if at("/*") { stack.append(.blockComment); i += 2 } else { out.append(c == "\n" ? c : " "); i += 1 }
+        case .string(let multiline, let hashes):
+            let closing = (multiline ? "\"\"\"" : "\"") + String(repeating: "#", count: hashes)
+            if c == "\\", at("\\" + String(repeating: "#", count: hashes) + "(") {
+                stack.append(.code(parens: 1))
+                i += 2 + hashes
+            } else if c == "\\" && hashes == 0 {
+                i += 2
+            } else if at(closing) {
+                stack.removeLast()
+                i += closing.count
+            } else {
+                out.append(c == "\n" ? c : " ")
+                i += 1
+            }
+        case .code(let parens):
+            if at("//") {
+                while i < text.count, text[i] != "\n" { i += 1 }
+            } else if at("/*") {
+                stack.append(.blockComment)
+                i += 2
+            } else if c == "#" || c == "\"" {
+                var hashes = 0
+                while i + hashes < text.count, text[i + hashes] == "#" { hashes += 1 }
+                let j = i + hashes
+                guard j < text.count, text[j] == "\"" else { out.append(c); i += 1; continue }
+                let multiline = j + 2 < text.count && text[j + 1] == "\"" && text[j + 2] == "\""
+                stack.append(.string(multiline: multiline, hashes: hashes))
+                i = j + (multiline ? 3 : 1)
+            } else if stack.count > 1, c == "(" || c == ")" {
+                let depth = parens + (c == "(" ? 1 : -1)
+                if depth == 0 { stack.removeLast() } else { stack[stack.count - 1] = .code(parens: depth) }
+                i += 1
+            } else {
+                out.append(c)
+                i += 1
+            }
+        }
+    }
+    return out
+}
+
+let declaration = try! Regex(#"^\s*(?:@[\w.]+(?:\([^)]*\))?\s+)*(?:(?:public|private|fileprivate|internal|package|open|final|indirect|nonisolated)\s+)*(struct|class|enum|actor|extension|protocol)\s+([A-Za-z_][\w.]*)"#)
+
+func typeBodies(in source: String?) -> [String: Metrics] {
+    guard let source else { return [:] }
+    let code = codeOnly(source)
+    let lines = String(code).split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+    var starts: [Int] = [0]
+    for line in lines { starts.append(starts[starts.count - 1] + line.count + 1) }
+    var found: [String: Metrics] = [:], seen: [String: Int] = [:]
+    for (number, line) in lines.enumerated() {
+        guard let match = line.firstMatch(of: declaration), let kind = match.output[1].substring.map(String.init),
+              let name = match.output[2].substring.map(String.init) else { continue }
+        if kind == "class", ["func", "var", "let", "subscript", "init"].contains(name) { continue }
+        var index = starts[number] + line.distance(from: line.startIndex, to: match.range.upperBound)
+        while index < code.count, code[index] != "{", code[index] != ";" { index += 1 }
+        guard index < code.count, code[index] == "{" else { continue }
+        var depth = 0, end = index
+        repeat {
+            if code[end] == "{" { depth += 1 } else if code[end] == "}" { depth -= 1 }
+            end += 1
+        } while depth > 0 && end < code.count
+        let body = String(code[index ..< end]).split(separator: "\n").dropFirst().dropLast()
+        let nloc = body.filter { !$0.allSatisfy(\.isWhitespace) }.count
+        let key = "\(kind) \(name)"
+        seen[key, default: 0] += 1
+        found[seen[key]! > 1 ? "\(key) #\(seen[key]!)" : key] = Metrics(ccn: 0, nloc: nloc, params: 0, line: number + 1)
+    }
+    return found
+}
+
+func typeViolations(path: String, before: [String: Metrics], after: [String: Metrics]) -> [String] {
+    after.sorted(by: { $0.key < $1.key }).compactMap { name, metrics in
+        let limit = name.hasPrefix("extension ") ? maxExtensionLines : maxTypeLines
+        let previous = before[name]?.nloc ?? 0
+        guard metrics.nloc > limit, metrics.nloc > previous else { return nil }
+        return "\(path):\(metrics.line): \(name): \(metrics.nloc) lines of code > \(limit)\(previous > limit ? ", was \(previous)" : "")"
+    }
+}
+
 let arguments = Array(CommandLine.arguments.dropFirst())
+if arguments.contains("--inventory") {
+    let files = FileManager.default.enumerator(atPath: "Sources")?.compactMap { $0 as? String }.filter { $0.hasSuffix(".swift") } ?? []
+    for file in files.sorted() {
+        let source = try String(contentsOfFile: "Sources/\(file)", encoding: .utf8)
+        for hit in typeViolations(path: "Sources/\(file)", before: [:], after: typeBodies(in: source)) { print(hit) }
+    }
+    exit(0)
+}
 let base = arguments.first { !$0.hasPrefix("--") } ?? "origin/main"
 let paths = try git("diff", "--name-only", "--diff-filter=d", "-z", "\(base)...HEAD", "--", "*.swift").split(separator: "\0").map(String.init)
 var hits: [String] = []
@@ -95,6 +201,7 @@ for path in paths {
     let head = (try? git("show", "HEAD:\(path)")) ?? ""
     let (before, after) = (try functions(in: base), try functions(in: head))
     hits += violations(path: path, before: before, after: after, base: base, head: head)
+    hits += typeViolations(path: path, before: typeBodies(in: base), after: typeBodies(in: head))
     touched += Set(before.keys).union(after.keys).filter { name in
         before[name].map { [$0.ccn, $0.nloc, $0.params] } != after[name].map { [$0.ccn, $0.nloc, $0.params] }
     }.count
