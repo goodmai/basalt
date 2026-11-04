@@ -13,7 +13,7 @@ public struct TokenBudgetCalculator: Sendable {
         let usableRAM = Int64(Double(availableRAM) * safetyMargin)
         let availableForContext = usableRAM - Int64(modelSizeMB) * 1024 * 1024
         guard availableForContext > 0 else { return 512 }
-        let feasibleTokens = kv.maxTokens(fitting: availableForContext, kvPrecision: kvPrecision) - max(0, promptTokens)
+        let feasibleTokens = kv.maxTokens(fitting: ByteCount(availableForContext), kvPrecision: kvPrecision).rawValue - max(0, promptTokens)
         return min(max(feasibleTokens, 512), upperCapTokens)
     }
 }

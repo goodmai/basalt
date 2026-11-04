@@ -553,7 +553,7 @@ public actor ModelOrchestratorActor {
         let zones = modelTakesKVZones ? (modelTakesKVEviction ? kvZones : kvZones?.evicting(0)) : nil
         let fits = kvPrecisionLadder.map { wanted in
             let precision = zones == nil ? wanted?.uniform : wanted
-            return (fitting: kvGeometry.maxTokens(fitting: budget, kvPrecision: precision, promptTokens: promptTokens, zones: zones), kvPrecision: precision)
+            return (fitting: kvGeometry.maxTokens(fitting: ByteCount(budget), kvPrecision: precision, promptTokens: TokenCount(promptTokens), zones: zones).rawValue, kvPrecision: precision)
         }
         return fits.first { $0.fitting >= wantedTokens } ?? fits.max { $0.fitting < $1.fitting }!
     }
@@ -580,7 +580,7 @@ public actor ModelOrchestratorActor {
     func reserveKV(_ ticket: Int, promptTokens: Int, for request: GenerationRequest) async throws(BasaltError) {
         let budget = await kvBudgetBytes()
         let zones = modelTakesKVZones ? (modelTakesKVEviction ? kvZones : kvZones?.evicting(0)) : nil
-        let bytes = kvGeometry.bytes(tokens: promptTokens + (request.maxTokens ?? maxTokens), kvPrecision: request.kvPrecision, zones: zones)
+        let bytes = kvGeometry.bytes(tokens: TokenCount(promptTokens + (request.maxTokens ?? maxTokens)), kvPrecision: request.kvPrecision, zones: zones).rawValue
         let others = kvReservations.values.reduce(0, +)
         guard others == 0 || others + bytes <= budget else {
             await gate.release(ticket)
