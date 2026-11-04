@@ -79,8 +79,7 @@ struct GenerationLauncher {
 
     func handing(_ iterator: some TokenIteratorProtocol, promptTokens: Int) -> (AsyncStream<Generation>, Task<Void, Never>, TimeInterval) {
         MLXInferenceEngine.handOff(
-            promptTokenCount: promptTokens, modelConfiguration: context.configuration, tokenizer: context.tokenizer,
-            iterator: iterator, tools: tools, toolCallPolicy: params.toolCallPolicy, since: started)
+            promptTokenCount: promptTokens, context: context, iterator: iterator, tools: tools, toolCallPolicy: params.toolCallPolicy, since: started)
     }
 
     func uncached(_ iterator: some TokenIteratorProtocol) -> MLXInferenceEngine.GenerationLaunch {
