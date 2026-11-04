@@ -136,6 +136,7 @@ let package = Package(
                 .product(name: "Jinja", package: "swift-jinja"),
             ],
             path: "Tests/BasaltTests",
+            exclude: ["Fixtures/ReferenceLogits"],
             swiftSettings: swiftSettings
         ),
         .executableTarget(
