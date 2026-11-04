@@ -1,0 +1,28 @@
+name: Parity Script
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/parity*'
+      - 'scripts/fixtures/parity-document.txt'
+      - '.github/workflows/parity.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  self-test:
+    name: Parity script self-test
+    # parity.swift imports CryptoKit, which the Linux swift image lacks, so this runs on the Mac.
+    runs-on: [self-hosted, macOS, ARM64]
+    # Same fork guard as unit-tests.yml: fork PRs never reach the owner's runner.
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          clean: false
+      - name: Configure Swift toolchain
+        uses: ./.github/actions/xcode-toolchain
+      - name: Parity self-test
+        run: swift scripts/parity.swift --self-test

@@ -78,6 +78,15 @@ result = check(before: ["Sources/Big.swift": big, "Tests/BigTests.swift": big],
 expect(result.status == 1 && result.output.contains("Sources/Big.swift: 701 lines > 600, was 700") && !result.output.contains("Tests/BigTests.swift"),
        "a long source file may not grow, a test file may", result.output)
 
+let setters = "final class Engine {\n    private(set) var a = 0\n    public private(set) var b = 0\n"
+    + (0 ..< 10).map { "    var v\($0) = \($0)\n" }.joined() + long("near", 55) + "}\n"
+result = check(before: [:], after: ["Sources/S.swift": setters])
+expect(result.status == 0 && !result.output.contains(": set:"), "private(set) is not read as a setter that swallows the declarations after it", result.output)
+
+let sparse = "func serve() {\n    group.run { value in\n" + (0 ..< 40).map { "        print(\($0))\n\n" }.joined() + "    }\n}\n"
+result = check(before: [:], after: ["Sources/C.swift": sparse])
+expect(result.status == 0, "a trailing closure over 60 lines long but under 60 lines of code passes: NLOC is checked, not length", result.output)
+
 func type(_ kind: String, _ name: String, _ lines: Int) -> String {
     "\(kind) \(name) {\n" + (0 ..< lines).map { "    var f\($0) = \"{ not a brace }\" // { nor this\n" }.joined() + "}\n"
 }
