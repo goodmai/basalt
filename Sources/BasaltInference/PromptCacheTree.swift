@@ -350,3 +350,21 @@ struct PromptCacheTree {
         }
     }
 }
+
+extension PromptCacheTree {
+    func checkInvariants(leases: Int? = nil) -> [String] {
+        var problems: [String] = []
+        var (bytes, pins) = (ByteCount.zero, 0)
+        var pending = Array(roots.values)
+        while let node = pending.popLast() {
+            bytes += node.bytes
+            pins += node.pins
+            if node.pins < 0 { problems.append("a \(node.tokens.count)-token node has \(node.pins) pins") }
+            pending.append(contentsOf: node.children.values)
+        }
+        if bytes != byteCount { problems.append("byteCount is \(byteCount.rawValue) but the nodes hold \(bytes.rawValue) bytes") }
+        if leafCount != leaves().count { problems.append("leafCount is \(leafCount) but the tree has \(leaves().count) leaves") }
+        if let leases, pins != leases { problems.append("\(pins) pins in the tree for \(leases) live leases: a pinned node left the tree") }
+        return problems
+    }
+}

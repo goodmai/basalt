@@ -55,6 +55,10 @@ enum EngineState: Sendable {
         if case .ready(let model) = self { model } else { nil }
     }
 
+    func checkInvariants(after previous: EngineState) -> [String] {
+        epoch < previous.epoch ? ["the epoch went back from \(previous.epoch) to \(epoch)"] : []
+    }
+
     static func reduce(_ state: EngineState, _ event: EngineEvent) -> EngineState {
         switch event {
         case .loadStarted(let path):
