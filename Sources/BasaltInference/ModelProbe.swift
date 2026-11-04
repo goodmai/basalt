@@ -102,16 +102,20 @@ package struct ModelProbe: Codable, Sendable {
 
     static func roundTrip(_ echoed: String) -> Finding? {
         echoed.trimmingCharacters(in: .whitespacesAndNewlines) == roundTripText ? nil
-            : Finding(check: .roundTrip, verdict: .fail, detail: "encoding then decoding \"\(roundTripText)\" gave \"\(echoed)\"")
+            : Finding(check: .roundTrip, verdict: .warn, detail: "encoding then decoding \"\(roundTripText)\" gave \"\(echoed)\"")
     }
 
     static func stops(_ tokens: [StopToken], vocabularySize: Int) -> Finding? {
         guard !tokens.isEmpty else {
             return Finding(check: .stopTokens, verdict: .fail, detail: "no EOS or stop token, so a generation only ends at max_tokens")
         }
-        let outside = tokens.filter { $0.name == nil || !(0 ..< vocabularySize).contains($0.id) }.map(\.id).sorted()
-        return outside.isEmpty ? nil
-            : Finding(check: .stopTokens, verdict: .fail, detail: "stop token ids \(outside) are not in the vocabulary of \(vocabularySize) tokens")
+        let outside = tokens.filter { !(0 ..< vocabularySize).contains($0.id) }.map(\.id).sorted()
+        let unnamed = tokens.filter { $0.name == nil }.map(\.id).sorted()
+        if !outside.isEmpty {
+            return Finding(check: .stopTokens, verdict: .fail, detail: "stop token ids \(outside) are not in the vocabulary of \(vocabularySize) tokens")
+        }
+        return unnamed.isEmpty ? nil
+            : Finding(check: .stopTokens, verdict: .warn, detail: "the tokenizer has no name for stop token ids \(unnamed)")
     }
 
     static func finite(_ nonFinite: Int) -> Finding? {

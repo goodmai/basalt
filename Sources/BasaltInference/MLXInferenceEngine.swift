@@ -944,7 +944,7 @@ public actor MLXInferenceEngine: InferenceEngine {
                     let completed = injected.point != .settle && !(Task.isCancelled || stoppedAfterCall)
                     await Self.settle(mlxTask, cancelled: !completed)
                     if completed, let session = constraint?.session { await self.recycle(session, epoch: epoch) }
-                    await self.keep(tokens: promptTokens, namespace: namespace, releasing: leaseID, epoch: epoch)
+                    await self.keep(tokens: promptTokens, namespace: alarm.isTripped ? nil : namespace, releasing: leaseID, epoch: epoch)
                     if !Task.isCancelled, !injected.endsStream {
                         let generationTime = (clock.now - startTime).inSeconds + prefillSeconds
                         let timeToFirstToken = (firstTokenAt.map { ($0 - startTime).inSeconds } ?? 0) + prefillSeconds

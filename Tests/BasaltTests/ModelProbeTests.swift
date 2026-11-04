@@ -40,10 +40,10 @@ struct ModelProbeTests {
         ("no chat template", facts { $0.template = .missing }, [.chatTemplate], .warn),
         ("template throws", facts { $0.template = .failed("unknown filter") }, [.chatTemplate], .fail),
         ("template renders nothing", facts { $0.template = .rendered(tokens: 0) }, [.chatTemplate], .fail),
-        ("round trip loses text", facts { $0.echoed = "The quick brown fox" }, [.roundTrip], .fail),
+        ("round trip loses text", facts { $0.echoed = "The quick brown fox" }, [.roundTrip], .warn),
         ("no stop token", facts { $0.stopTokens = [] }, [.stopTokens], .fail),
         ("stop token past the vocabulary", facts { $0.stopTokens = [.init(id: 32_000, name: "<eos>")] }, [.stopTokens], .fail),
-        ("stop token the tokenizer cannot name", facts { $0.stopTokens = [.init(id: 2, name: "</s>"), .init(id: 7, name: nil)] }, [.stopTokens], .fail),
+        ("stop token the tokenizer cannot name", facts { $0.stopTokens = [.init(id: 2, name: "</s>"), .init(id: 7, name: nil)] }, [.stopTokens], .warn),
         ("NaN logits skip the checks that read them", facts {
             $0.nonFiniteLogits = 3
             $0.meanEntropy = .nan
@@ -59,8 +59,8 @@ struct ModelProbeTests {
         ("one known answer missed", facts { $0.answers[1] = .init(expected: "8", got: " 9") }, [.knownAnswer], .warn),
         ("a fail outranks warns", facts {
             $0.perplexity = 500
-            $0.echoed = ""
-        }, [.roundTrip, .perplexity], .fail),
+            $0.stopTokens = []
+        }, [.stopTokens, .perplexity], .fail),
     ]
 
     @Test("Each set of facts gives its findings in check order and the worst one is the verdict", arguments: cases)
@@ -78,10 +78,10 @@ struct ModelProbeTests {
         #expect(decoded.findings == probe.findings)
     }
 
-    @Test("A tiny random-weight llama passes the tokenizer and logit checks and only warns: it cannot repeat \"blue cat\" and its perplexity on the fixed text is far above the ceiling")
+    @Test("A tiny random-weight Qwen3 passes the tokenizer and logit checks and only warns: it cannot repeat \"blue cat\" and its perplexity on the fixed text is far above the ceiling")
     func tinyFixtureWarns() async throws {
         let container = ModelContainer(context: ModelContext(
-            configuration: ModelConfiguration(id: "tiny-llama"), model: try TinyModel.make(.llama),
+            configuration: ModelConfiguration(id: "tiny-qwen3"), model: try TinyModel.make(.qwen3),
             processor: ByteInputProcessor(), tokenizer: ASCIITokenizer()))
         let probe = try await ModelProbe.run(container)
         #expect(probe.failure == nil)

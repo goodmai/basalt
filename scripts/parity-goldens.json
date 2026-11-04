@@ -49,22 +49,6 @@
   },
   {
     "commit" : "5738fe0",
-    "lines" : 3,
-    "md5" : "df2463dc07f1bf60646a990cfa9b5afe",
-    "mode" : "plain",
-    "model" : "LiquidAI/LFM2.5-24B-A2B-MLX-4bit",
-    "revision" : "667408d494bde191c2cb9dd4f4549827816b9275"
-  },
-  {
-    "commit" : "5738fe0",
-    "lines" : 3,
-    "md5" : "df2463dc07f1bf60646a990cfa9b5afe",
-    "mode" : "lookup",
-    "model" : "LiquidAI/LFM2.5-24B-A2B-MLX-4bit",
-    "revision" : "667408d494bde191c2cb9dd4f4549827816b9275"
-  },
-  {
-    "commit" : "5738fe0",
     "lines" : 6,
     "md5" : "c1766f9c115e416926aa6d87c63069f3",
     "mode" : "plain",

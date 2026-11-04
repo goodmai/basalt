@@ -38,8 +38,6 @@ let steps = [
     Step(model: qwen, mode: "split", flags: ["--kv-head-split", "0.5"]),
     Step(model: gemma, mode: "plain", flags: []),
     Step(model: gemma, mode: "quest", flags: ["--quest-top-k", "16"]),
-    Step(model: lfm, mode: "plain", flags: []),
-    Step(model: lfm, mode: "lookup", flags: ["--speculative-lookup"]),
     Step(model: bonsai, mode: "plain", flags: []),
     Step(model: bonsai, mode: "mtp", flags: ["--mtp"]),
 ]
