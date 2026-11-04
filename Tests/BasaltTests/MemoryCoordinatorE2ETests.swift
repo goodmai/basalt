@@ -47,7 +47,9 @@ struct MemoryCoordinatorE2ETests {
             await coordinator.sample()
         }
 
-        var tree: PromptCacheTree { get async { await engine.promptCaches } }
+        var tree: (byteBudget: Int, byteCount: Int, evictions: Int) {
+            get async { await engine.readPromptCaches { ($0.byteBudget, $0.byteCount, $0.evictions) } }
+        }
     }
 
     static func rig() async throws -> Rig {

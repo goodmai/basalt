@@ -260,7 +260,7 @@ struct CacheBlendTests {
         #expect(blended.generatedText == full.generatedText)
         let store = try #require(await engine.cacheBlend)
         #expect(store.chunkCount == 1)
-        #expect(await engine.promptCaches.byteBudget == 1 << 25)
+        #expect(await engine.readPromptCaches { $0.byteBudget } == 1 << 25)
     }
 
     @Test("A hybrid SSM model never blends: the snapshot path serves it and the chunk store stays empty")

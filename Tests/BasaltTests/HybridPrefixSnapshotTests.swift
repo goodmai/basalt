@@ -134,7 +134,7 @@ struct SlidingWindowSnapshotTests {
         let turn3 = try await engine.generate(request: greedy(Conversation.afterToolCall, key: "ns"))
         #expect(turn3.cachedPromptTokens == second.count - 1)
         #expect(turn3.generatedText == full2.generatedText)
-        #expect(pinCount(await engine.promptCaches) == 0)
+        #expect(await engine.readPromptCaches(pinCount) == 0)
     }
 }
 
@@ -262,10 +262,11 @@ struct HybridPrefixSnapshotTests {
         let turn1 = try await engine.generate(request: greedy(Conversation.firstTurn, key: "ns"))
         #expect(turn1.cachedPromptTokens == 0)
         #expect(turn1.promptTokens == first.count)
-        let stored = await engine.promptCaches
-        #expect(stored.storedPrefix(of: first, in: "ns") == first.count - 1)
-        #expect(stored.byteCount == stored.leaves().reduce(0) { $0 + $1.bytes })
-        #expect(stored.leaves().allSatisfy { $0.snapshot != nil })
+        await engine.readPromptCaches { stored in
+            #expect(stored.storedPrefix(of: first, in: "ns") == first.count - 1)
+            #expect(stored.byteCount == stored.leaves().reduce(0) { $0 + $1.bytes })
+            #expect(stored.leaves().allSatisfy { $0.snapshot != nil })
+        }
 
         let turn2 = try await engine.generate(request: greedy(Conversation.afterToolCall, key: "ns"))
         let full2 = try await engine.generate(request: greedy(Conversation.afterToolCall, key: nil))
@@ -291,7 +292,7 @@ struct HybridPrefixSnapshotTests {
         let fullThird = try await engine.generate(request: greedy(thirdPrompt, key: nil))
         #expect(third.cachedPromptTokens == shared)
         #expect(third.generatedText == fullThird.generatedText)
-        #expect(pinCount(await engine.promptCaches) == 0)
+        #expect(await engine.readPromptCaches(pinCount) == 0)
     }
 
     @Test("Two prompts diverging mid-leaf materialize a snapshot at the fork so a third prompt with the same prefix leases it (#95)")
