@@ -201,9 +201,8 @@ public struct ModelCache: Sendable {
     }
 }
 
-// MARK: — Hub
-
 package actor HuggingFaceHub {
+    package typealias Progress = @Sendable (String, Int64, Int64) -> Void
 
     private let session: URLSession
     private let baseURL: String
@@ -215,18 +214,12 @@ package actor HuggingFaceHub {
         apiURL = endpoint + "/api"
         let config = configuration
         config.timeoutIntervalForRequest  = 30
-        // Wall-clock budget for one file, not for the whole transfer. A 5 GB shard
-        // on a slow link needs hours, so the old 1h ceiling killed every large
-        // model deterministically once it had run long enough — a 19 GB repo
-        // aborted at "The request timed out" with four shards still partial.
-        // The 30s request timeout above is what actually catches a dead connection.
         config.timeoutIntervalForResource = 24 * 3600
         session = URLSession(configuration: config)
     }
+}
 
-    // MARK: — Listing
-
-    /// Lists MLX community models sorted by downloads.
+extension HuggingFaceHub {
     package func listModels(
         author: String = "mlx-community",
         search: String = "",
@@ -262,7 +255,6 @@ package actor HuggingFaceHub {
         }
     }
 
-    /// Detailed info for a single repo including file list.
     package func modelDetails(repoId: String) async throws -> HFModelDetails {
         guard Self.isRepoId(repoId), let url = URL(string: "\(apiURL)/models/\(repoId)") else {
             throw HFError.invalidRepoId(repoId)
@@ -280,24 +272,20 @@ package actor HuggingFaceHub {
 
     package func fetch(repoId: String, path: String, range: ClosedRange<Int>? = nil) async throws -> (data: Data, fileSize: Int64) {
         guard Self.isRepoId(repoId), Self.isRelativePath(path),
-              let encoded = path.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed),
-              let url = URL(string: "\(baseURL)/\(repoId)/resolve/main/\(encoded)") else {
+              let url = HubRequest.resolveURL(endpoint: baseURL, repoId: repoId, path: path) else {
             throw HFError.invalidRepoId("\(repoId)/\(path)")
         }
-        var request = URLRequest(url: url)
-        if let range { request.setValue("bytes=\(range.lowerBound)-\(range.upperBound)", forHTTPHeaderField: "Range") }
-
+        let request = HubRequest.file(url, token: nil, range: range.map(HubRequest.rangeHeader))
         let (bytes, response) = try await session.bytes(for: request)
         let http = response as? HTTPURLResponse
-        guard http?.statusCode == (range == nil ? 200 : 206) else {
+        if let failure = HubResponse.fetchFailure(status: http?.statusCode, ranged: range != nil, resource: "\(repoId)/\(path)") {
             bytes.task.cancel()
-            if http?.statusCode == 404 { throw HFError.modelNotFound("\(repoId)/\(path)") }
-            throw HFError.apiError(code: http?.statusCode ?? -1)
+            throw failure
         }
         var data = Data()
         for try await byte in bytes.prefix(range?.count ?? .max) { data.append(byte) }
         bytesFetched += data.count
-        let total = http?.value(forHTTPHeaderField: "Content-Range")?.split(separator: "/").last.flatMap { Int64($0) }
+        let total = HubResponse.totalSize(contentRange: http?.value(forHTTPHeaderField: "Content-Range"))
         return (data, range == nil ? Int64(data.count) : total ?? -1)
     }
 
@@ -310,29 +298,21 @@ package actor HuggingFaceHub {
         guard header.count == length else { return .failure(.malformedHeader) }
         return ModelInspector.parseSafetensorsHeader(header, fileSize: fileSize)
     }
+}
 
-    // MARK: — Download
-
-    /// Downloads all files for a model repo into the HF cache.
-    /// `subfolder` restricts the download to one directory inside the repo
-    /// (e.g. "2bit" for repos that ship several quantizations side by side).
+extension HuggingFaceHub {
     package func download(
         repoId: String,
         subfolder: String? = nil,
         token: String? = nil,
-        onFile: @Sendable @escaping (String, Int64, Int64) -> Void
+        onFile: @escaping Progress
     ) async throws -> URL {
         let details  = try await modelDetails(repoId: repoId)
-        let siblings = details.siblings ?? []
         let destDir  = ModelCache.cacheDir(for: repoId)
 
         try FileManager.default.createDirectory(at: destDir, withIntermediateDirectories: true)
 
-        let filesToDownload = siblings.map(\.rfilename).filter { name in
-            guard Self.isRelativePath(name), !name.hasSuffix(".gguf") else { return false }
-            guard let subfolder else { return true }
-            return name.hasPrefix("\(subfolder)/")
-        }
+        let filesToDownload = HubRequest.downloadable((details.siblings ?? []).map(\.rfilename), subfolder: subfolder)
         guard !filesToDownload.isEmpty else {
             throw HFError.modelNotFound(subfolder.map { "\(repoId)/\($0)" } ?? repoId)
         }
@@ -340,35 +320,11 @@ package actor HuggingFaceHub {
         try await withThrowingTaskGroup(of: Void.self) { group in
             for filename in filesToDownload {
                 group.addTask {
-                    let dest = destDir.appendingPathComponent(filename)
-                    guard let path = filename.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed),
-                          let fileURL = URL(string: "\(self.baseURL)/\(repoId)/resolve/main/\(path)") else {
+                    guard let url = HubRequest.resolveURL(endpoint: self.baseURL, repoId: repoId, path: filename) else {
                         throw HFError.downloadFailed(filename)
                     }
-                    
-                    // Retry loop
-                    var success = false
-                    var attempts = 0
-                    let maxAttempts = 5
-                    
-                    while !success && attempts < maxAttempts {
-                        attempts += 1
-                        do {
-                            try await self.downloadFileWithResume(
-                                url: fileURL,
-                                destination: dest,
-                                filename: filename,
-                                token: token,
-                                onProgress: onFile
-                            )
-                            success = true
-                        } catch {
-                            if attempts >= maxAttempts { throw error }
-                            // Exponential backoff
-                            let delay = UInt64(pow(2.0, Double(attempts))) * 1_000_000_000
-                            try await Task.sleep(nanoseconds: delay)
-                        }
-                    }
+                    let file = HubFile(name: filename, url: url, destination: destDir.appendingPathComponent(filename))
+                    try await self.downloadWithRetry(file, token: token, onProgress: onFile)
                 }
             }
             for try await _ in group {}
@@ -376,140 +332,91 @@ package actor HuggingFaceHub {
         return subfolder.map { destDir.appendingPathComponent($0) } ?? destDir
     }
 
-    // MARK: — Private
+    private func downloadWithRetry(_ file: HubFile, token: String?, onProgress: @escaping Progress) async throws {
+        var attempt = 1
+        while true {
+            do {
+                return try await downloadFileWithResume(file, token: token, onProgress: onProgress)
+            } catch {
+                guard let delay = HubRetry.delay(afterFailedAttempt: attempt) else { throw error }
+                try await Task.sleep(for: delay)
+                attempt += 1
+            }
+        }
+    }
 
-    /// Downloads a single file with resume support (Range header).
-    private func downloadFileWithResume(
-        url: URL,
-        destination: URL,
-        filename: String,
-        token: String?,
-        onProgress: @Sendable @escaping (String, Int64, Int64) -> Void
-    ) async throws {
+    private func downloadFileWithResume(_ file: HubFile, token: String?, onProgress: @escaping Progress) async throws {
         let fileManager = FileManager.default
-        let parent = destination.deletingLastPathComponent()
-        try fileManager.createDirectory(at: parent, withIntermediateDirectories: true)
+        try fileManager.createDirectory(at: file.destination.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let existingSize = try Self.fileSize(at: file.destination)
 
-        let existingSize: Int64
-        if fileManager.fileExists(atPath: destination.path) {
-            let attrs = try fileManager.attributesOfItem(atPath: destination.path)
-            existingSize = attrs[.size] as? Int64 ?? 0
-        } else {
-            existingSize = 0
-        }
+        let (_, headResponse) = try await session.data(for: HubRequest.file(file.url, token: token, method: "HEAD"))
+        let remoteSize = headResponse.expectedContentLength
+        let plan = HubTransferPlan(existingSize: existingSize, remoteSize: remoteSize)
 
-        // Get remote file size
-        var headRequest = URLRequest(url: url)
-        headRequest.httpMethod = "HEAD"
-        if let token { headRequest.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
-        
-        let (_, headResponse) = try await session.data(for: headRequest)
-        let totalSize = headResponse.expectedContentLength
-        
-        // Use pattern matching to decide next action based on file state
-        enum DownloadAction {
-            case skip
-            case resume(from: Int64)
-            case startNew
-        }
-        
-        let action: DownloadAction = switch (existingSize, totalSize) {
-        case (let s, let t) where s > 0 && t > 0 && s == t:
-            .skip
-        case (let s, let t) where s > 0 && s < t:
-            .resume(from: s)
-        default:
-            .startNew
-        }
-
-        switch action {
+        switch plan {
         case .skip:
-            onProgress(filename, totalSize, totalSize)
+            onProgress(file.name, remoteSize, remoteSize)
             return
-            
-        case .resume(let offset):
-            var req = URLRequest(url: url)
-            if let token { req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
-            req.setValue("bytes=\(offset)-", forHTTPHeaderField: "Range")
-            
-            let (stream, response) = try await session.bytes(for: req)
-            guard let http = response as? HTTPURLResponse, http.statusCode == 206 else {
-                // Server ignored the Range header, so the body is the whole file:
-                // appending it would duplicate the bytes we already hold. Drop the
-                // partial and fail — the caller's retry then takes the .startNew path.
-                // (Recursing here instead would re-derive the same .resume action and spin.)
-                try? fileManager.removeItem(at: destination)
-                throw HFError.downloadFailed(filename)
-            }
-            try await saveStream(stream, to: destination, isResume: true, existingSize: offset, totalSize: offset + http.expectedContentLength, filename: filename, onProgress: onProgress)
-            
-        case .startNew:
-            if fileManager.fileExists(atPath: destination.path) {
-                try fileManager.removeItem(at: destination)
-            }
-            var req = URLRequest(url: url)
-            if let token { req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
-            
-            let (stream, response) = try await session.bytes(for: req)
-            guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
-                throw HFError.downloadFailed(filename)
-            }
-            try await saveStream(stream, to: destination, isResume: false, existingSize: 0, totalSize: http.expectedContentLength, filename: filename, onProgress: onProgress)
+        case .startNew where fileManager.fileExists(atPath: file.destination.path):
+            try fileManager.removeItem(at: file.destination)
+        case .startNew, .resume:
+            break
         }
 
-        // An interrupted transfer leaves a short file that the next attempt would
-        // .resume — appending onto bytes it cannot verify. That is how a retried
-        // config.json ended up holding several concatenated copies of itself.
-        // Leave only files that match the advertised size; anything else is dropped
-        // so the retry restarts from scratch.
-        guard totalSize > 0 else { return }
-        let attrs = try? fileManager.attributesOfItem(atPath: destination.path)
-        let finalSize = (attrs?[.size] as? Int64) ?? 0
-        if finalSize != totalSize {
-            try? fileManager.removeItem(at: destination)
-            throw HFError.downloadFailed(filename)
+        let (stream, response) = try await session.bytes(for: HubRequest.file(file.url, token: token, range: plan.rangeHeader))
+        guard let http = response as? HTTPURLResponse, http.statusCode == plan.expectedStatus else {
+            try? fileManager.removeItem(at: file.destination)
+            throw HFError.downloadFailed(file.name)
+        }
+        try await saveStream(stream, to: file, plan: plan, contentLength: http.expectedContentLength, onProgress: onProgress)
+
+        guard HubTransferPlan.isComplete(fileSize: (try? Self.fileSize(at: file.destination)) ?? 0, remoteSize: remoteSize) else {
+            try? fileManager.removeItem(at: file.destination)
+            throw HFError.downloadFailed(file.name)
         }
     }
 
     private func saveStream(
         _ stream: URLSession.AsyncBytes,
-        to destination: URL,
-        isResume: Bool,
-        existingSize: Int64,
-        totalSize: Int64,
-        filename: String,
-        onProgress: @Sendable @escaping (String, Int64, Int64) -> Void
+        to file: HubFile,
+        plan: HubTransferPlan,
+        contentLength: Int64,
+        onProgress: @escaping Progress
     ) async throws {
-        if !isResume {
-            FileManager.default.createFile(atPath: destination.path, contents: nil)
+        if plan.offset == 0 {
+            FileManager.default.createFile(atPath: file.destination.path, contents: nil)
         }
-        let handle = isResume ? try FileHandle(forWritingTo: destination) : try FileHandle(forWritingTo: destination)
-        if isResume { try handle.seekToEnd() }
-        
+        let handle = try FileHandle(forWritingTo: file.destination)
+        if plan.offset > 0 { try handle.seekToEnd() }
         defer { try? handle.close() }
 
-        var downloaded = isResume ? existingSize : 0
+        let totalSize = plan.totalSize(contentLength: contentLength)
+        var downloaded = plan.offset
         var buffer = [UInt8]()
         buffer.reserveCapacity(65_536)
-        
+
         for try await byte in stream {
             buffer.append(byte)
             if buffer.count >= 65_536 {
                 try handle.write(contentsOf: buffer)
                 downloaded += Int64(buffer.count)
                 buffer.removeAll(keepingCapacity: true)
-                onProgress(filename, downloaded, totalSize)
+                onProgress(file.name, downloaded, totalSize)
             }
         }
         if !buffer.isEmpty {
             try handle.write(contentsOf: buffer)
             downloaded += Int64(buffer.count)
-            onProgress(filename, downloaded, totalSize)
+            onProgress(file.name, downloaded, totalSize)
         }
     }
-}
 
-// MARK: — Errors
+    private static func fileSize(at url: URL) throws -> Int64 {
+        guard FileManager.default.fileExists(atPath: url.path) else { return 0 }
+        return try FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int64 ?? 0
+    }
+}
 
 extension HuggingFaceHub {
     package static func isRepoId(_ id: String) -> Bool {

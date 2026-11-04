@@ -38,19 +38,6 @@ public struct PromptCacheDiskStore: Sendable {
         "generation_config.json", "special_tokens_map.json",
     ]
 
-    enum Key {
-        static let format = "basalt_format"
-        static let fingerprint = "basalt_fingerprint"
-        static let model = "basalt_model"
-        static let namespace = "basalt_namespace"
-        static let tokens = "basalt_tokens"
-        static let servesAnyPrefix = "basalt_serves_any_prefix"
-
-        static func inHeader(_ key: String) -> String {
-            "1." + key
-        }
-    }
-
     public static var defaultDirectory: URL {
         FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".basalt/prompt-cache")
     }
@@ -67,24 +54,32 @@ public struct PromptCacheDiskStore: Sendable {
         self.retentionDays = retentionDays
     }
 
+    static let sampledWeightBytes = 1 << 20
+    static let assumedWriteBytesPerSecond: Double = 1e9
+
+    func url(_ name: String) -> URL {
+        directory.appendingPathComponent(name)
+    }
+}
+
+extension PromptCacheDiskStore {
     public static func fingerprint(modelDirectory: URL) -> String {
-        var hasher = SHA256()
-        hasher.update(data: Data("basalt-prompt-cache-v\(formatVersion) \(HealthResponse.version)\n".utf8))
+        var fingerprint = PromptCacheFingerprint(version: HealthResponse.version)
         let files = (try? FileManager.default.contentsOfDirectory(at: modelDirectory, includingPropertiesForKeys: nil)) ?? []
         for file in files.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
             let name = file.lastPathComponent
             let resolved = file.resolvingSymlinksInPath()
-            if file.pathExtension == fileExtension {
-                hasher.update(data: Data("weights \(name) \(weightIdentity(file, resolved: resolved))\n".utf8))
-            } else if modelDescriptionFiles.contains(name), let contents = try? Data(contentsOf: resolved) {
-                hasher.update(data: Data("file \(name) \(hex(SHA256.hash(data: contents)))\n".utf8))
+            switch PromptCacheFingerprint.Input(name: name, pathExtension: file.pathExtension) {
+            case .weights:
+                fingerprint.addWeights(name, identity: weightIdentity(file, resolved: resolved))
+            case .description:
+                if let contents = try? Data(contentsOf: resolved) { fingerprint.addDescription(name, contents: contents) }
+            case .ignored:
+                break
             }
         }
-        return hex(hasher.finalize())
+        return fingerprint.finalize()
     }
-
-    static let sampledWeightBytes = 1 << 20
-    static let assumedWriteBytesPerSecond: Double = 1e9
 
     static func weightIdentity(_ file: URL, resolved: URL) -> String {
         let attributes = (try? FileManager.default.attributesOfItem(atPath: resolved.path)) ?? [:]
@@ -107,20 +102,9 @@ public struct PromptCacheDiskStore: Sendable {
         }
         return hex(hasher.finalize())
     }
+}
 
-    static func hex(_ digest: some Sequence<UInt8>) -> String {
-        digest.map { String(format: "%02x", $0) }.joined()
-    }
-
-    static func fileName(fingerprint: String, namespace: String, tokens: [Int]) -> String {
-        let key = "\(fingerprint)\u{0}\(namespace)\u{0}\(tokens.map(String.init).joined(separator: ","))"
-        return hex(SHA256.hash(data: Data(key.utf8))) + "." + fileExtension
-    }
-
-    func url(_ name: String) -> URL {
-        directory.appendingPathComponent(name)
-    }
-
+extension PromptCacheDiskStore {
     func prepareDirectory() throws {
         var isDirectory: ObjCBool = false
         if FileManager.default.fileExists(atPath: directory.path, isDirectory: &isDirectory) {
@@ -164,26 +148,15 @@ public struct PromptCacheDiskStore: Sendable {
         return result
     }
 
-    struct StoredFile {
-        let name: String
-        let bytes: Int64
-        let modified: Date
-    }
-
-    func storedFiles() -> [StoredFile] {
+    func storedFiles() -> [PromptCacheDiskSelection.StoredFile] {
         let keys: [URLResourceKey] = [.fileSizeKey, .contentModificationDateKey, .isRegularFileKey]
         let urls = (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: keys)) ?? []
         return urls.compactMap { url in
             let name = url.lastPathComponent
             guard Self.isStoreFileName(name), let values = try? url.resourceValues(forKeys: Set(keys)), values.isRegularFile == true
             else { return nil }
-            return StoredFile(name: name, bytes: Int64(values.fileSize ?? 0), modified: values.contentModificationDate ?? .distantPast)
+            return PromptCacheDiskSelection.StoredFile(name: name, bytes: Int64(values.fileSize ?? 0), modified: values.contentModificationDate ?? .distantPast)
         }
-    }
-
-    static func isStoreFileName(_ name: String) -> Bool {
-        let stem = name.dropLast(fileExtension.count + 1)
-        return name.hasSuffix("." + fileExtension) && stem.count == 64 && stem.allSatisfy(\.isHexDigit)
     }
 
     func temporaryFiles() -> [URL] {
@@ -191,6 +164,21 @@ public struct PromptCacheDiskStore: Sendable {
             .filter { $0.lastPathComponent.hasPrefix(Self.temporaryPrefix) }
     }
 
+    static func isReadable(_ file: URL) -> Bool {
+        let descriptor = open(file.path, O_RDONLY | O_CLOEXEC)
+        guard descriptor >= 0 else { return false }
+        close(descriptor)
+        return true
+    }
+
+    static func flushToDisk(_ file: URL) throws {
+        let handle = try FileHandle(forWritingTo: file)
+        defer { try? handle.close() }
+        try handle.synchronize()
+    }
+}
+
+extension PromptCacheDiskStore {
     mutating func entries() -> [PromptCacheDiskEntry] {
         let files = storedFiles()
         headers = headers.filter { cached in files.contains { $0.name == cached.key && $0.bytes == cached.value.bytes } }
@@ -203,31 +191,10 @@ public struct PromptCacheDiskStore: Sendable {
         }
     }
 
-    static func isReadable(_ file: URL) -> Bool {
-        let descriptor = open(file.path, O_RDONLY | O_CLOEXEC)
-        guard descriptor >= 0 else { return false }
-        close(descriptor)
-        return true
-    }
-
-    private func readEntry(_ file: StoredFile) -> PromptCacheDiskEntry? {
+    private func readEntry(_ file: PromptCacheDiskSelection.StoredFile) -> PromptCacheDiskEntry? {
         let parsed = ModelInspector.readSafetensors(at: url(file.name), fileSize: file.bytes)
             .mapError { PromptCacheDiskError.unusable($0.message) }
-            .flatMap { header -> Result<PromptCacheDiskEntry?, PromptCacheDiskError> in
-                let metadata = header.metadata
-                guard let format = metadata[Key.inHeader(Key.format)] else {
-                    return .failure(.unusable("no basalt prompt-cache metadata"))
-                }
-                guard format == String(Self.formatVersion) else { return .success(nil) }
-                guard let fingerprint = metadata[Key.inHeader(Key.fingerprint)],
-                      let namespace = metadata[Key.inHeader(Key.namespace)],
-                      let tokens = metadata[Key.inHeader(Key.tokens)].flatMap(Self.tokens(from:)), !tokens.isEmpty,
-                      Self.fileName(fingerprint: fingerprint, namespace: namespace, tokens: tokens) == file.name
-                else { return .failure(.unusable("incomplete basalt prompt-cache metadata")) }
-                return .success(PromptCacheDiskEntry(
-                    name: file.name, fingerprint: fingerprint, namespace: namespace, tokens: tokens,
-                    servesAnyPrefix: metadata[Key.inHeader(Key.servesAnyPrefix)] == "true", bytes: file.bytes))
-            }
+            .flatMap { PromptCacheDiskManifest.decode(header: $0.metadata, name: file.name, bytes: file.bytes) }
         switch parsed {
         case .success(let entry):
             return entry
@@ -238,31 +205,16 @@ public struct PromptCacheDiskStore: Sendable {
         }
     }
 
-    static func tokens(from text: String) -> [Int]? {
-        let parts = text.split(separator: ",")
-        let tokens = parts.compactMap { Int($0) }
-        return tokens.count == parts.count ? tokens : nil
-    }
-
     mutating func longestPrefix(
         fingerprint: String, namespace: String, of prompt: [Int], longerThan stored: Int, maxBytes: Int
     ) -> (entry: PromptCacheDiskEntry, usable: Int)? {
-        entries()
-            .filter { $0.fingerprint == fingerprint && $0.namespace == namespace && $0.bytes <= Int64(maxBytes) }
-            .map { (entry: $0, usable: $0.usableTokens(for: prompt)) }
-            .filter { $0.usable > stored && Self.worthLoading($0.usable, of: $0.entry.tokens.count) }
-            .max { ($0.usable, -$0.entry.bytes) < ($1.usable, -$1.entry.bytes) }
-    }
-
-    static func worthLoading(_ usable: Int, of stored: Int) -> Bool {
-        usable * 2 >= stored
+        PromptCacheDiskSelection.longestPrefix(
+            in: entries(), fingerprint: fingerprint, namespace: namespace, of: prompt, longerThan: stored, maxBytes: maxBytes)
     }
 
     func load(_ entry: PromptCacheDiskEntry, layout: [String]) throws -> PromptCache {
         let snapshot = try loadPromptCacheSnapshot(url: url(entry.name))
-        guard snapshot.metadata[Key.fingerprint] == entry.fingerprint,
-              snapshot.metadata[Key.tokens].flatMap(Self.tokens(from:)) == entry.tokens
-        else {
+        guard PromptCacheDiskManifest.matches(snapshot: snapshot.metadata, entry) else {
             throw PromptCacheDiskError.unusable("metadata changed after the header was read")
         }
         let found = snapshot.cache.map(Self.layoutName)
@@ -297,11 +249,6 @@ public struct PromptCacheDiskStore: Sendable {
         return true
     }
 
-    static func isTransient(_ error: any Error) -> Bool {
-        let domain = (error as NSError).domain
-        return error is POSIXError || domain == NSPOSIXErrorDomain || domain == NSCocoaErrorDomain
-    }
-
     mutating func discard(_ entry: PromptCacheDiskEntry) {
         try? FileManager.default.removeItem(at: url(entry.name))
         headers[entry.name] = nil
@@ -314,7 +261,9 @@ public struct PromptCacheDiskStore: Sendable {
     func has(fingerprint: String, namespace: String, tokens: [Int]) -> Bool {
         FileManager.default.fileExists(atPath: url(Self.fileName(fingerprint: fingerprint, namespace: namespace, tokens: tokens)).path)
     }
+}
 
+extension PromptCacheDiskStore {
     @discardableResult
     mutating func store(
         fingerprint: String, model: String, namespace: String, tokens: [Int], cache: PromptCache, keeping kept: Set<String> = []
@@ -340,11 +289,8 @@ public struct PromptCacheDiskStore: Sendable {
                 defer { try? FileManager.default.removeItem(at: temporary) }
                 try savePromptCache(
                     url: temporary, cache: cache.layers,
-                    metadata: [
-                        Key.format: String(Self.formatVersion), Key.fingerprint: fingerprint, Key.model: model,
-                        Key.namespace: namespace, Key.tokens: tokens.map(String.init).joined(separator: ","),
-                        Key.servesAnyPrefix: String(cache.isSharable),
-                    ],
+                    metadata: PromptCacheDiskManifest.encode(
+                        fingerprint: fingerprint, model: model, namespace: namespace, tokens: tokens, servesAnyPrefix: cache.isSharable),
                     state: cache.state)
                 try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: temporary.path)
                 try Self.flushToDisk(temporary)
@@ -367,37 +313,20 @@ public struct PromptCacheDiskStore: Sendable {
         }
     }
 
-    static let supersededTailTokens = 64
-
-    static func supersedes(_ tokens: [Int], _ older: PromptCacheDiskEntry) -> Bool {
-        older.servesAnyPrefix && older.tokens.count < tokens.count
-            && zip(older.tokens, tokens).prefix { $0 == $1 }.count
-                >= max(older.tokens.count - supersededTailTokens, (older.tokens.count + 1) / 2)
-    }
-
     private mutating func removeSuperseded(by tokens: [Int], fingerprint: String, namespace: String, keeping kept: Set<String>) {
-        for older in entries() where older.fingerprint == fingerprint && older.namespace == namespace
-            && !kept.contains(older.name) && Self.supersedes(tokens, older) {
+        let superseded = PromptCacheDiskSelection.superseded(
+            by: tokens, in: entries(), fingerprint: fingerprint, namespace: namespace, keeping: kept)
+        for older in superseded {
             discard(older)
         }
     }
 
-    static func flushToDisk(_ file: URL) throws {
-        let handle = try FileHandle(forWritingTo: file)
-        defer { try? handle.close() }
-        try handle.synchronize()
-    }
-
     private func makeRoom(for bytes: Int64, keeping kept: Set<String>) -> Bool {
-        var files = storedFiles().sorted { $0.modified < $1.modified }
-        var total = files.reduce(Int64(0)) { $0 + $1.bytes }
-        while total + bytes > byteQuota {
-            guard let victim = files.firstIndex(where: { !kept.contains($0.name) }) else { return false }
-            try? FileManager.default.removeItem(at: url(files[victim].name))
-            total -= files[victim].bytes
-            files.remove(at: victim)
+        let room = PromptCacheDiskSelection.room(for: bytes, in: storedFiles(), quota: byteQuota, keeping: kept)
+        for victim in room.evict {
+            try? FileManager.default.removeItem(at: url(victim.name))
         }
-        return true
+        return room.fits
     }
 
     @discardableResult
@@ -412,16 +341,11 @@ public struct PromptCacheDiskStore: Sendable {
                     freed += Int64(size)
                 }
             }
-            let cutoff = now.addingTimeInterval(-TimeInterval(retentionDays) * 86_400)
-            var files = storedFiles().sorted { $0.modified < $1.modified }
-            var total = files.reduce(Int64(0)) { $0 + $1.bytes }
-            while let oldest = files.first, oldest.modified < cutoff || total > byteQuota {
+            for oldest in PromptCacheDiskSelection.expired(storedFiles(), now: now, retentionDays: retentionDays, quota: byteQuota) {
                 if (try? FileManager.default.removeItem(at: url(oldest.name))) != nil {
                     removed += 1
                     freed += oldest.bytes
                 }
-                total -= oldest.bytes
-                files.removeFirst()
             }
             return (removed, freed)
         }
