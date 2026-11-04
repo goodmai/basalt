@@ -45,9 +45,8 @@ struct RateLimitTests {
         defer { try? FileManager.default.removeItem(at: dir) }
         let file = dir.appendingPathComponent("config.json")
         try Data(#"{"rate_limit": 30}"#.utf8).write(to: file)
-        #expect(try ServeCommand.resolveNetwork(cliPort: nil, cliHost: nil, cliApiKey: nil, configFile: file.path).rateLimit == 30)
-        #expect(try ServeCommand.resolveNetwork(cliPort: nil, cliHost: nil, cliApiKey: nil, cliRateLimit: 5,
-                                                configFile: file.path).rateLimit == 5)
+        #expect(try ServeCommand.resolveNetwork(configFile: file.path).rateLimit == 30)
+        #expect(try ServeCommand.resolveNetwork(NetworkSettings.Flags(rateLimit: 5), configFile: file.path).rateLimit == 5)
         // `--rate-limit -1` would fail in the parser (-1 reads as an option); `=` reaches validate().
         do {
             _ = try ServeCommand.parse(["--rate-limit=-1"])
@@ -57,12 +56,12 @@ struct RateLimitTests {
         }
         try Data(#"{"host": "0.0.0.0", "rate_limit": -1}"#.utf8).write(to: file)
         #expect(throws: (any Error).self, "a negative config value must not silently turn the limit off") {
-            _ = try ServeCommand.resolveNetwork(cliPort: nil, cliHost: nil, cliApiKey: nil, configFile: file.path)
+            _ = try ServeCommand.resolveNetwork(configFile: file.path)
         }
         for json in [#"{"rate_limit": true}"#, #"{"port": true}"#] {
             try Data(json.utf8).write(to: file)
             #expect(throws: (any Error).self, "a JSON boolean is not a number: \(json)") {
-                _ = try ServeCommand.resolveNetwork(cliPort: nil, cliHost: nil, cliApiKey: nil, configFile: file.path)
+                _ = try ServeCommand.resolveNetwork(configFile: file.path)
             }
         }
         #expect(throws: Never.self) { _ = try ServeCommand.parse(["--rate-limit", "0"]) }
@@ -192,8 +191,8 @@ struct RateLimitTests {
         defer { try? FileManager.default.removeItem(at: dir) }
         let file = dir.appendingPathComponent("config.json")
         try Data(#"{"rate_limit": 30, "rate_burst": 5}"#.utf8).write(to: file)
-        #expect(try ServeCommand.resolveNetwork(cliPort: nil, cliHost: nil, cliApiKey: nil, configFile: file.path).rateBurst == 5)
-        #expect(try ServeCommand.resolveNetwork(cliPort: nil, cliHost: nil, cliApiKey: nil, cliRateBurst: 8, configFile: file.path).rateBurst == 8)
+        #expect(try ServeCommand.resolveNetwork(configFile: file.path).rateBurst == 5)
+        #expect(try ServeCommand.resolveNetwork(NetworkSettings.Flags(rateBurst: 8), configFile: file.path).rateBurst == 8)
         do {
             _ = try ServeCommand.parse(["--rate-burst=-1"])
             Issue.record("a negative --rate-burst must be rejected")

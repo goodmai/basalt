@@ -46,9 +46,10 @@ struct CloudFallbackOptions: ParsableArguments {
 
     func settings(configFile: String?) throws -> ServeCommand.CloudFallbackSettings? {
         try ServeCommand.resolveCloudFallback(
-            cliModel: model, cliBaseURL: baseURL, cliDisabled: disabled,
-            cliLocalContextLimit: localContextLimit, cliRouterParams: routerParams, cliCostThreshold: costThreshold,
-            cliCacheStickiness: cacheStickiness, configFile: configFile)
+            ServeCommand.CloudFallbackSettings.Flags(
+                model: model, baseURL: baseURL, localContextLimit: localContextLimit,
+                routerParams: routerParams, costThreshold: costThreshold, cacheStickiness: cacheStickiness),
+            disabled: disabled, configFile: configFile)
     }
 }
 

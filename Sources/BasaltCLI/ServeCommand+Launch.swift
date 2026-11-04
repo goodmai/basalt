@@ -8,10 +8,10 @@ struct ServerLaunch: Sendable {
     let config: ServerConfig
     let startREST: Bool
     let mcpServer: MCPServer?
-    let embeddings: (any EmbeddingEngine)?
-    let statsInterval: Int?
-    let shutdownDeadline: Duration
-    let handleSignals: Bool
+    var embeddings: (any EmbeddingEngine)? = nil
+    var statsInterval: Int? = nil
+    var shutdownDeadline: Duration = .seconds(5)
+    var handleSignals = true
 }
 
 extension ServeCommand {

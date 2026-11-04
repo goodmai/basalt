@@ -119,13 +119,12 @@ struct RequestGuardTests {
         defer { try? FileManager.default.removeItem(at: dir) }
         let file = dir.appendingPathComponent("config.json")
         try Data(#"{"allowed_origins": ["https://a.example"]}"#.utf8).write(to: file)
-        let network = try ServeCommand.resolveNetwork(cliPort: nil, cliHost: nil, cliApiKey: nil,
-                                                      cliAllowedOrigins: ["http://b.example:3000"], configFile: file.path)
+        let network = try ServeCommand.resolveNetwork(NetworkSettings.Flags(allowedOrigins: ["http://b.example:3000"]), configFile: file.path)
         #expect(Set(network.allowedOrigins) == ["http://b.example:3000", "https://a.example"])
         #expect(try ServeCommand.parse(["--allow-origin", "https://x.example", "--allow-origin", "http://y:1"]).allowOrigins.count == 2)
         for bad in ["a.example", "https://a.example/app", "ftp://a.example", "*", "http://*", "https://*.example", "https://a.example/"] {
             #expect(throws: (any Error).self, "\(bad)") {
-                _ = try ServeCommand.resolveNetwork(cliPort: nil, cliHost: nil, cliApiKey: nil, cliAllowedOrigins: [bad], configFile: nil)
+                _ = try ServeCommand.resolveNetwork(NetworkSettings.Flags(allowedOrigins: [bad]), configFile: nil)
             }
         }
     }
