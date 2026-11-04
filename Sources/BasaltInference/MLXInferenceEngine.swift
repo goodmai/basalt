@@ -316,11 +316,6 @@ public actor MLXInferenceEngine: InferenceEngine {
         }
     }
 
-    func useMTPDrafter(in container: ModelContainer, _ make: @Sendable (ModelContext) -> (any MTPDrafterModel)?) async {
-        await container.update { $0.mtpDrafter = make($0) }
-        hasMTPDrafter = await container.perform { $0.mtpDrafter != nil }
-    }
-
     func attach(
         _ container: ModelContainer, profile: any ModelProfile = GenericProfile(),
         samplingDefaults: SamplingDefaults = SamplingDefaults(), controlTokens: ControlTokenGuard = .none,
@@ -440,25 +435,6 @@ public actor MLXInferenceEngine: InferenceEngine {
         logger.info("Previous model unloaded, GPU cache cleared.")
     }
 
-    func loadMTPDrafter(for loaded: ModelContainer, directory: URL, modelPath: String) async {
-        let logger = self.logger, speculativeLookup = self.speculativeLookup
-        await useMTPDrafter(in: loaded) { context in
-            do {
-                guard let drafter = try MTPSidecar.load(directory: directory, target: context.model) else {
-                    logger.warn("--mtp: \(modelPath) has no MTP head this build can use (Qwen3.5-family target plus mtp.safetensors); decoding stays plain")
-                    return nil
-                }
-                logger.info("MTP head loaded from \(MTPSidecar.file(in: directory)?.path ?? modelPath); requests without constraints, lookup or --kv-bits and prompts up to \(Self.mtpPromptLimit) tokens draft with it")
-                if speculativeLookup {
-                    logger.warn("--mtp with --speculative-lookup: lookup wins, so the MTP head drafts only for requests that set speculative_lookup to false")
-                }
-                return drafter
-            } catch {
-                logger.warn("--mtp: the MTP head of \(modelPath) did not load (\(error.localizedDescription)); decoding stays plain")
-                return nil
-            }
-        }
-    }
 
     static func loadFailure(_ error: any Error, modelPath: String) async -> BasaltError {
         switch error as? ModelFactoryError {
@@ -1272,6 +1248,31 @@ public actor MLXInferenceEngine: InferenceEngine {
 }
 
 extension MLXInferenceEngine {
+    func useMTPDrafter(in container: ModelContainer, _ make: @Sendable (ModelContext) -> (any MTPDrafterModel)?) async {
+        await container.update { $0.mtpDrafter = make($0) }
+        hasMTPDrafter = await container.perform { $0.mtpDrafter != nil }
+    }
+
+    func loadMTPDrafter(for loaded: ModelContainer, directory: URL, modelPath: String) async {
+        let logger = self.logger, speculativeLookup = self.speculativeLookup
+        await useMTPDrafter(in: loaded) { context in
+            do {
+                guard let drafter = try MTPSidecar.load(directory: directory, target: context.model) else {
+                    logger.warn("--mtp: \(modelPath) has no MTP head this build can use (Qwen3.5-family target plus mtp.safetensors); decoding stays plain")
+                    return nil
+                }
+                logger.info("MTP head loaded from \(MTPSidecar.file(in: directory)?.path ?? modelPath); requests without constraints, lookup or --kv-bits and prompts up to \(Self.mtpPromptLimit) tokens draft with it")
+                if speculativeLookup {
+                    logger.warn("--mtp with --speculative-lookup: lookup wins, so the MTP head drafts only for requests that set speculative_lookup to false")
+                }
+                return drafter
+            } catch {
+                logger.warn("--mtp: the MTP head of \(modelPath) did not load (\(error.localizedDescription)); decoding stays plain")
+                return nil
+            }
+        }
+    }
+
     func readPromptCaches<R: Sendable>(_ read: @Sendable (PromptCacheTree) throws -> R) rethrows -> R {
         try read(promptCaches)
     }
