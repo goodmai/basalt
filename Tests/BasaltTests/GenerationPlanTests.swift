@@ -1,4 +1,6 @@
 import Testing
+import MLXLMCommon
+import MLXLLM
 import BasaltCore
 @testable import BasaltInference
 
@@ -150,5 +152,66 @@ struct GenerationPlanTests {
         #expect(!GenerationPlan.plainPrompt(request, GenerationPlan.Settings(), carriesMoreThanTokens: true))
         #expect(!GenerationPlan.plainPrompt(request, GenerationPlan.Settings(kvPrecision: .q8), carriesMoreThanTokens: false))
         #expect(!GenerationPlan.plainPrompt(request.withKVPrecision(.k8v4), GenerationPlan.Settings(), carriesMoreThanTokens: false))
+    }
+
+    static let layouts = [
+        zoned, GenerationPlan.Settings(kvHeadMask: KVHeadMask(retrieval: [[0, 1]]), questTopK: 16), GenerationPlan.Settings(questTopK: 16),
+    ]
+
+    @Test("Every known family keeps today's plan for the facts its caches produce", arguments: mtp + batch + cache)
+    func knownFamiliesKeepTodaysPlan(_ row: Case) {
+        for (modelType, capabilities) in ModelCapabilities.families {
+            for base in [row.settings] + Self.layouts {
+                var (today, facts) = (base, row.facts)
+                if !capabilities.allows(.mtp) { facts.hasMTPDrafter = false }
+                if !capabilities.allows(.cacheBlend) { facts.modelIsHybrid = true }
+                if !capabilities.allows(.quest) { today.questTopK = nil }
+                var verified = today
+                verified.capabilities = capabilities
+                var expected = GenerationPlan.make(row.request, today, facts)
+                if !capabilities.allows(.batchedDecode) { expected.batchable = false }
+                #expect(GenerationPlan.make(row.request, verified, facts) == expected, "\(modelType)")
+                #expect(GenerationPlan.plainPrompt(row.request, verified, carriesMoreThanTokens: facts.carriesMoreThanTokens)
+                    == GenerationPlan.plainPrompt(row.request, today, carriesMoreThanTokens: facts.carriesMoreThanTokens), "\(modelType)")
+                #expect(GenerationPlan.cacheNamespace(row.request, verified, cacheEnabled: true, carriesMoreThanTokens: false, sameEpoch: true)
+                    == GenerationPlan.cacheNamespace(row.request, today, cacheEnabled: true, carriesMoreThanTokens: false, sameEpoch: true), "\(modelType)")
+            }
+        }
+    }
+
+    @Test("Each feature a known family leaves out is one the runtime already refuses for that family's caches",
+          arguments: [
+              (TinyModel.Family.llama, "llama"), (.qwen3, "qwen3"), (.qwen3Moe, "qwen3_moe"), (.qwen35, "qwen3_5"), (.qwen35Moe, "qwen3_5_moe"),
+              (.prism, PrismHadamard.modelType), (.nemotronH, "nemotron_h"), (.sigmoidMoe, "nemotron_h"), (.lfm2, "lfm2"), (.lfm2Moe, "lfm2_moe"),
+              (.gemma3, "gemma3_text"), (.gemma4, "gemma4_text"), (.gemma4Moe, "gemma4"),
+          ])
+    func exclusionsMatchTheRuntime(family: TinyModel.Family, modelType: String) throws {
+        let capabilities = try #require(ModelCapabilities.of(modelType: modelType))
+        let model = try TinyModel.make(family)
+        let cache = try model.newCache(parameters: nil)
+        if !capabilities.allows(.mtp) { #expect(!(model is MLXLLM.Qwen35Model || model is MLXLLM.Qwen35TextModel)) }
+        if !capabilities.allows(.cacheBlend) { #expect(PromptCache(cache).isHybrid) }
+        if !capabilities.allows(.batchedDecode) { #expect(BatchedTokenIterator.batchableLayers(cache) == nil) }
+        if !capabilities.allows(.quest) { #expect(try !QuestKVCache.modelAttendsThroughCache(model)) }
+    }
+
+    @Test("An unknown model_type gets the conservative plan and one warning naming it and every feature that stays off")
+    func unknownFamily() {
+        #expect(ModelCapabilities.of(modelType: "deepseek_v3") == nil)
+        #expect(ModelCapabilities.of(modelType: nil) == nil)
+        #expect(ModelCapabilities.of(modelType: "Qwen3_5") != nil)
+        let everything = GenerationPlan.Settings(
+            kvZones: .standard, attendsThroughZones: true, prefillsInChunks: true, kvHeadMask: KVHeadMask(retrieval: [[0, 1]]),
+            questTopK: 16, speculativeLookup: true, capabilities: .conservative)
+        let request = GenerationRequest(prompt: "p", cacheKey: "chat").withSpeculativeLookup(true)
+        let namespace = GenerationPlan.cacheNamespace(request, everything, cacheEnabled: true, carriesMoreThanTokens: false, sameEpoch: true)
+        #expect(namespace == nil)
+        #expect(!GenerationPlan.plainPrompt(request, everything, carriesMoreThanTokens: false))
+        let facts = GenerationPlan.Facts(
+            namespace: namespace, promptTokens: 100, hasMTPDrafter: true, blendAvailable: true, modelIsHybrid: false, modelHasRecurrentState: true)
+        #expect(GenerationPlan.make(request, everything, facts) == GenerationPlan())
+        let warning = ModelCapabilities.unverifiedWarning(modelType: "deepseek_v3")
+        #expect(warning.contains("deepseek_v3"))
+        #expect(ModelCapabilities.Feature.allCases.allSatisfy { warning.contains($0.rawValue) })
     }
 }

@@ -214,7 +214,7 @@ public actor MLXInferenceEngine: InferenceEngine {
     }
 
     func probeKVHeads(directory: URL) async {
-        guard let ratio = kvHeadSplit, let container else { return }
+        guard let ratio = kvHeadSplit, modelFacts.capabilities.allows(.kvHeadSplit), let container else { return }
         let epoch = modelEpoch
         guard (try? await container.perform({ try ZonedKVCache.modelAttendsThroughCache($0.model) })) == true else {
             logger.warn("--kv-head-split does not apply to this model: its attention does not go through the cache")
@@ -236,7 +236,7 @@ public actor MLXInferenceEngine: InferenceEngine {
     }
 
     func probeQuest() async {
-        guard let questTopK, let container else { return }
+        guard let questTopK, modelFacts.capabilities.allows(.quest), let container else { return }
         let epoch = modelEpoch
         do {
             guard try await container.perform({ try QuestKVCache.modelAttendsThroughCache($0.model) }) else {
@@ -273,7 +273,7 @@ public actor MLXInferenceEngine: InferenceEngine {
     var wiredLimitBytes: Int? { wiredTicket?.size }
 
     func probeKVZones() async {
-        guard kvZones != nil, let container else { return }
+        guard kvZones != nil, modelFacts.capabilities.allows(.kvZones), let container else { return }
         let epoch = modelEpoch
         let precision = kvPrecision ?? .q8
         let probed = (try? await container.perform { try ZonedKVCache.probe($0.model, precision: precision) }) ?? (attendsThroughCache: false, rotatesValues: false)
@@ -388,13 +388,16 @@ public actor MLXInferenceEngine: InferenceEngine {
             let loaded = try await loadModelContainer(from: directory, using: DefaultTokenizerLoader())
             try await loaded.perform { try PrismHadamard.prepareLoaded($0.model) }
             let drafts = mtp ? await loadMTPDrafter(for: loaded, directory: directory, modelPath: modelPath) : false
+            let modelType = ModelCache.config(at: directory)?["model_type"] as? String
+            let capabilities = ModelCapabilities.of(modelType: modelType)
             let facts = ModelFacts(
                 profile: ModelProfileRegistry.profile(forModelAt: modelPath),
                 samplingDefaults: SamplingDefaults(generationConfig: ModelCache.generationConfig(at: directory)),
                 controlTokens: ControlTokenGuard(modelDirectory: directory),
                 fingerprint: promptCacheDisk == nil ? nil : PromptCacheDiskStore.fingerprint(modelDirectory: directory),
-                description: modelPath, hasMTPDrafter: drafts)
+                description: modelPath, hasMTPDrafter: drafts, capabilities: capabilities ?? .conservative)
             guard attach(loaded, facts: facts, epoch: epoch) else { return }
+            if capabilities == nil { logger.warn(ModelCapabilities.unverifiedWarning(modelType: modelType)) }
             await probeKVZones()
             await wireWorkingSet()
             await probeKVHeads(directory: directory)
@@ -671,7 +674,8 @@ public actor MLXInferenceEngine: InferenceEngine {
         let (params, unbudgeted, shaping, exclusion) = sampling(for: request, breakers: await sequenceBreakerIds(for: request))
         let settings = GenerationPlan.Settings(
             kvPrecision: kvPrecision, kvZones: kvZones, attendsThroughZones: modelAttendsThroughZones, prefillsInChunks: modelPrefillsInChunks,
-            kvHeadMask: kvHeadMask, questTopK: questApplies ? questTopK : nil, speculativeLookup: speculativeLookup)
+            kvHeadMask: kvHeadMask, questTopK: questApplies ? questTopK : nil, speculativeLookup: speculativeLookup,
+            capabilities: modelFacts.capabilities)
 
         let toolSpecs = Self.toolSpecs(request.tools)
         let declaredTools = Set(request.tools?.map(\.name) ?? [])
