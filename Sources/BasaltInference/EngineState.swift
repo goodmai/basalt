@@ -21,6 +21,7 @@ struct ModelFacts: Sendable {
     var valueRotationUnavailable = false
     var kvHeadMask: KVHeadMask?
     var questApplies = false
+    var capabilities = ModelCapabilities.unrestricted
 }
 
 struct LoadedModel: Sendable {
