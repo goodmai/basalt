@@ -13,12 +13,14 @@ func git(_ arguments: String...) throws -> String {
     let process = Process()
     process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
     process.arguments = ["git", "-c", "core.quotePath=false"] + arguments
-    let output = Pipe()
+    let output = Pipe(), discard = FileHandle(forWritingAtPath: "/dev/null")
     process.standardOutput = output
-    process.standardError = FileHandle(forWritingAtPath: "/dev/null")
+    process.standardError = discard
     try process.run()
     let data = output.fileHandleForReading.readDataToEndOfFile()
     process.waitUntilExit()
+    try output.fileHandleForReading.close()
+    try discard?.close()
     guard process.terminationStatus == 0 else { throw GitFailure(arguments: arguments) }
     return String(decoding: data, as: UTF8.self)
 }
