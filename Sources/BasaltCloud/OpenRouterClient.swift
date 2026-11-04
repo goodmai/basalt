@@ -4,8 +4,8 @@ import BasaltCore
 public actor OpenRouterClient: Sendable {
     private let apiClient: CloudAPIClient
 
-    public init(config: Config = .default) throws {
-        self.apiClient = CloudAPIClient(config: try Self.apiConfig(config))
+    public init(config: Config = .default, configuration: URLSessionConfiguration = .default) throws {
+        self.apiClient = CloudAPIClient(config: try Self.apiConfig(config), configuration: configuration)
     }
 
     public static func isOpenRouter(_ url: URL) -> Bool {

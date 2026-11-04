@@ -57,7 +57,7 @@ func blendedLogits(
     }
     let outcome = try #require(store.extend(
         cache, prompt: prompt, from: prefix, namespace: "ns",
-        model: model, tokenizer: tokenizer, prefillStep: 5))
+        model: model, tokenizer: tokenizer, prefill: PrefillParameters(stepSize: 5)))
     let logits = model(MLXArray([Int32(prompt.last!)]).reshaped(1, 1), cache: outcome.cache.layers)
     return (logits[0, -1].asType(.float32), outcome)
 }

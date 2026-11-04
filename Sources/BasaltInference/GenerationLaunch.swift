@@ -57,6 +57,18 @@ struct MTPRequest {
     var prefix: MTPPrefix?
 }
 
+extension MLXInferenceEngine {
+    @TaskLocal static var prefillProgress: (@Sendable (_ processed: Int, _ total: Int) -> Void)?
+}
+
+extension GenerateParameters {
+    var reportingPrefill: GenerateParameters {
+        var reporting = self
+        reporting.prefill.progress = MLXInferenceEngine.prefillProgress ?? prefill.progress
+        return reporting
+    }
+}
+
 struct GenerationLauncher {
     let input: LMInput
     let params: GenerateParameters
@@ -168,7 +180,7 @@ struct GenerationLauncher {
         let blended = cache.isHybrid ? nil : blend.flatMap {
             $0.store.extend(
                 cache, prompt: input.text.tokens.asArray(Int.self), from: reused, namespace: $0.namespace,
-                model: context.model, tokenizer: context.tokenizer, prefillStep: params.prefill.stepSize ?? 512)
+                model: context.model, tokenizer: context.tokenizer, prefill: params.prefill)
         }
         try Task.checkCancellation()
         if let blended {
