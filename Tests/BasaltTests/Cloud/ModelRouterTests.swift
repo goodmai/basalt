@@ -229,9 +229,9 @@ struct ModelRouterTests {
     }
 
     private func unreachableCloudClient() throws -> OpenRouterClient {
-        try OpenRouterClient(config: .init(
-            apiKey: "test-key", baseURL: URL(string: "http://127.0.0.1:9")!, timeout: 2, maxRetries: 0
-        ))
+        try OpenRouterClient(
+            config: .init(apiKey: "test-key", baseURL: URL(string: "http://127.0.0.1:9")!, timeout: 2, maxRetries: 0),
+            configuration: StubURLProtocol.configuration)
     }
 
     private func cloudCalls(_ client: OpenRouterClient) async -> Int {

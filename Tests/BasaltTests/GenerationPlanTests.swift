@@ -1,0 +1,154 @@
+import Testing
+import BasaltCore
+@testable import BasaltInference
+
+@Suite("Per-request decisions come from one pure GenerationPlan, so MTP, lookup, batching, blending and the KV cache cannot collide")
+struct GenerationPlanTests {
+    enum Decision: Sendable {
+        case drafts, batchable, findsAnchors, blends
+
+        func read(_ plan: GenerationPlan) -> Bool {
+            switch self {
+            case .drafts: plan.drafts
+            case .batchable: plan.batchable
+            case .findsAnchors: plan.findsAnchors
+            case .blends: plan.blends
+            }
+        }
+    }
+
+    struct Case: Sendable, CustomTestStringConvertible {
+        let testDescription: String
+        var request = GenerationRequest(prompt: "p")
+        var settings = GenerationPlan.Settings()
+        var facts = GenerationPlan.Facts(promptTokens: 100)
+        let decision: Decision
+        let expected: Bool
+    }
+
+    static let zoned = GenerationPlan.Settings(kvZones: .standard, attendsThroughZones: true, prefillsInChunks: true)
+    static let drafter = GenerationPlan.Facts(promptTokens: 100, hasMTPDrafter: true)
+    static let cached = GenerationPlan.Facts(namespace: "chat", promptTokens: 100)
+
+    static let mtp: [Case] = [
+        Case(testDescription: "MTP drafts on a plain prompt when the model has a drafter", facts: drafter, decision: .drafts, expected: true),
+        Case(testDescription: "no drafter, no MTP", decision: .drafts, expected: false),
+        Case(testDescription: "lookup from the request wins over MTP",
+             request: GenerationRequest(prompt: "p").withSpeculativeLookup(true), facts: drafter, decision: .drafts, expected: false),
+        Case(testDescription: "lookup from serve wins over MTP",
+             settings: GenerationPlan.Settings(speculativeLookup: true), facts: drafter, decision: .drafts, expected: false),
+        Case(testDescription: "a request that turns lookup off gets MTP back",
+             request: GenerationRequest(prompt: "p").withSpeculativeLookup(false),
+             settings: GenerationPlan.Settings(speculativeLookup: true), facts: drafter, decision: .drafts, expected: true),
+        Case(testDescription: "a grammar constraint turns MTP off",
+             facts: GenerationPlan.Facts(promptTokens: 100, constrained: true, hasMTPDrafter: true), decision: .drafts, expected: false),
+        Case(testDescription: "KV zones turn MTP off", settings: zoned, facts: drafter, decision: .drafts, expected: false),
+        Case(testDescription: "--kv-bits turns MTP off",
+             settings: GenerationPlan.Settings(kvPrecision: .q8), facts: drafter, decision: .drafts, expected: false),
+        Case(testDescription: "a request kv precision turns MTP off",
+             request: GenerationRequest(prompt: "p").withKVPrecision(.q4), facts: drafter, decision: .drafts, expected: false),
+        Case(testDescription: "a prompt at the MTP limit still drafts",
+             facts: GenerationPlan.Facts(promptTokens: MLXInferenceEngine.mtpPromptLimit, hasMTPDrafter: true), decision: .drafts, expected: true),
+        Case(testDescription: "a prompt over the MTP limit does not draft",
+             facts: GenerationPlan.Facts(promptTokens: MLXInferenceEngine.mtpPromptLimit + 1, hasMTPDrafter: true), decision: .drafts, expected: false),
+    ]
+
+    static let batch: [Case] = [
+        Case(testDescription: "a plain request joins the batch", decision: .batchable, expected: true),
+        Case(testDescription: "a grammar constraint keeps the request out of the batch",
+             facts: GenerationPlan.Facts(promptTokens: 100, constrained: true), decision: .batchable, expected: false),
+        Case(testDescription: "a forced tool keeps the request out of the batch even when its arguments go unconstrained",
+             request: GenerationRequest(prompt: "p", toolChoice: ToolChoice(forcedTool: "f")), decision: .batchable, expected: false),
+        Case(testDescription: "lookup keeps the request out of the batch",
+             request: GenerationRequest(prompt: "p").withSpeculativeLookup(true), decision: .batchable, expected: false),
+        Case(testDescription: "MTP keeps the request out of the batch", facts: drafter, decision: .batchable, expected: false),
+        Case(testDescription: "cache blending keeps the request out of the batch",
+             facts: GenerationPlan.Facts(namespace: "chat", promptTokens: 100, blendAvailable: true, modelIsHybrid: false),
+             decision: .batchable, expected: false),
+        Case(testDescription: "a hybrid model does not blend, so it still batches",
+             facts: GenerationPlan.Facts(namespace: "chat", promptTokens: 100, blendAvailable: true, modelIsHybrid: true),
+             decision: .batchable, expected: true),
+        Case(testDescription: "--kv-bits keeps the request out of the batch",
+             settings: GenerationPlan.Settings(kvPrecision: .q8), decision: .batchable, expected: false),
+        Case(testDescription: "zoned precision keeps the request out of the batch",
+             settings: GenerationPlan.Settings(kvPrecision: .k8v4, kvZones: .standard, attendsThroughZones: true, prefillsInChunks: true),
+             decision: .batchable, expected: false),
+        Case(testDescription: "zones without a precision leave batching on", settings: zoned, decision: .batchable, expected: true),
+        Case(testDescription: "media or a masked prompt keeps the request out of the batch",
+             facts: GenerationPlan.Facts(promptTokens: 100, carriesMoreThanTokens: true), decision: .batchable, expected: false),
+    ]
+
+    static let cache: [Case] = [
+        Case(testDescription: "a recurrent model with a prompt cache looks for anchors",
+             facts: GenerationPlan.Facts(namespace: "chat", promptTokens: 100, modelHasRecurrentState: true), decision: .findsAnchors, expected: true),
+        Case(testDescription: "no prompt cache, no anchors",
+             facts: GenerationPlan.Facts(promptTokens: 100, modelHasRecurrentState: true), decision: .findsAnchors, expected: false),
+        Case(testDescription: "MTP keeps its own prefix, so no anchors",
+             facts: GenerationPlan.Facts(namespace: "chat", promptTokens: 100, hasMTPDrafter: true, modelHasRecurrentState: true),
+             decision: .findsAnchors, expected: false),
+        Case(testDescription: "a model not yet probed for recurrent state gets no anchors", facts: cached, decision: .findsAnchors, expected: false),
+        Case(testDescription: "a cached prompt on a non-hybrid model blends",
+             facts: GenerationPlan.Facts(namespace: "chat", promptTokens: 100, blendAvailable: true, modelIsHybrid: false), decision: .blends, expected: true),
+        Case(testDescription: "a model not yet probed for hybrid layers does not blend",
+             facts: GenerationPlan.Facts(namespace: "chat", promptTokens: 100, blendAvailable: true), decision: .blends, expected: false),
+        Case(testDescription: "without --cache-blend nothing blends",
+             facts: GenerationPlan.Facts(namespace: "chat", promptTokens: 100, modelIsHybrid: false), decision: .blends, expected: false),
+        Case(testDescription: "without a prompt cache nothing blends",
+             facts: GenerationPlan.Facts(promptTokens: 100, blendAvailable: true, modelIsHybrid: false), decision: .blends, expected: false),
+    ]
+
+    @Test("Each decision follows its inputs", arguments: mtp + batch + cache)
+    func decision(_ row: Case) {
+        #expect(row.decision.read(GenerationPlan.make(row.request, row.settings, row.facts)) == row.expected)
+    }
+
+    @Test("Zones apply only to a model that attends through them, and eviction only to one that prefills in chunks")
+    func zones() {
+        let evicting = GenerationPlan.Settings(kvPrecision: .k8v4, kvZones: KVZones.standard.evicting(0.5), attendsThroughZones: true)
+        let request = GenerationRequest(prompt: "p")
+        #expect(GenerationPlan.make(request, evicting, GenerationPlan.Facts()).kvZones == KVZones.standard.evicting(0))
+        #expect(GenerationPlan.make(request, evicting, GenerationPlan.Facts()).kvPrecision == .k8v4)
+        var chunked = evicting
+        chunked.prefillsInChunks = true
+        #expect(GenerationPlan.make(request, chunked, GenerationPlan.Facts()).kvZones == KVZones.standard.evicting(0.5))
+        var flat = evicting
+        flat.attendsThroughZones = false
+        #expect(GenerationPlan.make(request, flat, GenerationPlan.Facts()) == GenerationPlan(batchable: false))
+    }
+
+    @Test("Head split needs the full-precision unzoned cache; Quest steps aside for head split")
+    func headSplitAndQuest() {
+        let mask = KVHeadMask(retrieval: [[0, 1]])
+        let request = GenerationRequest(prompt: "p")
+        let both = GenerationPlan.Settings(kvHeadMask: mask, questTopK: 16)
+        #expect(GenerationPlan.make(request, both, GenerationPlan.Facts()) == GenerationPlan(kvHeadMask: mask, batchable: true))
+        #expect(GenerationPlan.make(request, GenerationPlan.Settings(questTopK: 16), GenerationPlan.Facts()) == GenerationPlan(questTopK: 16, batchable: true))
+        #expect(GenerationPlan.make(request.withKVPrecision(.q8), both, GenerationPlan.Facts()) == GenerationPlan(batchable: false))
+        var zonedBoth = Self.zoned
+        zonedBoth.kvHeadMask = mask
+        zonedBoth.questTopK = 16
+        #expect(GenerationPlan.make(request, zonedBoth, GenerationPlan.Facts()) == GenerationPlan(kvZones: .standard, batchable: true))
+    }
+
+    @Test("A prompt-cache namespace needs a budget, the full-precision cache, a token-only prompt and the same model")
+    func namespace() {
+        let request = GenerationRequest(prompt: "p", cacheKey: "chat")
+        let settings = GenerationPlan.Settings()
+        #expect(GenerationPlan.cacheNamespace(request, settings, cacheEnabled: true, carriesMoreThanTokens: false, sameEpoch: true) == "chat")
+        #expect(GenerationPlan.cacheNamespace(request, settings, cacheEnabled: false, carriesMoreThanTokens: false, sameEpoch: true) == nil)
+        #expect(GenerationPlan.cacheNamespace(request, settings, cacheEnabled: true, carriesMoreThanTokens: true, sameEpoch: true) == nil)
+        #expect(GenerationPlan.cacheNamespace(request, settings, cacheEnabled: true, carriesMoreThanTokens: false, sameEpoch: false) == nil)
+        #expect(GenerationPlan.cacheNamespace(request.withKVPrecision(.q8), settings, cacheEnabled: true, carriesMoreThanTokens: false, sameEpoch: true) == nil)
+        #expect(GenerationPlan.cacheNamespace(
+            request, GenerationPlan.Settings(kvPrecision: .q4), cacheEnabled: true, carriesMoreThanTokens: false, sameEpoch: true) == nil)
+    }
+
+    @Test("Grammar jump-forward is allowed only on a full-precision cache and a token-only prompt")
+    func plainPrompt() {
+        let request = GenerationRequest(prompt: "p")
+        #expect(GenerationPlan.plainPrompt(request, GenerationPlan.Settings(), carriesMoreThanTokens: false))
+        #expect(!GenerationPlan.plainPrompt(request, GenerationPlan.Settings(), carriesMoreThanTokens: true))
+        #expect(!GenerationPlan.plainPrompt(request, GenerationPlan.Settings(kvPrecision: .q8), carriesMoreThanTokens: false))
+        #expect(!GenerationPlan.plainPrompt(request.withKVPrecision(.k8v4), GenerationPlan.Settings(), carriesMoreThanTokens: false))
+    }
+}

@@ -302,29 +302,18 @@ struct OrchestratorTests {
         #expect(responses.allSatisfy { !$0.generatedText.isEmpty })
     }
     
-    @Test("Long-running operation allows other tasks to proceed")
+    @Test("A generation that has not finished does not block a health check", .timeLimit(.minutes(2)))
     func testConcurrentTasksWithLongOperation() async throws {
         let slowEngine = MockInferenceEngine()
-        await slowEngine.setArtificialDelay(1.0) // 1 second delay
-        
+        await slowEngine.holdStreams()
         let orch = ModelOrchestratorActor(engine: slowEngine)
         try await orch.loadModel(path: "test-model")
-        
-        let start = ContinuousClock.now
-        
-        // Start long-running task
         async let slowTask = orch.generate(request: .init(prompt: "Slow", maxTokens: 10))
-        
-        // Check health should not block on slow task
+        #expect(await GenerationGateTests.eventually { await orch.gate.inFlight == 1 })
         let health = await orch.healthSnapshot(modelId: "test-model")
-        
-        let quickDuration = start.duration(to: .now)
-        
-        // Health check completed quickly (< 500ms)
-        #expect(quickDuration < Duration.milliseconds(500))
         #expect(health.isReady == true)
-        
-        // Wait for slow task to complete
+        #expect(await orch.gate.inFlight == 1)
+        await slowEngine.releaseStreams()
         let _ = try await slowTask
     }
     

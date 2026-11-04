@@ -23,7 +23,7 @@ You are a Staff Swift Security & Quality Auditor executing a strict, zero-trust 
 - **Cancellation Leaks**: Verify long-running loops check `try Task.checkCancellation()`. Verify async resource teardown uses `defer { await ... }` (SE-0493) paired with `withTaskCancellationShield` (SE-0504) where teardown must not abort partway.
 - **Isolation Bypasses**: Reject unjustified `@unchecked Sendable` or `nonisolated(unsafe)`. Propose `sending` parameters, `UniqueBox`, or actor isolation instead.
 - **Race-free by construction (#300)**: flag these as `CRITICAL`:
-  - a new escape hatch (`@unchecked Sendable`, `nonisolated(unsafe)`, `NSLock`/`NSCondition`/`os_unfair_lock`, `DispatchQueue`/`DispatchSemaphore`, `Task.detached`) without a written reason;
+  - a new escape hatch (`@unchecked Sendable`, `nonisolated(unsafe)`, `NSLock`/`NSCondition`/`os_unfair_lock`, `DispatchQueue`/`DispatchSemaphore`, `Task.detached`, raw `Thread`) whose line in `scripts/concurrency-hatches.allow` does not name what serializes it (CI already fails a hatch with no line and a stale line);
   - a state change in an actor that awaits between its check and its write;
   - a result applied after an `await` without an epoch or generation check;
   - a `deinit` that mutates state owned by another type;
@@ -74,6 +74,7 @@ You are a Staff Swift Security & Quality Auditor executing a strict, zero-trust 
 ### Gate 5: Verification & Swift Testing Standards
 - Verify unit tests use the modern `Testing` framework (`@Test`, `#expect`, `#require`, parameterized `@Test(arguments:)`) rather than legacy `XCTest` boilerplate.
 - Ensure concurrent tests are deterministic and free of arbitrary `Task.sleep` race windows.
+- Read the changed-line coverage step of Unit Tests (`scripts/check_changed_coverage.swift`, minimum 60%): an uncovered range in new logic is a missing test, even when the total passes.
 
 ## 3. Required Output Report Structure
 Output the review strictly in this Markdown structure:

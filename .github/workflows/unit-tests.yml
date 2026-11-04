@@ -13,6 +13,9 @@ on:
       - 'scripts/check_*'
       - '.github/workflows/no-comments.yml'
       - '.github/workflows/size-limits.yml'
+      - '.github/workflows/concurrency-hatches.yml'
+      - '.github/workflows/changed-coverage.yml'
+      - 'scripts/concurrency-hatches.allow'
   pull_request:
     paths-ignore:
       - '**.md'
@@ -22,6 +25,9 @@ on:
       - 'scripts/check_*'
       - '.github/workflows/no-comments.yml'
       - '.github/workflows/size-limits.yml'
+      - '.github/workflows/concurrency-hatches.yml'
+      - '.github/workflows/changed-coverage.yml'
+      - 'scripts/concurrency-hatches.allow'
 
 # One self-hosted runner: a second push to the same ref makes the earlier run (queued or
 # running) irrelevant, so cancel it instead of letting it hold the machine.
@@ -55,6 +61,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           clean: false
+          fetch-depth: 0
 
       - name: Configure Swift toolchain
         uses: ./.github/actions/xcode-toolchain
@@ -63,13 +70,19 @@ jobs:
         run: xcrun metal --version >/dev/null 2>&1 || xcodebuild -downloadComponent MetalToolchain
 
       - name: Build tests
-        run: swift build --build-tests -Xswiftc -warnings-as-errors
+        run: swift build --build-tests --enable-code-coverage -Xswiftc -warnings-as-errors
 
       - name: MLX Metal kernels
         uses: ./.github/actions/mlx-metallib
 
       - name: Run unit tests
-        run: swift test
+        run: swift test --enable-code-coverage
+
+      - name: Changed-line coverage
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: swift scripts/check_changed_coverage.swift "$(swift test --show-codecov-path)" "origin/$BASE_REF"
 
       - name: Concurrency & Flake Repetition Gate (ST-0024)
-        run: swift test --skip-build --filter 'GenerationGateTests|PriorityAndPrefillCancellationTests|ServerDrainTests|TokenRecyclingTests|PromptLookupDecodingTests' --maximum-repetitions 10 --repeat-until fail
+        run: swift test --skip-build --enable-code-coverage --filter 'GenerationGateTests|PriorityAndPrefillCancellationTests|ServerDrainTests|TokenRecyclingTests|PromptLookupDecodingTests' --maximum-repetitions 10 --repeat-until fail

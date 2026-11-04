@@ -1,33 +1,25 @@
 import Foundation
 
 public enum BasaltError: Error, Sendable, LocalizedError {
-    // MARK: — IO / Model loading
     case modelNotFound(identifier: String)
     case weightsCorrupted(path: String, reason: String)
     case modelConfigurationInvalid(path: String, reason: String)
 
-    // MARK: — Memory / Hardware
     case outOfMemory(requestedMB: Int, availableMB: Int)
     case inferenceHardwareFailure(reason: String)
 
-    // MARK: — Protocol / Request
     case invalidRequestStructure(details: String)
     case contextLengthExceeded(maxTokens: Int, requested: Int)
     case rateLimitExceeded(retryAfter: String?)
     case authenticationFailed(details: String)
     case modelInferenceError(details: String)
 
-    // MARK: — Model lifecycle
-    /// Timeout or cancellation during a generate call.
     case inferenceError(String)
-    /// Requested model is not in the local HuggingFace cache.
     case modelNotCached(identifier: String)
-    /// Model switch is in progress — used for 503 responses.
     case modelSwitching(from: String, to: String)
     case serverBusy(retryAfterSeconds: Int?)
     case memoryPressure(retryAfterSeconds: Int)
 
-    // MARK: — LocalizedError
     public var errorDescription: String? {
         switch self {
         case .modelNotFound(let id):
@@ -64,24 +56,22 @@ public enum BasaltError: Error, Sendable, LocalizedError {
         }
     }
 
-    // Maps to HTTP status codes for the REST layer.
-    public var httpStatus: Int {
+    public var wire: (status: Int, openAIType: String, anthropicType: String, retryAfter: String?) {
         switch self {
-        case .modelNotFound:            return 404
-        case .weightsCorrupted:         return 500
-        case .modelConfigurationInvalid: return 422
-        case .outOfMemory:              return 507  // Insufficient Storage
-        case .inferenceHardwareFailure: return 503
-        case .invalidRequestStructure:  return 400
-        case .contextLengthExceeded:    return 413  // Payload Too Large
-        case .rateLimitExceeded:        return 429  // Too Many Requests
-        case .authenticationFailed:     return 401
-        case .modelInferenceError:      return 502  // Bad Gateway
-        case .inferenceError:           return 500
-        case .modelNotCached:           return 404
-        case .modelSwitching:           return 503  // Service Unavailable — retry
-        case .serverBusy:               return 503
-        case .memoryPressure:           return 503
+        case .modelNotFound, .modelNotCached: (404, "invalid_request_error", "not_found_error", nil)
+        case .invalidRequestStructure: (400, "invalid_request_error", "invalid_request_error", nil)
+        case .contextLengthExceeded: (413, "invalid_request_error", "invalid_request_error", nil)
+        case .modelConfigurationInvalid: (422, "invalid_request_error", "invalid_request_error", nil)
+        case .authenticationFailed: (401, "authentication_error", "authentication_error", nil)
+        case .rateLimitExceeded(let retryAfter): (429, "rate_limit_error", "rate_limit_error", retryAfter ?? "1")
+        case .weightsCorrupted, .inferenceError: (500, "server_error", "api_error", nil)
+        case .modelInferenceError: (502, "server_error", "api_error", nil)
+        case .inferenceHardwareFailure, .modelSwitching: (503, "server_error", "overloaded_error", "1")
+        case .serverBusy(let seconds): (503, "server_error", "overloaded_error", seconds.map(String.init) ?? "1")
+        case .memoryPressure(let seconds): (503, "server_error", "overloaded_error", String(seconds))
+        case .outOfMemory: (507, "server_error", "overloaded_error", "1")
         }
     }
+
+    public var httpStatus: Int { wire.status }
 }

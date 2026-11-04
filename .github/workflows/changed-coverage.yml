@@ -1,0 +1,21 @@
+name: Changed Coverage Checker
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/check_changed_coverage*'
+      - '.github/workflows/changed-coverage.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  self-test:
+    name: Changed-line coverage checker self-test
+    runs-on: ubuntu-latest
+    container: swift:6.1-noble
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Checker self-test
+        run: swift scripts/check_changed_coverage_test.swift

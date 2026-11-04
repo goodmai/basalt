@@ -69,7 +69,7 @@ struct RateLimitTests {
 
     private func router(rateLimit: Int, burst: Int? = nil, virtualKeys: [VirtualKey] = []) throws -> Router<BasicRequestContext> {
         let config = try ServerConfig(modelPath: "stub", host: "0.0.0.0", apiKey: "k-123", rateLimitPerMinute: rateLimit, rateBurst: burst, virtualKeys: virtualKeys)
-        return RESTServer(orchestrator: ModelOrchestratorActor(engine: MockInferenceEngine()), config: config).makeRouter()
+        return RESTServer(orchestrator: ModelOrchestratorActor(engine: MockInferenceEngine()), config: config, rateClock: { 0 }).makeRouter()
     }
 
     @Test("The real router: 401 without the key, 429 past the limit with Retry-After, health exempt")
@@ -90,7 +90,7 @@ struct RateLimitTests {
                 ($0.status, $0.headers[.retryAfter])
             }
             #expect(status == .tooManyRequests)
-            #expect(retryAfter.flatMap(Int.init).map { (1...30).contains($0) } == true, "\(retryAfter ?? "nil")")
+            #expect(retryAfter == "30")
             let health = try await client.execute(uri: "/api/v1/health", method: .get) { $0.status }
             #expect(health == .ok)
         }

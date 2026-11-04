@@ -19,12 +19,22 @@ public actor GenerationGate {
     private var exclusiveHeld = false
     private var exclusiveQueue: [CheckedContinuation<Void, Never>] = []
     private var closed = false
+    private var aborted = false
     private var nextId = 0
     private(set) var drainPolls = 0
+    private let now: @Sendable () -> Duration
+    private let sleep: @Sendable (Duration) async throws -> Void
 
-    public init(maxConcurrent: Int = 1, maxQueue: Int = 8) {
+    public init(
+        maxConcurrent: Int = 1,
+        maxQueue: Int = 8,
+        now: @escaping @Sendable () -> Duration = { [origin = ContinuousClock.now] in ContinuousClock.now - origin },
+        sleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
+    ) {
         self.maxConcurrent = max(1, maxConcurrent)
         self.maxQueue = max(0, maxQueue)
+        self.now = now
+        self.sleep = sleep
     }
 
     public var inFlight: Int { running.count }
@@ -70,6 +80,10 @@ public actor GenerationGate {
 
     public func onCancel(_ id: Int, _ cancel: @escaping @Sendable () -> Void) {
         guard running[id] != nil else { return }
+        if aborted {
+            cancel()
+            return
+        }
         running[id] = cancel
     }
 
@@ -96,14 +110,14 @@ public actor GenerationGate {
         let waiting = queue
         queue.removeAll()
         for waiter in waiting { waiter.continuation.resume(throwing: BasaltError.serverBusy(retryAfterSeconds: nil)) }
-        let clock = ContinuousClock()
-        let end = clock.now + deadline
+        let end = now() + deadline
         await withTaskCancellationShield {
-            while !running.isEmpty, clock.now < end {
+            while !running.isEmpty, now() < end {
                 drainPolls += 1
-                try? await Task.sleep(for: .milliseconds(20))
+                try? await sleep(.milliseconds(20))
             }
         }
+        aborted = true
         for cancel in running.values { cancel() }
     }
 

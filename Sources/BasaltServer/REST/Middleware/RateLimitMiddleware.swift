@@ -89,9 +89,7 @@ public struct RateLimitMiddleware<Context: RequestContext>: RouterMiddleware {
         requestsPerMinute: Int,
         burst: Int? = nil,
         maxClients: Int = 4096,
-        clock: @escaping @Sendable () -> Double = {
-            ProcessInfo.processInfo.systemUptime
-        }
+        clock: @escaping @Sendable () -> Double
     ) {
         let perMinute = Double(max(1, requestsPerMinute))
         let burstCapacity = Double(max(1, burst ?? max(1, min(requestsPerMinute, 10))))

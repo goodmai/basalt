@@ -1,11 +1,10 @@
 import Testing
 import Foundation
+import Observation
 @testable import BasaltCore
 @testable import BasaltApp
 
-/// The SwiftUI chat client end to end: ChatViewModel → RESTClient → a stubbed
-/// /api/v1/generate/stream that speaks the server's StreamChunk SSE format.
-@Suite("ChatViewModel and RESTClient over a stubbed stream")
+@Suite("ChatViewModel and RESTClient over a stubbed stream", .timeLimit(.minutes(2)))
 @MainActor
 struct ChatViewModelTests {
 
@@ -18,8 +17,11 @@ struct ChatViewModelTests {
     }
 
     private func waitUntilIdle(_ vm: ChatViewModel) async throws {
-        for _ in 0..<500 where vm.isGenerating { try await Task.sleep(for: .milliseconds(10)) }
-        #expect(!vm.isGenerating, "generation did not finish")
+        while vm.isGenerating {
+            await withCheckedContinuation { changed in
+                withObservationTracking { _ = vm.isGenerating } onChange: { changed.resume() }
+            }
+        }
     }
 
     @Test("A sent message streams reasoning and text into one assistant reply and records the stats")

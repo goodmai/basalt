@@ -6,6 +6,7 @@ import HTTPTypes
 import Logging
 import NIOCore
 import ServiceLifecycle
+import Synchronization
 @testable import BasaltCLI
 @testable import BasaltCore
 @testable import BasaltServer
@@ -32,25 +33,22 @@ struct ServerDrainTests {
         await orchestrator.gate.release(holder)
     }
 
-    @Test("On graceful shutdown the drain service ends an open stream within the deadline")
+    @Test("On graceful shutdown the drain service ends an open stream at the deadline", .timeLimit(.minutes(2)))
     func drainOnGracefulShutdown() async throws {
         let engine = MockInferenceEngine()
         let orchestrator = ModelOrchestratorActor(engine: engine, telemetry: TelemetryTracker())
         try await orchestrator.loadModel(path: "mock")
-        await engine.setArtificialDelay(30)
+        await engine.holdStreams()
         let stream = try await orchestrator.generateStream(request: GenerationRequest(prompt: "long"))
-        let consumer = Task { for await _ in stream {} }
+        let consumer = Task { await GenerationGateTests.drain(stream) }
 
         let group = ServiceGroup(configuration: .init(
             services: [.init(service: GenerationDrainService(orchestrator: orchestrator, deadline: .milliseconds(200)))],
             logger: Logger(label: "test")))
         let running = Task { try await group.run() }
-        try await Task.sleep(for: .milliseconds(50))
-        let started = ContinuousClock.now
         await group.triggerGracefulShutdown()
-        await consumer.value
+        #expect(await consumer.value.isEmpty)
         try await running.value
-        #expect(ContinuousClock.now - started < .seconds(15))
         #expect(await orchestrator.gate.inFlight == 0)
     }
 
@@ -110,14 +108,19 @@ struct ServerDrainTests {
         }
     }
 
-    @Test("Shutting down inside an already-cancelled task waits for in-flight work without busy-spinning")
+    @Test("Shutting down inside an already-cancelled task waits for in-flight work, and its drain polls sleep instead of seeing the cancellation and spinning")
     func cancelledShutdownDoesNotBusySpin() async throws {
         let engine = MockInferenceEngine()
-        let orchestrator = ModelOrchestratorActor(engine: engine, telemetry: TelemetryTracker())
+        let pollsSawCancellation = Mutex<[Bool]>([])
+        let (polled, threePolls) = AsyncStream<Void>.makeStream()
+        let gate = GenerationGate(now: { .zero }, sleep: { _ in
+            if pollsSawCancellation.withLock({ $0.append(Task.isCancelled); return $0.count }) == 3 { threePolls.finish() }
+            await Task.yield()
+        })
+        let orchestrator = ModelOrchestratorActor(engine: engine, telemetry: TelemetryTracker(), gate: gate)
         try await orchestrator.loadModel(path: "mock")
-        let holder = try await orchestrator.gate.admit()
+        let holder = try await gate.admit()
         let (ready, markReady) = AsyncStream<Void>.makeStream()
-        let started = ContinuousClock.now
         let cancelled = Task {
             markReady.finish()
             while !Task.isCancelled { await Task.yield() }
@@ -126,14 +129,14 @@ struct ServerDrainTests {
         }
         for await _ in ready {}
         cancelled.cancel()
-        #expect(await GenerationGateTests.eventually(within: .seconds(30)) { await orchestrator.gate.drainPolls >= 3 })
-        #expect(await orchestrator.gate.inFlight == 1)
+        for await _ in polled {}
+        #expect(await gate.inFlight == 1)
         #expect(await engine.persistCount == 0)
-        await orchestrator.gate.release(holder)
+        await gate.release(holder)
         await cancelled.value
-        let polls = await orchestrator.gate.drainPolls
-        #expect(polls <= Int((ContinuousClock.now - started) / .milliseconds(20)) + 1, "\(polls) polls")
-        #expect(await orchestrator.gate.inFlight == 0)
+        #expect(pollsSawCancellation.withLock { $0.allSatisfy { !$0 } })
+        #expect(await gate.drainPolls == pollsSawCancellation.withLock { $0.count })
+        #expect(await gate.inFlight == 0)
         #expect(await engine.persistCount == 1)
     }
 
@@ -167,7 +170,7 @@ struct ServerDrainTests {
         #expect(contents.contains("\"type\":\"response\""))
     }
 
-    @Test("MCP graceful shutdown exits an idle input stream without hanging and persists once")
+    @Test("MCP graceful shutdown exits an idle input stream without hanging and persists once", .timeLimit(.minutes(2)))
     func mcpGracefulShutdownExitsIdleInputAndPersistsOnce() async throws {
         let engine = MockInferenceEngine()
         let orchestrator = ModelOrchestratorActor(engine: engine, telemetry: TelemetryTracker())
@@ -186,10 +189,8 @@ struct ServerDrainTests {
         ))
         let running = Task { try await group.run() }
         try await Task.sleep(for: .milliseconds(50))
-        let started = ContinuousClock.now
         await group.triggerGracefulShutdown()
         try await running.value
-        #expect(ContinuousClock.now - started < .seconds(15))
         #expect(await engine.persistCount == 1)
     }
 

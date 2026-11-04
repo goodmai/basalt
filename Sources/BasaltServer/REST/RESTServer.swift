@@ -12,19 +12,22 @@ package struct RESTServer: Sendable {
 
     let shutdownDeadline: Duration
     let handleSignals: Bool
+    let rateClock: @Sendable () -> Double
 
     package init(
         orchestrator: ModelOrchestratorActor,
         config: ServerConfig,
         embeddings: (any EmbeddingEngine)? = nil,
         shutdownDeadline: Duration = .seconds(5),
-        handleSignals: Bool = true
+        handleSignals: Bool = true,
+        rateClock: @escaping @Sendable () -> Double = { ProcessInfo.processInfo.systemUptime }
     ) {
         self.orchestrator = orchestrator
         self.config = config
         self.embeddings = embeddings
         self.shutdownDeadline = shutdownDeadline
         self.handleSignals = handleSignals
+        self.rateClock = rateClock
     }
 
     package func run() async throws {
@@ -90,7 +93,7 @@ package struct RESTServer: Sendable {
             router.add(middleware: APIKeyAuthenticator(apiKey: config.apiKey ?? "", virtualKeys: config.virtualKeys))
         }
         if let limit = config.rateLimitPerMinute {
-            router.add(middleware: RateLimitMiddleware(requestsPerMinute: limit, burst: config.rateBurst))
+            router.add(middleware: RateLimitMiddleware(requestsPerMinute: limit, burst: config.rateBurst, clock: rateClock))
         }
         router.add(middleware: JSONNestingLimitMiddleware())
         router.add(middleware: RetryAfterMiddleware())

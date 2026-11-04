@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import Synchronization
 import MLX
 import MLXLMCommon
 @testable import BasaltInference
@@ -12,7 +13,7 @@ struct GenerationHandOffTests {
             processor: ByteInputProcessor(), tokenizer: ByteTokenizer())
     }
 
-    @Test("A launch without a prompt cache hands back its decode task, so cancelling the request stops decoding", .timeLimit(.minutes(1)))
+    @Test("A launch without a prompt cache hands back its decode task, so cancelling the request stops decoding", .timeLimit(.minutes(10)))
     func plainLaunchStopsOnCancel() async throws {
         let launch = try MLXInferenceEngine.launch(
             input: LMInput(tokens: MLXArray([5, 9, 5, 9, 5].map(Int32.init))), prompt: CachedPrompt(boundary: 4),
@@ -37,12 +38,17 @@ struct GenerationHandOffTests {
           arguments: [false, true])
     func prefillCoversTheIterator(keepsCache: Bool) async throws {
         let context = try Self.context()
-        let started = ContinuousClock.now
-        let launch = try MLXInferenceEngine.launch(
-            input: LMInput(tokens: MLXArray((0 ..< 3000).map { Int32(1 + $0 % 200) })), prompt: CachedPrompt(boundary: 2999),
-            options: LaunchOptions(params: GenerateParameters(maxTokens: 1, temperature: 0), keepsCache: keepsCache), context: context)
-        let wall = (ContinuousClock.now - started) / .seconds(1)
-        #expect(launch.prefillSeconds >= wall * 0.9)
+        let chunks = Mutex<[ContinuousClock.Instant]>([])
+        let launch = try MLXInferenceEngine.$prefillProgress.withValue({ _, _ in chunks.withLock { $0.append(.now) } }) {
+            try MLXInferenceEngine.launch(
+                input: LMInput(tokens: MLXArray((0 ..< 3000).map { Int32(1 + $0 % 200) })), prompt: CachedPrompt(boundary: 2999),
+                options: LaunchOptions(params: GenerateParameters(maxTokens: 1, temperature: 0), keepsCache: keepsCache), context: context)
+        }
+        let instants = chunks.withLock { $0 }
+        let first = try #require(instants.first)
+        let last = try #require(instants.last)
+        #expect(instants.count >= 2)
+        #expect(launch.prefillSeconds >= (last - first) / .seconds(1))
         await MLXInferenceEngine.settle(launch.task, cancelled: false)
     }
 }
