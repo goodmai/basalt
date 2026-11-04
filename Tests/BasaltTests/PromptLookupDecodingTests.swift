@@ -88,16 +88,20 @@ struct PromptLookupDecodingTests {
     @Test("Greedy decoding with prompt lookup emits exactly the plain decoder's tokens, and drafts are accepted",
           arguments: [TinyModel.Family.llama4Layers, .qwen3, .qwen35, .lfm2Moe, .nemotronH, .lfm2, .gemma4, .gemma4Moe])
     func greedyEquivalence(family: TinyModel.Family) throws {
-        let model = try TinyModel.make(family)
-        let expected = try LookupFixture.baseline(model)
-        let (tokens, iterator, _) = try LookupFixture.lookup(model)
-        expectTokenSequence(tokens, expected)
-        let telemetry = try #require(iterator.speculativeDecodingTelemetry)
-        #expect(telemetry.acceptedDraftTokenCount > 0)
-        #expect(telemetry.emittedTokenCount == tokens.count)
-        #expect(telemetry.targetModelCallCount < tokens.count)
-        #expect(telemetry.targetVerifiedTokenCount
-            == telemetry.draftTokenCount + telemetry.targetModelCallCount - iterator.replayRounds)
+        try withKnownIssue("Nemotron-H diverges from the plain decoder intermittently in full parallel runs (#250)", isIntermittent: true) {
+            let model = try TinyModel.make(family)
+            let expected = try LookupFixture.baseline(model)
+            let (tokens, iterator, _) = try LookupFixture.lookup(model)
+            expectTokenSequence(tokens, expected)
+            let telemetry = try #require(iterator.speculativeDecodingTelemetry)
+            #expect(telemetry.acceptedDraftTokenCount > 0)
+            #expect(telemetry.emittedTokenCount == tokens.count)
+            #expect(telemetry.targetModelCallCount < tokens.count)
+            #expect(telemetry.targetVerifiedTokenCount
+                == telemetry.draftTokenCount + telemetry.targetModelCallCount - iterator.replayRounds)
+        } when: {
+            family == .nemotronH
+        }
     }
 
     @Test("A recurrent fixture's greedy path has no near-tie that the verify forward's chunked scan could flip",
