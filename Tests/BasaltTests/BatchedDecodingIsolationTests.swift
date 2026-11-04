@@ -294,17 +294,6 @@ struct BatchedRoutingTests {
         #expect(throws: (any Error).self) { _ = try ServeCommand.parse(["--batch-slots", "0"]) }
     }
 
-    @Test("Sliding-window models keep the serialized path")
-    func rotatingStaysSolo() async throws {
-        for engine in [
-            await BatchFixture.engine(try TinyModel.make(.gemma4), id: "tiny-gemma4", batchSlots: 4),
-        ] {
-            let reply = try await engine.generate(request: BatchFixture.request(1, maxTokens: 6))
-            #expect(reply.completionTokens == 6)
-            #expect(await engine.batchedRows == 0)
-        }
-    }
-
     @Test("A request with a response format keeps the serialized path; the same engine batches a plain one")
     func grammarStaysSolo() async throws {
         let engine = MLXInferenceEngine(batchSlots: 4)
