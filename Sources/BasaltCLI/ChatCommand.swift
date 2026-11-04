@@ -63,23 +63,44 @@ struct ChatCommand: AsyncParsableCommand {
         return (session.id, exchange.messages + (exchange.reply.map { [ChatMessageInput(role: .assistant, text: $0)] } ?? []))
     }
 
-    // MARK: — Run
     private static let logger = BasaltLogger(module: "ChatCommand")
 
     mutating func run() async throws {
         Self.logger.trace("ChatCommand started.")
-        
-        let logDirectory = sessionLogDir.map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath) } ?? SessionLogWriter.defaultDirectory
-        var sessionId = "chat-" + ISO8601DateFormatter.string(from: Date(), timeZone: .current, formatOptions: [.withFullDate, .withTime])
-            .replacingOccurrences(of: ":", with: "")
-        var history: [ChatMessageInput] = []
-        if let resume {
-            (sessionId, history) = try Self.resumed(resume, in: logDirectory)
-            log("Resuming \(bold(sessionId)) with \(history.count) earlier messages")
-        }
+        let (sessionId, history) = try startingSession()
         let writer = ServeCommand.sessionLogWriter(mode: sessionLog, directory: sessionLogDir, defaultSession: sessionId)
         defer { if writer != nil { print("Resume with: basalt chat --resume \(sessionId)") } }
 
+        let orchestrator = try await loadedOrchestrator(sessionLog: writer)
+
+        if let prompt {
+            try await answer(prompt, history: history, sessionId: sessionId, orchestrator: orchestrator)
+            return
+        }
+
+        log("Model ready. Type 'exit' or 'quit' to stop.")
+        print("\n--- Basalt Chat ---")
+
+        let controller = ChatController(orchestrator: orchestrator, maxTokens: maxTokens, sessionId: sessionId, history: history)
+        await controller.start()
+        await orchestrator.shutdown()
+
+        let terminal = TerminalManager()
+        await terminal.disableRawMode()
+        print("Goodbye!")
+    }
+
+    private func startingSession() throws -> (session: String, history: [ChatMessageInput]) {
+        let sessionId = "chat-" + ISO8601DateFormatter.string(from: Date(), timeZone: .current, formatOptions: [.withFullDate, .withTime])
+            .replacingOccurrences(of: ":", with: "")
+        guard let resume else { return (sessionId, []) }
+        let logDirectory = sessionLogDir.map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath) } ?? SessionLogWriter.defaultDirectory
+        let resumed = try Self.resumed(resume, in: logDirectory)
+        log("Resuming \(bold(resumed.session)) with \(resumed.history.count) earlier messages")
+        return resumed
+    }
+
+    private func loadedOrchestrator(sessionLog writer: SessionLogWriter?) async throws -> ModelOrchestratorActor {
         let resolvedPath = try await resolveModelPath()
 
         let engine = MLXInferenceEngine(promptCacheDisk: try promptCacheDisk.store())
@@ -92,57 +113,44 @@ struct ChatCommand: AsyncParsableCommand {
             log("\(red("Failed to load model:")) \(error.localizedDescription)")
             throw ExitCode.failure
         }
-
-        if let initialPrompt = prompt {
-            // Non-interactive mode
-            let finalPrompt = try await PromptContextBuilder.build(prompt: initialPrompt)
-            let request = Self.request(finalPrompt, history: history, maxTokens: maxTokens, sessionId: sessionId)
-            
-            do {
-                let stream = try await orchestrator.generateStream(request: request)
-                var stats: GenerationResponse?
-                
-                for try await chunk in stream {
-                    switch chunk {
-                    case .toolCall:  // this path declares no tools, so a call has no client to go to
-                        break
-                    case .text(let t):
-                        print(t, terminator: "")
-                        fflush(stdout)
-                    case .reasoning(let r):
-                        print(r, terminator: "")
-                        fflush(stdout)
-                    case .metadata(let m):
-                        stats = m
-                    }
-                }
-                print("\n")
-                if let stats = stats {
-                    log(dim("Tokens: \(stats.promptTokens) in / \(stats.completionTokens) out | TPS: \(String(format: "%.2f", stats.tokensPerSecond)) | TTFT: \(String(format: "%.3fs", stats.timeToFirstToken))"))
-                }
-            } catch {
-                await orchestrator.shutdown()
-                log("\(red("Error:")) \(error.localizedDescription)")
-                throw ExitCode.failure
-            }
-            await orchestrator.shutdown()
-            return
-        }
-
-        log("Model ready. Type 'exit' or 'quit' to stop.")
-        print("\n--- Basalt Chat ---")
-        
-        let controller = ChatController(orchestrator: orchestrator, maxTokens: maxTokens, sessionId: sessionId, history: history)
-        await controller.start()
-        await orchestrator.shutdown()
-        
-        // Ensure raw mode is cleanly disabled when returning to bash
-        let terminal = TerminalManager()
-        await terminal.disableRawMode()
-        print("Goodbye!")
+        return orchestrator
     }
 
-    // MARK: — Path resolution
+    private func answer(
+        _ initialPrompt: String, history: [ChatMessageInput], sessionId: String, orchestrator: ModelOrchestratorActor
+    ) async throws {
+        let finalPrompt = try await PromptContextBuilder.build(prompt: initialPrompt)
+        let request = Self.request(finalPrompt, history: history, maxTokens: maxTokens, sessionId: sessionId)
+
+        do {
+            let stream = try await orchestrator.generateStream(request: request)
+            var stats: GenerationResponse?
+
+            for try await chunk in stream {
+                switch chunk {
+                case .toolCall:
+                    break
+                case .text(let t):
+                    print(t, terminator: "")
+                    fflush(stdout)
+                case .reasoning(let r):
+                    print(r, terminator: "")
+                    fflush(stdout)
+                case .metadata(let m):
+                    stats = m
+                }
+            }
+            print("\n")
+            if let stats = stats {
+                log(dim("Tokens: \(stats.promptTokens) in / \(stats.completionTokens) out | TPS: \(String(format: "%.2f", stats.tokensPerSecond)) | TTFT: \(String(format: "%.3fs", stats.timeToFirstToken))"))
+            }
+        } catch {
+            await orchestrator.shutdown()
+            log("\(red("Error:")) \(error.localizedDescription)")
+            throw ExitCode.failure
+        }
+        await orchestrator.shutdown()
+    }
 
     private func resolveModelPath() async throws -> String {
         // Explicit local path wins

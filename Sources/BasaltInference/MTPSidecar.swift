@@ -60,40 +60,20 @@ final class GreedyDraftingMTPDrafter: Module, StatefulMTPDrafterModel {
 
     func makeState(parameters: GenerateParameters?) -> MTPDrafterState { inner.makeState(parameters: parameters) }
 
-    func prepareDrafterState(
-        target: any LanguageModel, promptTokens: MLXArray, targetHidden: MLXArray, firstBonus: MLXArray?,
-        positionDeltas: MLXArray?, state: inout MTPDrafterState, sampler _: any LogitSampler
-    ) {
-        inner.prepareDrafterState(
-            target: target, promptTokens: promptTokens, targetHidden: targetHidden, firstBonus: firstBonus,
-            positionDeltas: positionDeltas, state: &state, sampler: argMax)
+    func prepareDrafterState(target: any LanguageModel, input: MTPPrefillInput, state: inout MTPDrafterState, sampler _: any LogitSampler) {
+        inner.prepareDrafterState(target: target, input: input, state: &state, sampler: argMax)
     }
 
-    func draftBlock(
-        target: any LanguageModel, lastToken: MLXArray, lastHidden: MLXArray, sharedKV: [String: (MLXArray, MLXArray)],
-        positionDeltas: MLXArray?, queryOffset: Int, blockSize: Int, sampler _: any LogitSampler
-    ) -> MLXArray {
-        inner.draftBlock(
-            target: target, lastToken: lastToken, lastHidden: lastHidden, sharedKV: sharedKV, positionDeltas: positionDeltas,
-            queryOffset: queryOffset, blockSize: blockSize, sampler: argMax)
+    func draftBlock(target: any LanguageModel, input: MTPDraftInput, sampler _: any LogitSampler) -> MLXArray {
+        inner.draftBlock(target: target, input: input, sampler: argMax)
     }
 
-    func draftBlock(
-        target: any LanguageModel, lastToken: MLXArray, lastHidden: MLXArray, sharedKV: [String: (MLXArray, MLXArray)],
-        positionDeltas: MLXArray?, queryOffset: Int, blockSize: Int, state: inout MTPDrafterState, sampler _: any LogitSampler
-    ) -> MLXArray {
-        inner.draftBlock(
-            target: target, lastToken: lastToken, lastHidden: lastHidden, sharedKV: sharedKV, positionDeltas: positionDeltas,
-            queryOffset: queryOffset, blockSize: blockSize, state: &state, sampler: argMax)
+    func draftBlock(target: any LanguageModel, input: MTPDraftInput, state: inout MTPDrafterState, sampler _: any LogitSampler) -> MLXArray {
+        inner.draftBlock(target: target, input: input, state: &state, sampler: argMax)
     }
 
-    func commitDrafterState(
-        target: any LanguageModel, targetHidden: MLXArray, draftTokens: MLXArray, acceptedCount: Int, finalToken: MLXArray,
-        positionDeltas: MLXArray?, state: inout MTPDrafterState, sampler _: any LogitSampler
-    ) {
-        inner.commitDrafterState(
-            target: target, targetHidden: targetHidden, draftTokens: draftTokens, acceptedCount: acceptedCount,
-            finalToken: finalToken, positionDeltas: positionDeltas, state: &state, sampler: argMax)
+    func commitDrafterState(target: any LanguageModel, input: MTPCommitInput, state: inout MTPDrafterState, sampler _: any LogitSampler) {
+        inner.commitDrafterState(target: target, input: input, state: &state, sampler: argMax)
     }
 }
 

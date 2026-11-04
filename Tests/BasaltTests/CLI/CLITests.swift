@@ -14,10 +14,9 @@ struct CLITests {
     @Test("ServeCommand default values")
     func testServeDefaults() throws {
         let cmd = try ServeCommand.parse([])
-        // Unset on the command line; the defaults are applied by resolveNetwork.
         #expect(cmd.port == nil)
         #expect(cmd.host == nil)
-        let network = try ServeCommand.resolveNetwork(cliPort: cmd.port, cliHost: cmd.host, cliApiKey: cmd.apiKey, configFile: nil)
+        let network = try ServeCommand.resolveNetwork(NetworkSettings.Flags(port: cmd.port, host: cmd.host, apiKey: cmd.apiKey), configFile: nil)
         #expect(network.port == 8080)
         #expect(network.host == "127.0.0.1")
         #expect(cmd.maxTokens == 65536)

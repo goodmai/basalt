@@ -109,7 +109,7 @@ struct PromptCacheDiskTests {
         let prompt = TinyModel.tokens(Conversation.firstTurn)
         let head = try HybridPrefixSnapshot.prefillHead(
             MLXArray(prompt.map(Int32.init)), into: PromptCache(try model.newCache(parameters: nil)),
-            reused: 0, boundary: prompt.count - 1, model: model, prefill: PrefillParameters(stepSize: 16))
+            plan: CachedPrompt(boundary: prompt.count - 1), model: model, prefill: PrefillParameters(stepSize: 16))
         let kept = try #require(head.kept)
         var tree = PromptCacheTree(byteBudget: 1 << 26)
         tree.store("ns", tokens: Array(prompt.dropLast()), cache: kept)
@@ -581,18 +581,18 @@ struct PromptCacheDiskTests {
         _ = try await engine.generate(request: GenerationRequest(
             prompt: String(String.UnicodeScalarView(stored.prefix(usable).compactMap { UnicodeScalar($0) })) + "zz",
             maxTokens: 1, temperature: 0, cacheKey: "shared"))
-        let tree = await engine.promptCaches
-        let path = try #require(tree.storedPathsByRecency().first)
-        #expect(path.tokens.prefix(usable).elementsEqual(stored.prefix(usable)))
-        var nodes = Array(tree.roots.values)
-        var storedTokens = 0
-        var storedBytes = 0
-        while let node = nodes.popLast() {
-            storedTokens += node.tokens.count
-            storedBytes += node.bytes
-            nodes.append(contentsOf: node.children.values)
+        let (newest, total, storedTokens, storedBytes) = await engine.readPromptCaches { tree in
+            var (nodes, tokens, bytes) = (Array(tree.roots.values), 0, 0)
+            while let node = nodes.popLast() {
+                tokens += node.tokens.count
+                bytes += node.bytes
+                nodes.append(contentsOf: node.children.values)
+            }
+            return (tree.storedPathsByRecency().first, tree.byteCount, tokens, bytes)
         }
-        #expect(tree.byteCount == storedBytes)
+        let path = try #require(newest)
+        #expect(path.tokens.prefix(usable).elementsEqual(stored.prefix(usable)))
+        #expect(total == storedBytes)
         #expect(storedBytes == storedTokens * TinyModel.cacheBytesPerToken)
     }
 

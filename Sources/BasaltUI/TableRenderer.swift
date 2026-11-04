@@ -14,14 +14,20 @@ public struct TableRenderer: Sendable {
         case right
     }
 
+    public struct Highlight: OptionSet, Sendable {
+        public let rawValue: Int
+        public init(rawValue: Int) { self.rawValue = rawValue }
+        public static let headers = Highlight(rawValue: 1 << 0)
+        public static let alternateRows = Highlight(rawValue: 1 << 1)
+    }
+
     public static func render(
         headers: [String],
         rows: [[String]],
         alignment: [ColumnAlignment]? = nil,
         widths: [Int]? = nil,
         style: TableStyle = .unicode,
-        colorHeaders: Bool = false,
-        alternateRowColors: Bool = false
+        highlight: Highlight = []
     ) -> String {
         guard !headers.isEmpty else { return "" }
         let layout = TableLayout(
@@ -30,9 +36,9 @@ public struct TableRenderer: Sendable {
         )
         switch style {
         case .unicode:
-            return layout.bordered(headers: headers, rows: rows, borders: .unicode, colorHeaders: colorHeaders, alternateRowColors: alternateRowColors)
+            return layout.bordered(headers: headers, rows: rows, borders: .unicode, highlight: highlight)
         case .ascii:
-            return layout.bordered(headers: headers, rows: rows, borders: .ascii, colorHeaders: colorHeaders, alternateRowColors: alternateRowColors)
+            return layout.bordered(headers: headers, rows: rows, borders: .ascii, highlight: highlight)
         case .minimal:
             return layout.minimal(headers: headers, rows: rows)
         }
@@ -113,14 +119,12 @@ struct TableBorders: Sendable, Equatable {
 }
 
 extension TableLayout {
-    func bordered(
-        headers: [String], rows: [[String]], borders: TableBorders, colorHeaders: Bool, alternateRowColors: Bool
-    ) -> String {
+    func bordered(headers: [String], rows: [[String]], borders: TableBorders, highlight: TableRenderer.Highlight) -> String {
         var output = borders.rule(borders.top, widths: widths)
-        output += borders.line(header(headers).map { colorHeaders ? TerminalUI.bold($0) : $0 })
+        output += borders.line(header(headers).map { highlight.contains(.headers) ? TerminalUI.bold($0) : $0 })
         output += borders.rule(borders.separator, widths: widths)
         for (rowIndex, row) in rows.enumerated() {
-            let dimmed = alternateRowColors && rowIndex % 2 == 1
+            let dimmed = highlight.contains(.alternateRows) && rowIndex % 2 == 1
             output += borders.line(cells(row).map { dimmed ? TerminalUI.dim($0) : $0 } + fill(row))
         }
         return output + borders.rule(borders.bottom, widths: widths)
@@ -146,8 +150,7 @@ public final class TableBuilder {
     private var alignments: [TableRenderer.ColumnAlignment] = []
     private var widths: [Int]?
     private var style: TableRenderer.TableStyle = .unicode
-    private var colorHeaders = false
-    private var alternateRowColors = false
+    private var highlight: TableRenderer.Highlight = []
     
     public init() {}
     
@@ -190,21 +193,18 @@ public final class TableBuilder {
         return self
     }
     
-    /// Enable colored headers
     @discardableResult
     public func withColoredHeaders() -> TableBuilder {
-        self.colorHeaders = true
+        highlight.insert(.headers)
         return self
     }
     
-    /// Enable alternating row colors
     @discardableResult
     public func withAlternatingRowColors() -> TableBuilder {
-        self.alternateRowColors = true
+        highlight.insert(.alternateRows)
         return self
     }
     
-    /// Build and render the table
     public func build() -> String {
         return TableRenderer.render(
             headers: headers,
@@ -212,8 +212,7 @@ public final class TableBuilder {
             alignment: alignments.isEmpty ? nil : alignments,
             widths: widths,
             style: style,
-            colorHeaders: colorHeaders,
-            alternateRowColors: alternateRowColors
+            highlight: highlight
         )
     }
 }

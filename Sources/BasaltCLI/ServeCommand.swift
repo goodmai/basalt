@@ -205,17 +205,7 @@ struct ServeCommand: AsyncParsableCommand {
 
         BasaltLogger.globalLevel = config.logLevel.basaltLevel
 
-        let engine = try makeEngine()
-        if batchSlots > 1, maxConcurrent < 2 {
-            log("\(yellow("[warn]")) --batch-slots \(batchSlots) has no effect with --max-concurrent \(maxConcurrent): only one generation runs at a time")
-        }
-        let sessionLogWriter = sessionLog.writer()
-        if let sessionLogWriter {
-            log("Session log: \(sessionLog.mode.rawValue) → \(sessionLogWriter.directory.path) (0700; `--session-log meta` keeps no content, `--session-log off` disables)")
-        }
-        let orchestrator = ModelOrchestratorActor(
-            engine: engine, maxTokens: config.maxTokens, kvPrecision: kvCache.bits?.fixedPrecision, adaptiveKVPrecision: kvCache.bits == .auto,
-            kvZones: kvCache.zones, gate: GenerationGate(maxConcurrent: maxConcurrent, maxQueue: maxQueue), sessionLog: sessionLogWriter)
+        let orchestrator = try makeOrchestrator(maxTokens: config.maxTokens)
 
         let embeddings = try await loadEmbeddings()
 
@@ -237,62 +227,40 @@ struct ServeCommand: AsyncParsableCommand {
         ) : nil
 
         try await Self.runServers(
-            orchestrator: orchestrator,
-            config: config,
-            startREST: startREST,
-            mcpServer: mcpServer,
-            embeddings: embeddings,
-            statsInterval: stats ? min(max(1, statsInterval), 86_400) : nil
-        )
+            ServerLaunch(
+                config: config, startREST: startREST, mcpServer: mcpServer, embeddings: embeddings,
+                statsInterval: stats ? min(max(1, statsInterval), 86_400) : nil),
+            orchestrator: orchestrator)
+    }
+
+    private func makeOrchestrator(maxTokens: Int) throws -> ModelOrchestratorActor {
+        let engine = try makeEngine()
+        if batchSlots > 1, maxConcurrent < 2 {
+            log("\(yellow("[warn]")) --batch-slots \(batchSlots) has no effect with --max-concurrent \(maxConcurrent): only one generation runs at a time")
+        }
+        let sessionLogWriter = sessionLog.writer()
+        if let sessionLogWriter {
+            log("Session log: \(sessionLog.mode.rawValue) → \(sessionLogWriter.directory.path) (0700; `--session-log meta` keeps no content, `--session-log off` disables)")
+        }
+        return ModelOrchestratorActor(
+            engine: engine, maxTokens: maxTokens, kvPrecision: kvCache.bits?.fixedPrecision, adaptiveKVPrecision: kvCache.bits == .auto,
+            kvZones: kvCache.zones, gate: GenerationGate(maxConcurrent: maxConcurrent, maxQueue: maxQueue), sessionLog: sessionLogWriter)
     }
 }
 
 extension ServeCommand {
-    static func resolveNetwork(
-        cliPort: Int?,
-        cliHost: String?,
-        cliApiKey: String?,
-        cliRateLimit: Int? = nil,
-        cliRateBurst: Int? = nil,
-        cliAllowedOrigins: [String] = [],
-        configFile: String?
-    ) throws -> NetworkSettings {
-        let file = try ConfigSection.serverConfig(at: configFile)
-        return try NetworkSettings.resolve(
-            NetworkSettings.Flags(port: cliPort, host: cliHost, apiKey: cliApiKey, rateLimit: cliRateLimit, rateBurst: cliRateBurst,
-                  allowedOrigins: cliAllowedOrigins),
-            file: file)
+    static func resolveNetwork(_ flags: NetworkSettings.Flags = NetworkSettings.Flags(), configFile: String?) throws -> NetworkSettings {
+        try NetworkSettings.resolve(flags, file: ConfigSection.serverConfig(at: configFile))
     }
 
     static func resolveCloudFallback(
-        cliModel: String?, cliBaseURL: String?, cliDisabled: Bool, cliLocalContextLimit: Int?,
-        cliRouterParams: String? = nil, cliCostThreshold: Double? = nil, cliCacheStickiness: Double? = nil,
-        configFile: String?,
+        _ flags: CloudFallbackSettings.Flags = CloudFallbackSettings.Flags(), disabled: Bool = false, configFile: String?,
         environment: [String: String] = ProcessInfo.processInfo.environment,
         savedOpenRouterKey: () -> String? = { CloudCommand.loadConfig()?.apiKey }
     ) throws -> CloudFallbackSettings? {
-        guard !cliDisabled else { return nil }
+        guard !disabled else { return nil }
         return try CloudFallbackSettings.resolve(
-            CloudFallbackSettings.Flags(model: cliModel, baseURL: cliBaseURL, localContextLimit: cliLocalContextLimit,
-                  routerParams: cliRouterParams, costThreshold: cliCostThreshold, cacheStickiness: cliCacheStickiness),
-            section: ConfigSection.cloudFallback(at: configFile), environment: environment, savedOpenRouterKey: savedOpenRouterKey)
-    }
-
-    package static func runServers(
-        orchestrator: ModelOrchestratorActor,
-        config: ServerConfig,
-        startREST: Bool,
-        mcpServer: MCPServer?,
-        embeddings: (any EmbeddingEngine)? = nil,
-        statsInterval: Int? = nil,
-        shutdownDeadline: Duration = .seconds(5),
-        handleSignals: Bool = true
-    ) async throws {
-        try await runServers(
-            ServerLaunch(
-                config: config, startREST: startREST, mcpServer: mcpServer, embeddings: embeddings,
-                statsInterval: statsInterval, shutdownDeadline: shutdownDeadline, handleSignals: handleSignals),
-            orchestrator: orchestrator)
+            flags, section: ConfigSection.cloudFallback(at: configFile), environment: environment, savedOpenRouterKey: savedOpenRouterKey)
     }
 }
 

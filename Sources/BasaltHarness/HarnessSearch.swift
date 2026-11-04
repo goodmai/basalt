@@ -209,7 +209,7 @@ struct HarnessSearch: Sendable {
         }
         let admission = HarnessProposal.admit(
             delta, base: base, baseReport: baseReport, siblings: accepted, spec: spec,
-            truncated: view.truncated, skipped: skipped, maxDeltaBytes: maxDeltaBytes
+            bounds: HarnessProposal.Bounds(truncated: view.truncated, skipped: skipped, maxDeltaBytes: maxDeltaBytes)
         )
         switch admission {
         case .failure(let rejection):

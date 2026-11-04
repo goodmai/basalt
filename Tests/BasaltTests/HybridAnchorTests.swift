@@ -75,7 +75,7 @@ struct HybridAnchorTests {
 
         let first = try await engine.generate(request: AgentTrace.request(original, key: "ns"))
         #expect(first.cachedPromptTokens == 0)
-        #expect(AgentTrace.snapshots(await engine.promptCaches).anchors
+        #expect(await engine.readPromptCaches(AgentTrace.snapshots).anchors
             == [AgentTrace.offset(original, before: 2), editedTurn, AgentTrace.offset(original, before: 6)])
 
         let resumed = try await engine.generate(request: AgentTrace.request(edited, key: "ns"))
@@ -83,11 +83,11 @@ struct HybridAnchorTests {
         #expect(resumed.cachedPromptTokens == editedTurn)
         #expect(Set(resumed.generatedText).count > 1)
         #expect(resumed.generatedText == cold.generatedText)
-        #expect(pinCount(await engine.promptCaches) == 0)
+        #expect(await engine.readPromptCaches(pinCount) == 0)
 
         let unanchored = try await TinyHybrid.engine(promptCacheBytes: 1 << 30, hybridAnchors: 0)
         _ = try await unanchored.generate(request: AgentTrace.request(original, key: "ns"))
-        #expect(AgentTrace.snapshots(await unanchored.promptCaches).anchors.isEmpty)
+        #expect(await unanchored.readPromptCaches(AgentTrace.snapshots).anchors.isEmpty)
         let full = try await unanchored.generate(request: AgentTrace.request(edited, key: "ns"))
         #expect(full.cachedPromptTokens == 0)
         #expect(full.generatedText == cold.generatedText)
@@ -100,7 +100,7 @@ struct HybridAnchorTests {
         let cuts = [40, 80, 120, 160, 200, 240]
         let head = try HybridPrefixSnapshot.prefillHead(
             MLXArray(prompt.map(Int32.init)), into: PromptCache(try model.newCache(parameters: nil)),
-            reused: 0, cuts: cuts.reversed() + [0, 299, 400], boundary: prompt.count - 1, model: model,
+            plan: CachedPrompt(cuts: cuts.reversed() + [0, 299, 400], boundary: prompt.count - 1), model: model,
             prefill: PrefillParameters(stepSize: 16))
         #expect(head.anchors.map(\.tokenCount) == cuts)
         #expect(head.anchors.allSatisfy { $0.isSnapshot(of: $0.tokenCount) })
@@ -143,7 +143,7 @@ struct HybridAnchorTests {
         let messages = AgentTrace.messages(thinking: false, user: tagged)
         let engine = try await TinyHybrid.engine(promptCacheBytes: 1 << 30)
         _ = try await engine.generate(request: AgentTrace.request(messages, key: "ns"))
-        let anchors = AgentTrace.snapshots(await engine.promptCaches).anchors
+        let anchors = await engine.readPromptCaches(AgentTrace.snapshots).anchors
         #expect(anchors == [2, 4, 6].map { AgentTrace.offset(messages, before: $0) })
         #expect(anchors.allSatisfy { $0 <= AgentTrace.offset(messages, before: 1) || $0 >= AgentTrace.offset(messages, before: 2) })
     }
@@ -158,7 +158,7 @@ struct HybridAnchorTests {
         let divergence = commonPrefix(
             TinyModel.tokens(original.map(\.text).joined()), TinyModel.tokens(edited.map(\.text).joined()))
         #expect(resumed.cachedPromptTokens == divergence)
-        let snapshots = AgentTrace.snapshots(await engine.promptCaches)
+        let snapshots = await engine.readPromptCaches(AgentTrace.snapshots)
         #expect(snapshots.anchors.isEmpty)
         #expect(snapshots.leaves.isEmpty)
         #expect(await engine.hybridAnchorUsage == nil)
@@ -173,7 +173,7 @@ struct HybridAnchorTests {
             let engine = try await TinySliding.engine(hybridAnchors: anchors)
             _ = try await engine.generate(request: AgentTrace.request(AgentTrace.messages(thinking: true), key: "ns"))
             let resumed = try await engine.generate(request: AgentTrace.request(AgentTrace.messages(thinking: false), key: "ns"))
-            return (AgentTrace.snapshots(await engine.promptCaches).anchors.count, resumed.cachedPromptTokens)
+            return (await engine.readPromptCaches(AgentTrace.snapshots).anchors.count, resumed.cachedPromptTokens)
         }
         let withAnchors = try await snapshotCount(anchors: 8)
         let without = try await snapshotCount(anchors: 0)
@@ -190,7 +190,7 @@ struct HybridAnchorTests {
         #expect(boundary - offsets[6] < HybridPrefixSnapshot.minAnchorSpacing)
         let engine = try await TinyHybrid.engine(promptCacheBytes: 1 << 30)
         _ = try await engine.generate(request: AgentTrace.request(messages, key: "ns"))
-        let snapshots = AgentTrace.snapshots(await engine.promptCaches)
+        let snapshots = await engine.readPromptCaches(AgentTrace.snapshots)
         #expect(snapshots.anchors == [offsets[4]])
         #expect(snapshots.leaves == [boundary])
     }

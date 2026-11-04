@@ -1,7 +1,6 @@
 import Foundation
 import MLX
 import MLXLMCommon
-import Synchronization
 
 final class PromptCache: @unchecked Sendable {
     let layers: [KVCache]
@@ -36,7 +35,7 @@ enum PromptCacheBudget {
     }
 }
 
-final class PromptCacheNode: @unchecked Sendable {
+final class PromptCacheNode {
     var tokens: [Int]
     var layers: [[MLXArray]]
     var snapshot: RecurrentSnapshot?
@@ -57,7 +56,7 @@ final class PromptCacheNode: @unchecked Sendable {
     }
 }
 
-struct PromptCacheLease: ~Copyable, Sendable {
+struct PromptCacheLease: ~Copyable {
     let cache: PromptCache
     let reusedTokens: Int
     let pinned: PromptCacheNode
@@ -67,19 +66,15 @@ struct PromptCacheLease: ~Copyable, Sendable {
     }
 }
 
-final class PromptCacheLeaseSlot: Sendable {
-    private let held: Mutex<PromptCacheLease?>
+final class PromptCacheLeaseSlot {
+    let lease: PromptCacheLease?
 
     init(_ lease: consuming PromptCacheLease?) {
-        held = Mutex(lease)
-    }
-
-    func take() -> PromptCacheLease? {
-        held.withLock { $0.take() }
+        self.lease = lease
     }
 }
 
-struct PromptCacheTree: Sendable {
+struct PromptCacheTree {
     typealias Step = (node: PromptCacheNode, used: Int)
 
     static let maxLeaves = 4096

@@ -157,7 +157,7 @@ struct ChatTurnsTemplateTests {
         let third = second + [ChatMessageInput(role: .assistant, text: turn2.generatedText), ChatMessageInput(role: .user, text: "thanks")]
         let turn3 = try await engine.generate(request: Self.request(third, key: "ns"))
         #expect(turn3.cachedPromptTokens == turn2.promptTokens - RoleTaggedInputProcessor.afterLastContent.count)
-        #expect(pinCount(await engine.promptCaches) == 0)
+        #expect(await engine.readPromptCaches(pinCount) == 0)
     }
 
     static let agentLoop = [

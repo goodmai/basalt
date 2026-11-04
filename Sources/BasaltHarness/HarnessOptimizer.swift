@@ -268,32 +268,42 @@ enum HarnessProposal {
         return strings.count == files.count && !strings.isEmpty ? strings : nil
     }
 
-    static func admit(
-        _ delta: [String: String], base: HarnessTree, baseReport: HarnessValidationReport,
-        siblings: [HarnessTree], spec: HarnessSurfaceSpec, truncated: Set<String> = [],
-        skipped: [HarnessSkippedFile] = [], maxDeltaBytes: Int = maxDeltaBytes
-    ) -> Result<Admitted, Rejection> {
+    struct Bounds: Sendable {
+        var truncated: Set<String> = []
+        var skipped: [HarnessSkippedFile] = []
+        var maxDeltaBytes = HarnessProposal.maxDeltaBytes
+    }
+
+    static func deltaReasons(_ delta: [String: String], spec: HarnessSurfaceSpec, bounds: Bounds) -> [String] {
         var reasons: [String] = []
         if delta.count > maxFiles { reasons.append("changes \(delta.count) files, more than \(maxFiles)") }
         let deltaBytes = HarnessExperienceLibrary.deltaBytes(delta)
-        if deltaBytes > maxDeltaBytes { reasons.append("changes \(deltaBytes) bytes in total, more than \(maxDeltaBytes)") }
+        if deltaBytes > bounds.maxDeltaBytes { reasons.append("changes \(deltaBytes) bytes in total, more than \(bounds.maxDeltaBytes)") }
         for (path, content) in delta.sorted(by: { $0.key < $1.key }) {
             if HarnessPath.normalized(path) != path || !spec.owns(path) {
                 reasons.append("\(path): outside the \(spec.name) harness")
             }
             if content.utf8.count > maxFileBytes { reasons.append("\(path): larger than \(maxFileBytes) bytes") }
-            if truncated.contains(path) { reasons.append("\(path): shown truncated to the proposer, so its full content is unknown to it") }
-            if let skip = skipped.first(where: { $0.path == path }) {
+            if bounds.truncated.contains(path) { reasons.append("\(path): shown truncated to the proposer, so its full content is unknown to it") }
+            if let skip = bounds.skipped.first(where: { $0.path == path }) {
                 reasons.append("\(path): skipped when the harness was loaded (\(skip.reason)), so its content is unknown to the proposer")
             }
             do { try HarnessLeakGuard.assertClean(content) } catch { reasons.append("\(path): \(error)") }
         }
+        return reasons
+    }
+
+    static func admit(
+        _ delta: [String: String], base: HarnessTree, baseReport: HarnessValidationReport,
+        siblings: [HarnessTree], spec: HarnessSurfaceSpec, bounds: Bounds = Bounds()
+    ) -> Result<Admitted, Rejection> {
+        let reasons = deltaReasons(delta, spec: spec, bounds: bounds)
         guard reasons.isEmpty else { return .failure(Rejection(reasons: reasons)) }
         let tree = base.applying(delta: delta)
         guard tree != base else { return .failure(Rejection(reasons: ["does not change the harness"])) }
         let report = HarnessValidator.validate(tree, spec: spec, requireDiverseFrom: siblings, relativeTo: base)
-        reasons += report.errors.filter { !baseReport.errors.contains($0) }
-        guard reasons.isEmpty else { return .failure(Rejection(reasons: reasons)) }
+        let regressions = report.errors.filter { !baseReport.errors.contains($0) }
+        guard regressions.isEmpty else { return .failure(Rejection(reasons: regressions)) }
         let unnamed = report.untriggeredSkills.filter { delta[$0] != nil }
         return .success(Admitted(tree: tree, warnings: unnamed.map {
             "\($0) is not named in the always-on files; the agent reaches it only by its description"
@@ -481,7 +491,7 @@ public struct HarnessOptimizer: Sendable {
     private func storeLesson(_ verdict: HarnessVerdict, task: HarnessTask, warnings: inout [String]) async -> String? {
         guard let library else { return nil }
         do {
-            return try await library.addKnowledge(
+            return try await library.addKnowledge(HarnessKnowledgeDraft(
                 topic: task.slug,
                 content: verdict.lesson,
                 domain: task.domain,
@@ -489,7 +499,7 @@ public struct HarnessOptimizer: Sendable {
                 confidence: verdict.confidence,
                 attributions: verdict.attributions,
                 delta: verdict.delta
-            ).slug
+            )).slug
         } catch {
             warnings.append("lesson not stored in the Experience Library: \(error)")
             return nil

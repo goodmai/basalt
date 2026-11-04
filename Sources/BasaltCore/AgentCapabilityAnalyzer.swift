@@ -91,26 +91,8 @@ public actor AgentCapabilityAnalyzer {
                 inParams = false
             } else if trimmed.hasPrefix("Parameters:") {
                 inParams = true
-            } else if inParams && trimmed.hasPrefix("-") {
-                // e.g. - expression (String, required): The math expression (e.g. "2 + 2").
-                let paramContent = trimmed.dropFirst().trimmingCharacters(in: .whitespaces)
-                let parts = paramContent.components(separatedBy: ":")
-                if parts.count >= 2 {
-                    let desc = parts[1...].joined(separator: ":").trimmingCharacters(in: .whitespaces)
-                    let nameTypePart = parts[0].trimmingCharacters(in: .whitespaces)
-                    
-                    if let startParen = nameTypePart.firstIndex(of: "("),
-                       let endParen = nameTypePart.firstIndex(of: ")") {
-                        let name = String(nameTypePart[..<startParen]).trimmingCharacters(in: .whitespaces)
-                        let typeInfo = String(nameTypePart[nameTypePart.index(after: startParen)..<endParen])
-                        let typeParts = typeInfo.components(separatedBy: ",")
-                        
-                        let type = typeParts[0].trimmingCharacters(in: .whitespaces)
-                        let req = typeParts.count > 1 ? typeParts[1].trimmingCharacters(in: .whitespaces).lowercased() == "required" : false
-                        
-                        currentParams.append(Parameter(name: name, type: type, isRequired: req, description: desc))
-                    }
-                }
+            } else if inParams && trimmed.hasPrefix("-"), let parameter = Self.parameter(fromListItem: trimmed) {
+                currentParams.append(parameter)
             }
         }
         commit()
@@ -118,6 +100,20 @@ public actor AgentCapabilityAnalyzer {
         return capabilities
     }
     
+    static func parameter(fromListItem line: String) -> Parameter? {
+        let parts = line.dropFirst().trimmingCharacters(in: .whitespaces).components(separatedBy: ":")
+        guard parts.count >= 2 else { return nil }
+        let nameTypePart = parts[0].trimmingCharacters(in: .whitespaces)
+        guard let startParen = nameTypePart.firstIndex(of: "("), let endParen = nameTypePart.firstIndex(of: ")") else { return nil }
+        let typeParts = String(nameTypePart[nameTypePart.index(after: startParen)..<endParen]).components(separatedBy: ",")
+        return Parameter(
+            name: String(nameTypePart[..<startParen]).trimmingCharacters(in: .whitespaces),
+            type: typeParts[0].trimmingCharacters(in: .whitespaces),
+            isRequired: typeParts.count > 1 ? typeParts[1].trimmingCharacters(in: .whitespaces).lowercased() == "required" : false,
+            description: parts[1...].joined(separator: ":").trimmingCharacters(in: .whitespaces)
+        )
+    }
+
     private func parseGeminiMd(_ content: String) throws -> [AgentCapability] {
         var capabilities: [AgentCapability] = []
         

@@ -18,7 +18,7 @@ struct CloudFallbackSettingsTests {
         env: [String: String] = [:], saved: String? = nil
     ) throws -> ServeCommand.CloudFallbackSettings? {
         try ServeCommand.resolveCloudFallback(
-            cliModel: model, cliBaseURL: baseURL, cliDisabled: disabled, cliLocalContextLimit: limit, configFile: file,
+            .init(model: model, baseURL: baseURL, localContextLimit: limit), disabled: disabled, configFile: file,
             environment: env, savedOpenRouterKey: { saved })
     }
 

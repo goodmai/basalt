@@ -40,6 +40,18 @@ struct ChatPipeline: Sendable {
         }
     }
 
+    struct Input: Sendable {
+        let chat: [ChatMessageInput]
+        let maxTokens: Int?
+        let sampling: Sampling
+        let reasoningEffort: String?
+        let tools: OpenAIController.RequestedTools
+        let thinkingBudget: Int?
+        let responseFormat: ResponseFormat?
+        let model: String?
+        let stream: Bool
+    }
+
     struct Prepared: Sendable {
         let request: GenerationRequest
         let requestedModel: String?
@@ -103,46 +115,42 @@ struct ChatPipeline: Sendable {
         }
     }
 
-    func prepare(
-        chat: [ChatMessageInput], headers: HTTPFields, maxTokens: Int?, sampling: Sampling, reasoningEffort: String?,
-        tools: OpenAIController.RequestedTools, thinkingBudget: Int?, responseFormat: ResponseFormat?, model: String?,
-        stream: Bool
-    ) throws -> Prepared {
-        let prompt = ChatMessageInput.plainText(chat)
-        let service = ServiceRequestDetector.prepare(prompt: prompt, maxTokens: maxTokens, headers: headers)
+    func prepare(_ input: Input, headers: HTTPFields) throws -> Prepared {
+        let prompt = ChatMessageInput.plainText(input.chat)
+        let service = ServiceRequestDetector.prepare(prompt: prompt, maxTokens: input.maxTokens, headers: headers)
         let request = GenerationRequest(
             prompt: service.prompt,
-            maxTokens: maxTokens,
-            temperature: sampling.temperature,
-            topP: sampling.topP,
-            minP: sampling.minP,
-            dynamicTemperature: sampling.dynamicTemperature,
-            reasoningEffort: reasoningEffort,
+            maxTokens: input.maxTokens,
+            temperature: input.sampling.temperature,
+            topP: input.sampling.topP,
+            minP: input.sampling.minP,
+            dynamicTemperature: input.sampling.dynamicTemperature,
+            reasoningEffort: input.reasoningEffort,
             isServiceRequest: service.isService,
-            tools: tools.tools,
-            toolChoice: tools.choice,
+            tools: input.tools.tools,
+            toolChoice: input.tools.choice,
             cacheKey: PromptCacheKey.resolve(isService: service.isService, headers: headers),
-            messages: service.prompt == prompt ? chat : nil,
-            topK: sampling.topK,
-            presencePenalty: sampling.presencePenalty,
-            repetitionPenalty: sampling.repetitionPenalty,
-            thinkingBudget: thinkingBudget,
-            responseFormat: responseFormat,
-            dryMultiplier: sampling.antiRepetition.dryMultiplier,
-            dryBase: sampling.antiRepetition.dryBase,
-            dryAllowedLength: sampling.antiRepetition.dryAllowedLength,
-            drySequenceBreakers: sampling.antiRepetition.drySequenceBreakers,
-            xtcThreshold: sampling.antiRepetition.xtcThreshold,
-            xtcProbability: sampling.antiRepetition.xtcProbability
-        ).withSpeculativeLookup(sampling.speculativeLookup)
-            .withGrammarJumpForward(sampling.grammarJumpForward)
-            .routed(by: headers).withOrigin(RequestOrigin(source: source, endpoint: endpoint, stream: stream))
+            messages: service.prompt == prompt ? input.chat : nil,
+            topK: input.sampling.topK,
+            presencePenalty: input.sampling.presencePenalty,
+            repetitionPenalty: input.sampling.repetitionPenalty,
+            thinkingBudget: input.thinkingBudget,
+            responseFormat: input.responseFormat,
+            dryMultiplier: input.sampling.antiRepetition.dryMultiplier,
+            dryBase: input.sampling.antiRepetition.dryBase,
+            dryAllowedLength: input.sampling.antiRepetition.dryAllowedLength,
+            drySequenceBreakers: input.sampling.antiRepetition.drySequenceBreakers,
+            xtcThreshold: input.sampling.antiRepetition.xtcThreshold,
+            xtcProbability: input.sampling.antiRepetition.xtcProbability
+        ).withSpeculativeLookup(input.sampling.speculativeLookup)
+            .withGrammarJumpForward(input.sampling.grammarJumpForward)
+            .routed(by: headers).withOrigin(RequestOrigin(source: source, endpoint: endpoint, stream: input.stream))
         do {
             _ = try request.validated()
         } catch {
             throw rejection(HTTPResponse.Status(code: error.httpStatus, reasonPhrase: ""), ModelsController.publicMessage(for: error))
         }
-        let restModel = model.map(ModelsController.restModel(from:))
+        let restModel = input.model.map(ModelsController.restModel(from:))
         if restModel == .path { throw rejection(.badRequest, ModelsController.pathRejected) }
         return Prepared(request: request, requestedModel: restModel?.repoId)
     }

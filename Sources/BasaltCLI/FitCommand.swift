@@ -45,14 +45,7 @@ struct FitCommand: AsyncParsableCommand {
             print()
         }
         
-        // Load model database and filter
-        var models = ModelDatabase.allModels
-        if let taskStr = task, let taskEnum = ModelTask(rawValue: taskStr.lowercased()) {
-            models = models.filter { $0.task == taskEnum }
-        }
-        if let modStr = modality, let modEnum = Modality(rawValue: modStr.lowercased()) {
-            models = models.filter { $0.modality == modEnum }
-        }
+        let models = filteredModels()
         
         if !json {
             print(TerminalUI.info("📊 Analyzing \(models.count) models..."))
@@ -65,73 +58,40 @@ struct FitCommand: AsyncParsableCommand {
             scored.append(await scorer.score(model))
         }
         
-        let recommendations = scored
+        let recommendations = Array(scored
             .sorted { $0.score > $1.score }
-            .prefix(all ? scored.count : 10)
+            .prefix(all ? scored.count : 10))
         
         if json {
-            struct DeviceOutput: Encodable {
-                let chip: String
-                let total_ram: Int64
-                let available_ram: Int64
-                let model_budget: Int64
-            }
-            struct RecOutput: Encodable {
-                let model: String
-                let fit_level: String
-                let score: Double
-                let ram_mb: Int64
-                let estimated_tps: Int
-                let context_window: Int
-                let measured: Bool
-                let calibration_factor: Double
-                let quantization: String
-                let optimal_quantization: String?
-            }
-            struct JsonOutput: Encodable {
-                let device: DeviceOutput
-                let recommendations: [RecOutput]
-            }
-            
-            let output = JsonOutput(
-                device: DeviceOutput(
-                    chip: profile.chipModel,
-                    total_ram: profile.totalRAM,
-                    available_ram: profile.availableRAM,
-                    model_budget: Int64(Double(profile.availableRAM) * 0.85)
-                ),
-                recommendations: recommendations.map { r in
-                    RecOutput(
-                        model: r.modelName,
-                        fit_level: r.fitLevel.rawValue.lowercased(),
-                        score: r.score,
-                        ram_mb: r.estimatedRAM,
-                        estimated_tps: r.estimatedTPS,
-                        context_window: r.contextWindow,
-                        measured: r.isMeasured,
-                        calibration_factor: r.calibrationFactor,
-                        quantization: r.selectedQuantization,
-                        optimal_quantization: r.optimalQuantization
-                    )
-                }
-            )
-            
-            let encoder = JSONEncoder()
-            encoder.outputFormatting = .prettyPrinted
-            if let data = try? encoder.encode(output), let str = String(data: data, encoding: .utf8) {
-                print(str)
-            }
+            Self.printReport(JSONReport(profile: profile, recommendations: recommendations))
+        } else if recommendations.isEmpty {
+            print(TerminalUI.warning("⚠️  No models match the filters."))
         } else {
-            if recommendations.isEmpty {
-                print(TerminalUI.warning("⚠️  No models match the filters."))
-                return
-            }
-            displayTable(Array(recommendations))
+            displayTable(recommendations)
 
             print()
             print(TerminalUI.dim("Tip: Run `basalt models download <model>` to install"))
-            }
-            }
+        }
+    }
+
+    private func filteredModels() -> [ModelDefinition] {
+        var models = ModelDatabase.allModels
+        if let taskStr = task, let taskEnum = ModelTask(rawValue: taskStr.lowercased()) {
+            models = models.filter { $0.task == taskEnum }
+        }
+        if let modStr = modality, let modEnum = Modality(rawValue: modStr.lowercased()) {
+            models = models.filter { $0.modality == modEnum }
+        }
+        return models
+    }
+
+    private static func printReport(_ report: JSONReport) {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .prettyPrinted
+        if let data = try? encoder.encode(report), let str = String(data: data, encoding: .utf8) {
+            print(str)
+        }
+    }
     
     private func displayHardwareInfo(_ resources: SystemProfiler.SystemResources) {
         let budget = Double(resources.availableRAM) * 0.85 / 1073741824.0
@@ -157,7 +117,7 @@ struct FitCommand: AsyncParsableCommand {
             headers: headers,
             rows: rows,
             style: .unicode,
-            colorHeaders: true
+            highlight: .headers
         )
         
         print(table)
@@ -182,6 +142,56 @@ struct FitCommand: AsyncParsableCommand {
         } else {
             let gb = Double(mb) / 1024.0
             return String(format: "%.1f GB", gb)
+        }
+    }
+}
+
+extension FitCommand {
+    struct JSONReport: Encodable {
+        struct Device: Encodable {
+            let chip: String
+            let total_ram: Int64
+            let available_ram: Int64
+            let model_budget: Int64
+        }
+
+        struct Recommendation: Encodable {
+            let model: String
+            let fit_level: String
+            let score: Double
+            let ram_mb: Int64
+            let estimated_tps: Int
+            let context_window: Int
+            let measured: Bool
+            let calibration_factor: Double
+            let quantization: String
+            let optimal_quantization: String?
+        }
+
+        let device: Device
+        let recommendations: [Recommendation]
+
+        init(profile: SystemProfiler.SystemResources, recommendations: [FitScore]) {
+            device = Device(
+                chip: profile.chipModel,
+                total_ram: profile.totalRAM,
+                available_ram: profile.availableRAM,
+                model_budget: Int64(Double(profile.availableRAM) * 0.85)
+            )
+            self.recommendations = recommendations.map { r in
+                Recommendation(
+                    model: r.modelName,
+                    fit_level: r.fitLevel.rawValue.lowercased(),
+                    score: r.score,
+                    ram_mb: r.estimatedRAM,
+                    estimated_tps: r.estimatedTPS,
+                    context_window: r.contextWindow,
+                    measured: r.isMeasured,
+                    calibration_factor: r.calibrationFactor,
+                    quantization: r.selectedQuantization,
+                    optimal_quantization: r.optimalQuantization
+                )
+            }
         }
     }
 }

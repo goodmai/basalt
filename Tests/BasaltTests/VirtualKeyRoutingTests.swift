@@ -103,7 +103,7 @@ struct VirtualKeyRoutingTests {
         func network(_ json: String) throws -> [VirtualKey] {
             let url = FileManager.default.temporaryDirectory.appendingPathComponent("vk-\(UUID().uuidString).json")
             try Data(json.utf8).write(to: url)
-            return try ServeCommand.resolveNetwork(cliPort: nil, cliHost: nil, cliApiKey: nil, configFile: url.path).virtualKeys
+            return try ServeCommand.resolveNetwork(configFile: url.path).virtualKeys
         }
         #expect(try network(#"{"virtual_keys": [{"key": "vk-team-a-0123456789", "id": "team-a", "max_budget": 2}, {"key": "vk-team-b-0123456789", "id": "team-b"}]}"#)
             == [Self.team, VirtualKey(key: "vk-team-b-0123456789", id: "team-b")])
@@ -143,8 +143,7 @@ struct VirtualKeyRoutingTests {
         let file = FileManager.default.temporaryDirectory.appendingPathComponent("cfg-\(UUID().uuidString).json")
         try Data(#"{"cloud_fallback": {"base_url": "http://127.0.0.1:9/v1", "model": "big", "router_params": "\#(params.path)", "cost_threshold": 0.5, "cache_stickiness": 0}}"#.utf8).write(to: file)
         let settings = try #require(try ServeCommand.resolveCloudFallback(
-            cliModel: nil, cliBaseURL: nil, cliDisabled: false, cliLocalContextLimit: nil, configFile: file.path,
-            environment: [:], savedOpenRouterKey: { nil }))
+            configFile: file.path, environment: [:], savedOpenRouterKey: { nil }))
         #expect(settings.routerParams == params)
         let costURL = FileManager.default.temporaryDirectory.appendingPathComponent("cost-\(UUID().uuidString).json")
         defer { try? FileManager.default.removeItem(at: costURL) }
@@ -157,8 +156,8 @@ struct VirtualKeyRoutingTests {
 
         #expect(throws: (any Error).self) {
             try ServeCommand.resolveCloudFallback(
-                cliModel: "m", cliBaseURL: "http://127.0.0.1:9/v1", cliDisabled: false, cliLocalContextLimit: nil,
-                cliCostThreshold: 0.4, configFile: nil, environment: [:], savedOpenRouterKey: { nil })
+                .init(model: "m", baseURL: "http://127.0.0.1:9/v1", costThreshold: 0.4),
+                configFile: nil, environment: [:], savedOpenRouterKey: { nil })
         }
     }
 

@@ -230,7 +230,7 @@ struct TableRendererTests {
         let output = TableRenderer.render(
             headers: headers,
             rows: rows,
-            colorHeaders: true
+            highlight: .headers
         )
         
         // Just verify it renders
@@ -247,7 +247,7 @@ struct TableRendererTests {
         let output = TableRenderer.render(
             headers: headers,
             rows: rows,
-            alternateRowColors: true
+            highlight: .alternateRows
         )
         
         #expect(!output.isEmpty)

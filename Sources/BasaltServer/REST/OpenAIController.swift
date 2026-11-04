@@ -33,11 +33,11 @@ extension OpenAIController {
             let tools = try pipeline.tools(in: data)
             let format = try pipeline.responseFormat(in: data)
             let stream = dto.stream == true
-            let prepared = try pipeline.prepare(
-                chat: Self.chatMessages(dto.messages), headers: request.headers, maxTokens: dto.maxTokens,
+            let prepared = try pipeline.prepare(ChatPipeline.Input(
+                chat: Self.chatMessages(dto.messages), maxTokens: dto.maxTokens,
                 sampling: dto.sampling(try pipeline.antiRepetition(in: data)),
                 reasoningEffort: dto.reasoningEffort, tools: tools, thinkingBudget: dto.thinkingBudget,
-                responseFormat: format, model: dto.model, stream: stream)
+                responseFormat: format, model: dto.model, stream: stream), headers: request.headers)
             if stream { try await pipeline.admitStream(prepared.request) }
             let model = dto.model ?? modelId
             let includeUsage = dto.streamOptions?.includeUsage == true
@@ -59,11 +59,11 @@ extension OpenAIController {
             let tools = try pipeline.tools(in: data)
             let format = try pipeline.responseFormat(in: data)
             let stream = dto.stream == true
-            let prepared = try pipeline.prepare(
-                chat: dto.instructionMessages + conversation, headers: request.headers,
+            let prepared = try pipeline.prepare(ChatPipeline.Input(
+                chat: dto.instructionMessages + conversation,
                 maxTokens: dto.maxOutputTokens ?? dto.maxTokens, sampling: dto.sampling(try pipeline.antiRepetition(in: data)),
                 reasoningEffort: dto.effectiveReasoningEffort, tools: tools, thinkingBudget: dto.thinkingBudget,
-                responseFormat: format, model: dto.model, stream: stream)
+                responseFormat: format, model: dto.model, stream: stream), headers: request.headers)
             if stream { try await pipeline.admitStream(prepared.request) }
             let model = dto.model ?? modelId
             return await pipeline.respond(to: prepared, stream: stream) { chunks in

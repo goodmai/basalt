@@ -47,8 +47,9 @@ enum BatchFixture {
         let seat = try #require(decoder.seat())
         let iterator = try BatchedTokenIterator(
             input: LMInput(tokens: MLXArray(prompt.map(Int32.init))), model: model,
-            layers: try #require(BatchedTokenIterator.batchableLayers(try model.newCache(parameters: nil))), processor: nil,
-            sampler: GenerateParameters(temperature: 0).sampler(), prefill: PrefillParameters(), maxTokens: maxTokens,
+            layers: try #require(BatchedTokenIterator.batchableLayers(try model.newCache(parameters: nil))),
+            decoding: DecodingSettings(
+                processor: nil, sampler: GenerateParameters(temperature: 0).sampler(), prefill: PrefillParameters(), maxTokens: maxTokens),
             stopTokens: stop, seat: seat)
         var configuration = ModelConfiguration(id: "tiny-llama")
         configuration.eosTokenIds = stop

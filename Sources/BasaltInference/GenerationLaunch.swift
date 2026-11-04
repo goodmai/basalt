@@ -84,8 +84,8 @@ struct GenerationLauncher {
         if let batch, let layers = BatchedTokenIterator.batchableLayers(try model.newCache(parameters: params)), let seat = batch.seat() {
             try components.validate(parameters: params)
             return uncached(try BatchedTokenIterator(
-                input: input, model: model, layers: layers, processor: components.logitProcessor(parameters: params),
-                sampler: params.sampler(), prefill: params.prefill, maxTokens: params.maxTokens,
+                input: input, model: model, layers: layers,
+                decoding: DecodingSettings(processor: components.logitProcessor(parameters: params), parameters: params),
                 stopTokens: MLXInferenceEngine.batchStopTokens(context), seat: seat))
         }
         let fresh = lookup.requested && params.kvBits == nil && !MLXInferenceEngine.carriesMoreThanTokens(input)
@@ -95,10 +95,9 @@ struct GenerationLauncher {
         }
         try components.validate(parameters: params)
         return uncached(try PromptLookupTokenIterator(
-            input: input, context: input.text.tokens.asArray(Int.self), model: model, cache: fresh,
-            processor: components.makeProcessor(parameters: params), sampler: params.sampler(),
-            prefill: params.prefill, maxTokens: params.maxTokens, recyclesTokens: lookup.recycling,
-            speculativeLookup: lookup.speculative, grammarJumpForward: lookup.jumpForward))
+            prompt: PromptLookupTokenIterator.Prompt(input: input, history: input.text.tokens.asArray(Int.self)), model: model, cache: fresh,
+            decoding: DecodingSettings(processor: components.makeProcessor(parameters: params), parameters: params),
+            lookup: lookup))
     }
 
     func mtp(_ request: MTPRequest, prompt: CachedPrompt, keepsCache: Bool) throws -> MLXInferenceEngine.GenerationLaunch {
@@ -138,15 +137,15 @@ struct GenerationLauncher {
         let output = context.model(LMInput.Text(tokens: head)[text: .newAxis], cache: prompt.layers, state: emit)
         if let hidden = output.state?[mtpLastHiddenStatesKey] {
             drafter.prepareDrafterState(
-                target: context.model, promptTokens: head, targetHidden: hidden, firstBonus: nil,
-                positionDeltas: nil, state: &state, sampler: ArgMaxSampler())
+                target: context.model, input: MTPPrefillInput(promptTokens: head, targetHidden: hidden, firstBonus: nil),
+                state: &state, sampler: ArgMaxSampler())
         }
         eval(prompt.layers.flatMap { $0.innerState() } + state.cache.flatMap { $0.innerState() })
         return MTPPrefix(state).map { (prompt.snapshot(at: tokens.upperBound, state: nil), $0) }
     }
 
     func cached(_ prompt: CachedPrompt, batch: BatchedDecoder?, lookup: LookupOptions) throws -> MLXInferenceEngine.GenerationLaunch {
-        let (reuse, cuts, boundary, blend) = (prompt.reuse, prompt.cuts, prompt.boundary, prompt.blend)
+        let (reuse, blend) = (prompt.reuse, prompt.blend)
         try components.validate(parameters: params)
         var cache = try reuse?.cache ?? PromptCache(context.model.newCache(parameters: params))
         let reused = reuse?.reusedTokens ?? 0
@@ -164,8 +163,7 @@ struct GenerationLauncher {
             }
         }
         let head = try blended.map { (anchors: [PromptCache](), kept: $0.cache as PromptCache?, start: reused + $0.tokens, state: $0.cache.state) }
-            ?? HybridPrefixSnapshot.prefillHead(
-                input.text.tokens, into: cache, reused: reused, cuts: cuts, boundary: boundary, model: context.model, prefill: params.prefill)
+            ?? HybridPrefixSnapshot.prefillHead(input.text.tokens, into: cache, plan: prompt, model: context.model, prefill: params.prefill)
         let tail = LMInput(tokens: input.text.tokens[.ellipsis, head.start...])
         let processor = components.makeProcessor(parameters: params).map {
             PromptAnchoredProcessor(base: $0, prompt: input.text.tokens)
@@ -180,15 +178,14 @@ struct GenerationLauncher {
         }
         if let batch, head.state == nil, let layers = BatchedTokenIterator.batchableLayers(cache.layers), let seat = batch.seat() {
             return launching(try BatchedTokenIterator(
-                input: tail, model: context.model, layers: layers, processor: processor, sampler: params.sampler(),
-                prefill: params.prefill, maxTokens: params.maxTokens, stopTokens: MLXInferenceEngine.batchStopTokens(context), seat: seat))
+                input: tail, model: context.model, layers: layers, decoding: DecodingSettings(processor: processor, parameters: params),
+                stopTokens: MLXInferenceEngine.batchStopTokens(context), seat: seat))
         }
         if lookup.requested, PromptLookupTokenIterator.supports(cache.layers, routesExperts: lookup.routesExperts) {
             return launching(try PromptLookupTokenIterator(
-                input: tail, context: input.text.tokens.asArray(Int.self), model: context.model, cache: cache.layers,
-                state: head.state, processor: processor, sampler: params.sampler(), prefill: params.prefill,
-                maxTokens: params.maxTokens, recyclesTokens: lookup.recycling,
-                speculativeLookup: lookup.speculative, grammarJumpForward: lookup.jumpForward))
+                prompt: PromptLookupTokenIterator.Prompt(input: tail, history: input.text.tokens.asArray(Int.self)), model: context.model,
+                cache: cache.layers, state: head.state, decoding: DecodingSettings(processor: processor, parameters: params),
+                lookup: lookup))
         }
         return launching(try TokenIterator(
             input: tail, model: context.model, cache: cache.layers, state: head.state,

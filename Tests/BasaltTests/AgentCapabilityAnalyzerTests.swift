@@ -116,4 +116,16 @@ struct AgentCapabilityAnalyzerTests {
 
         #expect(caps.isEmpty)
     }
+
+    @Test("A parameter list item keeps colons in its description and needs a parenthesized type")
+    func parameterListItem() throws {
+        let parameter = try #require(AgentCapabilityAnalyzer.parameter(fromListItem: "- url (String, Required): Where: the host"))
+        #expect(parameter.name == "url")
+        #expect(parameter.type == "String")
+        #expect(parameter.isRequired)
+        #expect(parameter.description == "Where: the host")
+        #expect(AgentCapabilityAnalyzer.parameter(fromListItem: "- count (Int): How many")?.isRequired == false)
+        #expect(AgentCapabilityAnalyzer.parameter(fromListItem: "- count Int: How many") == nil)
+        #expect(AgentCapabilityAnalyzer.parameter(fromListItem: "- count (Int)") == nil)
+    }
 }

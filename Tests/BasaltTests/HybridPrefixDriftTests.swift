@@ -57,7 +57,7 @@ struct HybridPrefixDriftTests {
             let ids2 = tokens2.asArray(Int.self)
 
             let turn1 = try HybridPrefixSnapshot.prefillHead(
-                tokens1, into: PromptCache(try model.newCache(parameters: nil)), reused: 0, boundary: b1,
+                tokens1, into: PromptCache(try model.newCache(parameters: nil)), plan: CachedPrompt(boundary: b1),
                 model: model, prefill: prefill)
             var tree = PromptCacheTree(byteBudget: 1 << 34)
             tree.store("shared", tokens: Array(ids1.prefix(b1)), cache: try #require(turn1.kept))
@@ -67,7 +67,7 @@ struct HybridPrefixDriftTests {
             }
             let reused = lease.reusedTokens
             let turn2 = try HybridPrefixSnapshot.prefillHead(
-                tokens2, into: lease.cache, reused: reused, boundary: b2, model: model, prefill: prefill)
+                tokens2, into: lease.cache, plan: CachedPrompt(reuse: (lease.cache, reused), boundary: b2), model: model, prefill: prefill)
             let a = try Self.lastLogits(tokens2, from: b2, cache: lease.cache, state: turn2.state, model: model)
             _ = consume lease
 
@@ -76,10 +76,10 @@ struct HybridPrefixDriftTests {
 
             let two = PromptCache(try model.newCache(parameters: nil))
             let cut1 = try HybridPrefixSnapshot.prefillHead(
-                tokens2, into: two, reused: 0, boundary: b1, model: model, prefill: prefill)
+                tokens2, into: two, plan: CachedPrompt(boundary: b1), model: model, prefill: prefill)
             two.state = cut1.state
             let cut2 = try HybridPrefixSnapshot.prefillHead(
-                tokens2, into: two, reused: b1, boundary: b2, model: model, prefill: prefill)
+                tokens2, into: two, plan: CachedPrompt(reuse: (two, b1), boundary: b2), model: model, prefill: prefill)
             let c = try Self.lastLogits(tokens2, from: b2, cache: two, state: cut2.state, model: model)
             let d = try Self.lastLogits(
                 tokens2, from: 0, cache: PromptCache(try model.newCache(parameters: nil)), state: nil, model: model,
@@ -141,12 +141,12 @@ struct HybridPrefixDriftTests {
                     reused = 0
                 }
                 let head = try HybridPrefixSnapshot.prefillHead(
-                    tokens, into: cache, reused: reused, boundary: boundary, model: model, prefill: prefill)
+                    tokens, into: cache, plan: CachedPrompt(reuse: (cache, reused), boundary: boundary), model: model, prefill: prefill)
                 tree.store("session", tokens: Array(ids.prefix(boundary)), cache: try #require(head.kept))
                 let restored = try Self.lastLogits(tokens, from: boundary, cache: cache, state: head.state, model: model)
 
                 let cut = try HybridPrefixSnapshot.prefillHead(
-                    tokens, into: reference, reused: previous, boundary: boundary, model: model, prefill: prefill)
+                    tokens, into: reference, plan: CachedPrompt(reuse: (reference, previous), boundary: boundary), model: model, prefill: prefill)
                 reference.state = cut.state
                 let probe = PromptCache(reference.layers.map { $0.copy() })
                 let cuts = try Self.lastLogits(tokens, from: boundary, cache: probe, state: cut.state, model: model)
