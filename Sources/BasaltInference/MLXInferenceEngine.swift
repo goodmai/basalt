@@ -84,6 +84,8 @@ public actor MLXInferenceEngine: InferenceEngine {
     private var wiredTicket: WiredMemoryTicket?
     private let kvHeadSplit: Double?
     private(set) var kvHeadMask: KVHeadMask?
+    private let questTopK: Int?
+    private(set) var questApplies = false
 
     /// Multiplicative penalty on recently emitted tokens. Left nil, nothing damps
     /// a degenerate loop: a 2-bit model answered "127 + 458" by repeating the
@@ -165,6 +167,7 @@ public actor MLXInferenceEngine: InferenceEngine {
         quantizedKVStart: Int = KVCacheGeometry.defaultQuantizedKVStart,
         kvZones: KVZones? = nil,
         kvHeadSplit: Double? = nil,
+        questTopK: Int? = nil,
         repetitionPenalty: Float? = nil,
         topK: Int? = nil,
         minP: Float? = nil,
@@ -197,6 +200,7 @@ public actor MLXInferenceEngine: InferenceEngine {
         self.quantizedKVStart = quantizedKVStart
         self.kvZones = kvZones
         self.kvHeadSplit = kvHeadSplit
+        self.questTopK = questTopK
         self.repetitionPenalty = repetitionPenalty
         self.topK = topK
         self.minP = minP
@@ -245,6 +249,17 @@ public actor MLXInferenceEngine: InferenceEngine {
         } catch {
             logger.warn("--kv-head-split: scoring the heads failed (\(error.localizedDescription)); the KV cache stays dense")
         }
+    }
+
+    func probeQuest() async {
+        questApplies = false
+        guard let questTopK, let container else { return }
+        guard (try? await container.perform({ try QuestKVCache.modelAttendsThroughCache($0.model) })) == true else {
+            logger.warn("--quest-top-k does not apply to this model: its full-attention layers read the whole cache through cache.update (Gemma 4 does), so they cannot attend to a selection of blocks; attention stays dense")
+            return
+        }
+        questApplies = true
+        logger.info("Quest: a decode step attends to \(QuestKVCache.sinkTokens) sink tokens, the last \(QuestKVCache.windowTokens) or more, and the \(questTopK) best \(QuestKVCache.blockTokens)-token blocks between them")
     }
 
     public static func renewsResidency() {
@@ -429,6 +444,7 @@ public actor MLXInferenceEngine: InferenceEngine {
             await probeKVZones()
             await wireWorkingSet()
             await probeKVHeads(directory: directory)
+            await probeQuest()
             logger.info("Sampling defaults from generation_config.json: \(samplingDefaults)")
             
             // Dynamic config inspection
@@ -954,6 +970,7 @@ public actor MLXInferenceEngine: InferenceEngine {
         let (params, unbudgeted, shaping, exclusion) = sampling(for: request, breakers: await sequenceBreakerIds(for: request))
         let zones = modelAttendsThroughZones ? (modelPrefillsInChunks ? kvZones : kvZones?.evicting(0)) : nil
         let headMask = zones == nil && request.kvPrecision == nil && kvPrecision == nil ? kvHeadMask : nil
+        let questBlocks = zones == nil && request.kvPrecision == nil && kvPrecision == nil && headMask == nil && questApplies ? questTopK : nil
         let zonedPrecision = zones == nil ? nil : request.kvPrecision ?? kvPrecision
 
         let toolSpecs = Self.toolSpecs(request.tools)
@@ -1109,7 +1126,7 @@ public actor MLXInferenceEngine: InferenceEngine {
                         params: params, components: constrained, tools: forcedTool == nil ? toolSpecs : nil,
                         context: context, speculativeLookup: speculativeLookup, speculativeRecycling: speculativeRecycling,
                         grammarJumpForward: jumpForward,
-                        routesExperts: expertRouting, kvZones: zones, kvHeadMask: headMask, kvPrecision: zonedPrecision,
+                        routesExperts: expertRouting, kvZones: zones, kvHeadMask: headMask, questTopK: questBlocks, kvPrecision: zonedPrecision,
                         mtpDrafter: drafter, mtpBlockSize: mtpBlockSize,
                         mtpPrefix: mtpPrefix) }
                 }
@@ -1562,7 +1579,7 @@ public actor MLXInferenceEngine: InferenceEngine {
         params: GenerateParameters, components: GenerationComponents,
         tools: [ToolSpec]?, context: ModelContext, speculativeLookup: Bool = false, speculativeRecycling: Bool = false,
         grammarJumpForward: Bool = false,
-        routesExperts: Bool = true, kvZones: KVZones? = nil, kvHeadMask: KVHeadMask? = nil,
+        routesExperts: Bool = true, kvZones: KVZones? = nil, kvHeadMask: KVHeadMask? = nil, questTopK: Int? = nil,
         kvPrecision: KVPrecision? = nil,
         mtpDrafter: MTPDrafter? = nil, mtpBlockSize: Int = 4, mtpPrefix: MTPPrefix? = nil
     ) throws -> GenerationLaunch {
@@ -1607,8 +1624,8 @@ public actor MLXInferenceEngine: InferenceEngine {
                 mtpPrefix: kept?.prefix)
         }
         guard keepsCache else {
-            if let kvHeadMask, params.kvBits == nil {
-                let cache = kvHeadMask.replacingFullAttention(try context.model.newCache(parameters: params))
+            if params.kvBits == nil, let cache = try kvHeadMask.map({ $0.replacingFullAttention(try context.model.newCache(parameters: params)) })
+                ?? questTopK.map({ QuestKVCache.replacingFullAttention(try context.model.newCache(parameters: params), topK: $0) }) {
                 let iterator = try TokenIterator(input: input, model: context.model, cache: cache, parameters: params, components: components)
                 let (stream, task, prefill) = Self.handOff(
                     promptTokenCount: input.text.tokens.dim(-1), modelConfiguration: context.configuration,

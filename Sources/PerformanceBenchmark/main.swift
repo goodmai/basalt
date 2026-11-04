@@ -58,6 +58,9 @@ struct Benchmark: AsyncParsableCommand {
     @Option(name: .customLong("kv-head-split"), help: "Experimental: keep the whole context in this share of KV heads, sinks and a recent window in the rest")
     var kvHeadSplit: Double?
 
+    @Option(name: .customLong("quest-top-k"), help: "Experimental: decode attends to sinks, a recent window and this many 64-token blocks between them (Quest)")
+    var questTopK: Int?
+
     @Option(name: .customLong("repetition-penalty"), help: "Penalty on recently emitted tokens, e.g. 1.1 (default: off)")
     var repetitionPenalty: Float?
 
@@ -115,6 +118,7 @@ struct Benchmark: AsyncParsableCommand {
             kvPrecision: kvBits,
             kvZones: kvZones ? .standard : nil,
             kvHeadSplit: kvHeadSplit,
+            questTopK: questTopK,
             repetitionPenalty: repetitionPenalty,
             topK: topK, minP: minP, seed: seed, speculativeLookup: speculativeLookup,
             speculativeRecycling: speculativeRecycling, mtp: mtp, mtpBlockSize: mtpBlock, experimentalSamplers: dryMultiplier != nil, grammarJumpForward: grammarJumpForward, wiresWorkingSet: wiredLimit)

@@ -77,6 +77,9 @@ struct ServeCommand: AsyncParsableCommand {
     @Option(name: .customLong("kv-head-split"), help: ArgumentHelp("Experimental: keep the whole context only in this share (0.05...1) of the KV heads of each full-attention layer, the heads that read facts from the middle of a long prompt (scored once per model on a synthetic passkey set, cached in ~/.basalt/head-scores); the other heads keep 128 sink and 256 recent tokens (DuoAttention). Not with --kv-bits or --kv-zones, and only for requests without a prompt-cache namespace, like --kv-zones"))
     var kvHeadSplit: Double?
 
+    @Option(name: .customLong("quest-top-k"), help: ArgumentHelp("Experimental: on long prompts, each decode step of a full-attention layer attends to 128 sink tokens, the last 256 or more, and only these many 64-token blocks between them, picked per KV head by their key bounds (Quest). Models whose attention reads the whole cache, like Gemma 4, stay dense. Not with --kv-bits, --kv-zones or --kv-head-split, and only for requests without a prompt-cache namespace"))
+    var questTopK: Int?
+
     @Option(name: .customLong("repetition-penalty"), help: "Penalty on recently emitted tokens, e.g. 1.1 (default: off)")
     var repetitionPenalty: Float?
 
@@ -457,6 +460,12 @@ struct ServeCommand: AsyncParsableCommand {
             guard (0.05 ... 1).contains(kvHeadSplit) else { throw ValidationError("--kv-head-split takes a share of heads in 0.05...1") }
             guard kvBits == nil, !kvZones else { throw ValidationError("--kv-head-split does not combine with --kv-bits or --kv-zones") }
         }
+        if let questTopK {
+            guard (1 ... 4096).contains(questTopK) else { throw ValidationError("--quest-top-k takes a number of blocks in 1...4096") }
+            guard kvBits == nil, !kvZones, kvHeadSplit == nil else {
+                throw ValidationError("--quest-top-k does not combine with --kv-bits, --kv-zones or --kv-head-split")
+            }
+        }
         try promptCacheDisk.validate(sessionLog: sessionLog)
         guard promptCacheDisk.megabytes == 0 || promptCacheMB != 0 else {
             throw ValidationError("--prompt-cache-disk-mb persists the in-memory prompt cache, which --prompt-cache-mb 0 turns off")
@@ -553,6 +562,7 @@ struct ServeCommand: AsyncParsableCommand {
             kvPrecision: kvBits?.fixedPrecision,
             kvZones: KVBitsSetting.zones(kvZones, evicting: kvEvict),
             kvHeadSplit: kvHeadSplit,
+            questTopK: questTopK,
             repetitionPenalty: repetitionPenalty,
             topK: topK,
             minP: minP,
