@@ -181,6 +181,19 @@ private final class BatchRow {
     }
 }
 
+struct DecodingSettings {
+    var processor: (any LogitProcessor)?
+    let sampler: any LogitSampler
+    let prefill: PrefillParameters
+    let maxTokens: Int?
+}
+
+extension DecodingSettings {
+    init(processor: (any LogitProcessor)?, parameters: GenerateParameters) {
+        self.init(processor: processor, sampler: parameters.sampler(), prefill: parameters.prefill, maxTokens: parameters.maxTokens)
+    }
+}
+
 struct BatchedTokenIterator: SelfSerializingTokenIterator {
     private let seat: BatchSeat
     private let row: BatchRow
@@ -196,28 +209,29 @@ struct BatchedTokenIterator: SelfSerializingTokenIterator {
     }
 
     init(
-        input: LMInput, model: any LanguageModel, layers: [KVCache], processor: (any LogitProcessor)?,
-        sampler: any LogitSampler, prefill: PrefillParameters, maxTokens: Int?, stopTokens: Set<Int>, seat: BatchSeat
+        input: LMInput, model: any LanguageModel, layers: [KVCache], decoding: DecodingSettings, stopTokens: Set<Int>,
+        seat: BatchSeat
     ) throws {
         let started = ContinuousClock.now
-        var processor = processor
+        var processor = decoding.processor
         processor?.prompt(input.text.tokens)
         let first = try seat.decoder.exclusively {
-            let logits = switch try model.prepare(input, cache: layers, state: nil, prefill: prefill) {
+            let logits = switch try model.prepare(input, cache: layers, state: nil, prefill: decoding.prefill) {
             case .tokens(let rest): model(rest[text: .newAxis], cache: layers, state: nil).logits
             case .logits(let output): output.logits
             }
             let last = logits[0..., -1, 0...]
-            let first = sampler.sample(logits: processor?.process(logits: last) ?? last)
+            let first = decoding.sampler.sample(logits: processor?.process(logits: last) ?? last)
             eval([first] + layers.flatMap { $0.innerState() })
             return first
         }
         processor?.didSample(token: first)
         row = BatchRow(
-            first: first, layers: layers, processor: processor, sampler: sampler, maxTokens: maxTokens, stopTokens: stopTokens)
+            first: first, layers: layers, processor: processor, sampler: decoding.sampler, maxTokens: decoding.maxTokens,
+            stopTokens: stopTokens)
         seat.row = row
         self.seat = seat
-        self.maxTokens = maxTokens
+        self.maxTokens = decoding.maxTokens
         promptPrefillTime = (ContinuousClock.now - started) / .seconds(1)
     }
 
