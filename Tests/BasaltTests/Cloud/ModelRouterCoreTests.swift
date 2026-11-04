@@ -99,12 +99,16 @@ struct ModelRouterCoreTests {
         let service = GenerationRequest(prompt: "p", isServiceRequest: true, tools: [ToolDefinition(name: "t")])
         let now = BradleyTerryRouterTests.start
         #expect(state.autoModel(for: tool, sessionId: nil, at: now) == "small-local")
-        #expect(!state.recordOutcome(service, response: BradleyTerryRouterTests.response(.repetition), localModel: "q", at: now))
-        #expect(!state.recordOutcome(tool, response: BradleyTerryRouterTests.response(.error), localModel: "q", at: now))
-        #expect(!state.recordOutcome(tool, response: BradleyTerryRouterTests.response(.stop), localModel: "q", at: now))
+        let ignored = [
+            state.recordOutcome(service, response: BradleyTerryRouterTests.response(.repetition), localModel: "q", at: now),
+            state.recordOutcome(tool, response: BradleyTerryRouterTests.response(.error), localModel: "q", at: now),
+            state.recordOutcome(tool, response: BradleyTerryRouterTests.response(.stop), localModel: "q", at: now)
+        ]
+        #expect(ignored == [false, false, false])
         #expect(state.lastLocalModel == "q")
         for _ in 0..<3 {
-            #expect(state.recordOutcome(tool, response: BradleyTerryRouterTests.response(.repetition), localModel: "q", at: now))
+            let changed = state.recordOutcome(tool, response: BradleyTerryRouterTests.response(.repetition), localModel: "q", at: now)
+            #expect(changed)
         }
         #expect(state.autoModel(for: tool, sessionId: nil, at: now) == "gpt-4")
         #expect(state.outcomeBias.beta(model: "q", bucket: .toolUse, at: now) > 0)
