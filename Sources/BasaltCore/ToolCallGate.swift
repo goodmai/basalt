@@ -5,7 +5,7 @@ public struct ToolCallGate: Sendable {
     private let forced: String?
     private let parallel: Bool
     private let callsDisabled: Bool
-    private var admitted = 0
+    public private(set) var admitted = 0
 
     public init(request: GenerationRequest) {
         declared = Set(request.tools?.map(\.name) ?? [])

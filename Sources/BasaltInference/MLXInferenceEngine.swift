@@ -478,6 +478,7 @@ public actor MLXInferenceEngine: InferenceEngine {
         guard let finalResponse else {
             throw .inferenceHardwareFailure(reason: "Stream finished without metadata")
         }
+        guard finalResponse.finishReason != .error else { throw .nonFiniteLogits }
 
         let fullReasoning = reasoningChunks.joined()
         return GenerationResponse(
@@ -499,7 +500,7 @@ public actor MLXInferenceEngine: InferenceEngine {
             modelCalls: finalResponse.modelCalls,
             toolCallRepairs: finalResponse.toolCallRepairs,
             toolCallRejections: finalResponse.toolCallRejections
-        )
+        ).reporting(degenerate: finalResponse.degenerate, draftSource: finalResponse.draftSource)
     }
 
     static let presenceContextSize = 1024
@@ -811,7 +812,8 @@ public actor MLXInferenceEngine: InferenceEngine {
                     thinkingDisabled: policy == .disabled, endsInsideThinking: promptEndsWithThinking,
                     prefillAnswered: !prefixAnswer.isEmpty))
             let excluded = exclusion.map { masked.appendingBasaltProcessor($0) } ?? masked
-            let constrained = shaping.map { excluded.appendingBasaltProcessor($0) } ?? excluded
+            let (constrained, alarm) = NonFiniteLogitGuard.guarding(
+                shaping.map { excluded.appendingBasaltProcessor($0) } ?? excluded, temperature: params.temperature)
             let forcedTool = constraint?.toolName
             let jumpForward = constraint?.fastForward == true
             let expertRouting = (plan.speculativeLookup || jumpForward) ? await routesExperts(container, epoch: epoch) : true
@@ -850,6 +852,7 @@ public actor MLXInferenceEngine: InferenceEngine {
                     var toolCallScanner = scansToolCallText ? NemotronToolCallScanner() : nil
                     var reasoningText = ""
                     var forcedToolArguments = prefixAnswer
+                    var health = DegenerateOutputDetector(controlTokens: controlTokens.tokens)
                     func emitReasoning(_ text: String) {
                         reasoningText += text
                         continuation.yield(.reasoning(text))
@@ -866,6 +869,7 @@ public actor MLXInferenceEngine: InferenceEngine {
 
                     func route(_ segments: [ThinkingSplitter.Segment]) {
                         for segment in segments {
+                            health.feed(segment)
                             switch segment {
                             case .reasoning(let text): emitReasoning(text)
                             case .answer(let text): emitText(text)
@@ -888,17 +892,13 @@ public actor MLXInferenceEngine: InferenceEngine {
                         }
                     }
                     tokens: while let generation = await generations.next() {
-                        if Task.isCancelled { 
-                            break 
-                        }
-                        
+                        if Task.isCancelled { break }
                         tokenCount += 1
-                        
                         switch generation {
                         case .chunk(let text):
                             if firstTokenAt == nil { firstTokenAt = clock.now }
                             route(splitter.feed(text))
-                            if gate.isSaturated { await stopAfterCall(); break tokens }
+                            if gate.isSaturated || alarm.isTripped { await stopAfterCall(); break tokens }
                             if repetition?.shouldStop(after: text) == true {
                                 stoppedOnRepetition = true
                                 await stopAfterCall()
@@ -962,12 +962,8 @@ public actor MLXInferenceEngine: InferenceEngine {
                             tokensPerSecond: lastInfo?.tokensPerSecond ?? 0,
                             generationTime: generationTime,
                             timeToFirstToken: timeToFirstToken,
-                            memory: .init(
-                                peakBytes: mem.peakMemory,
-                                activeBytes: mem.activeMemory,
-                                cacheBytes: mem.cacheMemory
-                            ),
-                            finishReason: stoppedOnRepetition ? .repetition
+                            memory: .init(peakBytes: mem.peakMemory, activeBytes: mem.activeMemory, cacheBytes: mem.cacheMemory),
+                            finishReason: alarm.isTripped ? .error : stoppedOnRepetition ? .repetition
                                 : (lastInfo?.generationTokenCount ?? 0) >= requestedMaxTokens ? .length : .stop,
                             reasoningTokens: reasoningTokens,
                             draftTokens: lastInfo?.speculativeDecodingTelemetry?.draftTokenCount,
@@ -976,7 +972,7 @@ public actor MLXInferenceEngine: InferenceEngine {
                             modelCalls: lastInfo?.speculativeDecodingTelemetry?.targetModelCallCount,
                             toolCallRepairs: toolCallRepairs,
                             toolCallRejections: toolCallRejections
-                        )
+                        ).reporting(degenerate: health.verdict(calledTools: gate.admitted > 0), draftSource: plan.draftSource)
                         continuation.yield(.metadata(metadata))
                     }
                     continuation.finish()

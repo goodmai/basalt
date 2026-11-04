@@ -166,6 +166,12 @@ struct ServeCommand: AsyncParsableCommand {
     @Option(name: .customLong("stats-interval"), help: "Interval in seconds between periodic telemetry stats outputs (default: 5)")
     var statsInterval: Int = 5
 
+    @Option(
+        name: .customLong("canary-minutes"),
+        help: "Every N minutes, when no request is running or queued, send one tiny known-answer request (17 + 25, greedy, thinking off) at background priority and count pass/fail in the telemetry snapshot (default: off)"
+    )
+    var canaryMinutes: Int?
+
     @Flag(
         name: .customLong("no-memory-coordinator"),
         help: "Keep the load-time memory limits: do not shrink the MLX allocator cache and prompt cache, or refuse long prompts, when macOS reports memory pressure"
@@ -229,7 +235,7 @@ struct ServeCommand: AsyncParsableCommand {
         try await Self.runServers(
             ServerLaunch(
                 config: config, startREST: startREST, mcpServer: mcpServer, embeddings: embeddings,
-                statsInterval: stats ? min(max(1, statsInterval), 86_400) : nil),
+                statsInterval: stats ? min(max(1, statsInterval), 86_400) : nil, canaryInterval: canaryMinutes.map { .seconds($0 * 60) }),
             orchestrator: orchestrator)
     }
 

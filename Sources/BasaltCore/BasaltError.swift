@@ -13,6 +13,7 @@ public enum BasaltError: Error, Sendable, LocalizedError {
     case rateLimitExceeded(retryAfter: String?)
     case authenticationFailed(details: String)
     case modelInferenceError(details: String)
+    case nonFiniteLogits
 
     case inferenceError(String)
     case modelNotCached(identifier: String)
@@ -42,6 +43,8 @@ public enum BasaltError: Error, Sendable, LocalizedError {
             return "Authentication failed: \(details)"
         case .modelInferenceError(let details):
             return "Model inference error: \(details)"
+        case .nonFiniteLogits:
+            return "The model produced NaN or infinite logits, so its output is unusable; the weights or their quantization are likely broken."
         case .inferenceError(let msg):
             return "Inference error: \(msg)"
         case .modelNotCached(let id):
@@ -64,7 +67,7 @@ public enum BasaltError: Error, Sendable, LocalizedError {
         case .modelConfigurationInvalid: (422, "invalid_request_error", "invalid_request_error", nil)
         case .authenticationFailed: (401, "authentication_error", "authentication_error", nil)
         case .rateLimitExceeded(let retryAfter): (429, "rate_limit_error", "rate_limit_error", retryAfter ?? "1")
-        case .weightsCorrupted, .inferenceError: (500, "server_error", "api_error", nil)
+        case .weightsCorrupted, .inferenceError, .nonFiniteLogits: (500, "server_error", "api_error", nil)
         case .modelInferenceError: (502, "server_error", "api_error", nil)
         case .inferenceHardwareFailure, .modelSwitching: (503, "server_error", "overloaded_error", "1")
         case .serverBusy(let seconds): (503, "server_error", "overloaded_error", seconds.map(String.init) ?? "1")
