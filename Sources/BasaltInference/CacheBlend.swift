@@ -272,10 +272,11 @@ final class CacheBlendStore: Sendable {
 
     func extend(
         _ cache: PromptCache, prompt: [Int], from start: Int, namespace: String,
-        model: any LanguageModel, tokenizer: any MLXLMCommon.Tokenizer, prefillStep: Int = 512,
+        model: any LanguageModel, tokenizer: any MLXLMCommon.Tokenizer, prefill: PrefillParameters = PrefillParameters(),
         ratio: Float? = nil, storing: Bool = true
     ) -> CacheBlendOutcome? {
         let end = prompt.count - 1
+        let prefillStep = prefill.stepSize ?? 512
         guard start < end, let blender = CacheBlendModel(model),
               cache.layers.count == blender.layers.count, cache.layers.allSatisfy({ $0 is KVCacheSimple })
         else { return nil }
@@ -301,13 +302,12 @@ final class CacheBlendStore: Sendable {
         let exactPrefix: Int
         let layers: (Range<Int>) -> [[MLXArray]]?
         if !Self.blends(reused: hits, count: count, offset: start, ratio: ratio ?? self.ratio) {
-            var position = start
-            while position < end {
+            for position in stride(from: start, to: end, by: max(1, prefillStep)) {
                 if Task.isCancelled { return nil }
                 let step = min(end, position + max(1, prefillStep))
                 _ = model(MLXArray(prompt[position ..< step].map(Int32.init)).reshaped(1, -1), cache: cache.layers)
                 eval(cache.layers.flatMap { $0.innerState() })
-                position = step
+                prefill.progress?(step, end)
             }
             (caches, reused, recomputed, exactPrefix) = (cache.layers, 0, 0, end)
             let region = blender.rotatesPurely ? blender.unrotated(cache.layers, start ..< end) : nil

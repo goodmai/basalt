@@ -1,5 +1,6 @@
 import Testing
 import Foundation
+import Synchronization
 import MLX
 import MLXLMCommon
 @testable import BasaltCore
@@ -83,56 +84,67 @@ struct PriorityAndPrefillCancellationTests {
         return engine
     }
 
-    @Test("Cancelling a request mid-prefill of a 16k-token prompt stops it within a prefill chunk, not at the end of the prompt",
+    final class PrefillChunks: Sendable {
+        private let reports = Mutex<[(processed: Int, total: Int)]>([])
+
+        func record(_ processed: Int, _ total: Int) -> Int {
+            reports.withLock {
+                $0.append((processed, total))
+                return $0.count
+            }
+        }
+
+        var all: [(processed: Int, total: Int)] { reports.withLock { $0 } }
+    }
+
+    @Test("Cancelling a request mid-prefill of a 16k-token prompt stops it before the next prefill chunk, not at the end of the prompt",
           arguments: [nil, 0.5] as [Float?])
     func prefillStopsOnCancel(cacheBlendRatio: Float?) async throws {
         let engine = try await Self.tinyEngine(cacheBlendRatio: cacheBlendRatio)
-        func request(_ key: String) -> GenerationRequest {
-            GenerationRequest(prompt: Self.longPrompt, maxTokens: 4, temperature: 0, cacheKey: key)
+        let request = GenerationRequest(prompt: Self.longPrompt, maxTokens: 4, temperature: 0, cacheKey: "cancelled")
+        let chunks = PrefillChunks()
+        let streamed = await MLXInferenceEngine.$prefillProgress.withValue({ processed, total in
+            if chunks.record(processed, total) == 2 { withUnsafeCurrentTask { $0?.cancel() } }
+        }) {
+            await Task {
+                var streamed = 0
+                do {
+                    for await _ in try await engine.generateStream(request: request) { streamed += 1 }
+                } catch {}
+                return streamed
+            }.value
         }
-        let fullStart = ContinuousClock.now
-        for await _ in try await engine.generateStream(request: request("timed")) {}
-        let full = ContinuousClock.now - fullStart
-
-        let task = Task { () -> Duration in
-            do {
-                for await _ in try await engine.generateStream(request: request("cancelled")) {}
-            } catch {}
-            return .zero
-        }
-        try await Task.sleep(for: full / 10)
-        let cancelled = ContinuousClock.now
-        task.cancel()
-        _ = await task.value
-        let abort = ContinuousClock.now - cancelled
-        print("PREFILL-CANCEL blend=\(String(describing: cacheBlendRatio)) full=\(full) abort=\(abort)")
-        #expect(abort < full / 3)
+        let seen = chunks.all
+        let last = try #require(seen.last)
+        #expect(streamed == 0)
+        #expect(seen.count == 2, "\(seen.count) prefill chunks ran, 2 before the cancel")
+        #expect(last.processed * 4 < last.total, "\(last.processed) of \(last.total) tokens prefilled")
     }
 
-    @Test("Shutting the server down during a stream's prefill aborts the prefill instead of waiting for it")
+    @Test("Shutting the server down during a stream's prefill aborts the prefill instead of waiting for it", .timeLimit(.minutes(5)))
     func drainAbortsStreamPrefill() async throws {
         let engine = try await Self.tinyEngine()
         let orchestrator = ModelOrchestratorActor(engine: engine, maxTokens: 4, telemetry: TelemetryTracker())
         let request = GenerationRequest(prompt: Self.longPrompt, maxTokens: 4, temperature: 0)
-        let fullStart = ContinuousClock.now
-        for await _ in try await orchestrator.generateStream(request: request) {}
-        let full = ContinuousClock.now - fullStart
-
-        let streaming = Task { () -> Bool in
-            do {
-                for await _ in try await orchestrator.generateStream(request: request) {}
-                return true
-            } catch {
-                return false
+        let chunks = PrefillChunks()
+        let (midPrefill, reachMidPrefill) = AsyncStream<Void>.makeStream()
+        let streaming = MLXInferenceEngine.$prefillProgress.withValue({ processed, total in
+            guard chunks.record(processed, total) == 2 else { return }
+            reachMidPrefill.finish()
+            while !Task.isCancelled { Thread.sleep(forTimeInterval: 0.001) }
+        }) {
+            Task { () -> Bool in
+                do {
+                    for await _ in try await orchestrator.generateStream(request: request) {}
+                    return true
+                } catch {
+                    return false
+                }
             }
         }
-        #expect(await GenerationGateTests.eventually { await orchestrator.gate.inFlight == 1 })
-        try await Task.sleep(for: full / 10)
-        let started = ContinuousClock.now
+        for await _ in midPrefill {}
         await orchestrator.shutdown(deadline: .zero)
-        _ = await streaming.value
-        let abort = ContinuousClock.now - started
-        print("DRAIN-PREFILL full=\(full) abort=\(abort)")
-        #expect(abort < full / 3)
+        #expect(await streaming.value == false)
+        #expect(chunks.all.count == 2)
     }
 }

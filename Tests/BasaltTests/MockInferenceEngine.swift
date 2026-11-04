@@ -83,9 +83,25 @@ actor MockInferenceEngine: InferenceEngine {
         self.mockCachedPromptTokens = tokens
     }
     
-    // Setter methods for actor-safe configuration
     func setArtificialDelay(_ delay: TimeInterval) {
         self.artificialDelay = delay
+    }
+
+    private var heldStreams: [CheckedContinuation<Void, Never>]?
+
+    func holdStreams() {
+        heldStreams = heldStreams ?? []
+    }
+
+    func releaseStreams() {
+        let held = heldStreams ?? []
+        heldStreams = nil
+        for stream in held { stream.resume() }
+    }
+
+    private func waitWhileHeld() async {
+        guard heldStreams != nil else { return }
+        await withCheckedContinuation { heldStreams?.append($0) }
     }
     
     func getLastRequest() -> GenerationRequest? {
@@ -166,13 +182,11 @@ actor MockInferenceEngine: InferenceEngine {
             Task {
                 let clock = ContinuousClock()
                 let start = clock.now
-                
-                // Apply artificial delay if configured
+                await waitWhileHeld()
                 if artificialDelay > 0 {
                     try? await Task.sleep(for: .seconds(artificialDelay))
                 }
                 
-                // simulate TTFT
                 try? await Task.sleep(for: .milliseconds(5))
                 let firstTokenTime = clock.now
                 if let reasoning = mockReasoning { continuation.yield(.reasoning(reasoning)) }
@@ -183,7 +197,6 @@ actor MockInferenceEngine: InferenceEngine {
                 }
                 if let after = mockTextAfterToolCall { continuation.yield(.text(after)) }
                 
-                // simulate total generation time
                 try? await Task.sleep(for: .milliseconds(5))
                 
                 let totalDuration = clock.now - start

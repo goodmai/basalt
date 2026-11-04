@@ -90,9 +90,8 @@ struct TelemetryTests {
         #expect(decoded == original)
     }
 
-    private func loadedOrchestrator(_ tracker: TelemetryTracker, delay: TimeInterval = 0) async throws -> (ModelOrchestratorActor, MockInferenceEngine) {
+    private func loadedOrchestrator(_ tracker: TelemetryTracker) async throws -> (ModelOrchestratorActor, MockInferenceEngine) {
         let engine = MockInferenceEngine()
-        await engine.setArtificialDelay(delay)
         let orch = ModelOrchestratorActor(engine: engine, telemetry: tracker)
         try await orch.loadModel(path: "test-model-path")
         return (orch, engine)
@@ -101,11 +100,12 @@ struct TelemetryTests {
     @Test("Streaming requests are counted and hold the active slot until the stream ends")
     func testStreamingPathRecordsTelemetry() async throws {
         let tracker = TelemetryTracker()
-        // The delay keeps the stream open long enough to observe the slot deterministically.
-        let (orch, _) = try await loadedOrchestrator(tracker, delay: 0.2)
+        let (orch, engine) = try await loadedOrchestrator(tracker)
+        await engine.holdStreams()
 
         let stream = try await orch.generateStream(request: GenerationRequest(prompt: "hi", maxTokens: 8))
         #expect(await tracker.snapshot().activeRequests == 1)
+        await engine.releaseStreams()
         for await _ in stream {}
         #expect(await GenerationGateTests.eventually { await tracker.snapshot().totalRequests == 1 })
 
@@ -139,26 +139,17 @@ struct TelemetryTests {
     @Test("A client that disconnects mid-stream releases its slot")
     func testDisconnectReleasesSlot() async throws {
         let tracker = TelemetryTracker()
-        let (orch, _) = try await loadedOrchestrator(tracker, delay: 120)
+        let (orch, engine) = try await loadedOrchestrator(tracker)
+        await engine.holdStreams()
 
-        func waitForActive(_ value: Int) async -> Bool {
-            let deadline = ContinuousClock.now + .seconds(30)
-            while ContinuousClock.now < deadline {
-                if await tracker.snapshot().activeRequests == value { return true }
-                try? await Task.sleep(for: .milliseconds(5))
-            }
-            return false
-        }
-
-        // A consumer that stops iterating (e.g. ChatController's task being cancelled)
-        // cancels the orchestrator's stream through onTermination.
         let consumer = Task {
             let stream = try await orch.generateStream(request: GenerationRequest(prompt: "hi", maxTokens: 8))
             for await _ in stream {}
         }
-        #expect(await waitForActive(1))
+        #expect(await GenerationGateTests.eventually { await tracker.snapshot().activeRequests == 1 })
         consumer.cancel()
-        #expect(await waitForActive(0))
+        #expect(await GenerationGateTests.eventually { await tracker.snapshot().activeRequests == 0 })
+        #expect(await orch.gate.inFlight == 0)
         #expect(await tracker.snapshot().totalRequests == 0)
     }
 

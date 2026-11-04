@@ -7,16 +7,19 @@ struct GenerationGateTests {
     actor CountingEngine: InferenceEngine {
         let inner = MockInferenceEngine()
         private(set) var loads: [String] = []
-        private(set) var loadStartedAt: [ContinuousClock.Instant] = []
-        var loadDelay: Duration = .zero
+        private var heldLoads: [CheckedContinuation<Void, Never>]?
 
-        func setLoadDelay(_ delay: Duration) { loadDelay = delay }
-        func setStreamDelay(_ seconds: TimeInterval) async { await inner.setArtificialDelay(seconds) }
+        func holdLoads() { heldLoads = heldLoads ?? [] }
+
+        func releaseLoads() {
+            let held = heldLoads ?? []
+            heldLoads = nil
+            for load in held { load.resume() }
+        }
 
         func load(modelPath: String) async throws(BasaltError) {
             loads.append(modelPath)
-            loadStartedAt.append(.now)
-            try? await Task.sleep(for: loadDelay)
+            if heldLoads != nil { await withCheckedContinuation { heldLoads?.append($0) } }
             try await inner.load(modelPath: modelPath)
         }
         func generate(request: GenerationRequest) async throws(BasaltError) -> GenerationResponse {
@@ -35,7 +38,7 @@ struct GenerationGateTests {
         return dir.path
     }
 
-    static func eventually(within limit: Duration = .seconds(10), _ condition: () async -> Bool) async -> Bool {
+    static func eventually(within limit: Duration = .seconds(60), _ condition: () async -> Bool) async -> Bool {
         let deadline = ContinuousClock.now + limit
         while ContinuousClock.now < deadline {
             if await condition() { return true }
@@ -56,7 +59,7 @@ struct GenerationGateTests {
         let orchestrator = ModelOrchestratorActor(
             engine: engine, telemetry: TelemetryTracker(), gate: GenerationGate(maxConcurrent: 1, maxQueue: 1))
         try await orchestrator.loadModel(path: "m")
-        await engine.setArtificialDelay(2)
+        await engine.holdStreams()
 
         let first = try await orchestrator.generateStream(request: GenerationRequest(prompt: "1"))
         async let second = orchestrator.generate(request: GenerationRequest(prompt: "2"))
@@ -70,6 +73,7 @@ struct GenerationGateTests {
             #expect(error.httpStatus == 503)
         }
         #expect(await engine.getRequests().map(\.prompt) == ["1"])
+        await engine.releaseStreams()
         #expect(await Self.drain(first) == "Mock response")
         #expect(try await second.generatedText == "Mock response")
         #expect(await engine.getRequests().map(\.prompt) == ["1", "2"])
@@ -82,14 +86,12 @@ struct GenerationGateTests {
         let orchestrator = ModelOrchestratorActor(
             engine: engine, telemetry: TelemetryTracker(), gate: GenerationGate(maxConcurrent: 1, maxQueue: 0))
         try await orchestrator.loadModel(path: "m")
-        await engine.setArtificialDelay(5)
+        await engine.holdStreams()
         var stream: AsyncStream<StreamChunk>? = try await orchestrator.generateStream(request: GenerationRequest(prompt: "1"))
         #expect(await orchestrator.gate.inFlight == 1)
         _ = stream
         stream = nil
-        let deadline = ContinuousClock.now + .seconds(2)
-        while await orchestrator.gate.inFlight > 0, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(20)) }
-        #expect(await orchestrator.gate.inFlight == 0)
+        #expect(await Self.eventually { await orchestrator.gate.inFlight == 0 })
     }
 
     @Test("A queued request whose client goes away leaves the queue")
@@ -108,7 +110,7 @@ struct GenerationGateTests {
     @Test("Two concurrent switches to the same model load it once; a switch to another model meanwhile is 503")
     func singleFlightSwitch() async throws {
         let engine = CountingEngine()
-        await engine.setLoadDelay(.seconds(2))
+        await engine.holdLoads()
         let orchestrator = ModelOrchestratorActor(engine: engine, telemetry: TelemetryTracker())
         let b = try Self.modelDirectory("B")
         let c = try Self.modelDirectory("C")
@@ -124,6 +126,7 @@ struct GenerationGateTests {
             #expect(to == b)
             #expect(error.httpStatus == 503)
         }
+        await engine.releaseLoads()
         _ = try await (one, two)
         #expect(await engine.loads.count == 1)
         #expect(await orchestrator.currentModelId == b)
@@ -135,7 +138,7 @@ struct GenerationGateTests {
         let orchestrator = ModelOrchestratorActor(
             engine: engine, telemetry: TelemetryTracker(), gate: GenerationGate(maxConcurrent: 2, maxQueue: 4))
         try await orchestrator.loadModel(path: "A")
-        await engine.setStreamDelay(2)
+        await engine.inner.holdStreams()
         let b = try Self.modelDirectory("B")
         defer { try? FileManager.default.removeItem(atPath: b) }
 
@@ -145,28 +148,27 @@ struct GenerationGateTests {
         #expect(await engine.loads == ["A"])
         let behind = Task { try await orchestrator.generate(request: GenerationRequest(prompt: "behind")) }
         #expect(await Self.eventually { await orchestrator.gate.queued == 1 })
+        #expect(await engine.loads == ["A"])
 
-        let streamEnded = ContinuousClock.now
+        await engine.inner.releaseStreams()
         _ = await Self.drain(stream)
         try await switching.value
         _ = try await behind.value
         #expect(await engine.loads.count == 2)
-        #expect(try #require(await engine.loadStartedAt.last) >= streamEnded)
     }
 
-    @Test("Shutdown stops admitting, and a stream still open after the deadline is cancelled and ends")
+    @Test("Shutdown stops admitting, and a stream still open after the deadline is cancelled and ends", .timeLimit(.minutes(2)))
     func shutdownDrainsWithDeadline() async throws {
         let engine = MockInferenceEngine()
         let orchestrator = ModelOrchestratorActor(engine: engine, telemetry: TelemetryTracker())
         try await orchestrator.loadModel(path: "m")
-        await engine.setArtificialDelay(30)
+        await engine.holdStreams()
         let stream = try await orchestrator.generateStream(request: GenerationRequest(prompt: "long"))
         let consumer = Task { await Self.drain(stream) }
 
-        let started = ContinuousClock.now
         await orchestrator.shutdown(deadline: .milliseconds(300))
-        _ = await consumer.value
-        #expect(ContinuousClock.now - started < .seconds(15))
+        #expect(await consumer.value.isEmpty)
+        #expect(await orchestrator.gate.inFlight == 0)
         await #expect(throws: BasaltError.self) {
             _ = try await orchestrator.generate(request: GenerationRequest(prompt: "late"))
         }

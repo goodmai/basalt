@@ -170,7 +170,7 @@ struct SessionLogTests {
         let dir = Self.tempDirectory()
         defer { try? FileManager.default.removeItem(at: dir) }
         let engine = MockInferenceEngine()
-        await engine.setArtificialDelay(5)
+        await engine.holdStreams()
         let writer = SessionLogWriter(mode: .full, directory: dir, defaultSession: "test")
         let orchestrator = ModelOrchestratorActor(engine: engine, telemetry: TelemetryTracker(), sessionLog: writer)
         try await orchestrator.loadModel(path: "mock")
@@ -178,14 +178,11 @@ struct SessionLogTests {
             request: GenerationRequest(prompt: "long").withOrigin(RequestOrigin(source: "openai-chat", endpoint: "/v1/chat/completions", stream: true)))
         _ = stream
         stream = nil
-        let deadline = ContinuousClock.now + .seconds(30)
-        var lines: [[String: Any]] = []
-        while ContinuousClock.now < deadline {
+        #expect(await GenerationGateTests.eventually {
             await writer.flush()
-            lines = (try? Self.lines(in: dir)) ?? []
-            if lines.contains(where: { $0["type"] as? String == "response" }) { break }
-            try await Task.sleep(for: .milliseconds(50))
-        }
+            return ((try? Self.lines(in: dir)) ?? []).contains { $0["type"] as? String == "response" }
+        })
+        let lines = try Self.lines(in: dir)
         let request = try #require(lines.first { $0["type"] as? String == "request" })
         let response = try #require(lines.first { $0["type"] as? String == "response" })
         #expect(response["status"] as? String == "cancelled")

@@ -161,8 +161,9 @@ struct ModelRouterCloudFallbackTests {
     func router(client: Bool = true, tracker: CostTracker? = nil) throws -> ModelRouter {
         ModelRouter(
             localOrchestrator: ModelOrchestratorActor(engine: MockInferenceEngine()),
-            cloudClient: client ? try OpenRouterClient(config: .init(
-                apiKey: "k", baseURL: URL(string: "http://127.0.0.1:9")!, timeout: 2, maxRetries: 0)) : nil,
+            cloudClient: client ? try OpenRouterClient(
+                config: .init(apiKey: "k", baseURL: URL(string: "http://127.0.0.1:9")!, timeout: 2, maxRetries: 0),
+                configuration: StubURLProtocol.configuration) : nil,
             strategy: .cloudOnly, costTracker: tracker, fallbackCloudModel: "openai/gpt-4-turbo")
     }
 
