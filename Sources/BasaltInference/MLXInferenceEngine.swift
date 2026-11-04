@@ -1202,9 +1202,7 @@ public actor MLXInferenceEngine: InferenceEngine {
 }
 
 extension MLXInferenceEngine {
-    func record(_ event: EngineEvent) {
-        state = .reduce(state, event)
-    }
+    func record(_ event: EngineEvent) { state = .reduce(state, event) }
 
     struct GenerationLaunch {
         let stream: AsyncStream<Generation>
