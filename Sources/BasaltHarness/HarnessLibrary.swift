@@ -14,6 +14,16 @@ public struct HarnessKnowledgeEntry: Codable, Sendable, Equatable {
     public let createdAt: String
 }
 
+struct HarnessKnowledgeDraft: Sendable {
+    let topic: String
+    let content: String
+    let domain: String
+    let cue: String
+    let confidence: String
+    var attributions: [HarnessComponentAttribution] = []
+    var delta: [String: String]?
+}
+
 public struct HarnessLibraryLimits: Sendable, Equatable {
     public var maxTopicChars = 200
     public var maxCueChars = 500
@@ -76,18 +86,17 @@ public struct HarnessExperienceLibrary: Sendable {
 
     @discardableResult
     public func addKnowledge(
-        topic: String,
-        content: String,
-        domain: String = "general",
-        cue: String = "",
-        confidence: String = "medium",
-        attributions: [HarnessComponentAttribution] = [],
-        delta: [String: String]? = nil
+        topic: String, content: String, domain: String = "general", cue: String = "", confidence: String = "medium"
     ) async throws -> HarnessKnowledgeEntry {
-        let topic = Self.singleLine(topic)
-        let cue = Self.singleLine(cue.isEmpty ? topic : cue)
-        let domainSlug = Self.slugify(domain.isEmpty ? "general" : domain)
-        try limits.validate(topic: topic, cue: cue, domain: domain, content: content, confidence: confidence, delta: delta)
+        try await addKnowledge(HarnessKnowledgeDraft(topic: topic, content: content, domain: domain, cue: cue, confidence: confidence))
+    }
+
+    func addKnowledge(_ draft: HarnessKnowledgeDraft) async throws -> HarnessKnowledgeEntry {
+        let topic = Self.singleLine(draft.topic)
+        let cue = Self.singleLine(draft.cue.isEmpty ? topic : draft.cue)
+        let domainSlug = Self.slugify(draft.domain.isEmpty ? "general" : draft.domain)
+        try limits.validate(
+            topic: topic, cue: cue, domain: draft.domain, content: draft.content, confidence: draft.confidence, delta: draft.delta)
         return try await onWriterQueue { try withLock {
             var entries = try loadEntries(quarantineCorrupt: true)
             guard entries.count < limits.maxEntries else {
@@ -96,8 +105,8 @@ public struct HarnessExperienceLibrary: Sendable {
             let domainDir = rootDirectory.appendingPathComponent(domainSlug, isDirectory: true)
             let slug = uniqueSlug(Self.slugify(topic), domain: domainSlug, entries: entries, domainDir: domainDir)
             let entry = HarnessKnowledgeEntry(
-                slug: slug, topic: topic, domain: domainSlug, content: content, cue: cue,
-                confidence: confidence, attributions: attributions, delta: delta,
+                slug: slug, topic: topic, domain: domainSlug, content: draft.content, cue: cue,
+                confidence: draft.confidence, attributions: draft.attributions, delta: draft.delta,
                 createdAt: ISO8601DateFormatter().string(from: Date())
             )
             entries.append(entry)

@@ -55,37 +55,10 @@ public enum HarnessValidator {
             errors.append("always-on files exceed budget (\(alwaysOnChars) > \(spec.alwaysOnMaxChars) chars)")
         }
 
-        var skills: [(path: String, name: String)] = []
-        var subagentCount = 0
-        var scriptCount = 0
-        for path in tree.files.keys.sorted() {
-            let content = tree.files[path] ?? ""
-            if let directoryName = spec.skillName(at: path) {
-                if let name = validateSkill(path: path, directoryName: directoryName, content: content, errors: &errors) {
-                    skills.append((path, name))
-                }
-            } else if spec.isAgentFile(path) {
-                subagentCount += 1
-                validateAgent(path: path, content: content, format: spec.agentFormat, errors: &errors)
-            } else if path == spec.hookSettingsFile {
-                validateHookSettings(content: content, path: path, errors: &errors, warnings: &warnings)
-            } else if spec.classify(path: path) == .scripts || spec.isUnder(spec.pluginDirectories, path) {
-                scriptCount += 1
-                if content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    errors.append("\(path): file is empty")
-                }
-            }
-        }
+        let census = validateFiles(tree, spec: spec, errors: &errors, warnings: &warnings)
+        errors = Array(Set(errors + missingScriptErrors(tree))).sorted()
 
-        for (path, content) in tree.files {
-            for reference in HarnessPath.scriptReferences(in: content)
-            where !HarnessPath.resolve(reference, from: path).contains(where: { tree.files[$0] != nil }) {
-                errors.append("\(path): references missing script '\(reference)'")
-            }
-        }
-        errors = Array(Set(errors)).sorted()
-
-        let untriggered = untriggeredSkills(skills, tree: tree, spec: spec, alwaysOnPaths: Set(alwaysOnPaths))
+        let untriggered = untriggeredSkills(census.skills, tree: tree, spec: spec, alwaysOnPaths: Set(alwaysOnPaths))
         var diversity: Double?
         if !siblings.isEmpty {
             let score = HarnessDiversity.nearestSiblingDistance(tree, siblings: siblings, relativeTo: base)
@@ -103,12 +76,47 @@ public enum HarnessValidator {
             alwaysOnFiles: alwaysOnPaths,
             alwaysOnChars: alwaysOnChars,
             alwaysOnMaxChars: spec.alwaysOnMaxChars,
-            skillCount: skills.count,
-            subagentCount: subagentCount,
-            scriptCount: scriptCount,
+            skillCount: census.skills.count,
+            subagentCount: census.subagents,
+            scriptCount: census.scripts,
             untriggeredSkills: untriggered,
             diversityScore: diversity
         )
+    }
+
+    private static func validateFiles(
+        _ tree: HarnessTree, spec: HarnessSurfaceSpec, errors: inout [String], warnings: inout [String]
+    ) -> (skills: [(path: String, name: String)], subagents: Int, scripts: Int) {
+        var skills: [(path: String, name: String)] = []
+        var subagents = 0
+        var scripts = 0
+        for path in tree.files.keys.sorted() {
+            let content = tree.files[path] ?? ""
+            if let directoryName = spec.skillName(at: path) {
+                if let name = validateSkill(path: path, directoryName: directoryName, content: content, errors: &errors) {
+                    skills.append((path, name))
+                }
+            } else if spec.isAgentFile(path) {
+                subagents += 1
+                validateAgent(path: path, content: content, format: spec.agentFormat, errors: &errors)
+            } else if path == spec.hookSettingsFile {
+                validateHookSettings(content: content, path: path, errors: &errors, warnings: &warnings)
+            } else if spec.classify(path: path) == .scripts || spec.isUnder(spec.pluginDirectories, path) {
+                scripts += 1
+                if content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    errors.append("\(path): file is empty")
+                }
+            }
+        }
+        return (skills, subagents, scripts)
+    }
+
+    private static func missingScriptErrors(_ tree: HarnessTree) -> [String] {
+        tree.files.flatMap { path, content in
+            HarnessPath.scriptReferences(in: content)
+                .filter { reference in !HarnessPath.resolve(reference, from: path).contains { tree.files[$0] != nil } }
+                .map { "\(path): references missing script '\($0)'" }
+        }
     }
 
     private static func validateSkill(path: String, directoryName: String, content: String, errors: inout [String]) -> String? {

@@ -282,13 +282,13 @@ struct HarnessOptimizerTests {
         #expect(view.block.count < HarnessProposal.maxHarnessPromptChars + 1000)
 
         let report = HarnessValidator.validate(base, spec: .claude)
-        let rejected = HarnessProposal.admit([".claude/b.md": "short"], base: base, baseReport: report, siblings: [], spec: .claude, truncated: view.truncated)
+        let rejected = HarnessProposal.admit([".claude/b.md": "short"], base: base, baseReport: report, siblings: [], spec: .claude, bounds: .init(truncated: view.truncated))
         guard case .failure(let rejection) = rejected else {
             Issue.record("a delta for a truncated file was admitted")
             return
         }
         #expect(rejection.reasons == [".claude/b.md: shown truncated to the proposer, so its full content is unknown to it"])
-        let admitted = HarnessProposal.admit([".claude/a.md": "short"], base: base, baseReport: report, siblings: [], spec: .claude, truncated: view.truncated)
+        let admitted = HarnessProposal.admit([".claude/a.md": "short"], base: base, baseReport: report, siblings: [], spec: .claude, bounds: .init(truncated: view.truncated))
         #expect(throws: Never.self) { try admitted.get() }
     }
 
