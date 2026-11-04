@@ -120,6 +120,7 @@ struct ProviderErrorResponseTests {
         (.authenticationFailed(details: "d"), 401, "authentication_error", "authentication_error", nil),
         (.invalidRequestStructure(details: "d"), 400, "invalid_request_error", "invalid_request_error", nil),
         (.modelConfigurationInvalid(path: "p", reason: "r"), 422, "invalid_request_error", "invalid_request_error", nil),
+        (.modelProbeFailed(path: "p", check: "c", reason: "r"), 422, "invalid_request_error", "invalid_request_error", nil),
         (.contextLengthExceeded(maxTokens: 10, requested: 20), 413, "invalid_request_error", "invalid_request_error", nil),
         (.rateLimitExceeded(retryAfter: "7"), 429, "rate_limit_error", "rate_limit_error", "7"),
         (.rateLimitExceeded(retryAfter: nil), 429, "rate_limit_error", "rate_limit_error", "1"),

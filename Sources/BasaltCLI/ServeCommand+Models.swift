@@ -11,11 +11,13 @@ extension ServeCommand {
             await orchestrator.setModelId(targetModel)
             log("Model ready.")
         } catch {
-            if case .modelConfigurationInvalid = error {
+            switch error {
+            case .modelConfigurationInvalid, .modelProbeFailed:
                 log("\(red("[error]")) \(error.localizedDescription)")
                 throw ExitCode.failure
+            default:
+                log("\(yellow("[warn]")) \(error.localizedDescription) — running in stub mode.")
             }
-            log("\(yellow("[warn]")) \(error.localizedDescription) — running in stub mode.")
         }
     }
 

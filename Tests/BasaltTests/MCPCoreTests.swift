@@ -122,6 +122,7 @@ struct MCPCoreTests {
         (.modelNotCached(identifier: "m"), -32010),
         (.serverBusy(retryAfterSeconds: 1), -32012),
         (.modelConfigurationInvalid(path: "p", reason: "r"), -32012),
+        (.modelProbeFailed(path: "p", check: "c", reason: "r"), -32012),
         (.memoryPressure(retryAfterSeconds: 1), -32013),
     ])
     func errorCodes(error: BasaltError, code: Int) {
