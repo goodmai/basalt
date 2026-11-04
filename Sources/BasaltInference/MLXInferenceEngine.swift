@@ -1350,9 +1350,8 @@ public actor MLXInferenceEngine: InferenceEngine {
 
     static func handOff<T: TokenIteratorProtocol>(
         promptTokenCount: Int, modelConfiguration: ModelConfiguration, tokenizer: any MLXLMCommon.Tokenizer,
-        iterator: consuming T, tools: [ToolSpec]?, toolCallPolicy: ToolCallPolicy
+        iterator: consuming T, tools: [ToolSpec]?, toolCallPolicy: ToolCallPolicy, since started: ContinuousClock.Instant = .now
     ) -> (AsyncStream<Generation>, Task<Void, Never>, TimeInterval) {
-        let started = ContinuousClock.now
         Stream.defaultStream.synchronize()
         let prefill = (ContinuousClock.now - started).inSeconds
         let (stream, task) = generateTask(
@@ -1567,8 +1566,8 @@ public actor MLXInferenceEngine: InferenceEngine {
         kvPrecision: KVPrecision? = nil,
         mtpDrafter: MTPDrafter? = nil, mtpBlockSize: Int = 4, mtpPrefix: MTPPrefix? = nil
     ) throws -> GenerationLaunch {
+        let started = ContinuousClock.now
         if let mtpDrafter, !carriesMoreThanTokens(input) {
-            let started = ContinuousClock.now
             let reused = reuse?.reusedTokens ?? 0
             let stateful = mtpDrafter.model as? any StatefulMTPDrafterModel
             let staged = keepsCache && stateful != nil && boundary >= reused && boundary < input.text.tokens.dim(-1)
@@ -1595,17 +1594,16 @@ public actor MLXInferenceEngine: InferenceEngine {
                 drafterState = state
             }
             let start = staged ? boundary : 0
-            let headSeconds = (ContinuousClock.now - started).inSeconds
             let iterator = try MTPSpeculativeTokenIterator(
                 input: LMInput(tokens: input.text.tokens[.ellipsis, start...]), mainModel: context.model,
                 drafter: mtpDrafter.model, mainCache: cache?.layers, drafterState: drafterState, parameters: params,
                 blockSize: mtpBlockSize, components: components)
             let (stream, task, prefill) = Self.handOff(
                 promptTokenCount: input.text.tokens.dim(-1) - start, modelConfiguration: context.configuration,
-                tokenizer: context.tokenizer, iterator: iterator, tools: tools, toolCallPolicy: params.toolCallPolicy)
+                tokenizer: context.tokenizer, iterator: iterator, tools: tools, toolCallPolicy: params.toolCallPolicy, since: started)
             return GenerationLaunch(
                 stream: stream, task: task, cache: kept?.cache, reusedTokens: staged ? reused : 0,
-                prefillSeconds: headSeconds + iterator.promptPrefillTime + prefill,
+                prefillSeconds: prefill,
                 mtpPrefix: kept?.prefix)
         }
         guard keepsCache else {
@@ -1614,7 +1612,7 @@ public actor MLXInferenceEngine: InferenceEngine {
                 let iterator = try TokenIterator(input: input, model: context.model, cache: cache, parameters: params, components: components)
                 let (stream, task, prefill) = Self.handOff(
                     promptTokenCount: input.text.tokens.dim(-1), modelConfiguration: context.configuration,
-                    tokenizer: context.tokenizer, iterator: iterator, tools: tools, toolCallPolicy: params.toolCallPolicy)
+                    tokenizer: context.tokenizer, iterator: iterator, tools: tools, toolCallPolicy: params.toolCallPolicy, since: started)
                 return GenerationLaunch(stream: stream, task: task, cache: nil, reusedTokens: 0, prefillSeconds: prefill)
             }
             if let zoned = try zonedCache(params: params, zones: kvZones, precision: kvPrecision, model: context.model) {
@@ -1622,7 +1620,7 @@ public actor MLXInferenceEngine: InferenceEngine {
                     input: input, model: context.model, cache: zoned.cache, parameters: zoned.params, components: components)
                 let (stream, task, prefill) = Self.handOff(
                     promptTokenCount: input.text.tokens.dim(-1), modelConfiguration: context.configuration,
-                    tokenizer: context.tokenizer, iterator: iterator, tools: tools, toolCallPolicy: zoned.params.toolCallPolicy)
+                    tokenizer: context.tokenizer, iterator: iterator, tools: tools, toolCallPolicy: zoned.params.toolCallPolicy, since: started)
                 return GenerationLaunch(stream: stream, task: task, cache: nil, reusedTokens: 0, prefillSeconds: prefill)
             }
             if let batch, let layers = BatchedTokenIterator.batchableLayers(try context.model.newCache(parameters: params)),
@@ -1632,12 +1630,11 @@ public actor MLXInferenceEngine: InferenceEngine {
                     input: input, model: context.model, layers: layers, processor: components.logitProcessor(parameters: params),
                     sampler: params.sampler(), prefill: params.prefill, maxTokens: params.maxTokens,
                     stopTokens: batchStopTokens(context), seat: seat)
-                let prefillTime = iterator.promptPrefillTime
                 let (stream, task, prefill) = Self.handOff(
                     promptTokenCount: input.text.tokens.dim(-1), modelConfiguration: context.configuration,
-                    tokenizer: context.tokenizer, iterator: iterator, tools: tools, toolCallPolicy: params.toolCallPolicy)
+                    tokenizer: context.tokenizer, iterator: iterator, tools: tools, toolCallPolicy: params.toolCallPolicy, since: started)
                 return GenerationLaunch(
-                    stream: stream, task: task, cache: nil, reusedTokens: 0, prefillSeconds: prefillTime + prefill)
+                    stream: stream, task: task, cache: nil, reusedTokens: 0, prefillSeconds: prefill)
             }
             let usesPromptLookupIterator = (speculativeLookup || grammarJumpForward)
             let fresh = usesPromptLookupIterator && params.kvBits == nil && !carriesMoreThanTokens(input)
@@ -1646,7 +1643,7 @@ public actor MLXInferenceEngine: InferenceEngine {
                 let iterator = try TokenIterator(input: input, model: context.model, parameters: params, components: components)
                 let (stream, task, prefill) = Self.handOff(
                     promptTokenCount: input.text.tokens.dim(-1), modelConfiguration: context.configuration,
-                    tokenizer: context.tokenizer, iterator: iterator, tools: tools, toolCallPolicy: params.toolCallPolicy)
+                    tokenizer: context.tokenizer, iterator: iterator, tools: tools, toolCallPolicy: params.toolCallPolicy, since: started)
                 return GenerationLaunch(stream: stream, task: task, cache: nil, reusedTokens: 0, prefillSeconds: prefill)
             }
             try components.validate(parameters: params)
@@ -1657,7 +1654,7 @@ public actor MLXInferenceEngine: InferenceEngine {
                 speculativeLookup: speculativeLookup, grammarJumpForward: grammarJumpForward)
             let (stream, task, prefill) = Self.handOff(
                 promptTokenCount: input.text.tokens.dim(-1), modelConfiguration: context.configuration,
-                tokenizer: context.tokenizer, iterator: iterator, tools: tools, toolCallPolicy: params.toolCallPolicy)
+                tokenizer: context.tokenizer, iterator: iterator, tools: tools, toolCallPolicy: params.toolCallPolicy, since: started)
             return GenerationLaunch(stream: stream, task: task, cache: nil, reusedTokens: 0, prefillSeconds: prefill)
         }
         try components.validate(parameters: params)
@@ -1687,7 +1684,7 @@ public actor MLXInferenceEngine: InferenceEngine {
             let keepable = iterator.state == nil || cache.isHybrid
             let (stream, task, prefill) = Self.handOff(
                 promptTokenCount: input.text.tokens.dim(-1) - reused, modelConfiguration: context.configuration,
-                tokenizer: context.tokenizer, iterator: iterator, tools: tools, toolCallPolicy: params.toolCallPolicy)
+                tokenizer: context.tokenizer, iterator: iterator, tools: tools, toolCallPolicy: params.toolCallPolicy, since: started)
             return GenerationLaunch(
                 stream: stream, task: task, cache: keepable ? head.kept : nil, anchors: keepable ? head.anchors : [],
                 reusedTokens: reused, exactTokens: blended?.exactPrefix ?? Int.max, prefillSeconds: prefill)
