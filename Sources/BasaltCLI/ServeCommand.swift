@@ -142,6 +142,9 @@ struct ServeCommand: AsyncParsableCommand {
     @Flag(name: .customLong("wired-limit"), inversion: .prefixedNo, help: "Hold the wired memory limit at Metal's recommended working set while a model is loaded (on Gemma 4 26B-A4B it cut swap by 41% under competing memory pressure and changed nothing without it)")
     var wiredLimit: Bool = true
 
+    @Flag(name: .customLong("model-probe"), inversion: .prefixedNo, help: "Probe a model once per fingerprint at load (chat template, tokenizer round trip, stop tokens, finite logits, entropy, perplexity, two greedy known answers; cached in ~/.basalt/model-probes) and refuse to load it when a check fails")
+    var modelProbe: Bool = true
+
     @Option(
         name: .customLong("max-queue"),
         help: "Requests waiting for a generation slot; beyond it the server answers 503 with Retry-After (default: 8)"
@@ -205,7 +208,7 @@ struct ServeCommand: AsyncParsableCommand {
 
         BasaltLogger.globalLevel = config.logLevel.basaltLevel
 
-        let orchestrator = try makeOrchestrator(maxTokens: config.maxTokens)
+        let orchestrator = try await makeOrchestrator(maxTokens: config.maxTokens)
 
         let embeddings = try await loadEmbeddings()
 
@@ -233,8 +236,9 @@ struct ServeCommand: AsyncParsableCommand {
             orchestrator: orchestrator)
     }
 
-    private func makeOrchestrator(maxTokens: Int) throws -> ModelOrchestratorActor {
+    private func makeOrchestrator(maxTokens: Int) async throws -> ModelOrchestratorActor {
         let engine = try makeEngine()
+        await engine.probeModels(modelProbe)
         if batchSlots > 1, maxConcurrent < 2 {
             log("\(yellow("[warn]")) --batch-slots \(batchSlots) has no effect with --max-concurrent \(maxConcurrent): only one generation runs at a time")
         }

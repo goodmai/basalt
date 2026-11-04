@@ -76,6 +76,7 @@ public actor MLXInferenceEngine: InferenceEngine {
     private let quantizedKVStart: Int
     private let kvZones: KVZones?
     private let wiresWorkingSet: Bool
+    var probesModel = false
     private var wiredTicket: WiredMemoryTicket?
     private let kvHeadSplit: Double?
     private let questTopK: Int?
@@ -363,8 +364,6 @@ public actor MLXInferenceEngine: InferenceEngine {
         await aliasRegistration.value
     }
 
-    // MARK: — Load
-
     public func load(modelPath: String) async throws(BasaltError) {
         logger.trace("Loading model from path: \(modelPath)")
         await Self.registerAliases()
@@ -387,6 +386,7 @@ public actor MLXInferenceEngine: InferenceEngine {
             if let gpuCacheLimit { Memory.cacheLimit = gpuCacheLimit }
             let loaded = try await loadModelContainer(from: directory, using: DefaultTokenizerLoader())
             try await loaded.perform { try PrismHadamard.prepareLoaded($0.model) }
+            try await probe(loaded, directory: directory, modelPath: modelPath)
             let drafts = mtp ? await loadMTPDrafter(for: loaded, directory: directory, modelPath: modelPath) : false
             let modelType = ModelCache.config(at: directory)?["model_type"] as? String
             let capabilities = ModelCapabilities.of(modelType: modelType)
@@ -422,18 +422,6 @@ public actor MLXInferenceEngine: InferenceEngine {
         cacheBlend = nil
         Memory.clearCache()
         logger.info("Previous model unloaded, GPU cache cleared.")
-    }
-
-
-    static func loadFailure(_ error: any Error, modelPath: String) async -> BasaltError {
-        switch error as? ModelFactoryError {
-        case .configurationDecodingError?:
-            return .modelConfigurationInvalid(path: modelPath, reason: error.localizedDescription)
-        case .unsupportedModelType(let modelType)? where await !VLMTypeRegistry.shared.contains(modelType):
-            return .modelConfigurationInvalid(path: modelPath, reason: error.localizedDescription)
-        default:
-            return .weightsCorrupted(path: modelPath, reason: error.localizedDescription)
-        }
     }
 
     static func upstreamTokenizer(at directory: URL) async throws -> any Tokenizers.Tokenizer {

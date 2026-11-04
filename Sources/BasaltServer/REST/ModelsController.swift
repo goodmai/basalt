@@ -239,7 +239,7 @@ struct ModelsController: Sendable {
 
     static func publicMessage(for error: any Error) -> String {
         switch error as? BasaltError {
-        case .modelNotFound?, .weightsCorrupted?, .modelNotCached?, .modelConfigurationInvalid?:
+        case .modelNotFound?, .weightsCorrupted?, .modelNotCached?, .modelConfigurationInvalid?, .modelProbeFailed?:
             fputs("🔴 [REST] \(error.localizedDescription)\n", stderr)
             return modelUnavailable
         default:
