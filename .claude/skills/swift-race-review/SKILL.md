@@ -31,6 +31,8 @@ Load `references/mlx-hazards.md` when the code calls a model, touches caches or 
 
 ## What to report
 
+Check what an API guarantees (`Mutex`, `Atomic`, `withTaskCancellationShield`, `Task` cancellation inheritance, `MTLCommandBuffer` completion handlers) with Xcode's `DocumentationSearch`; see the `xcode-mcp` skill (`python3 .claude/skills/xcode-mcp/scripts/xcode_mcp.py DocumentationSearch '{"query":"Mutex","frameworks":["Synchronization"]}'`). Don't rely on memory. For a crash, use CLI `lldb` (`bt all`).
+
 Report only hazards you can trace to two named contexts and one piece of shared state, or to a lock cycle you can draw. For each finding:
 
 - **Contexts:** which two threads or tasks, with the code location each runs from.

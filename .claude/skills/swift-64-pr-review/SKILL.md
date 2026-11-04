@@ -49,6 +49,9 @@ You are a Staff Swift Security & Quality Auditor executing a strict, zero-trust 
   - per-token `Array` scratch → `InlineArray`/`withTemporaryAllocation`, with a benchmark;
   - `default:` over our own enum → exhaustive `switch`.
 
+### Gate 3c: API Facts via Xcode MCP
+- When a finding or a diff depends on what a Swift 6.4 / stdlib / framework API does (signature, availability, `~Copyable`, isolation, whether a shield is inherited), check it with `DocumentationSearch` (the `xcode-mcp` skill) before reporting. Example: `python3 .claude/skills/xcode-mcp/scripts/xcode_mcp.py DocumentationSearch '{"query":"withTaskCancellationShield"}'`. Cite the doc passage in the finding.
+
 ### Gate 4: SwiftUI / Observation & Platform Hygiene (if applicable)
 - Flag view body side effects, unstable view identities, or `@Observable` property reads that trigger unnecessary view invalidation storms.
 - Reject legacy `ObservableObject` or `DispatchQueue.main.async` in favor of `@Observable` and `@MainActor`.
