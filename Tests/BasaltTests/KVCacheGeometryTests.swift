@@ -33,19 +33,19 @@ struct KVCacheGeometryTests {
     func denseGQA() {
         #expect(KVCacheGeometry.kvBytesPerToken(layers: 64, kvHeads: 8, headDim: 128, bytesPerElement: 2) == 262_144)
         let qwen32B = Self.dense(layers: 64, kvHeads: 8)
-        #expect(qwen32B.bytes(tokens: 1) == 262_144)
-        #expect(qwen32B.bytes(tokens: 32_768) == 8_589_934_592)
-        #expect(Self.dense(layers: 28, kvHeads: 4).bytes(tokens: 1) == 57_344)
+        #expect(qwen32B.bytes(tokens: TokenCount(1)).rawValue == 262_144)
+        #expect(qwen32B.bytes(tokens: TokenCount(32_768)).rawValue == 8_589_934_592)
+        #expect(Self.dense(layers: 28, kvHeads: 4).bytes(tokens: TokenCount(1)).rawValue == 57_344)
     }
 
     @Test("Qwen3-4B config.json: 147,456 B per token, 4.62 GiB at the 33,661-token prompt of #77")
     func qwen3_4B() {
         let g = KVCacheGeometry(config: Self.qwen3_4B)!
         #expect(g.isFromConfig)
-        #expect(g.bytes(tokens: 1) == 147_456)
-        #expect(g.bytes(tokens: 33_661) == 4_963_516_416)
-        #expect(abs(Double(g.bytes(tokens: 33_661)) / Double(1 << 30) - 4.62) < 0.01)
-        #expect(g.bytes(tokens: 32_768) == 4_831_838_208)
+        #expect(g.bytes(tokens: TokenCount(1)).rawValue == 147_456)
+        #expect(g.bytes(tokens: TokenCount(33_661)).rawValue == 4_963_516_416)
+        #expect(abs(Double(g.bytes(tokens: TokenCount(33_661)).rawValue) / Double(1 << 30) - 4.62) < 0.01)
+        #expect(g.bytes(tokens: TokenCount(32_768)).rawValue == 4_831_838_208)
     }
 
     @Test("Hybrid (Ornith-1.5-9B, text_config): KV only on the 8 full-attention layers, fixed SSM state on the 24 linear ones")
@@ -53,9 +53,9 @@ struct KVCacheGeometryTests {
         let g = KVCacheGeometry(config: Self.ornith9B)!
         let ssm: Int64 = 24 * (3 * 8192 * 2 + 32 * 128 * 128 * 4)
         #expect(g.fixedStateBytes == ssm)
-        #expect(g.bytes(tokens: 0) == ssm)
-        #expect(g.bytes(tokens: 1) - g.bytes(tokens: 0) == 2 * 8 * 4 * 256 * 2)
-        #expect(g.bytes(tokens: 32_768) == 1_073_741_824 + ssm)
+        #expect(g.bytes(tokens: TokenCount(0)).rawValue == ssm)
+        #expect(g.bytes(tokens: TokenCount(1)).rawValue - g.bytes(tokens: TokenCount(0)).rawValue == 2 * 8 * 4 * 256 * 2)
+        #expect(g.bytes(tokens: TokenCount(32_768)).rawValue == 1_073_741_824 + ssm)
     }
 
     @Test("full_attention_interval alone marks the same layers as layer_types")
@@ -72,8 +72,8 @@ struct KVCacheGeometryTests {
             "sliding_window": 512, "sliding_window_pattern": 6,
         ])!
         let perLayer: Int64 = 2 * 256 * 2
-        #expect(g.bytes(tokens: 512) == 6 * perLayer * 512)
-        #expect(g.bytes(tokens: 4096) == 5 * perLayer * 512 + perLayer * 4096)
+        #expect(g.bytes(tokens: TokenCount(512)).rawValue == 6 * perLayer * 512)
+        #expect(g.bytes(tokens: TokenCount(4096)).rawValue == 5 * perLayer * 512 + perLayer * 4096)
         let typed = KVCacheGeometry(config: [
             "num_hidden_layers": 6, "num_attention_heads": 4, "num_key_value_heads": 1, "head_dim": 256,
             "sliding_window": 512,
@@ -91,15 +91,15 @@ struct KVCacheGeometryTests {
         #expect(KVCacheGeometry.bytesPerElement(kvBits: 8) == 8.5 / 8)
         #expect(KVCacheGeometry.bytesPerElement(kvBits: 4) == 4.5 / 8)
         let g = Self.dense(layers: 64, kvHeads: 8)
-        #expect(g.bytes(tokens: 32_768, kvPrecision: .q4) == 8_589_934_592 * 9 / 32)
+        #expect(g.bytes(tokens: TokenCount(32_768), kvPrecision: .q4).rawValue == 8_589_934_592 * 9 / 32)
         let ornith = KVCacheGeometry(config: Self.ornith9B)!
-        #expect(ornith.bytes(tokens: 0, kvPrecision: .q4) == ornith.fixedStateBytes)
+        #expect(ornith.bytes(tokens: TokenCount(0), kvPrecision: .q4).rawValue == ornith.fixedStateBytes)
     }
 
     @Test("head_dim falls back to hidden_size / num_attention_heads, kv heads to the attention heads")
     func derivedFields() {
         let g = KVCacheGeometry(config: ["num_hidden_layers": 28, "num_attention_heads": 28, "hidden_size": 3584])!
-        #expect(g.bytes(tokens: 1) == 2 * 28 * 28 * 128 * 2)
+        #expect(g.bytes(tokens: TokenCount(1)).rawValue == 2 * 28 * 28 * 128 * 2)
     }
 
     @Test("Missing geometry → no config geometry; the model falls back to the parameter-count proxy")
@@ -110,7 +110,7 @@ struct KVCacheGeometryTests {
 
         let proxy = KVCacheGeometry(parameterProxy: 7)
         #expect(!proxy.isFromConfig)
-        #expect(abs(Double(proxy.bytes(tokens: 4096)) / 1e9 - 0.248) < 0.001)
+        #expect(abs(Double(proxy.bytes(tokens: TokenCount(4096)).rawValue) / 1e9 - 0.248) < 0.001)
         #expect(KVCacheGeometry(parameterProxy: 70) == KVCacheGeometry(parameterProxy: 32))
 
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -132,7 +132,7 @@ struct KVCacheGeometryTests {
         let g = KVCacheGeometry(config: config)!
         #expect(g.elementsPerToken == 3 * 1 * (512 + 512))
         #expect(g.windowedElementsPerToken == 12 * 2 * 1 * 256)
-        #expect(g.bytes(tokens: 4096) == 3 * 1024 * 2 * 4096 + 12 * 512 * 2 * 512)
+        #expect(g.bytes(tokens: TokenCount(4096)).rawValue == 3 * 1024 * 2 * 4096 + 12 * 512 * 2 * 512)
 
         config["attention_k_eq_v"] = true
         config["num_global_key_value_heads"] = 4
@@ -146,7 +146,7 @@ struct KVCacheGeometryTests {
             "num_key_value_heads": 128, "hidden_size": 7168, "kv_lora_rank": 512,
             "qk_nope_head_dim": 128, "qk_rope_head_dim": 64, "v_head_dim": 128,
         ])!
-        #expect(g.bytes(tokens: 1) == 61 * 128 * (192 + 128) * 2)
+        #expect(g.bytes(tokens: TokenCount(1)).rawValue == 61 * 128 * (192 + 128) * 2)
         #expect(g.quantizedGroupSize == 64)
     }
 
@@ -168,10 +168,10 @@ struct KVCacheGeometryTests {
         let g = KVCacheGeometry(config: Self.qwen3_4B)!
         #expect(g.bytesPerToken(.k8v4) == 59_904)
         #expect(g.bytesPerToken(.k8v4) / g.bytesPerToken(nil) == 13.0 / 32)
-        #expect(g.bytes(tokens: 32_768, kvPrecision: .k8v4) == 32_768 * 59_904)
-        #expect(g.bytes(tokens: 32_768, kvPrecision: .k8v4, zones: .standard) == 1_343 * 147_456 + 31_425 * 59_904)
+        #expect(g.bytes(tokens: TokenCount(32_768), kvPrecision: .k8v4).rawValue == 32_768 * 59_904)
+        #expect(g.bytes(tokens: TokenCount(32_768), kvPrecision: .k8v4, zones: .standard).rawValue == 1_343 * 147_456 + 31_425 * 59_904)
         let budget: Int64 = 7 << 30
-        let rooms = [KVPrecision.q8, .k8v4, .q4].map { g.maxTokens(fitting: budget, kvPrecision: $0, zones: .standard) }
+        let rooms = [KVPrecision.q8, .k8v4, .q4].map { g.maxTokens(fitting: ByteCount(budget), kvPrecision: $0, zones: .standard).rawValue }
         #expect(rooms[0] < rooms[1] && rooms[1] < rooms[2])
         #expect(g.bytesPerToken(.k8v4h) == g.bytesPerToken(.k8v4))
         #expect(!KVCacheGeometry.adaptiveKVPrecisionLadder.contains { $0?.rotatesValues == true })
@@ -185,12 +185,12 @@ struct KVCacheGeometryTests {
             "num_hidden_layers": 32, "num_attention_heads": 32, "num_key_value_heads": 8, "hidden_size": 4096,
             "attn_layer_period": 8, "attn_layer_offset": 4,
         ])!
-        #expect(jamba.bytes(tokens: 1) == 2 * 4 * 8 * 128 * 2)
+        #expect(jamba.bytes(tokens: TokenCount(1)).rawValue == 2 * 4 * 8 * 128 * 2)
         let nemotron = KVCacheGeometry(config: [
             "num_hidden_layers": 8, "num_attention_heads": 32, "num_key_value_heads": 8, "head_dim": 128,
             "hybrid_override_pattern": "M-M*-M*-",
         ])!
-        #expect(nemotron.bytes(tokens: 1) == 2 * 2 * 8 * 128 * 2)
+        #expect(nemotron.bytes(tokens: TokenCount(1)).rawValue == 2 * 2 * 8 * 128 * 2)
     }
 
     @Test("--kv-bits leaves sliding-window layers in fp16: MLX quantizes only simple caches, not rotating ones")
@@ -202,8 +202,8 @@ struct KVCacheGeometryTests {
         #expect(g.quantizedGroupSize == 64)
         let windowed = Int64(5 * 2 * 96 * 2 * 512)
         let full = 2.0 * 128 * 4096
-        #expect(g.bytes(tokens: 4096) == Int64(full * 2) + windowed)
-        #expect(g.bytes(tokens: 4096, kvPrecision: .q4) == Int64(full * (0.5 + 4.0 / 64)) + windowed)
+        #expect(g.bytes(tokens: TokenCount(4096)).rawValue == Int64(full * 2) + windowed)
+        #expect(g.bytes(tokens: TokenCount(4096), kvPrecision: .q4).rawValue == Int64(full * (0.5 + 4.0 / 64)) + windowed)
         #expect(g.maxTokens(fitting: g.bytes(tokens: 4096, kvPrecision: .q4), kvPrecision: .q4) == 4096)
     }
 
@@ -212,41 +212,41 @@ struct KVCacheGeometryTests {
         let g = KVCacheGeometry(config: ["num_hidden_layers": 2, "num_attention_heads": 4, "head_dim": 96])!
         #expect(g.quantizedGroupSize == 32)
         #expect(g.bytesPerToken(.q4) == g.elementsPerToken * (0.5 + 4.0 / 32))
-        #expect(g.bytes(tokens: 1, kvPrecision: .q4) == Int64(2 * 2 * 4 * 96 * (0.5 + 4.0 / 32)))
+        #expect(g.bytes(tokens: TokenCount(1), kvPrecision: .q4).rawValue == Int64(2 * 2 * 4 * 96 * (0.5 + 4.0 / 32)))
         #expect(KVCacheGeometry(config: Self.qwen3_4B)!.quantizedGroupSize == 64)
     }
 
     @Test("Qwen3-4B at 32k: 8-bit KV saves 46.875%, 4-bit 71.875% of fp16, the whole cache quantized past quantizedKVStart")
     func quantizedFootprintAt32k() {
         let g = KVCacheGeometry(config: Self.qwen3_4B)!
-        #expect(g.bytes(tokens: 32_768, kvPrecision: .q8) == 32_768 * 78_336)
-        #expect(g.bytes(tokens: 32_768, kvPrecision: .q4) == 32_768 * 41_472)
-        #expect(1 - Double(g.bytes(tokens: 32_768, kvPrecision: .q8)) / Double(g.bytes(tokens: 32_768)) == 0.46875)
-        #expect(1 - Double(g.bytes(tokens: 32_768, kvPrecision: .q4)) / Double(g.bytes(tokens: 32_768)) == 0.71875)
+        #expect(g.bytes(tokens: TokenCount(32_768), kvPrecision: .q8).rawValue == 32_768 * 78_336)
+        #expect(g.bytes(tokens: TokenCount(32_768), kvPrecision: .q4).rawValue == 32_768 * 41_472)
+        #expect(1 - Double(g.bytes(tokens: TokenCount(32_768), kvPrecision: .q8).rawValue) / Double(g.bytes(tokens: TokenCount(32_768)).rawValue) == 0.46875)
+        #expect(1 - Double(g.bytes(tokens: TokenCount(32_768), kvPrecision: .q4).rawValue) / Double(g.bytes(tokens: TokenCount(32_768)).rawValue) == 0.71875)
     }
 
     @Test("MLX prefills the prompt in fp16 and quantizes it afterwards: the conversion holds both copies")
     func conversionPeak() {
         let g = KVCacheGeometry(config: Self.qwen3_4B)!
-        #expect(g.conversionPeakBytes(tokens: 16_384, kvPrecision: .q8) == 16_384 * (147_456 + 78_336))
-        #expect(g.conversionPeakBytes(tokens: 16_384, kvPrecision: nil) == g.bytes(tokens: 16_384))
+        #expect(g.conversionPeakBytes(tokens: TokenCount(16_384), kvPrecision: .q8).rawValue == 16_384 * (147_456 + 78_336))
+        #expect(g.conversionPeakBytes(tokens: TokenCount(16_384), kvPrecision: nil).rawValue == g.bytes(tokens: TokenCount(16_384)).rawValue)
         let ornith = KVCacheGeometry(config: Self.ornith9B)!
-        let growing = ornith.bytes(tokens: 1_000) - ornith.fixedStateBytes
-        #expect(ornith.conversionPeakBytes(tokens: 1_000, kvPrecision: .q4) == ornith.bytes(tokens: 1_000) + growing * 9 / 32)
+        let growing = ornith.bytes(tokens: TokenCount(1_000)).rawValue - ornith.fixedStateBytes
+        #expect(ornith.conversionPeakBytes(tokens: TokenCount(1_000), kvPrecision: .q4).rawValue == ornith.bytes(tokens: TokenCount(1_000)).rawValue + growing * 9 / 32)
     }
 
     @Test("Quantized room on a 7 GiB budget: the prompt must survive its fp16 prefill and the conversion copy")
     func quantizedRoomHonorsPrefill() {
         let g = KVCacheGeometry(config: Self.qwen3_4B)!
         let budget: Int64 = 7 << 30
-        #expect(g.maxPromptTokens(fitting: budget, kvPrecision: nil) == 50_972)
-        #expect(g.maxPromptTokens(fitting: budget, kvPrecision: .q8) == 33_288)
-        #expect(g.maxPromptTokens(fitting: budget, kvPrecision: .q4) == 39_783)
-        #expect(g.maxTokens(fitting: budget, kvPrecision: nil, promptTokens: 30_000) == 50_972)
-        #expect(g.maxTokens(fitting: budget, kvPrecision: .q8, promptTokens: 30_000) == 95_948)
-        #expect(g.maxTokens(fitting: budget, kvPrecision: .q4, promptTokens: 30_000) == 181_235)
-        #expect(g.maxTokens(fitting: budget, kvPrecision: .q8, promptTokens: 40_000) == KVCacheGeometry.defaultQuantizedKVStart)
-        #expect(g.maxTokens(fitting: 300 * 147_456, kvPrecision: .q4, promptTokens: 10) == 300)
+        #expect(g.maxPromptTokens(fitting: ByteCount(budget), kvPrecision: nil).rawValue == 50_972)
+        #expect(g.maxPromptTokens(fitting: ByteCount(budget), kvPrecision: .q8).rawValue == 33_288)
+        #expect(g.maxPromptTokens(fitting: ByteCount(budget), kvPrecision: .q4).rawValue == 39_783)
+        #expect(g.maxTokens(fitting: ByteCount(budget), kvPrecision: nil, promptTokens: TokenCount(30_000)).rawValue == 50_972)
+        #expect(g.maxTokens(fitting: ByteCount(budget), kvPrecision: .q8, promptTokens: TokenCount(30_000)).rawValue == 95_948)
+        #expect(g.maxTokens(fitting: ByteCount(budget), kvPrecision: .q4, promptTokens: TokenCount(30_000)).rawValue == 181_235)
+        #expect(g.maxTokens(fitting: ByteCount(budget), kvPrecision: .q8, promptTokens: TokenCount(40_000)).rawValue == KVCacheGeometry.defaultQuantizedKVStart)
+        #expect(g.maxTokens(fitting: ByteCount(300 * 147_456), kvPrecision: .q4, promptTokens: TokenCount(10)).rawValue == 300)
     }
 
     @Test("Zoned KV on Qwen3-4B: up to 64 sink + 1024 window + one 256-token migration step stay fp16, the rest is quantized; at 32k that saves 68.9% at 4 bits, 45.0% at 8")
@@ -254,13 +254,13 @@ struct KVCacheGeometryTests {
         let g = KVCacheGeometry(config: Self.qwen3_4B)!
         let zones = KVZones.standard
         #expect(zones.maxFullPrecisionTokens == 1_343)
-        #expect(g.bytes(tokens: 1_343, kvPrecision: .q4, zones: zones) == g.bytes(tokens: 1_343))
-        #expect(g.bytes(tokens: 32_768, kvPrecision: .q4, zones: zones) == 1_343 * 147_456 + 31_425 * 41_472)
-        #expect(g.bytes(tokens: 32_768, kvPrecision: .q8, zones: zones) == 1_343 * 147_456 + 31_425 * 78_336)
-        #expect(g.bytes(tokens: 32_768, kvPrecision: nil, zones: zones) == g.bytes(tokens: 32_768))
-        let fp16 = Double(g.bytes(tokens: 32_768))
-        #expect(abs(1 - Double(g.bytes(tokens: 32_768, kvPrecision: .q4, zones: zones)) / fp16 - 0.6893) < 1e-4)
-        #expect(abs(1 - Double(g.bytes(tokens: 32_768, kvPrecision: .q8, zones: zones)) / fp16 - 0.4495) < 1e-4)
+        #expect(g.bytes(tokens: TokenCount(1_343), kvPrecision: .q4, zones: zones).rawValue == g.bytes(tokens: TokenCount(1_343)).rawValue)
+        #expect(g.bytes(tokens: TokenCount(32_768), kvPrecision: .q4, zones: zones).rawValue == 1_343 * 147_456 + 31_425 * 41_472)
+        #expect(g.bytes(tokens: TokenCount(32_768), kvPrecision: .q8, zones: zones).rawValue == 1_343 * 147_456 + 31_425 * 78_336)
+        #expect(g.bytes(tokens: TokenCount(32_768), kvPrecision: nil, zones: zones).rawValue == g.bytes(tokens: TokenCount(32_768)).rawValue)
+        let fp16 = Double(g.bytes(tokens: TokenCount(32_768)).rawValue)
+        #expect(abs(1 - Double(g.bytes(tokens: TokenCount(32_768), kvPrecision: .q4, zones: zones).rawValue) / fp16 - 0.6893) < 1e-4)
+        #expect(abs(1 - Double(g.bytes(tokens: TokenCount(32_768), kvPrecision: .q8, zones: zones).rawValue) / fp16 - 0.4495) < 1e-4)
     }
 
     @Test("Evicting half the zoned middle on Qwen3-4B counts half the quantized tokens and widens the room the binary search may find")
@@ -269,27 +269,27 @@ struct KVCacheGeometryTests {
         let (budget, zones): (Int64, KVZones) = (7 << 30, .standard)
         let half = zones.evicting(0.5)
         #expect(half.keptMiddleTokens(31_425) == 15_713)
-        #expect(g.bytes(tokens: 32_768, kvPrecision: .k8v4, zones: half) == 1_343 * 147_456 + 15_713 * 59_904)
-        #expect(g.bytes(tokens: 1_343, kvPrecision: .k8v4, zones: half) == g.bytes(tokens: 1_343))
-        let room = g.maxTokens(fitting: budget, kvPrecision: .k8v4, zones: half)
-        #expect(room > g.maxTokens(fitting: budget, kvPrecision: .k8v4, zones: zones) * 19 / 10)
-        #expect(g.bytes(tokens: room, kvPrecision: .k8v4, zones: half) <= budget)
-        #expect(g.bytes(tokens: room + 2, kvPrecision: .k8v4, zones: half) > budget)
+        #expect(g.bytes(tokens: TokenCount(32_768), kvPrecision: .k8v4, zones: half).rawValue == 1_343 * 147_456 + 15_713 * 59_904)
+        #expect(g.bytes(tokens: TokenCount(1_343), kvPrecision: .k8v4, zones: half).rawValue == g.bytes(tokens: TokenCount(1_343)).rawValue)
+        let room = g.maxTokens(fitting: ByteCount(budget), kvPrecision: .k8v4, zones: half).rawValue
+        #expect(room > g.maxTokens(fitting: ByteCount(budget), kvPrecision: .k8v4, zones: zones).rawValue * 19 / 10)
+        #expect(g.bytes(tokens: TokenCount(room), kvPrecision: .k8v4, zones: half).rawValue <= budget)
+        #expect(g.bytes(tokens: TokenCount(room + 2), kvPrecision: .k8v4, zones: half).rawValue > budget)
     }
 
     @Test("Zoned KV quantizes while it prefills: no conversion copy, so on 7 GiB the prompt may use the whole zoned room, not uniform 4-bit's 39,783 tokens")
     func zonedRoomHasNoConversionPeak() {
         let g = KVCacheGeometry(config: Self.qwen3_4B)!
         let (budget, zones): (Int64, KVZones) = (7 << 30, .standard)
-        #expect(g.maxTokens(fitting: budget, kvPrecision: .q4, zones: zones) == 177_803)
-        #expect(g.maxTokens(fitting: budget, kvPrecision: .q8, zones: zones) == 94_763)
-        #expect(g.bytes(tokens: 177_803, kvPrecision: .q4, zones: zones) <= budget)
-        #expect(g.bytes(tokens: 177_804, kvPrecision: .q4, zones: zones) > budget)
-        #expect(g.maxPromptTokens(fitting: budget, kvPrecision: .q4, zones: zones) == 177_803)
-        #expect(g.maxTokens(fitting: budget, kvPrecision: .q4, promptTokens: 45_000, zones: zones) == 177_803)
-        #expect(g.maxTokens(fitting: budget, kvPrecision: nil, promptTokens: 45_000, zones: zones) == 50_972)
-        #expect(g.conversionPeakBytes(tokens: 16_384, kvPrecision: .q8, zones: zones) == g.bytes(tokens: 16_384, kvPrecision: .q8, zones: zones))
-        #expect(g.maxTokens(fitting: 1_000 * 147_456, kvPrecision: .q4, zones: zones) == 1_000)
+        #expect(g.maxTokens(fitting: ByteCount(budget), kvPrecision: .q4, zones: zones).rawValue == 177_803)
+        #expect(g.maxTokens(fitting: ByteCount(budget), kvPrecision: .q8, zones: zones).rawValue == 94_763)
+        #expect(g.bytes(tokens: TokenCount(177_803), kvPrecision: .q4, zones: zones).rawValue <= budget)
+        #expect(g.bytes(tokens: TokenCount(177_804), kvPrecision: .q4, zones: zones).rawValue > budget)
+        #expect(g.maxPromptTokens(fitting: ByteCount(budget), kvPrecision: .q4, zones: zones).rawValue == 177_803)
+        #expect(g.maxTokens(fitting: ByteCount(budget), kvPrecision: .q4, promptTokens: TokenCount(45_000), zones: zones).rawValue == 177_803)
+        #expect(g.maxTokens(fitting: ByteCount(budget), kvPrecision: nil, promptTokens: TokenCount(45_000), zones: zones).rawValue == 50_972)
+        #expect(g.conversionPeakBytes(tokens: TokenCount(16_384), kvPrecision: .q8, zones: zones).rawValue == g.bytes(tokens: TokenCount(16_384), kvPrecision: .q8, zones: zones).rawValue)
+        #expect(g.maxTokens(fitting: ByteCount(1_000 * 147_456), kvPrecision: .q4, zones: zones).rawValue == 1_000)
     }
 
     @Test("The quantization group follows the head dimension: 64 when it divides, else the nearest of 32 and 128, none for 16")
@@ -302,9 +302,9 @@ struct KVCacheGeometryTests {
     @Test("maxTokens inverts bytes: the largest prompt that fits the budget")
     func inverse() {
         let g = KVCacheGeometry(config: Self.ornith9B)!
-        let budget = g.bytes(tokens: 20_000)
-        #expect(g.maxTokens(fitting: budget) == 20_000)
-        #expect(g.maxTokens(fitting: g.fixedStateBytes - 1) == 0)
-        #expect(Self.dense(layers: 64, kvHeads: 8).maxTokens(fitting: 4 << 30) == 16_384)
+        let budget = g.bytes(tokens: TokenCount(20_000)).rawValue
+        #expect(g.maxTokens(fitting: ByteCount(budget)).rawValue == 20_000)
+        #expect(g.maxTokens(fitting: ByteCount(g.fixedStateBytes - 1)).rawValue == 0)
+        #expect(Self.dense(layers: 64, kvHeads: 8).maxTokens(fitting: ByteCount(4 << 30)).rawValue == 16_384)
     }
 }

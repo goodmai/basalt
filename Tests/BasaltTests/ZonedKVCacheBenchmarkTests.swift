@@ -323,7 +323,7 @@ struct ZonedKVCacheBenchmarkTests {
         let room = Int64(PromptCacheBudget.gpuWorkingSet()) - Int64(Memory.activeMemory)
         let zonesApply = (try? await container.perform { try ZonedKVCache.modelAttendsThroughCache($0.model) }) ?? false
         log.line("PROBE \(repo) zonesApply=\(zonesApply) model=\(await container.perform { String(describing: type(of: $0.model)) })")
-        log.line("GEOMETRY \(repo) fp16BytesPerToken=\(geometry.bytes(tokens: 1_000) / 1_000) window=\(geometry.window) roomAfterWeights=\(room)")
+        log.line("GEOMETRY \(repo) fp16BytesPerToken=\(geometry.bytes(tokens: TokenCount(1_000)).rawValue / 1_000) window=\(geometry.window) roomAfterWeights=\(room)")
 
         if steps.contains("mem") {
             let marker = Self.env["BASALT_QUIET_MARKER"] ?? "/private/tmp/claude-501/basalt-quiet"
@@ -368,7 +368,7 @@ struct ZonedKVCacheBenchmarkTests {
                         withExtendedLifetime(made.cache) {}
                         return (Memory.activeMemory - before, Memory.peakMemory - before, Double(prompt) / prefill, decode)
                     }
-                    let estimate = geometry.bytes(tokens: prompt + 128, kvPrecision: mode.precision, zones: mode.zones)
+                    let estimate = geometry.bytes(tokens: TokenCount(prompt + 128), kvPrecision: mode.precision, zones: mode.zones).rawValue
                     let after = Self.hostLoad()
                     return "after: \(after.summary) speedValid=\(before.quiet && after.quiet) held=\(measured.0) geometry=\(estimate) ratio=\(String(format: "%.4f", Double(measured.0) / Double(estimate))) peak=\(measured.1) prefillTPS=\(String(format: "%.0f", measured.2)) decodeTPS=\(String(format: "%.1f", measured.3))"
                 }
@@ -437,8 +437,8 @@ struct ZonedKVCacheBenchmarkTests {
         let lengths = Self.list("BASALT_ZONED_LENGTHS", default: "16000,32000").compactMap { Int($0) }
         let depths = Self.list("BASALT_ZONED_DEPTHS", default: "0.2,0.8").compactMap { Double($0) }
         for length in lengths {
-            if geometry.bytes(tokens: length) * 2 > room {
-                log.line("SKIP passkey \(repo) length=\(length): fp16 KV \(geometry.bytes(tokens: length)) B twice exceeds the \(room) B left after the weights")
+            if geometry.bytes(tokens: TokenCount(length)).rawValue * 2 > room {
+                log.line("SKIP passkey \(repo) length=\(length): fp16 KV \(geometry.bytes(tokens: TokenCount(length)).rawValue) B twice exceeds the \(room) B left after the weights")
                 continue
             }
             for depth in depths {
@@ -470,7 +470,7 @@ struct ZonedKVCacheBenchmarkTests {
     func taskSteps(repo: String, container: ModelContainer, corpus: String, geometry: KVCacheGeometry, room: Int64, log: Log) async {
         let lengths = Self.list("BASALT_ZONED_LENGTHS", default: "16000,32000").compactMap { Int($0) }
         let trials = Int(Self.env["BASALT_ZONED_TRIALS"] ?? "") ?? 4
-        for length in lengths where geometry.bytes(tokens: length) * 2 <= room {
+        for length in lengths where geometry.bytes(tokens: TokenCount(length)).rawValue * 2 <= room {
             for name in Self.list("BASALT_ZONED_TASKS", default: "multikey,multihop,aggregate") {
                 for trial in 0 ..< trials {
                     let task = Self.task(name, trial: trial)

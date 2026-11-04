@@ -213,7 +213,7 @@ public actor FitScorer {
     }
     
     public static func kvReadGB(_ kv: KVCacheGeometry, contextTokens: Int) -> Double {
-        max(0.01, Double(kv.bytes(tokens: min(contextTokens, 4096))) / 1e9)
+        max(0.01, Double(kv.bytes(tokens: TokenCount(min(contextTokens, 4096))).rawValue) / 1e9)
     }
 
     /// Peak unified-memory bandwidth (GB/s) by generation and tier, from Apple's published specs

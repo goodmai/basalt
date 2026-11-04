@@ -48,7 +48,7 @@ struct MemoryEvaluatorTests {
         #expect(a.memoryBudgetBytes == 16 * Self.gib)
         #expect(a.warning?.contains("free right now") == true)
         let kv = model(ramMB: 12_943).kvGeometry
-        #expect(a.maxContextBudgetTokens == kv.maxTokens(fitting: (16 * Self.gib - 12_943 * Self.mib) / 2))
+        #expect(a.maxContextBudgetTokens == kv.maxTokens(fitting: ByteCount((16 * Self.gib - 12_943 * Self.mib) / 2)).rawValue)
     }
 
     @Test("More than total RAM never fits, however much is 'available'")
@@ -66,9 +66,9 @@ struct MemoryEvaluatorTests {
         let short = await e.evaluate(definition: model(ramMB: 1000), resources: r, contextLength: 0)
         let long = await e.evaluate(definition: model(ramMB: 1000), resources: r, contextLength: 32768)
         let kv = KVCacheGeometry(parameterProxy: model(ramMB: 1000).totalParameters)
-        #expect(long.requiredRAMBytes - short.requiredRAMBytes == kv.bytes(tokens: 32768))
+        #expect(long.requiredRAMBytes - short.requiredRAMBytes == kv.bytes(tokens: TokenCount(32768)).rawValue)
         let quantized = await e.evaluate(definition: model(ramMB: 1000), resources: r, contextLength: 32768, kvPrecision: .q4)
-        #expect(quantized.requiredRAMBytes - short.requiredRAMBytes == kv.bytes(tokens: 32768, kvPrecision: .q4))
+        #expect(quantized.requiredRAMBytes - short.requiredRAMBytes == kv.bytes(tokens: TokenCount(32768), kvPrecision: .q4).rawValue)
     }
 
     @Test("--kv-bits raises the context budget; the prompt budget is what its fp16 prefill and conversion copy leave")
@@ -82,8 +82,8 @@ struct MemoryEvaluatorTests {
         let room = (MemoryEvaluator.memoryBudget(r) - def.ramMB * Self.mib) / 2
         let cap = TokenBudgetCalculator.upperCapTokens
         #expect(fp16.maxPromptBudgetTokens == fp16.maxContextBudgetTokens)
-        #expect(q4.maxContextBudgetTokens == min(cap, kv.maxTokens(fitting: room, kvPrecision: .q4)))
-        #expect(q4.maxPromptBudgetTokens == min(cap, kv.maxPromptTokens(fitting: room, kvPrecision: .q4)))
+        #expect(q4.maxContextBudgetTokens == min(cap, kv.maxTokens(fitting: ByteCount(room), kvPrecision: .q4).rawValue))
+        #expect(q4.maxPromptBudgetTokens == min(cap, kv.maxPromptTokens(fitting: ByteCount(room), kvPrecision: .q4).rawValue))
         #expect(q4.maxContextBudgetTokens > fp16.maxContextBudgetTokens)
         #expect(q4.maxPromptBudgetTokens < fp16.maxPromptBudgetTokens)
     }
@@ -98,7 +98,7 @@ struct MemoryEvaluatorTests {
         let kv = KVCacheGeometry(parameterProxy: def.totalParameters)
         let room = (MemoryEvaluator.memoryBudget(r) - def.ramMB * Self.mib) / 2
         let cap = TokenBudgetCalculator.upperCapTokens
-        #expect(zoned.maxContextBudgetTokens == min(cap, kv.maxTokens(fitting: room, kvPrecision: .q4, zones: .standard)))
+        #expect(zoned.maxContextBudgetTokens == min(cap, kv.maxTokens(fitting: ByteCount(room), kvPrecision: .q4, zones: .standard).rawValue))
         #expect(zoned.maxPromptBudgetTokens == zoned.maxContextBudgetTokens)
         #expect(zoned.maxPromptBudgetTokens > uniform.maxPromptBudgetTokens)
         #expect(zoned.requiredRAMBytes > uniform.requiredRAMBytes)
@@ -130,7 +130,7 @@ struct MemoryEvaluatorTests {
             #expect(a.modelName == name)
         }
         let withContext = await e.evaluate(modelId: "\(owner)/Foo-7B-4bit", contextLength: 8192)
-        #expect(withContext.requiredRAMBytes == 7 * 550 * Self.mib + KVCacheGeometry(parameterProxy: 7).bytes(tokens: 8192))
+        #expect(withContext.requiredRAMBytes == 7 * 550 * Self.mib + KVCacheGeometry(parameterProxy: 7).bytes(tokens: TokenCount(8192)).rawValue)
         // 800 GB needs no particular machine to be too big; only the unquantized one is told to quantize.
         let base = await e.evaluate(modelId: "\(owner)/Huge-400B-bf16")
         #expect(base.fitLevel == .tooTight)

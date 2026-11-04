@@ -456,7 +456,7 @@ struct FitScorerTests {
     @Test("The decode KV read term is the geometry at up to 4k tokens; the grid charges the full L_min")
     func testKVCacheTerms() {
         let qwen = KVCacheGeometry(config: KVCacheGeometryTests.qwen3_4B)!
-        #expect(FitScorer.kvReadGB(qwen, contextTokens: 32_768) == Double(qwen.bytes(tokens: 4096)) / 1e9)
+        #expect(FitScorer.kvReadGB(qwen, contextTokens: 32_768) == Double(qwen.bytes(tokens: TokenCount(4096)).rawValue) / 1e9)
         #expect(abs(FitScorer.kvReadGB(KVCacheGeometry(parameterProxy: 7), contextTokens: 4096) - 0.248) < 0.001)
         #expect(FitScorer.kvReadGB(qwen, contextTokens: 0) == 0.01)
 
@@ -469,7 +469,7 @@ struct FitScorerTests {
         let long = ModelFitAnalyzer.evaluateQuantizations(model: model, resources: resources, lMin: 32768,
                                                           benchmarkProfile: HardwareBenchmarkProfile())
         let kv = KVCacheGeometry(parameterProxy: 7)
-        let grow = Double(kv.bytes(tokens: 32768) - kv.bytes(tokens: 4096)) / 1_048_576
+        let grow = Double(kv.bytes(tokens: TokenCount(32768)).rawValue - kv.bytes(tokens: TokenCount(4096)).rawValue) / 1_048_576
         let delta = Double(long.options[0].footprintMB - short.options[0].footprintMB)
         #expect(abs(delta - grow) <= 1)
     }

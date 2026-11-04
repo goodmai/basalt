@@ -113,7 +113,7 @@ public struct ModelFitAnalyzer: Sendable {
         
         let profile = benchmarkProfile ?? HardwareBenchmarkProfileStore.loadSync()
         
-        let kvCacheMB = Double(model.kvGeometry.bytes(tokens: lMin)) / 1_048_576
+        let kvCacheMB = Double(model.kvGeometry.bytes(tokens: TokenCount(lMin)).rawValue) / 1_048_576
         let overhead = 0.15 // 15% framework overhead
 
         var evaluated: [(bits: Int, name: String, footprintMB: Int, tps: Int, score: FourDimensionalScore, fits: Bool)] = []

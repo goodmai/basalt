@@ -119,7 +119,7 @@ public actor MemoryEvaluator {
     ) -> MemoryAssessment {
         let kv = def.kvGeometry
         let weights = def.ramMB * 1024 * 1024
-        let required = weights + kv.bytes(tokens: contextLength, kvPrecision: kvPrecision, zones: kvZones)
+        let required = weights + kv.bytes(tokens: TokenCount(contextLength), kvPrecision: kvPrecision, zones: kvZones).rawValue
         let oversized = def.quantization.lowercased().contains("bfloat16") || def.quantization.lowercased().contains("fp16") || def.ramMB > 30000
         return Self.assessment(
             id: def.id, name: def.name, required: required, weights: weights, kv: kv, kvPrecision: kvPrecision, kvZones: kvZones,
@@ -146,14 +146,14 @@ public actor MemoryEvaluator {
         budget: Int64, weights: Int64, kv: KVCacheGeometry, kvPrecision: KVPrecision?, kvZones: KVZones?
     ) -> Int {
         let room = kvRoom(budget: budget, weights: weights)
-        return min(TokenBudgetCalculator.upperCapTokens, max(0, kv.maxTokens(fitting: room, kvPrecision: kvPrecision, zones: kvZones)))
+        return min(TokenBudgetCalculator.upperCapTokens, max(0, kv.maxTokens(fitting: ByteCount(room), kvPrecision: kvPrecision, zones: kvZones).rawValue))
     }
 
     public static func promptBudget(
         budget: Int64, weights: Int64, kv: KVCacheGeometry, kvPrecision: KVPrecision?, kvZones: KVZones?
     ) -> Int {
         let room = kvRoom(budget: budget, weights: weights)
-        return min(TokenBudgetCalculator.upperCapTokens, kv.maxPromptTokens(fitting: room, kvPrecision: kvPrecision, zones: kvZones))
+        return min(TokenBudgetCalculator.upperCapTokens, kv.maxPromptTokens(fitting: ByteCount(room), kvPrecision: kvPrecision, zones: kvZones).rawValue)
     }
 
     static func kvRoom(budget: Int64, weights: Int64) -> Int64 {
@@ -195,7 +195,7 @@ public actor MemoryEvaluator {
         let kv = KVCacheGeometry.forModel(
             modelId, parameters: ModelDefinition.inferTotalParameters(id: modelId, name: "", ramMB: Int64(modelMB))
         )
-        let required = Int64(Double(localSize) * 1.15) + kv.bytes(tokens: contextLength, kvPrecision: kvPrecision, zones: kvZones)
+        let required = Int64(Double(localSize) * 1.15) + kv.bytes(tokens: TokenCount(contextLength), kvPrecision: kvPrecision, zones: kvZones).rawValue
         return Self.assessment(
             id: modelId, name: modelId.components(separatedBy: "/").last ?? modelId, required: required,
             weights: localSize, kv: kv, kvPrecision: kvPrecision, kvZones: kvZones, resources: resources,
@@ -229,7 +229,7 @@ public actor MemoryEvaluator {
         let weights = estimatedMB * 1024 * 1024
         let quantized = info.quantization.contains("4bit") || info.quantization.contains("dq") || info.quantization.contains("nvfp4")
         return Self.assessment(
-            id: modelId, name: info.name, required: weights + kv.bytes(tokens: contextLength, kvPrecision: kvPrecision, zones: kvZones),
+            id: modelId, name: info.name, required: weights + kv.bytes(tokens: TokenCount(contextLength), kvPrecision: kvPrecision, zones: kvZones).rawValue,
             weights: weights, kv: kv, kvPrecision: kvPrecision, kvZones: kvZones, resources: resources, subject: "Model (estimated)",
             recommendation: quantized ? nil : "Consider choosing a 4-bit quantized MLX model variant.")
     }

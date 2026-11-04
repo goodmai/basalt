@@ -183,7 +183,7 @@ struct DryRunAndMemoryIntegrationTests {
                 #expect(iterator.tokenCount == generated)
                 return held
             }
-            let estimate = geometry.bytes(tokens: prompt + generated, kvPrecision: bits)
+            let estimate = geometry.bytes(tokens: TokenCount(prompt + generated), kvPrecision: bits).rawValue
             #expect(abs(Double(held) / Double(estimate) - 1) <= 0.03, "kvBits \(String(describing: bits)): MLX holds \(held) B, geometry says \(estimate) B")
         }
     }
@@ -215,7 +215,7 @@ struct DryRunAndMemoryIntegrationTests {
                 #expect(iterator.tokenCount == generated)
                 return held
             }
-            let estimate = geometry.bytes(tokens: prompt + generated, kvPrecision: precision, zones: .standard)
+            let estimate = geometry.bytes(tokens: TokenCount(prompt + generated), kvPrecision: precision, zones: .standard).rawValue
             #expect(abs(Double(held) / Double(estimate) - 1) <= 0.03, "zoned \(precision): MLX holds \(held) B, geometry says \(estimate) B")
         }
     }
