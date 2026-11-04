@@ -69,7 +69,10 @@ struct PromptCacheDiskBenchmarkTests {
 
     static func request(_ messages: [ChatMessageInput]) -> GenerationRequest {
         GenerationRequest(
-            prompt: "", maxTokens: 24, temperature: 0, enableThinking: false, cacheKey: "shared", messages: messages)
+            prompt: "", maxTokens: 24, temperature: 0, messages: messages).with {
+            $0.enableThinking = false
+            $0.cacheKey = "shared"
+        }
     }
 
     static func uncache(_ file: URL) throws {

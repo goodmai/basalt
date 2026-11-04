@@ -204,19 +204,18 @@ struct ServeCommand: AsyncParsableCommand {
 
         let resolvedPath = try await resolveModelPath()
 
-        let config = try ServerConfig(
+        var config = try ServerConfig(
             modelPath: resolvedPath,
-            modelId:   model ?? modelPath,
             restPort:  network.port,
             host:      network.host,
-            maxTokens: maxTokens,
-            logLevel:  logLevel,
             apiKey:    network.apiKey,
-            rateLimitPerMinute: network.rateLimit,
-            rateBurst: network.rateBurst,
-            allowedOrigins: network.allowedOrigins,
-            virtualKeys: network.virtualKeys
+            access:    .init(
+                rateLimitPerMinute: network.rateLimit, rateBurst: network.rateBurst,
+                allowedOrigins: network.allowedOrigins, virtualKeys: network.virtualKeys)
         )
+        config.modelId = model ?? modelPath
+        config.maxTokens = maxTokens
+        config.logLevel = logLevel
 
         BasaltLogger.globalLevel = config.logLevel.basaltLevel
 
@@ -259,8 +258,8 @@ struct ServeCommand: AsyncParsableCommand {
             log("Session log: \(sessionLog.mode.rawValue) → \(sessionLogWriter.directory.path) (0700; `--session-log meta` keeps no content, `--session-log off` disables)")
         }
         return ModelOrchestratorActor(
-            engine: engine, maxTokens: maxTokens, kvPrecision: kvCache.bits?.fixedPrecision, adaptiveKVPrecision: kvCache.bits == .auto,
-            kvZones: kvCache.zones, gate: GenerationGate(maxConcurrent: maxConcurrent, maxQueue: maxQueue), sessionLog: sessionLogWriter)
+            engine: engine, maxTokens: maxTokens, kv: .init(precision: kvCache.bits?.fixedPrecision, adaptive: kvCache.bits == .auto, zones: kvCache.zones),
+            gate: GenerationGate(maxConcurrent: maxConcurrent, maxQueue: maxQueue), sessionLog: sessionLogWriter)
     }
 }
 

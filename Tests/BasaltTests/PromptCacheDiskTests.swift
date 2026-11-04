@@ -580,7 +580,7 @@ struct PromptCacheDiskTests {
         let usable = 70
         _ = try await engine.generate(request: GenerationRequest(
             prompt: String(String.UnicodeScalarView(stored.prefix(usable).compactMap { UnicodeScalar($0) })) + "zz",
-            maxTokens: 1, temperature: 0, cacheKey: "shared"))
+            maxTokens: 1, temperature: 0).with { $0.cacheKey = "shared" })
         let (newest, total, storedTokens, storedBytes) = await engine.readPromptCaches { tree in
             var (nodes, tokens, bytes) = (Array(tree.roots.values), 0, ByteCount.zero)
             while let node = nodes.popLast() {

@@ -86,12 +86,12 @@ extension OpenRouterClient {
 
     public struct ChatRequest: Codable, Sendable {
         public let model: String?
-        public let models: [String]?
+        public var models: [String]? = nil
         public let messages: [Message]
         public let temperature: Double?
         public let maxTokens: Int?
         public let stream: Bool?
-        public let provider: ProviderPreferences?
+        public var provider: ProviderPreferences? = nil
 
         public struct ProviderPreferences: Codable, Sendable {
             public let order: [String]?
@@ -130,20 +130,16 @@ extension OpenRouterClient {
 
         public init(
             model: String? = nil,
-            models: [String]? = nil,
             messages: [Message],
             temperature: Double? = nil,
             maxTokens: Int? = nil,
-            stream: Bool? = nil,
-            provider: ProviderPreferences? = nil
+            stream: Bool? = nil
         ) {
             self.model = model
-            self.models = models
             self.messages = messages
             self.temperature = temperature
             self.maxTokens = maxTokens
             self.stream = stream
-            self.provider = provider
         }
     }
 }

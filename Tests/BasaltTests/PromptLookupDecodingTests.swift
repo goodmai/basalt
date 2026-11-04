@@ -290,8 +290,7 @@ struct PromptLookupDecodingTests {
     func constrainedSampledEquivalence() async throws {
         let example = #"{"mode": "fast", "flags": [true, true, true, true], "inner": {"on": true, "note": null}}"#
         let request = GenerationRequest(
-            prompt: "Report the mode as \(example)", maxTokens: 300, temperature: 0.7,
-            responseFormat: .jsonSchema(ConstrainedModel.schema))
+            prompt: "Report the mode as \(example)", maxTokens: 300, temperature: 0.7).with { $0.responseFormat = .jsonSchema(ConstrainedModel.schema) }
         let engines = try await Self.sampledEngines(seed: 1) { try ConstrainedModel.container() }
         let expected = try await engines.plain.generate(request: request)
         let actual = try await engines.lookup.generate(request: request)
@@ -305,7 +304,7 @@ struct PromptLookupDecodingTests {
     @Test("A presence penalty at T > 0 with a seed leaves the output unchanged with prompt lookup on, and drafts are accepted")
     func presencePenaltySampledEquivalence() async throws {
         let prompt = LookupFixture.code
-        let request = GenerationRequest(prompt: prompt, maxTokens: 64, temperature: 0.1, presencePenalty: 0.5)
+        let request = GenerationRequest(prompt: prompt, maxTokens: 64, temperature: 0.1).with { $0.presencePenalty = 0.5 }
         let engines = try await Self.sampledEngines(seed: 11, LookupFixture.byteContainer)
         let expected = try await engines.plain.generate(request: request)
         let actual = try await engines.lookup.generate(request: request)

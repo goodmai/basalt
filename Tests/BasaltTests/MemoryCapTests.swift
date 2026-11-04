@@ -34,7 +34,7 @@ struct MemoryCapTests {
         await engine.setSupportsKVEviction(modelTakesKVEviction)
         let dir = try modelDirectory(weightsBytes: weightsBytes)
         let orchestrator = ModelOrchestratorActor(
-            engine: engine, maxTokens: maxTokens, kvPrecision: kvPrecision, adaptiveKVPrecision: adaptiveKVPrecision, kvZones: kvZones,
+            engine: engine, maxTokens: maxTokens, kv: .init(precision: kvPrecision, adaptive: adaptiveKVPrecision, zones: kvZones),
             telemetry: TelemetryTracker())
         try await orchestrator.loadModel(path: dir.path)
         await orchestrator.setFreeMemoryProbe { free }

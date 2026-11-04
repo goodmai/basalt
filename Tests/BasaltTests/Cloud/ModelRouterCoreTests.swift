@@ -96,7 +96,7 @@ struct ModelRouterCoreTests {
     func outcomesUpdateBias() throws {
         var state = CostRoutingState(routing: Self.costRouting(try BradleyTerryRouterTests.borderlineScorer()))
         let tool = GenerationRequest(prompt: BradleyTerryRouterTests.hardWord, tools: [ToolDefinition(name: "t")])
-        let service = GenerationRequest(prompt: "p", isServiceRequest: true, tools: [ToolDefinition(name: "t")])
+        let service = GenerationRequest(prompt: "p", tools: [ToolDefinition(name: "t")]).with { $0.isServiceRequest = true }
         let now = BradleyTerryRouterTests.start
         #expect(state.autoModel(for: tool, sessionId: nil, at: now) == "small-local")
         let ignored = [

@@ -35,10 +35,8 @@ struct OpenRouterCoreTests {
 
     @Test("A chat request encodes snake_case keys and omits unset fields")
     func chatRequestEncoding() throws {
-        let request = OpenRouterClient.ChatRequest(
-            model: "m", messages: [.init(role: "user", content: "hi")], maxTokens: 8, stream: true,
-            provider: .init(allowFallbacks: false)
-        )
+        var request = OpenRouterClient.ChatRequest(model: "m", messages: [.init(role: "user", content: "hi")], maxTokens: 8, stream: true)
+        request.provider = .init(allowFallbacks: false)
         let json = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(request)) as? [String: Any])
         #expect(Set(json.keys) == ["model", "messages", "max_tokens", "stream", "provider"])
         #expect(json["max_tokens"] as? Int == 8)

@@ -12,24 +12,36 @@ public actor ModelRouter: Sendable {
     private var catalog = ModelCatalog()
     private var costState: CostRoutingState?
 
-    public init(
-        localOrchestrator: ModelOrchestratorActor,
-        cloudClient: OpenRouterClient?,
-        strategy: RoutingStrategy = .auto,
-        mockAvailableRAM: Int64? = nil,
-        costRouting: CostRouting? = nil,
-        costTracker: CostTracker? = nil,
-        localFallbackModel: String? = nil,
-        fallbackCloudModel: String? = nil
-    ) {
+    public struct Options: Sendable {
+        let strategy: RoutingStrategy
+        let mockAvailableRAM: Int64?
+        let costRouting: CostRouting?
+        let costTracker: CostTracker?
+        let localFallbackModel: String?
+        let fallbackCloudModel: String?
+
+        public init(
+            strategy: RoutingStrategy = .auto, mockAvailableRAM: Int64? = nil, costRouting: CostRouting? = nil,
+            costTracker: CostTracker? = nil, localFallbackModel: String? = nil, fallbackCloudModel: String? = nil
+        ) {
+            self.strategy = strategy
+            self.mockAvailableRAM = mockAvailableRAM
+            self.costRouting = costRouting
+            self.costTracker = costTracker
+            self.localFallbackModel = localFallbackModel
+            self.fallbackCloudModel = fallbackCloudModel
+        }
+    }
+
+    public init(localOrchestrator: ModelOrchestratorActor, cloudClient: OpenRouterClient?, options: Options = Options()) {
         self.localOrchestrator = localOrchestrator
         self.cloudClient = cloudClient
-        self.strategy = strategy
-        self.mockAvailableRAM = mockAvailableRAM
-        self.costTracker = costTracker
-        self.localFallbackModel = localFallbackModel
-        self.fallbackCloudModel = fallbackCloudModel
-        self.costState = costRouting.map { routing in
+        self.strategy = options.strategy
+        self.mockAvailableRAM = options.mockAvailableRAM
+        self.costTracker = options.costTracker
+        self.localFallbackModel = options.localFallbackModel
+        self.fallbackCloudModel = options.fallbackCloudModel
+        self.costState = options.costRouting.map { routing in
             CostRoutingState(
                 routing: routing,
                 outcomeBias: routing.outcomeBiasURL.map(RoutingOutcomeBias.load(from:)) ?? RoutingOutcomeBias()

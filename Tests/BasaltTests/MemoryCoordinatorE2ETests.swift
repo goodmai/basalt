@@ -20,7 +20,7 @@ struct MemoryCoordinatorE2ETests {
     }
 
     static func cached(_ prompt: String, maxTokens: Int = 16, key: String = "agent") -> GenerationRequest {
-        GenerationRequest(prompt: prompt, maxTokens: maxTokens, temperature: 0, cacheKey: key)
+        GenerationRequest(prompt: prompt, maxTokens: maxTokens, temperature: 0).with { $0.cacheKey = key }
     }
 
     static func cold(_ prompt: String, maxTokens: Int = 16) -> GenerationRequest {

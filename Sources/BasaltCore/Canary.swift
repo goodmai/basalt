@@ -25,10 +25,12 @@ public struct CanarySchedule: Sendable {
 }
 
 public enum Canary {
-    public static let request = GenerationRequest(
-        prompt: "What is 17 + 25? Reply with the number only.", maxTokens: 32, temperature: 0, enableThinking: false,
-        isServiceRequest: true
-    ).withOrigin(RequestOrigin(source: "canary", endpoint: "canary", stream: false))
+    public static let request: GenerationRequest = {
+        var request = GenerationRequest(prompt: "What is 17 + 25? Reply with the number only.", maxTokens: 32, temperature: 0)
+        request.enableThinking = false
+        request.isServiceRequest = true
+        return request.withOrigin(RequestOrigin(source: "canary", endpoint: "canary", stream: false))
+    }()
 
     public static func passes(_ response: GenerationResponse) -> Bool {
         response.finishReason != .error && response.generatedText.contains("42")

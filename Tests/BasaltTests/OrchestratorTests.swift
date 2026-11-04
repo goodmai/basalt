@@ -347,15 +347,16 @@ struct OrchestratorTests {
         let orch = ModelOrchestratorActor(engine: engine, maxTokens: 100)
         try await orch.loadModel(path: "test-model")
 
-        _ = try await orch.generate(request: .init(
+        _ = try await orch.generate(request: GenerationRequest(
             prompt: "Prompt to cap",
             maxTokens: 130_000,
             temperature: 0.5,
-            topP: 0.8,
-            enableThinking: false,
-            reasoningEffort: "low",
-            isServiceRequest: false
-        ))
+            topP: 0.8
+        ).with {
+            $0.enableThinking = false
+            $0.reasoningEffort = "low"
+            $0.isServiceRequest = false
+        })
 
         let lastReq = await engine.getLastRequest()
         #expect((lastReq?.maxTokens ?? 0) <= 128_000)

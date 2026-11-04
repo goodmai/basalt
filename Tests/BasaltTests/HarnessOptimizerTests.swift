@@ -646,7 +646,7 @@ extension HarnessOptimizerTests {
     func assistantPrefixIsNotDecoded() throws {
         let request = try JSONDecoder().decode(GenerationRequest.self, from: Data(#"{"prompt": "p", "assistantPrefix": "x"}"#.utf8))
         #expect(request.assistantPrefix == nil)
-        #expect(GenerationRequest(prompt: "p", assistantPrefix: "{").assistantPrefix == "{")
+        #expect(GenerationRequest(prompt: "p").with { $0.assistantPrefix = "{" }.assistantPrefix == "{")
     }
 }
 

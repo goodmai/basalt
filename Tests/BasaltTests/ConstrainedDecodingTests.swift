@@ -103,8 +103,13 @@ enum ConstrainedModel {
         format: ResponseFormat?, thinking: Bool = false, budget: Int? = nil, maxTokens: Int = 300,
         tools: [ToolDefinition]? = nil, choice: ToolChoice? = nil
     ) -> GenerationRequest {
-        GenerationRequest(prompt: "Report the mode.", maxTokens: maxTokens, temperature: 0, enableThinking: thinking,
-                          tools: tools, toolChoice: choice, thinkingBudget: budget, responseFormat: format)
+        GenerationRequest(prompt: "Report the mode.", maxTokens: maxTokens, temperature: 0,
+                          tools: tools).with {
+            $0.enableThinking = thinking
+            $0.toolChoice = choice
+            $0.thinkingBudget = budget
+            $0.responseFormat = format
+        }
     }
 
     static func isValid(_ text: String, _ schema: String = schema) throws -> Bool {
@@ -131,8 +136,11 @@ struct ConstrainedDecodingEngineTests {
     func dryKeepsTheConstraint(multiplier: Double) async throws {
         let engine = try await ConstrainedModel.engine(experimentalSamplers: true)
         let request = GenerationRequest(
-            prompt: "Report the mode.", maxTokens: 300, temperature: 0, responseFormat: .jsonSchema(ConstrainedModel.schema),
-            dryMultiplier: multiplier, dryAllowedLength: 1)
+            prompt: "Report the mode.", maxTokens: 300, temperature: 0).with {
+            $0.responseFormat = .jsonSchema(ConstrainedModel.schema)
+            $0.dryMultiplier = multiplier
+            $0.dryAllowedLength = 1
+        }
         let result = try await engine.generate(request: request)
         #expect(try ConstrainedModel.isValid(result.generatedText), "\(result.generatedText)")
         #expect(result.finishReason == .stop)
@@ -142,8 +150,8 @@ struct ConstrainedDecodingEngineTests {
     func experimentalSamplersAreGated() async throws {
         let engine = try await ConstrainedModel.engine()
         for request in [
-            GenerationRequest(prompt: "Report the mode.", maxTokens: 8, temperature: 0, dryMultiplier: 0.8),
-            GenerationRequest(prompt: "Report the mode.", maxTokens: 8, temperature: 0.7, xtcProbability: 0.5),
+            GenerationRequest(prompt: "Report the mode.", maxTokens: 8, temperature: 0).with { $0.dryMultiplier = 0.8 },
+            GenerationRequest(prompt: "Report the mode.", maxTokens: 8, temperature: 0.7).with { $0.xtcProbability = 0.5 },
         ] {
             do {
                 _ = try await engine.generate(request: request)
@@ -212,8 +220,10 @@ struct ConstrainedDecodingEngineTests {
         let engine = try await ConstrainedModel.engine()
         for _ in 0..<3 {
             let result = try await engine.generate(request: GenerationRequest(
-                prompt: "Report the mode.", maxTokens: 300, temperature: 1.0, topP: 0.05, dynamicTemperature: true,
-                responseFormat: .jsonSchema(ConstrainedModel.schema)))
+                prompt: "Report the mode.", maxTokens: 300, temperature: 1.0, topP: 0.05).with {
+                $0.dynamicTemperature = true
+                $0.responseFormat = .jsonSchema(ConstrainedModel.schema)
+            })
             #expect(try ConstrainedModel.isValid(result.generatedText), "\(result.generatedText)")
         }
     }
@@ -288,9 +298,12 @@ struct ConstrainedDecodingEngineTests {
         let engine = try await ConstrainedModel.engine()
         let baseReq = ConstrainedModel.request(format: .jsonSchema(ConstrainedModel.schema), thinking: false, maxTokens: 300)
         let req = GenerationRequest(
-            prompt: baseReq.prompt, maxTokens: baseReq.maxTokens, temperature: 0,
-            enableThinking: false, presencePenalty: 0.5, responseFormat: baseReq.responseFormat
-        ).withGrammarJumpForward(true)
+            prompt: baseReq.prompt, maxTokens: baseReq.maxTokens, temperature: 0
+        ).with {
+            $0.enableThinking = false
+            $0.presencePenalty = 0.5
+            $0.responseFormat = baseReq.responseFormat
+        }.withGrammarJumpForward(true)
         let res = try await engine.generate(request: req)
         #expect(try ConstrainedModel.isValid(res.generatedText), "Text: \(res.generatedText), finish: \(res.finishReason)")
         #expect(res.forcedTokens ?? 0 > 0)

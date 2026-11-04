@@ -230,3 +230,11 @@ actor MockInferenceEngine: InferenceEngine {
         persistCount += 1
     }
 }
+
+extension GenerationRequest {
+    func with(_ edit: (inout GenerationRequest) throws -> Void) rethrows -> GenerationRequest {
+        var copy = self
+        try edit(&copy)
+        return copy
+    }
+}

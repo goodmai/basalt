@@ -41,40 +41,20 @@ public struct FitScore: Codable, Sendable {
     public let estimatedRAM: Int64
     public let estimatedTPS: Int
     public let contextWindow: Int
-    public let isMeasured: Bool
-    public let measuredTPS: Double?
-    public let calibrationFactor: Double
-    public let fourDimensionalScore: FourDimensionalScore?
-    public let selectedQuantization: String
-    /// Best grid width for this machine (see `ModelFitAnalyzer.evaluateQuantizations`), nil if none fits.
-    public let optimalQuantization: String?
+    public var isMeasured = false
+    public var measuredTPS: Double?
+    public var calibrationFactor = 1.0
+    public var fourDimensionalScore: FourDimensionalScore?
+    public var selectedQuantization = "4-bit"
+    public var optimalQuantization: String?
 
-    public init(
-        modelName: String,
-        fitLevel: FitLevel,
-        score: Double,
-        estimatedRAM: Int64,
-        estimatedTPS: Int,
-        contextWindow: Int,
-        isMeasured: Bool = false,
-        measuredTPS: Double? = nil,
-        calibrationFactor: Double = 1.0,
-        fourDimensionalScore: FourDimensionalScore? = nil,
-        selectedQuantization: String = "4-bit",
-        optimalQuantization: String? = nil
-    ) {
+    public init(modelName: String, fitLevel: FitLevel, score: Double, estimatedRAM: Int64, estimatedTPS: Int, contextWindow: Int) {
         self.modelName = modelName
         self.fitLevel = fitLevel
         self.score = score
         self.estimatedRAM = estimatedRAM
         self.estimatedTPS = estimatedTPS
         self.contextWindow = contextWindow
-        self.isMeasured = isMeasured
-        self.measuredTPS = measuredTPS
-        self.calibrationFactor = calibrationFactor
-        self.fourDimensionalScore = fourDimensionalScore
-        self.selectedQuantization = selectedQuantization
-        self.optimalQuantization = optimalQuantization
     }
 }
 
@@ -128,20 +108,16 @@ public actor FitScorer {
         // memory at L_min and decodes at ≥ TPS_min; nil when none does.
         let grid = ModelFitAnalyzer.evaluateQuantizations(model: model, resources: profile, benchmarkProfile: benchmarkProfile)
 
-        return FitScore(
-            modelName: model.name,
-            fitLevel: fitLevel,
-            score: totalScore,
-            estimatedRAM: model.ramMB,
-            estimatedTPS: estTPS,
-            contextWindow: model.contextWindow,
-            isMeasured: isMeasured,
-            measuredTPS: measuredTPS,
-            calibrationFactor: calibFactor,
-            fourDimensionalScore: fourD,
-            selectedQuantization: model.quantization,
-            optimalQuantization: grid.optimal.fitsBudget ? grid.optimal.name : nil
-        )
+        var result = FitScore(
+            modelName: model.name, fitLevel: fitLevel, score: totalScore,
+            estimatedRAM: model.ramMB, estimatedTPS: estTPS, contextWindow: model.contextWindow)
+        result.isMeasured = isMeasured
+        result.measuredTPS = measuredTPS
+        result.calibrationFactor = calibFactor
+        result.fourDimensionalScore = fourD
+        result.selectedQuantization = model.quantization
+        result.optimalQuantization = grid.optimal.fitsBudget ? grid.optimal.name : nil
+        return result
     }
     
     private func calculateRAMFit(model: ModelDefinition, available: Int64) -> Double {

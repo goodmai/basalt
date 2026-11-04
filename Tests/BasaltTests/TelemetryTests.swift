@@ -69,11 +69,17 @@ struct TelemetryTests {
 
     @Test("formattedStatsLine shows only measured metrics")
     func testFormattedStatsLine() {
-        let line = ServerTelemetrySnapshot(
-            tokensPerSecond: 55.4, timeToFirstToken: 0.12, totalRequests: 9, activeRequests: 2,
-            gpuActiveBytes: 1_073_741_824, gpuPeakBytes: 2_147_483_648,
-            totalRAMGB: 32, availableRAMGB: 18.5, modelRAMMB: 4096
-        ).formattedStatsLine
+        var snapshot = ServerTelemetrySnapshot()
+        snapshot.tokensPerSecond = 55.4
+        snapshot.timeToFirstToken = 0.12
+        snapshot.totalRequests = 9
+        snapshot.activeRequests = 2
+        snapshot.gpuActiveBytes = 1_073_741_824
+        snapshot.gpuPeakBytes = 2_147_483_648
+        snapshot.totalRAMGB = 32
+        snapshot.availableRAMGB = 18.5
+        snapshot.modelRAMMB = 4096
+        let line = snapshot.formattedStatsLine
         #expect(line.hasPrefix("[stats] 55.4 tok/s"))
         #expect(line.contains("TTFT: 0.12s"))
         #expect(line.contains("RAM avail: 18.5/32 GB"))
@@ -85,7 +91,10 @@ struct TelemetryTests {
 
     @Test("ServerTelemetrySnapshot round-trips through JSON")
     func testSnapshotCodable() throws {
-        let original = ServerTelemetrySnapshot(tokensPerSecond: 12.3, activeRequests: 1, gpuActiveBytes: 42)
+        var original = ServerTelemetrySnapshot()
+        original.tokensPerSecond = 12.3
+        original.activeRequests = 1
+        original.gpuActiveBytes = 42
         let decoded = try JSONDecoder().decode(ServerTelemetrySnapshot.self, from: JSONEncoder().encode(original))
         #expect(decoded == original)
     }

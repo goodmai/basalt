@@ -11,12 +11,15 @@ import Foundation
 struct FitCommandTests {
 
     private func score(measured: Bool, optimal: String?) -> FitScore {
-        FitScore(
+        var fit = FitScore(
             modelName: "Qwen 3.5 4B", fitLevel: .perfect, score: 95.0, estimatedRAM: 2300,
-            estimatedTPS: measured ? 92 : 85, contextWindow: 32768, isMeasured: measured,
-            measuredTPS: measured ? 92.4 : nil, calibrationFactor: measured ? 1.08 : 1.0,
-            selectedQuantization: "4-bit", optimalQuantization: optimal
-        )
+            estimatedTPS: measured ? 92 : 85, contextWindow: 32768)
+        fit.isMeasured = measured
+        fit.measuredTPS = measured ? 92.4 : nil
+        fit.calibrationFactor = measured ? 1.08 : 1.0
+        fit.selectedQuantization = "4-bit"
+        fit.optimalQuantization = optimal
+        return fit
     }
 
     @Test("fit table marks measured TPS and shows the grid's best width")

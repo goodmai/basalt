@@ -17,7 +17,7 @@ struct MemoryEvaluatorTests {
 
     private func model(ramMB: Int64, quantization: String = "4bit") -> ModelDefinition {
         ModelDefinition(id: "test/model", name: "Test", family: .qwen, task: .chat, modality: .text,
-                        ramMB: ramMB, contextWindow: 4096, quantization: quantization, quality: 0.5)
+                        spec: .init(ramMB: ramMB, contextWindow: 4096, quantization: quantization, quality: 0.5))
     }
 
     @Test("Fit levels switch at 60%, 90% and 100% of the Metal working set (3/4 of 16 GiB = 12 GiB here)", arguments: [

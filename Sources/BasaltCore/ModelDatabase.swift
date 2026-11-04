@@ -29,32 +29,41 @@ public struct ModelDefinition: Codable, Sendable {
         activeParameters < totalParameters
     }
 
-    public init(
-        id: String,
-        name: String,
-        family: ModelFamily,
-        task: ModelTask,
-        modality: Modality,
-        ramMB: Int64,
-        contextWindow: Int,
-        quantization: String,
-        quality: Double,
-        totalParameters: Double? = nil,
-        activeParameters: Double? = nil
-    ) {
+    public struct Spec: Sendable {
+        let ramMB: Int64
+        let contextWindow: Int
+        let quantization: String
+        let quality: Double
+        let totalParameters: Double?
+        let activeParameters: Double?
+
+        public init(
+            ramMB: Int64, contextWindow: Int, quantization: String, quality: Double,
+            totalParameters: Double? = nil, activeParameters: Double? = nil
+        ) {
+            self.ramMB = ramMB
+            self.contextWindow = contextWindow
+            self.quantization = quantization
+            self.quality = quality
+            self.totalParameters = totalParameters
+            self.activeParameters = activeParameters
+        }
+    }
+
+    public init(id: String, name: String, family: ModelFamily, task: ModelTask, modality: Modality, spec: Spec) {
         self.id = id
         self.name = name
         self.family = family
         self.task = task
         self.modality = modality
-        self.ramMB = ramMB
-        self.contextWindow = contextWindow
-        self.quantization = quantization
-        self.quality = quality
+        self.ramMB = spec.ramMB
+        self.contextWindow = spec.contextWindow
+        self.quantization = spec.quantization
+        self.quality = spec.quality
 
-        let total = totalParameters ?? Self.inferTotalParameters(id: id, name: name, ramMB: ramMB)
+        let total = spec.totalParameters ?? Self.inferTotalParameters(id: id, name: name, ramMB: spec.ramMB)
         self.totalParameters = total
-        self.activeParameters = activeParameters ?? Self.inferActiveParameters(id: id, name: name, total: total)
+        self.activeParameters = spec.activeParameters ?? Self.inferActiveParameters(id: id, name: name, total: total)
     }
 
     /// Parameter count (billions) read from the size token of an id like "Qwen3-30B-A3B-4bit":
@@ -89,12 +98,9 @@ public struct ModelDatabase: Sendable {
             family: .qwen,
             task: .chat,
             modality: .text,
-            ramMB: 2300,
-            contextWindow: 32768,
-            quantization: "4-bit",
-            quality: 0.85,
-            totalParameters: 4.0,
-            activeParameters: 4.0
+            spec: ModelDefinition.Spec(
+                ramMB: 2300, contextWindow: 32768, quantization: "4-bit", quality: 0.85,
+                totalParameters: 4.0, activeParameters: 4.0)
         ),
         ModelDefinition(
             id: "mlx-community/Qwen2.5-Coder-7B",
@@ -102,12 +108,9 @@ public struct ModelDatabase: Sendable {
             family: .qwen,
             task: .code,
             modality: .text,
-            ramMB: 4100,
-            contextWindow: 128000,
-            quantization: "4-bit",
-            quality: 0.89,
-            totalParameters: 7.0,
-            activeParameters: 7.0
+            spec: ModelDefinition.Spec(
+                ramMB: 4100, contextWindow: 128000, quantization: "4-bit", quality: 0.89,
+                totalParameters: 7.0, activeParameters: 7.0)
         ),
         ModelDefinition(
             id: "mlx-community/Qwen3.6-27B-4bit",
@@ -115,12 +118,9 @@ public struct ModelDatabase: Sendable {
             family: .qwen,
             task: .chat,
             modality: .text,
-            ramMB: 14500,
-            contextWindow: 32768,
-            quantization: "4-bit",
-            quality: 0.92,
-            totalParameters: 27.0,
-            activeParameters: 27.0
+            spec: ModelDefinition.Spec(
+                ramMB: 14500, contextWindow: 32768, quantization: "4-bit", quality: 0.92,
+                totalParameters: 27.0, activeParameters: 27.0)
         ),
         ModelDefinition(
             id: "mlx-community/gemma-2-2b-it",
@@ -128,12 +128,9 @@ public struct ModelDatabase: Sendable {
             family: .gemma,
             task: .chat,
             modality: .text,
-            ramMB: 2700,
-            contextWindow: 8192,
-            quantization: "4-bit",
-            quality: 0.83,
-            totalParameters: 2.0,
-            activeParameters: 2.0
+            spec: ModelDefinition.Spec(
+                ramMB: 2700, contextWindow: 8192, quantization: "4-bit", quality: 0.83,
+                totalParameters: 2.0, activeParameters: 2.0)
         ),
         ModelDefinition(
             id: "mlx-community/Llama-3.2-3B-Instruct-4bit",
@@ -141,12 +138,9 @@ public struct ModelDatabase: Sendable {
             family: .llama,
             task: .chat,
             modality: .text,
-            ramMB: 2100,
-            contextWindow: 128000,
-            quantization: "4-bit",
-            quality: 0.81,
-            totalParameters: 3.0,
-            activeParameters: 3.0
+            spec: ModelDefinition.Spec(
+                ramMB: 2100, contextWindow: 128000, quantization: "4-bit", quality: 0.81,
+                totalParameters: 3.0, activeParameters: 3.0)
         ),
         // Huihui AI Models
         ModelDefinition(
@@ -155,12 +149,9 @@ public struct ModelDatabase: Sendable {
             family: .qwen,
             task: .chat,
             modality: .text,
-            ramMB: 54000,
-            contextWindow: 262144,
-            quantization: "bfloat16",
-            quality: 0.95,
-            totalParameters: 27.0,
-            activeParameters: 27.0
+            spec: ModelDefinition.Spec(
+                ramMB: 54000, contextWindow: 262144, quantization: "bfloat16", quality: 0.95,
+                totalParameters: 27.0, activeParameters: 27.0)
         ),
         ModelDefinition(
             id: "AutisticAF/Huihui-Qwen3.8-27B-abliterated-mlx-4Bit",
@@ -168,12 +159,9 @@ public struct ModelDatabase: Sendable {
             family: .qwen,
             task: .chat,
             modality: .text,
-            ramMB: 15200,
-            contextWindow: 262144,
-            quantization: "4-bit",
-            quality: 0.94,
-            totalParameters: 27.0,
-            activeParameters: 27.0
+            spec: ModelDefinition.Spec(
+                ramMB: 15200, contextWindow: 262144, quantization: "4-bit", quality: 0.94,
+                totalParameters: 27.0, activeParameters: 27.0)
         ),
         // Ex0bit Models
         ModelDefinition(
@@ -182,12 +170,9 @@ public struct ModelDatabase: Sendable {
             family: .gemma,
             task: .chat,
             modality: .text,
-            ramMB: 14500,
-            contextWindow: 262144,
-            quantization: "Dynamic Quant (DQ)",
-            quality: 0.93,
-            totalParameters: 26.0,
-            activeParameters: 4.0
+            spec: ModelDefinition.Spec(
+                ramMB: 14500, contextWindow: 262144, quantization: "Dynamic Quant (DQ)", quality: 0.93,
+                totalParameters: 26.0, activeParameters: 4.0)
         ),
         ModelDefinition(
             id: "Ex0bit/Qwen3.6-35B-A3B-PRISM-MLX-NVFP4",
@@ -195,12 +180,9 @@ public struct ModelDatabase: Sendable {
             family: .qwen,
             task: .chat,
             modality: .text,
-            ramMB: 20500,
-            contextWindow: 131072,
-            quantization: "NVFP4",
-            quality: 0.94,
-            totalParameters: 35.0,
-            activeParameters: 3.0
+            spec: ModelDefinition.Spec(
+                ramMB: 20500, contextWindow: 131072, quantization: "NVFP4", quality: 0.94,
+                totalParameters: 35.0, activeParameters: 3.0)
         ),
         ModelDefinition(
             id: "Ex0bit/MiniMax-SLURPY-DQ-MLX",
@@ -208,12 +190,9 @@ public struct ModelDatabase: Sendable {
             family: .qwen,
             task: .chat,
             modality: .text,
-            ramMB: 72000,
-            contextWindow: 131072,
-            quantization: "Dynamic Quant (DQ)",
-            quality: 0.92,
-            totalParameters: 72.0,
-            activeParameters: 12.0
+            spec: ModelDefinition.Spec(
+                ramMB: 72000, contextWindow: 131072, quantization: "Dynamic Quant (DQ)", quality: 0.92,
+                totalParameters: 72.0, activeParameters: 12.0)
         ),
         // Ornith 1.5 — qwen3_5 / qwen3_5_moe architecture
         ModelDefinition(
@@ -222,12 +201,9 @@ public struct ModelDatabase: Sendable {
             family: .qwen,
             task: .code,
             modality: .text,
-            ramMB: 5800,
-            contextWindow: 262144,
-            quantization: "4-bit",
-            quality: 0.91,
-            totalParameters: 9.0,
-            activeParameters: 9.0
+            spec: ModelDefinition.Spec(
+                ramMB: 5800, contextWindow: 262144, quantization: "4-bit", quality: 0.91,
+                totalParameters: 9.0, activeParameters: 9.0)
         ),
         ModelDefinition(
             id: "ornith-ai/Ornith-1.5-35B-A3B-MLX-4bit",
@@ -235,12 +211,9 @@ public struct ModelDatabase: Sendable {
             family: .qwen,
             task: .code,
             modality: .text,
-            ramMB: 21000,
-            contextWindow: 262144,
-            quantization: "4-bit",
-            quality: 0.95,
-            totalParameters: 35.0,
-            activeParameters: 3.0
+            spec: ModelDefinition.Spec(
+                ramMB: 21000, contextWindow: 262144, quantization: "4-bit", quality: 0.95,
+                totalParameters: 35.0, activeParameters: 3.0)
         ),
         ModelDefinition(
             id: "Ex0bit/Elbaz-Olmo-3-7B-Instruct-abliterated",
@@ -248,12 +221,9 @@ public struct ModelDatabase: Sendable {
             family: .llama,
             task: .chat,
             modality: .text,
-            ramMB: 4500,
-            contextWindow: 65536,
-            quantization: "4-bit",
-            quality: 0.88,
-            totalParameters: 7.0,
-            activeParameters: 7.0
+            spec: ModelDefinition.Spec(
+                ramMB: 4500, contextWindow: 65536, quantization: "4-bit", quality: 0.88,
+                totalParameters: 7.0, activeParameters: 7.0)
         )
     ]
 
