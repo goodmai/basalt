@@ -5,7 +5,23 @@ on:
   # twice on the single runner.
   push:
     branches: [ main ]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - '.claude/**'
+      - '.agents/**'
+      - 'scripts/check_*'
+      - '.github/workflows/no-comments.yml'
+      - '.github/workflows/size-limits.yml'
   pull_request:
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - '.claude/**'
+      - '.agents/**'
+      - 'scripts/check_*'
+      - '.github/workflows/no-comments.yml'
+      - '.github/workflows/size-limits.yml'
 
 # One self-hosted runner: a second push to the same ref makes the earlier run (queued or
 # running) irrelevant, so cancel it instead of letting it hold the machine.
