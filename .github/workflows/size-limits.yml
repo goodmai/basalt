@@ -10,13 +10,18 @@ jobs:
   size-limits:
     name: Size and complexity limits
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    container: swift:6.1-noble
+    timeout-minutes: 15
     env:
       LIZARD: pipx run --spec lizard==1.24.0 lizard
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+      - name: Trust the checkout and install pipx for lizard
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          apt-get update -qq && apt-get install -y -qq --no-install-recommends pipx
       - name: Checker self-test
         run: swift scripts/check_size_limits_test.swift
       - name: No limit exceeded or grown

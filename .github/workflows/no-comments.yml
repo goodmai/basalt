@@ -10,11 +10,14 @@ jobs:
   no-comments:
     name: No new code comments
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    container: swift:6.1-noble
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+      - name: Trust the checkout
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - name: Checker self-test
         run: swift scripts/check_no_new_comments_test.swift
       - name: Added lines carry no comments
