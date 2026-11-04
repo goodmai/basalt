@@ -42,20 +42,34 @@ struct AnatomyScan: Sendable {
         var experts: Int?
         var cache: String?
         var window: Int?
+        var heads = Heads()
+    }
+
+    struct Heads: Sendable, Equatable {
+        var heads: Int?
+        var kvHeads: Int?
+        var headDim: Int?
     }
 
     var layers: [Layer]
     var parameterCount: Int
     var bytes: ByteCount
+    var hiddenSize: Int?
 
     init(model: any LanguageModel, caches: [any KVCache]) {
         let parameters = model.parameters().flattened()
         var modules: [Int: String] = [:]
         var groupSizes: [String: Int] = [:]
+        var heads: [Int: Heads] = [:]
         for (path, module) in model.namedModules() {
             if let quantized = module as? any Quantized { groupSizes[path] = quantized.groupSize }
             if let index = Self.layerIndex(path) {
-                modules[index, default: ""] += String(describing: type(of: module)).lowercased() + " "
+                let name = String(describing: type(of: module)).lowercased()
+                modules[index, default: ""] += name + " "
+                if name.contains("attention"), heads[index] == nil { heads[index] = Self.reflectedHeads(module) }
+            }
+            if hiddenSize == nil, let embedding = module as? Embedding, path.hasSuffix("embed_tokens") {
+                hiddenSize = embedding.weight.dim(-1) * ((embedding as? QuantizedEmbedding).map { 32 / $0.bits } ?? 1)
             }
         }
         var experts: [Int: Int] = [:]
@@ -63,12 +77,28 @@ struct AnatomyScan: Sendable {
             if let index = Self.layerIndex(path) { experts[index] = array.dim(0) }
         }
         var layers = (0 ..< ((modules.keys.max() ?? -1) + 1)).map {
-            Layer(mixer: modules[$0].flatMap(LayerMixer.init(modules:)), experts: experts[$0])
+            Layer(mixer: modules[$0].flatMap(LayerMixer.init(modules:)), experts: experts[$0], heads: heads[$0] ?? Heads())
         }
         Self.assign(caches, to: &layers)
         self.layers = layers
         parameterCount = Self.parameterCount(parameters, groupSizes: groupSizes)
         bytes = ByteCount(parameters.reduce(0) { $0 + $1.1.nbytes })
+    }
+
+    static func reflectedHeads(_ module: Module) -> Heads {
+        var found: [String: Int] = [:]
+        var pending: [(Mirror, Int)] = [(Mirror(reflecting: module), 0)]
+        while let (mirror, depth) = pending.popLast() {
+            for child in mirror.children {
+                guard let label = child.label?.trimmingCharacters(in: CharacterSet(charactersIn: "_")) else { continue }
+                if let value = child.value as? Int, found[label] == nil { found[label] = value }
+                if depth < 1, !(child.value is Module), !(child.value is MLXArray) { pending.append((Mirror(reflecting: child.value), depth + 1)) }
+            }
+        }
+        func first(_ labels: [String]) -> Int? { labels.lazy.compactMap { found[$0] }.first }
+        return Heads(
+            heads: first(["attentionHeads", "numAttentionHeads", "numHeads", "nHeads", "heads"]),
+            kvHeads: first(["kvHeads", "numKeyValueHeads", "numKVHeads", "nKVHeads"]), headDim: first(["headDim", "headDimensions"]))
     }
 
     static func layerIndex(_ path: String) -> Int? {
@@ -104,7 +134,7 @@ struct AnatomyScan: Sendable {
             parameterCount: parameterCount,
             bytes: bytes)
         anatomy.vocabulary = config.int("vocab_size") ?? 0
-        anatomy.hiddenSize = config.int("hidden_size") ?? 0
+        anatomy.hiddenSize = config.int("hidden_size") ?? hiddenSize ?? 0
         anatomy.quantization = json.isEmpty ? nil : architectureLines(config: json)
             .first { $0.hasPrefix(Self.quantizationPrefix) }.map { String($0.dropFirst(Self.quantizationPrefix.count)) }
         return anatomy
@@ -137,6 +167,9 @@ struct AnatomyConfig {
         switch scan.mixer {
         case .attention?:
             attention(&layer, global: scan.window == nil && !slides(index))
+            layer.heads = layer.heads ?? scan.heads.heads
+            layer.kvHeads = int("num_key_value_heads") == nil ? scan.heads.kvHeads ?? layer.kvHeads : layer.kvHeads
+            layer.headDim = layer.headDim ?? scan.heads.headDim
         case .linearAttention?:
             (layer.heads, layer.kvHeads, layer.headDim) = (int("linear_num_value_heads"), int("linear_num_key_heads"), int("linear_key_head_dim"))
         case .mamba?:
