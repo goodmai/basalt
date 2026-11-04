@@ -101,8 +101,9 @@ public actor MLXInferenceEngine: InferenceEngine {
     private let gpuCacheLimit: Int?
 
     private var promptCaches: PromptCacheTree
-    private var leases: [Int: PromptCacheLeaseSlot] = [:]
-    private var launches: [Int: GenerationLaunch] = [:]
+    private(set) var leases: [Int: PromptCacheLeaseSlot] = [:]
+    private(set) var launches: [Int: GenerationLaunch] = [:]
+    var faults = FaultPlan()
     private var leaseCount = 0
     private(set) var mtpPrefixes: [(namespace: String, tokens: [Int], prefix: MTPPrefix)] = []
     private var promptCacheFullBudget: ByteCount
@@ -381,9 +382,11 @@ public actor MLXInferenceEngine: InferenceEngine {
         }
 
         if container != nil { await unloadCurrentModel() }
+        do { try faults.check(.unload) } catch { throw await Self.loadFailure(error, modelPath: modelPath) }
         state = .reduce(state, .loadStarted(path: modelPath))
         let epoch = modelEpoch
         do {
+            try faults.check(.load)
             if let gpuCacheLimit { Memory.cacheLimit = gpuCacheLimit }
             let loaded = try await loadModelContainer(from: directory, using: DefaultTokenizerLoader())
             try await loaded.perform { try PrismHadamard.prepareLoaded($0.model) }
@@ -711,6 +714,7 @@ public actor MLXInferenceEngine: InferenceEngine {
             } else {
                 components = unbudgeted
             }
+            try faults.check(.tokenize)
             let rendered: LMInput
             do {
                 rendered = try await container.prepare(input: makeInput(lastText))
@@ -771,6 +775,7 @@ public actor MLXInferenceEngine: InferenceEngine {
                         details: "the assistant prefill is not a valid start of the requested JSON output")
                 }
             }
+            try faults.check(.snapshotBoundary)
             let boundary = namespace == nil
                 ? promptTokens.count - 1
                 : await snapshotBoundary(renderedCount, container: container, epoch: epoch, template: template, makeInput)
@@ -779,6 +784,7 @@ public actor MLXInferenceEngine: InferenceEngine {
                 constrained: constraint != nil, hasMTPDrafter: hasMTPDrafter, blendAvailable: cacheBlend != nil,
                 modelIsHybrid: modelIsHybrid, modelHasRecurrentState: modelHasRecurrentState))
             if let namespace, !plan.drafts {
+                try faults.check(.restoreFromDisk)
                 await restoreFromDisk(namespace, prompt: promptTokens, container: container, epoch: epoch)
             }
             var lease: PromptCacheLease? = if let namespace { promptCaches.lease(namespace, for: promptTokens) } else { nil }
@@ -798,6 +804,7 @@ public actor MLXInferenceEngine: InferenceEngine {
             case let held?: (held.cache, held.reusedTokens)
             case nil: nil
             }
+            try faults.check(.anchorOffsets)
             let leaseID = hold(lease)
             let anchors = plan.findsAnchors
                 ? await anchorOffsets(
@@ -825,6 +832,7 @@ public actor MLXInferenceEngine: InferenceEngine {
             let cuts = (fork.map { [$0] } ?? []) + anchors
             let launch: GenerationLaunch
             do {
+                try faults.check(.launch)
                 launch = try await container.performEvaluating(nonSendable: (lmInput, reuse)) { context, values in
                     let prompt = CachedPrompt(reuse: values.1, cuts: cuts, boundary: boundary, blend: blending)
                     return try Self.launch(input: values.0, prompt: prompt, options: options, context: context)
@@ -835,6 +843,7 @@ public actor MLXInferenceEngine: InferenceEngine {
             }
             let (mlxStream, mlxTask, reusedTokens, prefillSeconds) = (launch.stream, launch.task, launch.reusedTokens, launch.prefillSeconds)
             launches[leaseID] = launch
+            let injected = faults
 
             return AsyncStream<StreamChunk> { continuation in
                 let task = Task.detached {
@@ -940,11 +949,11 @@ public actor MLXInferenceEngine: InferenceEngine {
                             .trimmingCharacters(in: .whitespacesAndNewlines)
                         if !continued.isEmpty { continuation.yield(.text(continued)) }
                     }
-                    let completed = !(Task.isCancelled || stoppedAfterCall)
+                    let completed = injected.point != .settle && !(Task.isCancelled || stoppedAfterCall)
                     await Self.settle(mlxTask, cancelled: !completed)
                     if completed, let session = constraint?.session { await self.recycle(session, epoch: epoch) }
                     await self.keep(tokens: promptTokens, namespace: namespace, releasing: leaseID, epoch: epoch)
-                    if !Task.isCancelled {
+                    if !Task.isCancelled, !injected.endsStream {
                         let generationTime = (clock.now - startTime).inSeconds + prefillSeconds
                         let timeToFirstToken = (firstTokenAt.map { ($0 - startTime).inSeconds } ?? 0) + prefillSeconds
                         let mem = Memory.snapshot()
@@ -1196,7 +1205,7 @@ public actor MLXInferenceEngine: InferenceEngine {
     private func keep(tokens prompt: [Int], namespace: String?, releasing lease: Int, epoch: ModelEpoch) {
         leases[lease] = nil
         let launch = launches.removeValue(forKey: lease)
-        guard epoch == modelEpoch, let namespace, let launch else { return }
+        guard epoch == modelEpoch, faults.point != .keep, let namespace, let launch else { return }
         let (tokens, anchors) = (Array(prompt.prefix(launch.exactTokens.rawValue)), launch.anchors)
         for anchor in anchors {
             promptCaches.store(namespace, tokens: Array(tokens.prefix(anchor.tokenCount)), cache: anchor)

@@ -172,6 +172,7 @@ struct BatchedDecoderTests {
         for launch in launches { produced.append(await BatchFixture.collect(launch.stream)) }
         #expect(produced == expected)
         #expect(core.decoder.admittedRows == 4)
+        #expect(core.decoder.checkInvariants() == [])
     }
 
     @Test("A row joining mid-flight and rows retiring on EOS or max tokens leave the other rows' tokens unchanged, on plain attention and on recurrent hybrids",
@@ -192,6 +193,7 @@ struct BatchedDecoderTests {
             if case .chunk(let chunk) = generation { head += chunk }
         }
         let late = try BatchFixture.launch(core, model, prompts[3], maxTokens: 32)
+        #expect(core.decoder.checkInvariants() == [])
 
         var rest = ""
         while let generation = await longIterator.next() {
@@ -202,6 +204,7 @@ struct BatchedDecoderTests {
         let stopAt = try #require(solo[2].firstIndex(of: stop))
         #expect(await BatchFixture.collect(stopping.stream) == BatchFixture.text(Array(solo[2].prefix(stopAt))))
         #expect(await BatchFixture.collect(late.stream) == BatchFixture.text(Array(solo[3].prefix(32))))
+        #expect(core.decoder.checkInvariants() == [])
     }
 
     @Test("Cancelling one row stops only that row", .timeLimit(.minutes(1)), arguments: [TinyModel.Family.llama, .qwen35])
@@ -216,10 +219,12 @@ struct BatchedDecoderTests {
         #expect(await BatchFixture.collect(cancelled.stream, upTo: 4).unicodeScalars.count == 4)
         cancelled.task.cancel()
         await cancelled.task.value
+        #expect(core.decoder.checkInvariants() == [])
         #expect(await BatchFixture.collect(kept.stream) == expected)
         await kept.task.value
         let seats = [core.decoder.seat(on: core), core.decoder.seat(on: core)]
         #expect(seats.allSatisfy { $0 != nil })
+        #expect(core.decoder.checkInvariants() == [])
     }
 }
 
@@ -275,6 +280,8 @@ struct BatchedRoutingTests {
         #expect(responses.map(\.text) == expected)
         #expect(responses.allSatisfy { $0.metadata.completionTokens == 32 && $0.metadata.tokensPerSecond > 0 && $0.metadata.timeToFirstToken > 0 })
         #expect(await engine.batchedRows == 4)
+        #expect(await engine.checkInvariants(idle: true) == [])
+        #expect(await orchestrator.gate.checkInvariants(idle: true) == [])
     }
 
     @Test("With 1 batch slot, concurrent generations decode on their own as before; on a model with compiled traces they no longer race each other",

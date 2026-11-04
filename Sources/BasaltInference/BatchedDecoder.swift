@@ -13,6 +13,10 @@ final class BatchedDecoder: Sendable {
 
     var admittedRows: Int { mailbox.withLock { $0.admitted } }
 
+    func checkInvariants() -> [String] {
+        mailbox.withLock { $0.checkInvariants(slots: slots) }
+    }
+
     func seat(in context: ModelContext) -> BatchSeat? {
         (context.batch as? BatchCore).flatMap { seat(on: $0) }
     }
@@ -90,6 +94,15 @@ private struct Mailbox {
     mutating func deliver(_ row: BatchDelivery) {
         rows[row.id]?.tokens.append(row.token)
         if row.finished { rows[row.id]?.finished = true }
+    }
+
+    func checkInvariants(slots: Int) -> [String] {
+        var problems: [String] = []
+        if !(0...slots).contains(seated) { problems.append("\(seated) rows seated in \(slots) slots") }
+        if rows.count > seated { problems.append("\(rows.count) rows queued for \(seated) seats") }
+        if !rows.keys.allSatisfy({ $0 >= 1 && $0 <= issued }) { problems.append("a queued row has no issued seat") }
+        if admitted > issued { problems.append("\(admitted) rows admitted from \(issued) seats") }
+        return problems
     }
 }
 

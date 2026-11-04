@@ -96,7 +96,7 @@ struct SlidingWindowSnapshotTests {
         #expect(!rotating.isEmpty)
         #expect(rotating.allSatisfy { $0.metaState.last == "true" })
         var tree = PromptCacheTree(byteBudget: ByteCount(1 << 30))
-        tree.store("ns", tokens: Array(first.prefix(boundary)), cache: kept)
+        tree.checkedStore("ns", tokens: Array(first.prefix(boundary)), cache: kept)
         #expect(tree.leaves().count == 1)
 
         let full = model(TinyHybrid.row(second), cache: try model.newCache(parameters: nil))
@@ -114,7 +114,7 @@ struct SlidingWindowSnapshotTests {
         let control = model(tailTokens, cache: unrestored)
         _ = consume again
         #expect(!allClose(control, expected, rtol: 1e-4, atol: 5e-3).item(Bool.self))
-        #expect(pinCount(tree) == 0)
+        #expect(tree.checkInvariants(leases: 0) == [])
     }
 
     @Test("On the engine, a follow-up turn longer than the window reuses the previous prompt and answers like a full prefill")
@@ -134,7 +134,7 @@ struct SlidingWindowSnapshotTests {
         let turn3 = try await engine.generate(request: greedy(Conversation.afterToolCall, key: "ns"))
         #expect(turn3.cachedPromptTokens == second.count - 1)
         #expect(turn3.generatedText == full2.generatedText)
-        #expect(await engine.readPromptCaches(pinCount) == 0)
+        #expect(await engine.checkInvariants(idle: true) == [])
     }
 }
 
@@ -161,7 +161,7 @@ struct HybridPrefixSnapshotTests {
         var tree = PromptCacheTree(byteBudget: ByteCount(1 << 30))
         let snapshot = try TinyHybrid.snapshotted(model, first)
         #expect(snapshot.tokenCount == boundary)
-        tree.store("ns", tokens: Array(first.prefix(boundary)), cache: snapshot)
+        tree.checkedStore("ns", tokens: Array(first.prefix(boundary)), cache: snapshot)
         #expect(tree.byteCount == TinyHybrid.storedBytes(snapshot, tokens: boundary))
         let stored = TinyHybrid.recurrentStates(tree)
         #expect(!stored.isEmpty)
@@ -186,7 +186,7 @@ struct HybridPrefixSnapshotTests {
         _ = consume again
         #expect(!allClose(control, expected, rtol: 1e-4, atol: 1e-4).item(Bool.self))
         #expect(TinyHybrid.recurrentStates(tree) == stored)
-        #expect(pinCount(tree) == 0)
+        #expect(tree.checkInvariants(leases: 0) == [])
     }
 
     @Test("A prompt that does not extend the snapshot's tokens gets no lease and is prefilled in full")
@@ -194,7 +194,7 @@ struct HybridPrefixSnapshotTests {
         let model = try TinyModel.make(.qwen35)
         let first = TinyModel.tokens(Conversation.firstTurn)
         var tree = PromptCacheTree(byteBudget: ByteCount(1 << 30))
-        tree.store("ns", tokens: Array(first.dropLast()), cache: try TinyHybrid.snapshotted(model, first))
+        tree.checkedStore("ns", tokens: Array(first.dropLast()), cache: try TinyHybrid.snapshotted(model, first))
         let noLease1 = tree.lease("ns", for: TinyModel.tokens(Conversation.otherUser)) == nil
         #expect(noLease1)
         let noLease2 = tree.lease("ns", for: TinyModel.tokens(Conversation.otherBranch)) == nil
@@ -219,7 +219,7 @@ struct HybridPrefixSnapshotTests {
         _ = model(TinyHybrid.row(first), cache: cache.layers)
         eval(cache.layers.flatMap { $0.innerState() })
         var tree = PromptCacheTree(byteBudget: ByteCount(1 << 30))
-        tree.store("ns", tokens: Array(first.dropLast()), cache: cache)
+        tree.checkedStore("ns", tokens: Array(first.dropLast()), cache: cache)
         #expect(tree.byteCount == 0)
         #expect(tree.leaves().isEmpty)
     }
@@ -230,7 +230,7 @@ struct HybridPrefixSnapshotTests {
         let first = TinyModel.tokens(Conversation.firstTurn)
         let snapshot = try TinyHybrid.snapshotted(model, first)
         var tree = PromptCacheTree(byteBudget: TinyHybrid.storedBytes(snapshot, tokens: first.count - 1) - 1)
-        tree.store("ns", tokens: Array(first.dropLast()), cache: snapshot)
+        tree.checkedStore("ns", tokens: Array(first.dropLast()), cache: snapshot)
         #expect(tree.byteCount == 0)
         #expect(tree.leaves().isEmpty)
     }
@@ -250,7 +250,7 @@ struct HybridPrefixSnapshotTests {
             plan: CachedPrompt(boundary: first.count - 1), model: model, prefill: PrefillParameters(stepSize: 16))
         #expect(head.state != nil)
         var tree = PromptCacheTree(byteBudget: ByteCount(1 << 30))
-        tree.store("ns", tokens: Array(first.dropLast()), cache: try #require(head.kept))
+        tree.checkedStore("ns", tokens: Array(first.dropLast()), cache: try #require(head.kept))
         let lease = try tree.required("ns", for: TinyModel.tokens(Conversation.afterToolCall))
         #expect(lease.cache.state != nil)
         _ = consume lease
@@ -291,7 +291,7 @@ struct HybridPrefixSnapshotTests {
         let fullThird = try await engine.generate(request: greedy(thirdPrompt, key: nil))
         #expect(third.cachedPromptTokens == shared)
         #expect(third.generatedText == fullThird.generatedText)
-        #expect(await engine.readPromptCaches(pinCount) == 0)
+        #expect(await engine.checkInvariants(idle: true) == [])
     }
 
     @Test("Two prompts diverging mid-leaf materialize a snapshot at the fork so a third prompt with the same prefix leases it (#95)")
@@ -306,7 +306,7 @@ struct HybridPrefixSnapshotTests {
         #expect(commonPrefix(first, third) == shared)
 
         var tree = PromptCacheTree(byteBudget: ByteCount(1 << 30))
-        tree.store("ns", tokens: Array(first.dropLast()), cache: try TinyHybrid.snapshotted(model, first))
+        tree.checkedStore("ns", tokens: Array(first.dropLast()), cache: try TinyHybrid.snapshotted(model, first))
         let noLease = tree.lease("ns", for: second) == nil
         #expect(noLease)
 
@@ -321,8 +321,8 @@ struct HybridPrefixSnapshotTests {
         #expect(forkCache.isSnapshot(of: shared))
         #expect(keptCache.tokenCount == second.count - 1)
 
-        tree.store("ns", tokens: Array(second.prefix(forkCache.tokenCount)), cache: forkCache)
-        tree.store("ns", tokens: Array(second.dropLast()), cache: keptCache)
+        tree.checkedStore("ns", tokens: Array(second.prefix(forkCache.tokenCount)), cache: forkCache)
+        tree.checkedStore("ns", tokens: Array(second.dropLast()), cache: keptCache)
 
         let lease = try tree.required("ns", for: third)
         #expect(lease.reusedTokens == shared)
@@ -333,7 +333,7 @@ struct HybridPrefixSnapshotTests {
         eval(tail)
         _ = consume lease
         #expect(allClose(tail, expected, rtol: 1e-4, atol: 1e-4).item(Bool.self))
-        #expect(pinCount(tree) == 0)
+        #expect(tree.checkInvariants(leases: 0) == [])
     }
 
     @Test("A snapshot node left with one child after an eviction is not merged away, so its restore point survives")
@@ -343,7 +343,7 @@ struct HybridPrefixSnapshotTests {
         let head = Array(p.dropLast())
         var tree = PromptCacheTree(byteBudget: ByteCount(1 << 30), leafLimit: 2)
         for prompt in [p, head + [10, 11, 12], head + [20, 21, 22], Array(200..<220)] {
-            tree.store("ns", tokens: Array(prompt.dropLast()), cache: try TinyHybrid.snapshotted(model, prompt))
+            tree.checkedStore("ns", tokens: Array(prompt.dropLast()), cache: try TinyHybrid.snapshotted(model, prompt))
         }
         #expect(tree.leaves().count == 2)
         #expect(tree.byteCount == tree.leaves().reduce(0) { $0 + $1.bytes } + (tree.roots["ns"]?.children[p[0]]?.bytes ?? 0))
@@ -358,7 +358,7 @@ struct HybridPrefixSnapshotTests {
         let head = Array(TinyModel.tokens(Conversation.firstTurn).dropLast())
         var tree = PromptCacheTree(byteBudget: ByteCount(1 << 30), leafLimit: 1)
         for prompt in [head + [10, 11, 12], head + [20, 21, 22], Array(200..<220)] {
-            tree.store("ns", tokens: Array(prompt.dropLast()), cache: try TinyHybrid.snapshotted(model, prompt))
+            tree.checkedStore("ns", tokens: Array(prompt.dropLast()), cache: try TinyHybrid.snapshotted(model, prompt))
             #expect(tree.leaves().count == 1)
             #expect(tree.leaves().allSatisfy { $0.snapshot != nil && $0.parent?.tokens.isEmpty == true })
             #expect(tree.byteCount == tree.leaves().reduce(0) { $0 + $1.bytes })
@@ -409,7 +409,7 @@ struct HybridPrefixSnapshotTests {
         let budget = ByteCount(deepest * TinyHybrid.attentionBytesPerToken) + recurrent * 5 / 2
         var tree = PromptCacheTree(byteBudget: budget)
         for (index, prompt) in turns.enumerated() {
-            tree.store("ns", tokens: Array(prompt.dropLast()), cache: try TinyHybrid.snapshotted(model, prompt))
+            tree.checkedStore("ns", tokens: Array(prompt.dropLast()), cache: try TinyHybrid.snapshotted(model, prompt))
             var snapshots = 0
             var bytes = ByteCount.zero
             var pending = Array(tree.roots.values)
@@ -449,10 +449,10 @@ struct HybridPrefixSnapshotTests {
         let opening = TinyModel.tokens(Conversation.firstTurn)
         let turns = (0..<4).map { turn in opening + (0..<(turn * 20)).map { 100 + $0 % 50 } }
         var tree = PromptCacheTree(byteBudget: ByteCount(1 << 30))
-        tree.store("key:a", tokens: Array(opening.dropLast()), cache: try TinyHybrid.snapshotted(model, opening))
+        tree.checkedStore("key:a", tokens: Array(opening.dropLast()), cache: try TinyHybrid.snapshotted(model, opening))
         #expect(tree.storedPrefix(of: opening, in: "key:b") == 0)
         for prompt in turns {
-            tree.store("key:b", tokens: Array(prompt.dropLast()), cache: try TinyHybrid.snapshotted(model, prompt))
+            tree.checkedStore("key:b", tokens: Array(prompt.dropLast()), cache: try TinyHybrid.snapshotted(model, prompt))
         }
         func snapshots(_ namespace: String) -> Int {
             var count = 0
@@ -468,7 +468,7 @@ struct HybridPrefixSnapshotTests {
         let lease = try tree.required("key:a", for: opening + [9, 9])
         #expect(lease.reusedTokens == opening.count - 1)
         _ = consume lease
-        #expect(pinCount(tree) == 0)
+        #expect(tree.checkInvariants(leases: 0) == [])
     }
 
     @Test("The snapshot boundary is the end of the request text: the template's suffix after it is measured, not assumed")

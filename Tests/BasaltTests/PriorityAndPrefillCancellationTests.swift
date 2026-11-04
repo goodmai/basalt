@@ -30,6 +30,7 @@ struct PriorityAndPrefillCancellationTests {
         await gate.release(holder)
         for task in tasks { try await task.value }
         #expect(await order.admitted == ["ui", "tool", "std1", "std2", "bg"])
+        #expect(await gate.checkInvariants(idle: true) == [])
     }
 
     @Test("A full queue lets a higher-priority request in by turning away the lowest-priority waiter")
@@ -40,6 +41,7 @@ struct PriorityAndPrefillCancellationTests {
         #expect(await GenerationGateTests.eventually { await gate.queued == 1 })
         let standard = Task { try await gate.admit(priority: .standard) }
         #expect(await GenerationGateTests.eventually { await gate.queued == 2 })
+        #expect(await gate.checkInvariants() == [])
         #expect(await gate.refusal(for: .background) != nil)
         #expect(await gate.refusal(for: .interactive) == nil)
         let interactive = Task { try await gate.admit(priority: .interactive) }
@@ -54,6 +56,7 @@ struct PriorityAndPrefillCancellationTests {
         await gate.release(try await interactive.value)
         await gate.release(try await standard.value)
         #expect(await gate.inFlight == 0)
+        #expect(await gate.checkInvariants(idle: true) == [])
         await #expect(throws: BasaltError.self) {
             let full = GenerationGate(maxConcurrent: 1, maxQueue: 0)
             _ = try await full.admit()

@@ -76,6 +76,19 @@ public actor GenerationGate {
     public func release(_ id: Int) {
         guard running.removeValue(forKey: id) != nil else { return }
         promote()
+        assert(checkInvariants().isEmpty)
+    }
+
+    func checkInvariants(idle: Bool = false) -> [String] {
+        var problems: [String] = []
+        if running.count > maxConcurrent { problems.append("\(running.count) running for \(maxConcurrent) slots") }
+        if queue.count > maxQueue { problems.append("\(queue.count) queued for \(maxQueue) places") }
+        if exclusiveHeld, !running.isEmpty { problems.append("held exclusively while \(running.count) run") }
+        if canRun, !queue.isEmpty { problems.append("\(queue.count) wait while a slot is free") }
+        if idle, !running.isEmpty || !queue.isEmpty || exclusiveHeld || !exclusiveQueue.isEmpty {
+            problems.append("not idle: \(running.count) running, \(queue.count) queued, exclusive \(exclusiveHeld), \(exclusiveQueue.count) waiting for it")
+        }
+        return problems
     }
 
     public func exclusively<T: Sendable>(_ body: @Sendable () async throws -> T) async rethrows -> T {

@@ -61,6 +61,7 @@ struct GenerationGateTests {
         let first = try await orchestrator.generateStream(request: GenerationRequest(prompt: "1"))
         async let second = orchestrator.generate(request: GenerationRequest(prompt: "2"))
         #expect(await Self.eventually { await orchestrator.gate.queued == 1 })
+        #expect(await orchestrator.gate.checkInvariants() == [])
         do {
             _ = try await orchestrator.generate(request: GenerationRequest(prompt: "3"))
             Issue.record("expected serverBusy")
@@ -74,6 +75,7 @@ struct GenerationGateTests {
         #expect(try await second.generatedText == "Mock response")
         #expect(await engine.getRequests().map(\.prompt) == ["1", "2"])
         #expect(await orchestrator.gate.inFlight == 0)
+        #expect(await orchestrator.gate.checkInvariants(idle: true) == [])
     }
 
     @Test("A stream holds its slot until the consumer drops it")
@@ -90,6 +92,7 @@ struct GenerationGateTests {
         let deadline = ContinuousClock.now + .seconds(2)
         while await orchestrator.gate.inFlight > 0, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(20)) }
         #expect(await orchestrator.gate.inFlight == 0)
+        #expect(await orchestrator.gate.checkInvariants(idle: true) == [])
     }
 
     @Test("A queued request whose client goes away leaves the queue")
@@ -98,11 +101,14 @@ struct GenerationGateTests {
         let holder = try await gate.admit()
         let waiter = Task { try await gate.admit() }
         #expect(await Self.eventually { await gate.queued == 1 })
+        #expect(await gate.checkInvariants() == [])
         waiter.cancel()
         await #expect(throws: CancellationError.self) { _ = try await waiter.value }
         #expect(await gate.queued == 0)
+        #expect(await gate.checkInvariants() == [])
         await gate.release(holder)
         #expect(await gate.inFlight == 0)
+        #expect(await gate.checkInvariants(idle: true) == [])
     }
 
     @Test("Two concurrent switches to the same model load it once; a switch to another model meanwhile is 503")
@@ -127,6 +133,7 @@ struct GenerationGateTests {
         _ = try await (one, two)
         #expect(await engine.loads.count == 1)
         #expect(await orchestrator.currentModelId == b)
+        #expect(await orchestrator.gate.checkInvariants(idle: true) == [])
     }
 
     @Test("A switch issued during a running stream loads only after the stream ends, and new requests queue behind it")
@@ -142,9 +149,11 @@ struct GenerationGateTests {
         let stream = try await orchestrator.generateStream(request: GenerationRequest(prompt: "running"))
         let switching = Task { try await orchestrator.switchModel(to: b) }
         #expect(await Self.eventually { await orchestrator.gate.exclusiveWaiting == 1 })
+        #expect(await orchestrator.gate.checkInvariants() == [])
         #expect(await engine.loads == ["A"])
         let behind = Task { try await orchestrator.generate(request: GenerationRequest(prompt: "behind")) }
         #expect(await Self.eventually { await orchestrator.gate.queued == 1 })
+        #expect(await orchestrator.gate.checkInvariants() == [])
 
         let streamEnded = ContinuousClock.now
         _ = await Self.drain(stream)
@@ -152,6 +161,7 @@ struct GenerationGateTests {
         _ = try await behind.value
         #expect(await engine.loads.count == 2)
         #expect(try #require(await engine.loadStartedAt.last) >= streamEnded)
+        #expect(await orchestrator.gate.checkInvariants(idle: true) == [])
     }
 
     @Test("Shutdown stops admitting, and a stream still open after the deadline is cancelled and ends")
@@ -170,5 +180,6 @@ struct GenerationGateTests {
         await #expect(throws: BasaltError.self) {
             _ = try await orchestrator.generate(request: GenerationRequest(prompt: "late"))
         }
+        #expect(await orchestrator.gate.checkInvariants(idle: true) == [])
     }
 }
