@@ -99,7 +99,7 @@ struct GenerationRelayTests {
 
     @Test("A tool call flushes the held text first, and with parallel calls off the stream stops after it")
     func singleToolCallStops() {
-        let request = GenerationRequest(prompt: "p", tools: Self.tools, toolChoice: ToolChoice(parallel: false))
+        let request = GenerationRequest(prompt: "p", tools: Self.tools).with { $0.toolChoice = ToolChoice(parallel: false) }
         let run = Self.run(Setup(request: request), [.chunk("Let me look."), Self.call("shell"), .chunk("never")])
         #expect(run.steps == 2)
         #expect(run.transcript == ["text: Let me look.", "call: shell"])
@@ -159,7 +159,7 @@ struct GenerationRelayTests {
 
     @Test("A forced tool collects the answer after the prefill into one call when it parses as an object")
     func forcedToolCall() {
-        let request = GenerationRequest(prompt: "p", tools: Self.tools, toolChoice: ToolChoice(forcedTool: "read"))
+        let request = GenerationRequest(prompt: "p", tools: Self.tools).with { $0.toolChoice = ToolChoice(forcedTool: "read") }
         let run = Self.run(
             Setup(request: request, forcedTool: "read", prefixAnswer: #"{"path":"#, guardsRepetition: false), [.chunk(#" "a.txt"}"#)])
         #expect(run.transcript == ["call: read"])
@@ -168,7 +168,7 @@ struct GenerationRelayTests {
 
     @Test("A forced tool whose arguments do not parse returns the generated continuation as text")
     func forcedToolFallsBackToText() {
-        let request = GenerationRequest(prompt: "p", tools: Self.tools, toolChoice: ToolChoice(forcedTool: "read"))
+        let request = GenerationRequest(prompt: "p", tools: Self.tools).with { $0.toolChoice = ToolChoice(forcedTool: "read") }
         let run = Self.run(
             Setup(request: request, forcedTool: "read", prefixAnswer: #"{"path":"#, guardsRepetition: false), [.chunk(#" "a.txt""#)])
         #expect(run.transcript == [#"text: "a.txt""#])

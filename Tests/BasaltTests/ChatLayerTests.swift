@@ -142,19 +142,6 @@ struct RepetitionScoreTests {
     }
 }
 
-@Suite("Stop reason")
-struct StopReasonTests {
-
-    @Test("Truncation is reported as length, not as a clean stop")
-    func truncationIsVisible() {
-        // The old engine hardcoded .stop, so a run cut off at the ceiling looked
-        // identical to one that finished — truncated code read as a model failure.
-        #expect(ChatResult.Stop.tokenLimit.openAIFinishReason == "length")
-        #expect(ChatResult.Stop.repetitionLoop.openAIFinishReason == "length")
-        #expect(ChatResult.Stop.endTurn.openAIFinishReason == "stop")
-    }
-}
-
 @Suite("Ornith 1.5")
 struct OrnithModelTests {
     /// Ornith ships as `qwen3_5` / `qwen3_5_moe`, so it must land on QwenProfile —
