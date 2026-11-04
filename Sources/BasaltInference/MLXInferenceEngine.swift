@@ -394,47 +394,11 @@ public actor MLXInferenceEngine: InferenceEngine {
         }
 
         do {
-            // Free the old model BEFORE loading the new one to avoid a peak-memory spike
-            // where both models occupy GPU/unified memory simultaneously.
-            // Setting container to nil drops all ARC references to the ModelContainer,
-            // releasing the underlying MLXArray tensors and Metal buffers.
-            if container != nil {
-                await persistPromptCache(within: Self.modelSwitchPersistDeadline)
-                container = nil
-                await releaseWiredMemory()
-                batchDecoder = nil
-                mtpDrafter = nil
-                promptCaches.removeAll()
-                mtpPrefixes.removeAll()
-                cacheBlend = nil
-                modelEpoch += 1
-                Memory.clearCache()   // flush MLX's internal memory allocator cache
-                logger.info("Previous model unloaded, GPU cache cleared.")
-            }
-
-            // Unbounded buffer cache competes with model weights for unified memory
-            // and pushes large models (27B @ 4-bit ≈ 16 GB) into swap on 24 GB Macs.
-            // ponytail: fixed 512 MB cap; make it a --gpu-cache flag if a workload needs more.
+            if container != nil { await unloadCurrentModel() }
             if let gpuCacheLimit { Memory.cacheLimit = gpuCacheLimit }
-
             let loaded = try await loadModelContainer(from: directory, using: DefaultTokenizerLoader())
             try await loaded.perform { try PrismHadamard.prepareLoaded($0.model) }
-            if mtp {
-                do {
-                    mtpDrafter = try await loaded.perform { try MTPSidecar.load(directory: directory, target: $0.model) }
-                    if let mtpDrafter {
-                        logger.info("MTP head loaded from \(mtpDrafter.source); requests without constraints, lookup or --kv-bits and prompts up to \(Self.mtpPromptLimit) tokens draft with it")
-                        if speculativeLookup {
-                            logger.warn("--mtp with --speculative-lookup: lookup wins, so the MTP head drafts only for requests that set speculative_lookup to false")
-                        }
-                    } else {
-                        logger.warn("--mtp: \(modelPath) has no MTP head this build can use (Qwen3.5-family target plus mtp.safetensors); decoding stays plain")
-                    }
-                } catch {
-                    mtpDrafter = nil
-                    logger.warn("--mtp: the MTP head of \(modelPath) did not load (\(error.localizedDescription)); decoding stays plain")
-                }
-            }
+            if mtp { await loadMTPDrafter(for: loaded, directory: directory, modelPath: modelPath) }
             attach(loaded,
                    profile: ModelProfileRegistry.profile(forModelAt: modelPath),
                    samplingDefaults: SamplingDefaults(generationConfig: ModelCache.generationConfig(at: directory)),
@@ -446,42 +410,42 @@ public actor MLXInferenceEngine: InferenceEngine {
             await probeKVHeads(directory: directory)
             await probeQuest()
             logger.info("Sampling defaults from generation_config.json: \(samplingDefaults)")
-            
-            // Dynamic config inspection
-            if let json = ModelCache.config(at: directory) {
-                
-                let arch = (json["architectures"] as? [String])?.first ?? "Unknown"
-                let modelType = json["model_type"] as? String ?? "Unknown"
-                
-                let textConfig = json["text_config"] as? [String: Any]
-                let numExperts = json["num_experts"] as? Int ?? textConfig?["num_experts"] as? Int
-                let isMoE = (numExperts ?? 0) > 0
-                
-                let qConfig = json["quantization_config"] as? [String: Any] ?? json["quantization"] as? [String: Any]
-                let bits = qConfig?["bits"] as? Int
-                let groupSize = qConfig?["group_size"] as? Int
-                let qMode = qConfig?["mode"] as? String
-                
-                logger.info("--- Model Architecture ---")
-                logger.info("Type: \(modelType) (\(arch))")
-                if isMoE {
-                    logger.info("Topology: Sparse MoE (Experts: \(numExperts ?? 0))")
-                } else {
-                    logger.info("Topology: Dense")
-                }
-                if let b = bits {
-                    let modeStr = qMode.map { " [\($0)]" } ?? ""
-                    logger.info("Quantization: \(b)-bit (Group Size: \(groupSize ?? -1))\(modeStr)")
-                } else if let qDict = json["quantization"] as? [String: Any], !qDict.isEmpty {
-                    logger.info("Quantization: Dynamic Quantization (DQ - per-layer, \(qDict.count) layers)")
-                } else {
-                    logger.info("Quantization: None (FP16/BF16 Base)")
-                }
-                logger.info("--------------------------")
-            }
+            for line in ModelCache.config(at: directory).map(architectureLines(config:)) ?? [] { logger.info(line) }
             logger.info("Model loaded and initialized successfully.")
         } catch {
             throw await Self.loadFailure(error, modelPath: modelPath)
+        }
+    }
+
+    func unloadCurrentModel() async {
+        await persistPromptCache(within: Self.modelSwitchPersistDeadline)
+        container = nil
+        await releaseWiredMemory()
+        batchDecoder = nil
+        mtpDrafter = nil
+        promptCaches.removeAll()
+        mtpPrefixes.removeAll()
+        cacheBlend = nil
+        modelEpoch += 1
+        Memory.clearCache()
+        logger.info("Previous model unloaded, GPU cache cleared.")
+    }
+
+    func loadMTPDrafter(for loaded: ModelContainer, directory: URL, modelPath: String) async {
+        do {
+            mtpDrafter = try await loaded.perform { try MTPSidecar.load(directory: directory, target: $0.model) }
+        } catch {
+            mtpDrafter = nil
+            logger.warn("--mtp: the MTP head of \(modelPath) did not load (\(error.localizedDescription)); decoding stays plain")
+            return
+        }
+        guard let mtpDrafter else {
+            logger.warn("--mtp: \(modelPath) has no MTP head this build can use (Qwen3.5-family target plus mtp.safetensors); decoding stays plain")
+            return
+        }
+        logger.info("MTP head loaded from \(mtpDrafter.source); requests without constraints, lookup or --kv-bits and prompts up to \(Self.mtpPromptLimit) tokens draft with it")
+        if speculativeLookup {
+            logger.warn("--mtp with --speculative-lookup: lookup wins, so the MTP head drafts only for requests that set speculative_lookup to false")
         }
     }
 
@@ -514,25 +478,6 @@ public actor MLXInferenceEngine: InferenceEngine {
         guard compatible != template else { return tokenizerConfig }
         entries["chat_template"] = Config(compatible)
         return Config(entries)
-    }
-
-    // MARK: — Template Context
-    public static func buildTemplateContext(
-        request: GenerationRequest,
-        defaultReasoningEffort: String? = nil,
-        profile: (any ModelProfile)? = nil
-    ) -> [String: any Sendable]? {
-        // ReasoningPolicy(rawValue:) maps "off"/"none" to disabled; each profile maps level names
-        // onto its template (Qwen: "high" → "xhigh"), GenericProfile passes them through.
-        let policy = reasoningPolicy(request: request, defaultReasoningEffort: defaultReasoningEffort)
-        let context = (profile ?? GenericProfile()).templateContext(for: policy)
-        return context.isEmpty ? nil : context
-    }
-
-    static func reasoningPolicy(request: GenerationRequest, defaultReasoningEffort: String?) -> ReasoningPolicy {
-        request.enableThinking == false
-            ? .disabled
-            : ReasoningPolicy(rawValue: request.reasoningEffort ?? defaultReasoningEffort) ?? .modelDefault
     }
 
     // MARK: — Generate
@@ -582,170 +527,6 @@ public actor MLXInferenceEngine: InferenceEngine {
             toolCallRepairs: finalResponse.toolCallRepairs,
             toolCallRejections: finalResponse.toolCallRejections
         )
-    }
-
-    // MARK: — Tools
-
-    static func chat(_ messages: [ChatMessageInput], lastText: String) -> [Chat.Message] {
-        messages.enumerated().map { index, message in
-            let text = index == messages.count - 1 ? lastText : message.text
-            switch message.role {
-            case .system:    return .system(text)
-            case .user:      return .user(text)
-            case .assistant: return .assistant(text, toolCalls: message.toolCalls?.map(toolCall))
-            case .tool:      return .tool(text, id: message.toolCallId, name: message.toolName)
-            }
-        }
-    }
-
-    static func chatInput(
-        _ messages: [ChatMessageInput], normalisation: String, tools: [ToolSpec]?, context: [String: any Sendable]?
-    ) -> (@Sendable (String) -> UserInput, String?, String) {
-        let last = messages[messages.count - 1]
-        return (
-            { UserInput(chat: Self.chat(messages, lastText: $0), tools: tools, additionalContext: context) },
-            HybridPrefixSnapshot.templateKey([tools ?? [], context ?? [:], last.role.rawValue, last.toolCalls != nil, normalisation]),
-            last.text
-        )
-    }
-
-    static func templateFallbacks(_ turns: [ChatMessageInput]) -> [(String, [ChatMessageInput])] {
-        [("leadingSystem", ChatMessageInput.leadingSystem(turns)), ("alternating", ChatMessageInput.alternating(turns))]
-    }
-
-    static func briefly(_ error: any Error, limit: Int = 300) -> String {
-        let text = String(describing: error)
-        return text.count > limit ? String(text.prefix(limit)) + "…" : text
-    }
-
-    static func isTemplateRefusal(_ error: any Error) -> Bool {
-        if error is TemplateException { return true }
-        if case JinjaError.runtime = error { return true }
-        return false
-    }
-
-    static let thinkingOpeners = ["<think>", "<|channel>thought", "<|channel|>thought", "[THINK]"]
-    static let thinkingClosers = ["</think>", "<channel|>", "<|channel|>", "<|turn|>", "[/THINK]"]
-    static let strayThinkingClosers = ["</think>", "<channel|>", "[/THINK]"]
-    static let prefillThinkingClosers = ["</think>", "<channel|>", "<|channel|>", "[/THINK]"]
-    static let thinkingMarkerHoldback = (thinkingOpeners + thinkingClosers).map(\.count).max()! - 1
-
-    static func firstMarker(_ markers: [String], in text: some StringProtocol) -> Range<String.Index>? {
-        markers.compactMap { text.range(of: $0) }.min { $0.lowerBound < $1.lowerBound }
-    }
-
-    static func opensThinking(_ prefill: String) -> Bool {
-        let start = prefill.drop(while: \.isWhitespace)
-        return thinkingOpeners.contains { start.hasPrefix($0) }
-    }
-
-    static func endsInsideThinking(_ rendered: String, assistantPrefix: String = "") -> Bool {
-        answerAfterThinking(rendered, assistantPrefix: assistantPrefix) == nil
-    }
-
-    static func tailOpensThinking(_ rendered: String) -> Bool {
-        var tail = Substring(rendered)
-        while tail.last?.isWhitespace == true { tail.removeLast() }
-        return thinkingOpeners.contains { tail.hasSuffix($0) }
-    }
-
-    static func guardedPrefill(_ prefill: String, after renderedTail: String, controlTokens: ControlTokenGuard) -> String {
-        var inside = tailOpensThinking(renderedTail)
-        var rest = Substring(prefill)
-        if inside, let opener = thinkingOpeners.first(where: { rest.drop(while: \.isWhitespace).hasPrefix($0) }) {
-            rest = rest.drop(while: \.isWhitespace).dropFirst(opener.count).drop(while: \.isNewline)
-        }
-        var kept = ""
-        while true {
-            if inside {
-                guard let closer = firstMarker(prefillThinkingClosers, in: rest) else { return kept + controlTokens.neutralize(String(rest)) }
-                kept += controlTokens.neutralize(String(rest[..<closer.lowerBound])) + rest[closer]
-                rest = rest[closer.upperBound...]
-                inside = false
-            } else {
-                let start = rest.drop(while: \.isWhitespace)
-                guard let opener = thinkingOpeners.first(where: { start.hasPrefix($0) }) else { return kept + controlTokens.neutralize(String(rest)) }
-                kept += rest[..<start.startIndex] + opener
-                rest = start.dropFirst(opener.count)
-                inside = true
-            }
-        }
-    }
-
-    static func constraintPhase(thinkingDisabled: Bool, endsInsideThinking: Bool, prefillAnswered: Bool) -> JSONConstraintProcessor.Phase {
-        thinkingDisabled || prefillAnswered ? .constrained : endsInsideThinking ? .reasoning : .awaitingAnswer
-    }
-
-    static func answerAfterThinking(_ rendered: String, assistantPrefix: String = "") -> Substring? {
-        var inside = tailOpensThinking(rendered)
-        var rest = Substring(assistantPrefix)
-        while true {
-            if inside {
-                guard let closer = firstMarker(thinkingClosers, in: rest) else { return nil }
-                rest = rest[closer.upperBound...]
-                inside = false
-            } else {
-                let start = rest.drop(while: \.isWhitespace)
-                guard let opener = thinkingOpeners.first(where: { start.hasPrefix($0) }) else { return start }
-                rest = start.dropFirst(opener.count)
-                inside = true
-            }
-        }
-    }
-
-    static func toolCall(_ call: ToolCallOutput) -> ToolCall {
-        let arguments = (try? JSONDecoder().decode([String: JSONValue].self, from: Data(call.arguments.utf8)))
-            ?? ["input": .string(call.arguments)]
-        return ToolCall(function: .init(name: call.name, arguments: arguments), id: call.id.isEmpty ? nil : call.id)
-    }
-
-    /// OpenAI-style function specs for the chat template's tool section.
-    static func toolSpecs(_ tools: [ToolDefinition]?) -> [ToolSpec]? {
-        guard let tools, !tools.isEmpty else { return nil }
-        return tools.map { tool in
-            var function: [String: any Sendable] = ["name": tool.name]
-            if let description = tool.description { function["description"] = description }
-            if let json = tool.parametersJSON,
-               let schema = try? JSONSerialization.jsonObject(with: Data(json.utf8)) {
-                function["parameters"] = sendable(schema)
-            }
-            return ["type": "function", "function": function]
-        }
-    }
-
-    /// JSONSerialization output (NSDictionary/NSArray/NSNumber) as plain Sendable values the
-    /// Jinja renderer understands.
-    private static func sendable(_ value: Any) -> any Sendable {
-        switch value {
-        case let dict as [String: Any]: return dict.mapValues { sendable($0) }
-        case let array as [Any]:        return array.map { sendable($0) }
-        case let number as NSNumber:
-            if CFGetTypeID(number) == CFBooleanGetTypeID() { return number.boolValue }
-            return number.doubleValue.rounded() == number.doubleValue ? number.intValue : number.doubleValue
-        case let string as String:      return string
-        default:                        return String(describing: value)
-        }
-    }
-
-    /// What a rejected tool call becomes: quantized models often emit almost-JSON, so a malformed
-    /// call to a declared tool is repaired into a real call; anything else becomes a visible note
-    /// instead of a silently empty turn.
-    static func resolveRejectedToolCall(
-        reason: String, toolName: String?, callID: String?,
-        rawText: String, truncated: Bool, declaredTools: Set<String>
-    ) -> StreamChunk {
-        if reason == "malformed_syntax",
-           let call = ToolCallRepairer.repairToolCall(
-               name: toolName, callID: callID, rawText: rawText, truncated: truncated, declaredTools: declaredTools) {
-            return .toolCall(call)
-        }
-        let tool = toolName.map { " to \($0)" } ?? ""
-        return .text("\n[tool call\(tool) rejected: \(reason)]")
-    }
-
-    static func toolCallOutput(_ call: ToolCall) -> ToolCallOutput {
-        let arguments = (try? JSONEncoder().encode(call.function.arguments)).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
-        return ToolCallOutput(id: "call_\(UUID().uuidString.prefix(24))", name: call.function.name, arguments: arguments)
     }
 
     static let presenceContextSize = 1024
@@ -901,59 +682,6 @@ public actor MLXInferenceEngine: InferenceEngine {
         let ids = await container.perform { DRYPenalty.breakerIds(strings, tokenizer: $0.tokenizer) }
         if epoch == modelEpoch { sequenceBreakers = (strings, ids) }
         return ids
-    }
-
-    static let liquidReasoning = ReasoningConfig(
-        startDelimiter: "<think>", endDelimiter: "</think>", promptStrategy: .alwaysOn, isSpecialToken: true,
-        implicitEndDelimiters: ["<|tool_call_start|>"], budgetTransition: QwenReasoningProtocol.qwen3.budgetTransition)
-
-    static func reasoningProtocol(for profile: any ModelProfile) -> ReasoningConfig? {
-        switch profile {
-        case is QwenProfile:   QwenReasoningProtocol.tagged
-        case is LiquidProfile: liquidReasoning
-        default:               nil
-        }
-    }
-
-    static func budgetTransition(for reasoning: ReasoningConfig, profile: any ModelProfile) -> ReasoningBudgetTransition? {
-        if let declared = reasoning.budgetTransition { return declared }
-        guard profile is QwenProfile, reasoning.endDelimiter == QwenReasoningProtocol.qwen3.endDelimiter else {
-            return nil
-        }
-        return QwenReasoningProtocol.qwen3.budgetTransition
-    }
-
-    static func applyingThinkingBudget(
-        _ budget: Int, to components: GenerationComponents, parameters: GenerateParameters,
-        reasoning: ReasoningConfig?, tokenizer: any MLXLMCommon.Tokenizer, profile: any ModelProfile
-    ) throws(BasaltError) -> GenerationComponents {
-        guard let reasoning = reasoning ?? reasoningProtocol(for: profile) else {
-            return components
-        }
-        guard let transition = budgetTransition(for: reasoning, profile: profile) else {
-            BasaltLogger(module: "MLXInferenceEngine").info(
-                "thinking_budget ignored: \(type(of: profile)) declares no budget transition for \(reasoning.endDelimiter)")
-            return components
-        }
-        let answerReserve = GenerationRequest.thinkingAnswerReserve(maxTokens: parameters.maxTokens ?? 0)
-        func applying(_ budget: Int) throws -> GenerationComponents {
-            let budgeted = try components.applyingThinkingBudget(
-                ThinkingBudgetConfiguration(
-                    maximumTokenCount: budget, minimumAnswerTokenCount: answerReserve, transitionOverride: transition),
-                reasoning: reasoning, tokenizer: tokenizer)
-            try budgeted.validate(parameters: parameters)
-            return budgeted
-        }
-        do {
-            do {
-                return try applying(budget)
-            } catch ThinkingBudgetError.insufficientGenerationTokenLimit(let required, let actual)
-                where budget >= required - actual {
-                return try applying(budget - (required - actual))
-            }
-        } catch {
-            throw .invalidRequestStructure(details: "thinking_budget: \(error.localizedDescription)")
-        }
     }
 
     public func generateStream(request: GenerationRequest) async throws(BasaltError) -> AsyncStream<StreamChunk> {
