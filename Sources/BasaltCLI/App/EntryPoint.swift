@@ -80,5 +80,3 @@ public struct BasaltCLI: AsyncParsableCommand {
         defaultSubcommand: ChatCommand.self
     )
 }
-
-public typealias GemCLI = BasaltCLI

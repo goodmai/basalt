@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+### Upgrading from 0.9.0
+- The `GemCLI`, `GemLogger` and `GemLogLevel` typealiases are gone; use `BasaltCLI`, `BasaltLogger` and `BasaltLogLevel` (#236). The `gemma_*` MCP tool aliases stay.
+
 ## 0.9.0 — 2026-11-03
 
 ### Upgrading from 0.8.0
