@@ -1,5 +1,6 @@
 import Foundation
 import CryptoKit
+import System
 
 public enum SessionLogMode: String, Sendable, CaseIterable {
     case off
@@ -211,30 +212,21 @@ public actor SessionLogWriter {
     nonisolated public let mode: SessionLogMode
     nonisolated public let directory: URL
     nonisolated public let defaultSession: String
+    nonisolated public let redacts: Bool
+    nonisolated public let idleTimeout: TimeInterval
+    static let prefixWindow = SessionConversations.window
     let bufferLimit: Int
+    private let clock: @Sendable () -> Date
 
     private var pending: [(session: String, line: Data)] = []
     private var dropped = 0
     private var handles: [String: Int32] = [:]
     private var disabled = false
     private var flushTask: Task<Void, Never>?
-    private let clock: @Sendable () -> Date
-
-    nonisolated public let redacts: Bool
-    static let prefixWindow = 8
-    private var recentConversations: [String: [(id: String, digests: [SHA256.Digest])]] = [:]
-
-    static func digests(_ messages: [ChatMessageInput]) -> [SHA256.Digest] {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = .sortedKeys
-        return messages.map { SHA256.hash(data: (try? encoder.encode($0)) ?? Data($0.text.utf8)) }
-    }
+    private var conversations = SessionConversations()
+    private var activity = SessionActivity()
     private var requestSessions: [String: String] = [:]
-    private var lastActivity: [String: Date] = [:]
-    private var suspendedAt: [String: Date] = [:]
     private var resumedPaths: [String: URL] = [:]
-    private var primed: Set<String> = []
-    nonisolated public let idleTimeout: TimeInterval
 
     public init(
         mode: SessionLogMode, directory: URL, bufferLimit: Int = 1_024, redacts: Bool = true,
@@ -250,6 +242,12 @@ public actor SessionLogWriter {
         self.clock = clock
     }
 
+    public var isEnabled: Bool { mode != .off && !disabled }
+
+    nonisolated var format: SessionLogFormat { .init(mode: mode, redacts: redacts) }
+}
+
+extension SessionLogWriter {
     public static func processSession() -> String {
         let stamp = ISO8601DateFormatter.string(from: Date(), timeZone: .gmt, formatOptions: [.withFullDate, .withTime])
         return "server-\(stamp)-\(ProcessInfo.processInfo.processIdentifier)"
@@ -259,8 +257,124 @@ public actor SessionLogWriter {
         FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".basalt/sessions")
     }
 
-    public var isEnabled: Bool { mode != .off && !disabled }
+    static func sanitized(_ id: String?) -> String? {
+        guard let id, !id.isEmpty else { return nil }
+        let safe = String(id.unicodeScalars.map { CharacterSet.alphanumerics.contains($0) || "-_.".unicodeScalars.contains($0) ? Character($0) : "_" })
+        return safe.hasPrefix(".") ? "_" + safe.dropFirst() : safe
+    }
 
+    public static func applyRetention(directory: URL, days: Int, maxTotalBytes: Int64, now: Date = Date()) {
+        let fm = FileManager.default
+        guard let enumerator = fm.enumerator(at: directory, includingPropertiesForKeys: [.contentModificationDateKey, .fileSizeKey]) else { return }
+        var files: [SessionLogRetention.File] = []
+        for case let url as URL in enumerator where url.pathExtension == "jsonl" {
+            let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey])
+            files.append(.init(url: url, modified: values?.contentModificationDate ?? now, size: Int64(values?.fileSize ?? 0)))
+        }
+        for url in SessionLogRetention(days: days, maxTotalBytes: maxTotalBytes).deletions(among: files, now: now) {
+            try? fm.removeItem(at: url)
+        }
+        if let days = try? fm.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil) {
+            for day in days where (try? fm.contentsOfDirectory(atPath: day.path))?.isEmpty == true {
+                try? fm.removeItem(at: day)
+            }
+        }
+    }
+}
+
+extension SessionLogWriter {
+    public func logRequest(_ request: GenerationRequest, id: String, origin: RequestOrigin, modelRequested: String?) {
+        guard isEnabled else { return }
+        let session = session(for: request)
+        requestSessions[id] = session
+        prime(session)
+        let parent = conversations.remember(request.messages, id: id, session: session)
+        let record = format.request(request, id: id, origin: origin, modelRequested: modelRequested, parent: parent, at: stamp(session))
+        append(record, session: session)
+    }
+
+    public func logResponse(
+        _ request: GenerationRequest, id: String, status: String, result: SessionLogResult, queueWait: Duration, error: String? = nil
+    ) {
+        guard isEnabled else { return }
+        let session = requestSessions.removeValue(forKey: id) ?? session(for: request)
+        activity.touch(session, at: clock())
+        let record = format.response(id: id, status: status, result: result, queueWait: queueWait, error: error, at: stamp(session))
+        append(record, session: session)
+    }
+
+    public func logRejection(origin: RequestOrigin, sessionId: String?, code: Int, message: String, bodyBytes: Int) {
+        guard isEnabled else { return }
+        let stamped = stamp(Self.sanitized(sessionId) ?? defaultSession)
+        let record = SessionLogRecord.Rejection(
+            v: SessionLogRecord.schemaVersion, type: "error", ts: stamped.ts, session: stamped.session,
+            source: origin.source, endpoint: origin.endpoint, code: code, message: message, bodyBytes: bodyBytes)
+        append(record, session: stamped.session)
+    }
+
+    public func logModelSwitch(from: String, to: String, duration: Duration) {
+        guard isEnabled else { return }
+        appendEvent("model_switch", session: defaultSession) {
+            $0.from = from
+            $0.to = to
+            $0.durationMs = SessionLogFormat.milliseconds(duration)
+        }
+    }
+
+    func session(for request: GenerationRequest) -> String {
+        if let explicit = Self.sanitized(request.sessionId) { return explicit }
+        guard let messages = request.messages, !messages.isEmpty else { return defaultSession }
+        return conversations.session(continuing: SessionConversations.digests(messages))
+            ?? "s-" + UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(12).lowercased()
+    }
+
+    func prime(_ session: String) {
+        let now = clock()
+        switch activity.start(session, at: now) {
+        case .resumed(let gapS): appendEvent("session_resume", session: session) { $0.gapS = gapS }
+        case .firstSeen where handles[session] == nil: resumeFromDisk(session, now: now)
+        case .firstSeen, .seen: break
+        }
+    }
+
+    private func resumeFromDisk(_ session: String, now: Date) {
+        guard let existing = SessionLogReader.file(for: session, in: directory) else { return }
+        resumedPaths[session] = existing
+        let modified = (try? existing.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? now
+        appendEvent("session_resume", session: session) {
+            $0.gapS = max(0, Int(now.timeIntervalSince(modified)))
+            $0.resumedFrom = existing.deletingLastPathComponent().lastPathComponent + "/" + existing.lastPathComponent
+        }
+        if mode == .full, !conversations.knows(session) {
+            conversations.seed(session, with: SessionLogReader.recentConversations(
+                in: SessionLogReader.lines(of: existing), limit: Self.prefixWindow).map { ($0.id, SessionConversations.digests($0.messages)) })
+        }
+    }
+
+    func suspendIdleSessions() {
+        let now = clock()
+        for (session, last) in activity.lastActivity where handles[session] != nil {
+            guard let idle = SessionActivity.idleSeconds(since: last, now: now, timeout: idleTimeout) else { continue }
+            appendEvent("session_suspend", session: session) { $0.idleS = idle }
+            writePending()
+            if let fd = handles.removeValue(forKey: session) { Darwin.close(fd) }
+            activity.suspend(session, at: now)
+        }
+    }
+
+    private func stamp(_ session: String) -> SessionLogRecord.Stamp {
+        .init(ts: ISO8601DateFormatter.string(from: clock(), timeZone: .gmt, formatOptions: [.withInternetDateTime, .withFractionalSeconds]),
+              session: session)
+    }
+
+    private func appendEvent(_ type: String, session: String, _ fill: (inout SessionLogRecord.Event) -> Void) {
+        var event = SessionLogRecord.Event(type, at: stamp(session))
+        fill(&event)
+        append(event, session: session)
+    }
+}
+
+extension SessionLogWriter {
     public func startFlushing(every interval: Duration = .seconds(1)) {
         guard flushTask == nil, mode != .off else { return }
         flushTask = Task { [weak self] in
@@ -279,187 +393,26 @@ public actor SessionLogWriter {
         handles.removeAll()
     }
 
-    func timestamp() -> String {
-        ISO8601DateFormatter.string(from: clock(), timeZone: .gmt, formatOptions: [.withInternetDateTime, .withFractionalSeconds])
-    }
-
-    func session(for request: GenerationRequest) -> String {
-        if let explicit = Self.sanitized(request.sessionId) { return explicit }
-        guard let messages = request.messages, !messages.isEmpty else { return defaultSession }
-        let digests = Self.digests(messages)
-        let continued = recentConversations.first { _, conversations in
-            conversations.contains { $0.digests.count <= digests.count && digests.starts(with: $0.digests) }
-        }
-        return continued?.key ?? "s-" + UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(12).lowercased()
-    }
-
-    func prime(_ session: String) {
-        let now = clock()
-        defer { lastActivity[session] = now }
-        if let suspended = suspendedAt.removeValue(forKey: session) {
-            appendEvent("session_resume", session: session) { $0.gapS = Int(now.timeIntervalSince(suspended)) }
-            return
-        }
-        guard primed.insert(session).inserted, handles[session] == nil,
-              let existing = SessionLogReader.file(for: session, in: directory)
-        else { return }
-        resumedPaths[session] = existing
-        let modified = (try? existing.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? now
-        appendEvent("session_resume", session: session) {
-            $0.gapS = max(0, Int(now.timeIntervalSince(modified)))
-            $0.resumedFrom = existing.deletingLastPathComponent().lastPathComponent + "/" + existing.lastPathComponent
-        }
-        if mode == .full, recentConversations[session] == nil {
-            recentConversations[session] = SessionLogReader.recentConversations(
-                in: SessionLogReader.lines(of: existing), limit: Self.prefixWindow).map { ($0.id, Self.digests($0.messages)) }
-        }
-    }
-
-    func suspendIdleSessions() {
-        let now = clock()
-        for (session, last) in lastActivity where handles[session] != nil && now.timeIntervalSince(last) >= idleTimeout {
-            appendEvent("session_suspend", session: session) { $0.idleS = Int(now.timeIntervalSince(last)) }
-            writePending()
-            if let fd = handles.removeValue(forKey: session) { Darwin.close(fd) }
-            suspendedAt[session] = now
-            lastActivity[session] = nil
-        }
-    }
-
-    private func appendEvent(_ type: String, session: String, _ fill: (inout SessionLogRecord.Event) -> Void) {
-        var event = SessionLogRecord.Event(v: SessionLogRecord.schemaVersion, type: type, ts: timestamp(), session: session)
-        fill(&event)
-        append(event, session: session)
-    }
-
-    static func sanitized(_ id: String?) -> String? {
-        guard let id, !id.isEmpty else { return nil }
-        let safe = String(id.unicodeScalars.map { CharacterSet.alphanumerics.contains($0) || "-_.".unicodeScalars.contains($0) ? Character($0) : "_" })
-        return safe.hasPrefix(".") ? "_" + safe.dropFirst() : safe
-    }
-
-    public func logRequest(_ request: GenerationRequest, id: String, origin: RequestOrigin, modelRequested: String?) {
-        guard isEnabled else { return }
-        let session = session(for: request)
-        requestSessions[id] = session
-        prime(session)
-        let parent = remember(request, id: id, session: session)
-        let prompt = request.messages.map(ChatMessageInput.plainText) ?? request.prompt
-        let record = SessionLogRecord.Request(
-            v: SessionLogRecord.schemaVersion, type: "request", ts: timestamp(), session: session, id: id,
-            source: origin.source, endpoint: origin.endpoint, stream: origin.stream, service: request.isServiceRequest == true,
-            modelRequested: modelRequested,
-            params: .init(maxTokens: request.maxTokens, temperature: request.temperature, topP: request.topP,
-                          topK: request.topK, minP: request.minP, reasoningEffort: request.reasoningEffort,
-                          thinkingBudget: request.thinkingBudget),
-            cacheKey: request.cacheKey, messagesCount: request.messages?.count ?? 1, toolsCount: request.tools?.count ?? 0,
-            prompt: .init(prompt),
-            content: mode == .full ? content(of: request, parent: parent) : nil)
-        append(record, session: record.session)
-    }
-
-    public func logResponse(
-        _ request: GenerationRequest, id: String, status: String, result: SessionLogResult, queueWait: Duration, error: String? = nil
-    ) {
-        guard isEnabled else { return }
-        let session = requestSessions.removeValue(forKey: id) ?? session(for: request)
-        lastActivity[session] = clock()
-        let meta = result.metadata
-        let record = SessionLogRecord.Response(
-            v: SessionLogRecord.schemaVersion, type: "response", ts: timestamp(), session: session, requestId: id,
-            status: status, finishReason: meta?.finishReason.rawValue,
-            tokens: meta.map { .init(prompt: $0.promptTokens, completion: $0.completionTokens, cached: $0.cachedPromptTokens) },
-            timing: meta.map {
-                .init(queueWaitMs: Self.milliseconds(queueWait), ttftMs: Int(($0.timeToFirstToken * 1_000).rounded()),
-                      generationMs: Int(($0.generationTime * 1_000).rounded()), tokensPerSecond: $0.tokensPerSecond)
-            },
-            memory: meta.map { .init(activeBytes: $0.memory.activeBytes, peakBytes: $0.memory.peakBytes) },
-            output: .init(
-                chars: result.text.count, sha256: SessionLogRecord.Digest(result.text).sha256,
-                text: mode == .full ? scrub(result.text) : nil,
-                reasoning: mode == .full && !result.reasoning.isEmpty ? scrub(result.reasoning) : nil,
-                toolCalls: mode == .full && !result.toolCalls.isEmpty ? (redacts ? SecretRedactor.redact(result.toolCalls) : result.toolCalls) : nil),
-            toolCallsCount: result.toolCalls.count, toolCallRepairs: meta?.toolCallRepairs,
-            toolCallRejections: meta?.toolCallRejections, error: error)
-        append(record, session: record.session)
-    }
-
-    func scrub(_ text: String) -> String {
-        redacts ? SecretRedactor.redact(text) : text
-    }
-
-    func remember(_ request: GenerationRequest, id: String, session: String) -> (id: String, count: Int)? {
-        guard let messages = request.messages else { return nil }
-        let digests = Self.digests(messages)
-        var recent = recentConversations[session] ?? []
-        let parent = recent.reversed().first { earlier in
-            earlier.digests.count <= digests.count && digests.starts(with: earlier.digests)
-        }
-        recent.append((id, digests))
-        if recentConversations[session] == nil, recentConversations.count >= 4_096 { recentConversations.removeAll() }
-        recentConversations[session] = Array(recent.suffix(Self.prefixWindow))
-        return parent.map { ($0.id, $0.digests.count) }
-    }
-
-    func content(of request: GenerationRequest, parent: (id: String, count: Int)?) -> SessionLogRecord.RequestContent {
-        guard let messages = request.messages else {
-            return .init(messages: nil, prompt: scrub(request.prompt), tools: request.tools)
-        }
-        let stored = parent.map { Array(messages.dropFirst($0.count)) } ?? messages
-        var content = SessionLogRecord.RequestContent(
-            messages: redacts ? SecretRedactor.redact(stored) : stored, prompt: nil, tools: request.tools)
-        content.parent = parent?.id
-        content.prefixCount = parent?.count
-        return content
-    }
-
-    public func logRejection(origin: RequestOrigin, sessionId: String?, code: Int, message: String, bodyBytes: Int) {
-        guard isEnabled else { return }
-        let record = SessionLogRecord.Rejection(
-            v: SessionLogRecord.schemaVersion, type: "error", ts: timestamp(), session: Self.sanitized(sessionId) ?? defaultSession,
-            source: origin.source, endpoint: origin.endpoint, code: code, message: message, bodyBytes: bodyBytes)
-        append(record, session: record.session)
-    }
-
-    public func logModelSwitch(from: String, to: String, duration: Duration) {
-        guard isEnabled else { return }
-        var event = SessionLogRecord.Event(v: SessionLogRecord.schemaVersion, type: "model_switch", ts: timestamp(), session: defaultSession)
-        event.from = from
-        event.to = to
-        event.durationMs = Self.milliseconds(duration)
-        append(event, session: defaultSession)
-    }
-
-    static func milliseconds(_ duration: Duration) -> Int {
-        Int(duration.components.seconds * 1_000 + duration.components.attoseconds / 1_000_000_000_000_000)
-    }
-
-    private func append<R: Encodable>(_ record: R, session: String) {
-        guard pending.count < bufferLimit else {
-            dropped += 1
-            return
-        }
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
-        guard var line = try? encoder.encode(record) else { return }
-        line.append(0x0A)
-        pending.append((session, line))
-    }
-
     public func flush() {
         guard isEnabled else { return }
         suspendIdleSessions()
         guard !pending.isEmpty || dropped > 0 else { return }
         if dropped > 0 {
-            var event = SessionLogRecord.Event(v: SessionLogRecord.schemaVersion, type: "dropped", ts: timestamp(), session: defaultSession)
+            var event = SessionLogRecord.Event("dropped", at: stamp(defaultSession))
             event.count = dropped
             dropped = 0
-            if var line = try? JSONEncoder().encode(event) {
-                line.append(0x0A)
-                pending.append((defaultSession, line))
-            }
+            if let line = SessionLogFormat.line(event, sorted: false) { pending.append((defaultSession, line)) }
         }
         writePending()
+    }
+
+    private func append(_ record: some Encodable, session: String) {
+        guard pending.count < bufferLimit else {
+            dropped += 1
+            return
+        }
+        guard let line = SessionLogFormat.line(record) else { return }
+        pending.append((session, line))
     }
 
     private func writePending() {
@@ -467,9 +420,10 @@ public actor SessionLogWriter {
         pending.removeAll(keepingCapacity: true)
         for entry in batch {
             guard let fd = handle(for: entry.session) else { return }
-            let written = entry.line.withUnsafeBytes { Darwin.write(fd, $0.baseAddress, $0.count) }
-            if written != entry.line.count {
-                fail("write to the session log failed (errno \(errno))")
+            do {
+                try FileDescriptor(rawValue: fd).writeAll(entry.line)
+            } catch {
+                fail("write to the session log failed (errno \((error as? Errno)?.rawValue ?? errno))")
                 return
             }
         }
@@ -477,15 +431,7 @@ public actor SessionLogWriter {
 
     private func handle(for session: String) -> Int32? {
         if let fd = handles[session] { return fd }
-        let day = ISO8601DateFormatter.string(from: clock(), timeZone: .gmt, formatOptions: [.withFullDate])
-        let folder = resumedPaths[session]?.deletingLastPathComponent() ?? directory.appendingPathComponent(day)
-        do {
-            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-            try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
-        } catch {
-            fail("cannot create \(folder.path): \(error.localizedDescription)")
-            return nil
-        }
+        guard let folder = folder(for: session) else { return nil }
         let path = folder.appendingPathComponent("\(session).jsonl").path
         let isNew = !FileManager.default.fileExists(atPath: path)
         let fd = Darwin.open(path, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0o600)
@@ -495,18 +441,30 @@ public actor SessionLogWriter {
         }
         fchmod(fd, 0o600)
         handles[session] = fd
-        if isNew {
-            var start = SessionLogRecord.Event(v: SessionLogRecord.schemaVersion, type: "session_start", ts: timestamp(), session: session)
-            start.version = HealthResponse.version
-            start.pid = ProcessInfo.processInfo.processIdentifier
-            start.os = ProcessInfo.processInfo.operatingSystemVersionString
-            start.mode = mode.rawValue
-            if var line = try? JSONEncoder().encode(start) {
-                line.append(0x0A)
-                _ = line.withUnsafeBytes { Darwin.write(fd, $0.baseAddress, $0.count) }
-            }
-        }
+        if isNew { writeStart(of: session, to: fd) }
         return fd
+    }
+
+    private func folder(for session: String) -> URL? {
+        let day = ISO8601DateFormatter.string(from: clock(), timeZone: .gmt, formatOptions: [.withFullDate])
+        let folder = resumedPaths[session]?.deletingLastPathComponent() ?? directory.appendingPathComponent(day)
+        do {
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+            try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
+            return folder
+        } catch {
+            fail("cannot create \(folder.path): \(error.localizedDescription)")
+            return nil
+        }
+    }
+
+    private func writeStart(of session: String, to fd: Int32) {
+        var start = SessionLogRecord.Event("session_start", at: stamp(session))
+        start.version = HealthResponse.version
+        start.pid = ProcessInfo.processInfo.processIdentifier
+        start.os = ProcessInfo.processInfo.operatingSystemVersionString
+        start.mode = mode.rawValue
+        if let line = SessionLogFormat.line(start, sorted: false) { _ = try? FileDescriptor(rawValue: fd).writeAll(line) }
     }
 
     private func fail(_ reason: String) {
@@ -514,30 +472,5 @@ public actor SessionLogWriter {
         disabled = true
         pending.removeAll()
         BasaltLogger(module: "SessionLog").warn("Session log disabled until restart: \(reason)")
-    }
-
-    public static func applyRetention(directory: URL, days: Int, maxTotalBytes: Int64, now: Date = Date()) {
-        let fm = FileManager.default
-        guard let enumerator = fm.enumerator(at: directory, includingPropertiesForKeys: [.contentModificationDateKey, .fileSizeKey]) else { return }
-        var files: [(url: URL, modified: Date, size: Int64)] = []
-        for case let url as URL in enumerator where url.pathExtension == "jsonl" {
-            let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey])
-            files.append((url, values?.contentModificationDate ?? now, Int64(values?.fileSize ?? 0)))
-        }
-        let cutoff = now.addingTimeInterval(-Double(max(0, days)) * 86_400)
-        var kept: [(url: URL, modified: Date, size: Int64)] = []
-        for file in files {
-            if file.modified < cutoff { try? fm.removeItem(at: file.url) } else { kept.append(file) }
-        }
-        var total = kept.reduce(0) { $0 + $1.size }
-        for file in kept.sorted(by: { $0.modified < $1.modified }) where total > maxTotalBytes {
-            try? fm.removeItem(at: file.url)
-            total -= file.size
-        }
-        if let days = try? fm.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil) {
-            for day in days where (try? fm.contentsOfDirectory(atPath: day.path))?.isEmpty == true {
-                try? fm.removeItem(at: day)
-            }
-        }
     }
 }
