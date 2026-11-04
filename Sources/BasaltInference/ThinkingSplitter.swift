@@ -8,6 +8,7 @@ struct ThinkingSplitter: Sendable {
 
     private(set) var isThinking: Bool
     private var trimsAnswerStart = false
+    private var dropsNewline = false
     private var buffer = ""
 
     init(startsThinking: Bool) {
@@ -16,6 +17,7 @@ struct ThinkingSplitter: Sendable {
 
     mutating func feed(_ text: String, final: Bool = false) -> [Segment] {
         buffer.append(text)
+        dropLeadingNewline()
         var segments: [Segment] = []
         while !buffer.isEmpty {
             guard let boundary = nextMarker() else {
@@ -29,11 +31,18 @@ struct ThinkingSplitter: Sendable {
             let opensThinking = !isThinking && MLXInferenceEngine.thinkingOpeners.contains(String(buffer[boundary]))
             append(String(buffer[..<boundary.lowerBound]), to: &segments)
             buffer.removeSubrange(..<boundary.upperBound)
-            if buffer.hasPrefix("\n") { buffer.removeFirst() }
+            dropsNewline = true
+            dropLeadingNewline()
             if isThinking, !opensThinking { trimsAnswerStart = true }
             isThinking = opensThinking
         }
         return segments
+    }
+
+    private mutating func dropLeadingNewline() {
+        guard dropsNewline, let first = buffer.first else { return }
+        dropsNewline = false
+        if first == "\n" { buffer.removeFirst() }
     }
 
     private func nextMarker() -> Range<String.Index>? {
