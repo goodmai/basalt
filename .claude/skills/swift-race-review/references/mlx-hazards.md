@@ -48,15 +48,23 @@ Each section names the shared state, the contexts that race on it, how it showed
 - Who else holds a reference after a cache joins a batch or a snapshot?
 - Does anyone write into it later?
 
-## 4. Two threads, one model, and a synchronous wait
+## 4. Batched rows, one model, and a wait for a token
 
-**Contexts:**
-- The generation worker calls `BatchedTokenIterator.next()`, which blocks until the batch thread delivers a token.
-- The batch thread needs the model lock to step.
+**State:** the batch's MLX state (`BatchCore` in `ModelContext.batch`: merged caches, pending tokens, rows' samplers) and its bookkeeping (`BatchedDecoder`'s `Mutex<Mailbox>`: seats, delivered tokens, finished flags).
 
-**Deadlock:** if the generation loop holds the model lock around `next()`, the batch thread can never take it.
+**Contexts:** one generation worker per batched request, each calling `BatchedTokenIterator.next()`, plus the prefill of a row that is joining.
 
-**Fix:** iterators that only wait conform to `SelfSerializingTokenIterator`; the loop calls them without the lock, and the batch thread takes it per step.
+**History:** the batch decoder used to run its own `Thread`, woken through an `NSCondition`, behind `@unchecked Sendable`. A generation loop that held the model lock around a `next()` that waited for that thread deadlocked it, and the condition hand-off was invisible to the compiler.
+
+**Today (flat combining):**
+- A row whose token is missing takes the model's `ModelEvaluationLock`, checks the mailbox again, and if the token is still missing runs the next batch step for every row (admitting arriving rows, retiring finished ones), then delivers all rows' tokens to the mailbox. Whoever holds the lock does the work; nobody waits on a thread that needs the lock.
+- `BatchedTokenIterator` conforms to `SelfSerializingTokenIterator`, so the generation loop calls `next()` without the lock.
+- `BatchCore` is created in `container.update` and reached only through the model context, so the compiler keeps it in the model's region; rows carry it out through `BatchSeat` with their iterator, the same hand-off every MLX iterator uses. The last seat to leave resets it under the lock.
+
+**What to check:**
+- Every touch of `BatchCore` state happens under the model lock; mailbox reads and writes go through the `Mutex` and never hold it across a model call.
+- A path that waits for a token while holding the model lock must be the one that steps the batch, or it deadlocks.
+- Joining, retiring and filtering rows are exercised on a recurrent (hybrid) model, not only on attention-only caches.
 
 ## 5. Numerics that look like a race
 
