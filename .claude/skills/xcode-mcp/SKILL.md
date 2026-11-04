@@ -13,11 +13,11 @@ Xcode 27 ships an MCP server (`xcrun mcpbridge`, server name `xcode-tools`) that
 - **In any other session, or from a script**, use the helper, which handles the handshake and agent approval:
 
   ```bash
-  python3 .claude/skills/xcode-mcp/scripts/xcode_mcp.py list
-  python3 .claude/skills/xcode-mcp/scripts/xcode_mcp.py <Tool> '<json arguments>' [timeout s]
+  swift .claude/skills/xcode-mcp/scripts/xcode_mcp.swift list
+  swift .claude/skills/xcode-mcp/scripts/xcode_mcp.swift <Tool> '<json arguments>' [timeout s]
   ```
 
-Run it from the repo root. Xcode approves each launching process (zsh, python3, the Claude Code process) for 24 hours. The first call answers "This agent isn't approved", and the helper then calls `XcodeOpenWorkspace` on the current folder, which approves the agent, and retries.
+Run it from the repo root. Xcode approves each launching process (zsh, `swift-frontend` for `swift script.swift`, the Claude Code process) for 24 hours. When the first call answers "This agent isn't approved", the helper calls `XcodeOpenWorkspace` on the current folder, which approves the agent, and retries. When it answers "Xcode is waiting for the user to approve this request", approve the pending agent from the Xcode MCP menu bar icon or with `sudo xcrun mcp-server approve <id>` (the id is in `xcrun mcp-server status`), then rerun.
 
 ## What to use it for
 
@@ -27,11 +27,11 @@ It searches Apple's documentation semantically, Swift stdlib included. Arguments
 Use it before writing or approving code that uses a Swift 6.2–6.4 API from memory: spelling, generic parameters, availability, ownership (`borrowing`/`consuming`), whether something is `~Copyable`. The CONTRIBUTING toolset list is the usual trigger.
 
 ```bash
-python3 .claude/skills/xcode-mcp/scripts/xcode_mcp.py DocumentationSearch '{"query":"InlineArray"}'
-python3 .claude/skills/xcode-mcp/scripts/xcode_mcp.py DocumentationSearch '{"query":"withTaskCancellationShield"}'
-python3 .claude/skills/xcode-mcp/scripts/xcode_mcp.py DocumentationSearch '{"query":"Mutex withLock","frameworks":["Synchronization"]}'
-python3 .claude/skills/xcode-mcp/scripts/xcode_mcp.py DocumentationSearch '{"query":"RawSpan unsafeLoad"}'
-python3 .claude/skills/xcode-mcp/scripts/xcode_mcp.py DocumentationSearch '{"query":"MTLResidencySet"}'
+swift .claude/skills/xcode-mcp/scripts/xcode_mcp.swift DocumentationSearch '{"query":"InlineArray"}'
+swift .claude/skills/xcode-mcp/scripts/xcode_mcp.swift DocumentationSearch '{"query":"withTaskCancellationShield"}'
+swift .claude/skills/xcode-mcp/scripts/xcode_mcp.swift DocumentationSearch '{"query":"Mutex withLock","frameworks":["Synchronization"]}'
+swift .claude/skills/xcode-mcp/scripts/xcode_mcp.swift DocumentationSearch '{"query":"RawSpan unsafeLoad"}'
+swift .claude/skills/xcode-mcp/scripts/xcode_mcp.swift DocumentationSearch '{"query":"MTLResidencySet"}'
 ```
 
 Two results already checked:

@@ -56,7 +56,7 @@ All code modifications must pass these deterministic CLI verification gates befo
 ---
 
 ## 4. Non-Negotiable Code & Test Constraints
-- **Zero Code Comments (`CONTRIBUTING.md`)**: Do not add `//`, `///`, or `/* */` comments in Swift code; remove surrounding comments when modifying code. Verify with `python3 scripts/check_no_new_comments.py origin/main`.
+- **Zero Code Comments (`CONTRIBUTING.md`)**: Do not add `//`, `///`, or `/* */` comments in Swift code; remove surrounding comments when modifying code. Verify with `swift scripts/check_no_new_comments.swift origin/main`.
 - **Testing Standard**: Use the modern `Testing` module (`import Testing`, `@Suite`, `@Test`, `#expect`, `#require`). Never create new `XCTestCase` classes. No arbitrary `Task.sleep` in unit tests; use deterministic continuations or clock injection.
 - **Kernel Admission Rule (#228)**: A custom kernel or new decode path lands only with (a) a parity test against the stock MLX graph on a tiny fixture from `TinyModel.make(_:)` (`Tests/BasaltTests/Fixtures/TinyModels.swift`): exact for token ids and expert indices, within a stated float tolerance for logits and weights; and (b) no mocked engine below `BasaltServer` (`MockInferenceEngine` is for REST/controller tests only). A new architecture gets a `TinyModel.Family` case, not a suite-local builder.
 - **Memory & Ownership (Swift 6.4)**:
@@ -74,7 +74,7 @@ All code modifications must pass these deterministic CLI verification gates befo
 
 ## 5. Pre-Completion Definition of Done (DoD)
 1. Target architecture and module boundaries comply with `swift-64-architecture` and `ponytail`.
-2. Zero warnings on `swift build -Xswiftc -warnings-as-errors` and zero new comments (`check_no_new_comments.py`).
+2. Zero warnings on `swift build -Xswiftc -warnings-as-errors` and zero new comments (`swift scripts/check_no_new_comments.swift origin/main`).
 3. No new function over CCN 15 / 60 lines of code / 6 parameters, no type body over 200 lines of code, no extension over 150, no file over 600 lines; nothing already over a limit grows (`swift scripts/check_size_limits.swift origin/main --impact`, CONTRIBUTING "Size and complexity"). Code follows the value core / actor shell split (CONTRIBUTING "Value core, actor shell").
 4. All unit and parameterized `@Test` suites pass under `swift test --parallel`.
 5. Self-review completed against `swift-64-pr-review` (5 Gates) and `ponytail-review`.

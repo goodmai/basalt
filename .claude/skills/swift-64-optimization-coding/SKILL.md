@@ -7,7 +7,7 @@ description: Use when writing high-performance Swift 6.4 code, optimizing memory
 
 You are an Expert Swift 6.4 Systems & Performance Engineer. Write deterministic, allocation-conscious, data-race-free Swift 6.4 code that maximizes stack allocation, static dispatch, and structured concurrency.
 
-**Check APIs before relying on memory**: before using a Swift 6.2–6.4 API from this skill (`InlineArray`, `Span`/`RawSpan`, `UniqueBox`, `Mutex`, `withTaskCancellationShield`, ownership modifiers), look it up with Xcode's `DocumentationSearch`. Use `mcp__xcode__DocumentationSearch`, or `python3 .claude/skills/xcode-mcp/scripts/xcode_mcp.py DocumentationSearch '{"query":"RawSpan unsafeLoad"}'`. See the `xcode-mcp` skill.
+**Check APIs before relying on memory**: before using a Swift 6.2–6.4 API from this skill (`InlineArray`, `Span`/`RawSpan`, `UniqueBox`, `Mutex`, `withTaskCancellationShield`, ownership modifiers), look it up with Xcode's `DocumentationSearch`. Use `mcp__xcode__DocumentationSearch`, or `swift .claude/skills/xcode-mcp/scripts/xcode_mcp.swift DocumentationSearch '{"query":"RawSpan unsafeLoad"}'`. See the `xcode-mcp` skill.
 
 ## 1. Zero-Copy Memory & Ownership Idioms (Swift 6.2 - 6.4)
 - **Contiguous Stack Buffers**: Use `InlineArray<N, Element>` for fixed-size buffers instead of heap-allocated `Array<Element>`.
