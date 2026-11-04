@@ -160,7 +160,9 @@ extension MLXInferenceEngine {
         try faults.check(.anchorOffsets)
         return CacheClaim(leaseID: hold(lease), reuse: reuse, mtpPrefix: storedPrefix, fork: fork)
     }
+}
 
+extension MLXInferenceEngine {
     static func shaped(
         _ components: GenerationComponents, _ constraint: OutputConstraint?, _ policy: ReasoningPolicy, _ prompt: PromptInput,
         shaping: (@Sendable () -> EntropyDynamicTemperature)?, exclusion: (@Sendable () -> ExcludeTopChoices)?

@@ -352,11 +352,7 @@ struct OrchestratorTests {
             maxTokens: 130_000,
             temperature: 0.5,
             topP: 0.8
-        ).with {
-            $0.enableThinking = false
-            $0.reasoningEffort = "low"
-            $0.isServiceRequest = false
-        })
+        ).with { ($0.enableThinking, $0.reasoningEffort, $0.isServiceRequest) = (false, "low", false) })
 
         let lastReq = await engine.getLastRequest()
         #expect((lastReq?.maxTokens ?? 0) <= 128_000)

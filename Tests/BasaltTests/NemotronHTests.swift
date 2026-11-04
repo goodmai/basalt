@@ -493,11 +493,7 @@ struct NemotronHTests {
     ) -> GenerationRequest {
         GenerationRequest(
             prompt: "weather and time", maxTokens: maxTokens, temperature: 0,
-            tools: tools).with {
-            $0.toolChoice = toolChoice
-            $0.cacheKey = cacheKey
-            $0.assistantPrefix = assistantPrefix
-        }
+            tools: tools).with { ($0.toolChoice, $0.cacheKey, $0.assistantPrefix) = (toolChoice, cacheKey, assistantPrefix) }
     }
 
     static func chunks(_ engine: MLXInferenceEngine, _ request: GenerationRequest) async throws -> ScriptedOutcome {
