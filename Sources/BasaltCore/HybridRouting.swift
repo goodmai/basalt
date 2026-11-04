@@ -83,3 +83,26 @@ public struct HybridArbiter: Sendable, Equatable {
         return local.degradation > 0 ? .contextDegradation : .capability
     }
 }
+
+struct LocalEstimate: Sendable, Equatable {
+    let promptTokens: Int
+    let wantedTokens: Int
+    let fittingTokens: Int
+    let decodeTokens: Int
+    let tokensPerSecond: Double
+}
+
+extension HybridArbiter {
+    func cloudReason(_ assessment: CloudAssessment, local estimate: LocalEstimate) -> CloudFallbackReason? {
+        let local = HybridCandidate(
+            capability: 1 - min(max(assessment.capabilityGap, 0), 1),
+            degradation: localDegradation(contextTokens: estimate.promptTokens),
+            latencySeconds: estimate.tokensPerSecond > 0 ? Double(estimate.decodeTokens) / estimate.tokensPerSecond : 0,
+            cost: 0)
+        let cloud = HybridCandidate(
+            capability: 1, degradation: 0, latencySeconds: assessment.latencySeconds, cost: assessment.estimatedCost)
+        return cloudReason(
+            local: local, localFits: estimate.wantedTokens <= estimate.fittingTokens,
+            cloud: cloud, remainingBudget: assessment.remainingBudget)
+    }
+}

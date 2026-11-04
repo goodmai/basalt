@@ -1,36 +1,17 @@
 import Foundation
 import os
 
-// MARK: — Orchestrator
-
 public actor ModelOrchestratorActor {
-
-    // MARK: — State
-
     private let engine: any InferenceEngine
-    private let maxTokens: Int
+    private var kv: KVPlanner
+    private var reservations = KVReservations()
     private var modelSizeMB: Int = 4000
-    private let kvPrecisionLadder: [KVPrecision?]
-    private let kvZones: KVZones?
-    private var modelTakesKVZones = true
-    private var modelTakesKVEviction = true
-    private var kvGeometry = KVCacheGeometry(parameterProxy: 4)
-    private(set) var kvReservations: [Int: Int64] = [:]
-    /// Floor for the generation watchdog. The real budget scales with the token
-    /// count — see `timeout(for:)`.
-    private let generationTimeoutSeconds: UInt64 = 300  // 5 minutes
-
     private let logger = BasaltLogger(module: "ModelOrchestrator")
-
-    /// Filesystem path of the loaded model.
     private var currentModelPath: String = ""
-
-    /// HuggingFace repo ID of the loaded model, e.g. "mlx-community/Qwen3.5-4B-4bit".
-    /// Empty string means nothing has been loaded yet.
     public private(set) var currentModelId: String = ""
-
     nonisolated public let gate: GenerationGate
     public let sessionLog: SessionLogWriter?
+    public let telemetry: TelemetryTracker
     private var pendingSwitch: (modelId: String, task: Task<Void, Error>)?
     private var shutdownTask: Task<Void, Never>?
     private var cloudFallback: (any CloudFallback)?
@@ -41,11 +22,6 @@ public actor ModelOrchestratorActor {
     private var memoryLimits: MemoryLimits?
     private var memoryRefusals = 0
 
-    // MARK: — Init
-
-    /// The serving process's counters; injectable so tests do not share global state.
-    public let telemetry: TelemetryTracker
-
     public init(
         engine: any InferenceEngine, maxTokens: Int = 65_536, kvPrecision: KVPrecision? = nil, adaptiveKVPrecision: Bool = false,
         kvZones: KVZones? = nil, telemetry: TelemetryTracker = .shared,
@@ -54,10 +30,23 @@ public actor ModelOrchestratorActor {
         self.gate = gate
         self.sessionLog = sessionLog
         self.engine = engine
-        self.maxTokens = maxTokens
-        self.kvPrecisionLadder = adaptiveKVPrecision ? KVCacheGeometry.adaptiveKVPrecisionLadder : [kvPrecision]
-        self.kvZones = kvZones
+        self.kv = KVPlanner(
+            maxTokens: maxTokens,
+            precisionLadder: adaptiveKVPrecision ? KVCacheGeometry.adaptiveKVPrecisionLadder : [kvPrecision],
+            zones: kvZones)
         self.telemetry = telemetry
+    }
+
+    var kvReservations: [Int: Int64] { reservations.bytes }
+
+    var routingModelKey: String {
+        "\(modelInfo)@\(URL(fileURLWithPath: currentModelPath).lastPathComponent)"
+    }
+
+    public var modelInfo: String {
+        currentModelId.isEmpty
+            ? URL(fileURLWithPath: currentModelPath).lastPathComponent
+            : currentModelId
     }
 
     public func setCloudFallback(
@@ -69,62 +58,37 @@ public actor ModelOrchestratorActor {
         self.freeMemory = freeMemory
     }
 
-    func cloudFallbackReason(for request: GenerationRequest) async -> CloudFallbackReason? {
-        guard let cloudFallback, request.isServiceRequest != true,
-              let assessment = await cloudFallback.assess(request, localModel: routingModelKey)
-        else { return nil }
-        let promptTokens = Self.estimatedTokens(Self.budgetedText(request))
-        let wanted = promptTokens + (request.maxTokens ?? 0)
-        let fitting = kvFit(promptTokens: promptTokens, wantedTokens: wanted, budget: await kvBudgetBytes()).fitting
-        let localTPS = await telemetry.snapshot().tokensPerSecond
-        let local = HybridCandidate(
-            capability: 1 - min(max(assessment.capabilityGap, 0), 1),
-            degradation: arbiter.localDegradation(contextTokens: promptTokens),
-            latencySeconds: localTPS > 0 ? Double(request.maxTokens ?? maxTokens) / localTPS : 0,
-            cost: 0)
-        let cloud = HybridCandidate(
-            capability: 1, degradation: 0, latencySeconds: assessment.latencySeconds, cost: assessment.estimatedCost)
-        return arbiter.cloudReason(
-            local: local, localFits: wanted <= fitting,
-            cloud: cloud, remainingBudget: assessment.remainingBudget)
+    public func setFreeMemoryProbe(_ probe: @escaping @Sendable () -> Int64) {
+        freeMemory = probe
     }
 
-    // MARK: — Model loading
+    public func setModelId(_ id: String) {
+        self.currentModelId = id
+    }
+}
 
+extension ModelOrchestratorActor {
     public func loadModel(path: String) async throws(BasaltError) {
         do {
             try await gate.exclusively { try await self.performLoad(path: path) }
-        } catch let error as BasaltError {
-            throw error
         } catch {
-            throw .inferenceError("Model load error: \(error)")
+            throw Self.basaltError(error, "Model load error")
         }
     }
 
     private func performLoad(path: String) async throws(BasaltError) {
-        let size = try? calculateDirectorySize(url: URL(fileURLWithPath: path))
+        let size = UInt64(max(0, Self.resolvedDirectorySize(at: URL(fileURLWithPath: path))))
         try await engine.load(modelPath: path)
         currentModelPath = path
-        if let size {
-            modelSizeMB = Int(size / 1_048_576)
-            logger.info("Model size: \(self.modelSizeMB) MB")
-        }
-        kvGeometry = KVCacheGeometry.forModel(
+        modelSizeMB = Int(size / 1_048_576)
+        logger.info("Model size: \(self.modelSizeMB) MB")
+        kv.geometry = KVCacheGeometry.forModel(
             path, parameters: ModelDefinition.inferTotalParameters(id: path, name: "", ramMB: Int64(modelSizeMB))
         )
-        modelTakesKVZones = await engine.supportsKVZones
-        modelTakesKVEviction = await engine.supportsKVEviction
-        // After the load: a failed load must not report the failed model's size.
+        kv.takesZones = await engine.supportsKVZones
+        kv.takesEviction = await engine.supportsKVEviction
         await self.telemetry.setModelMemory(mb: self.modelSizeMB)
     }
-
-    /// Record the HuggingFace repo ID that was just loaded.
-    /// Call this once after `loadModel` completes.
-    public func setModelId(_ id: String) {
-        self.currentModelId = id
-    }
-
-    // MARK: — Model switching
 
     public func switchModel(to modelId: String) async throws(BasaltError) {
         if let pending = pendingSwitch {
@@ -138,14 +102,11 @@ public actor ModelOrchestratorActor {
             logger.trace("switchModel: already loaded '\(modelId)'")
             return
         }
-
-        // Same resolution `serve` uses, so a repo with 4bit/8bit subfolders switches too.
         let path = (ModelCache.resolve(repoId: modelId) ?? ModelCache.cacheDir(for: modelId)).path
         guard FileManager.default.fileExists(atPath: path) else {
             logger.error("switchModel: model not in cache: \(modelId)")
             throw BasaltError.modelNotCached(identifier: modelId)
         }
-
         logger.info("Switching model: '\(currentModelId)' → '\(modelId)'")
         let switchStarted = ContinuousClock.now
         let previousModel = currentModelId
@@ -163,30 +124,106 @@ public actor ModelOrchestratorActor {
     private static func awaitSwitch(_ task: Task<Void, Error>) async throws(BasaltError) {
         do {
             try await task.value
-        } catch let error as BasaltError {
-            throw error
         } catch {
-            throw .inferenceError("Model switch error: \(error)")
+            throw basaltError(error, "Model switch error")
         }
     }
 
-    private func admitted(_ priority: RequestPriority) async throws(BasaltError) -> Int {
-        do {
-            return try await gate.admit(priority: priority)
-        } catch let error as BasaltError {
-            throw error
-        } catch {
-            throw .inferenceError("Cancelled while queued")
+    private func autoSwitch(to modelId: String?) async throws(BasaltError) {
+        guard let id = modelId, !id.isEmpty, id != "basalt" else { return }
+        if await engine.isLoaded { return }
+        guard id != currentModelId else { return }
+        try await switchModel(to: id)
+    }
+
+    public func shutdown(deadline: Duration = .seconds(5)) async {
+        memoryTask?.cancel()
+        let task: Task<Void, Never>
+        if let existing = shutdownTask {
+            task = existing
+        } else {
+            task = Task {
+                await withTaskCancellationShield {
+                    await self.gate.shutdown(deadline: deadline)
+                    await self.engine.persistPromptCache(within: deadline)
+                    await self.sessionLog?.close()
+                }
+            }
+            shutdownTask = task
         }
+        await withTaskCancellationShield { await task.value }
+    }
+
+    public func healthSnapshot(modelId: String?) async -> HealthResponse {
+        let ready = await engine.isLoaded
+        return HealthResponse(
+            status: ready ? "ok" : "initializing",
+            modelId: modelId ?? (currentModelId.isEmpty ? nil : currentModelId),
+            isReady: ready,
+            version: HealthResponse.version
+        )
+    }
+
+    public func telemetrySnapshot() async -> ServerTelemetrySnapshot {
+        var snapshot = await telemetry.snapshot()
+        let anchors = await engine.hybridAnchorUsage
+        snapshot.hybridAnchors = anchors?.count
+        snapshot.hybridAnchorBytes = anchors?.bytes
+        if let memory {
+            snapshot.memory = MemoryTelemetry(state: await memory.state, limits: memoryLimits, refusedAdmissions: memoryRefusals)
+        }
+        snapshot.routingBias = await cloudFallback?.routingBias
+        return snapshot
+    }
+
+    public func cachedModels() -> [CachedModelInfo] {
+        let root = ModelCache.root
+        guard let entries = try? FileManager.default.contentsOfDirectory(atPath: root.path) else {
+            return []
+        }
+        return entries
+            .filter { $0.hasPrefix("models--") }
+            .sorted()
+            .compactMap { dir -> CachedModelInfo? in
+                let repoId = dir
+                    .replacingOccurrences(of: "models--", with: "")
+                    .replacingOccurrences(of: "--", with: "/")
+                return CachedModelInfo(
+                    id: repoId,
+                    sizeBytes: Self.resolvedDirectorySize(at: root.appendingPathComponent(dir)),
+                    isLoaded: repoId == currentModelId
+                )
+            }
+    }
+}
+
+extension ModelOrchestratorActor {
+    func cloudFallbackReason(for request: GenerationRequest) async -> CloudFallbackReason? {
+        guard let cloudFallback, request.isServiceRequest != true,
+              let assessment = await cloudFallback.assess(request, localModel: routingModelKey)
+        else { return nil }
+        let promptTokens = Self.estimatedTokens(Self.budgetedText(request))
+        let wanted = promptTokens + (request.maxTokens ?? 0)
+        let budget = await kvBudgetBytes()
+        let fitting = kv.fit(promptTokens: promptTokens, wantedTokens: wanted, budget: budget).fitting
+        let tokensPerSecond = await telemetry.snapshot().tokensPerSecond
+        let local = LocalEstimate(
+            promptTokens: promptTokens, wantedTokens: wanted, fittingTokens: fitting,
+            decodeTokens: request.maxTokens ?? kv.maxTokens, tokensPerSecond: tokensPerSecond)
+        return arbiter.cloudReason(assessment, local: local)
     }
 
     public func admissionRefusal(for request: GenerationRequest) async -> BasaltError? {
         let directive = await memory?.sample().directive ?? .relaxed
         if await cloudFallbackReason(for: request) != nil { return nil }
         if let refusal = await gate.refusal(for: request.priority) { return refusal }
-        let (room, fitting, promptTokens, _) = await generationRoom(for: request)
-        if let refusal = memoryRefusal(directive, promptTokens: promptTokens, room: room) { return refusal }
-        return room > 0 ? nil : .contextLengthExceeded(maxTokens: fitting, requested: promptTokens + 1)
+        let room = await generationRoom(for: request)
+        return refusal(room, under: directive)
+    }
+
+    public func effectiveMaxTokens(for request: GenerationRequest) async -> Int {
+        let room = await generationRoom(for: request)
+        return kv.effectiveMaxTokens(requested: request.maxTokens, room: room)
     }
 
     public func coordinateMemory(with coordinator: MemoryCoordinator) async {
@@ -211,45 +248,83 @@ public actor ModelOrchestratorActor {
         if let limits = await engine.apply(directive) { memoryLimits = limits }
     }
 
-    private func memoryRefusal(_ directive: MemoryDirective, promptTokens: Int, room: Int) -> BasaltError? {
-        guard directive.limitsAdmission, promptTokens >= MemoryDirective.longContextTokens || room <= 0 else { return nil }
-        memoryRefusals += 1
-        logger.warn("Refused with 503: critical memory pressure, and this request needs \(promptTokens) prompt tokens with room for \(max(0, room)) more; retry in \(MemoryDirective.retryAfterSeconds) s.")
-        return .memoryPressure(retryAfterSeconds: MemoryDirective.retryAfterSeconds)
-    }
-
-    public func shutdown(deadline: Duration = .seconds(5)) async {
-        memoryTask?.cancel()
-        let task: Task<Void, Never>
-        if let existing = shutdownTask {
-            task = existing
-        } else {
-            task = Task {
-                await withTaskCancellationShield {
-                    await self.gate.shutdown(deadline: deadline)
-                    await self.engine.persistPromptCache(within: deadline)
-                    await self.sessionLog?.close()
-                }
-            }
-            shutdownTask = task
+    private func refusal(_ room: KVRoom, under directive: MemoryDirective) -> BasaltError? {
+        let refusal = room.refusal(under: directive)
+        if case .memoryPressure? = refusal {
+            memoryRefusals += 1
+            logger.warn("Refused with 503: critical memory pressure, and this request needs \(room.promptTokens) prompt tokens with room for \(max(0, room.room)) more; retry in \(MemoryDirective.retryAfterSeconds) s.")
         }
-        await withTaskCancellationShield { await task.value }
+        return refusal
     }
 
-    var routingModelKey: String {
-        "\(modelInfo)@\(URL(fileURLWithPath: currentModelPath).lastPathComponent)"
+    func kvBudgetBytes() async -> Int64 {
+        let budget = if let engineBudget = await engine.kvMemoryBudgetBytes {
+            engineBudget
+        } else {
+            Int64(Double(freeMemory()) * TokenBudgetCalculator.safetyMargin)
+        }
+        guard let state = await memory?.state, state.directive.limitsAdmission else { return budget }
+        return min(budget, Int64(Double(state.sample.availableBytes) * TokenBudgetCalculator.safetyMargin))
     }
 
-    public var modelInfo: String {
-        currentModelId.isEmpty
-            ? URL(fileURLWithPath: currentModelPath).lastPathComponent
-            : currentModelId
+    private func generationRoom(for request: GenerationRequest) async -> KVRoom {
+        let promptTokens = await engine.promptTokenCount(for: request) ?? Self.estimatedTokens(Self.budgetedText(request))
+        let budget = await kvBudgetBytes()
+        return kv.room(promptTokens: promptTokens, requestedMaxTokens: request.maxTokens, budget: budget)
     }
 
-    // MARK: — Generate (non-streaming)
+    private func admit(
+        _ request: GenerationRequest
+    ) async throws(BasaltError) -> (request: GenerationRequest, ticket: Int, queueWait: Duration) {
+        let (validated, promptTokens) = try await capped(request)
+        let queued = ContinuousClock.now
+        let ticket = try await admitted(request.priority)
+        try await reserveKV(ticket, promptTokens: promptTokens, for: validated)
+        await applyMemoryDirective()
+        return (validated, ticket, ContinuousClock.now - queued)
+    }
 
-    /// Generate a completion. If `modelId` differs from the currently loaded model,
-    /// the model is switched automatically before generation.
+    private func capped(_ request: GenerationRequest) async throws(BasaltError) -> (request: GenerationRequest, promptTokens: Int) {
+        let directive = await memory?.sample().directive ?? .relaxed
+        let room = await generationRoom(for: request)
+        if let refusal = refusal(room, under: directive) { throw refusal }
+        let validated = try kv.validated(request, in: room)
+        let cap = kv.cap(for: room)
+        if let kvPrecision = room.kvPrecision, kv.isAdaptive {
+            logger.info("KV cache quantized \(kvPrecision) for this request: fp16 cannot hold \(room.promptTokens) prompt + \(request.maxTokens ?? cap) tokens.")
+        }
+        if let wanted = request.maxTokens, wanted > cap {
+            logger.warn("Token request (\(wanted)) > budget (\(cap): --max-tokens \(kv.maxTokens), memory room \(room.room)). Capping.")
+        }
+        return (validated, room.promptTokens)
+    }
+
+    private func admitted(_ priority: RequestPriority) async throws(BasaltError) -> Int {
+        do {
+            return try await gate.admit(priority: priority)
+        } catch {
+            throw error as? BasaltError ?? .inferenceError("Cancelled while queued")
+        }
+    }
+
+    func reserveKV(_ ticket: Int, promptTokens: Int, for request: GenerationRequest) async throws(BasaltError) {
+        let budget = await kvBudgetBytes()
+        let bytes = kv.reservationBytes(promptTokens: promptTokens, for: request)
+        guard reservations.reserve(bytes, for: ticket, within: budget) else {
+            logger.warn("Refused with 503: this request needs \(bytes >> 20) MB of KV cache and \(reservations.bytes.count) running requests hold \(reservations.held >> 20) MB of the \(budget >> 20) MB room; retry when one finishes.")
+            await gate.release(ticket)
+            throw .serverBusy(retryAfterSeconds: 1)
+        }
+    }
+
+    func finish(_ ticket: Int) async {
+        reservations.release(ticket)
+        await applyMemoryDirective()
+        await gate.release(ticket)
+    }
+}
+
+extension ModelOrchestratorActor {
     public func generate(
         request: GenerationRequest,
         modelId: String? = nil
@@ -266,62 +341,6 @@ public actor ModelOrchestratorActor {
             await sessionLog.logResponse(request, id: id, status: Self.logStatus(error), result: SessionLogResult(), queueWait: .zero,
                                          error: error.localizedDescription)
             throw error
-        }
-    }
-
-    static func newRequestId() -> String {
-        "req_" + UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased().prefix(24)
-    }
-
-    static func logStatus(_ error: BasaltError) -> String {
-        if case .inferenceError(let message) = error {
-            if message.hasPrefix("Timeout after") { return "timeout" }
-            if message == "Cancelled while queued" { return "cancelled" }
-        }
-        return Task.isCancelled ? "cancelled" : "error"
-    }
-
-    private func performGenerate(
-        request: GenerationRequest, modelId: String?
-    ) async throws(BasaltError) -> (response: GenerationResponse, queueWait: Duration) {
-        if let cloudFallback, let reason = await cloudFallbackReason(for: request) {
-            do {
-                logger.info("Serving from the cloud: \(reason.rawValue)")
-                return (try await cloudFallback.generate(request), .zero)
-            } catch {
-                logger.warn("Cloud fallback (\(reason.rawValue)) failed, serving locally: \(error)")
-            }
-        }
-        try await autoSwitch(to: modelId)
-
-        logger.trace("generate: \(request.prompt.prefix(60))…")
-        let (validated, promptTokens) = try await capped(request)
-        let queued = ContinuousClock.now
-        let ticket = try await admitted(request.priority)
-        try await reserveKV(ticket, promptTokens: promptTokens, for: validated)
-        await applyMemoryDirective()
-        defer {
-            await withTaskCancellationShield {
-                await finish(ticket)
-            }
-        }
-        let queueWait = ContinuousClock.now - queued
-        let seconds = timeout(for: validated)
-        let work = Task { try await self.withTimeout(seconds: seconds) { try await self.engine.generate(request: validated) } }
-        await gate.onCancel(ticket) { work.cancel() }
-
-        await self.telemetry.requestStarted()
-        do {
-            let response = try await withTaskCancellationHandler { try await work.value } onCancel: { work.cancel() }
-            await self.telemetry.requestFinished(with: response)
-            await cloudFallback?.recordLocalOutcome(request, response: response, localModel: routingModelKey)
-            return (response, queueWait)
-        } catch let error as BasaltError {
-            await self.telemetry.requestFinished()
-            throw error
-        } catch {
-            await self.telemetry.requestFinished()
-            throw BasaltError.inferenceError("Generation error: \(error)")
         }
     }
 
@@ -357,6 +376,42 @@ public actor ModelOrchestratorActor {
             continuation.onTermination = { _ in task.cancel() }
         }
     }
+}
+
+extension ModelOrchestratorActor {
+    private func performGenerate(
+        request: GenerationRequest, modelId: String?
+    ) async throws(BasaltError) -> (response: GenerationResponse, queueWait: Duration) {
+        if let cloudFallback, let reason = await cloudFallbackReason(for: request) {
+            do {
+                logger.info("Serving from the cloud: \(reason.rawValue)")
+                return (try await cloudFallback.generate(request), .zero)
+            } catch {
+                logger.warn("Cloud fallback (\(reason.rawValue)) failed, serving locally: \(error)")
+            }
+        }
+        try await autoSwitch(to: modelId)
+        logger.trace("generate: \(request.prompt.prefix(60))…")
+        let (validated, ticket, queueWait) = try await admit(request)
+        defer {
+            await withTaskCancellationShield {
+                await finish(ticket)
+            }
+        }
+        let seconds = Self.timeout(for: validated)
+        let work = Task { try await self.withTimeout(seconds: seconds) { try await self.engine.generate(request: validated) } }
+        await gate.onCancel(ticket) { work.cancel() }
+        await telemetry.requestStarted()
+        do {
+            let response = try await withTaskCancellationHandler { try await work.value } onCancel: { work.cancel() }
+            await telemetry.requestFinished(with: response)
+            await cloudFallback?.recordLocalOutcome(request, response: response, localModel: routingModelKey)
+            return (response, queueWait)
+        } catch {
+            await telemetry.requestFinished()
+            throw Self.basaltError(error, "Generation error")
+        }
+    }
 
     private func performStream(
         request: GenerationRequest, modelId: String?
@@ -370,51 +425,34 @@ public actor ModelOrchestratorActor {
             }
         }
         try await autoSwitch(to: modelId)
-
         logger.trace("generateStream start")
-        let (validated, promptTokens) = try await capped(request)
-        let queued = ContinuousClock.now
-        let ticket = try await admitted(request.priority)
-        try await reserveKV(ticket, promptTokens: promptTokens, for: validated)
-        await applyMemoryDirective()
-        let queueWait = ContinuousClock.now - queued
-
-        await self.telemetry.requestStarted()
+        let (validated, ticket, queueWait) = try await admit(request)
+        await telemetry.requestStarted()
         let stream: AsyncStream<StreamChunk>
         do {
-            let seconds = timeout(for: validated)
+            let seconds = Self.timeout(for: validated)
             let setup = Task { try await self.withTimeout(seconds: seconds) { try await self.engine.generateStream(request: validated) } }
             await gate.onCancel(ticket) { setup.cancel() }
             stream = try await withTaskCancellationHandler { try await setup.value } onCancel: { setup.cancel() }
-        } catch let error as BasaltError {
-            await finish(ticket)
-            await self.telemetry.requestFinished()
-            throw error
         } catch {
             await finish(ticket)
-            await self.telemetry.requestFinished()
-            throw BasaltError.inferenceError("Stream setup error: \(error)")
+            await telemetry.requestFinished()
+            throw Self.basaltError(error, "Stream setup error")
         }
+        return (relay(stream, ticket: ticket, request: request), queueWait)
+    }
 
+    private func relay(_ stream: AsyncStream<StreamChunk>, ticket: Int, request: GenerationRequest) -> AsyncStream<StreamChunk> {
         let telemetry = self.telemetry
         let gate = self.gate
         let cloudFallback = self.cloudFallback
         let localModel = routingModelKey
-        return (AsyncStream<StreamChunk> { continuation in
+        return AsyncStream<StreamChunk> { continuation in
             let task = Task.detached {
                 var result: GenerationResponse?
                 for await chunk in stream {
-                    switch chunk {
-                    case .text(let t):
-                        continuation.yield(.text(t))
-                    case .reasoning(let r):
-                        continuation.yield(.reasoning(r))
-                    case .metadata(let m):
-                        result = m
-                        continuation.yield(.metadata(m))
-                    case .toolCall(let call):
-                        continuation.yield(.toolCall(call))
-                    }
+                    if case .metadata(let metadata) = chunk { result = metadata }
+                    continuation.yield(chunk)
                 }
                 await self.finish(ticket)
                 await telemetry.requestFinished(with: result)
@@ -423,213 +461,7 @@ public actor ModelOrchestratorActor {
             }
             Task { await gate.onCancel(ticket) { task.cancel() } }
             continuation.onTermination = { _ in task.cancel() }
-        }, queueWait)
-    }
-
-    static func endingWithErrorMetadata(_ source: AsyncThrowingStream<StreamChunk, Error>) -> AsyncStream<StreamChunk> {
-        AsyncStream { continuation in
-            let task = Task {
-                do {
-                    for try await chunk in source { continuation.yield(chunk) }
-                } catch {
-                    BasaltLogger(module: "ModelOrchestrator").warn("Cloud stream failed mid-way: \(error)")
-                    continuation.yield(.metadata(GenerationResponse(
-                        generatedText: "", promptTokens: 0, completionTokens: 0, tokensPerSecond: 0,
-                        generationTime: 0, timeToFirstToken: 0,
-                        memory: .init(peakBytes: 0, activeBytes: 0, cacheBytes: 0), finishReason: .error)))
-                }
-                continuation.finish()
-            }
-            continuation.onTermination = { _ in task.cancel() }
         }
-    }
-
-    // MARK: — Health
-
-    public func healthSnapshot(modelId: String?) async -> HealthResponse {
-        let ready = await engine.isLoaded
-        return HealthResponse(
-            status: ready ? "ok" : "initializing",
-            modelId: modelId ?? (currentModelId.isEmpty ? nil : currentModelId),
-            isReady: ready,
-            version: HealthResponse.version
-        )
-    }
-
-    // MARK: — Telemetry
-
-    public func telemetrySnapshot() async -> ServerTelemetrySnapshot {
-        var snapshot = await telemetry.snapshot()
-        let anchors = await engine.hybridAnchorUsage
-        snapshot.hybridAnchors = anchors?.count
-        snapshot.hybridAnchorBytes = anchors?.bytes
-        if let memory {
-            snapshot.memory = MemoryTelemetry(state: await memory.state, limits: memoryLimits, refusedAdmissions: memoryRefusals)
-        }
-        snapshot.routingBias = await cloudFallback?.routingBias
-        return snapshot
-    }
-
-    // MARK: — Model catalogue
-
-    /// Returns all models currently in the local HuggingFace cache.
-    public func cachedModels() -> [CachedModelInfo] {
-        let root = ModelCache.root
-        guard let entries = try? FileManager.default.contentsOfDirectory(atPath: root.path) else {
-            return []
-        }
-
-        return entries
-            .filter { $0.hasPrefix("models--") }
-            .sorted()
-            .compactMap { dir -> CachedModelInfo? in
-                let repoId = dir
-                    .replacingOccurrences(of: "models--", with: "")
-                    .replacingOccurrences(of: "--", with: "/")
-                let url  = root.appendingPathComponent(dir)
-                let size = directorySize(at: url)
-                return CachedModelInfo(
-                    id: repoId,
-                    sizeBytes: size,
-                    isLoaded: repoId == currentModelId
-                )
-            }
-    }
-
-    // MARK: — Private helpers
-
-    /// Switch model if the requested ID differs from the loaded one.
-    /// Ignores nil, empty, and generic placeholder IDs like "basalt".
-    private func autoSwitch(to modelId: String?) async throws(BasaltError) {
-        guard let id = modelId, !id.isEmpty, id != "basalt" else { return }
-        if await engine.isLoaded { return }
-        guard id != currentModelId else { return }
-        try await switchModel(to: id)
-    }
-
-    private func timeout(for request: GenerationRequest) -> UInt64 {
-        Self.watchdogSeconds(
-            maxTokens: request.maxTokens ?? 0, promptTokens: Self.estimatedTokens(Self.budgetedText(request)),
-            floor: generationTimeoutSeconds
-        )
-    }
-
-    static func budgetedText(_ request: GenerationRequest) -> String {
-        guard let messages = request.messages, !messages.isEmpty else { return request.prompt }
-        return ChatMessageInput.plainText(messages)
-    }
-
-    static func watchdogSeconds(maxTokens: Int, promptTokens: Int, floor: UInt64 = 300) -> UInt64 {
-        let decodeSeconds = UInt64(max(0, maxTokens)) / 4
-        let prefillSeconds = UInt64(max(0, promptTokens)) / 50
-        return max(floor, decodeSeconds + prefillSeconds)
-    }
-
-    public func effectiveMaxTokens(for request: GenerationRequest) async -> Int {
-        let room = await generationRoom(for: request).room
-        return max(0, min(request.maxTokens ?? maxTokens, maxTokens, room))
-    }
-
-    func kvBudgetBytes() async -> Int64 {
-        let budget = if let engineBudget = await engine.kvMemoryBudgetBytes {
-            engineBudget
-        } else {
-            Int64(Double(freeMemory()) * TokenBudgetCalculator.safetyMargin)
-        }
-        guard let state = await memory?.state, state.directive.limitsAdmission else { return budget }
-        return min(budget, Int64(Double(state.sample.availableBytes) * TokenBudgetCalculator.safetyMargin))
-    }
-
-    func generationRoom(
-        for request: GenerationRequest
-    ) async -> (room: Int, fitting: Int, promptTokens: Int, kvPrecision: KVPrecision?) {
-        let promptTokens = await engine.promptTokenCount(for: request) ?? Self.estimatedTokens(Self.budgetedText(request))
-        let wanted = promptTokens + min(request.maxTokens ?? 1, maxTokens)
-        let fit = kvFit(promptTokens: promptTokens, wantedTokens: wanted, budget: await kvBudgetBytes())
-        return (fit.fitting - promptTokens, fit.fitting, promptTokens, fit.kvPrecision)
-    }
-
-    func kvFit(promptTokens: Int, wantedTokens: Int, budget: Int64) -> (fitting: Int, kvPrecision: KVPrecision?) {
-        let zones = modelTakesKVZones ? (modelTakesKVEviction ? kvZones : kvZones?.evicting(0)) : nil
-        let fits = kvPrecisionLadder.map { wanted in
-            let precision = zones == nil ? wanted?.uniform : wanted
-            return (fitting: kvGeometry.maxTokens(fitting: ByteCount(budget), kvPrecision: precision, promptTokens: TokenCount(promptTokens), zones: zones).rawValue, kvPrecision: precision)
-        }
-        return fits.first { $0.fitting >= wantedTokens } ?? fits.max { $0.fitting < $1.fitting }!
-    }
-
-    private func capped(_ request: GenerationRequest) async throws(BasaltError) -> (request: GenerationRequest, promptTokens: Int) {
-        let directive = await memory?.sample().directive ?? .relaxed
-        let (room, fitting, promptTokens, kvPrecision) = await generationRoom(for: request)
-        if let refusal = memoryRefusal(directive, promptTokens: promptTokens, room: room) { throw refusal }
-        guard room > 0 else {
-            throw .contextLengthExceeded(maxTokens: fitting, requested: promptTokens + 1)
-        }
-        let cap = min(maxTokens, room)
-        var v = try request.validated(defaultMaxTokens: cap).withKVPrecision(kvPrecision)
-        if let kvPrecision, kvPrecisionLadder.count > 1 {
-            logger.info("KV cache quantized \(kvPrecision) for this request: fp16 cannot hold \(promptTokens) prompt + \(v.maxTokens ?? 0) tokens.")
-        }
-        if let req = request.maxTokens, req > cap {
-            logger.warn("Token request (\(req)) > budget (\(cap): --max-tokens \(maxTokens), memory room \(room)). Capping.")
-            v = v.withMaxTokens(cap)
-        }
-        return (v, promptTokens)
-    }
-
-    func reserveKV(_ ticket: Int, promptTokens: Int, for request: GenerationRequest) async throws(BasaltError) {
-        let budget = await kvBudgetBytes()
-        let zones = modelTakesKVZones ? (modelTakesKVEviction ? kvZones : kvZones?.evicting(0)) : nil
-        let bytes = kvGeometry.bytes(tokens: TokenCount(promptTokens + (request.maxTokens ?? maxTokens)), kvPrecision: request.kvPrecision, zones: zones).rawValue
-        let others = kvReservations.values.reduce(0, +)
-        guard others == 0 || others + bytes <= budget else {
-            await gate.release(ticket)
-            logger.warn("Refused with 503: this request needs \(bytes >> 20) MB of KV cache and \(kvReservations.count) running requests hold \(others >> 20) MB of the \(budget >> 20) MB room; retry when one finishes.")
-            throw .serverBusy(retryAfterSeconds: 1)
-        }
-        kvReservations[ticket] = bytes
-    }
-
-    func finish(_ ticket: Int) async {
-        kvReservations[ticket] = nil
-        await applyMemoryDirective()
-        await gate.release(ticket)
-    }
-
-    public func setFreeMemoryProbe(_ probe: @escaping @Sendable () -> Int64) {
-        freeMemory = probe
-    }
-
-    static func estimatedTokens(_ prompt: String) -> Int {
-        prompt.utf8.count / 4
-    }
-
-    private func calculateDirectorySize(url: URL) throws -> UInt64 {
-        UInt64(max(0, Self.resolvedDirectorySize(at: url)))
-    }
-
-    /// Sums file sizes, following symlinks.
-    ///
-    /// The standard HuggingFace cache stores weights in `blobs/` and fills
-    /// `snapshots/` with symlinks, so measuring the link itself reports a few
-    /// bytes per shard: a 16 GB model came out as 6 MB, and every downstream
-    /// memory estimate and token budget was computed from that.
-    static func resolvedDirectorySize(at url: URL) -> Int64 {
-        guard let e = FileManager.default.enumerator(at: url,
-                        includingPropertiesForKeys: [.fileSizeKey],
-                        options: []) else { return 0 }
-        var total: Int64 = 0
-        for case let f as URL in e {
-            let target = f.resolvingSymlinksInPath()
-            if let s = try? target.resourceValues(forKeys: [.fileSizeKey]).fileSize {
-                total += Int64(s)
-            }
-        }
-        return total
-    }
-
-    private func directorySize(at url: URL) -> Int64 {
-        Self.resolvedDirectorySize(at: url)
     }
 
     private func withTimeout<T: Sendable>(
@@ -649,22 +481,6 @@ public actor ModelOrchestratorActor {
             }
             group.cancelAll()
             return result
-        }
-    }
-}
-
-// MARK: — CachedModelInfo DTO
-
-public struct CachedModelInfo: Sendable {
-    public let id: String
-    public let sizeBytes: Int64
-    public let isLoaded: Bool
-
-    public var sizeFormatted: String {
-        switch sizeBytes {
-        case 0..<1_048_576:    return String(format: "%.1f KB", Double(sizeBytes) / 1_024)
-        case 0..<1_073_741_824: return String(format: "%.1f MB", Double(sizeBytes) / 1_048_576)
-        default:               return String(format: "%.2f GB", Double(sizeBytes) / 1_073_741_824)
         }
     }
 }
