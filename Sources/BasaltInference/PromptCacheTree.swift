@@ -134,47 +134,6 @@ struct PromptCacheTree {
             cache: cache, reusedTokens: path.reduce(0) { $0 + $1.used }, pinned: deepest)
     }
 
-    mutating func store(_ namespace: String, tokens: [Int], cache: PromptCache) {
-        guard byteBudget > 0, !tokens.isEmpty, cache.tokenCount >= tokens.count,
-              cache.isSharable || cache.isSnapshot(of: tokens.count)
-        else { return }
-        let snapshot = RecurrentSnapshot(of: cache)
-        let root = roots[namespace] ?? PromptCacheNode(tokens: [], layers: [], lastUse: 0)
-        let path = Self.walk(from: root, along: tokens)
-        let matched = path.reduce(0) { $0 + $1.used }
-        guard matched < tokens.count else {
-            guard let last = path.last else { return }
-            let node = snapshot == nil || last.used == last.node.tokens.count ? last.node : split(last.node, at: last.used)
-            let before = node.bytes
-            node.snapshot = node.snapshot ?? snapshot
-            byteCount += node.bytes - before
-            touch(node)
-            retireSnapshots(above: node)
-            evict()
-            return
-        }
-        let addsLeaf = path.last.map { $0.used < $0.node.tokens.count || !$0.node.children.isEmpty } ?? true
-        guard !addsLeaf || leafCount < leafLimit || leaves().contains(where: { $0.pins == 0 }) else { return }
-        roots[namespace] = root
-        var parent = root
-        for step in path {
-            parent = step.used < step.node.tokens.count ? split(step.node, at: step.used) : step.node
-        }
-        let leaf = PromptCacheNode(
-            tokens: Array(tokens[matched...]),
-            layers: Self.slice(cache.layers.map { $0.isSnapshotOnly ? [] : $0.state }, matched..<tokens.count),
-            lastUse: 0)
-        if parent === root || !parent.children.isEmpty {
-            leafCount += 1
-        }
-        leaf.snapshot = snapshot
-        attach(leaf, to: parent)
-        byteCount += leaf.bytes
-        touch(leaf)
-        retireSnapshots(above: leaf)
-        evict()
-    }
-
     private mutating func retireSnapshots(above node: PromptCacheNode) {
         guard node.snapshot != nil else { return }
         var kept = 0
@@ -348,6 +307,62 @@ struct PromptCacheTree {
                 byteCount -= before
             }
         }
+    }
+}
+
+extension PromptCacheTree {
+    mutating func store(_ namespace: String, tokens: [Int], cache: PromptCache) {
+        guard byteBudget > 0, !tokens.isEmpty, cache.tokenCount >= tokens.count,
+              cache.isSharable || cache.isSnapshot(of: tokens.count)
+        else { return }
+        let snapshot = RecurrentSnapshot(of: cache)
+        let root = roots[namespace] ?? PromptCacheNode(tokens: [], layers: [], lastUse: 0)
+        let path = Self.walk(from: root, along: tokens)
+        let matched = path.reduce(0) { $0 + $1.used }
+        guard matched < tokens.count else {
+            if let last = path.last { keepSnapshot(snapshot, at: last) }
+            return
+        }
+        guard admitsLeaf(after: path) else { return }
+        roots[namespace] = root
+        let leaf = PromptCacheNode(
+            tokens: Array(tokens[matched...]),
+            layers: Self.slice(cache.layers.map { $0.isSnapshotOnly ? [] : $0.state }, matched..<tokens.count),
+            lastUse: 0)
+        leaf.snapshot = snapshot
+        insert(leaf, under: root, along: path)
+    }
+
+    private mutating func keepSnapshot(_ snapshot: RecurrentSnapshot?, at last: Step) {
+        let node = snapshot == nil || last.used == last.node.tokens.count ? last.node : split(last.node, at: last.used)
+        let before = node.bytes
+        node.snapshot = node.snapshot ?? snapshot
+        byteCount += node.bytes - before
+        settle(node)
+    }
+
+    private func admitsLeaf(after path: [Step]) -> Bool {
+        let addsLeaf = path.last.map { $0.used < $0.node.tokens.count || !$0.node.children.isEmpty } ?? true
+        return !addsLeaf || leafCount < leafLimit || leaves().contains(where: { $0.pins == 0 })
+    }
+
+    private mutating func insert(_ leaf: PromptCacheNode, under root: PromptCacheNode, along path: [Step]) {
+        var parent = root
+        for step in path {
+            parent = step.used < step.node.tokens.count ? split(step.node, at: step.used) : step.node
+        }
+        if parent === root || !parent.children.isEmpty {
+            leafCount += 1
+        }
+        attach(leaf, to: parent)
+        byteCount += leaf.bytes
+        settle(leaf)
+    }
+
+    private mutating func settle(_ node: PromptCacheNode) {
+        touch(node)
+        retireSnapshots(above: node)
+        evict()
     }
 }
 
