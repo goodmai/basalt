@@ -1,5 +1,4 @@
 import Foundation
-import Synchronization
 import MLX
 import MLXLLM
 // Registers MLXVLM's factory trampoline (Gemma 4, Qwen3.5-VL, …). The registry
@@ -336,58 +335,30 @@ public actor MLXInferenceEngine: InferenceEngine {
         logger.info("Prompt cache budget: \(promptCaches.byteBudget >> 20) MB")
     }
 
-    /// `registerAliases` is a static method, so it is *not* actor-isolated and two
-    /// concurrent loads could both observe `false` and register twice. Claim the
-    /// flag atomically instead of check-then-set on a bare Bool.
-    private static let aliasesRegistered = Mutex<Bool>(false)
-
-    /// Register architecture aliases (Qwen 3.8, Qwen 3.6, MiniMax M2) in LLMTypeRegistry.
-    public static func registerAliases() async {
-        let alreadyDone = aliasesRegistered.withLock { done -> Bool in
-            defer { done = true }
-            return done
+    private static let aliasRegistration = Task {
+        let registry = LLMTypeRegistry.shared
+        for type in ["qwen3_8", "qwen3.8", "qwen3_6", "qwen3.6"] {
+            await registry.registerModelType(type) { data in
+                MLXLLM.Qwen35Model(try JSONDecoder.json5().decode(MLXLLM.Qwen35Configuration.self, from: data))
+            }
         }
-        guard !alreadyDone else { return }
-
-        await LLMTypeRegistry.shared.registerModelType("qwen3_8") { data in
-            let config = try JSONDecoder.json5().decode(MLXLLM.Qwen35Configuration.self, from: data)
-            return MLXLLM.Qwen35Model(config)
+        for type in ["qwen3_8_moe", "qwen3.8_moe", "qwen3_6_moe"] {
+            await registry.registerModelType(type) { data in
+                MLXLLM.Qwen35MoEModel(try JSONDecoder.json5().decode(MLXLLM.Qwen35Configuration.self, from: data))
+            }
         }
-        await LLMTypeRegistry.shared.registerModelType("qwen3.8") { data in
-            let config = try JSONDecoder.json5().decode(MLXLLM.Qwen35Configuration.self, from: data)
-            return MLXLLM.Qwen35Model(config)
+        for type in ["minimax_m2", "minimax-m2"] {
+            await registry.registerModelType(type) { data in
+                MiniMaxModel(try JSONDecoder.json5().decode(MiniMaxConfiguration.self, from: data))
+            }
         }
-        await LLMTypeRegistry.shared.registerModelType("qwen3_8_moe") { data in
-            let config = try JSONDecoder.json5().decode(MLXLLM.Qwen35Configuration.self, from: data)
-            return MLXLLM.Qwen35MoEModel(config)
-        }
-        await LLMTypeRegistry.shared.registerModelType("qwen3.8_moe") { data in
-            let config = try JSONDecoder.json5().decode(MLXLLM.Qwen35Configuration.self, from: data)
-            return MLXLLM.Qwen35MoEModel(config)
-        }
-        await LLMTypeRegistry.shared.registerModelType("qwen3_6") { data in
-            let config = try JSONDecoder.json5().decode(MLXLLM.Qwen35Configuration.self, from: data)
-            return MLXLLM.Qwen35Model(config)
-        }
-        await LLMTypeRegistry.shared.registerModelType("qwen3.6") { data in
-            let config = try JSONDecoder.json5().decode(MLXLLM.Qwen35Configuration.self, from: data)
-            return MLXLLM.Qwen35Model(config)
-        }
-        await LLMTypeRegistry.shared.registerModelType("qwen3_6_moe") { data in
-            let config = try JSONDecoder.json5().decode(MLXLLM.Qwen35Configuration.self, from: data)
-            return MLXLLM.Qwen35MoEModel(config)
-        }
-        await LLMTypeRegistry.shared.registerModelType("minimax_m2") { data in
-            let config = try JSONDecoder.json5().decode(MiniMaxConfiguration.self, from: data)
-            return MiniMaxModel(config)
-        }
-        await LLMTypeRegistry.shared.registerModelType("minimax-m2") { data in
-            let config = try JSONDecoder.json5().decode(MiniMaxConfiguration.self, from: data)
-            return MiniMaxModel(config)
-        }
-        await LLMTypeRegistry.shared.registerModelType(PrismHadamard.modelType) { data in
+        await registry.registerModelType(PrismHadamard.modelType) { data in
             try PrismHadamard.model(configuration: data)
         }
+    }
+
+    public static func registerAliases() async {
+        await aliasRegistration.value
     }
 
     // MARK: — Load
