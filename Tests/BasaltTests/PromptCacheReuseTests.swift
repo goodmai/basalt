@@ -800,18 +800,6 @@ struct PromptCacheTreeTests {
         #expect(tree.leafCount == 0)
     }
 
-    @Test("The budget, the byte count and rebudget are ByteCount, so a token count cannot stand in for bytes (#304)")
-    func budgetIsTypedInBytes() {
-        var tree = PromptCacheTree(byteBudget: ByteCount(100 * Self.bytesPerToken))
-        let a = branch(1, 100)
-        tree.store("ns", tokens: a, cache: cache(a))
-        let full: ByteCount = tree.byteCount
-        #expect(full == tree.byteBudget)
-        tree.rebudget(full / 2)
-        #expect(tree.byteCount == ByteCount(50 * Self.bytesPerToken))
-        #expect(tree.storedPrefix(of: a, in: "ns") == 50)
-    }
-
     @Test("A zero budget stores nothing")
     func zeroBudgetStoresNothing() {
         var tree = PromptCacheTree(byteBudget: 0)
@@ -843,5 +831,19 @@ struct PromptCacheTreeTests {
         tree.store("ns", tokens: b, cache: cache(b))
         #expect(tree.storedPrefix(of: a, in: "ns") == 0)
         #expect(tree.storedPrefix(of: b, in: "ns") == 100)
+    }
+}
+
+extension PromptCacheTreeTests {
+    @Test("The budget, the byte count and rebudget are ByteCount, so a token count cannot stand in for bytes (#304)")
+    func budgetIsTypedInBytes() {
+        var tree = PromptCacheTree(byteBudget: ByteCount(100 * Self.bytesPerToken))
+        let a = branch(1, 100)
+        tree.store("ns", tokens: a, cache: cache(a))
+        let full: ByteCount = tree.byteCount
+        #expect(full == tree.byteBudget)
+        tree.rebudget(full / 2)
+        #expect(tree.byteCount == ByteCount(50 * Self.bytesPerToken))
+        #expect(tree.storedPrefix(of: a, in: "ns") == 50)
     }
 }
