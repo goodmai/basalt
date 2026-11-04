@@ -31,8 +31,23 @@ You are a Staff Swift Security & Quality Auditor executing a strict, zero-trust 
 
 ### Gate 3: Algorithmic Complexity & Error Contracts
 - Compute explicit time and space complexity $O(T)$ and $O(S)$ for modified functions.
+- **Size and complexity limits (CONTRIBUTING "Size and complexity")**: run `uvx lizard==1.24.0 -l swift -C 15 -L 60 -a 6 <changed files>`.
+  - A new function over CCN 15, 60 lines of code or 6 parameters is `MEDIUM`.
+  - An existing function or file over a limit that the diff makes longer or more complex is `MEDIUM`.
+  - A Swift file over 600 lines that grows is `MEDIUM`.
+  - Propose the split along an existing seam (a `switch` case, an engine mode, a stage).
 - Flag hidden $O(N^2)$ operations (e.g., `Array.contains` inside loops, repeated `String` index traversal, or main-actor serialization bottlenecks).
 - Verify error handling completeness: no swallowed errors (`try?` without logging/fallback), proper typed throws `throws(ErrorType)` usage where exhaustive catch is expected.
+
+### Gate 3b: Swift 6.4 Toolset Adoption
+- For each touched type or function, check whether the diff left a 6.4 tool unused where CONTRIBUTING asks for it, and report it as `MEDIUM` with the replacement:
+  - `@unchecked Sendable` + `NSLock`/`NSCondition` → `Mutex`, actor, or `sending`;
+  - a manually released resource → `~Copyable` with `consuming`/`borrowing`, or `UniqueBox`;
+  - teardown without `withTaskCancellationShield` / `defer { await }`;
+  - internal untyped `throws` → `throws(E)`;
+  - `withUnsafeBytes`/`Unsafe*Pointer` byte parsing → `RawSpan`/`Span`;
+  - per-token `Array` scratch → `InlineArray`/`withTemporaryAllocation`, with a benchmark;
+  - `default:` over our own enum → exhaustive `switch`.
 
 ### Gate 4: SwiftUI / Observation & Platform Hygiene (if applicable)
 - Flag view body side effects, unstable view identities, or `@Observable` property reads that trigger unnecessary view invalidation storms.

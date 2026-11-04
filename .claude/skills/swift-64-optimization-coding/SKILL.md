@@ -35,3 +35,19 @@ You are an Expert Swift 6.4 Systems & Performance Engineer. Write deterministic,
 - Apply `@inlinable`, `@inline(always)`, `@specialize`, and `@export(implementation)` judiciously on cross-module hot-path APIs.
 - Use `throws(SpecificError)` in performance-critical or embedded paths to avoid existential `any Error` heap boxing.
 - For C/C++ interoperability (Swift 6.3/6.4), use `@c` and `@implementation` instead of manual C bridging wrappers.
+
+## 4. Size, Complexity & Leaving Code Better (basalt)
+- **Limits (CONTRIBUTING "Size and complexity")**:
+  - a function stays at CCN ≤ 15 (aim ≤ 10), ≤ 60 lines of code and ≤ 6 parameters;
+  - a file stays at ≤ 600 lines (aim ≤ 400);
+  - check with `uvx lizard==1.24.0 -l swift -C 15 -L 60 -a 6 <files>` before committing.
+- **Ratchet**: a function or file already over a limit must not grow. Before adding a branch to one, split it along an existing seam: an engine mode, a `switch` case, a stage of a long function.
+- **Apply the toolset in the code you touch**, not only in new code:
+  - `Mutex`/actor over `@unchecked Sendable` and locks;
+  - `~Copyable` leases over flags such as `isHeld`;
+  - cancellation shields on teardown;
+  - typed throws;
+  - `RawSpan` over unsafe byte pointers;
+  - `InlineArray` on per-token scratch, only with a micro-benchmark that shows the gain.
+
+  Tracking issue: #284.
