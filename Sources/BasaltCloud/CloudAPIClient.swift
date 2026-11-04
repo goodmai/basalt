@@ -23,19 +23,19 @@ public struct CloudAPIConfig: Sendable {
     }
 }
 
-/// Generic HTTP client for Cloud LLM providers (OpenAI, Anthropic, OpenRouter, etc.)
-/// Handles JSON encoding/decoding, retries with exponential backoff, and standard HTTP error mapping.
 public actor CloudAPIClient: Sendable {
     private let config: CloudAPIConfig
     private let session: URLSession
+    private let sleep: @Sendable (Duration) async throws -> Void
     private var requestCount: Int = 0
     private var errorCount: Int = 0
 
-    /// `configuration` is the session's base (tests pass one with a stub protocol); the
-    /// timeouts from `config` are applied on top of it.
-    public init(config: CloudAPIConfig, configuration: URLSessionConfiguration = .default) {
+    public init(
+        config: CloudAPIConfig, configuration: URLSessionConfiguration = .default,
+        sleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
+    ) {
         self.config = config
-        // A copy: the caller's configuration object is not ours to mutate.
+        self.sleep = sleep
         let configuration = configuration.copy() as! URLSessionConfiguration
         configuration.timeoutIntervalForRequest = config.timeout
         configuration.timeoutIntervalForResource = config.timeout * 2
@@ -101,7 +101,7 @@ public actor CloudAPIClient: Sendable {
     }
 
     private func backoff(_ attempt: Int) async throws {
-        try await Task.sleep(nanoseconds: UInt64(pow(2.0, Double(attempt)) * 1_000_000_000))
+        try await sleep(.seconds(1 << attempt))
     }
 
     private func makeRequest(endpoint: String, method: String, body: Data?, accept: String? = nil) -> URLRequest {

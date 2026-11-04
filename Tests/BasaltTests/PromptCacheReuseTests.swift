@@ -315,21 +315,17 @@ struct PromptCacheReuseTests {
         let engine = try await TinyModel.engine()
         _ = try await engine.generate(request: greedy(Conversation.otherUser, key: "ns"))
         let stream = try await engine.generateStream(request: greedy(Conversation.firstTurn, key: "ns", maxTokens: 3000))
+        let (firstChunk, sawFirstChunk) = AsyncStream<Void>.makeStream()
         let consumer = Task {
-            for await _ in stream {
-                try? await Task.sleep(for: .milliseconds(2))
-            }
+            for await _ in stream { sawFirstChunk.finish() }
         }
-        try await Task.sleep(for: .milliseconds(50))
+        for await _ in firstChunk {}
         consumer.cancel()
         await consumer.value
 
         let prompt = TinyModel.tokens(Conversation.firstTurn)
         let other = TinyModel.tokens(Conversation.otherUser)
-        let deadline = ContinuousClock.now + .seconds(60)
-        while await engine.readPromptCaches({ $0.storedPrefix(of: prompt, in: "ns") }) < prompt.count, ContinuousClock.now < deadline {
-            try await Task.sleep(for: .milliseconds(5))
-        }
+        #expect(await GenerationGateTests.eventually { await engine.promptCacheReport(namespace: nil).launches.isEmpty })
         let (prefix, pins, bytes) = await engine.readPromptCaches { ($0.storedPrefix(of: prompt, in: "ns"), pinCount($0), $0.byteCount) }
         #expect(prefix == prompt.count)
         #expect(pins == 0)

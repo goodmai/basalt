@@ -55,7 +55,7 @@ public struct PromptCacheDiskStore: Sendable {
     }
 
     static let sampledWeightBytes = 1 << 20
-    static let assumedWriteBytesPerSecond: Double = 1e9
+    var assumedWriteBytesPerSecond: Double = 1e9
 
     func url(_ name: String) -> URL {
         directory.appendingPathComponent(name)

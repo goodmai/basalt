@@ -255,7 +255,7 @@ struct ConstrainedDecodingEngineTests {
             for await _ in try await engine.generateStream(request: ConstrainedModel.request(format: .jsonSchema(long), maxTokens: 400)) { break }
         }
         try await consumer.value
-        try await Task.sleep(for: .seconds(1))
+        #expect(await GenerationGateTests.eventually { await engine.promptCacheReport(namespace: nil).launches.isEmpty })
         #expect(await engine.idleGrammars[schema, default: []].isEmpty)
         _ = try await engine.generate(request: ConstrainedModel.request(format: .jsonSchema(long), maxTokens: 400))
         #expect(await engine.idleGrammars[schema]?.count == 1)

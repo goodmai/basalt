@@ -1154,7 +1154,7 @@ public actor MLXInferenceEngine: InferenceEngine {
     }
 
     public func persistPromptCache(within deadline: Duration) async {
-        guard promptCacheDisk != nil, let fingerprint = modelFingerprint else { return }
+        guard let writeRate = promptCacheDisk?.assumedWriteBytesPerSecond, let fingerprint = modelFingerprint else { return }
         let started = ContinuousClock.now
         var written: Set<String> = []
         var skipped = 0
@@ -1164,7 +1164,7 @@ public actor MLXInferenceEngine: InferenceEngine {
             guard !tokens.isEmpty else { continue }
             let alreadyOnDisk = promptCacheDisk?.has(fingerprint: fingerprint, namespace: path.namespace, tokens: tokens) == true
             let expectedWrite = alreadyOnDisk ? 0 : Double(PromptCacheDiskStore.estimatedBytes(of: lease.cache, tokens: tokens.count))
-                / PromptCacheDiskStore.assumedWriteBytesPerSecond
+                / writeRate
             guard ContinuousClock.now - started + .seconds(expectedWrite) <= deadline else {
                 skipped += 1
                 continue
