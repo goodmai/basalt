@@ -97,7 +97,7 @@ struct GenerationLauncher {
 
     func stock(batch: BatchedDecoder?, lookup: LookupOptions) throws -> MLXInferenceEngine.GenerationLaunch {
         let model = context.model
-        if let batch, let layers = BatchedTokenIterator.batchableLayers(try model.newCache(parameters: params)), let seat = batch.seat() {
+        if let batch, let layers = BatchedTokenIterator.batchableLayers(try model.newCache(parameters: params)), let seat = batch.seat(in: context) {
             try components.validate(parameters: params)
             return uncached(try BatchedTokenIterator(
                 input: input, model: model, layers: layers,
@@ -192,7 +192,7 @@ struct GenerationLauncher {
                 stream: stream, task: task, cache: keepable ? head.kept : nil, anchors: keepable ? head.anchors : [],
                 reusedTokens: reused, exactTokens: blended?.exactPrefix ?? Int.max, prefillSeconds: prefill)
         }
-        if let batch, head.state == nil, let layers = BatchedTokenIterator.batchableLayers(cache.layers), let seat = batch.seat() {
+        if let batch, head.state == nil, let layers = BatchedTokenIterator.batchableLayers(cache.layers), let seat = batch.seat(in: context) {
             return launching(try BatchedTokenIterator(
                 input: tail, model: context.model, layers: layers, decoding: DecodingSettings(processor: processor, parameters: params),
                 stopTokens: MLXInferenceEngine.batchStopTokens(context), seat: seat))

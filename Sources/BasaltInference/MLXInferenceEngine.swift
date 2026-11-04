@@ -1077,9 +1077,9 @@ public actor MLXInferenceEngine: InferenceEngine {
         guard batchSlots > 1, epoch == modelEpoch, appliedMemoryDirective < .tight else { return nil }
         if let batchDecoder { return batchDecoder }
         let slots = batchSlots
-        let made = await container.perform { BatchedDecoder(model: $0.model, slots: slots) }
+        await container.update { if $0.batch == nil { $0.batch = BatchCore(model: $0.model, slots: slots) } }
+        let made = await container.perform { ($0.batch as? BatchCore)?.decoder }
         guard epoch == modelEpoch else { return nil }
-        if let batchDecoder { return batchDecoder }
         batchDecoder = made
         return made
     }

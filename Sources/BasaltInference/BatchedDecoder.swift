@@ -5,45 +5,42 @@ import Synchronization
 
 final class BatchedDecoder: Sendable {
     let slots: Int
-    private let evaluation: FairRecursiveLock
     private let mailbox = Mutex(Mailbox())
-    private let core: BatchCore
 
-    init(model: any LanguageModel, slots: Int) {
-        evaluation = ModelEvaluationLock.lock(for: model)
-        core = BatchCore(model: model)
+    init(slots: Int) {
         self.slots = slots
     }
 
     var admittedRows: Int { mailbox.withLock { $0.admitted } }
 
-    func exclusively<T>(_ body: () throws -> T) rethrows -> T {
-        try evaluation.withLock(body)
+    func seat(in context: ModelContext) -> BatchSeat? {
+        (context.batch as? BatchCore).flatMap { seat(on: $0) }
     }
 
-    func seat() -> BatchSeat? {
-        mailbox.withLock { $0.seat(within: slots) }.map { BatchSeat(decoder: self, id: $0) }
+    func seat(on core: BatchCore) -> BatchSeat? {
+        guard core.decoder === self else { return nil }
+        return mailbox.withLock { $0.seat(within: slots) }.map { BatchSeat(core: core, id: $0) }
     }
 
-    fileprivate func leave(_ id: Int) {
+    fileprivate func leave(_ id: Int, from core: BatchCore) {
         guard mailbox.withLock({ $0.leave(id) }) else { return }
-        evaluation.withLock {
+        core.evaluation.withLock {
             if mailbox.withLock({ $0.seated == 0 }) { core.reset() }
         }
     }
 
-    fileprivate func take(_ id: Int, joining arrival: BatchRow?) -> Int? {
+    fileprivate func take(_ id: Int, from core: BatchCore, joining arrival: BatchRow?) -> Int? {
         if arrival != nil { mailbox.withLock { $0.open(id) } }
         if mailbox.withLock({ $0.waits(id) }) {
-            evaluation.withLock {
+            core.evaluation.withLock {
                 var arrivals = arrival.map { [$0] } ?? []
-                while mailbox.withLock({ $0.waits(id) }), advance(admitting: arrivals) { arrivals = [] }
+                while mailbox.withLock({ $0.waits(id) }), advance(core, admitting: arrivals) { arrivals = [] }
             }
         }
         return mailbox.withLock { $0.take(id) }
     }
 
-    private func advance(admitting arrivals: [BatchRow]) -> Bool {
+    private func advance(_ core: BatchCore, admitting arrivals: [BatchRow]) -> Bool {
         let ids = core.ids
         let seated = mailbox.withLock { box in ids.map { box.rows[$0] != nil } }
         let delivered = core.step(keeping: seated, admitting: arrivals)
@@ -98,26 +95,30 @@ private struct Mailbox {
 
 private typealias BatchDelivery = (id: Int, token: Int, finished: Bool)
 
-private final class BatchCore: @unchecked Sendable {
+final class BatchCore {
+    let decoder: BatchedDecoder
+    fileprivate let evaluation: FairRecursiveLock
     private let model: any LanguageModel
     private var rows: [BatchRow] = []
     private var layers: [KVCache] = []
     private var pending: MLXArray?
     private var steps = 0
 
-    init(model: any LanguageModel) {
+    init(model: any LanguageModel, slots: Int) {
         self.model = model
+        decoder = BatchedDecoder(slots: slots)
+        evaluation = ModelEvaluationLock.lock(for: model)
     }
 
-    var ids: [Int] { rows.map(\.id) }
+    fileprivate var ids: [Int] { rows.map(\.id) }
 
-    func reset() {
+    fileprivate func reset() {
         rows = []
         layers = []
         pending = nil
     }
 
-    func step(keeping seated: [Bool], admitting arrivals: [BatchRow]) -> [BatchDelivery] {
+    fileprivate func step(keeping seated: [Bool], admitting arrivals: [BatchRow]) -> [BatchDelivery] {
         let kept = rows.indices.filter { seated[$0] && !rows[$0].finished }
         if kept.count < rows.count { retain(kept) }
         if !arrivals.isEmpty { admit(arrivals) }
@@ -165,16 +166,16 @@ private final class BatchCore: @unchecked Sendable {
     }
 }
 
-final class BatchSeat: Sendable {
-    let decoder: BatchedDecoder
+final class BatchSeat {
+    fileprivate let core: BatchCore
     fileprivate let id: Int
 
-    fileprivate init(decoder: BatchedDecoder, id: Int) {
-        self.decoder = decoder
+    fileprivate init(core: BatchCore, id: Int) {
+        self.core = core
         self.id = id
     }
 
-    deinit { decoder.leave(id) }
+    deinit { core.decoder.leave(id, from: core) }
 }
 
 private final class BatchRow {
@@ -246,7 +247,7 @@ struct BatchedTokenIterator: SelfSerializingTokenIterator {
         let started = ContinuousClock.now
         var decoding = decoding
         decoding.processor?.prompt(input.text.tokens)
-        let first = try seat.decoder.exclusively {
+        let first = try seat.core.evaluation.withLock {
             let logits = switch try model.prepare(input, cache: layers, state: nil, prefill: decoding.prefill) {
             case .tokens(let rest): model(rest[text: .newAxis], cache: layers, state: nil).logits
             case .logits(let output): output.logits
@@ -265,7 +266,7 @@ struct BatchedTokenIterator: SelfSerializingTokenIterator {
 
     mutating func next() -> Int? {
         if let maxTokens, tokenCount >= maxTokens { return nil }
-        guard let token = seat.decoder.take(seat.id, joining: arrival.take()) else { return nil }
+        guard let token = seat.core.decoder.take(seat.id, from: seat.core, joining: arrival.take()) else { return nil }
         tokenCount += 1
         return token
     }
