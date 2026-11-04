@@ -125,10 +125,10 @@ public struct HarnessExperienceLibrary: Sendable {
         } }
     }
 
-    public func query(_ text: String? = nil, domain: String? = nil) async throws -> [HarnessKnowledgeEntry] {
+    @concurrent public func query(_ text: String? = nil, domain: String? = nil) async throws -> [HarnessKnowledgeEntry] {
         let needle = text?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
         let domainSlug = domain.flatMap { $0.isEmpty ? nil : Self.slugify($0) }
-        return try await Task.detached { try loadEntries(quarantineCorrupt: false) }.value.filter { entry in
+        return try loadEntries(quarantineCorrupt: false).filter { entry in
             if let domainSlug, entry.domain != domainSlug { return false }
             return needle.isEmpty || [entry.topic, entry.cue, entry.content].contains { $0.lowercased().contains(needle) }
         }
