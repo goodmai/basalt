@@ -256,10 +256,9 @@ struct PromptCacheReuseTests {
         #expect(bob.cachedPromptTokens == 0)
         let anonymous = try await engine.generate(request: greedy(Conversation.firstTurn, key: nil))
         #expect(anonymous.cachedPromptTokens == 0)
-        await engine.readPromptCaches { tree in
-            #expect(Set(tree.roots.keys) == ["alice", "bob"])
-            #expect(tree.byteCount == 2 * TinyModel.tokens(Conversation.firstTurn).count * TinyModel.cacheBytesPerToken)
-        }
+        let (keys, bytes) = await engine.readPromptCaches { (Set($0.roots.keys), $0.byteCount) }
+        #expect(keys == ["alice", "bob"])
+        #expect(bytes == 2 * TinyModel.tokens(Conversation.firstTurn).count * TinyModel.cacheBytesPerToken)
     }
 
     @Test("A zero budget or a quantized KV cache disables reuse")
@@ -309,11 +308,10 @@ struct PromptCacheReuseTests {
         while await engine.readPromptCaches({ $0.storedPrefix(of: prompt, in: "ns") }) < prompt.count, ContinuousClock.now < deadline {
             try await Task.sleep(for: .milliseconds(5))
         }
-        await engine.readPromptCaches { tree in
-            #expect(tree.storedPrefix(of: prompt, in: "ns") == prompt.count)
-            #expect(pinCount(tree) == 0)
-            #expect(tree.byteCount == (prompt.count + other.count - commonPrefix(prompt, other)) * TinyModel.cacheBytesPerToken)
-        }
+        let (prefix, pins, bytes) = await engine.readPromptCaches { ($0.storedPrefix(of: prompt, in: "ns"), pinCount($0), $0.byteCount) }
+        #expect(prefix == prompt.count)
+        #expect(pins == 0)
+        #expect(bytes == (prompt.count + other.count - commonPrefix(prompt, other)) * TinyModel.cacheBytesPerToken)
 
         let reused = try await engine.generate(request: greedy(Conversation.afterToolCall, key: "ns"))
         let full = try await engine.generate(request: greedy(Conversation.afterToolCall, key: nil))
@@ -365,10 +363,10 @@ struct PromptCacheReuseTests {
         let engine = try await TinyModel.engine(promptCacheBytes: budget)
         _ = try await engine.generate(request: greedy(Conversation.firstTurn, key: "ns"))
         _ = try await engine.generate(request: greedy(Conversation.otherBranch, key: "ns"))
-        let kept = await engine.readPromptCaches { tree in
-            #expect(tree.byteCount <= budget)
-            return tree.storedPrefix(of: TinyModel.tokens(Conversation.afterToolCall), in: "ns")
+        let (bytes, kept) = await engine.readPromptCaches {
+            ($0.byteCount, $0.storedPrefix(of: TinyModel.tokens(Conversation.afterToolCall), in: "ns"))
         }
+        #expect(bytes <= budget)
         #expect(kept > 40)
         #expect(kept < firstCount - 1)
 
@@ -382,10 +380,9 @@ struct PromptCacheReuseTests {
     func storedBranchIsCompact() async throws {
         let engine = try await TinyModel.engine()
         _ = try await engine.generate(request: greedy(Conversation.firstTurn, key: "ns", maxTokens: 40))
-        await engine.readPromptCaches { tree in
-            #expect(tree.byteCount == TinyModel.tokens(Conversation.firstTurn).count * TinyModel.cacheBytesPerToken)
-            #expect(tree.byteCount == tree.leaves().reduce(0) { $0 + $1.bytes })
-        }
+        let (bytes, leafBytes) = await engine.readPromptCaches { ($0.byteCount, $0.leaves().reduce(0) { $0 + $1.bytes }) }
+        #expect(bytes == TinyModel.tokens(Conversation.firstTurn).count * TinyModel.cacheBytesPerToken)
+        #expect(bytes == leafBytes)
     }
 
     @Test("The automatic budget is half of what the GPU's recommended working set leaves after the weights")

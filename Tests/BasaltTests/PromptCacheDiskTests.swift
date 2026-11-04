@@ -581,20 +581,19 @@ struct PromptCacheDiskTests {
         _ = try await engine.generate(request: GenerationRequest(
             prompt: String(String.UnicodeScalarView(stored.prefix(usable).compactMap { UnicodeScalar($0) })) + "zz",
             maxTokens: 1, temperature: 0, cacheKey: "shared"))
-        try await engine.readPromptCaches { tree in
-            let path = try #require(tree.storedPathsByRecency().first)
-            #expect(path.tokens.prefix(usable).elementsEqual(stored.prefix(usable)))
-            var nodes = Array(tree.roots.values)
-            var storedTokens = 0
-            var storedBytes = 0
+        let (newest, total, storedTokens, storedBytes) = await engine.readPromptCaches { tree in
+            var (nodes, tokens, bytes) = (Array(tree.roots.values), 0, 0)
             while let node = nodes.popLast() {
-                storedTokens += node.tokens.count
-                storedBytes += node.bytes
+                tokens += node.tokens.count
+                bytes += node.bytes
                 nodes.append(contentsOf: node.children.values)
             }
-            #expect(tree.byteCount == storedBytes)
-            #expect(storedBytes == storedTokens * TinyModel.cacheBytesPerToken)
+            return (tree.storedPathsByRecency().first, tree.byteCount, tokens, bytes)
         }
+        let path = try #require(newest)
+        #expect(path.tokens.prefix(usable).elementsEqual(stored.prefix(usable)))
+        #expect(total == storedBytes)
+        #expect(storedBytes == storedTokens * TinyModel.cacheBytesPerToken)
     }
 
     @Test("prune drops files past their retention, then the least recently used beyond the cap")
