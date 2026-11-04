@@ -1,7 +1,5 @@
 import Foundation
 
-// MARK: — Telemetry & Observability (Epic 16 / Issue #30)
-
 public struct ServerTelemetrySnapshot: Codable, Sendable, Equatable {
     public let timestamp: Date
     public let tokensPerSecond: Double
@@ -9,7 +7,6 @@ public struct ServerTelemetrySnapshot: Codable, Sendable, Equatable {
     public let totalRequests: Int
     public let totalTokensGenerated: Int
     public let activeRequests: Int
-    /// MLX GPU memory after the last generation (weights + KV cache + activations).
     public let gpuActiveBytes: Int64
     public let gpuPeakBytes: Int64
     public let totalRAMGB: Int
@@ -23,6 +20,7 @@ public struct ServerTelemetrySnapshot: Codable, Sendable, Equatable {
     public var routingBias: [String: [String: Double]]?
     public var draftTokens: Int?
     public var acceptedDraftTokens: Int?
+    public var health: HealthTelemetry?
 
     public init(
         timestamp: Date = Date(),
@@ -87,7 +85,6 @@ public struct MemoryTelemetry: Codable, Sendable, Equatable {
     }
 }
 
-/// Actor holding the serving process's telemetry counters.
 public actor TelemetryTracker {
     public static let shared = TelemetryTracker()
 
@@ -101,8 +98,10 @@ public actor TelemetryTracker {
     private var modelRAMMB: Int = 0
     private var draftTokens = 0
     private var acceptedDraftTokens = 0
-    /// Chip, GPU and total RAM never change for the process: probed once, not on every tick.
     private var hardware: SystemProfiler.SystemResources?
+    private var model = ""
+    private var health = HealthTelemetry()
+    private let logger = BasaltLogger(module: "Telemetry")
 
     public init() {}
 
@@ -115,16 +114,25 @@ public actor TelemetryTracker {
         gpuPeakBytes = Int64(response.memory.peakBytes)
         draftTokens += response.draftTokens ?? 0
         acceptedDraftTokens += response.acceptedDraftTokens ?? 0
+        for warning in health.record(response, model: model) { logger.warn(warning) }
     }
 
     public func setModelMemory(mb: Int) {
         modelRAMMB = mb
     }
 
+    public func setModel(_ name: String) {
+        model = name
+    }
+
+    public func recordCanary(passed: Bool, at date: Date = Date()) {
+        var canary = health.canary ?? CanaryTelemetry()
+        canary.record(passed: passed, at: date)
+        health.canary = canary
+    }
+
     public func requestStarted() { activeRequests += 1 }
 
-    /// Ends a request in one actor step: releases the active slot and, when the request
-    /// produced a result, records it — so no snapshot sees one change without the other.
     public func requestFinished(with response: GenerationResponse? = nil) {
         activeRequests = max(0, activeRequests - 1)
         if let response { recordGeneration(response) }
@@ -159,6 +167,7 @@ public actor TelemetryTracker {
             snapshot.draftTokens = draftTokens
             snapshot.acceptedDraftTokens = acceptedDraftTokens
         }
+        snapshot.health = health
         return snapshot
     }
 }

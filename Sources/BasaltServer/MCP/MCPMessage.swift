@@ -64,7 +64,7 @@ struct MCPFailure: Error, Sendable, Equatable {
         case .weightsCorrupted:         -32005
         case .rateLimitExceeded:        -32006
         case .authenticationFailed:     -32007
-        case .modelInferenceError:      -32008
+        case .modelInferenceError, .nonFiniteLogits: -32008
         case .inferenceError:           -32009
         case .modelNotCached:           -32010
         case .modelSwitching:           -32011

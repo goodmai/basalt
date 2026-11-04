@@ -165,6 +165,7 @@ chmod +x ./basalt-claude
 | `basalt serve --model <id> --rest` | REST server on :8080 (OpenAI + Anthropic compatible) |
 | `basalt serve --model <id> --mcp` | MCP stdio server for Claude Desktop / Cursor |
 | `basalt serve --model <id> --stats` | print telemetry to stderr every 5 s (`--stats-interval`); the same numbers at `GET /api/v1/stats` and in MCP `status` |
+| `basalt serve --model <id> --canary-minutes 30` | every 30 min, when idle, send one known-answer request at background priority; pass/fail, degenerate-output counts and per-model drift of tok/s and draft acceptance are under `health` in `GET /api/v1/stats` (#325) |
 | `basalt models list --author <org>` | browse a HuggingFace author's models |
 | `basalt models download <repo-id>` | download into the shared HF cache |
 | `basalt models info <repo-id>` | size, quantization, context window |
