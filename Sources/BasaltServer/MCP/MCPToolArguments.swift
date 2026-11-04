@@ -2,9 +2,10 @@ import Foundation
 import BasaltCore
 import BasaltHarness
 
-enum MCPTool: Sendable {
+enum MCPTool: Sendable, Equatable {
     case status, checkHardware, inspectModel, switchModel, generate, health, addKnowledge
     case harnessValidate, harnessLibraryQuery, harnessOptimize
+    case research(ResearchTool)
 
     init?(name: String) {
         switch name {
@@ -18,7 +19,9 @@ enum MCPTool: Sendable {
         case "harness_validate": self = .harnessValidate
         case "harness_library_query": self = .harnessLibraryQuery
         case "harness_optimize": self = .harnessOptimize
-        default: return nil
+        default:
+            guard let tool = ResearchTool(rawValue: name) else { return nil }
+            self = .research(tool)
         }
     }
 }
@@ -241,5 +244,181 @@ struct StatusOutput: Encodable, Sendable {
         requestedModelLoaded = requested.map { $0 == loaded }
         diagnostics = Diagnostics(requestCount: telemetry.totalRequests, totalTokensGenerated: telemetry.totalTokensGenerated)
         self.telemetry = telemetry
+    }
+}
+
+enum ResearchTool: String, Sendable, CaseIterable {
+    case modelDescribe = "model_describe"
+    case modelTensors = "model_tensors"
+    case modelTensor = "model_tensor"
+    case kvInspect = "kv_inspect"
+    case traceRun = "trace_run"
+    case intervene
+    case weightsDelta = "weights_delta"
+    case overlaysList = "overlays_list"
+    case overlayUndo = "overlay_undo"
+    case experimentCompare = "experiment_compare"
+
+    var isExperiment: Bool {
+        switch self {
+        case .modelDescribe, .modelTensors, .modelTensor, .kvInspect, .traceRun: false
+        case .intervene, .weightsDelta, .overlaysList, .overlayUndo, .experimentCompare: true
+        }
+    }
+}
+
+enum ResearchCall: Sendable, Equatable {
+    case describe
+    case tensors(filter: String?)
+    case tensor(TensorRequest)
+    case promptCache(namespace: String?)
+    case trace(TraceRequest)
+    case intervene(Intervention)
+    case delta(WeightDelta)
+    case overlays
+    case undo(OverlayID)
+    case compare(CompareRequest)
+
+    static let maxValues = 0...4096
+    static let topK = 1...100
+    static let comparePrompts = 1...16
+    static let compareTokens = 1...512
+    static let nonNegative = 0...Int.max
+
+    init(_ tool: ResearchTool, _ args: [String: Any]?) throws(MCPFailure) {
+        switch tool {
+        case .modelDescribe: self = .describe
+        case .modelTensors: self = .tensors(filter: try MCPArguments.string("filter", in: args))
+        case .modelTensor: self = .tensor(try TensorRequest(mcp: args))
+        case .kvInspect: self = .promptCache(namespace: try MCPArguments.string("namespace", in: args))
+        case .traceRun: self = .trace(try TraceRequest(mcp: args))
+        case .intervene: self = .intervene(try Intervention(mcp: args))
+        case .weightsDelta: self = .delta(try WeightDelta(mcp: args))
+        case .overlaysList: self = .overlays
+        case .overlayUndo: self = .undo(OverlayID(try MCPArguments.required("id", MCPArguments.integer("id", in: args, Self.nonNegative))))
+        case .experimentCompare: self = .compare(try CompareRequest(mcp: args))
+        }
+    }
+}
+
+extension MCPArguments {
+    static func present(_ key: String, in args: [String: Any]?) -> Any? {
+        args?[key].flatMap { $0 is NSNull ? nil : $0 }
+    }
+
+    static func required<T>(_ key: String, _ value: T?) throws(MCPFailure) -> T {
+        guard let value else { throw .invalidParams("Missing required argument: \(key)") }
+        return value
+    }
+
+    static func string(_ key: String, in args: [String: Any]?) throws(MCPFailure) -> String? {
+        guard let value = present(key, in: args) else { return nil }
+        guard let text = value as? String else { throw .invalidParams("\(key) must be a string") }
+        return text
+    }
+
+    static func integer(_ key: String, in args: [String: Any]?, _ range: ClosedRange<Int>) throws(MCPFailure) -> Int? {
+        guard let value = present(key, in: args) else { return nil }
+        guard !isJSONBoolean(value), let number = value as? Int, range.contains(number) else {
+            throw .invalidParams("\(key) must be an integer in \(range.upperBound == .max ? "\(range.lowerBound)..." : "\(range)")")
+        }
+        return number
+    }
+
+    static func number(_ key: String, in args: [String: Any]?) throws(MCPFailure) -> Float? {
+        guard let value = present(key, in: args) else { return nil }
+        guard !isJSONBoolean(value), let number = value as? Double, number.isFinite else {
+            throw .invalidParams("\(key) must be a number")
+        }
+        return Float(number)
+    }
+
+    static func numbers(_ key: String, in args: [String: Any]?) throws(MCPFailure) -> [Float]? {
+        guard let value = present(key, in: args) else { return nil }
+        guard let numbers = value as? [Double], !numbers.isEmpty, numbers.allSatisfy(\.isFinite) else {
+            throw .invalidParams("\(key) must be a non-empty array of numbers")
+        }
+        return numbers.map { Float($0) }
+    }
+
+    static func integers(_ key: String, in args: [String: Any]?) throws(MCPFailure) -> [Int]? {
+        guard let value = present(key, in: args) else { return nil }
+        guard let numbers = value as? [Int], numbers.allSatisfy({ $0 >= 0 }) else {
+            throw .invalidParams("\(key) must be an array of non-negative integers")
+        }
+        return numbers
+    }
+
+    static func slice(_ args: [String: Any]?) throws(MCPFailure) -> [Range<Int>]? {
+        guard let value = present("slice", in: args) else { return nil }
+        guard let pairs = value as? [[Int]], pairs.allSatisfy({ $0.count == 2 && 0 <= $0[0] && $0[0] < $0[1] }) else {
+            throw .invalidParams("slice must be an array of [start, end] integer pairs with 0 <= start < end")
+        }
+        return pairs.map { $0[0] ..< $0[1] }
+    }
+}
+
+extension TensorRequest {
+    init(mcp args: [String: Any]?) throws(MCPFailure) {
+        self.init(
+            name: try MCPArguments.required("name", MCPArguments.string("name", in: args)),
+            slice: try MCPArguments.slice(args),
+            maxValues: try MCPArguments.integer("maxValues", in: args, ResearchCall.maxValues) ?? 256)
+    }
+}
+
+extension TraceRequest {
+    init(mcp args: [String: Any]?) throws(MCPFailure) {
+        var request = TraceRequest(
+            prompt: try MCPArguments.required("prompt", MCPArguments.string("prompt", in: args)),
+            position: try MCPArguments.integer("position", in: args, ResearchCall.nonNegative),
+            layers: try MCPArguments.integers("layers", in: args),
+            topK: try MCPArguments.integer("topK", in: args, ResearchCall.topK) ?? 10)
+        request.attention = try MCPArguments.optionalBoolean("attention", in: args) ?? true
+        request.router = try MCPArguments.optionalBoolean("router", in: args) ?? true
+        request.logitLens = try MCPArguments.optionalBoolean("logitLens", in: args) ?? true
+        self = request
+    }
+}
+
+extension Intervention {
+    static let kinds = ["steer", "ablate_head", "ablate_expert"]
+
+    init(mcp args: [String: Any]?) throws(MCPFailure) {
+        let layer = try MCPArguments.required("layer", MCPArguments.integer("layer", in: args, ResearchCall.nonNegative))
+        switch try MCPArguments.string("kind", in: args) {
+        case "steer"?:
+            let vector = try MCPArguments.required("vector", MCPArguments.numbers("vector", in: args))
+            self = .steer(layer: layer, vector: vector, scale: try MCPArguments.number("scale", in: args) ?? 1)
+        case "ablate_head"?:
+            self = .ablateHead(layer: layer, head: try MCPArguments.required("head", MCPArguments.integer("head", in: args, ResearchCall.nonNegative)))
+        case "ablate_expert"?:
+            self = .ablateExpert(layer: layer, expert: try MCPArguments.required("expert", MCPArguments.integer("expert", in: args, ResearchCall.nonNegative)))
+        default:
+            throw .invalidParams("kind must be one of: \(Self.kinds.joined(separator: ", "))")
+        }
+    }
+}
+
+extension WeightDelta {
+    init(mcp args: [String: Any]?) throws(MCPFailure) {
+        self.init(
+            tensor: try MCPArguments.required("tensor", MCPArguments.string("tensor", in: args)),
+            slice: try MCPArguments.slice(args),
+            values: try MCPArguments.numbers("values", in: args),
+            scale: try MCPArguments.number("scale", in: args) ?? 1)
+    }
+}
+
+extension CompareRequest {
+    init(mcp args: [String: Any]?) throws(MCPFailure) {
+        let prompts = MCPArguments.present("prompts", in: args)
+        guard let prompts = prompts as? [String], ResearchCall.comparePrompts.contains(prompts.count) else {
+            throw .invalidParams("prompts must be an array of \(ResearchCall.comparePrompts) strings")
+        }
+        self.init(
+            prompts: prompts,
+            overlays: (try MCPArguments.integers("overlays", in: args) ?? []).map { OverlayID($0) },
+            maxTokens: try MCPArguments.integer("maxTokens", in: args, ResearchCall.compareTokens) ?? 32)
     }
 }
