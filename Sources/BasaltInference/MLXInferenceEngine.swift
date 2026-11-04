@@ -1213,6 +1213,10 @@ public actor MLXInferenceEngine: InferenceEngine {
 }
 
 extension MLXInferenceEngine {
+    func record(_ event: EngineEvent) {
+        state = .reduce(state, event)
+    }
+
     @discardableResult
     func useMTPDrafter(in container: ModelContainer, _ make: @Sendable (ModelContext) -> (any MTPDrafterModel)?) async -> Bool {
         let epoch = modelEpoch

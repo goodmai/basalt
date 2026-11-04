@@ -595,7 +595,7 @@ Available MCP tools:
 | `harness_optimize` | One Harness² propose–probe–compose pass on the loaded model (also `basalt harness optimize`) |
 | `harness_library_query` | Search the Experience Library |
 | `model_describe`, `model_tensors`, `model_tensor`, `kv_inspect`, `trace_run` | Model X-ray (read-only, background priority): layer anatomy, parameter list and bounded tensor statistics, the prompt-cache tree, one capture run of a prompt (#328) |
-| `intervene`, `weights_delta`, `overlays_list`, `overlay_undo`, `experiment_compare` | Sandboxed experiments, only with `serve --research-tools`: steering, head/expert ablation and weight deltas as undoable in-memory overlays for research calls only, compared before/after (#328) |
+| `intervene`, `weights_delta`, `overlays_list`, `overlay_undo`, `experiment_compare` | Sandboxed experiments, only with `serve --research-tools`: steering and head/expert ablation as undoable overlays applied to research calls only; weight deltas change the live model, so while one is active every response is marked as modified and prompt-cache reuse is off; see [docs/research-tools.md](docs/research-tools.md) (#328) |
 
 ---
 

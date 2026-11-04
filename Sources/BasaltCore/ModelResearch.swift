@@ -258,7 +258,7 @@ public struct WeightDelta: Sendable, Codable, Equatable {
     }
 }
 
-public struct OverlayInfo: Sendable, Codable {
+public struct OverlayInfo: Sendable, Codable, Equatable {
     public var id: OverlayID
     public var description: String
     public var createdAt: Date

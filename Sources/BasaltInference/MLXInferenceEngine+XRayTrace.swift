@@ -38,11 +38,9 @@ extension MLXInferenceEngine {
             throw BasaltError.invalidRequestStructure(details: "position \(position) is outside the prompt's \(ids.count) tokens")
         }
         let recorder = TraceRecorder(request, position: position, tokens: ids.count)
-        var context = context
-        context.probe = recorder
-        defer { context.probe = nil }
         let input = LMInput.Text(tokens: MLXArray(ids.map(Int32.init)).reshaped(1, -1))
-        let logits = context.model(input, cache: try context.model.newCache(parameters: nil), state: nil).logits
+        let cache = try context.model.newCache(parameters: nil)
+        let logits = withForwardProbe(recorder) { context.model(input, cache: cache, state: nil).logits }
         return try recorder.report(logits: logits, readout: readout(of: context.model), ids: ids, tokenizer: context.tokenizer)
     }
 

@@ -71,8 +71,9 @@ struct XRayTraceTests {
     @Test("Only the requested layers are traced, and a request without lens, attention or router leaves them out")
     func requestedLayers() async throws {
         let engine = try await TinyModel.engine(.lfm2Moe)
-        let report = try await engine.trace(TraceRequest(
-            prompt: Self.prompt, position: 2, layers: [3, 1, 3], topK: 3, attention: false, router: false, logitLens: false))
+        var request = TraceRequest(prompt: Self.prompt, position: 2, layers: [3, 1, 3], topK: 3)
+        (request.attention, request.router, request.logitLens) = (false, false, false)
+        let report = try await engine.trace(request)
         #expect(report.position == 2)
         #expect(report.layers.map(\.index) == [1, 3])
         #expect(report.final.count == 3)

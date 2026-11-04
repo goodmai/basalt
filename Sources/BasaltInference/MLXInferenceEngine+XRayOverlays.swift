@@ -20,7 +20,8 @@ extension MLXInferenceEngine {
     }
 
     public func undo(_ overlay: OverlayID) async throws(BasaltError) {
-        guard remove(overlay) != nil else {
+        let restored = try await undoDelta(overlay)
+        guard remove(overlay) != nil || restored else {
             throw .invalidRequestStructure(details: "no overlay \(overlay.rawValue): it expired, was undone or belonged to a previous model")
         }
     }
@@ -174,10 +175,7 @@ extension MLXInferenceEngine {
     }
 
     static func forward(_ context: ModelContext, probe: (any ForwardProbe)?, _ tokens: [Int], cache: [KVCache]) -> MLXArray {
-        var probed = context
-        probed.probe = probe
-        defer { probed.probe = nil }
-        return probed.model(MLXArray(tokens)[.newAxis], cache: cache)
+        withForwardProbe(probe) { context.model(MLXArray(tokens)[.newAxis], cache: cache) }
     }
 }
 

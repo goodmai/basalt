@@ -377,7 +377,7 @@ extension PromptCacheTree {
     }
 
     private static func namespaceReport(_ entry: (key: String, value: PromptCacheNode)) -> NamespaceReport {
-        var report = NamespaceReport(name: entry.key, nodes: 0, leaves: 0, tokens: 0, bytes: 0, snapshots: 0, pinned: 0, lastUse: 0)
+        var report = NamespaceReport(name: entry.key, nodes: 0, leaves: 0, tokens: 0, bytes: 0)
         var pending = Array(entry.value.children.values)
         while let node = pending.popLast() {
             report.nodes += 1

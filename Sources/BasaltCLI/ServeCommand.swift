@@ -162,7 +162,7 @@ struct ServeCommand: AsyncParsableCommand {
 
     @Flag(
         name: .customLong("research-tools"),
-        help: "With --mcp, also list and accept the experiment tools (intervene, weights_delta, overlays_list, overlay_undo, experiment_compare): temporary in-memory overlays with a TTL and undo that apply to research calls only, never to user requests or the weights on disk (default: off; the read-only X-ray tools are always on)"
+        help: "With --mcp, also list and accept the experiment tools (intervene, weights_delta, overlays_list, overlay_undo, experiment_compare): temporary in-memory overlays with a TTL and undo; steering and ablation apply to research calls only, while a weight delta changes the live model, marks every response as modified and turns off prompt-cache reuse until it is undone; the weights on disk are never written (default: off; the read-only X-ray tools are always on)"
     )
     var researchTools = false
 

@@ -28,13 +28,13 @@ extension MLXInferenceEngine {
         guard modelFacts.deltas[delta.tensor] == nil else {
             throw .invalidRequestStructure(details: "weights_delta: \(delta.tensor) already carries an active delta; undo it first")
         }
-        state = .reduce(state, .learned(modelEpoch) { $0.deltas[delta.tensor] = AppliedDelta() })
+        record(.learned(modelEpoch) { $0.deltas[delta.tensor] = AppliedDelta() })
         let written = await container.performEvaluating(nonSendable: delta) { context, delta in
             Result { () throws(BasaltError) in try Self.add(delta, to: context.model) }
         }
         var applied: AppliedDelta
         do { applied = try written.get() } catch {
-            state = .reduce(state, .learned(modelEpoch) { $0.deltas[delta.tensor] = nil })
+            record(.learned(modelEpoch) { $0.deltas[delta.tensor] = nil })
             throw error
         }
         guard self.container === container else {
@@ -60,7 +60,7 @@ extension MLXInferenceEngine {
 
     func weightsChanged(_ change: @escaping (inout ModelFacts) -> Void) {
         let fence = max(modelFacts.cacheFence, leases.keys.max() ?? 0)
-        state = .reduce(state, .learned(modelEpoch) {
+        record(.learned(modelEpoch) {
             change(&$0)
             $0.cacheFence = fence
         })
