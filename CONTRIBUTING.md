@@ -47,9 +47,12 @@ Measured with lizard, which reports per function the cyclomatic complexity (CCN)
 | Unit | Limit |
 |---|---|
 | Function | CCN ≤ 15 (aim for ≤ 10), ≤ 60 lines of code, ≤ 6 parameters |
+| Type body (`struct`, `enum`, `class`, `actor`, `protocol`) | ≤ 200 lines of code: a core type or a state type |
+| Extension body | ≤ 150 lines of code |
 | File | ≤ 600 lines (aim for ≤ 400) |
 
-- **CI enforces the ratchet**: `scripts/check_size_limits.py` runs lizard on the base and head versions of every changed Swift file (`.github/workflows/size-limits.yml`). Run it locally with `python3 scripts/check_size_limits.py origin/main`.
+- **CI enforces the ratchet**: `scripts/check_size_limits.swift` runs lizard on the base and head versions of every changed Swift file (`.github/workflows/size-limits.yml`). Run it locally with `swift scripts/check_size_limits.swift origin/main`; `--impact` adds the share of functions the change touched and the CCN sum and peak before and after, for the PR description.
+- **Type and extension bodies are counted** in lines of code (comments, strings and blank lines don't count) by the same script. On 2026-11-04, 21 types were over 200 lines and no extension was over 150 (`swift scripts/check_size_limits.swift --inventory` lists them). A type over the limit splits into a value core and an extension per concern, each extension within 150, not into a second type that shares the same state.
 - **New code stays within the limits.** Tests follow the function limits; a test file may be longer than 600 lines.
 - **Code already over a limit does not get worse.** On 2026-11-04 that was 6 files over 600 lines, 20 functions over CCN 15 and 20 over 60 lines (#284). A change that touches one of them must not make it longer or more complex. A change that adds a branch to one first splits it.
 - **Split along the seams the code already has.** A `switch` case or an engine mode becomes its own function or type, and a stage of a long function becomes a method named after what it does. Cutting a function into `part1`/`part2` to get under the number does not count.
@@ -61,6 +64,16 @@ Measured with lizard, which reports per function the cyclomatic complexity (CCN)
   - Byte parsing moves to `RawSpan`.
 
   The rules are in "Types first" and "Performance" above. Leave the code you touch closer to them.
+
+## Value core, actor shell
+
+Thread safety comes from where state lives, not from locks.
+
+- **Core: values and functions.** Decisions, parsing, scheduling policy, cache geometry, routing scores, request validation and sampling math are `struct`s and `enum`s with pure functions, or `mutating` methods on a value the caller owns. A core type is `Sendable` because its stored properties are values, so it needs no `@unchecked`, no lock and no actor. A test calls it directly with no engine, server or clock.
+- **Shell: actors and protocols.** Anything with identity or effects is an `actor`, or a type that one actor owns: a loaded model, a prompt cache, a session log, a socket, a file, the GPU lock, a cloud client. The shell takes a request, asks the core what to do, does it, and stores the new value. Dependencies cross the boundary as protocols with one narrow job (`InferenceEngine`, a clock, a store), so tests swap the effect, not the logic.
+- **One owner per mutable state.** A piece of mutable state belongs to exactly one actor or one value. Everyone else gets a copy, a `sending` transfer or a message. A `final class` with mutable fields is acceptable only inside one actor's isolation, as with MLX caches and model weights, and never escapes it.
+- **The shell stays thin.** An actor method reads its state, calls the core and writes the result. It does not hold logic of its own. Logic that grows inside an actor moves into the core value, and that is also how a type over 200 lines splits.
+- **MLX objects are shell state.** `MLXArray`, `KVCache` and `LanguageModel` are not `Sendable`. They stay inside the actor or the `ModelContainer.perform` that owns them, and cross a thread only through a hand-off that `swift-race-review` documents.
 
 ## No comments in code
 

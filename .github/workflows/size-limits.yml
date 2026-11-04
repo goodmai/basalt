@@ -18,8 +18,8 @@ jobs:
         with:
           fetch-depth: 0
       - name: Checker self-test
-        run: python3 scripts/check_size_limits_test.py
+        run: swift scripts/check_size_limits_test.swift
       - name: No limit exceeded or grown
         env:
           BASE_REF: ${{ github.base_ref }}
-        run: python3 scripts/check_size_limits.py "origin/$BASE_REF"
+        run: swift scripts/check_size_limits.swift "origin/$BASE_REF" --impact

@@ -31,7 +31,9 @@ You are a Staff Swift Security & Quality Auditor executing a strict, zero-trust 
 
 ### Gate 3: Algorithmic Complexity & Error Contracts
 - Compute explicit time and space complexity $O(T)$ and $O(S)$ for modified functions.
-- **Size and complexity limits (CONTRIBUTING "Size and complexity")**: run `uvx lizard==1.24.0 -l swift -C 15 -L 60 -a 6 <changed files>`.
+- **Size and complexity limits (CONTRIBUTING "Size and complexity")**: run `swift scripts/check_size_limits.swift origin/main --impact`, which wraps lizard and adds type and extension bodies.
+  - **Types**: a type body over 200 lines of code, or an extension over 150, that is new or grows is `MEDIUM`.
+  - **Core and shell**: logic added inside an actor or a stateful class that belongs in the value core is `MEDIUM`. So is a second owner of the same mutable state, or a lock where an owning actor fits.
   - A new function over CCN 15, 60 lines of code or 6 parameters is `MEDIUM`.
   - An existing function or file over a limit that the diff makes longer or more complex is `MEDIUM`.
   - A Swift file over 600 lines that grows is `MEDIUM`.
