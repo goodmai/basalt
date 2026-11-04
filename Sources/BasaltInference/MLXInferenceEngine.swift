@@ -105,6 +105,7 @@ public actor MLXInferenceEngine: InferenceEngine {
     private(set) var leases: [Int: PromptCacheLeaseSlot] = [:]
     private(set) var launches: [Int: GenerationLaunch] = [:]
     var faults = FaultPlan()
+    var experiments = (epoch: ModelEpoch(0), registry: OverlayRegistry())
     private var leaseCount = 0
     private(set) var mtpPrefixes: [(namespace: String, tokens: [Int], prefix: MTPPrefix)] = []
     private var promptCacheFullBudget: ByteCount
@@ -118,7 +119,6 @@ public actor MLXInferenceEngine: InferenceEngine {
         return (usage.count, usage.bytes.rawValue)
     }
     public var supportsKVZones: Bool { modelAttendsThroughZones }
-    public var supportsKVEviction: Bool { modelPrefillsInChunks }
 
     public func promptTokenCount(for request: GenerationRequest) async -> Int? {
         guard let container else { return nil }
