@@ -242,6 +242,7 @@ for path in paths {
     let (before, after) = (try functions(in: base), try functions(in: head))
     hits += violations(path: path, before: before, after: after, base: base, head: head)
     hits += typeViolations(path: path, before: typeBodies(in: base), after: typeBodies(in: head))
+    guard path.hasPrefix("Sources/") else { continue }
     touched += Set(before.keys).union(after.keys).filter { name in
         before[name].map { [$0.ccn, $0.nloc, $0.params] } != after[name].map { [$0.ccn, $0.nloc, $0.params] }
     }.count
@@ -252,7 +253,7 @@ for path in paths {
 if arguments.contains("--impact") {
     let total = try run(lizard + ["-l", "swift", "--csv", "Sources"]).split(separator: "\n").count
     let share = total == 0 ? 0 : Double(touched) / Double(total) * 100
-    print("Impact: \(paths.count) Swift file(s), \(touched) of \(total) functions in Sources touched (\(String(format: "%.1f", share))%), "
+    print("Impact: \(paths.filter { $0.hasPrefix("Sources/") }.count) Swift file(s) in Sources, \(touched) of \(total) functions in Sources touched (\(String(format: "%.1f", share))%), "
         + "CCN sum \(sums.before) → \(sums.after), largest CCN \(peaks.before) → \(peaks.after)")
 }
 for hit in hits { print(hit) }
