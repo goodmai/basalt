@@ -170,8 +170,8 @@ struct MTPSidecarTests {
         try save(arrays: Dictionary(uniqueKeysWithValues: head.parameters().flattened()), url: directory.appending(path: "mtp.safetensors"))
         let target: any LanguageModel = textOnly ? try TinyModel.make(.qwen35) : try TinyModel.make(.prism)
         let drafter = try #require(try MTPSidecar.load(directory: directory, target: target))
-        #expect(drafter.model is GreedyDraftingMTPDrafter)
-        #expect(!drafter.model.requiresGreedySampling)
+        #expect(drafter is GreedyDraftingMTPDrafter)
+        #expect(!drafter.requiresGreedySampling)
     }
 
     @Test("At T > 0 the MTP iterator keeps speculating and samples the same distribution as plain decoding")
