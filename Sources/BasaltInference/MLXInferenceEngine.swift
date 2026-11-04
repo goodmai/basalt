@@ -109,6 +109,7 @@ public actor MLXInferenceEngine: InferenceEngine {
 
     private var promptCaches: PromptCacheTree
     private var leases: [Int: PromptCacheLeaseSlot] = [:]
+    private var launches: [Int: GenerationLaunch] = [:]
     private var leaseCount = 0
     private(set) var mtpPrefixes: [(namespace: String, tokens: [Int], prefix: MTPPrefix)] = []
     private var promptCacheFullBudget: Int
@@ -854,8 +855,9 @@ public actor MLXInferenceEngine: InferenceEngine {
             let batch = batchable ? await batchedDecoder(container, epoch: epoch) : nil
             let launch: GenerationLaunch
             do {
-                launch = try await container.perform(nonSendable: lmInput) { context, input in
-                    try ModelEvaluationLock.lock(for: context.model).withLock { try Self.launch(
+                launch = try await container.performSending(nonSendable: (lmInput, reuse)) { context, values in
+                    let (input, reuse) = values
+                    return try ModelEvaluationLock.lock(for: context.model).withLock { try Self.launch(
                         input: input, reuse: reuse, cuts: (fork.map { [$0] } ?? []) + anchors, keepsCache: namespace != nil, boundary: boundary,
                         blend: blending, batch: batch,
                         params: params, components: constrained, tools: forcedTool == nil ? toolSpecs : nil,
@@ -866,10 +868,11 @@ public actor MLXInferenceEngine: InferenceEngine {
                         mtpPrefix: mtpPrefix) }
                 }
             } catch {
-                keep(nil, tokens: promptTokens, namespace: namespace, releasing: leaseID, epoch: epoch)
+                keep(tokens: promptTokens, namespace: namespace, releasing: leaseID, epoch: epoch)
                 throw error
             }
-            let mlxStream = launch.stream
+            let (mlxStream, mlxTask, reusedTokens, prefillSeconds) = (launch.stream, launch.task, launch.reusedTokens, launch.prefillSeconds)
+            launches[leaseID] = launch
 
             return AsyncStream<StreamChunk> { continuation in
                 let task = Task.detached {
@@ -915,7 +918,7 @@ public actor MLXInferenceEngine: InferenceEngine {
                     var toolCallRejections = 0
                     var generations = mlxStream.makeAsyncIterator()
                     func stopAfterCall() async {
-                        if let task = launch.task {
+                        if let task = mlxTask {
                             task.cancel()
                             lastInfo = await Self.drainCompletionInfo(&generations) ?? lastInfo
                         } else {
@@ -976,12 +979,12 @@ public actor MLXInferenceEngine: InferenceEngine {
                         if !continued.isEmpty { continuation.yield(.text(continued)) }
                     }
                     let completed = !(Task.isCancelled || stoppedAfterCall)
-                    await Self.settle(launch, cancelled: !completed)
+                    await Self.settle(mlxTask, cancelled: !completed)
                     if completed, let session = constraint?.session { await self.recycle(session, epoch: epoch) }
-                    await self.keep(launch, tokens: promptTokens, namespace: namespace, releasing: leaseID, epoch: epoch)
+                    await self.keep(tokens: promptTokens, namespace: namespace, releasing: leaseID, epoch: epoch)
                     if !Task.isCancelled {
-                        let generationTime = (clock.now - startTime).inSeconds + launch.prefillSeconds
-                        let timeToFirstToken = (firstTokenAt.map { ($0 - startTime).inSeconds } ?? 0) + launch.prefillSeconds
+                        let generationTime = (clock.now - startTime).inSeconds + prefillSeconds
+                        let timeToFirstToken = (firstTokenAt.map { ($0 - startTime).inSeconds } ?? 0) + prefillSeconds
                         let mem = Memory.snapshot()
                         let reasoning = reasoningText
                         let reasoningTokens = reasoning.isEmpty ? nil : await container.perform {
@@ -991,8 +994,8 @@ public actor MLXInferenceEngine: InferenceEngine {
                         let metadata = GenerationResponse(
                             generatedText: "", 
                             reasoningText: nil,
-                            promptTokens: lastInfo.map { launch.reusedTokens + $0.promptTokenCount } ?? promptTokens.count,
-                            cachedPromptTokens: launch.reusedTokens,
+                            promptTokens: lastInfo.map { reusedTokens + $0.promptTokenCount } ?? promptTokens.count,
+                            cachedPromptTokens: reusedTokens,
                             completionTokens: lastInfo?.generationTokenCount ?? tokenCount,
                             tokensPerSecond: lastInfo?.tokensPerSecond ?? 0,
                             generationTime: generationTime,
@@ -1051,7 +1054,7 @@ public actor MLXInferenceEngine: InferenceEngine {
         return LMInput(tokens: concatenated([tokens, extra], axis: -1))
     }
 
-    struct GenerationLaunch: Sendable {
+    struct GenerationLaunch {
         let stream: AsyncStream<Generation>
         let task: Task<Void, Never>?
         let cache: PromptCache?
@@ -1085,9 +1088,9 @@ public actor MLXInferenceEngine: InferenceEngine {
         return info
     }
 
-    static func settle(_ launch: GenerationLaunch, cancelled: Bool) async {
-        if cancelled { launch.task?.cancel() }
-        await launch.task?.value
+    static func settle(_ task: Task<Void, Never>?, cancelled: Bool) async {
+        if cancelled { task?.cancel() }
+        await task?.value
     }
 
     private func batchedDecoder(_ container: ModelContainer, epoch: Int) async -> BatchedDecoder? {
@@ -1242,8 +1245,9 @@ public actor MLXInferenceEngine: InferenceEngine {
             + (skipped > 0 ? "; \(skipped) paths skipped that could not be written within the \(deadline) deadline" : ""))
     }
 
-    private func keep(_ launch: GenerationLaunch?, tokens prompt: [Int], namespace: String?, releasing lease: Int, epoch: Int) {
+    private func keep(tokens prompt: [Int], namespace: String?, releasing lease: Int, epoch: Int) {
         leases[lease] = nil
+        let launch = launches.removeValue(forKey: lease)
         guard epoch == modelEpoch, let namespace, let launch else { return }
         let (tokens, anchors) = (Array(prompt.prefix(launch.exactTokens)), launch.anchors)
         for anchor in anchors {

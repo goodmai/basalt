@@ -2,7 +2,7 @@ import Foundation
 import MLX
 import MLXLMCommon
 
-final class PromptCache: @unchecked Sendable {
+final class PromptCache {
     let layers: [KVCache]
     var state: LMOutput.State?
 

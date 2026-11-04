@@ -350,7 +350,7 @@ struct ZonedKVCacheEngineTests {
         quantized.kvBits = 4
         quantized.quantizedKVStart = 0
         let params = quantized
-        let launches = try await container.perform { (context: ModelContext) -> [MLXInferenceEngine.GenerationLaunch] in
+        let streams = try await container.perform { (context: ModelContext) -> [AsyncStream<Generation>] in
             let input = LMInput(tokens: MLXArray(Self.prompt.map(Int32.init)))
             var exact = params
             exact.kvBits = nil
@@ -362,11 +362,11 @@ struct ZonedKVCacheEngineTests {
                 try MLXInferenceEngine.launch(
                     input: input, reuse: nil, keepsCache: false, boundary: Self.prompt.count - 1, params: params,
                     components: GenerationComponents(), tools: nil, context: context, kvZones: zones,
-                    kvPrecision: zones == nil ? nil : .q4)
-            } + [MLXInferenceEngine.GenerationLaunch(stream: reference, task: nil, cache: nil, reusedTokens: 0)]
+                    kvPrecision: zones == nil ? nil : .q4).stream
+            } + [reference]
         }
         var texts = [String]()
-        for launch in launches { texts.append(await Self.text(launch.stream)) }
+        for stream in streams { texts.append(await Self.text(stream)) }
         let (zoned, uniform, reference) = (texts[0], texts[1], texts[2])
         #expect(!zoned.isEmpty)
         #expect(zoned == reference)

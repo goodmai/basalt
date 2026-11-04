@@ -323,7 +323,7 @@ struct PromptCacheReuseTests {
     func settlingACancelledLaunchStopsGeneration() async throws {
         let longRun = 3000
         let container = try TinyModel.container()
-        let launch = try await container.perform { context in
+        let launch = try await container.performSending(nonSendable: ()) { context, _ in
             let input = LMInput(tokens: MLXArray(TinyModel.tokens(Conversation.firstTurn).map(Int32.init)))
             return try MLXInferenceEngine.launch(
                 input: input, reuse: nil, keepsCache: true, boundary: input.text.tokens.size - 1,
@@ -333,7 +333,7 @@ struct PromptCacheReuseTests {
         var iterator = launch.stream.makeAsyncIterator()
         _ = await iterator.next()
 
-        await MLXInferenceEngine.settle(launch, cancelled: true)
+        await MLXInferenceEngine.settle(launch.task, cancelled: true)
 
         let cache = try #require(launch.cache)
         let promptCount = TinyModel.tokens(Conversation.firstTurn).count

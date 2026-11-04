@@ -19,7 +19,7 @@ struct GenerationHandOffTests {
             params: GenerateParameters(maxTokens: 100_000, temperature: 0), components: .init(), tools: nil, context: try Self.context())
         let task = try #require(launch.task)
         #expect(launch.prefillSeconds >= 0)
-        await MLXInferenceEngine.settle(launch, cancelled: true)
+        await MLXInferenceEngine.settle(launch.task, cancelled: true)
         #expect(task.isCancelled)
     }
 
@@ -30,7 +30,7 @@ struct GenerationHandOffTests {
             keepsCache: true, boundary: 190, params: GenerateParameters(maxTokens: 4, temperature: 0), components: .init(), tools: nil,
             context: try Self.context())
         #expect(launch.prefillSeconds > 0)
-        await MLXInferenceEngine.settle(launch, cancelled: false)
+        await MLXInferenceEngine.settle(launch.task, cancelled: false)
     }
 
     @Test("A launch reports as prefill the whole time it took, including the prompt the iterator prefills when it is built (#277)",
@@ -44,6 +44,6 @@ struct GenerationHandOffTests {
             tools: nil, context: context)
         let wall = (ContinuousClock.now - started) / .seconds(1)
         #expect(launch.prefillSeconds >= wall * 0.9)
-        await MLXInferenceEngine.settle(launch, cancelled: false)
+        await MLXInferenceEngine.settle(launch.task, cancelled: false)
     }
 }
