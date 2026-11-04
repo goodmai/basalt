@@ -10,7 +10,8 @@
   - `DispatchQueue`, `DispatchSemaphore`;
   - `Task.detached`.
 
-  Prefer a value type, an actor, `sending`, `Mutex` or an atomic. Today's sites are listed in #300, and the list only shrinks: an existing hatch is removed when the code around it changes. A hatch that must stay (for example a stream task that has to outlive its caller and must not inherit actor isolation or priority) carries its reason in the PR, and in the allowlist once the #300 checker lands.
+  Prefer a value type, an actor, `sending`, `Mutex` or an atomic. `Sources/` has no `@unchecked Sendable` and no `nonisolated(unsafe)`. The remaining sites (two `Task.detached` stream tasks that must outlive their caller without inheriting actor isolation or priority, and two raw `Thread`s around blocking reads and writes) are listed in `scripts/concurrency-hatches.allow`, one line per site: `path:symbol: why it is needed and what serializes it`.
+- **The allowlist only shrinks.** `scripts/check_concurrency_hatches.swift` (`swift scripts/check_concurrency_hatches.swift`, CI: `.github/workflows/concurrency-hatches.yml`) lexes every file in `Sources/` like the comment checker, so comments and strings don't count, and fails on a hatch without an allowlist line (raw `Thread` included) and on an allowlist line that no longer matches. Removing a hatch removes its line in the same PR; a new line needs a reason the reviewer accepts.
 
 ## Types first
 
@@ -80,8 +81,8 @@ Thread safety comes from where state lives, not from locks.
 - **One owner per mutable state.** A piece of mutable state belongs to exactly one actor or one value. Everyone else gets a copy, a `sending` transfer or a message. A `final class` with mutable fields is acceptable only inside one actor's isolation, as with MLX caches and model weights, and never escapes it.
 - **The shell stays thin.** An actor method reads its state, calls the core and writes the result. It does not hold logic of its own. Logic that grows inside an actor moves into the core value, and that is also how a type over 200 lines splits.
 - **State changes are synchronous reducers.** An actor changes its state with `state = core.reduce(state, event)`, which has no `await` inside. Effects (network, disk, GPU) run before the reduce, to gather inputs, or after it, to apply results. A result that comes back after an `await` is applied only if the epoch or generation token it carries still matches, as the engine does with `modelEpoch`. Check-then-act across an `await` is a race even inside an actor.
-- **Shared state is released by its owner, not by a `deinit`.** A lease, pin or slot that changes another type's state is given back with a `consuming` method called on the owning actor. A `deinit` runs on whichever thread drops the value last, so it must not touch shared state. `PromptCacheLease` is the known case (#300).
-- **MLX objects are shell state.** `MLXArray`, `KVCache` and `LanguageModel` are not `Sendable`. They stay inside the actor or the `ModelContainer.perform` that owns them, and cross a thread only through a hand-off that `swift-race-review` documents. Two forwards of one model never run at once. Today `ModelEvaluationLock` enforces this, and every model call takes it. #300 replaces it with one global model actor, so the type system enforces it.
+- **Shared state is released by its owner, not by a `deinit`.** A lease, pin or slot that changes another type's state is given back with a `consuming` method called on the owning actor. A `deinit` runs on whichever thread drops the value last, so it must not touch shared state unless the compiler keeps the value on its owner. `PromptCacheLease` still unpins in `deinit`, but neither it nor `PromptCacheNode` is `Sendable`, so the lease can only be dropped on the engine actor (#300).
+- **MLX objects are shell state.** `MLXArray`, `KVCache`, `PromptCache` and `LanguageModel` are not `Sendable`. Model-wide MLX state lives in the mlx-swift-lm `ModelContext` next to the model: the MTP drafter (`mtpDrafter`) and the batch state (`batch`, a `BatchCore`) are created in `container.update` and read only inside `container.perform`. A per-request value crosses into the model through `container.performSending(nonSendable:)` and comes back as a `sending` result (`GenerationLaunch`); the engine actor keeps only `Sendable` handles, such as `BatchedDecoder`'s `Mutex`-guarded mailbox. Two forwards of one model never run at once: today `ModelEvaluationLock` enforces this, and every model call takes it (batched rows take it and step the whole batch themselves; there is no decode thread). #300 replaces it with one global model actor, so the type system enforces it.
 
 ## No comments in code
 
@@ -125,11 +126,30 @@ Shell pipelines lose exit statuses and stderr, `tail` hides a crash in the middl
 
 Measure more than one model family. A claim about speed or quality names the models it was measured on; a feature that disables itself on some architectures (hybrid SSM, sliding-window, multimodal) is also run on one of those to show the fallback gives the same output.
 
+## Coverage
+
+- **Changed lines are tested.** The Unit Tests job builds and runs the tests with `--enable-code-coverage`, then `scripts/check_changed_coverage.swift` compares the `llvm-cov export` JSON with the diff against the PR base. It lists, per changed file in `Sources/`, the added executable lines no test ran, and fails when fewer than 60% of them ran (#316). 60% leaves room for lines a unit test cannot reach (CLI and UI glue, Metal-only and real-model-only branches); it rises as PRs show the usual numbers. Locally:
+
+  ```bash
+  swift test --enable-code-coverage
+  swift scripts/check_changed_coverage.swift "$(swift test --show-codecov-path)" origin/main
+  ```
+- **Mutation testing is on demand, not in CI.** Each mutant is a rebuild and a test run, so run it on the files a change is about, when a suite's strength is in question:
+
+  ```bash
+  brew install muter-mutation-testing/formulae/muter
+  muter init
+  muter --files-to-mutate Sources/BasaltCore/ToolCallGate.swift
+  ```
+
+  `muter init` writes `muter.conf.yml` (keep it local; check that it runs `swift test`). A surviving mutant is a missing assertion: name it in the PR or add the test.
+
 ## Pull requests
 
 - One issue per PR; link it with `Closes #N`.
 - No function or file over the limits in "Size and complexity", and none already over them grown.
 - `swift build --build-tests` and `swift test` pass locally with no new warnings (run `./scripts/build_metal.swift --skip-unsupported` once if MLX reports a missing metallib).
 - A test that guards against nondeterminism (sampling parity, speculative exactness, concurrency) runs with repetitions (ST-0024: `swift test --maximum-repetitions 10 --repeat-until fail --filter <SuiteName>`) before it is trusted.
-- Behaviour changes come with a test that fails without the change.
+- Behaviour changes come with a test that fails without the change; the changed-line coverage step (see Coverage) checks the tests run it.
+- No new concurrency hatch outside `scripts/concurrency-hatches.allow`, and no stale line left in it.
 - Claims that need a real model (speed, output quality) are marked as unverified in the PR unless they were measured; measured ones name the models and link the runner's log (see Real-model runs).
