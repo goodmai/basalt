@@ -100,7 +100,7 @@ struct HybridAnchorTests {
         let cuts = [40, 80, 120, 160, 200, 240]
         let head = try HybridPrefixSnapshot.prefillHead(
             MLXArray(prompt.map(Int32.init)), into: PromptCache(try model.newCache(parameters: nil)),
-            reused: 0, cuts: cuts.reversed() + [0, 299, 400], boundary: prompt.count - 1, model: model,
+            plan: CachedPrompt(cuts: cuts.reversed() + [0, 299, 400], boundary: prompt.count - 1), model: model,
             prefill: PrefillParameters(stepSize: 16))
         #expect(head.anchors.map(\.tokenCount) == cuts)
         #expect(head.anchors.allSatisfy { $0.isSnapshot(of: $0.tokenCount) })

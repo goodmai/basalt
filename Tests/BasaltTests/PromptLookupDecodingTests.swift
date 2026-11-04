@@ -62,8 +62,9 @@ enum LookupFixture {
     ) throws -> (tokens: [Int], iterator: PromptLookupTokenIterator, cache: [KVCache]) {
         let cache = try model.newCache(parameters: nil)
         var iterator = try PromptLookupTokenIterator(
-            input: LMInput(tokens: MLXArray(prompt.map(Int32.init))), context: prompt, model: model, cache: cache,
-            processor: processor, sampler: sampler, prefill: .init(), maxTokens: maxTokens, recyclesTokens: recycling)
+            prompt: PromptLookupTokenIterator.Prompt(input: LMInput(tokens: MLXArray(prompt.map(Int32.init))), history: prompt), model: model, cache: cache,
+            decoding: DecodingSettings(processor: processor, sampler: sampler, prefill: .init(), maxTokens: maxTokens),
+            lookup: LookupOptions(speculative: true, recycling: recycling))
         var tokens: [Int] = []
         while let token = iterator.next() { tokens.append(token) }
         return (tokens, iterator, cache)

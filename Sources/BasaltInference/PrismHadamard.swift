@@ -36,11 +36,12 @@ final class HadamardQuantizedLinear: QuantizedLinear {
         let groups = inputs / quantization.groupSize
         self.rotation = rotation
         signs = MLXArray.ones([inputs], dtype: .float32)
+        let weight = MLXArray.zeros([outputs, inputs * quantization.bits / 32], dtype: .uint32)
+        let scales = MLXArray.zeros([outputs, groups], dtype: .float16)
+        let biases = MLXArray.zeros([outputs, groups], dtype: .float16)
         super.init(
-            weight: MLXArray.zeros([outputs, inputs * quantization.bits / 32], dtype: .uint32), bias: linear.bias,
-            scales: MLXArray.zeros([outputs, groups], dtype: .float16),
-            biases: MLXArray.zeros([outputs, groups], dtype: .float16),
-            groupSize: quantization.groupSize, bits: quantization.bits, mode: .affine)
+            weight: weight, bias: linear.bias, scales: scales, biases: biases,
+            groupSize: quantization.groupSize, bits: quantization.bits)
         freeze()
     }
 
@@ -58,11 +59,11 @@ final class HadamardQuantizedEmbedding: QuantizedEmbedding {
         let groups = dimensions / quantization.groupSize
         self.rotation = rotation
         signs = MLXArray.ones([dimensions], dtype: .float32)
+        let weight = MLXArray.zeros([count, dimensions * quantization.bits / 32], dtype: .uint32)
+        let scales = MLXArray.zeros([count, groups], dtype: .float16)
+        let biases = MLXArray.zeros([count, groups], dtype: .float16)
         super.init(
-            weight: MLXArray.zeros([count, dimensions * quantization.bits / 32], dtype: .uint32),
-            scales: MLXArray.zeros([count, groups], dtype: .float16),
-            biases: MLXArray.zeros([count, groups], dtype: .float16),
-            groupSize: quantization.groupSize, bits: quantization.bits, mode: .affine)
+            weight: weight, scales: scales, biases: biases, groupSize: quantization.groupSize, bits: quantization.bits)
         freeze()
     }
 

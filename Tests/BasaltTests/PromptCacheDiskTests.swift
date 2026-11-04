@@ -109,7 +109,7 @@ struct PromptCacheDiskTests {
         let prompt = TinyModel.tokens(Conversation.firstTurn)
         let head = try HybridPrefixSnapshot.prefillHead(
             MLXArray(prompt.map(Int32.init)), into: PromptCache(try model.newCache(parameters: nil)),
-            reused: 0, boundary: prompt.count - 1, model: model, prefill: PrefillParameters(stepSize: 16))
+            plan: CachedPrompt(boundary: prompt.count - 1), model: model, prefill: PrefillParameters(stepSize: 16))
         let kept = try #require(head.kept)
         var tree = PromptCacheTree(byteBudget: 1 << 26)
         tree.store("ns", tokens: Array(prompt.dropLast()), cache: kept)

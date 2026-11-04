@@ -44,7 +44,7 @@ enum TinyHybrid {
     static func snapshotted(_ model: any LanguageModel, _ prompt: [Int]) throws -> PromptCache {
         let head = try HybridPrefixSnapshot.prefillHead(
             MLXArray(prompt.map(Int32.init)), into: PromptCache(try model.newCache(parameters: nil)),
-            reused: 0, boundary: prompt.count - 1, model: model, prefill: PrefillParameters(stepSize: 16))
+            plan: CachedPrompt(boundary: prompt.count - 1), model: model, prefill: PrefillParameters(stepSize: 16))
         #expect(head.start == prompt.count - 1)
         return try #require(head.kept)
     }
@@ -90,7 +90,7 @@ struct SlidingWindowSnapshotTests {
 
         let head = try HybridPrefixSnapshot.prefillHead(
             MLXArray(first.map(Int32.init)), into: PromptCache(try model.newCache(parameters: nil)),
-            reused: 0, boundary: boundary, model: model, prefill: PrefillParameters(stepSize: stepSize))
+            plan: CachedPrompt(boundary: boundary), model: model, prefill: PrefillParameters(stepSize: stepSize))
         let kept = try #require(head.kept)
         let rotating = kept.layers.compactMap { $0 as? RotatingKVCache }
         #expect(!rotating.isEmpty)
@@ -247,7 +247,7 @@ struct HybridPrefixSnapshotTests {
         let first = TinyModel.tokens(Conversation.firstTurn)
         let head = try HybridPrefixSnapshot.prefillHead(
             MLXArray(first.map(Int32.init)), into: PromptCache(try model.newCache(parameters: nil)),
-            reused: 0, boundary: first.count - 1, model: model, prefill: PrefillParameters(stepSize: 16))
+            plan: CachedPrompt(boundary: first.count - 1), model: model, prefill: PrefillParameters(stepSize: 16))
         #expect(head.state != nil)
         var tree = PromptCacheTree(byteBudget: 1 << 30)
         tree.store("ns", tokens: Array(first.dropLast()), cache: try #require(head.kept))
@@ -314,7 +314,7 @@ struct HybridPrefixSnapshotTests {
         #expect(fork == shared)
         let head = try HybridPrefixSnapshot.prefillHead(
             MLXArray(second.map(Int32.init)), into: PromptCache(try model.newCache(parameters: nil)),
-            reused: 0, cuts: [fork], boundary: second.count - 1, model: model, prefill: PrefillParameters(stepSize: 16))
+            plan: CachedPrompt(cuts: [fork], boundary: second.count - 1), model: model, prefill: PrefillParameters(stepSize: 16))
         let forkCache = try #require(head.anchors.first)
         let keptCache = try #require(head.kept)
         #expect(forkCache.tokenCount == shared)
@@ -375,7 +375,7 @@ struct HybridPrefixSnapshotTests {
             attention.step = 8
         }
         let head = try HybridPrefixSnapshot.prefillHead(
-            MLXArray(prompt.map(Int32.init)), into: live, reused: 0, boundary: boundary,
+            MLXArray(prompt.map(Int32.init)), into: live, plan: CachedPrompt(boundary: boundary),
             model: model, prefill: PrefillParameters(stepSize: 16))
         let kept = try #require(head.kept)
         for (original, snapshot) in zip(live.layers, kept.layers) {
