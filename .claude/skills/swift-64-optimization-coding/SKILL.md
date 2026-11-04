@@ -42,7 +42,8 @@ You are an Expert Swift 6.4 Systems & Performance Engineer. Write deterministic,
 - **Limits (CONTRIBUTING "Size and complexity")**:
   - a function stays at CCN ≤ 15 (aim ≤ 10), ≤ 60 lines of code and ≤ 6 parameters;
   - a file stays at ≤ 600 lines (aim ≤ 400);
-  - a type body stays at ≤ 200 lines of code, and an extension at ≤ 150;
+  - a new type body stays at ≤ 200 lines of code, and an extension at ≤ 150;
+  - a type older than 2026-11-04 aims for ≤ 450, and any type over 200 must not grow;
   - code goes in a value core (structs, enums, pure functions) with a thin actor or protocol shell for effects (CONTRIBUTING "Value core, actor shell");
   - check with `uvx lizard==1.24.0 -l swift -C 15 -L 60 -a 6 <files>` before committing.
 - **Ratchet**: a function or file already over a limit must not grow. Before adding a branch to one, split it along an existing seam: an engine mode, a `switch` case, a stage of a long function.

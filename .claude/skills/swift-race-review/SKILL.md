@@ -33,6 +33,14 @@ Load `references/mlx-hazards.md` when the code calls a model, touches caches or 
 
 Check what an API guarantees (`Mutex`, `Atomic`, `withTaskCancellationShield`, `Task` cancellation inheritance, `MTLCommandBuffer` completion handlers) with Xcode's `DocumentationSearch`; see the `xcode-mcp` skill (`swift .claude/skills/xcode-mcp/scripts/xcode_mcp.swift DocumentationSearch '{"query":"Mutex","frameworks":["Synchronization"]}'`). Don't rely on memory. For a crash, use CLI `lldb` (`bt all`).
 
+Read #300 first: it lists today's escape hatches and the target design.
+- Data races stay inside one bridge.
+- Actor state changes are synchronous reducers, with epoch checks after each `await`.
+- Shared state is released by its owner (`consuming`), never in a `deinit`.
+- One owner serializes MLX.
+
+A finding that breaks one of these gets the structural fix, not an extra lock.
+
 Report only hazards you can trace to two named contexts and one piece of shared state, or to a lock cycle you can draw. For each finding:
 
 - **Contexts:** which two threads or tasks, with the code location each runs from.

@@ -14,10 +14,11 @@ let maxParams = 6
 let maxFileLines = 600
 let maxTypeLines = 200
 let maxExtensionLines = 150
+let legacyTypeTarget = 450
 let lizard = (ProcessInfo.processInfo.environment["LIZARD"] ?? "uvx --quiet lizard==1.24.0").split(separator: " ").map(String.init)
 
 @discardableResult
-func run(_ arguments: [String], input: String? = nil) throws -> String {
+func run(_ arguments: [String]) throws -> String {
     let process = Process()
     process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
     process.arguments = arguments
@@ -26,6 +27,7 @@ func run(_ arguments: [String], input: String? = nil) throws -> String {
     process.standardError = FileHandle.nullDevice
     try process.run()
     let data = output.fileHandleForReading.readDataToEndOfFile()
+    try output.fileHandleForReading.close()
     process.waitUntilExit()
     guard process.terminationStatus == 0 else { throw CocoaError(.executableLoad) }
     return String(decoding: data, as: UTF8.self)
@@ -228,7 +230,9 @@ if arguments.contains("--inventory") {
     let files = FileManager.default.enumerator(atPath: "Sources")?.compactMap { $0 as? String }.filter { $0.hasSuffix(".swift") } ?? []
     for file in files.sorted() {
         let source = try String(contentsOfFile: "Sources/\(file)", encoding: .utf8)
-        for hit in typeViolations(path: "Sources/\(file)", before: [:], after: typeBodies(in: source)) { print(hit) }
+        for (name, metrics) in typeBodies(in: source).sorted(by: { $0.key < $1.key }) where metrics.nloc > legacyTypeTarget {
+            print("Sources/\(file):\(metrics.line): \(name): \(metrics.nloc) lines of code > \(legacyTypeTarget)")
+        }
     }
     exit(0)
 }

@@ -4,7 +4,13 @@
 
 - Swift 6.4 (Xcode 27) and `swift-tools-version: 6.4`. Every target builds in the Swift 6 language mode, so data-race checking is complete; a target does not opt out.
 - Zero warnings in our own targets. A warning is fixed, not silenced; `@diagnose` (SE-0522) lowers one only for code we do not control, and the commit message says why.
-- No `@unchecked Sendable` and no `nonisolated(unsafe)` in new code. Prefer a value type, an actor, `Mutex` or an atomic; an existing escape hatch is removed when the code around it changes.
+- **No new concurrency escape hatch:**
+  - `@unchecked Sendable`, `nonisolated(unsafe)`;
+  - `NSLock`, `NSCondition`, `NSRecursiveLock`, `os_unfair_lock`;
+  - `DispatchQueue`, `DispatchSemaphore`;
+  - `Task.detached`.
+
+  Prefer a value type, an actor, `sending`, `Mutex` or an atomic. Today's sites are listed in #300, and the list only shrinks: an existing hatch is removed when the code around it changes. A hatch that must stay (for example a stream task that has to outlive its caller and must not inherit actor isolation or priority) carries its reason in the PR, and in the allowlist once the #300 checker lands.
 
 ## Types first
 
@@ -47,12 +53,12 @@ Measured with lizard, which reports per function the cyclomatic complexity (CCN)
 | Unit | Limit |
 |---|---|
 | Function | CCN ≤ 15 (aim for ≤ 10), ≤ 60 lines of code, ≤ 6 parameters |
-| Type body (`struct`, `enum`, `class`, `actor`, `protocol`) | ≤ 200 lines of code: a core type or a state type |
+| Type body (`struct`, `enum`, `class`, `actor`, `protocol`) | New type: ≤ 200 lines of code (a core type or a state type). A type that existed on 2026-11-04 aims for ≤ 450. Any type over 200 must not grow. |
 | Extension body | ≤ 150 lines of code |
 | File | ≤ 600 lines (aim for ≤ 400) |
 
 - **CI enforces the ratchet**: `scripts/check_size_limits.swift` runs lizard on the base and head versions of every changed Swift file (`.github/workflows/size-limits.yml`). Run it locally with `swift scripts/check_size_limits.swift origin/main`; `--impact` adds the share of functions the change touched and the CCN sum and peak before and after, for the PR description.
-- **Type and extension bodies are counted** in lines of code (comments, strings and blank lines don't count) by the same script. On 2026-11-04, 21 types were over 200 lines and no extension was over 150 (`swift scripts/check_size_limits.swift --inventory` lists them). A type over the limit splits into a value core and an extension per concern, each extension within 150, not into a second type that shares the same state.
+- **Type and extension bodies are counted** in lines of code (comments, strings and blank lines don't count) by the same script. A type older than 2026-11-04 that is over 200 is legacy. It may stay up to 450 and only has to stop growing. Refactoring targets the legacy types over 450, which `swift scripts/check_size_limits.swift --inventory` lists. A type that needs to shrink splits into a value core plus one extension per concern, each extension within 150. It does not split into a second type that shares the same state.
 - **New code stays within the limits.** Tests follow the function limits; a test file may be longer than 600 lines.
 - **Code already over a limit does not get worse.** On 2026-11-04 that was 6 files over 600 lines, 20 functions over CCN 15 and 20 over 60 lines (#284). A change that touches one of them must not make it longer or more complex. A change that adds a branch to one first splits it.
 - **Split along the seams the code already has.** A `switch` case or an engine mode becomes its own function or type, and a stage of a long function becomes a method named after what it does. Cutting a function into `part1`/`part2` to get under the number does not count.
@@ -73,7 +79,9 @@ Thread safety comes from where state lives, not from locks.
 - **Shell: actors and protocols.** Anything with identity or effects is an `actor`, or a type that one actor owns: a loaded model, a prompt cache, a session log, a socket, a file, the GPU lock, a cloud client. The shell takes a request, asks the core what to do, does it, and stores the new value. Dependencies cross the boundary as protocols with one narrow job (`InferenceEngine`, a clock, a store), so tests swap the effect, not the logic.
 - **One owner per mutable state.** A piece of mutable state belongs to exactly one actor or one value. Everyone else gets a copy, a `sending` transfer or a message. A `final class` with mutable fields is acceptable only inside one actor's isolation, as with MLX caches and model weights, and never escapes it.
 - **The shell stays thin.** An actor method reads its state, calls the core and writes the result. It does not hold logic of its own. Logic that grows inside an actor moves into the core value, and that is also how a type over 200 lines splits.
-- **MLX objects are shell state.** `MLXArray`, `KVCache` and `LanguageModel` are not `Sendable`. They stay inside the actor or the `ModelContainer.perform` that owns them, and cross a thread only through a hand-off that `swift-race-review` documents.
+- **State changes are synchronous reducers.** An actor changes its state with `state = core.reduce(state, event)`, which has no `await` inside. Effects (network, disk, GPU) run before the reduce, to gather inputs, or after it, to apply results. A result that comes back after an `await` is applied only if the epoch or generation token it carries still matches, as the engine does with `modelEpoch`. Check-then-act across an `await` is a race even inside an actor.
+- **Shared state is released by its owner, not by a `deinit`.** A lease, pin or slot that changes another type's state is given back with a `consuming` method called on the owning actor. A `deinit` runs on whichever thread drops the value last, so it must not touch shared state. `PromptCacheLease` is the known case (#300).
+- **MLX objects are shell state.** `MLXArray`, `KVCache` and `LanguageModel` are not `Sendable`. They stay inside the actor or the `ModelContainer.perform` that owns them, and cross a thread only through a hand-off that `swift-race-review` documents. Two forwards of one model never run at once. Today `ModelEvaluationLock` enforces this, and every model call takes it. #300 replaces it with one global model actor, so the type system enforces it.
 
 ## No comments in code
 

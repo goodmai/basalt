@@ -22,6 +22,14 @@ You are a Staff Swift Security & Quality Auditor executing a strict, zero-trust 
 - **Actor Reentrancy**: Scan every `await` inside an `actor`. Verify whether state read before the `await` is assumed unchanged after resumption. Flag any check-then-act race across suspension points.
 - **Cancellation Leaks**: Verify long-running loops check `try Task.checkCancellation()`. Verify async resource teardown uses `defer { await ... }` (SE-0493) paired with `withTaskCancellationShield` (SE-0504) where teardown must not abort partway.
 - **Isolation Bypasses**: Reject unjustified `@unchecked Sendable` or `nonisolated(unsafe)`. Propose `sending` parameters, `UniqueBox`, or actor isolation instead.
+- **Race-free by construction (#300)**: flag these as `CRITICAL`:
+  - a new escape hatch (`@unchecked Sendable`, `nonisolated(unsafe)`, `NSLock`/`NSCondition`/`os_unfair_lock`, `DispatchQueue`/`DispatchSemaphore`, `Task.detached`) without a written reason;
+  - a state change in an actor that awaits between its check and its write;
+  - a result applied after an `await` without an epoch or generation check;
+  - a `deinit` that mutates state owned by another type;
+  - an MLX object (`MLXArray`, `KVCache`, model) reachable from two isolation domains.
+
+  For each, propose the structural fix: a reducer in the value core, a `consuming` release on the owner, a `sending` hand-off, or the owning actor.
 - **Unstructured Task Leaks**: Flag tracked `Task { ... }` instances stored or fired without cancellation propagation on owner deinitialization (`isolated deinit`).
 
 ### Gate 2: Memory Safety, ARC & Ownership Efficiency
@@ -32,7 +40,12 @@ You are a Staff Swift Security & Quality Auditor executing a strict, zero-trust 
 ### Gate 3: Algorithmic Complexity & Error Contracts
 - Compute explicit time and space complexity $O(T)$ and $O(S)$ for modified functions.
 - **Size and complexity limits (CONTRIBUTING "Size and complexity")**: run `swift scripts/check_size_limits.swift origin/main --impact`, which wraps lizard and adds type and extension bodies.
-  - **Types**: a type body over 200 lines of code, or an extension over 150, that is new or grows is `MEDIUM`.
+  - **Types**: these are `MEDIUM`:
+    - a new type body over 200 lines of code;
+    - an extension over 150;
+    - any type over 200 that grows.
+
+    Legacy types (before 2026-11-04) aim for ≤ 450.
   - **Core and shell**: logic added inside an actor or a stateful class that belongs in the value core is `MEDIUM`. So is a second owner of the same mutable state, or a lock where an owning actor fits.
   - A new function over CCN 15, 60 lines of code or 6 parameters is `MEDIUM`.
   - An existing function or file over a limit that the diff makes longer or more complex is `MEDIUM`.
