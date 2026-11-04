@@ -427,7 +427,6 @@ public actor MLXInferenceEngine: InferenceEngine {
     }
 
     func dropPromptCaches() { promptCaches.removeAll(); mtpPrefixes.removeAll() }
-
     static func upstreamTokenizer(at directory: URL) async throws -> any Tokenizers.Tokenizer {
         let configuration = LanguageModelConfigurationFromHub(modelFolder: directory)
         guard let tokenizerConfig = try await configuration.tokenizerConfig else {
@@ -1203,7 +1202,6 @@ public actor MLXInferenceEngine: InferenceEngine {
 
 extension MLXInferenceEngine {
     func record(_ event: EngineEvent) { state = .reduce(state, event) }
-
     struct GenerationLaunch {
         let stream: AsyncStream<Generation>
         let task: Task<Void, Never>?
