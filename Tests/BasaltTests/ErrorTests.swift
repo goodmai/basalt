@@ -114,39 +114,37 @@ struct ProviderErrorResponseTests {
         #expect(ProviderErrorShape.forPath("/api/v1/health") == .native)
     }
 
-    @Test("Anthropic error types and Retry-After headers for each BasaltError case")
-    func anthropicErrorMapping() async throws {
-        let expectations: [(BasaltError, Int, String, String?)] = [
-            (.modelNotFound(identifier: "m"), 404, "not_found_error", nil),
-            (.modelNotCached(identifier: "m"), 404, "not_found_error", nil),
-            (.authenticationFailed(details: "d"), 401, "authentication_error", nil),
-            (.invalidRequestStructure(details: "d"), 400, "invalid_request_error", nil),
-            (.modelConfigurationInvalid(path: "p", reason: "r"), 422, "invalid_request_error", nil),
-            (.contextLengthExceeded(maxTokens: 10, requested: 20), 413, "invalid_request_error", nil),
-            (.rateLimitExceeded(retryAfter: "7"), 429, "rate_limit_error", "7"),
-            (.modelSwitching(from: "a", to: "b"), 503, "overloaded_error", "1"),
-            (.serverBusy(retryAfterSeconds: 4), 503, "overloaded_error", "4"),
-            (.inferenceHardwareFailure(reason: "r"), 503, "overloaded_error", "1"),
-            (.outOfMemory(requestedMB: 100, availableMB: 10), 507, "overloaded_error", "1"),
-            (.weightsCorrupted(path: "p", reason: "r"), 500, "api_error", nil),
-            (.modelInferenceError(details: "d"), 502, "api_error", nil),
-            (.inferenceError("msg"), 500, "api_error", nil)
-        ]
+    static let everyCase: [(BasaltError, Int, String, String, String?)] = [
+        (.modelNotFound(identifier: "m"), 404, "invalid_request_error", "not_found_error", nil),
+        (.modelNotCached(identifier: "m"), 404, "invalid_request_error", "not_found_error", nil),
+        (.authenticationFailed(details: "d"), 401, "authentication_error", "authentication_error", nil),
+        (.invalidRequestStructure(details: "d"), 400, "invalid_request_error", "invalid_request_error", nil),
+        (.modelConfigurationInvalid(path: "p", reason: "r"), 422, "invalid_request_error", "invalid_request_error", nil),
+        (.contextLengthExceeded(maxTokens: 10, requested: 20), 413, "invalid_request_error", "invalid_request_error", nil),
+        (.rateLimitExceeded(retryAfter: "7"), 429, "rate_limit_error", "rate_limit_error", "7"),
+        (.rateLimitExceeded(retryAfter: nil), 429, "rate_limit_error", "rate_limit_error", "1"),
+        (.modelSwitching(from: "a", to: "b"), 503, "server_error", "overloaded_error", "1"),
+        (.serverBusy(retryAfterSeconds: 4), 503, "server_error", "overloaded_error", "4"),
+        (.serverBusy(retryAfterSeconds: nil), 503, "server_error", "overloaded_error", "1"),
+        (.memoryPressure(retryAfterSeconds: 9), 503, "server_error", "overloaded_error", "9"),
+        (.inferenceHardwareFailure(reason: "r"), 503, "server_error", "overloaded_error", "1"),
+        (.outOfMemory(requestedMB: 100, availableMB: 10), 507, "server_error", "overloaded_error", "1"),
+        (.weightsCorrupted(path: "p", reason: "r"), 500, "server_error", "api_error", nil),
+        (.modelInferenceError(details: "d"), 502, "server_error", "api_error", nil),
+        (.inferenceError("msg"), 500, "server_error", "api_error", nil),
+    ]
 
-        for (err, expectedStatus, expectedType, expectedRetryAfter) in expectations {
-            let res = ProviderErrorResponse.response(for: err, shape: .anthropic)
-            #expect(res.status.code == expectedStatus)
-            if let expectedRetryAfter {
-                #expect(res.headers[.retryAfter] == expectedRetryAfter)
-            } else {
-                #expect(res.headers[.retryAfter] == nil)
-            }
-            let data = try await extractData(res)
-            let obj = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+    @Test("Every BasaltError case maps to its status, Retry-After and OpenAI and Anthropic error types", arguments: everyCase)
+    func everyCaseOnBothProviders(error: BasaltError, status: Int, openAIType: String, anthropicType: String, retryAfter: String?) async throws {
+        for (shape, expectedType) in [(ProviderErrorShape.openAI, openAIType), (.anthropic, anthropicType)] {
+            let res = ProviderErrorResponse.response(for: error, shape: shape)
+            #expect(res.status.code == status)
+            #expect(res.headers[.retryAfter] == retryAfter)
+            let obj = try #require(try JSONSerialization.jsonObject(with: try await extractData(res)) as? [String: Any])
             #expect(obj["type"] as? String == "error")
             let errorObj = try #require(obj["error"] as? [String: Any])
             #expect(errorObj["type"] as? String == expectedType)
-            #expect(errorObj["message"] != nil)
+            #expect(errorObj["message"] as? String == ModelsController.publicMessage(for: error))
         }
     }
 

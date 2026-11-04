@@ -118,20 +118,7 @@ package enum ProviderErrorResponse: Sendable {
         explicit: String?
     ) -> String? {
         if let explicit { return explicit }
-        if let basalt = error as? BasaltError {
-            switch basalt {
-            case .rateLimitExceeded(let r):
-                return r ?? "1"
-            case .serverBusy(let s):
-                return s.map(String.init) ?? "1"
-            case .memoryPressure(let s):
-                return String(s)
-            case .modelSwitching, .inferenceHardwareFailure, .outOfMemory:
-                return "1"
-            default:
-                break
-            }
-        }
+        if let retryAfter = (error as? BasaltError)?.wire.retryAfter { return retryAfter }
         if status == .tooManyRequests || status == .serviceUnavailable {
             return "1"
         }
@@ -142,7 +129,7 @@ package enum ProviderErrorResponse: Sendable {
         status: HTTPResponse.Status,
         error: (any Error)?
     ) -> String {
-        if let basalt = error as? BasaltError { return anthropicErrorType(basalt) }
+        if let basalt = error as? BasaltError { return basalt.wire.anthropicType }
         return anthropicStatusTypes[status.code] ?? (status.code >= 500 ? "api_error" : "invalid_request_error")
     }
 
@@ -151,41 +138,11 @@ package enum ProviderErrorResponse: Sendable {
         503: "overloaded_error", 507: "overloaded_error", 529: "overloaded_error",
     ]
 
-    private static func anthropicErrorType(_ basalt: BasaltError) -> String {
-        switch basalt {
-        case .modelNotFound, .modelNotCached:
-            return "not_found_error"
-        case .authenticationFailed:
-            return "authentication_error"
-        case .rateLimitExceeded:
-            return "rate_limit_error"
-        case .modelSwitching, .serverBusy, .memoryPressure, .inferenceHardwareFailure, .outOfMemory:
-            return "overloaded_error"
-        case .weightsCorrupted, .modelInferenceError, .inferenceError:
-            return "api_error"
-        case .invalidRequestStructure, .modelConfigurationInvalid, .contextLengthExceeded:
-            return "invalid_request_error"
-        }
-    }
-
     private static func openAIErrorType(
         status: HTTPResponse.Status,
         error: (any Error)?
     ) -> String {
-        if let basalt = error as? BasaltError {
-            switch basalt {
-            case .authenticationFailed:
-                return "authentication_error"
-            case .rateLimitExceeded:
-                return "rate_limit_error"
-            case .modelNotFound, .modelNotCached, .invalidRequestStructure,
-                 .modelConfigurationInvalid, .contextLengthExceeded:
-                return "invalid_request_error"
-            case .modelSwitching, .serverBusy, .memoryPressure, .inferenceHardwareFailure,
-                 .outOfMemory, .weightsCorrupted, .modelInferenceError, .inferenceError:
-                return "server_error"
-            }
-        }
+        if let basalt = error as? BasaltError { return basalt.wire.openAIType }
         switch status.code {
         case 401: return "authentication_error"
         case 429: return "rate_limit_error"
