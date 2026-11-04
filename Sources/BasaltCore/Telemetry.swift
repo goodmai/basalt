@@ -21,6 +21,7 @@ public struct ServerTelemetrySnapshot: Codable, Sendable, Equatable {
     public var draftTokens: Int?
     public var acceptedDraftTokens: Int?
     public var health: HealthTelemetry?
+    public var activeDeltas: [OverlayInfo]?
 
     public init(
         timestamp: Date = Date(),

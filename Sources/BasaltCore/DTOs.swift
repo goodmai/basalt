@@ -377,6 +377,7 @@ public struct GenerationResponse: Codable, Sendable {
     public let toolCallRejections: Int
     public private(set) var degenerate: DegenerateOutput?
     public private(set) var draftSource: DraftSource?
+    public private(set) var modelModified = false
 
     public init(
         generatedText: String,
@@ -418,17 +419,18 @@ public struct GenerationResponse: Codable, Sendable {
         self.toolCallRejections = toolCallRejections
     }
 
-    public func reporting(degenerate: DegenerateOutput?, draftSource: DraftSource?) -> GenerationResponse {
+    public func reporting(degenerate: DegenerateOutput?, draftSource: DraftSource?, modelModified: Bool = false) -> GenerationResponse {
         var copy = self
         copy.degenerate = degenerate
         copy.draftSource = draftSource
+        copy.modelModified = modelModified
         return copy
     }
 
     enum CodingKeys: String, CodingKey {
         case generatedText, reasoningText, promptTokens, cachedPromptTokens, completionTokens
         case tokensPerSecond, generationTime, timeToFirstToken, memory, finishReason, toolCalls, reasoningTokens
-        case draftTokens, acceptedDraftTokens, forcedTokens, modelCalls, toolCallRepairs, toolCallRejections, degenerate, draftSource
+        case draftTokens, acceptedDraftTokens, forcedTokens, modelCalls, toolCallRepairs, toolCallRejections, degenerate, draftSource, modelModified
     }
 
     public init(from decoder: Decoder) throws {
@@ -453,6 +455,7 @@ public struct GenerationResponse: Codable, Sendable {
         toolCallRejections = try c.decodeIfPresent(Int.self, forKey: .toolCallRejections) ?? 0
         degenerate = try c.decodeIfPresent(DegenerateOutput.self, forKey: .degenerate)
         draftSource = try c.decodeIfPresent(DraftSource.self, forKey: .draftSource)
+        modelModified = try c.decodeIfPresent(Bool.self, forKey: .modelModified) ?? false
     }
 
     public struct MemoryUsage: Codable, Sendable {
