@@ -240,7 +240,7 @@ public actor MLXInferenceEngine: InferenceEngine {
         do {
             let scores = try await KVHeadClassifier.loadOrScore(directory: directory, container: container)
             guard KVHeadMask.isConcentrated(scores) else {
-                logger.warn("--kv-head-split does not apply to this model: most of its attention heads read the middle of a long prompt (the median head scores above \(KVHeadMask.concentration) of the top one, as on Qwen3.5 hybrids whose few attention layers all retrieve), so dropping any of them loses facts; the KV cache stays dense")
+                logger.warn("--kv-head-split does not apply to this model: no small set of heads carries its long-range recall (the median head's ablation score is above \(KVHeadMask.concentration) of the top one), so dropping any of them loses facts; the KV cache stays dense")
                 return
             }
             kvHeadMask = KVHeadMask.classify(scores: scores, ratio: ratio)

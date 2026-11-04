@@ -52,10 +52,27 @@ final class HeadSplitKVCache: KVCacheAttentionProtocol {
         let inverse: MLXArray?
         let kvInverse: MLXArray?
         let kvHeads: Int
+        let queryHeads: Int
     }
 
     init(retrieval: [Int]) {
         self.retrieval = retrieval
+    }
+
+    convenience init(splitting dense: KVCacheSimple, retrieval: [Int]) {
+        self.init(retrieval: retrieval)
+        let state = dense.state
+        guard state.count == 2 else { return }
+        let heads = layout(kvHeads: state[0].dim(1), queryHeads: state[0].dim(1))
+        offset = dense.offset
+        if let index = heads.retrieval { full.state = state.map { $0[0..., index] } }
+        if let index = heads.streaming {
+            let count = state[0].dim(2)
+            let kept = count > Self.sinkTokens + Self.windowTokens
+                ? Array(0 ..< Self.sinkTokens) + Array((count - Self.windowTokens) ..< count) : Array(0 ..< count)
+            let rows = MLXArray(kept.map(Int32.init))
+            stream.state = state.map { $0[0..., index][.ellipsis, rows, 0...] }
+        }
     }
 
     var maxSize: Int? { nil }
@@ -76,7 +93,7 @@ final class HeadSplitKVCache: KVCacheAttentionProtocol {
     }
 
     func layout(kvHeads: Int, queryHeads: Int) -> Layout {
-        if let layout, layout.kvHeads == kvHeads { return layout }
+        if let layout, layout.kvHeads == kvHeads, layout.queryHeads == queryHeads { return layout }
         let groups = queryHeads / kvHeads
         let kept = Set(retrieval.filter { $0 < kvHeads })
         let retrievalHeads = (0 ..< kvHeads).filter { kept.contains($0) }
@@ -92,7 +109,8 @@ final class HeadSplitKVCache: KVCacheAttentionProtocol {
             retrievalQueries: indices(retrievalHeads.flatMap { ($0 * groups) ..< (($0 + 1) * groups) }),
             streamingQueries: indices(streamingHeads.flatMap { ($0 * groups) ..< (($0 + 1) * groups) }),
             inverse: retrievalHeads.isEmpty || streamingHeads.isEmpty ? nil : MLXArray(inverse),
-            kvInverse: retrievalHeads.isEmpty || streamingHeads.isEmpty ? nil : MLXArray(kvInverse), kvHeads: kvHeads)
+            kvInverse: retrievalHeads.isEmpty || streamingHeads.isEmpty ? nil : MLXArray(kvInverse), kvHeads: kvHeads,
+            queryHeads: queryHeads)
         layout = made
         return made
     }
@@ -184,54 +202,6 @@ final class HeadSplitKVCache: KVCacheAttentionProtocol {
     }
 }
 
-final class HeadScoringKVCache: KVCacheAttentionProtocol {
-    private let base = KVCacheSimple()
-    var target: Range<Int>?
-    private(set) var scores: [Float] = []
-    private(set) var attended = false
-
-    var offset: Int { base.offset }
-    var maxSize: Int? { nil }
-    var isTrimmable: Bool { true }
-    func innerState() -> [MLXArray] { base.innerState() }
-    var state: [MLXArray] {
-        get { base.state }
-        set { base.state = newValue }
-    }
-    var metaState: [String] {
-        get { base.metaState }
-        set { base.metaState = newValue }
-    }
-    @discardableResult
-    func trim(_ n: Int) -> Int { base.trim(n) }
-    func makeMask(n: Int, windowSize: Int?, returnArray: Bool) -> MLXFast.ScaledDotProductAttentionMaskMode {
-        base.makeMask(n: n, windowSize: windowSize, returnArray: returnArray)
-    }
-    func copy() -> any KVCache { base.copy() }
-    func update(keys: MLXArray, values: MLXArray) -> (MLXArray, MLXArray) { base.update(keys: keys, values: values) }
-
-    func updateAndAttend(
-        queries: MLXArray, keys: MLXArray, values: MLXArray, scale: Float,
-        mask: MLXFast.ScaledDotProductAttentionMaskMode
-    ) -> MLXArray {
-        attended = true
-        let (k, v) = base.update(keys: keys, values: values)
-        if let target, target.upperBound <= k.dim(2) {
-            let kvHeads = k.dim(1)
-            let groups = queries.dim(1) / kvHeads
-            let grouped = (queries.asType(.float32) * scale)
-                .reshaped(queries.dim(0), kvHeads, groups, queries.dim(2), queries.dim(3))
-            let logits = matmul(grouped, expandedDimensions(k.asType(.float32), axis: 2).swappedAxes(-1, -2))
-            let weights = softmax(logits, axis: -1, precise: true)
-            let mass = weights[.ellipsis, target].sum(axis: -1).mean(axes: [0, 2, 3])
-            let values = mass.asArray(Float.self)
-            scores = scores.isEmpty ? values : zip(scores, values).map { $0 + $1 }
-        }
-        return MLXFast.scaledDotProductAttention(
-            queries: queries, keys: k, values: v, scale: scale, mask: ZonedKVCache.trailingColumns(of: mask, keys: k.dim(2)))
-    }
-}
-
 enum KVHeadClassifier {
     static let filler = [
         "The river ran past the old mill, where the wheel had stopped turning years ago.",
@@ -241,7 +211,25 @@ enum KVHeadClassifier {
         "In the archive, ledgers from three centuries filled the shelves along the north wall.",
         "The orchestra tuned for a long time before the conductor finally raised his baton.",
     ]
+}
 
+extension KVHeadClassifier {
+    static func storedScores(for directory: URL) -> URL {
+        let name = directory.standardizedFileURL.path.replacingOccurrences(of: "/", with: "_")
+        return FileManager.default.homeDirectoryForCurrentUser.appending(path: ".basalt/head-scores/\(name)-ablation.json")
+    }
+
+    static func loadOrScore(directory: URL, container: ModelContainer) async throws -> [[Float]] {
+        let url = storedScores(for: directory)
+        if let data = try? Data(contentsOf: url), let scores = try? JSONDecoder().decode([[Float]].self, from: data) { return scores }
+        let scores = try await container.perform { try scores(model: $0.model, tokenizer: $0.tokenizer) }
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try JSONEncoder().encode(scores).write(to: url, options: .atomic)
+        return scores
+    }
+}
+
+extension KVHeadClassifier {
     static func scores(model: any LanguageModel, tokenizer: any MLXLMCommon.Tokenizer, length: Int = 3072) throws -> [[Float]] {
         var total: [[Float]] = []
         for (index, depth) in [0.2, 0.5, 0.8].enumerated() {
@@ -255,36 +243,33 @@ enum KVHeadClassifier {
             let body = tokenizer.encode(text: text, addSpecialTokens: false)
             let needle = tokenizer.encode(text: " The pass key is \(key). Remember it: \(key). ", addSpecialTokens: false)
             let question = tokenizer.encode(text: " What is the pass key? The pass key is", addSpecialTokens: false)
+            let answer = tokenizer.encode(text: " \(key)", addSpecialTokens: false)
             let at = Int(Double(body.count) * depth)
-            let prompt = Array(body[..<at]) + needle + Array(body[at...]) + question
-            let caches = try model.newCache(parameters: nil).map { cache -> any KVCache in
-                type(of: cache) == KVCacheSimple.self ? HeadScoringKVCache() : cache
+            let head = Array(body[..<at]) + needle + Array(body[at...])
+            let tail = question + answer
+            let dense = try model.newCache(parameters: nil)
+            eval(model(MLXArray(head.map(Int32.init)).reshaped(1, -1), cache: dense))
+            eval(dense.flatMap { $0.innerState() })
+            func answerLogProb(_ caches: [any KVCache]) -> Float {
+                let logits = model(MLXArray(tail.map(Int32.init)).reshaped(1, -1), cache: caches)[0].asType(.float32)
+                let predicting = logits[(question.count - 1) ..< (tail.count - 1)]
+                let logp = predicting - logSumExp(predicting, axis: -1, keepDims: true)
+                let targets = MLXArray(answer.map(Int32.init))[0..., .newAxis]
+                return takeAlong(logp, targets, axis: -1).sum().item(Float.self)
             }
-            let scoring = caches.compactMap { $0 as? HeadScoringKVCache }
-            let head = prompt.count - question.count
-            _ = model(MLXArray(prompt[..<head].map(Int32.init)).reshaped(1, -1), cache: caches)
-            eval(caches.flatMap { $0.innerState() })
-            for cache in scoring { cache.target = at ..< (at + needle.count) }
-            eval(model(MLXArray(prompt[head...].map(Int32.init)).reshaped(1, -1), cache: caches))
-            let layers = scoring.map(\.scores)
-            total = total.isEmpty ? layers : zip(total, layers).map { zip($0, $1).map { $0 + $1 } }
+            let baseline = answerLogProb(dense.map { $0.copy() })
+            let attention = dense.indices.filter { type(of: dense[$0]) == KVCacheSimple.self }
+            var drops: [[Float]] = []
+            for position in attention {
+                guard let layer = dense[position] as? KVCacheSimple, let kvHeads = layer.state.first?.dim(1) else { continue }
+                drops.append((0 ..< kvHeads).map { head in
+                    var caches = dense.map { $0.copy() }
+                    caches[position] = HeadSplitKVCache(splitting: layer, retrieval: (0 ..< kvHeads).filter { $0 != head })
+                    return max(0, baseline - answerLogProb(caches))
+                })
+            }
+            total = total.isEmpty ? drops : zip(total, drops).map { zip($0, $1).map { $0 + $1 } }
         }
         return total
-    }
-}
-
-extension KVHeadClassifier {
-    static func storedScores(for directory: URL) -> URL {
-        let name = directory.standardizedFileURL.path.replacingOccurrences(of: "/", with: "_")
-        return FileManager.default.homeDirectoryForCurrentUser.appending(path: ".basalt/head-scores/\(name).json")
-    }
-
-    static func loadOrScore(directory: URL, container: ModelContainer) async throws -> [[Float]] {
-        let url = storedScores(for: directory)
-        if let data = try? Data(contentsOf: url), let scores = try? JSONDecoder().decode([[Float]].self, from: data) { return scores }
-        let scores = try await container.perform { try scores(model: $0.model, tokenizer: $0.tokenizer) }
-        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try JSONEncoder().encode(scores).write(to: url, options: .atomic)
-        return scores
     }
 }

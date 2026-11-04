@@ -232,7 +232,11 @@ struct ZonedKVCacheBenchmarkTests {
             let key = ObjectIdentifier(model as AnyObject)
             let known = headScores.withLock { $0[key] }
             let scores = try known ?? KVHeadClassifier.scores(model: model, tokenizer: context.tokenizer)
-            if known == nil { headScores.withLock { $0[key] = scores } }
+            if known == nil {
+                headScores.withLock { $0[key] = scores }
+                let name = "logs/head-scores-\(context.configuration.name.replacingOccurrences(of: "/", with: "_"))-ablation.json"
+                try? JSONEncoder().encode(scores).write(to: URL(fileURLWithPath: name))
+            }
             return KVHeadMask.classify(scores: scores, ratio: ratio).replacingFullAttention(fresh)
         }
         if let topK = mode.questTopK { return QuestKVCache.replacingFullAttention(fresh, topK: topK) }
@@ -425,38 +429,99 @@ struct ZonedKVCacheBenchmarkTests {
             }
         }
 
-        if steps.contains("passkey") {
-            let lengths = Self.list("BASALT_ZONED_LENGTHS", default: "16000,32000").compactMap { Int($0) }
-            let depths = Self.list("BASALT_ZONED_DEPTHS", default: "0.2,0.8").compactMap { Double($0) }
-            for length in lengths {
-                if geometry.bytes(tokens: length) * 2 > room {
-                    log.line("SKIP passkey \(repo) length=\(length): fp16 KV \(geometry.bytes(tokens: length)) B twice exceeds the \(room) B left after the weights")
-                    continue
+        if steps.contains("passkey") { await passkeySteps(repo: repo, container: container, corpus: corpus, geometry: geometry, room: room, log: log) }
+        if steps.contains("tasks") { await taskSteps(repo: repo, container: container, corpus: corpus, geometry: geometry, room: room, log: log) }
+    }
+
+    func passkeySteps(repo: String, container: ModelContainer, corpus: String, geometry: KVCacheGeometry, room: Int64, log: Log) async {
+        let lengths = Self.list("BASALT_ZONED_LENGTHS", default: "16000,32000").compactMap { Int($0) }
+        let depths = Self.list("BASALT_ZONED_DEPTHS", default: "0.2,0.8").compactMap { Double($0) }
+        for length in lengths {
+            if geometry.bytes(tokens: length) * 2 > room {
+                log.line("SKIP passkey \(repo) length=\(length): fp16 KV \(geometry.bytes(tokens: length)) B twice exceeds the \(room) B left after the weights")
+                continue
+            }
+            for depth in depths {
+                for mode in Self.modes("BASALT_ZONED_PASSKEY_MODES") {
+                    let key = 10_000 + Int(depth * 1_000) * 37 + length % 997
+                    await log.step("passkey \(repo) \(mode) length=\(length) depth=\(depth) key=\(key)") {
+                        let answer = try await container.perform { (context: ModelContext) -> String in
+                            let filler = context.tokenizer.encode(text: corpus)
+                            let needle = context.tokenizer.encode(text: "\nThe pass key is \(key). Remember it. \(key) is the pass key.\n")
+                            let question = context.tokenizer.encode(text: "\nWhat is the pass key? The pass key is")
+                            let at = Int(Double(length) * depth)
+                            let end = length - needle.count - question.count
+                            guard filler.count >= end else { throw StepFailure(description: "corpus has \(filler.count) tokens") }
+                            let body = Array(filler[0..<at]) + needle + Array(filler[at..<end]) + question
+                            let made = try Self.iterator(mode, tokens: body, maxTokens: 8, context: context)
+                            var iterator = made.iterator
+                            var out = [Int]()
+                            while let token = iterator.next() { out.append(token) }
+                            withExtendedLifetime(made.cache) {}
+                            return context.tokenizer.decode(tokenIds: out)
+                        }
+                        return "ok=\(answer.contains(String(key))) answer=\(answer.debugDescription)"
+                    }
                 }
-                for depth in depths {
+            }
+        }
+    }
+
+    func taskSteps(repo: String, container: ModelContainer, corpus: String, geometry: KVCacheGeometry, room: Int64, log: Log) async {
+        let lengths = Self.list("BASALT_ZONED_LENGTHS", default: "16000,32000").compactMap { Int($0) }
+        let trials = Int(Self.env["BASALT_ZONED_TRIALS"] ?? "") ?? 4
+        for length in lengths where geometry.bytes(tokens: length) * 2 <= room {
+            for name in Self.list("BASALT_ZONED_TASKS", default: "multikey,multihop,aggregate") {
+                for trial in 0 ..< trials {
+                    let task = Self.task(name, trial: trial)
                     for mode in Self.modes("BASALT_ZONED_PASSKEY_MODES") {
-                        let key = 10_000 + Int(depth * 1_000) * 37 + length % 997
-                        await log.step("passkey \(repo) \(mode) length=\(length) depth=\(depth) key=\(key)") {
+                        await log.step("task \(name) \(repo) \(mode) length=\(length) trial=\(trial) expected=\(task.expected)") {
                             let answer = try await container.perform { (context: ModelContext) -> String in
                                 let filler = context.tokenizer.encode(text: corpus)
-                                let needle = context.tokenizer.encode(text: "\nThe pass key is \(key). Remember it. \(key) is the pass key.\n")
-                                let question = context.tokenizer.encode(text: "\nWhat is the pass key? The pass key is")
-                                let at = Int(Double(length) * depth)
-                                let end = length - needle.count - question.count
+                                let inserts = task.facts.map { (at: Int(Double(length) * $0.depth), tokens: context.tokenizer.encode(text: "\n\($0.text)\n")) }
+                                let question = context.tokenizer.encode(text: "\n\(task.question)")
+                                let end = length - inserts.map(\.tokens.count).reduce(0, +) - question.count
                                 guard filler.count >= end else { throw StepFailure(description: "corpus has \(filler.count) tokens") }
-                                let body = Array(filler[0..<at]) + needle + Array(filler[at..<end]) + question
-                                let made = try Self.iterator(mode, tokens: body, maxTokens: 8, context: context)
+                                var body = [Int](), start = 0
+                                for insert in inserts.sorted(by: { $0.at < $1.at }) {
+                                    body += filler[start ..< insert.at] + insert.tokens
+                                    start = insert.at
+                                }
+                                body += filler[start ..< end] + question
+                                let made = try Self.iterator(mode, tokens: body, maxTokens: name == "multikey" ? 10 : 40, context: context)
                                 var iterator = made.iterator
                                 var out = [Int]()
                                 while let token = iterator.next() { out.append(token) }
                                 withExtendedLifetime(made.cache) {}
                                 return context.tokenizer.decode(tokenIds: out)
                             }
-                            return "ok=\(answer.contains(String(key))) answer=\(answer.debugDescription)"
+                            return "ok=\(answer.contains(task.expected)) answer=\(answer.debugDescription)"
                         }
                     }
                 }
             }
+        }
+    }
+
+    static func task(_ name: String, trial: Int) -> (facts: [(depth: Double, text: String)], question: String, expected: String) {
+        let names = ["Alder", "Birch", "Cedar", "Dahlia"]
+        let keys = names.indices.map { 31_000 + (trial * 4 + $0) * 6_173 % 60_000 }
+        let shift = Double(trial) * 0.03
+        switch name {
+        case "multikey":
+            let asked = trial % names.count
+            return (zip(names, keys).enumerated().map { (0.12 + shift + Double($0.offset) * 0.22, "The pass key of \($0.element.0) is \($0.element.1).") },
+                    "What is the pass key of \(names[asked])? The pass key of \(names[asked]) is", String(keys[asked]))
+        case "multihop":
+            let (courier, decoy) = (names[trial % 4], names[(trial + 1) % 4])
+            return ([(0.15 + shift, "The vault code is the same five-digit number as the pass key of the courier named \(courier)."),
+                     (0.45 + shift, "The pass key of \(decoy) is \(keys[1])."),
+                     (0.7 + shift, "The pass key of \(courier) is \(keys[0]).")],
+                    "Example: if the vault code is the pass key of Zed, and the pass key of Zed is 11111, then the vault code is 11111. What is the vault code in the document above? The vault code is", String(keys[0]))
+        default:
+            let crates = (0 ..< 5).map { 2 + (trial * 5 + $0 * 3) % 8 }
+            return (crates.enumerated().map { (0.1 + shift + Double($0.offset) * 0.18, "A shipment of \($0.element) crates arrived at the north depot.") },
+                    "How many crates arrived at the north depot in total, adding up every shipment? The total is", String(crates.reduce(0, +)))
         }
     }
 
