@@ -97,12 +97,6 @@ struct Benchmark: AsyncParsableCommand {
     @Flag(name: .customLong("share"), help: "Export benchmark results to JSON format suitable for sharing (bench --share)")
     var share: Bool = false
 
-    func validate() throws {
-        if let conflict = KVPrecision.flagConflict(kvBitsSet: kvBits != nil, fixed: kvBits, zones: kvZones) {
-            throw ValidationError(conflict)
-        }
-    }
-
     func run() async throws {
         if wiredLimit { MLXInferenceEngine.renewsResidency() }
         let resolvedPath = resolveModelPath()
@@ -112,17 +106,7 @@ struct Benchmark: AsyncParsableCommand {
         }
         print("  iterations: \(iterations)  tokens: \(tokens)  warmup: \(!noWarmup)\n")
 
-        let engine = MLXInferenceEngine(
-            reasoningEffort: reasoningEffort,
-            gpuCacheLimit: gpuCacheMB.map { $0 == 0 ? nil : $0 << 20 } ?? (512 << 20),
-            kvPrecision: kvBits,
-            kvZones: kvZones ? .standard : nil,
-            kvHeadSplit: kvHeadSplit,
-            questTopK: questTopK,
-            repetitionPenalty: repetitionPenalty,
-            topK: topK, minP: minP, seed: seed, speculativeLookup: speculativeLookup,
-            speculativeRecycling: speculativeRecycling, mtp: mtp, mtpBlockSize: mtpBlock, experimentalSamplers: dryMultiplier != nil, grammarJumpForward: grammarJumpForward, wiresWorkingSet: wiredLimit)
-        let orchestrator = ModelOrchestratorActor(engine: engine, maxTokens: tokens, kvPrecision: kvBits, kvZones: kvZones ? .standard : nil)
+        let orchestrator = makeOrchestrator()
 
         print("Loading model…", terminator: ""); fflush(stdout)
         try await orchestrator.loadModel(path: resolvedPath)
@@ -133,48 +117,15 @@ struct Benchmark: AsyncParsableCommand {
             return
         }
 
-        // Warmup (excluded from stats)
         if !noWarmup {
             print("Warmup… ", terminator: ""); fflush(stdout)
             _ = try await orchestrator.generate(request: request())
             print("done\n")
         }
 
-        var tpsSamples:      [Double] = []
-        var ttftSamples:     [Double] = []
-        var genTimeSamples:  [Double] = []
-        var draftTokens = 0
-        var finishReasons: [String: Int] = [:]
-        var acceptedDraftTokens = 0
+        let runs = try await timedRuns(orchestrator)
+        printSummary(runs)
 
-        print("  #     TPS         TTFT (s)    Time (s)")
-        print("  " + String(repeating: "─", count: 42))
-
-        for i in 1...iterations {
-            let r = try await orchestrator.generate(request: request())
-            draftTokens += r.draftTokens ?? 0
-            finishReasons["\(r.finishReason)", default: 0] += 1
-            acceptedDraftTokens += r.acceptedDraftTokens ?? 0
-
-            tpsSamples.append(r.tokensPerSecond)
-            ttftSamples.append(r.timeToFirstToken)
-            genTimeSamples.append(r.generationTime)
-
-            print(String(format: "  %-4d  %-10.2f  %-10.3f  %-10.2f",
-                         i, r.tokensPerSecond, r.timeToFirstToken, r.generationTime))
-        }
-
-        print()
-        printStats(label: "TPS",          samples: tpsSamples,     unit: "tok/s")
-        printStats(label: "TTFT",         samples: ttftSamples,     unit: "s")
-        printStats(label: "GenTime",      samples: genTimeSamples,  unit: "s")
-        print("  Finish      " + finishReasons.sorted { $0.key < $1.key }.map { "\($0.key) \($0.value)" }.joined(separator: ", "))
-        if speculativeLookup || mtp {
-            let rate = draftTokens == 0 ? 0 : Double(acceptedDraftTokens) / Double(draftTokens)
-            print(String(format: "  Drafts      accepted %d of %d (α = %.3f)", acceptedDraftTokens, draftTokens, rate))
-        }
-
-        // Memory from last run
         let last = try await orchestrator.generate(request: request())
         let memMB = last.memory.activeBytes / 1_048_576
         if printOutput {
@@ -182,42 +133,13 @@ struct Benchmark: AsyncParsableCommand {
         }
         print(String(format: "\n  Memory (active): %d MB", memMB))
 
-        // Record benchmark in local hardware profile for self-calibration
-        let tpsMean = tpsSamples.isEmpty ? 0 : tpsSamples.reduce(0, +) / Double(tpsSamples.count)
-        let ttftMean = ttftSamples.isEmpty ? 0 : ttftSamples.reduce(0, +) / Double(ttftSamples.count)
+        let tpsMean = Self.mean(runs.map(\.tokensPerSecond))
+        let ttftMean = Self.mean(runs.map(\.timeToFirstToken))
         let chip = SystemProfiler.detectChipModel()
-
-        let normalizedModelId = ModelCache.canonicalRepoId(from: model)
-        let measurement = BenchmarkMeasurement(
-            modelId: normalizedModelId,
-            chipModel: chip,
-            measuredTPS: tpsMean,
-            measuredTTFT: ttftMean,
-            timestamp: Date(),
-            quant: quant
-        )
-        do {
-            try await HardwareBenchmarkProfileStore.shared.record(measurement)
-            print("  Hardware profile updated: \(HardwareBenchmarkProfileStore.defaultProfilePath) (measured ✓)")
-        } catch {
-            print("  Hardware profile NOT updated: \(error.localizedDescription)")
-            if error is DecodingError {
-                print("  \(HardwareBenchmarkProfileStore.defaultProfilePath) is unreadable — move or delete it to start a fresh profile.")
-            }
-        }
+        await recordProfile(tps: tpsMean, ttft: ttftMean, chip: chip)
 
         if share {
-            struct BenchmarkShareExport: Codable {
-                let basalt_version: String
-                let model: String
-                let quant: String?
-                let chip: String
-                let tps_avg: Double
-                let ttft_avg: Double
-                let memory_active_mb: Int
-                let timestamp: Date
-            }
-            let exportObj = BenchmarkShareExport(
+            printShareExport(BenchmarkShareExport(
                 basalt_version: HealthResponse.version,
                 model: model,
                 quant: quant,
@@ -226,15 +148,7 @@ struct Benchmark: AsyncParsableCommand {
                 ttft_avg: (ttftMean * 1000).rounded() / 1000,
                 memory_active_mb: memMB,
                 timestamp: Date()
-            )
-            let encoder = JSONEncoder()
-            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-            encoder.dateEncodingStrategy = .iso8601
-            if let data = try? encoder.encode(exportObj), let jsonStr = String(data: data, encoding: .utf8) {
-                print("\n--- BENCHMARK SHARE EXPORT (bench --share) ---")
-                print(jsonStr)
-                print("----------------------------------------------\n")
-            }
+            ))
         }
     }
 
@@ -283,5 +197,109 @@ struct Benchmark: AsyncParsableCommand {
     private func resolveModelPath() -> String {
         // Shared with `serve` so both agree on which weights are loaded.
         ModelCache.resolve(repoId: model, quant: quant)?.path ?? model
+    }
+}
+
+extension Benchmark {
+    func validate() throws {
+        if let conflict = KVPrecision.flagConflict(kvBitsSet: kvBits != nil, fixed: kvBits, zones: kvZones) {
+            throw ValidationError(conflict)
+        }
+        if let questTopK, !(1 ... 4096).contains(questTopK) {
+            throw ValidationError("--quest-top-k takes a number of blocks in 1...4096")
+        }
+    }
+}
+
+extension Benchmark {
+    struct BenchmarkShareExport: Codable {
+        let basalt_version: String
+        let model: String
+        let quant: String?
+        let chip: String
+        let tps_avg: Double
+        let ttft_avg: Double
+        let memory_active_mb: Int
+        let timestamp: Date
+    }
+
+    static func mean(_ samples: [Double]) -> Double {
+        samples.isEmpty ? 0 : samples.reduce(0, +) / Double(samples.count)
+    }
+
+    private func makeOrchestrator() -> ModelOrchestratorActor {
+        let engine = MLXInferenceEngine(
+            reasoningEffort: reasoningEffort,
+            gpuCacheLimit: gpuCacheMB.map { $0 == 0 ? nil : $0 << 20 } ?? (512 << 20),
+            kvPrecision: kvBits,
+            kvZones: kvZones ? .standard : nil,
+            kvHeadSplit: kvHeadSplit,
+            questTopK: questTopK,
+            repetitionPenalty: repetitionPenalty,
+            topK: topK, minP: minP, seed: seed, speculativeLookup: speculativeLookup,
+            speculativeRecycling: speculativeRecycling, mtp: mtp, mtpBlockSize: mtpBlock, experimentalSamplers: dryMultiplier != nil, grammarJumpForward: grammarJumpForward, wiresWorkingSet: wiredLimit)
+        return ModelOrchestratorActor(engine: engine, maxTokens: tokens, kvPrecision: kvBits, kvZones: kvZones ? .standard : nil)
+    }
+
+    private func timedRuns(_ orchestrator: ModelOrchestratorActor) async throws -> [GenerationResponse] {
+        print("  #     TPS         TTFT (s)    Time (s)")
+        print("  " + String(repeating: "─", count: 42))
+
+        var runs: [GenerationResponse] = []
+        for i in 1...iterations {
+            let r = try await orchestrator.generate(request: request())
+            runs.append(r)
+            print(String(format: "  %-4d  %-10.2f  %-10.3f  %-10.2f",
+                         i, r.tokensPerSecond, r.timeToFirstToken, r.generationTime))
+        }
+        return runs
+    }
+
+    private func printSummary(_ runs: [GenerationResponse]) {
+        var finishReasons: [String: Int] = [:]
+        for r in runs { finishReasons["\(r.finishReason)", default: 0] += 1 }
+
+        print()
+        printStats(label: "TPS",          samples: runs.map(\.tokensPerSecond),  unit: "tok/s")
+        printStats(label: "TTFT",         samples: runs.map(\.timeToFirstToken), unit: "s")
+        printStats(label: "GenTime",      samples: runs.map(\.generationTime),   unit: "s")
+        print("  Finish      " + finishReasons.sorted { $0.key < $1.key }.map { "\($0.key) \($0.value)" }.joined(separator: ", "))
+        if speculativeLookup || mtp {
+            let draftTokens = runs.reduce(0) { $0 + ($1.draftTokens ?? 0) }
+            let acceptedDraftTokens = runs.reduce(0) { $0 + ($1.acceptedDraftTokens ?? 0) }
+            let rate = draftTokens == 0 ? 0 : Double(acceptedDraftTokens) / Double(draftTokens)
+            print(String(format: "  Drafts      accepted %d of %d (α = %.3f)", acceptedDraftTokens, draftTokens, rate))
+        }
+    }
+
+    private func recordProfile(tps: Double, ttft: Double, chip: String) async {
+        let measurement = BenchmarkMeasurement(
+            modelId: ModelCache.canonicalRepoId(from: model),
+            chipModel: chip,
+            measuredTPS: tps,
+            measuredTTFT: ttft,
+            timestamp: Date(),
+            quant: quant
+        )
+        do {
+            try await HardwareBenchmarkProfileStore.shared.record(measurement)
+            print("  Hardware profile updated: \(HardwareBenchmarkProfileStore.defaultProfilePath) (measured ✓)")
+        } catch {
+            print("  Hardware profile NOT updated: \(error.localizedDescription)")
+            if error is DecodingError {
+                print("  \(HardwareBenchmarkProfileStore.defaultProfilePath) is unreadable — move or delete it to start a fresh profile.")
+            }
+        }
+    }
+
+    private func printShareExport(_ export: BenchmarkShareExport) {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        encoder.dateEncodingStrategy = .iso8601
+        if let data = try? encoder.encode(export), let jsonStr = String(data: data, encoding: .utf8) {
+            print("\n--- BENCHMARK SHARE EXPORT (bench --share) ---")
+            print(jsonStr)
+            print("----------------------------------------------\n")
+        }
     }
 }

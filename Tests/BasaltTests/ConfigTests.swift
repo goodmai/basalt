@@ -373,16 +373,16 @@ struct ConfigTests {
         let (dir, file) = try tempConfig(#"{"port": 9000, "host": "0.0.0.0", "api_key": "from-file"}"#)
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        let explicit = try ServeCommand.resolveNetwork(cliPort: 8080, cliHost: "127.0.0.1", cliApiKey: nil, configFile: file.path)
+        let explicit = try ServeCommand.resolveNetwork(NetworkSettings.Flags(port: 8080, host: "127.0.0.1"), configFile: file.path)
         #expect(explicit.port == 8080)
         #expect(explicit.host == "127.0.0.1")
         #expect(explicit.apiKey == "from-file")
 
-        let fromFile = try ServeCommand.resolveNetwork(cliPort: nil, cliHost: nil, cliApiKey: nil, configFile: file.path)
+        let fromFile = try ServeCommand.resolveNetwork(configFile: file.path)
         #expect(fromFile.port == 9000)
         #expect(fromFile.host == "0.0.0.0")
 
-        let none = try ServeCommand.resolveNetwork(cliPort: nil, cliHost: nil, cliApiKey: nil, configFile: nil)
+        let none = try ServeCommand.resolveNetwork(configFile: nil)
         #expect(none.port == 8080 && none.host == "127.0.0.1" && none.apiKey == nil)
     }
 
@@ -391,10 +391,10 @@ struct ConfigTests {
         let (dir, file) = try tempConfig("[1, 2, 3]")
         defer { try? FileManager.default.removeItem(at: dir) }
         #expect(throws: (any Error).self) {
-            _ = try ServeCommand.resolveNetwork(cliPort: nil, cliHost: nil, cliApiKey: nil, configFile: file.path)
+            _ = try ServeCommand.resolveNetwork(configFile: file.path)
         }
         #expect(throws: (any Error).self) {
-            _ = try ServeCommand.resolveNetwork(cliPort: nil, cliHost: nil, cliApiKey: nil, configFile: dir.appendingPathComponent("absent.json").path)
+            _ = try ServeCommand.resolveNetwork(configFile: dir.appendingPathComponent("absent.json").path)
         }
     }
 
@@ -477,15 +477,15 @@ struct ConfigTests {
         let (dir, file) = try tempConfig(#"{"port": "9000"}"#)
         defer { try? FileManager.default.removeItem(at: dir) }
         #expect(throws: (any Error).self) {
-            _ = try ServeCommand.resolveNetwork(cliPort: nil, cliHost: nil, cliApiKey: nil, configFile: file.path)
+            _ = try ServeCommand.resolveNetwork(configFile: file.path)
         }
         let (dir2, file2) = try tempConfig(#"{"api_key": "from-file"}"#)
         defer { try? FileManager.default.removeItem(at: dir2) }
-        let blank = try ServeCommand.resolveNetwork(cliPort: nil, cliHost: nil, cliApiKey: "  ", configFile: file2.path)
+        let blank = try ServeCommand.resolveNetwork(NetworkSettings.Flags(apiKey: "  "), configFile: file2.path)
         #expect(blank.apiKey == "from-file", "an empty CLI/env key must not mask the config key")
 
         // An explicit CLI value never consults the bad field.
-        let ok = try ServeCommand.resolveNetwork(cliPort: 8081, cliHost: nil, cliApiKey: nil, configFile: file.path)
+        let ok = try ServeCommand.resolveNetwork(NetworkSettings.Flags(port: 8081), configFile: file.path)
         #expect(ok.port == 8081)
     }
 

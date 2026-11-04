@@ -155,13 +155,10 @@ struct ServerDrainTests {
         }
         let mcp = MCPServer(orchestrator: orchestrator, modelId: "mock", input: input) { _ in }
         try await ServeCommand.runServers(
-            orchestrator: orchestrator,
-            config: try ServerConfig(modelPath: "mock", restPort: 0),
-            startREST: false,
-            mcpServer: mcp,
-            shutdownDeadline: .seconds(1),
-            handleSignals: false
-        )
+            ServerLaunch(
+                config: try ServerConfig(modelPath: "mock", restPort: 0), startREST: false, mcpServer: mcp,
+                shutdownDeadline: .seconds(1), handleSignals: false),
+            orchestrator: orchestrator)
 
         #expect(await engine.persistCount == 1)
         let logFile = try #require(SessionLogReader.file(for: "mcp-eof", in: tempDir))
@@ -210,13 +207,10 @@ struct ServerDrainTests {
         }
         let mcp = MCPServer(orchestrator: orchestrator, modelId: "mock", input: input) { _ in }
         try await ServeCommand.runServers(
-            orchestrator: orchestrator,
-            config: try ServerConfig(modelPath: "mock", restPort: 0),
-            startREST: true,
-            mcpServer: mcp,
-            shutdownDeadline: .milliseconds(500),
-            handleSignals: false
-        )
+            ServerLaunch(
+                config: try ServerConfig(modelPath: "mock", restPort: 0), startREST: true, mcpServer: mcp,
+                shutdownDeadline: .milliseconds(500), handleSignals: false),
+            orchestrator: orchestrator)
         await feeder.value
         #expect(await engine.persistCount == 1)
     }

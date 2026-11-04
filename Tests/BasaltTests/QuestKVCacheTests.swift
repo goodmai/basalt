@@ -65,6 +65,25 @@ struct QuestKVCacheTests {
         #expect(!allClose(farFromNeedle, dense, atol: 0.3).item(Bool.self))
     }
 
+    @Test("A copy decodes the next step exactly like the cache it was copied from, and the two stay independent")
+    func copyIsIndependent() throws {
+        let tokens = 2000
+        let keys = Self.normal([1, Self.kvHeads, tokens, Self.dim], 12)
+        let values = Self.normal([1, Self.kvHeads, tokens, Self.dim], 13)
+        let cache = QuestKVCache(topK: 4)
+        Self.filled(cache, keys: keys[.ellipsis, ..<(tokens - 1), 0...], values: values[.ellipsis, ..<(tokens - 1), 0...])
+        let copied = try #require(cache.copy() as? QuestKVCache)
+        let query = Self.normal([1, Self.kvHeads * Self.groups, 1, Self.dim], 14)
+        let next = (keys[.ellipsis, (tokens - 1)..., 0...], values[.ellipsis, (tokens - 1)..., 0...])
+        let original = cache.updateAndAttend(queries: query, keys: next.0, values: next.1, scale: Self.scale, mask: .none)
+        let fromCopy = copied.updateAndAttend(queries: query, keys: next.0, values: next.1, scale: Self.scale, mask: .none)
+        #expect(cache.sparseSteps == 1 && copied.sparseSteps == 1)
+        #expect(allClose(original, fromCopy, atol: 1e-6).item(Bool.self))
+        #expect(cache.offset == tokens && copied.offset == tokens)
+        #expect(cache.trim(500) == 500)
+        #expect(copied.offset == tokens)
+    }
+
     @Test("A multi-token step stays dense, the block bounds are evaluated with the cache, and trimming drops the bounds of blocks that no longer exist")
     func prefillDenseAndTrim() {
         let tokens = 2000

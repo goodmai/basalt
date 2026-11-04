@@ -178,11 +178,10 @@ extension ServeCommand {
 
     func resolveAccess() throws -> NetworkSettings {
         var settings = try Self.resolveNetwork(
-            cliPort: network.port, cliHost: network.host,
-            cliApiKey: network.apiKey ?? ProcessInfo.processInfo.environment["BASALT_API_KEY"],
-            cliRateLimit: network.rateLimit,
-            cliRateBurst: network.rateBurst,
-            cliAllowedOrigins: network.allowOrigins,
+            NetworkSettings.Flags(
+                port: network.port, host: network.host,
+                apiKey: network.apiKey ?? ProcessInfo.processInfo.environment["BASALT_API_KEY"],
+                rateLimit: network.rateLimit, rateBurst: network.rateBurst, allowedOrigins: network.allowOrigins),
             configFile: network.configPath
         )
         let access: (key: String?, generated: Bool)

@@ -14,6 +14,9 @@ final class QuestKVCache: KVCacheAttentionProtocol {
     private var indexedBlocks = 0
     private(set) var sparseSteps = 0
     private(set) var materializedForCaller = false
+    private let sinks = MLXArray(Int32(0) ..< Int32(QuestKVCache.sinkTokens))
+    private let windowSteps = MLXArray(Int32(0) ..< Int32(QuestKVCache.windowTokens + QuestKVCache.blockTokens))
+    private let blockSteps = MLXArray(Int32(0) ..< Int32(QuestKVCache.blockTokens)).reshaped(1, 1, 1, -1)
 
     init(topK: Int) {
         self.topK = topK
@@ -65,9 +68,9 @@ final class QuestKVCache: KVCacheAttentionProtocol {
         let lower = minima[0..., 0..., first ..< last].expandedDimensions(axis: 2)
         let score = maximum(q * upper, q * lower).sum(axis: -1).sum(axis: 2)
         let chosen = argPartition(-score, kth: topK - 1, axis: -1)[.ellipsis, ..<topK].asType(.int32) + Int32(first)
-        let within = MLXArray(Int32(0) ..< Int32(Self.blockTokens)).reshaped(1, 1, 1, -1)
-        let blocks = (chosen.expandedDimensions(axis: -1) * Int32(Self.blockTokens) + within).reshaped(batch, kvHeads, -1)
-        let fixed = MLXArray(Array(Int32(0) ..< Int32(Self.sinkTokens)) + Array(Int32(last * Self.blockTokens) ..< Int32(offset)))
+        let blocks = (chosen.expandedDimensions(axis: -1) * Int32(Self.blockTokens) + blockSteps).reshaped(batch, kvHeads, -1)
+        let windowStart = last * Self.blockTokens
+        let fixed = concatenated([sinks, windowSteps[..<(offset - windowStart)] + Int32(windowStart)])
         let rows = concatenated([broadcast(fixed.reshaped(1, 1, -1), to: [batch, kvHeads, fixed.dim(0)]), blocks], axis: -1)
             .expandedDimensions(axis: -1)
         let count = rows.dim(2)
