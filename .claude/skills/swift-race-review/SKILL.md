@@ -13,7 +13,7 @@ Use this skill for that blind spot. For ordinary actor, `Task` and async/await c
 
 ## How to review
 
-1. **List the execution contexts.** For the code under review, name every thread or task that runs it: the caller's task, `container.perform` / `performSending`, the mlx-swift-lm generation worker that calls `iterator.next()` (a batched row steps the whole batch from its own worker), the detached stream tasks, the allowlisted raw `Thread`s, timers, `deinit`. A race needs two of them. If you cannot say which two, you have not found a race yet.
+1. **List the execution contexts.** For the code under review, name every thread or task that runs it: the caller's task, `container.perform` / `performSending`, the mlx-swift-lm generation worker that calls `iterator.next()` (a batched row steps the whole batch from its own worker), the `@concurrent` stream tasks (engine token stream, orchestrator relay), the allowlisted raw `Thread`s, timers, `deinit`. A race needs two of them. If you cannot say which two, you have not found a race yet.
 2. **List the shared state they reach**, including state that isn't a Swift property:
    - the model's weights and module tree, read by every forward;
    - `CompiledTrace` / `MLX.compile` caches, which swap weights for tracers while they trace a new input shape;

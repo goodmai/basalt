@@ -318,7 +318,7 @@ public actor MLXInferenceEngine: InferenceEngine {
                 container: container, faults: faults)
 
             return AsyncStream<StreamChunk> { continuation in
-                let task = Task.detached {
+                let task = Task { @concurrent in
                     await self.relay(relay, inputs, into: continuation)
                 }
 
@@ -329,7 +329,7 @@ public actor MLXInferenceEngine: InferenceEngine {
         } catch let err as BasaltError {
             throw err
         } catch {
-            throw .inferenceHardwareFailure(reason: error.localizedDescription)
+            throw error is CancellationError ? .cancelled : .inferenceHardwareFailure(reason: error.localizedDescription)
         }
     }
 

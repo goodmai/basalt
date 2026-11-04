@@ -10,7 +10,7 @@
   - `DispatchQueue`, `DispatchSemaphore`;
   - `Task.detached`.
 
-  Prefer a value type, an actor, `sending`, `Mutex` or an atomic. `Sources/` has no `@unchecked Sendable` and no `nonisolated(unsafe)`. The remaining sites (two `Task.detached` stream tasks that must outlive their caller without inheriting actor isolation or priority, and two raw `Thread`s around blocking reads and writes) are listed in `scripts/concurrency-hatches.allow`, one line per site: `path:symbol: why it is needed and what serializes it`.
+  Prefer a value type, an actor, `sending`, `Mutex` or an atomic. `Sources/` has no `@unchecked Sendable` and no `nonisolated(unsafe)`. A task that must outlive its caller without the actor's isolation is `Task { @concurrent in … }`, not `Task.detached`. The remaining sites (two raw `Thread`s around blocking reads and writes) are listed in `scripts/concurrency-hatches.allow`, one line per site: `path:symbol: why it is needed and what serializes it`.
 - **The allowlist only shrinks.** `scripts/check_concurrency_hatches.swift` (`swift scripts/check_concurrency_hatches.swift`, CI: `.github/workflows/concurrency-hatches.yml`) lexes every file in `Sources/` like the comment checker, so comments and strings don't count, and fails on a hatch without an allowlist line (raw `Thread` included) and on an allowlist line that no longer matches. Removing a hatch removes its line in the same PR; a new line needs a reason the reviewer accepts.
 
 ## Types first

@@ -23,6 +23,8 @@ public enum BasaltError: Error, Sendable, LocalizedError {
     case serverBusy(retryAfterSeconds: Int?)
     case memoryPressure(retryAfterSeconds: Int)
 
+    public static let cancelled = BasaltError.inferenceError("Cancelled")
+
     public var errorDescription: String? {
         switch self {
         case .modelNotFound(let id):

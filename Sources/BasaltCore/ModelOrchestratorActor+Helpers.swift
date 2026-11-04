@@ -8,7 +8,7 @@ extension ModelOrchestratorActor {
     static func logStatus(_ error: BasaltError) -> String {
         if case .inferenceError(let message) = error {
             if message.hasPrefix("Timeout after") { return "timeout" }
-            if message == "Cancelled while queued" { return "cancelled" }
+            if message == "Cancelled" { return "cancelled" }
         }
         return Task.isCancelled ? "cancelled" : "error"
     }
