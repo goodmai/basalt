@@ -157,7 +157,7 @@ struct FitCommand: AsyncParsableCommand {
             headers: headers,
             rows: rows,
             style: .unicode,
-            colorHeaders: true
+            highlight: .headers
         )
         
         print(table)

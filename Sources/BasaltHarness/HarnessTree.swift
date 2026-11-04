@@ -195,7 +195,7 @@ enum HarnessPath {
     }
 
     static func scriptReferences(in content: String) -> [String] {
-        matches(of: #"(?<![^\s`(\["'])((?:\./)?(?:[A-Za-z0-9_.-]+/)*scripts/[A-Za-z0-9_./-]+\.(?:py|sh|bash|swift|ts|js|mjs))"#, in: content)
+        matches(of: #"(?<![^\s`(\[\x22'])((?:\./)?(?:[A-Za-z0-9_.-]+/)*scripts/[A-Za-z0-9_./-]+\.(?:py|sh|bash|swift|ts|js|mjs))"#, in: content)
             .filter { reference in
                 let head = reference.split(separator: "/").first ?? ""
                 return head.hasPrefix(".") || !head.contains(".")

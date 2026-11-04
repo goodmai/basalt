@@ -122,7 +122,8 @@ public actor MemoryEvaluator {
         let required = weights + kv.bytes(tokens: TokenCount(contextLength), kvPrecision: kvPrecision, zones: kvZones).rawValue
         let oversized = def.quantization.lowercased().contains("bfloat16") || def.quantization.lowercased().contains("fp16") || def.ramMB > 30000
         return Self.assessment(
-            id: def.id, name: def.name, required: required, weights: weights, kv: kv, kvPrecision: kvPrecision, kvZones: kvZones,
+            id: def.id, name: def.name,
+            footprint: Footprint(required: required, weights: weights, kv: kv, kvPrecision: kvPrecision, kvZones: kvZones),
             resources: resources,
             subject: "Model",
             recommendation: oversized ? "Use an MLX 4-bit or Dynamic Quant (DQ) quantized version (e.g. AutisticAF/Huihui-Qwen3.8-27B-abliterated-mlx-4Bit or Ex0bit/MYTHOS-26B-A4B-PRISM-PRO-DQ-MLX)." : nil)
@@ -160,11 +161,19 @@ public actor MemoryEvaluator {
         max(0, budget - weights) / 2
     }
 
+    struct Footprint: Sendable {
+        let required: Int64
+        let weights: Int64
+        let kv: KVCacheGeometry
+        let kvPrecision: KVPrecision?
+        let kvZones: KVZones?
+    }
+
     static func assessment(
-        id: String, name: String, required: Int64, weights: Int64, kv: KVCacheGeometry, kvPrecision: KVPrecision?, kvZones: KVZones?,
-        resources: SystemProfiler.SystemResources, subject: String, recommendation: String?
+        id: String, name: String, footprint: Footprint, resources: SystemProfiler.SystemResources, subject: String, recommendation: String?
     ) -> MemoryAssessment {
         let budget = memoryBudget(resources)
+        let required = footprint.required
         let level = fitLevel(required: required, budget: budget)
         let fits = level != .tooTight
         let warning: String?
@@ -178,8 +187,10 @@ public actor MemoryEvaluator {
         return MemoryAssessment(
             modelId: id, modelName: name, requiredRAMBytes: required, availableRAMBytes: resources.availableRAM,
             totalPhysicalRAMBytes: resources.totalRAM, fitsInMemory: fits, fitLevel: level,
-            maxContextBudgetTokens: contextBudget(budget: budget, weights: weights, kv: kv, kvPrecision: kvPrecision, kvZones: kvZones),
-            maxPromptBudgetTokens: promptBudget(budget: budget, weights: weights, kv: kv, kvPrecision: kvPrecision, kvZones: kvZones),
+            maxContextBudgetTokens: contextBudget(
+                budget: budget, weights: footprint.weights, kv: footprint.kv, kvPrecision: footprint.kvPrecision, kvZones: footprint.kvZones),
+            maxPromptBudgetTokens: promptBudget(
+                budget: budget, weights: footprint.weights, kv: footprint.kv, kvPrecision: footprint.kvPrecision, kvZones: footprint.kvZones),
             warning: warning, recommendation: fits ? nil : recommendation, memoryBudgetBytes: budget)
     }
 
@@ -197,8 +208,9 @@ public actor MemoryEvaluator {
         )
         let required = Int64(Double(localSize) * 1.15) + kv.bytes(tokens: TokenCount(contextLength), kvPrecision: kvPrecision, zones: kvZones).rawValue
         return Self.assessment(
-            id: modelId, name: modelId.components(separatedBy: "/").last ?? modelId, required: required,
-            weights: localSize, kv: kv, kvPrecision: kvPrecision, kvZones: kvZones, resources: resources,
+            id: modelId, name: modelId.components(separatedBy: "/").last ?? modelId,
+            footprint: Footprint(required: required, weights: localSize, kv: kv, kvPrecision: kvPrecision, kvZones: kvZones),
+            resources: resources,
             subject: "Model files (\(formatRAMBytes(localSize)))", recommendation: nil)
     }
 
@@ -229,8 +241,11 @@ public actor MemoryEvaluator {
         let weights = estimatedMB * 1024 * 1024
         let quantized = info.quantization.contains("4bit") || info.quantization.contains("dq") || info.quantization.contains("nvfp4")
         return Self.assessment(
-            id: modelId, name: info.name, required: weights + kv.bytes(tokens: TokenCount(contextLength), kvPrecision: kvPrecision, zones: kvZones).rawValue,
-            weights: weights, kv: kv, kvPrecision: kvPrecision, kvZones: kvZones, resources: resources, subject: "Model (estimated)",
+            id: modelId, name: info.name,
+            footprint: Footprint(
+                required: weights + kv.bytes(tokens: TokenCount(contextLength), kvPrecision: kvPrecision, zones: kvZones).rawValue,
+                weights: weights, kv: kv, kvPrecision: kvPrecision, kvZones: kvZones),
+            resources: resources, subject: "Model (estimated)",
             recommendation: quantized ? nil : "Consider choosing a 4-bit quantized MLX model variant.")
     }
 
