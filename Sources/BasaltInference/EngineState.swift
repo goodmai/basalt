@@ -22,6 +22,8 @@ struct ModelFacts: Sendable {
     var kvHeadMask: KVHeadMask?
     var questApplies = false
     var capabilities = ModelCapabilities.unrestricted
+    var deltas: [String: AppliedDelta] = [:]
+    var cacheFence = 0
 }
 
 struct LoadedModel: Sendable {

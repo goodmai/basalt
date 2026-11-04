@@ -168,8 +168,8 @@ extension ModelOrchestratorActor {
     public func telemetrySnapshot() async -> ServerTelemetrySnapshot {
         var snapshot = await telemetry.snapshot()
         let anchors = await engine.hybridAnchorUsage
-        snapshot.hybridAnchors = anchors?.count
-        snapshot.hybridAnchorBytes = anchors?.bytes
+        (snapshot.hybridAnchors, snapshot.hybridAnchorBytes) = (anchors?.count, anchors?.bytes)
+        snapshot.activeDeltas = await engine.activeDeltas
         if let memory {
             snapshot.memory = MemoryTelemetry(state: await memory.state, limits: memoryLimits, refusedAdmissions: memoryRefusals)
         }
