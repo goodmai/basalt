@@ -363,9 +363,7 @@ struct PromptCacheReuseTests {
         let engine = try await TinyModel.engine(promptCacheBytes: budget)
         _ = try await engine.generate(request: greedy(Conversation.firstTurn, key: "ns"))
         _ = try await engine.generate(request: greedy(Conversation.otherBranch, key: "ns"))
-        let (bytes, kept) = await engine.readPromptCaches {
-            ($0.byteCount, $0.storedPrefix(of: TinyModel.tokens(Conversation.afterToolCall), in: "ns"))
-        }
+        let (bytes, kept) = await engine.readPromptCaches { ($0.byteCount, $0.storedPrefix(of: TinyModel.tokens(Conversation.afterToolCall), in: "ns")) }
         #expect(bytes <= budget)
         #expect(kept > 40)
         #expect(kept < firstCount - 1)
