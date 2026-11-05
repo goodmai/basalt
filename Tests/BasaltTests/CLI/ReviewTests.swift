@@ -128,6 +128,18 @@ struct ReviewTests {
         await #expect(throws: ReviewRemote.Failure.self) { try await remote.fetchDiff(session: Self.session) }
     }
 
+    @Test("GitLab pages count against one total cap: two full pages that together pass it are refused")
+    func gitlabPagesShareTheCap() async throws {
+        let line = "+" + String(repeating: "x", count: ReviewRemote.maxDiffBytes / ReviewRemote.gitlabPageSize * 3 / 5) + "\n"
+        let files = (0 ..< ReviewRemote.gitlabPageSize).map { ["old_path": "f\($0)", "new_path": "f\($0)", "diff": line] }
+        let page = try JSONSerialization.data(withJSONObject: files)
+        #expect(page.count <= ReviewRemote.maxDiffBytes && 2 * page.count > ReviewRemote.maxDiffBytes)
+        let host = Self.stub(body: page)
+        let remote = try ReviewRemote(forge: .gitlab, instance: "https://\(host)", repo: "g/p", number: 1, token: nil)
+        await #expect(throws: ReviewRemote.Failure.self) { try await remote.fetchDiff(session: Self.session) }
+        #expect(StubURLProtocol.requests(for: host).count == 2)
+    }
+
     @Test("The request delegate refuses every redirect, so the token header never follows a Location to another host")
     func noRedirect() async throws {
         let target = try #require(URL(string: "https://elsewhere.test/steal"))
