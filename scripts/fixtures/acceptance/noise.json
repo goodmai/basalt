@@ -1,0 +1,8 @@
+{
+  "accuracy" : 0.825,
+  "commit" : "c0ffee00000000000000000000000000000000bb",
+  "maxKL" : 0.0009,
+  "model" : "lukaskremla/Qwen3.8-27B-3bit-MLX-TextOnly",
+  "tasks" : 40,
+  "tokPerSec" : 29.1
+}
