@@ -13,6 +13,7 @@ extension AnthropicController {
         var isError: Bool? = nil
         var thinking: String? = nil
         var signature: String? = nil
+        var source: ImageSource? = nil
 
         init(type: String = "text", text: String) {
             self.type = type
@@ -36,6 +37,14 @@ extension AnthropicController {
             type == "image" ? ToolTranscript.imageOmitted : text
         }
 
+        func image() throws(BasaltError) -> ImageInput {
+            switch source?.type {
+            case "base64": return try ImageInput(base64: source?.data ?? "", mime: source?.mediaType ?? "")
+            case "url": throw .invalidRequestStructure(details: ImageInput.remoteRefusal)
+            default: throw .invalidRequestStructure(details: "an image block needs a source of type base64")
+            }
+        }
+
         var inputJSON: String {
             input.flatMap { try? Self.sortedEncoder.encode($0) }.flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
         }
@@ -47,7 +56,7 @@ extension AnthropicController {
         }()
 
         enum CodingKeys: String, CodingKey {
-            case type, text, id, name, input, content, thinking, signature
+            case type, text, id, name, input, content, thinking, signature, source
             case toolUseId = "tool_use_id"
             case isError = "is_error"
         }
@@ -57,6 +66,17 @@ extension AnthropicController {
             return ChatMessageInput(
                 role: .tool, text: isError == true ? "Error: \(output)" : output,
                 toolCallId: toolUseId, toolName: toolUseId.flatMap { toolNames[$0] })
+        }
+    }
+
+    struct ImageSource: Codable, Sendable {
+        let type: String
+        var mediaType: String? = nil
+        var data: String? = nil
+
+        enum CodingKeys: String, CodingKey {
+            case type, data
+            case mediaType = "media_type"
         }
     }
 
@@ -271,13 +291,13 @@ extension AnthropicController {
             + zip(toolCalls, inputs).map { ContentBlock(toolUse: $0.0, input: $0.1) }
     }
 
-    static func chatMessages(system: SystemPrompt?, messages: [Message]) -> [ChatMessageInput] {
+    static func chatMessages(system: SystemPrompt?, messages: [Message]) throws(BasaltError) -> [ChatMessageInput] {
         let toolNames = toolNames(in: messages)
         var chat: [ChatMessageInput] = []
         if let text = system?.textValue, !text.isEmpty {
             chat.append(ChatMessageInput(role: .system, text: text))
         }
-        for message in messages { chat += turns(for: message, toolNames: toolNames) }
+        for message in messages { chat += try turns(for: message, toolNames: toolNames) }
         return chat
     }
 
@@ -291,19 +311,24 @@ extension AnthropicController {
         return toolNames
     }
 
-    static func turns(for message: Message, toolNames: [String: String]) -> [ChatMessageInput] {
+    static func turns(for message: Message, toolNames: [String: String]) throws(BasaltError) -> [ChatMessageInput] {
         let role: ChatMessageInput.Role = message.role == "assistant" ? .assistant : .user
         var turns: [ChatMessageInput] = []
         var text: [String] = []
         var calls: [ToolCallOutput] = []
+        var images: [ImageInput] = []
         func flush() {
-            guard !text.isEmpty || !calls.isEmpty else { return }
-            turns.append(ChatMessageInput(role: role, text: text.joined(separator: "\n"), toolCalls: calls.isEmpty ? nil : calls))
+            guard !text.isEmpty || !calls.isEmpty || !images.isEmpty else { return }
+            turns.append(ChatMessageInput(
+                role: role, text: text.joined(separator: "\n"), toolCalls: calls.isEmpty ? nil : calls, images: images))
             text = []
             calls = []
+            images = []
         }
         for block in message.content.contentBlocks {
             switch block.type {
+            case "image":
+                images.append(try block.image())
             case "tool_use":
                 calls.append(ToolCallOutput(id: block.id ?? "", name: block.name ?? "tool", arguments: block.inputJSON))
             case "tool_result":

@@ -99,3 +99,35 @@ struct GrammarFormatTests {
         #expect(details.contains(format.kind), "\(details)")
     }
 }
+
+@Suite("Constrained requests in the batched decoder (#346)", .serialized)
+struct BatchedGrammarTests {
+    static let formats: [ResponseFormat?] = [
+        .regex("[A-Z]{3}-[0-9]{4}"), .jsonSchema(ConstrainedModel.schema), nil, .grammar(#"root ::= ("yes" | "no") " because " [a-z]{1,8}"#),
+    ]
+
+    static func engine(slots: Int) async throws -> MLXInferenceEngine {
+        let engine = MLXInferenceEngine(batchSlots: slots)
+        await engine.attach(try ConstrainedModel.container())
+        return engine
+    }
+
+    @Test("Two constrained, one free and one EBNF request decode in one batch, and each row gets exactly its solo output", .timeLimit(.minutes(5)))
+    func batchedMatchesSolo() async throws {
+        let solo = try await Self.engine(slots: 1)
+        var expected: [String] = []
+        for format in Self.formats { expected.append(try await solo.generate(request: ConstrainedModel.request(format: format, maxTokens: 60)).generatedText) }
+        let batched = try await Self.engine(slots: 4)
+        let orchestrator = ModelOrchestratorActor(engine: batched, telemetry: TelemetryTracker(), gate: GenerationGate(maxConcurrent: 4))
+        let texts = try await withThrowingTaskGroup(of: (Int, String).self) { group in
+            for (index, format) in Self.formats.enumerated() {
+                group.addTask { (index, try await orchestrator.generate(request: ConstrainedModel.request(format: format, maxTokens: 60)).generatedText) }
+            }
+            var replies: [Int: String] = [:]
+            for try await (index, text) in group { replies[index] = text }
+            return Self.formats.indices.compactMap { replies[$0] }
+        }
+        #expect(texts == expected)
+        #expect(await batched.batchedRows == Self.formats.count)
+    }
+}

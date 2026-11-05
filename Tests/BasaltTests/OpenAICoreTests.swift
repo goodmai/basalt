@@ -34,7 +34,7 @@ struct OpenAICoreTests {
 
     @Test("Responses input items: consecutive calls merge into one assistant turn, outputs carry the tool name, reasoning is dropped")
     func responsesItemsToChat() throws {
-        let chat = OpenAIController.chatMessages(try messages(#"""
+        let chat = try OpenAIController.chatMessages(try messages(#"""
         [{"role": "user", "content": "go"},
          {"type": "reasoning"},
          {"type": "function_call", "call_id": "c1", "name": "read", "arguments": "{}"},
@@ -52,7 +52,7 @@ struct OpenAICoreTests {
 
     @Test("Chat messages: developer is system, tool results get the called name, empty turns without calls are dropped")
     func chatFormatToChat() throws {
-        let chat = OpenAIController.chatMessages(try messages(#"""
+        let chat = try OpenAIController.chatMessages(try messages(#"""
         [{"role": "developer", "content": "rules"},
          {"role": "user", "content": ""},
          {"role": "assistant", "content": null, "tool_calls": [{"id": "t1", "function": {"name": "ls"}}]},
@@ -71,9 +71,9 @@ struct OpenAICoreTests {
             try JSONDecoder().decode(OpenAIController.ResponsesRequest.self, from: Data(json.utf8))
         }
         let request = try decode(#"{"input": "hi", "instructions": "be brief"}"#)
-        #expect(request.conversation == [ChatMessageInput(role: .user, text: "hi")])
+        #expect(try request.conversation() == [ChatMessageInput(role: .user, text: "hi")])
         #expect(request.instructionMessages == [ChatMessageInput(role: .system, text: "be brief")])
-        #expect(try decode(#"{"input": "", "instructions": ""}"#).conversation.isEmpty)
+        #expect(try decode(#"{"input": "", "instructions": ""}"#).conversation().isEmpty)
         #expect(try decode(#"{"instructions": ""}"#).instructionMessages.isEmpty)
     }
 

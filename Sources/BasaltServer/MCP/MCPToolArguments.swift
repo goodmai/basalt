@@ -54,7 +54,7 @@ enum MCPArguments {
         return modelId
     }
 
-    static func generation(_ args: [String: Any]?) throws(MCPFailure) -> GenerationRequest {
+    static func generation(_ args: [String: Any]?, images: [ImageInput] = []) throws(MCPFailure) -> GenerationRequest {
         guard let prompt = args?["prompt"] as? String else {
             throw .invalidParams("Missing required argument: prompt")
         }
@@ -64,7 +64,8 @@ enum MCPArguments {
             prompt: prompt,
             maxTokens:   args?["maxTokens"]   as? Int,
             temperature: args?["temperature"] as? Double,
-            topP:        args?["topP"]        as? Double
+            topP:        args?["topP"]        as? Double,
+            messages:    images.isEmpty ? nil : [ChatMessageInput(role: .user, text: prompt, images: images)]
         )
         request.minP = args?["minP"] as? Double
         request.dynamicTemperature = args?["dynamicTemperature"] as? Bool

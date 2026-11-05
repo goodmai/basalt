@@ -57,10 +57,12 @@ struct GenerationPlanTests {
 
     static let batch: [Case] = [
         Case(testDescription: "a plain request joins the batch", decision: .batchable, expected: true),
-        Case(testDescription: "a grammar constraint keeps the request out of the batch",
-             facts: GenerationPlan.Facts(promptTokens: 100, constrained: true), decision: .batchable, expected: false),
-        Case(testDescription: "a forced tool keeps the request out of the batch even when its arguments go unconstrained",
-             request: GenerationRequest(prompt: "p").with { $0.toolChoice = ToolChoice(forcedTool: "f") }, decision: .batchable, expected: false),
+        Case(testDescription: "a grammar constraint joins the batch with its own mask",
+             facts: GenerationPlan.Facts(promptTokens: 100, constrained: true), decision: .batchable, expected: true),
+        Case(testDescription: "a forced tool joins the batch",
+             request: GenerationRequest(prompt: "p").with { $0.toolChoice = ToolChoice(forcedTool: "f") }, decision: .batchable, expected: true),
+        Case(testDescription: "grammar jump-forward keeps the request out of the batch",
+             facts: GenerationPlan.Facts(promptTokens: 100, constrained: true, jumpsForward: true), decision: .batchable, expected: false),
         Case(testDescription: "lookup keeps the request out of the batch",
              request: GenerationRequest(prompt: "p").withSpeculativeLookup(true), decision: .batchable, expected: false),
         Case(testDescription: "MTP keeps the request out of the batch", facts: drafter, decision: .batchable, expected: false),
@@ -136,13 +138,13 @@ struct GenerationPlanTests {
     func namespace() {
         let request = GenerationRequest(prompt: "p").with { $0.cacheKey = "chat" }
         let settings = GenerationPlan.Settings()
-        #expect(GenerationPlan.cacheNamespace(request, settings, cacheEnabled: true, carriesMoreThanTokens: false, sameEpoch: true) == "chat")
-        #expect(GenerationPlan.cacheNamespace(request, settings, cacheEnabled: false, carriesMoreThanTokens: false, sameEpoch: true) == nil)
-        #expect(GenerationPlan.cacheNamespace(request, settings, cacheEnabled: true, carriesMoreThanTokens: true, sameEpoch: true) == nil)
-        #expect(GenerationPlan.cacheNamespace(request, settings, cacheEnabled: true, carriesMoreThanTokens: false, sameEpoch: false) == nil)
-        #expect(GenerationPlan.cacheNamespace(request.withKVPrecision(.q8), settings, cacheEnabled: true, carriesMoreThanTokens: false, sameEpoch: true) == nil)
+        #expect(GenerationPlan.cacheNamespace(request, settings, cacheEnabled: true, media: .text, sameEpoch: true) == "chat")
+        #expect(GenerationPlan.cacheNamespace(request, settings, cacheEnabled: false, media: .text, sameEpoch: true) == nil)
+        #expect(GenerationPlan.cacheNamespace(request, settings, cacheEnabled: true, media: .uncacheable, sameEpoch: true) == nil)
+        #expect(GenerationPlan.cacheNamespace(request, settings, cacheEnabled: true, media: .text, sameEpoch: false) == nil)
+        #expect(GenerationPlan.cacheNamespace(request.withKVPrecision(.q8), settings, cacheEnabled: true, media: .text, sameEpoch: true) == nil)
         #expect(GenerationPlan.cacheNamespace(
-            request, GenerationPlan.Settings(kvPrecision: .q4), cacheEnabled: true, carriesMoreThanTokens: false, sameEpoch: true) == nil)
+            request, GenerationPlan.Settings(kvPrecision: .q4), cacheEnabled: true, media: .text, sameEpoch: true) == nil)
     }
 
     @Test("Grammar jump-forward is allowed only on a full-precision cache and a token-only prompt")
@@ -173,8 +175,8 @@ struct GenerationPlanTests {
                 #expect(GenerationPlan.make(row.request, verified, facts) == expected, "\(modelType)")
                 #expect(GenerationPlan.plainPrompt(row.request, verified, carriesMoreThanTokens: facts.carriesMoreThanTokens)
                     == GenerationPlan.plainPrompt(row.request, today, carriesMoreThanTokens: facts.carriesMoreThanTokens), "\(modelType)")
-                #expect(GenerationPlan.cacheNamespace(row.request, verified, cacheEnabled: true, carriesMoreThanTokens: false, sameEpoch: true)
-                    == GenerationPlan.cacheNamespace(row.request, today, cacheEnabled: true, carriesMoreThanTokens: false, sameEpoch: true), "\(modelType)")
+                #expect(GenerationPlan.cacheNamespace(row.request, verified, cacheEnabled: true, media: .text, sameEpoch: true)
+                    == GenerationPlan.cacheNamespace(row.request, today, cacheEnabled: true, media: .text, sameEpoch: true), "\(modelType)")
             }
         }
     }
@@ -204,7 +206,7 @@ struct GenerationPlanTests {
             kvZones: .standard, attendsThroughZones: true, prefillsInChunks: true, kvHeadMask: KVHeadMask(retrieval: [[0, 1]]),
             questTopK: 16, speculativeLookup: true, capabilities: .conservative)
         let request = GenerationRequest(prompt: "p").with { $0.cacheKey = "chat" }.withSpeculativeLookup(true)
-        let namespace = GenerationPlan.cacheNamespace(request, everything, cacheEnabled: true, carriesMoreThanTokens: false, sameEpoch: true)
+        let namespace = GenerationPlan.cacheNamespace(request, everything, cacheEnabled: true, media: .text, sameEpoch: true)
         #expect(namespace == nil)
         #expect(!GenerationPlan.plainPrompt(request, everything, carriesMoreThanTokens: false))
         let facts = GenerationPlan.Facts(

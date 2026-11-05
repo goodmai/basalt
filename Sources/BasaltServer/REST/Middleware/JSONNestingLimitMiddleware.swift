@@ -4,7 +4,7 @@ import BasaltCore
 
 public struct JSONNestingLimitMiddleware<Context: RequestContext>: RouterMiddleware {
     public static var depthLimit: Int { 128 }
-    static var bodyLimit: Int { 4 * 1024 * 1024 }
+    static var bodyLimit: Int { ChatPipeline.bodyLimit }
 
     public init() {}
 
