@@ -1,0 +1,348 @@
+import BasaltCore
+import Foundation
+import MLX
+import MLXLMCommon
+
+package struct WeightConverter: Sendable {
+    package enum Format: String, Sendable, CaseIterable { case mlx, hf }
+
+    package enum Precision: Sendable, Equatable {
+        case source
+        case affine(bits: Int, groupSize: Int)
+        case dense(DType?)
+    }
+
+    package enum Failure: LocalizedError {
+        case options(String)
+        case refused(String)
+        case malformed(String)
+
+        package var errorDescription: String? {
+            switch self {
+            case .options(let message), .refused(let message), .malformed(let message): message
+            }
+        }
+    }
+
+    package struct Summary: Sendable {
+        package var tensors = 0
+        package var outputTensors = 0
+        package var bytesBefore = 0
+        package var bytesAfter = 0
+        package var shards = 0
+    }
+
+    package var precision: Precision
+    package var format: Format
+    package var adapter: URL?
+    package var maxShardBytes = 5 << 30
+
+    package init(precision: Precision, format: Format = .mlx, adapter: URL? = nil) {
+        self.precision = precision
+        self.format = format
+        self.adapter = adapter
+    }
+
+    package static func precision(quantize: String?, dequantize: String?, format: Format) throws(Failure) -> Precision {
+        switch (quantize, dequantize) {
+        case (_?, _?):
+            throw .options("--quantize and --dequantize exclude each other")
+        case (let spec?, nil):
+            guard format == .mlx else { throw .options("--format hf writes dense weights; drop --quantize") }
+            let parts = spec.split(separator: ":")
+            guard parts.count == 3, parts[0] == "affine", let bits = Int(parts[1]), let groupSize = Int(parts[2]),
+                  [2, 3, 4, 5, 6, 8].contains(bits), [32, 64, 128].contains(groupSize)
+            else { throw .options("--quantize takes affine:<bits>:<group> (bits 2-6 or 8, group 32, 64 or 128), got '\(spec)'") }
+            return .affine(bits: bits, groupSize: groupSize)
+        case (nil, let name?):
+            guard let dtype = ["bf16": DType.bfloat16, "f16": DType.float16][name] else {
+                throw .options("--dequantize takes bf16 or f16, got '\(name)'")
+            }
+            return .dense(dtype)
+        case (nil, nil):
+            return format == .hf ? .dense(nil) : .source
+        }
+    }
+
+    @discardableResult
+    package func run(source: URL, output: URL) throws -> Summary {
+        try Self.checkOutput(output, source: source)
+        let configURL = source.appending(component: "config.json")
+        guard let config = ModelCache.config(at: source) else { throw Failure.malformed("\(configURL.path) is missing or unreadable") }
+        let layout = try SourceLayout(directory: source, config: config, configData: Data(contentsOf: configURL))
+        let lora = try adapter.map { try LoRAUpdate(directory: $0, keys: layout.shardOf) }
+        try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+        do {
+            try copySidecars(from: source, to: output, config: config)
+            return try stream(layout, lora: lora, to: output)
+        } catch {
+            try? FileManager.default.removeItem(at: output)
+            throw error
+        }
+    }
+
+    func stream(_ layout: SourceLayout, lora: LoRAUpdate?, to output: URL) throws -> Summary {
+        var writer = ShardWriter(directory: output, maxBytes: maxShardBytes, metadata: ["format": format == .hf ? "pt" : "mlx"])
+        var summary = Summary()
+        for shard in layout.shards {
+            var arrays = try loadArrays(url: shard)
+            for key in arrays.keys.sorted() where !layout.isCompanion(key) {
+                guard let tensor = arrays.removeValue(forKey: key) else { continue }
+                let packed = try layout.packed(key, taking: &arrays)
+                let outputs = try convert(key, tensor, packed: packed, lora: lora, sourceQuantized: layout.quantization != nil)
+                let inputs = [tensor, packed?.scales, packed?.biases].compactMap { $0 }
+                summary.tensors += inputs.count
+                summary.bytesBefore += inputs.reduce(0) { $0 + $1.nbytes }
+                summary.outputTensors += outputs.count
+                summary.bytesAfter += outputs.values.reduce(0) { $0 + $1.nbytes }
+                try writer.add(outputs)
+            }
+        }
+        summary.shards = try writer.finish()
+        return summary
+    }
+
+    func convert(
+        _ key: String, _ tensor: MLXArray, packed: PackedWeight?, lora: LoRAUpdate?, sourceQuantized: Bool
+    ) throws -> [String: MLXArray] {
+        let isWeight = key.hasSuffix(".weight")
+        let base = isWeight ? String(key.dropLast(".weight".count)) : key
+        let pair = isWeight ? lora?.pairs[base] : nil
+        let target = targetQuantization(key, tensor, packed: packed, sourceQuantized: sourceQuantized)
+        if pair == nil, let packed, let target, packed.quantization.asTuple == target.asTuple {
+            return packed.arrays(base, weight: tensor)
+        }
+        if pair == nil, packed == nil, target == nil { return [key: cast(tensor)] }
+        var weight = packed.map {
+            MLX.dequantized(
+                tensor, scales: $0.scales, biases: $0.biases,
+                groupSize: $0.quantization.groupSize, bits: $0.quantization.bits, mode: $0.quantization.mode)
+        } ?? tensor
+        if let pair, let lora { weight = try LoRAUpdate.merged(weight, pair, scale: lora.scale, layer: base) }
+        guard let target else { return [key: cast(weight)] }
+        let (wq, scales, biases) = MLX.quantized(weight, groupSize: target.groupSize, bits: target.bits, mode: target.mode)
+        return PackedWeight(scales: scales, biases: biases, quantization: target).arrays(base, weight: wq)
+    }
+
+    func targetQuantization(
+        _ key: String, _ tensor: MLXArray, packed: PackedWeight?, sourceQuantized: Bool
+    ) -> BaseConfiguration.Quantization? {
+        switch precision {
+        case .dense:
+            return nil
+        case .source:
+            return packed?.quantization
+        case .affine(let bits, let groupSize):
+            let target = BaseConfiguration.Quantization(groupSize: groupSize, bits: bits)
+            if let packed {
+                return (packed.scales.dim(-1) * packed.quantization.groupSize) % groupSize == 0 ? target : nil
+            }
+            guard !sourceQuantized, Self.isLinearLike(key, tensor), tensor.dim(-1) % groupSize == 0 else { return nil }
+            return target
+        }
+    }
+
+    static func isLinearLike(_ key: String, _ tensor: MLXArray) -> Bool {
+        let path = key.split(separator: ".")
+        guard path.last == "weight", (2 ... 3).contains(tensor.ndim), tensor.dtype.isFloatingPoint else { return false }
+        return !path.dropLast().contains { part in
+            part == "gate" || ["embed", "norm", "router", "vision", "visual", "audio"].contains { part.contains($0) }
+        }
+    }
+
+    func cast(_ tensor: MLXArray) -> MLXArray {
+        guard case .dense(let dtype?) = precision, tensor.dtype.isFloatingPoint, tensor.dtype != dtype else { return tensor }
+        return tensor.asType(dtype)
+    }
+}
+
+extension WeightConverter {
+    static func checkOutput(_ output: URL, source: URL) throws(Failure) {
+        guard !FileManager.default.fileExists(atPath: output.path) else {
+            throw .refused("\(output.path) exists; --out must name a new directory")
+        }
+        guard !canonical(output).starts(with: canonical(source)) else {
+            throw .refused("\(output.path) is inside the source \(source.path), which is never written")
+        }
+    }
+
+    static func canonical(_ url: URL) -> [String] {
+        var existing = url.standardizedFileURL
+        var missing: [String] = []
+        while !FileManager.default.fileExists(atPath: existing.path), existing.pathComponents.count > 1 {
+            missing.insert(existing.lastPathComponent, at: 0)
+            existing = existing.deletingLastPathComponent()
+        }
+        return existing.resolvingSymlinksInPath().pathComponents + missing
+    }
+
+    func copySidecars(from source: URL, to output: URL, config: [String: Any]) throws {
+        let fileManager = FileManager.default
+        for name in try fileManager.contentsOfDirectory(atPath: source.path) where !name.hasPrefix(".") {
+            let lowercased = name.lowercased()
+            guard lowercased != "config.json", !lowercased.hasSuffix(".safetensors"), !lowercased.hasSuffix(".safetensors.index.json") else { continue }
+            let file = source.appending(component: name).resolvingSymlinksInPath()
+            guard (try file.resourceValues(forKeys: [.isRegularFileKey])).isRegularFile == true else { continue }
+            try fileManager.copyItem(at: file, to: output.appending(component: name))
+        }
+        var config = config
+        switch precision {
+        case .source:
+            break
+        case .dense:
+            config["quantization"] = nil
+            config["quantization_config"] = nil
+        case .affine(let bits, let groupSize):
+            let block: [String: Any] = ["bits": bits, "group_size": groupSize, "mode": "affine"]
+            config["quantization"] = block
+            config["quantization_config"] = block
+        }
+        try JSONSerialization.data(withJSONObject: config, options: [.prettyPrinted, .sortedKeys])
+            .write(to: output.appending(component: "config.json"))
+    }
+}
+
+struct PackedWeight {
+    var scales: MLXArray
+    var biases: MLXArray?
+    var quantization: BaseConfiguration.Quantization
+
+    func arrays(_ base: String, weight: MLXArray) -> [String: MLXArray] {
+        var arrays = [base + ".weight": weight, base + ".scales": scales]
+        arrays[base + ".biases"] = biases
+        return arrays
+    }
+}
+
+struct SourceLayout {
+    let shards: [URL]
+    let shardOf: [String: URL]
+    let quantization: BaseConfiguration.PerLayerQuantization?
+
+    init(directory: URL, config: [String: Any], configData: Data) throws {
+        let index = (try? Data(contentsOf: directory.appending(component: "model.safetensors.index.json")))
+            .flatMap { (try? JSONSerialization.jsonObject(with: $0)) as? [String: Any] }
+        let files = Set(try FileManager.default.contentsOfDirectory(atPath: directory.path))
+        shards = ModelDeepCheck.weightFiles(in: files, prefix: "", weightMap: index?["weight_map"] as? [String: String])
+            .map { directory.appending(component: $0) }
+        guard !shards.isEmpty else { throw WeightConverter.Failure.malformed("no .safetensors weights in \(directory.path)") }
+        var shardOf: [String: URL] = [:]
+        for shard in shards {
+            for key in try loadArrays(url: shard).keys { shardOf[key] = shard }
+        }
+        self.shardOf = shardOf
+        quantization = config["quantization"] == nil
+            ? nil : try JSONDecoder.json5().decode(BaseConfiguration.self, from: configData).perLayerQuantization
+        for key in shardOf.keys where key.hasSuffix(".scales") {
+            let base = String(key.dropLast(".scales".count))
+            if shardOf[base + ".weight"] != nil, quantization?.quantization(layer: base) == nil {
+                throw WeightConverter.Failure.malformed("\(base) is quantized but config.json has no quantization for it")
+            }
+        }
+    }
+
+    func isCompanion(_ key: String) -> Bool {
+        guard key.hasSuffix(".scales") || key.hasSuffix(".biases") else { return false }
+        let base = String(key.dropLast(".scales".count))
+        return shardOf[base + ".weight"] != nil && shardOf[base + ".scales"] != nil
+    }
+
+    func packed(_ key: String, taking arrays: inout [String: MLXArray]) throws -> PackedWeight? {
+        guard key.hasSuffix(".weight") else { return nil }
+        let base = String(key.dropLast(".weight".count))
+        guard shardOf[base + ".scales"] != nil, let quantization = quantization?.quantization(layer: base) else { return nil }
+        func take(_ name: String) throws -> MLXArray? {
+            guard let shard = shardOf[name] else { return nil }
+            return try arrays.removeValue(forKey: name) ?? loadArrays(url: shard)[name]
+        }
+        guard let scales = try take(base + ".scales") else { return nil }
+        return PackedWeight(scales: scales, biases: try take(base + ".biases"), quantization: quantization)
+    }
+}
+
+struct LoRAUpdate {
+    let scale: Float
+    let pairs: [String: (a: MLXArray, b: MLXArray)]
+
+    init(directory: URL, keys: [String: URL]) throws {
+        let configuration = try JSONDecoder().decode(
+            LoRAConfiguration.self, from: Data(contentsOf: directory.appending(component: "adapter_config.json")))
+        guard configuration.fineTuneType == .lora else {
+            throw WeightConverter.Failure.malformed("only LoRA adapters merge; \(directory.path) is \(configuration.fineTuneType.rawValue)")
+        }
+        let arrays = try loadArrays(url: directory.appending(component: "adapters.safetensors"))
+        var pairs: [String: (a: MLXArray, b: MLXArray)] = [:]
+        for (key, a) in arrays where key.hasSuffix(".lora_a") {
+            let base = String(key.dropLast(".lora_a".count))
+            guard let b = arrays[base + ".lora_b"], keys[base + ".weight"] != nil else {
+                throw WeightConverter.Failure.malformed("adapter layer \(base) has no lora_b or is not in the model")
+            }
+            pairs[base] = (a, b)
+        }
+        guard !pairs.isEmpty else { throw WeightConverter.Failure.malformed("\(directory.path) holds no lora_a/lora_b pairs") }
+        scale = configuration.loraParameters.scale
+        self.pairs = pairs
+    }
+
+    static func merged(_ weight: MLXArray, _ pair: (a: MLXArray, b: MLXArray), scale: Float, layer: String) throws -> MLXArray {
+        let a = pair.a.asType(.float32)
+        let b = pair.b.asType(.float32)
+        let delta = a.ndim == 3 ? matmul(b, a) : matmul(a, b).T
+        guard delta.shape == weight.shape else {
+            throw WeightConverter.Failure.malformed("adapter \(layer): update \(delta.shape) does not fit weight \(weight.shape)")
+        }
+        return (weight.asType(.float32) + scale * delta).asType(weight.dtype)
+    }
+}
+
+struct ShardWriter {
+    let directory: URL
+    let maxBytes: Int
+    let metadata: [String: String]
+    private var pending: [String: MLXArray] = [:]
+    private var pendingBytes = 0
+    private var written: [[String]] = []
+    private var totalBytes = 0
+
+    init(directory: URL, maxBytes: Int, metadata: [String: String]) {
+        self.directory = directory
+        self.maxBytes = maxBytes
+        self.metadata = metadata
+    }
+
+    mutating func add(_ arrays: [String: MLXArray]) throws {
+        let bytes = arrays.values.reduce(0) { $0 + $1.nbytes }
+        if !pending.isEmpty, pendingBytes + bytes > maxBytes { try flush() }
+        eval(Array(arrays.values))
+        pending.merge(arrays) { _, new in new }
+        pendingBytes += bytes
+    }
+
+    mutating func finish() throws -> Int {
+        if !pending.isEmpty { try flush() }
+        var weightMap: [String: String] = [:]
+        for (index, keys) in written.enumerated() {
+            let name = written.count == 1
+                ? "model.safetensors" : String(format: "model-%05d-of-%05d.safetensors", index + 1, written.count)
+            try FileManager.default.moveItem(at: part(index), to: directory.appending(component: name))
+            for key in keys { weightMap[key] = name }
+        }
+        let index: [String: Any] = ["metadata": ["total_size": totalBytes], "weight_map": weightMap]
+        try JSONSerialization.data(withJSONObject: index, options: [.prettyPrinted, .sortedKeys])
+            .write(to: directory.appending(component: "model.safetensors.index.json"))
+        return written.count
+    }
+
+    private mutating func flush() throws {
+        try save(arrays: pending, metadata: metadata, url: part(written.count))
+        written.append(Array(pending.keys))
+        totalBytes += pendingBytes
+        pending = [:]
+        pendingBytes = 0
+        Memory.clearCache()
+    }
+
+    private func part(_ index: Int) -> URL {
+        directory.appending(component: "part-\(index).safetensors")
+    }
+}
