@@ -8,7 +8,7 @@ struct SessionsCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "sessions",
         abstract: "Read the local session log without loading a model.",
-        subcommands: [List.self, Show.self, Stats.self, Prune.self]
+        subcommands: [List.self, Show.self, Stats.self, Check.self, Prune.self]
     )
 
     struct Location: ParsableArguments {
@@ -86,6 +86,34 @@ struct SessionsCommand: AsyncParsableCommand {
             print("responses: \(responses.count) (\(ok.count) ok, \(responses.count - ok.count) other)")
             print("tokens: \(prompt) prompt (\(cached) cached), \(completion) completion")
             print(String(format: "mean: %.1f tok/s, %d ms to first token", tps, ttft))
+        }
+    }
+
+    struct Check: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(
+            abstract: "Report past-time temporal properties each session's tool calls violated: tool names and message indices only.")
+        @OptionGroup var location: Location
+
+        mutating func run() async throws {
+            var malformed = 0
+            var fired: [String: [SessionTemporalCheck.Property: Int]] = [:]
+            var scanned: [String: Int] = [:]
+            for session in SessionLogReader.sessions(in: location.url) {
+                let read = SessionLogReader.read(session.file)
+                malformed += read.malformed
+                let model = read.lines.lazy.compactMap(\.modelRequested).first ?? "?"
+                let violations = SessionTemporalCheck.check(read.lines)
+                scanned[model, default: 0] += 1
+                for property in Set(violations.map(\.property)) { fired[model, default: [:]][property, default: 0] += 1 }
+                guard !violations.isEmpty else { continue }
+                let found = violations.sorted { ($0.property.rawValue, $0.messageIndex) < ($1.property.rawValue, $1.messageIndex) }
+                print("\(session.id)\t\(model)\t" + found.map { "\($0.property.rawValue)@\($0.messageIndex)(\($0.tool))" }.joined(separator: " "))
+            }
+            print("\nsessions: \(scanned.values.reduce(0, +)), malformed lines skipped: \(malformed)")
+            for (model, count) in scanned.sorted(by: { $0.key < $1.key }) {
+                let rates = SessionTemporalCheck.Property.allCases.map { "\($0.rawValue) \(fired[model]?[$0] ?? 0)" }
+                print("\(model)\t\(count) sessions\t" + rates.joined(separator: "  "))
+            }
         }
     }
 
