@@ -135,11 +135,11 @@ enum ServeConfigFile {
                 tokens.append("\(flag)=\(value)")
             case .text(let flag):
                 guard let value = node.scalar?.string else { return mismatch(path, node, "a string") }
-                tokens.append("\(flag)=\(value)")
+                tokens.append("\(flag)=\(Self.expanded(value))")
             case .list(let flag):
                 let items = node.sequence?.compactMap { $0.scalar?.string }
                 guard let items, items.count == node.sequence?.count else { return mismatch(path, node, "a list of strings") }
-                if !cli.contains(where: { $0 == flag || $0.hasPrefix("\(flag)=") }) { tokens += items.map { "\(flag)=\($0)" } }
+                if !cli.contains(where: { $0 == flag || $0.hasPrefix("\(flag)=") }) { tokens += items.map { "\(flag)=\(Self.expanded($0))" } }
             case .flag(let on, let off):
                 guard let value = node.bool else { return mismatch(path, node, "true or false") }
                 if let token = value ? on : off { tokens.append(token) }
@@ -153,6 +153,10 @@ enum ServeConfigFile {
 
         mutating func issue(_ path: String, _ node: Node, _ message: String) {
             issues.append(.init(path: path, line: node.mark?.line, column: node.mark?.column, message: message))
+        }
+
+        static func expanded(_ value: String) -> String {
+            value == "~" || value.hasPrefix("~/") ? (value as NSString).expandingTildeInPath : value
         }
 
         static func display(_ path: String) -> String {

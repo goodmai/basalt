@@ -103,6 +103,15 @@ struct ServeConfigFileTests {
         #expect(Self.issues("defaults:\n  serve: [1]\n").map(\.message) == ["must be a mapping"])
     }
 
+    @Test("A leading ~ in a path value expands to the home directory, as the shell would expand it in a flag; other values stay literal")
+    func tildeExpands() throws {
+        let home = NSHomeDirectory()
+        let command = try Self.serve("defaults:\n  model: { path: ~/models/q }\n  serve: { session_log: { dir: ~/logs } }\n  mcp: { image_dirs: [~/a, /b, ~c] }\n")
+        #expect(command.modelPath == home + "/models/q")
+        #expect(command.sessionLog.directory == home + "/logs")
+        #expect(command.imageDirs == [home + "/a", "/b", "~c"])
+    }
+
     @Test("Malformed YAML, a missing file and an oversized file are unreadable; JSON configs and other commands pass through untouched")
     func passThroughAndUnreadable() throws {
         #expect(throws: ServeConfigError.self) { try ServeConfigFile.tokens(yaml: "defaults: [", file: "x.yaml", cli: []) }
