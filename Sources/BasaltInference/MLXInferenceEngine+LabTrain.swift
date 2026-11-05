@@ -91,7 +91,7 @@ extension MLXInferenceEngine {
 
     static func labRun<R: Sendable>(_ container: ModelContainer, _ body: @Sendable (ModelContext) throws -> R) async throws(BasaltError) -> R {
         do {
-            return try await container.performEvaluating(nonSendable: ()) { context, _ in try body(context) }
+            return try await container.performEvaluating(nonSendable: ()) { context, _ in try withError { try body(context) } }
         } catch let error as BasaltError {
             throw error
         } catch is CancellationError {
