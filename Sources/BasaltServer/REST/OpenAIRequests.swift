@@ -297,8 +297,9 @@ extension OpenAIController {
     }
 
     static func responseFormat(fromRequestBody data: Data) throws(InvalidResponseFormat) -> ResponseFormat? {
-        guard let body = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let format = (body["response_format"] as? [String: Any])
+        guard let body = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        if let guided = try guidedFormat(body) { return guided }
+        guard let format = (body["response_format"] as? [String: Any])
                 ?? ((body["text"] as? [String: Any])?["format"] as? [String: Any]) else { return nil }
         switch format["type"] as? String {
         case "text":
@@ -306,28 +307,58 @@ extension OpenAIController {
         case "json_object":
             return .jsonObject
         case "json_schema":
-            let declaration = (format["json_schema"] as? [String: Any]) ?? format
-            let ordered = OrderedJSON.parse(data, keeping: ["response_format", "text"])
-            let orderedFormat = ordered?["response_format"] ?? ordered?["text"]?["format"]
-            guard declaration["schema"] != nil, let text = (orderedFormat?["json_schema"] ?? orderedFormat)?["schema"]?.text else {
-                throw InvalidResponseFormat(message: "response_format json_schema needs a schema")
+            return try jsonSchemaFormat(format, data: data)
+        case "regex":
+            return .regex(try Self.grammarText(format, key: "regex"))
+        case "grammar":
+            return .grammar(try Self.grammarText(format, key: "grammar"))
+        case "structural_tag":
+            guard let source = try? JSONSerialization.data(withJSONObject: format, options: .sortedKeys) else {
+                throw InvalidResponseFormat(message: "response_format structural_tag is not a JSON object")
             }
-            let requested = ResponseFormat.jsonSchema(text, strict: declaration["strict"] as? Bool == true)
-            let prepared: PreparedJSONSchema
-            do {
-                prepared = try requested.prepared()
-            } catch {
-                throw InvalidResponseFormat(message: "response_format: \(error.message)")
-            }
-            if !prepared.relaxations.isEmpty {
-                BasaltLogger(module: "OpenAIController").info(
-                    "response_format without strict: \(prepared.relaxations.joined(separator: "; "))")
-            }
-            return requested
+            return .structuralTag(String(decoding: source, as: UTF8.self))
         case let type:
             throw InvalidResponseFormat(message:
-                "response_format type \(type.map { "'\($0)' is not supported" } ?? "is missing"); expected text, json_object or json_schema")
+                "response_format type \(type.map { "'\($0)' is not supported" } ?? "is missing"); expected text, json_object, json_schema, regex, grammar or structural_tag")
         }
+    }
+
+    static func jsonSchemaFormat(_ format: [String: Any], data: Data) throws(InvalidResponseFormat) -> ResponseFormat {
+        let declaration = (format["json_schema"] as? [String: Any]) ?? format
+        let ordered = OrderedJSON.parse(data, keeping: ["response_format", "text"])
+        let orderedFormat = ordered?["response_format"] ?? ordered?["text"]?["format"]
+        guard declaration["schema"] != nil, let text = (orderedFormat?["json_schema"] ?? orderedFormat)?["schema"]?.text else {
+            throw InvalidResponseFormat(message: "response_format json_schema needs a schema")
+        }
+        let requested = ResponseFormat.jsonSchema(text, strict: declaration["strict"] as? Bool == true)
+        let prepared: PreparedJSONSchema
+        do {
+            prepared = try requested.prepared()
+        } catch {
+            throw InvalidResponseFormat(message: "response_format: \(error.message)")
+        }
+        if !prepared.relaxations.isEmpty {
+            BasaltLogger(module: "OpenAIController").info(
+                "response_format without strict: \(prepared.relaxations.joined(separator: "; "))")
+        }
+        return requested
+    }
+
+    static func guidedFormat(_ body: [String: Any]) throws(InvalidResponseFormat) -> ResponseFormat? {
+        let guided = [("guided_regex", ResponseFormat.regex), ("guided_grammar", ResponseFormat.grammar)].compactMap { key, make in
+            (body[key] as? String).map { (key, make($0)) }
+        }
+        guard guided.count <= 1, guided.isEmpty || body["response_format"] == nil else {
+            throw InvalidResponseFormat(message: "give one of response_format, guided_regex or guided_grammar")
+        }
+        return guided.first?.1
+    }
+
+    static func grammarText(_ format: [String: Any], key: String) throws(InvalidResponseFormat) -> String {
+        guard let text = format[key] as? String, !text.isEmpty else {
+            throw InvalidResponseFormat(message: "response_format \(key) needs a non-empty \"\(key)\" string")
+        }
+        return text
     }
 
     static func chatMessages(_ messages: [ChatMessage]) -> [ChatMessageInput] {

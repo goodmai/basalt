@@ -47,7 +47,7 @@ extension MLXInferenceEngine {
             return nil
         }
         let schema: String
-        do { schema = try format.prepared().schema } catch { return try unconstrained(error.message) }
+        do { schema = try format.grammarSource() } catch { return try unconstrained(error.message) }
         let epoch = modelEpoch
         let vocabulary: GrammarVocabulary
         switch await loadedGrammarVocabulary() {
@@ -62,17 +62,17 @@ extension MLXInferenceEngine {
         } else {
             fastForward = false
         }
-        let poolKey = schema + (fastForward ? ":ff" : "")
+        let poolKey = format.kind + ":" + schema + (fastForward ? ":ff" : "")
         let grammar: GrammarConstraint
         if epoch == modelEpoch, let idle = grammarPool.take(poolKey) {
             grammar = idle
         } else {
             do {
-                grammar = try GrammarConstraint(
-                    tokenizer: vocabulary.tokenizer, jsonSchema: schema,
-                    fastForward: fastForward, hostTokenizer: fastForward ? vocabulary.hostTokenizer : nil)
+                grammar = try Self.compile(format, source: schema, vocabulary: vocabulary, fastForward: fastForward)
             } catch GrammarError.invalidJSONSchema(let message) {
                 return try unconstrained(message)
+            } catch GrammarError.constraintCompilationFailed(let message) {
+                return try unconstrained("the \(format.kind) does not compile: \(message)")
             } catch {
                 return try unconstrained("\(error)")
             }
@@ -80,6 +80,22 @@ extension MLXInferenceEngine {
         return OutputConstraint(
             session: GrammarSession(schema: schema, grammar: grammar, poolKey: poolKey), vocabulary: vocabulary,
             toolName: forcedTool?.name, fastForward: fastForward)
+    }
+
+    static func compile(
+        _ format: ResponseFormat, source: String, vocabulary: GrammarVocabulary, fastForward: Bool
+    ) throws -> GrammarConstraint {
+        let (tokenizer, host) = (vocabulary.tokenizer, fastForward ? vocabulary.hostTokenizer : nil)
+        switch format {
+        case .jsonObject, .jsonSchema:
+            return try GrammarConstraint(tokenizer: tokenizer, jsonSchema: source, fastForward: fastForward, hostTokenizer: host)
+        case .regex:
+            return try GrammarConstraint(tokenizer: tokenizer, regex: source, fastForward: fastForward, hostTokenizer: host)
+        case .grammar:
+            return try GrammarConstraint(tokenizer: tokenizer, grammar: source, fastForward: fastForward, hostTokenizer: host)
+        case .structuralTag:
+            return try GrammarConstraint(tokenizer: tokenizer, structuralTag: source, fastForward: fastForward, hostTokenizer: host)
+        }
     }
 
     func recycle(_ session: GrammarSession, epoch: ModelEpoch) {
