@@ -129,7 +129,8 @@ struct Benchmark: AsyncParsableCommand {
         let last = try await orchestrator.generate(request: request())
         let memMB = last.memory.activeBytes / 1_048_576
         if printOutput {
-            print("\n--- OUTPUT ---\n\(last.generatedText)\n--- END OUTPUT ---")
+            let text = last.generatedText.isEmpty ? last.reasoningText.map { "[reasoning]\n" + $0 } ?? "" : last.generatedText
+            print("\n--- OUTPUT ---\n\(text)\n--- END OUTPUT ---")
         }
         print(String(format: "\n  Memory (active): %d MB", memMB))
 

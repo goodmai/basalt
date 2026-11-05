@@ -1,6 +1,6 @@
 [
   {
-    "commit" : "5738fe0",
+    "commit" : "007bb37",
     "lines" : 6,
     "md5" : "215288e4484fce966211afa936ca2a0e",
     "mode" : "plain",
@@ -8,7 +8,7 @@
     "revision" : "dc755c911a7716a1db15cd8df8bab46a9dcfffdc"
   },
   {
-    "commit" : "5738fe0",
+    "commit" : "007bb37",
     "lines" : 6,
     "md5" : "215288e4484fce966211afa936ca2a0e",
     "mode" : "lookup",
@@ -16,7 +16,7 @@
     "revision" : "dc755c911a7716a1db15cd8df8bab46a9dcfffdc"
   },
   {
-    "commit" : "5738fe0",
+    "commit" : "007bb37",
     "lines" : 6,
     "md5" : "215288e4484fce966211afa936ca2a0e",
     "mode" : "zones",
@@ -24,7 +24,7 @@
     "revision" : "dc755c911a7716a1db15cd8df8bab46a9dcfffdc"
   },
   {
-    "commit" : "5738fe0",
+    "commit" : "007bb37",
     "lines" : 7,
     "md5" : "f527b9adbfdf07f8a5ad3b40d519bfb6",
     "mode" : "split",
@@ -32,7 +32,7 @@
     "revision" : "dc755c911a7716a1db15cd8df8bab46a9dcfffdc"
   },
   {
-    "commit" : "5738fe0",
+    "commit" : "007bb37",
     "lines" : 7,
     "md5" : "5766add98f7540f75011331c5b0eed6d",
     "mode" : "plain",
@@ -40,7 +40,7 @@
     "revision" : "unknown"
   },
   {
-    "commit" : "5738fe0",
+    "commit" : "007bb37",
     "lines" : 7,
     "md5" : "5766add98f7540f75011331c5b0eed6d",
     "mode" : "quest",
@@ -48,7 +48,7 @@
     "revision" : "unknown"
   },
   {
-    "commit" : "5738fe0",
+    "commit" : "007bb37",
     "lines" : 6,
     "md5" : "c1766f9c115e416926aa6d87c63069f3",
     "mode" : "plain",
@@ -56,11 +56,27 @@
     "revision" : "03bd60bb82755f2446f5083426dca9708eb8e0fe"
   },
   {
-    "commit" : "5738fe0",
+    "commit" : "007bb37",
     "lines" : 6,
     "md5" : "c1766f9c115e416926aa6d87c63069f3",
     "mode" : "mtp",
     "model" : "Youssofal/Ternary-Bonsai-2-27B-MTPLX-Optimized-Speed",
     "revision" : "03bd60bb82755f2446f5083426dca9708eb8e0fe"
+  },
+  {
+    "commit" : "007bb37",
+    "lines" : 4,
+    "md5" : "e6142f616b7bc742dfe5e71eaf4c3573",
+    "mode" : "plain",
+    "model" : "LiquidAI/LFM2.5-24B-A2B-MLX-4bit",
+    "revision" : "667408d494bde191c2cb9dd4f4549827816b9275"
+  },
+  {
+    "commit" : "007bb37",
+    "lines" : 4,
+    "md5" : "e6142f616b7bc742dfe5e71eaf4c3573",
+    "mode" : "lookup",
+    "model" : "LiquidAI/LFM2.5-24B-A2B-MLX-4bit",
+    "revision" : "667408d494bde191c2cb9dd4f4549827816b9275"
   }
 ]
