@@ -37,9 +37,9 @@ struct PackedLayer: Sendable {
             globalScale: live(globalScale))
     }
 
-    func restore(in model: Module) {
+    func restore(in model: Module) throws(BasaltError) {
         let layer = self.layer
-        model.update(modules: ModuleChildren.unflattened([(path, layer)]))
+        try MLXInferenceEngine.replace(path, with: layer, in: model)
         eval(layer)
     }
 }
@@ -74,7 +74,7 @@ enum TensorPacker {
         let outcome = Outcome(
             original: PackedLayer(path: path, layer: layer), from: describe(layer), bytesBefore: bytes(layer), bytesAfter: bytes(packed),
             rmse: rmse.item(Float.self), maxAbsError: maxAbsError.item(Float.self), relativeError: relativeError.item(Float.self))
-        model.update(modules: ModuleChildren.unflattened([(path, packed)]))
+        try MLXInferenceEngine.replace(path, with: packed, in: model)
         return outcome
     }
 

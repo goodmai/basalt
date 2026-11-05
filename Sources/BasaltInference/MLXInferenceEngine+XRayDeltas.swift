@@ -107,7 +107,7 @@ extension MLXInferenceEngine {
 
     static func restore(_ applied: AppliedDelta, of name: String, in model: Module) throws(BasaltError) {
         guard applied.modules.isEmpty else { return try detach(applied.modules, from: model) }
-        if let pack = applied.pack { return pack.restore(in: model) }
+        if let pack = applied.pack { return try pack.restore(in: model) }
         let tensor = try writableTensor(name, in: model)
         let indices: [any MLXArrayIndex] = applied.slice
         tensor[indices] = MLXArray(applied.original, applied.slice.map(\.count)).asType(tensor.dtype)

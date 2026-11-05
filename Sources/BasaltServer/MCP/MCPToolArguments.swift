@@ -353,7 +353,8 @@ extension MCPArguments {
 
     static func numbers(_ key: String, in args: [String: Any]?) throws(MCPFailure) -> [Float]? {
         guard let value = present(key, in: args) else { return nil }
-        guard let numbers = value as? [Double], !numbers.isEmpty, numbers.allSatisfy(\.isFinite) else {
+        let numbers = (value as? [Any])?.compactMap { ($0 as? Double) ?? ($0 as? Int).map(Double.init) }
+        guard let numbers, numbers.count == (value as? [Any])?.count, !numbers.isEmpty, numbers.allSatisfy(\.isFinite) else {
             throw .invalidParams("\(key) must be a non-empty array of numbers")
         }
         return numbers.map { Float($0) }
