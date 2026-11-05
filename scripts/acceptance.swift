@@ -66,26 +66,26 @@ struct Options {
     var baseline: String?
     var candidate: String?
     var port = 8090
+
+    var isComplete: Bool {
+        let measuring = model != nil && output != nil && candidate == nil
+        let comparing = model == nil && output == nil && baseline != nil && candidate != nil
+        return measuring || comparing
+    }
 }
 
 func parse(_ arguments: [String]) -> Options? {
-    var options = Options()
-    var rest = arguments[...]
-    while let flag = rest.popFirst() {
-        guard let value = rest.popFirst() else { return nil }
-        switch flag {
-        case "--model": options.model = value
-        case "--output": options.output = value
-        case "--repo": options.repo = value
-        case "--baseline": options.baseline = value
-        case "--candidate": options.candidate = value
-        case "--port": guard let port = Int(value), port > 0 else { return nil }; options.port = port
-        default: return nil
-        }
+    guard arguments.count.isMultiple(of: 2) else { return nil }
+    let values = Dictionary(stride(from: 0, to: arguments.count, by: 2).map { (arguments[$0], arguments[$0 + 1]) }) { $1 }
+    let known: Set = ["--model", "--output", "--repo", "--baseline", "--candidate", "--port"]
+    guard Set(values.keys).isSubset(of: known) else { return nil }
+    var options = Options(model: values["--model"], output: values["--output"], repo: values["--repo"],
+                          baseline: values["--baseline"], candidate: values["--candidate"])
+    if let port = values["--port"] {
+        guard let number = Int(port), number > 0 else { return nil }
+        options.port = number
     }
-    let measuring = options.model != nil && options.output != nil && options.candidate == nil
-    let comparing = options.model == nil && options.output == nil && options.baseline != nil && options.candidate != nil
-    return measuring || comparing ? options : nil
+    return options.isComplete ? options : nil
 }
 
 guard let options = parse(Array(CommandLine.arguments.dropFirst())) else {
