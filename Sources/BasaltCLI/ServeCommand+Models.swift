@@ -15,7 +15,9 @@ extension ServeCommand {
             case .modelConfigurationInvalid, .modelProbeFailed:
                 log("\(red("[error]")) \(error.localizedDescription)")
                 throw ExitCode.failure
-            default:
+            case .modelNotFound, .weightsCorrupted, .outOfMemory, .inferenceHardwareFailure, .invalidRequestStructure,
+                 .contextLengthExceeded, .rateLimitExceeded, .authenticationFailed, .modelInferenceError, .nonFiniteLogits,
+                 .inferenceError, .modelNotCached, .modelNotLoaded, .modelSwitching, .serverBusy, .memoryPressure:
                 log("\(yellow("[warn]")) \(error.localizedDescription) — running in stub mode.")
             }
         }

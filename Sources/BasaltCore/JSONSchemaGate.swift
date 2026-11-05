@@ -380,7 +380,7 @@ extension JSONSchemaGate.Walk {
         switch schema["type"] {
         case .scalar(let type)?: [OrderedJSON.Reader.decoded(type)]
         case .array(let list)?: list.map { OrderedJSON.Reader.decoded($0.text) }
-        default: []
+        case .object?, nil: []
         }
     }
 

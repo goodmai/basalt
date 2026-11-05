@@ -24,13 +24,12 @@ public enum ClipboardError: Error, LocalizedError {
 
 // MARK: - Clipboard Tool
 
-/// Available clipboard tools
 public enum ClipboardTool: String, Sendable {
-    case pbcopy    // macOS
-    case pbpaste   // macOS
-    case xclip     // Linux
-    case xsel      // Linux
-    case none      // Not available
+    case pbcopy
+    case pbpaste
+    case xclip
+    case xsel
+    case none
     
     var copyCommand: [String]? {
         switch self {
@@ -40,7 +39,7 @@ public enum ClipboardTool: String, Sendable {
             return ["/usr/bin/xclip", "-selection", "clipboard"]
         case .xsel:
             return ["/usr/bin/xsel", "--clipboard", "--input"]
-        default:
+        case .pbpaste, .none:
             return nil
         }
     }
@@ -53,7 +52,7 @@ public enum ClipboardTool: String, Sendable {
             return ["/usr/bin/xclip", "-selection", "clipboard", "-o"]
         case .xsel:
             return ["/usr/bin/xsel", "--clipboard", "--output"]
-        default:
+        case .pbcopy, .none:
             return nil
         }
     }
@@ -150,7 +149,6 @@ public actor ClipboardManager {
         return tool
     }
     
-    /// Detect available clipboard tool for pasting
     private func detectPasteTool() async -> ClipboardTool {
         let copyTool = await detectClipboardTool()
         
@@ -161,7 +159,7 @@ public actor ClipboardManager {
             return .xclip
         case .xsel:
             return .xsel
-        default:
+        case .pbpaste, .none:
             return .none
         }
     }

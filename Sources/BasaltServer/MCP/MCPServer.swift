@@ -189,7 +189,7 @@ extension ResearchCall {
         case .train(let request): .json(try await lab.train(request))
         case .contrast(let request): .json(try await lab.contrast(request))
         case .commitSteering(let commit): .json(try await lab.commitSteering(commit))
-        default: throw .invalidRequestStructure(details: "not a lab call")
+        case .describe, .tensors, .tensor, .promptCache, .trace, .intervene, .delta, .overlays, .undo, .compare: throw .invalidRequestStructure(details: "not a lab call")
         }
     }
 }
