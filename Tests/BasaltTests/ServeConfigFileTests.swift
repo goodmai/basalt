@@ -60,12 +60,12 @@ struct ServeConfigFileTests {
     static func issues(_ yaml: String) -> [ServeConfigError.Issue] {
         do {
             _ = try ServeConfigFile.tokens(yaml: yaml, file: "basalt.yaml", cli: [])
-        } catch .invalid(_, let issues) {
+            return []
+        } catch let ServeConfigError.invalid(_, issues) {
             return issues
         } catch {
             return []
         }
-        return []
     }
 
     @Test("Each option group in the file resolves to exactly what its flags give, and differs from the built-in default", arguments: groups)
