@@ -82,3 +82,57 @@ public struct CachedModelInfo: Sendable {
         }
     }
 }
+
+enum OrchestratorEvent {
+    case loaded(path: String, modelId: String?, geometry: KVCacheGeometry, takes: (zones: Bool, eviction: Bool, quantization: Bool))
+    case named(String)
+    case switchStarted(String, Task<Void, Error>)
+    case switchEnded(String)
+    case reserved(ticket: Int, bytes: ByteCount, budget: ByteCount, epoch: Int)
+    case released(Int)
+    case limitsApplied(MemoryLimits)
+    case refusedForMemory
+}
+
+struct OrchestratorState: Sendable {
+    var kv: KVPlanner
+    var reservations = KVReservations()
+    var modelPath = ""
+    var modelId = ""
+    var modelEpoch = 0
+    var pendingSwitch: (modelId: String, task: Task<Void, Error>)?
+    var memoryLimits: MemoryLimits?
+    var memoryRefusals = 0
+
+    func checkInvariants(after previous: OrchestratorState) -> [String] {
+        modelEpoch < previous.modelEpoch ? ["the model epoch went back from \(previous.modelEpoch) to \(modelEpoch)"] : []
+    }
+
+    static func reduce(_ state: OrchestratorState, _ event: OrchestratorEvent) -> OrchestratorState {
+        var next = state
+        switch event {
+        case .loaded(let path, let modelId, let geometry, let takes):
+            next.modelPath = path
+            next.modelId = modelId ?? state.modelId
+            next.modelEpoch += 1
+            next.kv.geometry = geometry
+            (next.kv.takesZones, next.kv.takesEviction, next.kv.takesQuantization) = takes
+        case .named(let id):
+            next.modelId = id
+        case .switchStarted(let id, let task):
+            next.pendingSwitch = (id, task)
+        case .switchEnded(let id):
+            if state.pendingSwitch?.modelId == id { next.pendingSwitch = nil }
+        case .reserved(let ticket, let bytes, let budget, let epoch):
+            guard epoch == state.modelEpoch else { return state }
+            _ = next.reservations.reserve(bytes, for: ticket, within: budget)
+        case .released(let ticket):
+            next.reservations.release(ticket)
+        case .limitsApplied(let limits):
+            next.memoryLimits = limits
+        case .refusedForMemory:
+            next.memoryRefusals += 1
+        }
+        return next
+    }
+}

@@ -3,24 +3,17 @@ import os
 
 public actor ModelOrchestratorActor {
     let engine: any InferenceEngine
-    private var kv: KVPlanner
-    private var reservations = KVReservations()
-    private var modelSizeMB: Int = 4000
+    private var state: OrchestratorState
     private let logger = BasaltLogger(module: "ModelOrchestrator")
-    private var currentModelPath: String = ""
-    public private(set) var currentModelId: String = ""
     nonisolated public let gate: GenerationGate
     public let sessionLog: SessionLogWriter?
     public let telemetry: TelemetryTracker
-    private var pendingSwitch: (modelId: String, task: Task<Void, Error>)?
     private var shutdownTask: Task<Void, Never>?
     private var cloudFallback: (any CloudFallback)?
     private var arbiter = HybridArbiter()
     private var freeMemory: @Sendable () -> Int64 = { SystemProfiler.availableSystemMemory() }
     private var memory: MemoryCoordinator?
     private var memoryTask: Task<Void, Never>?
-    private var memoryLimits: MemoryLimits?
-    private var memoryRefusals = 0
 
     public struct KVOptions: Sendable {
         let precision: KVPrecision?
@@ -41,22 +34,26 @@ public actor ModelOrchestratorActor {
         self.gate = gate
         self.sessionLog = sessionLog
         self.engine = engine
-        self.kv = KVPlanner(
+        self.state = OrchestratorState(kv: KVPlanner(
             maxTokens: maxTokens,
             precisionLadder: kv.adaptive ? KVCacheGeometry.adaptiveKVPrecisionLadder : [kv.precision],
-            zones: kv.zones)
+            zones: kv.zones))
         self.telemetry = telemetry
     }
 
-    var kvReservations: [Int: ByteCount] { reservations.bytes }
+    private var kv: KVPlanner { state.kv }
+
+    public var currentModelId: String { state.modelId }
+
+    var kvReservations: [Int: ByteCount] { state.reservations.bytes }
 
     var routingModelKey: String {
-        "\(modelInfo)@\(URL(fileURLWithPath: currentModelPath).lastPathComponent)"
+        "\(modelInfo)@\(URL(fileURLWithPath: state.modelPath).lastPathComponent)"
     }
 
     public var modelInfo: String {
         currentModelId.isEmpty
-            ? URL(fileURLWithPath: currentModelPath).lastPathComponent
+            ? URL(fileURLWithPath: state.modelPath).lastPathComponent
             : currentModelId
     }
 
@@ -74,7 +71,7 @@ public actor ModelOrchestratorActor {
     }
 
     public func setModelId(_ id: String) {
-        self.currentModelId = id
+        state = .reduce(state, .named(id))
     }
 }
 
@@ -87,24 +84,21 @@ extension ModelOrchestratorActor {
         }
     }
 
-    private func performLoad(path: String) async throws(BasaltError) {
-        let size = UInt64(max(0, Self.resolvedDirectorySize(at: URL(fileURLWithPath: path))))
+    private func performLoad(path: String, modelId: String? = nil) async throws(BasaltError) {
+        let sizeMB = Int(UInt64(max(0, Self.resolvedDirectorySize(at: URL(fileURLWithPath: path)))) / 1_048_576)
         try await engine.load(modelPath: path)
-        currentModelPath = path
-        modelSizeMB = Int(size / 1_048_576)
-        logger.info("Model size: \(self.modelSizeMB) MB")
-        kv.geometry = KVCacheGeometry.forModel(
-            path, parameters: ModelDefinition.inferTotalParameters(id: path, name: "", ramMB: Int64(modelSizeMB))
+        let geometry = KVCacheGeometry.forModel(
+            path, parameters: ModelDefinition.inferTotalParameters(id: path, name: "", ramMB: Int64(sizeMB))
         )
-        kv.takesZones = await engine.supportsKVZones
-        kv.takesEviction = await engine.supportsKVEviction
-        kv.takesQuantization = await engine.supportsKVQuantization
-        await self.telemetry.setModelMemory(mb: self.modelSizeMB)
+        let takes = await (zones: engine.supportsKVZones, eviction: engine.supportsKVEviction, quantization: engine.supportsKVQuantization)
+        state = .reduce(state, .loaded(path: path, modelId: modelId, geometry: geometry, takes: takes))
+        logger.info("Model size: \(sizeMB) MB")
+        await telemetry.setModelMemory(mb: sizeMB)
         await telemetry.setModel(URL(fileURLWithPath: path).lastPathComponent)
     }
 
     public func switchModel(to modelId: String) async throws(BasaltError) {
-        if let pending = pendingSwitch {
+        if let pending = state.pendingSwitch {
             guard pending.modelId == modelId else {
                 throw .modelSwitching(from: currentModelId, to: pending.modelId)
             }
@@ -124,11 +118,10 @@ extension ModelOrchestratorActor {
         let switchStarted = ContinuousClock.now
         let previousModel = currentModelId
         let task = Task {
-            defer { self.pendingSwitch = nil }
-            try await self.gate.exclusively { try await self.performLoad(path: path) }
-            self.currentModelId = modelId
+            defer { self.state = .reduce(self.state, .switchEnded(modelId)) }
+            try await self.gate.exclusively { try await self.performLoad(path: path, modelId: modelId) }
         }
-        pendingSwitch = (modelId, task)
+        state = .reduce(state, .switchStarted(modelId, task))
         try await Self.awaitSwitch(task)
         await sessionLog?.logModelSwitch(from: previousModel, to: modelId, duration: ContinuousClock.now - switchStarted)
         logger.info("Model switch complete: '\(modelId)'")
@@ -183,7 +176,7 @@ extension ModelOrchestratorActor {
         (snapshot.hybridAnchors, snapshot.hybridAnchorBytes) = (anchors?.count, anchors?.bytes)
         snapshot.activeDeltas = await engine.activeDeltas
         if let memory {
-            snapshot.memory = MemoryTelemetry(state: await memory.state, limits: memoryLimits, refusedAdmissions: memoryRefusals)
+            snapshot.memory = MemoryTelemetry(state: await memory.state, limits: state.memoryLimits, refusedAdmissions: state.memoryRefusals)
         }
         snapshot.routingBias = await cloudFallback?.routingBias
         return snapshot
@@ -244,6 +237,7 @@ extension ModelOrchestratorActor {
         memory = coordinator
         await coordinator.sample()
         await applyMemoryDirective()
+        guard memory === coordinator else { return }
         memoryTask = Task {
             async let sampling: Void = coordinator.run()
             for await state in coordinator.changes {
@@ -258,13 +252,13 @@ extension ModelOrchestratorActor {
     private func applyMemoryDirective() async {
         guard let memory else { return }
         let directive = await memory.state.directive
-        if let limits = await engine.apply(directive) { memoryLimits = limits }
+        if let limits = await engine.apply(directive) { state = .reduce(state, .limitsApplied(limits)) }
     }
 
     private func refusal(_ room: KVRoom, under directive: MemoryDirective) -> BasaltError? {
         let refusal = room.refusal(under: directive)
         if case .memoryPressure? = refusal {
-            memoryRefusals += 1
+            state = .reduce(state, .refusedForMemory)
             logger.warn("Refused with 503: critical memory pressure, and this request needs \(room.promptTokens) prompt tokens with room for \(max(0, room.room)) more; retry in \(MemoryDirective.retryAfterSeconds) s.")
         }
         return refusal
@@ -289,15 +283,26 @@ extension ModelOrchestratorActor {
     private func admit(
         _ request: GenerationRequest
     ) async throws(BasaltError) -> (request: GenerationRequest, ticket: Int, queueWait: Duration) {
-        let (validated, promptTokens) = try await capped(request)
+        var plan = try await capped(request)
         let queued = ContinuousClock.now
         let ticket = try await admitted(request.priority)
-        try await reserveKV(ticket, promptTokens: promptTokens, for: validated)
+        if plan.epoch != state.modelEpoch {
+            do {
+                plan = try await capped(request)
+            } catch {
+                await gate.release(ticket)
+                throw error
+            }
+        }
+        try await reserveKV(ticket, promptTokens: plan.promptTokens, for: plan.request, planned: plan.epoch)
         await applyMemoryDirective()
-        return (validated, ticket, ContinuousClock.now - queued)
+        return (plan.request, ticket, ContinuousClock.now - queued)
     }
 
-    private func capped(_ request: GenerationRequest) async throws(BasaltError) -> (request: GenerationRequest, promptTokens: Int) {
+    private func capped(
+        _ request: GenerationRequest
+    ) async throws(BasaltError) -> (request: GenerationRequest, promptTokens: Int, epoch: Int) {
+        let epoch = state.modelEpoch
         let directive = await memory?.sample().directive ?? .relaxed
         let room = await generationRoom(for: request)
         if let refusal = refusal(room, under: directive) { throw refusal }
@@ -309,7 +314,7 @@ extension ModelOrchestratorActor {
         if let wanted = request.maxTokens, wanted > cap {
             logger.warn("Token request (\(wanted)) > budget (\(cap): --max-tokens \(kv.maxTokens), memory room \(room.room)). Capping.")
         }
-        return (validated, room.promptTokens)
+        return (validated, room.promptTokens, epoch)
     }
 
     func admitted(_ priority: RequestPriority) async throws(BasaltError) -> Int {
@@ -320,18 +325,19 @@ extension ModelOrchestratorActor {
         }
     }
 
-    func reserveKV(_ ticket: Int, promptTokens: Int, for request: GenerationRequest) async throws(BasaltError) {
+    func reserveKV(_ ticket: Int, promptTokens: Int, for request: GenerationRequest, planned epoch: Int) async throws(BasaltError) {
         let budget = await kvBudget()
         let bytes = kv.reservationBytes(promptTokens: promptTokens, for: request)
-        guard reservations.reserve(bytes, for: ticket, within: budget) else {
-            logger.warn("Refused with 503: this request needs \(bytes.rawValue >> 20) MB of KV cache and \(reservations.bytes.count) running requests hold \(reservations.held.rawValue >> 20) MB of the \(budget.rawValue >> 20) MB room; retry when one finishes.")
-            await gate.release(ticket)
-            throw .serverBusy(retryAfterSeconds: 1)
-        }
+        state = .reduce(state, .reserved(ticket: ticket, bytes: bytes, budget: budget, epoch: epoch))
+        guard state.reservations.bytes[ticket] == nil else { return }
+        let reservations = state.reservations
+        logger.warn("Refused with 503: this request needs \(bytes.rawValue >> 20) MB of KV cache and \(reservations.bytes.count) running requests hold \(reservations.held.rawValue >> 20) MB of the \(budget.rawValue >> 20) MB room; retry when one finishes.")
+        await gate.release(ticket)
+        throw .serverBusy(retryAfterSeconds: 1)
     }
 
     func finish(_ ticket: Int) async {
-        reservations.release(ticket)
+        state = .reduce(state, .released(ticket))
         await applyMemoryDirective()
         await gate.release(ticket)
     }
