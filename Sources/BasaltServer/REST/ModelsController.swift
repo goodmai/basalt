@@ -248,6 +248,7 @@ struct ModelsController: Sendable {
     }
 
     static let modelUnavailable = "The model could not be loaded; the server log has the details."
+    static let generationFailed = "Generation stopped mid-stream; the server log has the cause."
 
     enum RESTModel: Equatable {
         case repoId(String)

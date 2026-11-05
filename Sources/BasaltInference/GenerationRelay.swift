@@ -104,7 +104,7 @@ struct GenerationRelay: Sendable {
             modelCalls: telemetry?.targetModelCallCount,
             toolCallRepairs: toolCallRepairs,
             toolCallRejections: toolCallRejections
-        ).reporting(degenerate: health.verdict(calledTools: gate.admitted > 0), draftSource: setup.draftSource, modelModified: modelModified)
+        ).reporting(degenerate: health.verdict(answerExpected: gate.admitted == 0 && finishReason != .length), draftSource: setup.draftSource, modelModified: modelModified)
     }
 
     private var finishReason: GenerationResponse.FinishReason {

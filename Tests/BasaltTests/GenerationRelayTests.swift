@@ -97,6 +97,14 @@ struct GenerationRelayTests {
         #expect(run.metadata.degenerate == .emptyAfterThinking)
     }
 
+    @Test("Reasoning cut off at max_tokens finishes with length and is not reported as degenerate")
+    func thinkingCutOffAtMaxTokens() {
+        let info = GenerateCompletionInfo(promptTokenCount: 6, generationTokenCount: 2, promptTime: 0.1, generationTime: 0.5)
+        let run = Self.run(Setup(request: GenerationRequest(prompt: "p", maxTokens: 2), startsThinking: true), [.chunk("plan"), .chunk(" more"), .info(info)])
+        #expect(run.metadata.finishReason == .length)
+        #expect(run.metadata.degenerate == nil)
+    }
+
     @Test("A tool call flushes the held text first, and with parallel calls off the stream stops after it")
     func singleToolCallStops() {
         let request = GenerationRequest(prompt: "p", tools: Self.tools).with { $0.toolChoice = ToolChoice(parallel: false) }

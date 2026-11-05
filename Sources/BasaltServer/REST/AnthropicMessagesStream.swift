@@ -45,7 +45,7 @@ struct AnthropicMessagesStream: EventStreamEncoder {
     mutating func closing() -> [String] {
         out = []
         if final?.finishReason == .error {
-            send("error", ["type": "error", "error": ["type": "api_error", "message": ModelsController.modelUnavailable]])
+            send("error", ["type": "error", "error": ["type": "api_error", "message": ModelsController.generationFailed]])
             return out
         }
         if openBlock != nil || !calledTools { stop(open("text")) }

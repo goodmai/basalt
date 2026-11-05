@@ -32,7 +32,7 @@ struct OpenAIChatStream: EventStreamEncoder {
 
     func closing() -> [String] {
         if final?.finishReason == .error {
-            let error: [String: Any] = ["error": ["message": ModelsController.modelUnavailable, "type": "server_error"]]
+            let error: [String: Any] = ["error": ["message": ModelsController.generationFailed, "type": "server_error"]]
             return Self.json(error).map { ["event: error\ndata: \($0)\n\n"] } ?? []
         }
         var frames = frame(delta: [:], finish: OpenAIController.finishReason(final?.finishReason, calledTools: toolCallCount > 0))
@@ -111,7 +111,7 @@ struct OpenAIResponsesStream: EventStreamEncoder {
         out = []
         if final?.finishReason == .error {
             send("response.failed", ["response": responseObject(status: "failed", output: [], extra: [
-                "error": ["code": "server_error", "message": ModelsController.modelUnavailable]
+                "error": ["code": "server_error", "message": ModelsController.generationFailed]
             ])])
             return out
         }
