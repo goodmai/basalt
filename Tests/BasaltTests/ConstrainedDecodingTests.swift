@@ -260,7 +260,7 @@ struct ConstrainedDecodingEngineTests {
             configuration: ModelConfiguration(id: "slow-json"), model: model,
             processor: JSONPieceInputProcessor(opensThinking: false), tokenizer: JSONPieceTokenizer())))
         let long = #"{"type": "string", "minLength": 300}"#
-        let schema = try JSONSchemaGate.prepare(long, strict: false).schema
+        let schema = "json_schema:" + (try JSONSchemaGate.prepare(long, strict: false).schema)
         let consumer = Task {
             for await _ in try await engine.generateStream(request: ConstrainedModel.request(format: .jsonSchema(long), maxTokens: 400)) { break }
         }

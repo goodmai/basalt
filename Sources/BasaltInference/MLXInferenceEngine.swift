@@ -167,7 +167,9 @@ public actor MLXInferenceEngine: InferenceEngine {
                 throw error
             }
             launches[claim.leaseID] = launch
-            let route = RelayRoute(namespace: namespace, leaseID: claim.leaseID, epoch: epoch, container: container, alarm: alarm)
+            let route = RelayRoute(
+                namespace: namespace, leaseID: claim.leaseID, epoch: epoch, container: container, alarm: alarm,
+                startsThinking: Self.relayStartsThinking(prompt, constrained: constraint != nil, policy: rendered.policy))
             return relayStream(launch, request, prompt, constraint, plan, route: route)
         } catch let err as BasaltError {
             throw err

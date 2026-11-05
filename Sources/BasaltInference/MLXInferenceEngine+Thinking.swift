@@ -54,6 +54,12 @@ extension MLXInferenceEngine {
         }
     }
 
+    static func relayStartsThinking(_ prompt: PromptInput, constrained: Bool, policy: ReasoningPolicy) -> Bool {
+        guard prompt.endsWithThinking, constrained else { return prompt.endsWithThinking }
+        let phase = constraintPhase(thinkingDisabled: policy == .disabled, endsInsideThinking: true, prefillAnswered: !prompt.prefixAnswer.isEmpty)
+        return phase != .constrained
+    }
+
     static func constraintPhase(thinkingDisabled: Bool, endsInsideThinking: Bool, prefillAnswered: Bool) -> JSONConstraintProcessor.Phase {
         thinkingDisabled || prefillAnswered ? .constrained : endsInsideThinking ? .reasoning : .awaitingAnswer
     }

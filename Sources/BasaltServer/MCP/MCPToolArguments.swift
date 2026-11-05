@@ -69,6 +69,9 @@ enum MCPArguments {
         request.minP = args?["minP"] as? Double
         request.dynamicTemperature = args?["dynamicTemperature"] as? Bool
         request.cacheKey = PromptCacheKey.resolve(isService: false)
+        let (regex, grammar) = (try MCPArguments.string("regex", in: args), try MCPArguments.string("grammar", in: args))
+        guard regex == nil || grammar == nil else { throw .invalidParams("give regex or grammar, not both") }
+        request.responseFormat = regex.map(ResponseFormat.regex) ?? grammar.map(ResponseFormat.grammar)
         return request.withSpeculativeLookup(speculativeLookup)
             .withGrammarJumpForward(grammarJumpForward)
             .withOrigin(RequestOrigin(source: "mcp", endpoint: "tools/call generate", stream: false))
