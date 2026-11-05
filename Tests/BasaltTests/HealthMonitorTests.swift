@@ -2,6 +2,7 @@ import Foundation
 import Testing
 import MLX
 import MLXLMCommon
+import MLXNN
 @testable import BasaltCore
 @testable import BasaltInference
 
@@ -204,5 +205,81 @@ struct CanaryTests {
         #expect(health?.canary?.lastRun == Date(timeIntervalSince1970: 2))
         #expect(health?.degenerateOutputs == ["repeatedToken": 1])
         #expect(health?.drift["m"]?["decodeTokensPerSecond"]?.recent == [40])
+    }
+}
+
+@Suite("Health monitors on tiny models (#325)", .serialized)
+struct HealthMonitorTinyModelTests {
+    static let families: [TinyModel.Family] = [.qwen3, .gemma4, .qwen35]
+
+    static func engine(_ family: TinyModel.Family, poisoned: Bool) async throws -> MLXInferenceEngine {
+        let model = try TinyModel.make(family)
+        if poisoned {
+            model.update(parameters: model.parameters().mapValues { $0.dtype.isFloatingPoint ? $0 * Float.nan : $0 })
+            eval(model)
+        }
+        let engine = MLXInferenceEngine(promptCacheBytes: 1 << 26)
+        await engine.attach(ModelContainer(context: ModelContext(
+            configuration: ModelConfiguration(id: "tiny-\(family.rawValue)"), model: model,
+            processor: ByteInputProcessor(), tokenizer: ByteTokenizer())))
+        return engine
+    }
+
+    static func request(temperature: Double, key: String? = nil) -> GenerationRequest {
+        GenerationRequest(prompt: "Explain the build.", maxTokens: 40, temperature: temperature).with { $0.cacheKey = key }
+    }
+
+    static func metadata(_ engine: MLXInferenceEngine, _ request: GenerationRequest) async throws -> GenerationResponse {
+        var metadata: GenerationResponse?
+        for await chunk in try await engine.generateStream(request: request) {
+            if case .metadata(let response) = chunk { metadata = response }
+        }
+        return try #require(metadata)
+    }
+
+    @Test("NaN weights end a sampled stream with an error and make generate throw nonFiniteLogits; healthy weights do not trip", arguments: families)
+    func sampledRequestTrips(family: TinyModel.Family) async throws {
+        let poisoned = try await Self.engine(family, poisoned: true)
+        #expect(try await Self.metadata(poisoned, Self.request(temperature: 0.7)).finishReason == .error)
+        let error = await #expect(throws: BasaltError.self) { try await poisoned.generate(request: Self.request(temperature: 0.7)) }
+        #expect(error?.localizedDescription == BasaltError.nonFiniteLogits.localizedDescription)
+        let healthy = try await Self.engine(family, poisoned: false)
+        #expect(try await Self.metadata(healthy, Self.request(temperature: 0.7)).finishReason != .error)
+    }
+
+    @Test("A plain greedy request carries no guard, so even NaN weights do not end it with an error", arguments: families)
+    func greedyRequestSkipsTheGuard(family: TinyModel.Family) async throws {
+        let poisoned = try await Self.engine(family, poisoned: true)
+        #expect(try await Self.metadata(poisoned, Self.request(temperature: 0)).finishReason != .error)
+    }
+
+    @Test("A request stopped on non-finite logits leaves no prompt cache behind")
+    func noPromptCacheAfterTrip() async throws {
+        let healthy = try await Self.engine(.qwen3, poisoned: false)
+        _ = try await Self.metadata(healthy, Self.request(temperature: 0.7, key: "ns"))
+        #expect(try await Self.metadata(healthy, Self.request(temperature: 0.7, key: "ns")).cachedPromptTokens > 0)
+        let poisoned = try await Self.engine(.qwen3, poisoned: true)
+        _ = try await Self.metadata(poisoned, Self.request(temperature: 0.7, key: "ns"))
+        #expect(try await Self.metadata(poisoned, Self.request(temperature: 0.7, key: "ns")).cachedPromptTokens == 0)
+    }
+
+    @Test("The canary goes through the gate, fails on broken weights and leaves the gate idle", arguments: [TinyModel.Family.gemma4, .qwen35])
+    func canaryProbe(family: TinyModel.Family) async throws {
+        let healthy = ModelOrchestratorActor(engine: try await Self.engine(family, poisoned: false), telemetry: TelemetryTracker())
+        #expect(await Canary.probe(healthy) != nil)
+        #expect(await healthy.gate.checkInvariants(idle: true) == [])
+        let broken = ModelOrchestratorActor(engine: try await Self.engine(family, poisoned: true), telemetry: TelemetryTracker())
+        #expect(await Canary.probe(broken) == false)
+        #expect(await broken.gate.checkInvariants(idle: true) == [])
+    }
+
+    @Test("A busy server counts as neither a pass nor a failure of the canary")
+    func canaryOnBusyServer() async throws {
+        let orchestrator = ModelOrchestratorActor(
+            engine: try await Self.engine(.gemma4, poisoned: false), telemetry: TelemetryTracker(),
+            gate: GenerationGate(maxConcurrent: 1, maxQueue: 0))
+        let ticket = try await orchestrator.gate.admit()
+        #expect(await Canary.probe(orchestrator) == nil)
+        await orchestrator.gate.release(ticket)
     }
 }

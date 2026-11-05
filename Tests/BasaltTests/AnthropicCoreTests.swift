@@ -117,5 +117,6 @@ struct AnthropicCoreTests {
         let evs = events(stream.closing())
         #expect(evs.map(\.event) == ["error"])
         #expect((evs[0].data["error"] as? [String: Any])?["type"] as? String == "api_error")
+        #expect((evs[0].data["error"] as? [String: Any])?["message"] as? String == ModelsController.generationFailed)
     }
 }

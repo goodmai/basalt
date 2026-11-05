@@ -125,6 +125,7 @@ struct OpenAICoreTests {
         let closing = stream.closing()
         #expect(closing.count == 1)
         #expect(closing[0].hasPrefix("event: error\n"))
+        #expect((payloads(closing).first?.data?["error"] as? [String: Any])?["message"] as? String == ModelsController.generationFailed)
     }
 
     @Test("Responses stream: reasoning item, message item, numbered events, completed response with both items and usage")
@@ -162,6 +163,9 @@ struct OpenAICoreTests {
 
         var failing = OpenAIResponsesStream(model: "m")
         _ = failing.frames(for: .metadata(result(text: "", finish: .error)))
-        #expect(payloads(failing.closing()).map(\.event) == ["response.failed"])
+        let failed = payloads(failing.closing())
+        #expect(failed.map(\.event) == ["response.failed"])
+        let error = (failed.first?.data?["response"] as? [String: Any])?["error"] as? [String: Any]
+        #expect(error?["message"] as? String == ModelsController.generationFailed)
     }
 }
