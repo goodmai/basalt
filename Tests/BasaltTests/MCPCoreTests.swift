@@ -161,11 +161,12 @@ struct MCPCoreTests {
 
 @Suite("MCP number arrays decoded through AnyCodable")
 struct MCPNumberArgumentTests {
-    @Test("Whole numbers in a vector decode as Int and are still accepted; a string element is refused")
+    @Test("Whole numbers in a vector or a scalar decode as Int and are still accepted; a string element is refused")
     func wholeNumbers() throws {
-        let message = try JSONDecoder().decode(AnyCodable.self, from: Data(#"{"v":[0.0,0.5,1],"w":[1,"x"]}"#.utf8))
+        let message = try JSONDecoder().decode(AnyCodable.self, from: Data(#"{"v":[0.0,0.5,1],"w":[1,"x"],"s":0}"#.utf8))
         let args = message.rawValue as? [String: Any]
         #expect(try MCPArguments.numbers("v", in: args) == [0, 0.5, 1])
+        #expect(try MCPArguments.number("s", in: args) == 0)
         #expect(throws: MCPFailure.self) { try MCPArguments.numbers("w", in: args) }
     }
 }

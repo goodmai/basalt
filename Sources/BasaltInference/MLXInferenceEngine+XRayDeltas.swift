@@ -102,6 +102,7 @@ extension MLXInferenceEngine {
         let added = values.count == 1 ? MLXArray(values[0]) : MLXArray(values, slice.shape)
         tensor[indices] = (slice + added * delta.scale).asType(tensor.dtype)
         eval(tensor)
+        model.invalidateCompiledTraces()
         return AppliedDelta(slice: ranges, original: original)
     }
 
@@ -112,6 +113,7 @@ extension MLXInferenceEngine {
         let indices: [any MLXArrayIndex] = applied.slice
         tensor[indices] = MLXArray(applied.original, applied.slice.map(\.count)).asType(tensor.dtype)
         eval(tensor)
+        model.invalidateCompiledTraces()
     }
 
     static func writableTensor(_ name: String, in model: Module) throws(BasaltError) -> MLXArray {

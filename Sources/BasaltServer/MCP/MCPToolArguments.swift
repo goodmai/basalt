@@ -345,7 +345,7 @@ extension MCPArguments {
 
     static func number(_ key: String, in args: [String: Any]?) throws(MCPFailure) -> Float? {
         guard let value = present(key, in: args) else { return nil }
-        guard !isJSONBoolean(value), let number = value as? Double, number.isFinite else {
+        guard !isJSONBoolean(value), let number = (value as? Double) ?? (value as? Int).map(Double.init), number.isFinite else {
             throw .invalidParams("\(key) must be a number")
         }
         return Float(number)

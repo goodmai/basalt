@@ -231,6 +231,7 @@ extension MLXInferenceEngine {
         }
         do {
             try parent.update(modules: ModuleChildren.unflattened([(key, module)]), verify: .noUnusedKeys)
+            settle(model)
         } catch {
             throw .inferenceError("adapter: \(path) could not be swapped: \(briefly(error))")
         }
