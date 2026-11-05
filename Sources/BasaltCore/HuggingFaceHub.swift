@@ -246,10 +246,12 @@ package actor HuggingFaceHub {
     private let session: URLSession
     private let baseURL: String
     private let apiURL: String
+    private let requireVerified: Bool
     private(set) var state = HubState()
     package var bytesFetched: Int { state.bytesFetched }
 
-    package init(configuration: URLSessionConfiguration = .default, endpoint: String = "https://huggingface.co") {
+    package init(configuration: URLSessionConfiguration = .default, endpoint: String = "https://huggingface.co", requireVerified: Bool = false) {
+        self.requireVerified = requireVerified
         baseURL = endpoint
         apiURL = endpoint + "/api"
         let config = configuration
@@ -308,6 +310,19 @@ extension HuggingFaceHub {
         default:
             throw HFError.modelNotFound(repoId)
         }
+    }
+
+    package func treeDigests(repoId: String, revision: String) async throws -> [String: HubDigest] {
+        guard Self.isRepoId(repoId), let encoded = revision.addingPercentEncoding(withAllowedCharacters: .alphanumerics),
+              let url = URL(string: "\(apiURL)/models/\(repoId)/tree/\(encoded)?recursive=true") else {
+            throw HFError.invalidRepoId(repoId)
+        }
+        let (data, response) = try await session.data(from: url)
+        state = HubState.reduce(state, .fetched(bytes: data.count))
+        let status = (response as? HTTPURLResponse)?.statusCode
+        guard status == 200 else { throw HFError.apiError(code: status ?? -1) }
+        let entries = try JSONDecoder().decode([HubTreeEntry].self, from: data)
+        return Dictionary(entries.compactMap { entry in entry.digest.map { (entry.path, $0) } }, uniquingKeysWith: { first, _ in first })
     }
 
     package func fetch(repoId: String, path: String, range: ClosedRange<Int>? = nil) async throws -> (data: Data, fileSize: Int64) {
@@ -398,6 +413,8 @@ extension HuggingFaceHub {
         while true {
             do {
                 return try await downloadFileWithResume(file, token: token, onProgress: onProgress)
+            } catch HFError.digestMissing(let name) {
+                throw HFError.digestMissing(name)
             } catch {
                 guard let delay = HubRetry.delay(afterFailedAttempt: attempt) else { throw error }
                 try await Task.sleep(for: delay)
@@ -415,6 +432,7 @@ extension HuggingFaceHub {
         let (_, headResponse) = try await session.data(for: head, delegate: HubHeadRedirects())
         let remoteSize = HubResponse.remoteSize(headResponse)
         let digest = HubDigest(headResponse)
+        if digest == nil, requireVerified { throw HFError.digestMissing(file.name) }
         var plan = HubTransferPlan(existingSize: existingSize, remoteSize: remoteSize)
         if plan == .skip, let digest, try !digest.verifyExisting(file) { plan = .startNew }
         if case .resume = plan, (try? file.destination.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) == true { plan = .startNew }
@@ -506,6 +524,8 @@ package enum HFError: Error, LocalizedError {
     case modelNotFound(String)
     case downloadFailed(String)
     case digestMismatch(file: String, expected: String, actual: String)
+    case digestMissing(String)
+    case unverifiedSnapshot(path: String, files: [String])
 
     package var errorDescription: String? {
         switch self {
@@ -516,6 +536,10 @@ package enum HFError: Error, LocalizedError {
         case .downloadFailed(let f):   return "Download failed: \(f)"
         case .digestMismatch(let file, let expected, let actual):
             return "Download of \(file) does not match its digest: expected \(expected), got \(actual)"
+        case .digestMissing(let file):
+            return "The server sent no digest for \(file), and --require-verified refuses a file it cannot verify"
+        case .unverifiedSnapshot(let path, let files):
+            return "Refusing to load \(path): not verified: \(files.joined(separator: ", ")). Run `basalt models inspect \(path) --verify` to see each file's verdict, or re-download with `basalt models download <repo> --require-verified`"
         }
     }
 }

@@ -18,6 +18,7 @@ public actor ModelInspector {
         public let tensorDtype: String
         public let shardFiles: [ShardInfo]
         public let errors: [String]
+        public var files: [HubFileVerdict]? = nil
     }
 
     public struct ShardInfo: Codable, Sendable {
@@ -28,6 +29,10 @@ public actor ModelInspector {
     }
 
     public func inspect(modelIdOrPath: String, quant: String? = nil) async -> Report {
+        await inspect(modelIdOrPath: modelIdOrPath, quant: quant, verifyingWith: nil)
+    }
+
+    package func inspect(modelIdOrPath: String, quant: String? = nil, verifyingWith hub: HuggingFaceHub?) async -> Report {
         let (dirURL, resolvedId) = resolveModelDirectory(modelIdOrPath: modelIdOrPath, quant: quant)
         guard let dirURL, FileManager.default.fileExists(atPath: dirURL.path) else {
             return Report(missingDirectory: dirURL?.path ?? modelIdOrPath, modelId: resolvedId)
@@ -43,7 +48,12 @@ public actor ModelInspector {
         for fileURL in shardFiles {
             scan.record(fileURL.lastPathComponent, shardOutcome(fileURL))
         }
-        return Report(modelId: resolvedId, path: dirURL.path, scan: scan, config: ModelCache.config(at: dirURL))
+        var files: [HubFileVerdict]?
+        if let hub { files = await HubSnapshot(directory: dirURL).verify(hub: hub) }
+        scan.errors += (files ?? []).filter { $0.verified == .mismatch }.map { "Digest mismatch: \($0.name)" }
+        var report = Report(modelId: resolvedId, path: dirURL.path, scan: scan, config: ModelCache.config(at: dirURL))
+        report.files = files
+        return report
     }
 
     private func indexProblems(in dirURL: URL) -> [String] {

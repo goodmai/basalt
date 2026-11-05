@@ -64,6 +64,22 @@ extension ServeCommand {
     }
 
     func resolveModelPath() async throws -> String {
+        let path = try await requestedModelPath()
+        if requireVerified { try await refuseUnverified(path) }
+        return path
+    }
+
+    func refuseUnverified(_ path: String) async throws {
+        log("Verifying every file of \(bold(path)) (--require-verified)…")
+        do throws(HFError) {
+            try await HubSnapshot(directory: URL(fileURLWithPath: path)).requireVerified(hub: HuggingFaceHub())
+        } catch {
+            log("\(red("[error]")) \(error.localizedDescription)")
+            throw ExitCode.failure
+        }
+    }
+
+    private func requestedModelPath() async throws -> String {
         if let explicit = modelPath { return explicit }
 
         let modelId = model ?? Self.defaultModel
@@ -84,7 +100,7 @@ extension ServeCommand {
         }
 
         log("Model not in local cache: \(bold(modelId))\(quant.map { " [\($0)]" } ?? ""). Downloading…")
-        let hub = HuggingFaceHub()
+        let hub = HuggingFaceHub(requireVerified: requireVerified)
         do {
             let dest = try await hub.download(repoId: modelId, subfolder: quant, token: nil,
                                               onFile: DownloadProgressReporter().callAsFunction)
