@@ -35,13 +35,13 @@ struct GrammarFormatTests {
         #expect(source.contains("const_string") && source.contains("structural_tag"))
     }
 
-    static let malformed: [[String: Any]] = [
+    static var malformed: [[String: Any]] { [
         ["response_format": ["type": "regex"]],
         ["response_format": ["type": "regex", "regex": ""]],
         ["response_format": ["type": "grammar", "grammar": 3]],
         ["guided_regex": "a", "guided_grammar": grammarA],
         ["guided_regex": "a", "response_format": ["type": "json_object"]],
-    ]
+    ] }
 
     @Test("A malformed grammar request is refused before generation", arguments: 0..<5)
     func refusesMalformed(index: Int) {
