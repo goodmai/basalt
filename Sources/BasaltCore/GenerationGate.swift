@@ -118,6 +118,14 @@ public actor GenerationGate {
         return try await body()
     }
 
+    public func idle(within limit: Duration) async -> Bool {
+        let end = now() + limit
+        while !running.isEmpty || !queue.isEmpty {
+            guard now() < end, (try? await sleep(.milliseconds(20))) != nil else { return false }
+        }
+        return true
+    }
+
     public func shutdown(deadline: Duration) async {
         closed = true
         let waiting = queue

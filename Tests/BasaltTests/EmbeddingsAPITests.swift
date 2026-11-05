@@ -22,7 +22,7 @@ struct StubEmbeddingEngine: EmbeddingEngine {
     var calls = EmbeddingCalls()
     var betweenBatches: (paused: AsyncStream<Void>.Continuation, resume: AsyncStream<Void>)?
 
-    func embed(_ inputs: [EmbeddingInput], dimensions: Int?) async throws(BasaltError) -> Embeddings {
+    func embed(_ inputs: [EmbeddingInput], dimensions: Int?, yieldingTo gate: GenerationGate?) async throws(BasaltError) -> Embeddings {
         calls.inputs.withLock { $0.append(inputs) }
         if let betweenBatches {
             calls.events.withLock { $0.append("micro-batch 1") }
@@ -259,5 +259,27 @@ struct EmbeddingsAPITests {
         #expect(batches.allSatisfy { $0.count <= 2 && ($0.count == 1 || ($0.map { lengths[$0] }.max() ?? 0) * $0.count <= 8192) })
         #expect(batches.first == [1, 3])
         #expect(batches.last == [2])
+    }
+}
+
+@Suite("Embedding micro-batches wait for generation to go idle (#233)")
+struct GenerationIdleTests {
+    @Test("idle(within:) is true at once on an idle gate, false at the limit while a request runs, and true again once it is released")
+    func idleWithin() async throws {
+        let clock = Mutex(Duration.zero)
+        let gate = GenerationGate(now: { clock.withLock { $0 } }, sleep: { step in clock.withLock { $0 += step } })
+        #expect(await gate.idle(within: .seconds(1)))
+        let id = try await gate.admit()
+        #expect(await !gate.idle(within: .seconds(1)))
+        #expect(clock.withLock { $0 } >= .seconds(1))
+        await gate.release(id)
+        #expect(await gate.idle(within: .seconds(1)))
+    }
+
+    @Test("A cancelled wait returns false instead of spinning until the limit")
+    func cancelledWait() async throws {
+        let gate = GenerationGate(now: { .zero }, sleep: { _ in throw CancellationError() })
+        _ = try await gate.admit()
+        #expect(await !gate.idle(within: .seconds(1)))
     }
 }
