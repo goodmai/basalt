@@ -205,6 +205,7 @@ extension MLXInferenceEngine {
             speculative: plan.speculativeLookup, recycling: speculativeRecycling, jumpForward: jumpForward, routesExperts: expertRouting)
         (options.kvZones, options.kvHeadMask, options.questTopK, options.kvPrecision) = (plan.kvZones, plan.kvHeadMask, plan.questTopK, plan.kvPrecision)
         (options.mtp, options.mtpBlockSize, options.mtpPrefix) = (plan.drafts, mtpBlockSize, mtpPrefix)
+        options.pacer = prefillPacer
     }
 
     func launching(_ input: LMInput, _ prompt: CachedPrompt, options: LaunchOptions, container: ModelContainer) async throws -> GenerationLaunch {

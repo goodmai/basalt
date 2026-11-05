@@ -49,6 +49,7 @@ struct LaunchOptions {
     var mtp = false
     var mtpBlockSize = 4
     var mtpPrefix: MTPPrefix?
+    var pacer: PrefillPacer?
 }
 
 struct MTPRequest {
@@ -66,6 +67,14 @@ extension GenerateParameters {
         var reporting = self
         reporting.prefill.progress = MLXInferenceEngine.prefillProgress ?? prefill.progress
         return reporting
+    }
+
+    func paced(by pacer: PrefillPacer?) -> GenerateParameters {
+        guard let pacer else { return self }
+        var paced = self
+        paced.prefill.stepSize = pacer.stepSize(under: prefill.stepSize)
+        paced.prefill.progress = pacer.progress(chaining: prefill.progress)
+        return paced
     }
 }
 
