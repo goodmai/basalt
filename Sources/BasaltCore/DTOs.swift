@@ -180,7 +180,8 @@ public struct GenerationRequest: Codable, Sendable {
         guard !prompt.isEmpty || messages?.isEmpty == false else {
             throw .invalidRequestStructure(details: "prompt must not be empty")
         }
-        
+        try ImageInput.checkCount(messages?.reduce(0) { $0 + $1.images.count } ?? 0)
+
         let maxT = maxTokens ?? defaultMaxTokens
         guard 1...Self.maximumTokens ~= maxT else {
             throw .contextLengthExceeded(maxTokens: Self.maximumTokens, requested: maxT)

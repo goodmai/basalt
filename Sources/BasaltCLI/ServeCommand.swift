@@ -160,6 +160,8 @@ struct ServeCommand: AsyncParsableCommand {
     @Flag(help: "Start REST only, suppress MCP stdio")
     var rest: Bool = false
 
+    @Option(name: .customLong("image-dir"), help: "With --mcp, a directory the generate tool may read image paths from, after resolving symlinks; repeatable (default: none, every path is refused)") var imageDirs: [String] = []
+
     @Flag(
         name: .customLong("research-tools"),
         help: "With --mcp, also list and accept the experiment tools (intervene, weights_delta, overlays_list, overlay_undo, experiment_compare, adapter_apply, gate_check, tensor_pack, tensor_unpack, train_experts, steer_search, steer_commit, introspect): in-memory overlays with undo and a TTL (an adapter that passed its quality gate has none); steering and ablation apply to research calls only, while a weight delta, adapter or pack changes the live model, marks every response as modified and turns off prompt-cache reuse until it is undone; model files on disk are never written (train_experts saves its adapter to a new directory) (default: off; the read-only X-ray tools are always on)"
@@ -238,7 +240,7 @@ struct ServeCommand: AsyncParsableCommand {
             orchestrator: orchestrator,
             modelId: resolvedPath.split(separator: "/").last.map { String($0) },
             library: HarnessExperienceLibrary(rootDirectory: HarnessExperienceLibrary.defaultRoot)
-        ).withResearchTools(researchTools) : nil
+        ).withResearchTools(researchTools).withImageDirectories(imageDirs.map { URL(fileURLWithPath: $0) }) : nil
 
         try await Self.runServers(
             ServerLaunch(

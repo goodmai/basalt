@@ -72,6 +72,10 @@ extension MLXInferenceEngine {
 
     public var isLoaded: Bool { container != nil }
 
+    static func imageToken(in config: [String: Any]?) -> Int? {
+        (config?["image_token_id"] ?? config?["image_token_index"]) as? Int
+    }
+
     public func load(modelPath: String) async throws(BasaltError) {
         logger.trace("Loading model from path: \(modelPath)")
         await Self.registerAliases()
@@ -105,7 +109,8 @@ extension MLXInferenceEngine {
                 samplingDefaults: SamplingDefaults(generationConfig: ModelCache.generationConfig(at: directory)),
                 controlTokens: ControlTokenGuard(modelDirectory: directory),
                 fingerprint: promptCacheDisk == nil ? nil : PromptCacheDiskStore.fingerprint(modelDirectory: directory),
-                description: modelPath, hasMTPDrafter: drafts, capabilities: capabilities ?? .conservative)
+                description: modelPath, hasMTPDrafter: drafts, capabilities: capabilities ?? .conservative,
+                imageToken: Self.imageToken(in: ModelCache.config(at: directory)))
             guard attach(loaded, facts: facts, epoch: epoch) else { return }
             if capabilities == nil { logger.warn(ModelCapabilities.unverifiedWarning(modelType: modelType)) }
             await probeKVZones()

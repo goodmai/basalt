@@ -388,6 +388,16 @@ Implements the full Anthropic SSE event sequence (`message_start`, `content_bloc
 
 **Prefill.** A conversation that ends with an assistant message continues that message instead of answering it in a new turn, on `/v1/messages`, `/v1/chat/completions` and `/v1/responses`, as on the Anthropic API, vLLM's `continue_final_message` and llama.cpp. The earlier turns are rendered up to the generation prompt with thinking off, the assistant text follows it unclosed, and the response holds only what the model writes after it: prefill `{"name":` and the reply is ` "Whiskers", "age": 3}`. With `response_format` or a forced tool the prefill is the start of the JSON document (a prefill the schema cannot start with is 400), and a forced tool's arguments include it. A prefill that opens a thinking block (`<think>…`) keeps the requested thinking and continues as reasoning. Several trailing assistant messages are joined as one prefill; an empty one is dropped; an assistant message with tool calls is still a finished turn. A prompt with images cannot be continued (400). Control tokens in the prefill (`<|im_end|>`, `<|im_start|>`, …) are neutralized like the rest of the conversation, so a prefill cannot forge a turn; only the thinking markers that open and close its reasoning stay real, and on a template that already opens `<think>` itself (Ornith, Qwen3.5+) the prefill's own leading `<think>` is dropped instead of doubled. With `--cloud-fallback` a prefilled request always stays local, since not every provider continues a trailing assistant message. On Nemotron Nano v2, which turns thinking off with a `/no_think` line in the system turn, a prefilled request renders a different system turn than a thinking-on request on the same history, so the two share only the prompt cache before it.
 
+### Image input
+
+A vision model (Gemma 4, Qwen3.5-VL, … — any model MLXVLM loads) takes images on `/v1/chat/completions`, `/v1/responses`, `/v1/messages` and the MCP `generate` tool:
+
+- **OpenAI:** a content part `{"type": "image_url", "image_url": {"url": "data:image/png;base64,…"}}` (`/v1/responses`: `{"type": "input_image", "image_url": "data:…"}`).
+- **Anthropic:** a content block `{"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "…"}}`.
+- **MCP:** `images: [{"data": "<base64>", "mime": "image/png"}]`, or `[{"path": "/abs/file.png"}]` for a file inside a directory given with `serve --image-dir <dir>` (repeatable). The path is checked after resolving symlinks; with no `--image-dir` every path is refused.
+
+PNG, JPEG, WebP and HEIC, at most 8 images per request and 20 MB of encoded bytes per image; each overflow is a 400 that names the limit. Remote URLs (`http(s)://` in `image_url`, `source.type: "url"`) are refused with 400 — basalt does not fetch them; send the image as a `data:` URI. An image sent to a model that is not a vision model is a 400 (`<model> does not take images`), never a silent drop, and a request with images never goes to `--cloud-fallback`. The prompt cache is keyed by the SHA-256 of each image: the same images in the same order reuse the cached prefix, different images reuse nothing. Session logs record digests and byte counts, never image bytes. Images inside tool results are still shown to the model as `[image omitted]`.
+
 ### SSE streaming (native API)
 
 ```bash
@@ -584,7 +594,7 @@ Available MCP tools:
 
 | Tool | Description |
 |---|---|
-| `gemma_generate` | Generate text — `prompt`, `maxTokens`, `temperature`, `topP`, `minP`, `dynamicTemperature` |
+| `gemma_generate` | Generate text — `prompt`, `maxTokens`, `temperature`, `topP`, `minP`, `dynamicTemperature`, `images` (see [Image input](#image-input)) |
 | `gemma_status` | Returns server readiness, version, and current model |
 | `status` | Engine health, loaded model, memory snapshot and telemetry — optional `modelId` to check |
 | `check_hardware` | Apple Silicon resources: chip, unified memory, GPU, disk |

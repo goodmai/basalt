@@ -1,6 +1,8 @@
 import Foundation
+import CoreImage
 import MLX
 import MLXLMCommon
+import MLXVLM
 import BasaltCore
 
 struct RenderedPrompt {
@@ -21,6 +23,7 @@ struct PromptInput {
     var echoedPrefix: String?
     var endsWithThinking: Bool
     var prefixAnswer: String
+    var media: PromptMedia
 }
 
 struct RelayRoute {
@@ -104,7 +107,7 @@ extension MLXInferenceEngine {
         }
     }
 
-    func promptInput(_ rendered: RenderedPrompt, request: GenerationRequest, container: ModelContainer) async throws -> PromptInput {
+    func promptInput(_ rendered: RenderedPrompt, request: GenerationRequest, container: ModelContainer, epoch: ModelEpoch) async throws -> PromptInput {
         logger.trace("Input prepared. Starting MLX generation...")
         let carries = Self.carriesMoreThanTokens(rendered.input)
         if carries, rendered.prefill != nil {
@@ -121,9 +124,25 @@ extension MLXInferenceEngine {
             input = Self.appending(ids, to: rendered.input)
         }
         let answer = Self.answerAfterThinking(renderedTail, assistantPrefix: assistantPrefix ?? "")
+        let tokens = input.text.tokens.asArray(Int.self)
+        let snapshotsCarryMedia = carries ? await cacheIsHybrid(container, epoch: epoch) : false
         return PromptInput(
-            input: input, tokens: input.text.tokens.asArray(Int.self), renderedCount: rendered.input.text.tokens.dim(-1),
-            carriesMoreThanTokens: carries, echoedPrefix: echoedPrefix, endsWithThinking: answer == nil, prefixAnswer: String(answer ?? ""))
+            input: input, tokens: tokens, renderedCount: rendered.input.text.tokens.dim(-1),
+            carriesMoreThanTokens: carries, echoedPrefix: echoedPrefix, endsWithThinking: answer == nil, prefixAnswer: String(answer ?? ""),
+            media: .of(request.messages, carriesMoreThanTokens: carries, tokens: tokens, imageToken: snapshotsCarryMedia ? modelFacts.imageToken : nil))
+    }
+
+    func checkImages(_ messages: [ChatMessageInput]?, container: ModelContainer) async throws(BasaltError) {
+        guard let messages, messages.contains(where: { !$0.images.isEmpty }) else { return }
+        try ImageInput.checkCount(messages.reduce(0) { $0 + $1.images.count })
+        let (name, takesImages) = await container.perform { ($0.configuration.name, $0.model is any VLMModel) }
+        guard takesImages else {
+            let model = ModelCache.canonicalRepoId(from: modelFacts.description.isEmpty ? name : modelFacts.description)
+            throw .invalidRequestStructure(details: "\(model) does not take images")
+        }
+        for (index, message) in messages.enumerated() where message.images.contains(where: { CIImage(data: $0.data) == nil }) {
+            throw .invalidRequestStructure(details: "the image in message \(index) cannot be decoded")
+        }
     }
 
     func checkedConstraint(
@@ -140,19 +159,20 @@ extension MLXInferenceEngine {
         return constraint
     }
 
-    func claimCache(_ namespace: String?, drafts: Bool, tokens: [Int]) throws -> CacheClaim {
+    func claimCache(_ namespace: String?, drafts: Bool, tokens: [Int], mediaEnd: Int) throws -> CacheClaim {
         var lease: PromptCacheLease? = if let namespace { promptCaches.lease(namespace, for: tokens) } else { nil }
+        let leased = switch lease {
+        case let held?: held.reusedTokens
+        case nil: 0
+        }
+        if leased < mediaEnd { lease = nil }
         var storedPrefix: MTPPrefix?
         if drafts, let namespace {
-            let leased = switch lease {
-            case let held?: held.reusedTokens
-            case nil: 0
-            }
             let prefix = Array(tokens.prefix(leased))
             storedPrefix = mtpPrefixes.last { $0.namespace == namespace && $0.tokens == prefix }?.prefix
             if leased > 0, storedPrefix == nil { lease = nil }
         }
-        let fork = namespace.map { promptCaches.storedPrefix(of: tokens, in: $0) }
+        let fork = mediaEnd > 0 ? nil : namespace.map { promptCaches.storedPrefix(of: tokens, in: $0) }
         let reuse: (cache: PromptCache, reusedTokens: Int)? = switch lease {
         case let held?: (held.cache, held.reusedTokens)
         case nil: nil

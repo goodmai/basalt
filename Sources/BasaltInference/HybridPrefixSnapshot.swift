@@ -51,14 +51,15 @@ struct RecurrentSnapshot {
 
 enum HybridPrefixSnapshot {
     static func prefillHead(
-        _ prompt: MLXArray, into cache: PromptCache, plan: CachedPrompt, model: any LanguageModel, prefill: PrefillParameters
+        _ prompt: MLXArray, into cache: PromptCache, plan: CachedPrompt, model: any LanguageModel, prefill: PrefillParameters,
+        image: LMInput.ProcessedImage? = nil
     ) throws -> (anchors: [PromptCache], kept: PromptCache?, start: Int, state: LMOutput.State?) {
         let (reused, cuts, boundary) = (plan.reuse?.reusedTokens ?? 0, plan.cuts, plan.boundary)
         guard cache.isHybrid else { return ([], cache, reused, cache.state) }
         guard boundary > reused, boundary < prompt.dim(-1) else { return ([], nil, reused, cache.state) }
         var state = cache.state
         func advance(_ range: Range<Int>) throws -> PromptCache {
-            let slice = LMInput(tokens: prompt[.ellipsis, range])
+            let slice = LMInput(text: LMInput.Text(tokens: prompt[.ellipsis, range]), image: range.lowerBound == 0 ? image : nil)
             switch try model.prepare(slice, cache: cache.layers, state: state, prefill: prefill) {
             case .tokens(let rest):
                 if rest.tokens.size > 0 {

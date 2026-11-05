@@ -117,7 +117,7 @@ struct EmbeddingsController: Sendable {
         guard let engine, let model = engine.models.first(where: { $0.task == .embedding }) else {
             return failure(.notFound, "No embedding model is loaded; start basalt serve with --embedding-model <repo|dir>.")
         }
-        let data = Data(try await request.body.collect(upTo: ChatPipeline.bodyLimit).readableBytesView)
+        let data = Data(try await request.body.collect(upTo: ChatPipeline.textBodyLimit).readableBytesView)
         guard let dto = try? JSONDecoder().decode(EmbeddingRequest.self, from: data) else {
             return failure(.badRequest, "\"input\" must be a string, an array of strings or an array of token arrays.")
         }
@@ -155,7 +155,7 @@ struct EmbeddingsController: Sendable {
         guard let engine, let model = engine.models.first(where: { $0.task == .rerank }) else {
             return failure(.notFound, "No rerank model is loaded; start basalt serve with --rerank-model <repo|dir>.")
         }
-        let data = Data(try await request.body.collect(upTo: ChatPipeline.bodyLimit).readableBytesView)
+        let data = Data(try await request.body.collect(upTo: ChatPipeline.textBodyLimit).readableBytesView)
         guard let dto = try? JSONDecoder().decode(RerankRequest.self, from: data) else {
             return failure(.badRequest, "A rerank request needs \"query\" and \"documents\" (strings or {\"text\": ...} objects).")
         }
