@@ -44,7 +44,7 @@ enum DiskFixture {
     }
 
     static func dense(_ disk: PromptCacheDiskStore?, fingerprint: String = "fp-1") async throws -> MLXInferenceEngine {
-        await engine(try TinyModel.make(), id: "tiny-llama", disk: disk, fingerprint: fingerprint)
+        await engine(try TinyModel.make(), id: "tiny-qwen3", disk: disk, fingerprint: fingerprint)
     }
 
     static func hybrid(_ disk: PromptCacheDiskStore?, fingerprint: String = "fp-1") async throws -> MLXInferenceEngine {
@@ -582,7 +582,7 @@ struct PromptCacheDiskTests {
         let stored = Array(0..<100)
         var store = DiskFixture.store(directory)
         _ = store.store(fingerprint: "fp-1", model: "m", namespace: "shared", tokens: stored, cache: try DiskFixture.prefilled(model, stored))
-        let engine = await DiskFixture.engine(model, id: "tiny-llama", disk: store)
+        let engine = await DiskFixture.engine(model, id: "tiny-qwen3", disk: store)
         let usable = 70
         _ = try await engine.generate(request: GenerationRequest(
             prompt: String(String.UnicodeScalarView(stored.prefix(usable).compactMap { UnicodeScalar($0) })) + "zz",

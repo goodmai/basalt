@@ -52,7 +52,7 @@ enum LookupFixture {
 
     static func byteContainer() throws -> ModelContainer {
         ModelContainer(context: ModelContext(
-            configuration: ModelConfiguration(id: "tiny-llama-4"), model: try TinyModel.make(.llama4Layers),
+            configuration: ModelConfiguration(id: "tiny-qwen3-4"), model: try TinyModel.make(.qwen3),
             processor: ByteInputProcessor(), tokenizer: ByteTokenizer()))
     }
 
@@ -87,7 +87,7 @@ struct PromptLookupDecodingTests {
     }
 
     @Test("Greedy decoding with prompt lookup emits exactly the plain decoder's tokens, and drafts are accepted",
-          arguments: [TinyModel.Family.llama4Layers, .qwen3, .qwen35, .lfm2Moe, .nemotronH, .lfm2, .gemma4, .gemma4Moe])
+          arguments: [TinyModel.Family.qwen3, .qwen35, .lfm2Moe, .nemotronH, .lfm2, .gemma4, .gemma4Moe])
     func greedyEquivalence(family: TinyModel.Family) throws {
         try withKnownIssue("Nemotron-H diverges from the plain decoder intermittently in full parallel runs (#250)", isIntermittent: true) {
             let model = try TinyModel.make(family)
@@ -125,7 +125,7 @@ struct PromptLookupDecodingTests {
     @Test("When the output copies a long span of the prompt, a verify round drafts more than 8 tokens on average")
     func draftsRunPastEightTokens() throws {
         let continuation = (0 ..< 64).map { LookupFixture.unit[(4 + $0) % LookupFixture.unit.count] }
-        let run = try LookupFixture.lookup(try TinyModel.make(.llama4Layers), sampler: ScriptedSampler(continuation))
+        let run = try LookupFixture.lookup(try TinyModel.make(.qwen3), sampler: ScriptedSampler(continuation))
         expectTokenSequence(run.tokens, continuation)
         let telemetry = try #require(run.iterator.speculativeDecodingTelemetry)
         #expect(telemetry.draftTokenCount > 8 * telemetry.roundCount)
@@ -223,7 +223,7 @@ struct PromptLookupDecodingTests {
     }
 
     @Test("A stateful logit processor and a seeded sampler see the same calls as in plain decoding",
-          arguments: [(TinyModel.Family.llama4Layers, "repetition"), (TinyModel.Family.llama4Layers, "entropy"), (TinyModel.Family.qwen35, "repetition")])
+          arguments: [(TinyModel.Family.qwen3, "repetition"), (TinyModel.Family.lfm2, "entropy"), (TinyModel.Family.qwen35, "repetition")])
     func processorAndSamplerParity(family: TinyModel.Family, shaping: String) throws {
         let model = try TinyModel.make(family)
         func processor() -> LogitProcessor {
@@ -241,7 +241,7 @@ struct PromptLookupDecodingTests {
     }
 
     @Test("DRY on: lookup on and off emit the same tokens, DRY changes the output, and drafts are still accepted",
-          arguments: [TinyModel.Family.llama4Layers, .qwen35])
+          arguments: [TinyModel.Family.qwen3, .qwen35])
     func dryParity(family: TinyModel.Family) throws {
         let model = try TinyModel.make(family)
         func dry() -> LogitProcessor { DRYPenalty(multiplier: 0.2, allowedLength: 6, breakers: []) }
@@ -253,7 +253,7 @@ struct PromptLookupDecodingTests {
     }
 
     @Test("A seeded sampler at T > 0 draws exactly the plain decoder's tokens with lookup on, with no processor or a stateful one past its warm-up, and drafts are accepted",
-          arguments: [TinyModel.Family.llama4Layers, .qwen35], ["none", "repetition", "entropy"])
+          arguments: [TinyModel.Family.qwen3, .qwen35], ["none", "repetition", "entropy"])
     func seededSamplerParity(family: TinyModel.Family, shaping: String) throws {
         let model = try TinyModel.make(family)
         let maxTokens = EntropyDynamicTemperature.minTokens + EntropyDynamicTemperature.readbackLag + 64

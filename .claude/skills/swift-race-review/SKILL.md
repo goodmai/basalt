@@ -28,7 +28,7 @@ Use this skill for that blind spot. For ordinary actor, `Task` and async/await c
    - A race test on a tiny model often passes without the fix, because the window is microseconds wide.
    - A test that finishes every prefill before the first decode step never overlaps them at all.
    - Say so, and ask for the real-model reproduction: the server under `--max-concurrent 4`, or staggered arrivals into the batch on Ornith or Qwen3.5. A green unit test is not enough.
-   - Check that every new path is exercised on every model family it enables, not only on Llama. For a batch decoder that means join, retire and filter.
+   - Check that every new path is exercised on every model family it enables, not only on dense Qwen3. For a batch decoder that means join, retire and filter.
 
 6. **Check the allowlist.** Run `swift scripts/check_concurrency_hatches.swift`. A new line in `scripts/concurrency-hatches.allow` needs a reason that names what serializes the site, and that reason must be true in the code; prefer the structural fix (a value, an actor, `sending`, `Mutex`) and no new line. A PR that removes a hatch removes its line.
 

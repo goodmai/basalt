@@ -57,7 +57,7 @@ struct FeatureMatrixTests {
     }
 
     static let promptCacheBytes = 1 << 26
-    static let families = TinyModel.Family.allCases.filter { ![.llama, .llama4Layers].contains($0) }
+    static let families = TinyModel.Family.allCases.filter { $0 != .qwen3Small }
     static let slidingWindowFamilies: [TinyModel.Family] = [.gemma3, .gemma4, .gemma4Moe]
 
     static var turns: [GenerationRequest] {

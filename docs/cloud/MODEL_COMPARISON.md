@@ -20,4 +20,4 @@ Gem integrates with OpenRouter to provide access to hundreds of cloud models. Th
 - `anthropic/claude-3.5-sonnet` (Excellent at coding)
 - `openai/gpt-4o` (Great all-rounder)
 - `google/gemini-1.5-pro` (Huge context window)
-- `meta-llama/llama-3-70b-instruct` (Top open-source)
+- `qwen/qwen3-235b-a22b` (Top open-weight)

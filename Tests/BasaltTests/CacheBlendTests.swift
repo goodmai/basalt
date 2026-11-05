@@ -39,7 +39,7 @@ enum Files {
 }
 
 func blendModels() throws -> [any LanguageModel] {
-    [try TinyModel.make(.llama4Layers), try TinyModel.make(.qwen3)]
+    [try TinyModel.make(.qwen3)]
 }
 
 func fullLogits(_ model: any LanguageModel, _ prompt: [Int]) throws -> MLXArray {
@@ -76,7 +76,7 @@ func distance(_ a: MLXArray, _ b: MLXArray) -> Float {
     (a - b).square().sum().sqrt().item(Float.self)
 }
 
-@Suite("CacheBlend non-prefix KV reuse on tiny random Llama and Qwen3 (#36)", .serialized)
+@Suite("CacheBlend non-prefix KV reuse on tiny random Qwen3 (#36)", .serialized)
 struct CacheBlendTests {
 
     @Test("Chunks end after a blank line, in one token or across two newline tokens, so a reordered file keeps its span")
@@ -91,7 +91,7 @@ struct CacheBlendTests {
 
     @Test("A SentencePiece-style tokenizer that emits one newline per token still finds the reordered files")
     func singleNewlineTokensStillChunk() throws {
-        let model = try TinyModel.make(.llama4Layers)
+        let model = try TinyModel.make(.qwen3)
         let pieces = ParagraphTokenizer(newline: "\n")
         let doubled = { (tokens: [Int]) in tokens.flatMap { $0 == ParagraphTokenizer.paragraph ? [0, 0] : [$0] } }
         let store = CacheBlendStore(ratio: 0.5, byteBudget: 1 << 30)
@@ -100,8 +100,8 @@ struct CacheBlendTests {
         #expect(outcome.reused == Files.reusable + Files.files.count)
     }
 
-    @Test("Only Llama and Qwen3 are blended; other families fall back to the prefix path")
-    func supportsDenseLlamaAndQwen3() throws {
+    @Test("Qwen3 is blended; other families fall back to the prefix path")
+    func supportsDenseQwen3() throws {
         for model in try blendModels() {
             let blender = try #require(CacheBlendModel(model))
             #expect(blender.layers.count == (model as? KVCacheDimensionProvider)?.kvHeads.count)
@@ -150,7 +150,7 @@ struct CacheBlendTests {
         #expect(CacheBlendStore.blends(reused: 100, count: 100, offset: 16284, ratio: 0.5))
         #expect(!CacheBlendStore.blends(reused: 100, count: 100, offset: 16285, ratio: 0.5))
 
-        let model = try TinyModel.make(.llama4Layers)
+        let model = try TinyModel.make(.qwen3)
         let store = try primed(model, ratio: 0.5)
         let mostlyNew = Files.header + Files.files[0] + (5 ... 9).flatMap { Files.chunk($0) } + Files.question
         let (_, outcome) = try blendedLogits(model, store: store, mostlyNew)
@@ -164,7 +164,7 @@ struct CacheBlendTests {
             "rope_scaling": {"rope_type": "llama3", "factor": 8.0, "low_freq_factor": 1.0, "high_freq_factor": 4.0,
              "original_max_position_embeddings": 64}, "max_position_embeddings": 512,
             """
-        for model in [try TinyModel.make(.llama4Layers, adding: "\"rope_traditional\": true, "), try TinyModel.make(.llama4Layers, adding: llama3)] {
+        for model in [try TinyModel.make(.qwen3, adding: "\"rope_traditional\": true, "), try TinyModel.make(.qwen3, adding: llama3)] {
             let (logits, outcome) = try blendedLogits(model, store: try primed(model, ratio: 0), Files.original)
             #expect(outcome.reused == Files.reusable)
             #expect(allClose(logits, try fullLogits(model, Files.original), rtol: 1e-3, atol: 1e-3).item(Bool.self))
@@ -224,7 +224,7 @@ struct CacheBlendTests {
 
     @Test("Uncached and short chunks are recomputed, only long misses are stored, and the byte budget evicts and refuses")
     func missesAreRecomputedAndStoredWithinBudget() throws {
-        let model = try TinyModel.make(.llama4Layers)
+        let model = try TinyModel.make(.qwen3)
         let store = try primed(model, ratio: 0)
         #expect(store.chunkCount == Files.files.count)
         let changed = Files.header + Files.chunk(9) + Files.files[0] + Files.question

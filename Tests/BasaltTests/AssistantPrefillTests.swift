@@ -530,10 +530,10 @@ struct AssistantPrefillTemplateTests {
         ("LiquidAI/LFM2.5-8B-A1B-MLX-4bit", false), ("lukaskremla/Qwen3.8-27B-3bit-MLX-TextOnly", false),
     ]
 
-    static func wideModel() throws -> LlamaModel {
-        let config = #"{"hidden_size": 16, "num_hidden_layers": 1, "intermediate_size": 32, "num_attention_heads": 2, "num_key_value_heads": 1, "rms_norm_eps": 1e-5, "vocab_size": 262400, "rope_theta": 10000.0, "tie_word_embeddings": true}"#
+    static func wideModel() throws -> Qwen3Model {
+        let config = #"{"hidden_size": 16, "num_hidden_layers": 1, "intermediate_size": 32, "num_attention_heads": 2, "num_key_value_heads": 1, "head_dim": 8, "rms_norm_eps": 1e-5, "vocab_size": 262400, "rope_theta": 10000.0, "tie_word_embeddings": true}"#
         return try withRandomState(MLXRandom.RandomState(seed: 56)) {
-            LlamaModel(try JSONDecoder().decode(LlamaConfiguration.self, from: Data(config.utf8)))
+            Qwen3Model(try JSONDecoder().decode(Qwen3Configuration.self, from: Data(config.utf8)))
         }
     }
 

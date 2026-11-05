@@ -108,7 +108,7 @@ print("├───────────────────────�
 print("│ Qwen3.5-4B-4bit            │ 🟢 Perfect  │ 95.2   │ 2 GB    │ 92 TPS   │")
 print("│ Qwen3.6-27B-4bit           │ 🟡 Good     │ 87.3   │ 14 GB   │ 11 TPS   │")
 print("│ Qwen2.5-Coder-7B-4bit      │ 🟢 Perfect  │ 89.1   │ 4 GB    │ 60 TPS   │")
-print("│ Llama-3.1-70B-4bit         │ 🔴 TooTight │ 45.2   │ 35 GB   │ 3 TPS    │")
+print("│ Qwen3-72B-4bit             │ 🔴 TooTight │ 45.2   │ 35 GB   │ 3 TPS    │")
 print("╰────────────────────────────┴─────────────┴────────┴─────────┴──────────╯\n")
 
 print(TerminalUI.dim("Run `gem models download <model>` to install.\n"))
