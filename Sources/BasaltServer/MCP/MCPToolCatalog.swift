@@ -166,7 +166,8 @@ enum MCPToolCatalog {
 extension MCPToolCatalog {
     static func catalog(researchTools: Bool) -> MCPToolsList {
         let research = ResearchTool.allCases.filter { researchTools || !$0.isExperiment }
-        return MCPToolsList(tools: list.tools + research.map { MCPToolDescriptor(name: $0.rawValue, description: $0.summary, inputSchema: $0.schema) })
+        let introspect = researchTools ? [introspectDescriptor] : []
+        return MCPToolsList(tools: list.tools + research.map { MCPToolDescriptor(name: $0.rawValue, description: $0.summary, inputSchema: $0.schema) } + introspect)
     }
 }
 

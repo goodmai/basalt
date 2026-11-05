@@ -87,3 +87,25 @@ The pack is an overlay like a weight delta: the model is marked modified, prompt
 2. `tensor_pack` `{"tensor": "model.layers.10.mlp.down_proj.weight", "format": "ternary"}`: note the overlay id and the error.
 3. `experiment_compare` with the same arguments: the change of `baselineText` and `baselinePerplexity` from step 1 is the effect of the pack on the logits.
 4. `overlay_undo` `{"id": 7}`, then step 1 again gives step 1's answer bit for bit.
+## Introspection (`introspect`, #332 mode 1)
+
+With `--research-tools`, `introspect` lets the served model study itself. Given a goal, the server runs the model through the normal generation path with the X-ray tools offered as tool definitions, executes each call it makes through the same gated research path as the MCP tools, feeds the result back and asks again.
+
+| Argument | Meaning |
+|---|---|
+| `goal` (required) | What to find out, e.g. `"find which heads attend to the last tool call"` |
+| `maxSteps` | Model turns before the loop stops, 1–32 (default 8) |
+| `allowInterventions` | Also offer `intervene`, `experiment_compare` and `overlay_undo` (default false; the read-only tools are always offered) |
+| `resultBudget` | Characters of each tool result fed back to the model, 200–20000 (default 2000); longer results are cut and marked |
+
+- **One call per turn.** The loop stops at an answer without a tool call, after `maxSteps`, or when the model repeats a call it already made (same tool and arguments, key order ignored); `stop` in the report says which.
+- **Hypotheses.** The model is asked to write each hypothesis as `Hypothesis:` / `Test:` / `Outcome:` lines. They are parsed leniently (markdown, numbering, `Result:` for `Outcome:`), and a restated hypothesis replaces the earlier one.
+- **Errors go back to the model.** A malformed or failing tool call becomes an `error: …` result the model sees; a failed generation or a cancellation ends the loop.
+- **Interventions never outlive the loop.** Every overlay created during the loop is undone when it ends, also on an error or a cancellation; `undone` lists them.
+- **Journal.** Each step appends one `introspect` line (model, step, tool, arguments and the start of the result) to `~/.basalt/experiments/introspect.jsonl`.
+
+The report holds `goal`, `steps` (the model's text, and for a call its `tool`, `arguments` and truncated `result`), `hypotheses` (`statement`, `test`, `outcome`), `answer`, `stop` and `undone`.
+
+```json
+{"goal": "find which heads attend to the last tool call", "maxSteps": 6, "allowInterventions": true}
+```
