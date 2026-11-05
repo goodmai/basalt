@@ -37,6 +37,7 @@ struct GenerationPlan: Equatable, Sendable {
         var promptTokens = 0
         var carriesMoreThanTokens = false
         var constrained = false
+        var jumpsForward = false
         var hasMTPDrafter = false
         var blendAvailable = false
         var modelIsHybrid: Bool?
@@ -88,7 +89,7 @@ struct GenerationPlan: Equatable, Sendable {
     }
 
     private static func batchable(_ plan: GenerationPlan, _ request: GenerationRequest, precision: KVPrecision?, _ facts: Facts) -> Bool {
-        !facts.constrained && request.toolChoice?.forcedTool == nil && !plan.speculativeLookup && !plan.drafts
+        !facts.jumpsForward && !plan.speculativeLookup && !plan.drafts
             && !plan.blends && precision == nil && !facts.carriesMoreThanTokens
     }
 

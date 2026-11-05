@@ -302,14 +302,15 @@ struct BatchedRoutingTests {
         #expect(throws: (any Error).self) { _ = try ServeCommand.parse(["--batch-slots", "0"]) }
     }
 
-    @Test("A request with a response format keeps the serialized path; the same engine batches a plain one")
-    func grammarStaysSolo() async throws {
+    @Test("A response format with grammar jump-forward keeps the serialized path; without jump-forward it batches with its own mask")
+    func grammarJumpForwardStaysSolo() async throws {
         let engine = MLXInferenceEngine(batchSlots: 4)
         await engine.attach(try ConstrainedModel.container())
-        let constrained = try await engine.generate(request: ConstrainedModel.request(format: .jsonSchema(ConstrainedModel.schema)))
-        #expect(try ConstrainedModel.isValid(constrained.generatedText))
+        let jumping = try await engine.generate(request: ConstrainedModel.request(format: .jsonSchema(ConstrainedModel.schema)).withGrammarJumpForward(true))
+        #expect(try ConstrainedModel.isValid(jumping.generatedText))
         #expect(await engine.batchedRows == 0)
-        _ = try await engine.generate(request: ConstrainedModel.request(format: nil, maxTokens: 4))
+        let masked = try await engine.generate(request: ConstrainedModel.request(format: .jsonSchema(ConstrainedModel.schema)))
+        #expect(try ConstrainedModel.isValid(masked.generatedText))
         #expect(await engine.batchedRows == 1)
     }
 

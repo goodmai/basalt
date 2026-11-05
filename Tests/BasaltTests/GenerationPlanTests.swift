@@ -57,10 +57,12 @@ struct GenerationPlanTests {
 
     static let batch: [Case] = [
         Case(testDescription: "a plain request joins the batch", decision: .batchable, expected: true),
-        Case(testDescription: "a grammar constraint keeps the request out of the batch",
-             facts: GenerationPlan.Facts(promptTokens: 100, constrained: true), decision: .batchable, expected: false),
-        Case(testDescription: "a forced tool keeps the request out of the batch even when its arguments go unconstrained",
-             request: GenerationRequest(prompt: "p").with { $0.toolChoice = ToolChoice(forcedTool: "f") }, decision: .batchable, expected: false),
+        Case(testDescription: "a grammar constraint joins the batch with its own mask",
+             facts: GenerationPlan.Facts(promptTokens: 100, constrained: true), decision: .batchable, expected: true),
+        Case(testDescription: "a forced tool joins the batch",
+             request: GenerationRequest(prompt: "p").with { $0.toolChoice = ToolChoice(forcedTool: "f") }, decision: .batchable, expected: true),
+        Case(testDescription: "grammar jump-forward keeps the request out of the batch",
+             facts: GenerationPlan.Facts(promptTokens: 100, constrained: true, jumpsForward: true), decision: .batchable, expected: false),
         Case(testDescription: "lookup keeps the request out of the batch",
              request: GenerationRequest(prompt: "p").withSpeculativeLookup(true), decision: .batchable, expected: false),
         Case(testDescription: "MTP keeps the request out of the batch", facts: drafter, decision: .batchable, expected: false),
