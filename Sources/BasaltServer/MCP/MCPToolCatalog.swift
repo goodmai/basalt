@@ -249,6 +249,7 @@ extension ResearchTool {
             "name": ["type": "string", "description": "Parameter name as model_tensors lists it"],
             "slice": slice,
             "maxValues": ["type": "integer", "minimum": ResearchCall.maxValues.lowerBound, "maximum": ResearchCall.maxValues.upperBound, "description": "Values returned from the slice (default 256; 0 = statistics only)"],
+            "spectrum": ["type": "boolean", "description": "Also the spectrum of the dequantized matrix (or of one expert picked by the slice): Marchenko–Pastur noise variance, bulk edges and the eigenvalue mass above the bulk, the Gavish–Donoho rank and the power-law tail exponent alpha. Gram on the GPU, eigvalsh on the CPU; seconds per matrix; smaller side at most 8192 (default false)"],
         ]
     }
 
