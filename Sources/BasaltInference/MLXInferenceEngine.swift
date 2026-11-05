@@ -130,6 +130,7 @@ public actor MLXInferenceEngine: InferenceEngine {
         guard let container else {
             throw .inferenceHardwareFailure(reason: "MLX engine not initialized — call load() first")
         }
+        guard request.adapter == activeAdapter else { throw .inferenceError("adapter \(request.adapter ?? "none") was asked for while \(activeAdapter ?? "the base model") is active") }
         let epoch = modelEpoch
         let (params, unbudgeted, shaping, exclusion) = try await checkedSampling(request)
         let settings = planSettings

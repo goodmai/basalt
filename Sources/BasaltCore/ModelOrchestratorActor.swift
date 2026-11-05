@@ -208,7 +208,7 @@ extension ModelOrchestratorActor {
 
 extension ModelOrchestratorActor {
     func cloudFallbackReason(for request: GenerationRequest) async -> CloudFallbackReason? {
-        guard let cloudFallback, request.isServiceRequest != true,
+        guard let cloudFallback, request.isServiceRequest != true, request.adapter == nil,
               let assessment = await cloudFallback.assess(request, localModel: routingModelKey)
         else { return nil }
         let promptTokens = Self.estimatedTokens(Self.budgetedText(request))
@@ -303,7 +303,7 @@ extension ModelOrchestratorActor {
     ) async throws(BasaltError) -> (request: GenerationRequest, ticket: Int, queueWait: Duration) {
         var plan = try await capped(request)
         let queued = ContinuousClock.now
-        let ticket = try await admitted(request.priority)
+        let ticket = try await admitted(request)
         if plan.epoch != state.modelEpoch {
             do {
                 plan = try await capped(request)

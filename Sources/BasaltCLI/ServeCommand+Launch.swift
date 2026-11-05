@@ -18,6 +18,7 @@ struct ServerLaunch: Sendable {
 extension ServeCommand {
     func validate() throws {
         try sessionLog.validateRetention()
+        _ = try Self.adapterDirectories(adapters)
         guard maxConcurrent >= 1 else {
             throw ValidationError("--max-concurrent must be at least 1, got \(maxConcurrent)")
         }

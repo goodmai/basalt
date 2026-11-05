@@ -1,12 +1,9 @@
 import Foundation
 
-// MARK: — Protocol
-
 public protocol InferenceEngine: Sendable {
     func load(modelPath: String) async throws(BasaltError)
     func generate(request: GenerationRequest) async throws(BasaltError) -> GenerationResponse
     func generateStream(request: GenerationRequest) async throws(BasaltError) -> AsyncStream<StreamChunk>
-    /// async getter — compatible with actor-isolated implementations.
     var isLoaded: Bool { get async }
     var kvMemoryBudget: ByteCount? { get async }
     var supportsKVZones: Bool { get async }
@@ -18,6 +15,10 @@ public protocol InferenceEngine: Sendable {
     func persistPromptCache(within deadline: Duration) async
     func apply(_ directive: MemoryDirective) async -> MemoryLimits?
     func pace(with pacer: PrefillPacer) async
+    var adapterNames: [String] { get async }
+    var activeAdapter: String? { get async }
+    func loadAdapters(_ directories: [String: URL]) async throws(BasaltError)
+    func useAdapter(_ name: String?) async throws(BasaltError)
 }
 
 extension InferenceEngine {
@@ -31,4 +32,11 @@ extension InferenceEngine {
     public func persistPromptCache(within deadline: Duration) async {}
     public func apply(_ directive: MemoryDirective) async -> MemoryLimits? { nil }
     public func pace(with pacer: PrefillPacer) async {}
+    public var adapterNames: [String] { get async { [] } }
+    public var activeAdapter: String? { get async { nil } }
+    public func useAdapter(_ name: String?) async throws(BasaltError) {}
+
+    public func loadAdapters(_ directories: [String: URL]) async throws(BasaltError) {
+        guard directories.isEmpty else { throw .invalidRequestStructure(details: "this engine serves no LoRA adapters") }
+    }
 }
