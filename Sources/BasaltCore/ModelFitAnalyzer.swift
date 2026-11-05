@@ -29,8 +29,7 @@ public struct ModelFitAnalyzer: Sendable {
         let evaluated = gridBits.map { bits in
             let footprintMB = Int(weightMB(parametersBillions: model.totalParameters, bits: bits) + kvCacheMB)
             let speed = FitScorer.decodeSpeed(
-                model: model, bits: Double(bits), contextTokens: lMin,
-                chip: resources.chipModel, gpuName: resources.gpuName, profile: profile
+                model: model, bits: Double(bits), contextTokens: lMin, resources: resources, profile: profile
             )
             let tps = max(1, Int(speed.tps.rounded()))
             let score = FourDimensionalScore(

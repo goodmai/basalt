@@ -47,6 +47,11 @@ public struct FitScore: Codable, Sendable {
     public var fourDimensionalScore: FourDimensionalScore?
     public var selectedQuantization = "4-bit"
     public var optimalQuantization: String?
+    public var estimatedPrefillTPS: Double?
+
+    public func estimatedTTFT(promptTokens: Int) -> Double? {
+        estimatedPrefillTPS.map { Double(promptTokens) / $0 }
+    }
 
     public init(modelName: String, fitLevel: FitLevel, score: Double, estimatedRAM: Int64, estimatedTPS: Int, contextWindow: Int) {
         self.modelName = modelName
@@ -74,11 +79,7 @@ public actor FitScorer {
         let ramFit = calculateRAMFit(model: model, available: profile.availableRAM)
         let contextFit = calculateContextFit(model: model)
         
-        let (speedFit, estTPS, isMeasured, measuredTPS, calibFactor) = calculateSpeedAndCalibration(
-            model: model,
-            chip: profile.chipModel,
-            gpuName: profile.gpuName
-        )
+        let (speedFit, estTPS, isMeasured, measuredTPS, calibFactor) = calculateSpeedAndCalibration(model: model)
         
         let fourD = FourDimensionalScore(
             quality: model.quality,
@@ -117,6 +118,7 @@ public actor FitScorer {
         result.fourDimensionalScore = fourD
         result.selectedQuantization = model.quantization
         result.optimalQuantization = grid.optimal.fitsBudget ? grid.optimal.name : nil
+        result.estimatedPrefillTPS = Self.prefillSpeed(model: model, resources: profile, profile: benchmarkProfile)?.tps
         return result
     }
     
@@ -147,40 +149,32 @@ public actor FitScorer {
         }
     }
     
-    /// Analytical speed modeling with MoE accounting & hardware calibration:
-    /// TPS_decode(m,q) = α_calib(m,chip) · η_Metal · BW_mem / ( P_active(m)·b(q)/8 + M_KV_read )
     private func calculateSpeedAndCalibration(
-        model: ModelDefinition,
-        chip: String,
-        gpuName: String
+        model: ModelDefinition
     ) -> (speedFit: Double, estimatedTPS: Int, isMeasured: Bool, measuredTPS: Double?, calibrationFactor: Double) {
         let speed = Self.decodeSpeed(
             model: model, bits: Self.parseBits(from: model.quantization), contextTokens: model.contextWindow,
-            chip: chip, gpuName: gpuName, profile: benchmarkProfile
+            resources: profile, profile: benchmarkProfile
         )
         let tps = max(1, Int(speed.tps.rounded()))
         let speedFit = min(1.0, speed.tps / 100.0)
         return (speedFit, tps, speed.measured, speed.measured ? speed.tps : nil, speed.calibrationFactor)
     }
 
-    /// The one decode-speed model, shared by `fit` scoring and the quantization grid:
-    /// TPS = η_Metal · BW_mem / (P_active·b/8 + M_KV_read). A benchmark of this model on this chip
-    /// replaces the theory, rescaled from the bit width it was measured at (decode is bandwidth
-    /// bound, so TPS ∝ 1/bits); a measurement without a recorded quant is taken as the model's own.
+    public static let etaMetal = 0.50
+
     public static func decodeSpeed(
         model: ModelDefinition,
         bits: Double,
         contextTokens: Int,
-        chip: String,
-        gpuName: String,
+        resources: SystemProfiler.SystemResources,
         profile: HardwareBenchmarkProfile
     ) -> (tps: Double, measured: Bool, calibrationFactor: Double) {
-        let etaMetal = 0.70  // fraction of peak bandwidth Metal sustains during decode
-        let effectiveBW = memoryBandwidthGBs(chip: chip, gpuName: gpuName) * etaMetal
+        let bandwidth = memoryBandwidthGBs(chip: resources.chipModel, gpuName: resources.gpuName, gpuCores: resources.gpuCores)
         let kvReadGB = kvReadGB(model.kvGeometry, contextTokens: contextTokens)
-        let theoretical = effectiveBW / max(0.1, model.activeParameters * (bits / 8.0) + kvReadGB)
+        let theoretical = bandwidth * etaMetal / max(0.1, model.activeParameters * (bits / 8.0) + kvReadGB)
 
-        guard bits > 0, let m = profile.measurement(for: model.id, currentChip: chip) else {
+        guard bits > 0, let m = profile.measurement(for: model.id, currentChip: resources.chipModel) else {
             return (theoretical, false, 1.0)
         }
         let measuredBits = m.quant.map { parseBits(from: $0) } ?? parseBits(from: model.quantization)
@@ -192,23 +186,8 @@ public actor FitScorer {
         max(0.01, Double(kv.bytes(tokens: TokenCount(min(contextTokens, 4096))).rawValue) / 1e9)
     }
 
-    /// Peak unified-memory bandwidth (GB/s) by generation and tier, from Apple's published specs
-    /// (full-bin parts; binned Max/Pro parts are lower, which the benchmark calibration corrects).
-    /// M5 Pro/Max/Ultra are not published yet: the M4 tier values stand in as a floor.
-    public static func memoryBandwidthGBs(chip: String, gpuName: String) -> Double {
-        let combined = (chip + " " + gpuName).uppercased()
-        let table: [(gen: String, base: Double, pro: Double, max: Double, ultra: Double)] = [
-            ("M5", 153, 273, 546, 1092),
-            ("M4", 120, 273, 546, 1092),
-            ("M3", 100, 150, 400, 819),
-            ("M2", 100, 200, 400, 800),
-            ("M1", 68, 200, 400, 800),
-        ]
-        guard let row = table.first(where: { combined.contains($0.gen) }) else { return 100.0 }
-        if combined.contains("ULTRA") { return row.ultra }
-        if combined.contains("MAX") { return row.max }
-        if combined.contains("PRO") { return row.pro }
-        return row.base
+    public static func memoryBandwidthGBs(chip: String, gpuName: String, gpuCores: Int? = nil) -> Double {
+        AppleSiliconChip(chip + " " + gpuName)?.memoryBandwidthGBs(gpuCores: gpuCores) ?? 100.0
     }
     
     /// Bits per weight from a quantization label. An explicit "<n>-bit"/"<n>bit" wins, so digits

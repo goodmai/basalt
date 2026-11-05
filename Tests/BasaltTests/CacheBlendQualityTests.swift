@@ -60,6 +60,64 @@ struct CacheBlendQualityTests {
         return (picked.mean().item(Float.self), agree.asType(.float32).mean().item(Float.self))
     }
 
+    typealias Sums = [String: (logProb: Float, top1: Float, reused: Int, seconds: Double)]
+    typealias Row = (String, Float, Float, Float, Float)
+
+    static func measure(_ context: ModelContext, primer: [Int], prompts: [[Int]], ratios: [Float]) throws -> [Row] {
+        let model = context.model
+        let store = CacheBlendStore(ratio: 1, byteBudget: 1 << 34)
+        _ = try #require(store.extend(
+            PromptCache(try model.newCache(parameters: nil)), prompt: primer, from: 0, namespace: "ns",
+            model: model, tokenizer: context.tokenizer))
+        func timedExtend(_ prompt: [Int], ratio: Float) throws -> (CacheBlendOutcome, Double) {
+            let started = ContinuousClock.now
+            let outcome = try #require(store.extend(
+                PromptCache(try model.newCache(parameters: nil)), prompt: prompt, from: 0, namespace: "ns",
+                model: model, tokenizer: context.tokenizer, ratio: ratio, storing: false))
+            eval(outcome.cache.layers.flatMap { $0.innerState() })
+            return (outcome, (ContinuousClock.now - started) / .seconds(1))
+        }
+        _ = try timedExtend(prompts[0], ratio: 1)
+        var sums = Sums()
+        for prompt in prompts {
+            let answer = try Self.greedy(prompt, count: 50, model: model)
+            let full = try model.newCache(parameters: nil)
+            let started = ContinuousClock.now
+            _ = model(MLXArray(prompt.dropLast().map(Int32.init)).reshaped(1, -1), cache: full)
+            eval(full.flatMap { $0.innerState() })
+            let fullSeconds = (ContinuousClock.now - started) / .seconds(1)
+            let exact = Self.teacherForced(prompt, answer: answer, cache: full, model: model)
+            let old = sums["full", default: (0, 0, 0, 0)]
+            sums["full"] = (old.logProb + exact.logProb, old.top1 + exact.top1, 0, old.seconds + fullSeconds)
+            for ratio in ratios {
+                let (outcome, seconds) = try timedExtend(prompt, ratio: ratio)
+                let blended = Self.teacherForced(prompt, answer: answer, cache: outcome.cache.layers, model: model)
+                let key = String(format: "%.2f", ratio)
+                let before = sums[key, default: (0, 0, 0, 0)]
+                sums[key] = (
+                    before.logProb + blended.logProb, before.top1 + blended.top1, before.reused + outcome.reused,
+                    before.seconds + seconds)
+            }
+        }
+        return summarize(sums, prompts: prompts, ratios: ratios)
+    }
+
+    static func summarize(_ sums: Sums, prompts: [[Int]], ratios: [Float]) -> [Row] {
+        let coldSeconds = sums["1.00"]!.seconds
+        return (["full"] + ratios.map { String(format: "%.2f", $0) }).map { key -> Row in
+            let sum = sums[key]!
+            let n = Float(prompts.count)
+            let perplexity = exp(-sum.logProb / n)
+            let line = String(
+                format: "%@ meanLogProb %.3f ppl %.4f top1 %.3f reused %d/%d prefill %.2fs speedup %.2fx", key,
+                sum.logProb / n, perplexity, sum.top1 / n, sum.reused / prompts.count,
+                prompts.map(\.count).reduce(0, +) / prompts.count, sum.seconds / Double(prompts.count),
+                coldSeconds / sum.seconds)
+            let share = Float(sum.reused) / Float(prompts.map { $0.count - 1 }.reduce(0, +))
+            return (line, sum.logProb / n, sum.top1 / n, share, perplexity)
+        }
+    }
+
     @Test("Teacher-forced log-prob, top-1 agreement and perplexity of the full-prefill answer under blended caches; at the default ratio 0.3, with chunk heads recomputed first, the perplexity stays within 0.05 of a full prefill",
           .enabled(if: modelPath != nil, "set BASALT_E2E=1 and BASALT_E2E_BLEND_MODEL_PATH (a Qwen3 model)"))
     func blendQualityAgainstFullPrefill() async throws {
@@ -83,54 +141,7 @@ struct CacheBlendQualityTests {
         let ratios: [Float] = [0, 0.15, 0.3, 0.5, 1]
         log.record("prompts", "\(prompts.count) reordered prompts, \(prompts.map(\.count)) tokens, ratios \(ratios)")
         let rows = try await log.step("measure") { try await container.perform { context in
-            let model = context.model
-            let store = CacheBlendStore(ratio: 1, byteBudget: 1 << 34)
-            _ = try #require(store.extend(
-                PromptCache(try model.newCache(parameters: nil)), prompt: primer, from: 0, namespace: "ns",
-                model: model, tokenizer: context.tokenizer))
-            func timedExtend(_ prompt: [Int], ratio: Float) throws -> (CacheBlendOutcome, Double) {
-                let started = ContinuousClock.now
-                let outcome = try #require(store.extend(
-                    PromptCache(try model.newCache(parameters: nil)), prompt: prompt, from: 0, namespace: "ns",
-                    model: model, tokenizer: context.tokenizer, ratio: ratio, storing: false))
-                eval(outcome.cache.layers.flatMap { $0.innerState() })
-                return (outcome, (ContinuousClock.now - started) / .seconds(1))
-            }
-            _ = try timedExtend(prompts[0], ratio: 1)
-            var sums = [String: (logProb: Float, top1: Float, reused: Int, seconds: Double)]()
-            for prompt in prompts {
-                let answer = try Self.greedy(prompt, count: 50, model: model)
-                let full = try model.newCache(parameters: nil)
-                let started = ContinuousClock.now
-                _ = model(MLXArray(prompt.dropLast().map(Int32.init)).reshaped(1, -1), cache: full)
-                eval(full.flatMap { $0.innerState() })
-                let fullSeconds = (ContinuousClock.now - started) / .seconds(1)
-                let exact = Self.teacherForced(prompt, answer: answer, cache: full, model: model)
-                let old = sums["full", default: (0, 0, 0, 0)]
-                sums["full"] = (old.logProb + exact.logProb, old.top1 + exact.top1, 0, old.seconds + fullSeconds)
-                for ratio in ratios {
-                    let (outcome, seconds) = try timedExtend(prompt, ratio: ratio)
-                    let blended = Self.teacherForced(prompt, answer: answer, cache: outcome.cache.layers, model: model)
-                    let key = String(format: "%.2f", ratio)
-                    let before = sums[key, default: (0, 0, 0, 0)]
-                    sums[key] = (
-                        before.logProb + blended.logProb, before.top1 + blended.top1, before.reused + outcome.reused,
-                        before.seconds + seconds)
-                }
-            }
-            let coldSeconds = sums["1.00"]!.seconds
-            return (["full"] + ratios.map { String(format: "%.2f", $0) }).map { key -> (String, Float, Float, Float, Float) in
-                let sum = sums[key]!
-                let n = Float(prompts.count)
-                let perplexity = exp(-sum.logProb / n)
-                let line = String(
-                    format: "%@ meanLogProb %.3f ppl %.4f top1 %.3f reused %d/%d prefill %.2fs speedup %.2fx", key,
-                    sum.logProb / n, perplexity, sum.top1 / n, sum.reused / prompts.count,
-                    prompts.map(\.count).reduce(0, +) / prompts.count, sum.seconds / Double(prompts.count),
-                    coldSeconds / sum.seconds)
-                let share = Float(sum.reused) / Float(prompts.map { $0.count - 1 }.reduce(0, +))
-                return (line, sum.logProb / n, sum.top1 / n, share, perplexity)
-            }
+            try Self.measure(context, primer: primer, prompts: prompts, ratios: ratios)
         } }
         for row in rows { log.record("result", "BLEND-QUALITY \(row.0)") }
         let byKey = Dictionary(uniqueKeysWithValues: zip(["full", "0.00", "0.15", "0.30", "0.50", "1.00"], rows))

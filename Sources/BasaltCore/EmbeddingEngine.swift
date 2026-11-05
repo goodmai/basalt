@@ -29,7 +29,7 @@ public struct EmbeddingModelInfo: Sendable, Equatable {
 
 public protocol EmbeddingEngine: Sendable {
     var models: [EmbeddingModelInfo] { get }
-    func embed(_ inputs: [EmbeddingInput], dimensions: Int?) async throws(BasaltError) -> Embeddings
+    func embed(_ inputs: [EmbeddingInput], dimensions: Int?, yieldingTo gate: GenerationGate?) async throws(BasaltError) -> Embeddings
     func rerank(query: String, documents: [String]) async throws(BasaltError) -> [Double]
 }
 

@@ -26,15 +26,9 @@ enum BatchProbe {
     }
 
     static func joined(_ rows: [[KVCache]]) -> [KVCache] {
-        rows[0].indices.map { index -> KVCache in
-            if let recurrent = rows[0][index] as? ArraysCache {
-                for row in rows.dropFirst() { if let other = row[index] as? ArraysCache { recurrent.extend(other: other) } }
-                return recurrent
-            }
-            let batch = BatchKVCache()
-            batch.append(rows.compactMap { $0[index] as? KVCacheSimple })
-            return batch
-        }
+        let layers = rows[0].map(BatchCore.batchLayer)
+        for (index, layer) in layers.enumerated() { BatchCore.join(rows.map { $0[index] }, into: layer) }
+        return layers
     }
 
     static func row(_ model: any LanguageModel, _ inputs: [MLXArray], target: Int) throws -> MLXArray {
@@ -79,10 +73,10 @@ enum BatchProbe {
     }
 }
 
-@Suite("Batched decode keeps a row's logits independent of companions that add no padding (#319)", .serialized)
+@Suite("Batched decode keeps a row's logits independent of companions that add no padding (#319, #255)", .serialized)
 struct BatchedOrderTests {
-    @Test("Tiny qwen35 and lfm2: one row through the batched path equals solo, and unpadded companions of any count leave the row bit for bit",
-          arguments: [TinyModel.Family.qwen35, .lfm2])
+    @Test("Tiny qwen35, lfm2, gemma4 and gemma4Moe: one row through the batched path equals solo, and unpadded companions of any count leave the row bit for bit",
+          arguments: [TinyModel.Family.qwen35, .lfm2, .gemma4, .gemma4Moe])
     func tiny(family: TinyModel.Family) throws {
         let model = try TinyModel.make(family)
         let report = try BatchProbe.run(model, BatchFixture.prompts.map { MLXArray($0.map(Int32.init)) })
@@ -92,7 +86,7 @@ struct BatchedOrderTests {
     }
 }
 
-@Suite("Batched greedy decode on real hybrid models: what moves a row's logits (#319)", .serialized)
+@Suite("Batched greedy decode on real hybrid and sliding-window models: what moves a row's logits (#319, #255)", .serialized)
 struct BatchedOrderRealModelTests {
     static var modelPaths: [String] {
         let env = ProcessInfo.processInfo.environment
@@ -114,7 +108,7 @@ struct BatchedOrderRealModelTests {
         try await engine.load(modelPath: path)
         let container = try #require(await engine.container)
         var inputs: [MLXArray] = []
-        for prompt in Self.prompts { inputs.append(try await container.prepare(input: UserInput(chat: [.user(prompt)])).text.tokens) }
+        for prompt in Self.prompts { inputs.append(try await container.prepare(input: UserInput(chat: [.user(prompt)])).text.tokens.reshaped(-1)) }
         let report = try await container.perform(nonSendable: inputs) { context, inputs -> BatchProbe.Report? in
             guard BatchedTokenIterator.batchableLayers(try context.model.newCache(parameters: nil)) != nil else { return nil }
             return try withError { try BatchProbe.run(context.model, inputs) }

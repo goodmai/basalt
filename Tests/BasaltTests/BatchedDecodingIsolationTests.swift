@@ -110,7 +110,7 @@ struct BatchKVCacheTests {
         }
     }
 
-    static func batchStep(_ model: any LanguageModel, _ layers: [BatchKVCache], _ tokens: [Int]) -> MLXArray {
+    static func batchStep(_ model: any LanguageModel, _ layers: [KVCache], _ tokens: [Int]) -> MLXArray {
         model(MLXArray(tokens.map(Int32.init)).reshaped(-1, 1), cache: layers)[0..., -1]
     }
 
@@ -159,11 +159,69 @@ struct BatchKVCacheTests {
     }
 }
 
+@Suite("BatchRotatingKVCache keeps every row's sliding-window attention equal to its own cache (#255)", .serialized)
+struct BatchRotatingKVCacheTests {
+    static func prefilledLikeTheIterator(_ model: any LanguageModel, _ prompt: [Int]) throws -> [KVCache] {
+        let layers = try BatchProbe.prefilled(model, MLXArray(prompt.dropLast().map(Int32.init)))
+        eval([model(MLXArray([Int32(prompt[prompt.count - 1])]).reshaped(1, 1), cache: layers)] + layers.flatMap { $0.innerState() })
+        return layers
+    }
+
+    @Test("Rows joining and retiring before, while and after the window wraps keep the logits each row gets alone",
+          arguments: [TinyModel.Family.gemma4, .gemma4Moe])
+    func joinAndRetireAcrossWrap(family: TinyModel.Family) throws {
+        let model = try TinyModel.make(family)
+        let prompts = [3, 6, 13, 2].enumerated().map { BatchFixture.prompt($1, seed: $0) }
+        let solo = try prompts.map { try BatchKVCacheTests.Solo(model, $0) }
+        let rows = try prompts.map { try Self.prefilledLikeTheIterator(model, $0) }
+        let layers = rows[0].map(BatchCore.batchLayer)
+        let ring = try #require(layers.first as? BatchRotatingKVCache)
+        var fed = 0
+        func join(_ joining: [Int]) {
+            for (index, layer) in layers.enumerated() { BatchCore.join(joining.map { rows[$0][index] }, into: layer) }
+        }
+        func retire(keeping kept: [Int]) {
+            for layer in layers {
+                (layer as? BatchKVCache)?.filter(rows: kept)
+                (layer as? BatchRotatingKVCache)?.filter(rows: kept)
+            }
+        }
+        func decode(_ live: [Int], steps: Int) {
+            for _ in 0 ..< steps {
+                fed += 1
+                let tokens = live.map { ($0 * 37 + fed * 11) % 250 + 1 }
+                BatchKVCacheTests.expectRowsMatch(
+                    BatchKVCacheTests.batchStep(model, layers, tokens), zip(live, tokens).map { solo[$0].step($1) })
+            }
+        }
+
+        join([0, 1])
+        #expect(ring.leftPadding == [3, 0] && !ring.wrapped)
+        decode([0, 1], steps: 4)
+        #expect(ring.leftPadding == [1, 0] && ring.wrapped && ring.idx == 2)
+
+        join([2])
+        #expect(ring.leftPadding == [1, 0, 0] && !ring.wrapped && ring.idx == TinyModel.slidingWindow)
+        decode([0, 1, 2], steps: 2)
+        retire(keeping: [0, 2])
+        #expect(ring.leftPadding == [0, 0] && ring.wrapped && ring.idx == 2)
+
+        join([3])
+        #expect(ring.leftPadding == [0, 0, 6])
+        decode([0, 2, 3], steps: 3)
+        #expect(ring.leftPadding == [0, 0, 3] && ring.wrapped)
+        retire(keeping: [2])
+        #expect(ring.leftPadding == [0] && !ring.wrapped && ring.idx == 5)
+        decode([3], steps: 5)
+        #expect(ring.positions == [prompts[3].count + 8])
+    }
+}
+
 @Suite("Batched decode gives each row the tokens it gets alone (#240)", .serialized)
 struct BatchedDecoderTests {
 
-    @Test("Four prompts of different lengths decoded together match their solo greedy decode for 32 steps, on plain attention and on recurrent hybrids",
-          .timeLimit(.minutes(10)), arguments: [TinyModel.Family.qwen3Small, .qwen35, .nemotronH, .lfm2])
+    @Test("Four prompts of different lengths decoded together match their solo greedy decode for 32 steps, on plain attention, recurrent hybrids and sliding-window models",
+          .timeLimit(.minutes(10)), arguments: [TinyModel.Family.qwen3Small, .qwen35, .nemotronH, .lfm2, .gemma4, .gemma4Moe])
     func fourRowsMatchSolo(family: TinyModel.Family) async throws {
         let model = try TinyModel.make(family)
         let expected = try BatchFixture.prompts.map { BatchFixture.text(try BatchFixture.soloGreedy(model, $0, steps: 32)) }
@@ -176,8 +234,8 @@ struct BatchedDecoderTests {
         #expect(core.decoder.checkInvariants() == [])
     }
 
-    @Test("A row joining mid-flight and rows retiring on EOS or max tokens leave the other rows' tokens unchanged, on plain attention and on recurrent hybrids",
-          .timeLimit(.minutes(10)), arguments: [TinyModel.Family.qwen3Small, .qwen35, .nemotronH, .lfm2])
+    @Test("A row joining mid-flight and rows retiring on EOS or max tokens leave the other rows' tokens unchanged, on plain attention, recurrent hybrids and sliding-window models",
+          .timeLimit(.minutes(10)), arguments: [TinyModel.Family.qwen3Small, .qwen35, .nemotronH, .lfm2, .gemma4, .gemma4Moe])
     func joinAndRetire(family: TinyModel.Family) async throws {
         let model = try TinyModel.make(family)
         let prompts = BatchFixture.prompts

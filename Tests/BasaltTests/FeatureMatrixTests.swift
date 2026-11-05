@@ -58,7 +58,6 @@ struct FeatureMatrixTests {
 
     static let promptCacheBytes = 1 << 26
     static let families = TinyModel.Family.allCases.filter { $0 != .qwen3Small }
-    static let slidingWindowFamilies: [TinyModel.Family] = [.gemma3, .gemma4, .gemma4Moe]
 
     static var turns: [GenerationRequest] {
         [greedy(Conversation.firstTurn, key: nil, maxTokens: 16), greedy(Conversation.firstTurn, key: "matrix", maxTokens: 16),
@@ -104,13 +103,13 @@ struct FeatureMatrixTests {
         }
     }
 
-    @Test("Four concurrent requests decoded in one batch each get their solo greedy text; sliding-window families decode alone and report no batched rows (#319)",
+    @Test("Four concurrent requests decoded in one batch each get their solo greedy text, sliding-window families included (#319, #255)",
           .timeLimit(.minutes(1)), arguments: families)
     func batchedDecodeMatchesSolo(family: TinyModel.Family) async throws {
         let expected = try await BatchedRoutingTests.solo(4, family: family)
         let engine = await BatchFixture.engine(try TinyModel.make(family), id: "tiny-\(family)", batchSlots: 4)
         let orchestrator = ModelOrchestratorActor(engine: engine, telemetry: TelemetryTracker(), gate: GenerationGate(maxConcurrent: 4))
         #expect(try await BatchedRoutingTests.concurrently(orchestrator, count: 4).map(\.text) == expected)
-        #expect(await engine.batchedRows == (Self.slidingWindowFamilies.contains(family) ? 0 : 4))
+        #expect(await engine.batchedRows == 4)
     }
 }

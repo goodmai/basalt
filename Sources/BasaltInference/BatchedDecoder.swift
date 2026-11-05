@@ -156,24 +156,36 @@ final class BatchCore {
         let index = MLXArray(kept.map(Int32.init))
         for layer in layers {
             (layer as? BatchKVCache)?.filter(rows: kept)
+            (layer as? BatchRotatingKVCache)?.filter(rows: kept)
             (layer as? ArraysCache)?.filter(batchIndices: index)
         }
         pending = pending?[MLXArray(kept.map(Int32.init))]
     }
 
     private func admit(_ arrivals: [BatchRow]) {
-        if layers.isEmpty { layers = arrivals[0].layers.map { $0 is ArraysCache ? $0 : BatchKVCache() } }
-        for (index, layer) in layers.enumerated() {
-            let joining = arrivals.map { $0.layers[index] }
-            if let recurrent = layer as? ArraysCache {
-                for case let row as ArraysCache in joining where row !== recurrent { recurrent.extend(other: row) }
-            } else {
-                (layer as? BatchKVCache)?.append(joining.compactMap { $0 as? KVCacheSimple })
-            }
-        }
+        if layers.isEmpty { layers = arrivals[0].layers.map(Self.batchLayer) }
+        for (index, layer) in layers.enumerated() { Self.join(arrivals.map { $0.layers[index] }, into: layer) }
         for row in arrivals { row.layers = [] }
         pending = concatenated((pending.map { [$0] } ?? []) + arrivals.map(\.first))
         rows += arrivals
+    }
+
+    static func batchLayer(_ row: KVCache) -> KVCache {
+        switch row {
+        case is ArraysCache: row
+        case let rotating as RotatingKVCache: BatchRotatingKVCache(window: rotating.maxSize ?? 0)
+        default: BatchKVCache()
+        }
+    }
+
+    static func join(_ joining: [KVCache], into layer: KVCache) {
+        switch layer {
+        case let recurrent as ArraysCache:
+            for case let row as ArraysCache in joining where row !== recurrent { recurrent.extend(other: row) }
+        case let rotating as BatchRotatingKVCache: rotating.append(joining.compactMap { $0 as? RotatingKVCache })
+        case let batch as BatchKVCache: batch.append(joining.compactMap { $0 as? KVCacheSimple })
+        default: break
+        }
     }
 }
 
@@ -247,7 +259,7 @@ struct BatchedTokenIterator: SelfSerializingTokenIterator {
 
     static func batchableLayers(_ cache: [KVCache]) -> [KVCache]? {
         let batchable = !cache.isEmpty && cache.contains { type(of: $0) == KVCacheSimple.self }
-            && cache.allSatisfy { type(of: $0) == KVCacheSimple.self || $0 is ArraysCache }
+            && cache.allSatisfy { type(of: $0) == KVCacheSimple.self || $0 is ArraysCache || BatchRotatingKVCache.admits($0) }
         return batchable ? cache : nil
     }
 

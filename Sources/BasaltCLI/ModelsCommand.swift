@@ -406,6 +406,7 @@ struct CheckSubcommand: AsyncParsableCommand {
         print("  Total RAM:       \(report.totalRAMGB) GB")
         print("  Available RAM:   \(report.availableRAMGB) GB")
         print("  GPU:             \(report.gpu) (\(report.gpuMemoryGB) GB working set)")
+        print("  GPU details:     \(AppleSiliconChip.gpuSummary(architecture: report.gpuArchitecture, cores: report.gpuCores, neuralAccelerators: report.neuralAccelerators))")
         print("  CPU Cores:       \(report.cpuCores)")
         print("  Disk Space:      \(report.diskSpaceGB) GB free")
         print("  OS Version:      \(report.osVersion)")

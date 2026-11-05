@@ -98,15 +98,13 @@ struct FitCommand: AsyncParsableCommand {
         let avail = Double(resources.availableRAM) / 1073741824.0
         
         print("Device: \(resources.chipModel) | \(resources.totalRAMGB) GB RAM | \(String(format: "%.1f", avail)) GB available | model budget: \(String(format: "%.1f", budget)) GB")
-        print("GPU: \(resources.gpuName) | metal | unified memory: true")
+        print("GPU: \(resources.gpuName) | \(AppleSiliconChip.gpuSummary(architecture: resources.gpuArchitecture, cores: resources.gpuCores, neuralAccelerators: resources.neuralAccelerators)) | metal | unified memory: true")
     }
     
     private func displayTable(_ recommendations: [FitScore]) {
         print(TerminalUI.heading("Top Recommendations:"))
         
-        // "Best width" is the grid width that would fit this machine — a target for picking a
-        // variant, not a claim that the repo publishes it.
-        let headers = ["Model", "Fit", "Score", "RAM", "TPS", "Context", "Best width"]
+        let headers = ["Model", "Fit", "Score", "RAM", "TPS", "Context", "Best width", "TTFT 4k / 16k"]
         var rows: [[String]] = []
         
         for rec in recommendations {
@@ -123,7 +121,6 @@ struct FitCommand: AsyncParsableCommand {
         print(table)
     }
     
-    /// One table row; "measured ✓" marks a TPS that comes from a benchmark on this machine.
     static func tableRow(_ rec: FitScore) -> [String] {
         [
             rec.modelName,
@@ -132,7 +129,8 @@ struct FitCommand: AsyncParsableCommand {
             formatRAM(rec.estimatedRAM),
             rec.isMeasured ? "\(rec.estimatedTPS) measured ✓" : "\(rec.estimatedTPS)",
             "\(rec.contextWindow / 1000)k",
-            rec.optimalQuantization ?? "—"
+            rec.optimalQuantization ?? "—",
+            [4096, 16384].map { rec.estimatedTTFT(promptTokens: $0).map { String(format: "%.1fs", $0) } ?? "—" }.joined(separator: " / ")
         ]
     }
 
@@ -153,6 +151,9 @@ extension FitCommand {
             let total_ram: Int64
             let available_ram: Int64
             let model_budget: Int64
+            let gpu_architecture: String?
+            let gpu_cores: Int?
+            let neural_accelerators: Bool?
         }
 
         struct Recommendation: Encodable {
@@ -166,6 +167,9 @@ extension FitCommand {
             let calibration_factor: Double
             let quantization: String
             let optimal_quantization: String?
+            let estimated_prefill_tps: Double?
+            let estimated_ttft_4k_s: Double?
+            let estimated_ttft_16k_s: Double?
         }
 
         let device: Device
@@ -176,7 +180,10 @@ extension FitCommand {
                 chip: profile.chipModel,
                 total_ram: profile.totalRAM,
                 available_ram: profile.availableRAM,
-                model_budget: Int64(Double(profile.availableRAM) * 0.85)
+                model_budget: Int64(Double(profile.availableRAM) * 0.85),
+                gpu_architecture: profile.gpuArchitecture,
+                gpu_cores: profile.gpuCores,
+                neural_accelerators: profile.neuralAccelerators
             )
             self.recommendations = recommendations.map { r in
                 Recommendation(
@@ -189,7 +196,10 @@ extension FitCommand {
                     measured: r.isMeasured,
                     calibration_factor: r.calibrationFactor,
                     quantization: r.selectedQuantization,
-                    optimal_quantization: r.optimalQuantization
+                    optimal_quantization: r.optimalQuantization,
+                    estimated_prefill_tps: r.estimatedPrefillTPS,
+                    estimated_ttft_4k_s: r.estimatedTTFT(promptTokens: 4096),
+                    estimated_ttft_16k_s: r.estimatedTTFT(promptTokens: 16384)
                 )
             }
         }

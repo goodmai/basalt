@@ -14,6 +14,9 @@ public struct ServerTelemetrySnapshot: Codable, Sendable, Equatable {
     public var modelRAMMB = 0
     public var chipModel = "Apple Silicon"
     public var gpuName = "Metal GPU"
+    public var gpuArchitecture: String?
+    public var gpuCores: Int?
+    public var neuralAccelerators: Bool?
     public var hybridAnchors: Int?
     public var hybridAnchorBytes: Int64?
     public var memory: MemoryTelemetry?
@@ -134,6 +137,9 @@ public actor TelemetryTracker {
         snapshot.modelRAMMB = modelRAMMB
         snapshot.chipModel = hw.chipModel
         snapshot.gpuName = hw.gpuName
+        snapshot.gpuArchitecture = hw.gpuArchitecture
+        snapshot.gpuCores = hw.gpuCores
+        snapshot.neuralAccelerators = hw.neuralAccelerators
         if draftTokens > 0 {
             snapshot.draftTokens = draftTokens
             snapshot.acceptedDraftTokens = acceptedDraftTokens
