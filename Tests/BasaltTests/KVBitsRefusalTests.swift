@@ -53,6 +53,7 @@ struct KVBitsRefusalTests {
         let container = ModelContainer(context: ModelContext(
             configuration: ModelConfiguration(id: "tiny-gemma2"), model: try Self.gemma2(),
             processor: ByteInputProcessor(), tokenizer: ByteTokenizer()))
+        await engine.record(.loadStarted(path: "tiny-gemma2"))
         await engine.attach(container, facts: ModelFacts(capabilities: .conservative), epoch: engine.modelEpoch)
         #expect(await engine.supportsKVQuantization == false)
         let request = GenerationRequest(prompt: "hello there", maxTokens: 4, temperature: 0).withKVPrecision(.q4)
