@@ -219,10 +219,35 @@ struct JSONConstraintProcessor: LogitProcessor, ForcedTokenSource {
         return allowed
     }
 
+    static let fusedMask = Atomic<Bool>(true)
+
+    private static let maskKernel = MLXFast.metalKernel(
+        name: "basalt_grammar_bitmask",
+        inputNames: ["words", "logits"],
+        outputNames: ["out"],
+        source: """
+            uint index = thread_position_in_grid.x;
+            uint column = index % W;
+            bool keep = column < V && ((static_cast<uint>(words[column >> 5]) >> (column & 31)) & 1u);
+            out[index] = keep ? logits[index] : static_cast<T>(-INFINITY);
+            """)
+
     func process(logits: MLXArray) -> MLXArray {
         guard phase != .reasoning, let words = allowedTokens() else { return logits }
-        var allowed = (MLXArray(words).take(wordIndex) >> bitOffset) & 1
+        let fused = Self.fusedMask.load(ordering: .relaxed) && Device.defaultDevice().deviceType == .gpu
+        return masked(logits, words: words, fused: fused)
+    }
+
+    func masked(_ logits: MLXArray, words: [Int32], fused: Bool) -> MLXArray {
         let width = logits.dim(-1)
+        if fused {
+            return Self.maskKernel(
+                [MLXArray(words), logits],
+                template: [("T", logits.dtype), ("W", width), ("V", min(vocabulary.size, words.count * 32))],
+                grid: (logits.size, 1, 1), threadGroup: (min(256, logits.size), 1, 1),
+                outputShapes: [logits.shape], outputDTypes: [logits.dtype])[0]
+        }
+        var allowed = (MLXArray(words).take(wordIndex) >> bitOffset) & 1
         if width > vocabulary.size {
             allowed = concatenated([allowed, MLXArray.zeros([width - vocabulary.size], dtype: .int32)])
         } else if width < vocabulary.size {
