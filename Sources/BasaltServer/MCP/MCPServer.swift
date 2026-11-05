@@ -169,6 +169,9 @@ extension ResearchCall {
             try await model.undo(overlay)
             return .text("Overlay \(overlay) undone")
         case .compare(let request): return .json(try await model.compare(request))
+        case .pack(let request):
+            guard let lab = model as? any ModelLab else { throw .invalidRequestStructure(details: "tensor pack is not available on this engine") }
+            return .json(try await lab.pack(request))
         }
     }
 }

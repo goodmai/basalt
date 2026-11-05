@@ -18,6 +18,8 @@ struct ModelResearchTests {
         case .weightsDelta: ["tensor": "model.norm.weight", "values": [0.25]]
         case .overlayUndo: ["id": 3]
         case .experimentCompare: ["prompts": ["a", "b"], "overlays": [3], "maxTokens": 8]
+        case .tensorPack: ["tensor": "w", "format": "affine", "bits": 3, "groupSize": 32]
+        case .tensorUnpack: ["tensor": "w", "format": "float16"]
         }
     }
 
@@ -33,6 +35,8 @@ struct ModelResearchTests {
         case .overlaysList: .overlays
         case .overlayUndo: .undo(3)
         case .experimentCompare: .compare(CompareRequest(prompts: ["a", "b"], overlays: [3], maxTokens: 8))
+        case .tensorPack: .pack(PackRequest(tensor: "w", format: .affine(bits: 3, groupSize: 32)))
+        case .tensorUnpack: .pack(PackRequest(tensor: "w", format: .float16))
         }
     }
 

@@ -8,6 +8,7 @@ struct AppliedDelta: Sendable {
     var info: OverlayInfo?
     var slice: [Range<Int>] = []
     var original: [Float] = []
+    var pack: PackedLayer?
 }
 
 extension MLXInferenceEngine {
@@ -104,6 +105,7 @@ extension MLXInferenceEngine {
     }
 
     static func restore(_ applied: AppliedDelta, of name: String, in model: Module) throws(BasaltError) {
+        if let pack = applied.pack { return pack.restore(in: model) }
         let tensor = try writableTensor(name, in: model)
         let indices: [any MLXArrayIndex] = applied.slice
         tensor[indices] = MLXArray(applied.original, applied.slice.map(\.count)).asType(tensor.dtype)

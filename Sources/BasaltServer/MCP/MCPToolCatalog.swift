@@ -183,6 +183,8 @@ extension ResearchTool {
         case .overlaysList: "Experiment: the active overlays with id, description, creation and expiry time."
         case .overlayUndo: "Experiment: undo one overlay by id."
         case .experimentCompare: "Experiment: greedy before/after on a prompt set with the given overlays: text, KL divergence of the logits and perplexity."
+        case .tensorPack: "Experiment: re-pack the weight of one linear layer in memory (affine 2-8 bit with a group size, mxfp4, or ternary absmean scale·{-1,0,1} per group of 64), dequantizing a quantized layer first. The layer is swapped live (the model is marked modified, prompt-cache reuse is off) as an overlay with TTL and bit-exact undo. Returns bytes before/after, RMSE, max abs error and relative error ||W-Ŵ||/||W||."
+        case .tensorUnpack: "Experiment: replace one quantized linear layer by a dense float16 or bfloat16 layer holding its dequantized weight, live, as an overlay with TTL and bit-exact undo. Returns bytes before/after and the error of the cast."
         }
     }
 
@@ -197,6 +199,8 @@ extension ResearchTool {
         case .weightsDelta: Self.object(Self.deltaProperties, required: ["tensor"])
         case .overlayUndo: Self.object(["id": ["type": "integer", "minimum": 0, "description": "Overlay id from intervene, weights_delta or overlays_list"]], required: ["id"])
         case .experimentCompare: Self.object(Self.compareProperties, required: ["prompts"])
+        case .tensorPack: Self.object(Self.packProperties, required: ["tensor"])
+        case .tensorUnpack: Self.object(Self.unpackProperties, required: ["tensor"])
         }
     }
 
@@ -260,6 +264,22 @@ extension ResearchTool {
             "prompts": ["type": "array", "items": ["type": "string"], "minItems": ResearchCall.comparePrompts.lowerBound, "maxItems": ResearchCall.comparePrompts.upperBound],
             "overlays": ["type": "array", "items": ["type": "integer", "minimum": 0], "description": "Overlay ids applied on the after side (default: none)"],
             "maxTokens": ["type": "integer", "minimum": ResearchCall.compareTokens.lowerBound, "maximum": ResearchCall.compareTokens.upperBound, "description": "Greedy tokens per side (default 32)"],
+        ]
+    }
+
+    private static var packProperties: [String: Any] {
+        [
+            "tensor": ["type": "string", "description": "Weight of a linear layer as model_tensors lists it, e.g. model.layers.3.mlp.down_proj.weight"],
+            "format": ["type": "string", "enum": PackRequest.packFormats, "description": "Target format (default affine)"],
+            "bits": ["type": "integer", "minimum": PackRequest.packBits.lowerBound, "maximum": PackRequest.packBits.upperBound, "description": "affine: bits per weight, 2, 3, 4, 5, 6 or 8 (default 4)"],
+            "groupSize": ["type": "integer", "enum": [32, 64, 128], "description": "affine: weights per scale and bias (default 64)"],
+        ]
+    }
+
+    private static var unpackProperties: [String: Any] {
+        [
+            "tensor": ["type": "string", "description": "Weight of a quantized linear layer as model_tensors lists it"],
+            "format": ["type": "string", "enum": PackRequest.unpackFormats, "description": "Float type of the dense layer (default bfloat16)"],
         ]
     }
 }

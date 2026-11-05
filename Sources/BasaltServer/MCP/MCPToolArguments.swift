@@ -259,11 +259,14 @@ enum ResearchTool: String, Sendable, CaseIterable {
     case overlaysList = "overlays_list"
     case overlayUndo = "overlay_undo"
     case experimentCompare = "experiment_compare"
+    case tensorPack = "tensor_pack"
+    case tensorUnpack = "tensor_unpack"
 
     var isExperiment: Bool {
         switch self {
         case .modelDescribe, .modelTensors, .modelTensor, .kvInspect, .traceRun: false
         case .intervene, .weightsDelta, .overlaysList, .overlayUndo, .experimentCompare: true
+        case .tensorPack, .tensorUnpack: true
         }
     }
 }
@@ -279,6 +282,7 @@ enum ResearchCall: Sendable, Equatable {
     case overlays
     case undo(OverlayID)
     case compare(CompareRequest)
+    case pack(PackRequest)
 
     static let maxValues = 0...4096
     static let topK = 1...100
@@ -298,6 +302,8 @@ enum ResearchCall: Sendable, Equatable {
         case .overlaysList: self = .overlays
         case .overlayUndo: self = .undo(OverlayID(try MCPArguments.required("id", MCPArguments.integer("id", in: args, Self.nonNegative))))
         case .experimentCompare: self = .compare(try CompareRequest(mcp: args))
+        case .tensorPack: self = .pack(try PackRequest(mcp: args, formats: PackRequest.packFormats))
+        case .tensorUnpack: self = .pack(try PackRequest(mcp: args, formats: PackRequest.unpackFormats))
         }
     }
 }
@@ -421,5 +427,29 @@ extension CompareRequest {
             prompts: prompts,
             overlays: (try MCPArguments.integers("overlays", in: args) ?? []).map { OverlayID($0) },
             maxTokens: try MCPArguments.integer("maxTokens", in: args, ResearchCall.compareTokens) ?? 32)
+    }
+}
+
+extension PackRequest {
+    static let packFormats = ["affine", "mxfp4", "ternary"]
+    static let unpackFormats = ["bfloat16", "float16"]
+    static let packBits = 2...8
+    static let packGroupSizes = 32...128
+
+    init(mcp args: [String: Any]?, formats: [String]) throws(MCPFailure) {
+        let tensor = try MCPArguments.required("tensor", MCPArguments.string("tensor", in: args))
+        let format: PackFormat
+        switch try MCPArguments.string("format", in: args) ?? formats[0] {
+        case "affine" where formats.contains("affine"):
+            format = .affine(
+                bits: try MCPArguments.integer("bits", in: args, Self.packBits) ?? 4,
+                groupSize: try MCPArguments.integer("groupSize", in: args, Self.packGroupSizes) ?? 64)
+        case "mxfp4" where formats.contains("mxfp4"): format = .mxfp4
+        case "ternary" where formats.contains("ternary"): format = .ternary
+        case "bfloat16" where formats.contains("bfloat16"): format = .bfloat16
+        case "float16" where formats.contains("float16"): format = .float16
+        default: throw .invalidParams("format must be one of: \(formats.joined(separator: ", "))")
+        }
+        self.init(tensor: tensor, format: format)
     }
 }
