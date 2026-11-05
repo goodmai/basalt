@@ -16,6 +16,7 @@ extension WeightSpectrum {
         do {
             eigenvalues = try withError {
                 let gram = Self.gram(rows: rows, columns: columns, block: block)
+                eval(gram)
                 let values = MLXLinalg.eigvalsh(gram, stream: .cpu)
                 eval(values)
                 return values.asArray(Float.self)

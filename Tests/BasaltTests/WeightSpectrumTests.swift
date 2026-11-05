@@ -86,4 +86,17 @@ struct WeightSpectrumTests {
         #expect(try ResearchCall(.modelTensor, ["name": "w", "spectrum": true]) == .tensor(expected))
         #expect(throws: MCPFailure.self) { try ResearchCall(.modelTensor, ["name": "w", "spectrum": "yes"]) }
     }
+
+    @Test("Without --research-tools a spectrum call is refused before it reaches the model; plain statistics still pass the gate")
+    func spectrumNeedsResearchTools() async throws {
+        let engine = MockInferenceEngine()
+        try await engine.load(modelPath: "/mock")
+        let capturer = OutputCapturer()
+        let server = MCPServer(orchestrator: ModelOrchestratorActor(engine: engine)) { capturer.capture($0) }
+        await server.dispatch(#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"model_tensor","arguments":{"name":"w","spectrum":true}}}"#)
+        await server.dispatch(#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"model_tensor","arguments":{"name":"w"}}}"#)
+        let lines = capturer.lines
+        #expect(lines[0].contains("-32601") && lines[0].contains("--research-tools"))
+        #expect(!lines[1].contains("--research-tools"))
+    }
 }

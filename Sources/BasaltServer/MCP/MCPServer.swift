@@ -155,6 +155,9 @@ extension MCPServer {
             throw .methodNotFound("\(tool.rawValue) is an experiment tool: start the server with serve --research-tools to use it")
         }
         let call = try ResearchCall(tool, args)
+        if case .tensor(let request) = call, request.spectrum, !researchTools {
+            throw .methodNotFound("model_tensor spectrum holds the model for seconds: start the server with serve --research-tools to use it")
+        }
         do throws(BasaltError) {
             return try await orchestrator.research { model throws(BasaltError) in try await call.run(on: model) }
         } catch {
