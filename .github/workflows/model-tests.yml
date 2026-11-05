@@ -4,9 +4,14 @@ name: Model Compatibility Tests
 # not something to do nightly on hosted runners.
 on:
   workflow_dispatch:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled]
+    paths:
+      - 'Sources/BasaltInference/**'
+      - 'Package.resolved'
 
 concurrency:
-  group: model-tests
+  group: model-tests-${{ github.event.pull_request.number || github.ref }}
   # A running dispatch is never killed mid-download; a newer dispatch replaces a still-pending one.
   cancel-in-progress: false
 
@@ -17,6 +22,7 @@ permissions:
 jobs:
   test-models:
     name: Test Inference & Benchmarks
+    if: github.event_name == 'workflow_dispatch'
     runs-on: [self-hosted, macOS, ARM64]
     # It downloads multi-GB weights; without a ceiling a stalled fetch holds the
     # runner for the default six hours.
@@ -63,4 +69,56 @@ jobs:
         with:
           name: benchmark-results
           path: context_latency.json
+          retention-days: 30
+
+  golden-gate:
+    name: Golden logits & swap gate (${{ matrix.model }})
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (contains(github.event.pull_request.labels.*.name, 'model-gate') &&
+       github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: [self-hosted, macOS, ARM64]
+    timeout-minutes: 60
+    strategy:
+      max-parallel: 1
+      fail-fast: false
+      matrix:
+        model:
+          - lukaskremla/Qwen3.8-27B-3bit-MLX-TextOnly
+          - LiquidAI/LFM2.5-24B-A2B-MLX-4bit
+          - mlx-community/gemma-4-26B-A4B-it-qat-4bit
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          clean: false
+
+      - name: Configure Swift toolchain
+        uses: ./.github/actions/xcode-toolchain
+
+      - name: Metal toolchain
+        run: xcrun metal --version >/dev/null 2>&1 || xcodebuild -downloadComponent MetalToolchain
+
+      - name: Build
+        run: swift build --build-tests
+
+      - name: MLX Metal kernels
+        uses: ./.github/actions/mlx-metallib
+
+      - name: Download model
+        run: swift run Basalt models download "${{ matrix.model }}"
+
+      - name: Run gate
+        env:
+          BASALT_E2E: "1"
+          BASALT_E2E_GOLDEN_MODELS: ${{ matrix.model }}
+        run: swift test --skip-build --filter GoldenLogitsRealModelTests
+
+      - name: Upload gate log
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.0
+        with:
+          name: golden-gate-logs-${{ strategy.job-index }}
+          path: logs/golden-*.log
           retention-days: 30

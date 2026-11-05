@@ -101,20 +101,22 @@ The server speaks JSON-RPC on stdin/stdout for as long as stdin is open. To stop
 
 ---
 
-## 4. Golden Test Vector & Reproducibility Standards
+## 4. Real-Model Regression Gate (#291)
 
-### Golden Test Vector
-- **Model ID**: `ornith-ai/Ornith-1.5-9B-MLX-4bit` (registered in `ModelDatabase`, Qwen 3.5 architecture).
-- **Benchmark Task**: ARC-AGI Task 1 (`benchmarks/arc-agi/compare-tasks/task_1.json`).
-- **Prompt**: Grid pattern induction with 2 train demonstrations and 1 test grid.
+`GoldenLogitsRealModelTests` in `Tests/BasaltTests/GoldenLogitsTests.swift` runs each model through `MLXInferenceEngine` at `temperature = 0` on eight fixed prompts (three short chats, code, an ~8k-token agent trace, a JSON tool call, a non-English chat, a hybrid-anchor resume over one `cacheKey`). A `LogitProbe` on the request records the top-64 log-probs of every greedy step, 32 steps per prompt. The gate fails when:
 
-### Reproducibility Invariants
-**Greedy Parity (`temperature = 0`)**: two independent generation runs at `temperature = 0.0` on the golden vector MUST produce bit-identical output:
-$$\text{Output}_1 \equiv \text{Output}_2$$
+- the greedy tokens differ from the fixture, or
+- at any step, KL(P_ref ‖ P_new) over the reference top-64, both renormalized over the reference ids, exceeds the fixture's `tolerance`. A reference id missing from the new top-64 gets the new smallest log-prob minus ln 1000.
 
-Verified by `SamplerAndGreedyParityTests` against the real MLX engine. The test loads several GB and runs on Metal, so it is opt-in and is reported as *skipped* otherwise — a green run without it proves nothing about parity:
+Fixtures live in `Tests/BasaltTests/Fixtures/golden/<org>--<name>.json` with the snapshot revision and the tolerance. The same suite asserts the memory invariant: an ~8k-token prompt with 256 generated tokens causes 0 new swap-outs (`host_statistics64`) and keeps the peak `phys_footprint` within the `basalt models check` fit estimate.
+
+Models: `lukaskremla/Qwen3.8-27B-3bit-MLX-TextOnly`, `LiquidAI/LFM2.5-24B-A2B-MLX-4bit`, `mlx-community/gemma-4-26B-A4B-it-qat-4bit`. An entry is a snapshot path or a repo id in the HF cache. The suite takes the GPU lock per model and logs to `logs/golden-logits-<date>.log` and `logs/golden-swap-<date>.log`.
 
 ```bash
-BASALT_E2E=1 swift test --filter SamplerAndGreedyParityTests                     # golden model in the HF cache
-BASALT_E2E=1 BASALT_E2E_MODEL_PATH=/path/to/model swift test --filter SamplerAndGreedyParityTests
+M=lukaskremla/Qwen3.8-27B-3bit-MLX-TextOnly,LiquidAI/LFM2.5-24B-A2B-MLX-4bit,mlx-community/gemma-4-26B-A4B-it-qat-4bit
+BASALT_E2E=1 BASALT_E2E_GOLDEN_MODELS=$M swift test --filter GoldenLogitsRealModelTests                          # compare
+BASALT_E2E=1 BASALT_E2E_GOLDEN_MODELS=$M BASALT_GOLDEN_NOISE=1 swift test --filter 'GoldenLogitsRealModelTests/goldenLogits'   # run-to-run max KL
+BASALT_E2E=1 BASALT_E2E_GOLDEN_MODELS=$M BASALT_GOLDEN_UPDATE=1 BASALT_GOLDEN_TOLERANCE=<from noise> swift test --filter 'GoldenLogitsRealModelTests/goldenLogits'  # record
 ```
+
+An update keeps the fixture's tolerance unless `BASALT_GOLDEN_TOLERANCE` is set. A PR that rewrites a fixture says why. Without `BASALT_E2E=1` the suite is reported as skipped, and a green run without it proves nothing. CI runs it through `.github/workflows/model-tests.yml` (manual dispatch, or a PR labelled `model-gate` that touches `Sources/BasaltInference/**` or `Package.resolved`).
