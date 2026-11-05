@@ -18,6 +18,7 @@ struct ReviewRemote: Sendable {
     }
 
     static let maxDiffBytes = 2 << 20
+    static let gitlabPageSize = 100
 
     let forge: Forge
     let instance: URL
@@ -57,7 +58,7 @@ struct ReviewRemote: Sendable {
 
     var diffPath: String {
         switch forge {
-        case .gitlab: "api/v4/projects/\(encodedRepo)/merge_requests/\(number)/diffs?per_page=100"
+        case .gitlab: "api/v4/projects/\(encodedRepo)/merge_requests/\(number)/diffs?per_page=\(Self.gitlabPageSize)"
         case .gitea: "api/v1/repos/\(repoPath)/pulls/\(number).diff"
         }
     }
@@ -82,11 +83,18 @@ struct ReviewRemote: Sendable {
     }
 
     func fetchDiff(session: URLSession) async throws -> String {
-        let data = try await send(request(diffPath), session: session)
-        switch forge {
-        case .gitea: return String(decoding: data, as: UTF8.self)
-        case .gitlab: return try Self.unified(gitlab: data)
+        guard forge == .gitlab else { return String(decoding: try await send(request(diffPath), session: session), as: UTF8.self) }
+        var files: [GitLabFile] = []
+        var bytes = 0
+        for page in 1... {
+            let data = try await send(request(diffPath + "&page=\(page)"), session: session)
+            bytes += data.count
+            guard bytes <= Self.maxDiffBytes else { throw Failure(description: "Diffs of \(repo) !\(number) exceed \(Self.maxDiffBytes) bytes") }
+            let batch = try Self.files(gitlab: data)
+            files += batch
+            if batch.count < Self.gitlabPageSize { break }
         }
+        return files.map { "--- a/\($0.oldPath)\n+++ b/\($0.newPath)\n\($0.diff)" }.joined(separator: "\n")
     }
 
     func post(_ body: String, session: URLSession) async throws {
@@ -103,14 +111,12 @@ struct ReviewRemote: Sendable {
         let diff: String
     }
 
-    static func unified(gitlab data: Data) throws -> String {
-        let files: [GitLabFile]
+    static func files(gitlab data: Data) throws -> [GitLabFile] {
         let decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase
-        do { files = try decoder.decode([GitLabFile].self, from: data) } catch {
+        do { return try decoder.decode([GitLabFile].self, from: data) } catch {
             throw Failure(description: "GitLab returned an unexpected diff payload")
         }
-        return files.map { "--- a/\($0.oldPath)\n+++ b/\($0.newPath)\n\($0.diff)" }.joined(separator: "\n")
     }
 
     func send(_ request: URLRequest, session: URLSession) async throws -> Data {

@@ -91,9 +91,23 @@ struct ReviewTests {
         let remote = try ReviewRemote(forge: .gitlab, instance: "https://\(host)", repo: "group/sub project", number: 42, token: "glpat-secret")
         let diff = try await remote.fetchDiff(session: Self.session)
         let request = try #require(StubURLProtocol.requests(for: host).first?.0)
-        #expect(request.url?.absoluteString == "https://\(host)/api/v4/projects/group%2Fsub%20project/merge_requests/42/diffs?per_page=100")
+        #expect(request.url?.absoluteString == "https://\(host)/api/v4/projects/group%2Fsub%20project/merge_requests/42/diffs?per_page=100&page=1")
         #expect(request.value(forHTTPHeaderField: "PRIVATE-TOKEN") == "glpat-secret")
         #expect(ReviewContext.symbols(in: DiffParser.parseUnifiedDiff(diff)).map(\.signature) == ["func old() {}", "func new() {}"])
+    }
+
+    @Test("GitLab: an MR with more files than one page is fetched page by page until a short page, and every file reaches the context")
+    func gitlabPages() async throws {
+        let host = StubURLProtocol.host { request, _ in
+            let page = request.url?.query?.hasSuffix("&page=1") == true ? 0 : 1
+            let count = page == 0 ? ReviewRemote.gitlabPageSize : 1
+            let files = (0 ..< count).map { ["old_path": "f\(page)_\($0).py", "new_path": "f\(page)_\($0).py", "diff": "@@ -1 +1 @@\n+def f\(page)_\($0)():\n"] }
+            return (200, [:], (try? JSONSerialization.data(withJSONObject: files)) ?? Data())
+        }
+        let remote = try ReviewRemote(forge: .gitlab, instance: "https://\(host)", repo: "g/p", number: 5, token: nil)
+        let diff = try await remote.fetchDiff(session: Self.session)
+        #expect(StubURLProtocol.requests(for: host).compactMap { $0.0.url?.query } == ["per_page=100&page=1", "per_page=100&page=2"])
+        #expect(ReviewContext.symbols(in: DiffParser.parseUnifiedDiff(diff)).count == ReviewRemote.gitlabPageSize + 1)
     }
 
     @Test("Gitea: the PR .diff is fetched with a token Authorization header")
