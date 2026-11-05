@@ -142,6 +142,8 @@ struct ServeCommand: AsyncParsableCommand {
     @Flag(name: .customLong("wired-limit"), inversion: .prefixedNo, help: "Hold the wired memory limit at Metal's recommended working set while a model is loaded (on Gemma 4 26B-A4B it cut swap by 41% under competing memory pressure and changed nothing without it)")
     var wiredLimit: Bool = true
 
+    @Flag(name: .customLong("require-verified"), help: "Before loading, re-hash every file of the model snapshot against its sidecar or Hub tree API digest and refuse to start when any file is unverified or mismatched; a download it needs refuses files the server sends no digest for") var requireVerified = false
+
     @Flag(name: .customLong("model-probe"), inversion: .prefixedNo, help: "Probe a model once per fingerprint at load (chat template, tokenizer round trip, stop tokens, finite logits, entropy, perplexity, two greedy known answers; cached in ~/.basalt/model-probes) and refuse to load it when a check fails")
     var modelProbe: Bool = true
 

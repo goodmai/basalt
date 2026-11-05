@@ -47,8 +47,11 @@ enum MCPToolCatalog {
         ),
         MCPToolDescriptor(
             name: "inspect_model",
-            description: "Verifies weight shard integrity and detects the actual bit width of MLX/Safetensors weights.",
-            inputSchema: modelIdSchema("Hugging Face repo ID or local path to inspect")
+            description: "Verifies weight shard integrity and detects the actual bit width of MLX/Safetensors weights. With verify, re-hashes every file against its sidecar or Hub tree API digest and reports verified \"true\", \"false\" or \"unknown\" per file; a mismatch makes intact false.",
+            inputSchema: ResearchTool.object([
+                "modelId": ["type": "string", "description": "Hugging Face repo ID or local path to inspect"],
+                "verify": ["type": "boolean", "description": "Re-hash every file and report its digest verdict (default: false)"],
+            ], required: ["modelId"])
         ),
         MCPToolDescriptor(
             name: "switch_model",

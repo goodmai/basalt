@@ -237,6 +237,11 @@ package struct HubSidecar: Codable, Equatable, Sendable {
         try JSONEncoder().encode(sidecar).write(to: url(for: file), options: .atomic)
     }
 
+    package static func digest(for file: URL) -> HubDigest? {
+        guard let data = try? Data(contentsOf: url(for: file)) else { return nil }
+        return HubDigest(header: (try? JSONDecoder().decode(HubSidecar.self, from: data))?.digest)
+    }
+
     package static func recorded(for file: URL) -> String? {
         guard let data = try? Data(contentsOf: url(for: file)),
               let sidecar = try? JSONDecoder().decode(HubSidecar.self, from: data),

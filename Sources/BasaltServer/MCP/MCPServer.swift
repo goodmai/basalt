@@ -217,7 +217,8 @@ extension MCPServer {
 
     private func inspectModel(_ args: [String: Any]?) async throws(MCPFailure) -> ToolResult {
         let target = try MCPArguments.modelId(args)
-        let report = await ModelInspector().inspect(modelIdOrPath: target)
+        let verify = try MCPArguments.optionalBoolean("verify", in: args) ?? false
+        let report = await ModelInspector().inspect(modelIdOrPath: target, verifyingWith: verify ? HuggingFaceHub() : nil)
         return .json(report, isError: !report.intact)
     }
 
