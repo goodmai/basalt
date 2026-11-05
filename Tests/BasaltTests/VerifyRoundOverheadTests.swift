@@ -110,7 +110,7 @@ enum VerifyRound {
 @Suite("Verify-round host share on a real model: graph build and dispatch against GPU wait, MLX compile on and off (#210)", .serialized)
 struct VerifyRoundOverheadTests {
     static let env = ProcessInfo.processInfo.environment
-    static let gate = 0.15
+    static let gate = 0.05
 
     static var modelPath: String? {
         env["BASALT_E2E"] == "1" ? env["BASALT_E2E_VERIFY_MODEL_PATH"] : nil
@@ -125,7 +125,7 @@ struct VerifyRoundOverheadTests {
     static let promptURL = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
         .deletingLastPathComponent().appending(path: "benchmarks/speculative-lookup/code.txt")
 
-    @Test("Each verify block splits into graph build, dispatch and GPU wait with compile on and off, the greedy rows match across the two, and the log states whether host time reaches the 15% gate for compiled verify graphs",
+    @Test("Each verify block splits into graph build, dispatch and GPU wait with compile on and off, the greedy rows match across the two, and the log states whether host time reaches the 5% gate of #210 for compiled verify graphs",
           .enabled(if: modelPath != nil, "set BASALT_E2E=1 and BASALT_E2E_VERIFY_MODEL_PATH (BASALT_E2E_VERIFY_MTP=1 for an MTP target)"))
     func splitsVerifyRounds() async throws {
         let path = try #require(Self.modelPath)
@@ -150,7 +150,7 @@ struct VerifyRoundOverheadTests {
             #expect(row.greedy == plain.greedy, "K=\(row.block)")
         }
         let peak = try #require(current.max { $0.hostShare < $1.hostShare })
-        log.record("gate", String(format: "host share peaks at %.1f%% (K=%d); %@", peak.hostShare * 100, peak.block,
-                                  peak.hostShare >= Self.gate ? "at or above 15%: prototype compiled verify graphs" : "below 15%: compiled verify graphs not needed"))
+        log.record("gate", String(format: "host share peaks at %.1f%% (K=%d), an upper bound since dispatch overlaps the GPU; %@", peak.hostShare * 100, peak.block,
+                                  peak.hostShare >= Self.gate ? "at or above 5%: compiled verify graphs decided by the compile-saves rows" : "below 5%: compiled verify graphs not needed"))
     }
 }
