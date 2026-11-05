@@ -89,22 +89,18 @@ struct FeatureMatrixTests {
     @Test("A plain first turn, a cached first turn and a second turn reusing it decode the same greedy text with the feature on; the feature reports itself on exactly where it applies",
           .timeLimit(.minutes(1)), arguments: families, Feature.allCases)
     func featureLeavesGreedyOutputUnchanged(family: TinyModel.Family, feature: Feature) async throws {
-        try await withKnownIssue("Nemotron-H diverges from the plain decoder intermittently in full parallel runs (#250)", isIntermittent: true) {
-            let plain = try await Self.run(family, nil).replies
-            let (engine, replies) = try await Self.run(family, feature)
-            #expect(replies.map(\.generatedText) == plain.map(\.generatedText))
-            let applies = feature.applies(to: family)
-            let reported = await feature.reportsOn(engine, replies)
-            if feature == .lookup {
-                #expect(applies || !reported, "lookup drafted on \(family), which it must decode plainly")
-            } else {
-                #expect(reported == applies, "\(feature) on \(family) reported \(reported ? "on" : "off")")
-            }
-            if feature == .cacheBlend {
-                #expect(replies.map(\.cachedPromptTokens) == plain.map(\.cachedPromptTokens))
-            }
-        } when: {
-            family == .nemotronH && feature == .lookup
+        let plain = try await Self.run(family, nil).replies
+        let (engine, replies) = try await Self.run(family, feature)
+        #expect(replies.map(\.generatedText) == plain.map(\.generatedText))
+        let applies = feature.applies(to: family)
+        let reported = await feature.reportsOn(engine, replies)
+        if feature == .lookup {
+            #expect(applies || !reported, "lookup drafted on \(family), which it must decode plainly")
+        } else {
+            #expect(reported == applies, "\(feature) on \(family) reported \(reported ? "on" : "off")")
+        }
+        if feature == .cacheBlend {
+            #expect(replies.map(\.cachedPromptTokens) == plain.map(\.cachedPromptTokens))
         }
     }
 
