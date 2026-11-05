@@ -30,15 +30,15 @@ struct ConfigTests {
 
     @Test("ServerConfig custom values round-trip with explicit apiKey")
     func testCustomWithApiKey() throws {
-        let config = try ServerConfig(
+        var config = try ServerConfig(
             modelPath: "/models/qwen",
-            modelId:   "mlx-community/Qwen3.5-4B-4bit",
             restPort:  9090,
             host:      "0.0.0.0",
-            maxTokens: 8192,
-            logLevel:  .debug,
             apiKey:    "test-secret-token"
         )
+        config.modelId = "mlx-community/Qwen3.5-4B-4bit"
+        config.maxTokens = 8192
+        config.logLevel = .debug
         #expect(config.modelId == "mlx-community/Qwen3.5-4B-4bit")
         #expect(config.restPort == 9090)
         #expect(config.host == "0.0.0.0")
@@ -94,7 +94,7 @@ struct ConfigTests {
             modelPath: "path",
             host: "0.0.0.0",
             apiKey: nil,
-            autoGenerateKeyIfMissing: true
+            access: .init(autoGenerateKeyIfMissing: true)
         )
         #expect(config.apiKey != nil)
         guard let key = config.apiKey else { return }

@@ -75,7 +75,7 @@ enum Conversation {
 }
 
 func greedy(_ prompt: String, key: String?, maxTokens: Int = 12) -> GenerationRequest {
-    GenerationRequest(prompt: prompt, maxTokens: maxTokens, temperature: 0, cacheKey: key)
+    GenerationRequest(prompt: prompt, maxTokens: maxTokens, temperature: 0).with { $0.cacheKey = key }
 }
 
 func commonPrefix(_ a: [Int], _ b: [Int]) -> Int {
@@ -218,7 +218,10 @@ struct PromptCacheReuseTests {
     @Test("An assistant prefix on an all-ones-mask VLM prompt is appended and answered like on a plain text processor")
     func assistantPrefixWithAllOnesMask() async throws {
         let request = GenerationRequest(
-            prompt: Conversation.firstTurn, maxTokens: 12, temperature: 0, cacheKey: "ns", assistantPrefix: "{\"")
+            prompt: Conversation.firstTurn, maxTokens: 12, temperature: 0).with {
+            $0.cacheKey = "ns"
+            $0.assistantPrefix = "{\""
+        }
         let vision = try await TinyModel.engine(processor: VisionStyleInputProcessor(padsFirstToken: false))
         let plain = try await TinyModel.engine()
         let prefixed = try await vision.generate(request: request)
@@ -315,21 +318,17 @@ struct PromptCacheReuseTests {
         let engine = try await TinyModel.engine()
         _ = try await engine.generate(request: greedy(Conversation.otherUser, key: "ns"))
         let stream = try await engine.generateStream(request: greedy(Conversation.firstTurn, key: "ns", maxTokens: 3000))
+        let (firstChunk, sawFirstChunk) = AsyncStream<Void>.makeStream()
         let consumer = Task {
-            for await _ in stream {
-                try? await Task.sleep(for: .milliseconds(2))
-            }
+            for await _ in stream { sawFirstChunk.finish() }
         }
-        try await Task.sleep(for: .milliseconds(50))
+        for await _ in firstChunk {}
         consumer.cancel()
         await consumer.value
 
         let prompt = TinyModel.tokens(Conversation.firstTurn)
         let other = TinyModel.tokens(Conversation.otherUser)
-        let deadline = ContinuousClock.now + .seconds(60)
-        while await engine.readPromptCaches({ $0.storedPrefix(of: prompt, in: "ns") }) < prompt.count, ContinuousClock.now < deadline {
-            try await Task.sleep(for: .milliseconds(5))
-        }
+        #expect(await GenerationGateTests.eventually { await engine.promptCacheReport(namespace: nil).launches.isEmpty })
         let (prefix, pins, bytes) = await engine.readPromptCaches { ($0.storedPrefix(of: prompt, in: "ns"), pinCount($0), $0.byteCount) }
         #expect(prefix == prompt.count)
         #expect(pins == 0)

@@ -153,8 +153,9 @@ struct Benchmark: AsyncParsableCommand {
     }
 
     private func request() -> GenerationRequest {
-        GenerationRequest(prompt: prompt, maxTokens: tokens, temperature: temperature, dryMultiplier: dryMultiplier)
-            .withGrammarJumpForward(grammarJumpForward)
+        var request = GenerationRequest(prompt: prompt, maxTokens: tokens, temperature: temperature)
+        request.dryMultiplier = dryMultiplier
+        return request.withGrammarJumpForward(grammarJumpForward)
             .withOrigin(RequestOrigin(source: "benchmark", endpoint: "PerformanceBenchmark", stream: false))
     }
 
@@ -238,7 +239,7 @@ extension Benchmark {
             repetitionPenalty: repetitionPenalty,
             topK: topK, minP: minP, seed: seed, speculativeLookup: speculativeLookup,
             speculativeRecycling: speculativeRecycling, mtp: mtp, mtpBlockSize: mtpBlock, experimentalSamplers: dryMultiplier != nil, grammarJumpForward: grammarJumpForward, wiresWorkingSet: wiredLimit)
-        return ModelOrchestratorActor(engine: engine, maxTokens: tokens, kvPrecision: kvBits, kvZones: kvZones ? .standard : nil)
+        return ModelOrchestratorActor(engine: engine, maxTokens: tokens, kv: ModelOrchestratorActor.KVOptions(precision: kvBits, zones: kvZones ? .standard : nil))
     }
 
     private func timedRuns(_ orchestrator: ModelOrchestratorActor) async throws -> [GenerationResponse] {

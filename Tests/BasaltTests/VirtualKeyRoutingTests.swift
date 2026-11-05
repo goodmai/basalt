@@ -177,7 +177,7 @@ struct VirtualKeyRoutingTests {
         let engine = MockInferenceEngine()
         let orchestrator = ModelOrchestratorActor(engine: engine, telemetry: TelemetryTracker())
         try await orchestrator.loadModel(path: "mock")
-        let server = RESTServer(orchestrator: orchestrator, config: try ServerConfig(modelPath: "mock", virtualKeys: [Self.team]))
+        let server = RESTServer(orchestrator: orchestrator, config: try ServerConfig(modelPath: "mock", access: .init(virtualKeys: [Self.team])))
         let app = Application(router: server.makeRouter())
         try await app.test(.router) { client in
             try await client.execute(

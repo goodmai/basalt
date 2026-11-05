@@ -34,7 +34,7 @@ struct MemoryCapTests {
         await engine.setSupportsKVEviction(modelTakesKVEviction)
         let dir = try modelDirectory(weightsBytes: weightsBytes)
         let orchestrator = ModelOrchestratorActor(
-            engine: engine, maxTokens: maxTokens, kvPrecision: kvPrecision, adaptiveKVPrecision: adaptiveKVPrecision, kvZones: kvZones,
+            engine: engine, maxTokens: maxTokens, kv: .init(precision: kvPrecision, adaptive: adaptiveKVPrecision, zones: kvZones),
             telemetry: TelemetryTracker())
         try await orchestrator.loadModel(path: dir.path)
         await orchestrator.setFreeMemoryProbe { free }
@@ -263,5 +263,34 @@ struct MemoryCapTests {
         #expect(budget > 0)
         #expect(budget <= workingSet - (64 << 20))
         #expect(await engine.promptTokenCount(for: GenerationRequest(prompt: "abcd")) == 4)
+    }
+}
+
+@Suite("KV quantization stays off, in the engine and in the planner, for a family that has not verified it (#323)")
+struct UnverifiedKVQuantizationTests {
+    @Test("Under --kv-bits 4 or auto the planner sizes the room for fp16 and sends no precision",
+          arguments: [(KVPrecision.q4, false), (nil, true)] as [(KVPrecision?, Bool)])
+    func plannerKeepsFP16(kvPrecision: KVPrecision?, adaptive: Bool) async throws {
+        let engine = MockInferenceEngine()
+        await engine.setMemory(kvBudget: 7 * MemoryCapTests.gib, promptTokens: 30_000)
+        await engine.setSupportsKVQuantization(false)
+        let dir = try MemoryCapTests.modelDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let orchestrator = ModelOrchestratorActor(
+            engine: engine, maxTokens: 131_072, kv: .init(precision: kvPrecision, adaptive: adaptive), telemetry: TelemetryTracker())
+        try await orchestrator.loadModel(path: dir.path)
+        _ = try await orchestrator.generate(request: GenerationRequest(prompt: "long", maxTokens: 80_000))
+        let sent = try #require(await engine.getLastRequest())
+        #expect(sent.kvPrecision == nil)
+        #expect(sent.maxTokens == 50_972 - 30_000)
+    }
+
+    @Test("The engine builds an fp16 cache under any --kv-bits for an unverified family and keeps the bits for a verified one")
+    func engineBuildsFP16() {
+        #expect(ModelCapabilities.conservative.kvBits(.q4) == nil)
+        #expect(ModelCapabilities.conservative.kvBits(.k8v4) == nil)
+        #expect(ModelCapabilities.unrestricted.kvBits(.q4) == 4)
+        #expect(ModelCapabilities.unrestricted.kvBits(.k8v4) == 8)
+        #expect(ModelCapabilities.unrestricted.kvBits(nil) == nil)
     }
 }

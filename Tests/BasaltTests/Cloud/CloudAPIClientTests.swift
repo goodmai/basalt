@@ -1,5 +1,6 @@
 import Testing
 import Foundation
+import Synchronization
 @testable import BasaltCore
 @testable import BasaltCloud
 
@@ -8,10 +9,13 @@ struct CloudAPIClientTests {
 
     private struct Reply: Codable, Sendable, Equatable { let value: String }
 
-    private func client(host: String, maxRetries: Int = 2, headers: [String: String] = [:]) -> CloudAPIClient {
+    private func client(
+        host: String, maxRetries: Int = 2, headers: [String: String] = [:],
+        sleep: @escaping @Sendable (Duration) async throws -> Void = { _ in }
+    ) -> CloudAPIClient {
         let config = CloudAPIConfig(apiKey: "sk-test", baseURL: URL(string: "https://\(host)/v1")!,
                                     timeout: 60, maxRetries: maxRetries, extraHeaders: headers)
-        return CloudAPIClient(config: config, configuration: StubURLProtocol.configuration)
+        return CloudAPIClient(config: config, configuration: StubURLProtocol.configuration, sleep: sleep)
     }
 
     private func json(_ s: String) -> Data { Data(s.utf8) }
@@ -55,25 +59,29 @@ struct CloudAPIClientTests {
         }
     }
 
-    @Test("A 5xx is retried; it succeeds when the retry does, and fails after maxRetries attempts")
+    @Test("A 5xx is retried after a backoff of 1 s, 2 s, …; it succeeds when the retry does, and fails after maxRetries attempts")
     func serverErrorsAreRetried() async throws {
         let counter = Counter()
         let flaky = StubURLProtocol.host { _, _ in
             counter.next() == 1 ? (503, [:], Data()) : (200, [:], Data(#"{"value": "second"}"#.utf8))
         }
-        let reply = try await client(host: flaky).performRequest(endpoint: "x", responseType: Reply.self)
+        let retried = Backoffs()
+        let reply = try await client(host: flaky) { retried.record($0) }.performRequest(endpoint: "x", responseType: Reply.self)
         #expect(reply.value == "second")
         #expect(StubURLProtocol.requests(for: flaky).count == 2)
+        #expect(retried.all == [.seconds(1)])
 
         let down = StubURLProtocol.host { _, _ in (500, [:], Data("boom".utf8)) }
-        let api = client(host: down)
+        let exhausted = Backoffs()
+        let api = client(host: down, maxRetries: 3) { exhausted.record($0) }
         await #expect {
             _ = try await api.performRequest(endpoint: "x", responseType: Reply.self)
         } throws: { error in
             if case .modelInferenceError(let d) = error as? BasaltError { return d.contains("HTTP 500") && d.contains("boom") }
             return false
         }
-        #expect(StubURLProtocol.requests(for: down).count == 2)
+        #expect(StubURLProtocol.requests(for: down).count == 3)
+        #expect(exhausted.all == [.seconds(1), .seconds(2)])
         #expect(await api.getMetrics().errors == 1)
     }
 
@@ -109,6 +117,12 @@ struct CloudAPIClientTests {
         let (request, _) = try #require(StubURLProtocol.requests(for: host).first)
         #expect(request.value(forHTTPHeaderField: "Authorization") == nil)
     }
+}
+
+private final class Backoffs: Sendable {
+    private let delays = Mutex<[Duration]>([])
+    func record(_ delay: Duration) { delays.withLock { $0.append(delay) } }
+    var all: [Duration] { delays.withLock { $0 } }
 }
 
 private final class Counter: @unchecked Sendable {

@@ -37,7 +37,7 @@ public struct ChatMessageInput: Codable, Sendable, Equatable {
     }
 
     public static func plainText(_ messages: [ChatMessageInput]) -> String {
-        messages.flatMap { [$0.text] + ($0.toolCalls ?? []).map(\.arguments) }
+        messages.flatMap { message -> [String] in [message.text] + (message.toolCalls ?? []).map(\.arguments) }
             .filter { !$0.isEmpty }
             .joined(separator: "\n\n")
     }
@@ -120,81 +120,5 @@ public enum ReasoningPolicy: Sendable, Equatable {
         // vocabulary (Qwen spells the top level `xhigh`, gpt-oss spells it `high`).
         case .some(let value):        self = .effort(value)  // already lowercased
         }
-    }
-}
-
-public struct ChatRequest: Sendable {
-    public let messages: [ChatMessageInput]
-    public let maxTokens: Int?
-    public let temperature: Double?
-    public let topP: Double?
-    public let reasoning: ReasoningPolicy
-    public let stream: Bool
-    /// Model the caller asked for, if it named one. Used for hot-swap.
-    public let requestedModel: String?
-
-    public init(
-        messages: [ChatMessageInput],
-        maxTokens: Int? = nil,
-        temperature: Double? = nil,
-        topP: Double? = nil,
-        reasoning: ReasoningPolicy = .modelDefault,
-        stream: Bool = false,
-        requestedModel: String? = nil
-    ) {
-        self.messages = messages
-        self.maxTokens = maxTokens
-        self.temperature = temperature
-        self.topP = topP
-        self.reasoning = reasoning
-        self.stream = stream
-        self.requestedModel = requestedModel
-    }
-}
-
-// MARK: — Canonical result
-
-public struct ChatResult: Sendable {
-    public enum Stop: String, Sendable {
-        /// Model emitted an end-of-turn token.
-        case endTurn
-        /// Generation was cut off at the token ceiling — the answer is incomplete.
-        case tokenLimit
-        /// A degenerate repetition loop was detected and generation was abandoned.
-        case repetitionLoop
-
-        public var openAIFinishReason: String {
-            switch self {
-            case .endTurn:        return "stop"
-            case .tokenLimit:     return "length"
-            case .repetitionLoop: return "length"
-            }
-        }
-    }
-
-    public let content: String
-    public let reasoning: String?
-    public let promptTokens: Int
-    public let completionTokens: Int
-    public let stop: Stop
-    public let tokensPerSecond: Double
-    public let timeToFirstToken: Double
-
-    public init(
-        content: String,
-        reasoning: String?,
-        promptTokens: Int,
-        completionTokens: Int,
-        stop: Stop,
-        tokensPerSecond: Double,
-        timeToFirstToken: Double
-    ) {
-        self.content = content
-        self.reasoning = reasoning
-        self.promptTokens = promptTokens
-        self.completionTokens = completionTokens
-        self.stop = stop
-        self.tokensPerSecond = tokensPerSecond
-        self.timeToFirstToken = timeToFirstToken
     }
 }

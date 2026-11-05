@@ -58,15 +58,16 @@ enum MCPArguments {
         }
         let speculativeLookup = try optionalBoolean("speculativeLookup", in: args)
         let grammarJumpForward = try optionalBoolean("grammarJumpForward", in: args)
-        return GenerationRequest(
+        var request = GenerationRequest(
             prompt: prompt,
             maxTokens:   args?["maxTokens"]   as? Int,
             temperature: args?["temperature"] as? Double,
-            topP:        args?["topP"]        as? Double,
-            minP:        args?["minP"]        as? Double,
-            dynamicTemperature: args?["dynamicTemperature"] as? Bool,
-            cacheKey: PromptCacheKey.resolve(isService: false)
-        ).withSpeculativeLookup(speculativeLookup)
+            topP:        args?["topP"]        as? Double
+        )
+        request.minP = args?["minP"] as? Double
+        request.dynamicTemperature = args?["dynamicTemperature"] as? Bool
+        request.cacheKey = PromptCacheKey.resolve(isService: false)
+        return request.withSpeculativeLookup(speculativeLookup)
             .withGrammarJumpForward(grammarJumpForward)
             .withOrigin(RequestOrigin(source: "mcp", endpoint: "tools/call generate", stream: false))
     }

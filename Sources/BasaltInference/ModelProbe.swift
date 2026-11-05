@@ -71,19 +71,22 @@ package struct ModelProbe: Codable, Sendable {
     static let entropyFloor: Float = 0.01
     static let uniformEntropyShare: Float = 0.9
     static let perplexityCeiling: Float = 40
+    static let familyPerplexityCeilings: [String: Float] = [
+        "qwen3_5": 30, "prism_hadamard_qwen35": 5, "gemma4": 24, "gemma4_unified": 99, "lfm2_moe": 8,
+    ]
 
     package var findings: [Finding]
 
     package var verdict: Verdict { findings.map(\.verdict).max() ?? .pass }
     package var failure: Finding? { findings.first { $0.verdict == .fail } }
 
-    package init(_ facts: Facts) {
+    package init(_ facts: Facts, family: String? = nil) {
         findings = [
             Self.template(facts.template), Self.roundTrip(facts.echoed),
             Self.stops(facts.stopTokens, vocabularySize: facts.vocabularySize), Self.finite(facts.nonFiniteLogits),
         ].compactMap { $0 }
         guard facts.nonFiniteLogits == 0 else { return }
-        findings += [Self.entropy(facts.meanEntropy, vocabularySize: facts.vocabularySize), Self.perplexity(facts.perplexity)].compactMap { $0 }
+        findings += [Self.entropy(facts.meanEntropy, vocabularySize: facts.vocabularySize), Self.perplexity(facts.perplexity, family: family)].compactMap { $0 }
         findings += facts.answers.compactMap(Self.answer)
     }
 
@@ -131,9 +134,14 @@ package struct ModelProbe: Codable, Sendable {
             detail: "mean next-token entropy \(Self.rounded(mean)) nats is outside \(entropyFloor)...\(Self.rounded(ceiling)), 90% of uniform over \(vocabularySize) tokens: one token takes all the mass, or none stands out")
     }
 
-    static func perplexity(_ value: Float) -> Finding? {
-        value.isFinite && value <= perplexityCeiling ? nil
-            : Finding(check: .perplexity, verdict: .warn, detail: "perplexity \(Self.rounded(value)) on a well-known fixed text is above \(perplexityCeiling)")
+    static func perplexityCeiling(family: String?) -> Float {
+        family.flatMap { familyPerplexityCeilings[$0] } ?? perplexityCeiling
+    }
+
+    static func perplexity(_ value: Float, family: String?) -> Finding? {
+        let ceiling = perplexityCeiling(family: family)
+        return value.isFinite && value <= ceiling ? nil
+            : Finding(check: .perplexity, verdict: .warn, detail: "perplexity \(Self.rounded(value)) on a well-known fixed text is above \(Self.rounded(ceiling)), the ceiling for \(family ?? "an unknown family")")
     }
 
     static func answer(_ answer: Answer) -> Finding? {
@@ -149,7 +157,7 @@ extension ModelProbe {
 
     static func facts(_ context: ModelContext) throws -> Facts {
         let tokenizer = context.tokenizer
-        let text = tokenizer.encode(text: perplexityText, addSpecialTokens: true)
+        let text = encoded(perplexityText, tokenizer)
         let input = LMInput.Text(tokens: MLXArray(text.map(Int32.init)).reshaped(1, -1))
         let logits = context.model(input, cache: try context.model.newCache(parameters: nil), state: nil).logits[0].asType(.float32)
         let logp = logits - logSumExp(logits, axis: -1, keepDims: true)
@@ -164,7 +172,13 @@ extension ModelProbe {
             stopTokens: MLXInferenceEngine.stopTokenIds(context).sorted().map { StopToken(id: $0, name: tokenizer.convertIdToToken($0)) },
             vocabularySize: logits.dim(-1), nonFiniteLogits: nonFinite.item(Int.self),
             meanEntropy: entropy.item(Float.self), perplexity: perplexity.item(Float.self),
-            answers: try knownAnswers.map { Answer(expected: $0.expected, got: try greedy($0.prompt, context: context)) })
+            answers: try knownAnswers.map { try known($0.prompt, expected: $0.expected, context: context) })
+    }
+
+    static func encoded(_ text: String, _ tokenizer: any MLXLMCommon.Tokenizer) -> [Int] {
+        let ids = tokenizer.encode(text: text, addSpecialTokens: true)
+        guard let bos = tokenizer.bosToken.flatMap(tokenizer.convertTokenToId), ids.first != bos else { return ids }
+        return [bos] + ids
     }
 
     static func template(_ tokenizer: any MLXLMCommon.Tokenizer) -> Template {
@@ -177,16 +191,27 @@ extension ModelProbe {
         }
     }
 
-    static func greedy(_ prompt: String, context: ModelContext) throws -> String {
-        let ids = context.tokenizer.encode(text: prompt, addSpecialTokens: true)
+    static func known(_ prompt: String, expected: String, context: ModelContext) throws -> Answer {
+        let chat = try? context.tokenizer.applyChatTemplate(
+            messages: [["role": "user", "content": prompt]], tools: nil, additionalContext: ["enable_thinking": false])
+        var answer = Answer(expected: expected, got: "")
+        for ids in [chat, encoded(prompt, context.tokenizer)].compactMap({ $0 }) where Self.answer(answer) != nil {
+            answer = Answer(expected: expected, got: try greedy(ids, context: context))
+        }
+        return answer
+    }
+
+    static func greedy(_ ids: [Int], context: ModelContext) throws -> String {
         let tokens = try TokenIterator(
             input: LMInput(tokens: MLXArray(ids.map(Int32.init))), model: context.model,
             parameters: GenerateParameters(maxTokens: answerTokens, temperature: 0))
         return context.tokenizer.decode(tokenIds: Array(tokens), skipSpecialTokens: true)
     }
 
-    static func run(_ container: ModelContainer) async throws -> ModelProbe {
-        ModelProbe(try await container.performEvaluating(nonSendable: ()) { context, _ in try facts(context) })
+    static func run(_ container: ModelContainer, family: String? = nil) async throws -> ModelProbe {
+        let gathered = try await container.performEvaluating(nonSendable: ()) { context, _ in try facts(context) }
+        logger.info("Model probe measured \(family ?? "unknown family"): perplexity \(rounded(gathered.perplexity)), mean entropy \(rounded(gathered.meanEntropy)) nats, known answers \(gathered.answers.map(\.got))")
+        return ModelProbe(gathered, family: family)
     }
 
     static func stored(fingerprint: String) -> URL {
@@ -196,7 +221,7 @@ extension ModelProbe {
     static func loadOrRun(directory: URL, container: ModelContainer) async throws -> ModelProbe {
         let url = stored(fingerprint: PromptCacheDiskStore.fingerprint(modelDirectory: directory))
         if let data = try? Data(contentsOf: url), let probe = try? JSONDecoder().decode(ModelProbe.self, from: data) { return probe }
-        let probe = try await run(container)
+        let probe = try await run(container, family: ModelCache.config(at: directory)?["model_type"] as? String)
         try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         try? JSONEncoder().encode(probe).write(to: url, options: .atomic)
         return probe
@@ -228,6 +253,7 @@ extension MLXInferenceEngine {
 
     static func loadFailure(_ error: any Error, modelPath: String) async -> BasaltError {
         if let error = error as? BasaltError { return error }
+        if error is CancellationError { return .cancelled }
         switch error as? ModelFactoryError {
         case .configurationDecodingError?:
             return .modelConfigurationInvalid(path: modelPath, reason: error.localizedDescription)

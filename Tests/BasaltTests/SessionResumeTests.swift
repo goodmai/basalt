@@ -90,7 +90,7 @@ struct SessionResumeTests {
         let dir = SessionLogTests.tempDirectory()
         defer { try? FileManager.default.removeItem(at: dir) }
         let clock = ManualClock()
-        let writer = SessionLogWriter(mode: .meta, directory: dir, defaultSession: "server", idleTimeout: 60, clock: { clock.now })
+        let writer = SessionLogWriter(mode: .meta, directory: dir, defaultSession: "server", idle: .init(timeout: 60, clock: { clock.now }))
         await Self.exchange(writer, ["hello"], id: "r1", session: "S")
         await writer.flush()
         clock.advance(30)

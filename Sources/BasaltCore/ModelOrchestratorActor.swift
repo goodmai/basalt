@@ -22,9 +22,20 @@ public actor ModelOrchestratorActor {
     private var memoryLimits: MemoryLimits?
     private var memoryRefusals = 0
 
+    public struct KVOptions: Sendable {
+        let precision: KVPrecision?
+        let adaptive: Bool
+        let zones: KVZones?
+
+        public init(precision: KVPrecision? = nil, adaptive: Bool = false, zones: KVZones? = nil) {
+            self.precision = precision
+            self.adaptive = adaptive
+            self.zones = zones
+        }
+    }
+
     public init(
-        engine: any InferenceEngine, maxTokens: Int = 65_536, kvPrecision: KVPrecision? = nil, adaptiveKVPrecision: Bool = false,
-        kvZones: KVZones? = nil, telemetry: TelemetryTracker = .shared,
+        engine: any InferenceEngine, maxTokens: Int = 65_536, kv: KVOptions = KVOptions(), telemetry: TelemetryTracker = .shared,
         gate: GenerationGate = GenerationGate(), sessionLog: SessionLogWriter? = nil
     ) {
         self.gate = gate
@@ -32,8 +43,8 @@ public actor ModelOrchestratorActor {
         self.engine = engine
         self.kv = KVPlanner(
             maxTokens: maxTokens,
-            precisionLadder: adaptiveKVPrecision ? KVCacheGeometry.adaptiveKVPrecisionLadder : [kvPrecision],
-            zones: kvZones)
+            precisionLadder: kv.adaptive ? KVCacheGeometry.adaptiveKVPrecisionLadder : [kv.precision],
+            zones: kv.zones)
         self.telemetry = telemetry
     }
 
@@ -87,6 +98,7 @@ extension ModelOrchestratorActor {
         )
         kv.takesZones = await engine.supportsKVZones
         kv.takesEviction = await engine.supportsKVEviction
+        kv.takesQuantization = await engine.supportsKVQuantization
         await self.telemetry.setModelMemory(mb: self.modelSizeMB)
         await telemetry.setModel(URL(fileURLWithPath: path).lastPathComponent)
     }
@@ -304,7 +316,7 @@ extension ModelOrchestratorActor {
         do {
             return try await gate.admit(priority: priority)
         } catch {
-            throw error as? BasaltError ?? .inferenceError("Cancelled while queued")
+            throw error as? BasaltError ?? .cancelled
         }
     }
 
@@ -449,7 +461,7 @@ extension ModelOrchestratorActor {
         let cloudFallback = self.cloudFallback
         let localModel = routingModelKey
         return AsyncStream<StreamChunk> { continuation in
-            let task = Task.detached {
+            let task = Task { @concurrent in
                 var result: GenerationResponse?
                 for await chunk in stream {
                     if case .metadata(let metadata) = chunk { result = metadata }

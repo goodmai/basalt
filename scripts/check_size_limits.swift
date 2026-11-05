@@ -54,10 +54,13 @@ func csvFields(_ line: Substring) -> [String] {
     return fields
 }
 
+let setterAccess = try! Regex(#"\b(private|fileprivate|internal|package|public|open)\(set\)"#)
+
 func functions(in source: String?) throws -> [String: Metrics] {
     guard let source else { return [:] }
     let file = FileManager.default.temporaryDirectory.appending(path: "size-\(UUID().uuidString).swift")
-    try source.write(to: file, atomically: true, encoding: .utf8)
+    let unconfused = source.replacing(setterAccess) { "\($0.output[1].substring ?? "")     " }
+    try unconfused.write(to: file, atomically: true, encoding: .utf8)
     defer { try? FileManager.default.removeItem(at: file) }
     var found: [String: Metrics] = [:]
     for row in try run(lizard + ["-l", "swift", "--csv", file.path]).split(separator: "\n") {

@@ -58,34 +58,33 @@ public struct GenerationRequest: Codable, Sendable {
     public private(set) var maxTokens: Int?
     public let temperature: Double?
     public let topP: Double?
-    public let minP: Double?
-    public let dynamicTemperature: Bool?
-    public let enableThinking: Bool?
-    public let reasoningEffort: String?
-    public let isServiceRequest: Bool?
-    /// Functions offered to the model; rendered into the chat template's tool section.
+    public var minP: Double?
+    public var dynamicTemperature: Bool?
+    public var enableThinking: Bool? = true
+    public var reasoningEffort: String?
+    public var isServiceRequest: Bool? = false
     public let tools: [ToolDefinition]?
-    public let toolChoice: ToolChoice?
-    public private(set) var cacheKey: String?
+    public var toolChoice: ToolChoice?
+    public var cacheKey: String?
     public let messages: [ChatMessageInput]?
-    public private(set) var assistantPrefix: String? = nil
-    public private(set) var topK: Int? = nil
-    public private(set) var presencePenalty: Double? = nil
-    public private(set) var repetitionPenalty: Double? = nil
-    public private(set) var thinkingBudget: Int? = nil
-    public private(set) var responseFormat: ResponseFormat? = nil
+    public var assistantPrefix: String? = nil
+    public var topK: Int?
+    public var presencePenalty: Double?
+    public var repetitionPenalty: Double?
+    public var thinkingBudget: Int?
+    public var responseFormat: ResponseFormat?
     public private(set) var sessionId: String? = nil
     public private(set) var budgetKey: String? = nil
     public private(set) var origin: RequestOrigin = .unspecified
     public private(set) var speculativeLookup: Bool? = nil
     public private(set) var grammarJumpForward: Bool? = nil
     public private(set) var kvPrecision: KVPrecision? = nil
-    public private(set) var dryMultiplier: Double? = nil
-    public private(set) var dryBase: Double? = nil
-    public private(set) var dryAllowedLength: Int? = nil
-    public private(set) var drySequenceBreakers: [String]? = nil
-    public private(set) var xtcThreshold: Double? = nil
-    public private(set) var xtcProbability: Double? = nil
+    public var dryMultiplier: Double?
+    public var dryBase: Double?
+    public var dryAllowedLength: Int?
+    public var drySequenceBreakers: [String]?
+    public var xtcThreshold: Double?
+    public var xtcProbability: Double?
 
     enum CodingKeys: String, CodingKey {
         case prompt, maxTokens, temperature, topP, minP, dynamicTemperature, enableThinking, reasoningEffort
@@ -100,57 +99,17 @@ public struct GenerationRequest: Codable, Sendable {
         maxTokens: Int? = nil,
         temperature: Double? = 0.7,
         topP: Double? = 0.9,
-        minP: Double? = nil,
-        dynamicTemperature: Bool? = nil,
-        enableThinking: Bool? = true,
-        reasoningEffort: String? = nil,
-        isServiceRequest: Bool? = false,
         tools: [ToolDefinition]? = nil,
-        toolChoice: ToolChoice? = nil,
-        cacheKey: String? = nil,
-        messages: [ChatMessageInput]? = nil,
-        assistantPrefix: String? = nil,
-        topK: Int? = nil,
-        presencePenalty: Double? = nil,
-        repetitionPenalty: Double? = nil,
-        thinkingBudget: Int? = nil,
-        responseFormat: ResponseFormat? = nil,
-        dryMultiplier: Double? = nil,
-        dryBase: Double? = nil,
-        dryAllowedLength: Int? = nil,
-        drySequenceBreakers: [String]? = nil,
-        xtcThreshold: Double? = nil,
-        xtcProbability: Double? = nil
+        messages: [ChatMessageInput]? = nil
     ) {
         self.prompt = prompt
         self.maxTokens = maxTokens
         self.temperature = temperature
         self.topP = topP
-        self.minP = minP
-        self.dynamicTemperature = dynamicTemperature
-        self.enableThinking = enableThinking
-        self.reasoningEffort = reasoningEffort
-        self.isServiceRequest = isServiceRequest
         self.tools = tools
-        self.toolChoice = toolChoice
-        self.cacheKey = cacheKey
         self.messages = messages
-        self.assistantPrefix = assistantPrefix
-        self.topK = topK
-        self.presencePenalty = presencePenalty
-        self.repetitionPenalty = repetitionPenalty
-        self.thinkingBudget = thinkingBudget
-        self.responseFormat = responseFormat
-        self.dryMultiplier = dryMultiplier
-        self.dryBase = dryBase
-        self.dryAllowedLength = dryAllowedLength
-        self.drySequenceBreakers = drySequenceBreakers
-        self.xtcThreshold = xtcThreshold
-        self.xtcProbability = xtcProbability
     }
 
-    /// The same request with another token budget. Kept next to the stored properties so a new
-    /// field cannot be forgotten by a caller that rebuilds the request field by field.
     public var usesExperimentalSamplers: Bool {
         dryMultiplier != nil || dryBase != nil || dryAllowedLength != nil || drySequenceBreakers != nil
             || xtcThreshold != nil || xtcProbability != nil

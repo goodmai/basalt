@@ -54,7 +54,8 @@ enum BatchFixture {
         var configuration = ModelConfiguration(id: "tiny-llama")
         configuration.eosTokenIds = stop
         let (stream, task, _) = MLXInferenceEngine.handOff(
-            promptTokenCount: prompt.count, modelConfiguration: configuration, tokenizer: ByteTokenizer(),
+            promptTokenCount: prompt.count,
+            context: ModelContext(configuration: configuration, model: model, processor: ByteInputProcessor(), tokenizer: ByteTokenizer()),
             iterator: iterator, tools: nil, toolCallPolicy: ToolCallPolicy())
         return (stream, task)
     }

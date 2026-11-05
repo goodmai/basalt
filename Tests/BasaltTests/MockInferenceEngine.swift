@@ -48,6 +48,12 @@ actor MockInferenceEngine: InferenceEngine {
         mockSupportsKVEviction = supported
     }
 
+    var supportsKVQuantization = true
+
+    func setSupportsKVQuantization(_ supported: Bool) {
+        supportsKVQuantization = supported
+    }
+
     func promptTokenCount(for request: GenerationRequest) async -> Int? { mockPromptTokens }
 
     var appliedDirectives: [MemoryDirective] = []
@@ -228,5 +234,13 @@ actor MockInferenceEngine: InferenceEngine {
 
     func persistPromptCache(within deadline: Duration) async {
         persistCount += 1
+    }
+}
+
+extension GenerationRequest {
+    func with(_ edit: (inout GenerationRequest) throws -> Void) rethrows -> GenerationRequest {
+        var copy = self
+        try edit(&copy)
+        return copy
     }
 }

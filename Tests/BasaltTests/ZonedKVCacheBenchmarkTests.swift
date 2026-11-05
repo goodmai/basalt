@@ -382,7 +382,7 @@ struct ZonedKVCacheBenchmarkTests {
             var texts = [KVPrecision: String]()
             for precision in [KVPrecision.k8v4, .q8] {
                 await log.step("fallback \(repo) request=\(precision) engineZones=\(await engine.supportsKVZones)") {
-                    let request = GenerationRequest(prompt: prompt, maxTokens: 48, temperature: 0, enableThinking: false)
+                    let request = GenerationRequest(prompt: prompt, maxTokens: 48, temperature: 0).with { $0.enableThinking = false }
                         .withKVPrecision(precision)
                     let sentBits = await engine.sampling(for: request).0.kvBits
                     let response = try await engine.generate(request: request)

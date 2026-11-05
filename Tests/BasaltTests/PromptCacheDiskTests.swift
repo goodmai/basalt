@@ -16,6 +16,12 @@ enum DiskFixture {
         PromptCacheDiskStore(directory: directory, byteQuota: megabytes << 20, retentionDays: days)
     }
 
+    static func crawling(_ directory: URL) -> PromptCacheDiskStore {
+        var slow = store(directory)
+        slow.assumedWriteBytesPerSecond = 1
+        return slow
+    }
+
     static func files(_ directory: URL) -> [URL] {
         ((try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? [])
             .filter { $0.pathExtension == "safetensors" }
@@ -441,15 +447,15 @@ struct PromptCacheDiskTests {
     func persistenceRespectsDeadline() async throws {
         let directory = DiskFixture.directory()
         defer { try? FileManager.default.removeItem(at: directory) }
-        let engine = try await DiskFixture.dense(DiskFixture.store(directory))
+        let engine = try await DiskFixture.dense(DiskFixture.crawling(directory))
         _ = try await engine.generate(request: greedy(String(repeating: "abcd ", count: 600), key: "shared", maxTokens: 2))
-        await engine.persistPromptCache(within: .microseconds(500))
-        #expect(DiskFixture.files(directory).isEmpty)
         await engine.persistPromptCache(within: .seconds(30))
+        #expect(DiskFixture.files(directory).isEmpty)
+        await engine.persistPromptCache(within: .seconds(1 << 40))
         let file = try #require(DiskFixture.files(directory).first)
         let stale = Date(timeIntervalSinceNow: -120)
         try FileManager.default.setAttributes([.modificationDate: stale], ofItemAtPath: file.path)
-        await engine.persistPromptCache(within: .milliseconds(50))
+        await engine.persistPromptCache(within: .seconds(30))
         let refreshed = try #require(try FileManager.default.attributesOfItem(atPath: file.path)[.modificationDate] as? Date)
         #expect(refreshed > stale)
     }
@@ -580,7 +586,7 @@ struct PromptCacheDiskTests {
         let usable = 70
         _ = try await engine.generate(request: GenerationRequest(
             prompt: String(String.UnicodeScalarView(stored.prefix(usable).compactMap { UnicodeScalar($0) })) + "zz",
-            maxTokens: 1, temperature: 0, cacheKey: "shared"))
+            maxTokens: 1, temperature: 0).with { $0.cacheKey = "shared" })
         let (newest, total, storedTokens, storedBytes) = await engine.readPromptCaches { tree in
             var (nodes, tokens, bytes) = (Array(tree.roots.values), 0, ByteCount.zero)
             while let node = nodes.popLast() {

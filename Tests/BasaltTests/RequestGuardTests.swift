@@ -18,7 +18,7 @@ struct RequestGuardTests {
         -> Application<RouterResponder<BasicRequestContext>> {
         let orch = ModelOrchestratorActor(engine: MockInferenceEngine(), maxTokens: 65536, telemetry: TelemetryTracker())
         try await orch.loadModel(path: "mock")
-        let config = try ServerConfig(modelPath: "org/mock-model", host: host, apiKey: apiKey, allowedOrigins: origins)
+        let config = try ServerConfig(modelPath: "org/mock-model", host: host, apiKey: apiKey, access: .init(allowedOrigins: origins))
         return Application(router: RESTServer(orchestrator: orch, config: config, embeddings: StubEmbeddingEngine()).makeRouter())
     }
 

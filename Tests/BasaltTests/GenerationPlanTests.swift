@@ -60,7 +60,7 @@ struct GenerationPlanTests {
         Case(testDescription: "a grammar constraint keeps the request out of the batch",
              facts: GenerationPlan.Facts(promptTokens: 100, constrained: true), decision: .batchable, expected: false),
         Case(testDescription: "a forced tool keeps the request out of the batch even when its arguments go unconstrained",
-             request: GenerationRequest(prompt: "p", toolChoice: ToolChoice(forcedTool: "f")), decision: .batchable, expected: false),
+             request: GenerationRequest(prompt: "p").with { $0.toolChoice = ToolChoice(forcedTool: "f") }, decision: .batchable, expected: false),
         Case(testDescription: "lookup keeps the request out of the batch",
              request: GenerationRequest(prompt: "p").withSpeculativeLookup(true), decision: .batchable, expected: false),
         Case(testDescription: "MTP keeps the request out of the batch", facts: drafter, decision: .batchable, expected: false),
@@ -134,7 +134,7 @@ struct GenerationPlanTests {
 
     @Test("A prompt-cache namespace needs a budget, the full-precision cache, a token-only prompt and the same model")
     func namespace() {
-        let request = GenerationRequest(prompt: "p", cacheKey: "chat")
+        let request = GenerationRequest(prompt: "p").with { $0.cacheKey = "chat" }
         let settings = GenerationPlan.Settings()
         #expect(GenerationPlan.cacheNamespace(request, settings, cacheEnabled: true, carriesMoreThanTokens: false, sameEpoch: true) == "chat")
         #expect(GenerationPlan.cacheNamespace(request, settings, cacheEnabled: false, carriesMoreThanTokens: false, sameEpoch: true) == nil)
@@ -203,7 +203,7 @@ struct GenerationPlanTests {
         let everything = GenerationPlan.Settings(
             kvZones: .standard, attendsThroughZones: true, prefillsInChunks: true, kvHeadMask: KVHeadMask(retrieval: [[0, 1]]),
             questTopK: 16, speculativeLookup: true, capabilities: .conservative)
-        let request = GenerationRequest(prompt: "p", cacheKey: "chat").withSpeculativeLookup(true)
+        let request = GenerationRequest(prompt: "p").with { $0.cacheKey = "chat" }.withSpeculativeLookup(true)
         let namespace = GenerationPlan.cacheNamespace(request, everything, cacheEnabled: true, carriesMoreThanTokens: false, sameEpoch: true)
         #expect(namespace == nil)
         #expect(!GenerationPlan.plainPrompt(request, everything, carriesMoreThanTokens: false))

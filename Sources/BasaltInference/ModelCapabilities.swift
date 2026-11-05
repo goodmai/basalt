@@ -1,3 +1,5 @@
+import BasaltCore
+
 struct ModelCapabilities: Equatable, Sendable {
     enum Feature: String, CaseIterable, Sendable {
         case speculativeLookup = "speculative lookup"
@@ -6,6 +8,7 @@ struct ModelCapabilities: Equatable, Sendable {
         case promptCacheReuse = "prompt-cache reuse"
         case cacheBlend = "CacheBlend"
         case kvZones = "KV zones"
+        case kvQuantization = "KV quantization"
         case kvHeadSplit = "KV head split"
         case quest = "Quest"
         case grammarJumpForward = "grammar jump-forward"
@@ -17,6 +20,8 @@ struct ModelCapabilities: Equatable, Sendable {
     static let conservative = ModelCapabilities(verified: [])
 
     func allows(_ feature: Feature) -> Bool { verified.contains(feature) }
+
+    func kvBits(_ precision: KVPrecision?) -> Int? { allows(.kvQuantization) ? precision?.uniform.keyBits : nil }
 
     static func of(modelType: String?) -> ModelCapabilities? {
         modelType.flatMap { families[$0.lowercased()] }

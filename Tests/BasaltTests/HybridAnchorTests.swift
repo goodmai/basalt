@@ -31,7 +31,7 @@ enum AgentTrace {
     }
 
     static func request(_ messages: [ChatMessageInput], key: String?) -> GenerationRequest {
-        GenerationRequest(prompt: ChatMessageInput.plainText(messages), maxTokens: 12, temperature: 0, cacheKey: key, messages: messages)
+        GenerationRequest(prompt: ChatMessageInput.plainText(messages), maxTokens: 12, temperature: 0, messages: messages).with { $0.cacheKey = key }
     }
 
     static func snapshots(_ tree: PromptCacheTree) -> (anchors: [Int], leaves: [Int]) {
@@ -209,5 +209,31 @@ struct HybridAnchorTests {
         #expect(telemetry.hybridAnchorBytes == (recurrent * 3).rawValue)
         let json = try #require(try JSONSerialization.jsonObject(with: JSONEncoder().encode(telemetry)) as? [String: Any])
         #expect(json["hybridAnchors"] as? Int == 3)
+    }
+}
+
+@Suite("Anchor offsets keep their distance from the reused prefix, from each other and from the stable boundary (#284)")
+struct AnchorSearchTests {
+    @Test("An offset too close to a kept anchor or the boundary is skipped, one too close to the reused prefix ends the search, and the limit stops it")
+    func spacing() {
+        let spacing = HybridPrefixSnapshot.minAnchorSpacing
+        let prompt = Array(0..<(10 * spacing))
+        var search = AnchorSearch(prompt: prompt, reused: 0, boundary: 8 * spacing, limit: 2)
+        #expect(search.hasRoom)
+        let admitted1 = search.admit(Array(prompt.prefix(2 * spacing)))
+        #expect(admitted1)
+        let admitted2 = search.admit(Array(prompt.prefix(2 * spacing + 1)))
+        #expect(admitted2)
+        let admitted3 = search.admit(Array(prompt.prefix(7 * spacing + 1)))
+        #expect(admitted3)
+        #expect(search.found == [2 * spacing])
+        let admitted4 = search.admit(Array(prompt.prefix(4 * spacing)))
+        #expect(admitted4)
+        #expect(search.found == [2 * spacing, 4 * spacing])
+        #expect(!search.wantsMore)
+        var resumed = AnchorSearch(prompt: prompt, reused: spacing, boundary: 8 * spacing, limit: 2)
+        let admitted5 = resumed.admit(Array(prompt.prefix(spacing + 1)))
+        #expect(!admitted5)
+        #expect(!AnchorSearch(prompt: prompt, reused: 7 * spacing, boundary: 8 * spacing, limit: 2).hasRoom)
     }
 }

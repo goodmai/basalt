@@ -85,8 +85,8 @@ struct EngineSamplingTests {
     func minPPrecedence() async {
         let engine = MLXInferenceEngine(minP: 0.1)
         #expect(await engine.sampling(for: GenerationRequest(prompt: "p")).0.minP == 0.1)
-        #expect(await engine.sampling(for: GenerationRequest(prompt: "p", minP: 0.02)).0.minP == 0.02)
-        #expect(await engine.sampling(for: GenerationRequest(prompt: "p", minP: 0)).0.minP == 0)
+        #expect(await engine.sampling(for: GenerationRequest(prompt: "p").with { $0.minP = 0.02 }).0.minP == 0.02)
+        #expect(await engine.sampling(for: GenerationRequest(prompt: "p").with { $0.minP = 0 }).0.minP == 0)
         #expect(await MLXInferenceEngine().sampling(for: GenerationRequest(prompt: "p")).0.minP == 0)
     }
 
@@ -94,16 +94,16 @@ struct EngineSamplingTests {
     func edtComponent() async throws {
         let engine = MLXInferenceEngine()
         #expect(await engine.sampling(for: GenerationRequest(prompt: "p")).1.logitProcessorFactory == nil)
-        #expect(await engine.sampling(for: GenerationRequest(prompt: "p", dynamicTemperature: false)).shaping == nil)
-        #expect(await engine.sampling(for: GenerationRequest(prompt: "p", temperature: 0, dynamicTemperature: true)).shaping == nil)
+        #expect(await engine.sampling(for: GenerationRequest(prompt: "p").with { $0.dynamicTemperature = false }).shaping == nil)
+        #expect(await engine.sampling(for: GenerationRequest(prompt: "p", temperature: 0).with { $0.dynamicTemperature = true }).shaping == nil)
 
         let factory = try #require(await engine.sampling(
-            for: GenerationRequest(prompt: "p", temperature: 0.9, dynamicTemperature: true)).shaping)
+            for: GenerationRequest(prompt: "p", temperature: 0.9).with { $0.dynamicTemperature = true }).shaping)
         let edt = factory()
         #expect(edt.baseTemperature == 0.9)
 
         let (params, _, shaping, _) = await MLXInferenceEngine(minP: 0.1).sampling(
-            for: GenerationRequest(prompt: "p", temperature: 0.9, topP: 0.8, dynamicTemperature: true))
+            for: GenerationRequest(prompt: "p", temperature: 0.9, topP: 0.8).with { $0.dynamicTemperature = true })
         #expect(params.topP == 1 && params.minP == 0)
         let moved = try #require(shaping?())
         #expect(moved.topP == 0.8 && moved.minP == 0.1)
@@ -113,7 +113,7 @@ struct EngineSamplingTests {
     func minPMasksTail() async {
         let logits = log(MLXArray([Float(0.5), 0.3, 0.2])).reshaped(1, -1)
         func draws(minP: Double) async -> Set<Int> {
-            let request = GenerationRequest(prompt: "p", temperature: 1, topP: 1, minP: minP)
+            let request = GenerationRequest(prompt: "p", temperature: 1, topP: 1).with { $0.minP = minP }
             let sampler = await MLXInferenceEngine().sampling(for: request).0.sampler()
             return Set((0..<300).map { _ in sampler.sample(logits: logits).item(Int.self) })
         }
@@ -244,13 +244,18 @@ struct DRYAndXTCTests {
         let engine = MLXInferenceEngine(seed: 5)
         let plain = await engine.sampling(for: GenerationRequest(prompt: "p"))
         #expect(plain.1.logitProcessorFactory == nil && plain.exclusion == nil)
-        let inert = await engine.sampling(for: GenerationRequest(
-            prompt: "p", dryMultiplier: 0, dryBase: 2, dryAllowedLength: 3, drySequenceBreakers: ["x"], xtcThreshold: 0.2))
+        let inert = await engine.sampling(for: GenerationRequest(prompt: "p").with {
+            $0.dryMultiplier = 0
+            $0.dryBase = 2
+            $0.dryAllowedLength = 3
+            $0.drySequenceBreakers = ["x"]
+            $0.xtcThreshold = 0.2
+        })
         #expect(inert.1.logitProcessorFactory == nil && inert.exclusion == nil)
-        #expect(await engine.sampling(for: GenerationRequest(prompt: "p", temperature: 0, xtcProbability: 1)).exclusion == nil)
+        #expect(await engine.sampling(for: GenerationRequest(prompt: "p", temperature: 0).with { $0.xtcProbability = 1 }).exclusion == nil)
 
         let on = await engine.sampling(
-            for: GenerationRequest(prompt: "p", temperature: 0.7, dryMultiplier: 0.8, xtcProbability: 0.5), breakers: [9])
+            for: GenerationRequest(prompt: "p", temperature: 0.7).with { $0.dryMultiplier = 0.8; $0.xtcProbability = 0.5 }, breakers: [9])
         let dry = try #require(on.1.logitProcessorFactory?() as? DRYPenalty)
         #expect(dry.multiplier == 0.8 && dry.base == DRYPenalty.defaultBase
             && dry.allowedLength == DRYPenalty.defaultAllowedLength && dry.breakers == [9])

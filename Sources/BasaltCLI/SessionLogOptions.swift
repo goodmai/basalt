@@ -57,7 +57,7 @@ extension ServeCommand {
         let url = directory.map(ConfigSection.fileURL) ?? SessionLogWriter.defaultDirectory
         SessionLogWriter.applyRetention(directory: url, days: retention.days, maxTotalBytes: Int64(retention.maxTotalMB) << 20)
         let writer = SessionLogWriter(
-            mode: mode, directory: url, redacts: redacts, defaultSession: defaultSession, idleTimeout: TimeInterval(max(1, idleMinutes) * 60))
+            mode: mode, directory: url, redacts: redacts, defaultSession: defaultSession, idle: .init(timeout: TimeInterval(max(1, idleMinutes) * 60)))
         Task { await writer.startFlushing() }
         return writer
     }

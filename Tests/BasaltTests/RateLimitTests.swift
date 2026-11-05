@@ -68,7 +68,7 @@ struct RateLimitTests {
     }
 
     private func router(rateLimit: Int, burst: Int? = nil, virtualKeys: [VirtualKey] = []) throws -> Router<BasicRequestContext> {
-        let config = try ServerConfig(modelPath: "stub", host: "0.0.0.0", apiKey: "k-123", rateLimitPerMinute: rateLimit, rateBurst: burst, virtualKeys: virtualKeys)
+        let config = try ServerConfig(modelPath: "stub", host: "0.0.0.0", apiKey: "k-123", access: .init(rateLimitPerMinute: rateLimit, rateBurst: burst, virtualKeys: virtualKeys))
         return RESTServer(orchestrator: ModelOrchestratorActor(engine: MockInferenceEngine()), config: config, rateClock: { 0 }).makeRouter()
     }
 

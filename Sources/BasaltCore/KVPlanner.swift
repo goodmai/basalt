@@ -21,6 +21,7 @@ struct KVPlanner: Sendable {
     let zones: KVZones?
     var takesZones = true
     var takesEviction = true
+    var takesQuantization = true
     var geometry = KVCacheGeometry(parameterProxy: 4)
 
     var isAdaptive: Bool { precisionLadder.count > 1 }
@@ -32,7 +33,7 @@ struct KVPlanner: Sendable {
 
     func fit(promptTokens: Int, wantedTokens: Int, budget: Int64) -> KVRoom {
         let zones = activeZones
-        let fits = precisionLadder.map { wanted in
+        let fits = (takesQuantization ? precisionLadder : [nil]).map { wanted in
             let precision = zones == nil ? wanted?.uniform : wanted
             let fitting = geometry.maxTokens(
                 fitting: ByteCount(budget), kvPrecision: precision, promptTokens: TokenCount(promptTokens), zones: zones).rawValue

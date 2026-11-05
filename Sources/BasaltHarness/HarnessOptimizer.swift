@@ -509,10 +509,11 @@ public struct HarnessOptimizer: Sendable {
     private func generate(
         _ prompt: String, task: HarnessTask, maxTokens: Int, temperature: Double, assistantPrefix: String? = nil
     ) async throws -> GenerationResponse {
-        try await orchestrator.generate(request: GenerationRequest(
-            prompt: prompt, maxTokens: maxTokens, temperature: temperature,
-            enableThinking: false, cacheKey: "harness:\(task.slug)", assistantPrefix: assistantPrefix
-        ).withOrigin(RequestOrigin(source: "harness", endpoint: "optimize", stream: false)))
+        var request = GenerationRequest(prompt: prompt, maxTokens: maxTokens, temperature: temperature)
+        request.enableThinking = false
+        request.cacheKey = "harness:\(task.slug)"
+        request.assistantPrefix = assistantPrefix
+        return try await orchestrator.generate(request: request.withOrigin(RequestOrigin(source: "harness", endpoint: "optimize", stream: false)))
     }
 
     static let rolloutHeader = "You are an agent working under the harness below."
