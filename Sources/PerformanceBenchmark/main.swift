@@ -19,6 +19,9 @@ struct Benchmark: AsyncParsableCommand {
     @Option(name: .shortAndLong, help: "Prompt to use for every iteration")
     var prompt: String = "Explain the importance of open source models."
 
+    @Option(name: .customLong("prompt-repeat"), help: "Repeat the prompt this many times to measure prefill on a long prompt; every run then starts with a unique prefix, so the prompt cache cannot shorten it, and the profile records the prompt length with the TTFT")
+    var promptRepeat = 1
+
     @Option(name: .shortAndLong, help: "Max tokens to generate per iteration")
     var tokens: Int = 100
 
@@ -137,7 +140,8 @@ struct Benchmark: AsyncParsableCommand {
         let tpsMean = Self.mean(runs.map(\.tokensPerSecond))
         let ttftMean = Self.mean(runs.map(\.timeToFirstToken))
         let chip = SystemProfiler.detectChipModel()
-        await recordProfile(tps: tpsMean, ttft: ttftMean, chip: chip)
+        let prefilled = Int(Self.mean(runs.map { Double($0.promptTokens - $0.cachedPromptTokens) }))
+        await recordProfile(tps: tpsMean, ttft: ttftMean, chip: chip, promptTokens: prefilled)
 
         if share {
             printShareExport(BenchmarkShareExport(
@@ -154,7 +158,8 @@ struct Benchmark: AsyncParsableCommand {
     }
 
     private func request() -> GenerationRequest {
-        var request = GenerationRequest(prompt: prompt, maxTokens: tokens, temperature: temperature)
+        let text = promptRepeat > 1 ? ([UUID().uuidString] + Array(repeating: prompt, count: promptRepeat)).joined(separator: " ") : prompt
+        var request = GenerationRequest(prompt: text, maxTokens: tokens, temperature: temperature)
         request.dryMultiplier = dryMultiplier
         return request.withGrammarJumpForward(grammarJumpForward)
             .withOrigin(RequestOrigin(source: "benchmark", endpoint: "PerformanceBenchmark", stream: false))
@@ -274,8 +279,8 @@ extension Benchmark {
         }
     }
 
-    private func recordProfile(tps: Double, ttft: Double, chip: String) async {
-        let measurement = BenchmarkMeasurement(
+    private func recordProfile(tps: Double, ttft: Double, chip: String, promptTokens: Int) async {
+        var measurement = BenchmarkMeasurement(
             modelId: ModelCache.canonicalRepoId(from: model),
             chipModel: chip,
             measuredTPS: tps,
@@ -283,6 +288,7 @@ extension Benchmark {
             timestamp: Date(),
             quant: quant
         )
+        measurement.promptTokens = promptTokens
         do {
             try await HardwareBenchmarkProfileStore.shared.record(measurement)
             print("  Hardware profile updated: \(HardwareBenchmarkProfileStore.defaultProfilePath) (measured ✓)")

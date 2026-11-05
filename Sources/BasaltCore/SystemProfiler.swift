@@ -21,8 +21,11 @@ public actor SystemProfiler {
         public let gpuMemory: Int64          // bytes
         public let diskSpace: Int64          // bytes available
         public let osVersion: String
-        public let chipModel: String         // M1, M2, M3, M4, M5
-        
+        public let chipModel: String
+        public var gpuArchitecture: String?
+        public var gpuCores: Int?
+        public var neuralAccelerators: Bool?
+
         /// Human-readable RAM in GB
         public var totalRAMGB: Int {
             Int(totalRAM / 1_073_741_824)
@@ -53,6 +56,9 @@ public actor SystemProfiler {
         public let diskSpaceBytes: Int64
         public let osVersion: String
         public let compatible: Bool
+        public let gpuArchitecture: String?
+        public let gpuCores: Int?
+        public let neuralAccelerators: Bool?
     }
     
     /// Model recommendation based on hardware specs
@@ -66,41 +72,23 @@ public actor SystemProfiler {
     
     public init() {}
     
-    /// Detect system resources
     public func detectResources() async -> SystemResources {
-        let totalRAM = ProcessInfo.processInfo.physicalMemory
-        let cpuCores = ProcessInfo.processInfo.processorCount
-        let osVersion = ProcessInfo.processInfo.operatingSystemVersionString
-        
-        // Metal GPU detection
-        let gpuName: String
-        let gpuMemory: Int64
-        if let device = MTLCreateSystemDefaultDevice() {
-            gpuName = device.name
-            gpuMemory = Int64(device.recommendedMaxWorkingSetSize)
-        } else {
-            gpuName = "Unknown"
-            gpuMemory = 0
-        }
-        
-        // Disk space
-        let diskSpace = getAvailableDiskSpace()
-        
-        // Available RAM
-        let availableRAM = Self.availableSystemMemory()
-        
-        // Chip model detection
-        let chipModel = detectChipModel()
-        
+        let device = MTLCreateSystemDefaultDevice()
+        let architecture = device?.architecture.name
         return SystemResources(
-            totalRAM: Int64(totalRAM),
-            availableRAM: availableRAM,
-            cpuCores: cpuCores,
-            gpuName: gpuName,
-            gpuMemory: gpuMemory,
-            diskSpace: diskSpace,
-            osVersion: osVersion,
-            chipModel: chipModel
+            totalRAM: Int64(ProcessInfo.processInfo.physicalMemory),
+            availableRAM: Self.availableSystemMemory(),
+            cpuCores: ProcessInfo.processInfo.processorCount,
+            gpuName: device?.name ?? "Unknown",
+            gpuMemory: device.map { Int64($0.recommendedMaxWorkingSetSize) } ?? 0,
+            diskSpace: getAvailableDiskSpace(),
+            osVersion: ProcessInfo.processInfo.operatingSystemVersionString,
+            chipModel: detectChipModel(),
+            gpuArchitecture: architecture,
+            gpuCores: AppleSiliconChip.gpuCoreCount(),
+            neuralAccelerators: architecture.map {
+                AppleSiliconChip.neuralAcceleratorsActive(architecture: $0, os: ProcessInfo.processInfo.operatingSystemVersion)
+            }
         )
     }
 
@@ -122,7 +110,10 @@ public actor SystemProfiler {
             diskSpaceGB: res.diskSpaceGB,
             diskSpaceBytes: res.diskSpace,
             osVersion: res.osVersion,
-            compatible: isCompatible
+            compatible: isCompatible,
+            gpuArchitecture: res.gpuArchitecture,
+            gpuCores: res.gpuCores,
+            neuralAccelerators: res.neuralAccelerators
         )
     }
     
