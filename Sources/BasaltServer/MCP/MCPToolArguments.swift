@@ -501,7 +501,7 @@ extension GateRequest {
 }
 
 extension PackRequest {
-    static let packFormats = ["affine", "mxfp4", "ternary"]
+    static let packFormats = ["affine", "mxfp4", "nf4:32", "nf4:64", "ternary"]
     static let unpackFormats = ["bfloat16", "float16"]
     static let packBits = 2...8
     static let packGroupSizes = 32...128
@@ -509,12 +509,14 @@ extension PackRequest {
     init(mcp args: [String: Any]?, formats: [String]) throws(MCPFailure) {
         let tensor = try MCPArguments.required("tensor", MCPArguments.string("tensor", in: args))
         let format: PackFormat
-        switch try MCPArguments.string("format", in: args) ?? formats[0] {
+        let name = try MCPArguments.string("format", in: args) ?? formats[0]
+        switch name {
         case "affine" where formats.contains("affine"):
             format = .affine(
                 bits: try MCPArguments.integer("bits", in: args, Self.packBits) ?? 4,
                 groupSize: try MCPArguments.integer("groupSize", in: args, Self.packGroupSizes) ?? 64)
         case "mxfp4" where formats.contains("mxfp4"): format = .mxfp4
+        case _ where name.hasPrefix("nf4:") && formats.contains(name): format = .nf4(groupSize: Int(name.dropFirst(4)) ?? 0)
         case "ternary" where formats.contains("ternary"): format = .ternary
         case "bfloat16" where formats.contains("bfloat16"): format = .bfloat16
         case "float16" where formats.contains("float16"): format = .float16
