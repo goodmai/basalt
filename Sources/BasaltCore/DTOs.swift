@@ -44,11 +44,38 @@ public struct ToolChoice: Codable, Sendable, Equatable {
 public enum ResponseFormat: Codable, Sendable, Equatable {
     case jsonObject
     case jsonSchema(String, strict: Bool = false)
+    case regex(String)
+    case grammar(String)
+    case structuralTag(String)
+
+    public static let maxGrammarBytes = 65_536
 
     public func prepared() throws(UnsupportedJSONSchema) -> PreparedJSONSchema {
         switch self {
         case .jsonObject: try JSONSchemaGate.prepare(#"{"type": "object"}"#, strict: true)
         case .jsonSchema(let schema, let strict): try JSONSchemaGate.prepare(schema, strict: strict)
+        case .regex, .grammar, .structuralTag: throw UnsupportedJSONSchema(message: "\(kind) is not a JSON schema")
+        }
+    }
+
+    public var kind: String {
+        switch self {
+        case .jsonObject: "json_object"
+        case .jsonSchema: "json_schema"
+        case .regex: "regex"
+        case .grammar: "grammar"
+        case .structuralTag: "structural_tag"
+        }
+    }
+
+    public func grammarSource() throws(UnsupportedJSONSchema) -> String {
+        switch self {
+        case .jsonObject, .jsonSchema: return try prepared().schema
+        case .regex(let source), .grammar(let source), .structuralTag(let source):
+            guard !source.isEmpty, source.utf8.count <= Self.maxGrammarBytes else {
+                throw UnsupportedJSONSchema(message: "the \(kind) must be 1 to \(Self.maxGrammarBytes) bytes")
+            }
+            return source
         }
     }
 }

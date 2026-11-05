@@ -32,6 +32,7 @@ struct RelayRoute {
     var epoch: ModelEpoch
     var container: ModelContainer
     var alarm: NonFiniteLogitAlarm
+    var startsThinking: Bool
 }
 
 struct CacheClaim {
@@ -249,7 +250,7 @@ extension MLXInferenceEngine {
     ) -> AsyncStream<StreamChunk> {
         let relay = GenerationRelay(GenerationRelay.Setup(
             request: request, promptTokens: prompt.tokens.count, reusedTokens: launch.reusedTokens.rawValue, alarm: route.alarm,
-            controlTokens: controlTokens.tokens, startsThinking: prompt.endsWithThinking,
+            controlTokens: controlTokens.tokens, startsThinking: route.startsThinking,
             scansToolCallText: profile.writesToolCallsAsText && request.tools?.isEmpty == false,
             echoedPrefix: prompt.echoedPrefix, forcedTool: constraint?.toolName, prefixAnswer: prompt.prefixAnswer,
             guardsRepetition: constraint == nil, draftSource: plan.draftSource))

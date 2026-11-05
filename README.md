@@ -386,6 +386,14 @@ Implements the full Anthropic SSE event sequence (`message_start`, `content_bloc
 
 `thinking` blocks carry an empty `signature`: basalt has no key to sign them with. They round-trip through basalt, but the real Anthropic API rejects a conversation that replays them, so drop them before sending the same history there.
 
+**Constrained output.** `response_format` constrains the answer, after any reasoning block, with XGrammar:
+- `{"type": "json_object"}` or `{"type": "json_schema", "json_schema": {"schema": …}}`;
+- `{"type": "regex", "regex": "[A-Z]{3}-\\d{4}"}`;
+- `{"type": "grammar", "grammar": "root ::= …"}`, XGrammar's EBNF/GBNF dialect with root rule `root`;
+- `{"type": "structural_tag", "format": …}`, XGrammar's structural-tag JSON (`sequence`, `const_string`, `regex`, `json_schema`, `tag`, …).
+
+vLLM's `guided_regex` and `guided_grammar` request fields work too, one of them at a time. The MCP `generate` tool takes `regex` or `grammar`. A source over 64 KB, or one XGrammar does not compile, is a 400 that names the format.
+
 **Prefill.** A conversation that ends with an assistant message continues that message instead of answering it in a new turn, on `/v1/messages`, `/v1/chat/completions` and `/v1/responses`, as on the Anthropic API, vLLM's `continue_final_message` and llama.cpp. The earlier turns are rendered up to the generation prompt with thinking off, the assistant text follows it unclosed, and the response holds only what the model writes after it: prefill `{"name":` and the reply is ` "Whiskers", "age": 3}`. With `response_format` or a forced tool the prefill is the start of the JSON document (a prefill the schema cannot start with is 400), and a forced tool's arguments include it. A prefill that opens a thinking block (`<think>…`) keeps the requested thinking and continues as reasoning. Several trailing assistant messages are joined as one prefill; an empty one is dropped; an assistant message with tool calls is still a finished turn. A prompt with images cannot be continued (400). Control tokens in the prefill (`<|im_end|>`, `<|im_start|>`, …) are neutralized like the rest of the conversation, so a prefill cannot forge a turn; only the thinking markers that open and close its reasoning stay real, and on a template that already opens `<think>` itself (Ornith, Qwen3.5+) the prefill's own leading `<think>` is dropped instead of doubled. With `--cloud-fallback` a prefilled request always stays local, since not every provider continues a trailing assistant message. On Nemotron Nano v2, which turns thinking off with a `/no_think` line in the system turn, a prefilled request renders a different system turn than a thinking-on request on the same history, so the two share only the prompt cache before it.
 
 ### Image input

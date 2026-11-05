@@ -130,6 +130,8 @@ enum MCPToolCatalog {
         "required": ["prompt"],
         "properties": [
             "prompt":      ["type": "string",  "description": "Input prompt"],
+            "regex":       ["type": "string",  "description": "Constrain the answer to this regular expression (XGrammar syntax)"],
+            "grammar":     ["type": "string",  "description": "Constrain the answer to this EBNF/GBNF grammar (XGrammar dialect, root rule \"root\")"],
             "maxTokens":   ["type": "integer", "description": "Max tokens to generate (default 65536)"],
             "temperature": ["type": "number",  "description": "Sampling temperature 0–2 (default: the model's generation_config, else 0.7)"],
             "topP":        ["type": "number",  "description": "Nucleus sampling p (default: the model's generation_config, else 0.9)"],

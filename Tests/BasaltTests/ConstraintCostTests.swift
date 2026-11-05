@@ -125,7 +125,7 @@ struct GrammarPoolTests {
         for index in 0..<limit { try await generate(index) }
         try await generate(0)
         try await generate(limit)
-        let prepared = try [0, 1, limit].map { try JSONSchemaGate.prepare(Self.schema($0), strict: false).schema }
+        let prepared = try [0, 1, limit].map { "json_schema:" + (try JSONSchemaGate.prepare(Self.schema($0), strict: false).schema) }
         let pooled = await Self.pooledSchemas(engine)
         #expect(pooled.count == limit)
         #expect(pooled.contains(prepared[0]))
