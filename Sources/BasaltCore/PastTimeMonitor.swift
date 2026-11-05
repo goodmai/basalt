@@ -44,7 +44,7 @@ public struct PastMonitor: Sendable {
 
     private mutating func compile(_ formula: PastFormula) -> Int {
         let node: Node = switch formula {
-        case .atom(let bit): .atom(bit)
+        case .atom(let bit): .atom(Self.checkedAtom(bit))
         case .not(let operand): .not(compile(operand))
         case .and(let lhs, let rhs): .and(compile(lhs), compile(rhs))
         case .or(let lhs, let rhs): .or(compile(lhs), compile(rhs))
@@ -55,6 +55,11 @@ public struct PastMonitor: Sendable {
         }
         nodes.append(node)
         return nodes.count - 1
+    }
+
+    private static func checkedAtom(_ bit: Int) -> Int {
+        precondition((0 ..< UInt64.bitWidth).contains(bit), "an atom is one bit of a 64-bit event word")
+        return bit
     }
 
     fileprivate static func bit(_ word: UInt64, _ index: Int) -> Bool {

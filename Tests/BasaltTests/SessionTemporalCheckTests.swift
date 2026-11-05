@@ -30,6 +30,12 @@ struct SessionTemporalCheckTests {
         #expect(testCase.trace.map { monitor.step($0) } == testCase.expected)
     }
 
+    @Test("A formula of exactly 64 subformulas evaluates its top node in bit 63")
+    func sixtyFourSubformulas() {
+        var monitor = PastMonitor((0 ..< 63).reduce(Self.a) { formula, _ in .not(formula) })
+        #expect([1, 0, 1].map { monitor.step($0) } == [false, true, false])
+    }
+
     static func call(_ name: String, _ arguments: String) -> ChatMessageInput {
         ChatMessageInput(role: .assistant, text: "", toolCalls: [ToolCallOutput(id: UUID().uuidString, name: name, arguments: arguments)])
     }
