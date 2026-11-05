@@ -42,14 +42,14 @@ struct ModelResearchTests {
         case .gateCheck: .gate(GateRequest(heldOut: ["h"], maxPerplexityRise: 0.5))
         case .tensorPack: .pack(PackRequest(tensor: "w", format: .affine(bits: 3, groupSize: 32)))
         case .tensorUnpack: .pack(PackRequest(tensor: "w", format: .float16))
+        case .trainExperts: .train(Self.train)
         }
     }
 
     static var gate: GateRequest {
         var request = GateRequest(heldOut: ["h"], maxKL: 0.25)
         request.target = [GateTarget(prompt: "2 + 2 =", expected: "4")]
-        case .trainExperts: .train(Self.train)
-        }
+        return request
     }
 
     static var train: TrainRequest {

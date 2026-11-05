@@ -130,13 +130,13 @@ struct LabGateTests {
         let close = ModelProbeTests.facts { $0.perplexity = 215; $0.answers = [.init(expected: "8", got: "7")] }
         let far = ModelProbeTests.facts { $0.perplexity = 230; $0.answers = [.init(expected: "8", got: "7")] }
         let answered = ModelProbeTests.facts { $0.perplexity = 200; $0.answers = [.init(expected: "8", got: " 8")] }
-        #expect(MLXInferenceEngine.probeChecks(close, pristine: missed, family: nil, rise: 0.1).allSatisfy(\.passed))
+        #expect(MLXInferenceEngine.probeChecks(close, pristine: missed, family: nil, rise: 0.1).allSatisfy { $0.passed })
         #expect(MLXInferenceEngine.probeChecks(far, pristine: missed, family: nil, rise: 0.1).map(\.passed) == [false, true])
         #expect(MLXInferenceEngine.probeChecks(missed, pristine: answered, family: nil, rise: 0.1).map(\.passed) == [true, false])
         let rows = [CompareRow(prompt: "p", baselineText: "", overlayText: "", klDivergence: .infinity, baselinePerplexity: 2, overlayPerplexity: .nan)]
         let checks = MLXInferenceEngine.heldOutChecks(rows, GateRequest(heldOut: ["p"]))
         #expect(checks.map(\.passed) == [false, false])
-        #expect(checks.allSatisfy(\.value.isFinite))
+        #expect(checks.allSatisfy { $0.value.isFinite })
     }
 
     @Test("adapter_apply and gate_check arguments are checked at the boundary")

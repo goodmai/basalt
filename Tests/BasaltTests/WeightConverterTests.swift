@@ -81,7 +81,10 @@ struct WeightConverterTests {
         for key in [Self.attention + ".weight", "model.layers.0.mlp.down_proj.weight"] {
             let restored = try #require(dense[key])
             #expect(restored.shape == original[key]?.shape)
-            #expect(Self.maxDifference(restored, try #require(original[key])) < 0.1)
+            let source = try #require(original[key])
+            let (w, scales, biases) = quantized(source, groupSize: 64, bits: 4)
+            let reference = dequantized(w, scales: scales, biases: biases, groupSize: 64, bits: 4)
+            #expect(Self.maxDifference(restored, reference) < 1e-6)
         }
         #expect(dense.keys.allSatisfy { !$0.hasSuffix(".scales") && !$0.hasSuffix(".biases") })
         #expect(try Self.config(scratch.url("dense"))["quantization"] == nil)
