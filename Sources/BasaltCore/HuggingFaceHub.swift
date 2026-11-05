@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 // MARK: — HuggingFace Hub API Client
@@ -405,17 +406,21 @@ extension HuggingFaceHub {
         }
     }
 
-    private func downloadFileWithResume(_ file: HubFile, token: String?, onProgress: @escaping Progress) async throws {
+    func downloadFileWithResume(_ file: HubFile, token: String?, onProgress: @escaping Progress) async throws {
         let fileManager = FileManager.default
         try fileManager.createDirectory(at: file.destination.deletingLastPathComponent(), withIntermediateDirectories: true)
         let existingSize = try Self.fileSize(at: file.destination)
 
-        let (_, headResponse) = try await session.data(for: HubRequest.file(file.url, token: token, method: "HEAD"))
-        let remoteSize = headResponse.expectedContentLength
-        let plan = HubTransferPlan(existingSize: existingSize, remoteSize: remoteSize)
+        let head = HubRequest.file(file.url, token: token, method: "HEAD")
+        let (_, headResponse) = try await session.data(for: head, delegate: HubHeadRedirects())
+        let remoteSize = HubResponse.remoteSize(headResponse)
+        let digest = HubDigest(headResponse)
+        var plan = HubTransferPlan(existingSize: existingSize, remoteSize: remoteSize)
+        if plan == .skip, let digest, try !digest.verifyExisting(file) { plan = .startNew }
 
         switch plan {
         case .skip:
+            if digest == nil { HubSidecar.logger.warn("unverified \(file.name): the server sent no digest") }
             onProgress(file.name, remoteSize, remoteSize)
             return
         case .startNew where fileManager.fileExists(atPath: file.destination.path):
@@ -424,17 +429,14 @@ extension HuggingFaceHub {
             break
         }
 
+        var hasher = try digest?.streamingHasher(prefix: plan.offset > 0 ? file.destination : nil)
         let (stream, response) = try await session.bytes(for: HubRequest.file(file.url, token: token, range: plan.rangeHeader))
         guard let http = response as? HTTPURLResponse, http.statusCode == plan.expectedStatus else {
             try? fileManager.removeItem(at: file.destination)
             throw HFError.downloadFailed(file.name)
         }
-        try await saveStream(stream, to: file, plan: plan, contentLength: http.expectedContentLength, onProgress: onProgress)
-
-        guard HubTransferPlan.isComplete(fileSize: (try? Self.fileSize(at: file.destination)) ?? 0, remoteSize: remoteSize) else {
-            try? fileManager.removeItem(at: file.destination)
-            throw HFError.downloadFailed(file.name)
-        }
+        try await saveStream(stream, to: file, plan: plan, contentLength: http.expectedContentLength, hasher: &hasher, onProgress: onProgress)
+        try HubDigest.verifyDownload(file, digest: digest, streamed: hasher, remoteSize: remoteSize)
     }
 
     private func saveStream(
@@ -442,6 +444,7 @@ extension HuggingFaceHub {
         to file: HubFile,
         plan: HubTransferPlan,
         contentLength: Int64,
+        hasher: inout SHA256?,
         onProgress: @escaping Progress
     ) async throws {
         if plan.offset == 0 {
@@ -460,6 +463,7 @@ extension HuggingFaceHub {
             buffer.append(byte)
             if buffer.count >= 65_536 {
                 try handle.write(contentsOf: buffer)
+                hasher?.update(data: buffer)
                 downloaded += Int64(buffer.count)
                 buffer.removeAll(keepingCapacity: true)
                 onProgress(file.name, downloaded, totalSize)
@@ -467,6 +471,7 @@ extension HuggingFaceHub {
         }
         if !buffer.isEmpty {
             try handle.write(contentsOf: buffer)
+            hasher?.update(data: buffer)
             downloaded += Int64(buffer.count)
             onProgress(file.name, downloaded, totalSize)
         }
@@ -499,6 +504,7 @@ package enum HFError: Error, LocalizedError {
     case apiError(code: Int)
     case modelNotFound(String)
     case downloadFailed(String)
+    case digestMismatch(file: String, expected: String, actual: String)
 
     package var errorDescription: String? {
         switch self {
@@ -507,6 +513,8 @@ package enum HFError: Error, LocalizedError {
         case .apiError(let code):      return "HuggingFace API error: HTTP \(code)"
         case .modelNotFound(let id):   return "Model not found: \(id)"
         case .downloadFailed(let f):   return "Download failed: \(f)"
+        case .digestMismatch(let file, let expected, let actual):
+            return "Download of \(file) does not match its digest: expected \(expected), got \(actual)"
         }
     }
 }
