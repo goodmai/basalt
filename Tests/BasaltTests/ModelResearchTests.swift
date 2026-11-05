@@ -22,19 +22,6 @@ struct ModelResearchTests {
         }
     }
 
-    static func labArguments(_ tool: ResearchTool) -> [String: Any] {
-        switch tool {
-        case .adapterApply: ["module": "model.layers.0.mlp.down_proj", "input": [1.0], "output": [2.0], "scale": 0.5, "gate": ["heldOut": ["h"], "maxKL": 0.25, "target": [["prompt": "2 + 2 =", "expected": "4"]]]]
-        case .gateCheck: ["heldOut": ["h"], "maxPerplexityRise": 0.5]
-        case .tensorPack: ["tensor": "w", "format": "affine", "bits": 3, "groupSize": 32]
-        case .tensorUnpack: ["tensor": "w", "format": "float16"]
-        case .trainExperts: ["count": 40, "seed": 7, "layers": [2, 3], "rank": 4, "iterations": 20, "heldOut": ["Name a colour."]]
-        case .steerSearch: LabSteerTests.searchArguments
-        case .steerCommit: LabSteerTests.commitArguments
-        default: [:]
-        }
-    }
-
     static func expected(_ tool: ResearchTool) -> ResearchCall {
         switch tool {
         case .modelDescribe: .describe
@@ -48,19 +35,6 @@ struct ModelResearchTests {
         case .overlayUndo: .undo(3)
         case .experimentCompare: .compare(CompareRequest(prompts: ["a", "b"], overlays: [3], maxTokens: 8))
         default: labExpected(tool)
-        }
-    }
-
-    static func labExpected(_ tool: ResearchTool) -> ResearchCall {
-        switch tool {
-        case .adapterApply: .adapter(.rankOne(module: "model.layers.0.mlp.down_proj", input: [1], output: [2], scale: 0.5), gate: Self.gate)
-        case .gateCheck: .gate(GateRequest(heldOut: ["h"], maxPerplexityRise: 0.5))
-        case .tensorPack: .pack(PackRequest(tensor: "w", format: .affine(bits: 3, groupSize: 32)))
-        case .tensorUnpack: .pack(PackRequest(tensor: "w", format: .float16))
-        case .trainExperts: .train(Self.train)
-        case .steerSearch: .contrast(LabSteerTests.searchRequest)
-        case .steerCommit: .commitSteering(LabSteerTests.commitRequest)
-        default: .describe
         }
     }
 
@@ -228,5 +202,33 @@ struct ModelResearchTests {
         await server.dispatch(#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"model_describe"}}"#)
         #expect(capturer.lines.first?.contains("linear attention") == true)
         #expect(await orchestrator.gate.inFlight == 0)
+    }
+}
+
+extension ModelResearchTests {
+    static func labArguments(_ tool: ResearchTool) -> [String: Any] {
+        switch tool {
+        case .adapterApply: ["module": "model.layers.0.mlp.down_proj", "input": [1.0], "output": [2.0], "scale": 0.5, "gate": ["heldOut": ["h"], "maxKL": 0.25, "target": [["prompt": "2 + 2 =", "expected": "4"]]]]
+        case .gateCheck: ["heldOut": ["h"], "maxPerplexityRise": 0.5]
+        case .tensorPack: ["tensor": "w", "format": "affine", "bits": 3, "groupSize": 32]
+        case .tensorUnpack: ["tensor": "w", "format": "float16"]
+        case .trainExperts: ["count": 40, "seed": 7, "layers": [2, 3], "rank": 4, "iterations": 20, "heldOut": ["Name a colour."]]
+        case .steerSearch: LabSteerTests.searchArguments
+        case .steerCommit: LabSteerTests.commitArguments
+        default: [:]
+        }
+    }
+
+    static func labExpected(_ tool: ResearchTool) -> ResearchCall {
+        switch tool {
+        case .adapterApply: .adapter(.rankOne(module: "model.layers.0.mlp.down_proj", input: [1], output: [2], scale: 0.5), gate: Self.gate)
+        case .gateCheck: .gate(GateRequest(heldOut: ["h"], maxPerplexityRise: 0.5))
+        case .tensorPack: .pack(PackRequest(tensor: "w", format: .affine(bits: 3, groupSize: 32)))
+        case .tensorUnpack: .pack(PackRequest(tensor: "w", format: .float16))
+        case .trainExperts: .train(Self.train)
+        case .steerSearch: .contrast(LabSteerTests.searchRequest)
+        case .steerCommit: .commitSteering(LabSteerTests.commitRequest)
+        default: .describe
+        }
     }
 }
