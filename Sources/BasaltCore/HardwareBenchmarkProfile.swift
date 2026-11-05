@@ -10,6 +10,9 @@ public struct BenchmarkMeasurement: Codable, Sendable, Equatable {
     public let measuredTTFT: Double
     public let timestamp: Date
     public let quant: String?
+    public var promptTokens: Int?
+
+    public static let minimumPrefillTokens = 1024
 
     public init(
         modelId: String,
@@ -25,6 +28,11 @@ public struct BenchmarkMeasurement: Codable, Sendable, Equatable {
         self.measuredTTFT = measuredTTFT
         self.timestamp = timestamp
         self.quant = quant
+    }
+
+    public var prefillTokensPerSecond: Double? {
+        guard let promptTokens, promptTokens >= Self.minimumPrefillTokens, measuredTTFT > 0 else { return nil }
+        return Double(promptTokens) / measuredTTFT
     }
 }
 
@@ -44,35 +52,21 @@ public struct HardwareBenchmarkProfile: Codable, Sendable {
         self.lastUpdated = lastUpdated
     }
 
-    /// Retrieve matching measurement by exact ID or clean repo basename match, validating chip compatibility
-    public func measurement(for modelId: String, currentChip: String? = nil) -> BenchmarkMeasurement? {
-        func chipMatches(_ m: BenchmarkMeasurement) -> Bool {
-            guard let cur = currentChip?.trimmingCharacters(in: .whitespacesAndNewlines), !cur.isEmpty else {
-                return true
-            }
-            let curLower = cur.lowercased()
-            let mLower = m.chipModel.lowercased()
-            if curLower == mLower { return true }
-            for series in ["m1", "m2", "m3", "m4", "m5"] {
-                if curLower.contains(series) && mLower.contains(series) {
-                    for tier in ["ultra", "max", "pro"] {
-                        if curLower.contains(tier) != mLower.contains(tier) {
-                            return false
-                        }
-                    }
-                    return true
-                }
-            }
-            return false
+    public func matching(chip currentChip: String?) -> [String: BenchmarkMeasurement] {
+        guard let current = currentChip?.trimmingCharacters(in: .whitespacesAndNewlines), !current.isEmpty else {
+            return measurements
         }
+        return measurements.filter { _, m in
+            if current.lowercased() == m.chipModel.lowercased() { return true }
+            guard let chip = AppleSiliconChip(current) else { return false }
+            return AppleSiliconChip(m.chipModel) == chip
+        }
+    }
 
+    public func measurement(for modelId: String, currentChip: String? = nil) -> BenchmarkMeasurement? {
         let normalize = { (id: String) in id.lowercased().trimmingCharacters(in: .whitespacesAndNewlines) }
         let target = normalize(modelId)
-        let candidates = measurements.filter { chipMatches($0.value) }
-
-        // An exact id wins. Otherwise fall back to the repo basename ("org/repo" vs "repo",
-        // or the same repo under another org), but only when exactly one entry matches:
-        // with two, dictionary order would pick one at random — possibly another model's.
+        let candidates = matching(chip: currentChip)
         if let exact = candidates.first(where: { normalize($0.key) == target }) {
             return exact.value
         }
