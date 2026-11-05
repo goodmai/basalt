@@ -117,6 +117,13 @@ struct ImageInputTests {
         #expect(result.body.contains("over the limit of 20 MB per image"), "\(result.body.prefix(300))")
     }
 
+    @Test("Images that are each within 20 MB but add up to more than 32 MB are refused")
+    func imageTotalLimit() throws {
+        let image = try ImageInput(data: Data(count: 12 * 1024 * 1024), mime: "image/png")
+        #expect(throws: Never.self) { try ImageInput.checkLimits([image, image]) }
+        #expect(throws: BasaltError.self) { try ImageInput.checkLimits([image, image, image]) }
+    }
+
     struct ImageTree {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("basalt-images-\(UUID().uuidString)")
         var inside: URL { root.appendingPathComponent("inside") }

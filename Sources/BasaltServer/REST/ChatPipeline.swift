@@ -81,7 +81,7 @@ struct ChatPipeline: Sendable {
     }
 
     static let textBodyLimit = 4 * 1024 * 1024
-    static let bodyLimit = textBodyLimit + ImageInput.maxCount * ImageInput.maxBytes / 3 * 4
+    static let bodyLimit = textBodyLimit + (ImageInput.maxTotalBytes + 2) / 3 * 4
 
     func body(of request: Request) async throws -> Data {
         Data(try await request.body.collect(upTo: Self.bodyLimit).readableBytesView)

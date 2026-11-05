@@ -134,7 +134,7 @@ extension MLXInferenceEngine {
 
     func checkImages(_ messages: [ChatMessageInput]?, container: ModelContainer) async throws(BasaltError) {
         guard let messages, messages.contains(where: { !$0.images.isEmpty }) else { return }
-        try ImageInput.checkCount(messages.reduce(0) { $0 + $1.images.count })
+        try ImageInput.checkLimits(messages.flatMap(\.images))
         let (name, takesImages) = await container.perform { ($0.configuration.name, $0.model is any VLMModel) }
         guard takesImages else {
             let model = ModelCache.canonicalRepoId(from: modelFacts.description.isEmpty ? name : modelFacts.description)

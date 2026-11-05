@@ -4,6 +4,7 @@ import CryptoKit
 public struct ImageInput: Sendable, Codable, Hashable {
     public static let maxCount = 8
     public static let maxBytes = 20 * 1024 * 1024
+    public static let maxTotalBytes = 32 * 1024 * 1024
     public static let mimeTypes: Set<String> = ["image/png", "image/jpeg", "image/webp", "image/heic"]
     public static let remoteRefusal = "remote image URLs are not fetched; send the image as a data: URI"
 
@@ -47,6 +48,14 @@ public struct ImageInput: Sendable, Codable, Hashable {
             try self.init(base64: url[url.index(after: comma)...], mime: String(mime))
         default:
             throw .invalidRequestStructure(details: "an image URL must be a data:<mime>;base64,<data> URI")
+        }
+    }
+
+    public static func checkLimits(_ images: [ImageInput]) throws(BasaltError) {
+        try checkCount(images.count)
+        let total = images.reduce(0) { $0 + $1.data.count }
+        guard total <= maxTotalBytes else {
+            throw .invalidRequestStructure(details: "the images of a request add up to \(total) bytes, over the limit of 32 MB per request")
         }
     }
 
