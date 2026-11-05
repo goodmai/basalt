@@ -1,8 +1,12 @@
 {
   "accuracy" : 0.85,
+  "chip" : "Apple M4 Pro",
   "commit" : "c0ffee00000000000000000000000000000000bb",
+  "concurrency" : 4,
+  "golden" : "961b2baaefed3ae13887c5bd86e79cb884d912d7",
   "maxKL" : 0.0004,
   "model" : "lukaskremla/Qwen3.8-27B-3bit-MLX-TextOnly",
   "tasks" : 40,
-  "tokPerSec" : 28.2
+  "tokPerSec" : 28.2,
+  "tokens" : 384
 }

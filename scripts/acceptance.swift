@@ -18,7 +18,11 @@ let usage = """
 struct Report: Codable, Equatable {
     var commit: String
     var model: String
+    var chip: String
+    var golden: String
     var tasks: Int
+    var concurrency: Int
+    var tokens: Int
     var accuracy: Double
     var tokPerSec: Double
     var maxKL: Double
@@ -227,16 +231,23 @@ func goldenKL(repo: String, model: String) -> Double {
 
 func measure(repo: String, model: String, config: Config, port: Int) -> Report {
     let commit = trimmed(run("/usr/bin/git", ["rev-parse", "HEAD"], in: repo).output)
+    let dirty = trimmed(run("/usr/bin/git", ["status", "--porcelain", "--untracked-files=no"], in: repo).output)
+    guard dirty.isEmpty else { fail("checkout", "\(repo) has uncommitted changes, so commit \(commit) would not name what ran") }
+    let golden = trimmed(run("/usr/bin/git", ["rev-parse", "HEAD:Tests/BasaltTests/Fixtures/golden"], in: repo).output)
     log("measure commit=\(commit) repo=\(repo) model=\(model) tasks=\(config.tasks) concurrency=\(config.concurrency) tokens=\(config.tokens)")
     let pool = taskPool(repo: repo, model: model, config: config, port: port)
     let kl = goldenKL(repo: repo, model: model)
-    return Report(commit: commit, model: model, tasks: config.tasks, accuracy: pool.accuracy, tokPerSec: pool.tokPerSec, maxKL: kl)
+    return Report(commit: commit, model: model, chip: chip, golden: golden, tasks: config.tasks, concurrency: config.concurrency,
+                  tokens: config.tokens, accuracy: pool.accuracy, tokPerSec: pool.tokPerSec, maxKL: kl)
 }
 
 func compare(_ baseline: Report, _ candidate: Report, config: Config) -> Int {
     log("compare model=\(candidate.model) baseline=\(baseline.commit) candidate=\(candidate.commit)")
-    guard baseline.model == candidate.model, baseline.tasks == candidate.tasks else {
-        log("FAIL comparable baseline \(baseline.model)/\(baseline.tasks) tasks, candidate \(candidate.model)/\(candidate.tasks) tasks")
+    let setup = { (report: Report) in
+        "\(report.model) on \(report.chip), goldens \(report.golden), \(report.tasks) tasks x\(report.concurrency) at \(report.tokens) tokens"
+    }
+    guard setup(baseline) == setup(candidate) else {
+        log("FAIL comparable baseline \(setup(baseline)), candidate \(setup(candidate))")
         return 1
     }
     let results = gates(baseline: baseline, candidate: candidate, config: config)
