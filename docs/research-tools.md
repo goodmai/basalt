@@ -27,6 +27,7 @@ The examples are the `arguments` object of an MCP `tools/call` request.
 | `overlays_list` | Active overlays: id, description, creation and expiry time | `{}` |
 | `overlay_undo` | Undoes one overlay by id; a weight delta is restored bit for bit | `{"id": 4}` |
 | `experiment_compare` | Greedy before/after on a prompt set with the given overlays: both texts, KL divergence of the logits, both perplexities | `{"prompts": ["2 + 2 =", "Name a prime above 100."], "overlays": [3, 4], "maxTokens": 32}` |
+| `train_experts` | Self-training (#332 mode 3, long-running): collects answers to checkable tasks, keeps only the verified ones, trains a LoRA, saves it, reports loss and held-out accuracy before/after, then applies it through the quality gate. See [Self-training](#self-training-train_experts) | `{"count": 200, "seed": 1, "layers": [20, 21, 22, 23], "iterations": 200, "heldOut": ["Summarise the plot of Hamlet in two sentences."]}` |
 
 A slice is one half-open `[start, end)` pair per leading dimension; dimensions left out are taken whole.
 
@@ -48,3 +49,16 @@ A slice is one half-open `[start, end)` pair per leading dimension; dimensions l
 ## How this leads to learning loops (#328 layer 3)
 
 These tools are the measuring instrument and the sandbox for a later layer: `distill.collect` gathers prompts and reference answers, `adapter.train` / `apply` / `evaluate` train and try a small adapter, and `weights.propose` takes an externally proposed correction. Each candidate first runs as an overlay or a delta here, is compared with `experiment_compare`, and is accepted only if the load-time probe, the reference logits, the parity runner and the feature matrix still pass. Nothing in this layer persists a change; the learning loop decides what, if anything, becomes permanent.
+
+## Self-training (`train_experts`)
+
+One call runs the whole loop at background priority through the generation gate, holding the model for the training itself:
+
+1. **Tasks.** `count` + `seed` generate integer `+`, `-`, `*` problems with known answers (the same seed gives the same problems); `file` reads JSONL lines `{"prompt": "...", "answer": "..."}` instead. A fifth of the tasks (at least one) is held out and never trained on.
+2. **Collect.** The model answers every task greedily through the chat template (thinking off, 64 tokens). With `teacher` (base URL of an OpenAI-compatible server; `teacherModel` names its model, `BASALT_TEACHER_API_KEY` is sent as a bearer token if set) the teacher answers the training tasks too.
+3. **Verify.** An answer is kept only if its final integer (commas ignored) equals a numeric known answer, or its last line, case and surrounding punctuation ignored, equals a text answer (or ends in `: <answer>`). Wrong, empty and malformed answers are dropped. **Nothing unverified is ever learned:** if no answer verifies, the report has `verified: 0`, no adapter is trained, nothing is written and the model is untouched.
+4. **Train.** A LoRA (`rank`, Adam at `learningRate`, `iterations`) is trained with the fork's `LoRATrain` on the verified prompt + answer pairs rendered as the model saw them, on the attention and dense or shared-expert projections of `layers` (default all). Per-expert LoRA is not available — the fork's `SwitchLinear` expert layers take no adapter — so `experts` is refused with an error. A model that already carries an adapter is refused too. Cancelling the call stops training at the next iteration and leaves the model unchanged.
+5. **Save.** `adapter_config.json` + `adapters.safetensors` (the mlx-lm adapter format) go to `output` or `~/.basalt/adapters/<model fingerprint>/<timestamp>` (0700). An `output` inside the model directory is refused: nothing is ever written next to the source weights.
+6. **Measure and apply.** Held-out accuracy is measured with the adapter in place, the training layers are removed again, and the adapter is applied through `applyAdapter` with the quality gate built from `heldOut`, `maxKL` and `maxPerplexityRise`: it becomes a marked, undoable overlay with the usual TTL, or is refused by the gate.
+
+The report lists `collected` (answers gathered for training), `verified`, `losses` (mean training loss per reporting step, at most 20), `accuracyBefore` / `accuracyAfter` on the held-out tasks, `adapterDirectory` and the gate's `verdict`.

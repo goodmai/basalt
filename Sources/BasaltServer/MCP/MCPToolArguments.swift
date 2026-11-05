@@ -259,11 +259,13 @@ enum ResearchTool: String, Sendable, CaseIterable {
     case overlaysList = "overlays_list"
     case overlayUndo = "overlay_undo"
     case experimentCompare = "experiment_compare"
+    case trainExperts = "train_experts"
 
     var isExperiment: Bool {
         switch self {
         case .modelDescribe, .modelTensors, .modelTensor, .kvInspect, .traceRun: false
         case .intervene, .weightsDelta, .overlaysList, .overlayUndo, .experimentCompare: true
+        case .trainExperts: true
         }
     }
 }
@@ -279,6 +281,7 @@ enum ResearchCall: Sendable, Equatable {
     case overlays
     case undo(OverlayID)
     case compare(CompareRequest)
+    case train(TrainRequest)
 
     static let maxValues = 0...4096
     static let topK = 1...100
@@ -298,6 +301,7 @@ enum ResearchCall: Sendable, Equatable {
         case .overlaysList: self = .overlays
         case .overlayUndo: self = .undo(OverlayID(try MCPArguments.required("id", MCPArguments.integer("id", in: args, Self.nonNegative))))
         case .experimentCompare: self = .compare(try CompareRequest(mcp: args))
+        case .trainExperts: self = .train(try TrainRequest(mcp: args))
         }
     }
 }
@@ -421,5 +425,31 @@ extension CompareRequest {
             prompts: prompts,
             overlays: (try MCPArguments.integers("overlays", in: args) ?? []).map { OverlayID($0) },
             maxTokens: try MCPArguments.integer("maxTokens", in: args, ResearchCall.compareTokens) ?? 32)
+    }
+}
+
+extension TrainRequest {
+    static let taskCounts = 2...10_000
+
+    init(mcp args: [String: Any]?) throws(MCPFailure) {
+        let heldOut = MCPArguments.present("heldOut", in: args)
+        guard let heldOut = heldOut as? [String], !heldOut.isEmpty else {
+            throw .invalidParams("heldOut must be a non-empty array of general prompts the quality gate checks the adapter on")
+        }
+        var gate = GateRequest(heldOut: heldOut)
+        gate.maxKL = try MCPArguments.number("maxKL", in: args) ?? gate.maxKL
+        gate.maxPerplexityRise = try MCPArguments.number("maxPerplexityRise", in: args) ?? gate.maxPerplexityRise
+        let count = try MCPArguments.integer("count", in: args, Self.taskCounts) ?? 200
+        let seed = try MCPArguments.integer("seed", in: args, ResearchCall.nonNegative) ?? 0
+        let file = try MCPArguments.string("file", in: args)
+        self.init(tasks: file.map(TrainingTasks.file) ?? .arithmetic(count: count, seed: UInt64(seed)), gate: gate)
+        teacher = try MCPArguments.string("teacher", in: args)
+        teacherModel = try MCPArguments.string("teacherModel", in: args)
+        layers = try MCPArguments.integers("layers", in: args)
+        experts = try MCPArguments.integers("experts", in: args)
+        rank = try MCPArguments.integer("rank", in: args, ResearchCall.nonNegative) ?? rank
+        iterations = try MCPArguments.integer("iterations", in: args, ResearchCall.nonNegative) ?? iterations
+        learningRate = try MCPArguments.number("learningRate", in: args) ?? learningRate
+        output = try MCPArguments.string("output", in: args)
     }
 }

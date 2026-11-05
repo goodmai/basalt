@@ -183,6 +183,7 @@ extension ResearchTool {
         case .overlaysList: "Experiment: the active overlays with id, description, creation and expiry time."
         case .overlayUndo: "Experiment: undo one overlay by id."
         case .experimentCompare: "Experiment: greedy before/after on a prompt set with the given overlays: text, KL divergence of the logits and perplexity."
+        case .trainExperts: "Experiment, long-running: self-training. Collects the model's (and an optional teacher's) answers to checkable tasks, keeps only answers that match the known answer, trains a LoRA on them, saves it under ~/.basalt/adapters, reports loss and held-out accuracy before/after, then applies it through the quality gate as an undoable overlay."
         }
     }
 
@@ -197,6 +198,7 @@ extension ResearchTool {
         case .weightsDelta: Self.object(Self.deltaProperties, required: ["tensor"])
         case .overlayUndo: Self.object(["id": ["type": "integer", "minimum": 0, "description": "Overlay id from intervene, weights_delta or overlays_list"]], required: ["id"])
         case .experimentCompare: Self.object(Self.compareProperties, required: ["prompts"])
+        case .trainExperts: Self.object(Self.trainProperties, required: ["heldOut"])
         }
     }
 
@@ -260,6 +262,25 @@ extension ResearchTool {
             "prompts": ["type": "array", "items": ["type": "string"], "minItems": ResearchCall.comparePrompts.lowerBound, "maxItems": ResearchCall.comparePrompts.upperBound],
             "overlays": ["type": "array", "items": ["type": "integer", "minimum": 0], "description": "Overlay ids applied on the after side (default: none)"],
             "maxTokens": ["type": "integer", "minimum": ResearchCall.compareTokens.lowerBound, "maximum": ResearchCall.compareTokens.upperBound, "description": "Greedy tokens per side (default 32)"],
+        ]
+    }
+
+    private static var trainProperties: [String: Any] {
+        [
+            "count": ["type": "integer", "minimum": TrainRequest.taskCounts.lowerBound, "maximum": TrainRequest.taskCounts.upperBound, "description": "Generated integer +, -, * problems (default 200); a fifth is held out for accuracy"],
+            "seed": ["type": "integer", "minimum": 0, "description": "Seed of the problem generator (default 0)"],
+            "file": ["type": "string", "description": "JSONL of {\"prompt\", \"answer\"} instead of generated problems"],
+            "teacher": ["type": "string", "description": "Base URL of an OpenAI-compatible server whose answers are collected too (key: BASALT_TEACHER_API_KEY)"],
+            "teacherModel": ["type": "string", "description": "Model name sent to the teacher"],
+            "layers": ["type": "array", "items": ["type": "integer", "minimum": 0], "description": "Layers that get LoRA (default: all)"],
+            "experts": ["type": "array", "items": ["type": "integer", "minimum": 0], "description": "Refused: the fork has no per-expert LoRA"],
+            "rank": ["type": "integer", "minimum": 1, "maximum": 64, "description": "LoRA rank (default 8)"],
+            "iterations": ["type": "integer", "minimum": 1, "maximum": 10_000, "description": "Training iterations (default 200)"],
+            "learningRate": ["type": "number", "description": "Adam learning rate (default 1e-5)"],
+            "output": ["type": "string", "description": "Adapter directory (default ~/.basalt/adapters/<fingerprint>/<timestamp>); never inside the model directory"],
+            "heldOut": ["type": "array", "items": ["type": "string"], "minItems": 1, "description": "General prompts the quality gate checks the adapter on"],
+            "maxKL": ["type": "number", "description": "Gate: largest mean KL on heldOut (default 0.5)"],
+            "maxPerplexityRise": ["type": "number", "description": "Gate: largest relative perplexity rise on heldOut (default 0.1)"],
         ]
     }
 }

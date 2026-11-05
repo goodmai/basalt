@@ -45,6 +45,7 @@ let package = Package(
             dependencies: [
                 "BasaltCore",
                 .product(name: "MLX",           package: "mlx-swift"),
+                .product(name: "MLXOptimizers", package: "mlx-swift"),
                 .product(name: "MLXLLM",        package: "mlx-swift-lm"),
                 // Gemma 4 and other *ForConditionalGeneration checkpoints are only
                 // registered in MLXVLM; without it ModelFactoryRegistry cannot load them.

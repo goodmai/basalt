@@ -169,6 +169,9 @@ extension ResearchCall {
             try await model.undo(overlay)
             return .text("Overlay \(overlay) undone")
         case .compare(let request): return .json(try await model.compare(request))
+        case .train(let request):
+            guard let lab = model as? any ModelLab else { throw .invalidRequestStructure(details: "this engine cannot train adapters") }
+            return .json(try await lab.train(request))
         }
     }
 }
