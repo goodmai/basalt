@@ -183,6 +183,8 @@ extension ResearchTool {
         case .overlaysList: "Experiment: the active overlays with id, description, creation and expiry time."
         case .overlayUndo: "Experiment: undo one overlay by id."
         case .experimentCompare: "Experiment: greedy before/after on a prompt set with the given overlays: text, KL divergence of the logits and perplexity."
+        case .adapterApply: "Experiment: apply a LoRA adapter live, from an mlx-lm adapter directory or as a rank-1 update of one linear layer (quantized included). Marks the model modified; undo with overlay_undo. With a gate it is kept without expiry only if the gate passes, otherwise undone; without one it expires after 30 min."
+        case .gateCheck: "Experiment: the quality gate on the model as it is now against the pristine model (every live adapter and delta lifted): load-probe perplexity and known answers, mean KL and perplexity rise on held-out prompts, and exact-match targets. Each check has its value and limit."
         }
     }
 
@@ -197,6 +199,8 @@ extension ResearchTool {
         case .weightsDelta: Self.object(Self.deltaProperties, required: ["tensor"])
         case .overlayUndo: Self.object(["id": ["type": "integer", "minimum": 0, "description": "Overlay id from intervene, weights_delta or overlays_list"]], required: ["id"])
         case .experimentCompare: Self.object(Self.compareProperties, required: ["prompts"])
+        case .adapterApply: Self.object(Self.adapterProperties)
+        case .gateCheck: Self.object(Self.gateProperties, required: ["heldOut"])
         }
     }
 
@@ -260,6 +264,29 @@ extension ResearchTool {
             "prompts": ["type": "array", "items": ["type": "string"], "minItems": ResearchCall.comparePrompts.lowerBound, "maxItems": ResearchCall.comparePrompts.upperBound],
             "overlays": ["type": "array", "items": ["type": "integer", "minimum": 0], "description": "Overlay ids applied on the after side (default: none)"],
             "maxTokens": ["type": "integer", "minimum": ResearchCall.compareTokens.lowerBound, "maximum": ResearchCall.compareTokens.upperBound, "description": "Greedy tokens per side (default 32)"],
+        ]
+    }
+
+    private static var adapterProperties: [String: Any] {
+        [
+            "directory": ["type": "string", "description": "mlx-lm adapter directory with adapter_config.json and adapters.safetensors; or give module, input and output"],
+            "module": ["type": "string", "description": "rank-1: linear layer name, e.g. model.layers.3.mlp.down_proj"],
+            "input": numbers.merging(["description": "rank-1: A, one value per input feature of the layer"]) { $1 },
+            "output": numbers.merging(["description": "rank-1: B, one value per output feature of the layer"]) { $1 },
+            "scale": ["type": "number", "description": "rank-1: factor on the update (default 1)"],
+            "gate": ["type": "object", "properties": gateProperties, "required": ["heldOut"], "description": "Run the quality gate after applying; keep the adapter only if it passes"],
+        ]
+    }
+
+    private static var gateProperties: [String: Any] {
+        [
+            "heldOut": ["type": "array", "items": ["type": "string"], "minItems": ResearchCall.comparePrompts.lowerBound, "maxItems": ResearchCall.comparePrompts.upperBound, "description": "Prompts whose next-token distributions and baseline text are compared with the pristine model"],
+            "maxKL": ["type": "number", "minimum": 0, "description": "Limit on the mean KL divergence (default 0.5)"],
+            "maxPerplexityRise": ["type": "number", "minimum": 0, "description": "Limit on the relative perplexity rise of the baseline text (default 0.1)"],
+            "target": [
+                "type": "array", "maxItems": ResearchCall.comparePrompts.upperBound, "description": "Exact-match tasks: the greedy answer must contain expected",
+                "items": ["type": "object", "properties": ["prompt": ["type": "string"], "expected": ["type": "string"]], "required": ["prompt", "expected"]],
+            ],
         ]
     }
 }

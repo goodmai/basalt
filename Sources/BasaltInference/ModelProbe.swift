@@ -191,21 +191,21 @@ extension ModelProbe {
         }
     }
 
-    static func known(_ prompt: String, expected: String, context: ModelContext) throws -> Answer {
+    static func known(_ prompt: String, expected: String, context: ModelContext, tokens: Int = answerTokens) throws -> Answer {
         let chat = try? context.tokenizer.applyChatTemplate(
             messages: [["role": "user", "content": prompt]], tools: nil, additionalContext: ["enable_thinking": false])
         var answer = Answer(expected: expected, got: "")
         for ids in [chat, encoded(prompt, context.tokenizer)].compactMap({ $0 }) where Self.answer(answer) != nil {
-            answer = Answer(expected: expected, got: try greedy(ids, context: context))
+            answer = Answer(expected: expected, got: try greedy(ids, context: context, tokens: tokens))
         }
         return answer
     }
 
-    static func greedy(_ ids: [Int], context: ModelContext) throws -> String {
-        let tokens = try TokenIterator(
+    static func greedy(_ ids: [Int], context: ModelContext, tokens: Int = answerTokens) throws -> String {
+        let generated = try TokenIterator(
             input: LMInput(tokens: MLXArray(ids.map(Int32.init))), model: context.model,
-            parameters: GenerateParameters(maxTokens: answerTokens, temperature: 0))
-        return context.tokenizer.decode(tokenIds: Array(tokens), skipSpecialTokens: true)
+            parameters: GenerateParameters(maxTokens: tokens, temperature: 0))
+        return context.tokenizer.decode(tokenIds: Array(generated), skipSpecialTokens: true)
     }
 
     static func run(_ container: ModelContainer, family: String? = nil) async throws -> ModelProbe {

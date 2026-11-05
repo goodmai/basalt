@@ -18,6 +18,8 @@ struct ModelResearchTests {
         case .weightsDelta: ["tensor": "model.norm.weight", "values": [0.25]]
         case .overlayUndo: ["id": 3]
         case .experimentCompare: ["prompts": ["a", "b"], "overlays": [3], "maxTokens": 8]
+        case .adapterApply: ["module": "model.layers.0.mlp.down_proj", "input": [1.0], "output": [2.0], "scale": 0.5, "gate": ["heldOut": ["h"], "maxKL": 0.25, "target": [["prompt": "2 + 2 =", "expected": "4"]]]]
+        case .gateCheck: ["heldOut": ["h"], "maxPerplexityRise": 0.5]
         }
     }
 
@@ -33,7 +35,15 @@ struct ModelResearchTests {
         case .overlaysList: .overlays
         case .overlayUndo: .undo(3)
         case .experimentCompare: .compare(CompareRequest(prompts: ["a", "b"], overlays: [3], maxTokens: 8))
+        case .adapterApply: .adapter(.rankOne(module: "model.layers.0.mlp.down_proj", input: [1], output: [2], scale: 0.5), gate: Self.gate)
+        case .gateCheck: .gate(GateRequest(heldOut: ["h"], maxPerplexityRise: 0.5))
         }
+    }
+
+    static var gate: GateRequest {
+        var request = GateRequest(heldOut: ["h"], maxKL: 0.25)
+        request.target = [GateTarget(prompt: "2 + 2 =", expected: "4")]
+        return request
     }
 
     static var trace: TraceRequest {

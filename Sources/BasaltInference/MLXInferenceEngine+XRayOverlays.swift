@@ -48,10 +48,10 @@ extension MLXInferenceEngine {
         }
     }
 
-    func register(_ intervention: Intervention?, description: String) -> OverlayInfo {
+    func register(_ intervention: Intervention?, description: String, lifetime: TimeInterval? = OverlayRegistry.defaultLifetime) -> OverlayInfo {
         let now = Date()
         refreshOverlays(at: now)
-        let info = experiments.registry.add(intervention, description: description, at: now)
+        let info = experiments.registry.add(intervention, description: description, at: now, lifetime: lifetime)
         journal("add", info, at: now)
         return info
     }
@@ -133,13 +133,20 @@ extension MLXInferenceEngine {
 }
 
 extension MLXInferenceEngine {
-    static func compareRow(_ prompt: String, context: ModelContext, probe: (any ForwardProbe)?, maxTokens: Int) throws -> CompareRow {
+    static func compareRow(
+        _ prompt: String, context: ModelContext, probe: (any ForwardProbe)?, maxTokens: Int, pristine: [String: AppliedDelta]? = nil
+    ) throws -> CompareRow {
         let ids = context.tokenizer.encode(text: prompt, addSpecialTokens: true)
         guard !ids.isEmpty else { throw BasaltError.invalidRequestStructure(details: "an empty prompt has no next token to compare") }
         let stops = stopTokenIds(context)
-        let baseline = try greedy(ids, context: context, probe: nil, maxTokens: maxTokens, stops: stops)
+        let reference = { () throws -> ([Int], MLXArray) in
+            let tokens = try greedy(ids, context: context, probe: nil, maxTokens: maxTokens, stops: stops)
+            let base = try logProbabilities(ids + tokens, from: ids.count - 1, context: context, probe: nil)
+            eval(base)
+            return (tokens, base)
+        }
+        let (baseline, base) = try pristine.map { try lifted($0, in: context.model, reference) } ?? reference()
         let overlay = try greedy(ids, context: context, probe: probe, maxTokens: maxTokens, stops: stops)
-        let base = try logProbabilities(ids + baseline, from: ids.count - 1, context: context, probe: nil)
         let steered = try logProbabilities(ids + baseline, from: ids.count - 1, context: context, probe: probe)
         let p = exp(base)
         let kl = which(p .> 0, p * (base - steered), 0).sum(axis: -1).mean()

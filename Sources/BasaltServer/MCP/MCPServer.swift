@@ -169,7 +169,14 @@ extension ResearchCall {
             try await model.undo(overlay)
             return .text("Overlay \(overlay) undone")
         case .compare(let request): return .json(try await model.compare(request))
+        case .adapter(let source, let gate): return .json(try await Self.lab(model).applyAdapter(source, gate: gate))
+        case .gate(let request): return .json(try await Self.lab(model).gate(request))
         }
+    }
+
+    static func lab(_ model: any ModelResearch) throws(BasaltError) -> any ModelLab {
+        guard let lab = model as? any ModelLab else { throw .invalidRequestStructure(details: "the inference engine of this server has no lab tools") }
+        return lab
     }
 }
 

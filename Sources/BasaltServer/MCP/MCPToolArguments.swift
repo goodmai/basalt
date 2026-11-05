@@ -259,11 +259,13 @@ enum ResearchTool: String, Sendable, CaseIterable {
     case overlaysList = "overlays_list"
     case overlayUndo = "overlay_undo"
     case experimentCompare = "experiment_compare"
+    case adapterApply = "adapter_apply"
+    case gateCheck = "gate_check"
 
     var isExperiment: Bool {
         switch self {
         case .modelDescribe, .modelTensors, .modelTensor, .kvInspect, .traceRun: false
-        case .intervene, .weightsDelta, .overlaysList, .overlayUndo, .experimentCompare: true
+        case .intervene, .weightsDelta, .overlaysList, .overlayUndo, .experimentCompare, .adapterApply, .gateCheck: true
         }
     }
 }
@@ -279,6 +281,8 @@ enum ResearchCall: Sendable, Equatable {
     case overlays
     case undo(OverlayID)
     case compare(CompareRequest)
+    case adapter(AdapterSource, gate: GateRequest?)
+    case gate(GateRequest)
 
     static let maxValues = 0...4096
     static let topK = 1...100
@@ -298,6 +302,8 @@ enum ResearchCall: Sendable, Equatable {
         case .overlaysList: self = .overlays
         case .overlayUndo: self = .undo(OverlayID(try MCPArguments.required("id", MCPArguments.integer("id", in: args, Self.nonNegative))))
         case .experimentCompare: self = .compare(try CompareRequest(mcp: args))
+        case .adapterApply: self = .adapter(try AdapterSource(mcp: args), gate: try MCPArguments.present("gate", in: args).map { value throws(MCPFailure) in try GateRequest(mcp: value) })
+        case .gateCheck: self = .gate(try GateRequest(mcp: args))
         }
     }
 }
@@ -421,5 +427,41 @@ extension CompareRequest {
             prompts: prompts,
             overlays: (try MCPArguments.integers("overlays", in: args) ?? []).map { OverlayID($0) },
             maxTokens: try MCPArguments.integer("maxTokens", in: args, ResearchCall.compareTokens) ?? 32)
+    }
+}
+
+extension AdapterSource {
+    init(mcp args: [String: Any]?) throws(MCPFailure) {
+        if let directory = try MCPArguments.string("directory", in: args) {
+            self = .directory(directory)
+            return
+        }
+        self = .rankOne(
+            module: try MCPArguments.required("module", MCPArguments.string("module", in: args)),
+            input: try MCPArguments.required("input", MCPArguments.numbers("input", in: args)),
+            output: try MCPArguments.required("output", MCPArguments.numbers("output", in: args)),
+            scale: try MCPArguments.number("scale", in: args) ?? 1)
+    }
+}
+
+extension GateRequest {
+    init(mcp value: Any?) throws(MCPFailure) {
+        let args = value as? [String: Any]
+        guard value == nil || args != nil else { throw .invalidParams("gate must be an object") }
+        guard let heldOut = MCPArguments.present("heldOut", in: args) as? [String], ResearchCall.comparePrompts.contains(heldOut.count) else {
+            throw .invalidParams("heldOut must be an array of \(ResearchCall.comparePrompts) strings")
+        }
+        self.init(heldOut: heldOut)
+        maxKL = try MCPArguments.number("maxKL", in: args) ?? maxKL
+        maxPerplexityRise = try MCPArguments.number("maxPerplexityRise", in: args) ?? maxPerplexityRise
+        let targets = MCPArguments.present("target", in: args) ?? [Any]()
+        guard let targets = targets as? [[String: Any]], targets.count <= ResearchCall.comparePrompts.upperBound else {
+            throw .invalidParams("target must be an array of at most \(ResearchCall.comparePrompts.upperBound) {prompt, expected} objects")
+        }
+        for item in targets {
+            target.append(GateTarget(
+                prompt: try MCPArguments.required("prompt", MCPArguments.string("prompt", in: item)),
+                expected: try MCPArguments.required("expected", MCPArguments.string("expected", in: item))))
+        }
     }
 }

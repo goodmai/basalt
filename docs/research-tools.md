@@ -27,6 +27,8 @@ The examples are the `arguments` object of an MCP `tools/call` request.
 | `overlays_list` | Active overlays: id, description, creation and expiry time | `{}` |
 | `overlay_undo` | Undoes one overlay by id; a weight delta is restored bit for bit | `{"id": 4}` |
 | `experiment_compare` | Greedy before/after on a prompt set with the given overlays: both texts, KL divergence of the logits, both perplexities | `{"prompts": ["2 + 2 =", "Name a prime above 100."], "overlays": [3, 4], "maxTokens": 32}` |
+| `adapter_apply` | Applies a LoRA adapter to the live model: an mlx-lm adapter directory (`adapter_config.json` + `adapters.safetensors`), or a rank-1 update `scale × (x·input) output` of one linear layer, quantized layers included. Marks the model modified like a weight delta; `overlay_undo` restores the layers bit for bit. With `gate`, the gate runs after applying: on a pass the adapter stays without expiry, on a failure it is undone and the report comes back with `overlay: null`. Without `gate` it expires after 30 minutes. | `{"module": "model.layers.10.mlp.down_proj", "input": [0.01, …], "output": [0.02, …], "scale": 1, "gate": {"heldOut": ["The capital of France is"], "maxKL": 0.5}}` |
+| `gate_check` | The quality gate on the model as it is now against the pristine model (every live adapter and weight delta lifted for the baseline): each check with its value, limit and verdict, and the held-out comparison rows | `{"heldOut": ["The capital of France is", "2 + 2 ="], "maxKL": 0.5, "maxPerplexityRise": 0.1, "target": [{"prompt": "17 + 25 =", "expected": "42"}]}` |
 
 A slice is one half-open `[start, end)` pair per leading dimension; dimensions left out are taken whole.
 
@@ -44,6 +46,21 @@ A slice is one half-open `[start, end)` pair per leading dimension; dimensions l
   - the in-memory prompt caches are dropped on apply and on undo, and a request that was running across either change does not store its cache.
 - **Validated at the boundary.** The tensor must exist, the slice must be in range and non-empty (at most 16M elements), there must be one value per element or one to broadcast, every value must be finite and `|scale| ≤ 10`. One active delta per tensor.
 - **Float tensors only.** Deltas write norms, biases and unquantized embeddings or projections (float16, bfloat16, float32). A tensor of a quantized layer (its packed weight and its scales and biases alike) is refused: a quantized write path is out of scope.
+
+## Quality gate and adapters (#332)
+
+`gate_check` and the `gate` of `adapter_apply` compare the current model with the pristine one, inside one exclusive model call that lifts every live adapter and weight delta for the baseline and puts them back. The checks:
+
+- **`probe perplexity`**: the load probe's perplexity on its fixed text must stay under the family ceiling, or, when the pristine model is already above it, rise no more than `maxPerplexityRise` over the pristine value.
+- **`probe known answer …`**: each load-probe known answer the pristine model gets right must still be right (value 1 or 0, limit the pristine result).
+- **`held-out mean KL`** and **`held-out perplexity rise`**: on each `heldOut` prompt, `experiment_compare`'s machinery runs with the pristine model as the baseline; the mean KL divergence of the next-token distributions along the baseline text must be at most `maxKL` (default 0.5) and the mean relative perplexity rise of that text at most `maxPerplexityRise` (default 0.1).
+- **`target …`**: each target prompt's greedy answer (chat template first, then the raw prompt, 16 tokens) must contain `expected`, case-insensitively.
+
+Non-finite values are reported as the largest finite float and fail. Adapters:
+
+- A directory adapter is loaded with mlx-swift-lm's LoRA support; one directory adapter at a time, and its tensors must match the layers' shapes and the configured rank.
+- A rank-1 adapter needs one `input` value per input feature and one `output` value per output feature of the layer; the layer must be a plain `Linear` or `QuantizedLinear` without an adapter.
+- Adapters wrap only plain `Linear` and `QuantizedLinear` layers, so undo puts back the same weights and the logits match the pristine model bit for bit. Nothing is written to disk.
 
 ## How this leads to learning loops (#328 layer 3)
 

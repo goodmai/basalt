@@ -27,10 +27,10 @@ public struct OverlayRegistry: Sendable {
     }
 
     public mutating func add(
-        _ intervention: Intervention?, description: String, at now: Date, lifetime: TimeInterval = defaultLifetime
+        _ intervention: Intervention?, description: String, at now: Date, lifetime: TimeInterval? = defaultLifetime
     ) -> OverlayInfo {
         lastID += 1
-        let info = OverlayInfo(id: OverlayID(lastID), description: description, createdAt: now, expiresAt: now.addingTimeInterval(lifetime))
+        let info = OverlayInfo(id: OverlayID(lastID), description: description, createdAt: now, expiresAt: lifetime.map { now.addingTimeInterval($0) })
         overlays.append(Overlay(info: info, intervention: intervention))
         return info
     }
