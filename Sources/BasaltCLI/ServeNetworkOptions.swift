@@ -42,7 +42,7 @@ struct ServeNetworkOptions: ParsableArguments {
 
     @Option(
         name: .customLong("config"),
-        help: "Path to JSON server configuration file (default: ~/.basalt/config.json when it exists)"
+        help: "Path to a JSON server configuration file (default: ~/.basalt/config.json when it exists), or a basalt.yaml (.yaml/.yml) whose defaults.model, defaults.serve and defaults.mcp sections set serve options; flags on the command line win"
     )
     var configFile: String?
 
