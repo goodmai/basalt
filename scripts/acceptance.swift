@@ -148,6 +148,7 @@ func lockOwner() -> String {
 func acquireLock() {
     var waiting = false
     while mkdir(lockDirectory, 0o755) != 0 {
+        guard errno == EEXIST else { fail("lock", "cannot create \(lockDirectory): \(String(cString: strerror(errno)))") }
         let owner = lockOwner()
         if let holder = Int32(owner), kill(holder, 0) != 0, errno == ESRCH {
             unlink(lockDirectory + "/owner")
