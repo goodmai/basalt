@@ -45,6 +45,7 @@ jobs:
   release:
     name: Build and Release
     needs: main-tests
+    if: ${{ !cancelled() }}
     runs-on: xcode-27
     timeout-minutes: 60
     permissions:
