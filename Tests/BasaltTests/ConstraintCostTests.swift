@@ -62,32 +62,23 @@ struct ConstraintCostBenchmarkTests {
         var processor = JSONConstraintProcessor(session: session, vocabulary: vocabulary, phase: .constrained)
         let logits = MLXRandom.normal([1, Self.vocabularySize]).asType(.bfloat16)
         eval(logits)
-        var fill: [Double] = [], allowed: [Double] = [], bare: [Double] = []
-        var build: [Bool: [Double]] = [:], applied: [Bool: [Double]] = [:]
+        var fill: [Double] = [], allowed: [Double] = [], build: [Double] = [], applied: [Double] = [], bare: [Double] = []
         for byte in Array(Self.document.utf8) {
             _ = processor.phase
             fill.append(Self.micros(clock.measure { _ = session.mask() }))
             allowed.append(Self.micros(clock.measure { _ = processor.allowedTokens() }))
-            let current = processor
-            var masked: [Bool: MLXArray] = [:]
-            for fused in [false, true] {
-                build[fused, default: []].append(Self.micros(clock.measure {
-                    masked[fused] = current.allowedTokens().map { current.masked(logits, words: $0, fused: fused) } ?? logits
-                }))
-                applied[fused, default: []].append(Self.micros(clock.measure { eval(masked[fused]!) }))
-            }
+            var masked = logits
+            build.append(Self.micros(clock.measure { masked = processor.process(logits: logits) }))
+            applied.append(Self.micros(clock.measure { eval(masked) }))
             let shifted = logits + 0
             bare.append(Self.micros(clock.measure { eval(shifted) }))
-            #expect(masked[true]![0, Int(byte)].item(Float.self) > -Float.infinity, "byte \(byte) must stay allowed")
-            #expect(arrayEqual(masked[true]!, masked[false]!).item(Bool.self), "byte \(byte): the kernel must equal the ops path")
+            #expect(masked[0, Int(byte)].item(Float.self) > -Float.infinity, "byte \(byte) must stay allowed")
             processor.didSample(token: MLXArray(Int32(byte)))
         }
         Self.report("xgrammar fill", fill)
         Self.report("allowedTokens (fill + post-processing)", allowed)
-        Self.report("process() graph build, CPU, take/shift/where", build[false]!)
-        Self.report("process() graph build, CPU, fused kernel", build[true]!)
-        Self.report("eval of the masked logits, take/shift/where", applied[false]!)
-        Self.report("eval of the masked logits, fused kernel", applied[true]!)
+        Self.report("process() graph build, CPU", build)
+        Self.report("eval of the masked logits", applied)
         Self.report("eval of unmasked logits (baseline)", bare)
     }
 
@@ -157,82 +148,5 @@ struct BitmaskMaskingTests {
         #expect(allowed.contains(31 + 64))
         #expect(!allowed.contains(31))
         #expect(allowed == (32..<127).map { $0 }, "\(allowed)")
-    }
-
-    @Test("The fused mask kernel equals the take/shift/where path bit for bit on random words, sign-bit words and widths off a multiple of 32",
-          arguments: [(100, 100), (100, 128), (1000, 977), (1000, 1013), (4097, 4097)], [DType.float32, .bfloat16, .float16])
-    func fusedKernelMatchesOps(shape: (Int, Int), dtype: DType) throws {
-        let (vocabularySize, width) = shape
-        let vocabulary = try GrammarVocabulary(
-            pieces: (0..<vocabularySize).map { "t\($0)" }, vocabType: .raw, stopTokens: [vocabularySize - 1], markers: ReasoningMarkers())
-        let processor = try GrammarVocabularyTests.processor(vocabulary)
-        var generator = SplitMix64(seed: UInt64(vocabularySize * 7919 + width))
-        var words = (0..<(vocabularySize + 31) / 32).map { _ in Int32(truncatingIfNeeded: generator.next()) }
-        words[0] = Int32.min
-        words[words.count / 2] = -1
-        words[words.count - 1] |= Int32.min
-        let logits = MLXRandom.normal([2, width], key: MLXRandom.key(UInt64(width))).asType(dtype)
-        let fused = processor.masked(logits, words: words, fused: true)
-        let ops = processor.masked(logits, words: words, fused: false)
-        eval(fused, ops)
-        #expect(fused.dtype == dtype && fused.shape == ops.shape)
-        #expect(arrayEqual(fused, ops).item(Bool.self))
-        #expect(fused[0, 31].item(Float.self) == logits[0, 31].item(Float.self))
-        #expect((fused .== -Float.infinity).sum().item(Int.self) > 0)
-    }
-}
-
-@Suite("Fused grammar mask kernel: release decode tok/s with a JSON schema, kernel on vs off, interleaved (#346)", .serialized)
-struct MaskKernelABRealModelTests {
-    static let env = ProcessInfo.processInfo.environment
-    static let rounds = env["BASALT_MASK_AB_ROUNDS"].flatMap(Int.init) ?? 8
-    static let schema = #"""
-        {"type": "object", "properties": {"cities": {"type": "array", "items": {"type": "object", "properties": {
-            "name": {"type": "string"}, "country": {"type": "string"}, "population": {"type": "integer"},
-            "summary": {"type": "string"}}, "required": ["name", "country", "population", "summary"]}}},
-         "required": ["cities"]}
-        """#
-
-    static var models: [String] {
-        guard env["BASALT_E2E"] == "1" else { return [] }
-        return (env["BASALT_E2E_MASK_MODELS"] ?? "").split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
-    }
-
-    static func median(_ samples: [Double]) -> Double { samples.sorted()[samples.count / 2] }
-
-    @Test("Greedy output is the same with the kernel on and off; the median tok/s gain is logged against the 2% bar",
-          .enabled(if: !models.isEmpty, "set BASALT_E2E=1 and BASALT_E2E_MASK_MODELS"), arguments: models)
-    func interleavedDecode(entry: String) async throws {
-        let path = GoldenLogitsRealModelTests.path(entry)
-        let log = try await ModelRunLog("mask-kernel-ab", modelPath: path)
-        defer {
-            JSONConstraintProcessor.fusedMask.store(true, ordering: .relaxed)
-            log.releaseGPU()
-        }
-        let engine = MLXInferenceEngine()
-        try await log.step("load") { try await engine.load(modelPath: path) }
-        let request = GenerationRequest(
-            prompt: "Describe twelve European capital cities, one sentence each.", maxTokens: 384, temperature: 0
-        ).with {
-            $0.enableThinking = false
-            $0.responseFormat = .jsonSchema(Self.schema)
-        }
-        _ = try await log.step("warm-up") { try await engine.generate(request: request) }
-        var rates: [Bool: [Double]] = [:], texts: [Bool: Set<String>] = [:]
-        for round in 0..<Self.rounds {
-            for fused in round.isMultiple(of: 2) ? [false, true] : [true, false] {
-                JSONConstraintProcessor.fusedMask.store(fused, ordering: .relaxed)
-                let response = try await engine.generate(request: request)
-                rates[fused, default: []].append(response.tokensPerSecond)
-                texts[fused, default: []].insert(response.generatedText)
-                log.record("round \(round) kernel \(fused ? "on" : "off")",
-                           String(format: "%ld tokens, %.2f tok/s, %@", response.completionTokens, response.tokensPerSecond, log.host()))
-            }
-        }
-        let on = Self.median(rates[true] ?? [0]), off = Self.median(rates[false] ?? [0])
-        let gain = (on / off - 1) * 100
-        log.record("result", String(format: "MASK-KERNEL on %.2f tok/s, off %.2f tok/s, gain %+.2f%%, %@",
-                                    on, off, gain, gain >= 2 ? "clears the 2% bar" : "below the 2% bar"))
-        #expect(texts[true] == texts[false], "\(log.model): greedy text differs between kernel on and off")
     }
 }
