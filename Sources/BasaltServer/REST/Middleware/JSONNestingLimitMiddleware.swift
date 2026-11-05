@@ -1,6 +1,5 @@
 import Foundation
 import Hummingbird
-import NIOFoundationEssentialsCompat
 import BasaltCore
 
 public struct JSONNestingLimitMiddleware<Context: RequestContext>: RouterMiddleware {
@@ -16,7 +15,8 @@ public struct JSONNestingLimitMiddleware<Context: RequestContext>: RouterMiddlew
     ) async throws -> Response {
         guard request.method == .post || request.method == .put else { return try await next(request, context) }
         var request = request
-        let bytes = Data(buffer: try await request.collectBody(upTo: Self.bodyLimit))
+        let body = try await request.collectBody(upTo: Self.bodyLimit)
+        let bytes = Data(body.readableBytesView)
         guard !bytes.contains(0) else { return Self.badRequest("the request body is not UTF-8 JSON", path: request.uri.path) }
         guard JSONNesting.depth(of: bytes) <= Self.depthLimit else {
             return Self.badRequest("the request body nests deeper than \(Self.depthLimit) JSON levels", path: request.uri.path)
