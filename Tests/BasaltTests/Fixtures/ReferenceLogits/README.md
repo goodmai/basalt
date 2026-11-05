@@ -11,7 +11,7 @@ Each directory holds a tiny random checkpoint and the logits the Python referenc
 | `gemma4` | `gemma4_text` | sliding window 8 over 16 tokens, per-layer inputs, KV-shared layers, proportional RoPE on full layers, logit softcap |
 | `gemma4_moe` | `gemma4_text` | the 26B-A4B layout: `attention_k_eq_v`, one global KV head, dense MLP plus experts |
 | `lfm2` | `lfm2` | short conv + attention, auto-adjusted FFN width |
-| `lfm2_moe` | `lfm2_moe` | the LFM2.5-8B-A1B layout: dense first layer, expert bias |
+| `lfm2_moe` | `lfm2_moe` | the LFM2.5-8B-A1B layout: dense first layer, expert bias; reference router from transformers (see below) |
 | `nemotron_h` | `nemotron_h` | Mamba-2 + attention + relu² MLP (`M*M-`) |
 | `nemotron_h_moe` | `nemotron_h` | sigmoid grouped router with correction bias, shared expert (`ME*E`) |
 
@@ -76,6 +76,34 @@ for family in sys.argv[2:]:
     }
     (directory / "reference.json").write_text(json.dumps(reference) + "\n")
 ```
+
+## `lfm2_moe`: the router comes from transformers
+
+mlx-lm (0.30.7 to 0.31.3) scores LFM2 MoE experts with a softmax and adds the expert bias to the weights it multiplies the experts by. transformers' `Lfm2MoeSparseMoeBlock`, Liquid's reference, scores with a sigmoid, uses the bias only to pick the experts, normalises with `+ 1e-6` and applies `routed_scaling_factor`. basalt follows transformers. The real checkpoints side with it:
+
+| Measure | mlx-lm router | transformers router |
+|---|---|---|
+| `expert_bias` range in LFM2.5-8B-A1B / 24B-A2B | −0.31…0.08 / −0.22…0.05, against softmax probabilities of about 1/32 and 1/64, so the bias alone would pick the experts | against sigmoid scores in (0, 1) |
+| perplexity, LFM2.5-24B-A2B-MLX-4bit, 505 tokens of plain prose | 33.9 | 12.1 |
+| perplexity, LFM2.5-8B-A1B-MLX-4bit, same text | 47.1 | 49.3 |
+
+So `lfm2_moe/reference.json` is mlx-lm's forward on the committed weights with the block's `__call__` replaced by the transformers router (`generator` in the file says so):
+
+```python
+def hf_route(self, x):
+    weights = mx.sigmoid(self.gate(x).astype(mx.float32))
+    selection = weights + self.expert_bias if self.use_expert_bias else weights
+    inds = mx.argpartition(-selection, kth=self.top_k - 1, axis=-1)[..., : self.top_k]
+    scores = mx.take_along_axis(weights, inds, axis=-1)
+    if self.norm_topk_prob:
+        scores = scores / (scores.sum(axis=-1, keepdims=True) + 1e-6)
+    y = self.switch_mlp(x, inds)
+    return (y * scores.astype(x.dtype)[..., None]).sum(axis=-2)
+
+lfm2_moe.Lfm2MoeSparseMoeBlock.__call__ = hf_route
+```
+
+The fixture's `routed_scaling_factor` is 1.0, so the scaling step is left out.
 
 ## Not covered
 
