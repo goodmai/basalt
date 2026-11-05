@@ -22,6 +22,7 @@ struct ModelResearchTests {
         case .gateCheck: ["heldOut": ["h"], "maxPerplexityRise": 0.5]
         case .tensorPack: ["tensor": "w", "format": "affine", "bits": 3, "groupSize": 32]
         case .tensorUnpack: ["tensor": "w", "format": "float16"]
+        case .trainExperts: ["count": 40, "seed": 7, "layers": [2, 3], "rank": 4, "iterations": 20, "heldOut": ["Name a colour."]]
         }
     }
 
@@ -47,6 +48,13 @@ struct ModelResearchTests {
     static var gate: GateRequest {
         var request = GateRequest(heldOut: ["h"], maxKL: 0.25)
         request.target = [GateTarget(prompt: "2 + 2 =", expected: "4")]
+        case .trainExperts: .train(Self.train)
+        }
+    }
+
+    static var train: TrainRequest {
+        var request = TrainRequest(tasks: .arithmetic(count: 40, seed: 7), gate: GateRequest(heldOut: ["Name a colour."]))
+        (request.layers, request.rank, request.iterations) = ([2, 3], 4, 20)
         return request
     }
 
@@ -90,6 +98,8 @@ struct ModelResearchTests {
             (.experimentCompare, ["prompts": [String]()], "prompts must be an array of 1...16 strings"),
             (.experimentCompare, ["prompts": ["p"], "maxTokens": 0], "maxTokens must be an integer in 1...512"),
             (.weightsDelta, ["tensor": "w", "values": [Double]()], "values must be a non-empty array of numbers"),
+            (.trainExperts, ["count": 40], "heldOut must be a non-empty array"),
+            (.trainExperts, ["heldOut": ["p"], "count": 1], "count must be an integer in 2...10000"),
         ]
         for (tool, args, fragment) in cases {
             let failure = #expect(throws: MCPFailure.self) { try ResearchCall(tool, args) }

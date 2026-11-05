@@ -211,6 +211,7 @@ public enum TrainingTasks: Sendable, Codable, Equatable {
 public struct TrainRequest: Sendable, Codable, Equatable {
     public var tasks: TrainingTasks
     public var teacher: String?
+    public var teacherModel: String?
     public var layers: [Int]?
     public var experts: [Int]?
     public var rank = 8

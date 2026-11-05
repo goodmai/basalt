@@ -173,6 +173,7 @@ extension ResearchCall {
         case .adapter(let source, let gate): return .json(try await Self.lab(model).applyAdapter(source, gate: gate))
         case .gate(let request): return .json(try await Self.lab(model).gate(request))
         case .pack(let request): return .json(try await Self.lab(model).pack(request))
+        case .train(let request): return .json(try await Self.lab(model).train(request))
         }
     }
 

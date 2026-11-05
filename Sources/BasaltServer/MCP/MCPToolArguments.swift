@@ -265,12 +265,13 @@ enum ResearchTool: String, Sendable, CaseIterable {
     case gateCheck = "gate_check"
     case tensorPack = "tensor_pack"
     case tensorUnpack = "tensor_unpack"
+    case trainExperts = "train_experts"
 
     var isExperiment: Bool {
         switch self {
         case .modelDescribe, .modelTensors, .modelTensor, .kvInspect, .traceRun: false
         case .intervene, .weightsDelta, .overlaysList, .overlayUndo, .experimentCompare, .adapterApply, .gateCheck: true
-        case .tensorPack, .tensorUnpack: true
+        case .tensorPack, .tensorUnpack, .trainExperts: true
         }
     }
 }
@@ -289,6 +290,7 @@ enum ResearchCall: Sendable, Equatable {
     case adapter(AdapterSource, gate: GateRequest?)
     case gate(GateRequest)
     case pack(PackRequest)
+    case train(TrainRequest)
 
     static let maxValues = 0...4096
     static let topK = 1...100
@@ -312,6 +314,7 @@ enum ResearchCall: Sendable, Equatable {
         case .gateCheck: self = .gate(try GateRequest(mcp: args))
         case .tensorPack: self = .pack(try PackRequest(mcp: args, formats: PackRequest.packFormats))
         case .tensorUnpack: self = .pack(try PackRequest(mcp: args, formats: PackRequest.unpackFormats))
+        case .trainExperts: self = .train(try TrainRequest(mcp: args))
         }
     }
 }
@@ -495,5 +498,31 @@ extension PackRequest {
         default: throw .invalidParams("format must be one of: \(formats.joined(separator: ", "))")
         }
         self.init(tensor: tensor, format: format)
+    }
+}
+
+extension TrainRequest {
+    static let taskCounts = 2...10_000
+
+    init(mcp args: [String: Any]?) throws(MCPFailure) {
+        let heldOut = MCPArguments.present("heldOut", in: args)
+        guard let heldOut = heldOut as? [String], !heldOut.isEmpty else {
+            throw .invalidParams("heldOut must be a non-empty array of general prompts the quality gate checks the adapter on")
+        }
+        var gate = GateRequest(heldOut: heldOut)
+        gate.maxKL = try MCPArguments.number("maxKL", in: args) ?? gate.maxKL
+        gate.maxPerplexityRise = try MCPArguments.number("maxPerplexityRise", in: args) ?? gate.maxPerplexityRise
+        let count = try MCPArguments.integer("count", in: args, Self.taskCounts) ?? 200
+        let seed = try MCPArguments.integer("seed", in: args, ResearchCall.nonNegative) ?? 0
+        let file = try MCPArguments.string("file", in: args)
+        self.init(tasks: file.map(TrainingTasks.file) ?? .arithmetic(count: count, seed: UInt64(seed)), gate: gate)
+        teacher = try MCPArguments.string("teacher", in: args)
+        teacherModel = try MCPArguments.string("teacherModel", in: args)
+        layers = try MCPArguments.integers("layers", in: args)
+        experts = try MCPArguments.integers("experts", in: args)
+        rank = try MCPArguments.integer("rank", in: args, ResearchCall.nonNegative) ?? rank
+        iterations = try MCPArguments.integer("iterations", in: args, ResearchCall.nonNegative) ?? iterations
+        learningRate = try MCPArguments.number("learningRate", in: args) ?? learningRate
+        output = try MCPArguments.string("output", in: args)
     }
 }

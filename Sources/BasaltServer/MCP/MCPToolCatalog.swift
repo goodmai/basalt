@@ -188,6 +188,7 @@ extension ResearchTool {
         case .gateCheck: "Experiment: the quality gate on the model as it is now against the pristine model (every live adapter and delta lifted): load-probe perplexity and known answers, mean KL and perplexity rise on held-out prompts, and exact-match targets. Each check has its value and limit."
         case .tensorPack: "Experiment: re-pack the weight of one linear layer in memory (affine 2-8 bit with a group size, mxfp4, or ternary absmean scale·{-1,0,1} per group of 64), dequantizing a quantized layer first. The layer is swapped live (the model is marked modified, prompt-cache reuse is off) as an overlay with TTL and bit-exact undo. Returns bytes before/after, RMSE, max abs error and relative error ||W-Ŵ||/||W||."
         case .tensorUnpack: "Experiment: replace one quantized linear layer by a dense float16 or bfloat16 layer holding its dequantized weight, live, as an overlay with TTL and bit-exact undo. Returns bytes before/after and the error of the cast."
+        case .trainExperts: "Experiment, long-running: self-training. Collects the model's (and an optional teacher's) answers to checkable tasks, keeps only answers that match the known answer, trains a LoRA on them, saves it under ~/.basalt/adapters, reports loss and held-out accuracy before/after, then applies it through the quality gate as an undoable overlay."
         }
     }
 
@@ -206,6 +207,7 @@ extension ResearchTool {
         case .gateCheck: Self.object(Self.gateProperties, required: ["heldOut"])
         case .tensorPack: Self.object(Self.packProperties, required: ["tensor"])
         case .tensorUnpack: Self.object(Self.unpackProperties, required: ["tensor"])
+        case .trainExperts: Self.object(Self.trainProperties, required: ["heldOut"])
         }
     }
 
@@ -308,6 +310,25 @@ extension ResearchTool {
         [
             "tensor": ["type": "string", "description": "Weight of a quantized linear layer as model_tensors lists it"],
             "format": ["type": "string", "enum": PackRequest.unpackFormats, "description": "Float type of the dense layer (default bfloat16)"],
+        ]
+    }
+
+    private static var trainProperties: [String: Any] {
+        [
+            "count": ["type": "integer", "minimum": TrainRequest.taskCounts.lowerBound, "maximum": TrainRequest.taskCounts.upperBound, "description": "Generated integer +, -, * problems (default 200); a fifth is held out for accuracy"],
+            "seed": ["type": "integer", "minimum": 0, "description": "Seed of the problem generator (default 0)"],
+            "file": ["type": "string", "description": "JSONL of {\"prompt\", \"answer\"} instead of generated problems"],
+            "teacher": ["type": "string", "description": "Base URL of an OpenAI-compatible server whose answers are collected too (key: BASALT_TEACHER_API_KEY)"],
+            "teacherModel": ["type": "string", "description": "Model name sent to the teacher"],
+            "layers": ["type": "array", "items": ["type": "integer", "minimum": 0], "description": "Layers that get LoRA (default: all)"],
+            "experts": ["type": "array", "items": ["type": "integer", "minimum": 0], "description": "Refused: the fork has no per-expert LoRA"],
+            "rank": ["type": "integer", "minimum": 1, "maximum": 64, "description": "LoRA rank (default 8)"],
+            "iterations": ["type": "integer", "minimum": 1, "maximum": 10_000, "description": "Training iterations (default 200)"],
+            "learningRate": ["type": "number", "description": "Adam learning rate (default 1e-5)"],
+            "output": ["type": "string", "description": "Adapter directory (default ~/.basalt/adapters/<fingerprint>/<timestamp>); never inside the model directory"],
+            "heldOut": ["type": "array", "items": ["type": "string"], "minItems": 1, "description": "General prompts the quality gate checks the adapter on"],
+            "maxKL": ["type": "number", "description": "Gate: largest mean KL on heldOut (default 0.5)"],
+            "maxPerplexityRise": ["type": "number", "description": "Gate: largest relative perplexity rise on heldOut (default 0.1)"],
         ]
     }
 }
