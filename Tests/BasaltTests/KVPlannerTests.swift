@@ -40,7 +40,7 @@ struct KVPlannerTests {
 
     @Test("With a budget that holds fp16 the adaptive ladder keeps fp16")
     func adaptiveKeepsFP16WhenItFits() {
-        let budget = Self.geometry.bytes(tokens: 8_192).rawValue * 2
+        let budget = Self.geometry.bytes(tokens: 8_192) * 2
         let room = Self.adaptive.fit(promptTokens: 1_000, wantedTokens: 2_000, budget: budget)
         #expect(room.kvPrecision == nil)
         #expect(room.fitting >= 2_000)
@@ -50,8 +50,8 @@ struct KVPlannerTests {
     @Test("When fp16 cannot hold the request the ladder steps down to the first precision that does")
     func adaptiveStepsDown() {
         let wanted = 50_000
-        let budget = Self.geometry.bytes(tokens: TokenCount(wanted), kvPrecision: .q4).rawValue * 2
-        let fp16 = Self.geometry.maxTokens(fitting: ByteCount(budget), kvPrecision: nil, promptTokens: 1_000, zones: nil).rawValue
+        let budget = Self.geometry.bytes(tokens: TokenCount(wanted), kvPrecision: .q4) * 2
+        let fp16 = Self.geometry.maxTokens(fitting: budget, kvPrecision: nil, promptTokens: 1_000, zones: nil).rawValue
         let room = Self.adaptive.fit(promptTokens: 1_000, wantedTokens: wanted, budget: budget)
         #expect(fp16 < wanted)
         #expect(room.kvPrecision != nil)
@@ -60,10 +60,10 @@ struct KVPlannerTests {
 
     @Test("When no precision holds the request the ladder returns the one that fits most")
     func adaptiveFallsBackToLargest() {
-        let budget = Self.geometry.bytes(tokens: 2_000).rawValue
+        let budget = Self.geometry.bytes(tokens: 2_000)
         let room = Self.adaptive.fit(promptTokens: 1_000, wantedTokens: 10_000_000, budget: budget)
         let best = KVCacheGeometry.adaptiveKVPrecisionLadder
-            .map { Self.geometry.maxTokens(fitting: ByteCount(budget), kvPrecision: $0?.uniform, promptTokens: 1_000, zones: nil).rawValue }
+            .map { Self.geometry.maxTokens(fitting: budget, kvPrecision: $0?.uniform, promptTokens: 1_000, zones: nil).rawValue }
             .max()
         #expect(room.fitting == best)
     }
@@ -71,7 +71,7 @@ struct KVPlannerTests {
     @Test("Without zones a mixed precision is planned as its uniform equivalent")
     func mixedPrecisionWithoutZonesIsUniform() {
         let planner = KVPlanner(maxTokens: 4096, precisionLadder: [.k8v4], zones: nil)
-        #expect(planner.fit(promptTokens: 10, wantedTokens: 20, budget: 1 << 30).kvPrecision == KVPrecision.k8v4.uniform)
+        #expect(planner.fit(promptTokens: 10, wantedTokens: 20, budget: ByteCount(1 << 30)).kvPrecision == KVPrecision.k8v4.uniform)
     }
 
     @Test("Zones apply only when the model takes them, and without eviction support they evict nothing")
@@ -88,7 +88,7 @@ struct KVPlannerTests {
     @Test("Room asks for the prompt plus the requested tokens, at most --max-tokens, and one token when none is asked")
     func roomWantsPromptPlusRequested() {
         let planner = KVPlanner(maxTokens: 100, precisionLadder: [nil, .q4], zones: nil)
-        let budget = Self.geometry.bytes(tokens: 1_000).rawValue / 2
+        let budget = Self.geometry.bytes(tokens: 1_000) / 2
         #expect(planner.room(promptTokens: 10, requestedMaxTokens: nil, budget: budget)
             == planner.fit(promptTokens: 10, wantedTokens: 11, budget: budget))
         #expect(planner.room(promptTokens: 10, requestedMaxTokens: 1_000_000, budget: budget)
@@ -120,9 +120,9 @@ struct KVPlannerTests {
     func reservationBytes() {
         let planner = KVPlanner(maxTokens: 300, precisionLadder: [nil], zones: nil)
         #expect(planner.reservationBytes(promptTokens: 100, for: GenerationRequest(prompt: "p", maxTokens: 50))
-            == Self.geometry.bytes(tokens: 150).rawValue)
+            == Self.geometry.bytes(tokens: 150))
         #expect(planner.reservationBytes(promptTokens: 100, for: GenerationRequest(prompt: "p"))
-            == Self.geometry.bytes(tokens: 400).rawValue)
+            == Self.geometry.bytes(tokens: 400))
     }
 
     @Test("The first reservation is always admitted; later ones only while the total stays within the budget")

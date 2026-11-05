@@ -18,7 +18,7 @@ struct KVReservationTests {
 
         let first = try await orchestrator.generateStream(request: GenerationRequest(prompt: "first", maxTokens: 100))
         let reserved = try #require(await orchestrator.kvReservations.values.first)
-        await engine.setMemory(kvBudget: reserved * 3 / 2, promptTokens: 100)
+        await engine.setMemory(kvBudget: (reserved * 3 / 2).rawValue, promptTokens: 100)
 
         do {
             _ = try await orchestrator.generate(request: GenerationRequest(prompt: "second", maxTokens: 100))
@@ -48,7 +48,7 @@ struct KVReservationTests {
         await engine.holdStreams()
         let first = try await orchestrator.generateStream(request: GenerationRequest(prompt: "first", maxTokens: 100))
         let reserved = try #require(await orchestrator.kvReservations.values.first)
-        await engine.setMemory(kvBudget: reserved * 2, promptTokens: 100)
+        await engine.setMemory(kvBudget: (reserved * 2).rawValue, promptTokens: 100)
         let second = try await orchestrator.generateStream(request: GenerationRequest(prompt: "second", maxTokens: 100))
         #expect(await orchestrator.kvReservations.count == 2)
         await engine.releaseStreams()

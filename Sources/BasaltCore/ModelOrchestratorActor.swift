@@ -48,7 +48,7 @@ public actor ModelOrchestratorActor {
         self.telemetry = telemetry
     }
 
-    var kvReservations: [Int: Int64] { reservations.bytes }
+    var kvReservations: [Int: ByteCount] { reservations.bytes }
 
     var routingModelKey: String {
         "\(modelInfo)@\(URL(fileURLWithPath: currentModelPath).lastPathComponent)"
@@ -217,7 +217,7 @@ extension ModelOrchestratorActor {
         else { return nil }
         let promptTokens = Self.estimatedTokens(Self.budgetedText(request))
         let wanted = promptTokens + (request.maxTokens ?? 0)
-        let budget = await kvBudgetBytes()
+        let budget = await kvBudget()
         let fitting = kv.fit(promptTokens: promptTokens, wantedTokens: wanted, budget: budget).fitting
         let tokensPerSecond = await telemetry.snapshot().tokensPerSecond
         let local = LocalEstimate(
@@ -270,19 +270,19 @@ extension ModelOrchestratorActor {
         return refusal
     }
 
-    func kvBudgetBytes() async -> Int64 {
-        let budget = if let engineBudget = await engine.kvMemoryBudgetBytes {
+    func kvBudget() async -> ByteCount {
+        let budget = if let engineBudget = await engine.kvMemoryBudget {
             engineBudget
         } else {
-            Int64(Double(freeMemory()) * TokenBudgetCalculator.safetyMargin)
+            ByteCount(Int64(Double(freeMemory()) * TokenBudgetCalculator.safetyMargin))
         }
         guard let state = await memory?.state, state.directive.limitsAdmission else { return budget }
-        return min(budget, Int64(Double(state.sample.availableBytes) * TokenBudgetCalculator.safetyMargin))
+        return min(budget, ByteCount(Int64(Double(state.sample.availableBytes) * TokenBudgetCalculator.safetyMargin)))
     }
 
     private func generationRoom(for request: GenerationRequest) async -> KVRoom {
         let promptTokens = await engine.promptTokenCount(for: request) ?? Self.estimatedTokens(Self.budgetedText(request))
-        let budget = await kvBudgetBytes()
+        let budget = await kvBudget()
         return kv.room(promptTokens: promptTokens, requestedMaxTokens: request.maxTokens, budget: budget)
     }
 
@@ -321,10 +321,10 @@ extension ModelOrchestratorActor {
     }
 
     func reserveKV(_ ticket: Int, promptTokens: Int, for request: GenerationRequest) async throws(BasaltError) {
-        let budget = await kvBudgetBytes()
+        let budget = await kvBudget()
         let bytes = kv.reservationBytes(promptTokens: promptTokens, for: request)
         guard reservations.reserve(bytes, for: ticket, within: budget) else {
-            logger.warn("Refused with 503: this request needs \(bytes >> 20) MB of KV cache and \(reservations.bytes.count) running requests hold \(reservations.held >> 20) MB of the \(budget >> 20) MB room; retry when one finishes.")
+            logger.warn("Refused with 503: this request needs \(bytes.rawValue >> 20) MB of KV cache and \(reservations.bytes.count) running requests hold \(reservations.held.rawValue >> 20) MB of the \(budget.rawValue >> 20) MB room; retry when one finishes.")
             await gate.release(ticket)
             throw .serverBusy(retryAfterSeconds: 1)
         }

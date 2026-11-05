@@ -31,12 +31,12 @@ struct KVPlanner: Sendable {
         return takesEviction ? zones : zones?.evicting(0)
     }
 
-    func fit(promptTokens: Int, wantedTokens: Int, budget: Int64) -> KVRoom {
+    func fit(promptTokens: Int, wantedTokens: Int, budget: ByteCount) -> KVRoom {
         let zones = activeZones
         let fits = (takesQuantization ? precisionLadder : [nil]).map { wanted in
             let precision = zones == nil ? wanted?.uniform : wanted
             let fitting = geometry.maxTokens(
-                fitting: ByteCount(budget), kvPrecision: precision, promptTokens: TokenCount(promptTokens), zones: zones).rawValue
+                fitting: budget, kvPrecision: precision, promptTokens: TokenCount(promptTokens), zones: zones).rawValue
             return KVRoom(promptTokens: promptTokens, fitting: fitting, kvPrecision: precision)
         }
         return fits.first { $0.fitting >= wantedTokens }
@@ -44,7 +44,7 @@ struct KVPlanner: Sendable {
             ?? KVRoom(promptTokens: promptTokens, fitting: 0, kvPrecision: nil)
     }
 
-    func room(promptTokens: Int, requestedMaxTokens: Int?, budget: Int64) -> KVRoom {
+    func room(promptTokens: Int, requestedMaxTokens: Int?, budget: ByteCount) -> KVRoom {
         fit(promptTokens: promptTokens, wantedTokens: promptTokens + min(requestedMaxTokens ?? 1, maxTokens), budget: budget)
     }
 
@@ -63,18 +63,17 @@ struct KVPlanner: Sendable {
         return validated.withMaxTokens(cap)
     }
 
-    func reservationBytes(promptTokens: Int, for request: GenerationRequest) -> Int64 {
-        geometry.bytes(
-            tokens: TokenCount(promptTokens + (request.maxTokens ?? maxTokens)), kvPrecision: request.kvPrecision, zones: activeZones).rawValue
+    func reservationBytes(promptTokens: Int, for request: GenerationRequest) -> ByteCount {
+        geometry.bytes(tokens: TokenCount(promptTokens + (request.maxTokens ?? maxTokens)), kvPrecision: request.kvPrecision, zones: activeZones)
     }
 }
 
 struct KVReservations: Sendable {
-    private(set) var bytes: [Int: Int64] = [:]
+    private(set) var bytes: [Int: ByteCount] = [:]
 
-    var held: Int64 { bytes.values.reduce(0, +) }
+    var held: ByteCount { bytes.values.reduce(.zero, +) }
 
-    mutating func reserve(_ wanted: Int64, for ticket: Int, within budget: Int64) -> Bool {
+    mutating func reserve(_ wanted: ByteCount, for ticket: Int, within budget: ByteCount) -> Bool {
         let held = held
         guard held == 0 || held + wanted <= budget else { return false }
         bytes[ticket] = wanted
