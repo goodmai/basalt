@@ -64,6 +64,12 @@ actor MockInferenceEngine: InferenceEngine {
                             promptCacheBudgetBytes: Int(Double(1 << 30) * directive.promptCacheShare), promptCacheEvictions: 0)
     }
 
+    var pacer: PrefillPacer?
+
+    func pace(with pacer: PrefillPacer) async {
+        self.pacer = pacer
+    }
+
     func setMockFinishReason(_ reason: GenerationResponse.FinishReason) {
         self.mockFinishReason = reason
     }

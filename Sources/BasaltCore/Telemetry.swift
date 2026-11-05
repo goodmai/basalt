@@ -20,6 +20,7 @@ public struct ServerTelemetrySnapshot: Codable, Sendable, Equatable {
     public var hybridAnchors: Int?
     public var hybridAnchorBytes: Int64?
     public var memory: MemoryTelemetry?
+    public var thermal: ThermalTelemetry?
     public var routingBias: [String: [String: Double]]?
     public var draftTokens: Int?
     public var acceptedDraftTokens: Int?
@@ -34,6 +35,7 @@ public struct ServerTelemetrySnapshot: Codable, Sendable, Equatable {
         let ram = String(format: "%.1f", availableRAMGB)
         return "[stats] \(tps) tok/s | TTFT: \(ttft)s | RAM avail: \(ram)/\(totalRAMGB) GB | Model: \(modelRAMMB) MB | GPU active: \(formatBytes(gpuActiveBytes)) (peak \(formatBytes(gpuPeakBytes))) | Active: \(activeRequests) | Requests: \(totalRequests)"
             + (memory.map { " | \($0.formattedStats)" } ?? "")
+            + (thermal.map { " | \($0.formattedStats)" } ?? "")
             + (draftTokens.map { " | Drafts: \(acceptedDraftTokens ?? 0) of \($0) accepted" } ?? "")
     }
 }

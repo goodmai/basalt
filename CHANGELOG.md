@@ -4,6 +4,7 @@
 
 ### Upgrading from 0.9.0
 - The `GemCLI`, `GemLogger` and `GemLogLevel` typealiases are gone; use `BasaltCLI`, `BasaltLogger` and `BasaltLogLevel` (#236). The `gemma_*` MCP tool aliases stay.
+- The thermal policy is on by default (#45). At macOS `.serious` thermal state prefill runs in 256-token chunks with a pause of a quarter of each chunk's time after it; at `.critical` prompts of 8192+ tokens are refused with 503 `Retry-After: 60`. `/api/v1/stats` and `serve --stats` show the thermal state and directive. `serve --no-thermal-policy` turns the pacing and refusals off.
 
 ## 0.9.0 — 2026-11-03
 

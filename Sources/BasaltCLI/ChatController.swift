@@ -12,18 +12,31 @@ actor ChatController {
     private var activeTask: Task<Void, Never>? = nil
     private var isRunning = true
     private let sessionId: String
-    private var history: [ChatMessageInput]
+    private var history: ChatHistoryDigest
 
     init(orchestrator: ModelOrchestratorActor, maxTokens: Int, sessionId: String, history: [ChatMessageInput] = []) {
         self.terminal = TerminalManager()
         self.orchestrator = orchestrator
         self.maxTokens = maxTokens
         self.sessionId = sessionId
-        self.history = history
+        self.history = ChatHistoryDigest(turns: history)
     }
 
     private func record(_ user: String, _ reply: String) {
-        history += [ChatMessageInput(role: .user, text: user), ChatMessageInput(role: .assistant, text: reply)]
+        history.record(user, reply)
+    }
+
+    private func fitted(_ prompt: String) async -> GenerationRequest {
+        let before = history
+        var digest = before
+        let orchestrator = orchestrator
+        let request = await digest.fitted(prompt, maxTokens: maxTokens, sessionId: sessionId) {
+            await orchestrator.effectiveMaxTokens(for: $0)
+        }
+        guard history == before, digest != before else { return request }
+        history = digest
+        await terminal.updateInfo(debug: TerminalUI.dim("Folded \(before.turns.count - digest.turns.count) earlier messages into a digest to fit the context"))
+        return request
     }
     
     func start() async {
@@ -50,7 +63,7 @@ actor ChatController {
                 
                 if trimmed.lowercased() == "/clear" {
                     messageQueue.removeAll()
-                    history.removeAll()
+                    history = ChatHistoryDigest()
                     await terminal.updateInfo(debug: TerminalUI.info("Chat history cleared."))
                     continue
                 }
@@ -97,7 +110,7 @@ actor ChatController {
                         let finalPrompt = try await PromptContextBuilder.build(prompt: prompt)
                         await terminal.updateInfo(debug: "Thinking...")
                         
-                        let request = ChatCommand.request(finalPrompt, history: history, maxTokens: maxTokens, sessionId: sessionId)
+                        let request = await self.fitted(finalPrompt)
                         let stream = try await orchestrator.generateStream(request: request)
                         var reply = ""
                         

@@ -189,6 +189,12 @@ struct ServeCommand: AsyncParsableCommand {
     )
     var noMemoryCoordinator = false
 
+    @Flag(
+        name: .customLong("no-thermal-policy"),
+        help: "Keep the full prefill chunk and admit long prompts when macOS reports a serious or critical thermal state"
+    )
+    var noThermalPolicy = false
+
     @OptionGroup var cloud: CloudFallbackOptions
 
     @OptionGroup var sessionLog: SessionLogOptions
@@ -227,6 +233,7 @@ struct ServeCommand: AsyncParsableCommand {
 
         try await load(orchestrator, from: resolvedPath)
         if !noMemoryCoordinator { await orchestrator.coordinateMemory(with: MemoryCoordinator()) }
+        if !noThermalPolicy { await orchestrator.coordinateThermal() }
 
         try await attachCloudFallback(to: orchestrator, virtualKeys: config.virtualKeys)
 
@@ -248,7 +255,9 @@ struct ServeCommand: AsyncParsableCommand {
                 statsInterval: stats ? min(max(1, statsInterval), 86_400) : nil, canaryInterval: canaryMinutes.map { .seconds($0 * 60) }),
             orchestrator: orchestrator)
     }
+}
 
+extension ServeCommand {
     private func makeOrchestrator(maxTokens: Int) async throws -> ModelOrchestratorActor {
         let engine = try makeEngine()
         await engine.probeModels(modelProbe)
@@ -263,9 +272,7 @@ struct ServeCommand: AsyncParsableCommand {
             engine: engine, maxTokens: maxTokens, kv: .init(precision: kvCache.bits?.fixedPrecision, adaptive: kvCache.bits == .auto, zones: kvCache.zones),
             gate: GenerationGate(maxConcurrent: maxConcurrent, maxQueue: maxQueue), sessionLog: sessionLogWriter)
     }
-}
 
-extension ServeCommand {
     static func resolveNetwork(_ flags: NetworkSettings.Flags = NetworkSettings.Flags(), configFile: String?) throws -> NetworkSettings {
         try NetworkSettings.resolve(flags, file: ConfigSection.serverConfig(at: configFile))
     }

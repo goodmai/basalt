@@ -17,6 +17,7 @@ public protocol InferenceEngine: Sendable {
     func promptTokenCount(for request: GenerationRequest) async -> Int?
     func persistPromptCache(within deadline: Duration) async
     func apply(_ directive: MemoryDirective) async -> MemoryLimits?
+    func pace(with pacer: PrefillPacer) async
 }
 
 extension InferenceEngine {
@@ -29,4 +30,5 @@ extension InferenceEngine {
     public func promptTokenCount(for request: GenerationRequest) async -> Int? { nil }
     public func persistPromptCache(within deadline: Duration) async {}
     public func apply(_ directive: MemoryDirective) async -> MemoryLimits? { nil }
+    public func pace(with pacer: PrefillPacer) async {}
 }

@@ -53,6 +53,7 @@ public actor MLXInferenceEngine: InferenceEngine {
     private(set) var mtpPrefixes: [(namespace: String, tokens: [Int], prefix: MTPPrefix)] = []
     private var promptCacheFullBudget: ByteCount
     private(set) var appliedMemoryDirective = MemoryDirective.relaxed
+    private(set) var prefillPacer: PrefillPacer?
     private var kvBudget: ByteCount?
     private let configuredPromptCacheBytes: ByteCount?
     private let hybridAnchors: Int
@@ -216,6 +217,10 @@ extension MLXInferenceEngine {
             cacheLimitBytes: gpuCacheLimit.map { Self.cacheLimit($0, under: appliedMemoryDirective) },
             promptCacheBudgetBytes: Int(promptCaches.byteBudget.rawValue), promptCacheBytes: Int(promptCaches.byteCount.rawValue),
             promptCacheEvictions: promptCaches.evictions)
+    }
+
+    public func pace(with pacer: PrefillPacer) async {
+        prefillPacer = pacer
     }
 
     static func cacheLimit(_ relaxed: Int, under directive: MemoryDirective) -> Int {
