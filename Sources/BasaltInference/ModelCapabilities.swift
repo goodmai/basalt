@@ -37,7 +37,7 @@ struct ModelCapabilities: Equatable, Sendable {
         let qwen35 = ModelCapabilities(verified: all.subtracting([.cacheBlend]))
         let recurrent = ModelCapabilities(verified: all.subtracting([.mtp, .cacheBlend]))
         let gemma3 = ModelCapabilities(verified: all.subtracting([.mtp, .cacheBlend, .batchedDecode]))
-        let gemma4 = ModelCapabilities(verified: all.subtracting([.mtp, .batchedDecode, .quest]))
+        let gemma4 = ModelCapabilities(verified: all.subtracting([.mtp, .quest]))
         let table: [([String], ModelCapabilities)] = [
             (["llama", "qwen3", "qwen3_moe", "minimax_m2", "minimax-m2"], attention),
             (["qwen3_5", "qwen3_6", "qwen3.6", "qwen3_8", "qwen3.8", PrismHadamard.modelType], qwen35),

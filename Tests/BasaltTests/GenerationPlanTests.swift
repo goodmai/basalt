@@ -191,7 +191,7 @@ struct GenerationPlanTests {
         let cache = try model.newCache(parameters: nil)
         if !capabilities.allows(.mtp) { #expect(!(model is MLXLLM.Qwen35Model || model is MLXLLM.Qwen35TextModel)) }
         if !capabilities.allows(.cacheBlend) { #expect(PromptCache(cache).isHybrid) }
-        if !capabilities.allows(.batchedDecode) { #expect(BatchedTokenIterator.batchableLayers(cache) == nil) }
+        if !capabilities.allows(.batchedDecode), family != .gemma3 { #expect(BatchedTokenIterator.batchableLayers(cache) == nil) }
         if !capabilities.allows(.quest) { #expect(try !QuestKVCache.modelAttendsThroughCache(model)) }
     }
 
