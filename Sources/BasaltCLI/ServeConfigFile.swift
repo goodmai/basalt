@@ -66,7 +66,9 @@ enum ServeConfigFile {
     static func tokens(file: String, cli: [String]) throws(ServeConfigError) -> [String] {
         let data: Data
         do {
-            data = try Data(contentsOf: ConfigSection.fileURL(file))
+            let handle = try FileHandle(forReadingFrom: ConfigSection.fileURL(file))
+            defer { try? handle.close() }
+            data = try handle.read(upToCount: maxBytes + 1) ?? Data()
         } catch {
             throw .unreadable(file: file, reason: error.localizedDescription)
         }
