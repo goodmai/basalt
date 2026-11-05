@@ -9,7 +9,7 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
     static let recycledDraftLimit = 6
 
     let model: any LanguageModel
-    let cache: [KVCache]
+    private(set) var cache: [KVCache]
     var state: LMOutput.State?
     var processor: LogitProcessor?
     let sampler: LogitSampler
@@ -19,6 +19,7 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
     let grammarJumpForward: Bool
     let replaysRejections: Bool
     let stagesRounds: Bool
+    private let kvQuantization: GenerateParameters?
     var tokenCount = 0
     var promptPrefillTime: TimeInterval = 0
     var evaluatedModel: (any LanguageModel)? { model }
@@ -42,27 +43,6 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
     private(set) var replayRounds = 0
     private var evalTargets: [MLXArray] = []
 
-    static func supports(_ cache: [KVCache], routesExperts: Bool) -> Bool {
-        PromptCache(cache).isSharable || stagesRounds(cache) || (isReplayableHybrid(cache) && !routesExperts)
-    }
-
-    static func stagesRounds(_ cache: [KVCache]) -> Bool {
-        guard cache.contains(where: { $0 is RotatingKVCache }) else { return false }
-        let storage = KVCacheStorage(cache)
-        guard let round = storage.beginRound(maximumPositions: draftLimit + 1) else { return false }
-        storage.rollback(round)
-        return true
-    }
-
-    static func isReplayableHybrid(_ cache: [KVCache]) -> Bool {
-        cache.contains { $0 is MambaCache }
-            && cache.allSatisfy { $0 is MambaCache || type(of: $0) == KVCacheSimple.self }
-    }
-
-    static func routesExperts(_ model: any LanguageModel) -> Bool {
-        model.modules().contains { $0 is SwitchLinear }
-    }
-
     struct Prompt {
         let input: LMInput
         let history: [Int]
@@ -75,6 +55,7 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
         self.recyclesTokens = lookup.recycling
         self.speculativeLookup = lookup.speculative
         self.grammarJumpForward = lookup.jumpForward
+        self.kvQuantization = lookup.kvQuantization
         self.replaysRejections = Self.isReplayableHybrid(cache)
         self.stagesRounds = !PromptCache(cache).isSharable && !replaysRejections && Self.stagesRounds(cache)
         self.model = model
@@ -131,6 +112,7 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
         case .logits(let output):
             state = output.state
             logits = output.logits
+            quantizeCache()
         }
         let last = logits[0..., -1, 0...]
         if recyclesTokens {
@@ -181,12 +163,13 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
         return token
     }
 
-    private mutating func forward(_ input: LMInput.Text, through layers: [KVCache]? = nil) -> LMOutput {
-        let layers = layers ?? cache
+    private mutating func forward(_ input: LMInput.Text, through round: [KVCache]? = nil) -> LMOutput {
+        let layers = round ?? cache
         let output = withPreparedCache(layers, lengths: input.sequenceLengths) {
             model(input[text: .newAxis], cache: layers, state: state)
         }
         state = output.state
+        if round == nil { quantizeCache() }
         return output
     }
 
@@ -259,7 +242,7 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
     private func lookupDraft(remaining: Int) -> [Int] {
         guard speculativeLookup && backoffs.lookup.allowsDraft && state == nil else { return [] }
         let limit = replaysRejections && backoffs.lookup.probing ? Self.replayedProbeLimit : backoffs.lookup.draftLimit
-        return Self.draft(after: history, limit: Swift.min(limit, remaining - 1))
+        return Self.draft(after: history, limit: Swift.min(limit, remaining - 1, draftRoom))
     }
 
     private mutating func decode(remaining: Int) {
@@ -289,7 +272,7 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
 
     private mutating func recycleOrStep(recycles: Bool, remaining: Int) {
         let recycled = recycles
-            ? recycling.chain(from: history[history.count - 1], limit: Swift.min(Self.recycledDraftLimit, remaining - 1))
+            ? recycling.chain(from: history[history.count - 1], limit: Swift.min(Self.recycledDraftLimit, remaining - 1, draftRoom))
             : []
         if recycled.isEmpty {
             emit(step(MLXArray([Int32(history[history.count - 1])])), lookingAhead: remaining > 1)
@@ -408,6 +391,40 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
         tokenCount += 1
         pendingIndex += 1
         return pending[pendingIndex - 1]
+    }
+}
+
+extension PromptLookupTokenIterator {
+    static func supports(_ cache: [KVCache], routesExperts: Bool) -> Bool {
+        PromptCache(cache).isSharable || stagesRounds(cache) || (isReplayableHybrid(cache) && !routesExperts)
+    }
+
+    static func stagesRounds(_ cache: [KVCache]) -> Bool {
+        guard cache.contains(where: { $0 is RotatingKVCache }) else { return false }
+        let storage = KVCacheStorage(cache)
+        guard let round = storage.beginRound(maximumPositions: draftLimit + 1) else { return false }
+        storage.rollback(round)
+        return true
+    }
+
+    static func isReplayableHybrid(_ cache: [KVCache]) -> Bool {
+        cache.contains { $0 is MambaCache }
+            && cache.allSatisfy { $0 is MambaCache || type(of: $0) == KVCacheSimple.self }
+    }
+
+    static func routesExperts(_ model: any LanguageModel) -> Bool {
+        model.modules().contains { $0 is SwitchLinear }
+    }
+
+    fileprivate mutating func quantizeCache() {
+        guard let kv = kvQuantization else { return }
+        maybeQuantizeKVCache(
+            cache: &cache, kvBits: kv.kvBits, kvGroupSize: kv.kvGroupSize, quantizedKVStart: kv.quantizedKVStart, kvScheme: kv.kvScheme)
+    }
+
+    fileprivate var draftRoom: Int {
+        guard let start = kvQuantization?.quantizedKVStart, history.count <= start + 1 else { return .max }
+        return Swift.max(0, start - history.count)
     }
 }
 

@@ -24,6 +24,7 @@ struct LookupOptions {
     var recycling = false
     var jumpForward = false
     var routesExperts = true
+    var kvQuantization: GenerateParameters?
 
     var requested: Bool { speculative || jumpForward }
 }
@@ -115,16 +116,18 @@ struct GenerationLauncher {
                 decoding: DecodingSettings(processor: components.logitProcessor(parameters: params), parameters: params),
                 stopTokens: MLXInferenceEngine.batchStopTokens(context), seat: seat))
         }
-        let fresh = lookup.requested && params.kvBits == nil && !MLXInferenceEngine.carriesMoreThanTokens(input)
+        let fresh = lookup.requested && !MLXInferenceEngine.carriesMoreThanTokens(input)
             ? try model.newCache(parameters: params) : []
         guard PromptLookupTokenIterator.supports(fresh, routesExperts: lookup.routesExperts) else {
             return uncached(try TokenIterator(input: input, model: model, parameters: params, components: components))
         }
         try components.validate(parameters: params)
+        var quantizing = lookup
+        quantizing.kvQuantization = params.kvBits == nil ? nil : params
         return uncached(try PromptLookupTokenIterator(
             prompt: PromptLookupTokenIterator.Prompt(input: input, history: input.text.tokens.asArray(Int.self)), model: model, cache: fresh,
             decoding: DecodingSettings(processor: components.makeProcessor(parameters: params), parameters: params),
-            lookup: lookup))
+            lookup: quantizing))
     }
 
     func mtp(_ request: MTPRequest, prompt: CachedPrompt, keepsCache: Bool) throws -> MLXInferenceEngine.GenerationLaunch {
