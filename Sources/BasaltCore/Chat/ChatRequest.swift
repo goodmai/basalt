@@ -37,7 +37,7 @@ public struct ChatMessageInput: Codable, Sendable, Equatable {
     }
 
     public static func plainText(_ messages: [ChatMessageInput]) -> String {
-        messages.flatMap { [$0.text] + ($0.toolCalls ?? []).map(\.arguments) }
+        messages.flatMap { message -> [String] in [message.text] + (message.toolCalls ?? []).map(\.arguments) }
             .filter { !$0.isEmpty }
             .joined(separator: "\n\n")
     }

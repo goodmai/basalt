@@ -16,7 +16,7 @@ extension MLXInferenceEngine {
             temperature: temperature,
             topP: Float(request.topP ?? samplingDefaults.topP ?? 0.9)
         )
-        params.kvBits = (request.kvPrecision ?? kvPrecision)?.uniform.keyBits
+        params.kvBits = modelFacts.capabilities.kvBits(request.kvPrecision ?? kvPrecision)
         params.quantizedKVStart = quantizedKVStart
         params.repetitionPenalty = request.repetitionPenalty.map(Float.init) ?? repetitionPenalty
             ?? samplingDefaults.repetitionPenalty.map(Float.init)

@@ -98,6 +98,7 @@ extension ModelOrchestratorActor {
         )
         kv.takesZones = await engine.supportsKVZones
         kv.takesEviction = await engine.supportsKVEviction
+        kv.takesQuantization = await engine.supportsKVQuantization
         await self.telemetry.setModelMemory(mb: self.modelSizeMB)
         await telemetry.setModel(URL(fileURLWithPath: path).lastPathComponent)
     }

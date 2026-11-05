@@ -45,7 +45,7 @@ extension MLXInferenceEngine {
     }
 
     static func readout(of model: Module) -> ((MLXArray) -> MLXArray)? {
-        let modules = model.namedModules().map { (path: $0.0, name: $0.0.split(separator: ".").last.map(String.init), module: $0.1) }
+        let modules: [(path: String, name: String?, module: Module)] = model.namedModules().map { (path: $0.0, name: $0.0.split(separator: ".").last.map(String.init), module: $0.1) }
             .sorted { $0.path.split(separator: ".").count < $1.path.split(separator: ".").count }
         guard let embedding = ["embed_tokens", "embeddings"].lazy.compactMap({ name in
             modules.first { $0.name == name && $0.module is Embedding }
