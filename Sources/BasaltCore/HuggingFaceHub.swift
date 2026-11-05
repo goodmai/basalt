@@ -374,7 +374,7 @@ extension HuggingFaceHub {
     private func transfer(_ file: HubFile, token: String?, onProgress: @escaping Progress) async throws {
         let joined = state.transfers[file.destination] != nil
         let task = transferTask(file, token: token, onProgress: onProgress)
-        try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
+        try await withTaskCancellationHandler { try await task.value } onCancel: { if !joined { task.cancel() } }
         if joined {
             let size = try Self.fileSize(at: file.destination)
             onProgress(file.name, size, size)
