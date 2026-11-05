@@ -259,11 +259,14 @@ enum ResearchTool: String, Sendable, CaseIterable {
     case overlaysList = "overlays_list"
     case overlayUndo = "overlay_undo"
     case experimentCompare = "experiment_compare"
+    case steerSearch = "steer_search"
+    case steerCommit = "steer_commit"
 
     var isExperiment: Bool {
         switch self {
         case .modelDescribe, .modelTensors, .modelTensor, .kvInspect, .traceRun: false
         case .intervene, .weightsDelta, .overlaysList, .overlayUndo, .experimentCompare: true
+        case .steerSearch, .steerCommit: true
         }
     }
 }
@@ -279,6 +282,8 @@ enum ResearchCall: Sendable, Equatable {
     case overlays
     case undo(OverlayID)
     case compare(CompareRequest)
+    case contrast(ContrastRequest)
+    case commitSteering(SteeringCommit)
 
     static let maxValues = 0...4096
     static let topK = 1...100
@@ -298,6 +303,8 @@ enum ResearchCall: Sendable, Equatable {
         case .overlaysList: self = .overlays
         case .overlayUndo: self = .undo(OverlayID(try MCPArguments.required("id", MCPArguments.integer("id", in: args, Self.nonNegative))))
         case .experimentCompare: self = .compare(try CompareRequest(mcp: args))
+        case .steerSearch: self = .contrast(try ContrastRequest(mcp: args))
+        case .steerCommit: self = .commitSteering(try SteeringCommit(mcp: args))
         }
     }
 }
@@ -421,5 +428,43 @@ extension CompareRequest {
             prompts: prompts,
             overlays: (try MCPArguments.integers("overlays", in: args) ?? []).map { OverlayID($0) },
             maxTokens: try MCPArguments.integer("maxTokens", in: args, ResearchCall.compareTokens) ?? 32)
+    }
+}
+
+extension ContrastRequest {
+    static let headLimit = 0...64
+
+    static func prompts(_ key: String, in args: [String: Any]?, _ range: ClosedRange<Int>) throws(MCPFailure) -> [String] {
+        guard let prompts = MCPArguments.present(key, in: args) as? [String], range.contains(prompts.count) else {
+            throw .invalidParams("\(key) must be an array of \(range) strings")
+        }
+        return prompts
+    }
+
+    init(mcp args: [String: Any]?) throws(MCPFailure) {
+        self.init(
+            positive: try Self.prompts("positive", in: args, Self.classPrompts),
+            negative: try Self.prompts("negative", in: args, Self.classPrompts),
+            heldOut: try Self.prompts("heldOut", in: args, Self.heldOutPrompts),
+            layers: try MCPArguments.integers("layers", in: args))
+        topHeads = try MCPArguments.integer("topHeads", in: args, Self.headLimit) ?? topHeads
+        if let scales = try MCPArguments.numbers("scales", in: args) {
+            guard Self.scaleCount.contains(scales.count) else { throw .invalidParams("scales must hold \(Self.scaleCount) numbers") }
+            self.scales = scales
+        }
+    }
+}
+
+extension SteeringCommit {
+    init(mcp args: [String: Any]?) throws(MCPFailure) {
+        var gate = GateRequest(heldOut: try ContrastRequest.prompts("heldOut", in: args, ContrastRequest.heldOutPrompts))
+        gate.maxKL = try MCPArguments.number("maxKL", in: args) ?? gate.maxKL
+        gate.maxPerplexityRise = try MCPArguments.number("maxPerplexityRise", in: args) ?? gate.maxPerplexityRise
+        self.init(
+            layer: try MCPArguments.required("layer", MCPArguments.integer("layer", in: args, ResearchCall.nonNegative)),
+            direction: try MCPArguments.required("direction", MCPArguments.numbers("direction", in: args)),
+            scale: try MCPArguments.required("scale", MCPArguments.number("scale", in: args)),
+            gate: gate)
+        positive = try ContrastRequest.prompts("positive", in: args, 1...ContrastRequest.classPrompts.upperBound)
     }
 }

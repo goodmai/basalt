@@ -129,6 +129,10 @@ public struct ContrastRequest: Sendable, Codable, Equatable {
     public var topHeads = 8
     public var scales: [Float] = [2, 4, 8]
 
+    public static let classPrompts = 2...32
+    public static let heldOutPrompts = 1...16
+    public static let scaleCount = 1...8
+
     public init(positive: [String], negative: [String], heldOut: [String], layers: [Int]? = nil) {
         self.positive = positive
         self.negative = negative
@@ -194,6 +198,7 @@ public struct SteeringCommit: Sendable, Codable, Equatable {
     public var direction: [Float]
     public var scale: Float
     public var gate: GateRequest
+    public var positive: [String] = []
 
     public init(layer: Int, direction: [Float], scale: Float, gate: GateRequest) {
         self.layer = layer

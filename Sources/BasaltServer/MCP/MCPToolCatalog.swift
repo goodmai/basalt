@@ -183,6 +183,8 @@ extension ResearchTool {
         case .overlaysList: "Experiment: the active overlays with id, description, creation and expiry time."
         case .overlayUndo: "Experiment: undo one overlay by id."
         case .experimentCompare: "Experiment: greedy before/after on a prompt set with the given overlays: text, KL divergence of the logits and perplexity."
+        case .steerSearch: "Experiment: contrastive steering search. The difference of mean residuals (positive minus negative prompts) per layer gives a direction; reports norm and class separation per layer, the best layer's unit direction, the heads whose ablation shrinks the gap most, and KL and projection shift when held-out prompts are steered by each scale. Directed search for activation directions, not self-awareness; leaves no overlay behind."
+        case .steerCommit: "Experiment: turns a steering direction into a rank-1 update of the layer's output projection (input = mean module input over the positive prompts) and applies it as an adapter through the quality gate on the held-out prompts; undoable, never written to disk."
         }
     }
 
@@ -197,6 +199,8 @@ extension ResearchTool {
         case .weightsDelta: Self.object(Self.deltaProperties, required: ["tensor"])
         case .overlayUndo: Self.object(["id": ["type": "integer", "minimum": 0, "description": "Overlay id from intervene, weights_delta or overlays_list"]], required: ["id"])
         case .experimentCompare: Self.object(Self.compareProperties, required: ["prompts"])
+        case .steerSearch: Self.object(Self.steerSearchProperties, required: ["positive", "negative", "heldOut"])
+        case .steerCommit: Self.object(Self.steerCommitProperties, required: ["layer", "direction", "scale", "positive", "heldOut"])
         }
     }
 
@@ -260,6 +264,33 @@ extension ResearchTool {
             "prompts": ["type": "array", "items": ["type": "string"], "minItems": ResearchCall.comparePrompts.lowerBound, "maxItems": ResearchCall.comparePrompts.upperBound],
             "overlays": ["type": "array", "items": ["type": "integer", "minimum": 0], "description": "Overlay ids applied on the after side (default: none)"],
             "maxTokens": ["type": "integer", "minimum": ResearchCall.compareTokens.lowerBound, "maximum": ResearchCall.compareTokens.upperBound, "description": "Greedy tokens per side (default 32)"],
+        ]
+    }
+
+    private static func prompts(_ range: ClosedRange<Int>, _ description: String) -> [String: Any] {
+        ["type": "array", "items": ["type": "string"], "minItems": range.lowerBound, "maxItems": range.upperBound, "description": description]
+    }
+
+    private static var steerSearchProperties: [String: Any] {
+        [
+            "positive": prompts(ContrastRequest.classPrompts, "Prompts showing the behaviour to find"),
+            "negative": prompts(ContrastRequest.classPrompts, "Prompts without it"),
+            "heldOut": prompts(ContrastRequest.heldOutPrompts, "Prompts steered in the trials"),
+            "layers": ["type": "array", "items": ["type": "integer", "minimum": 0], "description": "Layers to search (default: all)"],
+            "topHeads": ["type": "integer", "minimum": ContrastRequest.headLimit.lowerBound, "maximum": ContrastRequest.headLimit.upperBound, "description": "Heads reported, ranked by ablation effect (default 8; 0 skips the ablations)"],
+            "scales": numbers.merging(["maxItems": ContrastRequest.scaleCount.upperBound, "description": "Steering scales tried on the held-out prompts (default [2, 4, 8])"]) { $1 },
+        ]
+    }
+
+    private static var steerCommitProperties: [String: Any] {
+        [
+            "layer": ["type": "integer", "minimum": 0, "description": "bestLayer from steer_search"],
+            "direction": numbers.merging(["description": "direction from steer_search (hidden size)"]) { $1 },
+            "scale": ["type": "number", "description": "Scale chosen from the steer_search trials"],
+            "positive": prompts(1...ContrastRequest.classPrompts.upperBound, "Positive prompts; their mean module input becomes the rank-1 input"),
+            "heldOut": prompts(ContrastRequest.heldOutPrompts, "Held-out prompts for the quality gate"),
+            "maxKL": ["type": "number", "description": "Gate: largest mean KL against the baseline (default 0.5)"],
+            "maxPerplexityRise": ["type": "number", "description": "Gate: largest relative perplexity rise (default 0.1)"],
         ]
     }
 }

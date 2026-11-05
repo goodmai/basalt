@@ -155,6 +155,13 @@ extension MCPServer {
 }
 
 extension ResearchCall {
+    static func lab(_ model: any ModelResearch) throws(BasaltError) -> any ModelLab {
+        guard let lab = model as? any ModelLab else {
+            throw .invalidRequestStructure(details: "the inference engine of this server has no lab tools")
+        }
+        return lab
+    }
+
     func run(on model: any ModelResearch) async throws(BasaltError) -> ToolResult {
         switch self {
         case .describe: return .json(try await model.anatomy())
@@ -169,6 +176,8 @@ extension ResearchCall {
             try await model.undo(overlay)
             return .text("Overlay \(overlay) undone")
         case .compare(let request): return .json(try await model.compare(request))
+        case .contrast(let request): return .json(try await Self.lab(model).contrast(request))
+        case .commitSteering(let commit): return .json(try await Self.lab(model).commitSteering(commit))
         }
     }
 }

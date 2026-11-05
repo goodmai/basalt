@@ -18,6 +18,8 @@ struct ModelResearchTests {
         case .weightsDelta: ["tensor": "model.norm.weight", "values": [0.25]]
         case .overlayUndo: ["id": 3]
         case .experimentCompare: ["prompts": ["a", "b"], "overlays": [3], "maxTokens": 8]
+        case .steerSearch: LabSteerTests.searchArguments
+        case .steerCommit: LabSteerTests.commitArguments
         }
     }
 
@@ -33,6 +35,8 @@ struct ModelResearchTests {
         case .overlaysList: .overlays
         case .overlayUndo: .undo(3)
         case .experimentCompare: .compare(CompareRequest(prompts: ["a", "b"], overlays: [3], maxTokens: 8))
+        case .steerSearch: .contrast(LabSteerTests.searchRequest)
+        case .steerCommit: .commitSteering(LabSteerTests.commitRequest)
         }
     }
 
