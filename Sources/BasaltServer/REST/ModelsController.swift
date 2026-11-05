@@ -242,7 +242,9 @@ struct ModelsController: Sendable {
         case .modelNotFound?, .weightsCorrupted?, .modelNotCached?, .modelConfigurationInvalid?, .modelProbeFailed?:
             fputs("🔴 [REST] \(error.localizedDescription)\n", stderr)
             return modelUnavailable
-        default:
+        case .outOfMemory?, .inferenceHardwareFailure?, .invalidRequestStructure?, .contextLengthExceeded?, .rateLimitExceeded?,
+             .authenticationFailed?, .modelInferenceError?, .nonFiniteLogits?, .inferenceError?, .modelNotLoaded?,
+             .modelSwitching?, .serverBusy?, .memoryPressure?, nil:
             return error.localizedDescription
         }
     }

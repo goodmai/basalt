@@ -327,7 +327,7 @@ enum ResearchCall: Sendable, Equatable {
         case .trainExperts: self = .train(try TrainRequest(mcp: args))
         case .steerSearch: self = .contrast(try ContrastRequest(mcp: args))
         case .steerCommit: self = .commitSteering(try SteeringCommit(mcp: args))
-        default: throw .invalidParams("\(tool.rawValue) is not a lab tool")
+        case .modelDescribe, .modelTensors, .modelTensor, .kvInspect, .traceRun, .intervene, .weightsDelta, .overlaysList, .overlayUndo, .experimentCompare: throw .invalidParams("\(tool.rawValue) is not a lab tool")
         }
     }
 }
