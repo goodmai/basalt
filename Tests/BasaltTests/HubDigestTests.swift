@@ -21,6 +21,10 @@ struct HubDigestTests {
         try Data(text.utf8).write(to: url)
         #expect(try HubDigest.sha256(sha256).computed(fileAt: url) == sha256)
         #expect(try HubDigest.gitBlobSHA1(sha1).computed(fileAt: url) == sha1)
+        let link = directory.appendingPathComponent("link")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: url)
+        #expect(try HubDigest.gitBlobSHA1(sha1).computed(fileAt: link) == sha1, "a Hugging Face snapshot file is a symlink into blobs/")
+        #expect(try HubSidecar.stat(link).size == Int64(text.utf8.count))
     }
 
     @Test("Header digests are 64 hex for sha256 or 40 for sha1; anything malformed counts as missing", arguments: [
@@ -98,6 +102,21 @@ struct HubDigestTests {
         try await fixture.attempt()
         #expect(try Data(contentsOf: fixture.file.destination) == Self.body)
         #expect(HubSidecar.recorded(for: fixture.file.destination) == Self.bodySHA256)
+    }
+
+    @Test("A partial file that is a symlink into a shared blob store is downloaded afresh, never resumed through the link")
+    func symlinkedPartialNotResumedInPlace() async throws {
+        let fixture = try Fixture(headers: ["X-Linked-Etag": "\"\(Self.bodySHA256)\"", "Content-Length": "\(Self.body.count)"])
+        defer { fixture.remove() }
+        let blob = fixture.file.destination.deletingLastPathComponent().appendingPathComponent("blob")
+        let prefix = Self.body.prefix(100_000)
+        try prefix.write(to: blob)
+        try FileManager.default.createSymbolicLink(at: fixture.file.destination, withDestinationURL: blob)
+
+        try await fixture.attempt()
+        #expect(fixture.ranges.isEmpty)
+        #expect(try Data(contentsOf: blob) == prefix)
+        #expect(try Data(contentsOf: fixture.file.destination) == Self.body)
     }
 
     @Test("The mismatch error names the file and both digests")

@@ -227,7 +227,7 @@ package struct HubSidecar: Codable, Equatable, Sendable {
     }
 
     package static func stat(_ file: URL) throws -> (size: Int64, modified: Double) {
-        let attributes = try FileManager.default.attributesOfItem(atPath: file.path)
+        let attributes = try FileManager.default.attributesOfItem(atPath: file.resolvingSymlinksInPath().path)
         return (attributes[.size] as? Int64 ?? 0, (attributes[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0)
     }
 

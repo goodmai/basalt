@@ -417,6 +417,7 @@ extension HuggingFaceHub {
         let digest = HubDigest(headResponse)
         var plan = HubTransferPlan(existingSize: existingSize, remoteSize: remoteSize)
         if plan == .skip, let digest, try !digest.verifyExisting(file) { plan = .startNew }
+        if case .resume = plan, (try? file.destination.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) == true { plan = .startNew }
 
         switch plan {
         case .skip:
@@ -479,7 +480,7 @@ extension HuggingFaceHub {
 
     private static func fileSize(at url: URL) throws -> Int64 {
         guard FileManager.default.fileExists(atPath: url.path) else { return 0 }
-        return try FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int64 ?? 0
+        return try FileManager.default.attributesOfItem(atPath: url.resolvingSymlinksInPath().path)[.size] as? Int64 ?? 0
     }
 }
 
