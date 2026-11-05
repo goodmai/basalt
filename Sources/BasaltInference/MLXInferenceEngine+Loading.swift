@@ -90,6 +90,8 @@ extension MLXInferenceEngine {
             logger.error("Refusing to load \(modelPath): no readable config.json; the current model stays loaded")
             throw .modelNotFound(identifier: modelPath)
         }
+        let modelType = ModelCache.config(at: directory)?["model_type"] as? String
+        try ModelCapabilities.refuseUnverifiedKVBits(kvPrecision, modelType: modelType, path: modelPath)
 
         if container != nil { await unloadCurrentModel() }
         do { try faults.check(.unload) } catch { throw await Self.loadFailure(error, modelPath: modelPath) }
@@ -102,7 +104,6 @@ extension MLXInferenceEngine {
             try await loaded.perform { try PrismHadamard.prepareLoaded($0.model) }
             try await probe(loaded, directory: directory, modelPath: modelPath)
             let drafts = mtp ? await loadMTPDrafter(for: loaded, directory: directory, modelPath: modelPath) : false
-            let modelType = ModelCache.config(at: directory)?["model_type"] as? String
             let capabilities = ModelCapabilities.of(modelType: modelType)
             let facts = ModelFacts(
                 profile: ModelProfileRegistry.profile(forModelAt: modelPath),
