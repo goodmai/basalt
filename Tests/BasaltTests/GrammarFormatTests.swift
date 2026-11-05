@@ -19,6 +19,10 @@ struct GrammarFormatTests {
         #expect(try OpenAIController.responseFormat(fromRequestBody: Self.body(#"{"response_format": {"type": "grammar", "grammar": "root ::= \"a\""}}"#)) == .grammar(#"root ::= "a""#))
         #expect(try OpenAIController.responseFormat(fromRequestBody: Self.body(#"{"guided_regex": "[0-9]{2}"}"#)) == .regex("[0-9]{2}"))
         #expect(try OpenAIController.responseFormat(fromRequestBody: Self.body(#"{"guided_grammar": "root ::= \"b\""}"#)) == .grammar(#"root ::= "b""#))
+    }
+
+    @Test("OpenAI response_format structural_tag keeps the whole tag object as the source")
+    func parsesStructuralTag() throws {
         let tag = try OpenAIController.responseFormat(fromRequestBody: Self.body(#"{"response_format": \#(Self.structuralTag)}"#))
         guard case .structuralTag(let source)? = tag else {
             Issue.record("expected a structural tag, got \(String(describing: tag))")

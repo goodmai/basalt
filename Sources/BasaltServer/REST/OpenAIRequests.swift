@@ -307,24 +307,7 @@ extension OpenAIController {
         case "json_object":
             return .jsonObject
         case "json_schema":
-            let declaration = (format["json_schema"] as? [String: Any]) ?? format
-            let ordered = OrderedJSON.parse(data, keeping: ["response_format", "text"])
-            let orderedFormat = ordered?["response_format"] ?? ordered?["text"]?["format"]
-            guard declaration["schema"] != nil, let text = (orderedFormat?["json_schema"] ?? orderedFormat)?["schema"]?.text else {
-                throw InvalidResponseFormat(message: "response_format json_schema needs a schema")
-            }
-            let requested = ResponseFormat.jsonSchema(text, strict: declaration["strict"] as? Bool == true)
-            let prepared: PreparedJSONSchema
-            do {
-                prepared = try requested.prepared()
-            } catch {
-                throw InvalidResponseFormat(message: "response_format: \(error.message)")
-            }
-            if !prepared.relaxations.isEmpty {
-                BasaltLogger(module: "OpenAIController").info(
-                    "response_format without strict: \(prepared.relaxations.joined(separator: "; "))")
-            }
-            return requested
+            return try jsonSchemaFormat(format, data: data)
         case "regex":
             return .regex(try Self.grammarText(format, key: "regex"))
         case "grammar":
@@ -338,6 +321,27 @@ extension OpenAIController {
             throw InvalidResponseFormat(message:
                 "response_format type \(type.map { "'\($0)' is not supported" } ?? "is missing"); expected text, json_object, json_schema, regex, grammar or structural_tag")
         }
+    }
+
+    static func jsonSchemaFormat(_ format: [String: Any], data: Data) throws(InvalidResponseFormat) -> ResponseFormat {
+        let declaration = (format["json_schema"] as? [String: Any]) ?? format
+        let ordered = OrderedJSON.parse(data, keeping: ["response_format", "text"])
+        let orderedFormat = ordered?["response_format"] ?? ordered?["text"]?["format"]
+        guard declaration["schema"] != nil, let text = (orderedFormat?["json_schema"] ?? orderedFormat)?["schema"]?.text else {
+            throw InvalidResponseFormat(message: "response_format json_schema needs a schema")
+        }
+        let requested = ResponseFormat.jsonSchema(text, strict: declaration["strict"] as? Bool == true)
+        let prepared: PreparedJSONSchema
+        do {
+            prepared = try requested.prepared()
+        } catch {
+            throw InvalidResponseFormat(message: "response_format: \(error.message)")
+        }
+        if !prepared.relaxations.isEmpty {
+            BasaltLogger(module: "OpenAIController").info(
+                "response_format without strict: \(prepared.relaxations.joined(separator: "; "))")
+        }
+        return requested
     }
 
     static func guidedFormat(_ body: [String: Any]) throws(InvalidResponseFormat) -> ResponseFormat? {
