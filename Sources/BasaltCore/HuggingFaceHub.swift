@@ -201,13 +201,52 @@ public struct ModelCache: Sendable {
     }
 }
 
+enum HubEvent {
+    case fetched(bytes: Int)
+    case transferStarted(URL, generation: Int, Task<Void, any Error>)
+    case transferFinished(URL, generation: Int)
+}
+
+struct HubState: Sendable {
+    struct Transfer: Sendable {
+        let generation: Int
+        let task: Task<Void, any Error>
+    }
+
+    var bytesFetched = 0
+    var generation = 0
+    var transfers: [URL: Transfer] = [:]
+
+    func checkInvariants(after previous: HubState) -> [String] {
+        (bytesFetched < previous.bytesFetched ? ["bytesFetched went back from \(previous.bytesFetched) to \(bytesFetched)"] : [])
+            + (generation < previous.generation ? ["the generation went back from \(previous.generation) to \(generation)"] : [])
+    }
+
+    static func reduce(_ state: HubState, _ event: HubEvent) -> HubState {
+        var next = state
+        switch event {
+        case .fetched(let bytes):
+            next.bytesFetched += bytes
+        case .transferStarted(let destination, let generation, let task):
+            guard state.transfers[destination] == nil, generation > state.generation else { return state }
+            next.generation = generation
+            next.transfers[destination] = Transfer(generation: generation, task: task)
+        case .transferFinished(let destination, let generation):
+            guard state.transfers[destination]?.generation == generation else { return state }
+            next.transfers[destination] = nil
+        }
+        return next
+    }
+}
+
 package actor HuggingFaceHub {
     package typealias Progress = @Sendable (String, Int64, Int64) -> Void
 
     private let session: URLSession
     private let baseURL: String
     private let apiURL: String
-    package private(set) var bytesFetched = 0
+    private(set) var state = HubState()
+    package var bytesFetched: Int { state.bytesFetched }
 
     package init(configuration: URLSessionConfiguration = .default, endpoint: String = "https://huggingface.co") {
         baseURL = endpoint
@@ -260,7 +299,7 @@ extension HuggingFaceHub {
             throw HFError.invalidRepoId(repoId)
         }
         let (data, response) = try await session.data(from: url)
-        bytesFetched += data.count
+        state = HubState.reduce(state, .fetched(bytes: data.count))
 
         switch (response as? HTTPURLResponse)?.statusCode {
         case 200:
@@ -284,7 +323,7 @@ extension HuggingFaceHub {
         }
         var data = Data()
         for try await byte in bytes.prefix(range?.count ?? .max) { data.append(byte) }
-        bytesFetched += data.count
+        state = HubState.reduce(state, .fetched(bytes: data.count))
         let total = HubResponse.totalSize(contentRange: http?.value(forHTTPHeaderField: "Content-Range"))
         return (data, range == nil ? Int64(data.count) : total ?? -1)
     }
@@ -324,12 +363,33 @@ extension HuggingFaceHub {
                         throw HFError.downloadFailed(filename)
                     }
                     let file = HubFile(name: filename, url: url, destination: destDir.appendingPathComponent(filename))
-                    try await self.downloadWithRetry(file, token: token, onProgress: onFile)
+                    try await self.transfer(file, token: token, onProgress: onFile)
                 }
             }
             for try await _ in group {}
         }
         return subfolder.map { destDir.appendingPathComponent($0) } ?? destDir
+    }
+
+    private func transfer(_ file: HubFile, token: String?, onProgress: @escaping Progress) async throws {
+        let joined = state.transfers[file.destination] != nil
+        let task = transferTask(file, token: token, onProgress: onProgress)
+        try await withTaskCancellationHandler { try await task.value } onCancel: { if !joined { task.cancel() } }
+        if joined {
+            let size = try Self.fileSize(at: file.destination)
+            onProgress(file.name, size, size)
+        }
+    }
+
+    func transferTask(_ file: HubFile, token: String?, onProgress: @escaping Progress) -> Task<Void, any Error> {
+        if let running = state.transfers[file.destination] { return running.task }
+        let generation = state.generation + 1
+        let task = Task {
+            defer { state = HubState.reduce(state, .transferFinished(file.destination, generation: generation)) }
+            try await downloadWithRetry(file, token: token, onProgress: onProgress)
+        }
+        state = HubState.reduce(state, .transferStarted(file.destination, generation: generation, task))
+        return task
     }
 
     private func downloadWithRetry(_ file: HubFile, token: String?, onProgress: @escaping Progress) async throws {

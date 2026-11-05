@@ -119,15 +119,14 @@ struct SessionConversations: Sendable {
         recent[session] = entries
     }
 
-    mutating func remember(_ messages: [ChatMessageInput]?, id: String, session: String) -> SessionLogFormat.Parent? {
-        guard let messages else { return nil }
-        let digests = Self.digests(messages)
-        var entries = recent[session] ?? []
-        let parent = entries.last { digests.starts(with: $0.digests) }
-        entries.append((id, digests))
+    func parent(of digests: [SHA256.Digest], in session: String) -> SessionLogFormat.Parent? {
+        recent[session]?.last { digests.starts(with: $0.digests) }.map { ($0.id, $0.digests.count) }
+    }
+
+    mutating func remember(_ digests: [SHA256.Digest], id: String, session: String) {
+        let entries = (recent[session] ?? []) + [(id, digests)]
         if recent[session] == nil, recent.count >= Self.capacity { recent.removeAll() }
         recent[session] = Array(entries.suffix(Self.window))
-        return parent.map { ($0.id, $0.digests.count) }
     }
 }
 
@@ -142,12 +141,14 @@ struct SessionActivity: Sendable {
     private var suspendedAt: [String: Date] = [:]
     private var primed: Set<String> = []
 
-    mutating func start(_ session: String, at now: Date) -> Start {
+    func start(of session: String, at now: Date) -> Start {
+        if let suspended = suspendedAt[session] { return .resumed(gapS: Int(now.timeIntervalSince(suspended))) }
+        return primed.contains(session) ? .seen : .firstSeen
+    }
+
+    mutating func begin(_ session: String, at now: Date) {
         lastActivity[session] = now
-        if let suspended = suspendedAt.removeValue(forKey: session) {
-            return .resumed(gapS: Int(now.timeIntervalSince(suspended)))
-        }
-        return primed.insert(session).inserted ? .firstSeen : .seen
+        if suspendedAt.removeValue(forKey: session) == nil { primed.insert(session) }
     }
 
     mutating func touch(_ session: String, at now: Date) {
@@ -185,5 +186,78 @@ struct SessionLogRetention: Sendable {
             total -= file.size
         }
         return files.filter { $0.modified < cutoff }.map(\.url) + oversize
+    }
+}
+
+struct SessionLogState: Sendable {
+    enum Event: Sendable {
+        case started(id: String, session: String, at: Date)
+        case resumed(session: String, from: URL, seed: [SessionConversations.Entry]?)
+        case remembered(id: String, session: String, digests: [SHA256.Digest]?)
+        case answered(id: String, session: String, at: Date)
+        case appended(session: String, line: Data?, limit: Int)
+        case dropsReported(session: String, line: Data?)
+        case drained
+        case opened(session: String, fd: Int32)
+        case suspended(session: String, at: Date)
+        case closed
+        case failed
+    }
+
+    var pending: [(session: String, line: Data)] = []
+    var dropped = 0
+    var disabled = false
+    var handles: [String: Int32] = [:]
+    var conversations = SessionConversations()
+    var activity = SessionActivity()
+    var requestSessions: [String: String] = [:]
+    var resumedPaths: [String: URL] = [:]
+
+    func checkInvariants(after previous: SessionLogState) -> [String] {
+        disabled && !pending.isEmpty ? ["a disabled log buffers \(pending.count) lines"] : []
+    }
+
+    static func reduce(_ state: SessionLogState, _ event: Event) -> SessionLogState {
+        var next = state
+        switch event {
+        case .started(let id, let session, let now):
+            next.requestSessions[id] = session
+            next.activity.begin(session, at: now)
+        case .resumed(let session, let url, let seed):
+            next.resumedPaths[session] = url
+            if let seed { next.conversations.seed(session, with: seed) }
+        case .remembered(let id, let session, let digests):
+            if let digests { next.conversations.remember(digests, id: id, session: session) }
+        case .answered(let id, let session, let now):
+            next.requestSessions[id] = nil
+            next.activity.touch(session, at: now)
+        case .appended(let session, let line, let limit):
+            next.buffer(line, session: session, limit: limit)
+        case .dropsReported(let session, let line):
+            next.dropped = 0
+            next.buffer(line, session: session, limit: .max)
+        case .drained:
+            next.pending.removeAll(keepingCapacity: true)
+        case .opened(let session, let fd):
+            next.handles[session] = fd
+        case .suspended(let session, let now):
+            next.handles[session] = nil
+            next.activity.suspend(session, at: now)
+        case .closed:
+            next.handles.removeAll()
+        case .failed:
+            next.disabled = true
+            next.pending.removeAll()
+        }
+        return next
+    }
+
+    private mutating func buffer(_ line: Data?, session: String, limit: Int) {
+        guard !disabled else { return }
+        guard pending.count < limit else {
+            dropped += 1
+            return
+        }
+        if let line { pending.append((session, line)) }
     }
 }
