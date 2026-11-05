@@ -177,12 +177,19 @@ extension ResearchCall {
             try await model.undo(overlay)
             return .text("Overlay \(overlay) undone")
         case .compare(let request): return .json(try await model.compare(request))
-        case .adapter(let source, let gate): return .json(try await Self.lab(model).applyAdapter(source, gate: gate))
-        case .gate(let request): return .json(try await Self.lab(model).gate(request))
-        case .pack(let request): return .json(try await Self.lab(model).pack(request))
-        case .train(let request): return .json(try await Self.lab(model).train(request))
-        case .contrast(let request): return .json(try await Self.lab(model).contrast(request))
-        case .commitSteering(let commit): return .json(try await Self.lab(model).commitSteering(commit))
+        case .adapter, .gate, .pack, .train, .contrast, .commitSteering: return try await run(on: Self.lab(model))
+        }
+    }
+
+    func run(on lab: any ModelLab) async throws(BasaltError) -> ToolResult {
+        switch self {
+        case .adapter(let source, let gate): .json(try await lab.applyAdapter(source, gate: gate))
+        case .gate(let request): .json(try await lab.gate(request))
+        case .pack(let request): .json(try await lab.pack(request))
+        case .train(let request): .json(try await lab.train(request))
+        case .contrast(let request): .json(try await lab.contrast(request))
+        case .commitSteering(let commit): .json(try await lab.commitSteering(commit))
+        default: throw .invalidRequestStructure(details: "not a lab call")
         }
     }
 }

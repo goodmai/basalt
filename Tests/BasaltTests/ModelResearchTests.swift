@@ -18,6 +18,12 @@ struct ModelResearchTests {
         case .weightsDelta: ["tensor": "model.norm.weight", "values": [0.25]]
         case .overlayUndo: ["id": 3]
         case .experimentCompare: ["prompts": ["a", "b"], "overlays": [3], "maxTokens": 8]
+        default: labArguments(tool)
+        }
+    }
+
+    static func labArguments(_ tool: ResearchTool) -> [String: Any] {
+        switch tool {
         case .adapterApply: ["module": "model.layers.0.mlp.down_proj", "input": [1.0], "output": [2.0], "scale": 0.5, "gate": ["heldOut": ["h"], "maxKL": 0.25, "target": [["prompt": "2 + 2 =", "expected": "4"]]]]
         case .gateCheck: ["heldOut": ["h"], "maxPerplexityRise": 0.5]
         case .tensorPack: ["tensor": "w", "format": "affine", "bits": 3, "groupSize": 32]
@@ -25,6 +31,7 @@ struct ModelResearchTests {
         case .trainExperts: ["count": 40, "seed": 7, "layers": [2, 3], "rank": 4, "iterations": 20, "heldOut": ["Name a colour."]]
         case .steerSearch: LabSteerTests.searchArguments
         case .steerCommit: LabSteerTests.commitArguments
+        default: [:]
         }
     }
 
@@ -40,6 +47,12 @@ struct ModelResearchTests {
         case .overlaysList: .overlays
         case .overlayUndo: .undo(3)
         case .experimentCompare: .compare(CompareRequest(prompts: ["a", "b"], overlays: [3], maxTokens: 8))
+        default: labExpected(tool)
+        }
+    }
+
+    static func labExpected(_ tool: ResearchTool) -> ResearchCall {
+        switch tool {
         case .adapterApply: .adapter(.rankOne(module: "model.layers.0.mlp.down_proj", input: [1], output: [2], scale: 0.5), gate: Self.gate)
         case .gateCheck: .gate(GateRequest(heldOut: ["h"], maxPerplexityRise: 0.5))
         case .tensorPack: .pack(PackRequest(tensor: "w", format: .affine(bits: 3, groupSize: 32)))
@@ -47,6 +60,7 @@ struct ModelResearchTests {
         case .trainExperts: .train(Self.train)
         case .steerSearch: .contrast(LabSteerTests.searchRequest)
         case .steerCommit: .commitSteering(LabSteerTests.commitRequest)
+        default: .describe
         }
     }
 

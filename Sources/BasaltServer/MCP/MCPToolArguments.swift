@@ -314,6 +314,12 @@ enum ResearchCall: Sendable, Equatable {
         case .overlaysList: self = .overlays
         case .overlayUndo: self = .undo(OverlayID(try MCPArguments.required("id", MCPArguments.integer("id", in: args, Self.nonNegative))))
         case .experimentCompare: self = .compare(try CompareRequest(mcp: args))
+        case .adapterApply, .gateCheck, .tensorPack, .tensorUnpack, .trainExperts, .steerSearch, .steerCommit: self = try Self(lab: tool, args)
+        }
+    }
+
+    init(lab tool: ResearchTool, _ args: [String: Any]?) throws(MCPFailure) {
+        switch tool {
         case .adapterApply: self = .adapter(try AdapterSource(mcp: args), gate: try MCPArguments.present("gate", in: args).map { value throws(MCPFailure) in try GateRequest(mcp: value) })
         case .gateCheck: self = .gate(try GateRequest(mcp: args))
         case .tensorPack: self = .pack(try PackRequest(mcp: args, formats: PackRequest.packFormats))
@@ -321,6 +327,7 @@ enum ResearchCall: Sendable, Equatable {
         case .trainExperts: self = .train(try TrainRequest(mcp: args))
         case .steerSearch: self = .contrast(try ContrastRequest(mcp: args))
         case .steerCommit: self = .commitSteering(try SteeringCommit(mcp: args))
+        default: throw .invalidParams("\(tool.rawValue) is not a lab tool")
         }
     }
 }
@@ -545,11 +552,10 @@ extension ContrastRequest {
     }
 
     init(mcp args: [String: Any]?) throws(MCPFailure) {
-        self.init(
-            positive: try Self.prompts("positive", in: args, Self.classPrompts),
-            negative: try Self.prompts("negative", in: args, Self.classPrompts),
-            heldOut: try Self.prompts("heldOut", in: args, Self.heldOutPrompts),
-            layers: try MCPArguments.integers("layers", in: args))
+        let positive = try Self.prompts("positive", in: args, Self.classPrompts)
+        let negative = try Self.prompts("negative", in: args, Self.classPrompts)
+        let heldOut = try Self.prompts("heldOut", in: args, Self.heldOutPrompts)
+        self.init(positive: positive, negative: negative, heldOut: heldOut, layers: try MCPArguments.integers("layers", in: args))
         topHeads = try MCPArguments.integer("topHeads", in: args, Self.headLimit) ?? topHeads
         if let scales = try MCPArguments.numbers("scales", in: args) {
             guard Self.scaleCount.contains(scales.count) else { throw .invalidParams("scales must hold \(Self.scaleCount) numbers") }

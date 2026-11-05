@@ -215,7 +215,7 @@ extension ResearchTool {
         }
     }
 
-    private static func object(_ properties: [String: Any], required: [String] = []) -> AnyCodable {
+    static func object(_ properties: [String: Any], required: [String] = []) -> AnyCodable {
         var schema: [String: Any] = ["type": "object", "properties": properties]
         if !required.isEmpty { schema["required"] = required }
         return AnyCodable(schema)
@@ -228,7 +228,7 @@ extension ResearchTool {
         ]
     }
 
-    private static var numbers: [String: Any] { ["type": "array", "items": ["type": "number"], "minItems": 1] }
+    static var numbers: [String: Any] { ["type": "array", "items": ["type": "number"], "minItems": 1] }
 
     private static var tensorProperties: [String: Any] {
         [
@@ -278,7 +278,10 @@ extension ResearchTool {
         ]
     }
 
-    private static var adapterProperties: [String: Any] {
+}
+
+extension ResearchTool {
+    static var adapterProperties: [String: Any] {
         [
             "directory": ["type": "string", "description": "mlx-lm adapter directory with adapter_config.json and adapters.safetensors; or give module, input and output"],
             "module": ["type": "string", "description": "rank-1: linear layer name, e.g. model.layers.3.mlp.down_proj"],
@@ -289,7 +292,7 @@ extension ResearchTool {
         ]
     }
 
-    private static var gateProperties: [String: Any] {
+    static var gateProperties: [String: Any] {
         [
             "heldOut": ["type": "array", "items": ["type": "string"], "minItems": ResearchCall.comparePrompts.lowerBound, "maxItems": ResearchCall.comparePrompts.upperBound, "description": "Prompts whose next-token distributions and baseline text are compared with the pristine model"],
             "maxKL": ["type": "number", "minimum": 0, "description": "Limit on the mean KL divergence (default 0.5)"],
@@ -301,7 +304,7 @@ extension ResearchTool {
         ]
     }
 
-    private static var packProperties: [String: Any] {
+    static var packProperties: [String: Any] {
         [
             "tensor": ["type": "string", "description": "Weight of a linear layer as model_tensors lists it, e.g. model.layers.3.mlp.down_proj.weight"],
             "format": ["type": "string", "enum": PackRequest.packFormats, "description": "Target format (default affine)"],
@@ -310,14 +313,14 @@ extension ResearchTool {
         ]
     }
 
-    private static var unpackProperties: [String: Any] {
+    static var unpackProperties: [String: Any] {
         [
             "tensor": ["type": "string", "description": "Weight of a quantized linear layer as model_tensors lists it"],
             "format": ["type": "string", "enum": PackRequest.unpackFormats, "description": "Float type of the dense layer (default bfloat16)"],
         ]
     }
 
-    private static var trainProperties: [String: Any] {
+    static var trainProperties: [String: Any] {
         [
             "count": ["type": "integer", "minimum": TrainRequest.taskCounts.lowerBound, "maximum": TrainRequest.taskCounts.upperBound, "description": "Generated integer +, -, * problems (default 200); a fifth is held out for accuracy"],
             "seed": ["type": "integer", "minimum": 0, "description": "Seed of the problem generator (default 0)"],
@@ -340,7 +343,7 @@ extension ResearchTool {
         ["type": "array", "items": ["type": "string"], "minItems": range.lowerBound, "maxItems": range.upperBound, "description": description]
     }
 
-    private static var steerSearchProperties: [String: Any] {
+    static var steerSearchProperties: [String: Any] {
         [
             "positive": prompts(ContrastRequest.classPrompts, "Prompts showing the behaviour to find"),
             "negative": prompts(ContrastRequest.classPrompts, "Prompts without it"),
@@ -351,7 +354,7 @@ extension ResearchTool {
         ]
     }
 
-    private static var steerCommitProperties: [String: Any] {
+    static var steerCommitProperties: [String: Any] {
         [
             "layer": ["type": "integer", "minimum": 0, "description": "bestLayer from steer_search"],
             "direction": numbers.merging(["description": "direction from steer_search (hidden size)"]) { $1 },

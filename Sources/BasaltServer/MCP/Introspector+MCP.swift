@@ -42,10 +42,10 @@ extension ToolResult {
 
 extension IntrospectRequest {
     init(mcp args: [String: Any]?) throws(MCPFailure) {
-        self.init(
-            goal: try MCPArguments.required("goal", MCPArguments.string("goal", in: args)),
-            maxSteps: try MCPArguments.integer("maxSteps", in: args, Self.steps) ?? 8,
-            allowInterventions: try MCPArguments.optionalBoolean("allowInterventions", in: args) ?? false)
+        let goal = try MCPArguments.required("goal", MCPArguments.string("goal", in: args))
+        let maxSteps = try MCPArguments.integer("maxSteps", in: args, Self.steps) ?? 8
+        let allowInterventions = try MCPArguments.optionalBoolean("allowInterventions", in: args) ?? false
+        self.init(goal: goal, maxSteps: maxSteps, allowInterventions: allowInterventions)
         resultBudget = try MCPArguments.integer("resultBudget", in: args, Self.budgets) ?? resultBudget
     }
 }
