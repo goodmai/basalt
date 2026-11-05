@@ -36,6 +36,11 @@ struct AdapterServingRealModelTests {
         try await orchestrator.generate(request: greedy(prompt, key: nil, maxTokens: maxTokens).withAdapter(adapter))
     }
 
+    static func text(_ orchestrator: ModelOrchestratorActor, _ adapter: String?) async throws -> String {
+        let response = try await ask(orchestrator, adapter)
+        return (response.reasoningText ?? "") + response.generatedText
+    }
+
     static func percentile(_ values: [Duration], _ share: Double) -> Duration {
         let sorted = values.sorted()
         return sorted[min(sorted.count - 1, Int(Double(sorted.count) * share))]
@@ -50,14 +55,15 @@ struct AdapterServingRealModelTests {
         let container = try #require(await engine.container)
         let directories = try await Self.trained(container)
         let orchestrator = ModelOrchestratorActor(engine: engine, telemetry: TelemetryTracker())
-        let base = try await Self.ask(orchestrator, nil).generatedText
+        let base = try await Self.text(orchestrator, nil)
+        #expect(!base.isEmpty)
         let before = Memory.activeMemory
         try await orchestrator.loadAdapters(directories)
-        let firstA = try await Self.ask(orchestrator, "a").generatedText
-        let firstB = try await Self.ask(orchestrator, "b").generatedText
+        let firstA = try await Self.text(orchestrator, "a")
+        let firstB = try await Self.text(orchestrator, "b")
         let resident = Memory.activeMemory - before
-        #expect(try await Self.ask(orchestrator, nil).generatedText == base)
-        #expect(try await Self.ask(orchestrator, "a").generatedText == firstA)
+        #expect(try await Self.text(orchestrator, nil) == base)
+        #expect(try await Self.text(orchestrator, "a") == firstA)
         print("[#179] \(path): base \(base.debugDescription) | a \(firstA.debugDescription) | b \(firstB.debugDescription)")
 
         var latencies: [Duration] = []
@@ -66,7 +72,7 @@ struct AdapterServingRealModelTests {
             try await engine.useAdapter(index.isMultiple(of: 2) ? "b" : "a")
             latencies.append(ContinuousClock.now - started)
         }
-        #expect(try await Self.ask(orchestrator, "a").generatedText == firstA)
+        #expect(try await Self.text(orchestrator, "a") == firstA)
 
         let unfused = try await Self.ask(orchestrator, "a", maxTokens: 256).tokensPerSecond
         let plain = try await Self.ask(orchestrator, nil, maxTokens: 256).tokensPerSecond
@@ -77,15 +83,15 @@ struct AdapterServingRealModelTests {
         #expect(unfused >= 0.9 * fused)
     }
 
-    @Test("A base whose architecture takes no LoRA (Gemma 4 through MLXVLM) refuses the adapter at startup, naming it",
+    @Test("An adapter whose tensors fit no layer of the base (an LLM-named adapter on Gemma 4 through MLXVLM) is refused at startup, naming the tensor",
           .enabled(if: refusedModelPath != nil, "set BASALT_E2E=1 and BASALT_E2E_LORA_REFUSED_MODEL_PATH"))
-    func refusesArchitecture() async throws {
+    func refusesMismatchedAdapter() async throws {
         let engine = MLXInferenceEngine(promptCacheBytes: 0)
         try await engine.load(modelPath: try #require(Self.refusedModelPath))
         let directory = try LabGateTests.adapterDirectory(rank: 2, storedRank: 2)
         let refusal = await #expect(throws: BasaltError.self) { try await engine.loadAdapters(["a": directory]) }
         print("[#179] refused: \(refusal?.localizedDescription ?? "nothing")")
-        #expect(refusal?.localizedDescription.contains("architecture takes no LoRA") == true)
+        #expect(refusal?.localizedDescription.contains("belongs to no linear layer of this model") == true)
         #expect(await engine.adapterNames.isEmpty)
     }
 }

@@ -95,7 +95,7 @@ package struct RESTServer: Sendable {
         if let limit = config.rateLimitPerMinute {
             router.add(middleware: RateLimitMiddleware(requestsPerMinute: limit, burst: config.rateBurst, clock: rateClock))
         }
-        router.add(middleware: JSONNestingLimitMiddleware())
+        router.add(middleware: JSONNestingLimitMiddleware(zeroCopyBody: config.experimentalZeroCopyBody))
         router.add(middleware: RetryAfterMiddleware())
     }
 
@@ -114,12 +114,12 @@ package struct RESTServer: Sendable {
     }
 
     private func addGenerationRoutes(to oai: RouterGroup<BasicRequestContext>, defaultId: String) {
-        let openAI = OpenAIController(orchestrator: orchestrator, modelId: defaultId)
+        let openAI = OpenAIController(orchestrator: orchestrator, modelId: defaultId, zeroCopyBody: config.experimentalZeroCopyBody)
         let embedding = EmbeddingsController(engine: embeddings, gate: orchestrator.gate)
         oai.post("/chat/completions", use: openAI.chatCompletions)
         oai.post("/responses", use: openAI.responses)
         oai.post("/generate", use: openAI.generateRaw)
-        oai.post("/messages", use: AnthropicController(orchestrator: orchestrator, modelId: defaultId).messages)
+        oai.post("/messages", use: AnthropicController(orchestrator: orchestrator, modelId: defaultId, zeroCopyBody: config.experimentalZeroCopyBody).messages)
         oai.post("/embeddings", use: embedding.embeddings)
         oai.post("/rerank", use: embedding.rerank)
     }

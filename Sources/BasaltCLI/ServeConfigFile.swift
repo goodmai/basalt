@@ -181,6 +181,7 @@ extension ServeConfigFile {
         "serve.max_tokens": .int("--max-tokens"),
         "serve.log_level": .text("--log-level"),
         "serve.experimental_samplers": .flag(on: "--experimental-samplers", off: nil),
+        "serve.experimental_zero_copy_body": .flag(on: "--experimental-zero-copy-body", off: nil),
         "serve.grammar_jump_forward": .flag(on: "--grammar-jump-forward", off: nil),
         "serve.kv.bits": .text("--kv-bits"),
         "serve.kv.zones": .flag(on: "--kv-zones", off: nil),

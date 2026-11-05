@@ -120,6 +120,12 @@ struct ServeCommand: AsyncParsableCommand {
     var experimentalSamplers = false
 
     @Flag(
+        name: .customLong("experimental-zero-copy-body"),
+        help: "Wrap each collected REST request body in Data without copying it, in the JSON nesting check and the chat pipeline. Measured on Gemma 4 26B-A4B with 1-8 images at the 32 MB limit: process footprint peak 70-95 MB lower, MLX peak unchanged, TTFT no better (#345)"
+    )
+    var experimentalZeroCopyBody = false
+
+    @Flag(
         name: .customLong("grammar-jump-forward"),
         help: "Feed XGrammar-forced spans in one forward pass during constrained decoding (opt-in; JSON schema and forced tool calls)"
     )
@@ -228,6 +234,7 @@ struct ServeCommand: AsyncParsableCommand {
         config.modelId = model ?? modelPath
         config.maxTokens = maxTokens
         config.logLevel = logLevel
+        config.experimentalZeroCopyBody = experimentalZeroCopyBody
 
         BasaltLogger.globalLevel = config.logLevel.basaltLevel
 

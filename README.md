@@ -205,7 +205,8 @@ The flags worth knowing on `serve`:
 | `--max-tokens` | default generation ceiling (2048–128000) |
 | `--dry-run` | memory feasibility check, then exit without loading |
 | `--config basalt.yaml` | serve options from a YAML file: keys under `defaults.{model,serve,mcp}` become the matching flags, flags on the command line win, unknown keys are reported with line and column (#344) |
-| `--adapter name=dir` | load an mlx-lm LoRA adapter on the resident base model (repeatable); a request picks one with `X-Basalt-Adapter: name`. Same-adapter requests run together, a switch waits for running generations, each adapter has its own prompt-cache namespace. Not on Gemma 4 (#179) |
+| `--adapter name=dir` | load an mlx-lm LoRA adapter on the resident base model (repeatable); a request picks one with `X-Basalt-Adapter: name`. Same-adapter requests run together, a switch waits for running generations, each adapter has its own prompt-cache namespace; an adapter whose tensors fit no layer of the base is refused at startup (#179) |
+| `--experimental-zero-copy-body` | **Experimental**: wrap each REST request body in `Data` without copying it. On Gemma 4 26B-A4B with 1–8 images, process footprint peak 70–95 MB lower, TTFT no better (#345) |
 | `--require-verified` | before loading, re-hash the snapshot against its sidecars or the Hub's digests and refuse to start on any unverified file (#367) |
 | `--port`, `--host` | default 127.0.0.1:8080; any other host needs an API key (`BASALT_API_KEY` or `--auto-generate-key`) |
 | `virtual_keys` (config only) | extra API keys with their own cloud budget: `"virtual_keys": [{"key": "vk-…", "id": "team-a", "max_budget": 2.0}]` in `~/.gem/config.json`; a key is at least 16 characters, ids and keys are unique; spend per key survives restarts |
