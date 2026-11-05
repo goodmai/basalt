@@ -5,6 +5,7 @@ import Hummingbird
 import HummingbirdTesting
 import NIOCore
 import HTTPTypes
+import MLXLMCommon
 @testable import BasaltCore
 @testable import BasaltInference
 @testable import BasaltServer
@@ -22,14 +23,17 @@ struct StubEmbeddingEngine: EmbeddingEngine {
     var calls = EmbeddingCalls()
     var betweenBatches: (paused: AsyncStream<Void>.Continuation, resume: AsyncStream<Void>)?
 
+    func pauseBetweenBatches() async {
+        guard let betweenBatches else { return }
+        calls.events.withLock { $0.append("micro-batch 1") }
+        betweenBatches.paused.yield()
+        for await _ in betweenBatches.resume { break }
+        calls.events.withLock { $0.append("micro-batch 2") }
+    }
+
     func embed(_ inputs: [EmbeddingInput], dimensions: Int?, yieldingTo gate: GenerationGate?) async throws(BasaltError) -> Embeddings {
         calls.inputs.withLock { $0.append(inputs) }
-        if let betweenBatches {
-            calls.events.withLock { $0.append("micro-batch 1") }
-            betweenBatches.paused.yield()
-            for await _ in betweenBatches.resume { break }
-            calls.events.withLock { $0.append("micro-batch 2") }
-        }
+        await pauseBetweenBatches()
         let vectors = inputs.indices.map { row -> [Float] in
             let raw = (0 ..< (dimensions ?? 8)).map { Float($0 + row + 1) }
             let norm = raw.reduce(0) { $0 + $1 * $1 }.squareRoot()
@@ -38,8 +42,9 @@ struct StubEmbeddingEngine: EmbeddingEngine {
         return Embeddings(vectors: vectors, promptTokens: inputs.count * 3)
     }
 
-    func rerank(query: String, documents: [String]) async throws(BasaltError) -> [Double] {
-        documents.map { Double($0.count) }
+    func rerank(query: String, documents: [String], yieldingTo gate: GenerationGate?) async throws(BasaltError) -> [Double] {
+        await pauseBetweenBatches()
+        return documents.map { Double($0.count) }
     }
 }
 
@@ -195,6 +200,15 @@ struct EmbeddingsAPITests {
 
     @Test("A generation runs to completion between two micro-batches of one long embeddings request (#233)", .timeLimit(.minutes(1)))
     func generationRunsBetweenMicroBatches() async throws {
+        try await generationRunsBetweenBatches(of: "/v1/embeddings", #"{"input": ["a", "b"]}"#)
+    }
+
+    @Test("A chat request completes between two /v1/rerank chunks instead of waiting for the whole document list (#355)", .timeLimit(.minutes(1)))
+    func generationRunsBetweenRerankChunks() async throws {
+        try await generationRunsBetweenBatches(of: "/v1/rerank", #"{"query": "q", "documents": ["a", "bb"]}"#)
+    }
+
+    private func generationRunsBetweenBatches(of uri: String, _ body: String) async throws {
         let orchestrator = ModelOrchestratorActor(engine: MockInferenceEngine(), maxTokens: 65536, telemetry: TelemetryTracker())
         try await orchestrator.loadModel(path: "mock")
         let (paused, pause) = AsyncStream<Void>.makeStream()
@@ -203,7 +217,7 @@ struct EmbeddingsAPITests {
         engine.betweenBatches = (pause, resumed)
         let calls = engine.calls
         try await app(engine, orchestrator: orchestrator).test(.router) { (client) async throws in
-            async let embedding = post(client, "/v1/embeddings", #"{"input": ["a", "b"]}"#)
+            async let embedding = post(client, uri, body)
             for await _ in paused { break }
             let response = try await orchestrator.generate(request: GenerationRequest(prompt: "hi", maxTokens: 4))
             #expect(response.completionTokens > 0)
@@ -274,6 +288,19 @@ struct GenerationIdleTests {
         #expect(clock.withLock { $0 } >= .seconds(1))
         await gate.release(id)
         #expect(await gate.idle(within: .seconds(1)))
+    }
+
+    @Test("Rerank asks the gate before each micro-batch only when a chat model is loaded, and splits only while generation stays busy (#355)")
+    func rerankOptions() async throws {
+        #expect(EmbeddingService.rerankOptions(yieldingTo: nil).beforeMicroBatch == nil)
+        let clock = Mutex(Duration.zero)
+        let gate = GenerationGate(now: { clock.withLock { $0 } }, sleep: { step in clock.withLock { $0 += step } })
+        let split = try #require(EmbeddingService.rerankOptions(yieldingTo: gate).beforeMicroBatch)
+        #expect(await !split())
+        let id = try await gate.admit()
+        #expect(await split())
+        await gate.release(id)
+        #expect(await !split())
     }
 
     @Test("A cancelled wait returns false instead of spinning until the limit")
