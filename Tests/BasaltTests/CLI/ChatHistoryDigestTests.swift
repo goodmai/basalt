@@ -54,7 +54,8 @@ struct ChatHistoryDigestTests {
     @Test("A resumed history that starts with a system message still leaves a user turn first")
     func foldRealignsOnUserTurn() {
         var digest = ChatHistoryDigest(turns: [ChatMessageInput(role: .system, text: "be brief")] + Self.exchanges(4).turns)
-        #expect(digest.foldOlderHalf())
+        let folded = digest.foldOlderHalf()
+        #expect(folded)
         #expect(digest.turns.first?.role == .user)
         #expect(digest.lines.first == "system: be brief")
     }
