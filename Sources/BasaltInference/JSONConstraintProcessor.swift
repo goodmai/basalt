@@ -125,19 +125,6 @@ final class GrammarSession: Sendable {
 
     func accepts(_ ids: [Int]) -> Bool {
         for id in ids {
-            let consumedForced = progress.withLock { progress -> Bool? in
-                guard !progress.pendingForced.isEmpty else { return nil }
-                guard progress.pendingForced.first == id else {
-                    progress.failed = true
-                    return false
-                }
-                progress.pendingForced.removeFirst()
-                return true
-            }
-            if let consumedForced {
-                if !consumedForced { return false }
-                continue
-            }
             commit(id)
             guard progress.withLock({ !$0.failed }) else { return false }
         }

@@ -96,4 +96,21 @@ struct GrammarFormatRealModelTests {
         print("[#346] batched \(entry): \(rows.count - mismatches.count)/\(rows.count) matched, batched rows \(batchedRows)")
         #expect(mismatches.isEmpty, "\(mismatches.map { "\($0.0.0?.kind ?? "free"): \($0.1)" })")
     }
+
+    @Test("A JSON-schema request with an assistant prefill answers the same with --grammar-jump-forward as without it (#205)",
+          .enabled(if: !models.isEmpty, "set BASALT_E2E=1 and BASALT_E2E_GRAMMAR_MODELS"), arguments: models)
+    func prefillUnderJumpForward(entry: String) async throws {
+        let engine = MLXInferenceEngine()
+        try await engine.load(modelPath: entry)
+        let schema = #"{"type": "object", "properties": {"name": {"type": "string"}, "age": {"type": "integer"}}, "required": ["name", "age"]}"#
+        let messages = [ChatMessageInput(role: .user, text: "Invent a person and give their name and age as JSON."),
+                        ChatMessageInput(role: .assistant, text: #"{"name":"#)]
+        var request = GenerationRequest(prompt: "", maxTokens: 64, temperature: 0, messages: messages)
+        request.responseFormat = .jsonSchema(schema)
+        request.enableThinking = false
+        let off = try await engine.generate(request: request.withGrammarJumpForward(false))
+        let on = try await engine.generate(request: request.withGrammarJumpForward(true))
+        print("[#205] \(entry): off \(off.generatedText) | on \(on.generatedText)")
+        #expect(on.generatedText == off.generatedText)
+    }
 }
