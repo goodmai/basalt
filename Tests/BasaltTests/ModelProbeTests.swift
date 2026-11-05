@@ -71,6 +71,16 @@ struct ModelProbeTests {
         #expect((probe.failure != nil) == (verdict == .fail), "\(name)")
     }
 
+    @Test("Each measured family gets its own perplexity ceiling, three times its weakest measured checkpoint; an unknown family keeps the global 40", arguments: [
+        ("qwen3_5", 9.76, false), ("qwen3_5", 31, true), ("prism_hadamard_qwen35", 1.35, false), ("prism_hadamard_qwen35", 6, true),
+        ("gemma4", 7.95, false), ("gemma4", 25, true), ("gemma4_unified", 32.99, false), ("gemma4_unified", 100, true),
+        ("lfm2_moe", 2.56, false), ("lfm2_moe", 9, true), ("mistral3", 40, false), ("mistral3", 41, true),
+    ] as [(String, Float, Bool)])
+    func familyCeilings(family: String, perplexity: Float, warns: Bool) {
+        let probe = ModelProbe(Self.facts { $0.perplexity = perplexity }, family: family)
+        #expect(probe.findings.map(\.check) == (warns ? [.perplexity] : []), "\(family) at \(perplexity)")
+    }
+
     @Test("A probe result survives the disk cache's JSON round trip")
     func codable() throws {
         let probe = ModelProbe(Self.facts { $0.template = .failed("x") })
