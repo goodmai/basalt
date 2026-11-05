@@ -307,12 +307,12 @@ public actor MLXInferenceEngine: InferenceEngine {
     func attach(
         _ container: ModelContainer, profile: any ModelProfile = GenericProfile(),
         samplingDefaults: SamplingDefaults = SamplingDefaults(), controlTokens: ControlTokenGuard = .none,
-        fingerprint: String? = nil, modelDescription: String = "", capabilities: ModelCapabilities = .unrestricted
+        fingerprint: String? = nil, modelDescription: String = ""
     ) {
         state = .reduce(state, .loadStarted(path: modelDescription))
         attach(container, facts: ModelFacts(
             profile: profile, samplingDefaults: samplingDefaults, controlTokens: controlTokens,
-            fingerprint: fingerprint, description: modelDescription, capabilities: capabilities), epoch: modelEpoch)
+            fingerprint: fingerprint, description: modelDescription), epoch: modelEpoch)
     }
 
     @discardableResult
@@ -603,7 +603,7 @@ public actor MLXInferenceEngine: InferenceEngine {
             temperature: temperature,
             topP: Float(request.topP ?? samplingDefaults.topP ?? 0.9)
         )
-        params.kvBits = supportsKVQuantization ? (request.kvPrecision ?? kvPrecision)?.uniform.keyBits : nil
+        params.kvBits = modelFacts.capabilities.kvBits(request.kvPrecision ?? kvPrecision)
         params.quantizedKVStart = quantizedKVStart
         params.repetitionPenalty = request.repetitionPenalty.map(Float.init) ?? repetitionPenalty
             ?? samplingDefaults.repetitionPenalty.map(Float.init)
