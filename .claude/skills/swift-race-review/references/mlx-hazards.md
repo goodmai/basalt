@@ -15,7 +15,7 @@ Each section names the shared state, the contexts that race on it, how it showed
 `CompiledTrace` in mlx-swift-lm takes its lock only to install the trace, and calls the compiled function outside it.
 
 **Symptom:** `Fatal error: [eval] Attempting to eval an array without a primitive`.
-- It appears on a Qwen3.5 hybrid (Ornith, Qwen3.8, Bonsai 2), never on Llama, Nemotron-H or LFM2, which have no compiled traces.
+- It appears on a Qwen3.5 hybrid (Ornith, Qwen3.8, Bonsai 2), never on dense Qwen3, Nemotron-H or LFM2, which have no compiled traces.
 - It appears under `--max-concurrent 4` even with batching off.
 - In the batch decoder it surfaced on the second step, as soon as a new row prefilled while the batch thread decoded.
 

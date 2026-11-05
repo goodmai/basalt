@@ -84,11 +84,11 @@ struct FitCommandTests {
     @Test("Parameter counts are read from the size token, not from '-4bit'")
     func testParameterInference() {
         let total = { (id: String) in ModelDefinition.inferTotalParameters(id: id, name: "", ramMB: 0) }
-        #expect(total("mlx-community/Llama-3.1-8B-Instruct-4bit") == 8)
+        #expect(total("mlx-community/Qwen3-8B-Instruct-4bit") == 8)
         #expect(total("Qwen/Qwen3-30B-A3B-4bit") == 30)
         #expect(total("mlx-community/Qwen2.5-0.5B-Instruct-4bit") == 0.5)
         #expect(total("mlx-community/Qwen3.5-4B-4bit") == 4)
         #expect(ModelDefinition.inferActiveParameters(id: "Qwen/Qwen3-30B-A3B-4bit", name: "", total: 30) == 3)
-        #expect(ModelDefinition.inferActiveParameters(id: "mlx-community/Llama-3.1-8B-4bit", name: "", total: 8) == 8)
+        #expect(ModelDefinition.inferActiveParameters(id: "mlx-community/Qwen3-8B-4bit", name: "", total: 8) == 8)
     }
 }

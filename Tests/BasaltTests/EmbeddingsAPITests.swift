@@ -224,7 +224,7 @@ struct EmbeddingsAPITests {
             (#"{"model_type": "qwen3", "architectures": ["Qwen3ForCausalLM"]}"#, true, "/models/snapshot", true),
             (#"{"model_type": "lfm2", "mlx": {"head": "embedding"}}"#, false, "mlx-community/LFM2.5-Embedding-350M-4bit", true),
             (#"{"model_type": "qwen3", "architectures": ["Qwen3ForCausalLM"]}"#, false, "mlx-community/Qwen3-4B-4bit", false),
-            (#"{"model_type": "llama", "architectures": ["LlamaForCausalLM"]}"#, true, "mlx-community/Llama-3.2-1B-Instruct-4bit", false),
+            (#"{"model_type": "nemotron_h", "architectures": ["NemotronHForCausalLM"]}"#, true, "mlx-community/NVIDIA-Nemotron-3-Nano-4B-4bit", false),
             (#"{"model_type": "gemma3_text"}"#, false, "mlx-community/gemma-3-1b-it-qat-4bit", false),
             (#"{"model_type": "lfm2", "architectures": ["Lfm2ForCausalLM"]}"#, false, "LiquidAI/LFM2-1.2B", false),
             (#"{"model_type": "lfm2", "mlx": {"head": "colbert"}}"#, false, "mlx-community/LFM2.5-ColBERT-350M-4bit", false),

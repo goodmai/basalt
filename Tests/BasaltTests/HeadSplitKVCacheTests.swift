@@ -65,7 +65,7 @@ struct HeadSplitKVCacheTests {
     }
 
     @Test("On a tiny model, a mask with every head retrieving, or a partial mask before any token leaves the window, decodes exactly like the dense cache",
-          arguments: [(TinyModel.Family.llama, false), (.llama, true), (.qwen35, false), (.qwen35, true)])
+          arguments: [(TinyModel.Family.qwen3Small, false), (.qwen3Small, true), (.qwen35, false), (.qwen35, true)])
     func matchesDenseModelWhileNothingIsDropped(family: TinyModel.Family, partial: Bool) throws {
         let model = try TinyModel.make(family)
         let prompt = MLXArray((0 ..< 40).map { Int32(1 + $0 % 200) }).reshaped(1, -1)

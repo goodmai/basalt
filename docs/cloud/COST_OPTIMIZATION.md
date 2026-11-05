@@ -17,7 +17,7 @@ Monthly Usage: $0.1500 / $50.0000
 
 Model Breakdown:
   - google/gemma-2-9b-it:free: $0.0000
-  - meta-llama/llama-3-70b-instruct: $0.1500
+  - qwen/qwen3-235b-a22b: $0.1500
 ```
 
 ## Hybrid Inference Strategy

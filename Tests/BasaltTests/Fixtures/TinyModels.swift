@@ -7,13 +7,12 @@ import MLXLLM
 
 enum TinyModel {
     enum Family: String, CaseIterable, Sendable {
-        case llama, llama4Layers, qwen3, qwen3HeadDim32, qwen35, qwen35Moe, gemma3, gemma4, gemma4Moe, qwen3Moe, sigmoidMoe, nemotronH, lfm2, lfm2Moe, prism
+        case qwen3Small, qwen3, qwen3HeadDim32, qwen35, qwen35Moe, gemma3, gemma4, gemma4Moe, qwen3Moe, sigmoidMoe, nemotronH, lfm2, lfm2Moe, prism
 
         func model(_ config: Data) throws -> any LanguageModel {
             let decoder = JSONDecoder.json5()
             return switch self {
-            case .llama, .llama4Layers: LlamaModel(try decoder.decode(LlamaConfiguration.self, from: config))
-            case .qwen3, .qwen3HeadDim32: Qwen3Model(try decoder.decode(Qwen3Configuration.self, from: config))
+            case .qwen3Small, .qwen3, .qwen3HeadDim32: Qwen3Model(try decoder.decode(Qwen3Configuration.self, from: config))
             case .qwen35, .qwen35Moe: Qwen35TextModel(try decoder.decode(Qwen35TextConfiguration.self, from: config))
             case .gemma3: Gemma3TextModel(try decoder.decode(Gemma3TextConfiguration.self, from: config))
             case .gemma4, .gemma4Moe: Gemma4TextModel(try decoder.decode(Gemma4TextConfiguration.self, from: config))
@@ -27,8 +26,8 @@ enum TinyModel {
 
         var seed: UInt64 {
             switch self {
-            case .llama: 56
-            case .llama4Layers, .qwen3, .qwen3HeadDim32: 36
+            case .qwen3Small: 56
+            case .qwen3, .qwen3HeadDim32: 36
             case .qwen35, .qwen35Moe: 79
             case .gemma3: 103
             case .gemma4, .gemma4Moe, .qwen3Moe, .sigmoidMoe: 228
@@ -41,19 +40,14 @@ enum TinyModel {
 
         var weightScale: Float {
             switch self {
-            case .llama, .gemma3: 4
-            case .llama4Layers, .qwen3, .qwen3HeadDim32, .gemma4, .gemma4Moe, .qwen35, .qwen35Moe, .qwen3Moe, .sigmoidMoe, .nemotronH, .lfm2, .lfm2Moe, .prism: 1
+            case .qwen3Small, .gemma3: 4
+            case .qwen3, .qwen3HeadDim32, .gemma4, .gemma4Moe, .qwen35, .qwen35Moe, .qwen3Moe, .sigmoidMoe, .nemotronH, .lfm2, .lfm2Moe, .prism: 1
             }
         }
 
         var config: String {
             switch self {
-            case .llama: """
-                {"hidden_size": 64, "num_hidden_layers": 2, "intermediate_size": 128,
-                 "num_attention_heads": 4, "num_key_value_heads": 2, "rms_norm_eps": 1e-5,
-                 "vocab_size": 256, "rope_theta": 10000.0, "tie_word_embeddings": false}
-                """
-            case .llama4Layers: Self.llama.config.replacingOccurrences(of: "\"num_hidden_layers\": 2", with: "\"num_hidden_layers\": 4")
+            case .qwen3Small: Self.qwen3.config.replacingOccurrences(of: "\"num_hidden_layers\": 4", with: "\"num_hidden_layers\": 2")
             case .qwen3: """
                 {"hidden_size": 64, "num_hidden_layers": 4, "intermediate_size": 128,
                  "num_attention_heads": 4, "num_key_value_heads": 2, "head_dim": 16, "rms_norm_eps": 1e-5,
@@ -127,10 +121,10 @@ enum TinyModel {
     }
 
     static let slidingWindow = 8
-    static let config = Family.llama.config
-    static let weightScale = Family.llama.weightScale
+    static let config = Family.qwen3Small.config
+    static let weightScale = Family.qwen3Small.weightScale
 
-    static func make(_ family: Family = .llama, adding extra: String = "") throws -> any LanguageModel {
+    static func make(_ family: Family = .qwen3Small, adding extra: String = "") throws -> any LanguageModel {
         let config = "{" + extra + family.config.dropFirst()
         let model = try withRandomState(MLXRandom.RandomState(seed: family.seed)) {
             let model = try family.model(Data(config.utf8))
@@ -148,7 +142,7 @@ enum TinyModel {
         return model
     }
 
-    static func container(_ family: Family = .llama, processor: any UserInputProcessor = ByteInputProcessor()) throws -> ModelContainer {
+    static func container(_ family: Family = .qwen3Small, processor: any UserInputProcessor = ByteInputProcessor()) throws -> ModelContainer {
         ModelContainer(context: ModelContext(
             configuration: ModelConfiguration(id: "tiny-\(family.rawValue)"),
             model: try make(family),
@@ -159,7 +153,7 @@ enum TinyModel {
     static let cacheBytesPerToken = 2 * 2 * 16 * 4 * 2
 
     static func engine(
-        _ family: Family = .llama, promptCacheBytes: Int? = nil, repetitionPenalty: Float? = nil,
+        _ family: Family = .qwen3Small, promptCacheBytes: Int? = nil, repetitionPenalty: Float? = nil,
         processor: any UserInputProcessor = ByteInputProcessor()
     ) async throws -> MLXInferenceEngine {
         let engine = MLXInferenceEngine(promptCacheBytes: promptCacheBytes, repetitionPenalty: repetitionPenalty)

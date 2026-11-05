@@ -521,7 +521,7 @@ struct RESTServerTests {
     }
 
     private static let jsonHeaders: HTTPFields = [.contentType: "application/json"]
-    private static let aliasModels = ["meta-llama/llama-3.1-8b-instruct:free", "org/name@rev", "org/model/variant"]
+    private static let aliasModels = ["qwen/qwen3-8b-instruct:free", "org/name@rev", "org/model/variant"]
     private static let pathLikeModels = ["/tmp", "./x", "../x", "~/x", "claude-local/..--x", "org/../x", "/", " /tmp/x", " claude-local/..--x"]
 
     @Test("REST model ids are repo ids: HF charset, two components, no path forms (#72)")

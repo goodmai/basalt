@@ -267,35 +267,35 @@ struct ZonedKVCacheEngineTests {
     static func container() throws -> ModelContainer {
         let config = """
             {"hidden_size": 128, "num_hidden_layers": 2, "intermediate_size": 256,
-             "num_attention_heads": 4, "num_key_value_heads": 2, "rms_norm_eps": 1e-5,
+             "num_attention_heads": 4, "num_key_value_heads": 2, "head_dim": 32, "rms_norm_eps": 1e-5,
              "vocab_size": 256, "rope_theta": 10000.0, "tie_word_embeddings": false}
             """
         let model = try withRandomState(MLXRandom.RandomState(seed: 7)) {
-            LlamaModel(try JSONDecoder().decode(LlamaConfiguration.self, from: Data(config.utf8)))
+            Qwen3Model(try JSONDecoder().decode(Qwen3Configuration.self, from: Data(config.utf8)))
         }
         model.update(parameters: model.parameters().mapValues { $0 * TinyModel.weightScale })
         eval(model)
         return ModelContainer(context: ModelContext(
-            configuration: ModelConfiguration(id: "tiny-llama-32"), model: model,
+            configuration: ModelConfiguration(id: "tiny-qwen3-32"), model: model,
             processor: ByteInputProcessor(), tokenizer: ByteTokenizer()))
     }
 
-    static func headDim80Model() throws -> LlamaModel {
+    static func headDim80Model() throws -> Qwen3Model {
         let config = """
             {"hidden_size": 320, "num_hidden_layers": 1, "intermediate_size": 64,
-             "num_attention_heads": 4, "num_key_value_heads": 2, "rms_norm_eps": 1e-5,
+             "num_attention_heads": 4, "num_key_value_heads": 2, "head_dim": 80, "rms_norm_eps": 1e-5,
              "vocab_size": 256, "rope_theta": 10000.0, "tie_word_embeddings": false}
             """
-        return LlamaModel(try JSONDecoder().decode(LlamaConfiguration.self, from: Data(config.utf8)))
+        return Qwen3Model(try JSONDecoder().decode(Qwen3Configuration.self, from: Data(config.utf8)))
     }
 
-    static func llama(hiddenSize: Int) throws -> LlamaModel {
+    static func qwen3(hiddenSize: Int) throws -> Qwen3Model {
         let config = """
             {"hidden_size": \(hiddenSize), "num_hidden_layers": 1, "intermediate_size": 64,
-             "num_attention_heads": 4, "num_key_value_heads": 2, "rms_norm_eps": 1e-5,
+             "num_attention_heads": 4, "num_key_value_heads": 2, "head_dim": \(hiddenSize / 4), "rms_norm_eps": 1e-5,
              "vocab_size": 256, "rope_theta": 10000.0, "tie_word_embeddings": false}
             """
-        return LlamaModel(try JSONDecoder().decode(LlamaConfiguration.self, from: Data(config.utf8)))
+        return Qwen3Model(try JSONDecoder().decode(Qwen3Configuration.self, from: Data(config.utf8)))
     }
 
     static func text(_ stream: AsyncStream<Generation>) async -> String {
@@ -308,22 +308,22 @@ struct ZonedKVCacheEngineTests {
 
     @Test("The probe accepts a model whose attention goes through attentionWithCacheUpdate and rejects one that reads the cache with update(), as Gemma 4 does")
     func probeTellsHowAttentionReadsTheCache() async throws {
-        let llama = try Self.container()
-        #expect(try await llama.perform { try ZonedKVCache.modelAttendsThroughCache($0.model) })
+        let dense = try Self.container()
+        #expect(try await dense.perform { try ZonedKVCache.modelAttendsThroughCache($0.model) })
         #expect(try !ZonedKVCache.modelAttendsThroughCache(SelfAttendingModel()))
         #expect(try !ZonedKVCache.modelAttendsThroughCache(Self.headDim80Model()))
     }
 
     @Test("k8v4h on a model whose value heads it cannot rotate (head dim 160) is found at load and flagged, so serve logs that it runs as k8v4")
     func loadFlagsUnrotatableValueHeads() async throws {
-        #expect(try ZonedKVCache.probe(Self.llama(hiddenSize: 640), precision: .k8v4h) == (true, false))
-        #expect(try ZonedKVCache.probe(Self.llama(hiddenSize: 512), precision: .k8v4h) == (true, true))
-        #expect(try ZonedKVCache.probe(Self.llama(hiddenSize: 512), precision: .k8v4) == (true, false))
+        #expect(try ZonedKVCache.probe(Self.qwen3(hiddenSize: 640), precision: .k8v4h) == (true, false))
+        #expect(try ZonedKVCache.probe(Self.qwen3(hiddenSize: 512), precision: .k8v4h) == (true, true))
+        #expect(try ZonedKVCache.probe(Self.qwen3(hiddenSize: 512), precision: .k8v4) == (true, false))
         for (hiddenSize, precision, flagged) in [(640, KVPrecision.k8v4h, true), (512, .k8v4h, false), (640, .k8v4, false)] {
             let engine = MLXInferenceEngine(kvPrecision: precision, kvZones: .standard)
-            let model = try Self.llama(hiddenSize: hiddenSize)
+            let model = try Self.qwen3(hiddenSize: hiddenSize)
             await engine.attach(ModelContainer(context: ModelContext(
-                configuration: ModelConfiguration(id: "tiny-llama-\(hiddenSize)"), model: model,
+                configuration: ModelConfiguration(id: "tiny-qwen3-\(hiddenSize)"), model: model,
                 processor: ByteInputProcessor(), tokenizer: ByteTokenizer())))
             await engine.probeKVZones()
             #expect(await engine.supportsKVZones)
@@ -336,7 +336,7 @@ struct ZonedKVCacheEngineTests {
     func loadReportsWhetherEvictionApplies(zones: KVZones, applies: Bool) async throws {
         let engine = MLXInferenceEngine(kvPrecision: .k8v4, kvZones: zones)
         await engine.attach(ModelContainer(context: ModelContext(
-            configuration: ModelConfiguration(id: "tiny-llama-evict"), model: try Self.llama(hiddenSize: 128),
+            configuration: ModelConfiguration(id: "tiny-qwen3-evict"), model: try Self.qwen3(hiddenSize: 128),
             processor: ByteInputProcessor(), tokenizer: ByteTokenizer())))
         await engine.probeKVZones()
         #expect(await engine.supportsKVZones)
@@ -499,7 +499,7 @@ extension ZonedKVCacheTests {
 
     @Test("The load probe finds whether the model prefills a long prompt in chunks no longer than the recent window")
     func probeFindsWhetherPrefillChunksFitTheWindow() throws {
-        let model = try ZonedKVCacheEngineTests.llama(hiddenSize: 128)
+        let model = try ZonedKVCacheEngineTests.qwen3(hiddenSize: 128)
         let zones = KVZones(sinkTokens: 4, windowTokens: 16, migrationStep: 8, evictedMiddleFraction: 0.5)
         #expect(try ZonedKVCache.prefillsWithinWindow(model, zones: zones, precision: .q8, prefill: PrefillParameters(stepSize: 8)))
         #expect(try !ZonedKVCache.prefillsWithinWindow(model, zones: zones, precision: .q8, prefill: PrefillParameters(stepSize: 64)))

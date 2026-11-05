@@ -63,7 +63,7 @@ struct ProfileRegistryTests {
     @Test("Gemma and unknown ids resolve correctly")
     func otherVariants() {
         #expect(ModelProfileRegistry.profile(forModelType: "gemma4").name == "gemma")
-        #expect(ModelProfileRegistry.profile(forModelType: "llama").name == "generic")
+        #expect(ModelProfileRegistry.profile(forModelType: "olmo2").name == "generic")
         #expect(ModelProfileRegistry.profile(forModelType: nil).name == "generic")
     }
 }

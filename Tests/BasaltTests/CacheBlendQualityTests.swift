@@ -61,7 +61,7 @@ struct CacheBlendQualityTests {
     }
 
     @Test("Teacher-forced log-prob, top-1 agreement and perplexity of the full-prefill answer under blended caches; at the default ratio 0.3, with chunk heads recomputed first, the perplexity stays within 0.05 of a full prefill",
-          .enabled(if: modelPath != nil, "set BASALT_E2E=1 and BASALT_E2E_BLEND_MODEL_PATH (a Llama or Qwen3 model)"))
+          .enabled(if: modelPath != nil, "set BASALT_E2E=1 and BASALT_E2E_BLEND_MODEL_PATH (a Qwen3 model)"))
     func blendQualityAgainstFullPrefill() async throws {
         let path = try #require(Self.modelPath)
         let log = try await ModelRunLog("cacheblend-quality", modelPath: path)

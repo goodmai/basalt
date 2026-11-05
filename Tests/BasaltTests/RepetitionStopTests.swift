@@ -50,7 +50,7 @@ struct RepetitionStopTests {
     func loopStopsEarly() async throws {
         let engine = MLXInferenceEngine()
         await engine.attach(ModelContainer(context: ModelContext(
-            configuration: ModelConfiguration(id: "tiny-llama"),
+            configuration: ModelConfiguration(id: "tiny-qwen3"),
             model: try TinyModel.make(), processor: ByteInputProcessor(), tokenizer: ChantingTokenizer())))
         let response = try await engine.generate(request: GenerationRequest(prompt: "sing", maxTokens: 2_000, temperature: 0))
         #expect(response.finishReason == .repetition)

@@ -181,7 +181,7 @@ struct GenerationPlanTests {
 
     @Test("Each feature a known family leaves out is one the runtime already refuses for that family's caches",
           arguments: [
-              (TinyModel.Family.llama, "llama"), (.qwen3, "qwen3"), (.qwen3Moe, "qwen3_moe"), (.qwen35, "qwen3_5"), (.qwen35Moe, "qwen3_5_moe"),
+              (TinyModel.Family.qwen3Small, "qwen3"), (.qwen3, "qwen3"), (.qwen3Moe, "qwen3_moe"), (.qwen35, "qwen3_5"), (.qwen35Moe, "qwen3_5_moe"),
               (.prism, PrismHadamard.modelType), (.nemotronH, "nemotron_h"), (.sigmoidMoe, "nemotron_h"), (.lfm2, "lfm2"), (.lfm2Moe, "lfm2_moe"),
               (.gemma3, "gemma3_text"), (.gemma4, "gemma4_text"), (.gemma4Moe, "gemma4"),
           ])

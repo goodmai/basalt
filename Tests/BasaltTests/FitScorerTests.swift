@@ -265,7 +265,7 @@ struct FitScorerTests {
         let hugeModel = ModelDefinition(
             id: "huge/70B",
             name: "Huge 70B",
-            family: .llama,
+            family: .qwen,
             task: .chat,
             modality: .text,
             spec: .init(ramMB: 40000, contextWindow: 4096, quantization: "4-bit", quality: 0.95, totalParameters: 70.0, activeParameters: 70.0)
