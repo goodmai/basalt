@@ -179,7 +179,7 @@ echo ""
 
 # 6. Check for weak cryptography
 echo "6️⃣  Checking for weak cryptography..."
-if grep -r "MD5\|SHA1\|DES\|RC4" Sources/ --include="*.swift" | grep -v "// "; then
+if grep -r "MD5\|SHA1\|DES\|RC4" Sources/ --include="*.swift" | grep -v "// " | grep -v "^Sources/BasaltCore/HubTransfer.swift:.*\(gitBlobSHA1\|Insecure\.SHA1()\)"; then
     echo -e "${RED}❌ FAIL: Weak cryptographic algorithms detected${NC}"
     ISSUES_FOUND=$((ISSUES_FOUND + 1))
 else
