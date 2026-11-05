@@ -5,6 +5,12 @@
 ### Upgrading from 0.9.0
 - The `GemCLI`, `GemLogger` and `GemLogLevel` typealiases are gone; use `BasaltCLI`, `BasaltLogger` and `BasaltLogLevel` (#236). The `gemma_*` MCP tool aliases stay.
 - The thermal policy is on by default (#45). At macOS `.serious` thermal state prefill runs in 256-token chunks with a pause of a quarter of each chunk's time after it; at `.critical` prompts of 8192+ tokens are refused with 503 `Retry-After: 60`. `/api/v1/stats` and `serve --stats` show the thermal state and directive. `serve --no-thermal-policy` turns the pacing and refusals off.
+- New opt-ins that change nothing unless used:
+  - `serve --config basalt.yaml` reads serve options from a YAML file (#344). Keys under `defaults.{model,serve,mcp}` become the matching flags, flags on the command line win, and unknown keys or wrong types are reported with line and column. Local files only, at most 256 KB.
+  - `serve --adapter name=dir` (repeatable) loads mlx-lm LoRA adapters on top of the resident base model, and the `X-Basalt-Adapter` header picks one per request (#179). Requests for the same adapter run concurrently. A switch waits until no generation runs. Each adapter gets its own prompt-cache namespace. Bases that are not LoRA models, such as Gemma 4, are refused at startup.
+  - `models inspect --verify` re-hashes every cached file against its sidecar or the Hub's digest and reports `true`, `false` or `unknown` per file (#367). It only reads. `download --require-verified` refuses files the Hub sends no digest for, and `serve --require-verified` refuses to load a snapshot with any unverified file.
+  - `basalt review` reviews a diff on the local model (#35): `--diff FILE|-`, or a merge request fetched with `--gitlab` / `--gitea URL --repo --number`. It prints the review and posts it only with `--post`. Tokens come from `GITLAB_TOKEN` / `GITEA_TOKEN`.
+- The release workflow now runs the tests itself when it cannot find a green main run for the tagged commit, instead of skipping the release (#206).
 
 ## 0.9.0 — 2026-11-03
 

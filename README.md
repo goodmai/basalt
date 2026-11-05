@@ -173,6 +173,8 @@ chmod +x ./basalt-claude
 | `basalt models check <repo-id>` | will it fit in memory (non-zero exit when it does not) |
 | `basalt models check --deep <repo-id>` | also, before downloading: fetch only the safetensors headers (a few hundred KB), build the model shape-only against them and render the chat template; lists missing, unexpected or mis-shaped tensors, an unsupported `model_type` or a template error, and exits non-zero |
 | `basalt models inspect <repo-id>` | verify a cached model is complete and measure its real bit width |
+| `basalt models inspect --verify <repo-id>` | also re-hash every cached file against its sidecar or the Hub's digest: `true`, `false` or `unknown` per file, read-only (#367) |
+| `basalt review --diff FILE\|- --model <id>` | review a diff on the local model; `--gitlab` / `--gitea URL --repo R --number N` fetch a merge request instead, `--post` posts the review back (`GITLAB_TOKEN` / `GITEA_TOKEN`) (#35) |
 | `basalt cloud configure` | OpenRouter fallback for what does not fit locally |
 | `basalt cloud cost` | spend so far on the cloud fallback |
 
@@ -202,6 +204,9 @@ The flags worth knowing on `serve`:
 | `--min-p`, `--top-k`, `--seed` | sampling; `--seed` makes a non-greedy run reproducible; a request's `min_p` overrides `--min-p` |
 | `--max-tokens` | default generation ceiling (2048–128000) |
 | `--dry-run` | memory feasibility check, then exit without loading |
+| `--config basalt.yaml` | serve options from a YAML file: keys under `defaults.{model,serve,mcp}` become the matching flags, flags on the command line win, unknown keys are reported with line and column (#344) |
+| `--adapter name=dir` | load an mlx-lm LoRA adapter on the resident base model (repeatable); a request picks one with `X-Basalt-Adapter: name`. Same-adapter requests run together, a switch waits for running generations, each adapter has its own prompt-cache namespace. Not on Gemma 4 (#179) |
+| `--require-verified` | before loading, re-hash the snapshot against its sidecars or the Hub's digests and refuse to start on any unverified file (#367) |
 | `--port`, `--host` | default 127.0.0.1:8080; any other host needs an API key (`BASALT_API_KEY` or `--auto-generate-key`) |
 | `virtual_keys` (config only) | extra API keys with their own cloud budget: `"virtual_keys": [{"key": "vk-…", "id": "team-a", "max_budget": 2.0}]` in `~/.gem/config.json`; a key is at least 16 characters, ids and keys are unique; spend per key survives restarts |
 | `--max-concurrent N`, `--max-queue N` | generations decoding at once (default 1; each holds its own KV cache) and requests waiting for a slot (default 8), by priority — `basalt chat` first, then service requests (titles, summaries) and harness probes, then API traffic, then benchmarks — and in arrival order within a level; a higher-priority request finding the queue full turns away the lowest-priority waiter; beyond the queue the server answers 503 with `Retry-After` (a stream that already sent its headers gets an error event instead). A model switch waits for running generations and new requests queue behind it; two loads of the same model share one, a load of another model meanwhile is 503. On SIGTERM/SIGINT generations get 5 s to finish, then they are cancelled so the process exits |
