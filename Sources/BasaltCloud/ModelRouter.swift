@@ -9,8 +9,7 @@ public actor ModelRouter: Sendable {
     private let costTracker: CostTracker?
     private let localFallbackModel: String?
     private let fallbackCloudModel: String?
-    private var catalog = ModelCatalog()
-    private var costState: CostRoutingState?
+    private var state: RouterState
 
     public struct Options: Sendable {
         let strategy: RoutingStrategy
@@ -41,19 +40,27 @@ public actor ModelRouter: Sendable {
         self.costTracker = options.costTracker
         self.localFallbackModel = options.localFallbackModel
         self.fallbackCloudModel = options.fallbackCloudModel
-        self.costState = options.costRouting.map { routing in
+        self.state = RouterState(cost: options.costRouting.map { routing in
             CostRoutingState(
                 routing: routing,
                 outcomeBias: routing.outcomeBiasURL.map(RoutingOutcomeBias.load(from:)) ?? RoutingOutcomeBias()
             )
-        }
+        })
     }
 
     public func syncCloudModels() async throws {
         guard let client = cloudClient else { return }
-        let fetchedModels = try await client.getModels()
-        catalog.merge(fetchedModels)
-        log("Synced \(fetchedModels.count) models from OpenRouter")
+        try await syncCloudModels { try await client.getModels() }
+    }
+
+    func syncCloudModels(fetch: @Sendable () async throws -> [OpenRouterClient.OpenRouterModel]) async throws {
+        state = .reduce(state, .syncStarted)
+        let generation = state.syncsStarted
+        let fetchedModels = try await fetch()
+        state = .reduce(state, .synced(generation, fetchedModels))
+        log(state.syncApplied == generation
+            ? "Synced \(fetchedModels.count) models from OpenRouter"
+            : "Dropped model sync \(generation): sync \(state.syncApplied) is newer")
     }
 
     public func route(
@@ -80,33 +87,33 @@ public actor ModelRouter: Sendable {
 
     func resolveModel(_ preferredModel: String?, request: GenerationRequest, context: RoutingContext) -> String {
         let modelId = preferredModel ?? "auto"
-        guard modelId == "auto",
-              let model = costState?.autoModel(for: request, sessionId: context.sessionId, at: Date())
-        else { return modelId }
-        return model
+        guard modelId == "auto", let cost = state.cost else { return modelId }
+        let tier = cost.autoTier(for: request, sessionId: context.sessionId, at: Date())
+        state = .reduce(state, .tierChosen(tier, sessionId: context.sessionId, request: request))
+        return cost.routing.policy.model(for: tier)
     }
 
     public func recordLocalOutcome(_ request: GenerationRequest, response: GenerationResponse, localModel: String) {
-        guard costState?.recordOutcome(request, response: response, localModel: localModel, at: Date()) == true,
-              let state = costState, let url = state.routing.outcomeBiasURL
-        else { return }
+        let before = state.cost?.outcomeBias
+        state = .reduce(state, .outcome(request, response, localModel: localModel, at: Date()))
+        guard let cost = state.cost, cost.outcomeBias != before, let url = cost.routing.outcomeBiasURL else { return }
         do {
-            try state.outcomeBias.save(to: url)
+            try cost.outcomeBias.save(to: url)
         } catch {
             log("Saving the routing outcome bias to \(url.path) failed: \(error)")
         }
     }
 
     public var routingBias: [String: [String: Double]]? {
-        costState?.outcomeBias.snapshot(at: Date())
+        state.cost?.outcomeBias.snapshot(at: Date())
     }
 
     public func registerLocalModel(id: String, estimatedRAM: Int64) {
-        catalog.registerLocal(id: id, estimatedRAM: estimatedRAM)
+        state = .reduce(state, .localRegistered(id: id, estimatedRAM: estimatedRAM))
     }
 
     public func makeRoutingDecision(modelId: String) async throws -> ModelLocation {
-        let route = try catalog.route(modelId, strategy: strategy, cloudConfigured: cloudClient != nil) {
+        let route = try state.catalog.route(modelId, strategy: strategy, cloudConfigured: cloudClient != nil) {
             mockAvailableRAM ?? SystemProfiler.availableSystemMemory()
         }
         switch route {
@@ -121,11 +128,11 @@ public actor ModelRouter: Sendable {
     }
 
     public func knowsPrice(of model: String) -> Bool {
-        catalog.estimateCost(model: model, promptTokens: 1_000_000, completionTokens: 0) > 0
+        state.catalog.estimateCost(model: model, promptTokens: 1_000_000, completionTokens: 0) > 0
     }
 
     public func estimateCost(model: String, promptTokens: Int, completionTokens: Int) -> Double {
-        catalog.estimateCost(model: model, promptTokens: promptTokens, completionTokens: completionTokens)
+        state.catalog.estimateCost(model: model, promptTokens: promptTokens, completionTokens: completionTokens)
     }
 
     private func dispatch<Output>(
@@ -182,7 +189,7 @@ extension ModelRouter {
 
     private func recordCloudCost(model: String, response: GenerationResponse, context: RoutingContext) async {
         guard let costTracker else { return }
-        let cost = catalog.estimateCost(model: model, promptTokens: response.promptTokens, completionTokens: response.completionTokens)
+        let cost = state.catalog.estimateCost(model: model, promptTokens: response.promptTokens, completionTokens: response.completionTokens)
         do {
             try await costTracker.recordUsage(model: model, cost: cost, scopes: context.budgetScopes)
         } catch {
@@ -296,7 +303,7 @@ extension ModelRouter: CloudFallback {
     }
 
     public func assess(_ request: GenerationRequest, localModel: String) async -> CloudAssessment? {
-        costState?.lastLocalModel = localModel
+        state = .reduce(state, .localModelSeen(localModel))
         guard cloudClient != nil, let cloudModel = fallbackCloudModel,
               request.tools?.isEmpty ?? true, request.responseFormat == nil,
               ChatMessageInput.splittingPrefill(request.messages ?? [])?.prefill.isEmpty ?? true
@@ -304,7 +311,9 @@ extension ModelRouter: CloudFallback {
         let context = RoutingContext(request)
         if let costTracker, await costTracker.isExhausted(scopes: context.budgetScopes) { return nil }
         let completionTokens = request.maxTokens ?? 1_024
-        let gap = costState?.stickyTier(request, sessionId: context.sessionId, localModel: localModel, at: Date()).capabilityGap ?? 0
+        let choice = state.cost?.stickyTier(request, sessionId: context.sessionId, localModel: localModel, at: Date())
+        if let choice { state = .reduce(state, .tierChosen(choice.tier, sessionId: context.sessionId, request: request)) }
+        let gap = choice?.capabilityGap ?? 0
         return CloudAssessment(
             capabilityGap: gap,
             estimatedCost: estimateCost(model: cloudModel, promptTokens: request.prompt.utf8.count / 4, completionTokens: completionTokens),

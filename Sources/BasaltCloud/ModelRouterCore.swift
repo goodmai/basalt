@@ -210,12 +210,11 @@ struct CostRoutingState: Sendable {
 
     var trackedSessionCount: Int { sessions.count }
 
-    mutating func autoModel(for request: GenerationRequest, sessionId: String?, at now: Date) -> String {
-        let localModel = lastLocalModel ?? routing.policy.weakModel
-        return routing.policy.model(for: stickyTier(request, sessionId: sessionId, localModel: localModel, at: now).tier)
+    func autoTier(for request: GenerationRequest, sessionId: String?, at now: Date) -> StickyRoutingPolicy.Tier {
+        stickyTier(request, sessionId: sessionId, localModel: lastLocalModel ?? routing.policy.weakModel, at: now).tier
     }
 
-    mutating func stickyTier(_ request: GenerationRequest, sessionId: String?, localModel: String, at now: Date) -> TierChoice {
+    func stickyTier(_ request: GenerationRequest, sessionId: String?, localModel: String, at now: Date) -> TierChoice {
         let previous = sessionId.flatMap { sessions[$0] }
         let bias = outcomeBias.beta(model: localModel, bucket: .init(request), at: now)
         let probability = routing.scorer.strongWinProbability(for: request.prompt, escalationBias: bias)
@@ -224,19 +223,67 @@ struct CostRoutingState: Sendable {
             previous: previous?.tier,
             warmPrefixTokens: previous?.promptTokens ?? 0
         )
-        if let sessionId {
-            if sessions[sessionId] == nil, sessions.count >= Self.maxTrackedSessions { sessions.removeAll() }
-            sessions[sessionId] = SessionRoute(tier: tier, promptTokens: request.prompt.utf8.count / 4)
-        }
         return TierChoice(tier: tier, strongWinProbability: probability)
     }
 
-    mutating func recordOutcome(_ request: GenerationRequest, response: GenerationResponse, localModel: String, at now: Date) -> Bool {
+    mutating func remember(_ tier: StickyRoutingPolicy.Tier, sessionId: String?, request: GenerationRequest) {
+        guard let sessionId else { return }
+        if sessions[sessionId] == nil, sessions.count >= Self.maxTrackedSessions { sessions.removeAll() }
+        sessions[sessionId] = SessionRoute(tier: tier, promptTokens: request.prompt.utf8.count / 4)
+    }
+
+    mutating func recordOutcome(_ request: GenerationRequest, response: GenerationResponse, localModel: String, at now: Date) {
         lastLocalModel = localModel
-        guard request.isServiceRequest != true, let failed = RoutingOutcomeBias.failed(request, response) else { return false }
-        let before = outcomeBias
+        guard request.isServiceRequest != true, let failed = RoutingOutcomeBias.failed(request, response) else { return }
         outcomeBias.record(failed: failed, model: localModel, bucket: .init(request), at: now)
-        return outcomeBias != before
+    }
+}
+
+enum RouterEvent: Sendable {
+    case localRegistered(id: String, estimatedRAM: Int64)
+    case syncStarted
+    case synced(Int, [OpenRouterClient.OpenRouterModel])
+    case localModelSeen(String)
+    case tierChosen(StickyRoutingPolicy.Tier, sessionId: String?, request: GenerationRequest)
+    case outcome(GenerationRequest, GenerationResponse, localModel: String, at: Date)
+}
+
+struct RouterState: Sendable {
+    private(set) var catalog = ModelCatalog()
+    private(set) var cost: CostRoutingState?
+    private(set) var syncsStarted = 0
+    private(set) var syncApplied = 0
+
+    init(cost: CostRoutingState? = nil) {
+        self.cost = cost
+    }
+
+    func checkInvariants(after previous: RouterState) -> [String] {
+        var problems: [String] = []
+        if syncApplied < previous.syncApplied { problems.append("the applied sync went back from \(previous.syncApplied) to \(syncApplied)") }
+        if syncApplied > syncsStarted { problems.append("sync \(syncApplied) was applied but only \(syncsStarted) started") }
+        return problems
+    }
+
+    static func reduce(_ state: RouterState, _ event: RouterEvent) -> RouterState {
+        var next = state
+        switch event {
+        case .localRegistered(let id, let estimatedRAM):
+            next.catalog.registerLocal(id: id, estimatedRAM: estimatedRAM)
+        case .syncStarted:
+            next.syncsStarted += 1
+        case .synced(let generation, let models):
+            guard generation > state.syncApplied else { return state }
+            next.catalog.merge(models)
+            next.syncApplied = generation
+        case .localModelSeen(let model):
+            next.cost?.lastLocalModel = model
+        case .tierChosen(let tier, let sessionId, let request):
+            next.cost?.remember(tier, sessionId: sessionId, request: request)
+        case .outcome(let request, let response, let localModel, let now):
+            next.cost?.recordOutcome(request, response: response, localModel: localModel, at: now)
+        }
+        return next
     }
 }
 

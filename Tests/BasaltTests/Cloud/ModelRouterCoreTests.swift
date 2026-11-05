@@ -69,7 +69,7 @@ struct ModelRouterCoreTests {
     @Test("With β = 0 the sticky tier carries exactly the scorer's win probability")
     func zeroBiasIsThePlainScorer() throws {
         let scorer = try BradleyTerryRouterTests.scorer()
-        var state = CostRoutingState(routing: Self.costRouting(scorer))
+        let state = CostRoutingState(routing: Self.costRouting(scorer))
         let request = GenerationRequest(prompt: BradleyTerryRouterTests.hardWord)
         let choice = state.stickyTier(request, sessionId: nil, localModel: "m", at: BradleyTerryRouterTests.start)
         #expect(choice.strongWinProbability == scorer.strongWinProbability(for: request.prompt))
@@ -83,34 +83,34 @@ struct ModelRouterCoreTests {
         var state = CostRoutingState(routing: Self.costRouting(try BradleyTerryRouterTests.scorer()))
         let request = GenerationRequest(prompt: BradleyTerryRouterTests.easyWord)
         for i in 0..<CostRoutingState.maxTrackedSessions {
-            _ = state.stickyTier(request, sessionId: "s\(i)", localModel: "m", at: BradleyTerryRouterTests.start)
+            state.remember(.weak, sessionId: "s\(i)", request: request)
         }
         #expect(state.trackedSessionCount == CostRoutingState.maxTrackedSessions)
-        _ = state.stickyTier(request, sessionId: "s0", localModel: "m", at: BradleyTerryRouterTests.start)
+        state.remember(.weak, sessionId: "s0", request: request)
         #expect(state.trackedSessionCount == CostRoutingState.maxTrackedSessions)
-        _ = state.stickyTier(request, sessionId: "new", localModel: "m", at: BradleyTerryRouterTests.start)
+        state.remember(.weak, sessionId: "new", request: request)
         #expect(state.trackedSessionCount == 1)
     }
 
-    @Test("Outcomes update β under the reported local model, skip service requests and errors, and say when β changed")
+    @Test("Outcomes update β under the reported local model, skip service requests and errors, and change β only on a failure")
     func outcomesUpdateBias() throws {
         var state = CostRoutingState(routing: Self.costRouting(try BradleyTerryRouterTests.borderlineScorer()))
         let tool = GenerationRequest(prompt: BradleyTerryRouterTests.hardWord, tools: [ToolDefinition(name: "t")])
         let service = GenerationRequest(prompt: "p", tools: [ToolDefinition(name: "t")]).with { $0.isServiceRequest = true }
         let now = BradleyTerryRouterTests.start
-        #expect(state.autoModel(for: tool, sessionId: nil, at: now) == "small-local")
-        let ignored = [
-            state.recordOutcome(service, response: BradleyTerryRouterTests.response(.repetition), localModel: "q", at: now),
-            state.recordOutcome(tool, response: BradleyTerryRouterTests.response(.error), localModel: "q", at: now),
-            state.recordOutcome(tool, response: BradleyTerryRouterTests.response(.stop), localModel: "q", at: now)
-        ]
-        #expect(ignored == [false, false, false])
+        #expect(state.autoTier(for: tool, sessionId: nil, at: now) == .weak)
+        let initial = state.outcomeBias
+        state.recordOutcome(service, response: BradleyTerryRouterTests.response(.repetition), localModel: "q", at: now)
+        state.recordOutcome(tool, response: BradleyTerryRouterTests.response(.error), localModel: "q", at: now)
+        state.recordOutcome(tool, response: BradleyTerryRouterTests.response(.stop), localModel: "q", at: now)
+        #expect(state.outcomeBias == initial)
         #expect(state.lastLocalModel == "q")
         for _ in 0..<3 {
-            let changed = state.recordOutcome(tool, response: BradleyTerryRouterTests.response(.repetition), localModel: "q", at: now)
-            #expect(changed)
+            let before = state.outcomeBias
+            state.recordOutcome(tool, response: BradleyTerryRouterTests.response(.repetition), localModel: "q", at: now)
+            #expect(state.outcomeBias != before)
         }
-        #expect(state.autoModel(for: tool, sessionId: nil, at: now) == "gpt-4")
+        #expect(state.autoTier(for: tool, sessionId: nil, at: now) == .strong)
         #expect(state.outcomeBias.beta(model: "q", bucket: .toolUse, at: now) > 0)
     }
 
