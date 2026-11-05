@@ -8,6 +8,8 @@ struct AppliedDelta: Sendable {
     var info: OverlayInfo?
     var slice: [Range<Int>] = []
     var original: [Float] = []
+    var modules: [String] = []
+    var pack: PackedLayer?
 }
 
 extension MLXInferenceEngine {
@@ -27,6 +29,9 @@ extension MLXInferenceEngine {
         guard let container else { throw .inferenceHardwareFailure(reason: "MLX engine not initialized — call load() first") }
         guard modelFacts.deltas[delta.tensor] == nil else {
             throw .invalidRequestStructure(details: "weights_delta: \(delta.tensor) already carries an active delta; undo it first")
+        }
+        guard !modelFacts.deltas.values.contains(where: { $0.pack.map { delta.tensor.hasPrefix($0.path + ".") } == true }) else {
+            throw .invalidRequestStructure(details: "weights_delta: the layer of \(delta.tensor) is packed; undo the pack first")
         }
         record(.learned(modelEpoch) { $0.deltas[delta.tensor] = AppliedDelta() })
         let written = await container.performEvaluating(nonSendable: delta) { context, delta in
@@ -57,7 +62,7 @@ extension MLXInferenceEngine {
             Result { () throws(BasaltError) in try Self.restore(applied, of: tensor, in: context.model) }
         }
         if case .failure(let error) = restored { throw error }
-        guard self.container === container else { return true }
+        guard self.container === container, modelFacts.deltas[tensor]?.info?.id == id else { return true }
         weightsChanged { $0.deltas[tensor] = nil }
         return true
     }
@@ -100,14 +105,18 @@ extension MLXInferenceEngine {
         let added = values.count == 1 ? MLXArray(values[0]) : MLXArray(values, slice.shape)
         tensor[indices] = (slice + added * delta.scale).asType(tensor.dtype)
         eval(tensor)
+        model.invalidateCompiledTraces()
         return AppliedDelta(slice: ranges, original: original)
     }
 
     static func restore(_ applied: AppliedDelta, of name: String, in model: Module) throws(BasaltError) {
+        guard applied.modules.isEmpty else { return try detach(applied.modules, from: model) }
+        if let pack = applied.pack { return try pack.restore(in: model) }
         let tensor = try writableTensor(name, in: model)
         let indices: [any MLXArrayIndex] = applied.slice
         tensor[indices] = MLXArray(applied.original, applied.slice.map(\.count)).asType(tensor.dtype)
         eval(tensor)
+        model.invalidateCompiledTraces()
     }
 
     static func writableTensor(_ name: String, in model: Module) throws(BasaltError) -> MLXArray {

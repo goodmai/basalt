@@ -17,6 +17,7 @@ struct ModelsCommand: AsyncParsableCommand {
             CacheSubcommand.self,
             CheckSubcommand.self,
             InspectSubcommand.self,
+            ConvertSubcommand.self,
         ],
         defaultSubcommand: ListSubcommand.self
     )

@@ -138,6 +138,7 @@ extension MCPServer {
         case .harnessLibraryQuery: try await queryLibrary(args)
         case .harnessOptimize: try await optimizeHarness(args)
         case .research(let tool): try await research(tool, args)
+        case .introspect: try await introspect(args)
         }
     }
 
@@ -155,6 +156,13 @@ extension MCPServer {
 }
 
 extension ResearchCall {
+    static func lab(_ model: any ModelResearch) throws(BasaltError) -> any ModelLab {
+        guard let lab = model as? any ModelLab else {
+            throw .invalidRequestStructure(details: "the inference engine of this server has no lab tools")
+        }
+        return lab
+    }
+
     func run(on model: any ModelResearch) async throws(BasaltError) -> ToolResult {
         switch self {
         case .describe: return .json(try await model.anatomy())
@@ -169,6 +177,19 @@ extension ResearchCall {
             try await model.undo(overlay)
             return .text("Overlay \(overlay) undone")
         case .compare(let request): return .json(try await model.compare(request))
+        case .adapter, .gate, .pack, .train, .contrast, .commitSteering: return try await run(on: Self.lab(model))
+        }
+    }
+
+    func run(on lab: any ModelLab) async throws(BasaltError) -> ToolResult {
+        switch self {
+        case .adapter(let source, let gate): .json(try await lab.applyAdapter(source, gate: gate))
+        case .gate(let request): .json(try await lab.gate(request))
+        case .pack(let request): .json(try await lab.pack(request))
+        case .train(let request): .json(try await lab.train(request))
+        case .contrast(let request): .json(try await lab.contrast(request))
+        case .commitSteering(let commit): .json(try await lab.commitSteering(commit))
+        default: throw .invalidRequestStructure(details: "not a lab call")
         }
     }
 }
@@ -267,6 +288,20 @@ extension MCPServer {
             ))
         } catch {
             throw .optimization(error)
+        }
+    }
+}
+
+extension MCPServer {
+    private func introspect(_ args: [String: Any]?) async throws(MCPFailure) -> ToolResult {
+        guard researchTools else {
+            throw .methodNotFound("introspect is an experiment tool: start the server with serve --research-tools to use it")
+        }
+        let request = try IntrospectRequest(mcp: args)
+        do throws(BasaltError) {
+            return .json(try await Introspector(orchestrator: orchestrator, interventions: request.allowInterventions).introspect(request))
+        } catch {
+            throw MCPFailure(error)
         }
     }
 }

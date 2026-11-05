@@ -6,6 +6,7 @@ enum MCPTool: Sendable, Equatable {
     case status, checkHardware, inspectModel, switchModel, generate, health, addKnowledge
     case harnessValidate, harnessLibraryQuery, harnessOptimize
     case research(ResearchTool)
+    case introspect
 
     init?(name: String) {
         switch name {
@@ -19,6 +20,7 @@ enum MCPTool: Sendable, Equatable {
         case "harness_validate": self = .harnessValidate
         case "harness_library_query": self = .harnessLibraryQuery
         case "harness_optimize": self = .harnessOptimize
+        case "introspect": self = .introspect
         default:
             guard let tool = ResearchTool(rawValue: name) else { return nil }
             self = .research(tool)
@@ -259,11 +261,19 @@ enum ResearchTool: String, Sendable, CaseIterable {
     case overlaysList = "overlays_list"
     case overlayUndo = "overlay_undo"
     case experimentCompare = "experiment_compare"
+    case adapterApply = "adapter_apply"
+    case gateCheck = "gate_check"
+    case tensorPack = "tensor_pack"
+    case tensorUnpack = "tensor_unpack"
+    case trainExperts = "train_experts"
+    case steerSearch = "steer_search"
+    case steerCommit = "steer_commit"
 
     var isExperiment: Bool {
         switch self {
         case .modelDescribe, .modelTensors, .modelTensor, .kvInspect, .traceRun: false
-        case .intervene, .weightsDelta, .overlaysList, .overlayUndo, .experimentCompare: true
+        case .intervene, .weightsDelta, .overlaysList, .overlayUndo, .experimentCompare, .adapterApply, .gateCheck: true
+        case .tensorPack, .tensorUnpack, .trainExperts, .steerSearch, .steerCommit: true
         }
     }
 }
@@ -279,6 +289,12 @@ enum ResearchCall: Sendable, Equatable {
     case overlays
     case undo(OverlayID)
     case compare(CompareRequest)
+    case adapter(AdapterSource, gate: GateRequest?)
+    case gate(GateRequest)
+    case pack(PackRequest)
+    case train(TrainRequest)
+    case contrast(ContrastRequest)
+    case commitSteering(SteeringCommit)
 
     static let maxValues = 0...4096
     static let topK = 1...100
@@ -298,6 +314,20 @@ enum ResearchCall: Sendable, Equatable {
         case .overlaysList: self = .overlays
         case .overlayUndo: self = .undo(OverlayID(try MCPArguments.required("id", MCPArguments.integer("id", in: args, Self.nonNegative))))
         case .experimentCompare: self = .compare(try CompareRequest(mcp: args))
+        case .adapterApply, .gateCheck, .tensorPack, .tensorUnpack, .trainExperts, .steerSearch, .steerCommit: self = try Self(lab: tool, args)
+        }
+    }
+
+    init(lab tool: ResearchTool, _ args: [String: Any]?) throws(MCPFailure) {
+        switch tool {
+        case .adapterApply: self = .adapter(try AdapterSource(mcp: args), gate: try MCPArguments.present("gate", in: args).map { value throws(MCPFailure) in try GateRequest(mcp: value) })
+        case .gateCheck: self = .gate(try GateRequest(mcp: args))
+        case .tensorPack: self = .pack(try PackRequest(mcp: args, formats: PackRequest.packFormats))
+        case .tensorUnpack: self = .pack(try PackRequest(mcp: args, formats: PackRequest.unpackFormats))
+        case .trainExperts: self = .train(try TrainRequest(mcp: args))
+        case .steerSearch: self = .contrast(try ContrastRequest(mcp: args))
+        case .steerCommit: self = .commitSteering(try SteeringCommit(mcp: args))
+        default: throw .invalidParams("\(tool.rawValue) is not a lab tool")
         }
     }
 }
@@ -328,7 +358,7 @@ extension MCPArguments {
 
     static func number(_ key: String, in args: [String: Any]?) throws(MCPFailure) -> Float? {
         guard let value = present(key, in: args) else { return nil }
-        guard !isJSONBoolean(value), let number = value as? Double, number.isFinite else {
+        guard !isJSONBoolean(value), let number = (value as? Double) ?? (value as? Int).map(Double.init), number.isFinite else {
             throw .invalidParams("\(key) must be a number")
         }
         return Float(number)
@@ -336,7 +366,8 @@ extension MCPArguments {
 
     static func numbers(_ key: String, in args: [String: Any]?) throws(MCPFailure) -> [Float]? {
         guard let value = present(key, in: args) else { return nil }
-        guard let numbers = value as? [Double], !numbers.isEmpty, numbers.allSatisfy(\.isFinite) else {
+        let numbers = (value as? [Any])?.compactMap { ($0 as? Double) ?? ($0 as? Int).map(Double.init) }
+        guard let numbers, numbers.count == (value as? [Any])?.count, !numbers.isEmpty, numbers.allSatisfy(\.isFinite) else {
             throw .invalidParams("\(key) must be a non-empty array of numbers")
         }
         return numbers.map { Float($0) }
@@ -421,5 +452,131 @@ extension CompareRequest {
             prompts: prompts,
             overlays: (try MCPArguments.integers("overlays", in: args) ?? []).map { OverlayID($0) },
             maxTokens: try MCPArguments.integer("maxTokens", in: args, ResearchCall.compareTokens) ?? 32)
+    }
+}
+
+extension AdapterSource {
+    init(mcp args: [String: Any]?) throws(MCPFailure) {
+        if let directory = try MCPArguments.string("directory", in: args) {
+            self = .directory(directory)
+            return
+        }
+        self = .rankOne(
+            module: try MCPArguments.required("module", MCPArguments.string("module", in: args)),
+            input: try MCPArguments.required("input", MCPArguments.numbers("input", in: args)),
+            output: try MCPArguments.required("output", MCPArguments.numbers("output", in: args)),
+            scale: try MCPArguments.number("scale", in: args) ?? 1)
+    }
+}
+
+extension GateRequest {
+    init(mcp value: Any?) throws(MCPFailure) {
+        let args = value as? [String: Any]
+        guard value == nil || args != nil else { throw .invalidParams("gate must be an object") }
+        guard let heldOut = MCPArguments.present("heldOut", in: args) as? [String], ResearchCall.comparePrompts.contains(heldOut.count) else {
+            throw .invalidParams("heldOut must be an array of \(ResearchCall.comparePrompts) strings")
+        }
+        self.init(heldOut: heldOut)
+        try readLimits(args)
+        let targets = MCPArguments.present("target", in: args) ?? [Any]()
+        guard let targets = targets as? [[String: Any]], targets.count <= ResearchCall.comparePrompts.upperBound else {
+            throw .invalidParams("target must be an array of at most \(ResearchCall.comparePrompts.upperBound) {prompt, expected} objects")
+        }
+        for item in targets {
+            target.append(GateTarget(
+                prompt: try MCPArguments.required("prompt", MCPArguments.string("prompt", in: item)),
+                expected: try MCPArguments.required("expected", MCPArguments.string("expected", in: item))))
+        }
+    }
+
+    mutating func readLimits(_ args: [String: Any]?) throws(MCPFailure) {
+        maxKL = try MCPArguments.number("maxKL", in: args) ?? maxKL
+        maxPerplexityRise = try MCPArguments.number("maxPerplexityRise", in: args) ?? maxPerplexityRise
+        guard maxKL >= 0, maxPerplexityRise >= 0 else { throw .invalidParams("maxKL and maxPerplexityRise must not be negative") }
+    }
+}
+
+extension PackRequest {
+    static let packFormats = ["affine", "mxfp4", "ternary"]
+    static let unpackFormats = ["bfloat16", "float16"]
+    static let packBits = 2...8
+    static let packGroupSizes = 32...128
+
+    init(mcp args: [String: Any]?, formats: [String]) throws(MCPFailure) {
+        let tensor = try MCPArguments.required("tensor", MCPArguments.string("tensor", in: args))
+        let format: PackFormat
+        switch try MCPArguments.string("format", in: args) ?? formats[0] {
+        case "affine" where formats.contains("affine"):
+            format = .affine(
+                bits: try MCPArguments.integer("bits", in: args, Self.packBits) ?? 4,
+                groupSize: try MCPArguments.integer("groupSize", in: args, Self.packGroupSizes) ?? 64)
+        case "mxfp4" where formats.contains("mxfp4"): format = .mxfp4
+        case "ternary" where formats.contains("ternary"): format = .ternary
+        case "bfloat16" where formats.contains("bfloat16"): format = .bfloat16
+        case "float16" where formats.contains("float16"): format = .float16
+        default: throw .invalidParams("format must be one of: \(formats.joined(separator: ", "))")
+        }
+        self.init(tensor: tensor, format: format)
+    }
+}
+
+extension TrainRequest {
+    static let taskCounts = 2...10_000
+
+    init(mcp args: [String: Any]?) throws(MCPFailure) {
+        let heldOut = MCPArguments.present("heldOut", in: args)
+        guard let heldOut = heldOut as? [String], ResearchCall.comparePrompts.contains(heldOut.count) else {
+            throw .invalidParams("heldOut must be an array of \(ResearchCall.comparePrompts) general prompts the quality gate checks the adapter on")
+        }
+        var gate = GateRequest(heldOut: heldOut)
+        try gate.readLimits(args)
+        let count = try MCPArguments.integer("count", in: args, Self.taskCounts) ?? 200
+        let seed = try MCPArguments.integer("seed", in: args, ResearchCall.nonNegative) ?? 0
+        let file = try MCPArguments.string("file", in: args)
+        self.init(tasks: file.map(TrainingTasks.file) ?? .arithmetic(count: count, seed: UInt64(seed)), gate: gate)
+        teacher = try MCPArguments.string("teacher", in: args)
+        teacherModel = try MCPArguments.string("teacherModel", in: args)
+        layers = try MCPArguments.integers("layers", in: args)
+        experts = try MCPArguments.integers("experts", in: args)
+        rank = try MCPArguments.integer("rank", in: args, ResearchCall.nonNegative) ?? rank
+        iterations = try MCPArguments.integer("iterations", in: args, ResearchCall.nonNegative) ?? iterations
+        learningRate = try MCPArguments.number("learningRate", in: args) ?? learningRate
+        output = try MCPArguments.string("output", in: args)
+    }
+}
+
+extension ContrastRequest {
+    static let headLimit = 0...64
+
+    static func prompts(_ key: String, in args: [String: Any]?, _ range: ClosedRange<Int>) throws(MCPFailure) -> [String] {
+        guard let prompts = MCPArguments.present(key, in: args) as? [String], range.contains(prompts.count) else {
+            throw .invalidParams("\(key) must be an array of \(range) strings")
+        }
+        return prompts
+    }
+
+    init(mcp args: [String: Any]?) throws(MCPFailure) {
+        let positive = try Self.prompts("positive", in: args, Self.classPrompts)
+        let negative = try Self.prompts("negative", in: args, Self.classPrompts)
+        let heldOut = try Self.prompts("heldOut", in: args, Self.heldOutPrompts)
+        self.init(positive: positive, negative: negative, heldOut: heldOut, layers: try MCPArguments.integers("layers", in: args))
+        topHeads = try MCPArguments.integer("topHeads", in: args, Self.headLimit) ?? topHeads
+        if let scales = try MCPArguments.numbers("scales", in: args) {
+            guard Self.scaleCount.contains(scales.count) else { throw .invalidParams("scales must hold \(Self.scaleCount) numbers") }
+            self.scales = scales
+        }
+    }
+}
+
+extension SteeringCommit {
+    init(mcp args: [String: Any]?) throws(MCPFailure) {
+        var gate = GateRequest(heldOut: try ContrastRequest.prompts("heldOut", in: args, ContrastRequest.heldOutPrompts))
+        try gate.readLimits(args)
+        self.init(
+            layer: try MCPArguments.required("layer", MCPArguments.integer("layer", in: args, ResearchCall.nonNegative)),
+            direction: try MCPArguments.required("direction", MCPArguments.numbers("direction", in: args)),
+            scale: try MCPArguments.required("scale", MCPArguments.number("scale", in: args)),
+            gate: gate)
+        positive = try ContrastRequest.prompts("positive", in: args, 1...ContrastRequest.classPrompts.upperBound)
     }
 }

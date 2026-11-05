@@ -166,7 +166,8 @@ enum MCPToolCatalog {
 extension MCPToolCatalog {
     static func catalog(researchTools: Bool) -> MCPToolsList {
         let research = ResearchTool.allCases.filter { researchTools || !$0.isExperiment }
-        return MCPToolsList(tools: list.tools + research.map { MCPToolDescriptor(name: $0.rawValue, description: $0.summary, inputSchema: $0.schema) })
+        let introspect = researchTools ? [introspectDescriptor] : []
+        return MCPToolsList(tools: list.tools + research.map { MCPToolDescriptor(name: $0.rawValue, description: $0.summary, inputSchema: $0.schema) } + introspect)
     }
 }
 
@@ -183,6 +184,13 @@ extension ResearchTool {
         case .overlaysList: "Experiment: the active overlays with id, description, creation and expiry time."
         case .overlayUndo: "Experiment: undo one overlay by id."
         case .experimentCompare: "Experiment: greedy before/after on a prompt set with the given overlays: text, KL divergence of the logits and perplexity."
+        case .adapterApply: "Experiment: apply a LoRA adapter live, from an mlx-lm adapter directory or as a rank-1 update of one linear layer (quantized included). Marks the model modified; undo with overlay_undo. With a gate it is kept without expiry only if the gate passes, otherwise undone; without one it expires after 30 min."
+        case .gateCheck: "Experiment: the quality gate on the model as it is now against the pristine model (every live adapter and delta lifted): load-probe perplexity and known answers, mean KL and perplexity rise on held-out prompts, and exact-match targets. Each check has its value and limit."
+        case .tensorPack: "Experiment: re-pack the weight of one linear layer in memory (affine 2-8 bit with a group size, mxfp4, or ternary absmean scale·{-1,0,1} per group of 64), dequantizing a quantized layer first. The layer is swapped live (the model is marked modified, prompt-cache reuse is off) as an overlay with TTL and bit-exact undo. Returns bytes before/after, RMSE, max abs error and relative error ||W-Ŵ||/||W||."
+        case .tensorUnpack: "Experiment: replace one quantized linear layer by a dense float16 or bfloat16 layer holding its dequantized weight, live, as an overlay with TTL and bit-exact undo. Returns bytes before/after and the error of the cast."
+        case .trainExperts: "Experiment, long-running: self-training. Collects the model's (and an optional teacher's) answers to checkable tasks, keeps only answers that match the known answer, trains a LoRA on them, saves it under ~/.basalt/adapters, reports loss and held-out accuracy before/after, then applies it through the quality gate as an undoable overlay."
+        case .steerSearch: "Experiment: contrastive steering search. The difference of mean residuals (positive minus negative prompts) per layer gives a direction; reports norm and class separation per layer, the best layer's unit direction, the heads whose ablation shrinks the gap most, and KL and projection shift when held-out prompts are steered by each scale. Directed search for activation directions, not self-awareness; leaves no overlay behind."
+        case .steerCommit: "Experiment: turns a steering direction into a rank-1 update of the layer's output projection (input = mean module input over the positive prompts) and applies it as an adapter through the quality gate on the held-out prompts; undoable, never written to disk."
         }
     }
 
@@ -197,10 +205,17 @@ extension ResearchTool {
         case .weightsDelta: Self.object(Self.deltaProperties, required: ["tensor"])
         case .overlayUndo: Self.object(["id": ["type": "integer", "minimum": 0, "description": "Overlay id from intervene, weights_delta or overlays_list"]], required: ["id"])
         case .experimentCompare: Self.object(Self.compareProperties, required: ["prompts"])
+        case .adapterApply: Self.object(Self.adapterProperties)
+        case .gateCheck: Self.object(Self.gateProperties, required: ["heldOut"])
+        case .tensorPack: Self.object(Self.packProperties, required: ["tensor"])
+        case .tensorUnpack: Self.object(Self.unpackProperties, required: ["tensor"])
+        case .trainExperts: Self.object(Self.trainProperties, required: ["heldOut"])
+        case .steerSearch: Self.object(Self.steerSearchProperties, required: ["positive", "negative", "heldOut"])
+        case .steerCommit: Self.object(Self.steerCommitProperties, required: ["layer", "direction", "scale", "positive", "heldOut"])
         }
     }
 
-    private static func object(_ properties: [String: Any], required: [String] = []) -> AnyCodable {
+    static func object(_ properties: [String: Any], required: [String] = []) -> AnyCodable {
         var schema: [String: Any] = ["type": "object", "properties": properties]
         if !required.isEmpty { schema["required"] = required }
         return AnyCodable(schema)
@@ -213,7 +228,7 @@ extension ResearchTool {
         ]
     }
 
-    private static var numbers: [String: Any] { ["type": "array", "items": ["type": "number"], "minItems": 1] }
+    static var numbers: [String: Any] { ["type": "array", "items": ["type": "number"], "minItems": 1] }
 
     private static var tensorProperties: [String: Any] {
         [
@@ -260,6 +275,94 @@ extension ResearchTool {
             "prompts": ["type": "array", "items": ["type": "string"], "minItems": ResearchCall.comparePrompts.lowerBound, "maxItems": ResearchCall.comparePrompts.upperBound],
             "overlays": ["type": "array", "items": ["type": "integer", "minimum": 0], "description": "Overlay ids applied on the after side (default: none)"],
             "maxTokens": ["type": "integer", "minimum": ResearchCall.compareTokens.lowerBound, "maximum": ResearchCall.compareTokens.upperBound, "description": "Greedy tokens per side (default 32)"],
+        ]
+    }
+
+}
+
+extension ResearchTool {
+    static var adapterProperties: [String: Any] {
+        [
+            "directory": ["type": "string", "description": "mlx-lm adapter directory with adapter_config.json and adapters.safetensors; or give module, input and output"],
+            "module": ["type": "string", "description": "rank-1: linear layer name, e.g. model.layers.3.mlp.down_proj"],
+            "input": numbers.merging(["description": "rank-1: A, one value per input feature of the layer"]) { $1 },
+            "output": numbers.merging(["description": "rank-1: B, one value per output feature of the layer"]) { $1 },
+            "scale": ["type": "number", "description": "rank-1: factor on the update (default 1)"],
+            "gate": ["type": "object", "properties": gateProperties, "required": ["heldOut"], "description": "Run the quality gate after applying; keep the adapter only if it passes"],
+        ]
+    }
+
+    static var gateProperties: [String: Any] {
+        [
+            "heldOut": ["type": "array", "items": ["type": "string"], "minItems": ResearchCall.comparePrompts.lowerBound, "maxItems": ResearchCall.comparePrompts.upperBound, "description": "Prompts whose next-token distributions and baseline text are compared with the pristine model"],
+            "maxKL": ["type": "number", "minimum": 0, "description": "Limit on the mean KL divergence (default 0.5)"],
+            "maxPerplexityRise": ["type": "number", "minimum": 0, "description": "Limit on the relative perplexity rise of the baseline text (default 0.1)"],
+            "target": [
+                "type": "array", "maxItems": ResearchCall.comparePrompts.upperBound, "description": "Exact-match tasks: the greedy answer must contain expected",
+                "items": ["type": "object", "properties": ["prompt": ["type": "string"], "expected": ["type": "string"]], "required": ["prompt", "expected"]],
+            ],
+        ]
+    }
+
+    static var packProperties: [String: Any] {
+        [
+            "tensor": ["type": "string", "description": "Weight of a linear layer as model_tensors lists it, e.g. model.layers.3.mlp.down_proj.weight"],
+            "format": ["type": "string", "enum": PackRequest.packFormats, "description": "Target format (default affine)"],
+            "bits": ["type": "integer", "minimum": PackRequest.packBits.lowerBound, "maximum": PackRequest.packBits.upperBound, "description": "affine: bits per weight, 2, 3, 4, 5, 6 or 8 (default 4)"],
+            "groupSize": ["type": "integer", "enum": [32, 64, 128], "description": "affine: weights per scale and bias (default 64)"],
+        ]
+    }
+
+    static var unpackProperties: [String: Any] {
+        [
+            "tensor": ["type": "string", "description": "Weight of a quantized linear layer as model_tensors lists it"],
+            "format": ["type": "string", "enum": PackRequest.unpackFormats, "description": "Float type of the dense layer (default bfloat16)"],
+        ]
+    }
+
+    static var trainProperties: [String: Any] {
+        [
+            "count": ["type": "integer", "minimum": TrainRequest.taskCounts.lowerBound, "maximum": TrainRequest.taskCounts.upperBound, "description": "Generated integer +, -, * problems (default 200); a fifth is held out for accuracy"],
+            "seed": ["type": "integer", "minimum": 0, "description": "Seed of the problem generator (default 0)"],
+            "file": ["type": "string", "description": "JSONL of {\"prompt\", \"answer\"} instead of generated problems"],
+            "teacher": ["type": "string", "description": "Base URL of an OpenAI-compatible server whose answers are collected too; BASALT_TEACHER_API_KEY is sent only when its scheme, host and port match BASALT_TEACHER_URL"],
+            "teacherModel": ["type": "string", "description": "Model name sent to the teacher"],
+            "layers": ["type": "array", "items": ["type": "integer", "minimum": 0], "description": "Layers that get LoRA (default: all)"],
+            "experts": ["type": "array", "items": ["type": "integer", "minimum": 0], "description": "Refused: the fork has no per-expert LoRA"],
+            "rank": ["type": "integer", "minimum": 1, "maximum": 64, "description": "LoRA rank (default 8)"],
+            "iterations": ["type": "integer", "minimum": 1, "maximum": 10_000, "description": "Training iterations (default 200)"],
+            "learningRate": ["type": "number", "description": "Adam learning rate (default 1e-5)"],
+            "output": ["type": "string", "description": "Adapter directory (default ~/.basalt/adapters/<fingerprint>/<timestamp>); never inside the model directory"],
+            "heldOut": ["type": "array", "items": ["type": "string"], "minItems": ResearchCall.comparePrompts.lowerBound, "maxItems": ResearchCall.comparePrompts.upperBound, "description": "General prompts the quality gate checks the adapter on"],
+            "maxKL": ["type": "number", "minimum": 0, "description": "Gate: largest mean KL on heldOut (default 0.5)"],
+            "maxPerplexityRise": ["type": "number", "minimum": 0, "description": "Gate: largest relative perplexity rise on heldOut (default 0.1)"],
+        ]
+    }
+
+    private static func prompts(_ range: ClosedRange<Int>, _ description: String) -> [String: Any] {
+        ["type": "array", "items": ["type": "string"], "minItems": range.lowerBound, "maxItems": range.upperBound, "description": description]
+    }
+
+    static var steerSearchProperties: [String: Any] {
+        [
+            "positive": prompts(ContrastRequest.classPrompts, "Prompts showing the behaviour to find"),
+            "negative": prompts(ContrastRequest.classPrompts, "Prompts without it"),
+            "heldOut": prompts(ContrastRequest.heldOutPrompts, "Prompts steered in the trials"),
+            "layers": ["type": "array", "items": ["type": "integer", "minimum": 0], "description": "Layers to search (default: all)"],
+            "topHeads": ["type": "integer", "minimum": ContrastRequest.headLimit.lowerBound, "maximum": ContrastRequest.headLimit.upperBound, "description": "Heads reported, ranked by ablation effect (default 8; 0 skips the ablations)"],
+            "scales": numbers.merging(["maxItems": ContrastRequest.scaleCount.upperBound, "description": "Steering scales tried on the held-out prompts (default [2, 4, 8])"]) { $1 },
+        ]
+    }
+
+    static var steerCommitProperties: [String: Any] {
+        [
+            "layer": ["type": "integer", "minimum": 0, "description": "bestLayer from steer_search"],
+            "direction": numbers.merging(["description": "direction from steer_search (hidden size)"]) { $1 },
+            "scale": ["type": "number", "description": "Scale chosen from the steer_search trials"],
+            "positive": prompts(1...ContrastRequest.classPrompts.upperBound, "Positive prompts; their mean module input becomes the rank-1 input"),
+            "heldOut": prompts(ContrastRequest.heldOutPrompts, "Held-out prompts for the quality gate"),
+            "maxKL": ["type": "number", "minimum": 0, "description": "Gate: largest mean KL against the baseline (default 0.5)"],
+            "maxPerplexityRise": ["type": "number", "minimum": 0, "description": "Gate: largest relative perplexity rise (default 0.1)"],
         ]
     }
 }

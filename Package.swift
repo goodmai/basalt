@@ -10,7 +10,7 @@ let package = Package(
     ],
     dependencies: [
         .package(url: "https://github.com/ml-explore/mlx-swift",     from: "0.33.0"),
-        .package(url: "https://github.com/goodmai/mlx-swift-lm",      revision: "9e4cbbad37287ffe9f4502fee8c232aaae79c902"),
+        .package(url: "https://github.com/goodmai/mlx-swift-lm",      revision: "407938e29744ca3f3ed71b6e3f578f71a50422bf"),
         .package(url: "https://github.com/hummingbird-project/hummingbird", from: "2.28.0"),
         .package(url: "https://github.com/apple/swift-argument-parser",    from: "1.8.2"),
         .package(url: "https://github.com/swift-server/swift-service-lifecycle", from: "2.12.0"),
@@ -45,6 +45,7 @@ let package = Package(
             dependencies: [
                 "BasaltCore",
                 .product(name: "MLX",           package: "mlx-swift"),
+                .product(name: "MLXOptimizers", package: "mlx-swift"),
                 .product(name: "MLXLLM",        package: "mlx-swift-lm"),
                 // Gemma 4 and other *ForConditionalGeneration checkpoints are only
                 // registered in MLXVLM; without it ModelFactoryRegistry cannot load them.
