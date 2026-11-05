@@ -23,6 +23,7 @@ enum KeyTrajectoryFit {
     static let orders = [4, 8, 16]
     static let window = 1000
     static let lowError = 0.1
+    static let centeredCeiling = 0.3
     static let lowErrorShare = 0.15
     static let bimodalThreshold = 5.0 / 9.0
 
@@ -36,7 +37,14 @@ enum KeyTrajectoryFit {
 
     struct HeadError: Sendable {
         var relative: [Double]
+        var centered: [Double]
         var skipped: Int
+    }
+
+    struct Rope: Sendable {
+        let half: Int
+        let rotated: Int
+        let base: Double
     }
 
     static func fit(_ x: [Cx], order: Int) -> Fit? {
@@ -125,24 +133,30 @@ enum KeyTrajectoryFit {
             + (0 ..< tail).map { (2 * ropeHalf + $0, 2 * ropeHalf + tail + $0) }
     }
 
-    static func headError(_ keys: ArraySlice<Float>, tokens: Int, headDim: Int, ropeHalf: Int) -> HeadError {
+    static func headError(_ keys: ArraySlice<Float>, tokens: Int, headDim: Int, rope: Rope) -> HeadError {
         let start = keys.startIndex
-        var residual = [Double](repeating: 0, count: orders.count)
-        var energy = [Double](repeating: 0, count: orders.count)
+        var residual = [Double](repeating: 0, count: 2 * orders.count)
+        var energy = [Double](repeating: 0, count: 2 * orders.count)
         var skipped = 0
         for first in stride(from: 0, through: tokens - window, by: window) {
-            for pair in channelPairs(headDim: headDim, ropeHalf: ropeHalf) {
+            for (index, pair) in channelPairs(headDim: headDim, ropeHalf: rope.half).enumerated() {
+                let theta = index < rope.rotated ? pow(rope.base, -Double(index) / Double(rope.half)) : 0
                 let x = (first ..< first + window).map { t in
                     Cx(re: Double(keys[start + t * headDim + pair.re]), im: Double(keys[start + t * headDim + pair.im]))
+                        * Cx.polar(1, -theta * Double(t))
                 }
-                for (index, order) in orders.enumerated() {
-                    guard let fit = fit(x, order: order) else { skipped += 1; continue }
-                    residual[index] += fit.residual
-                    energy[index] += fit.energy
+                let mean = x.reduce(Cx.zero, +) * (1 / Double(window))
+                for (variant, signal) in [x, x.map { $0 - mean }].enumerated() {
+                    for (column, order) in orders.enumerated() {
+                        guard let fit = fit(signal, order: order) else { skipped += 1; continue }
+                        residual[variant * orders.count + column] += fit.residual
+                        energy[variant * orders.count + column] += fit.energy
+                    }
                 }
             }
         }
-        return HeadError(relative: zip(residual, energy).map { $1 > 0 ? ($0 / $1).squareRoot() : .nan }, skipped: skipped)
+        let relative = zip(residual, energy).map { $1 > 0 ? ($0 / $1).squareRoot() : .nan }
+        return HeadError(relative: Array(relative.prefix(orders.count)), centered: Array(relative.suffix(orders.count)), skipped: skipped)
     }
 
     static func bimodality(_ values: [Double]) -> Double {
@@ -157,10 +171,11 @@ enum KeyTrajectoryFit {
         return (skew * skew + 1) / (excess + 3 * (n - 1) * (n - 1) / ((n - 2) * (n - 3)))
     }
 
-    static func phaseOneGo(_ errors: [Double]) -> (lowShare: Double, bimodality: Double, go: Bool) {
-        let finite = errors.filter(\.isFinite)
-        let share = finite.isEmpty ? 0 : Double(finite.filter { $0 < lowError }.count) / Double(finite.count)
-        let coefficient = bimodality(finite)
+    static func phaseOneGo(_ errors: [Double], centered: [Double]) -> (lowShare: Double, bimodality: Double, go: Bool) {
+        let finite = zip(errors, centered).filter { $0.isFinite && $1.isFinite }
+        let low = finite.filter { $0 < lowError && $1 <= centeredCeiling }.count
+        let share = finite.isEmpty ? 0 : Double(low) / Double(finite.count)
+        let coefficient = bimodality(finite.map(\.0))
         return (share, coefficient, share >= lowErrorShare && coefficient > bimodalThreshold)
     }
 }

@@ -84,18 +84,34 @@ struct KeyTrajectoryFitTests {
         let signal = KeyTrajectorySignal.damped(Array(KeyTrajectorySignal.poles.prefix(2)), noise: 1e-4)
         let noise = KeyTrajectorySignal.damped([], noise: 1, seed: 11)
         let head = { (x: [Cx]) in ArraySlice(x.flatMap { [Float($0.re), Float($0.re), Float($0.im), Float($0.im)] }) }
-        let low = KeyTrajectoryFit.headError(head(signal), tokens: 1000, headDim: 4, ropeHalf: 0)
-        let high = KeyTrajectoryFit.headError(head(noise), tokens: 1000, headDim: 4, ropeHalf: 0)
+        let plain = KeyTrajectoryFit.Rope(half: 0, rotated: 0, base: 1)
+        let low = KeyTrajectoryFit.headError(head(signal), tokens: 1000, headDim: 4, rope: plain)
+        let high = KeyTrajectoryFit.headError(head(noise), tokens: 1000, headDim: 4, rope: plain)
         #expect(low.relative[0] < KeyTrajectoryFit.lowError && low.skipped == 0)
         #expect(high.relative[0] > 0.9)
     }
 
-    @Test("Two separated clusters of head errors are bimodal and clear the go bar; one tight cluster is not")
+    @Test("A pre-RoPE mean rotated by RoPE is one pole: inverting RoPE and removing the mean leaves only the noise")
+    func centeredErrorRemovesRotatedMean() {
+        var generator = SplitMix64(seed: 3)
+        let pair = (0 ..< 1000).flatMap { t -> [Float] in
+            let value = Cx(re: 5 + 0.1 * .random(in: -1 ... 1, using: &generator), im: 0.1 * .random(in: -1 ... 1, using: &generator))
+                * Cx.polar(1, Double(t))
+            return [Float(value.re), Float(value.im)]
+        }
+        let error = KeyTrajectoryFit.headError(ArraySlice(pair), tokens: 1000, headDim: 2,
+                                               rope: KeyTrajectoryFit.Rope(half: 1, rotated: 1, base: 10_000))
+        #expect(error.relative[0] < KeyTrajectoryFit.lowError)
+        #expect(error.centered[0] > 0.9)
+    }
+
+    @Test("Two separated clusters of head errors are bimodal and clear the go bar; one tight cluster, or low errors that are only a mean, do not")
     func goVerdict() {
         let split = Array(repeating: 0.03, count: 10) + Array(repeating: 0.9, count: 30) + [0.05, 0.85]
         let single = (0 ..< 40).map { 0.8 + 0.001 * Double($0) }
-        #expect(KeyTrajectoryFit.phaseOneGo(split).go)
-        #expect(!KeyTrajectoryFit.phaseOneGo(single).go)
+        #expect(KeyTrajectoryFit.phaseOneGo(split, centered: split).go)
+        #expect(!KeyTrajectoryFit.phaseOneGo(single, centered: single).go)
+        #expect(!KeyTrajectoryFit.phaseOneGo(split, centered: split.map { _ in 0.95 }).go)
     }
 }
 
@@ -142,11 +158,17 @@ struct KeyTrajectoryRealModelTests {
                 .deletingLastPathComponent().appendingPathComponent("CONTRIBUTING.md")
     }
 
-    static func ropeHalf(modelPath: String, headDim: Int) -> Int {
+    static func rope(modelPath: String, headDim: Int) -> KeyTrajectoryFit.Rope {
         let config = (try? Data(contentsOf: URL(fileURLWithPath: modelPath).appendingPathComponent("config.json")))
-            .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
-        let type = config?["model_type"] as? String ?? ""
-        return type.hasPrefix("qwen3_5") ? headDim / 8 : headDim / 2
+            .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } ?? [:]
+        let text = config["text_config"] as? [String: Any] ?? config
+        let parameters = text["rope_parameters"] as? [String: Any] ?? [:]
+        let global = parameters["full_attention"] as? [String: Any] ?? parameters
+        let base = (global["rope_theta"] ?? text["rope_theta"]) as? Double ?? 10_000
+        let partial = (global["partial_rotary_factor"] ?? text["partial_rotary_factor"]) as? Double ?? 1
+        let rotated = Int(partial * Double(headDim)) / 2
+        return KeyTrajectoryFit.Rope(half: global["rope_type"] as? String == "proportional" ? headDim / 2 : rotated,
+                                     rotated: rotated, base: base)
     }
 
     @Test("Per full-attention KV head: relative Prony residual at M = 4, 8, 16 over 1000-token windows, and the phase-1 go check",
@@ -169,20 +191,25 @@ struct KeyTrajectoryRealModelTests {
         log.record("corpus", "\(Self.corpus.lastPathComponent) sha256 \(digest) tokens \(dump.tokens) full-attention layers \(dump.layers.map(\.index))")
         try #require(dump.tokens >= KeyTrajectoryFit.window, "corpus shorter than one window")
         var atSixteen: [Double] = []
+        var centeredAtSixteen: [Double] = []
         for layer in dump.layers {
-            let half = Self.ropeHalf(modelPath: path, headDim: layer.headDim)
+            let rope = Self.rope(modelPath: path, headDim: layer.headDim)
             for head in 0 ..< layer.heads {
                 let size = layer.tokens * layer.headDim
                 let error = KeyTrajectoryFit.headError(layer.keys[head * size ..< (head + 1) * size],
-                                                       tokens: layer.tokens, headDim: layer.headDim, ropeHalf: half)
-                let cells = zip(KeyTrajectoryFit.orders, error.relative).map { String(format: "M%ld %.4f", $0, $1) }
-                log.record("head", "layer \(layer.index) kv-head \(head) dim \(layer.headDim) rope-half \(half) \(cells.joined(separator: " ")) skipped \(error.skipped)")
+                                                       tokens: layer.tokens, headDim: layer.headDim, rope: rope)
+                let cells = zip(KeyTrajectoryFit.orders, zip(error.relative, error.centered)).map {
+                    String(format: "M%ld %.4f centered %.4f", $0, $1.0, $1.1)
+                }
+                log.record("head", "layer \(layer.index) kv-head \(head) dim \(layer.headDim) rope \(rope.rotated)/\(rope.half) base \(rope.base) \(cells.joined(separator: " ")) skipped \(error.skipped)")
                 atSixteen.append(error.relative[KeyTrajectoryFit.orders.count - 1])
+                centeredAtSixteen.append(error.centered[KeyTrajectoryFit.orders.count - 1])
             }
         }
-        let verdict = KeyTrajectoryFit.phaseOneGo(atSixteen)
-        log.record("result", String(format: "PADE heads %ld below-%.2f-at-M16 %.3f bimodality %.3f %@", atSixteen.count,
-                                    KeyTrajectoryFit.lowError, verdict.lowShare, verdict.bimodality, verdict.go ? "GO" : "NO-GO"))
+        let verdict = KeyTrajectoryFit.phaseOneGo(atSixteen, centered: centeredAtSixteen)
+        log.record("result", String(format: "PADE heads %ld below-%.2f-and-centered-at-most-%.2f-at-M16 %.3f bimodality %.3f %@", atSixteen.count,
+                                    KeyTrajectoryFit.lowError, KeyTrajectoryFit.centeredCeiling, verdict.lowShare, verdict.bimodality,
+                                    verdict.go ? "GO" : "NO-GO"))
         #expect(!atSixteen.isEmpty, "\(log.model): no full-attention KV head captured")
     }
 }
