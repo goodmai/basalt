@@ -120,7 +120,10 @@ struct ChatCommand: AsyncParsableCommand {
         _ initialPrompt: String, history: [ChatMessageInput], sessionId: String, orchestrator: ModelOrchestratorActor
     ) async throws {
         let finalPrompt = try await PromptContextBuilder.build(prompt: initialPrompt)
-        let request = Self.request(finalPrompt, history: history, maxTokens: maxTokens, sessionId: sessionId)
+        var digest = ChatHistoryDigest(turns: history)
+        let request = await digest.fitted(finalPrompt, maxTokens: maxTokens, sessionId: sessionId) {
+            await orchestrator.effectiveMaxTokens(for: $0)
+        }
 
         do {
             let stream = try await orchestrator.generateStream(request: request)
