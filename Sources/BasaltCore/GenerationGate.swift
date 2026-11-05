@@ -115,12 +115,14 @@ public actor GenerationGate {
     }
 
     public func admit(after body: @Sendable () async throws -> Void) async throws -> Int {
+        if exclusiveHeld || !running.isEmpty, exclusiveQueue.count >= maxQueue { throw BasaltError.serverBusy(retryAfterSeconds: 1) }
         await holdExclusively()
         defer {
             exclusiveHeld = false
             promote()
         }
         guard !closed else { throw BasaltError.serverBusy(retryAfterSeconds: nil) }
+        try Task.checkCancellation()
         try await body()
         nextId += 1
         running[nextId] = {}

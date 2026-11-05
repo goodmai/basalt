@@ -31,7 +31,7 @@ extension ModelOrchestratorActor {
         do {
             return try await gate.admit(after: { try await engine.useAdapter(adapter) })
         } catch {
-            throw Self.basaltError(error, "Adapter switch error")
+            throw error is CancellationError ? .cancelled : Self.basaltError(error, "Adapter switch error")
         }
     }
 }

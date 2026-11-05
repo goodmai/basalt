@@ -41,6 +41,11 @@ actor AdapterEngine: InferenceEngine {
     }
 }
 
+actor SwitchProbe {
+    private(set) var runs = 0
+    func ran() { runs += 1 }
+}
+
 @Suite("Per-request LoRA adapters on one resident model (#179)", .serialized)
 struct AdapterServingTests {
     static let prompt = Conversation.firstTurn
@@ -142,6 +147,22 @@ struct AdapterServingTests {
         let ticket = try await switched.value
         #expect(await gate.inFlight == 1)
         await gate.release(ticket)
+        #expect(await gate.checkInvariants(idle: true) == [])
+    }
+
+    @Test("A switch cancelled while it waits never runs and takes no ticket; one more switch than the queue holds is refused with 503")
+    func switchCancelledWhileWaiting() async throws {
+        let gate = GenerationGate(maxConcurrent: 2, maxQueue: 1)
+        let probe = SwitchProbe()
+        let running = try await gate.admit()
+        let waiting = Task { try await gate.admit(after: { await probe.ran() }) }
+        #expect(await Self.until { await gate.exclusiveWaiting == 1 })
+        let refusal = await #expect(throws: BasaltError.self) { try await gate.admit(after: {}) }
+        #expect(refusal?.localizedDescription == BasaltError.serverBusy(retryAfterSeconds: 1).localizedDescription)
+        waiting.cancel()
+        await gate.release(running)
+        await #expect(throws: CancellationError.self) { try await waiting.value }
+        #expect(await probe.runs == 0)
         #expect(await gate.checkInvariants(idle: true) == [])
     }
 
