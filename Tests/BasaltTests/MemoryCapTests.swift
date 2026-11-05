@@ -277,7 +277,7 @@ struct UnverifiedKVQuantizationTests {
         let dir = try MemoryCapTests.modelDirectory()
         defer { try? FileManager.default.removeItem(at: dir) }
         let orchestrator = ModelOrchestratorActor(
-            engine: engine, maxTokens: 131_072, kvPrecision: kvPrecision, adaptiveKVPrecision: adaptive, telemetry: TelemetryTracker())
+            engine: engine, maxTokens: 131_072, kv: .init(precision: kvPrecision, adaptive: adaptive), telemetry: TelemetryTracker())
         try await orchestrator.loadModel(path: dir.path)
         _ = try await orchestrator.generate(request: GenerationRequest(prompt: "long", maxTokens: 80_000))
         let sent = try #require(await engine.getLastRequest())
