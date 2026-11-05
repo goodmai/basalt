@@ -115,7 +115,7 @@ package struct RESTServer: Sendable {
 
     private func addGenerationRoutes(to oai: RouterGroup<BasicRequestContext>, defaultId: String) {
         let openAI = OpenAIController(orchestrator: orchestrator, modelId: defaultId)
-        let embedding = EmbeddingsController(engine: embeddings, gate: orchestrator.gate)
+        let embedding = EmbeddingsController(engine: embeddings)
         oai.post("/chat/completions", use: openAI.chatCompletions)
         oai.post("/responses", use: openAI.responses)
         oai.post("/generate", use: openAI.generateRaw)

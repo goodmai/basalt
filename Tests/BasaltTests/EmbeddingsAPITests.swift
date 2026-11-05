@@ -11,6 +11,7 @@ import HTTPTypes
 
 final class EmbeddingCalls: Sendable {
     let inputs = Mutex<[[EmbeddingInput]]>([])
+    let events = Mutex<[String]>([])
 }
 
 struct StubEmbeddingEngine: EmbeddingEngine {
@@ -19,9 +20,16 @@ struct StubEmbeddingEngine: EmbeddingEngine {
         EmbeddingModelInfo(id: "org/stub-rerank", task: .rerank),
     ]
     var calls = EmbeddingCalls()
+    var betweenBatches: (paused: AsyncStream<Void>.Continuation, resume: AsyncStream<Void>)?
 
     func embed(_ inputs: [EmbeddingInput], dimensions: Int?) async throws(BasaltError) -> Embeddings {
         calls.inputs.withLock { $0.append(inputs) }
+        if let betweenBatches {
+            calls.events.withLock { $0.append("micro-batch 1") }
+            betweenBatches.paused.yield()
+            for await _ in betweenBatches.resume { break }
+            calls.events.withLock { $0.append("micro-batch 2") }
+        }
         let vectors = inputs.indices.map { row -> [Float] in
             let raw = (0 ..< (dimensions ?? 8)).map { Float($0 + row + 1) }
             let norm = raw.reduce(0) { $0 + $1 * $1 }.squareRoot()
@@ -185,20 +193,26 @@ struct EmbeddingsAPITests {
         }
     }
 
-    @Test("An embedding call waits for a running generation to release the gate, then runs")
-    func gateSerializesWithGeneration() async throws {
+    @Test("A generation runs to completion between two micro-batches of one long embeddings request (#233)", .timeLimit(.minutes(1)))
+    func generationRunsBetweenMicroBatches() async throws {
         let orchestrator = ModelOrchestratorActor(engine: MockInferenceEngine(), maxTokens: 65536, telemetry: TelemetryTracker())
-        let engine = StubEmbeddingEngine()
-        let gate = orchestrator.gate
-        let generation = try await gate.admit()
+        try await orchestrator.loadModel(path: "mock")
+        let (paused, pause) = AsyncStream<Void>.makeStream()
+        let (resumed, resume) = AsyncStream<Void>.makeStream()
+        var engine = StubEmbeddingEngine()
+        engine.betweenBatches = (pause, resumed)
+        let calls = engine.calls
         try await app(engine, orchestrator: orchestrator).test(.router) { (client) async throws in
-            async let embedding = post(client, "/v1/embeddings", #"{"input": "a"}"#)
-            #expect(await GenerationGateTests.eventually { await gate.exclusiveWaiting == 1 })
-            #expect(engine.calls.inputs.withLock { $0 }.isEmpty, "the embedder must not run while a generation holds the gate")
-            await gate.release(generation)
+            async let embedding = post(client, "/v1/embeddings", #"{"input": ["a", "b"]}"#)
+            for await _ in paused { break }
+            let response = try await orchestrator.generate(request: GenerationRequest(prompt: "hi", maxTokens: 4))
+            #expect(response.completionTokens > 0)
+            calls.events.withLock { $0.append("generation") }
+            resume.yield()
             #expect((try await embedding).0 == .ok)
         }
-        #expect(engine.calls.inputs.withLock { $0.count } == 1)
+        #expect(calls.events.withLock { $0 } == ["micro-batch 1", "generation", "micro-batch 2"])
+        #expect(await orchestrator.gate.checkInvariants(idle: true).isEmpty)
     }
 
     @Test("A chat checkpoint passed as --embedding-model is refused at load with the reason, before any weight is read")

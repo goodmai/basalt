@@ -5,7 +5,6 @@ import BasaltCore
 
 struct EmbeddingsController: Sendable {
     let engine: (any EmbeddingEngine)?
-    let gate: GenerationGate
 
     struct EmbeddingRequest: Decodable {
         let input: [EmbeddingInput]
@@ -137,7 +136,7 @@ struct EmbeddingsController: Sendable {
             guard dimensions > 0 else { return failure(.badRequest, "\"dimensions\" must be positive.") }
         }
         do {
-            let result = try await gate.exclusively { try await engine.embed(dto.input, dimensions: dto.dimensions) }
+            let result = try await engine.embed(dto.input, dimensions: dto.dimensions)
             let base64 = dto.encodingFormat == "base64"
             let items = result.vectors.enumerated().map { index, vector in
                 EmbeddingList.Item(index: index, embedding: base64 ? .base64(Self.base64(vector)) : .float(vector))
@@ -167,7 +166,7 @@ struct EmbeddingsController: Sendable {
         }
         if let topN = dto.topN, topN < 1 { return failure(.badRequest, "\"top_n\" must be at least 1.") }
         do {
-            let scores = try await gate.exclusively { try await engine.rerank(query: dto.query, documents: dto.documents) }
+            let scores = try await engine.rerank(query: dto.query, documents: dto.documents)
             guard scores.count == dto.documents.count else {
                 throw BasaltError.inferenceError("the reranker returned \(scores.count) scores for \(dto.documents.count) documents")
             }
