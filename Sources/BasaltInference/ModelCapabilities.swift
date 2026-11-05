@@ -27,6 +27,13 @@ struct ModelCapabilities: Equatable, Sendable {
         modelType.flatMap { families[$0.lowercased()] }
     }
 
+    static func refuseUnverifiedKVBits(_ precision: KVPrecision?, modelType: String?, path: String) throws(BasaltError) {
+        guard precision != nil, of(modelType: modelType)?.allows(.kvQuantization) != true else { return }
+        throw .modelConfigurationInvalid(
+            path: path,
+            reason: "model_type '\(modelType ?? "none")' has no verified quantized KV cache, so --kv-bits cannot apply; serve it without --kv-bits or with --kv-bits auto")
+    }
+
     static func unverifiedWarning(modelType: String?) -> String {
         "unverified model family '\(modelType ?? "no model_type")': features \(Feature.allCases.map(\.rawValue).joined(separator: ", ")) stay off"
     }
