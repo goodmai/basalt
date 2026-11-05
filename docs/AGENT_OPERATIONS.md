@@ -108,7 +108,7 @@ The server speaks JSON-RPC on stdin/stdout for as long as stdin is open. To stop
 - the greedy tokens differ from the fixture, or
 - at any step, KL(P_ref ‖ P_new) over the reference top-64, both renormalized over the reference ids, exceeds the fixture's `tolerance`. A reference id missing from the new top-64 gets the new smallest log-prob minus ln 1000.
 
-Fixtures live in `Tests/BasaltTests/Fixtures/golden/<org>--<name>.json` with the snapshot revision and the tolerance. The same suite asserts the memory invariant: an ~8k-token prompt with 256 generated tokens causes 0 new swap-outs (`host_statistics64`) and keeps the peak `phys_footprint` within the `basalt models check` fit estimate.
+Fixtures live in `Tests/BasaltTests/Fixtures/golden/<org>--<name>.json` with the snapshot revision and the tolerance. The same suite checks memory on an ~8k-token prompt with 256 generated tokens: the peak `phys_footprint` must stay within the `basalt models check` fit estimate. It also logs, without asserting, the system swap-outs (`host_statistics64`) and how much of basalt's own memory macOS compressed or swapped (`task_vm_info.compressed`). macOS swaps idle apps out ahead of time even with gigabytes free, so the system counter can't be attributed to basalt on a shared Mac.
 
 Models: `lukaskremla/Qwen3.8-27B-3bit-MLX-TextOnly`, `LiquidAI/LFM2.5-24B-A2B-MLX-4bit`, `mlx-community/gemma-4-26B-A4B-it-qat-4bit`. An entry is a snapshot path or a repo id in the HF cache. The suite takes the GPU lock per model and logs to `logs/golden-logits-<date>.log` and `logs/golden-swap-<date>.log`.
 
