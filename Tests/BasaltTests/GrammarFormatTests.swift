@@ -11,35 +11,41 @@ struct GrammarFormatTests {
             {"type": "const_string", "value": "ID: "}, {"type": "regex", "pattern": "[0-9]{3}"}]}}
         """#
 
-    static func body(_ json: String) -> Data { Data(json.utf8) }
+    static func format(_ body: [String: Any]) throws -> ResponseFormat? {
+        try OpenAIController.responseFormat(fromRequestBody: JSONSerialization.data(withJSONObject: body))
+    }
 
-    @Test("OpenAI response_format accepts regex, grammar and structural_tag, and vLLM's guided_regex and guided_grammar")
+    static let grammarA = "root ::= \"a\""
+
+    @Test("OpenAI response_format accepts regex and grammar, and vLLM's guided_regex and guided_grammar")
     func parses() throws {
-        #expect(try OpenAIController.responseFormat(fromRequestBody: Self.body(#"{"response_format": {"type": "regex", "regex": "[a-z]+"}}"#)) == .regex("[a-z]+"))
-        #expect(try OpenAIController.responseFormat(fromRequestBody: Self.body(#"{"response_format": {"type": "grammar", "grammar": "root ::= \"a\""}}"#)) == .grammar(#"root ::= "a""#))
-        #expect(try OpenAIController.responseFormat(fromRequestBody: Self.body(#"{"guided_regex": "[0-9]{2}"}"#)) == .regex("[0-9]{2}"))
-        #expect(try OpenAIController.responseFormat(fromRequestBody: Self.body(#"{"guided_grammar": "root ::= \"b\""}"#)) == .grammar(#"root ::= "b""#))
+        #expect(try Self.format(["response_format": ["type": "regex", "regex": "[a-z]+"]]) == .regex("[a-z]+"))
+        #expect(try Self.format(["response_format": ["type": "grammar", "grammar": Self.grammarA]]) == .grammar(Self.grammarA))
+        #expect(try Self.format(["guided_regex": "[0-9]{2}"]) == .regex("[0-9]{2}"))
+        #expect(try Self.format(["guided_grammar": Self.grammarA]) == .grammar(Self.grammarA))
     }
 
     @Test("OpenAI response_format structural_tag keeps the whole tag object as the source")
     func parsesStructuralTag() throws {
-        let tag = try OpenAIController.responseFormat(fromRequestBody: Self.body(#"{"response_format": \#(Self.structuralTag)}"#))
-        guard case .structuralTag(let source)? = tag else {
-            Issue.record("expected a structural tag, got \(String(describing: tag))")
+        let object = try #require(JSONSerialization.jsonObject(with: Data(Self.structuralTag.utf8)) as? [String: Any])
+        guard case .structuralTag(let source)? = try Self.format(["response_format": object]) else {
+            Issue.record("expected a structural tag")
             return
         }
         #expect(source.contains("const_string") && source.contains("structural_tag"))
     }
 
-    @Test("A malformed grammar request is refused before generation", arguments: [
-        #"{"response_format": {"type": "regex"}}"#,
-        #"{"response_format": {"type": "regex", "regex": ""}}"#,
-        #"{"response_format": {"type": "grammar", "grammar": 3}}"#,
-        #"{"guided_regex": "a", "guided_grammar": "root ::= \"a\""}"#,
-        #"{"guided_regex": "a", "response_format": {"type": "json_object"}}"#,
-    ])
-    func refusesMalformed(json: String) {
-        #expect(throws: OpenAIController.InvalidResponseFormat.self) { try OpenAIController.responseFormat(fromRequestBody: Self.body(json)) }
+    static let malformed: [[String: Any]] = [
+        ["response_format": ["type": "regex"]],
+        ["response_format": ["type": "regex", "regex": ""]],
+        ["response_format": ["type": "grammar", "grammar": 3]],
+        ["guided_regex": "a", "guided_grammar": grammarA],
+        ["guided_regex": "a", "response_format": ["type": "json_object"]],
+    ]
+
+    @Test("A malformed grammar request is refused before generation", arguments: 0..<5)
+    func refusesMalformed(index: Int) {
+        #expect(throws: OpenAIController.InvalidResponseFormat.self) { try Self.format(Self.malformed[index]) }
     }
 
     @Test("MCP generate takes regex or grammar, not both")
