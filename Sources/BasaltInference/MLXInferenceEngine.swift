@@ -144,7 +144,8 @@ public actor MLXInferenceEngine: InferenceEngine {
             let boundary = try await boundary(namespace, prompt, rendered, container: container, epoch: epoch)
             let plan = GenerationPlan.make(request, settings, GenerationPlan.Facts(
                 namespace: namespace, promptTokens: prompt.tokens.count, carriesMoreThanTokens: prompt.carriesMoreThanTokens,
-                constrained: constraint != nil, hasMTPDrafter: hasMTPDrafter, blendAvailable: cacheBlend != nil,
+                constrained: constraint != nil, jumpsForward: constraint?.fastForward == true, hasMTPDrafter: hasMTPDrafter,
+                blendAvailable: cacheBlend != nil,
                 modelIsHybrid: modelIsHybrid, modelHasRecurrentState: modelHasRecurrentState))
             try await restoreIfNeeded(namespace, drafts: plan.drafts, tokens: prompt.tokens, container: container, epoch: epoch)
             let claim = try claimCache(namespace, drafts: plan.drafts, tokens: prompt.tokens)

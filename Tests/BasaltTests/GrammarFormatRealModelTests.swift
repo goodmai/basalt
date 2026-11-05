@@ -67,4 +67,33 @@ struct GrammarFormatRealModelTests {
         print("[#346] \(entry): \(15 - mismatches.count)/15 matched")
         #expect(mismatches.isEmpty, "\(mismatches)")
     }
+
+    static func constrained(_ format: ResponseFormat?, _ prompt: String) -> GenerationRequest {
+        var request = GenerationRequest(prompt: prompt, maxTokens: 256, temperature: 0)
+        request.responseFormat = format
+        request.enableThinking = false
+        request.thinkingBudget = 96
+        return request
+    }
+
+    @Test("With --batch-slots 4, three constrained rows and a free one decode together, and every constrained answer matches its own grammar",
+          .enabled(if: !models.isEmpty, "set BASALT_E2E=1 and BASALT_E2E_GRAMMAR_MODELS"), arguments: models)
+    func batched(entry: String) async throws {
+        let engine = MLXInferenceEngine(batchSlots: 4)
+        try await engine.load(modelPath: entry)
+        let orchestrator = ModelOrchestratorActor(engine: engine, telemetry: TelemetryTracker(), gate: GenerationGate(maxConcurrent: 4))
+        let rows: [(ResponseFormat?, String?, String)] = Self.cases.map { ($0.0, $0.1, $0.2[0]) } + [(nil, nil, "Say hello in one short sentence.")]
+        let texts = try await withThrowingTaskGroup(of: (Int, String).self) { group in
+            for (index, row) in rows.enumerated() {
+                group.addTask { (index, try await orchestrator.generate(request: Self.constrained(row.0, row.2)).generatedText) }
+            }
+            var replies: [Int: String] = [:]
+            for try await (index, text) in group { replies[index] = text }
+            return rows.indices.compactMap { replies[$0] }
+        }
+        let mismatches = try zip(rows, texts).filter { row, text in try row.1.map { text.wholeMatch(of: try Regex($0)) == nil } ?? false }
+        let batchedRows = await engine.batchedRows
+        print("[#346] batched \(entry): \(rows.count - mismatches.count)/\(rows.count) matched, batched rows \(batchedRows)")
+        #expect(mismatches.isEmpty, "\(mismatches.map { "\($0.0.0?.kind ?? "free"): \($0.1)" })")
+    }
 }
