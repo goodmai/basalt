@@ -198,37 +198,6 @@ struct EmbeddingsAPITests {
         }
     }
 
-    @Test("A generation runs to completion between two micro-batches of one long embeddings request (#233)", .timeLimit(.minutes(1)))
-    func generationRunsBetweenMicroBatches() async throws {
-        try await generationRunsBetweenBatches(of: "/v1/embeddings", #"{"input": ["a", "b"]}"#)
-    }
-
-    @Test("A chat request completes between two /v1/rerank chunks instead of waiting for the whole document list (#355)", .timeLimit(.minutes(1)))
-    func generationRunsBetweenRerankChunks() async throws {
-        try await generationRunsBetweenBatches(of: "/v1/rerank", #"{"query": "q", "documents": ["a", "bb"]}"#)
-    }
-
-    private func generationRunsBetweenBatches(of uri: String, _ body: String) async throws {
-        let orchestrator = ModelOrchestratorActor(engine: MockInferenceEngine(), maxTokens: 65536, telemetry: TelemetryTracker())
-        try await orchestrator.loadModel(path: "mock")
-        let (paused, pause) = AsyncStream<Void>.makeStream()
-        let (resumed, resume) = AsyncStream<Void>.makeStream()
-        var engine = StubEmbeddingEngine()
-        engine.betweenBatches = (pause, resumed)
-        let calls = engine.calls
-        try await app(engine, orchestrator: orchestrator).test(.router) { (client) async throws in
-            async let embedding = post(client, uri, body)
-            for await _ in paused { break }
-            let response = try await orchestrator.generate(request: GenerationRequest(prompt: "hi", maxTokens: 4))
-            #expect(response.completionTokens > 0)
-            calls.events.withLock { $0.append("generation") }
-            resume.yield()
-            #expect((try await embedding).0 == .ok)
-        }
-        #expect(calls.events.withLock { $0 } == ["micro-batch 1", "generation", "micro-batch 2"])
-        #expect(await orchestrator.gate.checkInvariants(idle: true).isEmpty)
-    }
-
     @Test("A chat checkpoint passed as --embedding-model is refused at load with the reason, before any weight is read")
     func chatCheckpointRefused() async throws {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -273,6 +242,39 @@ struct EmbeddingsAPITests {
         #expect(batches.allSatisfy { $0.count <= 2 && ($0.count == 1 || ($0.map { lengths[$0] }.max() ?? 0) * $0.count <= 8192) })
         #expect(batches.first == [1, 3])
         #expect(batches.last == [2])
+    }
+}
+
+extension EmbeddingsAPITests {
+    @Test("A generation runs to completion between two micro-batches of one long embeddings request (#233)", .timeLimit(.minutes(1)))
+    func generationRunsBetweenMicroBatches() async throws {
+        try await generationRunsBetweenBatches(of: "/v1/embeddings", #"{"input": ["a", "b"]}"#)
+    }
+
+    @Test("A chat request completes between two /v1/rerank chunks instead of waiting for the whole document list (#355)", .timeLimit(.minutes(1)))
+    func generationRunsBetweenRerankChunks() async throws {
+        try await generationRunsBetweenBatches(of: "/v1/rerank", #"{"query": "q", "documents": ["a", "bb"]}"#)
+    }
+
+    private func generationRunsBetweenBatches(of uri: String, _ body: String) async throws {
+        let orchestrator = ModelOrchestratorActor(engine: MockInferenceEngine(), maxTokens: 65536, telemetry: TelemetryTracker())
+        try await orchestrator.loadModel(path: "mock")
+        let (paused, pause) = AsyncStream<Void>.makeStream()
+        let (resumed, resume) = AsyncStream<Void>.makeStream()
+        var engine = StubEmbeddingEngine()
+        engine.betweenBatches = (pause, resumed)
+        let calls = engine.calls
+        try await app(engine, orchestrator: orchestrator).test(.router) { (client) async throws in
+            async let embedding = post(client, uri, body)
+            for await _ in paused { break }
+            let response = try await orchestrator.generate(request: GenerationRequest(prompt: "hi", maxTokens: 4))
+            #expect(response.completionTokens > 0)
+            calls.events.withLock { $0.append("generation") }
+            resume.yield()
+            #expect((try await embedding).0 == .ok)
+        }
+        #expect(calls.events.withLock { $0 } == ["micro-batch 1", "generation", "micro-batch 2"])
+        #expect(await orchestrator.gate.checkInvariants(idle: true).isEmpty)
     }
 }
 
