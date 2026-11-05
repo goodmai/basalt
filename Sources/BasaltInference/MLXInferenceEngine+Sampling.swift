@@ -39,6 +39,9 @@ extension MLXInferenceEngine {
                 DRYPenalty(multiplier: multiplier, base: base, allowedLength: allowedLength, breakers: breakers)
             }
         }
+        if let probe = request.logitProbe {
+            components = components.appendingBasaltProcessor { LogitProbeRecorder(probe: probe) }
+        }
         var exclusion: (@Sendable () -> ExcludeTopChoices)?
         if let probability = request.xtcProbability.map(Float.init), probability > 0, temperature > 0 {
             let threshold = request.xtcThreshold.map(Float.init) ?? ExcludeTopChoices.defaultThreshold
@@ -81,6 +84,24 @@ struct GeneratedTokensPresencePenalty: LogitProcessor {
 
     mutating func didSample(token: MLXArray) {
         context.didSample(token: token)
+    }
+}
+
+struct LogitProbeRecorder: LogitProcessor {
+    let probe: LogitProbe
+
+    mutating func prompt(_ prompt: MLXArray) {}
+
+    func process(logits: MLXArray) -> MLXArray {
+        let row = logits.reshaped(-1).asType(.float32)
+        let logprobs = row - logSumExp(row)
+        let ids = argSort(-logprobs)[..<min(probe.topK, row.dim(0))]
+        probe.record(ids: ids.asArray(Int.self), logprobs: logprobs[ids].asArray(Float.self))
+        return logits
+    }
+
+    mutating func didSample(token: MLXArray) {
+        probe.sampled(token.item(Int.self))
     }
 }
 

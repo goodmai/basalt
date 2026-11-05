@@ -85,6 +85,7 @@ public struct GenerationRequest: Codable, Sendable {
     public var drySequenceBreakers: [String]?
     public var xtcThreshold: Double?
     public var xtcProbability: Double?
+    public var logitProbe: LogitProbe? = nil
 
     enum CodingKeys: String, CodingKey {
         case prompt, maxTokens, temperature, topP, minP, dynamicTemperature, enableThinking, reasoningEffort
