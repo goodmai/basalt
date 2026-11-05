@@ -108,7 +108,7 @@ struct BatchedOrderRealModelTests {
         try await engine.load(modelPath: path)
         let container = try #require(await engine.container)
         var inputs: [MLXArray] = []
-        for prompt in Self.prompts { inputs.append(try await container.prepare(input: UserInput(chat: [.user(prompt)])).text.tokens) }
+        for prompt in Self.prompts { inputs.append(try await container.prepare(input: UserInput(chat: [.user(prompt)])).text.tokens.reshaped(-1)) }
         let report = try await container.perform(nonSendable: inputs) { context, inputs -> BatchProbe.Report? in
             guard BatchedTokenIterator.batchableLayers(try context.model.newCache(parameters: nil)) != nil else { return nil }
             return try withError { try BatchProbe.run(context.model, inputs) }
