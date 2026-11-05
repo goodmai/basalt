@@ -30,11 +30,12 @@ struct HubTransferTests {
         #expect(fresh.totalSize(contentLength: 60) == 60)
     }
 
-    @Test("A finished file must match the advertised size, unless the server advertised none", arguments: [
-        (Int64(100), Int64(100), true), (60, 100, false), (200, 100, false), (60, -1, true), (60, 0, true),
+    @Test("A finished file is complete when its digest matched, else only when it matches a positive advertised size", arguments: [
+        (Int64(100), Int64(100), false, true), (60, 100, false, false), (200, 100, false, false),
+        (60, -1, false, false), (60, 0, false, false), (60, -1, true, true), (100, 100, true, true),
     ])
-    func completeness(fileSize: Int64, remote: Int64, complete: Bool) {
-        #expect(HubTransferPlan.isComplete(fileSize: fileSize, remoteSize: remote) == complete)
+    func completeness(fileSize: Int64, remote: Int64, verified: Bool, complete: Bool) {
+        #expect(HubTransferPlan.isComplete(fileSize: fileSize, remoteSize: remote, verified: verified) == complete)
     }
 
     @Test("Five attempts with 2, 4, 8 and 16 seconds between them")

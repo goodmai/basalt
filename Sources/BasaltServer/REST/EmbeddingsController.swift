@@ -167,7 +167,7 @@ struct EmbeddingsController: Sendable {
         }
         if let topN = dto.topN, topN < 1 { return failure(.badRequest, "\"top_n\" must be at least 1.") }
         do {
-            let scores = try await engine.rerank(query: dto.query, documents: dto.documents)
+            let scores = try await engine.rerank(query: dto.query, documents: dto.documents, yieldingTo: gate)
             guard scores.count == dto.documents.count else {
                 throw BasaltError.inferenceError("the reranker returned \(scores.count) scores for \(dto.documents.count) documents")
             }

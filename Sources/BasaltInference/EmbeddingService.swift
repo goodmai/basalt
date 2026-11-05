@@ -8,7 +8,7 @@ import BasaltCore
 public struct EmbeddingService: EmbeddingEngine {
     public let models: [EmbeddingModelInfo]
     private let embedder: EmbedderModelContainer?
-    private let reranker: RerankerContainer?
+    let reranker: RerankerContainer?
 
     public init(
         embeddingModel: (id: String, directory: URL)?, rerankModel: (id: String, directory: URL)?
@@ -114,7 +114,7 @@ public struct EmbeddingService: EmbeddingEngine {
         }
     }
 
-    static let generationWait = Duration.seconds(1)
+    static let generationWait = Duration.seconds(2)
 
     static func forward(_ context: EmbedderModelContext, tokens: [[Int]], dimensions: Int?) throws -> [[Float]] {
         let length = tokens.map(\.count).max() ?? 0
@@ -147,10 +147,18 @@ public struct EmbeddingService: EmbeddingEngine {
         return batches
     }
 
-    public func rerank(query: String, documents: [String]) async throws(BasaltError) -> [Double] {
+    static func rerankOptions(yieldingTo gate: GenerationGate?) -> RerankExecutionOptions {
+        var options = RerankExecutionOptions()
+        if let gate {
+            options.beforeMicroBatch = { await !gate.idle(within: generationWait) }
+        }
+        return options
+    }
+
+    public func rerank(query: String, documents: [String], yieldingTo gate: GenerationGate?) async throws(BasaltError) -> [Double] {
         guard let reranker else { throw .invalidRequestStructure(details: "no rerank model is loaded; start serve with --rerank-model") }
         do {
-            return try await reranker.scores(query: query, documents: documents, instruction: nil, options: RerankExecutionOptions())
+            return try await reranker.scores(query: query, documents: documents, instruction: nil, options: Self.rerankOptions(yieldingTo: gate))
                 .results.map(\.score)
         } catch {
             throw .inferenceError("Rerank failed: \(error)")

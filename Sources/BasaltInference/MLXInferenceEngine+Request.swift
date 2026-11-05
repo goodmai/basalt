@@ -150,7 +150,8 @@ extension MLXInferenceEngine {
         _ request: GenerationRequest, _ settings: GenerationPlan.Settings, _ prompt: PromptInput, container: ModelContainer
     ) async throws -> OutputConstraint? {
         let constraint = try await outputConstraint(
-            for: request, allowsFastForward: GenerationPlan.plainPrompt(request, settings, carriesMoreThanTokens: prompt.carriesMoreThanTokens))
+            for: request,
+            allowsFastForward: prompt.prefixAnswer.isEmpty && GenerationPlan.plainPrompt(request, settings, carriesMoreThanTokens: prompt.carriesMoreThanTokens))
         guard let constraint, !prompt.prefixAnswer.isEmpty else { return constraint }
         let prefixAnswer = prompt.prefixAnswer
         let ids = await container.perform { $0.tokenizer.encode(text: prefixAnswer, addSpecialTokens: false) }

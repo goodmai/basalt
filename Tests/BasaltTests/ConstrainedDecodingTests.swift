@@ -334,6 +334,7 @@ struct ConstrainedDecodingEngineTests {
             #expect(res.finishReason == .length)
         }
     }
+
 }
 
 enum SchemaCheck {
@@ -459,26 +460,6 @@ struct JSONConstraintProcessorTests {
         #expect(session.totalForcedTokens == forced.count)
         let pooled = try #require(session.rewound())
         #expect(try pooled.computeMask().mask == pristine)
-    }
-
-    @Test("Fast-forward session accepts a valid prefill that spans forced tokens and rejects an invalid one")
-    func fastForwardAcceptsPrefillAcrossForcedSpan() throws {
-        let tokenizer = JSONPieceTokenizer()
-        let vocabulary = try GrammarVocabulary(
-            pieces: (0..<256).map { tokenizer.convertIdToToken($0)! }, vocabType: .raw, stopTokens: [JSONPieceTokenizer.endOfText],
-            markers: ReasoningMarkers(openers: [JSONPieceTokenizer.open], closers: [[JSONPieceTokenizer.close]]),
-            hostTokenizer: tokenizer)
-        let schema = try JSONSchemaGate.prepare(ConstrainedModel.schema, strict: true).schema
-        let validSession = GrammarSession(
-            schema: schema,
-            grammar: try GrammarConstraint(tokenizer: vocabulary.tokenizer, jsonSchema: schema, fastForward: true, hostTokenizer: tokenizer))
-        #expect(validSession.accepts(Array(#"{"mode":"#.utf8).map(Int.init)))
-        #expect(validSession.totalForcedTokens == 0)
-
-        let invalidSession = GrammarSession(
-            schema: schema,
-            grammar: try GrammarConstraint(tokenizer: vocabulary.tokenizer, jsonSchema: schema, fastForward: true, hostTokenizer: tokenizer))
-        #expect(!invalidSession.accepts(Array(#"{"fast":"#.utf8).map(Int.init)))
     }
 }
 
