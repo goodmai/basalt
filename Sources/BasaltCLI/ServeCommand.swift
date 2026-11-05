@@ -160,6 +160,8 @@ struct ServeCommand: AsyncParsableCommand {
     @Flag(help: "Start REST only, suppress MCP stdio")
     var rest: Bool = false
 
+    @Option(name: .customLong("adapter"), help: "Serve a LoRA adapter on the loaded model as name=directory (an mlx-lm adapter directory: adapter_config.json and adapters.safetensors), checked against the model at startup; repeatable. A request picks one with the X-Basalt-Adapter header (unknown name: 400); requests for different adapters take turns, the same adapter runs concurrently") var adapters: [String] = []
+
     @Option(name: .customLong("image-dir"), help: "With --mcp, a directory the generate tool may read image paths from, after resolving symlinks; repeatable (default: none, every path is refused)") var imageDirs: [String] = []
 
     @Flag(

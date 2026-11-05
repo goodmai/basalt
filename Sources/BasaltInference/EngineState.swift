@@ -25,6 +25,8 @@ struct ModelFacts: Sendable {
     var imageToken: Int?
     var deltas: [String: AppliedDelta] = [:]
     var cacheFence = 0
+    var adapters: [String: ServedAdapter] = [:]
+    var adapter: String?
 }
 
 struct LoadedModel: Sendable {

@@ -102,6 +102,7 @@ public struct GenerationRequest: Codable, Sendable {
     public var responseFormat: ResponseFormat?
     public private(set) var sessionId: String? = nil
     public private(set) var budgetKey: String? = nil
+    public private(set) var adapter: String? = nil
     public private(set) var origin: RequestOrigin = .unspecified
     public private(set) var speculativeLookup: Bool? = nil
     public private(set) var grammarJumpForward: Bool? = nil
@@ -153,6 +154,12 @@ public struct GenerationRequest: Codable, Sendable {
         var copy = self
         copy.sessionId = sessionId
         copy.budgetKey = budgetKey
+        return copy
+    }
+
+    public func withAdapter(_ adapter: String?) -> GenerationRequest {
+        var copy = self
+        copy.adapter = adapter
         return copy
     }
 
