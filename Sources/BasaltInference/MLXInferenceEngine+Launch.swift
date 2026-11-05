@@ -71,7 +71,7 @@ extension MLXInferenceEngine {
 
     static func launch(input: LMInput, prompt: CachedPrompt, options: LaunchOptions, context: ModelContext) throws -> GenerationLaunch {
         let start = GenerationLauncher(
-            input: input, params: options.params.reportingPrefill, components: options.components, tools: options.tools, context: context, started: .now)
+            input: input, params: options.params.reportingPrefill.paced(by: options.pacer), components: options.components, tools: options.tools, context: context, started: .now)
         if options.mtp, let drafter = context.mtpDrafter, !carriesMoreThanTokens(input) {
             return try start.mtp(
                 MTPRequest(drafter: drafter, blockSize: options.mtpBlockSize, prefix: options.mtpPrefix), prompt: prompt,

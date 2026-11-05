@@ -14,6 +14,8 @@ public actor ModelOrchestratorActor {
     private var freeMemory: @Sendable () -> Int64 = { SystemProfiler.availableSystemMemory() }
     private var memory: MemoryCoordinator?
     private var memoryTask: Task<Void, Never>?
+    private var thermal = ThermalLevel.current
+    private var pacesThermally = false
 
     public struct KVOptions: Sendable {
         let precision: KVPrecision?
@@ -178,6 +180,7 @@ extension ModelOrchestratorActor {
         if let memory {
             snapshot.memory = MemoryTelemetry(state: await memory.state, limits: state.memoryLimits, refusedAdmissions: state.memoryRefusals)
         }
+        snapshot.thermal = thermalTelemetry
         snapshot.routingBias = await cloudFallback?.routingBias
         return snapshot
     }
@@ -249,6 +252,16 @@ extension ModelOrchestratorActor {
         }
     }
 
+    public func coordinateThermal(with source: @escaping @Sendable () -> ThermalLevel = ThermalLevel.current) async {
+        (thermal, pacesThermally) = (source, true)
+        await engine.pace(with: PrefillPacer(directive: { ThermalDirective(source()) }))
+    }
+
+    var thermalTelemetry: ThermalTelemetry {
+        let level = thermal()
+        return ThermalTelemetry(level: level, directive: pacesThermally ? ThermalDirective(level) : .normal)
+    }
+
     private func applyMemoryDirective() async {
         guard let memory else { return }
         let directive = await memory.state.directive
@@ -256,6 +269,11 @@ extension ModelOrchestratorActor {
     }
 
     private func refusal(_ room: KVRoom, under directive: MemoryDirective) -> BasaltError? {
+        let heat = thermalTelemetry
+        if let refusal = heat.directive.refusal(promptTokens: room.promptTokens) {
+            logger.warn("Refused with 503: thermal state \(heat.level.rawValue), and this request needs \(room.promptTokens) prompt tokens; retry in \(ThermalDirective.retryAfterSeconds) s.")
+            return refusal
+        }
         let refusal = room.refusal(under: directive)
         if case .memoryPressure? = refusal {
             state = .reduce(state, .refusedForMemory)
