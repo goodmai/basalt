@@ -189,6 +189,8 @@ extension ResearchTool {
         case .tensorPack: "Experiment: re-pack the weight of one linear layer in memory (affine 2-8 bit with a group size, mxfp4, or ternary absmean scale·{-1,0,1} per group of 64), dequantizing a quantized layer first. The layer is swapped live (the model is marked modified, prompt-cache reuse is off) as an overlay with TTL and bit-exact undo. Returns bytes before/after, RMSE, max abs error and relative error ||W-Ŵ||/||W||."
         case .tensorUnpack: "Experiment: replace one quantized linear layer by a dense float16 or bfloat16 layer holding its dequantized weight, live, as an overlay with TTL and bit-exact undo. Returns bytes before/after and the error of the cast."
         case .trainExperts: "Experiment, long-running: self-training. Collects the model's (and an optional teacher's) answers to checkable tasks, keeps only answers that match the known answer, trains a LoRA on them, saves it under ~/.basalt/adapters, reports loss and held-out accuracy before/after, then applies it through the quality gate as an undoable overlay."
+        case .steerSearch: "Experiment: contrastive steering search. The difference of mean residuals (positive minus negative prompts) per layer gives a direction; reports norm and class separation per layer, the best layer's unit direction, the heads whose ablation shrinks the gap most, and KL and projection shift when held-out prompts are steered by each scale. Directed search for activation directions, not self-awareness; leaves no overlay behind."
+        case .steerCommit: "Experiment: turns a steering direction into a rank-1 update of the layer's output projection (input = mean module input over the positive prompts) and applies it as an adapter through the quality gate on the held-out prompts; undoable, never written to disk."
         }
     }
 
@@ -208,6 +210,8 @@ extension ResearchTool {
         case .tensorPack: Self.object(Self.packProperties, required: ["tensor"])
         case .tensorUnpack: Self.object(Self.unpackProperties, required: ["tensor"])
         case .trainExperts: Self.object(Self.trainProperties, required: ["heldOut"])
+        case .steerSearch: Self.object(Self.steerSearchProperties, required: ["positive", "negative", "heldOut"])
+        case .steerCommit: Self.object(Self.steerCommitProperties, required: ["layer", "direction", "scale", "positive", "heldOut"])
         }
     }
 
@@ -329,6 +333,33 @@ extension ResearchTool {
             "heldOut": ["type": "array", "items": ["type": "string"], "minItems": 1, "description": "General prompts the quality gate checks the adapter on"],
             "maxKL": ["type": "number", "description": "Gate: largest mean KL on heldOut (default 0.5)"],
             "maxPerplexityRise": ["type": "number", "description": "Gate: largest relative perplexity rise on heldOut (default 0.1)"],
+        ]
+    }
+
+    private static func prompts(_ range: ClosedRange<Int>, _ description: String) -> [String: Any] {
+        ["type": "array", "items": ["type": "string"], "minItems": range.lowerBound, "maxItems": range.upperBound, "description": description]
+    }
+
+    private static var steerSearchProperties: [String: Any] {
+        [
+            "positive": prompts(ContrastRequest.classPrompts, "Prompts showing the behaviour to find"),
+            "negative": prompts(ContrastRequest.classPrompts, "Prompts without it"),
+            "heldOut": prompts(ContrastRequest.heldOutPrompts, "Prompts steered in the trials"),
+            "layers": ["type": "array", "items": ["type": "integer", "minimum": 0], "description": "Layers to search (default: all)"],
+            "topHeads": ["type": "integer", "minimum": ContrastRequest.headLimit.lowerBound, "maximum": ContrastRequest.headLimit.upperBound, "description": "Heads reported, ranked by ablation effect (default 8; 0 skips the ablations)"],
+            "scales": numbers.merging(["maxItems": ContrastRequest.scaleCount.upperBound, "description": "Steering scales tried on the held-out prompts (default [2, 4, 8])"]) { $1 },
+        ]
+    }
+
+    private static var steerCommitProperties: [String: Any] {
+        [
+            "layer": ["type": "integer", "minimum": 0, "description": "bestLayer from steer_search"],
+            "direction": numbers.merging(["description": "direction from steer_search (hidden size)"]) { $1 },
+            "scale": ["type": "number", "description": "Scale chosen from the steer_search trials"],
+            "positive": prompts(1...ContrastRequest.classPrompts.upperBound, "Positive prompts; their mean module input becomes the rank-1 input"),
+            "heldOut": prompts(ContrastRequest.heldOutPrompts, "Held-out prompts for the quality gate"),
+            "maxKL": ["type": "number", "description": "Gate: largest mean KL against the baseline (default 0.5)"],
+            "maxPerplexityRise": ["type": "number", "description": "Gate: largest relative perplexity rise (default 0.1)"],
         ]
     }
 }

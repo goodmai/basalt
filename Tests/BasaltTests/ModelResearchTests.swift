@@ -23,6 +23,8 @@ struct ModelResearchTests {
         case .tensorPack: ["tensor": "w", "format": "affine", "bits": 3, "groupSize": 32]
         case .tensorUnpack: ["tensor": "w", "format": "float16"]
         case .trainExperts: ["count": 40, "seed": 7, "layers": [2, 3], "rank": 4, "iterations": 20, "heldOut": ["Name a colour."]]
+        case .steerSearch: LabSteerTests.searchArguments
+        case .steerCommit: LabSteerTests.commitArguments
         }
     }
 
@@ -43,6 +45,8 @@ struct ModelResearchTests {
         case .tensorPack: .pack(PackRequest(tensor: "w", format: .affine(bits: 3, groupSize: 32)))
         case .tensorUnpack: .pack(PackRequest(tensor: "w", format: .float16))
         case .trainExperts: .train(Self.train)
+        case .steerSearch: .contrast(LabSteerTests.searchRequest)
+        case .steerCommit: .commitSteering(LabSteerTests.commitRequest)
         }
     }
 

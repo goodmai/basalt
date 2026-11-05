@@ -32,6 +32,8 @@ The examples are the `arguments` object of an MCP `tools/call` request.
 | `tensor_pack` | Re-packs the weight of one linear layer in memory: `affine` (`bits` 2, 3, 4, 5, 6 or 8, `groupSize` 32, 64 or 128), `mxfp4`, or `ternary` (absmean scale·{-1, 0, 1} per group of 64). A quantized layer is dequantized first. The layer is swapped live, like a weight delta (see below) | `{"tensor": "model.layers.10.mlp.down_proj.weight", "format": "affine", "bits": 2, "groupSize": 64}` |
 | `tensor_unpack` | Replaces one quantized linear layer by a dense `float16` or `bfloat16` layer (default `bfloat16`) holding its dequantized weight, live | `{"tensor": "model.layers.10.mlp.down_proj.weight", "format": "bfloat16"}` |
 | `train_experts` | Self-training (#332 mode 3, long-running): collects answers to checkable tasks, keeps only the verified ones, trains a LoRA, saves it, reports loss and held-out accuracy before/after, then applies it through the quality gate. See [Self-training](#self-training-train_experts) | `{"count": 200, "seed": 1, "layers": [20, 21, 22, 23], "iterations": 200, "heldOut": ["Summarise the plot of Hamlet in two sentences."]}` |
+| `steer_search` | Contrastive steering search: per layer the direction mean(positive) − mean(negative) of the last-position residual, its norm and class separation; the best layer's unit direction; the heads whose ablation shrinks the gap most; KL and projection shift when the held-out prompts are steered at each scale. Leaves no overlay behind. | `{"positive": ["I love this", "What a great day"], "negative": ["I hate this", "What an awful day"], "heldOut": ["The movie was"], "topHeads": 4, "scales": [2, 4, 8]}` |
+| `steer_commit` | Turns a direction into a rank-1 adapter on the layer's output projection and applies it through the quality gate on `heldOut`. Changes the live weights like `weights_delta` (undoable, TTL unless accepted, never on disk). | `{"layer": 12, "direction": [0.01, -0.02], "scale": 4, "positive": ["I love this"], "heldOut": ["The movie was"]}` |
 
 A slice is one half-open `[start, end)` pair per leading dimension; dimensions left out are taken whole.
 
@@ -122,3 +124,23 @@ One call runs the whole loop at background priority through the generation gate,
 6. **Measure and apply.** Held-out accuracy is measured with the adapter in place, the training layers are removed again, and the adapter is applied through `applyAdapter` with the quality gate built from `heldOut`, `maxKL` and `maxPerplexityRise`: it becomes a marked, undoable overlay with the usual TTL, or is refused by the gate.
 
 The report lists `collected` (answers gathered for training), `verified`, `losses` (mean training loss per reporting step, at most 20), `accuracyBefore` / `accuracyAfter` on the held-out tasks, `adapterDirectory` and the gate's `verdict`.
+
+## Contrastive steering ("meditation", #332 mode 2)
+
+This is directed search for activation directions, not self-awareness. Nothing here means the model reflects on itself: basalt runs two sets of prompts through the model, subtracts the averages of the hidden states, and measures what the difference does.
+
+`steer_search` runs every positive and negative prompt through one probed forward and keeps the residual after each layer at the last position.
+
+- **Direction per layer:** mean(positive) − mean(negative). `norm` is its length; `separation` is the gap between the class means of the projections onto the unit direction (equal to `norm`) divided by the pooled standard deviation of those projections. The best layer has the highest separation, and `direction` is its unit vector (hidden size).
+- **Heads:** each attention head of the best layer and of the layer before it is ablated in turn (the `ablate_head` intervention), and `effect` is how much the positive-minus-negative projection gap at the best layer shrinks. Heads of later layers cannot change that residual and are not tried. At most `topHeads` are reported, largest effect first. This is one forward per head and prompt, so keep the prompt sets small on large models, or pass `topHeads: 0`.
+- **Trials:** for each scale the held-out prompts are steered by `direction × scale` after the best layer (the `steer` intervention, research-only). `klDivergence` is the mean KL of the next-token distribution against the unsteered run; `projectionShift` is the mean change of the projection onto `direction` read after the last layer. At the steered layer that shift is the scale by construction, so the last layer shows how much of the push survives.
+- No overlay is registered: the ablations and steering exist only inside the call.
+
+`steer_commit` makes a direction that helped permanent for the session, through the gate. It picks the layer's dense projection that writes into the residual (`mlp.down_proj`, else `feed_forward.w2`, else `self_attn.o_proj`; a MoE layer without a dense one is refused), measures that module's mean input `m` at the last position over the `positive` prompts, and calls the adapter path with `.rankOne(module: <full module path>, input: m / (m·m), output: direction, scale: scale)`, so the update is ΔW = scale · direction ⊗ m / (m·m).
+
+The approximation, stated plainly:
+
+- The update adds `scale · (x·m / m·m) · direction` to the projection's output for every token. That equals the steering vector exactly only where the module input `x` has the same projection on `m` as the positive mean; other tokens get more, less or the opposite. `steer` adds the same vector to every position.
+- It is exact in the residual only when the projection's output is added straight to the residual stream (pre-norm blocks such as Qwen and LFM). Where a norm follows the projection (Gemma's post-attention and post-feedforward norms) the vector is rescaled and only its direction is roughly kept. When the fallback `self_attn.o_proj` is used, the vector also passes through the layer's MLP before it reaches the residual after the layer.
+- The adapter is accepted only if the gate passes (`maxKL`, `maxPerplexityRise` on `heldOut`); run `steer_search` trials first and commit a scale whose KL was acceptable.
+
