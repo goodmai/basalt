@@ -20,12 +20,16 @@ extension ModelOrchestratorActor {
             let served = names.isEmpty ? "none (serve --adapter name=directory adds one)" : names.joined(separator: ", ")
             throw .invalidRequestStructure(details: "unknown adapter \(name.prefix(64)); this server serves \(served)")
         }
-        let ticket = try await admitted(request.priority)
-        guard await engine.activeAdapter != request.adapter else { return ticket }
+        return try await admitted(request.priority, adapter: request.adapter)
+    }
+
+    func admitted(_ priority: RequestPriority, adapter: String?) async throws(BasaltError) -> Int {
+        let ticket = try await admitted(priority)
+        guard await engine.activeAdapter != adapter else { return ticket }
         await gate.release(ticket)
         let engine = engine
         do {
-            return try await gate.admit(after: { try await engine.useAdapter(request.adapter) })
+            return try await gate.admit(after: { try await engine.useAdapter(adapter) })
         } catch {
             throw Self.basaltError(error, "Adapter switch error")
         }

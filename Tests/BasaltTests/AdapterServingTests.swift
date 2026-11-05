@@ -106,6 +106,16 @@ struct AdapterServingTests {
         #expect(await orchestrator.gate.checkInvariants(idle: true) == [])
     }
 
+    @Test("A research call runs on the base model: a served adapter left active by the last request is switched off first")
+    func researchRunsOnBase() async throws {
+        let (engine, orchestrator, _) = try await Self.served()
+        _ = try await orchestrator.generate(request: greedy(Self.prompt, key: nil).withAdapter("a"))
+        #expect(await engine.activeAdapter == "a")
+        let active = try await orchestrator.research { _ in await engine.activeAdapter }
+        #expect(active == nil)
+        #expect(await orchestrator.gate.checkInvariants(idle: true) == [])
+    }
+
     @Test("The same prompt under A and then B never shares a lease; A again reuses A's prefix across the switch and answers the same")
     func cacheIsolatedPerAdapter() async throws {
         let (_, orchestrator, _) = try await Self.served()
