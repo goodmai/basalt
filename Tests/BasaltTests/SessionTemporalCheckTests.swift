@@ -1,6 +1,7 @@
 import Testing
 import Foundation
 @testable import BasaltCore
+@testable import BasaltCLI
 
 @Suite("Past-time LTL monitor over session tool calls (#359)")
 struct SessionTemporalCheckTests {
@@ -109,5 +110,14 @@ struct SessionTemporalCheckTests {
         #expect(read.lines.compactMap(\.modelRequested) == ["gemma"])
         let violations = SessionTemporalCheck.check(read.lines)
         #expect(Set(violations.map { "\($0.property.rawValue)@\($0.messageIndex)(\($0.tool))" }) == ["P1@5(Read)", "P2@5(Read)"])
+    }
+
+    @Test("sessions check prints a tool or model name only when it is a plain identifier, never free text or escape sequences")
+    func printedNames() {
+        #expect(SessionsCommand.Check.label("mcp__fs__Read") == "mcp__fs__Read")
+        #expect(SessionsCommand.Check.label("lukaskremla/Qwen3.8-27B-3bit-MLX-TextOnly") == "lukaskremla/Qwen3.8-27B-3bit-MLX-TextOnly")
+        #expect(SessionsCommand.Check.label("Read\u{1B}[2J") == "?")
+        #expect(SessionsCommand.Check.label("my secret plan") == "?")
+        #expect(SessionsCommand.Check.label(nil) == "?")
     }
 }
