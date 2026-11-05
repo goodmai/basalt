@@ -114,7 +114,7 @@ public struct EmbeddingService: EmbeddingEngine {
         }
     }
 
-    static let generationWait = Duration.seconds(1)
+    static let generationWait = Duration.seconds(2)
 
     static func forward(_ context: EmbedderModelContext, tokens: [[Int]], dimensions: Int?) throws -> [[Float]] {
         let length = tokens.map(\.count).max() ?? 0
