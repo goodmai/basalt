@@ -138,7 +138,19 @@ enum MCPToolCatalog {
             "minP":        ["type": "number",  "description": "Min-P 0–1, overrides the server default (0 = off)"],
             "dynamicTemperature": ["type": "boolean", "description": "Entropy-based dynamic temperature (EDT)"],
             "speculativeLookup": ["type": "boolean", "description": "Prompt-lookup speculative decoding for this call; unset takes serve --speculative-lookup"],
-            "grammarJumpForward": ["type": "boolean", "description": "Grammar jump-forward constrained decoding for this call; unset takes serve --grammar-jump-forward"]
+            "grammarJumpForward": ["type": "boolean", "description": "Grammar jump-forward constrained decoding for this call; unset takes serve --grammar-jump-forward"],
+            "images": [
+                "type": "array", "maxItems": ImageInput.maxCount,
+                "description": "Images for a vision model, at most 8 of at most 20 MB each: {data, mime} with base64 bytes, or {path} to a file inside a serve --image-dir directory",
+                "items": [
+                    "type": "object",
+                    "properties": [
+                        "data": ["type": "string", "description": "Base64 of the encoded image"],
+                        "mime": ["type": "string", "enum": ImageInput.mimeTypes.sorted()],
+                        "path": ["type": "string", "description": "Absolute path inside a serve --image-dir directory"],
+                    ],
+                ],
+            ],
         ]
     ])
 

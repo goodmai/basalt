@@ -9,6 +9,30 @@ extension OpenAIController {
         struct ContentBlock: Codable, Sendable {
             let type: String?
             let text: String?
+            var imageUrl: ImageURL? = nil
+
+            var isImage: Bool { type?.contains("image") == true }
+
+            enum CodingKeys: String, CodingKey {
+                case type, text
+                case imageUrl = "image_url"
+            }
+        }
+
+        struct ImageURL: Codable, Sendable {
+            let url: String?
+
+            enum CodingKeys: String, CodingKey {
+                case url
+            }
+
+            init(from decoder: Decoder) throws {
+                if let url = try? decoder.singleValueContainer().decode(String.self) {
+                    self.url = url
+                } else {
+                    url = try? decoder.container(keyedBy: CodingKeys.self).decodeIfPresent(String.self, forKey: .url)
+                }
+            }
         }
 
         init(from decoder: Decoder) throws {
@@ -28,13 +52,25 @@ extension OpenAIController {
             }
         }
 
-        var textValue: String {
+        var textValue: String { text(imagesAs: ToolTranscript.imageOmitted) }
+
+        func text(imagesAs placeholder: String?) -> String {
             switch self {
-            case .text(let s):   return s
-            case .blocks(let b):
-                return b.compactMap { $0.type?.contains("image") == true ? ToolTranscript.imageOmitted : $0.text }
-                    .joined(separator: "\n")
+            case .text(let s):   s
+            case .blocks(let b): b.compactMap { $0.isImage ? placeholder : $0.text }.joined(separator: "\n")
             }
+        }
+
+        func images() throws(BasaltError) -> [ImageInput] {
+            guard case .blocks(let blocks) = self else { return [] }
+            var images: [ImageInput] = []
+            for block in blocks where block.isImage {
+                guard let url = block.imageUrl?.url else {
+                    throw .invalidRequestStructure(details: "an image content part needs an image_url")
+                }
+                images.append(try ImageInput(url: url))
+            }
+            return images
         }
     }
 
@@ -207,11 +243,11 @@ extension OpenAIController {
             case grammarJumpForward = "grammar_jump_forward"
         }
 
-        var conversation: [ChatMessageInput] {
+        func conversation() throws(BasaltError) -> [ChatMessageInput] {
             switch input {
             case .text(let t):        t.isEmpty ? [] : [ChatMessageInput(role: .user, text: t)]
-            case .messages(let msgs): OpenAIController.chatMessages(msgs)
-            case nil:                 OpenAIController.chatMessages(messages ?? [])
+            case .messages(let msgs): try OpenAIController.chatMessages(msgs)
+            case nil:                 try OpenAIController.chatMessages(messages ?? [])
             }
         }
 
@@ -361,7 +397,7 @@ extension OpenAIController {
         return text
     }
 
-    static func chatMessages(_ messages: [ChatMessage]) -> [ChatMessageInput] {
+    static func chatMessages(_ messages: [ChatMessage]) throws(BasaltError) -> [ChatMessageInput] {
         let toolNames = toolNames(in: messages)
         var chat: [ChatMessageInput] = []
         for msg in messages {
@@ -375,7 +411,7 @@ extension OpenAIController {
             case "reasoning":
                 continue
             default:
-                if let input = msg.chatInput(toolNames: toolNames) { chat.append(input) }
+                if let input = try msg.chatInput(toolNames: toolNames) { chat.append(input) }
             }
         }
         return chat
@@ -409,16 +445,18 @@ extension OpenAIController.ChatMessage {
         }
     }
 
-    func chatInput(toolNames: [String: String]) -> ChatMessageInput? {
-        let text = content?.textValue ?? ""
+    func chatInput(toolNames: [String: String]) throws(BasaltError) -> ChatMessageInput? {
         let role = chatRole
         if role == .tool {
-            return ChatMessageInput(role: .tool, text: text, toolCallId: toolCallId, toolName: toolCallId.flatMap { toolNames[$0] })
+            return ChatMessageInput(
+                role: .tool, text: content?.textValue ?? "", toolCallId: toolCallId, toolName: toolCallId.flatMap { toolNames[$0] })
         }
+        let text = content?.text(imagesAs: nil) ?? ""
+        let images = try content?.images() ?? []
         let calls = (toolCalls ?? []).map {
             ToolCallOutput(id: $0.id ?? "", name: $0.function.name, arguments: $0.function.arguments ?? "{}")
         }
-        guard !text.isEmpty || !calls.isEmpty else { return nil }
-        return ChatMessageInput(role: role, text: text, toolCalls: calls.isEmpty ? nil : calls)
+        guard !text.isEmpty || !calls.isEmpty || !images.isEmpty else { return nil }
+        return ChatMessageInput(role: role, text: text, toolCalls: calls.isEmpty ? nil : calls, images: images)
     }
 }

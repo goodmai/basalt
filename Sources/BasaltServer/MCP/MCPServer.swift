@@ -12,6 +12,7 @@ public final class MCPServer: Service, Sendable {
     private let harnessRoots: [URL]
     private let harnessLimits: HarnessLoadLimits
     private let researchTools: Bool
+    private let imageDirectories: [URL]
     private let makeInput: @Sendable () -> AsyncStream<String>
     private let writer: @Sendable (String) -> Void
 
@@ -29,6 +30,7 @@ public final class MCPServer: Service, Sendable {
         self.harnessRoots = harnessRoots
         self.harnessLimits = harnessLimits
         self.researchTools = false
+        self.imageDirectories = []
         self.makeInput = Self.stdinStream
         self.writer = writer
     }
@@ -45,23 +47,29 @@ public final class MCPServer: Service, Sendable {
         self.harnessRoots = HarnessLoader.allowedRoots()
         self.harnessLimits = .standard
         self.researchTools = false
+        self.imageDirectories = []
         self.makeInput = { input }
         self.writer = writer
     }
 
-    private init(_ server: MCPServer, researchTools: Bool) {
+    private init(_ server: MCPServer, researchTools: Bool, imageDirectories: [URL]) {
         orchestrator = server.orchestrator
         modelId = server.modelId
         library = server.library
         harnessRoots = server.harnessRoots
         harnessLimits = server.harnessLimits
         self.researchTools = researchTools
+        self.imageDirectories = imageDirectories
         makeInput = server.makeInput
         writer = server.writer
     }
 
     public func withResearchTools(_ enabled: Bool) -> MCPServer {
-        MCPServer(self, researchTools: enabled)
+        MCPServer(self, researchTools: enabled, imageDirectories: imageDirectories)
+    }
+
+    public func withImageDirectories(_ directories: [URL]) -> MCPServer {
+        MCPServer(self, researchTools: researchTools, imageDirectories: directories.map(MCPImages.resolved))
     }
 }
 
@@ -224,7 +232,7 @@ extension MCPServer {
     }
 
     private func generate(_ args: [String: Any]?) async throws(MCPFailure) -> ToolResult {
-        let request = try MCPArguments.generation(args)
+        let request = try MCPArguments.generation(args, images: try MCPImages.parse(args?["images"], allowedIn: imageDirectories))
         do throws(BasaltError) {
             return .generated(try await orchestrator.generate(request: request))
         } catch {

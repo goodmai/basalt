@@ -133,22 +133,23 @@ public actor MLXInferenceEngine: InferenceEngine {
         let (params, unbudgeted, shaping, exclusion) = try await checkedSampling(request)
         let settings = planSettings
         let toolSpecs = Self.toolSpecs(request.tools)
+        try await checkImages(request.messages, container: container)
         do {
             let rendered = try await render(request, tools: toolSpecs, container: container)
             let components = try await budgeted(unbudgeted, request, rendered.policy, params: params, container: container)
-            let prompt = try await promptInput(rendered, request: request, container: container)
+            let prompt = try await promptInput(rendered, request: request, container: container, epoch: epoch)
             let namespace = GenerationPlan.cacheNamespace(
                 request, settings, cacheEnabled: promptCaches.byteBudget > 0 && !modelModified,
-                carriesMoreThanTokens: prompt.carriesMoreThanTokens, sameEpoch: epoch == modelEpoch)
+                media: prompt.media, sameEpoch: epoch == modelEpoch)
             let constraint = try await checkedConstraint(request, settings, prompt, container: container)
-            let boundary = try await boundary(namespace, prompt, rendered, container: container, epoch: epoch)
+            let boundary = max(prompt.media.end, try await boundary(namespace, prompt, rendered, container: container, epoch: epoch))
             let plan = GenerationPlan.make(request, settings, GenerationPlan.Facts(
                 namespace: namespace, promptTokens: prompt.tokens.count, carriesMoreThanTokens: prompt.carriesMoreThanTokens,
                 constrained: constraint != nil, jumpsForward: constraint?.fastForward == true, hasMTPDrafter: hasMTPDrafter,
                 blendAvailable: cacheBlend != nil,
                 modelIsHybrid: modelIsHybrid, modelHasRecurrentState: modelHasRecurrentState))
             try await restoreIfNeeded(namespace, drafts: plan.drafts, tokens: prompt.tokens, container: container, epoch: epoch)
-            let claim = try claimCache(namespace, drafts: plan.drafts, tokens: prompt.tokens)
+            let claim = try claimCache(namespace, drafts: plan.drafts, tokens: prompt.tokens, mediaEnd: prompt.media.end)
             let search = AnchorSearch(prompt: prompt.tokens, reused: claim.reuse?.reusedTokens ?? 0, boundary: boundary, limit: hybridAnchors)
             let anchors = plan.findsAnchors
                 ? await anchorOffsets(rendered.anchorTurns, search, container: container, tools: toolSpecs, context: rendered.context) : []

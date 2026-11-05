@@ -1,5 +1,25 @@
 import BasaltCore
 
+enum PromptMedia: Equatable, Sendable {
+    case text
+    case images(digests: [String], end: Int)
+    case uncacheable
+
+    var end: Int {
+        switch self {
+        case .images(_, let end): end
+        case .text, .uncacheable: 0
+        }
+    }
+
+    static func of(_ messages: [ChatMessageInput]?, carriesMoreThanTokens: Bool, tokens: [Int], imageToken: Int?) -> PromptMedia {
+        guard carriesMoreThanTokens else { return .text }
+        let digests = messages?.flatMap(\.images).map(\.digest) ?? []
+        guard !digests.isEmpty, let last = imageToken.flatMap({ tokens.lastIndex(of: $0) }) else { return .uncacheable }
+        return .images(digests: digests, end: last + 1)
+    }
+}
+
 struct GenerationPlan: Equatable, Sendable {
     struct Settings: Sendable {
         var kvPrecision: KVPrecision?
@@ -35,11 +55,15 @@ struct GenerationPlan: Equatable, Sendable {
     var batchable = false
 
     static func cacheNamespace(
-        _ request: GenerationRequest, _ settings: Settings, cacheEnabled: Bool, carriesMoreThanTokens: Bool, sameEpoch: Bool
+        _ request: GenerationRequest, _ settings: Settings, cacheEnabled: Bool, media: PromptMedia, sameEpoch: Bool
     ) -> String? {
-        guard sameEpoch, !carriesMoreThanTokens, cacheEnabled, settings.capabilities.allows(.promptCacheReuse),
+        guard sameEpoch, cacheEnabled, settings.capabilities.allows(.promptCacheReuse),
               (request.kvPrecision ?? settings.kvPrecision) == nil else { return nil }
-        return request.cacheKey
+        switch media {
+        case .text: return request.cacheKey
+        case .images(let digests, _): return request.cacheKey.map { "\($0)#images:\(digests.joined(separator: ","))" }
+        case .uncacheable: return nil
+        }
     }
 
     static func plainPrompt(_ request: GenerationRequest, _ settings: Settings, carriesMoreThanTokens: Bool) -> Bool {
@@ -50,10 +74,11 @@ struct GenerationPlan: Equatable, Sendable {
         let capabilities = settings.capabilities
         let precision = request.kvPrecision ?? settings.kvPrecision
         var plan = cache(precision: precision, settings)
-        plan.speculativeLookup = capabilities.allows(.speculativeLookup) && (request.speculativeLookup ?? settings.speculativeLookup)
-        plan.drafts = capabilities.allows(.mtp) && drafts(plan, precision: precision, facts)
-        plan.findsAnchors = facts.namespace != nil && !plan.drafts && facts.modelHasRecurrentState == true
-        plan.blends = capabilities.allows(.cacheBlend) && facts.namespace != nil && facts.modelIsHybrid == false && facts.blendAvailable
+        let tokensOnly = !facts.carriesMoreThanTokens
+        plan.speculativeLookup = tokensOnly && capabilities.allows(.speculativeLookup) && (request.speculativeLookup ?? settings.speculativeLookup)
+        plan.drafts = tokensOnly && capabilities.allows(.mtp) && drafts(plan, precision: precision, facts)
+        plan.findsAnchors = tokensOnly && facts.namespace != nil && !plan.drafts && facts.modelHasRecurrentState == true
+        plan.blends = tokensOnly && capabilities.allows(.cacheBlend) && facts.namespace != nil && facts.modelIsHybrid == false && facts.blendAvailable
         plan.batchable = capabilities.allows(.batchedDecode) && batchable(plan, request, precision: precision, facts)
         return plan
     }

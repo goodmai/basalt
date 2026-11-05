@@ -80,7 +80,8 @@ struct ChatPipeline: Sendable {
         }
     }
 
-    static let bodyLimit = 4 * 1024 * 1024
+    static let textBodyLimit = 4 * 1024 * 1024
+    static let bodyLimit = textBodyLimit + (ImageInput.maxTotalBytes + 2) / 3 * 4
 
     func body(of request: Request) async throws -> Data {
         Data(try await request.body.collect(upTo: Self.bodyLimit).readableBytesView)
@@ -97,6 +98,12 @@ struct ChatPipeline: Sendable {
 
     func require(_ condition: Bool, _ message: String) throws {
         guard condition else { throw rejection(.badRequest, message) }
+    }
+
+    func parsed(_ chat: () throws(BasaltError) -> [ChatMessageInput]) throws -> [ChatMessageInput] {
+        do { return try chat() } catch {
+            throw rejection(HTTPResponse.Status(code: error.httpStatus, reasonPhrase: ""), ModelsController.publicMessage(for: error))
+        }
     }
 
     func tools(in data: Data) throws -> OpenAIController.RequestedTools {

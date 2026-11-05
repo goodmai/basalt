@@ -190,8 +190,9 @@ struct GenerationLauncher {
             }
         }
         let head = try blended.map { (anchors: [PromptCache](), kept: $0.cache as PromptCache?, start: reused + $0.tokens, state: $0.cache.state) }
-            ?? HybridPrefixSnapshot.prefillHead(input.text.tokens, into: cache, plan: prompt, model: context.model, prefill: params.prefill)
-        let tail = LMInput(tokens: input.text.tokens[.ellipsis, head.start...])
+            ?? HybridPrefixSnapshot.prefillHead(
+                input.text.tokens, into: cache, plan: prompt, model: context.model, prefill: params.prefill, image: input.image)
+        let tail = LMInput(text: LMInput.Text(tokens: input.text.tokens[.ellipsis, head.start...]), image: head.start == 0 ? input.image : nil)
         let processor = components.makeProcessor(parameters: params).map {
             PromptAnchoredProcessor(base: $0, prompt: input.text.tokens)
         }
