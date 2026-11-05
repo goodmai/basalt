@@ -536,3 +536,20 @@ struct NemotronHTests {
     }
 }
 
+@Suite("Nemotron-H decode kernel (#250)")
+struct NemotronHDecodeKernelTests {
+    @Test("Decoding token by token gives the logits of one multi-token forward, also for a state size below 32 that the decode kernel cannot cover (#250)",
+          arguments: [16, 32])
+    func stepwiseMatchesForward(stateSize: Int) throws {
+        let config = TinyModel.Family.nemotronH.config.replacingOccurrences(of: "\"ssm_state_size\": 16", with: "\"ssm_state_size\": \(stateSize)")
+        let model = try withRandomState(MLXRandom.RandomState(seed: 30)) { try TinyModel.Family.nemotronH.model(Data(config.utf8)) }
+        let prompt = LookupFixture.prompt.map(Int32.init)
+        let whole = model(MLXArray(prompt)[.newAxis], cache: try model.newCache(parameters: nil))[0, -1]
+        let cache = try model.newCache(parameters: nil)
+        eval(model(MLXArray(Array(prompt.dropLast(6)))[.newAxis], cache: cache))
+        var last = whole
+        for token in prompt.suffix(6) { last = model(MLXArray([token]).reshaped(1, 1), cache: cache)[0, -1] }
+        let gap = abs(whole - last).max().item(Float.self)
+        #expect(gap < 1e-4, "state size \(stateSize): max |Δlogit| \(gap)")
+    }
+}
