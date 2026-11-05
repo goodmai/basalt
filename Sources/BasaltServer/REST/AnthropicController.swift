@@ -21,7 +21,7 @@ extension AnthropicController {
             let tools = try pipeline.tools(in: data)
             let stream = dto.stream == true
             let prepared = try pipeline.prepare(ChatPipeline.Input(
-                chat: Self.chatMessages(system: dto.system, messages: dto.messages),
+                chat: try pipeline.parsed { () throws(BasaltError) in try Self.chatMessages(system: dto.system, messages: dto.messages) },
                 maxTokens: dto.effectiveMaxTokens, sampling: dto.sampling(try pipeline.antiRepetition(in: data)),
                 reasoningEffort: dto.effectiveReasoningEffort, tools: tools, thinkingBudget: dto.thinkingBudget,
                 responseFormat: nil, model: dto.model, stream: stream), headers: request.headers)

@@ -305,7 +305,7 @@ extension ModelRouter: CloudFallback {
     public func assess(_ request: GenerationRequest, localModel: String) async -> CloudAssessment? {
         state = .reduce(state, .localModelSeen(localModel))
         guard cloudClient != nil, let cloudModel = fallbackCloudModel,
-              request.tools?.isEmpty ?? true, request.responseFormat == nil,
+              request.tools?.isEmpty ?? true, request.responseFormat == nil, request.messages?.contains(where: { !$0.images.isEmpty }) != true,
               ChatMessageInput.splittingPrefill(request.messages ?? [])?.prefill.isEmpty ?? true
         else { return nil }
         let context = RoutingContext(request)

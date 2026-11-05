@@ -49,7 +49,8 @@ public enum SecretRedactor {
         messages.map { message in
             ChatMessageInput(
                 role: message.role, text: redact(message.text),
-                toolCalls: message.toolCalls.map(redact), toolCallId: message.toolCallId, toolName: message.toolName)
+                toolCalls: message.toolCalls.map(redact), toolCallId: message.toolCallId, toolName: message.toolName,
+                images: message.images)
         }
     }
 

@@ -1,4 +1,5 @@
 import Foundation
+import CoreImage
 import MLX
 import MLXLMCommon
 import Tokenizers
@@ -24,10 +25,11 @@ extension MLXInferenceEngine {
     static func chat(_ messages: [ChatMessageInput], lastText: String) -> [Chat.Message] {
         messages.enumerated().map { index, message in
             let text = index == messages.count - 1 ? lastText : message.text
+            let images = message.images.compactMap { CIImage(data: $0.data) }.map(UserInput.Image.ciImage)
             switch message.role {
-            case .system:    return .system(text)
-            case .user:      return .user(text)
-            case .assistant: return .assistant(text, toolCalls: message.toolCalls?.map(toolCall))
+            case .system:    return .system(text, images: images)
+            case .user:      return .user(text, images: images)
+            case .assistant: return .assistant(text, images: images, toolCalls: message.toolCalls?.map(toolCall))
             case .tool:      return .tool(text, id: message.toolCallId, name: message.toolName)
             }
         }

@@ -43,7 +43,7 @@ struct ControlTokenGuard: Sendable, Equatable {
             ChatMessageInput(
                 role: message.role, text: neutralize(message.text),
                 toolCalls: message.toolCalls?.map { ToolCallOutput(id: $0.id, name: $0.name, arguments: neutralize($0.arguments)) },
-                toolCallId: message.toolCallId, toolName: message.toolName)
+                toolCallId: message.toolCallId, toolName: message.toolName, images: message.images)
         }
     }
 }

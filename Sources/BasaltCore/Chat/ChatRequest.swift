@@ -1,19 +1,5 @@
 import Foundation
 
-// MARK: — Canonical chat request
-//
-// Every wire protocol (OpenAI, Anthropic, native) decodes into this one type.
-// It is deliberately model-agnostic: nothing here knows about `<think>` markers,
-// `<|im_start|>`, or any other template syntax. Turning a ChatRequest into tokens
-// is the job of the tokenizer's own chat template, reached via ModelProfile.
-//
-// The previous design let the OpenAI adapter hand-assemble a prompt string with
-// Gemma-3 markers, which (a) produced the wrong prompt for every non-Gemma-3
-// model and (b) put the stream parser into thinking mode for the whole
-// generation, so `content` came back empty while `completion_tokens` was
-// non-zero. Keeping prompt syntax out of the transport layer makes that class
-// of bug unrepresentable.
-
 public struct ChatMessageInput: Codable, Sendable, Equatable {
     public enum Role: String, Codable, Sendable {
         case system, user, assistant, tool
@@ -24,16 +10,25 @@ public struct ChatMessageInput: Codable, Sendable, Equatable {
     public let toolCalls: [ToolCallOutput]?
     public let toolCallId: String?
     public let toolName: String?
+    private let attachedImages: [ImageInput]?
+
+    public var images: [ImageInput] { attachedImages ?? [] }
+
+    enum CodingKeys: String, CodingKey {
+        case role, text, toolCalls, toolCallId, toolName
+        case attachedImages = "images"
+    }
 
     public init(
         role: Role, text: String, toolCalls: [ToolCallOutput]? = nil,
-        toolCallId: String? = nil, toolName: String? = nil
+        toolCallId: String? = nil, toolName: String? = nil, images: [ImageInput] = []
     ) {
         self.role = role
         self.text = text
         self.toolCalls = toolCalls
         self.toolCallId = toolCallId
         self.toolName = toolName
+        attachedImages = images.isEmpty ? nil : images
     }
 
     public static func plainText(_ messages: [ChatMessageInput]) -> String {
@@ -53,9 +48,10 @@ public struct ChatMessageInput: Codable, Sendable, Equatable {
         let leading = joined(messages[..<firstUser].filter { $0.role == .system }.map(\.text))
         var rest: [ChatMessageInput] = []
         for (index, message) in messages.enumerated() where !(index < firstUser && message.role == .system) {
-            let message = message.role == .system ? ChatMessageInput(role: .user, text: "System: \(message.text)") : message
+            let message = message.role == .system ? ChatMessageInput(role: .user, text: "System: \(message.text)", images: message.images) : message
             if message.role == .user, let previous = rest.last, previous.role == .user {
-                rest[rest.count - 1] = ChatMessageInput(role: .user, text: joined([previous.text, message.text]) ?? "")
+                rest[rest.count - 1] = ChatMessageInput(
+                    role: .user, text: joined([previous.text, message.text]) ?? "", images: previous.images + message.images)
             } else {
                 rest.append(message)
             }
@@ -65,7 +61,7 @@ public struct ChatMessageInput: Codable, Sendable, Equatable {
 
     public static func alternating(_ messages: [ChatMessageInput]) -> [ChatMessageInput] {
         let placed = leadingSystem(messages)
-        var turns: [(role: Role, texts: [String])] = []
+        var turns: [(role: Role, texts: [String], images: [ImageInput])] = []
         for message in placed where message.role != .system {
             let role: Role = message.role == .tool ? .user : message.role
             let text = message.role == .tool
@@ -74,19 +70,20 @@ public struct ChatMessageInput: Codable, Sendable, Equatable {
                     .filter { !$0.isEmpty }.joined(separator: "\n")
             if turns.last?.role == role {
                 turns[turns.count - 1].texts.append(text)
+                turns[turns.count - 1].images += message.images
             } else {
-                turns.append((role, [text]))
+                turns.append((role, [text], message.images))
             }
         }
         guard turns.contains(where: { $0.role == .user }) else {
-            return [ChatMessageInput(role: .user, text: plainText(messages))]
+            return [ChatMessageInput(role: .user, text: plainText(messages), images: messages.flatMap(\.images))]
         }
         if turns[0].role == .assistant {
             let opening = joined(turns.removeFirst().texts).map { "Assistant: \($0)" }
             turns[0].texts.insert(contentsOf: opening.map { [$0] } ?? [], at: 0)
         }
         let leading = placed.first.flatMap { $0.role == .system ? [$0] : nil } ?? []
-        return leading + turns.map { ChatMessageInput(role: $0.role, text: joined($0.texts) ?? "") }
+        return leading + turns.map { ChatMessageInput(role: $0.role, text: joined($0.texts) ?? "", images: $0.images) }
     }
 
     private static func joined(_ texts: [String]) -> String? {

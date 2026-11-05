@@ -34,7 +34,7 @@ extension OpenAIController {
             let format = try pipeline.responseFormat(in: data)
             let stream = dto.stream == true
             let prepared = try pipeline.prepare(ChatPipeline.Input(
-                chat: Self.chatMessages(dto.messages), maxTokens: dto.maxTokens,
+                chat: try pipeline.parsed { () throws(BasaltError) in try Self.chatMessages(dto.messages) }, maxTokens: dto.maxTokens,
                 sampling: dto.sampling(try pipeline.antiRepetition(in: data)),
                 reasoningEffort: dto.reasoningEffort, tools: tools, thinkingBudget: dto.thinkingBudget,
                 responseFormat: format, model: dto.model, stream: stream), headers: request.headers)
@@ -54,7 +54,7 @@ extension OpenAIController {
         let pipeline = self.pipeline(source: "openai-responses", endpoint: "/v1/responses")
         return try await pipeline.handle(request) { data in
             let dto = try pipeline.decode(ResponsesRequest.self, from: data, failure: "Cannot decode responses request")
-            let conversation = dto.conversation
+            let conversation = try pipeline.parsed(dto.conversation)
             try pipeline.require(!conversation.isEmpty, "input or messages must not be empty")
             let tools = try pipeline.tools(in: data)
             let format = try pipeline.responseFormat(in: data)

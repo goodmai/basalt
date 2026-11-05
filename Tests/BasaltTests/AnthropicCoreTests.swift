@@ -27,7 +27,7 @@ struct AnthropicCoreTests {
         }
     }
 
-    @Test("Messages: system first, tool_use becomes a call, tool_result splits the turn and carries the tool name and error prefix")
+    @Test("Messages: system first, tool_use becomes a call, tool_result splits the turn and carries the tool name and error prefix, an image block becomes an image of its turn")
     func messagesToChat() throws {
         let dto = try request(#"""
         {"system": [{"type": "text", "text": "rules"}],
@@ -36,15 +36,15 @@ struct AnthropicCoreTests {
            {"role": "assistant", "content": [{"type": "text", "text": "ok"},
                                              {"type": "tool_use", "id": "t1", "name": "ls", "input": {"b": 1, "a": "x/y"}}]},
            {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t1", "is_error": true, "content": "boom"},
-                                        {"type": "image"}]},
+                                        {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "cG5n"}}]},
            {"role": "assistant", "content": []}]}
         """#)
-        #expect(AnthropicController.chatMessages(system: dto.system, messages: dto.messages) == [
+        #expect(try AnthropicController.chatMessages(system: dto.system, messages: dto.messages) == [
             ChatMessageInput(role: .system, text: "rules"),
             ChatMessageInput(role: .user, text: "go"),
             ChatMessageInput(role: .assistant, text: "ok", toolCalls: [ToolCallOutput(id: "t1", name: "ls", arguments: #"{"a":"x/y","b":1}"#)]),
             ChatMessageInput(role: .tool, text: "Error: boom", toolCallId: "t1", toolName: "ls"),
-            ChatMessageInput(role: .user, text: ToolTranscript.imageOmitted),
+            ChatMessageInput(role: .user, text: "", images: [try ImageInput(data: Data("png".utf8), mime: "image/png")]),
             ChatMessageInput(role: .assistant, text: ""),
         ])
     }

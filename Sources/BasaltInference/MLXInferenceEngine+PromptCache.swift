@@ -31,22 +31,21 @@ extension MLXInferenceEngine {
         try read(promptCaches)
     }
 
+    func cacheIsHybrid(_ container: ModelContainer, epoch: ModelEpoch) async -> Bool {
+        if let known = modelIsHybrid { return known }
+        let kinds = (try? await container.perform { context -> (hybrid: Bool, recurrent: Bool) in
+            let cache = try context.model.newCache(parameters: nil)
+            return (PromptCache(cache).isHybrid, cache.contains { $0 is MambaCache })
+        }) ?? (hybrid: false, recurrent: false)
+        record(.learned(epoch) { ($0.isHybrid, $0.hasRecurrentState) = (kinds.hybrid, kinds.recurrent) })
+        return kinds.hybrid
+    }
+
     func snapshotBoundary(
         _ count: Int, container: ModelContainer, epoch: ModelEpoch, template: String?,
         _ makeInput: @Sendable (String) -> UserInput
     ) async -> Int {
-        let hybrid: Bool
-        if let known = modelIsHybrid {
-            hybrid = known
-        } else {
-            let kinds = (try? await container.perform { context -> (hybrid: Bool, recurrent: Bool) in
-                let cache = try context.model.newCache(parameters: nil)
-                return (PromptCache(cache).isHybrid, cache.contains { $0 is MambaCache })
-            }) ?? (hybrid: false, recurrent: false)
-            hybrid = kinds.hybrid
-            record(.learned(epoch) { ($0.isHybrid, $0.hasRecurrentState) = (kinds.hybrid, kinds.recurrent) })
-        }
-        guard hybrid else { return count - 1 }
+        guard await cacheIsHybrid(container, epoch: epoch) else { return count - 1 }
         if let template, let suffix = templateSuffixes[template] {
             return count - suffix
         }

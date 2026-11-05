@@ -22,6 +22,7 @@ struct ModelFacts: Sendable {
     var kvHeadMask: KVHeadMask?
     var questApplies = false
     var capabilities = ModelCapabilities.unrestricted
+    var imageToken: Int?
     var deltas: [String: AppliedDelta] = [:]
     var cacheFence = 0
 }
