@@ -20,6 +20,8 @@ struct ModelResearchTests {
         case .experimentCompare: ["prompts": ["a", "b"], "overlays": [3], "maxTokens": 8]
         case .adapterApply: ["module": "model.layers.0.mlp.down_proj", "input": [1.0], "output": [2.0], "scale": 0.5, "gate": ["heldOut": ["h"], "maxKL": 0.25, "target": [["prompt": "2 + 2 =", "expected": "4"]]]]
         case .gateCheck: ["heldOut": ["h"], "maxPerplexityRise": 0.5]
+        case .tensorPack: ["tensor": "w", "format": "affine", "bits": 3, "groupSize": 32]
+        case .tensorUnpack: ["tensor": "w", "format": "float16"]
         }
     }
 
@@ -37,6 +39,8 @@ struct ModelResearchTests {
         case .experimentCompare: .compare(CompareRequest(prompts: ["a", "b"], overlays: [3], maxTokens: 8))
         case .adapterApply: .adapter(.rankOne(module: "model.layers.0.mlp.down_proj", input: [1], output: [2], scale: 0.5), gate: Self.gate)
         case .gateCheck: .gate(GateRequest(heldOut: ["h"], maxPerplexityRise: 0.5))
+        case .tensorPack: .pack(PackRequest(tensor: "w", format: .affine(bits: 3, groupSize: 32)))
+        case .tensorUnpack: .pack(PackRequest(tensor: "w", format: .float16))
         }
     }
 

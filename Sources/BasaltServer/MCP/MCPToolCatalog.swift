@@ -185,6 +185,8 @@ extension ResearchTool {
         case .experimentCompare: "Experiment: greedy before/after on a prompt set with the given overlays: text, KL divergence of the logits and perplexity."
         case .adapterApply: "Experiment: apply a LoRA adapter live, from an mlx-lm adapter directory or as a rank-1 update of one linear layer (quantized included). Marks the model modified; undo with overlay_undo. With a gate it is kept without expiry only if the gate passes, otherwise undone; without one it expires after 30 min."
         case .gateCheck: "Experiment: the quality gate on the model as it is now against the pristine model (every live adapter and delta lifted): load-probe perplexity and known answers, mean KL and perplexity rise on held-out prompts, and exact-match targets. Each check has its value and limit."
+        case .tensorPack: "Experiment: re-pack the weight of one linear layer in memory (affine 2-8 bit with a group size, mxfp4, or ternary absmean scale·{-1,0,1} per group of 64), dequantizing a quantized layer first. The layer is swapped live (the model is marked modified, prompt-cache reuse is off) as an overlay with TTL and bit-exact undo. Returns bytes before/after, RMSE, max abs error and relative error ||W-Ŵ||/||W||."
+        case .tensorUnpack: "Experiment: replace one quantized linear layer by a dense float16 or bfloat16 layer holding its dequantized weight, live, as an overlay with TTL and bit-exact undo. Returns bytes before/after and the error of the cast."
         }
     }
 
@@ -201,6 +203,8 @@ extension ResearchTool {
         case .experimentCompare: Self.object(Self.compareProperties, required: ["prompts"])
         case .adapterApply: Self.object(Self.adapterProperties)
         case .gateCheck: Self.object(Self.gateProperties, required: ["heldOut"])
+        case .tensorPack: Self.object(Self.packProperties, required: ["tensor"])
+        case .tensorUnpack: Self.object(Self.unpackProperties, required: ["tensor"])
         }
     }
 
@@ -287,6 +291,22 @@ extension ResearchTool {
                 "type": "array", "maxItems": ResearchCall.comparePrompts.upperBound, "description": "Exact-match tasks: the greedy answer must contain expected",
                 "items": ["type": "object", "properties": ["prompt": ["type": "string"], "expected": ["type": "string"]], "required": ["prompt", "expected"]],
             ],
+        ]
+    }
+
+    private static var packProperties: [String: Any] {
+        [
+            "tensor": ["type": "string", "description": "Weight of a linear layer as model_tensors lists it, e.g. model.layers.3.mlp.down_proj.weight"],
+            "format": ["type": "string", "enum": PackRequest.packFormats, "description": "Target format (default affine)"],
+            "bits": ["type": "integer", "minimum": PackRequest.packBits.lowerBound, "maximum": PackRequest.packBits.upperBound, "description": "affine: bits per weight, 2, 3, 4, 5, 6 or 8 (default 4)"],
+            "groupSize": ["type": "integer", "enum": [32, 64, 128], "description": "affine: weights per scale and bias (default 64)"],
+        ]
+    }
+
+    private static var unpackProperties: [String: Any] {
+        [
+            "tensor": ["type": "string", "description": "Weight of a quantized linear layer as model_tensors lists it"],
+            "format": ["type": "string", "enum": PackRequest.unpackFormats, "description": "Float type of the dense layer (default bfloat16)"],
         ]
     }
 }

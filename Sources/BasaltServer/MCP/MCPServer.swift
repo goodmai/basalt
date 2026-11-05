@@ -171,6 +171,7 @@ extension ResearchCall {
         case .compare(let request): return .json(try await model.compare(request))
         case .adapter(let source, let gate): return .json(try await Self.lab(model).applyAdapter(source, gate: gate))
         case .gate(let request): return .json(try await Self.lab(model).gate(request))
+        case .pack(let request): return .json(try await Self.lab(model).pack(request))
         }
     }
 
