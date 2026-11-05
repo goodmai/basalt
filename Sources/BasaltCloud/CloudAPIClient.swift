@@ -132,9 +132,9 @@ public actor CloudAPIClient: Sendable {
             throw BasaltError.invalidRequestStructure(details: "Invalid response type")
         }
         
-        guard (200...299).contains(httpResponse.statusCode) else {
+        if let failure = Self.failure(of: httpResponse, body: Data()) {
             self.errorCount += 1
-            throw BasaltError.modelInferenceError(details: "Streaming API error (HTTP \(httpResponse.statusCode))")
+            throw failure
         }
         
         self.requestCount += 1
