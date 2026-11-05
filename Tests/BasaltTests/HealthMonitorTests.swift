@@ -74,31 +74,32 @@ struct DegenerateOutputDetectorTests {
 
     static let repeated = Array(repeating: Segment.answer(" the"), count: DegenerateOutputDetector.repeatLimit)
     static let cases: [([Segment], Bool, DegenerateOutput?)] = [
-        ([.reasoning("think"), .answer("Paris.")], false, nil),
-        ([.answer("Paris.")], false, nil),
-        ([], false, nil),
-        ([.reasoning("think")], false, .emptyAfterThinking),
-        ([.reasoning("think")], true, nil),
-        ([.reasoning("think"), .answer("\n\n  ")], false, .blankAnswer),
-        ([.answer("<|im_end|>"), .answer(" \n<|endoftext|>")], false, .blankAnswer),
-        ([.answer("<|im_"), .answer("end|>")], false, .blankAnswer),
-        (repeated, false, .repeatedToken),
-        (Array(repeated.dropLast()), false, nil),
+        ([.reasoning("think"), .answer("Paris.")], true, nil),
+        ([.answer("Paris.")], true, nil),
+        ([], true, nil),
+        ([.reasoning("think")], true, .emptyAfterThinking),
+        ([.reasoning("think")], false, nil),
+        ([.reasoning("think"), .answer("\n\n  ")], true, .blankAnswer),
+        ([.reasoning("think"), .answer("\n\n  ")], false, nil),
+        ([.answer("<|im_end|>"), .answer(" \n<|endoftext|>")], true, .blankAnswer),
+        ([.answer("<|im_"), .answer("end|>")], true, .blankAnswer),
         (repeated, true, .repeatedToken),
+        (Array(repeated.dropLast()), true, nil),
+        (repeated, false, .repeatedToken),
     ]
 
-    @Test("Flags repetition, an empty answer after thinking and a blank answer", arguments: cases)
-    func verdict(_ segments: [Segment], calledTools: Bool, expected: DegenerateOutput?) {
+    @Test("Flags repetition always, and an empty answer after thinking or a blank answer only when an answer was expected (no tool call, not cut off at max_tokens)", arguments: cases)
+    func verdict(_ segments: [Segment], answerExpected: Bool, expected: DegenerateOutput?) {
         var detector = DegenerateOutputDetector(controlTokens: ["<|im_end|>", "<|endoftext|>"])
         for segment in segments { detector.feed(segment) }
-        #expect(detector.verdict(calledTools: calledTools) == expected)
+        #expect(detector.verdict(answerExpected: answerExpected) == expected)
     }
 
     @Test("A different token between repeats resets the run")
     func runResets() {
         var detector = DegenerateOutputDetector(controlTokens: [])
         for index in 0 ..< DegenerateOutputDetector.repeatLimit * 2 { detector.feed(.answer(index.isMultiple(of: 50) ? "x" : "a")) }
-        #expect(detector.verdict(calledTools: false) == nil)
+        #expect(detector.verdict(answerExpected: true) == nil)
     }
 }
 

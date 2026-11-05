@@ -79,9 +79,9 @@ struct DegenerateOutputDetector: Sendable {
         repeated = repeated || run >= Self.repeatLimit
     }
 
-    func verdict(calledTools: Bool) -> DegenerateOutput? {
+    func verdict(answerExpected: Bool) -> DegenerateOutput? {
         if repeated { return .repeatedToken }
-        guard !calledTools else { return nil }
+        guard answerExpected else { return nil }
         if answered {
             return controlTokens.reduce(answer) { $0.replacingOccurrences(of: $1, with: "") }.isEmpty ? .blankAnswer : nil
         }
