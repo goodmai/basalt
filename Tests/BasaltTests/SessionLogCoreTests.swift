@@ -1,5 +1,6 @@
 import Testing
 import Foundation
+import CryptoKit
 @testable import BasaltCore
 
 @Suite("Session log value core: formatting, redaction, conversations, idle rotation, retention")
@@ -86,16 +87,16 @@ struct SessionLogCoreTests {
     @Test("A conversation that extends an earlier one finds its session and parent; the window keeps the last eight")
     func conversations() {
         var index = SessionConversations()
-        let none = index.remember(nil, id: "x", session: "s1")
-        let first = index.remember(Self.turns(["a"]), id: "r1", session: "s1")
-        let parent = index.remember(Self.turns(["a", "b", "c"]), id: "r2", session: "s1")
-        #expect(none == nil && first == nil)
+        func digests(_ texts: [String]) -> [SHA256.Digest] { SessionConversations.digests(Self.turns(texts)) }
+        #expect(index.parent(of: digests(["a"]), in: "s1") == nil)
+        index.remember(digests(["a"]), id: "r1", session: "s1")
+        let parent = index.parent(of: digests(["a", "b", "c"]), in: "s1")
+        index.remember(digests(["a", "b", "c"]), id: "r2", session: "s1")
         #expect(parent?.id == "r1" && parent?.count == 1)
-        #expect(index.session(continuing: SessionConversations.digests(Self.turns(["a", "b", "c", "d"]))) == "s1")
-        #expect(index.session(continuing: SessionConversations.digests(Self.turns(["z"]))) == nil)
-        for i in 0..<SessionConversations.window { _ = index.remember(Self.turns(["w\(i)"]), id: "w\(i)", session: "s1") }
-        let evicted = index.remember(Self.turns(["a", "b", "c", "d"]), id: "r3", session: "s1")
-        #expect(evicted == nil)
+        #expect(index.session(continuing: digests(["a", "b", "c", "d"])) == "s1")
+        #expect(index.session(continuing: digests(["z"])) == nil)
+        for i in 0..<SessionConversations.window { index.remember(digests(["w\(i)"]), id: "w\(i)", session: "s1") }
+        #expect(index.parent(of: digests(["a", "b", "c", "d"]), in: "s1") == nil)
         #expect(index.knows("s1") && !index.knows("s2"))
     }
 
@@ -103,14 +104,16 @@ struct SessionLogCoreTests {
     func activity() {
         var activity = SessionActivity()
         let t0 = Date(timeIntervalSince1970: 1_000)
-        let starts = [activity.start("s", at: t0), activity.start("s", at: t0)]
-        #expect(starts == [.firstSeen, .seen])
+        #expect(activity.start(of: "s", at: t0) == .firstSeen)
+        activity.begin("s", at: t0)
+        #expect(activity.start(of: "s", at: t0) == .seen)
         #expect(SessionActivity.idleSeconds(since: t0, now: t0.addingTimeInterval(59.9), timeout: 60) == nil)
         #expect(SessionActivity.idleSeconds(since: t0, now: t0.addingTimeInterval(60), timeout: 60) == 60)
         activity.suspend("s", at: t0.addingTimeInterval(61))
         #expect(activity.lastActivity["s"] == nil)
-        let resumed = activity.start("s", at: t0.addingTimeInterval(161))
-        #expect(resumed == .resumed(gapS: 100))
+        #expect(activity.start(of: "s", at: t0.addingTimeInterval(161)) == .resumed(gapS: 100))
+        activity.begin("s", at: t0.addingTimeInterval(161))
+        #expect(activity.start(of: "s", at: t0.addingTimeInterval(161)) == .seen)
         #expect(activity.lastActivity["s"] == t0.addingTimeInterval(161))
         activity.touch("s", at: t0)
         #expect(activity.lastActivity["s"] == t0)
