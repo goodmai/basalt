@@ -11,8 +11,10 @@ struct TeacherClient: Sendable {
     }
 
     static let keyVariable = "BASALT_TEACHER_API_KEY"
+    static let urlVariable = "BASALT_TEACHER_URL"
     let endpoint: URL
     let model: String
+    let key: String?
 
     init(_ teacher: String, model: String?) throws(BasaltError) {
         guard var url = URL(string: teacher), ["http", "https"].contains(url.scheme?.lowercased() ?? ""), url.host != nil else {
@@ -21,13 +23,21 @@ struct TeacherClient: Sendable {
         if !url.path.hasSuffix("chat/completions") { url.append(path: "chat/completions") }
         endpoint = url
         self.model = model ?? "default"
+        key = Self.key(for: url, environment: ProcessInfo.processInfo.environment)
+    }
+
+    static func key(for url: URL, environment: [String: String]) -> String? {
+        guard let trusted = environment[urlVariable].flatMap(URL.init(string:)),
+              trusted.scheme?.lowercased() == url.scheme?.lowercased(), trusted.host?.lowercased() == url.host?.lowercased(), trusted.port == url.port
+        else { return nil }
+        return environment[keyVariable]
     }
 
     func answer(_ prompt: String) async throws(BasaltError) -> String {
         var request = URLRequest(url: endpoint, timeoutInterval: 120)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        if let key = ProcessInfo.processInfo.environment[Self.keyVariable] { request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization") }
+        if let key { request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization") }
         let body: [String: Any] = ["model": model, "messages": [["role": "user", "content": prompt]], "temperature": 0, "max_tokens": 256]
         let status: Int
         let data: Data

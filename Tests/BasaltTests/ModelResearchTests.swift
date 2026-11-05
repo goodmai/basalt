@@ -90,7 +90,7 @@ struct ModelResearchTests {
             (.experimentCompare, ["prompts": [String]()], "prompts must be an array of 1...16 strings"),
             (.experimentCompare, ["prompts": ["p"], "maxTokens": 0], "maxTokens must be an integer in 1...512"),
             (.weightsDelta, ["tensor": "w", "values": [Double]()], "values must be a non-empty array of numbers"),
-            (.trainExperts, ["count": 40], "heldOut must be a non-empty array"),
+            (.trainExperts, ["count": 40], "heldOut must be an array of 1...16"),
             (.trainExperts, ["heldOut": ["p"], "count": 1], "count must be an integer in 2...10000"),
         ]
         for (tool, args, fragment) in cases {

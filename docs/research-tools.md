@@ -41,8 +41,8 @@ A slice is one half-open `[start, end)` pair per leading dimension; dimensions l
 
 - **Local only.** The tools are MCP tools served over stdio to the client that launched the server; they have no REST route.
 - **Off by default.** Without `--research-tools` the experiment tools are neither listed nor accepted.
-- **Overlays, TTL, undo, journal.** Every experiment is an overlay with an id, a description and a 30-minute TTL. `overlay_undo` removes it early; on expiry it is undone automatically. Adds, undos and expiries are appended to `~/.basalt/experiments/<model fingerprint>.jsonl` (directory 0700, file 0600). Loading another model drops every overlay.
-- **Files on disk are never written.** A delta exists only in memory; restarting the server or reloading the model discards it.
+- **Overlays, TTL, undo, journal.** Every experiment is an overlay with an id, a description and a 30-minute TTL, except an adapter that passed its quality gate (`adapter_apply` with `gate`, `steer_commit`, `train_experts`), which stays until `overlay_undo`. `overlay_undo` removes any overlay early; on expiry it is undone automatically. Adds, undos and expiries are appended to `~/.basalt/experiments/<model fingerprint>.jsonl` (directory 0700, file 0600). Loading another model drops every overlay.
+- **Model files on disk are never written.** Deltas, packs and adapters exist only in memory; restarting the server or reloading the model discards them. The only files written are the journal and the adapter `train_experts` saves to a new directory.
 - **Interventions stay in research calls.** Steering and ablations apply to `experiment_compare` and `trace_run`, never to user requests.
 - **Weight deltas are visible and isolated from the caches.** A delta changes the weights every request uses, so while one is active:
   - every response carries `modelModified: true` (also a response whose generation overlapped an apply or undo);
@@ -102,12 +102,13 @@ With `--research-tools`, `introspect` lets the served model study itself. Given 
 | `resultBudget` | Characters of each tool result fed back to the model, 200–20000 (default 2000); longer results are cut and marked |
 
 - **One call per turn.** The loop stops at an answer without a tool call, after `maxSteps`, or when the model repeats a call it already made (same tool and arguments, key order ignored); `stop` in the report says which.
-- **Hypotheses.** The model is asked to write each hypothesis as `Hypothesis:` / `Test:` / `Outcome:` lines. They are parsed leniently (markdown, numbering, `Result:` for `Outcome:`), and a restated hypothesis replaces the earlier one.
+- **Hypotheses.** The model is asked to write each hypothesis as `Hypothesis:` / `Test:` / `Outcome:` lines. They are parsed leniently (markdown, numbering, `Result:` for `Outcome:`), and a restated hypothesis replaces the earlier one, keeping its `Test:` or `Outcome:` when the restatement leaves that line out.
 - **Errors go back to the model.** A malformed or failing tool call becomes an `error: …` result the model sees; a failed generation or a cancellation ends the loop.
-- **Interventions never outlive the loop.** Every overlay created during the loop is undone when it ends, also on an error or a cancellation; `undone` lists them.
+- **Interventions never outlive the loop.** Every overlay created during the loop is undone when it ends, also on an error or a cancellation; `undone` lists them. If the server refuses the cleanup (busy), `cleanupFailure` says so and those overlays expire at their TTL. `overlay_undo` refuses overlays that existed before the loop.
+- **A failed turn keeps the report.** If a generation fails mid-loop, the steps so far come back with `stop: "failed"` and the error in `failure`.
 - **Journal.** Each step appends one `introspect` line (model, step, tool, arguments and the start of the result) to `~/.basalt/experiments/introspect.jsonl`.
 
-The report holds `goal`, `steps` (the model's text, and for a call its `tool`, `arguments` and truncated `result`), `hypotheses` (`statement`, `test`, `outcome`), `answer`, `stop` and `undone`.
+The report holds `goal`, `steps` (the model's text, and for a call its `tool`, `arguments` and truncated `result`), `hypotheses` (`statement`, `test`, `outcome`), `answer`, `stop`, `failure`, `undone` and `cleanupFailure`.
 
 ```json
 {"goal": "find which heads attend to the last tool call", "maxSteps": 6, "allowInterventions": true}
@@ -117,11 +118,11 @@ The report holds `goal`, `steps` (the model's text, and for a call its `tool`, `
 One call runs the whole loop at background priority through the generation gate, holding the model for the training itself:
 
 1. **Tasks.** `count` + `seed` generate integer `+`, `-`, `*` problems with known answers (the same seed gives the same problems); `file` reads JSONL lines `{"prompt": "...", "answer": "..."}` instead. A fifth of the tasks (at least one) is held out and never trained on.
-2. **Collect.** The model answers every task greedily through the chat template (thinking off, 64 tokens). With `teacher` (base URL of an OpenAI-compatible server; `teacherModel` names its model, `BASALT_TEACHER_API_KEY` is sent as a bearer token if set) the teacher answers the training tasks too.
+2. **Collect.** The model answers every task greedily through the chat template (thinking off, 64 tokens). With `teacher` (base URL of an OpenAI-compatible server; `teacherModel` names its model, `BASALT_TEACHER_API_KEY` is sent as a bearer token only when the teacher's scheme, host and port match `BASALT_TEACHER_URL`, so a client cannot send the key elsewhere) the teacher answers the training tasks too.
 3. **Verify.** An answer is kept only if its final integer (commas ignored) equals a numeric known answer, or its last line, case and surrounding punctuation ignored, equals a text answer (or ends in `: <answer>`). Wrong, empty and malformed answers are dropped. **Nothing unverified is ever learned:** if no answer verifies, the report has `verified: 0`, no adapter is trained, nothing is written and the model is untouched.
 4. **Train.** A LoRA (`rank`, Adam at `learningRate`, `iterations`) is trained with the fork's `LoRATrain` on the verified prompt + answer pairs rendered as the model saw them, on the attention and dense or shared-expert projections of `layers` (default all). Per-expert LoRA is not available — the fork's `SwitchLinear` expert layers take no adapter — so `experts` is refused with an error. A model that already carries an adapter is refused too. Cancelling the call stops training at the next iteration and leaves the model unchanged.
-5. **Save.** `adapter_config.json` + `adapters.safetensors` (the mlx-lm adapter format) go to `output` or `~/.basalt/adapters/<model fingerprint>/<timestamp>` (0700). An `output` inside the model directory is refused: nothing is ever written next to the source weights.
-6. **Measure and apply.** Held-out accuracy is measured with the adapter in place, the training layers are removed again, and the adapter is applied through `applyAdapter` with the quality gate built from `heldOut`, `maxKL` and `maxPerplexityRise`: it becomes a marked, undoable overlay with the usual TTL, or is refused by the gate.
+5. **Save.** `adapter_config.json` + `adapters.safetensors` (the mlx-lm adapter format) go to `output` or `~/.basalt/adapters/<model fingerprint>/<timestamp>` (0700). `output` must not exist yet, and one inside the model directory is refused: nothing is overwritten and nothing is written next to the source weights.
+6. **Measure and apply.** Held-out accuracy is measured with the adapter in place, the training layers are removed again, and the adapter is applied through `applyAdapter` with the quality gate built from `heldOut`, `maxKL` and `maxPerplexityRise`: it becomes a marked overlay without expiry that `overlay_undo` removes, or is refused by the gate.
 
 The report lists `collected` (answers gathered for training), `verified`, `losses` (mean training loss per reporting step, at most 20), `accuracyBefore` / `accuracyAfter` on the held-out tasks, `adapterDirectory` and the gate's `verdict`.
 

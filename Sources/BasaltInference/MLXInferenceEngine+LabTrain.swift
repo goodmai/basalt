@@ -75,6 +75,9 @@ extension MLXInferenceEngine {
         guard modelDescription.isEmpty || !Self.isInside(directory, URL(fileURLWithPath: modelDescription)) else {
             throw .invalidRequestStructure(details: "train: the adapter is never written next to the source weights; choose an output outside \(modelDescription)")
         }
+        guard !FileManager.default.fileExists(atPath: directory.path) else {
+            throw .invalidRequestStructure(details: "train: \(directory.path) already exists; the adapter goes to a new directory, nothing is overwritten")
+        }
         return directory
     }
 
@@ -92,15 +95,17 @@ extension MLXInferenceEngine {
 }
 
 extension MLXInferenceEngine {
-    static func labRun<R: Sendable>(_ container: ModelContainer, _ body: @Sendable (ModelContext) throws -> R) async throws(BasaltError) -> R {
+    static func labRun<R: Sendable>(
+        _ container: ModelContainer, _ what: String = "training", _ body: @Sendable (ModelContext) throws -> R
+    ) async throws(BasaltError) -> R {
         do {
             return try await container.performEvaluating(nonSendable: ()) { context, _ in try withError { try body(context) } }
         } catch let error as BasaltError {
             throw error
         } catch is CancellationError {
-            throw .inferenceError("training was cancelled; the model is unchanged")
+            throw .inferenceError("\(what) was cancelled; the model is unchanged")
         } catch {
-            throw .inferenceError("training failed: \(briefly(error))")
+            throw .inferenceError("\(what) failed: \(briefly(error))")
         }
     }
 
@@ -122,7 +127,6 @@ extension MLXInferenceEngine {
         }
         try Task.checkCancellation()
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
         try JSONEncoder().encode(configuration).write(to: directory.appending(component: "adapter_config.json"))
         try LoRATrain.saveLoRAWeights(model: context.model, url: directory.appending(component: "adapters.safetensors"))
         let after = accuracy(heldOut, try heldOut.map { try labAnswer($0.prompt, context) })
@@ -144,8 +148,7 @@ extension MLXInferenceEngine {
         model.freeze()
         for index in Set(chosen) {
             let update: [(String, Module)] = blocks[index].namedModules().compactMap { key, module -> (String, Module)? in
-                guard keys.contains(key), let linear = module as? Linear,
-                      type(of: linear) == Linear.self || type(of: linear) == QuantizedLinear.self else { return nil }
+                guard keys.contains(key), let linear = module as? Linear, restorable(linear) else { return nil }
                 return (key, LoRALinear.from(linear: linear, rank: rank, scale: parameters.scale))
             }
             if !update.isEmpty { blocks[index].update(modules: .unflattened(update)) }

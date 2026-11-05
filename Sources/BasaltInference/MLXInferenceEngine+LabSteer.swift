@@ -11,15 +11,7 @@ extension MLXInferenceEngine {
         let anatomy = try await self.anatomy()
         guard modelEpoch == epoch else { throw .inferenceError("the model changed while the contrast was prepared; retry") }
         try Self.validate(request, layers: anatomy.layers.count)
-        do {
-            return try await container.performEvaluating(nonSendable: ()) { context, _ in
-                try ContrastSearch(request, anatomy: anatomy, context: context).run()
-            }
-        } catch let error as BasaltError {
-            throw error
-        } catch {
-            throw .inferenceError("the contrast failed: \(Self.briefly(error))")
-        }
+        return try await Self.labRun(container, "the contrast") { context in try ContrastSearch(request, anatomy: anatomy, context: context).run() }
     }
 
     public func commitSteering(_ commit: SteeringCommit) async throws(BasaltError) -> AdapterVerdict {
@@ -31,14 +23,7 @@ extension MLXInferenceEngine {
             throw .invalidRequestStructure(details: "the steering direction must be non-empty and, with its scale, finite")
         }
         let epoch = modelEpoch
-        let source: AdapterSource
-        do {
-            source = try await container.performEvaluating(nonSendable: ()) { context, _ in try Self.steeringSource(commit, context: context) }
-        } catch let error as BasaltError {
-            throw error
-        } catch {
-            throw .inferenceError("the steering commit failed: \(Self.briefly(error))")
-        }
+        let source = try await Self.labRun(container, "the steering commit") { context in try Self.steeringSource(commit, context: context) }
         guard modelEpoch == epoch else { throw .inferenceError("the model changed while the steering commit was measured; retry") }
         return try await applyAdapter(source, gate: commit.gate)
     }

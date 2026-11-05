@@ -11,17 +11,9 @@ extension MLXInferenceEngine {
     public func gate(_ request: GateRequest) async throws(BasaltError) -> GateReport {
         guard let container else { throw .inferenceHardwareFailure(reason: "MLX engine not initialized — call load() first") }
         try Self.validate(request)
-        let live = modelFacts.deltas.filter { !$0.value.slice.isEmpty }
+        let live = modelFacts.deltas.filter { !$0.value.slice.isEmpty || $0.value.pack != nil }
         let family = (modelDescription.isEmpty ? nil : URL(fileURLWithPath: modelDescription)).flatMap(ModelCache.config(at:))?["model_type"] as? String
-        do {
-            return try await container.performEvaluating(nonSendable: ()) { context, _ in
-                try Self.gate(request, context: context, live: live, family: family)
-            }
-        } catch let error as BasaltError {
-            throw error
-        } catch {
-            throw .inferenceError("the quality gate failed: \(Self.briefly(error))")
-        }
+        return try await Self.labRun(container, "the quality gate") { context in try Self.gate(request, context: context, live: live, family: family) }
     }
 
     public func applyAdapter(_ source: AdapterSource, gate request: GateRequest?) async throws(BasaltError) -> AdapterVerdict {
@@ -30,14 +22,10 @@ extension MLXInferenceEngine {
         let key = Self.describe(source)
         guard modelFacts.deltas[key] == nil else { throw .invalidRequestStructure(details: "adapter_apply: \(key) is already applied; undo it first") }
         record(.learned(modelEpoch) { $0.deltas[key] = AppliedDelta() })
-        let attached = await container.performEvaluating(nonSendable: source) { context, source in
-            Result { () throws(BasaltError) in try Self.attach(source, to: context.model) }
-        }
         let modules: [String]
-        switch attached {
-        case .success(let value):
-            modules = value
-        case .failure(let error):
+        do throws(BasaltError) {
+            modules = try await Self.labRun(container, "the adapter") { context in try Self.attach(source, to: context.model) }
+        } catch {
             record(.learned(modelEpoch) { $0.deltas[key] = nil })
             throw error
         }
@@ -143,6 +131,11 @@ extension MLXInferenceEngine {
     }
 
     static func swapped(_ applied: AppliedDelta, of name: String, in model: Module) throws(BasaltError) -> AppliedDelta {
+        if let pack = applied.pack {
+            let (_, current) = try TensorPacker.linear(name, in: model)
+            try pack.restore(in: model)
+            return AppliedDelta(pack: PackedLayer(path: pack.path, layer: current))
+        }
         let tensor = try writableTensor(name, in: model)
         let indices: [any MLXArrayIndex] = applied.slice
         var current = applied
@@ -238,7 +231,8 @@ extension MLXInferenceEngine {
     }
 
     static func restorable(_ module: Module) -> Bool {
-        [ObjectIdentifier(Linear.self), ObjectIdentifier(QuantizedLinear.self)].contains(ObjectIdentifier(type(of: module)))
+        guard (module as? QuantizedLinear)?.globalScale == nil else { return false }
+        return [ObjectIdentifier(Linear.self), ObjectIdentifier(QuantizedLinear.self)].contains(ObjectIdentifier(type(of: module)))
     }
 
     static func settle(_ model: Module) {

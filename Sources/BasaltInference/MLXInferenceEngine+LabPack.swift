@@ -163,14 +163,10 @@ extension MLXInferenceEngine {
             throw .invalidRequestStructure(details: "tensor_pack: \(request.tensor) or its layer already carries an active delta or pack; undo it first")
         }
         record(.learned(modelEpoch) { $0.deltas[request.tensor] = AppliedDelta() })
-        let packed = await container.performEvaluating(nonSendable: request) { context, request in
-            Result { () throws(BasaltError) in try TensorPacker.pack(request, in: context.model) }
-        }
         let outcome: TensorPacker.Outcome
-        switch packed {
-        case .success(let value):
-            outcome = value
-        case .failure(let error):
+        do throws(BasaltError) {
+            outcome = try await Self.labRun(container, "the pack") { context in try TensorPacker.pack(request, in: context.model) }
+        } catch {
             record(.learned(modelEpoch) { $0.deltas[request.tensor] = nil })
             throw error
         }

@@ -30,6 +30,9 @@ extension MLXInferenceEngine {
         guard modelFacts.deltas[delta.tensor] == nil else {
             throw .invalidRequestStructure(details: "weights_delta: \(delta.tensor) already carries an active delta; undo it first")
         }
+        guard !modelFacts.deltas.values.contains(where: { $0.pack.map { delta.tensor.hasPrefix($0.path + ".") } == true }) else {
+            throw .invalidRequestStructure(details: "weights_delta: the layer of \(delta.tensor) is packed; undo the pack first")
+        }
         record(.learned(modelEpoch) { $0.deltas[delta.tensor] = AppliedDelta() })
         let written = await container.performEvaluating(nonSendable: delta) { context, delta in
             Result { () throws(BasaltError) in try Self.add(delta, to: context.model) }
@@ -59,7 +62,7 @@ extension MLXInferenceEngine {
             Result { () throws(BasaltError) in try Self.restore(applied, of: tensor, in: context.model) }
         }
         if case .failure(let error) = restored { throw error }
-        guard self.container === container else { return true }
+        guard self.container === container, modelFacts.deltas[tensor]?.info?.id == id else { return true }
         weightsChanged { $0.deltas[tensor] = nil }
         return true
     }

@@ -124,15 +124,24 @@ struct IntrospectorTests {
         #expect(await engine.requests.count == 2)
     }
 
-    @Test("An intervention the loop created is undone when generation fails")
+    @Test("A failed generation keeps the steps so far with stop failed, and the intervention the loop created is undone")
     func undoneOnError() async throws {
         let engine = ScriptedResearchEngine([.call("intervene", Self.ablation), .fail])
-        let introspector = Self.introspector(engine, interventions: true)
-        await #expect(throws: BasaltError.self) {
-            try await introspector.introspect(IntrospectRequest(goal: "g", allowInterventions: true))
-        }
+        let report = try await Self.introspector(engine, interventions: true).introspect(IntrospectRequest(goal: "g", allowInterventions: true))
+        #expect(report.stop == .failed && report.failure != nil && report.steps.count == 1)
+        #expect(report.undone == [1] && report.cleanupFailure == nil)
         #expect(await engine.undone == [1])
         #expect(await engine.overlays().isEmpty)
+    }
+
+    @Test("overlay_undo refuses an overlay that existed before the loop, and the cleanup leaves it in place")
+    func protectsEarlierOverlays() async throws {
+        let engine = ScriptedResearchEngine([.call("overlay_undo", #"{"id": 1}"#), .answer("Answer: kept")])
+        let earlier = try await engine.intervene(.ablateHead(layer: 0, head: 1))
+        let report = try await Self.introspector(engine, interventions: true).introspect(IntrospectRequest(goal: "g", allowInterventions: true))
+        #expect(report.steps.first?.result?.contains("existed before this introspection") == true)
+        #expect(report.undone.isEmpty)
+        #expect(await engine.overlays().map(\.id) == [earlier.id])
     }
 
     @Test("An intervention the loop created is undone when the loop is cancelled mid-generation")
@@ -178,7 +187,7 @@ struct IntrospectorTests {
             Hypothesis(statement: "the router prefers expert 5", outcome: "refuted — expert 1 wins"),
         ])
         Hypothesis.merge([Hypothesis(statement: "head 3 of layer 2 reads the tool call", outcome: "confirmed")], into: &all)
-        #expect(all.count == 2 && all[0].outcome == "confirmed")
+        #expect(all.count == 2 && all[0].outcome == "confirmed" && all[0].test == "trace_run with attention at the last position")
         #expect(Hypothesis.parse("no fields here\njust prose").isEmpty)
     }
 

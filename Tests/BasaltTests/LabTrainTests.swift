@@ -122,19 +122,32 @@ struct LabTrainTests {
         #expect(await Self.parameterNames(container) == before)
     }
 
+    @Test("The teacher key goes only to the scheme, host and port of BASALT_TEACHER_URL", arguments: [
+        ("https://api.example.com/v1", "https://api.example.com/v1/x", true),
+        ("https://api.example.com/v1", "http://api.example.com/v1", false),
+        ("https://api.example.com/v1", "https://attacker.example/v1", false),
+        ("http://127.0.0.1:8080/v1", "http://127.0.0.1:9090/v1", false),
+        ("", "https://api.example.com/v1", false),
+    ])
+    func teacherKey(trusted: String, teacher: String, sent: Bool) throws {
+        let environment = trusted.isEmpty ? [TeacherClient.keyVariable: "k"] : [TeacherClient.urlVariable: trusted, TeacherClient.keyVariable: "k"]
+        #expect((TeacherClient.key(for: try #require(URL(string: teacher)), environment: environment) == "k") == sent)
+    }
+
     @Test("An output inside the model directory, per-expert LoRA and out-of-range settings are refused before anything runs; the default goes under ~/.basalt/adapters")
     func refused() async throws {
         let model = try Self.scratch()
         let engine = MLXInferenceEngine()
         await engine.attach(try TinyModel.container(.qwen3), modelDescription: model.path)
         let inside = Self.request(output: model.appending(path: "adapters/run"))
+        let existing = Self.request(output: try Self.scratch())
         var experts = Self.request()
         experts.experts = [0]
         var rank = Self.request()
         rank.rank = 0
         var rate = Self.request()
         rate.learningRate = .nan
-        for (request, fragment) in [(inside, "next to the source weights"), (experts, "per-expert LoRA is not available"), (rank, "rank"), (rate, "learningRate")] {
+        for (request, fragment) in [(inside, "next to the source weights"), (existing, "already exists"), (experts, "per-expert LoRA is not available"), (rank, "rank"), (rate, "learningRate")] {
             let error = await #expect(throws: BasaltError.self) { try await engine.train(request) }
             guard case .invalidRequestStructure(let details)? = error else { Issue.record("unexpected \(String(describing: error))"); continue }
             #expect(details.contains(fragment), "\(details)")

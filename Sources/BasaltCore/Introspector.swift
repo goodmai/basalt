@@ -44,7 +44,7 @@ public struct Hypothesis: Sendable, Codable, Equatable {
 
 public struct IntrospectReport: Sendable, Codable, Equatable {
     public enum Stop: String, Sendable, Codable {
-        case answered, maxSteps, repeatedCall
+        case answered, maxSteps, repeatedCall, failed
     }
 
     public var goal: String
@@ -53,6 +53,8 @@ public struct IntrospectReport: Sendable, Codable, Equatable {
     public var answer: String?
     public var stop = Stop.maxSteps
     public var undone: [OverlayID] = []
+    public var failure: String?
+    public var cleanupFailure: String?
 
     public init(goal: String) {
         self.goal = goal
@@ -90,23 +92,30 @@ public struct Introspector: Sendable {
         let before = Set(try await orchestrator.research { model in await model.overlays() }.map(\.id))
         let outcome: Result<IntrospectReport, BasaltError>
         do throws(BasaltError) {
-            outcome = .success(try await loop(request))
+            outcome = .success(try await loop(request, protected: before))
         } catch {
             outcome = .failure(error)
         }
-        let undone = await withTaskCancellationShield { await undoOverlays(except: before) }
+        let cleanup = await withTaskCancellationShield { await undoOverlays(except: before) }
         var report = try outcome.get()
-        report.undone = undone
+        (report.undone, report.cleanupFailure) = cleanup
         return report
     }
 
-    func loop(_ request: IntrospectRequest) async throws(BasaltError) -> IntrospectReport {
+    func loop(_ request: IntrospectRequest, protected: Set<OverlayID> = []) async throws(BasaltError) -> IntrospectReport {
         var report = IntrospectReport(goal: request.goal)
         var messages = [ChatMessageInput(role: .system, text: Self.instructions), ChatMessageInput(role: .user, text: request.goal)]
         var made: Set<String> = []
         for _ in 0 ..< request.maxSteps {
             guard !Task.isCancelled else { throw .cancelled }
-            let response = try await orchestrator.generate(request: generation(request.goal, messages))
+            let response: GenerationResponse
+            do throws(BasaltError) {
+                response = try await orchestrator.generate(request: generation(request.goal, messages))
+            } catch {
+                if Task.isCancelled { throw error }
+                (report.stop, report.failure) = (.failed, error.localizedDescription)
+                return report
+            }
             Hypothesis.merge(Hypothesis.parse(response.generatedText), into: &report.hypotheses)
             guard let call = response.toolCalls?.first else {
                 let step = IntrospectStep(text: response.generatedText)
@@ -118,7 +127,7 @@ public struct Introspector: Sendable {
             }
             var step = IntrospectStep(text: response.generatedText, tool: call.name, arguments: call.arguments)
             let repeated = !made.insert(Self.key(call)).inserted
-            if !repeated { step.result = Self.truncated(try await execute(call), to: request.resultBudget) }
+            if !repeated { step.result = Self.truncated(try await execute(call, protected: protected), to: request.resultBudget) }
             report.steps.append(step)
             await record(report.steps.count, step)
             if repeated {
@@ -139,9 +148,12 @@ public struct Introspector: Sendable {
         return request.withOrigin(RequestOrigin(source: "introspect", endpoint: "introspect", stream: false))
     }
 
-    func execute(_ call: ToolCallOutput) async throws(BasaltError) -> String {
+    func execute(_ call: ToolCallOutput, protected: Set<OverlayID> = []) async throws(BasaltError) -> String {
         guard tools.contains(where: { $0.name == call.name }) else {
             return "error: \(call.name) is not one of the tools offered in this session"
+        }
+        if call.name == "overlay_undo", let id = Self.overlayID(call), protected.contains(id) {
+            return "error: overlay \(id.rawValue) existed before this introspection; only overlays made during it can be undone"
         }
         let run = self.run
         do throws(BasaltError) {
@@ -152,15 +164,30 @@ public struct Introspector: Sendable {
         }
     }
 
-    func undoOverlays(except kept: Set<OverlayID>) async -> [OverlayID] {
-        let undone = try? await orchestrator.research { model in
-            var undone: [OverlayID] = []
-            for overlay in await model.overlays() where !kept.contains(overlay.id) {
-                if (try? await model.undo(overlay.id)) != nil { undone.append(overlay.id) }
+    func undoOverlays(except kept: Set<OverlayID>) async -> ([OverlayID], String?) {
+        do throws(BasaltError) {
+            return try await orchestrator.research { model in
+                var undone: [OverlayID] = []
+                var failures: [String] = []
+                for overlay in await model.overlays() where !kept.contains(overlay.id) {
+                    do throws(BasaltError) {
+                        try await model.undo(overlay.id)
+                        undone.append(overlay.id)
+                    } catch {
+                        failures.append("overlay \(overlay.id.rawValue): \(error.localizedDescription)")
+                    }
+                }
+                return (undone, failures.isEmpty ? nil : failures.joined(separator: "; "))
             }
-            return undone
+        } catch {
+            BasaltLogger(module: "Introspector").warn("Overlays made during introspection were not undone: \(error.localizedDescription)")
+            return ([], "the cleanup was refused: \(error.localizedDescription); overlays made during the loop expire at their TTL")
         }
-        return undone ?? []
+    }
+
+    static func overlayID(_ call: ToolCallOutput) -> OverlayID? {
+        let arguments = (try? JSONSerialization.jsonObject(with: Data(call.arguments.utf8))) as? [String: Any]
+        return (arguments?["id"] as? Int).map { OverlayID($0) }
     }
 
     func record(_ index: Int, _ step: IntrospectStep) async {
@@ -208,7 +235,10 @@ extension Hypothesis {
     static func merge(_ new: [Hypothesis], into all: inout [Hypothesis]) {
         for hypothesis in new {
             if let index = all.firstIndex(where: { $0.statement == hypothesis.statement }) {
-                all[index] = hypothesis
+                var merged = hypothesis
+                if merged.test.isEmpty { merged.test = all[index].test }
+                if merged.outcome.isEmpty { merged.outcome = all[index].outcome }
+                all[index] = merged
             } else {
                 all.append(hypothesis)
             }

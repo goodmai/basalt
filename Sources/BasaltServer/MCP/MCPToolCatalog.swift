@@ -325,7 +325,7 @@ extension ResearchTool {
             "count": ["type": "integer", "minimum": TrainRequest.taskCounts.lowerBound, "maximum": TrainRequest.taskCounts.upperBound, "description": "Generated integer +, -, * problems (default 200); a fifth is held out for accuracy"],
             "seed": ["type": "integer", "minimum": 0, "description": "Seed of the problem generator (default 0)"],
             "file": ["type": "string", "description": "JSONL of {\"prompt\", \"answer\"} instead of generated problems"],
-            "teacher": ["type": "string", "description": "Base URL of an OpenAI-compatible server whose answers are collected too (key: BASALT_TEACHER_API_KEY)"],
+            "teacher": ["type": "string", "description": "Base URL of an OpenAI-compatible server whose answers are collected too; BASALT_TEACHER_API_KEY is sent only when its scheme, host and port match BASALT_TEACHER_URL"],
             "teacherModel": ["type": "string", "description": "Model name sent to the teacher"],
             "layers": ["type": "array", "items": ["type": "integer", "minimum": 0], "description": "Layers that get LoRA (default: all)"],
             "experts": ["type": "array", "items": ["type": "integer", "minimum": 0], "description": "Refused: the fork has no per-expert LoRA"],
@@ -333,9 +333,9 @@ extension ResearchTool {
             "iterations": ["type": "integer", "minimum": 1, "maximum": 10_000, "description": "Training iterations (default 200)"],
             "learningRate": ["type": "number", "description": "Adam learning rate (default 1e-5)"],
             "output": ["type": "string", "description": "Adapter directory (default ~/.basalt/adapters/<fingerprint>/<timestamp>); never inside the model directory"],
-            "heldOut": ["type": "array", "items": ["type": "string"], "minItems": 1, "description": "General prompts the quality gate checks the adapter on"],
-            "maxKL": ["type": "number", "description": "Gate: largest mean KL on heldOut (default 0.5)"],
-            "maxPerplexityRise": ["type": "number", "description": "Gate: largest relative perplexity rise on heldOut (default 0.1)"],
+            "heldOut": ["type": "array", "items": ["type": "string"], "minItems": ResearchCall.comparePrompts.lowerBound, "maxItems": ResearchCall.comparePrompts.upperBound, "description": "General prompts the quality gate checks the adapter on"],
+            "maxKL": ["type": "number", "minimum": 0, "description": "Gate: largest mean KL on heldOut (default 0.5)"],
+            "maxPerplexityRise": ["type": "number", "minimum": 0, "description": "Gate: largest relative perplexity rise on heldOut (default 0.1)"],
         ]
     }
 
@@ -361,8 +361,8 @@ extension ResearchTool {
             "scale": ["type": "number", "description": "Scale chosen from the steer_search trials"],
             "positive": prompts(1...ContrastRequest.classPrompts.upperBound, "Positive prompts; their mean module input becomes the rank-1 input"),
             "heldOut": prompts(ContrastRequest.heldOutPrompts, "Held-out prompts for the quality gate"),
-            "maxKL": ["type": "number", "description": "Gate: largest mean KL against the baseline (default 0.5)"],
-            "maxPerplexityRise": ["type": "number", "description": "Gate: largest relative perplexity rise (default 0.1)"],
+            "maxKL": ["type": "number", "minimum": 0, "description": "Gate: largest mean KL against the baseline (default 0.5)"],
+            "maxPerplexityRise": ["type": "number", "minimum": 0, "description": "Gate: largest relative perplexity rise (default 0.1)"],
         ]
     }
 }

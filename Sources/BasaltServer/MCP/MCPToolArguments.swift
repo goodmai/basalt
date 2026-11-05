@@ -477,8 +477,7 @@ extension GateRequest {
             throw .invalidParams("heldOut must be an array of \(ResearchCall.comparePrompts) strings")
         }
         self.init(heldOut: heldOut)
-        maxKL = try MCPArguments.number("maxKL", in: args) ?? maxKL
-        maxPerplexityRise = try MCPArguments.number("maxPerplexityRise", in: args) ?? maxPerplexityRise
+        try readLimits(args)
         let targets = MCPArguments.present("target", in: args) ?? [Any]()
         guard let targets = targets as? [[String: Any]], targets.count <= ResearchCall.comparePrompts.upperBound else {
             throw .invalidParams("target must be an array of at most \(ResearchCall.comparePrompts.upperBound) {prompt, expected} objects")
@@ -488,6 +487,12 @@ extension GateRequest {
                 prompt: try MCPArguments.required("prompt", MCPArguments.string("prompt", in: item)),
                 expected: try MCPArguments.required("expected", MCPArguments.string("expected", in: item))))
         }
+    }
+
+    mutating func readLimits(_ args: [String: Any]?) throws(MCPFailure) {
+        maxKL = try MCPArguments.number("maxKL", in: args) ?? maxKL
+        maxPerplexityRise = try MCPArguments.number("maxPerplexityRise", in: args) ?? maxPerplexityRise
+        guard maxKL >= 0, maxPerplexityRise >= 0 else { throw .invalidParams("maxKL and maxPerplexityRise must not be negative") }
     }
 }
 
@@ -520,12 +525,11 @@ extension TrainRequest {
 
     init(mcp args: [String: Any]?) throws(MCPFailure) {
         let heldOut = MCPArguments.present("heldOut", in: args)
-        guard let heldOut = heldOut as? [String], !heldOut.isEmpty else {
-            throw .invalidParams("heldOut must be a non-empty array of general prompts the quality gate checks the adapter on")
+        guard let heldOut = heldOut as? [String], ResearchCall.comparePrompts.contains(heldOut.count) else {
+            throw .invalidParams("heldOut must be an array of \(ResearchCall.comparePrompts) general prompts the quality gate checks the adapter on")
         }
         var gate = GateRequest(heldOut: heldOut)
-        gate.maxKL = try MCPArguments.number("maxKL", in: args) ?? gate.maxKL
-        gate.maxPerplexityRise = try MCPArguments.number("maxPerplexityRise", in: args) ?? gate.maxPerplexityRise
+        try gate.readLimits(args)
         let count = try MCPArguments.integer("count", in: args, Self.taskCounts) ?? 200
         let seed = try MCPArguments.integer("seed", in: args, ResearchCall.nonNegative) ?? 0
         let file = try MCPArguments.string("file", in: args)
@@ -567,8 +571,7 @@ extension ContrastRequest {
 extension SteeringCommit {
     init(mcp args: [String: Any]?) throws(MCPFailure) {
         var gate = GateRequest(heldOut: try ContrastRequest.prompts("heldOut", in: args, ContrastRequest.heldOutPrompts))
-        gate.maxKL = try MCPArguments.number("maxKL", in: args) ?? gate.maxKL
-        gate.maxPerplexityRise = try MCPArguments.number("maxPerplexityRise", in: args) ?? gate.maxPerplexityRise
+        try gate.readLimits(args)
         self.init(
             layer: try MCPArguments.required("layer", MCPArguments.integer("layer", in: args, ResearchCall.nonNegative)),
             direction: try MCPArguments.required("direction", MCPArguments.numbers("direction", in: args)),

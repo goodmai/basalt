@@ -49,6 +49,20 @@ struct TensorPackTests {
         }
     }
 
+    @Test("The quality gate lifts a pack for its pristine baseline, so a ternary pack shows up as KL; the pack is back in place after the gate and undo restores the logits")
+    func gateLiftsPack() async throws {
+        let engine = try await Self.engine()
+        let container = try #require(await engine.container)
+        let logits = try await Self.logits(container).map(\.bitPattern)
+        let packed = try await engine.pack(PackRequest(tensor: Self.projection, format: .ternary))
+        let report = try await engine.gate(GateRequest(heldOut: ["The quick brown fox"]))
+        let kl = try #require(report.checks.first { $0.name == "held-out mean KL" })
+        #expect(kl.value > 0, "\(report.checks)")
+        #expect(await Self.layerType(container) == "QuantizedLinear")
+        try await engine.undo(packed.overlay.id)
+        #expect(try await Self.logits(container).map(\.bitPattern) == logits)
+    }
+
     @Test("Affine 8-bit has a small error and fewer bytes, 2-bit a larger one; a packed layer refuses a second pack; undo restores the logits bit for bit")
     func affine() async throws {
         let engine = try await Self.engine()
