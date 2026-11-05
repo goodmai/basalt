@@ -79,11 +79,11 @@ struct MemoryEvaluatorTests {
         let fp16 = await e.evaluate(definition: def, resources: r)
         let q4 = await e.evaluate(definition: def, resources: r, kvPrecision: .q4)
         let kv = KVCacheGeometry(parameterProxy: def.totalParameters)
-        let room = (MemoryEvaluator.memoryBudget(r) - def.ramMB * Self.mib) / 2
+        let room = (MemoryEvaluator.memoryBudget(r) - ByteCount(def.ramMB * Self.mib)) / 2
         let cap = TokenBudgetCalculator.upperCapTokens
         #expect(fp16.maxPromptBudgetTokens == fp16.maxContextBudgetTokens)
-        #expect(q4.maxContextBudgetTokens == min(cap, kv.maxTokens(fitting: ByteCount(room), kvPrecision: .q4).rawValue))
-        #expect(q4.maxPromptBudgetTokens == min(cap, kv.maxPromptTokens(fitting: ByteCount(room), kvPrecision: .q4).rawValue))
+        #expect(q4.maxContextBudgetTokens == min(cap, kv.maxTokens(fitting: room, kvPrecision: .q4).rawValue))
+        #expect(q4.maxPromptBudgetTokens == min(cap, kv.maxPromptTokens(fitting: room, kvPrecision: .q4).rawValue))
         #expect(q4.maxContextBudgetTokens > fp16.maxContextBudgetTokens)
         #expect(q4.maxPromptBudgetTokens < fp16.maxPromptBudgetTokens)
     }
@@ -96,9 +96,9 @@ struct MemoryEvaluatorTests {
         let uniform = await e.evaluate(definition: def, resources: r, kvPrecision: .q4)
         let zoned = await e.evaluate(definition: def, resources: r, kvPrecision: .q4, kvZones: .standard)
         let kv = KVCacheGeometry(parameterProxy: def.totalParameters)
-        let room = (MemoryEvaluator.memoryBudget(r) - def.ramMB * Self.mib) / 2
+        let room = (MemoryEvaluator.memoryBudget(r) - ByteCount(def.ramMB * Self.mib)) / 2
         let cap = TokenBudgetCalculator.upperCapTokens
-        #expect(zoned.maxContextBudgetTokens == min(cap, kv.maxTokens(fitting: ByteCount(room), kvPrecision: .q4, zones: .standard).rawValue))
+        #expect(zoned.maxContextBudgetTokens == min(cap, kv.maxTokens(fitting: room, kvPrecision: .q4, zones: .standard).rawValue))
         #expect(zoned.maxPromptBudgetTokens == zoned.maxContextBudgetTokens)
         #expect(zoned.maxPromptBudgetTokens > uniform.maxPromptBudgetTokens)
         #expect(zoned.requiredRAMBytes > uniform.requiredRAMBytes)

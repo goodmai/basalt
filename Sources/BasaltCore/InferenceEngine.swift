@@ -8,7 +8,7 @@ public protocol InferenceEngine: Sendable {
     func generateStream(request: GenerationRequest) async throws(BasaltError) -> AsyncStream<StreamChunk>
     /// async getter — compatible with actor-isolated implementations.
     var isLoaded: Bool { get async }
-    var kvMemoryBudgetBytes: Int64? { get async }
+    var kvMemoryBudget: ByteCount? { get async }
     var supportsKVZones: Bool { get async }
     var supportsKVEviction: Bool { get async }
     var supportsKVQuantization: Bool { get async }
@@ -20,7 +20,7 @@ public protocol InferenceEngine: Sendable {
 }
 
 extension InferenceEngine {
-    public var kvMemoryBudgetBytes: Int64? { get async { nil } }
+    public var kvMemoryBudget: ByteCount? { get async { nil } }
     public var supportsKVZones: Bool { get async { true } }
     public var supportsKVEviction: Bool { get async { true } }
     public var supportsKVQuantization: Bool { get async { true } }

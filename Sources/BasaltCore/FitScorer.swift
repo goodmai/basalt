@@ -89,16 +89,16 @@ public actor FitScorer {
         
         let totalScore = fourD.compositeScore
         
-        let availableBytes = profile.availableRAM
-        let modelBytes = model.ramMB * 1_048_576
-        let budgetBytes = Int64(Double(availableBytes) * 0.85)
+        let available = ByteCount(profile.availableRAM)
+        let modelBytes = ByteCount(model.ramMB * 1_048_576)
+        let budget = ByteCount(Int64(Double(available.rawValue) * 0.85))
         
         let fitLevel: FitLevel
-        if modelBytes <= Int64(Double(availableBytes) * 0.70) && ramFit >= 0.8 {
+        if modelBytes <= ByteCount(Int64(Double(available.rawValue) * 0.70)) && ramFit >= 0.8 {
             fitLevel = .perfect
-        } else if modelBytes <= budgetBytes && ramFit >= 0.5 {
+        } else if modelBytes <= budget && ramFit >= 0.5 {
             fitLevel = .good
-        } else if modelBytes <= availableBytes {
+        } else if modelBytes <= available {
             fitLevel = .marginal
         } else {
             fitLevel = .tooTight

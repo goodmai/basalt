@@ -33,7 +33,7 @@ actor MockInferenceEngine: InferenceEngine {
         mockPromptTokens = promptTokens
     }
 
-    var kvMemoryBudgetBytes: Int64? { mockKVBudget }
+    var kvMemoryBudget: ByteCount? { mockKVBudget.map { ByteCount($0) } }
     var mockSupportsKVZones = true
     var supportsKVZones: Bool { mockSupportsKVZones }
 

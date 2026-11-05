@@ -53,7 +53,7 @@ public actor MLXInferenceEngine: InferenceEngine {
     private(set) var mtpPrefixes: [(namespace: String, tokens: [Int], prefix: MTPPrefix)] = []
     private var promptCacheFullBudget: ByteCount
     private(set) var appliedMemoryDirective = MemoryDirective.relaxed
-    private var kvMemoryBudget: Int64?
+    private var kvBudget: ByteCount?
     private let configuredPromptCacheBytes: ByteCount?
     private let hybridAnchors: Int
     var templateSuffixes: [String: Int] = [:]
@@ -68,7 +68,7 @@ public actor MLXInferenceEngine: InferenceEngine {
     let mtpBlockSize: Int
     let experimentalSamplers: Bool
     let grammarJumpForward: Bool
-    public var kvMemoryBudgetBytes: Int64? { kvMemoryBudget }
+    public var kvMemoryBudget: ByteCount? { kvBudget }
     var promptCacheDisk: PromptCacheDiskStore?
     let batchSlots: Int
     var batchDecoder: BatchedDecoder?
@@ -229,7 +229,7 @@ extension MLXInferenceEngine {
         let workingSet = PromptCacheBudget.gpuWorkingSet()
         let weights = ByteCount(Memory.activeMemory)
         let budget = configuredPromptCacheBytes ?? PromptCacheBudget.automatic(workingSet: workingSet, weights: weights)
-        kvMemoryBudget = max(0, workingSet - weights - budget).rawValue
+        kvBudget = max(0, workingSet - weights - budget)
         let blendBytes = cacheBlendRatio == nil ? 0 : budget / 2
         promptCaches = PromptCacheTree(byteBudget: budget - blendBytes, anchorLimit: max(1, hybridAnchors))
         mtpPrefixes.removeAll()
