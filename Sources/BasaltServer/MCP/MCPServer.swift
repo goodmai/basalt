@@ -138,6 +138,7 @@ extension MCPServer {
         case .harnessLibraryQuery: try await queryLibrary(args)
         case .harnessOptimize: try await optimizeHarness(args)
         case .research(let tool): try await research(tool, args)
+        case .introspect: try await introspect(args)
         }
     }
 
@@ -267,6 +268,20 @@ extension MCPServer {
             ))
         } catch {
             throw .optimization(error)
+        }
+    }
+}
+
+extension MCPServer {
+    private func introspect(_ args: [String: Any]?) async throws(MCPFailure) -> ToolResult {
+        guard researchTools else {
+            throw .methodNotFound("introspect is an experiment tool: start the server with serve --research-tools to use it")
+        }
+        let request = try IntrospectRequest(mcp: args)
+        do throws(BasaltError) {
+            return .json(try await Introspector(orchestrator: orchestrator, interventions: request.allowInterventions).introspect(request))
+        } catch {
+            throw MCPFailure(error)
         }
     }
 }

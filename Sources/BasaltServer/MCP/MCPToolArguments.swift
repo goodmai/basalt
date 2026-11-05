@@ -6,6 +6,7 @@ enum MCPTool: Sendable, Equatable {
     case status, checkHardware, inspectModel, switchModel, generate, health, addKnowledge
     case harnessValidate, harnessLibraryQuery, harnessOptimize
     case research(ResearchTool)
+    case introspect
 
     init?(name: String) {
         switch name {
@@ -19,6 +20,7 @@ enum MCPTool: Sendable, Equatable {
         case "harness_validate": self = .harnessValidate
         case "harness_library_query": self = .harnessLibraryQuery
         case "harness_optimize": self = .harnessOptimize
+        case "introspect": self = .introspect
         default:
             guard let tool = ResearchTool(rawValue: name) else { return nil }
             self = .research(tool)
