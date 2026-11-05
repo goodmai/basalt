@@ -14,7 +14,7 @@ struct SmallMQuantizedMatmulBenchmarkTests {
 
     static let enabled = ProcessInfo.processInfo.environment["BASALT_BENCH_SMALLM"] == "1"
     static let groupSize = 64
-    static let rows = [1, 2, 3, 4, 8, 16]
+    static let rows = [1, 2, 3, 4, 5, 6, 8, 16]
     static let cacheDefeatBytes = 256 << 20
     static let samples = 7
     static let shapes = [
@@ -82,7 +82,7 @@ struct SmallMQuantizedMatmulBenchmarkTests {
         close(descriptor)
     }
 
-    @Test("µs per call at M = 1, 2, 3, 4, 8, 16 on the Qwen3.8-27B projection shapes, 4- and 8-bit, against weight bytes / measured GB/s",
+    @Test("µs per call at M = 1 to 6, 8 and 16 on the Qwen3.8-27B projection shapes, 4- and 8-bit, against weight bytes / measured GB/s",
           .enabled(if: enabled, "set BASALT_BENCH_SMALLM=1 and run a release build"))
     func stockAgainstBound() throws {
         guard case .taken = try ModelRunLog.claim(ModelRunLog.gpuLock, pid: getpid()) else {
