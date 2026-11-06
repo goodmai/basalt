@@ -225,43 +225,6 @@ struct ZonedKVCacheBenchmarkTests {
         log.line("UNQUIET \(marker)")
     }
 
-    static let headScores = Mutex<[ObjectIdentifier: [[Float]]]>([:])
-
-    static func ablationScores(_ context: ModelContext) throws -> [[Float]] {
-        let key = ObjectIdentifier(context.model as AnyObject)
-        if let known = headScores.withLock({ $0[key] }) { return known }
-        let scores = try KVHeadClassifier.scores(model: context.model, tokenizer: context.tokenizer)
-        headScores.withLock { $0[key] = scores }
-        let name = "logs/head-scores-\(context.configuration.name.replacingOccurrences(of: "/", with: "_"))-ablation.json"
-        try? JSONEncoder().encode(scores).write(to: URL(fileURLWithPath: name))
-        return scores
-    }
-
-    static func cache(_ mode: Mode, _ context: ModelContext) throws -> [any KVCache] {
-        let fresh = try context.model.newCache(parameters: nil)
-        if let ratio = mode.headRatio {
-            let zoning = mode.zones.flatMap { zones in mode.precision.map { HeadSplitKVCache.Zoning(zones: zones, precision: $0) } }
-            return KVHeadMask.classify(scores: try ablationScores(context), ratio: ratio).replacingFullAttention(fresh, zoning: zoning)
-        }
-        if let topK = mode.questTopK { return QuestKVCache.replacingFullAttention(fresh, topK: topK) }
-        guard let zones = mode.zones, let precision = mode.precision else { return fresh }
-        return ZonedKVCache.replacingFullAttention(fresh, zones: zones, precision: precision)
-    }
-
-    static func iterator(
-        _ mode: Mode, tokens: [Int], maxTokens: Int, context: ModelContext
-    ) throws -> (iterator: TokenIterator, cache: [any KVCache]?) {
-        var parameters = GenerateParameters(maxTokens: maxTokens, temperature: 0)
-        let input = LMInput(tokens: MLXArray(tokens))
-        guard mode.zones == nil, mode.headRatio == nil, mode.questTopK == nil else {
-            let cache = try Self.cache(mode, context)
-            return (try TokenIterator(input: input, model: context.model, cache: cache, parameters: parameters), cache)
-        }
-        parameters.kvBits = mode.precision?.keyBits
-        parameters.quantizedKVStart = KVCacheGeometry.defaultQuantizedKVStart
-        return (try TokenIterator(input: input, model: context.model, cache: nil, parameters: parameters), nil)
-    }
-
     @Test("KV bytes against the geometry, perplexity, passkey and speed for fp16, uniform and zoned KV on each model in BASALT_E2E_ZONED_BENCH",
           .enabled(if: !ZonedKVCacheBenchmarkTests.models.isEmpty, "set BASALT_E2E_ZONED_BENCH to a comma-separated list of cached repo ids"))
     func benchmark() async throws {
@@ -555,5 +518,44 @@ struct ZonedKVCacheBenchmarkTests {
             start = end
         }
         return exp(nll / Double(total - prefix))
+    }
+}
+
+extension ZonedKVCacheBenchmarkTests {
+    static let headScores = Mutex<[ObjectIdentifier: [[Float]]]>([:])
+
+    static func ablationScores(_ context: ModelContext) throws -> [[Float]] {
+        let key = ObjectIdentifier(context.model as AnyObject)
+        if let known = headScores.withLock({ $0[key] }) { return known }
+        let scores = try KVHeadClassifier.scores(model: context.model, tokenizer: context.tokenizer)
+        headScores.withLock { $0[key] = scores }
+        let name = "logs/head-scores-\(context.configuration.name.replacingOccurrences(of: "/", with: "_"))-ablation.json"
+        try? JSONEncoder().encode(scores).write(to: URL(fileURLWithPath: name))
+        return scores
+    }
+
+    static func cache(_ mode: Mode, _ context: ModelContext) throws -> [any KVCache] {
+        let fresh = try context.model.newCache(parameters: nil)
+        if let ratio = mode.headRatio {
+            let zoning = mode.zones.flatMap { zones in mode.precision.map { HeadSplitKVCache.Zoning(zones: zones, precision: $0) } }
+            return KVHeadMask.classify(scores: try ablationScores(context), ratio: ratio).replacingFullAttention(fresh, zoning: zoning)
+        }
+        if let topK = mode.questTopK { return QuestKVCache.replacingFullAttention(fresh, topK: topK) }
+        guard let zones = mode.zones, let precision = mode.precision else { return fresh }
+        return ZonedKVCache.replacingFullAttention(fresh, zones: zones, precision: precision)
+    }
+
+    static func iterator(
+        _ mode: Mode, tokens: [Int], maxTokens: Int, context: ModelContext
+    ) throws -> (iterator: TokenIterator, cache: [any KVCache]?) {
+        var parameters = GenerateParameters(maxTokens: maxTokens, temperature: 0)
+        let input = LMInput(tokens: MLXArray(tokens))
+        guard mode.zones == nil, mode.headRatio == nil, mode.questTopK == nil else {
+            let cache = try Self.cache(mode, context)
+            return (try TokenIterator(input: input, model: context.model, cache: cache, parameters: parameters), cache)
+        }
+        parameters.kvBits = mode.precision?.keyBits
+        parameters.quantizedKVStart = KVCacheGeometry.defaultQuantizedKVStart
+        return (try TokenIterator(input: input, model: context.model, cache: nil, parameters: parameters), nil)
     }
 }
