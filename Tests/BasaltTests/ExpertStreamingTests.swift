@@ -194,6 +194,14 @@ struct ExpertStreamingParityTests {
         #expect(!MLX.arrayEqual(compact(true), resident).item(Bool.self))
     }
 
+    @Test("The streaming loader tries the model factories in the stock loader's order, MLXVLM first, so a model_type both register (gemma4) gets the implementation a resident load gets")
+    func factoryOrder() async {
+        let stock = ModelFactoryRegistry.shared.modelFactories().map { String(describing: type(of: $0)) }
+        let streaming = ExpertStreamingLoader.families.map { String(describing: type(of: $0.factory($0.types))) }
+        #expect(Array(stock.prefix(streaming.count)) == streaming)
+        #expect(streaming.count == 2)
+    }
+
     @Test("A dense model is refused: there are no routed experts to stream")
     func denseRefused() async throws {
         await #expect(throws: BasaltError.self) {

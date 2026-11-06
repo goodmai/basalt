@@ -2,6 +2,7 @@ import Foundation
 import MLX
 import MLXNN
 import MLXLLM
+import MLXVLM
 import MLXLMCommon
 import BasaltCore
 
@@ -96,12 +97,42 @@ struct ExpertPlan {
 }
 
 enum ExpertStreamingLoader {
+    struct Family {
+        let types: ModelTypeRegistry<any LanguageModel>
+        let factory: @Sendable (ModelTypeRegistry<any LanguageModel>) -> any ModelFactory
+    }
+
+    static let families = [
+        Family(types: VLMModelFactory.shared.typeRegistry) { registry in
+            let stock = VLMModelFactory.shared
+            return VLMModelFactory(
+                typeRegistry: registry, processorRegistry: stock.processorRegistry, modelRegistry: stock.modelRegistry,
+                conventionsRegistry: stock.conventionsRegistry, processorLoadingRegistry: stock.processorLoadingRegistry)
+        },
+        Family(types: LLMModelFactory.shared.typeRegistry) { LLMModelFactory(typeRegistry: $0, modelRegistry: LLMRegistry.shared) },
+    ]
+
     static func loadContainer(
         from directory: URL, streaming: ExpertStreaming, tokenizerLoader: any TokenizerLoader
     ) async throws -> ModelContainer {
         let configuration = try Data(contentsOf: directory.appending(component: "config.json"))
         let base = try JSONDecoder.json5().decode(BaseConfiguration.self, from: configuration)
-        let model = try await LLMTypeRegistry.shared.createModel(configuration: configuration, modelType: base.modelType)
+        var failure: (any Error)?
+        for family in families where await family.types.contains(base.modelType) {
+            do {
+                return try await load(directory, family: family, base: base, configuration: configuration, streaming: streaming, tokenizerLoader: tokenizerLoader)
+            } catch {
+                failure = failure ?? error
+            }
+        }
+        throw failure ?? BasaltError.inferenceError("expert streaming: no model factory knows model_type \(base.modelType)")
+    }
+
+    static func load(
+        _ directory: URL, family: Family, base: BaseConfiguration, configuration: Data, streaming: ExpertStreaming,
+        tokenizerLoader: any TokenizerLoader
+    ) async throws -> ModelContainer {
+        let model = try await family.types.createModel(configuration: configuration, modelType: base.modelType)
         let shards = try shardURLs(in: directory).map { try SafetensorsShard(url: $0) }
         let plan = try ExpertPlan(model: model, shards: shards, quantization: base.perLayerQuantization)
         guard !plan.layouts.isEmpty else {
@@ -112,8 +143,7 @@ enum ExpertStreamingLoader {
         let view = try residentView(of: directory, shards: shards, plan: plan)
         defer { try? FileManager.default.removeItem(at: view) }
         let registry = ModelTypeRegistry<any LanguageModel>(creators: [base.modelType: { _ in model }])
-        return try await LLMModelFactory(typeRegistry: registry, modelRegistry: LLMRegistry.shared)
-            .loadContainer(from: view, using: tokenizerLoader)
+        return try await family.factory(registry).loadContainer(from: view, using: tokenizerLoader)
     }
 
     static func store(in model: Module) -> ExpertStore? {
