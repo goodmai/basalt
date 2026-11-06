@@ -126,6 +126,12 @@ struct ServeCommand: AsyncParsableCommand {
     var experimentalZeroCopyBody = false
 
     @Flag(
+        name: .customLong("experimental-adaptive-thinking-budget"),
+        help: "Give a request that sets neither thinking_budget nor reasoning_effort a thinking budget from a difficulty estimate of its last user message (keywords, length, tools): easy 512 tokens, medium 2048, hard uncapped. Unmeasured heuristic (#41); off by default"
+    )
+    var experimentalAdaptiveThinkingBudget = false
+
+    @Flag(
         name: .customLong("grammar-jump-forward"),
         help: "Feed XGrammar-forced spans in one forward pass during constrained decoding (opt-in; JSON schema and forced tool calls)"
     )
@@ -279,9 +285,11 @@ extension ServeCommand {
         if let sessionLogWriter {
             log("Session log: \(sessionLog.mode.rawValue) → \(sessionLogWriter.directory.path) (0700; `--session-log meta` keeps no content, `--session-log off` disables)")
         }
-        return ModelOrchestratorActor(
+        let orchestrator = ModelOrchestratorActor(
             engine: engine, maxTokens: maxTokens, kv: .init(precision: kvCache.bits?.fixedPrecision, adaptive: kvCache.bits == .auto, zones: kvCache.zones),
             gate: GenerationGate(maxConcurrent: maxConcurrent, maxQueue: maxQueue), sessionLog: sessionLogWriter)
+        await orchestrator.setAdaptiveThinkingBudget(experimentalAdaptiveThinkingBudget)
+        return orchestrator
     }
 
     static func resolveNetwork(_ flags: NetworkSettings.Flags = NetworkSettings.Flags(), configFile: String?) throws -> NetworkSettings {
