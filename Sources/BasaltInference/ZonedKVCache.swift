@@ -80,16 +80,12 @@ final class ZonedKVCache: KVCacheAttentionProtocol {
         try probe(model, precision: .q8).attendsThroughCache
     }
 
-    static func probe(
-        _ model: any LanguageModel, precision: KVPrecision
-    ) throws -> (attendsThroughCache: Bool, rotatesValues: Bool, readsThroughUpdate: Bool) {
+    static func probe(_ model: any LanguageModel, precision: KVPrecision) throws -> (attendsThroughCache: Bool, rotatesValues: Bool, readsThroughUpdate: Bool) {
         let caches = replacingFullAttention(try model.newCache(parameters: nil), zones: .standard, precision: precision)
         let zoned = caches.compactMap { $0 as? ZonedKVCache }
         guard !zoned.isEmpty else { return (false, false, false) }
         _ = model(LMInput.Text(tokens: MLXArray([Int32(0)]).reshaped(1, 1)), cache: caches, state: nil)
-        return (
-            zoned.allSatisfy { !$0.materializedForCaller && $0.headsQuantize == true }, zoned.allSatisfy(\.rotatesValues),
-            zoned.allSatisfy(\.materializedForCaller))
+        return (zoned.allSatisfy { !$0.materializedForCaller && $0.headsQuantize == true }, zoned.allSatisfy(\.rotatesValues), zoned.allSatisfy(\.materializedForCaller))
     }
 
     static func prefillsWithinWindow(
