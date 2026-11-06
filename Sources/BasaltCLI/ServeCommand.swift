@@ -125,6 +125,12 @@ struct ServeCommand: AsyncParsableCommand {
     )
     var experimentalZeroCopyBody = false
 
+    @Flag(
+        name: .customLong("experimental-smallm-kernel"),
+        help: "Run 2-8 row forwards (speculative-lookup and MTP verify windows, batched decode) of 4-bit affine linear layers through basalt's small-M kernel, which decodes each weight once for all rows and matches stock quantizedMatmul bit for bit (#208). Same as BASALT_SMALLM_KERNEL=1. Off by default until measured end to end"
+    )
+    var experimentalSmallMKernel = false
+
     @OptionGroup var thinking: ThinkingOptions
 
     @Flag(
@@ -218,6 +224,7 @@ struct ServeCommand: AsyncParsableCommand {
 
     mutating func run() async throws {
         if wiredLimit { MLXInferenceEngine.renewsResidency() }
+        if experimentalSmallMKernel { MLXInferenceEngine.enablesSmallMKernel() }
         if dryRun { return await assessMemory() }
 
         let network = try resolveAccess()
