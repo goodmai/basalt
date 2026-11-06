@@ -237,7 +237,11 @@ extension MLXInferenceEngine {
     }
 
     func probeKVHeads(directory: URL) async {
-        guard let ratio = kvHeadSplit, modelFacts.capabilities.allows(.kvHeadSplit), let container else { return }
+        guard let ratio = kvHeadSplit, let container else { return }
+        guard modelFacts.capabilities.allows(.kvHeadSplit) else {
+            logger.warn("--kv-head-split is not verified on this model family; on the Qwen3.5-family and LFM2 hybrids the ablation-chosen heads lost the passkey at 16k, so the KV cache stays dense")
+            return
+        }
         let epoch = modelEpoch
         guard (try? await container.perform({ try ZonedKVCache.modelAttendsThroughCache($0.model) })) == true else {
             logger.warn("--kv-head-split does not apply to this model: its attention does not go through the cache")

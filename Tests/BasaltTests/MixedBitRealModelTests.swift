@@ -64,7 +64,7 @@ struct MixedBitRealModelTests {
         let summary = try WeightConverter(precision: precision).run(source: URL(fileURLWithPath: source), output: output)
         let seconds = (ContinuousClock.now - start) / .seconds(1)
         let plan = summary.plan.map { " high \($0.highLayers.count)/\($0.layers) layers, unscored \($0.unscored)" } ?? ""
-        log.record("converted", String(format: "%@ bytes %d → %d, %d shards%@, %.0f s", spec, summary.bytesBefore, summary.bytesAfter, summary.shards, plan, seconds))
+        log.record("converted", String(format: "%@ bytes %ld → %ld, %ld shards%@, %.0f s", spec, summary.bytesBefore, summary.bytesAfter, summary.shards, plan, seconds))
         return summary
     }
 

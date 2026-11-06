@@ -159,6 +159,7 @@ struct GenerationPlanTests {
                 if !capabilities.allows(.mtp) { facts.hasMTPDrafter = false }
                 if !capabilities.allows(.cacheBlend) { facts.modelIsHybrid = true }
                 if !capabilities.allows(.quest) { today.questTopK = nil }
+                if !capabilities.allows(.kvHeadSplit) { today.kvHeadMask = nil }
                 var verified = today
                 verified.capabilities = capabilities
                 var expected = GenerationPlan.make(row.request, today, facts)
