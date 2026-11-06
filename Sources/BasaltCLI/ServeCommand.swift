@@ -125,11 +125,7 @@ struct ServeCommand: AsyncParsableCommand {
     )
     var experimentalZeroCopyBody = false
 
-    @Flag(
-        name: .customLong("experimental-adaptive-thinking-budget"),
-        help: "Give a request that sets neither thinking_budget nor reasoning_effort a thinking budget from a difficulty estimate of its last user message (keywords, length, tools): easy 512 tokens, medium 2048, hard uncapped. Unmeasured heuristic (#41); off by default"
-    )
-    var experimentalAdaptiveThinkingBudget = false
+    @OptionGroup var thinking: ThinkingOptions
 
     @Flag(
         name: .customLong("grammar-jump-forward"),
@@ -288,7 +284,7 @@ extension ServeCommand {
         let orchestrator = ModelOrchestratorActor(
             engine: engine, maxTokens: maxTokens, kv: .init(precision: kvCache.bits?.fixedPrecision, adaptive: kvCache.bits == .auto, zones: kvCache.zones),
             gate: GenerationGate(maxConcurrent: maxConcurrent, maxQueue: maxQueue), sessionLog: sessionLogWriter)
-        await orchestrator.setAdaptiveThinkingBudget(experimentalAdaptiveThinkingBudget)
+        await orchestrator.setAdaptiveThinkingBudget(thinking.experimentalAdaptiveThinkingBudget)
         return orchestrator
     }
 

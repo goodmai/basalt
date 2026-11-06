@@ -76,7 +76,7 @@ struct ThinkingDifficultyTests {
 
     @Test("Off unless --experimental-adaptive-thinking-budget is given")
     func flagIsOptIn() throws {
-        #expect(try !ServeCommand.parse([]).experimentalAdaptiveThinkingBudget)
-        #expect(try ServeCommand.parse(["--experimental-adaptive-thinking-budget"]).experimentalAdaptiveThinkingBudget)
+        #expect(try !ServeCommand.parse([]).thinking.experimentalAdaptiveThinkingBudget)
+        #expect(try ServeCommand.parse(["--experimental-adaptive-thinking-budget"]).thinking.experimentalAdaptiveThinkingBudget)
     }
 }

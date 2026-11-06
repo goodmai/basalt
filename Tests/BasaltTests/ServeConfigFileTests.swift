@@ -29,7 +29,7 @@ struct ServeConfigFileTests {
         Group(yaml: "serve: { sampling: { top_k: 40, min_p: 0.05, seed: 7, reasoning_effort: none } }", flags: ["--top-k", "40", "--min-p", "0.05", "--seed", "7", "--reasoning-effort", "none"]) {
             "\($0.topK ?? 0) \($0.minP ?? 0) \($0.seed ?? 0) \($0.reasoningEffort ?? "")"
         },
-        Group(yaml: "serve: { experimental_adaptive_thinking_budget: true }", flags: ["--experimental-adaptive-thinking-budget"]) { "\($0.experimentalAdaptiveThinkingBudget)" },
+        Group(yaml: "serve: { experimental_adaptive_thinking_budget: true }", flags: ["--experimental-adaptive-thinking-budget"]) { "\($0.thinking.experimentalAdaptiveThinkingBudget)" },
         Group(yaml: "serve: { max_concurrent: 2, batching: { slots: 2 } }", flags: ["--max-concurrent", "2", "--batch-slots", "2"]) { "\($0.maxConcurrent) \($0.batchSlots)" },
         Group(yaml: "serve: { memory: { wired_limit: false, coordinator: false, model_probe: false } }", flags: ["--no-wired-limit", "--no-memory-coordinator", "--no-model-probe"]) {
             "\($0.wiredLimit) \($0.noMemoryCoordinator) \($0.modelProbe)"
