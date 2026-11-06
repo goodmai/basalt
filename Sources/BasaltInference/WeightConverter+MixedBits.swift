@@ -23,9 +23,16 @@ package struct MixedBits: Sendable, Equatable {
     var configBlock: [String: Any] {
         var block: [String: Any] = ["bits": low, "group_size": groupSize, "mode": "affine"]
         for layer in highLayers {
-            block[layer] = ["bits": high, "group_size": groupSize, "mode": "affine"]
+            for name in Self.loaderNames(layer) { block[name] = ["bits": high, "group_size": groupSize, "mode": "affine"] }
         }
         return block
+    }
+
+    static func loaderNames(_ layer: String) -> [String] {
+        for prefix in ["model.language_model.", "model."] where layer.hasPrefix(prefix) {
+            return [layer, "language_model.model." + layer.dropFirst(prefix.count)]
+        }
+        return [layer]
     }
 }
 

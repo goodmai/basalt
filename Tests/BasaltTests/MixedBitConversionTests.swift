@@ -48,7 +48,7 @@ struct MixedBitConversionTests {
         #expect(try WeightConverter.precision(quantize: "affine:4:64", dequantize: nil, format: .mlx) == .affine(bits: 4, groupSize: 64))
         let refused: [(String?, String?, Double?)] = [
             ("mixed:3:6:64", nil, nil), ("mixed:6:3:64", nil, 10), ("mixed:3:7:64", nil, 10), ("mixed:3:6:48", nil, 10),
-            ("mixed:3:6", nil, 10), ("mixed:3:6:64", nil, -1), ("mixed:3:6:64", nil, .infinity), ("affine:4:64", nil, 10),
+            ("mixed:3:6", nil, 10), ("mixed:3:6:64", nil, -1), ("mixed:3:6:64", nil, .infinity), ("mixed:3:6:64", nil, 1e10), ("affine:4:64", nil, 10),
             (nil, "bf16", 10), (nil, nil, 10),
         ]
         for (quantize, dequantize, budget) in refused {
@@ -56,6 +56,16 @@ struct MixedBitConversionTests {
                 try WeightConverter.precision(quantize: quantize, dequantize: dequantize, format: .mlx, budgetGB: budget)
             }
         }
+    }
+
+    @Test("A high layer's override is written under its file key and, for HF layouts, under the loader's sanitized language_model.model. path")
+    func overrideNames() {
+        #expect(MixedBits.loaderNames("model.language_model.layers.3.mlp.down_proj") == ["model.language_model.layers.3.mlp.down_proj", "language_model.model.layers.3.mlp.down_proj"])
+        #expect(MixedBits.loaderNames("model.layers.3.self_attn.q_proj") == ["model.layers.3.self_attn.q_proj", "language_model.model.layers.3.self_attn.q_proj"])
+        #expect(MixedBits.loaderNames("language_model.model.layers.3.mlp.up_proj") == ["language_model.model.layers.3.mlp.up_proj"])
+        var mixed = MixedBits(low: 3, high: 6, groupSize: 64, budgetBytes: 1)
+        mixed.highLayers = ["model.layers.0.mlp.gate_proj"]
+        #expect(Set(mixed.configBlock.keys) == ["bits", "group_size", "mode", "model.layers.0.mlp.gate_proj", "language_model.model.layers.0.mlp.gate_proj"])
     }
 
     @Test("Only a per-expert key (experts.<n>.) is pinned to the low bits; stacked experts are planned")
@@ -100,7 +110,7 @@ struct MixedBitConversionTests {
         let config = try WeightConverterTests.config(scratch.url("mixed"))
         let block = try #require(config["quantization"] as? [String: Any])
         #expect(block["bits"] as? Int == low && block["group_size"] as? Int == 32)
-        #expect(Set(block.keys).subtracting(["bits", "group_size", "mode"]) == plan.highLayers)
+        #expect(Set(block.keys).subtracting(["bits", "group_size", "mode"]) == Set(plan.highLayers.flatMap(MixedBits.loaderNames)))
         let override = try #require(plan.highLayers.first.flatMap { block[$0] as? [String: Any] })
         #expect(override["bits"] as? Int == high && override["group_size"] as? Int == 32)
 

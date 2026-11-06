@@ -184,8 +184,7 @@ final class HeadSplitKVCache: KVCacheAttentionProtocol {
 
     @discardableResult
     func trim(_ n: Int) -> Int {
-        let removed = min(max(0, n), offset)
-        _ = full.trim(removed)
+        let removed = full.trim(min(max(0, n), offset))
         _ = stream.trim(min(removed, max(0, stream.offset - Self.sinkTokens)))
         offset -= removed
         return removed

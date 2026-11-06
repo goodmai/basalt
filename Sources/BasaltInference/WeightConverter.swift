@@ -76,7 +76,7 @@ package struct WeightConverter: Sendable {
         case "affine" where parts.count == 3 && numbers.count == 2 && bitsValid:
             return .affine(bits: numbers[0], groupSize: numbers[1])
         case "mixed" where parts.count == 4 && numbers.count == 3 && bitsValid && numbers[0] < numbers[1]:
-            guard let budgetGB, budgetGB.isFinite, budgetGB > 0 else { throw .options("--quantize mixed needs --budget-gb, a positive size in GB (10^9 bytes)") }
+            guard let budgetGB, budgetGB.isFinite, budgetGB > 0, budgetGB * 1e9 < Double(Int.max) else { throw .options("--quantize mixed needs --budget-gb, a positive size in GB (10^9 bytes)") }
             return .mixed(MixedBits(low: numbers[0], high: numbers[1], groupSize: numbers[2], budgetBytes: Int(budgetGB * 1e9)))
         default:
             throw .options(
