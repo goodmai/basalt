@@ -400,6 +400,7 @@ extension TensorRequest {
             name: try MCPArguments.required("name", MCPArguments.string("name", in: args)),
             slice: try MCPArguments.slice(args),
             maxValues: try MCPArguments.integer("maxValues", in: args, ResearchCall.maxValues) ?? 256)
+        spectrum = try MCPArguments.optionalBoolean("spectrum", in: args) ?? false
     }
 }
 

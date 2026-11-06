@@ -26,15 +26,16 @@ struct LabGateTests {
         await container.perform { context in context.model.namedModules().filter { $0.1 is LoRALayer }.count }
     }
 
-    static func adapterDirectory(rank: Int, storedRank: Int) throws -> URL {
+    static func adapterDirectory(rank: Int, storedRank: Int, seed: UInt64? = nil) throws -> URL {
         let directory = FileManager.default.temporaryDirectory.appending(path: "lab-adapter-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let config = #"{"fine_tune_type": "lora", "num_layers": 4, "lora_parameters": {"rank": \#(rank), "scale": 2.0, "keys": ["self_attn.q_proj"]}}"#
         try Data(config.utf8).write(to: directory.appending(path: "adapter_config.json"))
         var arrays: [String: MLXArray] = [:]
+        let keys = MLXRandom.split(key: MLXRandom.key(seed ?? .random(in: 0 ... .max)), into: 8)
         for layer in 0 ..< 4 {
-            arrays["model.layers.\(layer).self_attn.q_proj.lora_a"] = MLXRandom.normal([64, storedRank])
-            arrays["model.layers.\(layer).self_attn.q_proj.lora_b"] = MLXRandom.normal([storedRank, 64])
+            arrays["model.layers.\(layer).self_attn.q_proj.lora_a"] = MLXRandom.normal([64, storedRank], key: keys[2 * layer])
+            arrays["model.layers.\(layer).self_attn.q_proj.lora_b"] = MLXRandom.normal([storedRank, 64], key: keys[2 * layer + 1])
         }
         try save(arrays: arrays, url: directory.appending(path: "adapters.safetensors"))
         return directory

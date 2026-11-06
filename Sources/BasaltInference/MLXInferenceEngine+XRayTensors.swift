@@ -87,6 +87,7 @@ extension MLXInferenceEngine {
             l2: statistics.l2)
         report.percentiles = measured.percentiles
         report.values = values(view, ranges: ranges, limit: min(request.maxValues, tensorValuesCap))
+        if request.spectrum { report.spectrum = try spectrum(view, ranges: ranges) }
         return report
     }
 

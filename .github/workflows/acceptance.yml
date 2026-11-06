@@ -1,0 +1,27 @@
+name: Acceptance Gate
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/acceptance*'
+      - 'scripts/task_pool_eval.swift'
+      - 'scripts/fixtures/acceptance/**'
+      - '.github/workflows/acceptance.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  self-test:
+    name: Acceptance gate self-test
+    runs-on: [self-hosted, macOS, ARM64]
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          clean: false
+      - name: Configure Swift toolchain
+        uses: ./.github/actions/xcode-toolchain
+      - name: Gate logic on recorded reports
+        run: swift scripts/acceptance_test.swift
