@@ -41,6 +41,16 @@ struct ChatPipeline: Sendable {
         }
     }
 
+    struct Body<DTO: Decodable>: Decodable {
+        let dto: DTO
+        let antiRepetition: Result<AntiRepetition, any Error>
+
+        init(from decoder: any Decoder) throws {
+            dto = try DTO(from: decoder)
+            antiRepetition = Result { try AntiRepetition(from: decoder) }
+        }
+    }
+
     struct Input: Sendable {
         let chat: [ChatMessageInput]
         let maxTokens: Int?
@@ -97,9 +107,17 @@ struct ChatPipeline: Sendable {
         do {
             return try JSONDecoder().decode(type, from: data)
         } catch {
-            fputs("🔴 [\(label)] decode error: \(error) (body: \(data.count) bytes)\n", stderr)
-            throw rejection(.badRequest, "\(failure): \(error.localizedDescription)")
+            throw decodeFailure(error, failure, bodyBytes: data.count)
         }
+    }
+
+    func decodeFailure(_ error: any Error, _ failure: String, bodyBytes: Int) -> Rejection {
+        fputs("🔴 [\(label)] decode error: \(error) (body: \(bodyBytes) bytes)\n", stderr)
+        return rejection(.badRequest, "\(failure): \(error.localizedDescription)")
+    }
+
+    static func object(in data: Data) -> [String: Any]? {
+        try? JSONSerialization.jsonObject(with: data) as? [String: Any]
     }
 
     func require(_ condition: Bool, _ message: String) throws {
@@ -112,18 +130,20 @@ struct ChatPipeline: Sendable {
         }
     }
 
-    func tools(in data: Data) throws -> OpenAIController.RequestedTools {
-        do { return try OpenAIController.requestedTools(fromRequestBody: data) } catch {
+    func tools(in body: [String: Any]?) throws -> OpenAIController.RequestedTools {
+        do { return try OpenAIController.requestedTools(in: body) } catch {
             throw rejection(.badRequest, error.message)
         }
     }
 
-    func antiRepetition(in data: Data) throws -> AntiRepetition {
-        try decode(AntiRepetition.self, from: data, failure: "Invalid DRY or XTC parameter")
+    func antiRepetition(_ decoded: Result<AntiRepetition, any Error>, bodyBytes: Int) throws -> AntiRepetition {
+        do { return try decoded.get() } catch {
+            throw decodeFailure(error, "Invalid DRY or XTC parameter", bodyBytes: bodyBytes)
+        }
     }
 
-    func responseFormat(in data: Data) throws -> ResponseFormat? {
-        do { return try OpenAIController.responseFormat(fromRequestBody: data) } catch {
+    func responseFormat(in body: [String: Any]?, data: Data) throws -> ResponseFormat? {
+        do { return try OpenAIController.responseFormat(in: body, data: data) } catch {
             throw rejection(.badRequest, error.message)
         }
     }

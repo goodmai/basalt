@@ -1,5 +1,6 @@
 import Foundation
 import CoreImage
+import ImageIO
 import MLX
 import MLXLMCommon
 import Tokenizers
@@ -22,10 +23,10 @@ extension MLXInferenceEngine {
             ? .disabled
             : ReasoningPolicy(rawValue: request.reasoningEffort ?? defaultReasoningEffort) ?? .modelDefault
     }
-    static func chat(_ messages: [ChatMessageInput], lastText: String) -> [Chat.Message] {
+    static func chat(_ messages: [ChatMessageInput], lastText: String, images decoded: [String: CIImage] = [:]) -> [Chat.Message] {
         messages.enumerated().map { index, message in
             let text = index == messages.count - 1 ? lastText : message.text
-            let images = message.images.compactMap { CIImage(data: $0.data) }.map(UserInput.Image.ciImage)
+            let images = message.images.compactMap { decoded[$0.digest] ?? CIImage(data: $0.data) }.map(UserInput.Image.ciImage)
             switch message.role {
             case .system:    return .system(text, images: images)
             case .user:      return .user(text, images: images)
@@ -36,14 +37,34 @@ extension MLXInferenceEngine {
     }
 
     static func chatInput(
-        _ messages: [ChatMessageInput], normalisation: String, tools: [ToolSpec]?, context: [String: any Sendable]?
+        _ messages: [ChatMessageInput], normalisation: String, tools: [ToolSpec]?, context: [String: any Sendable]?,
+        images: [String: CIImage]
     ) -> (@Sendable (String) -> UserInput, String?, String) {
         let last = messages[messages.count - 1]
         return (
-            { UserInput(chat: Self.chat(messages, lastText: $0), tools: tools, additionalContext: context) },
+            { UserInput(chat: Self.chat(messages, lastText: $0, images: images), tools: tools, additionalContext: context) },
             HybridPrefixSnapshot.templateKey([tools ?? [], context ?? [:], last.role.rawValue, last.toolCalls != nil, normalisation]),
             last.text
         )
+    }
+
+    static func decodedImages(_ messages: [ChatMessageInput]) throws(BasaltError) -> [String: CIImage] {
+        var decoded: [String: CIImage] = [:]
+        for (index, message) in messages.enumerated() {
+            for image in message.images where decoded[image.digest] == nil {
+                guard hasImageHeader(image.data), let ciImage = CIImage(data: image.data) else {
+                    throw .invalidRequestStructure(details: "the image in message \(index) cannot be decoded")
+                }
+                decoded[image.digest] = ciImage
+            }
+        }
+        return decoded
+    }
+
+    static func hasImageHeader(_ data: Data) -> Bool {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any] else { return false }
+        return (properties[kCGImagePropertyPixelWidth] as? Int ?? 0) > 0 && (properties[kCGImagePropertyPixelHeight] as? Int ?? 0) > 0
     }
 
     static func templateFallbacks(_ turns: [ChatMessageInput]) -> [(String, [ChatMessageInput])] {

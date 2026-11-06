@@ -13,6 +13,7 @@ struct RenderedPrompt {
     var context: [String: any Sendable]?
     var policy: ReasoningPolicy
     var prefill: String?
+    var images: [String: CIImage]
 }
 
 struct PromptInput {
@@ -45,7 +46,9 @@ struct CacheClaim {
 extension MLXInferenceEngine {
     typealias Draft = (makeInput: @Sendable (String) -> UserInput, template: String?, lastText: String)
 
-    func render(_ request: GenerationRequest, tools: [ToolSpec]?, container: ModelContainer) async throws -> RenderedPrompt {
+    func render(
+        _ request: GenerationRequest, tools: [ToolSpec]?, images: [String: CIImage], container: ModelContainer
+    ) async throws -> RenderedPrompt {
         let continued = request.messages.flatMap(ChatMessageInput.splittingPrefill)
         let prefill = continued.flatMap { $0.prefill.isEmpty ? nil : $0.prefill }
         let requestedPolicy = Self.reasoningPolicy(request: request, defaultReasoningEffort: reasoningEffort)
@@ -61,28 +64,30 @@ extension MLXInferenceEngine {
             draft = ({ UserInput(prompt: $0) }, "raw", request.prompt)
         } else {
             anchorTurns = turns ?? profile.turns(controlTokens.neutralize([ChatMessageInput(role: .user, text: request.prompt)]), for: policy)
-            draft = Self.chatInput(anchorTurns, normalisation: "native", tools: tools, context: context)
+            draft = Self.chatInput(anchorTurns, normalisation: "native", tools: tools, context: context, images: images)
         }
         try faults.check(.tokenize)
         let input: LMInput
         do {
             input = try await container.prepare(input: draft.makeInput(draft.lastText))
         } catch where turns != nil && Self.isTemplateRefusal(error) {
-            (input, draft, anchorTurns) = try await renderingFallbacks(turns ?? [], refusal: error, tools: tools, context: context, container: container)
+            (input, draft, anchorTurns) = try await renderingFallbacks(
+                turns ?? [], refusal: error, tools: tools, context: context, images: images, container: container)
         }
         return RenderedPrompt(
             input: input, makeInput: draft.makeInput, template: draft.template, anchorTurns: anchorTurns, context: context,
-            policy: policy, prefill: prefill)
+            policy: policy, prefill: prefill, images: images)
     }
 
     func renderingFallbacks(
-        _ turns: [ChatMessageInput], refusal native: any Error, tools: [ToolSpec]?, context: [String: any Sendable]?, container: ModelContainer
+        _ turns: [ChatMessageInput], refusal native: any Error, tools: [ToolSpec]?, context: [String: any Sendable]?,
+        images: [String: CIImage], container: ModelContainer
     ) async throws -> (LMInput, Draft, [ChatMessageInput]) {
         var refusal = native
         var previous = turns
         for (step, messages) in Self.templateFallbacks(turns) where messages != previous {
             previous = messages
-            let draft: Draft = Self.chatInput(messages, normalisation: step, tools: tools, context: context)
+            let draft: Draft = Self.chatInput(messages, normalisation: step, tools: tools, context: context, images: images)
             do {
                 let input = try await container.prepare(input: draft.makeInput(draft.lastText))
                 logger.info("Chat template refused native turns (\(Self.briefly(native))); rendered with \(step) turns")
@@ -133,17 +138,15 @@ extension MLXInferenceEngine {
             media: .of(request.messages, carriesMoreThanTokens: carries, tokens: tokens, imageToken: snapshotsCarryMedia ? modelFacts.imageToken : nil))
     }
 
-    func checkImages(_ messages: [ChatMessageInput]?, container: ModelContainer) async throws(BasaltError) {
-        guard let messages, messages.contains(where: { !$0.images.isEmpty }) else { return }
+    func checkImages(_ messages: [ChatMessageInput]?, container: ModelContainer) async throws(BasaltError) -> [String: CIImage] {
+        guard let messages, messages.contains(where: { !$0.images.isEmpty }) else { return [:] }
         try ImageInput.checkLimits(messages.flatMap(\.images))
         let (name, takesImages) = await container.perform { ($0.configuration.name, $0.model is any VLMModel) }
         guard takesImages else {
             let model = ModelCache.canonicalRepoId(from: modelFacts.description.isEmpty ? name : modelFacts.description)
             throw .invalidRequestStructure(details: "\(model) does not take images")
         }
-        for (index, message) in messages.enumerated() where message.images.contains(where: { CIImage(data: $0.data) == nil }) {
-            throw .invalidRequestStructure(details: "the image in message \(index) cannot be decoded")
-        }
+        return try Self.decodedImages(messages)
     }
 
     func checkedConstraint(
