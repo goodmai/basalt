@@ -49,15 +49,19 @@ package struct BitPlan: Sendable, Equatable {
         guard bytes <= mixed.budgetBytes else {
             throw .refused("the budget of \(mixed.budgetBytes) bytes is below \(bytes) bytes, the size with every quantized layer at \(mixed.low) bits")
         }
-        let ranked = candidates.compactMap { candidate in candidate.score.map { (candidate, $0) } }
-            .sorted { $0.1 == $1.1 ? $0.0.layer < $1.0.layer : $0.1 > $1.1 }
-        for (candidate, _) in ranked {
+        let ranked = candidates.filter { $0.score != nil }.sorted(by: Self.ranksAbove)
+        for candidate in ranked {
             let extra = Self.bytes(candidate, bits: mixed.high, groupSize: mixed.groupSize)
                 - Self.bytes(candidate, bits: mixed.low, groupSize: mixed.groupSize)
             guard bytes + extra <= mixed.budgetBytes else { continue }
             highLayers.insert(candidate.layer)
             bytes += extra
         }
+    }
+
+    static func ranksAbove(_ a: Candidate, _ b: Candidate) -> Bool {
+        let left = a.score ?? -.infinity, right = b.score ?? -.infinity
+        return left == right ? a.layer < b.layer : left > right
     }
 
     static func bytes(_ candidate: Candidate, bits: Int, groupSize: Int) -> Int {

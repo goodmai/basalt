@@ -23,7 +23,7 @@ struct ConvertSubcommand: AsyncParsableCommand {
     @Option(name: .long, help: "New output directory; must not exist and must not be inside the source")
     var out: String
 
-    @Option(name: .long, help: "Requantize linear weights: affine:<bits>:<group>, e.g. affine:4:64, or mixed:<low>:<high>:<group> with --budget-gb")
+    @Option(name: .long, help: "Requantize linear weights: affine:<bits>:<group>, e.g. affine:4:64, mixed:<low>:<high>:<group> with --budget-gb, or nf4:<group> (32 or 64; experimental: loads with the fork's NF4Linear, set MLXLM_NF4_KERNEL=1 for its decode kernel, which runs 1.1-1.5x slower than affine 4-bit at one row)")
     var quantize: String?
 
     @Option(name: .long, help: "Total weight size for --quantize mixed, in GB (10^9 bytes): layers with the largest Marchenko-Pastur noise variance get the high bits while the total fits")

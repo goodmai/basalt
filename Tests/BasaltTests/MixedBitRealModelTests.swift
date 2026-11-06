@@ -29,12 +29,12 @@ struct MixedBitRealModelTests {
     func compare(source: String) async throws {
         let log = try await ModelRunLog("mixed-bit", modelPath: source)
         defer { log.releaseGPU() }
-        let root = env["BASALT_E2E_MIXED_OUT"].map { URL(fileURLWithPath: $0) } ?? FileManager.default.temporaryDirectory
+        let root = Self.env["BASALT_E2E_MIXED_OUT"].map { URL(fileURLWithPath: $0) } ?? FileManager.default.temporaryDirectory
         let stem = root.appending(component: "basalt-mixed-\(UUID().uuidString.prefix(8))")
-        defer { if env["BASALT_E2E_MIXED_KEEP"] != "1" { try? FileManager.default.removeItem(at: stem) } }
-        let uniformSpec = env["BASALT_E2E_MIXED_UNIFORM"] ?? "affine:3:64"
-        let mixedSpec = env["BASALT_E2E_MIXED"] ?? "mixed:2:4:64"
-        log.record("setup", "uniform \(uniformSpec) mixed \(mixedSpec) out \(stem.path) corpus \(env["BASALT_E2E_MIXED_CORPUS"] ?? "unset") pplTokens \(Self.perplexityTokens) decodeTokens \(Self.decodeTokens)")
+        defer { if Self.env["BASALT_E2E_MIXED_KEEP"] != "1" { try? FileManager.default.removeItem(at: stem) } }
+        let uniformSpec = Self.env["BASALT_E2E_MIXED_UNIFORM"] ?? "affine:3:64"
+        let mixedSpec = Self.env["BASALT_E2E_MIXED"] ?? "mixed:2:4:64"
+        log.record("setup", "uniform \(uniformSpec) mixed \(mixedSpec) out \(stem.path) corpus \(Self.env["BASALT_E2E_MIXED_CORPUS"] ?? "unset") pplTokens \(Self.perplexityTokens) decodeTokens \(Self.decodeTokens)")
         let uniform = try await log.step("convert \(uniformSpec)") {
             try Self.convert(source, spec: uniformSpec, budget: nil, to: stem.appending(component: "uniform"), log: log)
         }

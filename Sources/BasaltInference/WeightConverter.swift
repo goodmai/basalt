@@ -10,6 +10,7 @@ package struct WeightConverter: Sendable {
         case source
         case affine(bits: Int, groupSize: Int)
         case mixed(MixedBits)
+        case nf4(groupSize: Int)
         case dense(DType?)
     }
 
@@ -69,7 +70,9 @@ package struct WeightConverter: Sendable {
         let parts = spec.split(separator: ":")
         let numbers = parts.dropFirst().compactMap { Int($0) }
         let bitsValid = numbers.dropLast().allSatisfy { [2, 3, 4, 5, 6, 8].contains($0) } && [32, 64, 128].contains(numbers.last ?? 0)
-        switch parts.first {
+        switch parts.first.map(String.init) {
+        case "nf4" where parts.count == 2 && numbers.count == 1 && NF4Codec.groupSizes.contains(numbers[0]):
+            return .nf4(groupSize: numbers[0])
         case "affine" where parts.count == 3 && numbers.count == 2 && bitsValid:
             return .affine(bits: numbers[0], groupSize: numbers[1])
         case "mixed" where parts.count == 4 && numbers.count == 3 && bitsValid && numbers[0] < numbers[1]:
@@ -77,7 +80,7 @@ package struct WeightConverter: Sendable {
             return .mixed(MixedBits(low: numbers[0], high: numbers[1], groupSize: numbers[2], budgetBytes: Int(budgetGB * 1e9)))
         default:
             throw .options(
-                "--quantize takes affine:<bits>:<group> or mixed:<low>:<high>:<group> (bits 2-6 or 8, low below high, group 32, 64 or 128), got '\(spec)'")
+                "--quantize takes affine:<bits>:<group> or mixed:<low>:<high>:<group> (bits 2-6 or 8, low below high, group 32, 64 or 128) or nf4:<group> (group 32 or 64), got '\(spec)'")
         }
     }
 
@@ -90,6 +93,7 @@ package struct WeightConverter: Sendable {
         guard !layout.shardOf.keys.contains(where: { $0.hasSuffix(".global_scale") }) else {
             throw Failure.refused("\(source.path) is an nvfp4 checkpoint with global scales; converting it is not supported yet")
         }
+        try checkNF4Source(layout, source: source)
         let lora = try adapter.map { try LoRAUpdate(directory: $0, keys: layout.shardOf) }
         var converter = self
         var bitPlan: BitPlan?
@@ -138,13 +142,19 @@ package struct WeightConverter: Sendable {
         let isWeight = key.hasSuffix(".weight")
         let base = isWeight ? String(key.dropLast(".weight".count)) : key
         let pair = isWeight ? lora?.pairs[base] : nil
+        let nf4: Int? = if case .nf4(let groupSize) = precision,
+            Self.takesNF4(key, tensor, packed: packed, sourceQuantized: sourceQuantized, groupSize: groupSize) { groupSize } else { nil }
         let target = targetQuantization(key, tensor, packed: packed, sourceQuantized: sourceQuantized)
-        if pair == nil, let packed, let target, packed.quantization.asTuple == target.asTuple {
+        if nf4 == nil, pair == nil, let packed, let target, packed.quantization.asTuple == target.asTuple {
             return packed.arrays(base, weight: tensor)
         }
-        if pair == nil, packed == nil, target == nil { return [key: cast(tensor)] }
+        if nf4 == nil, pair == nil, packed == nil, target == nil { return [key: cast(tensor)] }
         var weight = Self.dense(tensor, packed)
         if let pair, let lora { weight = try LoRAUpdate.merged(weight, pair, scale: lora.scale, layer: base) }
+        if let nf4 {
+            let (codes, scales) = NF4Codec.quantized(weight, groupSize: nf4)
+            return [base + ".weight": codes, base + ".scales": scales]
+        }
         guard let target else { return [key: cast(weight)] }
         let (wq, scales, biases) = MLX.quantized(weight, groupSize: target.groupSize, bits: target.bits, mode: target.mode)
         return PackedWeight(scales: scales, biases: biases, quantization: target).arrays(base, weight: wq)
@@ -156,7 +166,7 @@ package struct WeightConverter: Sendable {
         switch precision {
         case .dense:
             return nil
-        case .source:
+        case .source, .nf4:
             return packed?.quantization
         case .affine(let bits, let groupSize):
             guard Self.quantizable(key, tensor, packed: packed, sourceQuantized: sourceQuantized, groupSize: groupSize) else { return nil }
@@ -181,11 +191,22 @@ package struct WeightConverter: Sendable {
     }
 
     static func isLinearLike(_ key: String, _ tensor: MLXArray) -> Bool {
+        (2 ... 3).contains(tensor.ndim) && tensor.dtype.isFloatingPoint && isLinearPath(key)
+    }
+
+    static func isLinearPath(_ key: String) -> Bool {
         let path = key.split(separator: ".")
-        guard path.last == "weight", (2 ... 3).contains(tensor.ndim), tensor.dtype.isFloatingPoint else { return false }
+        guard path.last == "weight" else { return false }
         return !path.dropLast().contains { part in
             part == "gate" || ["embed", "norm", "router", "vision", "visual", "audio"].contains { part.contains($0) }
         }
+    }
+
+    static func takesNF4(_ key: String, _ tensor: MLXArray, packed: PackedWeight?, sourceQuantized: Bool, groupSize: Int) -> Bool {
+        guard tensor.ndim == 2, isLinearPath(key) else { return false }
+        guard let packed else { return !sourceQuantized && tensor.dtype.isFloatingPoint && tensor.dim(-1) % groupSize == 0 }
+        return packed.quantization.bits == 4 && packed.quantization.mode == .affine
+            && (packed.scales.dim(-1) * packed.quantization.groupSize) % groupSize == 0
     }
 
     func cast(_ tensor: MLXArray) -> MLXArray {
@@ -202,6 +223,13 @@ extension WeightConverter {
         guard !canonical(output).starts(with: canonical(source)) else {
             throw .refused("\(output.path) is inside the source \(source.path), which is never written")
         }
+    }
+
+    func checkNF4Source(_ layout: SourceLayout, source: URL) throws(Failure) {
+        guard case .nf4 = precision else { return }
+        let unbiased = layout.shardOf.keys.filter { $0.hasSuffix(".scales") && layout.shardOf[String($0.dropLast(".scales".count)) + ".biases"] == nil }
+        guard let example = unbiased.min() else { return }
+        throw .refused("\(source.path) has quantized layers without biases (\(example)); nf4 conversion needs a dense or affine source, since the loader reads scales without biases as nf4")
     }
 
     static func canonical(_ url: URL) -> [String] {
@@ -237,6 +265,11 @@ extension WeightConverter {
         case .mixed(let mixed):
             config["quantization"] = mixed.configBlock
             config["quantization_config"] = mixed.configBlock
+        case .nf4(let groupSize):
+            var block = config["quantization"] as? [String: Any] ?? ["bits": 4, "group_size": groupSize, "mode": "affine"]
+            block["quant_method"] = "nf4"
+            config["quantization"] = block
+            config["quantization_config"] = block
         }
         try JSONSerialization.data(withJSONObject: config, options: [.prettyPrinted, .sortedKeys])
             .write(to: output.appending(component: "config.json"))

@@ -3,6 +3,9 @@
 ## Unreleased
 
 ### Upgrading from 0.9.0
+- swift-transformers 1.3.5 → 1.4.0. Token IDs, and so golden logits and prompt-cache keys, are unchanged. Two behaviour changes:
+  - BPE tokenizers no longer collapse spaces around punctuation when decoding, and `clean_up_tokenization_spaces` now defaults to false, as in Transformers 5.7. On Gemma 4, whose tokenizer omits the setting, decoded text keeps those spaces: `x != y` stays `x != y`, where it used to become `x!= y`. Qwen3.8 and LFM2.5 already set it to false and are unaffected.
+  - A tokenizer regex that Foundation cannot compile now refuses the model at load, as an invalid model configuration that names the pattern. It used to be silently ignored (Split) or crash the process (Replace). basalt reports it that way instead of as corrupted weights.
 - The `GemCLI`, `GemLogger` and `GemLogLevel` typealiases are gone; use `BasaltCLI`, `BasaltLogger` and `BasaltLogLevel` (#236). The `gemma_*` MCP tool aliases stay.
 - The thermal policy is on by default (#45). At macOS `.serious` thermal state prefill runs in 256-token chunks with a pause of a quarter of each chunk's time after it; at `.critical` prompts of 8192+ tokens are refused with 503 `Retry-After: 60`. `/api/v1/stats` and `serve --stats` show the thermal state and directive. `serve --no-thermal-policy` turns the pacing and refusals off.
 - New opt-ins that change nothing unless used:
@@ -11,6 +14,7 @@
   - `models inspect --verify` re-hashes every cached file against its sidecar or the Hub's digest and reports `true`, `false` or `unknown` per file (#367). It only reads. `download --require-verified` refuses files the Hub sends no digest for, and `serve --require-verified` refuses to load a snapshot with any unverified file.
   - `basalt review` reviews a diff on the local model (#35): `--diff FILE|-`, or a merge request fetched with `--gitlab` / `--gitea URL --repo --number`. It prints the review and posts it only with `--post`. Tokens come from `GITLAB_TOKEN` / `GITEA_TOKEN`.
   - **Experimental:** `serve --experimental-zero-copy-body` wraps each collected REST request body in `Data` without copying it (#345). Measured on Gemma 4 26B-A4B with 1, 4 and 8 images at the 32 MB limit (release, median of 3): process footprint peak 70–95 MB lower, MLX peak unchanged, TTFT with 1 image unchanged and with 4 and 8 images 8–9% higher. That is under the 5% gain the issue asked for, so the flag stays off by default.
+  - **Experimental:** NF4 weights (#357). `tensor_pack` takes `nf4:32` and `nf4:64`, and `models convert --quantize nf4:32` writes an NF4 checkpoint that the fork's `NF4Linear` loads. MoE experts stay affine. Measured on bf16 sources, NF4 g32 has 4.6–8.5% lower weight error and 5.3–12.4% lower activation-weighted error than affine 4-bit g64 at the same 4.5 bits per weight, on Qwen3.8-27B, LFM2.5-24B-A2B and Gemma 4 26B-A4B. Its decode kernel (`MLXLM_NF4_KERNEL=1`, off by default) is 1.1–1.5× slower than stock affine 4-bit at one row and 3.3× slower at 8, so NF4 checkpoints are for conversion and introspection experiments, not for serving speed.
 - The release workflow now runs the tests itself when it cannot find a green main run for the tagged commit, instead of skipping the release (#206).
 
 ## 0.9.0 — 2026-11-03
