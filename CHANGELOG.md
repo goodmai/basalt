@@ -20,7 +20,17 @@
   - **Experimental:** `serve --experimental-adaptive-thinking-budget` (#41) gives a request that sets no thinking control a budget from a keyword and length score of its last user message: 512 thinking tokens when easy, 2048 when medium, none when hard. On 12 problems at 2,048 tokens it lost no problem: LFM2.5-24B-A2B solved 10/12 against 9/12 and thought 17% less; Qwen3.8-27B was unchanged (11/12, same tokens).
   - `--kv-evict` now applies to Gemma 4 (#171): its full-attention layers keep an fp16 cache that drops the highest key-norm tokens leaving the recent window. On Gemma 4 26B-A4B at 16k, 0.25 holds 14% less KV with passkey 5/5 and perplexity +0.6%, and keeps greedy output identical over 64 tokens; 0.5 holds 28% less, passkey 5/5, perplexity +20%.
   - `--kv-head-split R --kv-zones --kv-bits k8v4` stores the kept heads' long context zoned in k8v4 (#294): on LFM2.5-24B-A2B at 30k, KV 161 → 73 MB against head split alone, with the same perplexity.
-- `--kv-head-split` is refused, with a warning, on the Qwen3.5-family and LFM2 / Nemotron-H hybrids (#294). Its ablation-chosen 25% of heads lost the 16k passkey there: Qwen3.8-27B 0/3 depths and LFM2.5-24B 2/3, against 3/3 dense, with perplexity +24% and +42%. Choosing heads by output fidelity is #282.
+- `--kv-head-split` now chooses its heads by output fidelity and checks them at load (#282, replacing #294's refusal of the hybrid families):
+  - **Selection:** a greedy search adds, one at a time, the head that brings the final-layer output closest to the dense cache (KL on a calibration prompt with three pass keys).
+  - **Gate:** the split applies only if every answer token keeps the dense model's top choice on that prompt and on a held-out one, and the mean KL is at most 0.1 nats per token. Otherwise the cache stays dense with a warning.
+  - **Measured:** the gate refused both hybrids at 25%: Qwen3.8-27B (KL 0.23) and LFM2.5-24B (KL 0.14).
+    - Qwen3.8-27B: the fidelity choice beat the old ablation choice, perplexity 4.68 against 4.89 and 16k passkey 2/3 against 0/3.
+    - LFM2.5-24B: it did worse, 13.26 against 11.94 and 0/3 against 2/3.
+  - **First-load cost:** selection takes 979 s on Qwen3.8-27B and 248 s on LFM2.5-24B, only with the flag, cached in `~/.basalt/head-scores`.
+- **Experimental:** `serve --experimental-smallm-kernel` (or `BASALT_SMALLM_KERNEL=1`) runs 4–8 row forwards of 4-bit affine layers through a simdgroup-matrix kernel that decodes each weight once (#208). These are speculative-lookup and MTP verify windows, plus batched decode.
+  - **Kernel:** on Qwen3.8-27B shapes it takes about 1.5× of one-token time at any of 4–8 rows, against 1.7–1.9× at 4 and 3.3–3.7× at 8 for stock MLX.
+  - **End to end:** on Gemma 4 26B-A4B with `--speculative-lookup`, code edits went from 112.7 to 118.5 tok/s (+5.2%) with byte-identical greedy output over 256 tokens. Prose was unchanged.
+  - **Scope:** MoE expert layers keep MLX's gather kernel.
 - `models check` and `basalt fit` classify a MoE model that does not fit resident but would fit with expert streaming as "Streaming" and print the arithmetic: resident weights, expert cache and KV (#242). It is still refused, since the streaming engine (#225) does not exist yet.
 - Image requests spend less CPU before inference (#374). Byte scans use `memchr`, the body is parsed once for tools, `response_format` and DRY/XTC, and each image is checked from its header and decoded once. On Gemma 4 26B-A4B, TTFT drops from 1536 to 1323 ms with one 20 MB image (−14%), and by 385 and 753 ms with 4 and 8 images (−8%).
 - The release workflow now runs the tests itself when it cannot find a green main run for the tagged commit, instead of skipping the release (#206).
