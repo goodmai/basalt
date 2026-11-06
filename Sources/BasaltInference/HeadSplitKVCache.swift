@@ -6,23 +6,6 @@ import BasaltCore
 struct KVHeadMask: Codable, Sendable, Equatable {
     let retrieval: [[Int]]
 
-    static let concentration: Float = 0.25
-
-    static func isConcentrated(_ scores: [[Float]]) -> Bool {
-        let ranked = scores.joined().sorted(by: >)
-        guard let top = ranked.first, top > 0 else { return false }
-        return ranked[ranked.count / 2] <= top * concentration
-    }
-
-    static func classify(scores: [[Float]], ratio: Double) -> KVHeadMask {
-        let ranked = scores.enumerated().flatMap { layer, heads in heads.enumerated().map { (layer, $0.offset, $0.element) } }
-            .sorted { $0.2 > $1.2 }
-        let kept = Int((Double(ranked.count) * ratio).rounded())
-        var retrieval = scores.map { _ in [Int]() }
-        for (layer, head, _) in ranked.prefix(kept) { retrieval[layer].append(head) }
-        return KVHeadMask(retrieval: retrieval.map { $0.sorted() })
-    }
-
     func replacingFullAttention(_ caches: [any KVCache], zoning: HeadSplitKVCache.Zoning? = nil) -> [any KVCache] {
         var layer = 0
         return caches.map { cache in
@@ -213,77 +196,5 @@ final class HeadSplitKVCache: KVCacheAttentionProtocol {
         stream.state = stream.state.map {
             concatenated([$0[.ellipsis, ..<Self.sinkTokens, 0...], $0[.ellipsis, (count - Self.windowTokens)..., 0...]], axis: 2)
         }
-    }
-}
-
-enum KVHeadClassifier {
-    static let filler = [
-        "The river ran past the old mill, where the wheel had stopped turning years ago.",
-        "Each morning the baker opened the shutters and set the first loaves on the sill.",
-        "A committee met on Tuesdays to argue about the budget for the new library roof.",
-        "Trains to the coast left every hour, and the last one waited for the ferry.",
-        "In the archive, ledgers from three centuries filled the shelves along the north wall.",
-        "The orchestra tuned for a long time before the conductor finally raised his baton.",
-    ]
-}
-
-extension KVHeadClassifier {
-    static func storedScores(for directory: URL) -> URL {
-        let name = directory.standardizedFileURL.path.replacingOccurrences(of: "/", with: "_")
-        return FileManager.default.homeDirectoryForCurrentUser.appending(path: ".basalt/head-scores/\(name)-ablation.json")
-    }
-
-    static func loadOrScore(directory: URL, container: ModelContainer) async throws -> [[Float]] {
-        let url = storedScores(for: directory)
-        if let data = try? Data(contentsOf: url), let scores = try? JSONDecoder().decode([[Float]].self, from: data) { return scores }
-        let scores = try await container.perform { try scores(model: $0.model, tokenizer: $0.tokenizer) }
-        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try JSONEncoder().encode(scores).write(to: url, options: .atomic)
-        return scores
-    }
-}
-
-extension KVHeadClassifier {
-    static func scores(model: any LanguageModel, tokenizer: any MLXLMCommon.Tokenizer, length: Int = 3072) throws -> [[Float]] {
-        var total: [[Float]] = []
-        for (index, depth) in [0.2, 0.5, 0.8].enumerated() {
-            let key = 41_000 + index * 7_919
-            var text = ""
-            var sentence = 0
-            while tokenizer.encode(text: text, addSpecialTokens: false).count < length {
-                text += filler[sentence % filler.count] + " "
-                sentence += 1
-            }
-            let body = tokenizer.encode(text: text, addSpecialTokens: false)
-            let needle = tokenizer.encode(text: " The pass key is \(key). Remember it: \(key). ", addSpecialTokens: false)
-            let question = tokenizer.encode(text: " What is the pass key? The pass key is", addSpecialTokens: false)
-            let answer = tokenizer.encode(text: " \(key)", addSpecialTokens: false)
-            let at = Int(Double(body.count) * depth)
-            let head = Array(body[..<at]) + needle + Array(body[at...])
-            let tail = question + answer
-            let dense = try model.newCache(parameters: nil)
-            eval(model(MLXArray(head.map(Int32.init)).reshaped(1, -1), cache: dense))
-            eval(dense.flatMap { $0.innerState() })
-            func answerLogProb(_ caches: [any KVCache]) -> Float {
-                let logits = model(MLXArray(tail.map(Int32.init)).reshaped(1, -1), cache: caches)[0].asType(.float32)
-                let predicting = logits[(question.count - 1) ..< (tail.count - 1)]
-                let logp = predicting - logSumExp(predicting, axis: -1, keepDims: true)
-                let targets = MLXArray(answer.map(Int32.init))[0..., .newAxis]
-                return takeAlong(logp, targets, axis: -1).sum().item(Float.self)
-            }
-            let baseline = answerLogProb(dense.map { $0.copy() })
-            let attention = dense.indices.filter { type(of: dense[$0]) == KVCacheSimple.self }
-            var drops: [[Float]] = []
-            for position in attention {
-                guard let layer = dense[position] as? KVCacheSimple, let kvHeads = layer.state.first?.dim(1) else { continue }
-                drops.append((0 ..< kvHeads).map { head in
-                    var caches = dense.map { $0.copy() }
-                    caches[position] = HeadSplitKVCache(splitting: layer, retrieval: (0 ..< kvHeads).filter { $0 != head })
-                    return max(0, baseline - answerLogProb(caches))
-                })
-            }
-            total = total.isEmpty ? drops : zip(total, drops).map { zip($0, $1).map { $0 + $1 } }
-        }
-        return total
     }
 }

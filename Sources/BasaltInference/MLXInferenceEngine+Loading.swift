@@ -239,7 +239,7 @@ extension MLXInferenceEngine {
     func probeKVHeads(directory: URL) async {
         guard let ratio = kvHeadSplit, let container else { return }
         guard modelFacts.capabilities.allows(.kvHeadSplit) else {
-            logger.warn("--kv-head-split is not verified on this model family; on the Qwen3.5-family and LFM2 hybrids the ablation-chosen heads lost the passkey at 16k, so the KV cache stays dense")
+            logger.warn("--kv-head-split is not verified on this model family, so the KV cache stays dense")
             return
         }
         let epoch = modelEpoch
@@ -248,17 +248,17 @@ extension MLXInferenceEngine {
             return
         }
         do {
-            let scores = try await KVHeadClassifier.loadOrScore(directory: directory, container: container)
-            guard KVHeadMask.isConcentrated(scores) else {
-                logger.warn("--kv-head-split does not apply to this model: no small set of heads carries its long-range recall (the median head's ablation score is above \(KVHeadMask.concentration) of the top one), so dropping any of them loses facts; the KV cache stays dense")
+            let started = ContinuousClock.now
+            let selection = try await KVHeadClassifier.loadOrSelect(directory: directory, container: container, ratio: ratio)
+            let measured = "answers kept \(selection.answersKept), mean KL \(selection.meanKL) nats per token against the dense cache (limit \(KVHeadSelection.maxMeanKL)), chosen or read in \(ContinuousClock.now - started)"
+            guard selection.keepsFidelity else {
+                logger.warn("--kv-head-split \(ratio) does not apply to this model: the \(selection.keptHeads) KV heads that best keep its output still lose the calibration passkeys (\(measured)); the KV cache stays dense")
                 return
             }
-            let mask = KVHeadMask.classify(scores: scores, ratio: ratio)
-            record(.learned(epoch) { $0.kvHeadMask = mask })
-            let kept = mask.retrieval.map(\.count).reduce(0, +)
-            logger.info("KV head split: \(kept) of \(scores.map(\.count).reduce(0, +)) KV heads keep the whole context; the rest keep \(HeadSplitKVCache.sinkTokens) sink and \(HeadSplitKVCache.windowTokens) recent tokens")
+            record(.learned(epoch) { $0.kvHeadMask = selection.mask })
+            logger.info("KV head split: \(selection.keptHeads) KV heads chosen by output fidelity keep the whole context, the rest keep \(HeadSplitKVCache.sinkTokens) sink and \(HeadSplitKVCache.windowTokens) recent tokens (\(measured))")
         } catch {
-            logger.warn("--kv-head-split: scoring the heads failed (\(error.localizedDescription)); the KV cache stays dense")
+            logger.warn("--kv-head-split: choosing the heads failed (\(error.localizedDescription)); the KV cache stays dense")
         }
     }
 

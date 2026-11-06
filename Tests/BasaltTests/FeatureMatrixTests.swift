@@ -83,11 +83,12 @@ struct FeatureMatrixTests {
 
     static func probeHeads(_ engine: MLXInferenceEngine, storingScores: Bool) async throws {
         let directory = FileManager.default.temporaryDirectory.appending(path: "feature-matrix-\(UUID().uuidString)")
-        let scores = KVHeadClassifier.storedScores(for: directory)
-        defer { try? FileManager.default.removeItem(at: scores) }
+        let stored = KVHeadClassifier.storedSelection(for: directory, ratio: 0.5)
+        defer { try? FileManager.default.removeItem(at: stored) }
         if storingScores {
-            try FileManager.default.createDirectory(at: scores.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try JSONEncoder().encode(Array(repeating: [Float(1), 0], count: 4)).write(to: scores)
+            try FileManager.default.createDirectory(at: stored.deletingLastPathComponent(), withIntermediateDirectories: true)
+            let selection = KVHeadSelection(mask: KVHeadMask(retrieval: Array(repeating: [0], count: 4)), meanKL: 0, answersKept: true)
+            try JSONEncoder().encode(selection).write(to: stored)
         }
         await engine.probeKVHeads(directory: directory)
     }

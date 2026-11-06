@@ -11,7 +11,7 @@ import MLXLMCommon
 struct ZonedKVCacheBenchmarkTests {
     enum Mode: CustomStringConvertible, CaseIterable {
         case fp16, uniform8, uniform4, zoned8, zoned4, zonedK8V4, zonedK8V4H, zonedK8V4Evict25, zonedK8V4Evict50
-        case headSplit25, headSplit375, headSplit50, headSplit25K8V4, headSplit50K8V4, quest16, quest32
+        case headSplit25, headSplit375, headSplit50, headSplit25K8V4, headSplit50K8V4, headSplitFidelity25, headSplitFidelity50, quest16, quest32
 
         var description: String {
             switch self {
@@ -29,17 +29,10 @@ struct ZonedKVCacheBenchmarkTests {
             case .headSplit50: "head-split-50"
             case .headSplit25K8V4: "head-split-25-zoned-k8v4"
             case .headSplit50K8V4: "head-split-50-zoned-k8v4"
+            case .headSplitFidelity25: "head-split-fidelity-25"
+            case .headSplitFidelity50: "head-split-fidelity-50"
             case .quest16: "quest-16"
             case .quest32: "quest-32"
-            }
-        }
-
-        var headRatio: Double? {
-            switch self {
-            case .headSplit25, .headSplit25K8V4: 0.25
-            case .headSplit375: 0.375
-            case .headSplit50, .headSplit50K8V4: 0.5
-            default: nil
             }
         }
 
@@ -53,7 +46,7 @@ struct ZonedKVCacheBenchmarkTests {
 
         var precision: KVPrecision? {
             switch self {
-            case .fp16, .headSplit25, .headSplit375, .headSplit50, .quest16, .quest32: nil
+            case .fp16, .headSplit25, .headSplit375, .headSplit50, .headSplitFidelity25, .headSplitFidelity50, .quest16, .quest32: nil
             case .uniform8, .zoned8: .q8
             case .uniform4, .zoned4: .q4
             case .zonedK8V4, .zonedK8V4Evict25, .zonedK8V4Evict50, .headSplit25K8V4, .headSplit50K8V4: .k8v4
@@ -527,18 +520,32 @@ extension ZonedKVCacheBenchmarkTests {
     static func ablationScores(_ context: ModelContext) throws -> [[Float]] {
         let key = ObjectIdentifier(context.model as AnyObject)
         if let known = headScores.withLock({ $0[key] }) { return known }
-        let scores = try KVHeadClassifier.scores(model: context.model, tokenizer: context.tokenizer)
+        let scores = try KVHeadClassifier.ablationScores(model: context.model, tokenizer: context.tokenizer)
         headScores.withLock { $0[key] = scores }
         let name = "logs/head-scores-\(context.configuration.name.replacingOccurrences(of: "/", with: "_"))-ablation.json"
         try? JSONEncoder().encode(scores).write(to: URL(fileURLWithPath: name))
         return scores
     }
 
+    static let selections = Mutex<[String: KVHeadSelection]>([:])
+
+    static func selectionKey(_ model: any LanguageModel, ratio: Double) -> String { "\(ObjectIdentifier(model as AnyObject))-\(ratio)" }
+
+    static func fidelityMask(_ context: ModelContext, ratio: Double) throws -> KVHeadMask {
+        let key = selectionKey(context.model, ratio: ratio)
+        if let known = selections.withLock({ $0[key] }) { return known.mask }
+        let selection = try KVHeadClassifier.select(model: context.model, tokenizer: context.tokenizer, ratio: ratio)
+        selections.withLock { $0[key] = selection }
+        return selection.mask
+    }
+
     static func cache(_ mode: Mode, _ context: ModelContext) throws -> [any KVCache] {
         let fresh = try context.model.newCache(parameters: nil)
         if let ratio = mode.headRatio {
             let zoning = mode.zones.flatMap { zones in mode.precision.map { HeadSplitKVCache.Zoning(zones: zones, precision: $0) } }
-            return KVHeadMask.classify(scores: try ablationScores(context), ratio: ratio).replacingFullAttention(fresh, zoning: zoning)
+            let mask = mode.selectsByFidelity
+                ? try fidelityMask(context, ratio: ratio) : KVHeadMask.classify(scores: try ablationScores(context), ratio: ratio)
+            return mask.replacingFullAttention(fresh, zoning: zoning)
         }
         if let topK = mode.questTopK { return QuestKVCache.replacingFullAttention(fresh, topK: topK) }
         guard let zones = mode.zones, let precision = mode.precision else { return fresh }
@@ -558,4 +565,17 @@ extension ZonedKVCacheBenchmarkTests {
         parameters.quantizedKVStart = KVCacheGeometry.defaultQuantizedKVStart
         return (try TokenIterator(input: input, model: context.model, cache: nil, parameters: parameters), nil)
     }
+}
+
+extension ZonedKVCacheBenchmarkTests.Mode {
+    var headRatio: Double? {
+        switch self {
+        case .headSplit25, .headSplit25K8V4, .headSplitFidelity25: 0.25
+        case .headSplit375: 0.375
+        case .headSplit50, .headSplit50K8V4, .headSplitFidelity50: 0.5
+        default: nil
+        }
+    }
+
+    var selectsByFidelity: Bool { self == .headSplitFidelity25 || self == .headSplitFidelity50 }
 }
