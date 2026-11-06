@@ -32,7 +32,7 @@ struct NF4SparseInstallTests {
         for index in [0, 2] {
             weights["layers.\(index).expert.weight"] = wq
             weights["layers.\(index).expert.scales"] = affineScales
-            weights["layers.\(index).expert.biases"] = try #require(biases)
+            weights["layers.\(index).expert.biases"] = biases
         }
         try NF4Linear.install(in: stack, weights: weights)
         NF4Linear.quantizeRest(in: stack, weights: weights) { _ in (64, 4, .affine) }
