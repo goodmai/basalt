@@ -9,7 +9,9 @@ extension MLXInferenceEngine {
 
     public func expertCacheStats() async -> (stats: ExpertCacheStats, capacity: ByteCount)? {
         guard let container else { return nil }
-        return await container.perform { ExpertStreamingLoader.store(in: $0.model).map { ($0.stats, $0.capacity) } }
+        return await container.performEvaluating(nonSendable: ()) { context, _ in
+            ExpertStreamingLoader.store(in: context.model).map { ($0.stats, $0.capacity) }
+        }
     }
 
     func loadContainer(from directory: URL) async throws -> ModelContainer {

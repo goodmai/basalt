@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import ArgumentParser
 import MLX
 import MLXNN
 import MLXLMCommon
@@ -51,6 +52,18 @@ struct ExpertLRUTests {
             weights: weights, totalParameters: 35, activeParameters: 3, kv: .zero, streaming: ExpertStreaming(cacheBytes: ByteCount(1_000))))
         #expect(fixed.expertCache == ByteCount(1_000))
         #expect(fixed.required == ByteCount(4_000))
+    }
+
+    @Test("--expert-cache-gb sets the cache in bytes and is refused without --experimental-expert-streaming or when not positive")
+    func options() async throws {
+        #expect(try ExpertStreamingOptions.parse([]).setting == nil)
+        #expect(try ExpertStreamingOptions.parse(["--experimental-expert-streaming"]).setting == ExpertStreaming())
+        #expect(try ExpertStreamingOptions.parse(["--experimental-expert-streaming", "--expert-cache-gb", "2"]).setting == ExpertStreaming(cacheBytes: ByteCount(2 << 30)))
+        #expect(throws: (any Error).self) { try ExpertStreamingOptions.parse(["--expert-cache-gb", "2"]) }
+        #expect(throws: (any Error).self) { try ExpertStreamingOptions.parse(["--experimental-expert-streaming", "--expert-cache-gb", "0"]) }
+        let engine = MLXInferenceEngine()
+        await engine.streamExperts(ExpertStreaming())
+        #expect(await engine.expertCacheStats() == nil)
     }
 
     @Test("models check and serve --dry-run admit a Streaming-tier MoE only with --experimental-expert-streaming, sizing the context after resident weights and cache")
