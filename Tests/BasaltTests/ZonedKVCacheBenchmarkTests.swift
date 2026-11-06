@@ -11,7 +11,7 @@ import MLXLMCommon
 struct ZonedKVCacheBenchmarkTests {
     enum Mode: CustomStringConvertible, CaseIterable {
         case fp16, uniform8, uniform4, zoned8, zoned4, zonedK8V4, zonedK8V4H, zonedK8V4Evict25, zonedK8V4Evict50
-        case headSplit25, headSplit375, headSplit50, quest16, quest32
+        case headSplit25, headSplit375, headSplit50, headSplit25K8V4, headSplit50K8V4, quest16, quest32
 
         var description: String {
             switch self {
@@ -27,6 +27,8 @@ struct ZonedKVCacheBenchmarkTests {
             case .headSplit25: "head-split-25"
             case .headSplit375: "head-split-37.5"
             case .headSplit50: "head-split-50"
+            case .headSplit25K8V4: "head-split-25-zoned-k8v4"
+            case .headSplit50K8V4: "head-split-50-zoned-k8v4"
             case .quest16: "quest-16"
             case .quest32: "quest-32"
             }
@@ -34,9 +36,9 @@ struct ZonedKVCacheBenchmarkTests {
 
         var headRatio: Double? {
             switch self {
-            case .headSplit25: 0.25
+            case .headSplit25, .headSplit25K8V4: 0.25
             case .headSplit375: 0.375
-            case .headSplit50: 0.5
+            case .headSplit50, .headSplit50K8V4: 0.5
             default: nil
             }
         }
@@ -54,14 +56,14 @@ struct ZonedKVCacheBenchmarkTests {
             case .fp16, .headSplit25, .headSplit375, .headSplit50, .quest16, .quest32: nil
             case .uniform8, .zoned8: .q8
             case .uniform4, .zoned4: .q4
-            case .zonedK8V4, .zonedK8V4Evict25, .zonedK8V4Evict50: .k8v4
+            case .zonedK8V4, .zonedK8V4Evict25, .zonedK8V4Evict50, .headSplit25K8V4, .headSplit50K8V4: .k8v4
             case .zonedK8V4H: .k8v4h
             }
         }
 
         var zones: KVZones? {
             switch self {
-            case .zoned8, .zoned4, .zonedK8V4, .zonedK8V4H: .standard
+            case .zoned8, .zoned4, .zonedK8V4, .zonedK8V4H, .headSplit25K8V4, .headSplit50K8V4: .standard
             case .zonedK8V4Evict25: KVZones.standard.evicting(0.25)
             case .zonedK8V4Evict50: KVZones.standard.evicting(0.5)
             default: nil
@@ -225,19 +227,21 @@ struct ZonedKVCacheBenchmarkTests {
 
     static let headScores = Mutex<[ObjectIdentifier: [[Float]]]>([:])
 
+    static func ablationScores(_ context: ModelContext) throws -> [[Float]] {
+        let key = ObjectIdentifier(context.model as AnyObject)
+        if let known = headScores.withLock({ $0[key] }) { return known }
+        let scores = try KVHeadClassifier.scores(model: context.model, tokenizer: context.tokenizer)
+        headScores.withLock { $0[key] = scores }
+        let name = "logs/head-scores-\(context.configuration.name.replacingOccurrences(of: "/", with: "_"))-ablation.json"
+        try? JSONEncoder().encode(scores).write(to: URL(fileURLWithPath: name))
+        return scores
+    }
+
     static func cache(_ mode: Mode, _ context: ModelContext) throws -> [any KVCache] {
-        let model = context.model
-        let fresh = try model.newCache(parameters: nil)
+        let fresh = try context.model.newCache(parameters: nil)
         if let ratio = mode.headRatio {
-            let key = ObjectIdentifier(model as AnyObject)
-            let known = headScores.withLock { $0[key] }
-            let scores = try known ?? KVHeadClassifier.scores(model: model, tokenizer: context.tokenizer)
-            if known == nil {
-                headScores.withLock { $0[key] = scores }
-                let name = "logs/head-scores-\(context.configuration.name.replacingOccurrences(of: "/", with: "_"))-ablation.json"
-                try? JSONEncoder().encode(scores).write(to: URL(fileURLWithPath: name))
-            }
-            return KVHeadMask.classify(scores: scores, ratio: ratio).replacingFullAttention(fresh)
+            let zoning = mode.zones.flatMap { zones in mode.precision.map { HeadSplitKVCache.Zoning(zones: zones, precision: $0) } }
+            return KVHeadMask.classify(scores: try ablationScores(context), ratio: ratio).replacingFullAttention(fresh, zoning: zoning)
         }
         if let topK = mode.questTopK { return QuestKVCache.replacingFullAttention(fresh, topK: topK) }
         guard let zones = mode.zones, let precision = mode.precision else { return fresh }

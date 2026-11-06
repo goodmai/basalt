@@ -8,14 +8,14 @@ import MLXLMCommon
 @Suite("Feature matrix: on every tiny family a feature leaves greedy output unchanged, or reports itself off and falls back (#327)", .serialized)
 struct FeatureMatrixTests {
     enum Feature: String, CaseIterable, Sendable {
-        case lookup, mtp, cacheBlend, kvZones, headSplit, quest
+        case lookup, mtp, cacheBlend, kvZones, headSplit, headSplitZoned, quest
 
         func applies(to family: TinyModel.Family) -> Bool {
             switch self {
             case .lookup: ![.qwen35Moe, .lfm2Moe, .sigmoidMoe].contains(family)
             case .mtp: [.qwen35, .prism].contains(family)
             case .cacheBlend: [.qwen3, .qwen3HeadDim32].contains(family)
-            case .kvZones, .headSplit: family == .qwen3HeadDim32
+            case .kvZones, .headSplit, .headSplitZoned: family == .qwen3HeadDim32
             case .quest: ![.gemma4, .gemma4Moe].contains(family)
             }
         }
@@ -28,6 +28,7 @@ struct FeatureMatrixTests {
             case .cacheBlend: MLXInferenceEngine(promptCacheBytes: bytes, cacheBlendRatio: 0.15)
             case .kvZones: MLXInferenceEngine(promptCacheBytes: bytes, kvPrecision: .q8, kvZones: .standard)
             case .headSplit: MLXInferenceEngine(promptCacheBytes: bytes, kvHeadSplit: 0.5)
+            case .headSplitZoned: MLXInferenceEngine(promptCacheBytes: bytes, kvPrecision: .k8v4, kvZones: .standard, kvHeadSplit: 0.5)
             case .quest: MLXInferenceEngine(promptCacheBytes: bytes, questTopK: 2)
             }
         }
@@ -38,6 +39,9 @@ struct FeatureMatrixTests {
                 await engine.useMTPDrafter(in: container) { _ in try? GreedyDraftingMTPDrafter(MTPPromptCacheTests.head()) }
             case .kvZones: await engine.probeKVZones()
             case .headSplit: try await FeatureMatrixTests.probeHeads(engine, storingScores: applies(to: family))
+            case .headSplitZoned:
+                await engine.probeKVZones()
+                try await FeatureMatrixTests.probeHeads(engine, storingScores: applies(to: family))
             case .quest: await engine.probeQuest()
             case .lookup, .mtp, .cacheBlend: break
             }
@@ -51,6 +55,9 @@ struct FeatureMatrixTests {
                 return (store?.chunkCount ?? 0) > 0
             case .kvZones: return await engine.supportsKVZones
             case .headSplit: return await engine.kvHeadMask != nil
+            case .headSplitZoned:
+                let (mask, zones) = await (engine.kvHeadMask, engine.supportsKVZones)
+                return mask != nil && zones
             case .quest: return await engine.questApplies
             }
         }

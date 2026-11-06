@@ -99,9 +99,9 @@ struct GenerationPlan: Equatable, Sendable {
         let capabilities = settings.capabilities
         let attends = settings.attendsThroughZones && capabilities.allows(.kvZones)
         let zones = attends ? (settings.prefillsInChunks ? settings.kvZones : settings.kvZones?.evicting(0)) : nil
-        guard zones == nil else { return GenerationPlan(kvZones: zones, kvPrecision: precision) }
-        guard precision == nil else { return GenerationPlan() }
         let mask = capabilities.allows(.kvHeadSplit) ? settings.kvHeadMask : nil
+        guard zones == nil else { return GenerationPlan(kvZones: zones, kvHeadMask: mask, kvPrecision: precision) }
+        guard precision == nil else { return GenerationPlan() }
         return mask.map { GenerationPlan(kvHeadMask: $0) } ?? GenerationPlan(questTopK: capabilities.allows(.quest) ? settings.questTopK : nil)
     }
 }
