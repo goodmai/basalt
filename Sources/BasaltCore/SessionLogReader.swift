@@ -19,6 +19,9 @@ public enum SessionLogReader {
     public struct Output: Decodable, Sendable {
         public let text: String?
         public let chars: Int?
+        public let toolCalls: [ToolCallOutput]?
+
+        enum CodingKeys: String, CodingKey { case text, chars, toolCalls = "tool_calls" }
     }
 
     public struct Tokens: Decodable, Sendable {
@@ -43,13 +46,14 @@ public enum SessionLogReader {
         public let source: String?
         public let status: String?
         public let mode: String?
+        public let modelRequested: String?
         public let content: Content?
         public let output: Output?
         public let tokens: Tokens?
         public let timing: Timing?
 
         enum CodingKeys: String, CodingKey {
-            case type, ts, id, requestId = "request_id", source, status, mode, content, output, tokens, timing
+            case type, ts, id, requestId = "request_id", source, status, mode, modelRequested = "model_requested", content, output, tokens, timing
         }
     }
 
@@ -68,9 +72,15 @@ public enum SessionLogReader {
     }
 
     public static func lines(of file: URL) -> [Line] {
-        guard let text = try? String(contentsOf: file, encoding: .utf8) else { return [] }
+        read(file).lines
+    }
+
+    public static func read(_ file: URL) -> (lines: [Line], malformed: Int) {
+        guard let text = try? String(contentsOf: file, encoding: .utf8) else { return ([], 0) }
         let decoder = JSONDecoder()
-        return text.split(separator: "\n").compactMap { try? decoder.decode(Line.self, from: Data($0.utf8)) }
+        let raw = text.split(separator: "\n")
+        let lines = raw.compactMap { try? decoder.decode(Line.self, from: Data($0.utf8)) }
+        return (lines, raw.count - lines.count)
     }
 
     public static func mode(of lines: [Line]) -> String? {
