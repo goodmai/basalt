@@ -153,6 +153,55 @@ struct ExpertStreamingParityTests {
         #expect(shapes.allSatisfy { $0 == [1] })
     }
 
+    @Test("A Hugging Face snapshot whose shards are relative symlinks into blobs/ streams like the files themselves")
+    func symlinkedSnapshot() async throws {
+        let source = Self.fixtures.appendingPathComponent("lfm2_moe")
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("expert-streaming-hub-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let blobs = root.appendingPathComponent("blobs"), snapshot = root.appendingPathComponent("snapshots/rev")
+        try FileManager.default.createDirectory(at: blobs, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: snapshot, withIntermediateDirectories: true)
+        for (index, name) in ["config.json", "model.safetensors"].enumerated() {
+            try FileManager.default.copyItem(at: source.appendingPathComponent(name), to: blobs.appendingPathComponent("blob\(index)"))
+            try FileManager.default.createSymbolicLink(atPath: snapshot.appendingPathComponent(name).path, withDestinationPath: "../../blobs/blob\(index)")
+        }
+        let resident = try await Self.outputs(try await loadModelContainer(from: source, using: ByteTokenizerLoader()))
+        let streamed = try await Self.outputs(try await Self.streamed(snapshot, cache: ByteCount(1)))
+        #expect(streamed.tokens == resident.tokens)
+        #expect(streamed.logits == resident.logits)
+    }
+
+    @Test("The compacted expert tensor runs the quantized kernel the full one would: MLX picks gather_qmm_rhs by assignments per expert, so a sorted call over few of many experts passes sortedIndices only when the resident call would take that kernel")
+    func residentKernelChoice() throws {
+        let (x, weights, used) = withRandomState(MLXRandom.RandomState(seed: 7)) {
+            (MLXRandom.normal([64, 1, 64]).asType(.bfloat16), MLXRandom.normal([32, 64, 64]).asType(.bfloat16), [3, 9, 17])
+        }
+        let (packed, scales, biases) = MLX.quantized(weights, groupSize: 32, bits: 4)
+        let routed = (0 ..< 64).map { used[$0 * used.count / 64] }
+        func multiply(_ w: MLXArray, _ s: MLXArray, _ b: MLXArray?, _ indices: [Int], sorted: Bool) -> MLXArray {
+            MLX.gatherQuantizedMM(
+                x, w, scales: s, biases: b, rhsIndices: MLXArray(indices.map(UInt32.init)), transpose: true,
+                groupSize: 32, bits: 4, sortedIndices: sorted)
+        }
+        let resident = multiply(packed, scales, biases, routed, sorted: true)
+        let pick = MLXArray(used.map(Int32.init))
+        let local = routed.map { used.firstIndex(of: $0)! }
+        let compact = { (sorted: Bool) in multiply(packed[pick], scales[pick], biases.map { $0[pick] }, local, sorted: sorted) }
+        #expect(!StreamedSwitchLinear.residentKernel(sorted: true, assignments: 64, experts: 32))
+        #expect(StreamedSwitchLinear.residentKernel(sorted: true, assignments: 128, experts: 32))
+        #expect(!StreamedSwitchLinear.residentKernel(sorted: false, assignments: 128, experts: 32))
+        #expect(MLX.arrayEqual(compact(StreamedSwitchLinear.residentKernel(sorted: true, assignments: 64, experts: 32)), resident).item(Bool.self))
+        #expect(!MLX.arrayEqual(compact(true), resident).item(Bool.self))
+    }
+
+    @Test("The streaming loader tries the model factories in the stock loader's order, MLXVLM first, so a model_type both register (gemma4) gets the implementation a resident load gets")
+    func factoryOrder() async {
+        let stock = ModelFactoryRegistry.shared.modelFactories().map { String(describing: type(of: $0)) }
+        let streaming = ExpertStreamingLoader.families.map { String(describing: type(of: $0.factory($0.types))) }
+        #expect(Array(stock.prefix(streaming.count)) == streaming)
+        #expect(streaming.count == 2)
+    }
+
     @Test("A dense model is refused: there are no routed experts to stream")
     func denseRefused() async throws {
         await #expect(throws: BasaltError.self) {
