@@ -90,7 +90,7 @@ struct ExpertStreamingRealModelTests {
                 }
             }
         }
-        findings.append("expert slices checked against the file: \(store.layouts.count * 3) modules x 3 experts, differing: \(expertMismatches.count) \(expertMismatches.prefix(5))")
+        findings.append("expert slices checked against the file: \(store.layouts.count) modules x 3 experts, differing: \(expertMismatches.count) \(expertMismatches.prefix(5))")
         for index in [0, store.layouts.count - 1] {
             let layout = store.layouts[index]
             guard let q = layout.quantization, let w = files["\(layout.path).weight"], let s = files["\(layout.path).scales"] else { continue }
