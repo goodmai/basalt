@@ -91,6 +91,80 @@ struct KVHeadSelectionTests {
         #expect(await engine.kvHeadMask == (passes ? selection.mask : nil))
     }
 
+    @Test("A cached selection whose mask does not fit the loaded model is ignored and chosen again")
+    func staleShapeIsReselected() async throws {
+        let engine = MLXInferenceEngine(EngineConfiguration(promptCacheBytes: FeatureMatrixTests.promptCacheBytes, kvHeadSplit: 0.5))
+        await engine.attach(try TinyModel.container(.qwen3HeadDim32))
+        let directory = FileManager.default.temporaryDirectory.appending(path: "head-stale-\(UUID().uuidString)")
+        let stored = KVHeadClassifier.storedSelection(for: directory, ratio: 0.5)
+        defer { try? FileManager.default.removeItem(at: stored) }
+        let stale = KVHeadSelection(mask: KVHeadMask(retrieval: Array(repeating: [7], count: 6)), meanKL: 0, answersKept: true)
+        try FileManager.default.createDirectory(at: stored.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try JSONEncoder().encode(stale).write(to: stored)
+        await engine.probeKVHeads(directory: directory)
+        #expect(await engine.kvHeadMask != stale.mask)
+        let rewritten = try JSONDecoder().decode(KVHeadSelection.self, from: Data(contentsOf: stored))
+        #expect(rewritten.fits([2, 2, 2, 2]))
+        #expect(!stale.fits([2, 2, 2, 2]))
+    }
+
+    @Test("Cached selections are keyed by the model's fingerprint, so changed files choose again")
+    func cacheKeyFollowsFingerprint() throws {
+        let directory = FileManager.default.temporaryDirectory.appending(path: "head-key-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try Data("{\"model_type\": \"qwen3\"}".utf8).write(to: directory.appending(path: "config.json"))
+        let before = KVHeadClassifier.storedSelection(for: directory, ratio: 0.25)
+        try Data("{\"model_type\": \"qwen3_5\"}".utf8).write(to: directory.appending(path: "config.json"))
+        #expect(KVHeadClassifier.storedSelection(for: directory, ratio: 0.25) != before)
+        #expect(KVHeadClassifier.storedSelection(for: directory, ratio: 0.25) != KVHeadClassifier.storedSelection(for: directory, ratio: 0.5))
+    }
+
+    @Test("The planned trial count is exactly the number of loss evaluations the greedy search makes",
+          arguments: [([2, 2], 2), ([4, 4], 4), ([64], 16), ([64], 32), ([8, 8, 8], 3), ([4], 4)])
+    func plannedTrialsMatchGreedy(heads: [Int], keep: Int) {
+        var calls = 0
+        _ = KVHeadClassifier.greedy(heads: heads, keep: keep) { trial in
+            calls += 1
+            return Float(trial.joined().reduce(0, +))
+        }
+        #expect(calls == KVHeadClassifier.plannedTrials(heads: heads.reduce(0, +), keep: keep))
+    }
+
+    @Test("After the first step the search keeps only the best candidates: a head that restores nothing alone is not tried again once the pool is smaller than the heads")
+    func greedyPrunesToThePool() {
+        var tried: [Int: Int] = [:]
+        let picked = KVHeadClassifier.greedy(heads: [8], keep: 2) { trial in
+            let added = trial[0].last ?? -1
+            tried[added, default: 0] += 1
+            return Float(added) - (trial[0].count == 2 ? 0.5 : 0)
+        }
+        #expect(picked == [[0, 1]])
+        #expect(tried[7] == 1)
+        #expect(tried[1] == 2)
+    }
+
+    @Test("Full-attention models with many KV heads are refused before calibration; the measured hybrids stay within the budget")
+    func trialBudget() {
+        #expect(KVHeadClassifier.plannedTrials(heads: 64, keep: 16) == 424)
+        #expect(KVHeadClassifier.plannedTrials(heads: 64, keep: 32) <= KVHeadClassifier.maxTrials)
+        #expect(KVHeadClassifier.plannedTrials(heads: 512, keep: 128) > KVHeadClassifier.maxTrials)
+        #expect(KVHeadClassifier.plannedTrials(heads: 512, keep: 512) == 0)
+    }
+
+    @Test("A non-finite KL never passes the gate, in any order, and a NaN loss is never picked by the search")
+    func nonFiniteKLFails() {
+        #expect(KVHeadClassifier.worst([0.01, .nan]) == .greatestFiniteMagnitude)
+        #expect(KVHeadClassifier.worst([.nan, 0.01]) == .greatestFiniteMagnitude)
+        #expect(KVHeadClassifier.worst([0.01, .infinity]) == .greatestFiniteMagnitude)
+        #expect(KVHeadClassifier.worst([0.01, 0.03]) == 0.03)
+        let mask = KVHeadMask(retrieval: [[0]])
+        #expect(!KVHeadSelection(mask: mask, meanKL: KVHeadClassifier.worst([.nan, 0.01]), answersKept: true).keepsFidelity)
+        #expect(!KVHeadSelection(mask: mask, meanKL: .infinity, answersKept: true).keepsFidelity)
+        let picked = KVHeadClassifier.greedy(heads: [3], keep: 1) { trial in trial[0] == [0] ? .nan : Float(trial[0][0]) }
+        #expect(picked == [[1]])
+    }
+
     @Test("The Qwen3.5-family and LFM2 / Nemotron-H hybrids reach the fidelity gate again instead of a blanket refusal")
     func familiesBehindTheGate() {
         for type in ["qwen3_5", "qwen3_5_moe", "lfm2", "lfm2_moe", "nemotron_h"] {

@@ -248,8 +248,10 @@ extension MLXInferenceEngine {
             return
         }
         do {
-            let started = ContinuousClock.now
-            let selection = try await KVHeadClassifier.loadOrSelect(directory: directory, container: container, ratio: ratio)
+            let (started, logger) = (ContinuousClock.now, logger)
+            let selection = try await KVHeadClassifier.loadOrSelect(directory: directory, container: container, ratio: ratio) { trials in
+                logger.info("KV head split: choosing \(ratio) of the KV heads by output fidelity takes about \(trials) forward passes over a short calibration tail, once per model; the result is cached in ~/.basalt/head-scores")
+            }
             let measured = "answers kept \(selection.answersKept), mean KL \(selection.meanKL) nats per token against the dense cache (limit \(KVHeadSelection.maxMeanKL)), chosen or read in \(ContinuousClock.now - started)"
             guard selection.keepsFidelity else {
                 logger.warn("--kv-head-split \(ratio) does not apply to this model: the \(selection.keptHeads) KV heads that best keep its output still lose the calibration passkeys (\(measured)); the KV cache stays dense")
@@ -258,7 +260,7 @@ extension MLXInferenceEngine {
             record(.learned(epoch) { $0.kvHeadMask = selection.mask })
             logger.info("KV head split: \(selection.keptHeads) KV heads chosen by output fidelity keep the whole context, the rest keep \(HeadSplitKVCache.sinkTokens) sink and \(HeadSplitKVCache.windowTokens) recent tokens (\(measured))")
         } catch {
-            logger.warn("--kv-head-split: choosing the heads failed (\(error.localizedDescription)); the KV cache stays dense")
+            logger.warn("--kv-head-split does not apply: \(error); the KV cache stays dense")
         }
     }
 
