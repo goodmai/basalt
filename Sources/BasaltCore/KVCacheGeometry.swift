@@ -169,7 +169,7 @@ public struct KVCacheGeometry: Sendable, Equatable {
         let windowed = window > 0 ? min(t, Double(window)) : t
         let exact = kvPrecision == nil ? t : min(t, Double(zones?.maxFullPrecisionTokens ?? 0))
         let middle = Double(zones?.keptMiddleTokens(Int(t - exact)) ?? Int(t - exact))
-        let growing = exact * bytesPerToken(nil) + middle * bytesPerToken(kvPrecision)
+        let growing = exact * bytesPerToken(nil) + middle * bytesPerToken(zones?.middleStaysFullPrecision == true ? nil : kvPrecision)
         return ByteCount(Int64(growing + windowedElementsPerToken * windowed * Self.activationBytes) + fixedStateBytes)
     }
 
@@ -281,6 +281,7 @@ public struct KVZones: Sendable, Equatable {
     public let windowTokens: Int
     public let migrationStep: Int
     public let evictedMiddleFraction: Double
+    public private(set) var middleStaysFullPrecision = false
 
     public static let standard = KVZones(sinkTokens: 64, windowTokens: 1024, migrationStep: 256)
     public static let evictionFractions = 0.0...0.9
@@ -295,7 +296,15 @@ public struct KVZones: Sendable, Equatable {
     }
 
     public func evicting(_ fraction: Double) -> KVZones {
-        KVZones(sinkTokens: sinkTokens, windowTokens: windowTokens, migrationStep: migrationStep, evictedMiddleFraction: fraction)
+        var zones = KVZones(sinkTokens: sinkTokens, windowTokens: windowTokens, migrationStep: migrationStep, evictedMiddleFraction: fraction)
+        zones.middleStaysFullPrecision = middleStaysFullPrecision
+        return zones
+    }
+
+    public func keepingMiddleFullPrecision() -> KVZones {
+        var zones = self
+        zones.middleStaysFullPrecision = true
+        return zones
     }
 
     public var maxFullPrecisionTokens: Int { sinkTokens + windowTokens + migrationStep - 1 }

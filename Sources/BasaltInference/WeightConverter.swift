@@ -9,6 +9,7 @@ package struct WeightConverter: Sendable {
     package enum Precision: Sendable, Equatable {
         case source
         case affine(bits: Int, groupSize: Int)
+        case mixed(MixedBits)
         case nf4(groupSize: Int)
         case dense(DType?)
     }
@@ -31,6 +32,7 @@ package struct WeightConverter: Sendable {
         package var bytesBefore = 0
         package var bytesAfter = 0
         package var shards = 0
+        package var plan: BitPlan?
     }
 
     package var precision: Precision
@@ -44,20 +46,16 @@ package struct WeightConverter: Sendable {
         self.adapter = adapter
     }
 
-    package static func precision(quantize: String?, dequantize: String?, format: Format) throws(Failure) -> Precision {
+    package static func precision(
+        quantize: String?, dequantize: String?, format: Format, budgetGB: Double? = nil
+    ) throws(Failure) -> Precision {
+        guard budgetGB == nil || quantize?.hasPrefix("mixed:") == true else { throw .options("--budget-gb goes with --quantize mixed:<low>:<high>:<group>") }
         switch (quantize, dequantize) {
         case (_?, _?):
             throw .options("--quantize and --dequantize exclude each other")
         case (let spec?, nil):
             guard format == .mlx else { throw .options("--format hf writes dense weights; drop --quantize") }
-            let parts = spec.split(separator: ":")
-            if parts.count == 2, parts[0] == "nf4", let groupSize = Int(parts[1]), NF4Codec.groupSizes.contains(groupSize) {
-                return .nf4(groupSize: groupSize)
-            }
-            guard parts.count == 3, parts[0] == "affine", let bits = Int(parts[1]), let groupSize = Int(parts[2]),
-                  [2, 3, 4, 5, 6, 8].contains(bits), [32, 64, 128].contains(groupSize)
-            else { throw .options("--quantize takes affine:<bits>:<group> (bits 2-6 or 8, group 32, 64 or 128) or nf4:<group> (group 32 or 64), got '\(spec)'") }
-            return .affine(bits: bits, groupSize: groupSize)
+            return try quantization(spec, budgetGB: budgetGB)
         case (nil, let name?):
             guard let dtype = ["bf16": DType.bfloat16, "f16": DType.float16][name] else {
                 throw .options("--dequantize takes bf16 or f16, got '\(name)'")
@@ -65,6 +63,24 @@ package struct WeightConverter: Sendable {
             return .dense(dtype)
         case (nil, nil):
             return format == .hf ? .dense(nil) : .source
+        }
+    }
+
+    static func quantization(_ spec: String, budgetGB: Double?) throws(Failure) -> Precision {
+        let parts = spec.split(separator: ":")
+        let numbers = parts.dropFirst().compactMap { Int($0) }
+        let bitsValid = numbers.dropLast().allSatisfy { [2, 3, 4, 5, 6, 8].contains($0) } && [32, 64, 128].contains(numbers.last ?? 0)
+        switch parts.first.map(String.init) {
+        case "nf4" where parts.count == 2 && numbers.count == 1 && NF4Codec.groupSizes.contains(numbers[0]):
+            return .nf4(groupSize: numbers[0])
+        case "affine" where parts.count == 3 && numbers.count == 2 && bitsValid:
+            return .affine(bits: numbers[0], groupSize: numbers[1])
+        case "mixed" where parts.count == 4 && numbers.count == 3 && bitsValid && numbers[0] < numbers[1]:
+            guard let budgetGB, budgetGB.isFinite, budgetGB > 0, budgetGB * 1e9 < Double(Int.max) else { throw .options("--quantize mixed needs --budget-gb, a positive size in GB (10^9 bytes)") }
+            return .mixed(MixedBits(low: numbers[0], high: numbers[1], groupSize: numbers[2], budgetBytes: Int(budgetGB * 1e9)))
+        default:
+            throw .options(
+                "--quantize takes affine:<bits>:<group> or mixed:<low>:<high>:<group> (bits 2-6 or 8, low below high, group 32, 64 or 128) or nf4:<group> (group 32 or 64), got '\(spec)'")
         }
     }
 
@@ -79,10 +95,20 @@ package struct WeightConverter: Sendable {
         }
         try checkNF4Source(layout, source: source)
         let lora = try adapter.map { try LoRAUpdate(directory: $0, keys: layout.shardOf) }
+        var converter = self
+        var bitPlan: BitPlan?
+        if case .mixed(var mixed) = precision {
+            let made = try plan(layout, mixed)
+            mixed.highLayers = made.highLayers
+            converter.precision = .mixed(mixed)
+            bitPlan = made
+        }
         try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
         do {
-            try copySidecars(from: source, to: output, config: config)
-            return try stream(layout, lora: lora, to: output)
+            try converter.copySidecars(from: source, to: output, config: config)
+            var summary = try converter.stream(layout, lora: lora, to: output)
+            summary.plan = bitPlan
+            return summary
         } catch {
             try? FileManager.default.removeItem(at: output)
             throw error
@@ -123,11 +149,7 @@ package struct WeightConverter: Sendable {
             return packed.arrays(base, weight: tensor)
         }
         if nf4 == nil, pair == nil, packed == nil, target == nil { return [key: cast(tensor)] }
-        var weight = packed.map {
-            MLX.dequantized(
-                tensor, scales: $0.scales, biases: $0.biases,
-                groupSize: $0.quantization.groupSize, bits: $0.quantization.bits, mode: $0.quantization.mode)
-        } ?? tensor
+        var weight = Self.dense(tensor, packed)
         if let pair, let lora { weight = try LoRAUpdate.merged(weight, pair, scale: lora.scale, layer: base) }
         if let nf4 {
             let (codes, scales) = NF4Codec.quantized(weight, groupSize: nf4)
@@ -147,13 +169,25 @@ package struct WeightConverter: Sendable {
         case .source, .nf4:
             return packed?.quantization
         case .affine(let bits, let groupSize):
-            let target = BaseConfiguration.Quantization(groupSize: groupSize, bits: bits)
-            if let packed {
-                return (packed.scales.dim(-1) * packed.quantization.groupSize) % groupSize == 0 ? target : nil
-            }
-            guard !sourceQuantized, Self.isLinearLike(key, tensor), tensor.dim(-1) % groupSize == 0 else { return nil }
-            return target
+            guard Self.quantizable(key, tensor, packed: packed, sourceQuantized: sourceQuantized, groupSize: groupSize) else { return nil }
+            return BaseConfiguration.Quantization(groupSize: groupSize, bits: bits)
+        case .mixed(let mixed):
+            guard Self.quantizable(key, tensor, packed: packed, sourceQuantized: sourceQuantized, groupSize: mixed.groupSize) else { return nil }
+            return BaseConfiguration.Quantization(groupSize: mixed.groupSize, bits: mixed.bits(layer: String(key.dropLast(".weight".count))))
         }
+    }
+
+    static func quantizable(_ key: String, _ tensor: MLXArray, packed: PackedWeight?, sourceQuantized: Bool, groupSize: Int) -> Bool {
+        if let packed { return (packed.scales.dim(-1) * packed.quantization.groupSize) % groupSize == 0 }
+        return !sourceQuantized && isLinearLike(key, tensor) && tensor.dim(-1) % groupSize == 0
+    }
+
+    static func dense(_ tensor: MLXArray, _ packed: PackedWeight?) -> MLXArray {
+        packed.map {
+            MLX.dequantized(
+                tensor, scales: $0.scales, biases: $0.biases,
+                groupSize: $0.quantization.groupSize, bits: $0.quantization.bits, mode: $0.quantization.mode)
+        } ?? tensor
     }
 
     static func isLinearLike(_ key: String, _ tensor: MLXArray) -> Bool {
@@ -228,6 +262,9 @@ extension WeightConverter {
             let block: [String: Any] = ["bits": bits, "group_size": groupSize, "mode": "affine"]
             config["quantization"] = block
             config["quantization_config"] = block
+        case .mixed(let mixed):
+            config["quantization"] = mixed.configBlock
+            config["quantization_config"] = mixed.configBlock
         case .nf4(let groupSize):
             var block = config["quantization"] as? [String: Any] ?? ["bits": 4, "group_size": groupSize, "mode": "affine"]
             block["quant_method"] = "nf4"

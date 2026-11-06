@@ -10,24 +10,44 @@ public struct PreparedJSONSchema: Sendable, Equatable {
 }
 
 public enum JSONNesting {
-    public static func depth(of data: Data) -> Int {
-        var depth = 0
-        var deepest = 0
-        var inString = false
-        var escaped = false
-        for byte in data {
-            if inString {
-                if escaped { escaped = false } else if byte == UInt8(ascii: "\\") { escaped = true } else if byte == UInt8(ascii: "\"") { inString = false }
-            } else if byte == UInt8(ascii: "\"") {
-                inString = true
-            } else if byte == UInt8(ascii: "[") || byte == UInt8(ascii: "{") {
-                depth += 1
-                deepest = max(deepest, depth)
-            } else if byte == UInt8(ascii: "]") || byte == UInt8(ascii: "}") {
-                depth -= 1
-            }
+    public static func containsZero(_ data: Data) -> Bool {
+        data.withUnsafeBytes { bytes in
+            guard let base = bytes.baseAddress else { return false }
+            return memchr(base, 0, bytes.count) != nil
         }
-        return deepest
+    }
+
+    public static func depth(of data: Data) -> Int {
+        data.withUnsafeBytes { bytes in
+            var depth = 0
+            var deepest = 0
+            var index = 0
+            while index < bytes.count {
+                switch bytes[index] {
+                case UInt8(ascii: "\""): index = closingQuote(in: bytes, after: index)
+                case UInt8(ascii: "["), UInt8(ascii: "{"):
+                    depth += 1
+                    deepest = max(deepest, depth)
+                case UInt8(ascii: "]"), UInt8(ascii: "}"): depth -= 1
+                default: break
+                }
+                index += 1
+            }
+            return deepest
+        }
+    }
+
+    static func closingQuote(in bytes: UnsafeRawBufferPointer, after open: Int) -> Int {
+        guard let base = bytes.baseAddress else { return bytes.count }
+        var from = open + 1
+        while from < bytes.count, let hit = memchr(base + from, Int32(UInt8(ascii: "\"")), bytes.count - from) {
+            let quote = base.distance(to: UnsafeRawPointer(hit))
+            var backslashes = 0
+            while quote - backslashes - 1 > open, bytes[quote - backslashes - 1] == UInt8(ascii: "\\") { backslashes += 1 }
+            if backslashes.isMultiple(of: 2) { return quote }
+            from = quote + 1
+        }
+        return bytes.count
     }
 }
 
@@ -43,7 +63,7 @@ public indirect enum OrderedJSON: Equatable, Sendable {
     case scalar(String)
 
     public static func parse(_ data: Data, keeping topLevelKeys: Set<String>? = nil) -> OrderedJSON? {
-        guard !data.contains(0), JSONNesting.depth(of: data) <= JSONSchemaGate.depthLimit,
+        guard !JSONNesting.containsZero(data), JSONNesting.depth(of: data) <= JSONSchemaGate.depthLimit,
               (try? JSONSerialization.jsonObject(with: data, options: .fragmentsAllowed)) != nil else { return nil }
         let bytes = Array(data)
         var reader = Reader(bytes: bytes.starts(with: [0xEF, 0xBB, 0xBF]) ? Array(bytes.dropFirst(3)) : bytes)

@@ -1,6 +1,7 @@
 import Foundation
 import MLX
 import MLXLMCommon
+import BasaltCore
 
 struct KVHeadMask: Codable, Sendable, Equatable {
     let retrieval: [[Int]]
@@ -22,12 +23,12 @@ struct KVHeadMask: Codable, Sendable, Equatable {
         return KVHeadMask(retrieval: retrieval.map { $0.sorted() })
     }
 
-    func replacingFullAttention(_ caches: [any KVCache]) -> [any KVCache] {
+    func replacingFullAttention(_ caches: [any KVCache], zoning: HeadSplitKVCache.Zoning? = nil) -> [any KVCache] {
         var layer = 0
         return caches.map { cache in
             guard type(of: cache) == KVCacheSimple.self, layer < retrieval.count else { return cache }
             defer { layer += 1 }
-            return HeadSplitKVCache(retrieval: retrieval[layer])
+            return HeadSplitKVCache(retrieval: retrieval[layer], zoning: zoning)
         }
     }
 }
@@ -37,9 +38,14 @@ final class HeadSplitKVCache: KVCacheAttentionProtocol {
     static let windowTokens = 256
     static let trimStep = 64
 
+    struct Zoning: Equatable, Sendable {
+        let zones: KVZones
+        let precision: KVPrecision
+    }
+
     let retrieval: [Int]
-    private let full = KVCacheSimple()
-    private let stream = KVCacheSimple()
+    private let full: any KVCache
+    private let stream: KVCacheSimple
     private(set) var offset = 0
     private(set) var materializedForCaller = false
     private var layout: Layout?
@@ -55,12 +61,20 @@ final class HeadSplitKVCache: KVCacheAttentionProtocol {
         let queryHeads: Int
     }
 
-    init(retrieval: [Int]) {
+    private init(retrieval: [Int], full: any KVCache, stream: KVCacheSimple) {
         self.retrieval = retrieval
+        self.full = full
+        self.stream = stream
+    }
+
+    convenience init(retrieval: [Int], zoning: Zoning? = nil) {
+        let full: any KVCache = zoning.map { ZonedKVCache(zones: $0.zones, precision: $0.precision) } ?? KVCacheSimple()
+        self.init(retrieval: retrieval, full: full, stream: KVCacheSimple())
     }
 
     convenience init(splitting dense: KVCacheSimple, retrieval: [Int]) {
-        self.init(retrieval: retrieval)
+        let full = KVCacheSimple()
+        self.init(retrieval: retrieval, full: full, stream: KVCacheSimple())
         let state = dense.state
         guard state.count == 2 else { return }
         let heads = layout(kvHeads: state[0].dim(1), queryHeads: state[0].dim(1))
@@ -76,7 +90,7 @@ final class HeadSplitKVCache: KVCacheAttentionProtocol {
     }
 
     var maxSize: Int? { nil }
-    var isTrimmable: Bool { true }
+    var isTrimmable: Bool { full.isTrimmable }
     var retrievalTokens: Int { full.offset }
     var streamingTokens: Int { stream.offset }
 
@@ -123,10 +137,8 @@ final class HeadSplitKVCache: KVCacheAttentionProtocol {
         offset += keys.dim(2)
         var parts: [MLXArray] = []
         if let index = heads.retrieval, let queryIndex = heads.retrievalQueries {
-            let (k, v) = full.update(keys: keys[0..., index], values: values[0..., index])
-            parts.append(MLXFast.scaledDotProductAttention(
-                queries: queries[0..., queryIndex], keys: k, values: v, scale: scale,
-                mask: ZonedKVCache.trailingColumns(of: mask, keys: k.dim(2))))
+            parts.append(attendRetrieval(
+                queries: queries[0..., queryIndex], keys: keys[0..., index], values: values[0..., index], scale: scale, mask: mask))
         }
         if let index = heads.streaming, let queryIndex = heads.streamingQueries {
             let (k, v) = stream.update(keys: keys[0..., index], values: values[0..., index])
@@ -137,6 +149,17 @@ final class HeadSplitKVCache: KVCacheAttentionProtocol {
         }
         let output = parts.count == 1 ? parts[0] : concatenated(parts, axis: 1)
         return heads.inverse.map { output[0..., $0] } ?? output
+    }
+
+    private func attendRetrieval(
+        queries: MLXArray, keys: MLXArray, values: MLXArray, scale: Float, mask: MLXFast.ScaledDotProductAttentionMaskMode
+    ) -> MLXArray {
+        if let zoned = full as? ZonedKVCache {
+            return zoned.updateAndAttend(queries: queries, keys: keys, values: values, scale: scale, mask: mask)
+        }
+        let (k, v) = full.update(keys: keys, values: values)
+        return MLXFast.scaledDotProductAttention(
+            queries: queries, keys: k, values: v, scale: scale, mask: ZonedKVCache.trailingColumns(of: mask, keys: k.dim(2)))
     }
 
     func update(keys: MLXArray, values: MLXArray) -> (MLXArray, MLXArray) {
@@ -161,8 +184,7 @@ final class HeadSplitKVCache: KVCacheAttentionProtocol {
 
     @discardableResult
     func trim(_ n: Int) -> Int {
-        let removed = min(max(0, n), offset)
-        _ = full.trim(removed)
+        let removed = full.trim(min(max(0, n), offset))
         _ = stream.trim(min(removed, max(0, stream.offset - Self.sinkTokens)))
         offset -= removed
         return removed
@@ -177,20 +199,12 @@ final class HeadSplitKVCache: KVCacheAttentionProtocol {
     }
 
     func copy() -> any KVCache {
-        guard let fullCopy = full.copy() as? KVCacheSimple, let streamCopy = stream.copy() as? KVCacheSimple else {
+        guard let streamCopy = stream.copy() as? KVCacheSimple else {
             preconditionFailure("KVCacheSimple copies to its own type")
         }
-        let copied = HeadSplitKVCache(retrieval: retrieval)
-        copied.adopt(offset: offset, materialized: materializedForCaller, layout: layout, full: fullCopy, stream: streamCopy)
+        let copied = HeadSplitKVCache(retrieval: retrieval, full: full.copy(), stream: streamCopy)
+        (copied.offset, copied.materializedForCaller, copied.layout) = (offset, materializedForCaller, layout)
         return copied
-    }
-
-    private func adopt(offset: Int, materialized: Bool, layout: Layout?, full: KVCacheSimple, stream: KVCacheSimple) {
-        self.offset = offset
-        materializedForCaller = materialized
-        self.layout = layout
-        if !full.state.isEmpty { self.full.state = full.state }
-        if !stream.state.isEmpty { self.stream.state = stream.state }
     }
 
     private func dropMiddle() {

@@ -118,20 +118,11 @@ struct GenerationPlanTests {
         var flat = evicting
         flat.attendsThroughZones = false
         #expect(GenerationPlan.make(request, flat, GenerationPlan.Facts()) == GenerationPlan(batchable: false))
-    }
-
-    @Test("Head split needs the full-precision unzoned cache; Quest steps aside for head split")
-    func headSplitAndQuest() {
-        let mask = KVHeadMask(retrieval: [[0, 1]])
-        let request = GenerationRequest(prompt: "p")
-        let both = GenerationPlan.Settings(kvHeadMask: mask, questTopK: 16)
-        #expect(GenerationPlan.make(request, both, GenerationPlan.Facts()) == GenerationPlan(kvHeadMask: mask, batchable: true))
-        #expect(GenerationPlan.make(request, GenerationPlan.Settings(questTopK: 16), GenerationPlan.Facts()) == GenerationPlan(questTopK: 16, batchable: true))
-        #expect(GenerationPlan.make(request.withKVPrecision(.q8), both, GenerationPlan.Facts()) == GenerationPlan(batchable: false))
-        var zonedBoth = Self.zoned
-        zonedBoth.kvHeadMask = mask
-        zonedBoth.questTopK = 16
-        #expect(GenerationPlan.make(request, zonedBoth, GenerationPlan.Facts()) == GenerationPlan(kvZones: .standard, batchable: true))
+        var throughUpdate = flat
+        throughUpdate.evictsThroughUpdate = true
+        #expect(GenerationPlan.make(request, throughUpdate, GenerationPlan.Facts()).kvZones == KVZones.standard.evicting(0.5).keepingMiddleFullPrecision())
+        throughUpdate.capabilities = .conservative
+        #expect(GenerationPlan.make(request, throughUpdate, GenerationPlan.Facts()).kvZones == nil)
     }
 
     @Test("A prompt-cache namespace needs a budget, the full-precision cache, a token-only prompt and the same model")
@@ -168,6 +159,7 @@ struct GenerationPlanTests {
                 if !capabilities.allows(.mtp) { facts.hasMTPDrafter = false }
                 if !capabilities.allows(.cacheBlend) { facts.modelIsHybrid = true }
                 if !capabilities.allows(.quest) { today.questTopK = nil }
+                if !capabilities.allows(.kvHeadSplit) { today.kvHeadMask = nil }
                 var verified = today
                 verified.capabilities = capabilities
                 var expected = GenerationPlan.make(row.request, today, facts)
@@ -215,5 +207,25 @@ struct GenerationPlanTests {
         let warning = ModelCapabilities.unverifiedWarning(modelType: "deepseek_v3")
         #expect(warning.contains("deepseek_v3"))
         #expect(ModelCapabilities.Feature.allCases.allSatisfy { warning.contains($0.rawValue) })
+    }
+}
+
+extension GenerationPlanTests {
+    @Test("Head split runs on the full-precision cache or inside zones, never under uniform quantization; Quest steps aside for head split")
+    func headSplitAndQuest() {
+        let mask = KVHeadMask(retrieval: [[0, 1]])
+        let request = GenerationRequest(prompt: "p")
+        let both = GenerationPlan.Settings(kvHeadMask: mask, questTopK: 16)
+        #expect(GenerationPlan.make(request, both, GenerationPlan.Facts()) == GenerationPlan(kvHeadMask: mask, batchable: true))
+        #expect(GenerationPlan.make(request, GenerationPlan.Settings(questTopK: 16), GenerationPlan.Facts()) == GenerationPlan(questTopK: 16, batchable: true))
+        #expect(GenerationPlan.make(request.withKVPrecision(.q8), both, GenerationPlan.Facts()) == GenerationPlan(batchable: false))
+        var zonedBoth = Self.zoned
+        zonedBoth.kvHeadMask = mask
+        zonedBoth.questTopK = 16
+        #expect(GenerationPlan.make(request, zonedBoth, GenerationPlan.Facts()) == GenerationPlan(kvZones: .standard, kvHeadMask: mask, batchable: true))
+        #expect(GenerationPlan.make(request.withKVPrecision(.k8v4), zonedBoth, GenerationPlan.Facts())
+            == GenerationPlan(kvZones: .standard, kvHeadMask: mask, kvPrecision: .k8v4, batchable: false))
+        zonedBoth.capabilities = ModelCapabilities(verified: Set(ModelCapabilities.Feature.allCases).subtracting([.kvHeadSplit]))
+        #expect(GenerationPlan.make(request.withKVPrecision(.k8v4), zonedBoth, GenerationPlan.Facts()).kvHeadMask == nil)
     }
 }

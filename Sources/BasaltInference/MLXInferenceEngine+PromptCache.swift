@@ -60,14 +60,15 @@ extension MLXInferenceEngine {
     }
 
     func anchorOffsets(
-        _ turns: [ChatMessageInput], _ search: AnchorSearch,
-        container: ModelContainer, tools: [ToolSpec]?, context: [String: any Sendable]?
+        _ prompt: RenderedPrompt, _ search: AnchorSearch, container: ModelContainer, tools: [ToolSpec]?
     ) async -> [Int] {
         var search = search
         guard search.hasRoom else { return [] }
-        for prefix in HybridPrefixSnapshot.anchorPrefixes(turns) where search.wantsMore {
+        for prefix in HybridPrefixSnapshot.anchorPrefixes(prompt.anchorTurns) where search.wantsMore {
             guard let rendered = try? await container.prepare(
-                input: UserInput(chat: Self.chat(prefix, lastText: prefix.last?.text ?? ""), tools: tools, additionalContext: context))
+                input: UserInput(
+                    chat: Self.chat(prefix, lastText: prefix.last?.text ?? "", images: prompt.images), tools: tools,
+                    additionalContext: prompt.context))
             else { continue }
             guard search.admit(rendered.text.tokens.asArray(Int.self)) else { break }
         }

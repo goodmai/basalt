@@ -13,6 +13,7 @@ public struct MemoryAssessment: Sendable, Codable, Equatable {
     public var warning: String?
     public var recommendation: String?
     public var memoryBudgetBytes: Int64 = 0
+    public var expertStreaming: ExpertStreamingFootprint?
 
     public var requiredRAMFormatted: String {
         formatRAMBytes(requiredRAMBytes)
@@ -35,7 +36,7 @@ public struct MemoryAssessment: Sendable, Codable, Equatable {
         self.requiredRAMBytes = requiredRAMBytes
         self.availableRAMBytes = availableRAMBytes
         self.totalPhysicalRAMBytes = totalPhysicalRAMBytes
-        self.fitsInMemory = fitLevel != .tooTight
+        self.fitsInMemory = fitLevel.fitsResident
         self.fitLevel = fitLevel
     }
 
@@ -104,11 +105,14 @@ public actor MemoryEvaluator {
     ) -> MemoryAssessment {
         let kv = def.kvGeometry
         let weights = ByteCount(def.ramMB * 1024 * 1024)
-        let required = weights + kv.bytes(tokens: TokenCount(contextLength), kvPrecision: kvPrecision, zones: kvZones)
+        let kvBytes = kv.bytes(tokens: TokenCount(contextLength), kvPrecision: kvPrecision, zones: kvZones)
         let oversized = def.quantization.lowercased().contains("bfloat16") || def.quantization.lowercased().contains("fp16") || def.ramMB > 30000
+        var footprint = Footprint(required: weights + kvBytes, weights: weights, kv: kv, kvPrecision: kvPrecision, kvZones: kvZones)
+        footprint.streaming = ExpertStreamingFootprint(
+            weights: weights, totalParameters: def.totalParameters, activeParameters: def.activeParameters, kv: kvBytes)
         return Self.assessment(
             id: def.id, name: def.name,
-            footprint: Footprint(required: required, weights: weights, kv: kv, kvPrecision: kvPrecision, kvZones: kvZones),
+            footprint: footprint,
             resources: resources,
             subject: "Model",
             recommendation: oversized ? "Use an MLX 4-bit or Dynamic Quant (DQ) quantized version (e.g. AutisticAF/Huihui-Qwen3.8-27B-abliterated-mlx-4Bit or Ex0bit/MYTHOS-26B-A4B-PRISM-PRO-DQ-MLX)." : nil)
@@ -152,6 +156,7 @@ public actor MemoryEvaluator {
         let kv: KVCacheGeometry
         let kvPrecision: KVPrecision?
         let kvZones: KVZones?
+        var streaming: ExpertStreamingFootprint?
     }
 
     static func assessment(
@@ -159,27 +164,34 @@ public actor MemoryEvaluator {
     ) -> MemoryAssessment {
         let budget = memoryBudget(resources)
         let required = footprint.required
+        let streaming = footprint.streaming.flatMap { $0.required <= budget ? $0 : nil }
         let level = fitLevel(required: required, budget: budget)
-        let fits = level != .tooTight
-        let warning: String?
-        if !fits {
-            warning = "\(subject) requires ~\(formatRAMBytes(required.rawValue)), more than the \(formatRAMBytes(budget.rawValue)) Metal can use on this Mac (\(formatRAMBytes(resources.totalRAM)) physical)."
-        } else if required > ByteCount(resources.availableRAM) {
-            warning = "Only \(formatRAMBytes(resources.availableRAM)) is free right now; loading the model makes macOS compress or swap other apps' memory."
-        } else {
-            warning = nil
-        }
+        let tier = level == .tooTight && streaming != nil ? FitLevel.moeTieredStreaming : level
+        let fits = tier.fitsResident
         var result = MemoryAssessment(
             modelId: id, modelName: name, requiredRAMBytes: required.rawValue, availableRAMBytes: resources.availableRAM,
-            totalPhysicalRAMBytes: resources.totalRAM, fitLevel: level)
+            totalPhysicalRAMBytes: resources.totalRAM, fitLevel: tier)
+        result.expertStreaming = tier == .moeTieredStreaming ? streaming : nil
         result.maxContextBudgetTokens = contextBudget(
             budget: budget, weights: footprint.weights, kv: footprint.kv, kvPrecision: footprint.kvPrecision, kvZones: footprint.kvZones)
         result.maxPromptBudgetTokens = promptBudget(
             budget: budget, weights: footprint.weights, kv: footprint.kv, kvPrecision: footprint.kvPrecision, kvZones: footprint.kvZones)
-        result.warning = warning
+        result.warning = warning(subject: subject, required: required, budget: budget, resources: resources, fits: fits)
         result.recommendation = fits ? nil : recommendation
         result.memoryBudgetBytes = budget.rawValue
         return result
+    }
+
+    static func warning(
+        subject: String, required: ByteCount, budget: ByteCount, resources: SystemProfiler.SystemResources, fits: Bool
+    ) -> String? {
+        if !fits {
+            return "\(subject) requires ~\(formatRAMBytes(required.rawValue)), more than the \(formatRAMBytes(budget.rawValue)) Metal can use on this Mac (\(formatRAMBytes(resources.totalRAM)) physical)."
+        }
+        if required > ByteCount(resources.availableRAM) {
+            return "Only \(formatRAMBytes(resources.availableRAM)) is free right now; loading the model makes macOS compress or swap other apps' memory."
+        }
+        return nil
     }
 
     private func evaluateLocal(
@@ -191,13 +203,17 @@ public actor MemoryEvaluator {
         kvZones: KVZones?
     ) -> MemoryAssessment {
         let modelMB = Int(localSize / (1024 * 1024))
-        let kv = KVCacheGeometry.forModel(
-            modelId, parameters: ModelDefinition.inferTotalParameters(id: modelId, name: "", ramMB: Int64(modelMB))
-        )
-        let required = ByteCount(Int64(Double(localSize) * 1.15)) + kv.bytes(tokens: TokenCount(contextLength), kvPrecision: kvPrecision, zones: kvZones)
+        let total = ModelDefinition.inferTotalParameters(id: modelId, name: "", ramMB: Int64(modelMB))
+        let kv = KVCacheGeometry.forModel(modelId, parameters: total)
+        let loaded = ByteCount(Int64(Double(localSize) * 1.15))
+        let kvBytes = kv.bytes(tokens: TokenCount(contextLength), kvPrecision: kvPrecision, zones: kvZones)
+        var footprint = Footprint(required: loaded + kvBytes, weights: ByteCount(localSize), kv: kv, kvPrecision: kvPrecision, kvZones: kvZones)
+        footprint.streaming = ExpertStreamingFootprint(
+            weights: loaded, totalParameters: total,
+            activeParameters: ModelDefinition.inferActiveParameters(id: modelId, name: "", total: total), kv: kvBytes)
         return Self.assessment(
             id: modelId, name: modelId.components(separatedBy: "/").last ?? modelId,
-            footprint: Footprint(required: required, weights: ByteCount(localSize), kv: kv, kvPrecision: kvPrecision, kvZones: kvZones),
+            footprint: footprint,
             resources: resources,
             subject: "Model files (\(formatRAMBytes(localSize)))", recommendation: nil)
     }
@@ -223,16 +239,18 @@ public actor MemoryEvaluator {
             }
         }
 
-        let kv = KVCacheGeometry(
-            parameterProxy: params ?? ModelDefinition.inferTotalParameters(id: modelId, name: "", ramMB: estimatedMB)
-        )
+        let total = params ?? ModelDefinition.inferTotalParameters(id: modelId, name: "", ramMB: estimatedMB)
+        let kv = KVCacheGeometry(parameterProxy: total)
         let weights = ByteCount(estimatedMB * 1024 * 1024)
+        let kvBytes = kv.bytes(tokens: TokenCount(contextLength), kvPrecision: kvPrecision, zones: kvZones)
         let quantized = info.quantization.contains("4bit") || info.quantization.contains("dq") || info.quantization.contains("nvfp4")
+        var footprint = Footprint(required: weights + kvBytes, weights: weights, kv: kv, kvPrecision: kvPrecision, kvZones: kvZones)
+        footprint.streaming = ExpertStreamingFootprint(
+            weights: weights, totalParameters: total,
+            activeParameters: ModelDefinition.inferActiveParameters(id: modelId, name: "", total: total), kv: kvBytes)
         return Self.assessment(
             id: modelId, name: info.name,
-            footprint: Footprint(
-                required: weights + kv.bytes(tokens: TokenCount(contextLength), kvPrecision: kvPrecision, zones: kvZones),
-                weights: weights, kv: kv, kvPrecision: kvPrecision, kvZones: kvZones),
+            footprint: footprint,
             resources: resources, subject: "Model (estimated)",
             recommendation: quantized ? nil : "Consider choosing a 4-bit quantized MLX model variant.")
     }

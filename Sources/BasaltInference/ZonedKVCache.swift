@@ -80,12 +80,12 @@ final class ZonedKVCache: KVCacheAttentionProtocol {
         try probe(model, precision: .q8).attendsThroughCache
     }
 
-    static func probe(_ model: any LanguageModel, precision: KVPrecision) throws -> (attendsThroughCache: Bool, rotatesValues: Bool) {
+    static func probe(_ model: any LanguageModel, precision: KVPrecision) throws -> (attendsThroughCache: Bool, rotatesValues: Bool, readsThroughUpdate: Bool) {
         let caches = replacingFullAttention(try model.newCache(parameters: nil), zones: .standard, precision: precision)
         let zoned = caches.compactMap { $0 as? ZonedKVCache }
-        guard !zoned.isEmpty else { return (false, false) }
+        guard !zoned.isEmpty else { return (false, false, false) }
         _ = model(LMInput.Text(tokens: MLXArray([Int32(0)]).reshaped(1, 1)), cache: caches, state: nil)
-        return (zoned.allSatisfy { !$0.materializedForCaller && $0.headsQuantize == true }, zoned.allSatisfy(\.rotatesValues))
+        return (zoned.allSatisfy { !$0.materializedForCaller && $0.headsQuantize == true }, zoned.allSatisfy(\.rotatesValues), zoned.allSatisfy(\.materializedForCaller))
     }
 
     static func prefillsWithinWindow(
@@ -214,9 +214,7 @@ final class ZonedKVCache: KVCacheAttentionProtocol {
         let kept = zones.keptMiddleTokens(quantizedCount + evictedCount + arriving) - quantizedCount
         guard !evictionRefused, kept < arriving else { return (keys, values) }
         evictedCount += arriving - kept
-        let squaredNorms = keys.asType(.float32).square().sum(axis: -1)
-        let rows = expandedDimensions(sorted(argSort(squaredNorms, axis: -1)[.ellipsis, ..<kept], axis: -1), axis: -1)
-        return (takeAlong(keys, rows, axis: 2), takeAlong(values, rows, axis: 2))
+        return EvictingKVCache.keepingLowestKeyNorms(keys: keys, values: values, count: kept)
     }
 
     private func rotatedValues(_ values: MLXArray) -> MLXArray {

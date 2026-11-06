@@ -546,6 +546,9 @@ extension MemoryAssessment {
         if let line = KVBitsSetting.evictionSizing(kvEvict) { lines.append("  KV eviction:     \(line)") }
         lines.append("")
         if let warning { lines.append((fitsInMemory ? yellow : red)("  \(warning)")) }
+        if let expertStreaming {
+            lines.append(yellow("  Needs expert streaming (#225), not available yet: \(expertStreaming.summary) fits the budget."))
+        }
         if let recommendation { lines.append(yellow("  💡 Recommendation: \(recommendation)")) }
         lines.append(fitsInMemory ? green("  \(fits)") : red("  \(exceeds)"))
         return lines

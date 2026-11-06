@@ -6,12 +6,22 @@ import BasaltCore
 struct GenerationLaunchPlanTests {
     static let mask = KVHeadMask(retrieval: [[0, 1]])
 
-    @Test("Head split wins over Quest and zones, and both custom caches step aside when --kv-bits quantizes the cache")
+    static let k8v4Zones = HeadSplitKVCache.Zoning(zones: .standard, precision: .k8v4)
+
+    @Test("Head split wins over Quest and zones, and both custom caches step aside when uniform --kv-bits quantizes the cache")
     func priority() {
-        #expect(FreshCache.plan(kvBitsSet: false, headMask: Self.mask, questTopK: 16, zones: .standard, precision: .k8v4) == .headSplit(Self.mask))
+        #expect(FreshCache.plan(kvBitsSet: false, headMask: Self.mask, questTopK: 16, zones: nil, precision: nil) == .headSplit(Self.mask, nil))
         #expect(FreshCache.plan(kvBitsSet: false, headMask: nil, questTopK: 16, zones: .standard, precision: .k8v4) == .quest(topK: 16))
-        #expect(FreshCache.plan(kvBitsSet: true, headMask: Self.mask, questTopK: 16, zones: .standard, precision: .k8v4) == .zoned(.standard, .k8v4))
+        #expect(FreshCache.plan(kvBitsSet: true, headMask: nil, questTopK: 16, zones: .standard, precision: .k8v4) == .zoned(.standard, .k8v4))
         #expect(FreshCache.plan(kvBitsSet: true, headMask: Self.mask, questTopK: 16, zones: nil, precision: nil) == .stock)
+    }
+
+    @Test("With zones and a precision, head split keeps the whole context of its retrieval heads zoned at that precision (#294)")
+    func headSplitTakesZones() {
+        #expect(FreshCache.plan(kvBitsSet: true, headMask: Self.mask, questTopK: 16, zones: .standard, precision: .k8v4) == .headSplit(Self.mask, Self.k8v4Zones))
+        #expect(FreshCache.plan(kvBitsSet: false, headMask: Self.mask, questTopK: nil, zones: .standard, precision: .k8v4) == .headSplit(Self.mask, Self.k8v4Zones))
+        #expect(FreshCache.plan(kvBitsSet: false, headMask: Self.mask, questTopK: nil, zones: .standard, precision: nil) == .headSplit(Self.mask, nil))
+        #expect(FreshCache.plan(kvBitsSet: true, headMask: Self.mask, questTopK: nil, zones: nil, precision: .q8) == .stock)
     }
 
     @Test("Zones need both a layout and a precision; otherwise the stock cache serves")
@@ -19,5 +29,12 @@ struct GenerationLaunchPlanTests {
         #expect(FreshCache.plan(kvBitsSet: false, headMask: nil, questTopK: nil, zones: .standard, precision: nil) == .stock)
         #expect(FreshCache.plan(kvBitsSet: false, headMask: nil, questTopK: nil, zones: nil, precision: .q8) == .stock)
         #expect(FreshCache.plan(kvBitsSet: false, headMask: nil, questTopK: nil, zones: .standard, precision: .q8) == .zoned(.standard, .q8))
+    }
+
+    @Test("Zones whose middle stays fp16 plan the evicting cache, still only for a request with a precision")
+    func fullPrecisionMiddlePlansEvictingCache() {
+        let zones = KVZones.standard.evicting(0.5).keepingMiddleFullPrecision()
+        #expect(FreshCache.plan(kvBitsSet: true, headMask: nil, questTopK: nil, zones: zones, precision: .q8) == .evicting(zones))
+        #expect(FreshCache.plan(kvBitsSet: false, headMask: nil, questTopK: nil, zones: zones, precision: nil) == .stock)
     }
 }

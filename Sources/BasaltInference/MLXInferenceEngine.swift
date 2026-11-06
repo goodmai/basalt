@@ -135,9 +135,9 @@ public actor MLXInferenceEngine: InferenceEngine {
         let (params, unbudgeted, shaping, exclusion) = try await checkedSampling(request)
         let settings = planSettings
         let toolSpecs = Self.toolSpecs(request.tools)
-        try await checkImages(request.messages, container: container)
+        let images = try await checkImages(request.messages, container: container)
         do {
-            let rendered = try await render(request, tools: toolSpecs, container: container)
+            let rendered = try await render(request, tools: toolSpecs, images: images, container: container)
             let components = try await budgeted(unbudgeted, request, rendered.policy, params: params, container: container)
             let prompt = try await promptInput(rendered, request: request, container: container, epoch: epoch)
             let namespace = GenerationPlan.cacheNamespace(
@@ -154,7 +154,7 @@ public actor MLXInferenceEngine: InferenceEngine {
             let claim = try claimCache(namespace, drafts: plan.drafts, tokens: prompt.tokens, mediaEnd: prompt.media.end)
             let search = AnchorSearch(prompt: prompt.tokens, reused: claim.reuse?.reusedTokens ?? 0, boundary: boundary, limit: hybridAnchors)
             let anchors = plan.findsAnchors
-                ? await anchorOffsets(rendered.anchorTurns, search, container: container, tools: toolSpecs, context: rendered.context) : []
+                ? await anchorOffsets(rendered, search, container: container, tools: toolSpecs) : []
             let (constrained, alarm) = NonFiniteLogitGuard.guarding(
                 Self.shaped(components, constraint, rendered.policy, prompt, shaping: shaping, exclusion: exclusion),
                 temperature: params.temperature)

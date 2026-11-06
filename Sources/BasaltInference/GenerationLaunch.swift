@@ -4,17 +4,19 @@ import MLXLMCommon
 import BasaltCore
 
 enum FreshCache: Equatable {
-    case headSplit(KVHeadMask)
+    case headSplit(KVHeadMask, HeadSplitKVCache.Zoning?)
     case quest(topK: Int)
     case zoned(KVZones, KVPrecision)
+    case evicting(KVZones)
     case stock
 
     static func plan(
         kvBitsSet: Bool, headMask: KVHeadMask?, questTopK: Int?, zones: KVZones?, precision: KVPrecision?
     ) -> FreshCache {
-        if !kvBitsSet, let headMask { return .headSplit(headMask) }
+        let zoning = zones.flatMap { zones in precision.map { HeadSplitKVCache.Zoning(zones: zones, precision: $0) } }
+        if let headMask, !kvBitsSet || zoning != nil { return .headSplit(headMask, zoning) }
         if !kvBitsSet, let questTopK { return .quest(topK: questTopK) }
-        if let zones, let precision { return .zoned(zones, precision) }
+        if let zones, let precision { return zones.middleStaysFullPrecision ? .evicting(zones) : .zoned(zones, precision) }
         return .stock
     }
 }
@@ -100,9 +102,11 @@ struct GenerationLauncher {
     func fresh(_ plan: FreshCache, batch: BatchedDecoder?, lookup: LookupOptions) throws -> MLXInferenceEngine.GenerationLaunch {
         let model = context.model
         switch plan {
-        case .headSplit(let mask):
-            let cache = mask.replacingFullAttention(try model.newCache(parameters: params))
-            return uncached(try TokenIterator(input: input, model: model, cache: cache, parameters: params, components: components))
+        case .headSplit(let mask, let zoning):
+            var exact = params
+            exact.kvBits = nil
+            let cache = mask.replacingFullAttention(try model.newCache(parameters: exact), zoning: zoning)
+            return uncached(try TokenIterator(input: input, model: model, cache: cache, parameters: exact, components: components))
         case .quest(let topK):
             let cache = QuestKVCache.replacingFullAttention(try model.newCache(parameters: params), topK: topK)
             return uncached(try TokenIterator(input: input, model: model, cache: cache, parameters: params, components: components))
@@ -110,6 +114,11 @@ struct GenerationLauncher {
             var exact = params
             exact.kvBits = nil
             let cache = ZonedKVCache.replacingFullAttention(try model.newCache(parameters: exact), zones: zones, precision: precision)
+            return uncached(try TokenIterator(input: input, model: model, cache: cache, parameters: exact, components: components))
+        case .evicting(let zones):
+            var exact = params
+            exact.kvBits = nil
+            let cache = EvictingKVCache.replacingFullAttention(try model.newCache(parameters: exact), zones: zones)
             return uncached(try TokenIterator(input: input, model: model, cache: cache, parameters: exact, components: components))
         case .stock:
             return try stock(batch: batch, lookup: lookup)

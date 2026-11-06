@@ -12,7 +12,7 @@ struct GrammarFormatTests {
         """#
 
     static func format(_ body: [String: Any]) throws -> ResponseFormat? {
-        try OpenAIController.responseFormat(fromRequestBody: JSONSerialization.data(withJSONObject: body))
+        try OpenAIController.responseFormat(in: body, data: JSONSerialization.data(withJSONObject: body))
     }
 
     static let grammarA = "root ::= \"a\""

@@ -261,7 +261,7 @@ struct CodingAgentAPITests {
     func toolChoice() throws {
         let tools = #"[{"type": "function", "name": "shell"}, {"type": "function", "name": "read"}, {"name": "edit", "input_schema": {"type": "object"}}]"#
         let parse = { (extra: String) throws in
-            try OpenAIController.requestedTools(fromRequestBody: Data("{\"tools\": \(tools), \(extra)}".utf8))
+            try OpenAIController.requestedTools(in: ChatPipeline.object(in: Data("{\"tools\": \(tools), \(extra)}".utf8)))
         }
         #expect(try parse(#""tool_choice": "auto""#).tools?.map(\.name) == ["shell", "read", "edit"])
         #expect(try parse(#""tool_choice": "auto""#).choice == nil)
@@ -284,7 +284,7 @@ struct CodingAgentAPITests {
     @Test("Tool schemas are serialized with sorted keys, so the same tools render the same prompt")
     func toolSchemaSortedKeys() throws {
         let body = #"{"tools": [{"type": "function", "name": "f", "parameters": {"type": "object", "required": ["b"], "properties": {"b": {}}}}]}"#
-        let schema = try #require(try OpenAIController.requestedTools(fromRequestBody: Data(body.utf8)).tools?.first?.parametersJSON)
+        let schema = try #require(try OpenAIController.requestedTools(in: ChatPipeline.object(in: Data(body.utf8))).tools?.first?.parametersJSON)
         #expect(schema == #"{"properties":{"b":{}},"required":["b"],"type":"object"}"#)
     }
 

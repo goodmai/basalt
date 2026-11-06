@@ -29,14 +29,16 @@ extension OpenAIController {
     func chatCompletions(request: Request, context: BasicRequestContext) async throws -> Response {
         let pipeline = self.pipeline(source: "openai-chat", endpoint: "/v1/chat/completions")
         return try await pipeline.handle(request) { data in
-            let dto = try pipeline.decode(ChatCompletionRequest.self, from: data, failure: "Cannot decode request")
+            let body = try pipeline.decode(ChatPipeline.Body<ChatCompletionRequest>.self, from: data, failure: "Cannot decode request")
+            let dto = body.dto
             try pipeline.require(!dto.messages.isEmpty, "messages must not be empty")
-            let tools = try pipeline.tools(in: data)
-            let format = try pipeline.responseFormat(in: data)
+            let json = ChatPipeline.object(in: data)
+            let tools = try pipeline.tools(in: json)
+            let format = try pipeline.responseFormat(in: json, data: data)
             let stream = dto.stream == true
             let prepared = try pipeline.prepare(ChatPipeline.Input(
                 chat: try pipeline.parsed { () throws(BasaltError) in try Self.chatMessages(dto.messages) }, maxTokens: dto.maxTokens,
-                sampling: dto.sampling(try pipeline.antiRepetition(in: data)),
+                sampling: dto.sampling(try pipeline.antiRepetition(body.antiRepetition, bodyBytes: data.count)),
                 reasoningEffort: dto.reasoningEffort, tools: tools, thinkingBudget: dto.thinkingBudget,
                 responseFormat: format, model: dto.model, stream: stream), headers: request.headers)
             if stream { try await pipeline.admitStream(prepared.request) }
@@ -54,15 +56,17 @@ extension OpenAIController {
     func responses(request: Request, context: BasicRequestContext) async throws -> Response {
         let pipeline = self.pipeline(source: "openai-responses", endpoint: "/v1/responses")
         return try await pipeline.handle(request) { data in
-            let dto = try pipeline.decode(ResponsesRequest.self, from: data, failure: "Cannot decode responses request")
+            let body = try pipeline.decode(ChatPipeline.Body<ResponsesRequest>.self, from: data, failure: "Cannot decode responses request")
+            let dto = body.dto
             let conversation = try pipeline.parsed(dto.conversation)
             try pipeline.require(!conversation.isEmpty, "input or messages must not be empty")
-            let tools = try pipeline.tools(in: data)
-            let format = try pipeline.responseFormat(in: data)
+            let json = ChatPipeline.object(in: data)
+            let tools = try pipeline.tools(in: json)
+            let format = try pipeline.responseFormat(in: json, data: data)
             let stream = dto.stream == true
             let prepared = try pipeline.prepare(ChatPipeline.Input(
                 chat: dto.instructionMessages + conversation,
-                maxTokens: dto.maxOutputTokens ?? dto.maxTokens, sampling: dto.sampling(try pipeline.antiRepetition(in: data)),
+                maxTokens: dto.maxOutputTokens ?? dto.maxTokens, sampling: dto.sampling(try pipeline.antiRepetition(body.antiRepetition, bodyBytes: data.count)),
                 reasoningEffort: dto.effectiveReasoningEffort, tools: tools, thinkingBudget: dto.thinkingBudget,
                 responseFormat: format, model: dto.model, stream: stream), headers: request.headers)
             if stream { try await pipeline.admitStream(prepared.request) }
