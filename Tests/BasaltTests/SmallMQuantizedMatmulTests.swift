@@ -61,8 +61,8 @@ struct SmallMQuantizedMatmulTests {
 
     @Test("Off unless --experimental-smallm-kernel is given")
     func flag() throws {
-        #expect(try ServeCommand.parse([]).experimentalSmallMKernel == false)
-        #expect(try ServeCommand.parse(["--experimental-smallm-kernel"]).experimentalSmallMKernel)
+        #expect(try ServeCommand.parse([]).experimental.smallMKernel == false)
+        #expect(try ServeCommand.parse(["--experimental-smallm-kernel"]).experimental.smallMKernel)
     }
 
     @Test("A quantized tiny Qwen3 with the kernel installed keeps the stock verify-window logits within bf16 tolerance and the same argmax")

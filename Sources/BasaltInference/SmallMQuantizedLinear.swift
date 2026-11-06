@@ -127,7 +127,7 @@ final class SmallMQuantizedLinear: QuantizedLinear {
     init(replacing layer: QuantizedLinear) {
         super.init(
             weight: layer.weight, bias: layer.bias, scales: layer.scales, biases: layer.biases,
-            groupSize: layer.groupSize, bits: layer.bits, mode: layer.mode)
+            groupSize: layer.groupSize, bits: layer.bits)
         freeze()
     }
 
