@@ -362,6 +362,8 @@ struct CheckSubcommand: AsyncParsableCommand {
     @Option(name: .customLong("kv-evict"), help: KVBitsSetting.evictHelp)
     var kvEvict: Double?
 
+    @OptionGroup var expertStreaming: ExpertStreamingOptions
+
     func validate() throws {
         try KVBitsSetting.validate(zones: kvZones, bits: kvBits, evict: kvEvict)
     }
@@ -376,7 +378,7 @@ struct CheckSubcommand: AsyncParsableCommand {
         guard let id = modelId else {
             throw ValidationError("Pass a model repo ID, or --system for a hardware check.")
         }
-        let evaluator = MemoryEvaluator()
+        let evaluator = MemoryEvaluator(expertStreaming: expertStreaming.setting)
         let assessment = await evaluator.evaluate(modelId: id, kvPrecision: kvBits?.budgetPrecision, kvZones: KVBitsSetting.zones(kvZones, evicting: kvEvict))
         let deepCheck: ModelDeepCheck?
         do {
@@ -547,7 +549,9 @@ extension MemoryAssessment {
         lines.append("")
         if let warning { lines.append((fitsInMemory ? yellow : red)("  \(warning)")) }
         if let expertStreaming {
-            lines.append(yellow("  Needs expert streaming (#225), not available yet: \(expertStreaming.summary) fits the budget."))
+            lines.append(yellow(fitsInMemory
+                ? "  Loads with experimental expert streaming: \(expertStreaming.summary)."
+                : "  Needs expert streaming (#225): \(expertStreaming.summary) fits the budget; pass --experimental-expert-streaming."))
         }
         if let recommendation { lines.append(yellow("  💡 Recommendation: \(recommendation)")) }
         lines.append(fitsInMemory ? green("  \(fits)") : red("  \(exceeds)"))

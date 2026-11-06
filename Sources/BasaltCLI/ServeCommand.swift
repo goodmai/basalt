@@ -25,10 +25,7 @@ struct ServeCommand: AsyncParsableCommand {
     )
     var modelPath: String?
 
-    @Option(
-        name: .customLong("quant"),
-        help: "Quantization subfolder inside the repo (e.g. 2bit | 4bit) — for repos shipping several variants"
-    )
+    @Option(name: .customLong("quant"), help: "Quantization subfolder inside the repo (e.g. 2bit | 4bit) — for repos shipping several variants")
     var quant: String?
 
     @Option(
@@ -59,6 +56,8 @@ struct ServeCommand: AsyncParsableCommand {
     var seed: UInt64?
 
     @OptionGroup var kvCache: KVCacheOptions
+
+    @OptionGroup var expertStreaming: ExpertStreamingOptions
 
     @Option(name: .customLong("repetition-penalty"), help: "Penalty on recently emitted tokens, e.g. 1.1 (default: off)")
     var repetitionPenalty: Float?
@@ -274,6 +273,7 @@ extension ServeCommand {
     private func makeOrchestrator(maxTokens: Int) async throws -> ModelOrchestratorActor {
         let engine = try makeEngine()
         await engine.probeModels(modelProbe)
+        await engine.streamExperts(expertStreaming.setting)
         if batchSlots > 1, maxConcurrent < 2 {
             log("\(yellow("[warn]")) --batch-slots \(batchSlots) has no effect with --max-concurrent \(maxConcurrent): only one generation runs at a time")
         }
