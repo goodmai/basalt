@@ -100,7 +100,7 @@ extension MLXInferenceEngine {
         do {
             try faults.check(.load)
             if let gpuCacheLimit { Memory.cacheLimit = gpuCacheLimit }
-            let loaded = try await loadModelContainer(from: directory, using: DefaultTokenizerLoader())
+            let loaded = try await loadContainer(from: directory)
             try await loaded.perform { try PrismHadamard.prepareLoaded($0.model) }
             try await probe(loaded, directory: directory, modelPath: modelPath)
             let drafts = mtp ? await loadMTPDrafter(for: loaded, directory: directory, modelPath: modelPath) : false

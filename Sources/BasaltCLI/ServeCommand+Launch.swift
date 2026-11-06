@@ -46,7 +46,7 @@ extension ServeCommand {
 
     func assessMemory() async {
         log("🔍 Performing dry-run memory assessment for \(bold(targetModel))…")
-        let assessment = await MemoryEvaluator().evaluate(
+        let assessment = await MemoryEvaluator(expertStreaming: expertStreaming.setting).evaluate(
             modelId: targetModel, kvPrecision: kvCache.bits?.budgetPrecision, kvZones: kvCache.zones)
         let lines = assessment.reportLines(
             kvZones: kvCache.zoned, kvEvict: kvCache.evict,

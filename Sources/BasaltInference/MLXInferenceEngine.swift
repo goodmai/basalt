@@ -35,6 +35,7 @@ public actor MLXInferenceEngine: InferenceEngine {
     let kvZones: KVZones?
     let wiresWorkingSet: Bool
     var probesModel = false
+    var expertStreaming: ExpertStreaming?
     var wiredTicket: WiredMemoryTicket?
     let kvHeadSplit: Double?
     let questTopK: Int?
