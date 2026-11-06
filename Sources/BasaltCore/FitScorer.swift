@@ -4,6 +4,7 @@ public enum FitLevel: String, Codable, Sendable {
     case perfect = "Perfect"
     case good = "Good"
     case marginal = "Marginal"
+    case moeTieredStreaming = "Streaming"
     case tooTight = "TooTight"
     
     public var emoji: String {
@@ -11,7 +12,15 @@ public enum FitLevel: String, Codable, Sendable {
         case .perfect: return "🟢"
         case .good: return "🟡"
         case .marginal: return "🟠"
+        case .moeTieredStreaming: return "🔵"
         case .tooTight: return "🔴"
+        }
+    }
+
+    public var fitsResident: Bool {
+        switch self {
+        case .perfect, .good, .marginal: true
+        case .moeTieredStreaming, .tooTight: false
         }
     }
 }
@@ -89,24 +98,7 @@ public actor FitScorer {
         )
         
         let totalScore = fourD.compositeScore
-        
-        let available = ByteCount(profile.availableRAM)
-        let modelBytes = ByteCount(model.ramMB * 1_048_576)
-        let budget = ByteCount(Int64(Double(available.rawValue) * 0.85))
-        
-        let fitLevel: FitLevel
-        if modelBytes <= ByteCount(Int64(Double(available.rawValue) * 0.70)) && ramFit >= 0.8 {
-            fitLevel = .perfect
-        } else if modelBytes <= budget && ramFit >= 0.5 {
-            fitLevel = .good
-        } else if modelBytes <= available {
-            fitLevel = .marginal
-        } else {
-            fitLevel = .tooTight
-        }
-        
-        // q*(m): the highest-quality width of the 8/6/4/3/2 grid that fits 85% of available
-        // memory at L_min and decodes at ≥ TPS_min; nil when none does.
+        let fitLevel = Self.fitLevel(model: model, available: ByteCount(profile.availableRAM), ramFit: ramFit)
         let grid = ModelFitAnalyzer.evaluateQuantizations(model: model, resources: profile, benchmarkProfile: benchmarkProfile)
 
         var result = FitScore(
@@ -122,6 +114,17 @@ public actor FitScorer {
         return result
     }
     
+    static func fitLevel(model: ModelDefinition, available: ByteCount, ramFit: Double) -> FitLevel {
+        let modelBytes = ByteCount(model.ramMB * 1_048_576)
+        if modelBytes <= ByteCount(Int64(Double(available.rawValue) * 0.70)) && ramFit >= 0.8 { return .perfect }
+        if modelBytes <= ByteCount(Int64(Double(available.rawValue) * 0.85)) && ramFit >= 0.5 { return .good }
+        if modelBytes <= available { return .marginal }
+        let streaming = ExpertStreamingFootprint(
+            weights: modelBytes, totalParameters: model.totalParameters, activeParameters: model.activeParameters,
+            kv: model.kvGeometry.bytes(tokens: TokenCount(4096)))
+        return streaming.map { $0.required <= available } == true ? .moeTieredStreaming : .tooTight
+    }
+
     private func calculateRAMFit(model: ModelDefinition, available: Int64) -> Double {
         let availableMB = Double(available) / 1048576.0
         let modelMB = Double(model.ramMB)

@@ -100,6 +100,43 @@ struct FitScorerTests {
         #expect(moeScore.estimatedTPS >= 50)
     }
 
+    private func sparseAndDense(ramMB: Int64) -> (moe: ModelDefinition, dense: ModelDefinition) {
+        func make(_ id: String, active: Double) -> ModelDefinition {
+            ModelDefinition(id: id, name: id, family: .qwen, task: .chat, modality: .text,
+                            spec: .init(ramMB: ramMB, contextWindow: 131072, quantization: "8-bit", quality: 0.9,
+                                        totalParameters: 35, activeParameters: active))
+        }
+        return (make("org/Sparse-35B-A3B-8bit", active: 3), make("org/Dense-35B-8bit", active: 35))
+    }
+
+    @Test("A sparse MoE too big to sit resident is MoE-tiered streaming on a constrained Mac, its normal tier on a large one; dense never is")
+    func testMoETieredStreamingTier() async {
+        let models = sparseAndDense(ramMB: 37_000)
+        let constrained = FitScorer(profile: createMockResources(ramGB: 24, availableGB: 16, chip: "M4 Pro"),
+                                    benchmarkProfile: HardwareBenchmarkProfile())
+        let large = FitScorer(profile: createMockResources(ramGB: 128, availableGB: 110, chip: "M2 Ultra"),
+                              benchmarkProfile: HardwareBenchmarkProfile())
+        #expect(await constrained.score(models.moe).fitLevel == .moeTieredStreaming)
+        #expect(await constrained.score(models.dense).fitLevel == .tooTight)
+        #expect(await large.score(models.moe).fitLevel == .perfect)
+        #expect(await large.score(models.dense).fitLevel == .perfect)
+        let tiny = FitScorer(profile: createMockResources(ramGB: 8, availableGB: 4, chip: "M1"),
+                             benchmarkProfile: HardwareBenchmarkProfile())
+        #expect(await tiny.score(models.moe).fitLevel == .tooTight)
+        #expect(!FitLevel.moeTieredStreaming.fitsResident)
+    }
+
+    @Test("Expert streaming footprint: active share of the weights resident, a quarter of the rest as expert cache, plus KV; none for dense")
+    func testExpertStreamingArithmetic() throws {
+        let weights = ByteCount(35_000)
+        let footprint = try #require(ExpertStreamingFootprint(weights: weights, totalParameters: 35, activeParameters: 3, kv: ByteCount(500)))
+        #expect(footprint.residentWeights == ByteCount(3_000))
+        #expect(footprint.expertCache == ByteCount(8_000))
+        #expect(footprint.required == ByteCount(11_500))
+        #expect(ExpertStreamingFootprint(weights: weights, totalParameters: 35, activeParameters: 35, kv: .zero) == nil)
+        #expect(ExpertStreamingFootprint(weights: weights, totalParameters: 35, activeParameters: 0, kv: .zero) == nil)
+    }
+
     @Test("Self-calibration from real hardware benchmark measurements")
     func testHardwareProfileCalibration() async {
         let resources = createMockResources(ramGB: 32, availableGB: 20, chip: "M3 Max")
