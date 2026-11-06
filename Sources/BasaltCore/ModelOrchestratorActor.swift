@@ -16,6 +16,7 @@ public actor ModelOrchestratorActor {
     private var memoryTask: Task<Void, Never>?
     private var thermal = ThermalLevel.current
     private var pacesThermally = false
+    private var adaptiveThinkingBudget = false
 
     public struct KVOptions: Sendable {
         let precision: KVPrecision?
@@ -74,6 +75,10 @@ public actor ModelOrchestratorActor {
 
     public func setModelId(_ id: String) {
         state = .reduce(state, .named(id))
+    }
+
+    public func setAdaptiveThinkingBudget(_ enabled: Bool) {
+        adaptiveThinkingBudget = enabled
     }
 }
 
@@ -334,7 +339,15 @@ extension ModelOrchestratorActor {
         if let wanted = request.maxTokens, wanted > cap {
             logger.warn("Token request (\(wanted)) > budget (\(cap): --max-tokens \(kv.maxTokens), memory room \(room.room)). Capping.")
         }
-        return (validated, room.promptTokens, epoch)
+        return (budgetedByDifficulty(validated), room.promptTokens, epoch)
+    }
+
+    private func budgetedByDifficulty(_ request: GenerationRequest) -> GenerationRequest {
+        guard adaptiveThinkingBudget, let (difficulty, budget) = ThinkingDifficulty.adaptiveBudget(for: request) else { return request }
+        logger.info("Adaptive thinking budget: \(difficulty.rawValue) prompt, thinking_budget \(budget)")
+        var budgeted = request
+        budgeted.thinkingBudget = budget
+        return budgeted
     }
 
     func admitted(_ priority: RequestPriority) async throws(BasaltError) -> Int {

@@ -182,6 +182,7 @@ extension ServeConfigFile {
         "serve.log_level": .text("--log-level"),
         "serve.experimental_samplers": .flag(on: "--experimental-samplers", off: nil),
         "serve.experimental_zero_copy_body": .flag(on: "--experimental-zero-copy-body", off: nil),
+        "serve.experimental_adaptive_thinking_budget": .flag(on: "--experimental-adaptive-thinking-budget", off: nil),
         "serve.grammar_jump_forward": .flag(on: "--grammar-jump-forward", off: nil),
         "serve.kv.bits": .text("--kv-bits"),
         "serve.kv.zones": .flag(on: "--kv-zones", off: nil),
