@@ -32,12 +32,12 @@ extension ServeCommand {
             throw ValidationError("--canary-minutes must be between 1 and 10080, got \(canaryMinutes)")
         }
         try network.validateRates()
-        guard (0...1).contains(cacheBlendRatio) else {
-            throw ValidationError("--cache-blend-ratio must be between 0 and 1, got \(cacheBlendRatio)")
+        guard (0...1).contains(promptCache.cacheBlendRatio) else {
+            throw ValidationError("--cache-blend-ratio must be between 0 and 1, got \(promptCache.cacheBlendRatio)")
         }
         try kvCache.validateCombination()
         try promptCacheDisk.validate(sessionLog: sessionLog.mode)
-        guard promptCacheDisk.megabytes == 0 || promptCacheMB != 0 else {
+        guard promptCacheDisk.megabytes == 0 || promptCache.promptCacheMB != 0 else {
             throw ValidationError("--prompt-cache-disk-mb persists the in-memory prompt cache, which --prompt-cache-mb 0 turns off")
         }
     }
@@ -56,24 +56,11 @@ extension ServeCommand {
 
     func makeEngine() throws -> MLXInferenceEngine {
         var configuration = EngineConfiguration.standard
-        configuration.reasoningEffort = reasoningEffort
-        configuration.promptCacheBytes = promptCacheMB.map { min(max(0, $0), 1 << 30) << 20 }
-        configuration.kvPrecision = kvCache.bits?.fixedPrecision
-        configuration.kvZones = kvCache.zones
-        configuration.kvHeadSplit = kvCache.headSplit
-        configuration.questTopK = kvCache.questTopK
-        configuration.repetitionPenalty = repetitionPenalty
-        configuration.topK = topK
-        configuration.minP = minP
-        configuration.seed = seed
-        configuration.cacheBlendRatio = cacheBlend ? min(max(0, cacheBlendRatio), 1) : nil
-        configuration.speculativeLookup = speculativeLookup
-        configuration.speculativeRecycling = speculativeRecycling
-        configuration.mtp = mtp
-        configuration.mtpBlockSize = mtpBlock
-        configuration.experimentalSamplers = experimentalSamplers
-        configuration.grammarJumpForward = grammarJumpForward
-        configuration.hybridAnchors = max(0, hybridAnchors)
+        sampling.configure(&configuration)
+        promptCache.configure(&configuration)
+        speculative.configure(&configuration)
+        (configuration.kvPrecision, configuration.kvZones) = (kvCache.bits?.fixedPrecision, kvCache.zones)
+        (configuration.kvHeadSplit, configuration.questTopK) = (kvCache.headSplit, kvCache.questTopK)
         configuration.batchSlots = maxConcurrent >= 2 ? batchSlots : 1
         configuration.wiresWorkingSet = wiredLimit
         configuration.expertStreaming = expertStreaming.setting
