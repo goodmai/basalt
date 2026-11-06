@@ -219,7 +219,7 @@ struct HealthMonitorTinyModelTests {
             model.update(parameters: model.parameters().mapValues { $0.dtype.isFloatingPoint ? $0 * Float.nan : $0 })
             eval(model)
         }
-        let engine = MLXInferenceEngine(promptCacheBytes: 1 << 26)
+        let engine = MLXInferenceEngine(EngineConfiguration(promptCacheBytes: 1 << 26))
         await engine.attach(ModelContainer(context: ModelContext(
             configuration: ModelConfiguration(id: "tiny-\(family.rawValue)"), model: model,
             processor: ByteInputProcessor(), tokenizer: ByteTokenizer())))

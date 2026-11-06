@@ -27,7 +27,7 @@ struct SamplingDefaultsTests {
 
     private func engine(defaults: SamplingDefaults, topK: Int? = nil, repetitionPenalty: Float? = nil) async throws
         -> MLXInferenceEngine {
-        let engine = MLXInferenceEngine(repetitionPenalty: repetitionPenalty, topK: topK)
+        let engine = MLXInferenceEngine(EngineConfiguration(repetitionPenalty: repetitionPenalty, topK: topK))
         await engine.attach(try TinyModel.container(), samplingDefaults: defaults)
         return engine
     }

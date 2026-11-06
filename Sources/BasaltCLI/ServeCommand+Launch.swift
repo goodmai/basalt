@@ -55,29 +55,30 @@ extension ServeCommand {
     }
 
     func makeEngine() throws -> MLXInferenceEngine {
-        MLXInferenceEngine(
-            reasoningEffort: reasoningEffort,
-            promptCacheBytes: promptCacheMB.map { min(max(0, $0), 1 << 30) << 20 },
-            kvPrecision: kvCache.bits?.fixedPrecision,
-            kvZones: kvCache.zones,
-            kvHeadSplit: kvCache.headSplit,
-            questTopK: kvCache.questTopK,
-            repetitionPenalty: repetitionPenalty,
-            topK: topK,
-            minP: minP,
-            seed: seed,
-            cacheBlendRatio: cacheBlend ? min(max(0, cacheBlendRatio), 1) : nil,
-            speculativeLookup: speculativeLookup,
-            speculativeRecycling: speculativeRecycling,
-            mtp: mtp,
-            mtpBlockSize: mtpBlock,
-            experimentalSamplers: experimentalSamplers,
-            grammarJumpForward: grammarJumpForward,
-            promptCacheDisk: try promptCacheDisk.store(),
-            hybridAnchors: max(0, hybridAnchors),
-            batchSlots: maxConcurrent >= 2 ? batchSlots : 1,
-            wiresWorkingSet: wiredLimit
-        )
+        var configuration = EngineConfiguration.standard
+        configuration.reasoningEffort = reasoningEffort
+        configuration.promptCacheBytes = promptCacheMB.map { min(max(0, $0), 1 << 30) << 20 }
+        configuration.kvPrecision = kvCache.bits?.fixedPrecision
+        configuration.kvZones = kvCache.zones
+        configuration.kvHeadSplit = kvCache.headSplit
+        configuration.questTopK = kvCache.questTopK
+        configuration.repetitionPenalty = repetitionPenalty
+        configuration.topK = topK
+        configuration.minP = minP
+        configuration.seed = seed
+        configuration.cacheBlendRatio = cacheBlend ? min(max(0, cacheBlendRatio), 1) : nil
+        configuration.speculativeLookup = speculativeLookup
+        configuration.speculativeRecycling = speculativeRecycling
+        configuration.mtp = mtp
+        configuration.mtpBlockSize = mtpBlock
+        configuration.experimentalSamplers = experimentalSamplers
+        configuration.grammarJumpForward = grammarJumpForward
+        configuration.hybridAnchors = max(0, hybridAnchors)
+        configuration.batchSlots = maxConcurrent >= 2 ? batchSlots : 1
+        configuration.wiresWorkingSet = wiredLimit
+        configuration.expertStreaming = expertStreaming.setting
+        configuration.probesModel = modelProbe
+        return MLXInferenceEngine(configuration, promptCacheDisk: try promptCacheDisk.store())
     }
 
     static func runServers(_ launch: ServerLaunch, orchestrator: ModelOrchestratorActor) async throws {

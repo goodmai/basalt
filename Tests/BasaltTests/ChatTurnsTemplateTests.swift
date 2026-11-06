@@ -94,7 +94,7 @@ struct ChatTurnsTemplateTests {
     }
 
     static func engine(_ model: any LanguageModel, processor: any UserInputProcessor = RoleTaggedInputProcessor()) async -> MLXInferenceEngine {
-        let engine = MLXInferenceEngine(promptCacheBytes: 1 << 30)
+        let engine = MLXInferenceEngine(EngineConfiguration(promptCacheBytes: 1 << 30))
         await engine.attach(ModelContainer(context: ModelContext(
             configuration: ModelConfiguration(id: "tiny-role-tagged"),
             model: model,

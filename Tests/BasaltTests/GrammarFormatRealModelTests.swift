@@ -79,7 +79,7 @@ struct GrammarFormatRealModelTests {
     @Test("With --batch-slots 4, three constrained rows and a free one decode together, and every constrained answer matches its own grammar",
           .enabled(if: !models.isEmpty, "set BASALT_E2E=1 and BASALT_E2E_GRAMMAR_MODELS"), arguments: models)
     func batched(entry: String) async throws {
-        let engine = MLXInferenceEngine(batchSlots: 4)
+        let engine = MLXInferenceEngine(EngineConfiguration(batchSlots: 4))
         try await engine.load(modelPath: entry)
         let orchestrator = ModelOrchestratorActor(engine: engine, telemetry: TelemetryTracker(), gate: GenerationGate(maxConcurrent: 4))
         let rows: [(ResponseFormat?, String?, String)] = Self.cases.map { ($0.0, $0.1, $0.2[0]) } + [(nil, nil, "Say hello in one short sentence.")]

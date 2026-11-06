@@ -86,7 +86,7 @@ struct MoEContextScalingBenchmarkTests {
         let log = try await ModelRunLog("moe-context-scaling", modelPath: path)
         defer { log.releaseGPU() }
         let fit = try await fitTier(log, contexts: contexts)
-        let orchestrator = ModelOrchestratorActor(engine: MLXInferenceEngine(wiresWorkingSet: true), maxTokens: tokens, telemetry: TelemetryTracker())
+        let orchestrator = ModelOrchestratorActor(engine: MLXInferenceEngine(EngineConfiguration(wiresWorkingSet: true)), maxTokens: tokens, telemetry: TelemetryTracker())
         try await log.step("load") { try await orchestrator.loadModel(path: path) }
         let calibration = try await log.step("calibrate") {
             try await orchestrator.generate(request: GenerationRequest(prompt: Self.prompt("calibrate", words: 1000), maxTokens: 1))

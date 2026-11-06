@@ -91,7 +91,7 @@ extension MLXInferenceEngine {
             throw .modelNotFound(identifier: modelPath)
         }
         let modelType = ModelCache.config(at: directory)?["model_type"] as? String
-        try ModelCapabilities.refuseUnverifiedKVBits(kvPrecision, modelType: modelType, path: modelPath)
+        try ModelCapabilities.refuseUnverifiedKVBits(configuration.kvPrecision, modelType: modelType, path: modelPath)
 
         if container != nil { await unloadCurrentModel() }
         do { try faults.check(.unload) } catch { throw await Self.loadFailure(error, modelPath: modelPath) }
@@ -99,11 +99,11 @@ extension MLXInferenceEngine {
         let epoch = modelEpoch
         do {
             try faults.check(.load)
-            if let gpuCacheLimit { Memory.cacheLimit = gpuCacheLimit }
+            if let gpuCacheLimit = configuration.gpuCacheLimit { Memory.cacheLimit = gpuCacheLimit }
             let loaded = try await loadContainer(from: directory)
             try await loaded.perform { try PrismHadamard.prepareLoaded($0.model); SmallMQuantizedLinear.installIfEnabled(in: $0.model) }
             try await probe(loaded, directory: directory, modelPath: modelPath)
-            let drafts = mtp ? await loadMTPDrafter(for: loaded, directory: directory, modelPath: modelPath) : false
+            let drafts = configuration.mtp ? await loadMTPDrafter(for: loaded, directory: directory, modelPath: modelPath) : false
             let capabilities = ModelCapabilities.of(modelType: modelType)
             let facts = ModelFacts(
                 profile: ModelProfileRegistry.profile(forModelAt: modelPath),
@@ -174,7 +174,7 @@ extension MLXInferenceEngine {
     }
 
     func loadMTPDrafter(for loaded: ModelContainer, directory: URL, modelPath: String) async -> Bool {
-        let logger = self.logger, speculativeLookup = self.speculativeLookup
+        let logger = self.logger, speculativeLookup = configuration.speculativeLookup
         return await useMTPDrafter(in: loaded) { context in
             do {
                 guard let drafter = try MTPSidecar.load(directory: directory, target: context.model) else {
@@ -198,9 +198,9 @@ extension MLXInferenceEngine {
     public var supportsKVZones: Bool { modelAttendsThroughZones }
 
     func probeKVZones() async {
-        guard let zones = kvZones, modelFacts.capabilities.allows(.kvZones), let container else { return }
+        guard let zones = configuration.kvZones, modelFacts.capabilities.allows(.kvZones), let container else { return }
         let epoch = modelEpoch
-        let precision = kvPrecision ?? .q8
+        let precision = configuration.kvPrecision ?? .q8
         let probed = (try? await container.perform { try ZonedKVCache.probe($0.model, precision: precision) })
             ?? (attendsThroughCache: false, rotatesValues: false, readsThroughUpdate: false)
         let attends = probed.attendsThroughCache
@@ -237,7 +237,7 @@ extension MLXInferenceEngine {
     }
 
     func probeKVHeads(directory: URL) async {
-        guard let ratio = kvHeadSplit, let container else { return }
+        guard let ratio = configuration.kvHeadSplit, let container else { return }
         guard modelFacts.capabilities.allows(.kvHeadSplit) else {
             logger.warn("--kv-head-split is not verified on this model family, so the KV cache stays dense")
             return
@@ -263,7 +263,7 @@ extension MLXInferenceEngine {
     }
 
     func probeQuest() async {
-        guard let questTopK, modelFacts.capabilities.allows(.quest), let container else { return }
+        guard let questTopK = configuration.questTopK, modelFacts.capabilities.allows(.quest), let container else { return }
         let epoch = modelEpoch
         do {
             guard try await container.perform({ try QuestKVCache.modelAttendsThroughCache($0.model) }) else {
@@ -310,7 +310,7 @@ extension MLXInferenceEngine {
 
     func wireWorkingSet() async {
         await releaseWiredMemory()
-        guard wiresWorkingSet else { return }
+        guard configuration.wiresWorkingSet else { return }
         let ticket = WiredMemoryTicket(size: Int(PromptCacheBudget.gpuWorkingSet().rawValue), policy: WiredMaxPolicy(), kind: .active)
         let applied = await ticket.start()
         wiredTicket = ticket

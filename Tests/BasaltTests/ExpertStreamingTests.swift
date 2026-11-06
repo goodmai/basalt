@@ -61,8 +61,7 @@ struct ExpertLRUTests {
         #expect(try ExpertStreamingOptions.parse(["--experimental-expert-streaming", "--expert-cache-gb", "2"]).setting == ExpertStreaming(cacheBytes: ByteCount(2 << 30)))
         #expect(throws: (any Error).self) { try ExpertStreamingOptions.parse(["--expert-cache-gb", "2"]) }
         #expect(throws: (any Error).self) { try ExpertStreamingOptions.parse(["--experimental-expert-streaming", "--expert-cache-gb", "0"]) }
-        let engine = MLXInferenceEngine()
-        await engine.streamExperts(ExpertStreaming())
+        let engine = MLXInferenceEngine(EngineConfiguration(expertStreaming: ExpertStreaming()))
         #expect(await engine.expertCacheStats() == nil)
     }
 

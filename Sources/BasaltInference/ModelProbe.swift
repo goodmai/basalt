@@ -230,12 +230,8 @@ extension ModelProbe {
 }
 
 extension MLXInferenceEngine {
-    public func probeModels(_ enabled: Bool) {
-        probesModel = enabled
-    }
-
     func probe(_ container: ModelContainer, directory: URL, modelPath: String) async throws(BasaltError) {
-        guard probesModel else { return }
+        guard configuration.probesModel else { return }
         let started = ContinuousClock.now
         let probe: ModelProbe
         do {

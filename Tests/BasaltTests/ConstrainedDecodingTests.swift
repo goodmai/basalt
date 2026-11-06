@@ -86,7 +86,7 @@ enum ConstrainedModel {
         opensThinking: Bool = false, profile: any ModelProfile = GenericProfile(), endsText: Bool = true,
         tokenizer: (any MLXLMCommon.Tokenizer)? = nil, experimentalSamplers: Bool = false
     ) async throws -> MLXInferenceEngine {
-        let engine = MLXInferenceEngine(experimentalSamplers: experimentalSamplers)
+        let engine = MLXInferenceEngine(EngineConfiguration(experimentalSamplers: experimentalSamplers))
         await engine.attach(try container(opensThinking: opensThinking, tokenizer: tokenizer ?? JSONPieceTokenizer(endsText: endsText)),
                             profile: profile)
         return engine

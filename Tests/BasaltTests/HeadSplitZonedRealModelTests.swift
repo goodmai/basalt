@@ -89,7 +89,7 @@ struct HeadSplitZonedRealModelTests {
         defer { log.releaseGPU() }
         let directory = URL(fileURLWithPath: path)
         let cachedAtLoad = FileManager.default.fileExists(atPath: KVHeadClassifier.storedSelection(for: directory, ratio: Self.servedShare).path)
-        let engine = MLXInferenceEngine(gpuCacheLimit: 0, kvPrecision: .k8v4, kvZones: .standard, kvHeadSplit: Self.servedShare)
+        let engine = MLXInferenceEngine(EngineConfiguration(gpuCacheLimit: 0, kvPrecision: .k8v4, kvZones: .standard, kvHeadSplit: Self.servedShare))
         let loadStarted = Date()
         try await log.step("load") { try await engine.load(modelPath: path) }
         let container = try #require(await engine.container)

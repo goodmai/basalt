@@ -1,8 +1,6 @@
 import Foundation
 import MLX
 import MLXLLM
-// Registers MLXVLM's factory trampoline (Gemma 4, Qwen3.5-VL, …). The registry
-// finds it via NSClassFromString, so the module must actually be linked in.
 import MLXVLM
 import MLXLMCommon
 import MLXHuggingFace
@@ -18,32 +16,13 @@ extension Duration {
     }
 }
 
-// MARK: — Real implementation
-
 public actor MLXInferenceEngine: InferenceEngine {
 
     private(set) var state = EngineState.unloaded(0)
     let logger = BasaltLogger(module: "MLXInferenceEngine")
 
-    /// Chat-template knob for models with a reasoning budget (Qwen3.8: xhigh | medium | low).
-    /// Left nil the template picks its own default — for Qwen3.8 that is `xhigh`, which
-    /// can spend the whole token budget thinking and never emit an answer.
-    let reasoningEffort: String?
-
-    let kvPrecision: KVPrecision?
-    let quantizedKVStart: Int
-    let kvZones: KVZones?
-    let wiresWorkingSet: Bool
-    var probesModel = false
-    var expertStreaming: ExpertStreaming?
+    let configuration: EngineConfiguration
     var wiredTicket: WiredMemoryTicket?
-    let kvHeadSplit: Double?
-    let questTopK: Int?
-    let repetitionPenalty: Float?
-    let topK: Int?
-    let minP: Float?
-    let seed: UInt64?
-    let gpuCacheLimit: Int?
 
     var promptCaches: PromptCacheTree
     private(set) var leases: [Int: PromptCacheLeaseSlot] = [:]
@@ -56,75 +35,20 @@ public actor MLXInferenceEngine: InferenceEngine {
     private(set) var appliedMemoryDirective = MemoryDirective.relaxed
     private(set) var prefillPacer: PrefillPacer?
     private var kvBudget: ByteCount?
-    private let configuredPromptCacheBytes: ByteCount?
-    private let hybridAnchors: Int
     var templateSuffixes: [String: Int] = [:]
     var grammarVocabulary: Result<GrammarVocabulary, ConstraintUnavailable>?
     var sequenceBreakers: (strings: [String], ids: Set<Int>)?
     var grammarPool = GrammarPool()
-    private let cacheBlendRatio: Float?
     private(set) var cacheBlend: CacheBlendStore?
-    let speculativeLookup: Bool
-    let speculativeRecycling: Bool
-    let mtp: Bool
-    let mtpBlockSize: Int
-    let experimentalSamplers: Bool
-    let grammarJumpForward: Bool
     public var kvMemoryBudget: ByteCount? { kvBudget }
     var promptCacheDisk: PromptCacheDiskStore?
-    let batchSlots: Int
     var batchDecoder: BatchedDecoder?
 
-    public init(
-        reasoningEffort: String? = nil,
-        gpuCacheLimit: Int? = 512 << 20,
-        promptCacheBytes: Int? = nil,
-        kvPrecision: KVPrecision? = nil,
-        quantizedKVStart: Int = KVCacheGeometry.defaultQuantizedKVStart,
-        kvZones: KVZones? = nil,
-        kvHeadSplit: Double? = nil,
-        questTopK: Int? = nil,
-        repetitionPenalty: Float? = nil,
-        topK: Int? = nil,
-        minP: Float? = nil,
-        seed: UInt64? = nil,
-        cacheBlendRatio: Float? = nil,
-        speculativeLookup: Bool = false,
-        speculativeRecycling: Bool = false,
-        mtp: Bool = false,
-        mtpBlockSize: Int = 4,
-        experimentalSamplers: Bool = false,
-        grammarJumpForward: Bool = false,
-        promptCacheDisk: PromptCacheDiskStore? = nil,
-        hybridAnchors: Int = 8,
-        batchSlots: Int = 1,
-        wiresWorkingSet: Bool = false
-    ) {
-        self.wiresWorkingSet = wiresWorkingSet
-        self.hybridAnchors = hybridAnchors
-        self.batchSlots = max(1, batchSlots)
+    public init(_ configuration: EngineConfiguration = .standard, promptCacheDisk: PromptCacheDiskStore? = nil) {
+        self.configuration = configuration.normalized
         self.promptCacheDisk = promptCacheDisk
-        self.speculativeLookup = speculativeLookup
-        self.speculativeRecycling = speculativeRecycling
-        self.mtp = mtp
-        self.mtpBlockSize = max(2, mtpBlockSize)
-        self.experimentalSamplers = experimentalSamplers
-        self.grammarJumpForward = grammarJumpForward
-        self.reasoningEffort = reasoningEffort
-        self.gpuCacheLimit = gpuCacheLimit
-        self.kvPrecision = kvPrecision
-        self.quantizedKVStart = quantizedKVStart
-        self.kvZones = kvZones
-        self.kvHeadSplit = kvHeadSplit
-        self.questTopK = questTopK
-        self.repetitionPenalty = repetitionPenalty
-        self.topK = topK
-        self.minP = minP
-        self.seed = seed
-        self.configuredPromptCacheBytes = promptCacheBytes.map { ByteCount($0) }
-        self.cacheBlendRatio = cacheBlendRatio
-        self.promptCaches = PromptCacheTree(byteBudget: ByteCount(promptCacheBytes ?? 0), anchorLimit: max(1, hybridAnchors))
-        self.promptCacheFullBudget = ByteCount(promptCacheBytes ?? 0)
+        promptCaches = PromptCacheTree(byteBudget: ByteCount(configuration.promptCacheBytes ?? 0), anchorLimit: max(1, configuration.hybridAnchors))
+        promptCacheFullBudget = ByteCount(configuration.promptCacheBytes ?? 0)
     }
 
     public func generateStream(request: GenerationRequest) async throws(BasaltError) -> AsyncStream<StreamChunk> {
@@ -153,7 +77,7 @@ public actor MLXInferenceEngine: InferenceEngine {
                 modelIsHybrid: modelIsHybrid, modelHasRecurrentState: modelHasRecurrentState))
             try await restoreIfNeeded(namespace, drafts: plan.drafts, tokens: prompt.tokens, container: container, epoch: epoch)
             let claim = try claimCache(namespace, drafts: plan.drafts, tokens: prompt.tokens, mediaEnd: prompt.media.end)
-            let search = AnchorSearch(prompt: prompt.tokens, reused: claim.reuse?.reusedTokens ?? 0, boundary: boundary, limit: hybridAnchors)
+            let search = AnchorSearch(prompt: prompt.tokens, reused: claim.reuse?.reusedTokens ?? 0, boundary: boundary, limit: configuration.hybridAnchors)
             let anchors = plan.findsAnchors
                 ? await anchorOffsets(rendered, search, container: container, tools: toolSpecs) : []
             let (constrained, alarm) = NonFiniteLogitGuard.guarding(
@@ -208,7 +132,7 @@ extension MLXInferenceEngine {
 
     public func apply(_ directive: MemoryDirective) async -> MemoryLimits? {
         if directive != appliedMemoryDirective {
-            if let gpuCacheLimit { Memory.cacheLimit = Self.cacheLimit(gpuCacheLimit, under: directive) }
+            if let gpuCacheLimit = configuration.gpuCacheLimit { Memory.cacheLimit = Self.cacheLimit(gpuCacheLimit, under: directive) }
             if directive > appliedMemoryDirective, directive.clearsCache { Memory.clearCache() }
             let evictedBefore = promptCaches.evictions
             promptCaches.rebudget(ByteCount(Int64(Double(promptCacheFullBudget.rawValue) * directive.promptCacheShare)))
@@ -216,7 +140,7 @@ extension MLXInferenceEngine {
             appliedMemoryDirective = directive
         }
         return MemoryLimits(
-            cacheLimitBytes: gpuCacheLimit.map { Self.cacheLimit($0, under: appliedMemoryDirective) },
+            cacheLimitBytes: configuration.gpuCacheLimit.map { Self.cacheLimit($0, under: appliedMemoryDirective) },
             promptCacheBudgetBytes: Int(promptCaches.byteBudget.rawValue), promptCacheBytes: Int(promptCaches.byteCount.rawValue),
             promptCacheEvictions: promptCaches.evictions)
     }
@@ -239,14 +163,14 @@ extension MLXInferenceEngine {
         grammarPool = GrammarPool()
         let workingSet = PromptCacheBudget.gpuWorkingSet()
         let weights = ByteCount(Memory.activeMemory)
-        let budget = configuredPromptCacheBytes ?? PromptCacheBudget.automatic(workingSet: workingSet, weights: weights)
+        let budget = configuration.promptCacheBytes.map { ByteCount($0) } ?? PromptCacheBudget.automatic(workingSet: workingSet, weights: weights)
         kvBudget = max(0, workingSet - weights - budget)
-        let blendBytes = cacheBlendRatio == nil ? 0 : budget / 2
-        promptCaches = PromptCacheTree(byteBudget: budget - blendBytes, anchorLimit: max(1, hybridAnchors))
+        let blendBytes = configuration.cacheBlendRatio == nil ? 0 : budget / 2
+        promptCaches = PromptCacheTree(byteBudget: budget - blendBytes, anchorLimit: max(1, configuration.hybridAnchors))
         mtpPrefixes.removeAll()
         promptCacheFullBudget = budget - blendBytes
         appliedMemoryDirective = .relaxed
-        cacheBlend = cacheBlendRatio.map { CacheBlendStore(ratio: $0, byteBudget: Int(blendBytes.rawValue)) }
+        cacheBlend = configuration.cacheBlendRatio.map { CacheBlendStore(ratio: $0, byteBudget: Int(blendBytes.rawValue)) }
         templateSuffixes = [:]
         logger.info("Prompt cache budget: \(promptCaches.byteBudget.rawValue >> 20) MB")
         return true

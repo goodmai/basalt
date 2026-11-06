@@ -145,7 +145,7 @@ struct EvictingKVCacheEngineTests {
             (.qwen3HeadDim32, KVZones.standard.evicting(0.5), true, false),
           ])
     func loadFindsUpdateReaders(family: TinyModel.Family, zones: KVZones, takesZones: Bool, evictsInFP16: Bool) async throws {
-        let engine = MLXInferenceEngine(kvPrecision: .q8, kvZones: zones)
+        let engine = MLXInferenceEngine(EngineConfiguration(kvPrecision: .q8, kvZones: zones))
         await engine.attach(try TinyModel.container(family))
         await engine.probeKVZones()
         #expect(await engine.supportsKVZones == takesZones)

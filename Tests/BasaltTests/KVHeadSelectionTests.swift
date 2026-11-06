@@ -79,7 +79,7 @@ struct KVHeadSelectionTests {
 
     @Test("At load the split applies only when the stored selection passes the gate", arguments: [true, false])
     func loadGate(passes: Bool) async throws {
-        let engine = MLXInferenceEngine(promptCacheBytes: FeatureMatrixTests.promptCacheBytes, kvHeadSplit: 0.5)
+        let engine = MLXInferenceEngine(EngineConfiguration(promptCacheBytes: FeatureMatrixTests.promptCacheBytes, kvHeadSplit: 0.5))
         await engine.attach(try TinyModel.container(.qwen3HeadDim32))
         let directory = FileManager.default.temporaryDirectory.appending(path: "head-gate-\(UUID().uuidString)")
         let stored = KVHeadClassifier.storedSelection(for: directory, ratio: 0.5)

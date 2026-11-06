@@ -73,7 +73,7 @@ struct XRayTensorTests {
     static let downProj = "model.layers.0.mlp.down_proj.weight"
 
     static func engine(_ model: any LanguageModel) async -> MLXInferenceEngine {
-        let engine = MLXInferenceEngine(promptCacheBytes: nil)
+        let engine = MLXInferenceEngine(EngineConfiguration(promptCacheBytes: nil))
         await engine.attach(ModelContainer(context: ModelContext(
             configuration: ModelConfiguration(id: "tiny-xray"), model: model, processor: ByteInputProcessor(), tokenizer: ByteTokenizer())))
         return engine

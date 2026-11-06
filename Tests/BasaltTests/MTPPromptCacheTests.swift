@@ -69,7 +69,7 @@ struct MTPPromptCacheTests {
     @Test("Through the engine a warm follow-up turn with --mtp leases the stored prefix, still drafts, and answers like a cold full prefill")
     func warmTurnReusesPrefix() async throws {
         func engine() async throws -> MLXInferenceEngine {
-            let engine = MLXInferenceEngine(promptCacheBytes: 1 << 30, mtp: true)
+            let engine = MLXInferenceEngine(EngineConfiguration(promptCacheBytes: 1 << 30, mtp: true))
             let container = try TinyModel.container(.qwen35)
             await engine.attach(container)
             await engine.useMTPDrafter(in: container) { _ in try? GreedyDraftingMTPDrafter(Self.head()) }
@@ -100,7 +100,7 @@ struct MTPPromptCacheTests {
     @Test("On a real MTP model a warm follow-up turn prefills only its tail: lower TTFT than a cold full prefill, the same greedy text",
           .enabled(if: modelPath != nil, "set BASALT_E2E=1 and BASALT_E2E_MTP_MODEL_PATH"))
     func warmFollowUpOnRealModel() async throws {
-        let engine = MLXInferenceEngine(mtp: true)
+        let engine = MLXInferenceEngine(EngineConfiguration(mtp: true))
         try await engine.load(modelPath: try #require(Self.modelPath))
         let code = try String(contentsOf: URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()

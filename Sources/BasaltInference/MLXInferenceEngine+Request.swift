@@ -51,7 +51,7 @@ extension MLXInferenceEngine {
     ) async throws -> RenderedPrompt {
         let continued = request.messages.flatMap(ChatMessageInput.splittingPrefill)
         let prefill = continued.flatMap { $0.prefill.isEmpty ? nil : $0.prefill }
-        let requestedPolicy = Self.reasoningPolicy(request: request, defaultReasoningEffort: reasoningEffort)
+        let requestedPolicy = Self.reasoningPolicy(request: request, defaultReasoningEffort: configuration.reasoningEffort)
         let policy = prefill.map { Self.opensThinking($0) ? requestedPolicy : .disabled } ?? requestedPolicy
         let turns = (continued?.turns ?? request.messages).flatMap {
             $0.isEmpty ? nil : profile.turns(controlTokens.neutralize($0), for: policy)
@@ -206,9 +206,9 @@ extension MLXInferenceEngine {
         let expertRouting = (plan.speculativeLookup || jumpForward) ? await routesExperts(container, epoch: epoch) : true
         options.batch = plan.batchable ? await batchedDecoder(container, epoch: epoch) : nil
         options.lookup = LookupOptions(
-            speculative: plan.speculativeLookup, recycling: speculativeRecycling, jumpForward: jumpForward, routesExperts: expertRouting)
+            speculative: plan.speculativeLookup, recycling: configuration.speculativeRecycling, jumpForward: jumpForward, routesExperts: expertRouting)
         (options.kvZones, options.kvHeadMask, options.questTopK, options.kvPrecision) = (plan.kvZones, plan.kvHeadMask, plan.questTopK, plan.kvPrecision)
-        (options.mtp, options.mtpBlockSize, options.mtpPrefix) = (plan.drafts, mtpBlockSize, mtpPrefix)
+        (options.mtp, options.mtpBlockSize, options.mtpPrefix) = (plan.drafts, configuration.mtpBlockSize, mtpPrefix)
         options.pacer = prefillPacer
     }
 
@@ -221,8 +221,8 @@ extension MLXInferenceEngine {
 
     var planSettings: GenerationPlan.Settings {
         GenerationPlan.Settings(
-            kvPrecision: kvPrecision, kvZones: kvZones, attendsThroughZones: modelAttendsThroughZones, prefillsInChunks: modelPrefillsInChunks,
-            evictsThroughUpdate: modelFacts.evictsThroughUpdate, kvHeadMask: kvHeadMask, questTopK: questApplies ? questTopK : nil, speculativeLookup: speculativeLookup,
+            kvPrecision: configuration.kvPrecision, kvZones: configuration.kvZones, attendsThroughZones: modelAttendsThroughZones, prefillsInChunks: modelPrefillsInChunks,
+            evictsThroughUpdate: modelFacts.evictsThroughUpdate, kvHeadMask: kvHeadMask, questTopK: questApplies ? configuration.questTopK : nil, speculativeLookup: configuration.speculativeLookup,
             capabilities: modelFacts.capabilities, adapter: adapterNamespace)
     }
 
@@ -230,7 +230,7 @@ extension MLXInferenceEngine {
         GenerateParameters, GenerationComponents, shaping: (@Sendable () -> EntropyDynamicTemperature)?,
         exclusion: (@Sendable () -> ExcludeTopChoices)?
     ) {
-        if request.usesExperimentalSamplers, !experimentalSamplers {
+        if request.usesExperimentalSamplers, !configuration.experimentalSamplers {
             throw .invalidRequestStructure(
                 details: "dry_* and xtc_* are experimental (DRY can turn a detectable loop into one with corrupted facts on low-bit models); start the server with --experimental-samplers to use them")
         }

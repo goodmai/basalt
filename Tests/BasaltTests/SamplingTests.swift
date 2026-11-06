@@ -83,7 +83,7 @@ struct EngineSamplingTests {
 
     @Test("min_p precedence: request, then --min-p, then the profile; 0 turns it off")
     func minPPrecedence() async {
-        let engine = MLXInferenceEngine(minP: 0.1)
+        let engine = MLXInferenceEngine(EngineConfiguration(minP: 0.1))
         #expect(await engine.sampling(for: GenerationRequest(prompt: "p")).0.minP == 0.1)
         #expect(await engine.sampling(for: GenerationRequest(prompt: "p").with { $0.minP = 0.02 }).0.minP == 0.02)
         #expect(await engine.sampling(for: GenerationRequest(prompt: "p").with { $0.minP = 0 }).0.minP == 0)
@@ -102,7 +102,7 @@ struct EngineSamplingTests {
         let edt = factory()
         #expect(edt.baseTemperature == 0.9)
 
-        let (params, _, shaping, _) = await MLXInferenceEngine(minP: 0.1).sampling(
+        let (params, _, shaping, _) = await MLXInferenceEngine(EngineConfiguration(minP: 0.1)).sampling(
             for: GenerationRequest(prompt: "p", temperature: 0.9, topP: 0.8).with { $0.dynamicTemperature = true })
         #expect(params.topP == 1 && params.minP == 0)
         let moved = try #require(shaping?())
@@ -241,7 +241,7 @@ struct DRYAndXTCTests {
 
     @Test("With every DRY and XTC field unset no processor is appended; DRY needs a positive multiplier, XTC a positive probability and T > 0")
     func wiring() async throws {
-        let engine = MLXInferenceEngine(seed: 5)
+        let engine = MLXInferenceEngine(EngineConfiguration(seed: 5))
         let plain = await engine.sampling(for: GenerationRequest(prompt: "p"))
         #expect(plain.1.logitProcessorFactory == nil && plain.exclusion == nil)
         let inert = await engine.sampling(for: GenerationRequest(prompt: "p").with {

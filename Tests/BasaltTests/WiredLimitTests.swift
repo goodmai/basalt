@@ -7,7 +7,7 @@ import Testing
 struct WiredLimitTests {
     @Test("Wiring holds one ticket of the working set and releasing returns it; a second wire replaces the first")
     func wireAndRelease() async {
-        let engine = MLXInferenceEngine(wiresWorkingSet: true)
+        let engine = MLXInferenceEngine(EngineConfiguration(wiresWorkingSet: true))
         await engine.wireWorkingSet()
         #expect(await engine.wiredLimitBytes == Int(PromptCacheBudget.gpuWorkingSet().rawValue))
         await engine.wireWorkingSet()

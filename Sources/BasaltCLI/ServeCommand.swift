@@ -269,8 +269,6 @@ struct ServeCommand: AsyncParsableCommand {
 extension ServeCommand {
     private func makeOrchestrator(maxTokens: Int) async throws -> ModelOrchestratorActor {
         let engine = try makeEngine()
-        await engine.probeModels(modelProbe)
-        await engine.streamExperts(expertStreaming.setting)
         if batchSlots > 1, maxConcurrent < 2 {
             log("\(yellow("[warn]")) --batch-slots \(batchSlots) has no effect with --max-concurrent \(maxConcurrent): only one generation runs at a time")
         }

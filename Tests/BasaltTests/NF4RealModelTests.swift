@@ -216,7 +216,7 @@ struct NF4SpeedRealModelTests {
         let inspection = await ModelInspector().inspect(modelIdOrPath: converted.path)
         log.record("inspect nf4", "intact \(inspection.intact), \(inspection.totalSizeFormatted)")
         try #require(inspection.intact)
-        let engine = MLXInferenceEngine(promptCacheBytes: 1 << 30)
+        let engine = MLXInferenceEngine(EngineConfiguration(promptCacheBytes: 1 << 30))
         let source = try await NF4Run.measure(engine, path: path, arm: "source", log: log)
         let nf4 = try await NF4Run.measure(engine, path: converted.path, arm: "nf4", log: log)
         let kl = GoldenFixture(revision: "source", tolerance: .infinity, prompts: source.traces).compare(nf4.traces)

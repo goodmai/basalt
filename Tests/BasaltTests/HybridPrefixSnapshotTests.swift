@@ -22,7 +22,7 @@ enum TinyHybrid {
     }
 
     static func engine(promptCacheBytes: Int? = nil, vision: Bool = false, hybridAnchors: Int = 8) async throws -> MLXInferenceEngine {
-        let engine = MLXInferenceEngine(promptCacheBytes: promptCacheBytes, hybridAnchors: hybridAnchors)
+        let engine = MLXInferenceEngine(EngineConfiguration(promptCacheBytes: promptCacheBytes, hybridAnchors: hybridAnchors))
         await engine.attach(ModelContainer(context: ModelContext(
             configuration: ModelConfiguration(id: "tiny-qwen35"),
             model: vision ? try makeVision() : try TinyModel.make(.qwen35),
@@ -58,7 +58,7 @@ enum TinyHybrid {
 
 enum TinySliding {
     static func engine(hybridAnchors: Int = 8) async throws -> MLXInferenceEngine {
-        let engine = MLXInferenceEngine(promptCacheBytes: 1 << 30, hybridAnchors: hybridAnchors)
+        let engine = MLXInferenceEngine(EngineConfiguration(promptCacheBytes: 1 << 30, hybridAnchors: hybridAnchors))
         await engine.attach(ModelContainer(context: ModelContext(
             configuration: ModelConfiguration(id: "tiny-gemma3"),
             model: try TinyModel.make(.gemma3),

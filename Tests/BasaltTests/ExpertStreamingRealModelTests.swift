@@ -48,8 +48,7 @@ struct ExpertStreamingRealModelTests {
     static func run(_ path: String, streaming: ExpertStreaming?, log: ModelRunLog, step: String) async throws -> Run {
         Memory.clearCache()
         Memory.peakMemory = 0
-        let engine = MLXInferenceEngine()
-        await engine.streamExperts(streaming)
+        let engine = MLXInferenceEngine(EngineConfiguration(expertStreaming: streaming))
         try await log.step("\(step) load") { try await engine.load(modelPath: path) }
         let response = try await log.step("\(step) generate") {
             try await engine.generate(request: GenerationRequest(prompt: prompt, maxTokens: tokens, temperature: 0))

@@ -87,7 +87,7 @@ enum Prefill {
     }
 
     static func engine(_ recorder: RenderRecorder, promptCacheBytes: Int? = nil) async throws -> MLXInferenceEngine {
-        let engine = MLXInferenceEngine(promptCacheBytes: promptCacheBytes)
+        let engine = MLXInferenceEngine(EngineConfiguration(promptCacheBytes: promptCacheBytes))
         await engine.attach(ModelContainer(context: ModelContext(
             configuration: ModelConfiguration(id: "tiny-prefill"), model: try TinyModel.make(),
             processor: ThinkingSwitchProcessor(recorder: recorder), tokenizer: ByteTokenizer())))

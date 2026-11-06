@@ -107,7 +107,7 @@ struct BatchedGrammarTests {
     ]
 
     static func engine(slots: Int) async throws -> MLXInferenceEngine {
-        let engine = MLXInferenceEngine(batchSlots: slots)
+        let engine = MLXInferenceEngine(EngineConfiguration(batchSlots: slots))
         await engine.attach(try ConstrainedModel.container())
         return engine
     }

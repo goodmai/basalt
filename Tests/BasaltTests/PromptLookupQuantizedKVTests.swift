@@ -43,9 +43,9 @@ struct PromptLookupQuantizedKVTests {
     @Test("Through the engine at --kv-bits 8 and 4, greedy output is unchanged with prompt lookup on and the response reports accepted drafts",
           arguments: [KVPrecision.q8, .q4])
     func engineEquivalence(precision: KVPrecision) async throws {
-        let plain = MLXInferenceEngine(quantizedKVStart: 0)
+        let plain = MLXInferenceEngine(EngineConfiguration(quantizedKVStart: 0))
         await plain.attach(try TinyModel.container(.qwen3HeadDim32))
-        let speculative = MLXInferenceEngine(quantizedKVStart: 0, speculativeLookup: true)
+        let speculative = MLXInferenceEngine(EngineConfiguration(quantizedKVStart: 0, speculativeLookup: true))
         await speculative.attach(try TinyModel.container(.qwen3HeadDim32))
         let request = GenerationRequest(prompt: LookupFixture.code, maxTokens: 64, temperature: 0).withKVPrecision(precision)
         let expected = try await plain.generate(request: request)

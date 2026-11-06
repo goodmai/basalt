@@ -23,13 +23,13 @@ struct FeatureMatrixTests {
         func makeEngine() -> MLXInferenceEngine {
             let bytes = FeatureMatrixTests.promptCacheBytes
             return switch self {
-            case .lookup: MLXInferenceEngine(promptCacheBytes: bytes, speculativeLookup: true)
-            case .mtp: MLXInferenceEngine(promptCacheBytes: bytes, mtp: true)
-            case .cacheBlend: MLXInferenceEngine(promptCacheBytes: bytes, cacheBlendRatio: 0.15)
-            case .kvZones: MLXInferenceEngine(promptCacheBytes: bytes, kvPrecision: .q8, kvZones: .standard)
-            case .headSplit: MLXInferenceEngine(promptCacheBytes: bytes, kvHeadSplit: 0.5)
-            case .headSplitZoned: MLXInferenceEngine(promptCacheBytes: bytes, kvPrecision: .k8v4, kvZones: .standard, kvHeadSplit: 0.5)
-            case .quest: MLXInferenceEngine(promptCacheBytes: bytes, questTopK: 2)
+            case .lookup: MLXInferenceEngine(EngineConfiguration(promptCacheBytes: bytes, speculativeLookup: true))
+            case .mtp: MLXInferenceEngine(EngineConfiguration(promptCacheBytes: bytes, mtp: true))
+            case .cacheBlend: MLXInferenceEngine(EngineConfiguration(promptCacheBytes: bytes, cacheBlendRatio: 0.15))
+            case .kvZones: MLXInferenceEngine(EngineConfiguration(promptCacheBytes: bytes, kvPrecision: .q8, kvZones: .standard))
+            case .headSplit: MLXInferenceEngine(EngineConfiguration(promptCacheBytes: bytes, kvHeadSplit: 0.5))
+            case .headSplitZoned: MLXInferenceEngine(EngineConfiguration(promptCacheBytes: bytes, kvPrecision: .k8v4, kvZones: .standard, kvHeadSplit: 0.5))
+            case .quest: MLXInferenceEngine(EngineConfiguration(promptCacheBytes: bytes, questTopK: 2))
             }
         }
 
@@ -73,7 +73,7 @@ struct FeatureMatrixTests {
 
     static func run(_ family: TinyModel.Family, _ feature: Feature?) async throws -> (engine: MLXInferenceEngine, replies: [GenerationResponse]) {
         let container = try TinyModel.container(family)
-        let engine = feature?.makeEngine() ?? MLXInferenceEngine(promptCacheBytes: promptCacheBytes)
+        let engine = feature?.makeEngine() ?? MLXInferenceEngine(EngineConfiguration(promptCacheBytes: promptCacheBytes))
         await engine.attach(container)
         try await feature?.prepare(engine, container, family)
         var replies: [GenerationResponse] = []

@@ -34,7 +34,7 @@ enum DiskFixture {
     static func engine(
         _ model: any LanguageModel, id: String, disk: PromptCacheDiskStore?, fingerprint: String = "fp-1"
     ) async -> MLXInferenceEngine {
-        let engine = MLXInferenceEngine(promptCacheBytes: 1 << 26, promptCacheDisk: disk)
+        let engine = MLXInferenceEngine(EngineConfiguration(promptCacheBytes: 1 << 26), promptCacheDisk: disk)
         await engine.attach(
             ModelContainer(context: ModelContext(
                 configuration: ModelConfiguration(id: id), model: model,

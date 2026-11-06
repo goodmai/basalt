@@ -268,7 +268,7 @@ struct ZonedKVCacheBenchmarkTests {
             return
         }
         let engineZones = KVZones.standard.evicting(engineEvict)
-        let engine = MLXInferenceEngine(gpuCacheLimit: 0, kvPrecision: .k8v4, kvZones: engineZones)
+        let engine = MLXInferenceEngine(EngineConfiguration(gpuCacheLimit: 0, kvPrecision: .k8v4, kvZones: engineZones))
         do {
             try await engine.load(modelPath: directory.path)
         } catch {

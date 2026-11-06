@@ -151,7 +151,7 @@ struct PromptCacheDiskBenchmarkTests {
         resumed = nil
         Memory.clearCache()
 
-        var cold: MLXInferenceEngine? = MLXInferenceEngine(promptCacheBytes: 0)
+        var cold: MLXInferenceEngine? = MLXInferenceEngine(EngineConfiguration(promptCacheBytes: 0))
         try await log.step("load-no-cache") { try await cold!.load(modelPath: path) }
         let full = try await log.step("turn2-full-prefill") { try await timed(cold!, request(secondTurn)) }
         log.record("turn2-full", String(format: "prompt %d cached %d ttft %.3f s", full.promptTokens, full.cachedTokens, full.ttft))

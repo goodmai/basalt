@@ -320,7 +320,7 @@ struct ZonedKVCacheEngineTests {
         #expect(try ZonedKVCache.probe(Self.qwen3(hiddenSize: 512), precision: .k8v4h) == (true, true, false))
         #expect(try ZonedKVCache.probe(Self.qwen3(hiddenSize: 512), precision: .k8v4) == (true, false, false))
         for (hiddenSize, precision, flagged) in [(640, KVPrecision.k8v4h, true), (512, .k8v4h, false), (640, .k8v4, false)] {
-            let engine = MLXInferenceEngine(kvPrecision: precision, kvZones: .standard)
+            let engine = MLXInferenceEngine(EngineConfiguration(kvPrecision: precision, kvZones: .standard))
             let model = try Self.qwen3(hiddenSize: hiddenSize)
             await engine.attach(ModelContainer(context: ModelContext(
                 configuration: ModelConfiguration(id: "tiny-qwen3-\(hiddenSize)"), model: model,
@@ -334,7 +334,7 @@ struct ZonedKVCacheEngineTests {
     @Test("At load the engine reports eviction only when the model's default prefill chunks fit the recent window; without --kv-evict it never does",
           arguments: [(KVZones.standard.evicting(0.5), true), (KVZones(sinkTokens: 4, windowTokens: 16, migrationStep: 8, evictedMiddleFraction: 0.5), false), (KVZones.standard, false)])
     func loadReportsWhetherEvictionApplies(zones: KVZones, applies: Bool) async throws {
-        let engine = MLXInferenceEngine(kvPrecision: .k8v4, kvZones: zones)
+        let engine = MLXInferenceEngine(EngineConfiguration(kvPrecision: .k8v4, kvZones: zones))
         await engine.attach(ModelContainer(context: ModelContext(
             configuration: ModelConfiguration(id: "tiny-qwen3-evict"), model: try Self.qwen3(hiddenSize: 128),
             processor: ByteInputProcessor(), tokenizer: ByteTokenizer())))

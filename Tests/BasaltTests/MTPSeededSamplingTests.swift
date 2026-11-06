@@ -75,7 +75,7 @@ struct MTPSeededSamplingTests {
     @Test("Through the engine a seeded T = 0.7 request with --mtp answers like one without it and reports drafts proposed and accepted")
     func engineReportsAcceptance() async throws {
         func reply(mtp: Bool) async throws -> GenerationResponse {
-            let engine = MLXInferenceEngine(seed: 11, mtp: mtp)
+            let engine = MLXInferenceEngine(EngineConfiguration(seed: 11, mtp: mtp))
             let container = try TinyModel.container(.qwen35)
             await engine.attach(container)
             if mtp { await engine.useMTPDrafter(in: container) { _ in try? GreedyDraftingMTPDrafter(MTPPromptCacheTests.head()) } }

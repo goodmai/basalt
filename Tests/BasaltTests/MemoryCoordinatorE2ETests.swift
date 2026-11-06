@@ -53,7 +53,7 @@ struct MemoryCoordinatorE2ETests {
     }
 
     static func rig() async throws -> Rig {
-        let engine = MLXInferenceEngine(promptCacheBytes: budget)
+        let engine = MLXInferenceEngine(EngineConfiguration(promptCacheBytes: budget))
         let orchestrator = ModelOrchestratorActor(engine: engine, telemetry: TelemetryTracker())
         try await orchestrator.loadModel(path: try #require(modelPath))
         let source = FakeMemoryPressure()
