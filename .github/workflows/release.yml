@@ -11,9 +11,41 @@ concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
 
+permissions: {}
+
 jobs:
+  main-tests:
+    name: Main tests green
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+    outputs:
+      green: ${{ steps.lookup.outputs.green }}
+    steps:
+      - name: Look up the unit-tests.yml push run on main
+        id: lookup
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          GREEN=false
+          if RUN=$(gh api "repos/$REPO/actions/workflows/unit-tests.yml/runs?head_sha=$SHA&event=push&branch=main" \
+                --jq 'if .total_count == 1 and .workflow_runs[0].status == "completed" then .workflow_runs[0].id else empty end') \
+              && [ -n "$RUN" ] \
+              && JOBS=$(gh api "repos/$REPO/actions/runs/$RUN/jobs?filter=latest" \
+                --jq '[.jobs[] | select(.name == "Swift Tests" and .conclusion == "success")] | length') \
+              && [ "$JOBS" = 1 ]; then
+            GREEN=true
+          fi
+          echo "green=$GREEN" >> "$GITHUB_OUTPUT"
+          echo "unit-tests.yml green on ${SHA}: $GREEN"
+
   release:
     name: Build and Release
+    needs: main-tests
+    if: ${{ !cancelled() }}
     runs-on: xcode-27
     timeout-minutes: 60
     permissions:
@@ -71,18 +103,8 @@ jobs:
           ls -la sboms
 
       - name: Test
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          COMMIT_SHA="${{ github.sha }}"
-          UNIT_TESTS_STATUS=$(gh api "repos/${{ github.repository }}/commits/${COMMIT_SHA}/check-runs" \
-            --jq '.check_runs[] | select(.name == "Swift Tests" or .name == "Unit Tests") | .conclusion' | grep "^success$" | head -n 1 || true)
-          if [ "$UNIT_TESTS_STATUS" = "success" ]; then
-            echo "Unit tests already green on commit ${COMMIT_SHA} — skipping redundant debug rebuild."
-          else
-            echo "No green Unit Tests check-run found on commit ${COMMIT_SHA} — running test suite fallback."
-            swift test --no-parallel
-          fi
+        if: needs.main-tests.outputs.green != 'true'
+        run: swift test --no-parallel
 
       # No prebuilt binary is published: the binary alone is useless without the
       # Metal library beside it, and a 130 MB metallib in every release is not

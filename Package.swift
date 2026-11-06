@@ -16,12 +16,14 @@ let package = Package(
         .package(url: "https://github.com/swift-server/swift-service-lifecycle", from: "2.12.0"),
         .package(url: "https://github.com/apple/swift-http-types.git",     from: "1.4.0"),
         .package(url: "https://github.com/apple/swift-log.git",            from: "1.6.2"),
+        .package(url: "https://github.com/apple/swift-nio.git",            from: "2.104.0"),
         // Provides the `Tokenizers` module used by MLXHuggingFace macros
         .package(url: "https://github.com/huggingface/swift-transformers",  from: "1.3.5"),
         .package(url: "https://github.com/huggingface/swift-jinja.git",     from: "2.5.1"),
         // Epic 16: CLI Enhancements
         .package(url: "https://github.com/onevcat/Rainbow.git", from: "4.2.2"),
         .package(url: "https://github.com/apple/swift-markdown.git", from: "0.9.0"),
+        .package(url: "https://github.com/jpsim/Yams.git", exact: "6.2.2"),
     ],
     targets: [
 
@@ -78,6 +80,7 @@ let package = Package(
                 .product(name: "Hummingbird",   package: "hummingbird"),
                 .product(name: "HTTPTypes",     package: "swift-http-types"),
                 .product(name: "Logging",       package: "swift-log"),
+                .product(name: "NIOFoundationEssentialsCompat", package: "swift-nio"),
             ],
             path: "Sources/BasaltServer",
             swiftSettings: swiftSettings
@@ -110,6 +113,7 @@ let package = Package(
             dependencies: [
                 "BasaltCore", "BasaltInference", "BasaltCloud", "BasaltServer", "BasaltUI", "BasaltHarness",
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
+                .product(name: "Yams", package: "Yams"),
             ],
             path: "Sources/BasaltCLI",
             swiftSettings: swiftSettings

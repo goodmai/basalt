@@ -1,6 +1,7 @@
 import Foundation
 import Hummingbird
 import HTTPTypes
+import NIOFoundationEssentialsCompat
 import BasaltCore
 
 struct ChatPipeline: Sendable {
@@ -61,6 +62,7 @@ struct ChatPipeline: Sendable {
     let label: String
     let source: String
     let endpoint: String
+    let zeroCopyBody: Bool
     let reject: @Sendable (HTTPResponse.Status, String) -> Response
 
     func rejection(_ status: HTTPResponse.Status, _ message: String) -> Rejection {
@@ -84,7 +86,11 @@ struct ChatPipeline: Sendable {
     static let bodyLimit = textBodyLimit + (ImageInput.maxTotalBytes + 2) / 3 * 4
 
     func body(of request: Request) async throws -> Data {
-        Data(try await request.body.collect(upTo: Self.bodyLimit).readableBytesView)
+        Self.data(of: try await request.body.collect(upTo: Self.bodyLimit), zeroCopy: zeroCopyBody)
+    }
+
+    static func data(of buffer: ByteBuffer, zeroCopy: Bool) -> Data {
+        zeroCopy ? Data(buffer: buffer) : Data(buffer.readableBytesView)
     }
 
     func decode<T: Decodable>(_ type: T.Type, from data: Data, failure: String) throws -> T {

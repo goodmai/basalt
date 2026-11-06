@@ -67,6 +67,9 @@ public struct DiffParser: Sendable {
         }
         for line in diff.components(separatedBy: .newlines) {
             if line.hasPrefix("--- ") {
+                flush()
+                header = nil
+                lines = []
                 oldFile = String(line.dropFirst(4))
             } else if line.hasPrefix("+++ ") {
                 newFile = String(line.dropFirst(4))

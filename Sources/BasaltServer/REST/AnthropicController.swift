@@ -6,12 +6,13 @@ import BasaltCore
 struct AnthropicController: Sendable {
     let orchestrator: ModelOrchestratorActor
     let modelId: String
+    var zeroCopyBody = false
 }
 
 extension AnthropicController {
     @Sendable
     func messages(request: Request, context: BasicRequestContext) async throws -> Response {
-        let pipeline = ChatPipeline(orchestrator: orchestrator, label: "Anthropic", source: "anthropic", endpoint: "/v1/messages") { status, message in
+        let pipeline = ChatPipeline(orchestrator: orchestrator, label: "Anthropic", source: "anthropic", endpoint: "/v1/messages", zeroCopyBody: zeroCopyBody) { status, message in
             ProviderErrorResponse.response(status: status, message: message, shape: .anthropic)
         }
         return try await pipeline.handle(request) { data in

@@ -6,9 +6,8 @@ import Foundation
 @available(macOS 14.0, *)
 struct AppEntry {
     static func main() {
-        // Execute the CLI asynchronously with proper run loop management
         Task {
-            await BasaltCLI.main()
+            await BasaltCLI.main(BasaltCLI.configuredArguments())
             Darwin.exit(0)
         }
 

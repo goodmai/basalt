@@ -4,6 +4,7 @@ public enum SecretRedactor {
     static let patterns: [(label: String, regex: NSRegularExpression)] = [
         ("anthropic_key", #"sk-ant-[A-Za-z0-9_\-]{20,}"#),
         ("openai_key", #"sk-[A-Za-z0-9_\-]{20,}"#),
+        ("gitlab_token", #"glpat-[A-Za-z0-9_\-]{20,}"#),
         ("github_token", #"(?:gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{40,})"#),
         ("aws_access_key", #"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b"#),
         ("slack_token", #"xox[bpas]-[A-Za-z0-9\-]{10,}"#),

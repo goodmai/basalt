@@ -338,3 +338,25 @@ struct DiffRendererTests {
         #expect(elapsed < 1, "Rendering should take < 1 s")
     }
 }
+
+@Suite("A unified diff of several files keeps each hunk with its own file")
+struct DiffParserFilesTests {
+    @Test("Each hunk carries the file it appears under, not the file that follows it")
+    func hunksKeepTheirFile() {
+        let diff = """
+            --- a/one.swift
+            +++ b/one.swift
+            @@ -1,1 +1,1 @@
+            -a
+            +b
+            --- a/two.py
+            +++ b/two.py
+            @@ -1,1 +1,1 @@
+            -c
+            +d
+            """
+        let hunks = DiffParser.parseUnifiedDiff(diff)
+        #expect(hunks.map(\.newFile) == ["b/one.swift", "b/two.py"])
+        #expect(hunks.map { $0.lines.map(\.text) } == [["a", "b"], ["c", "d"]])
+    }
+}

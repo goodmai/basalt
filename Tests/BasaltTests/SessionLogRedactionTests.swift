@@ -23,6 +23,7 @@ struct SessionLogRedactionTests {
         ("sk-ant-api03-" + String(repeating: "x", count: 30), "[REDACTED:anthropic_key]", "api03"),
         ("token ghp_" + String(repeating: "Z9", count: 18), "[REDACTED:github_token]", "Z9Z9"),
         ("github_pat_" + String(repeating: "A", count: 45), "[REDACTED:github_token]", "AAAA"),
+        ("gitlab glpat-" + String(repeating: "Q7", count: 10), "[REDACTED:gitlab_token]", "Q7Q7"),
         ("aws " + "AKIA" + "IOSFODNN7EXAMPLE x", "[REDACTED:aws_access_key]", "IOSFODNN"),
         ("slack " + "xox" + "b-1234567890-abcdefghij", "[REDACTED:slack_token]", "1234567890"),
         ("Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.payload", "[REDACTED:bearer]", "eyJhbGci"),

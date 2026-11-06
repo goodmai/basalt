@@ -30,6 +30,7 @@ struct GenerationPlan: Equatable, Sendable {
         var questTopK: Int?
         var speculativeLookup = false
         var capabilities = ModelCapabilities.unrestricted
+        var adapter: String?
     }
 
     struct Facts: Sendable {
@@ -59,11 +60,12 @@ struct GenerationPlan: Equatable, Sendable {
     ) -> String? {
         guard sameEpoch, cacheEnabled, settings.capabilities.allows(.promptCacheReuse),
               (request.kvPrecision ?? settings.kvPrecision) == nil else { return nil }
-        switch media {
-        case .text: return request.cacheKey
-        case .images(let digests, _): return request.cacheKey.map { "\($0)#images:\(digests.joined(separator: ","))" }
-        case .uncacheable: return nil
+        let key: String? = switch media {
+        case .text: request.cacheKey
+        case .images(let digests, _): request.cacheKey.map { "\($0)#images:\(digests.joined(separator: ","))" }
+        case .uncacheable: nil
         }
+        return key.map { key in settings.adapter.map { "\(key)|adapter:\($0)" } ?? key }
     }
 
     static func plainPrompt(_ request: GenerationRequest, _ settings: Settings, carriesMoreThanTokens: Bool) -> Bool {

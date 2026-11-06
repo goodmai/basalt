@@ -6,6 +6,7 @@ import BasaltCore
 struct OpenAIController: Sendable {
     let orchestrator: ModelOrchestratorActor
     let modelId: String
+    var zeroCopyBody = false
 }
 
 extension OpenAIController {
@@ -108,7 +109,7 @@ extension OpenAIController {
     }
 
     func pipeline(source: String, endpoint: String) -> ChatPipeline {
-        ChatPipeline(orchestrator: orchestrator, label: "OpenAI", source: source, endpoint: endpoint) { status, message in
+        ChatPipeline(orchestrator: orchestrator, label: "OpenAI", source: source, endpoint: endpoint, zeroCopyBody: zeroCopyBody) { status, message in
             ProviderErrorResponse.response(status: status, message: message, shape: .openAI)
         }
     }

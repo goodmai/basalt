@@ -11,7 +11,7 @@ updates:
       prefix: "deps"
 
   - package-ecosystem: "github-actions"
-    directory: "/"
+    directories: ["/", "/.github/actions/*"]
     schedule:
       interval: "monthly"
     commit-message:

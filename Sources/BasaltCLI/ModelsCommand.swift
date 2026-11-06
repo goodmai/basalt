@@ -90,8 +90,11 @@ struct DownloadSubcommand: AsyncParsableCommand {
     @Option(name: .shortAndLong, help: "Search term for interactive picker (e.g. Qwen3 | Qwen2.5-Coder | gemma-4 | Huihui | PRISM)")
     var search: String = ""
 
+    @Flag(name: .customLong("require-verified"), help: "Refuse a file the server sends no digest for, instead of keeping it with an `unverified` warning")
+    var requireVerified: Bool = false
+
     mutating func run() async throws {
-        let hub = HuggingFaceHub()
+        let hub = HuggingFaceHub(requireVerified: requireVerified)
 
         let repoId: String
         if let explicit = modelId {
@@ -465,9 +468,12 @@ struct InspectSubcommand: AsyncParsableCommand {
     @Flag(name: .long, help: "Output in machine-readable JSON format")
     var json: Bool = false
 
+    @Flag(name: .long, help: "Re-hash every file against its .<file>.sha256 sidecar, or the Hub tree API digest where there is none, and report verified true, false or unknown per file; reads only, never writes the snapshot or its blobs")
+    var verify: Bool = false
+
     mutating func run() async throws {
         let inspector = ModelInspector()
-        let report = await inspector.inspect(modelIdOrPath: modelId, quant: quant)
+        let report = await inspector.inspect(modelIdOrPath: modelId, quant: quant, verifyingWith: verify ? HuggingFaceHub() : nil)
 
         if json {
             try printJSON(report)
@@ -498,6 +504,8 @@ struct InspectSubcommand: AsyncParsableCommand {
                 print()
             }
 
+            if let files = report.files { printVerdicts(files) }
+
             if !report.errors.isEmpty {
                 print(red("  Errors detected:"))
                 for e in report.errors {
@@ -507,6 +515,19 @@ struct InspectSubcommand: AsyncParsableCommand {
                 throw ExitCode.failure
             }
         }
+    }
+
+    private func printVerdicts(_ files: [HubFileVerdict]) {
+        print("  Verified:")
+        for file in files {
+            let status = switch file.verified {
+            case .verified: green("✓ true   ")
+            case .mismatch: red("✗ false  ")
+            case .unknown: yellow("? unknown")
+            }
+            print("    \(status) \(file.name)")
+        }
+        print()
     }
 }
 

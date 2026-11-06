@@ -172,17 +172,24 @@ extension MLXInferenceEngine {
 
     static func attachDirectory(_ directory: URL, to model: any LanguageModel) throws(BasaltError) -> [String] {
         func refused(_ reason: String) -> BasaltError { .invalidRequestStructure(details: "adapter_apply \(directory.path): \(reason)") }
-        guard !model.namedModules().contains(where: { $0.1 is LoRALayer }) else { throw refused("another adapter is applied; undo it first") }
-        let adapter: LoRAContainer
+        return try attachContainer(try loraContainer(at: directory, refused), to: model, refused)
+    }
+
+    static func loraContainer(at directory: URL, _ refused: (String) -> BasaltError) throws(BasaltError) -> LoRAContainer {
         do {
-            adapter = try LoRAContainer.from(directory: directory)
+            return try LoRAContainer.from(directory: directory)
         } catch {
             throw refused("not an mlx-lm adapter directory (adapter_config.json and adapters.safetensors): \(briefly(error))")
         }
+    }
+
+    static func attachContainer(_ adapter: LoRAContainer, to model: any LanguageModel, _ refused: (String) -> BasaltError) throws(BasaltError) -> [String] {
+        guard model is LoRAModel else { throw refused("the \(type(of: model)) architecture takes no LoRA adapter") }
+        guard loraModules(of: model).isEmpty else { throw refused("another adapter is applied; undo it first") }
         try checkShapes(adapter, in: model, refused)
         let plain = Dictionary(model.namedModules().map { ($0.0, restorable($0.1)) }, uniquingKeysWith: { first, _ in first })
         let loaded = Result { try model.load(adapter: adapter) }
-        let modules = model.namedModules().filter { $0.1 is LoRALayer }.map(\.0)
+        let modules = loraModules(of: model)
         if case .failure(let error) = loaded {
             try detach(modules, from: model)
             throw refused(briefly(error))
@@ -206,6 +213,10 @@ extension MLXInferenceEngine {
             let expected = key.hasSuffix(".lora_a") ? [inputs, rank] : key.hasSuffix(".lora_b") ? [rank, outputs] : value.shape
             guard value.shape == expected else { throw refused("\(key) has shape \(value.shape), the layer needs \(expected)") }
         }
+    }
+
+    static func loraModules(of model: Module) -> [String] {
+        model.namedModules().filter { $0.1 is LoRALayer }.map(\.0)
     }
 
     static func detach(_ paths: [String], from model: Module) throws(BasaltError) {

@@ -120,6 +120,12 @@ struct ServeCommand: AsyncParsableCommand {
     var experimentalSamplers = false
 
     @Flag(
+        name: .customLong("experimental-zero-copy-body"),
+        help: "Wrap each collected REST request body in Data without copying it, in the JSON nesting check and the chat pipeline. Measured on Gemma 4 26B-A4B with 1-8 images at the 32 MB limit: process footprint peak 70-95 MB lower, MLX peak unchanged, TTFT no better (#345)"
+    )
+    var experimentalZeroCopyBody = false
+
+    @Flag(
         name: .customLong("grammar-jump-forward"),
         help: "Feed XGrammar-forced spans in one forward pass during constrained decoding (opt-in; JSON schema and forced tool calls)"
     )
@@ -142,6 +148,8 @@ struct ServeCommand: AsyncParsableCommand {
     @Flag(name: .customLong("wired-limit"), inversion: .prefixedNo, help: "Hold the wired memory limit at Metal's recommended working set while a model is loaded (on Gemma 4 26B-A4B it cut swap by 41% under competing memory pressure and changed nothing without it)")
     var wiredLimit: Bool = true
 
+    @Flag(name: .customLong("require-verified"), help: "Before loading, re-hash every file of the model snapshot against its sidecar or Hub tree API digest and refuse to start when any file is unverified or mismatched; a download it needs refuses files the server sends no digest for") var requireVerified = false
+
     @Flag(name: .customLong("model-probe"), inversion: .prefixedNo, help: "Probe a model once per fingerprint at load (chat template, tokenizer round trip, stop tokens, finite logits, entropy, perplexity, two greedy known answers; cached in ~/.basalt/model-probes) and refuse to load it when a check fails")
     var modelProbe: Bool = true
 
@@ -159,6 +167,8 @@ struct ServeCommand: AsyncParsableCommand {
 
     @Flag(help: "Start REST only, suppress MCP stdio")
     var rest: Bool = false
+
+    @Option(name: .customLong("adapter"), help: "Serve a LoRA adapter on the loaded model as name=directory (an mlx-lm adapter directory: adapter_config.json and adapters.safetensors), checked against the model at startup; repeatable. A request picks one with the X-Basalt-Adapter header (unknown name: 400); requests for different adapters take turns, the same adapter runs concurrently") var adapters: [String] = []
 
     @Option(name: .customLong("image-dir"), help: "With --mcp, a directory the generate tool may read image paths from, after resolving symlinks; repeatable (default: none, every path is refused)") var imageDirs: [String] = []
 
@@ -224,6 +234,7 @@ struct ServeCommand: AsyncParsableCommand {
         config.modelId = model ?? modelPath
         config.maxTokens = maxTokens
         config.logLevel = logLevel
+        config.experimentalZeroCopyBody = experimentalZeroCopyBody
 
         BasaltLogger.globalLevel = config.logLevel.basaltLevel
 

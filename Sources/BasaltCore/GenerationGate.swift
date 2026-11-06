@@ -106,16 +106,35 @@ public actor GenerationGate {
     }
 
     public func exclusively<T: Sendable>(_ body: @Sendable () async throws -> T) async rethrows -> T {
-        if exclusiveHeld || !running.isEmpty {
-            await withCheckedContinuation { exclusiveQueue.append($0) }
-        } else {
-            exclusiveHeld = true
-        }
+        await holdExclusively()
         defer {
             exclusiveHeld = false
             promote()
         }
         return try await body()
+    }
+
+    public func admit(after body: @Sendable () async throws -> Void) async throws -> Int {
+        if exclusiveHeld || !running.isEmpty, exclusiveQueue.count >= maxQueue { throw BasaltError.serverBusy(retryAfterSeconds: 1) }
+        await holdExclusively()
+        defer {
+            exclusiveHeld = false
+            promote()
+        }
+        guard !closed else { throw BasaltError.serverBusy(retryAfterSeconds: nil) }
+        try Task.checkCancellation()
+        try await body()
+        nextId += 1
+        running[nextId] = {}
+        return nextId
+    }
+
+    private func holdExclusively() async {
+        if exclusiveHeld || !running.isEmpty {
+            await withCheckedContinuation { exclusiveQueue.append($0) }
+        } else {
+            exclusiveHeld = true
+        }
     }
 
     public func idle(within limit: Duration) async -> Bool {
