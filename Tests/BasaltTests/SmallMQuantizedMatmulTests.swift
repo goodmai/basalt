@@ -5,7 +5,7 @@ import MLXLMCommon
 @testable import BasaltInference
 @testable import BasaltCLI
 
-@Suite("Small-M 4-bit affine kernel: every row bit-identical to the stock one-token quantizedMatmul (#208)")
+@Suite("Small-M 4-bit affine simdgroup-matrix kernel against dequantize → matmul and stock quantizedMatmul (#208)")
 struct SmallMQuantizedMatmulTests {
     static func layer(inputs: Int, outputs: Int, groupSize: Int, dtype: DType, bias: Bool = false) -> QuantizedLinear {
         let key = MLXRandom.key(UInt64(inputs * 7 + outputs * 3 + groupSize))
@@ -24,39 +24,50 @@ struct SmallMQuantizedMatmulTests {
         a.shape == b.shape && (a .== b).all().item(Bool.self)
     }
 
-    static func oneTokenAtATime(_ layer: QuantizedLinear, _ x: MLXArray) -> MLXArray {
-        concatenated((0 ..< x.dim(1)).map { layer(x[0..., $0 ..< $0 + 1]) }, axis: 1)
+    static func relativeError(_ actual: MLXArray, _ reference: MLXArray) -> Float {
+        let reference = reference.asType(.float32)
+        return (abs(actual.asType(.float32) - reference).max() / abs(reference).max()).item(Float.self)
     }
 
-    @Test("Rows 2...8 equal the stock one-token path bit for bit and dequantize → matmul within tolerance",
+    static func tolerance(_ dtype: DType) -> Float {
+        switch dtype {
+        case .bfloat16: 1e-2
+        case .float16: 2e-3
+        default: 1e-4
+        }
+    }
+
+    @Test("Rows 4...8 match dequantize → matmul within the activation dtype's tolerance and stock within rounding",
           arguments: [32, 64, 128], [DType.bfloat16, .float16, .float32])
-    func matchesOneTokenPath(groupSize: Int, dtype: DType) {
-        let stock = Self.layer(inputs: 1024, outputs: 64, groupSize: groupSize, dtype: dtype, bias: true)
+    func matchesReference(groupSize: Int, dtype: DType) {
+        let stock = Self.layer(inputs: 1024, outputs: 96, groupSize: groupSize, dtype: dtype, bias: true)
         let kernel = SmallMQuantizedLinear(replacing: stock)
         let dense = dequantized(stock.weight, scales: stock.scales, biases: stock.biases, groupSize: groupSize, bits: 4)
         for rows in SmallMQuantizedMatmul.rows {
             let x = Self.input(rows: rows, inputs: 1024, dtype: dtype)
             #expect(SmallMQuantizedMatmul.handles(x, layer: kernel))
             let actual = kernel(x)
-            #expect(Self.identical(actual, Self.oneTokenAtATime(stock, x)), "rows \(rows)")
+            #expect(actual.shape == [1, rows, 96] && actual.dtype == dtype)
             let reference = matmul(x.asType(.float32), dense.asType(.float32).T) + stock.bias!.asType(.float32)
-            let error = (abs(actual.asType(.float32) - reference).max() / abs(reference).max()).item(Float.self)
-            #expect(error < (dtype == .bfloat16 ? 1e-2 : 1e-3), "rows \(rows) error \(error)")
+            let error = Self.relativeError(actual, reference)
+            #expect(error < Self.tolerance(dtype), "rows \(rows) error \(error)")
+            #expect(Self.relativeError(actual, stock(x)) < Self.tolerance(dtype), "rows \(rows) against stock")
         }
     }
 
-    @Test("Rows outside 2...8, a width that is not a multiple of 512, 8-bit and mixed dtypes stay on the stock path")
+    @Test("Rows outside 4...8, a width that is not a multiple of 64, 8-bit and mixed dtypes stay on the stock path")
     func outsideContractFallsBack() {
-        let wide = Self.layer(inputs: 512, outputs: 16, groupSize: 64, dtype: .bfloat16)
+        let wide = Self.layer(inputs: 512, outputs: 32, groupSize: 64, dtype: .bfloat16)
         let kernel = SmallMQuantizedLinear(replacing: wide)
-        for rows in [1, 9, 16] {
+        for rows in [1, 2, 3, 9, 16] {
             let x = Self.input(rows: rows, inputs: 512, dtype: .bfloat16)
             #expect(!SmallMQuantizedMatmul.handles(x, layer: kernel))
             #expect(Self.identical(kernel(x), wide(x)))
         }
         #expect(!SmallMQuantizedMatmul.handles(Self.input(rows: 4, inputs: 512, dtype: .float16), layer: kernel))
-        #expect(!SmallMQuantizedMatmul.fits(Self.layer(inputs: 192, outputs: 16, groupSize: 64, dtype: .bfloat16)))
-        #expect(!SmallMQuantizedMatmul.fits(QuantizedLinear(weight: MLXRandom.normal([16, 512]), bias: nil, groupSize: 64, bits: 8)))
+        #expect(!SmallMQuantizedMatmul.fits(Self.layer(inputs: 96, outputs: 32, groupSize: 32, dtype: .bfloat16)))
+        #expect(!SmallMQuantizedMatmul.fits(Self.layer(inputs: 512, outputs: 24, groupSize: 64, dtype: .bfloat16)))
+        #expect(!SmallMQuantizedMatmul.fits(QuantizedLinear(weight: MLXRandom.normal([32, 512]), bias: nil, groupSize: 64, bits: 8)))
     }
 
     @Test("Off unless --experimental-smallm-kernel is given")
@@ -72,13 +83,13 @@ struct SmallMQuantizedMatmulTests {
         quantize(model: model, groupSize: 64, bits: 4)
         eval(model)
         let window = MLXArray([3, 141, 59, 26, 5, 35].map(Int32.init)).reshaped(1, -1)
-        let stock = model(window, cache: nil).asType(.float32)
+        let stock = model(window, cache: nil)
         eval(stock)
         let installed = SmallMQuantizedLinear.install(in: model)
         #expect(installed == model.leafModules().flattened().filter { $0.1 is SmallMQuantizedLinear }.count)
-        #expect(installed == 4 * 6 + 1)
-        let actual = model(window, cache: nil).asType(.float32)
-        let error = (abs(actual - stock).max() / abs(stock).max()).item(Float.self)
+        #expect(installed == 4 * 7 + 1)
+        let actual = model(window, cache: nil)
+        let error = Self.relativeError(actual, stock)
         #expect(error < 2e-2, "relative max error \(error)")
         #expect(Self.identical(actual.argMax(axis: -1), stock.argMax(axis: -1)))
     }
