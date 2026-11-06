@@ -16,14 +16,15 @@ extension AnthropicController {
             ProviderErrorResponse.response(status: status, message: message, shape: .anthropic)
         }
         return try await pipeline.handle(request) { data in
-            let dto = try pipeline.decode(MessagesRequest.self, from: data, failure: "Decode error")
+            let body = try pipeline.decode(ChatPipeline.Body<MessagesRequest>.self, from: data, failure: "Decode error")
+            let dto = body.dto
             try pipeline.require(!dto.messages.isEmpty, "messages must not be empty")
             if let problem = dto.thinkingBudgetProblem { throw pipeline.rejection(.badRequest, problem) }
-            let tools = try pipeline.tools(in: data)
+            let tools = try pipeline.tools(in: ChatPipeline.object(in: data))
             let stream = dto.stream == true
             let prepared = try pipeline.prepare(ChatPipeline.Input(
                 chat: try pipeline.parsed { () throws(BasaltError) in try Self.chatMessages(system: dto.system, messages: dto.messages) },
-                maxTokens: dto.effectiveMaxTokens, sampling: dto.sampling(try pipeline.antiRepetition(in: data)),
+                maxTokens: dto.effectiveMaxTokens, sampling: dto.sampling(try pipeline.antiRepetition(body.antiRepetition, bodyBytes: data.count)),
                 reasoningEffort: dto.effectiveReasoningEffort, tools: tools, thinkingBudget: dto.thinkingBudget,
                 responseFormat: nil, model: dto.model, stream: stream), headers: request.headers)
             if stream { try await pipeline.admitStream(prepared.request) }

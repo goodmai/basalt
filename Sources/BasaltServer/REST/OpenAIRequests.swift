@@ -304,8 +304,8 @@ extension OpenAIController {
         var message: String { "tool_choice names \(name), which is not in tools" }
     }
 
-    static func requestedTools(fromRequestBody data: Data) throws(UndeclaredForcedTool) -> RequestedTools {
-        guard let body = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return RequestedTools() }
+    static func requestedTools(in body: [String: Any]?) throws(UndeclaredForcedTool) -> RequestedTools {
+        guard let body else { return RequestedTools() }
         let choice = body["tool_choice"] as? [String: Any]
         let forced = ((choice?["function"] as? [String: Any])?["name"] as? String) ?? (choice?["name"] as? String)
         let parallel = body["parallel_tool_calls"] as? Bool != false && choice?["disable_parallel_tool_use"] as? Bool != true
@@ -332,8 +332,8 @@ extension OpenAIController {
         let message: String
     }
 
-    static func responseFormat(fromRequestBody data: Data) throws(InvalidResponseFormat) -> ResponseFormat? {
-        guard let body = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+    static func responseFormat(in body: [String: Any]?, data: Data) throws(InvalidResponseFormat) -> ResponseFormat? {
+        guard let body else { return nil }
         if let guided = try guidedFormat(body) { return guided }
         guard let format = (body["response_format"] as? [String: Any])
                 ?? ((body["text"] as? [String: Any])?["format"] as? [String: Any]) else { return nil }
