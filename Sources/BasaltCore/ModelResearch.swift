@@ -71,6 +71,7 @@ public struct TensorRequest: Sendable, Codable, Equatable {
     public var name: String
     public var slice: [Range<Int>]?
     public var maxValues: Int = 256
+    public var spectrum = false
 
     public init(name: String, slice: [Range<Int>]? = nil, maxValues: Int = 256) {
         self.name = name
@@ -88,6 +89,7 @@ public struct TensorReport: Sendable, Codable {
     public var l2: Float
     public var percentiles: [Float] = []
     public var values: [Float]?
+    public var spectrum: WeightSpectrum?
 
     public init(info: TensorInfo, mean: Float, std: Float, min: Float, max: Float, l2: Float) {
         self.info = info

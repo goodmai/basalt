@@ -53,8 +53,8 @@ struct AdapterServingTests {
     static func served() async throws -> (MLXInferenceEngine, ModelOrchestratorActor, [String: URL]) {
         let engine = try await TinyModel.engine(.qwen3)
         let directories = [
-            "a": try LabGateTests.adapterDirectory(rank: 2, storedRank: 2),
-            "b": try LabGateTests.adapterDirectory(rank: 2, storedRank: 2),
+            "a": try LabGateTests.adapterDirectory(rank: 2, storedRank: 2, seed: 1),
+            "b": try LabGateTests.adapterDirectory(rank: 2, storedRank: 2, seed: 2),
         ]
         let orchestrator = ModelOrchestratorActor(engine: engine, telemetry: TelemetryTracker())
         try await orchestrator.loadAdapters(directories)
