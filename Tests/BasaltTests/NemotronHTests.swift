@@ -433,8 +433,7 @@ struct NemotronHTests {
     }
 
     struct ScriptedTokenizer: MLXLMCommon.Tokenizer {
-        static let toolCallScript = #"Checking. <TOOLCALL>[{"name": "get_weather", "arguments": {}}, {"name": "get_time", "arguments": {}}]</TOOLCALL> Done"#
-            + String(repeating: ", and a long tail that a single-call request never generates", count: 12) + "."
+        static let toolCallScript = #"Checking. <TOOLCALL>[{"name": "get_weather", "arguments": {}}, {"name": "get_time", "arguments": {}}]</TOOLCALL> Done"# + String(repeating: ", and a long tail that a single-call request never generates", count: 12) + "."
 
         var script = Self.toolCallScript
         var prompt = ""
