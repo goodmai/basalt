@@ -328,3 +328,69 @@ struct NF4ActivationRealModelTests {
         #expect(!matched.isEmpty)
     }
 }
+
+enum NF4LayerKL {
+    static let arms: [PackFormat] = [.nf4(groupSize: 32), .affine(bits: 4, groupSize: 64)]
+
+    static func logProbabilities(_ model: some LanguageModel, _ tokens: MLXArray) throws -> MLXArray {
+        let logits = model(tokens, cache: try model.newCache(parameters: nil))[0].asType(.float32)
+        let result = logits - logSumExp(logits, axis: -1, keepDims: true)
+        eval(result)
+        return result
+    }
+
+    static func divergence(_ reference: MLXArray, _ other: MLXArray) -> Float {
+        (exp(reference) * (reference - other)).sum(axis: -1).mean().item(Float.self)
+    }
+
+    static func sweep(_ container: ModelContainer, paths: [String], index: [String: (URL, String)], text: String) async throws -> [String] {
+        try await container.perform { context in
+            let tokens = MLXArray(Array(context.tokenizer.encode(text: text).prefix(NF4Activation.calibrationTokens)).map(Int32.init))[.newAxis]
+            var lines: [String] = []
+            for path in paths {
+                guard let original = context.model.namedModules().first(where: { $0.0 == path })?.1 as? Linear,
+                      let (url, key) = NF4Activation.tail(path + ".weight").flatMap({ index[$0] }),
+                      let weight = try loadArrays(url: url)[key], weight.ndim == 2, weight.shape == TensorPacker.dense(original).shape else {
+                    lines.append("kl \(path) skipped")
+                    continue
+                }
+                defer { try? MLXInferenceEngine.replace(path, with: original, in: context.model) }
+                try MLXInferenceEngine.replace(path, with: Linear(weight: weight.asType(.bfloat16), bias: original.bias), in: context.model)
+                let reference = try logProbabilities(context.model, tokens)
+                do {
+                    let values = try arms.map { format -> String in
+                        let packed = TensorPacker.dense(try TensorPacker.converted(weight, bias: nil, to: format)).asType(.bfloat16)
+                        try MLXInferenceEngine.replace(path, with: Linear(weight: packed, bias: original.bias), in: context.model)
+                        return "\(TensorPacker.describe(format)) \(divergence(reference, try logProbabilities(context.model, tokens)))"
+                    }
+                    lines.append("kl \(path) " + values.joined(separator: " "))
+                } catch {
+                    lines.append("kl \(path) refused: \(error)")
+                }
+                Memory.clearCache()
+            }
+            return lines
+        }
+    }
+}
+
+@Suite("NF4 against affine 4-bit g64 by single-layer KL: each sampled linear set to bf16, NF4 and affine in turn, logits compared over the calibration text", .serialized)
+struct NF4LayerKLRealModelTests {
+    @Test("Mean KL(bf16 layer ‖ packed layer) per sampled linear, for NF4 g32 and affine 4-bit g64",
+          .enabled(if: !NF4ActivationRealModelTests.pairs.isEmpty, "set BASALT_E2E=1 and BASALT_E2E_NF4_ACT_MODELS to <checkpoint>=<bf16 directory> pairs"),
+          arguments: NF4ActivationRealModelTests.pairs)
+    func layerKL(pair: String) async throws {
+        let parts = pair.split(separator: "=", maxSplits: 1).map(String.init)
+        try #require(parts.count == 2, "expected <checkpoint>=<bf16 directory>")
+        let path = NF4Run.path(parts[0])
+        let index = try NF4Activation.sourceIndex(URL(fileURLWithPath: parts[1]))
+        let log = try await ModelRunLog("nf4-layer-kl", modelPath: path)
+        defer { log.releaseGPU() }
+        let engine = MLXInferenceEngine()
+        try await log.step("load") { try await engine.load(modelPath: path) }
+        let container = try #require(await engine.container)
+        let paths = await NF4Run.sample(container).linears.map { String($0.dropLast(".weight".count)) }.filter { !$0.hasSuffix("lm_head") }
+        for line in try await NF4LayerKL.sweep(container, paths: paths, index: index, text: NF4Run.text) { log.record("result", line) }
+        #expect(!paths.isEmpty)
+    }
+}
