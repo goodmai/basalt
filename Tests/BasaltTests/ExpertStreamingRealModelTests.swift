@@ -25,6 +25,23 @@ struct ExpertStreamingRealModelTests {
         let response: GenerationResponse
         let peakBytes: Int
         let stats: (stats: ExpertCacheStats, capacity: ByteCount)?
+        let logits: [Float]
+    }
+
+    static func lastLogits(_ engine: MLXInferenceEngine) async throws -> [Float] {
+        let container = try #require(await engine.container)
+        return try await container.performEvaluating(nonSendable: ()) { context, _ in
+            let tokens = context.tokenizer.encode(text: prompt, addSpecialTokens: true)
+            let logits = context.model(MLXArray(tokens.map(Int32.init)).reshaped(1, -1), cache: try context.model.newCache(parameters: nil))
+            return logits[0, -1].asType(.float32).asArray(Float.self)
+        }
+    }
+
+    static func comparison(_ streamed: [Float], _ resident: [Float]) -> String {
+        func top(_ logits: [Float]) -> [Int] { Array(logits.indices.sorted { logits[$0] > logits[$1] }.prefix(5)) }
+        let drift = zip(streamed, resident).map { abs($0 - $1) }.max() ?? .infinity
+        let shared = Set(top(streamed)).intersection(top(resident)).count
+        return String(format: "prefill last-position logits max |diff| %g, top-5 overlap %d/5, argmax %@", drift, shared, top(streamed).first == top(resident).first ? "equal" : "differs")
     }
 
     static func run(_ path: String, streaming: ExpertStreaming?, log: ModelRunLog, step: String) async throws -> Run {
@@ -36,7 +53,8 @@ struct ExpertStreamingRealModelTests {
         let response = try await log.step("\(step) generate") {
             try await engine.generate(request: GenerationRequest(prompt: prompt, maxTokens: tokens, temperature: 0))
         }
-        let run = Run(response: response, peakBytes: Memory.peakMemory, stats: await engine.expertCacheStats())
+        let logits = try await log.step("\(step) logits") { try await lastLogits(engine) }
+        let run = Run(response: response, peakBytes: Memory.peakMemory, stats: await engine.expertCacheStats(), logits: logits)
         await engine.unloadCurrentModel()
         return run
     }
@@ -60,6 +78,7 @@ struct ExpertStreamingRealModelTests {
                 format: "greedy %@, decode %.2f tok/s (resident %.2f), ttft %.2f s, peak %d MB (resident %d MB), %@",
                 identical ? "identical" : "differs", streamed.response.tokensPerSecond, resident.response.tokensPerSecond,
                 streamed.response.timeToFirstToken, streamed.peakBytes >> 20, resident.peakBytes >> 20, streamed.stats?.stats.summary ?? "no expert cache"))
+            log.record("cache \(gigabytes) GB logits", Self.comparison(streamed.logits, resident.logits))
             if !identical {
                 log.record("diff", "resident: \(resident.response.generatedText.debugDescription) streamed: \(streamed.response.generatedText.debugDescription)")
             }

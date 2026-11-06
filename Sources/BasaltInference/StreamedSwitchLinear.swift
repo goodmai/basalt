@@ -127,12 +127,17 @@ final class StreamedSwitchLinear: SwitchLinear {
         return project(x, ExpertArrays.stacked(store.experts(module: module, ids)), local, sortedIndices: sortedIndices)
     }
 
+    static func residentKernel(sorted: Bool, assignments: Int, experts: Int) -> Bool {
+        sorted && assignments / max(1, experts) >= 4
+    }
+
     private func project(_ x: MLXArray, _ experts: ExpertArrays, _ indices: MLXArray, sortedIndices: Bool) -> MLXArray {
         var result =
             if let quantization = store.layouts[module].quantization, let scales = experts.scales {
                 MLX.gatherQuantizedMM(
                     x, experts.weight, scales: scales, biases: experts.biases, rhsIndices: indices, transpose: true,
-                    groupSize: quantization.groupSize, bits: quantization.bits, mode: quantization.mode, sortedIndices: sortedIndices)
+                    groupSize: quantization.groupSize, bits: quantization.bits, mode: quantization.mode,
+                    sortedIndices: Self.residentKernel(sorted: sortedIndices, assignments: indices.size, experts: store.layouts[module].numExperts))
             } else {
                 MLX.gatherMM(x, experts.weight.swappedAxes(-1, -2), rhsIndices: indices, sortedIndices: sortedIndices)
             }

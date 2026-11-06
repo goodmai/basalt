@@ -12,7 +12,7 @@ struct SafetensorsShard {
 
     init(url: URL) throws(BasaltError) {
         self.url = url
-        let size = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int64) ?? 0
+        let size = (try? FileManager.default.attributesOfItem(atPath: url.resolvingSymlinksInPath().path)[.size] as? Int64) ?? 0
         guard let handle = try? FileHandle(forReadingFrom: url), let prefix = try? handle.read(upToCount: 8),
               let length = ModelInspector.safetensorsHeaderLength(prefix, fileSize: size),
               let header = try? handle.read(upToCount: length), header.count == length,
