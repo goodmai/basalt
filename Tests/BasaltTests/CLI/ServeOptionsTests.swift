@@ -110,6 +110,15 @@ struct ServeOptionsTests {
         #expect(throws: ValidationError.self) { try options.validateCombination() }
     }
 
+    @Test("KV head split combines with zones at a fixed or adaptive precision (#294)", arguments: [
+        ["--kv-head-split", "0.5", "--kv-zones", "--kv-bits", "k8v4"], ["--kv-head-split", "0.25", "--kv-zones", "--kv-bits", "auto"],
+    ])
+    func headSplitWithZones(_ arguments: [String]) throws {
+        let options = try KVCacheOptions.parse(arguments)
+        #expect(throws: Never.self) { try options.validateCombination() }
+        #expect(options.zones == .standard)
+    }
+
     @Test("KV zones carry the eviction fraction")
     func kvZones() throws {
         #expect(try KVCacheOptions.parse([]).zones == nil)

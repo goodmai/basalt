@@ -99,9 +99,9 @@ struct GenerationPlan: Equatable, Sendable {
     static func cache(precision: KVPrecision?, _ settings: Settings) -> GenerationPlan {
         let capabilities = settings.capabilities
         let zones = zones(settings)
-        guard zones == nil else { return GenerationPlan(kvZones: zones, kvPrecision: precision) }
-        guard precision == nil else { return GenerationPlan() }
         let mask = capabilities.allows(.kvHeadSplit) ? settings.kvHeadMask : nil
+        guard zones == nil else { return GenerationPlan(kvZones: zones, kvHeadMask: mask, kvPrecision: precision) }
+        guard precision == nil else { return GenerationPlan() }
         return mask.map { GenerationPlan(kvHeadMask: $0) } ?? GenerationPlan(questTopK: capabilities.allows(.quest) ? settings.questTopK : nil)
     }
 

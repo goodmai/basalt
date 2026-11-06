@@ -125,7 +125,7 @@ struct GenerationPlanTests {
         #expect(GenerationPlan.make(request, throughUpdate, GenerationPlan.Facts()).kvZones == nil)
     }
 
-    @Test("Head split needs the full-precision unzoned cache; Quest steps aside for head split")
+    @Test("Head split runs on the full-precision cache or inside zones, never under uniform quantization; Quest steps aside for head split")
     func headSplitAndQuest() {
         let mask = KVHeadMask(retrieval: [[0, 1]])
         let request = GenerationRequest(prompt: "p")
@@ -136,7 +136,11 @@ struct GenerationPlanTests {
         var zonedBoth = Self.zoned
         zonedBoth.kvHeadMask = mask
         zonedBoth.questTopK = 16
-        #expect(GenerationPlan.make(request, zonedBoth, GenerationPlan.Facts()) == GenerationPlan(kvZones: .standard, batchable: true))
+        #expect(GenerationPlan.make(request, zonedBoth, GenerationPlan.Facts()) == GenerationPlan(kvZones: .standard, kvHeadMask: mask, batchable: true))
+        #expect(GenerationPlan.make(request.withKVPrecision(.k8v4), zonedBoth, GenerationPlan.Facts())
+            == GenerationPlan(kvZones: .standard, kvHeadMask: mask, kvPrecision: .k8v4, batchable: false))
+        zonedBoth.capabilities = ModelCapabilities(verified: Set(ModelCapabilities.Feature.allCases).subtracting([.kvHeadSplit]))
+        #expect(GenerationPlan.make(request.withKVPrecision(.k8v4), zonedBoth, GenerationPlan.Facts()).kvHeadMask == nil)
     }
 
     @Test("A prompt-cache namespace needs a budget, the full-precision cache, a token-only prompt and the same model")
