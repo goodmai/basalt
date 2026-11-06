@@ -26,6 +26,7 @@ struct GenerationPlan: Equatable, Sendable {
         var kvZones: KVZones?
         var attendsThroughZones = false
         var prefillsInChunks = false
+        var evictsThroughUpdate = false
         var kvHeadMask: KVHeadMask?
         var questTopK: Int?
         var speculativeLookup = false
@@ -97,11 +98,16 @@ struct GenerationPlan: Equatable, Sendable {
 
     static func cache(precision: KVPrecision?, _ settings: Settings) -> GenerationPlan {
         let capabilities = settings.capabilities
-        let attends = settings.attendsThroughZones && capabilities.allows(.kvZones)
-        let zones = attends ? (settings.prefillsInChunks ? settings.kvZones : settings.kvZones?.evicting(0)) : nil
+        let zones = zones(settings)
         guard zones == nil else { return GenerationPlan(kvZones: zones, kvPrecision: precision) }
         guard precision == nil else { return GenerationPlan() }
         let mask = capabilities.allows(.kvHeadSplit) ? settings.kvHeadMask : nil
         return mask.map { GenerationPlan(kvHeadMask: $0) } ?? GenerationPlan(questTopK: capabilities.allows(.quest) ? settings.questTopK : nil)
+    }
+
+    private static func zones(_ settings: Settings) -> KVZones? {
+        guard settings.capabilities.allows(.kvZones) else { return nil }
+        if settings.attendsThroughZones { return settings.prefillsInChunks ? settings.kvZones : settings.kvZones?.evicting(0) }
+        return settings.evictsThroughUpdate ? settings.kvZones?.keepingMiddleFullPrecision() : nil
     }
 }

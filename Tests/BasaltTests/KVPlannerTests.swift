@@ -83,6 +83,25 @@ struct KVPlannerTests {
         #expect(planner.activeZones == zones.evicting(0))
         planner.takesZones = false
         #expect(planner.activeZones == nil)
+        planner.takesFullPrecisionEviction = true
+        #expect(planner.activeZones == zones.keepingMiddleFullPrecision())
+    }
+
+    @Test("An fp16 middle is sized at fp16: below keeping every token, above the quantized middle, at the kept share of the tokens past the exact zones",
+          arguments: [0.25, 0.5])
+    func fullPrecisionMiddleSizing(fraction: Double) {
+        let zones = KVZones.standard.evicting(fraction)
+        let tokens = 20_000
+        let exact = zones.maxFullPrecisionTokens
+        let kept = zones.keptMiddleTokens(tokens - exact)
+        let fp16 = Self.geometry.bytes(tokens: TokenCount(tokens), kvPrecision: .q8, zones: zones.keepingMiddleFullPrecision())
+        #expect(fp16 == ByteCount(Int64(Double(exact + kept) * Self.geometry.bytesPerToken(nil))))
+        #expect(fp16 < Self.geometry.bytes(tokens: TokenCount(tokens)))
+        #expect(fp16 > Self.geometry.bytes(tokens: TokenCount(tokens), kvPrecision: .q8, zones: zones))
+        let planner = KVPlanner(maxTokens: 1 << 20, precisionLadder: [.q8], zones: zones, takesZones: false, takesFullPrecisionEviction: true)
+        let room = planner.fit(promptTokens: 100, wantedTokens: 1 << 20, budget: fp16)
+        #expect(room.kvPrecision == .q8)
+        #expect(abs(room.fitting - tokens) <= 2)
     }
 
     @Test("Room asks for the prompt plus the requested tokens, at most --max-tokens, and one token when none is asked")

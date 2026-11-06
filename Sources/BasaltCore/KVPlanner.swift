@@ -22,12 +22,13 @@ struct KVPlanner: Sendable {
     var takesZones = true
     var takesEviction = true
     var takesQuantization = true
+    var takesFullPrecisionEviction = false
     var geometry = KVCacheGeometry(parameterProxy: 4)
 
     var isAdaptive: Bool { precisionLadder.count > 1 }
 
     var activeZones: KVZones? {
-        guard takesZones else { return nil }
+        guard takesZones else { return takesFullPrecisionEviction ? zones?.keepingMiddleFullPrecision() : nil }
         return takesEviction ? zones : zones?.evicting(0)
     }
 

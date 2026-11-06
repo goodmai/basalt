@@ -7,6 +7,7 @@ enum FreshCache: Equatable {
     case headSplit(KVHeadMask)
     case quest(topK: Int)
     case zoned(KVZones, KVPrecision)
+    case evicting(KVZones)
     case stock
 
     static func plan(
@@ -14,7 +15,7 @@ enum FreshCache: Equatable {
     ) -> FreshCache {
         if !kvBitsSet, let headMask { return .headSplit(headMask) }
         if !kvBitsSet, let questTopK { return .quest(topK: questTopK) }
-        if let zones, let precision { return .zoned(zones, precision) }
+        if let zones, let precision { return zones.middleStaysFullPrecision ? .evicting(zones) : .zoned(zones, precision) }
         return .stock
     }
 }
@@ -110,6 +111,11 @@ struct GenerationLauncher {
             var exact = params
             exact.kvBits = nil
             let cache = ZonedKVCache.replacingFullAttention(try model.newCache(parameters: exact), zones: zones, precision: precision)
+            return uncached(try TokenIterator(input: input, model: model, cache: cache, parameters: exact, components: components))
+        case .evicting(let zones):
+            var exact = params
+            exact.kvBits = nil
+            let cache = EvictingKVCache.replacingFullAttention(try model.newCache(parameters: exact), zones: zones)
             return uncached(try TokenIterator(input: input, model: model, cache: cache, parameters: exact, components: components))
         case .stock:
             return try stock(batch: batch, lookup: lookup)

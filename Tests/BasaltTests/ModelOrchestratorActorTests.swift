@@ -96,7 +96,7 @@ struct ModelOrchestratorActorTests {
     }
 
     func loaded(_ path: String, as id: String? = nil) -> OrchestratorEvent {
-        .loaded(path: path, modelId: id, geometry: KVCacheGeometry(parameterProxy: 4), takes: (true, true, true))
+        .loaded(path: path, modelId: id, geometry: KVCacheGeometry(parameterProxy: 4), takes: (true, true, true, false))
     }
 
     @Test("Each event changes only its own part of the state, and a reservation planned under an older model is dropped")
