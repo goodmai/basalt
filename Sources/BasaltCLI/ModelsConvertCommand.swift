@@ -23,8 +23,11 @@ struct ConvertSubcommand: AsyncParsableCommand {
     @Option(name: .long, help: "New output directory; must not exist and must not be inside the source")
     var out: String
 
-    @Option(name: .long, help: "Requantize linear weights: affine:<bits>:<group>, e.g. affine:4:64")
+    @Option(name: .long, help: "Requantize linear weights: affine:<bits>:<group>, e.g. affine:4:64, or mixed:<low>:<high>:<group> with --budget-gb")
     var quantize: String?
+
+    @Option(name: .long, help: "Total weight size for --quantize mixed, in GB (10^9 bytes): layers with the largest Marchenko-Pastur noise variance get the high bits while the total fits")
+    var budgetGb: Double?
 
     @Option(name: .long, help: "Dequantize to dense weights: bf16 or f16")
     var dequantize: String?
@@ -38,7 +41,7 @@ struct ConvertSubcommand: AsyncParsableCommand {
     mutating func run() async throws {
         let precision: WeightConverter.Precision
         do {
-            precision = try WeightConverter.precision(quantize: quantize, dequantize: dequantize, format: format)
+            precision = try WeightConverter.precision(quantize: quantize, dequantize: dequantize, format: format, budgetGB: budgetGb)
         } catch {
             throw ValidationError(error.localizedDescription)
         }
@@ -63,6 +66,9 @@ struct ConvertSubcommand: AsyncParsableCommand {
         printSuccess("Converted \(sourceURL.path) → \(outURL.path)")
         print("  Tensors:   \(summary.tensors) → \(summary.outputTensors) in \(summary.shards) shard(s)")
         print("  Bytes:     \(formatBytes(Int64(summary.bytesBefore))) → \(formatBytes(Int64(summary.bytesAfter)))")
+        if let plan = summary.plan {
+            print("  Plan:      \(plan.highLayers.count) of \(plan.layers) layers at the high bits, \(plan.unscored) unscored kept low")
+        }
         print("  Time:      \(elapsed.formatted(.units(allowed: [.minutes, .seconds], width: .abbreviated)))")
     }
 }
