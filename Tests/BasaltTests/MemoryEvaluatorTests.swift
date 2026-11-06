@@ -1,6 +1,7 @@
 import Testing
 import Foundation
 @testable import BasaltCore
+@testable import BasaltCLI
 
 /// The deterministic parts of MemoryEvaluator and SystemProfiler. Coarse per-machine fits
 /// for the model database live in DryRunAndMemoryIntegrationTests.
@@ -49,6 +50,35 @@ struct MemoryEvaluatorTests {
         #expect(a.warning?.contains("free right now") == true)
         let kv = model(ramMB: 12_943).kvGeometry
         #expect(a.maxContextBudgetTokens == kv.maxTokens(fitting: ByteCount((16 * Self.gib - 12_943 * Self.mib) / 2)).rawValue)
+    }
+
+    @Test("models check: a sparse MoE over the budget whose streaming footprint fits is MoE-tiered streaming, still refused, with the arithmetic")
+    func moeTieredStreaming() async throws {
+        let mac24 = SystemProfiler.SystemResources(
+            totalRAM: 24 * Self.gib, availableRAM: 16 * Self.gib, cpuCores: 12, gpuName: "Apple M4 Pro",
+            gpuMemory: 18 * Self.gib, diskSpace: 0, osVersion: "26", chipModel: "M4 Pro")
+        func make(_ id: String, ramMB: Int64) -> ModelDefinition {
+            ModelDefinition(id: id, name: id, family: .qwen, task: .chat, modality: .text,
+                            spec: .init(ramMB: ramMB, contextWindow: 131072, quantization: "8bit", quality: 0.9))
+        }
+        let moe = make("org/Sparse-35B-A3B-8bit", ramMB: 37_000)
+        let a = await MemoryEvaluator().evaluate(definition: moe, resources: mac24, contextLength: 4096)
+        #expect(a.fitLevel == .moeTieredStreaming)
+        #expect(!a.fitsInMemory)
+        let streaming = try #require(a.expertStreaming)
+        let weights = 37_000 * Self.mib
+        let kv = moe.kvGeometry.bytes(tokens: TokenCount(4096)).rawValue
+        #expect(abs(streaming.residentWeights.rawValue - weights * 3 / 35) <= 1)
+        #expect(streaming.kv.rawValue == kv)
+        #expect(streaming.required.rawValue < 18 * Self.gib)
+        #expect(a.reportLines(kvZones: false, kvEvict: nil, fits: "ok", exceeds: "no").contains { $0.contains("Needs expert streaming") })
+
+        let dense = await MemoryEvaluator().evaluate(definition: make("org/Dense-35B-8bit", ramMB: 37_000), resources: mac24, contextLength: 4096)
+        #expect(dense.fitLevel == .tooTight)
+        #expect(dense.expertStreaming == nil)
+        let huge = await MemoryEvaluator().evaluate(definition: make("org/Sparse-400B-A20B-8bit", ramMB: 400_000), resources: mac24, contextLength: 4096)
+        #expect(huge.fitLevel == .tooTight)
+        #expect(huge.expertStreaming == nil)
     }
 
     @Test("More than total RAM never fits, however much is 'available'")

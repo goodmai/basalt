@@ -155,3 +155,16 @@ With no drafts, the lookup iterator decodes as fast as plain decoding on a hybri
 On reasoning, lookup is below plain decoding on hybrids as it is on Qwen3-4B (0.80–0.86× above). Each failed round on a hybrid also pays a replay forward. That is why replayed rounds back off harder and probe with 4 tokens first. On Nemotron-Nano-9B-v2 the backoff charge alone moved reasoning from 0.76× to 0.80–0.89× (`logs/speculative_lookup_bench-2026-10-29T180222Z.log`).
 
 "Same text as off" is what these runs observed, not a guarantee. Lookup spends exactly one sampler draw per emitted token, in plain-decoding order, so a seeded run follows plain decoding as long as the logits match. But a multi-token verify uses different matmul kernels than a one-token step, so on a quantized model a near-tie can flip, at T 0 and at T > 0 alike (#146). That happened on Qwen3-4B's greedy prose. The Qwen3-4B prose row at T 0.7 drafted nothing, so its "yes" shows nothing about lookup.
+
+## MoE context scaling (#242)
+
+`MoEContextScalingBenchmarkTests` measures TTFT, prefill tok/s, decode tok/s and peak memory of one MoE model at 1k, 4k, 16k and 32k tokens of context. Run it on a release build, one model per invocation:
+
+```
+BASALT_E2E=1 BASALT_E2E_MOE_SCALING_MODEL_PATH=~/.cache/huggingface/hub/models--LiquidAI--LFM2.5-24B-A2B-MLX-4bit/snapshots/<rev> \
+  swift test -c release --filter MoEContextScalingBenchmarkTests
+```
+
+Optional: `BASALT_E2E_MOE_SCALING_CONTEXTS` (comma-separated token counts), `_RUNS` (timed runs per context, default 3) and `_TOKENS` (generated tokens per run, default 128). The runner inspects the snapshot, takes the GPU lock, logs the model's fit tier from `MemoryEvaluator` (resident tier, or `Streaming` with its resident + expert cache + KV arithmetic), refuses a model whose id names no active-parameter count, and skips a context above the fit's context budget. Each prompt starts with a unique tag, so the prompt cache cannot shorten prefill. The log `logs/moe-context-scaling-<date>.log` ends with a Markdown table, and the rows go to `logs/moe-context-scaling-<date>-<org>--<model>.json`.
+
+The `Streaming` fit tier (`FitLevel.moeTieredStreaming`) marks a sparse MoE that does not fit the Metal working set resident but would with expert streaming: the active share of the weights resident, a quarter of the remaining expert weights as expert cache, plus the KV cache. `models check` and `serve --dry-run` print that arithmetic and still refuse the model, because expert streaming (#225) is not implemented; the benchmark therefore measures resident MoE models only.
