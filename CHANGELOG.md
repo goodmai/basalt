@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.10.0 — 2026-11-06
 
 ### Upgrading from 0.9.0
 - swift-transformers 1.3.5 → 1.4.0. Token IDs, and so golden logits and prompt-cache keys, are unchanged. Two behaviour changes:
