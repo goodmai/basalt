@@ -267,12 +267,11 @@ struct ExpertStreamingParityTests {
         let plan = try ExpertPlan(model: model, shards: shards, quantization: nil)
         try FileManager.default.removeItem(at: shard)
         try FileManager.default.createSymbolicLink(atPath: shard.path, withDestinationPath: "missing.safetensors")
-        let probe = try FileManager.default.url(for: .itemReplacementDirectory, in: .userDomainMask, appropriateFor: directory, create: true)
-        let parent = probe.deletingLastPathComponent()
-        try FileManager.default.removeItem(at: probe)
-        let before = Set(try FileManager.default.contentsOfDirectory(atPath: parent.path))
-        #expect(throws: (any Error).self) { _ = try ExpertStreamingLoader.residentView(of: directory, shards: shards, plan: plan) }
-        #expect(Set(try FileManager.default.contentsOfDirectory(atPath: parent.path)) == before)
+        let scratch = directory.deletingLastPathComponent().appending(component: "view-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: scratch) }
+        #expect(throws: (any Error).self) { _ = try ExpertStreamingLoader.residentView(of: directory, shards: shards, plan: plan, in: scratch) }
+        #expect(!FileManager.default.fileExists(atPath: scratch.path))
     }
 
     @Test("The float gatherMM kernel choice has no expert-count term, so the compacted tensor keeps the caller's sorted flag and stays bitwise equal")

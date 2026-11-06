@@ -196,9 +196,9 @@ enum ExpertStreamingLoader {
         }
     }
 
-    static func residentView(of directory: URL, shards: [SafetensorsShard], plan: ExpertPlan) throws -> URL {
+    static func residentView(of directory: URL, shards: [SafetensorsShard], plan: ExpertPlan, in scratch: URL? = nil) throws -> URL {
         let files = FileManager.default
-        let view = try files.url(for: .itemReplacementDirectory, in: .userDomainMask, appropriateFor: directory, create: true)
+        let view = try scratch ?? files.url(for: .itemReplacementDirectory, in: .userDomainMask, appropriateFor: directory, create: true)
         do {
             try fill(view, from: directory, shards: shards, plan: plan)
         } catch {
