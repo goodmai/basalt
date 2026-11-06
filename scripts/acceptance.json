@@ -1,0 +1,8 @@
+{
+  "tasks": 40,
+  "concurrency": 4,
+  "tokens": 384,
+  "maxAccuracyDrop": 0.05,
+  "maxKLIncrease": 0.001,
+  "minTokPerSecRatio": 0.95
+}
