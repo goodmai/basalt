@@ -3,6 +3,9 @@
 ## Unreleased
 
 ### Upgrading from 0.9.0
+- swift-transformers 1.3.5 → 1.4.0. Token IDs, and so golden logits and prompt-cache keys, are unchanged. Two behaviour changes:
+  - BPE tokenizers no longer collapse spaces around punctuation when decoding, and `clean_up_tokenization_spaces` now defaults to false, as in Transformers 5.7. On Gemma 4, whose tokenizer omits the setting, decoded text keeps those spaces: `x != y` stays `x != y`, where it used to become `x!= y`. Qwen3.8 and LFM2.5 already set it to false and are unaffected.
+  - A tokenizer regex that Foundation cannot compile now refuses the model at load, as an invalid model configuration that names the pattern. It used to be silently ignored (Split) or crash the process (Replace). basalt reports it that way instead of as corrupted weights.
 - The `GemCLI`, `GemLogger` and `GemLogLevel` typealiases are gone; use `BasaltCLI`, `BasaltLogger` and `BasaltLogLevel` (#236). The `gemma_*` MCP tool aliases stay.
 - The thermal policy is on by default (#45). At macOS `.serious` thermal state prefill runs in 256-token chunks with a pause of a quarter of each chunk's time after it; at `.critical` prompts of 8192+ tokens are refused with 503 `Retry-After: 60`. `/api/v1/stats` and `serve --stats` show the thermal state and directive. `serve --no-thermal-policy` turns the pacing and refusals off.
 - New opt-ins that change nothing unless used:
