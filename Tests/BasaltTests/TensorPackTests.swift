@@ -94,6 +94,21 @@ struct TensorPackTests {
         #expect(report.overlay.description.contains("mxfp4"))
     }
 
+    @Test("An nf4 pack decodes the 16-level codebook into the live layer, reports NF4's 4.5 (g32) or 4.25 (g64) bits per weight and a 4-bit error, and undoes bit for bit", arguments: [32, 64])
+    func nf4(groupSize: Int) async throws {
+        let engine = try await Self.engine()
+        let container = try #require(await engine.container)
+        let logits = try await Self.logits(container).map(\.bitPattern)
+        let report = try await engine.pack(PackRequest(tensor: Self.projection, format: .nf4(groupSize: groupSize)))
+        let weights = Int(report.bytesBefore.rawValue) / MemoryLayout<Float>.size
+        #expect(report.bytesAfter.rawValue == Int64(NF4Codec.bytes(elements: weights, groupSize: groupSize)))
+        #expect(report.relativeError > 0.03 && report.relativeError < 0.2)
+        #expect(report.overlay.description.contains("nf4 g\(groupSize)"))
+        #expect(await Self.layerType(container) == "Linear")
+        try await engine.undo(report.overlay.id)
+        #expect(try await Self.logits(container).map(\.bitPattern) == logits)
+    }
+
     @Test("A ternary pack holds scale·{-1, 0, 1} per group of 64 as 2-bit codes, with the error of absmean rounding")
     func ternary() async throws {
         let engine = try await Self.engine()
@@ -127,6 +142,7 @@ struct TensorPackTests {
         PackRequest(tensor: "model.norm.weight", format: .ternary),
         PackRequest(tensor: "model.layers.0.self_attn.q_proj.weight", format: .affine(bits: 7, groupSize: 64)),
         PackRequest(tensor: "model.layers.0.self_attn.q_proj.weight", format: .affine(bits: 4, groupSize: 48)),
+        PackRequest(tensor: "model.layers.0.self_attn.q_proj.weight", format: .nf4(groupSize: 128)),
     ])
     func refused(request: PackRequest) async throws {
         let engine = try await Self.engine()
@@ -137,13 +153,19 @@ struct TensorPackTests {
         #expect(await engine.activeDeltas.isEmpty)
     }
 
-    @Test("tensor_pack defaults to affine 4-bit g64 and tensor_unpack to bfloat16; each refuses the other's formats and bits outside 2...8")
+    @Test("tensor_pack defaults to affine 4-bit g64 and tensor_unpack to bfloat16; each refuses the other's formats and bits outside 2...8; nf4 takes only nf4:32 or nf4:64")
     func mcpArguments() throws {
         #expect(try ResearchCall(.tensorPack, ["tensor": "w"]) == .pack(PackRequest(tensor: "w", format: .affine(bits: 4, groupSize: 64))))
         #expect(try ResearchCall(.tensorPack, ["tensor": "w", "format": "ternary"]) == .pack(PackRequest(tensor: "w", format: .ternary)))
         #expect(try ResearchCall(.tensorUnpack, ["tensor": "w"]) == .pack(PackRequest(tensor: "w", format: .bfloat16)))
+        #expect(try ResearchCall(.tensorPack, ["tensor": "w", "format": "nf4:32"]) == .pack(PackRequest(tensor: "w", format: .nf4(groupSize: 32))))
+        #expect(try ResearchCall(.tensorPack, ["tensor": "w", "format": "nf4:64"]) == .pack(PackRequest(tensor: "w", format: .nf4(groupSize: 64))))
         let cases: [(ResearchTool, [String: Any])] = [
             (.tensorUnpack, ["tensor": "w", "format": "ternary"]),
+            (.tensorUnpack, ["tensor": "w", "format": "nf4:32"]),
+            (.tensorPack, ["tensor": "w", "format": "nf4"]),
+            (.tensorPack, ["tensor": "w", "format": "nf4:128"]),
+            (.tensorPack, ["tensor": "w", "format": "nf4:16"]),
             (.tensorPack, ["tensor": "w", "format": "float16"]),
             (.tensorPack, ["tensor": "w", "bits": 9]),
             (.tensorPack, ["format": "affine"]),

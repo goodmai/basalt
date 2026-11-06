@@ -1,6 +1,7 @@
 import Foundation
 import MLX
 import MLXLMCommon
+import Tokenizers
 import MLXVLM
 import BasaltCore
 
@@ -254,6 +255,9 @@ extension MLXInferenceEngine {
     static func loadFailure(_ error: any Error, modelPath: String) async -> BasaltError {
         if let error = error as? BasaltError { return error }
         if error is CancellationError { return .cancelled }
+        if let error = error as? Tokenizers.TokenizerError {
+            return .modelConfigurationInvalid(path: modelPath, reason: "tokenizer: \(error.localizedDescription)")
+        }
         switch error as? ModelFactoryError {
         case .configurationDecodingError?:
             return .modelConfigurationInvalid(path: modelPath, reason: error.localizedDescription)

@@ -1,5 +1,5 @@
 {
-  "originHash" : "346a5533b9df61f3bcf1f9b5dcafad7fb6f11ce8b3183d3f5df62d92f98777e2",
+  "originHash" : "242eb3ae15f36ede2fa51c825b668eb1508846186710cf94969b9342069f6da6",
   "pins" : [
     {
       "identity" : "async-http-client",
@@ -42,7 +42,7 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/goodmai/mlx-swift-lm",
       "state" : {
-        "revision" : "c71bae17b5cc27e44fe989cfde5a1c878d9fb72d"
+        "revision" : "b002cb09d3c818cf60e94cff4df6f80c7487c7c1"
       }
     },
     {
@@ -311,8 +311,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/huggingface/swift-transformers",
       "state" : {
-        "revision" : "48473106a93b2d8dfb114b82f0628ebbb71734e7",
-        "version" : "1.3.5"
+        "revision" : "402a8a1105f52038b0949d9596981fc9e32bed17",
+        "version" : "1.4.0"
       }
     },
     {
@@ -329,8 +329,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/ibireme/yyjson.git",
       "state" : {
-        "revision" : "8b4a38dc994a110abaec8a400615567bd996105f",
-        "version" : "0.12.0"
+        "revision" : "6447536015f3d600f3d65323b10976103b337ca7",
+        "version" : "0.13.0"
       }
     }
   ],
