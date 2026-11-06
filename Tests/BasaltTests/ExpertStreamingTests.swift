@@ -101,8 +101,37 @@ struct ExpertStreamingParityTests {
     }
 
     static func streamed(_ directory: URL, cache: ByteCount) async throws -> ModelContainer {
+        try #require(try await streamedIfRouted(directory, cache: cache))
+    }
+
+    static func streamedIfRouted(_ directory: URL, cache: ByteCount) async throws -> ModelContainer? {
         try await ExpertStreamingLoader.loadContainer(
             from: directory, streaming: ExpertStreaming(cacheBytes: cache), tokenizerLoader: ByteTokenizerLoader())
+    }
+
+    static func refusal(_ directory: URL) async -> String? {
+        do {
+            _ = try await streamedIfRouted(directory, cache: ByteCount(1))
+            return nil
+        } catch {
+            return "\(error)"
+        }
+    }
+
+    static func rewriteHeader(of shard: URL, _ change: (inout [String: Any], Int) -> Void) throws {
+        let data = try Data(contentsOf: shard)
+        let length = Int(RawSpan(elements: Array(data.prefix(8)).span).load(fromByteOffset: 0, as: UInt64.self).littleEndian)
+        var header = try #require(try JSONSerialization.jsonObject(with: data.subdata(in: 8 ..< 8 + length)) as? [String: Any])
+        change(&header, data.count - 8 - length)
+        let rewritten = try JSONSerialization.data(withJSONObject: header, options: [.sortedKeys])
+        try #require(rewritten.count <= length)
+        try (data.prefix(8) + rewritten + Data(repeating: 0x20, count: length - rewritten.count) + data.suffix(from: 8 + length)).write(to: shard)
+    }
+
+    static func copy(_ family: String) throws -> URL {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("expert-streaming-\(family)-\(UUID().uuidString)")
+        try FileManager.default.copyItem(at: fixtures.appendingPathComponent(family), to: directory)
+        return directory
     }
 
     static func quantized(_ family: String) async throws -> URL {
@@ -121,8 +150,12 @@ struct ExpertStreamingParityTests {
     }
 
     @Test("Logits are bitwise equal and 16 greedy tokens identical with a cache that holds every expert, half of them, or none beyond the current call",
-          arguments: ["lfm2_moe", "gemma4_moe", "qwen3_moe"], [false, true])
+          arguments: ["lfm2_moe", "gemma4_moe", "qwen3_moe", "qwen3_5_moe"], [false, true])
     func parity(family: String, quantized: Bool) async throws {
+        if family == "qwen3_5_moe", let refusal = await Self.refusal(Self.fixtures.appendingPathComponent(family)) {
+            #expect(refusal.contains("compiled trace"))
+            return
+        }
         let directory = quantized ? try await Self.quantized(family) : Self.fixtures.appendingPathComponent(family)
         defer { if quantized { try? FileManager.default.removeItem(at: directory) } }
         let resident = try await Self.outputs(try await loadModelContainer(from: directory, using: ByteTokenizerLoader()))
@@ -186,10 +219,10 @@ struct ExpertStreamingParityTests {
         let pick = MLXArray(used.map(Int32.init))
         let local = routed.map { used.firstIndex(of: $0)! }
         let compact = { (sorted: Bool) in multiply(packed[pick], scales[pick], biases.map { $0[pick] }, local, sorted: sorted) }
-        #expect(!StreamedSwitchLinear.residentKernel(sorted: true, assignments: 64, experts: 32))
-        #expect(StreamedSwitchLinear.residentKernel(sorted: true, assignments: 128, experts: 32))
-        #expect(!StreamedSwitchLinear.residentKernel(sorted: false, assignments: 128, experts: 32))
-        #expect(MLX.arrayEqual(compact(StreamedSwitchLinear.residentKernel(sorted: true, assignments: 64, experts: 32)), resident).item(Bool.self))
+        #expect(!StreamedSwitchLinear.residentKernel(sorted: true, assignments: 64, experts: 32, quantized: true))
+        #expect(StreamedSwitchLinear.residentKernel(sorted: true, assignments: 128, experts: 32, quantized: true))
+        #expect(!StreamedSwitchLinear.residentKernel(sorted: false, assignments: 128, experts: 32, quantized: true))
+        #expect(MLX.arrayEqual(compact(StreamedSwitchLinear.residentKernel(sorted: true, assignments: 64, experts: 32, quantized: true)), resident).item(Bool.self))
         #expect(!MLX.arrayEqual(compact(true), resident).item(Bool.self))
     }
 
@@ -203,8 +236,74 @@ struct ExpertStreamingParityTests {
 
     @Test("A dense model is refused: there are no routed experts to stream")
     func denseRefused() async throws {
-        await #expect(throws: BasaltError.self) {
-            _ = try await Self.streamed(Self.fixtures.appendingPathComponent("qwen3"), cache: ByteCount(1))
+        #expect(try await Self.streamedIfRouted(Self.fixtures.appendingPathComponent("qwen3"), cache: ByteCount(1)) == nil)
+    }
+
+    @Test("An expert tensor whose data_offsets disagree with its shape, or reach past the end of the shard, is refused at load instead of failing a read mid-forward")
+    func truncatedExpertRefused() async throws {
+        let key = "model.layers.1.feed_forward.switch_mlp.gate_proj.weight"
+        for pastEnd in [false, true] {
+            let directory = try Self.copy("lfm2_moe")
+            defer { try? FileManager.default.removeItem(at: directory) }
+            try Self.rewriteHeader(of: directory.appendingPathComponent("model.safetensors")) { header, dataLength in
+                var entry = header[key] as! [String: Any]
+                let offsets = entry["data_offsets"] as! [Int]
+                let length = offsets[1] - offsets[0]
+                entry["data_offsets"] = pastEnd ? [dataLength - length / 2, dataLength + length / 2] : [offsets[0], offsets[0] + 1]
+                header[key] = entry
+            }
+            let refusal = await Self.refusal(directory)
+            #expect(refusal?.contains("expert streaming") == true, "\(refusal ?? "loaded")")
         }
+    }
+
+    @Test("A resident view that fails while it is being built leaves no clone directory behind")
+    func failedViewIsRemoved() throws {
+        let directory = try Self.copy("lfm2_moe")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let shard = directory.appendingPathComponent("model.safetensors")
+        let shards = [try SafetensorsShard(url: shard)]
+        let model = try TinyModel.make(.lfm2Moe)
+        let plan = try ExpertPlan(model: model, shards: shards, quantization: nil)
+        try FileManager.default.removeItem(at: shard)
+        try FileManager.default.createSymbolicLink(atPath: shard.path, withDestinationPath: "missing.safetensors")
+        let probe = try FileManager.default.url(for: .itemReplacementDirectory, in: .userDomainMask, appropriateFor: directory, create: true)
+        let parent = probe.deletingLastPathComponent()
+        try FileManager.default.removeItem(at: probe)
+        let before = Set(try FileManager.default.contentsOfDirectory(atPath: parent.path))
+        #expect(throws: (any Error).self) { _ = try ExpertStreamingLoader.residentView(of: directory, shards: shards, plan: plan) }
+        #expect(Set(try FileManager.default.contentsOfDirectory(atPath: parent.path)) == before)
+    }
+
+    @Test("The float gatherMM kernel choice has no expert-count term, so the compacted tensor keeps the caller's sorted flag and stays bitwise equal")
+    func residentFloatKernelChoice() {
+        let (x, weights) = withRandomState(MLXRandom.RandomState(seed: 11)) {
+            (MLXRandom.normal([64, 1, 64]).asType(.bfloat16), MLXRandom.normal([32, 64, 64]).asType(.bfloat16))
+        }
+        let used = [3, 9, 17]
+        let routed = (0 ..< 64).map { used[$0 * used.count / 64] }
+        let sorted = StreamedSwitchLinear.residentKernel(sorted: true, assignments: 64, experts: 32, quantized: false)
+        let resident = MLX.gatherMM(x, weights.swappedAxes(-1, -2), rhsIndices: MLXArray(routed.map(UInt32.init)), sortedIndices: true)
+        let compact = MLX.gatherMM(
+            x, weights[MLXArray(used.map(Int32.init))].swappedAxes(-1, -2),
+            rhsIndices: MLXArray(routed.map { UInt32(used.firstIndex(of: $0)!) }), sortedIndices: sorted)
+        #expect(sorted)
+        #expect(MLX.arrayEqual(compact, resident).item(Bool.self))
+    }
+
+    @Test("The expert cache and three stacked layers' worth of experts are held out of the prompt-cache and KV budgets")
+    func reserveLowersBudgets() async throws {
+        let store = try #require(await Self.streamed(Self.fixtures.appendingPathComponent("qwen3_moe"), cache: ByteCount(1 << 20))
+            .perform { ExpertStreamingLoader.store(in: $0.model).map { ($0.reserve, $0.capacity, $0.layouts.map(\.totalBytes).max()!) } })
+        #expect(store.0 == store.1 + store.2 * 3)
+        func kvBudget(_ reserve: ByteCount) async throws -> ByteCount {
+            let engine = MLXInferenceEngine(EngineConfiguration(promptCacheBytes: 64 << 20))
+            await engine.record(.loadStarted(path: "tiny"))
+            await engine.attach(try TinyModel.container(.qwen3Moe), facts: ModelFacts(expertReserve: reserve), epoch: await engine.modelEpoch)
+            return try #require(await engine.kvMemoryBudget)
+        }
+        let plain = try await kvBudget(.zero)
+        let reserved = try await kvBudget(ByteCount(8 << 30))
+        #expect(reserved < plain)
     }
 }

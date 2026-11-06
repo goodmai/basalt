@@ -30,6 +30,9 @@ struct ServeConfigFileTests {
             "\($0.sampling.topK ?? 0) \($0.sampling.minP ?? 0) \($0.sampling.seed ?? 0) \($0.sampling.reasoningEffort ?? "")"
         },
         Group(yaml: "serve: { experimental_adaptive_thinking_budget: true }", flags: ["--experimental-adaptive-thinking-budget"]) { "\($0.thinking.experimentalAdaptiveThinkingBudget)" },
+        Group(yaml: "serve: { expert_streaming: { enabled: true, cache_gb: 2.5 } }", flags: ["--experimental-expert-streaming", "--expert-cache-gb", "2.5"]) {
+            "\($0.expertStreaming.enabled) \($0.expertStreaming.cacheGB ?? 0)"
+        },
         Group(yaml: "serve: { max_concurrent: 2, batching: { slots: 2 } }", flags: ["--max-concurrent", "2", "--batch-slots", "2"]) { "\($0.maxConcurrent) \($0.batchSlots)" },
         Group(yaml: "serve: { memory: { wired_limit: false, coordinator: false, model_probe: false } }", flags: ["--no-wired-limit", "--no-memory-coordinator", "--no-model-probe"]) {
             "\($0.wiredLimit) \($0.noMemoryCoordinator) \($0.modelProbe)"
