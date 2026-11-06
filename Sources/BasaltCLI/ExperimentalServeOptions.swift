@@ -9,7 +9,7 @@ struct ExperimentalServeOptions: ParsableArguments {
 
     @Flag(
         name: .customLong("experimental-smallm-kernel"),
-        help: "Run 2-8 row forwards (speculative-lookup and MTP verify windows, batched decode) of 4-bit affine linear layers through basalt's small-M kernel, which decodes each weight word once for all rows; each row equals the stock one-token result bit for bit (#208). Same as BASALT_SMALLM_KERNEL=1. Off by default until measured end to end"
+        help: "Run 4-8 row forwards (speculative-lookup and MTP verify windows, batched decode) of 4-bit affine linear layers through basalt's simdgroup-matrix kernel, which decodes each weight once for all rows. On M4 Pro, Qwen3.8-27B shapes: 1.5-1.7x the one-token time at any of 4-8 rows, where stock takes 1.7-1.9x at 4 and 3.3-3.7x at 8; results differ from stock by bf16 rounding (#208). Same as BASALT_SMALLM_KERNEL=1. Off by default until greedy identity is checked on real models"
     )
     var smallMKernel = false
 }
