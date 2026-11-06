@@ -248,7 +248,7 @@ struct CacheBlendTests {
 
     @Test("The engine answers like a full prefill, reports only the exact prefix as cached and keeps the tree exact")
     func engineReportsExactCachedTokensOnly() async throws {
-        let engine = MLXInferenceEngine(promptCacheBytes: 1 << 26, cacheBlendRatio: 0.15)
+        let engine = MLXInferenceEngine(EngineConfiguration(promptCacheBytes: 1 << 26, cacheBlendRatio: 0.15))
         await engine.attach(try TinyModel.container())
         _ = try await engine.generate(request: greedy(Conversation.firstTurn, key: "ns"))
         let blended = try await engine.generate(request: greedy(Conversation.otherUser, key: "ns"))

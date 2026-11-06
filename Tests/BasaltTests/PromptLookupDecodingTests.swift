@@ -275,9 +275,9 @@ struct PromptLookupDecodingTests {
     static func sampledEngines(
         seed: UInt64, _ container: () throws -> ModelContainer
     ) async throws -> (plain: MLXInferenceEngine, lookup: MLXInferenceEngine) {
-        let plain = MLXInferenceEngine(seed: seed)
+        let plain = MLXInferenceEngine(EngineConfiguration(seed: seed))
         await plain.attach(try container(), profile: GenericProfile())
-        let lookup = MLXInferenceEngine(seed: seed, speculativeLookup: true)
+        let lookup = MLXInferenceEngine(EngineConfiguration(seed: seed, speculativeLookup: true))
         await lookup.attach(try container(), profile: GenericProfile())
         return (plain, lookup)
     }
@@ -313,9 +313,9 @@ struct PromptLookupDecodingTests {
     @Test("Through the engine, greedy output is unchanged with prompt lookup on, and the response reports the drafts")
     func engineGreedyEquivalence() async throws {
         let prompt = LookupFixture.code
-        let plain = MLXInferenceEngine(promptCacheBytes: 1 << 26)
+        let plain = MLXInferenceEngine(EngineConfiguration(promptCacheBytes: 1 << 26))
         await plain.attach(try LookupFixture.byteContainer())
-        let speculative = MLXInferenceEngine(promptCacheBytes: 1 << 26, speculativeLookup: true)
+        let speculative = MLXInferenceEngine(EngineConfiguration(promptCacheBytes: 1 << 26, speculativeLookup: true))
         await speculative.attach(try LookupFixture.byteContainer())
         let request = GenerationRequest(prompt: prompt, maxTokens: 64, temperature: 0)
         let expected = try await plain.generate(request: request)
@@ -360,7 +360,7 @@ struct PromptLookupDecodingTests {
           arguments: [TinyModel.Family.qwen35, .nemotronH, .lfm2Moe])
     func engineHybridEquivalence(family: TinyModel.Family) async throws {
         func engine(lookup: Bool) async throws -> MLXInferenceEngine {
-            let engine = MLXInferenceEngine(promptCacheBytes: 1 << 26, speculativeLookup: lookup)
+            let engine = MLXInferenceEngine(EngineConfiguration(promptCacheBytes: 1 << 26, speculativeLookup: lookup))
             await engine.attach(ModelContainer(context: ModelContext(
                 configuration: ModelConfiguration(id: "tiny-\(family)"), model: try TinyModel.make(family),
                 processor: ByteInputProcessor(), tokenizer: ByteTokenizer())))

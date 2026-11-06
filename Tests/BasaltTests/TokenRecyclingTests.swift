@@ -88,7 +88,7 @@ struct TokenRecyclingTests {
     @Test("Through the engine, greedy output is unchanged with recycling on, and recycling drafts beyond what lookup alone drafts, with and without a cache key")
     func engineGreedyEquivalence() async throws {
         func engine(lookup: Bool, recycling: Bool) async throws -> MLXInferenceEngine {
-            let engine = MLXInferenceEngine(promptCacheBytes: 1 << 26, speculativeLookup: lookup, speculativeRecycling: recycling)
+            let engine = MLXInferenceEngine(EngineConfiguration(promptCacheBytes: 1 << 26, speculativeLookup: lookup, speculativeRecycling: recycling))
             await engine.attach(try LookupFixture.byteContainer())
             return engine
         }

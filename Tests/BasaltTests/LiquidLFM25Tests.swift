@@ -52,7 +52,7 @@ struct LiquidLFM25Tests {
         #expect(await engine.sampling(for: GenerationRequest(prompt: "p")).0.repetitionPenalty == 1.05)
         #expect(await engine.sampling(for: GenerationRequest(prompt: "p").with { $0.repetitionPenalty = 1.2 }).0.repetitionPenalty == 1.2)
 
-        let flagged = MLXInferenceEngine(repetitionPenalty: 1.1)
+        let flagged = MLXInferenceEngine(EngineConfiguration(repetitionPenalty: 1.1))
         await flagged.attach(try TinyModel.container(), samplingDefaults: defaults)
         #expect(await flagged.sampling(for: GenerationRequest(prompt: "p")).0.repetitionPenalty == 1.1)
     }

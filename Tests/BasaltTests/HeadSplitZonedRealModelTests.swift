@@ -6,7 +6,7 @@ import MLXLMCommon
 @testable import BasaltCore
 @testable import BasaltInference
 
-@Suite("Head split with zoned k8v4 retrieval heads on real models: KV bytes, passkey, multikey and multihop, perplexity, decode speed (#294)", .serialized)
+@Suite("Head split on real models, heads chosen by ablation or by output fidelity, with zoned k8v4 retrieval heads: KV bytes, passkey, multikey and multihop, perplexity, decode speed (#294, #282)", .serialized)
 struct HeadSplitZonedRealModelTests {
     typealias Mode = ZonedKVCacheBenchmarkTests.Mode
     typealias Fact = (depth: Double, text: String)
@@ -23,7 +23,8 @@ struct HeadSplitZonedRealModelTests {
     }
 
     static let env = ProcessInfo.processInfo.environment
-    static let defaultModes: [Mode] = [.fp16, .zonedK8V4, .headSplit25, .headSplit50, .headSplit25K8V4, .headSplit50K8V4]
+    static let defaultModes: [Mode] = [.fp16, .headSplit25, .headSplitFidelity25, .headSplit50, .headSplitFidelity50]
+    static let servedShare = 0.25
 
     static var models: [String] {
         guard env["BASALT_E2E"] == "1" else { return [] }
@@ -86,22 +87,37 @@ struct HeadSplitZonedRealModelTests {
     func measure(path: String) async throws {
         let log = try await ModelRunLog("head-split-zoned", modelPath: path)
         defer { log.releaseGPU() }
-        let engine = MLXInferenceEngine(gpuCacheLimit: 0, kvPrecision: .k8v4, kvZones: .standard, kvHeadSplit: 0.5)
+        let directory = URL(fileURLWithPath: path)
+        let cachedAtLoad = FileManager.default.fileExists(atPath: KVHeadClassifier.storedSelection(for: directory, ratio: Self.servedShare).path)
+        let engine = MLXInferenceEngine(EngineConfiguration(gpuCacheLimit: 0, kvPrecision: .k8v4, kvZones: .standard, kvHeadSplit: Self.servedShare))
+        let loadStarted = Date()
         try await log.step("load") { try await engine.load(modelPath: path) }
         let container = try #require(await engine.container)
-        let geometry = try #require(KVCacheGeometry.load(modelDirectory: URL(fileURLWithPath: path)))
+        let geometry = try #require(KVCacheGeometry.load(modelDirectory: directory))
         let (zones, mask) = await (engine.supportsKVZones, engine.kvHeadMask)
-        log.record("serve", "--kv-zones applies \(zones), --kv-head-split 0.5 applies \(mask != nil)")
+        log.record("serve", "--kv-zones applies \(zones), --kv-head-split \(Self.servedShare) applies \(mask != nil); load took \(String(format: "%.1f", Date().timeIntervalSince(loadStarted))) s, \(cachedAtLoad ? "reading" : "choosing") the \(Self.servedShare) heads")
         guard zones else {
             log.record("refused", "attention does not go through the cache, so serve keeps head split and zones off; only fp16 is measured")
             await run(Runner(log: log, container: container, geometry: geometry, modes: [.fp16]))
             return
         }
-        let scores = try await KVHeadClassifier.loadOrScore(directory: URL(fileURLWithPath: path), container: container)
-        let key = await container.perform { ObjectIdentifier($0.model as AnyObject) }
-        ZonedKVCacheBenchmarkTests.headScores.withLock { $0[key] = scores }
-        log.record("heads", "concentrated \(KVHeadMask.isConcentrated(scores)) (serve refuses the split when false; the split modes are measured anyway)")
+        for ratio in Set(Self.modes.filter(\.selectsByFidelity).compactMap(\.headRatio)).sorted() {
+            try await Self.select(ratio, directory: directory, container: container, log: log)
+        }
         await run(Runner(log: log, container: container, geometry: geometry, modes: Self.modes))
+    }
+
+    static func select(_ ratio: Double, directory: URL, container: ModelContainer, log: ModelRunLog) async throws {
+        let cached = FileManager.default.fileExists(atPath: KVHeadClassifier.storedSelection(for: directory, ratio: ratio).path)
+        Memory.peakMemory = 0
+        let (before, started) = (Memory.activeMemory, Date())
+        let selection = try await log.step("select fidelity \(ratio)") {
+            try await KVHeadClassifier.loadOrSelect(directory: directory, container: container, ratio: ratio)
+        }
+        let seconds = String(format: "%.1f", Date().timeIntervalSince(started))
+        let key = await container.perform { ZonedKVCacheBenchmarkTests.selectionKey($0.model, ratio: ratio) }
+        ZonedKVCacheBenchmarkTests.selections.withLock { $0[key] = selection }
+        log.record("heads fidelity \(ratio)", "kept \(selection.keptHeads) retrieval \(selection.mask.retrieval) answersKept \(selection.answersKept) meanKL \(String(format: "%.4f", selection.meanKL)) limit \(KVHeadSelection.maxMeanKL) gate \(selection.keepsFidelity ? "pass" : "FAIL, serve refuses the split") \(cached ? "read from disk" : "chosen") in \(seconds) s peakAboveActive \(Memory.peakMemory - before) B")
     }
 
     func run(_ runner: Runner) async {

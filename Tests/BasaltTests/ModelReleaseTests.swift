@@ -20,7 +20,7 @@ struct ModelReleaseTests {
         for _ in 1...3 {
             weak var released: MLXInferenceEngine?
             do {
-                let engine = MLXInferenceEngine(promptCacheBytes: 1 << 30)
+                let engine = MLXInferenceEngine(EngineConfiguration(promptCacheBytes: 1 << 30))
                 let orchestrator = ModelOrchestratorActor(engine: engine, telemetry: TelemetryTracker())
                 try await orchestrator.loadModel(path: path)
                 _ = try await orchestrator.generate(request: GenerationRequest(prompt: "Say hi.", maxTokens: 4, temperature: 0).with { $0.cacheKey = "a" })

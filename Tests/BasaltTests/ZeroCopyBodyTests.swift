@@ -16,7 +16,7 @@ struct ZeroCopyBodyTests {
 
     @Test("Off unless --experimental-zero-copy-body is given")
     func flag() throws {
-        #expect(try ServeCommand.parse([]).experimentalZeroCopyBody == false)
-        #expect(try ServeCommand.parse(["--experimental-zero-copy-body"]).experimentalZeroCopyBody)
+        #expect(try ServeCommand.parse([]).experimental.zeroCopyBody == false)
+        #expect(try ServeCommand.parse(["--experimental-zero-copy-body"]).experimental.zeroCopyBody)
     }
 }

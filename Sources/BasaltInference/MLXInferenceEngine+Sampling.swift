@@ -16,15 +16,15 @@ extension MLXInferenceEngine {
             temperature: temperature,
             topP: Float(request.topP ?? samplingDefaults.topP ?? 0.9)
         )
-        params.kvBits = modelFacts.capabilities.kvBits(request.kvPrecision ?? kvPrecision)
-        params.quantizedKVStart = quantizedKVStart
-        params.repetitionPenalty = request.repetitionPenalty.map(Float.init) ?? repetitionPenalty
+        params.kvBits = modelFacts.capabilities.kvBits(request.kvPrecision ?? configuration.kvPrecision)
+        params.quantizedKVStart = configuration.quantizedKVStart
+        params.repetitionPenalty = request.repetitionPenalty.map(Float.init) ?? configuration.repetitionPenalty
             ?? samplingDefaults.repetitionPenalty.map(Float.init)
-        if let topK = request.topK ?? topK ?? samplingDefaults.topK { params.topK = topK }
-        if let effectiveMinP = request.minP.map(Float.init) ?? minP ?? profile.defaultMinP {
+        if let topK = request.topK ?? configuration.topK ?? samplingDefaults.topK { params.topK = topK }
+        if let effectiveMinP = request.minP.map(Float.init) ?? configuration.minP ?? profile.defaultMinP {
             params.minP = effectiveMinP
         }
-        params.seed = seed
+        params.seed = configuration.seed
 
         var components = GenerationComponents()
         if let presencePenalty = request.presencePenalty.map(Float.init), presencePenalty != 0 {
@@ -45,7 +45,7 @@ extension MLXInferenceEngine {
         var exclusion: (@Sendable () -> ExcludeTopChoices)?
         if let probability = request.xtcProbability.map(Float.init), probability > 0, temperature > 0 {
             let threshold = request.xtcThreshold.map(Float.init) ?? ExcludeTopChoices.defaultThreshold
-            let seed = seed
+            let seed = configuration.seed
             exclusion = { ExcludeTopChoices(threshold: threshold, probability: probability, seed: seed) }
         }
         var shaping: (@Sendable () -> EntropyDynamicTemperature)?

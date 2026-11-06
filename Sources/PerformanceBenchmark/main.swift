@@ -235,16 +235,21 @@ extension Benchmark {
     }
 
     private func makeOrchestrator() -> ModelOrchestratorActor {
-        let engine = MLXInferenceEngine(
-            reasoningEffort: reasoningEffort,
-            gpuCacheLimit: gpuCacheMB.map { $0 == 0 ? nil : $0 << 20 } ?? (512 << 20),
-            kvPrecision: kvBits,
-            kvZones: kvZones ? .standard : nil,
-            kvHeadSplit: kvHeadSplit,
-            questTopK: questTopK,
-            repetitionPenalty: repetitionPenalty,
-            topK: topK, minP: minP, seed: seed, speculativeLookup: speculativeLookup,
-            speculativeRecycling: speculativeRecycling, mtp: mtp, mtpBlockSize: mtpBlock, experimentalSamplers: dryMultiplier != nil, grammarJumpForward: grammarJumpForward, wiresWorkingSet: wiredLimit)
+        var configuration = EngineConfiguration.standard
+        configuration.reasoningEffort = reasoningEffort
+        configuration.gpuCacheLimit = gpuCacheMB.map { $0 == 0 ? nil : $0 << 20 } ?? (512 << 20)
+        configuration.kvPrecision = kvBits
+        configuration.kvZones = kvZones ? .standard : nil
+        configuration.kvHeadSplit = kvHeadSplit
+        configuration.questTopK = questTopK
+        configuration.repetitionPenalty = repetitionPenalty
+        (configuration.topK, configuration.minP, configuration.seed) = (topK, minP, seed)
+        (configuration.speculativeLookup, configuration.speculativeRecycling) = (speculativeLookup, speculativeRecycling)
+        (configuration.mtp, configuration.mtpBlockSize) = (mtp, mtpBlock)
+        configuration.experimentalSamplers = dryMultiplier != nil
+        configuration.grammarJumpForward = grammarJumpForward
+        configuration.wiresWorkingSet = wiredLimit
+        let engine = MLXInferenceEngine(configuration)
         return ModelOrchestratorActor(engine: engine, maxTokens: tokens, kv: ModelOrchestratorActor.KVOptions(precision: kvBits, zones: kvZones ? .standard : nil))
     }
 

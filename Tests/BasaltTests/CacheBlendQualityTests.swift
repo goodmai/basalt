@@ -173,7 +173,7 @@ struct CacheBlendExclusionTests {
         cacheBlendRatio: Float?, path: String, log: ModelRunLog
     ) async throws -> (texts: [String], cached: [Int], chunks: Int?, requestSeconds: [Double]) {
         let mode = cacheBlendRatio.map { "blend \($0)" } ?? "plain"
-        let engine = MLXInferenceEngine(promptCacheBytes: 1 << 30, cacheBlendRatio: cacheBlendRatio)
+        let engine = MLXInferenceEngine(EngineConfiguration(promptCacheBytes: 1 << 30, cacheBlendRatio: cacheBlendRatio))
         try await log.step("load \(mode)") { try await engine.load(modelPath: path) }
         let container = try #require(await engine.container)
         let refusal = try await container.perform { context in

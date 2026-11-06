@@ -20,16 +20,19 @@ struct ServeConfigFileTests {
             "\(String(describing: $0.kvBits)) \($0.kvZones) \($0.kvEvict ?? 0)"
         },
         Group(yaml: "serve: { prompt_cache: { mb: 512, hybrid_anchors: 2, disk_days: 3 } }", flags: ["--prompt-cache-mb", "512", "--hybrid-anchors", "2", "--prompt-cache-disk-days", "3"]) {
-            "\($0.promptCacheMB ?? 0) \($0.hybridAnchors) \($0.promptCacheDisk.retentionDays)"
+            "\($0.promptCache.promptCacheMB ?? 0) \($0.promptCache.hybridAnchors) \($0.promptCacheDisk.retentionDays)"
         },
-        Group(yaml: "serve: { cache_blend: { enabled: true, ratio: 0.5 } }", flags: ["--cache-blend", "--cache-blend-ratio", "0.5"]) { "\($0.cacheBlend) \($0.cacheBlendRatio)" },
+        Group(yaml: "serve: { cache_blend: { enabled: true, ratio: 0.5 } }", flags: ["--cache-blend", "--cache-blend-ratio", "0.5"]) { "\($0.promptCache.cacheBlend) \($0.promptCache.cacheBlendRatio)" },
         Group(yaml: "serve: { speculative: { lookup: true, recycling: true, mtp_block: 2 } }", flags: ["--speculative-lookup", "--speculative-recycling", "--mtp-block", "2"]) {
-            "\($0.speculativeLookup) \($0.speculativeRecycling) \($0.mtpBlock)"
+            "\($0.speculative.speculativeLookup) \($0.speculative.speculativeRecycling) \($0.speculative.mtpBlock)"
         },
         Group(yaml: "serve: { sampling: { top_k: 40, min_p: 0.05, seed: 7, reasoning_effort: none } }", flags: ["--top-k", "40", "--min-p", "0.05", "--seed", "7", "--reasoning-effort", "none"]) {
-            "\($0.topK ?? 0) \($0.minP ?? 0) \($0.seed ?? 0) \($0.reasoningEffort ?? "")"
+            "\($0.sampling.topK ?? 0) \($0.sampling.minP ?? 0) \($0.sampling.seed ?? 0) \($0.sampling.reasoningEffort ?? "")"
         },
         Group(yaml: "serve: { experimental_adaptive_thinking_budget: true }", flags: ["--experimental-adaptive-thinking-budget"]) { "\($0.thinking.experimentalAdaptiveThinkingBudget)" },
+        Group(yaml: "serve: { expert_streaming: { enabled: true, cache_gb: 2.5 } }", flags: ["--experimental-expert-streaming", "--expert-cache-gb", "2.5"]) {
+            "\($0.expertStreaming.enabled) \($0.expertStreaming.cacheGB ?? 0)"
+        },
         Group(yaml: "serve: { max_concurrent: 2, batching: { slots: 2 } }", flags: ["--max-concurrent", "2", "--batch-slots", "2"]) { "\($0.maxConcurrent) \($0.batchSlots)" },
         Group(yaml: "serve: { memory: { wired_limit: false, coordinator: false, model_probe: false } }", flags: ["--no-wired-limit", "--no-memory-coordinator", "--no-model-probe"]) {
             "\($0.wiredLimit) \($0.noMemoryCoordinator) \($0.modelProbe)"

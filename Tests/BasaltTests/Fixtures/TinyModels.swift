@@ -156,7 +156,7 @@ enum TinyModel {
         _ family: Family = .qwen3Small, promptCacheBytes: Int? = nil, repetitionPenalty: Float? = nil,
         processor: any UserInputProcessor = ByteInputProcessor()
     ) async throws -> MLXInferenceEngine {
-        let engine = MLXInferenceEngine(promptCacheBytes: promptCacheBytes, repetitionPenalty: repetitionPenalty)
+        let engine = MLXInferenceEngine(EngineConfiguration(promptCacheBytes: promptCacheBytes, repetitionPenalty: repetitionPenalty))
         await engine.attach(try container(family, processor: processor))
         return engine
     }

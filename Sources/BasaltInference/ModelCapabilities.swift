@@ -41,8 +41,8 @@ struct ModelCapabilities: Equatable, Sendable {
     static let families: [String: ModelCapabilities] = {
         let all = Set(Feature.allCases)
         let attention = ModelCapabilities(verified: all.subtracting([.mtp]))
-        let qwen35 = ModelCapabilities(verified: all.subtracting([.cacheBlend, .kvHeadSplit]))
-        let recurrent = ModelCapabilities(verified: all.subtracting([.mtp, .cacheBlend, .kvHeadSplit]))
+        let qwen35 = ModelCapabilities(verified: all.subtracting([.cacheBlend]))
+        let recurrent = ModelCapabilities(verified: all.subtracting([.mtp, .cacheBlend]))
         let gemma3 = ModelCapabilities(verified: all.subtracting([.mtp, .cacheBlend, .batchedDecode]))
         let gemma4 = ModelCapabilities(verified: all.subtracting([.mtp, .quest]))
         let table: [([String], ModelCapabilities)] = [

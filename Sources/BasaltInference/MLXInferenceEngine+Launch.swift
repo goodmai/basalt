@@ -111,9 +111,9 @@ extension MLXInferenceEngine {
     }
 
     func batchedDecoder(_ container: ModelContainer, epoch: ModelEpoch) async -> BatchedDecoder? {
-        guard batchSlots > 1, epoch == modelEpoch, appliedMemoryDirective < .tight else { return nil }
+        guard configuration.batchSlots > 1, epoch == modelEpoch, appliedMemoryDirective < .tight else { return nil }
         if let batchDecoder { return batchDecoder }
-        let slots = batchSlots
+        let slots = configuration.batchSlots
         await container.update { if $0.batch == nil { $0.batch = BatchCore(model: $0.model, slots: slots) } }
         let made = await container.perform { ($0.batch as? BatchCore)?.decoder }
         guard epoch == modelEpoch else { return nil }

@@ -294,7 +294,7 @@ struct PromptCacheReuseTests {
         #expect(second.cachedPromptTokens == 0)
         #expect(await disabled.readPromptCaches { $0.roots.isEmpty })
 
-        let quantized = MLXInferenceEngine(kvPrecision: .q8)
+        let quantized = MLXInferenceEngine(EngineConfiguration(kvPrecision: .q8))
         await quantized.attach(try TinyModel.container())
         _ = try await quantized.generate(request: greedy(Conversation.firstTurn, key: "ns"))
         #expect(await quantized.readPromptCaches { $0.roots.isEmpty })

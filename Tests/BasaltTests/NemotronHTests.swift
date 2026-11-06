@@ -480,7 +480,7 @@ struct NemotronHTests {
         _ profile: any ModelProfile, tokenizer: ScriptedTokenizer = ScriptedTokenizer(),
         processor: any UserInputProcessor = ByteInputProcessor(), promptCacheBytes: Int? = nil
     ) async throws -> MLXInferenceEngine {
-        let engine = MLXInferenceEngine(promptCacheBytes: promptCacheBytes)
+        let engine = MLXInferenceEngine(EngineConfiguration(promptCacheBytes: promptCacheBytes))
         await engine.attach(ModelContainer(context: ModelContext(
             configuration: ModelConfiguration(id: "scripted"), model: try TinyModel.make(),
             processor: processor, tokenizer: tokenizer)), profile: profile)

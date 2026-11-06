@@ -116,6 +116,6 @@ struct ModelProbeTests {
     func optOut() async throws {
         #expect(try ServeCommand.parse([]).modelProbe)
         #expect(try !ServeCommand.parse(["--no-model-probe"]).modelProbe)
-        #expect(await !MLXInferenceEngine().probesModel)
+        #expect(await !MLXInferenceEngine().configuration.probesModel)
     }
 }

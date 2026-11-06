@@ -80,7 +80,7 @@ struct KVEvictGemmaRealModelTests {
         let corpus = try String(contentsOfFile: try #require(Self.env["BASALT_E2E_KV_EVICT_CORPUS"]), encoding: .utf8)
         let log = try await ModelRunLog("kv-evict-gemma", modelPath: path)
         defer { log.releaseGPU() }
-        let engine = MLXInferenceEngine(gpuCacheLimit: 0, kvPrecision: .q8, kvZones: KVZones.standard.evicting(0.5))
+        let engine = MLXInferenceEngine(EngineConfiguration(gpuCacheLimit: 0, kvPrecision: .q8, kvZones: KVZones.standard.evicting(0.5)))
         try await log.step("load") { try await engine.load(modelPath: path) }
         let container = try #require(await engine.container)
         let geometry = try #require(KVCacheGeometry.load(modelDirectory: URL(fileURLWithPath: path)))

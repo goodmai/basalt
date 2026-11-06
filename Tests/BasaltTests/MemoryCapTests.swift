@@ -255,7 +255,7 @@ struct MemoryCapTests {
 
     @Test("The MLX engine's KV room is the GPU working set minus the weights and the prompt-cache budget")
     func engineBudget() async throws {
-        let engine = MLXInferenceEngine(promptCacheBytes: 64 << 20)
+        let engine = MLXInferenceEngine(EngineConfiguration(promptCacheBytes: 64 << 20))
         #expect(await engine.kvMemoryBudget == nil)
         await engine.attach(try TinyModel.container())
         let budget = try #require(await engine.kvMemoryBudget)

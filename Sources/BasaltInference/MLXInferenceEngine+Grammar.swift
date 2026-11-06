@@ -55,7 +55,7 @@ extension MLXInferenceEngine {
         case .failure(let error): return try unconstrained(error.reason)
         }
         guard !vocabulary.stopTokens.isEmpty else { return try unconstrained("the model declares no stop token to end the document") }
-        let fastForwardRequested = allowsFastForward && (request.grammarJumpForward ?? grammarJumpForward)
+        let fastForwardRequested = allowsFastForward && (request.grammarJumpForward ?? configuration.grammarJumpForward)
         let fastForward: Bool
         if fastForwardRequested, let container {
             fastForward = await supportsMultiTokenForward(container, epoch: epoch)

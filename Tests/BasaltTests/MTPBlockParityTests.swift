@@ -22,7 +22,7 @@ struct MTPBlockParityTests {
         """
 
     static func generate(mtp: Bool, blockSize: Int = 2) async throws -> GenerationResponse {
-        let engine = MLXInferenceEngine(mtp: mtp, mtpBlockSize: blockSize)
+        let engine = MLXInferenceEngine(EngineConfiguration(mtp: mtp, mtpBlockSize: blockSize))
         try await engine.load(modelPath: try #require(modelPath))
         return try await engine.generate(request: GenerationRequest(
             prompt: prompt, maxTokens: 160, temperature: 0).with { $0.reasoningEffort = "none" })
@@ -60,7 +60,7 @@ struct MTPBlockParityTests {
         let workloads = ["code", "prose", "reasoning"]
         var plainText: [String: String] = [:]
         for mtp in [false, true] {
-            let engine = MLXInferenceEngine(seed: 7, mtp: mtp)
+            let engine = MLXInferenceEngine(EngineConfiguration(seed: 7, mtp: mtp))
             try await engine.load(modelPath: try #require(Self.modelPath))
             for workload in workloads {
                 let replies = try await Self.sampled(engine, workload: workload, mtp: mtp)

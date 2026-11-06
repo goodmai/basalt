@@ -72,7 +72,7 @@ enum BatchFixture {
     static func engine(_ model: any LanguageModel, id: String, batchSlots: Int, processor: any UserInputProcessor = ByteInputProcessor())
         async -> MLXInferenceEngine
     {
-        let engine = MLXInferenceEngine(batchSlots: batchSlots)
+        let engine = MLXInferenceEngine(EngineConfiguration(batchSlots: batchSlots))
         await engine.attach(ModelContainer(context: ModelContext(
             configuration: ModelConfiguration(id: id), model: model, processor: processor, tokenizer: ByteTokenizer())))
         return engine
@@ -362,7 +362,7 @@ struct BatchedRoutingTests {
 
     @Test("A response format with grammar jump-forward keeps the serialized path; without jump-forward it batches with its own mask")
     func grammarJumpForwardStaysSolo() async throws {
-        let engine = MLXInferenceEngine(batchSlots: 4)
+        let engine = MLXInferenceEngine(EngineConfiguration(batchSlots: 4))
         await engine.attach(try ConstrainedModel.container())
         let jumping = try await engine.generate(request: ConstrainedModel.request(format: .jsonSchema(ConstrainedModel.schema)).withGrammarJumpForward(true))
         #expect(try ConstrainedModel.isValid(jumping.generatedText))
@@ -374,7 +374,7 @@ struct BatchedRoutingTests {
 
     @Test("Under tight memory pressure a plain request decodes on its own; back at relaxed it batches again")
     func pressureStopsJoining() async throws {
-        let engine = MLXInferenceEngine(batchSlots: 4)
+        let engine = MLXInferenceEngine(EngineConfiguration(batchSlots: 4))
         await engine.attach(try ConstrainedModel.container())
         _ = await engine.apply(.tight)
         _ = try await engine.generate(request: ConstrainedModel.request(format: nil, maxTokens: 4))

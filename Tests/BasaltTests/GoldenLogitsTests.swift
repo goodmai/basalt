@@ -313,7 +313,7 @@ struct GoldenLogitsRealModelTests {
         let path = Self.path(entry)
         let log = try await ModelRunLog("golden-logits", modelPath: path)
         defer { log.releaseGPU() }
-        let engine = MLXInferenceEngine(promptCacheBytes: 1 << 30)
+        let engine = MLXInferenceEngine(EngineConfiguration(promptCacheBytes: 1 << 30))
         try await log.step("load") { try await engine.load(modelPath: path) }
         let revision = URL(fileURLWithPath: path).resolvingSymlinksInPath().lastPathComponent
         let url = GoldenFixture.url(repo: log.model)

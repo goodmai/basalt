@@ -25,7 +25,7 @@ struct KVBitsRefusalTests {
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: dir) }
         try Data(#"{"model_type": "\#(modelType)"}"#.utf8).write(to: dir.appendingPathComponent("config.json"))
-        let engine = MLXInferenceEngine(kvPrecision: .q4)
+        let engine = MLXInferenceEngine(EngineConfiguration(kvPrecision: .q4))
         let error = await #expect(throws: BasaltError.self) { try await engine.load(modelPath: dir.path) }
         guard case .modelConfigurationInvalid(let path, let reason)? = error else {
             Issue.record("expected modelConfigurationInvalid, got \(String(describing: error))")
@@ -49,7 +49,7 @@ struct KVBitsRefusalTests {
 
     @Test("Under auto a Gemma 2 decodes on an fp16 cache even when handed a 4-bit rung, instead of trapping in QuantizedKVCache.update")
     func autoKeepsFP16OnTrappingModel() async throws {
-        let engine = MLXInferenceEngine(quantizedKVStart: 0)
+        let engine = MLXInferenceEngine(EngineConfiguration(quantizedKVStart: 0))
         let container = ModelContainer(context: ModelContext(
             configuration: ModelConfiguration(id: "tiny-gemma2"), model: try Self.gemma2(),
             processor: ByteInputProcessor(), tokenizer: ByteTokenizer()))

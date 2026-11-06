@@ -23,13 +23,13 @@ struct FeatureMatrixTests {
         func makeEngine() -> MLXInferenceEngine {
             let bytes = FeatureMatrixTests.promptCacheBytes
             return switch self {
-            case .lookup: MLXInferenceEngine(promptCacheBytes: bytes, speculativeLookup: true)
-            case .mtp: MLXInferenceEngine(promptCacheBytes: bytes, mtp: true)
-            case .cacheBlend: MLXInferenceEngine(promptCacheBytes: bytes, cacheBlendRatio: 0.15)
-            case .kvZones: MLXInferenceEngine(promptCacheBytes: bytes, kvPrecision: .q8, kvZones: .standard)
-            case .headSplit: MLXInferenceEngine(promptCacheBytes: bytes, kvHeadSplit: 0.5)
-            case .headSplitZoned: MLXInferenceEngine(promptCacheBytes: bytes, kvPrecision: .k8v4, kvZones: .standard, kvHeadSplit: 0.5)
-            case .quest: MLXInferenceEngine(promptCacheBytes: bytes, questTopK: 2)
+            case .lookup: MLXInferenceEngine(EngineConfiguration(promptCacheBytes: bytes, speculativeLookup: true))
+            case .mtp: MLXInferenceEngine(EngineConfiguration(promptCacheBytes: bytes, mtp: true))
+            case .cacheBlend: MLXInferenceEngine(EngineConfiguration(promptCacheBytes: bytes, cacheBlendRatio: 0.15))
+            case .kvZones: MLXInferenceEngine(EngineConfiguration(promptCacheBytes: bytes, kvPrecision: .q8, kvZones: .standard))
+            case .headSplit: MLXInferenceEngine(EngineConfiguration(promptCacheBytes: bytes, kvHeadSplit: 0.5))
+            case .headSplitZoned: MLXInferenceEngine(EngineConfiguration(promptCacheBytes: bytes, kvPrecision: .k8v4, kvZones: .standard, kvHeadSplit: 0.5))
+            case .quest: MLXInferenceEngine(EngineConfiguration(promptCacheBytes: bytes, questTopK: 2))
             }
         }
 
@@ -73,7 +73,7 @@ struct FeatureMatrixTests {
 
     static func run(_ family: TinyModel.Family, _ feature: Feature?) async throws -> (engine: MLXInferenceEngine, replies: [GenerationResponse]) {
         let container = try TinyModel.container(family)
-        let engine = feature?.makeEngine() ?? MLXInferenceEngine(promptCacheBytes: promptCacheBytes)
+        let engine = feature?.makeEngine() ?? MLXInferenceEngine(EngineConfiguration(promptCacheBytes: promptCacheBytes))
         await engine.attach(container)
         try await feature?.prepare(engine, container, family)
         var replies: [GenerationResponse] = []
@@ -83,11 +83,12 @@ struct FeatureMatrixTests {
 
     static func probeHeads(_ engine: MLXInferenceEngine, storingScores: Bool) async throws {
         let directory = FileManager.default.temporaryDirectory.appending(path: "feature-matrix-\(UUID().uuidString)")
-        let scores = KVHeadClassifier.storedScores(for: directory)
-        defer { try? FileManager.default.removeItem(at: scores) }
+        let stored = KVHeadClassifier.storedSelection(for: directory, ratio: 0.5)
+        defer { try? FileManager.default.removeItem(at: stored) }
         if storingScores {
-            try FileManager.default.createDirectory(at: scores.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try JSONEncoder().encode(Array(repeating: [Float(1), 0], count: 4)).write(to: scores)
+            try FileManager.default.createDirectory(at: stored.deletingLastPathComponent(), withIntermediateDirectories: true)
+            let selection = KVHeadSelection(mask: KVHeadMask(retrieval: Array(repeating: [0], count: 4)), meanKL: 0, answersKept: true)
+            try JSONEncoder().encode(selection).write(to: stored)
         }
         await engine.probeKVHeads(directory: directory)
     }

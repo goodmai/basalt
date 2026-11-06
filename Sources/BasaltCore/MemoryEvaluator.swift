@@ -6,7 +6,7 @@ public struct MemoryAssessment: Sendable, Codable, Equatable {
     public let requiredRAMBytes: Int64
     public let availableRAMBytes: Int64
     public let totalPhysicalRAMBytes: Int64
-    public let fitsInMemory: Bool
+    public var fitsInMemory: Bool
     public let fitLevel: FitLevel
     public var maxContextBudgetTokens = 0
     public var maxPromptBudgetTokens = 0
@@ -60,9 +60,11 @@ public func formatRAMBytes(_ bytes: Int64) -> String {
 
 public actor MemoryEvaluator {
     private let profiler: SystemProfiler
+    private let expertStreaming: ExpertStreaming?
 
-    public init(profiler: SystemProfiler = SystemProfiler()) {
+    public init(profiler: SystemProfiler = SystemProfiler(), expertStreaming: ExpertStreaming? = nil) {
         self.profiler = profiler
+        self.expertStreaming = expertStreaming
     }
 
     public func evaluate(
@@ -108,8 +110,8 @@ public actor MemoryEvaluator {
         let kvBytes = kv.bytes(tokens: TokenCount(contextLength), kvPrecision: kvPrecision, zones: kvZones)
         let oversized = def.quantization.lowercased().contains("bfloat16") || def.quantization.lowercased().contains("fp16") || def.ramMB > 30000
         var footprint = Footprint(required: weights + kvBytes, weights: weights, kv: kv, kvPrecision: kvPrecision, kvZones: kvZones)
-        footprint.streaming = ExpertStreamingFootprint(
-            weights: weights, totalParameters: def.totalParameters, activeParameters: def.activeParameters, kv: kvBytes)
+        footprint.streaming = streaming(weights: weights, totalParameters: def.totalParameters, activeParameters: def.activeParameters, kv: kvBytes)
+        footprint.admitsStreaming = expertStreaming != nil
         return Self.assessment(
             id: def.id, name: def.name,
             footprint: footprint,
@@ -157,6 +159,13 @@ public actor MemoryEvaluator {
         let kvPrecision: KVPrecision?
         let kvZones: KVZones?
         var streaming: ExpertStreamingFootprint?
+        var admitsStreaming = false
+    }
+
+    private func streaming(weights: ByteCount, totalParameters: Double, activeParameters: Double, kv: ByteCount) -> ExpertStreamingFootprint? {
+        ExpertStreamingFootprint(
+            weights: weights, totalParameters: totalParameters, activeParameters: activeParameters, kv: kv,
+            streaming: expertStreaming ?? ExpertStreaming())
     }
 
     static func assessment(
@@ -167,16 +176,19 @@ public actor MemoryEvaluator {
         let streaming = footprint.streaming.flatMap { $0.required <= budget ? $0 : nil }
         let level = fitLevel(required: required, budget: budget)
         let tier = level == .tooTight && streaming != nil ? FitLevel.moeTieredStreaming : level
-        let fits = tier.fitsResident
+        let admitted = tier == .moeTieredStreaming && footprint.admitsStreaming ? streaming : nil
+        let fits = tier.fitsResident || admitted != nil
         var result = MemoryAssessment(
             modelId: id, modelName: name, requiredRAMBytes: required.rawValue, availableRAMBytes: resources.availableRAM,
             totalPhysicalRAMBytes: resources.totalRAM, fitLevel: tier)
+        result.fitsInMemory = fits
         result.expertStreaming = tier == .moeTieredStreaming ? streaming : nil
+        let weights = admitted.map { $0.residentWeights + $0.expertCache } ?? footprint.weights
         result.maxContextBudgetTokens = contextBudget(
-            budget: budget, weights: footprint.weights, kv: footprint.kv, kvPrecision: footprint.kvPrecision, kvZones: footprint.kvZones)
+            budget: budget, weights: weights, kv: footprint.kv, kvPrecision: footprint.kvPrecision, kvZones: footprint.kvZones)
         result.maxPromptBudgetTokens = promptBudget(
-            budget: budget, weights: footprint.weights, kv: footprint.kv, kvPrecision: footprint.kvPrecision, kvZones: footprint.kvZones)
-        result.warning = warning(subject: subject, required: required, budget: budget, resources: resources, fits: fits)
+            budget: budget, weights: weights, kv: footprint.kv, kvPrecision: footprint.kvPrecision, kvZones: footprint.kvZones)
+        result.warning = warning(subject: subject, required: admitted?.required ?? required, budget: budget, resources: resources, fits: fits)
         result.recommendation = fits ? nil : recommendation
         result.memoryBudgetBytes = budget.rawValue
         return result
@@ -208,9 +220,10 @@ public actor MemoryEvaluator {
         let loaded = ByteCount(Int64(Double(localSize) * 1.15))
         let kvBytes = kv.bytes(tokens: TokenCount(contextLength), kvPrecision: kvPrecision, zones: kvZones)
         var footprint = Footprint(required: loaded + kvBytes, weights: ByteCount(localSize), kv: kv, kvPrecision: kvPrecision, kvZones: kvZones)
-        footprint.streaming = ExpertStreamingFootprint(
+        footprint.streaming = streaming(
             weights: loaded, totalParameters: total,
             activeParameters: ModelDefinition.inferActiveParameters(id: modelId, name: "", total: total), kv: kvBytes)
+        footprint.admitsStreaming = expertStreaming != nil
         return Self.assessment(
             id: modelId, name: modelId.components(separatedBy: "/").last ?? modelId,
             footprint: footprint,
@@ -234,7 +247,6 @@ public actor MemoryEvaluator {
             } else if info.quantization.contains("8bit") {
                 estimatedMB = Int64(params * 1000)
             } else {
-                // FP16 / base
                 estimatedMB = Int64(params * 2000)
             }
         }
@@ -245,9 +257,10 @@ public actor MemoryEvaluator {
         let kvBytes = kv.bytes(tokens: TokenCount(contextLength), kvPrecision: kvPrecision, zones: kvZones)
         let quantized = info.quantization.contains("4bit") || info.quantization.contains("dq") || info.quantization.contains("nvfp4")
         var footprint = Footprint(required: weights + kvBytes, weights: weights, kv: kv, kvPrecision: kvPrecision, kvZones: kvZones)
-        footprint.streaming = ExpertStreamingFootprint(
+        footprint.streaming = streaming(
             weights: weights, totalParameters: total,
             activeParameters: ModelDefinition.inferActiveParameters(id: modelId, name: "", total: total), kv: kvBytes)
+        footprint.admitsStreaming = expertStreaming != nil
         return Self.assessment(
             id: modelId, name: info.name,
             footprint: footprint,

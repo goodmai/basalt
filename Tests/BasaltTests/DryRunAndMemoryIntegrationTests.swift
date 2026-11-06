@@ -162,7 +162,7 @@ struct DryRunAndMemoryIntegrationTests {
                    "set BASALT_E2E=1 and cache mlx-community/Qwen3-4B-4bit"))
     func measuredKVMatchesGeometry() async throws {
         let path = try #require(Self.kvProbeModelPath)
-        let engine = MLXInferenceEngine(gpuCacheLimit: 0)
+        let engine = MLXInferenceEngine(EngineConfiguration(gpuCacheLimit: 0))
         try await engine.load(modelPath: path)
         let container = try #require(await engine.container)
         let geometry = try #require(KVCacheGeometry.load(modelDirectory: URL(fileURLWithPath: path)))
@@ -193,7 +193,7 @@ struct DryRunAndMemoryIntegrationTests {
                    "set BASALT_E2E=1 and cache mlx-community/Qwen3-4B-4bit"))
     func measuredZonedKVMatchesGeometry() async throws {
         let path = try #require(Self.kvProbeModelPath)
-        let engine = MLXInferenceEngine(gpuCacheLimit: 0)
+        let engine = MLXInferenceEngine(EngineConfiguration(gpuCacheLimit: 0))
         try await engine.load(modelPath: path)
         let container = try #require(await engine.container)
         let geometry = try #require(KVCacheGeometry.load(modelDirectory: URL(fileURLWithPath: path)))

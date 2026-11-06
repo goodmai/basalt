@@ -94,29 +94,6 @@ struct HeadSplitKVCacheTests {
         #expect(cache.retrievalTokens == 192)
         #expect(cache.streamingTokens == 192)
     }
-
-    @Test("Splitting applies only when a few heads carry the retrieval: a hybrid whose every attention head retrieves stays dense")
-    func concentrationGuard() {
-        #expect(KVHeadMask.isConcentrated([[1.07, 0.28, 0.01, 0.0003], [0.11, 0.02, 0.6, 0.004]]))
-        #expect(!KVHeadMask.isConcentrated([[0.41, 0.67, 0.65, 0.65], [0.79, 1.04, 0.94, 1.26]]))
-        #expect(!KVHeadMask.isConcentrated([[0, 0], [0, 0]]))
-    }
-
-    @Test("The mask keeps the requested share of heads with the highest scores, across layers")
-    func classifyKeepsTopHeads() {
-        let mask = KVHeadMask.classify(scores: [[0.9, 0.1, 0.5, 0.2], [0.05, 0.8, 0.3, 0.7]], ratio: 0.5)
-        #expect(mask.retrieval == [[0, 2], [1, 3]])
-        #expect(KVHeadMask.classify(scores: [[0.1, 0.2]], ratio: 0).retrieval == [[]])
-    }
-
-    @Test("Ablation scores cover every full-attention layer and KV head of a model: the drop in the answer's log-probability when that head keeps only sinks and a window")
-    func classifierScoresEveryHead() throws {
-        let model = try TinyModel.make(.qwen3)
-        let layers = try model.newCache(parameters: nil).filter { type(of: $0) == KVCacheSimple.self }.count
-        let scores = try KVHeadClassifier.scores(model: model, tokenizer: ByteTokenizer(), length: 512)
-        #expect(scores.count == layers)
-        #expect(scores.allSatisfy { !$0.isEmpty && $0.allSatisfy { $0.isFinite && $0 >= 0 } })
-    }
 }
 
 @Suite("A head-split cache built from a dense one attends like the cache that saw every token (#270)")

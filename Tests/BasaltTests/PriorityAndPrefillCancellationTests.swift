@@ -82,7 +82,7 @@ struct PriorityAndPrefillCancellationTests {
     static let longPrompt = String(repeating: "abcdefgh", count: 2_048)
 
     static func tinyEngine(cacheBlendRatio: Float? = nil) async throws -> MLXInferenceEngine {
-        let engine = MLXInferenceEngine(promptCacheBytes: cacheBlendRatio == nil ? 0 : 1 << 26, cacheBlendRatio: cacheBlendRatio)
+        let engine = MLXInferenceEngine(EngineConfiguration(promptCacheBytes: cacheBlendRatio == nil ? 0 : 1 << 26, cacheBlendRatio: cacheBlendRatio))
         await engine.attach(try TinyModel.container())
         return engine
     }

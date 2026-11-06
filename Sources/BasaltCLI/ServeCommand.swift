@@ -25,10 +25,7 @@ struct ServeCommand: AsyncParsableCommand {
     )
     var modelPath: String?
 
-    @Option(
-        name: .customLong("quant"),
-        help: "Quantization subfolder inside the repo (e.g. 2bit | 4bit) — for repos shipping several variants"
-    )
+    @Option(name: .customLong("quant"), help: "Quantization subfolder inside the repo (e.g. 2bit | 4bit) — for repos shipping several variants")
     var quant: String?
 
     @Option(
@@ -43,95 +40,21 @@ struct ServeCommand: AsyncParsableCommand {
     )
     var rerankModel: String?
 
-    @Option(
-        name: .customLong("reasoning-effort"),
-        help: "Chat-template reasoning budget (Qwen3.8: xhigh | medium | low), or `none` to disable thinking entirely"
-    )
-    var reasoningEffort: String?
-
-    @Option(name: .customLong("top-k"), help: "Keep only the k most likely tokens (unset disables)")
-    var topK: Int?
-
-    @Option(name: .customLong("min-p"), help: "Drop tokens below this fraction of the top token's probability")
-    var minP: Float?
-
-    @Option(name: .customLong("seed"), help: "Seed the sampler so a non-greedy run is reproducible")
-    var seed: UInt64?
+    @OptionGroup var sampling: SamplingOptions
 
     @OptionGroup var kvCache: KVCacheOptions
 
-    @Option(name: .customLong("repetition-penalty"), help: "Penalty on recently emitted tokens, e.g. 1.1 (default: off)")
-    var repetitionPenalty: Float?
+    @OptionGroup var expertStreaming: ExpertStreamingOptions
 
-    @Option(
-        name: .customLong("prompt-cache-mb"),
-        help: "Memory for the prompt-cache prefix tree shared by all requests, in MB (default: half of what Metal's recommended working set leaves after the weights; 0 disables)"
-    )
-    var promptCacheMB: Int?
+    @OptionGroup var promptCache: PromptCacheOptions
 
     @OptionGroup var promptCacheDisk: PromptCacheDiskOptions
 
-    @Option(
-        name: .customLong("hybrid-anchors"),
-        help: "Recurrent-state snapshots kept per conversation at message boundaries (assistant turn starts, tool result and reasoning ends, at least 512 tokens apart) on hybrid models such as Qwen3.5, Nemotron-H or LFM2, so a prompt edited mid-history resumes from the last one before the edit; each costs one recurrent state from the prompt-cache budget (default: 8; 0 disables)"
-    )
-    var hybridAnchors = 8
+    @OptionGroup var speculative: SpeculativeOptions
 
-    @Flag(
-        name: .customLong("cache-blend"),
-        help: "Reuse the KV of prompt chunks (split after blank lines) in any order, recomputing only the most deviating tokens (CacheBlend, approximate; Llama and Qwen3 only; takes half the prompt-cache budget)"
-    )
-    var cacheBlend = false
-
-    @Option(
-        name: .customLong("cache-blend-ratio"),
-        help: "Share of reused chunk tokens recomputed by --cache-blend, 0...1 (default: 0.3; 0 is fastest, 1 ≈ a full prefill up to numerical noise)"
-    )
-    var cacheBlendRatio: Float = 0.3
-
-    @Flag(
-        name: .customLong("speculative-lookup"),
-        help: "Draft up to 16 tokens per step by matching the last 3-5 tokens against the prompt and output, verified in one forward pass (faster when the answer copies its context, slower on free prose; greedy output can differ at floating-point near-ties; attention-only models and dense recurrent hybrids such as Qwen3.5 or Nemotron-H, without --kv-bits)"
-    )
-    var speculativeLookup = false
-
-    @Flag(
-        name: .customLong("speculative-recycling"),
-        help: "With speculative lookup on, draft up to 6 tokens from the model's own argmax successors (Token Recycling) when no n-gram matches; measured neutral to 1.2x over lookup alone on reasoning-style text, no gain on prose"
-    )
-    var speculativeRecycling = false
-
-    @Flag(
-        name: .customLong("mtp"),
-        help: "Draft with the model's multi-token-prediction head (mtp.safetensors, e.g. MTPLX packs of Qwen3.5/3.8 and Bonsai 2), verified in one forward pass and exact at any temperature (greedy drafts, the target samples every token); requests without JSON constraints, speculative lookup, --kv-bits or --kv-zones and prompts up to 8192 tokens (prefilled in one forward; a follow-up turn reuses the stored prefix from the prompt cache and prefills only the new tail)"
-    )
-    var mtp = false
-
-    @Option(
-        name: .customLong("mtp-block"),
-        help: "With --mtp, the largest verify round: one token the target already chose plus up to N-1 drafted by the MTP head. Rounds start at one drafted token, grow by one after four fully accepted rounds and drop back to one on a rejection (default 4; Qwen3.5-family targets rewind up to 7 drafted tokens, others clamp to their limit; 2 drafts one token every round)"
-    )
-    var mtpBlock = 4
-
-    @Flag(
-        name: .customLong("experimental-samplers"),
-        help: "Accept the experimental dry_* (DRY repetition penalty) and xtc_* (exclude top choices) request fields. Measured on a 2-bit Qwen3.8, DRY turned a verbatim loop that RepetitionGuard stops into a loop with corrupted numbers that runs to max_tokens; on models that do not loop it changed nothing. Without this flag those fields are refused with 400"
-    )
-    var experimentalSamplers = false
-
-    @Flag(
-        name: .customLong("experimental-zero-copy-body"),
-        help: "Wrap each collected REST request body in Data without copying it, in the JSON nesting check and the chat pipeline. Measured on Gemma 4 26B-A4B with 1-8 images at the 32 MB limit: process footprint peak 70-95 MB lower, MLX peak unchanged, TTFT no better (#345)"
-    )
-    var experimentalZeroCopyBody = false
+    @OptionGroup var experimental: ExperimentalServeOptions
 
     @OptionGroup var thinking: ThinkingOptions
-
-    @Flag(
-        name: .customLong("grammar-jump-forward"),
-        help: "Feed XGrammar-forced spans in one forward pass during constrained decoding (opt-in; JSON schema and forced tool calls)"
-    )
-    var grammarJumpForward = false
 
     @OptionGroup var network: ServeNetworkOptions
 
@@ -218,6 +141,7 @@ struct ServeCommand: AsyncParsableCommand {
 
     mutating func run() async throws {
         if wiredLimit { MLXInferenceEngine.renewsResidency() }
+        if experimental.smallMKernel { MLXInferenceEngine.enablesSmallMKernel() }
         if dryRun { return await assessMemory() }
 
         let network = try resolveAccess()
@@ -236,7 +160,7 @@ struct ServeCommand: AsyncParsableCommand {
         config.modelId = model ?? modelPath
         config.maxTokens = maxTokens
         config.logLevel = logLevel
-        config.experimentalZeroCopyBody = experimentalZeroCopyBody
+        config.experimentalZeroCopyBody = experimental.zeroCopyBody
 
         BasaltLogger.globalLevel = config.logLevel.basaltLevel
 
@@ -273,7 +197,6 @@ struct ServeCommand: AsyncParsableCommand {
 extension ServeCommand {
     private func makeOrchestrator(maxTokens: Int) async throws -> ModelOrchestratorActor {
         let engine = try makeEngine()
-        await engine.probeModels(modelProbe)
         if batchSlots > 1, maxConcurrent < 2 {
             log("\(yellow("[warn]")) --batch-slots \(batchSlots) has no effect with --max-concurrent \(maxConcurrent): only one generation runs at a time")
         }

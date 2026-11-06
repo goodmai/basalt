@@ -50,7 +50,7 @@ struct AdapterServingRealModelTests {
           .enabled(if: modelPath != nil, "set BASALT_E2E=1 and BASALT_E2E_LORA_MODEL_PATH"))
     func servesAdapters() async throws {
         let path = try #require(Self.modelPath)
-        let engine = MLXInferenceEngine(promptCacheBytes: 0)
+        let engine = MLXInferenceEngine(EngineConfiguration(promptCacheBytes: 0))
         try await engine.load(modelPath: path)
         let container = try #require(await engine.container)
         let directories = try await Self.trained(container)
@@ -86,7 +86,7 @@ struct AdapterServingRealModelTests {
     @Test("An adapter whose tensors fit no layer of the base (an LLM-named adapter on Gemma 4 through MLXVLM) is refused at startup, naming the tensor",
           .enabled(if: refusedModelPath != nil, "set BASALT_E2E=1 and BASALT_E2E_LORA_REFUSED_MODEL_PATH"))
     func refusesMismatchedAdapter() async throws {
-        let engine = MLXInferenceEngine(promptCacheBytes: 0)
+        let engine = MLXInferenceEngine(EngineConfiguration(promptCacheBytes: 0))
         try await engine.load(modelPath: try #require(Self.refusedModelPath))
         let directory = try LabGateTests.adapterDirectory(rank: 2, storedRank: 2)
         let refusal = await #expect(throws: BasaltError.self) { try await engine.loadAdapters(["a": directory]) }

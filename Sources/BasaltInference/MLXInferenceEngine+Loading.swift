@@ -91,7 +91,7 @@ extension MLXInferenceEngine {
             throw .modelNotFound(identifier: modelPath)
         }
         let modelType = ModelCache.config(at: directory)?["model_type"] as? String
-        try ModelCapabilities.refuseUnverifiedKVBits(kvPrecision, modelType: modelType, path: modelPath)
+        try ModelCapabilities.refuseUnverifiedKVBits(configuration.kvPrecision, modelType: modelType, path: modelPath)
 
         if container != nil { await unloadCurrentModel() }
         do { try faults.check(.unload) } catch { throw await Self.loadFailure(error, modelPath: modelPath) }
@@ -99,18 +99,18 @@ extension MLXInferenceEngine {
         let epoch = modelEpoch
         do {
             try faults.check(.load)
-            if let gpuCacheLimit { Memory.cacheLimit = gpuCacheLimit }
-            let loaded = try await loadModelContainer(from: directory, using: DefaultTokenizerLoader())
-            try await loaded.perform { try PrismHadamard.prepareLoaded($0.model) }
+            if let gpuCacheLimit = configuration.gpuCacheLimit { Memory.cacheLimit = gpuCacheLimit }
+            let loaded = try await loadContainer(from: directory)
+            try await loaded.perform { try PrismHadamard.prepareLoaded($0.model); SmallMQuantizedLinear.installIfEnabled(in: $0.model) }
             try await probe(loaded, directory: directory, modelPath: modelPath)
-            let drafts = mtp ? await loadMTPDrafter(for: loaded, directory: directory, modelPath: modelPath) : false
+            let drafts = configuration.mtp ? await loadMTPDrafter(for: loaded, directory: directory, modelPath: modelPath) : false
             let capabilities = ModelCapabilities.of(modelType: modelType)
             let facts = ModelFacts(
                 profile: ModelProfileRegistry.profile(forModelAt: modelPath),
                 samplingDefaults: SamplingDefaults(generationConfig: ModelCache.generationConfig(at: directory)),
                 controlTokens: ControlTokenGuard(modelDirectory: directory),
                 fingerprint: promptCacheDisk == nil ? nil : PromptCacheDiskStore.fingerprint(modelDirectory: directory),
-                description: modelPath, hasMTPDrafter: drafts, capabilities: capabilities ?? .conservative,
+                description: modelPath, hasMTPDrafter: drafts, expertReserve: await Self.expertReserve(loaded), capabilities: capabilities ?? .conservative,
                 imageToken: Self.imageToken(in: ModelCache.config(at: directory)))
             guard attach(loaded, facts: facts, epoch: epoch) else { return }
             if capabilities == nil { logger.warn(ModelCapabilities.unverifiedWarning(modelType: modelType)) }
@@ -174,7 +174,7 @@ extension MLXInferenceEngine {
     }
 
     func loadMTPDrafter(for loaded: ModelContainer, directory: URL, modelPath: String) async -> Bool {
-        let logger = self.logger, speculativeLookup = self.speculativeLookup
+        let logger = self.logger, speculativeLookup = configuration.speculativeLookup
         return await useMTPDrafter(in: loaded) { context in
             do {
                 guard let drafter = try MTPSidecar.load(directory: directory, target: context.model) else {
@@ -198,9 +198,9 @@ extension MLXInferenceEngine {
     public var supportsKVZones: Bool { modelAttendsThroughZones }
 
     func probeKVZones() async {
-        guard let zones = kvZones, modelFacts.capabilities.allows(.kvZones), let container else { return }
+        guard let zones = configuration.kvZones, modelFacts.capabilities.allows(.kvZones), let container else { return }
         let epoch = modelEpoch
-        let precision = kvPrecision ?? .q8
+        let precision = configuration.kvPrecision ?? .q8
         let probed = (try? await container.perform { try ZonedKVCache.probe($0.model, precision: precision) })
             ?? (attendsThroughCache: false, rotatesValues: false, readsThroughUpdate: false)
         let attends = probed.attendsThroughCache
@@ -237,9 +237,9 @@ extension MLXInferenceEngine {
     }
 
     func probeKVHeads(directory: URL) async {
-        guard let ratio = kvHeadSplit, let container else { return }
+        guard let ratio = configuration.kvHeadSplit, let container else { return }
         guard modelFacts.capabilities.allows(.kvHeadSplit) else {
-            logger.warn("--kv-head-split is not verified on this model family; on the Qwen3.5-family and LFM2 hybrids the ablation-chosen heads lost the passkey at 16k, so the KV cache stays dense")
+            logger.warn("--kv-head-split is not verified on this model family, so the KV cache stays dense")
             return
         }
         let epoch = modelEpoch
@@ -248,22 +248,24 @@ extension MLXInferenceEngine {
             return
         }
         do {
-            let scores = try await KVHeadClassifier.loadOrScore(directory: directory, container: container)
-            guard KVHeadMask.isConcentrated(scores) else {
-                logger.warn("--kv-head-split does not apply to this model: no small set of heads carries its long-range recall (the median head's ablation score is above \(KVHeadMask.concentration) of the top one), so dropping any of them loses facts; the KV cache stays dense")
+            let (started, logger) = (ContinuousClock.now, logger)
+            let selection = try await KVHeadClassifier.loadOrSelect(directory: directory, container: container, ratio: ratio) { trials in
+                logger.info("KV head split: choosing \(ratio) of the KV heads by output fidelity takes about \(trials) forward passes over a short calibration tail, once per model; the result is cached in ~/.basalt/head-scores")
+            }
+            let measured = "answers kept \(selection.answersKept), mean KL \(selection.meanKL) nats per token against the dense cache (limit \(KVHeadSelection.maxMeanKL)), chosen or read in \(ContinuousClock.now - started)"
+            guard selection.keepsFidelity else {
+                logger.warn("--kv-head-split \(ratio) does not apply to this model: the \(selection.keptHeads) KV heads that best keep its output still lose the calibration passkeys (\(measured)); the KV cache stays dense")
                 return
             }
-            let mask = KVHeadMask.classify(scores: scores, ratio: ratio)
-            record(.learned(epoch) { $0.kvHeadMask = mask })
-            let kept = mask.retrieval.map(\.count).reduce(0, +)
-            logger.info("KV head split: \(kept) of \(scores.map(\.count).reduce(0, +)) KV heads keep the whole context; the rest keep \(HeadSplitKVCache.sinkTokens) sink and \(HeadSplitKVCache.windowTokens) recent tokens")
+            record(.learned(epoch) { $0.kvHeadMask = selection.mask })
+            logger.info("KV head split: \(selection.keptHeads) KV heads chosen by output fidelity keep the whole context, the rest keep \(HeadSplitKVCache.sinkTokens) sink and \(HeadSplitKVCache.windowTokens) recent tokens (\(measured))")
         } catch {
-            logger.warn("--kv-head-split: scoring the heads failed (\(error.localizedDescription)); the KV cache stays dense")
+            logger.warn("--kv-head-split does not apply: \(error); the KV cache stays dense")
         }
     }
 
     func probeQuest() async {
-        guard let questTopK, modelFacts.capabilities.allows(.quest), let container else { return }
+        guard let questTopK = configuration.questTopK, modelFacts.capabilities.allows(.quest), let container else { return }
         let epoch = modelEpoch
         do {
             guard try await container.perform({ try QuestKVCache.modelAttendsThroughCache($0.model) }) else {
@@ -310,7 +312,7 @@ extension MLXInferenceEngine {
 
     func wireWorkingSet() async {
         await releaseWiredMemory()
-        guard wiresWorkingSet else { return }
+        guard configuration.wiresWorkingSet else { return }
         let ticket = WiredMemoryTicket(size: Int(PromptCacheBudget.gpuWorkingSet().rawValue), policy: WiredMaxPolicy(), kind: .active)
         let applied = await ticket.start()
         wiredTicket = ticket

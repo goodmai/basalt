@@ -32,12 +32,12 @@ extension ServeCommand {
             throw ValidationError("--canary-minutes must be between 1 and 10080, got \(canaryMinutes)")
         }
         try network.validateRates()
-        guard (0...1).contains(cacheBlendRatio) else {
-            throw ValidationError("--cache-blend-ratio must be between 0 and 1, got \(cacheBlendRatio)")
+        guard (0...1).contains(promptCache.cacheBlendRatio) else {
+            throw ValidationError("--cache-blend-ratio must be between 0 and 1, got \(promptCache.cacheBlendRatio)")
         }
         try kvCache.validateCombination()
         try promptCacheDisk.validate(sessionLog: sessionLog.mode)
-        guard promptCacheDisk.megabytes == 0 || promptCacheMB != 0 else {
+        guard promptCacheDisk.megabytes == 0 || promptCache.promptCacheMB != 0 else {
             throw ValidationError("--prompt-cache-disk-mb persists the in-memory prompt cache, which --prompt-cache-mb 0 turns off")
         }
     }
@@ -46,7 +46,7 @@ extension ServeCommand {
 
     func assessMemory() async {
         log("🔍 Performing dry-run memory assessment for \(bold(targetModel))…")
-        let assessment = await MemoryEvaluator().evaluate(
+        let assessment = await MemoryEvaluator(expertStreaming: expertStreaming.setting).evaluate(
             modelId: targetModel, kvPrecision: kvCache.bits?.budgetPrecision, kvZones: kvCache.zones)
         let lines = assessment.reportLines(
             kvZones: kvCache.zoned, kvEvict: kvCache.evict,
@@ -55,29 +55,17 @@ extension ServeCommand {
     }
 
     func makeEngine() throws -> MLXInferenceEngine {
-        MLXInferenceEngine(
-            reasoningEffort: reasoningEffort,
-            promptCacheBytes: promptCacheMB.map { min(max(0, $0), 1 << 30) << 20 },
-            kvPrecision: kvCache.bits?.fixedPrecision,
-            kvZones: kvCache.zones,
-            kvHeadSplit: kvCache.headSplit,
-            questTopK: kvCache.questTopK,
-            repetitionPenalty: repetitionPenalty,
-            topK: topK,
-            minP: minP,
-            seed: seed,
-            cacheBlendRatio: cacheBlend ? min(max(0, cacheBlendRatio), 1) : nil,
-            speculativeLookup: speculativeLookup,
-            speculativeRecycling: speculativeRecycling,
-            mtp: mtp,
-            mtpBlockSize: mtpBlock,
-            experimentalSamplers: experimentalSamplers,
-            grammarJumpForward: grammarJumpForward,
-            promptCacheDisk: try promptCacheDisk.store(),
-            hybridAnchors: max(0, hybridAnchors),
-            batchSlots: maxConcurrent >= 2 ? batchSlots : 1,
-            wiresWorkingSet: wiredLimit
-        )
+        var configuration = EngineConfiguration.standard
+        sampling.configure(&configuration)
+        promptCache.configure(&configuration)
+        speculative.configure(&configuration)
+        (configuration.kvPrecision, configuration.kvZones) = (kvCache.bits?.fixedPrecision, kvCache.zones)
+        (configuration.kvHeadSplit, configuration.questTopK) = (kvCache.headSplit, kvCache.questTopK)
+        configuration.batchSlots = maxConcurrent >= 2 ? batchSlots : 1
+        configuration.wiresWorkingSet = wiredLimit
+        configuration.expertStreaming = expertStreaming.setting
+        configuration.probesModel = modelProbe
+        return MLXInferenceEngine(configuration, promptCacheDisk: try promptCacheDisk.store())
     }
 
     static func runServers(_ launch: ServerLaunch, orchestrator: ModelOrchestratorActor) async throws {
