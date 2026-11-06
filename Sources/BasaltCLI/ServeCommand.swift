@@ -118,11 +118,7 @@ struct ServeCommand: AsyncParsableCommand {
     )
     var experimentalSamplers = false
 
-    @Flag(
-        name: .customLong("experimental-zero-copy-body"),
-        help: "Wrap each collected REST request body in Data without copying it, in the JSON nesting check and the chat pipeline. Measured on Gemma 4 26B-A4B with 1-8 images at the 32 MB limit: process footprint peak 70-95 MB lower, MLX peak unchanged, TTFT no better (#345)"
-    )
-    var experimentalZeroCopyBody = false
+    @OptionGroup var experimental: ExperimentalServeOptions
 
     @OptionGroup var thinking: ThinkingOptions
 
@@ -217,6 +213,7 @@ struct ServeCommand: AsyncParsableCommand {
 
     mutating func run() async throws {
         if wiredLimit { MLXInferenceEngine.renewsResidency() }
+        if experimental.smallMKernel { MLXInferenceEngine.enablesSmallMKernel() }
         if dryRun { return await assessMemory() }
 
         let network = try resolveAccess()
@@ -235,7 +232,7 @@ struct ServeCommand: AsyncParsableCommand {
         config.modelId = model ?? modelPath
         config.maxTokens = maxTokens
         config.logLevel = logLevel
-        config.experimentalZeroCopyBody = experimentalZeroCopyBody
+        config.experimentalZeroCopyBody = experimental.zeroCopyBody
 
         BasaltLogger.globalLevel = config.logLevel.basaltLevel
 
