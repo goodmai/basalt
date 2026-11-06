@@ -114,10 +114,10 @@ struct ExpertStreamingRealModelTests {
         let log = try await ModelRunLog("expert-streaming-audit", modelPath: path)
         defer { log.releaseGPU() }
         let directory = URL(fileURLWithPath: path)
-        let container = try await log.step("load") {
+        let container = try #require(try await log.step("load") {
             try await ExpertStreamingLoader.loadContainer(
                 from: directory, streaming: ExpertStreaming(cacheBytes: ByteCount(1 << 30)), tokenizerLoader: DefaultTokenizerLoader())
-        }
+        })
         let findings = try await container.performEvaluating(nonSendable: ()) { context, _ in try Self.audit(context, directory: directory) }
         for finding in findings { log.record("audit", finding) }
     }

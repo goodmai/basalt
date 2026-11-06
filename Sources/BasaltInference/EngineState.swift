@@ -14,6 +14,7 @@ struct ModelFacts: Sendable {
     var isHybrid: Bool?
     var hasRecurrentState: Bool?
     var routesExperts: Bool?
+    var expertReserve = ByteCount.zero
     var cacheLayout: [String]?
     var supportsMultiTokenForward: Bool?
     var attendsThroughZones = false

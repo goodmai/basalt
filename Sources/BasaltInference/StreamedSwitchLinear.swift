@@ -67,6 +67,8 @@ final class ExpertStore {
     var stats: ExpertCacheStats { lru.stats }
     var capacity: ByteCount { lru.capacity }
     var expertBytes: ByteCount { layouts.reduce(.zero) { $0 + $1.totalBytes } }
+    var reserve: ByteCount { capacity + (layouts.map(\.totalBytes).max() ?? .zero) * 3 }
+    var unclaimedReserve: ByteCount { max(.zero, reserve - lru.resident) }
 
     func experts(module: Int, _ ids: [Int]) -> [ExpertArrays] {
         let wanted = Set(ids.map { ExpertSlot(module: module, expert: $0) })
@@ -127,19 +129,21 @@ final class StreamedSwitchLinear: SwitchLinear {
         return project(x, ExpertArrays.stacked(store.experts(module: module, ids)), local, sortedIndices: sortedIndices)
     }
 
-    static func residentKernel(sorted: Bool, assignments: Int, experts: Int) -> Bool {
-        sorted && assignments / max(1, experts) >= 4
+    static func residentKernel(sorted: Bool, assignments: Int, experts: Int, quantized: Bool) -> Bool {
+        quantized ? sorted && assignments / max(1, experts) >= 4 : sorted
     }
 
     private func project(_ x: MLXArray, _ experts: ExpertArrays, _ indices: MLXArray, sortedIndices: Bool) -> MLXArray {
+        let layout = store.layouts[module]
+        let quantization = experts.scales == nil ? nil : layout.quantization
+        let sorted = Self.residentKernel(sorted: sortedIndices, assignments: indices.size, experts: layout.numExperts, quantized: quantization != nil)
         var result =
-            if let quantization = store.layouts[module].quantization, let scales = experts.scales {
+            if let quantization, let scales = experts.scales {
                 MLX.gatherQuantizedMM(
                     x, experts.weight, scales: scales, biases: experts.biases, rhsIndices: indices, transpose: true,
-                    groupSize: quantization.groupSize, bits: quantization.bits, mode: quantization.mode,
-                    sortedIndices: Self.residentKernel(sorted: sortedIndices, assignments: indices.size, experts: store.layouts[module].numExperts))
+                    groupSize: quantization.groupSize, bits: quantization.bits, mode: quantization.mode, sortedIndices: sorted)
             } else {
-                MLX.gatherMM(x, experts.weight.swappedAxes(-1, -2), rhsIndices: indices, sortedIndices: sortedIndices)
+                MLX.gatherMM(x, experts.weight.swappedAxes(-1, -2), rhsIndices: indices, sortedIndices: sorted)
             }
         if let bias = experts.bias {
             result = result + MLX.expandedDimensions(bias[indices], axis: -2)

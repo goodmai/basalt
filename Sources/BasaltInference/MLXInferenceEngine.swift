@@ -162,7 +162,7 @@ extension MLXInferenceEngine {
         sequenceBreakers = nil
         grammarPool = GrammarPool()
         let workingSet = PromptCacheBudget.gpuWorkingSet()
-        let weights = ByteCount(Memory.activeMemory)
+        let weights = ByteCount(Memory.activeMemory) + facts.expertReserve
         let budget = configuration.promptCacheBytes.map { ByteCount($0) } ?? PromptCacheBudget.automatic(workingSet: workingSet, weights: weights)
         kvBudget = max(0, workingSet - weights - budget)
         let blendBytes = configuration.cacheBlendRatio == nil ? 0 : budget / 2

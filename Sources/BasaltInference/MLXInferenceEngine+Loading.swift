@@ -110,7 +110,7 @@ extension MLXInferenceEngine {
                 samplingDefaults: SamplingDefaults(generationConfig: ModelCache.generationConfig(at: directory)),
                 controlTokens: ControlTokenGuard(modelDirectory: directory),
                 fingerprint: promptCacheDisk == nil ? nil : PromptCacheDiskStore.fingerprint(modelDirectory: directory),
-                description: modelPath, hasMTPDrafter: drafts, capabilities: capabilities ?? .conservative,
+                description: modelPath, hasMTPDrafter: drafts, expertReserve: await Self.expertReserve(loaded), capabilities: capabilities ?? .conservative,
                 imageToken: Self.imageToken(in: ModelCache.config(at: directory)))
             guard attach(loaded, facts: facts, epoch: epoch) else { return }
             if capabilities == nil { logger.warn(ModelCapabilities.unverifiedWarning(modelType: modelType)) }

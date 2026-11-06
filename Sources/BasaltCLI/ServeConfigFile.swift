@@ -185,6 +185,8 @@ extension ServeConfigFile {
         "serve.experimental_smallm_kernel": .flag(on: "--experimental-smallm-kernel", off: nil),
         "serve.experimental_adaptive_thinking_budget": .flag(on: "--experimental-adaptive-thinking-budget", off: nil),
         "serve.grammar_jump_forward": .flag(on: "--grammar-jump-forward", off: nil),
+        "serve.expert_streaming.enabled": .flag(on: "--experimental-expert-streaming", off: nil),
+        "serve.expert_streaming.cache_gb": .number("--expert-cache-gb"),
         "serve.kv.bits": .text("--kv-bits"),
         "serve.kv.zones": .flag(on: "--kv-zones", off: nil),
         "serve.kv.evict": .number("--kv-evict"),
