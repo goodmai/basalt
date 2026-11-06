@@ -219,7 +219,7 @@ extension MLXInferenceEngine {
     var planSettings: GenerationPlan.Settings {
         GenerationPlan.Settings(
             kvPrecision: kvPrecision, kvZones: kvZones, attendsThroughZones: modelAttendsThroughZones, prefillsInChunks: modelPrefillsInChunks,
-            kvHeadMask: kvHeadMask, questTopK: questApplies ? questTopK : nil, speculativeLookup: speculativeLookup,
+            evictsThroughUpdate: modelFacts.evictsThroughUpdate, kvHeadMask: kvHeadMask, questTopK: questApplies ? questTopK : nil, speculativeLookup: speculativeLookup,
             capabilities: modelFacts.capabilities, adapter: adapterNamespace)
     }
 

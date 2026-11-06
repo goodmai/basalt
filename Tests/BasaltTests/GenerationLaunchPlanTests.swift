@@ -20,4 +20,11 @@ struct GenerationLaunchPlanTests {
         #expect(FreshCache.plan(kvBitsSet: false, headMask: nil, questTopK: nil, zones: nil, precision: .q8) == .stock)
         #expect(FreshCache.plan(kvBitsSet: false, headMask: nil, questTopK: nil, zones: .standard, precision: .q8) == .zoned(.standard, .q8))
     }
+
+    @Test("Zones whose middle stays fp16 plan the evicting cache, still only for a request with a precision")
+    func fullPrecisionMiddlePlansEvictingCache() {
+        let zones = KVZones.standard.evicting(0.5).keepingMiddleFullPrecision()
+        #expect(FreshCache.plan(kvBitsSet: true, headMask: nil, questTopK: nil, zones: zones, precision: .q8) == .evicting(zones))
+        #expect(FreshCache.plan(kvBitsSet: false, headMask: nil, questTopK: nil, zones: zones, precision: nil) == .stock)
+    }
 }

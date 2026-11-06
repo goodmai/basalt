@@ -92,7 +92,9 @@ extension ModelOrchestratorActor {
         let geometry = KVCacheGeometry.forModel(
             path, parameters: ModelDefinition.inferTotalParameters(id: path, name: "", ramMB: Int64(sizeMB))
         )
-        let takes = await (zones: engine.supportsKVZones, eviction: engine.supportsKVEviction, quantization: engine.supportsKVQuantization)
+        let takes = await (
+            zones: engine.supportsKVZones, eviction: engine.supportsKVEviction, quantization: engine.supportsKVQuantization,
+            fullPrecisionEviction: engine.evictsKVInFullPrecision)
         state = .reduce(state, .loaded(path: path, modelId: modelId, geometry: geometry, takes: takes))
         logger.info("Model size: \(sizeMB) MB")
         await telemetry.setModelMemory(mb: sizeMB)

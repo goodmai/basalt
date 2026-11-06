@@ -118,6 +118,11 @@ struct GenerationPlanTests {
         var flat = evicting
         flat.attendsThroughZones = false
         #expect(GenerationPlan.make(request, flat, GenerationPlan.Facts()) == GenerationPlan(batchable: false))
+        var throughUpdate = flat
+        throughUpdate.evictsThroughUpdate = true
+        #expect(GenerationPlan.make(request, throughUpdate, GenerationPlan.Facts()).kvZones == KVZones.standard.evicting(0.5).keepingMiddleFullPrecision())
+        throughUpdate.capabilities = .conservative
+        #expect(GenerationPlan.make(request, throughUpdate, GenerationPlan.Facts()).kvZones == nil)
     }
 
     @Test("Head split needs the full-precision unzoned cache; Quest steps aside for head split")

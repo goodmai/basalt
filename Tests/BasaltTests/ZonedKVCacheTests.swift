@@ -316,9 +316,9 @@ struct ZonedKVCacheEngineTests {
 
     @Test("k8v4h on a model whose value heads it cannot rotate (head dim 160) is found at load and flagged, so serve logs that it runs as k8v4")
     func loadFlagsUnrotatableValueHeads() async throws {
-        #expect(try ZonedKVCache.probe(Self.qwen3(hiddenSize: 640), precision: .k8v4h) == (true, false))
-        #expect(try ZonedKVCache.probe(Self.qwen3(hiddenSize: 512), precision: .k8v4h) == (true, true))
-        #expect(try ZonedKVCache.probe(Self.qwen3(hiddenSize: 512), precision: .k8v4) == (true, false))
+        #expect(try ZonedKVCache.probe(Self.qwen3(hiddenSize: 640), precision: .k8v4h) == (true, false, false))
+        #expect(try ZonedKVCache.probe(Self.qwen3(hiddenSize: 512), precision: .k8v4h) == (true, true, false))
+        #expect(try ZonedKVCache.probe(Self.qwen3(hiddenSize: 512), precision: .k8v4) == (true, false, false))
         for (hiddenSize, precision, flagged) in [(640, KVPrecision.k8v4h, true), (512, .k8v4h, false), (640, .k8v4, false)] {
             let engine = MLXInferenceEngine(kvPrecision: precision, kvZones: .standard)
             let model = try Self.qwen3(hiddenSize: hiddenSize)

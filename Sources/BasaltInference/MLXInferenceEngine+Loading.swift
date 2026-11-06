@@ -198,32 +198,41 @@ extension MLXInferenceEngine {
     public var supportsKVZones: Bool { modelAttendsThroughZones }
 
     func probeKVZones() async {
-        guard kvZones != nil, modelFacts.capabilities.allows(.kvZones), let container else { return }
+        guard let zones = kvZones, modelFacts.capabilities.allows(.kvZones), let container else { return }
         let epoch = modelEpoch
         let precision = kvPrecision ?? .q8
-        let probed = (try? await container.perform { try ZonedKVCache.probe($0.model, precision: precision) }) ?? (attendsThroughCache: false, rotatesValues: false)
+        let probed = (try? await container.perform { try ZonedKVCache.probe($0.model, precision: precision) })
+            ?? (attendsThroughCache: false, rotatesValues: false, readsThroughUpdate: false)
         let attends = probed.attendsThroughCache
-        var chunks = false
-        if let zones = kvZones, zones.evictedMiddleFraction > 0, attends {
-            do {
-                chunks = try await container.perform {
-                    try ZonedKVCache.prefillsWithinWindow($0.model, zones: zones, precision: precision, prefill: GenerateParameters().prefill)
-                }
-                if !chunks {
-                    logger.warn("--kv-evict does not apply to this model: it prefills a prompt longer than the recent window in one pass, so its zoned cache keeps every token and is sized that way.")
-                }
-            } catch {
-                logger.warn("--kv-evict is off for this model: its prefill probe failed (\(error)), so its zoned cache keeps every token and is sized that way.")
-            }
-        }
+        let evictable = zones.evictedMiddleFraction > 0 && (attends || probed.readsThroughUpdate)
+        let chunks = evictable ? await prefillsWithinWindow(zones: zones, precision: precision, container: container) : false
         let rotationUnavailable = attends && precision.rotatesValues && !probed.rotatesValues
+        let throughUpdate = !attends && chunks
         record(.learned(epoch) {
-            ($0.attendsThroughZones, $0.prefillsInChunks, $0.valueRotationUnavailable) = (attends, chunks, rotationUnavailable)
+            ($0.attendsThroughZones, $0.prefillsInChunks, $0.valueRotationUnavailable, $0.evictsThroughUpdate) =
+                (attends, attends && chunks, rotationUnavailable, throughUpdate)
         })
-        if !attends {
-            logger.warn("--kv-zones does not apply to this model: its attention reads the whole cache through update(), or its head dimension has no quantization group. Its quantized requests use uniform --kv-bits, k8v4 as 8-bit\((kvZones?.evictedMiddleFraction ?? 0) > 0 ? ", and --kv-evict keeps every token" : "").")
+        if throughUpdate {
+            logger.info("--kv-evict on this model: its attention reads the whole cache through update() (Gemma 4), so its full-attention layers keep \(zones.sinkTokens) sink tokens, the last \(zones.windowTokens) and \(Int(((1 - zones.evictedMiddleFraction) * 100).rounded()))% of the tokens between them in fp16; --kv-zones and --kv-bits do not apply to its cache")
+        } else if !attends {
+            logger.warn("--kv-zones does not apply to this model: its attention reads the whole cache through update(), or its head dimension has no quantization group. Its quantized requests use uniform --kv-bits, k8v4 as 8-bit\(zones.evictedMiddleFraction > 0 ? ", and --kv-evict keeps every token" : "").")
         } else if rotationUnavailable {
             logger.warn("--kv-bits \(precision) cannot rotate this model's value heads: the Hadamard transform is its own inverse only for head dimensions 2^k and 12·2^k. It runs as k8v4.")
+        }
+    }
+
+    private func prefillsWithinWindow(zones: KVZones, precision: KVPrecision, container: ModelContainer) async -> Bool {
+        do {
+            let chunks = try await container.perform {
+                try ZonedKVCache.prefillsWithinWindow($0.model, zones: zones, precision: precision, prefill: GenerateParameters().prefill)
+            }
+            if !chunks {
+                logger.warn("--kv-evict does not apply to this model: it prefills a prompt longer than the recent window in one pass, so its zoned cache keeps every token and is sized that way.")
+            }
+            return chunks
+        } catch {
+            logger.warn("--kv-evict is off for this model: its prefill probe failed (\(error)), so its zoned cache keeps every token and is sized that way.")
+            return false
         }
     }
 

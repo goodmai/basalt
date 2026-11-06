@@ -18,6 +18,7 @@ struct ModelFacts: Sendable {
     var supportsMultiTokenForward: Bool?
     var attendsThroughZones = false
     var prefillsInChunks = false
+    var evictsThroughUpdate = false
     var valueRotationUnavailable = false
     var kvHeadMask: KVHeadMask?
     var questApplies = false
@@ -99,6 +100,7 @@ extension MLXInferenceEngine {
     var modelAttendsThroughZones: Bool { modelFacts.attendsThroughZones }
     var modelPrefillsInChunks: Bool { modelFacts.prefillsInChunks }
     public var supportsKVEviction: Bool { modelPrefillsInChunks }
+    public var evictsKVInFullPrecision: Bool { modelFacts.evictsThroughUpdate }
     public var supportsKVQuantization: Bool { modelFacts.capabilities.allows(.kvQuantization) }
     var valueRotationUnavailable: Bool { modelFacts.valueRotationUnavailable }
     var kvHeadMask: KVHeadMask? { modelFacts.kvHeadMask }
