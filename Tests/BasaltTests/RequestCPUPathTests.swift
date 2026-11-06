@@ -65,7 +65,7 @@ struct RequestCPUPathTests {
         }
         #expect(JSONNesting.depth(of: Data(Self.nested(128).utf8)) == 128)
         #expect(JSONNesting.depth(of: Data(Self.nested(129).utf8)) == 129)
-        #expect(JSONNesting.depth(of: Data(#"{"s": "a \"[[[\" b"}"#.utf8)) == 1)
+        #expect(JSONNesting.depth(of: Data("{\"s\": \"a \\\"[[[\\\" b\"}".utf8)) == 1)
     }
 
     @Test("Folding DRY and XTC into the request decode gives the same values and the same failure text as a separate decode", arguments: [
@@ -101,7 +101,7 @@ struct RequestCPUPathTests {
         #expect(tools.choice == ToolChoice(forcedTool: "f"))
         let format = try OpenAIController.responseFormat(in: shared, data: data)
         #expect(format == .jsonSchema(#"{"type":"object","properties":{"z":{"type":"string"},"a":{"type":"integer"}}}"#, strict: false))
-        #expect(OpenAIController.requestedTools(in: nil).tools == nil)
+        #expect(try OpenAIController.requestedTools(in: nil).tools == nil)
         #expect(try OpenAIController.responseFormat(in: ChatPipeline.object(in: Data("[1]".utf8)), data: data) == nil)
     }
 
@@ -152,7 +152,7 @@ struct RequestCPUPathTests {
         #expect(decoded.count == 2)
         let chat = MLXInferenceEngine.chat(messages, lastText: "b", images: decoded)
         #expect(chat.map(\.images.count) == [2, 1])
-        guard case .ciImage(let reused) = chat[1].images[0] else { Issue.record("expected a CIImage"); return }
+        guard case .ciImage(let reused) = chat[1].images[0].source else { Issue.record("expected a CIImage"); return }
         #expect(reused === decoded[image.digest])
     }
 }
