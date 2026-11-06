@@ -63,6 +63,16 @@ enum TensorPacker {
         let (path, layer) = try linear(request.tensor, in: model)
         let original = dense(layer)
         let packed = try converted(original, bias: layer.bias, to: request.format)
+        let error = measure(original, packed)
+        let outcome = Outcome(
+            original: PackedLayer(path: path, layer: layer), from: describe(layer), bytesBefore: bytes(layer),
+            bytesAfter: bytes(packed, as: request.format),
+            rmse: error.rmse, maxAbsError: error.maxAbsError, relativeError: error.relativeError)
+        try MLXInferenceEngine.replace(path, with: packed, in: model)
+        return outcome
+    }
+
+    static func measure(_ original: MLXArray, _ packed: Linear) -> (rmse: Float, maxAbsError: Float, relativeError: Float) {
         let reference = original.asType(.float32)
         let difference = reference - dense(packed).asType(.float32)
         let squared = (difference * difference).sum()
@@ -71,11 +81,7 @@ enum TensorPacker {
         let maxAbsError = abs(difference).max()
         let relativeError = which(norm .> 0, sqrt(squared / norm), 0)
         eval(packed, rmse, maxAbsError, relativeError)
-        let outcome = Outcome(
-            original: PackedLayer(path: path, layer: layer), from: describe(layer), bytesBefore: bytes(layer), bytesAfter: bytes(packed),
-            rmse: rmse.item(Float.self), maxAbsError: maxAbsError.item(Float.self), relativeError: relativeError.item(Float.self))
-        try MLXInferenceEngine.replace(path, with: packed, in: model)
-        return outcome
+        return (rmse.item(Float.self), maxAbsError.item(Float.self), relativeError.item(Float.self))
     }
 
     static func linear(_ name: String, in model: Module) throws(BasaltError) -> (String, Linear) {
@@ -107,6 +113,11 @@ enum TensorPacker {
         case .mxfp4:
             try divisible(columns, by: 32)
             return QuantizedLinear(weight: dense, bias: bias, groupSize: 32, bits: 4, mode: .mxfp4)
+        case .nf4(let groupSize):
+            guard NF4Codec.groupSizes.contains(groupSize) else { throw refused("nf4 packs take a group size of 32 or 64; got \(groupSize)") }
+            try divisible(columns, by: groupSize)
+            let (codes, scales) = NF4Codec.quantized(dense, groupSize: groupSize)
+            return Linear(weight: NF4Codec.dequantized(codes, scales: scales, groupSize: groupSize).asType(dense.dtype), bias: bias)
         case .ternary:
             try divisible(columns, by: ternaryGroupSize)
             return ternary(dense, bias: bias)
@@ -134,6 +145,11 @@ enum TensorPacker {
 
     static func bytes(_ layer: Module) -> Int { layer.parameters().flattened().reduce(0) { $0 + $1.1.nbytes } }
 
+    static func bytes(_ layer: Linear, as format: PackFormat) -> Int {
+        guard case .nf4(let groupSize) = format else { return bytes(layer) }
+        return NF4Codec.bytes(elements: layer.weight.size, groupSize: groupSize) + (layer.bias?.nbytes ?? 0)
+    }
+
     static func describe(_ layer: Linear) -> String {
         (layer as? QuantizedLinear).map { "\($0.bits)-bit \($0.mode.rawValue) g\($0.groupSize)" } ?? "\(layer.weight.dtype)"
     }
@@ -142,6 +158,7 @@ enum TensorPacker {
         switch format {
         case .affine(let bits, let groupSize): "\(bits)-bit affine g\(groupSize)"
         case .mxfp4: "4-bit mxfp4 g32"
+        case .nf4(let groupSize): "4-bit nf4 g\(groupSize)"
         case .ternary: "ternary g\(ternaryGroupSize)"
         case .float16: "float16"
         case .bfloat16: "bfloat16"

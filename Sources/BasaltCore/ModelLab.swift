@@ -88,6 +88,7 @@ public struct AdapterVerdict: Sendable, Codable {
 public enum PackFormat: Sendable, Codable, Equatable {
     case affine(bits: Int, groupSize: Int)
     case mxfp4
+    case nf4(groupSize: Int)
     case ternary
     case float16
     case bfloat16
