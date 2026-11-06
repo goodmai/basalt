@@ -226,3 +226,105 @@ struct NF4SpeedRealModelTests {
         #expect(nf4.perplexity <= source.perplexity, "perplexity \(nf4.perplexity) vs \(source.perplexity)")
     }
 }
+
+final class CapturingLinear: Linear {
+    let inner: Linear
+    var inputs: [MLXArray] = []
+
+    init(_ inner: Linear) {
+        self.inner = inner
+        super.init(weight: inner.weight, bias: inner.bias)
+    }
+
+    override func callAsFunction(_ x: MLXArray) -> MLXArray {
+        inputs.append(x)
+        return inner(x)
+    }
+}
+
+enum NF4Activation {
+    static let calibrationTokens = 512
+
+    static func tail(_ key: String) -> String? {
+        if key.hasSuffix("lm_head.weight") { return "lm_head.weight" }
+        guard let range = key.range(of: #"layers\.\d+\..+"#, options: .regularExpression) else { return nil }
+        return String(key[range])
+    }
+
+    static func sourceIndex(_ directory: URL) throws -> [String: (URL, String)] {
+        let shards = try FileManager.default.contentsOfDirectory(atPath: directory.path).filter { $0.hasSuffix(".safetensors") }
+        var index: [String: (URL, String)] = [:]
+        for name in shards {
+            let url = directory.appendingPathComponent(name)
+            for key in try loadArrays(url: url).keys { if let tail = tail(key) { index[tail] = (url, key) } }
+        }
+        return index
+    }
+
+    static func sweep(_ container: ModelContainer, paths: [String], index: [String: (URL, String)], text: String) async throws -> [String] {
+        try await container.perform { context in
+            var probes: [(String, Linear, CapturingLinear)] = []
+            for path in paths {
+                guard let linear = context.model.namedModules().first(where: { $0.0 == path })?.1 as? Linear else { continue }
+                let probe = CapturingLinear(linear)
+                try MLXInferenceEngine.replace(path, with: probe, in: context.model)
+                probes.append((path, linear, probe))
+            }
+            let tokens = Array(context.tokenizer.encode(text: text).prefix(calibrationTokens)).map(Int32.init)
+            eval(context.model(MLXArray(tokens)[.newAxis], cache: try context.model.newCache(parameters: nil)))
+            for (path, linear, _) in probes { try MLXInferenceEngine.replace(path, with: linear, in: context.model) }
+            var lines: [String] = []
+            for (path, _, probe) in probes {
+                guard !probe.inputs.isEmpty, let (url, key) = tail(path + ".weight").flatMap({ index[$0] }),
+                      let weight = try loadArrays(url: url)[key] else { lines.append("\(path) no input or weight"); continue }
+                let input = concatenated(probe.inputs.map { $0.reshaped(-1, $0.dim(-1)) }, axis: 0).asType(.float32)
+                lines += errors(path, weight: weight, input: input)
+                probe.inputs = []
+                Memory.clearCache()
+            }
+            return lines
+        }
+    }
+
+    static func errors(_ path: String, weight: MLXArray, input: MLXArray) -> [String] {
+        let w = weight.asType(.float32)
+        guard w.ndim == 2, w.dim(1) == input.dim(1) else { return ["\(path) shape \(weight.shape) vs input \(input.shape): skipped"] }
+        let reference = matmul(input, w.transposed())
+        let norm = sqrt((reference * reference).sum()).item(Float.self)
+        return NF4Run.formats.map { format in
+            do {
+                let packed = TensorPacker.dense(try TensorPacker.converted(weight, bias: nil, to: format)).asType(.float32)
+                let difference = matmul(input, (w - packed).transposed())
+                let error = sqrt((difference * difference).sum()).item(Float.self) / norm
+                Memory.clearCache()
+                return "act \(path) \(weight.shape) tokens \(input.dim(0)) → \(TensorPacker.describe(format)) relative \(error)"
+            } catch {
+                return "act \(path) → \(TensorPacker.describe(format)) refused: \(error)"
+            }
+        }
+    }
+}
+
+@Suite("NF4 against affine and mxfp4, weighted by real layer inputs: bf16 weights, inputs captured from the shipped checkpoint", .serialized)
+struct NF4ActivationRealModelTests {
+    static let pairs = NF4Run.models("BASALT_E2E_NF4_ACT_MODELS")
+
+    @Test("‖X(W−Ŵ)ᵀ‖/‖XWᵀ‖ per sampled linear on 512 calibration tokens, W from the bf16 source, X from the quantized checkpoint's forward",
+          .enabled(if: !pairs.isEmpty, "set BASALT_E2E=1 and BASALT_E2E_NF4_ACT_MODELS to <checkpoint>=<bf16 directory> pairs"), arguments: pairs)
+    func activationSweep(pair: String) async throws {
+        let parts = pair.split(separator: "=", maxSplits: 1).map(String.init)
+        try #require(parts.count == 2, "expected <checkpoint>=<bf16 directory>")
+        let path = NF4Run.path(parts[0])
+        let index = try NF4Activation.sourceIndex(URL(fileURLWithPath: parts[1]))
+        let log = try await ModelRunLog("nf4-activation", modelPath: path)
+        defer { log.releaseGPU() }
+        let engine = MLXInferenceEngine()
+        try await log.step("load") { try await engine.load(modelPath: path) }
+        let container = try #require(await engine.container)
+        let paths = await NF4Run.sample(container).linears.map { String($0.dropLast(".weight".count)) }
+        let matched = paths.filter { NF4Activation.tail($0 + ".weight").flatMap { index[$0] } != nil }
+        log.record("sample", "\(paths.count) linears, \(matched.count) matched in \(index.count) bf16 tensors of \(parts[1])")
+        for line in try await NF4Activation.sweep(container, paths: matched, index: index, text: NF4Run.text) { log.record("result", line) }
+        #expect(!matched.isEmpty)
+    }
+}
