@@ -64,6 +64,12 @@ let package = Package(
             path: "Sources/BasaltInference",
             swiftSettings: swiftSettings
         ),
+        .target(
+            name: "BasaltSpeech",
+            dependencies: ["BasaltCore"],
+            path: "Sources/BasaltSpeech",
+            swiftSettings: swiftSettings
+        ),
         // Cloud: OpenRouter client, router, cost tracking.
         .target(
             name: "BasaltCloud",
@@ -111,7 +117,7 @@ let package = Package(
         .target(
             name: "BasaltCLI",
             dependencies: [
-                "BasaltCore", "BasaltInference", "BasaltCloud", "BasaltServer", "BasaltUI", "BasaltHarness",
+                "BasaltCore", "BasaltInference", "BasaltCloud", "BasaltServer", "BasaltUI", "BasaltHarness", "BasaltSpeech",
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
                 .product(name: "Yams", package: "Yams"),
             ],

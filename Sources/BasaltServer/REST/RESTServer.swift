@@ -122,6 +122,7 @@ package struct RESTServer: Sendable {
         oai.post("/messages", use: AnthropicController(orchestrator: orchestrator, modelId: defaultId, zeroCopyBody: config.experimentalZeroCopyBody).messages)
         oai.post("/embeddings", use: embedding.embeddings)
         oai.post("/rerank", use: embedding.rerank)
+        oai.post("/audio/transcriptions", use: TranscriptionsController(orchestrator: orchestrator).transcriptions)
     }
 
     private func addDocumentationRoutes(to router: Router<BasicRequestContext>) {
@@ -184,7 +185,8 @@ extension RESTServer {
         "/v1/responses":           { "post": { "summary": "OpenAI Responses API (Codex/Cursor)" } },
         "/v1/messages":            { "post": { "summary": "Anthropic-compatible messages API" } },
         "/v1/embeddings":          { "post": { "summary": "OpenAI-compatible embeddings (serve --embedding-model)" } },
-        "/v1/rerank":              { "post": { "summary": "Cohere/Jina-compatible rerank (serve --rerank-model)" } }
+        "/v1/rerank":              { "post": { "summary": "Cohere/Jina-compatible rerank (serve --rerank-model)" } },
+        "/v1/audio/transcriptions": { "post": { "summary": "OpenAI-compatible speech to text (multipart: file, model, language, response_format, temperature)" } }
       }
     }
     """

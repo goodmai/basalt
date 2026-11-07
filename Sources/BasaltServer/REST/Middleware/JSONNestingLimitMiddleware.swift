@@ -17,7 +17,9 @@ public struct JSONNestingLimitMiddleware<Context: RequestContext>: RouterMiddlew
         context: Context,
         next: (Request, Context) async throws -> Response
     ) async throws -> Response {
-        guard request.method == .post || request.method == .put else { return try await next(request, context) }
+        guard request.method == .post || request.method == .put, request.uri.path != TranscriptionsController.path else {
+            return try await next(request, context)
+        }
         var request = request
         let bytes = ChatPipeline.data(of: try await request.collectBody(upTo: Self.bodyLimit), zeroCopy: zeroCopyBody)
         guard !JSONNesting.containsZero(bytes) else { return Self.badRequest("the request body is not UTF-8 JSON", path: request.uri.path) }

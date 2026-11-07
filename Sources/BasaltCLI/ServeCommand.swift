@@ -3,6 +3,7 @@ import ArgumentParser
 import BasaltCore
 import BasaltInference
 import BasaltServer
+import BasaltSpeech
 import BasaltHarness
 import BasaltCloud
 
@@ -171,6 +172,7 @@ struct ServeCommand: AsyncParsableCommand {
         try await load(orchestrator, from: resolvedPath)
         if !noMemoryCoordinator { await orchestrator.coordinateMemory(with: MemoryCoordinator()) }
         if !noThermalPolicy { await orchestrator.coordinateThermal() }
+        if experimental.speechAnalyzer { await orchestrator.setSpeechFallback(SpeechAnalyzerTranscriber()) }
 
         try await attachCloudFallback(to: orchestrator, virtualKeys: config.virtualKeys)
 

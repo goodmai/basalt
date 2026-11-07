@@ -241,6 +241,18 @@ actor MockInferenceEngine: InferenceEngine {
     func persistPromptCache(within deadline: Duration) async {
         persistCount += 1
     }
+
+    var mockTranscription: Transcription?
+    var transcribesAudio: Bool { mockTranscription != nil }
+
+    func setMockTranscription(_ transcription: Transcription?) {
+        mockTranscription = transcription
+    }
+
+    func transcribe(_ request: TranscriptionRequest) async throws(BasaltError) -> Transcription {
+        guard let mockTranscription else { throw .noAudioEncoder("") }
+        return mockTranscription
+    }
 }
 
 extension GenerationRequest {

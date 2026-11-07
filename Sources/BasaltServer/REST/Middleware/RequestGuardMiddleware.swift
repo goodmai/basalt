@@ -62,9 +62,9 @@ public struct RequestGuardMiddleware: RouterMiddleware {
         return (Self.loopbackHosts.contains(parsed.host) && parsed.port == bindPort) || allowedOrigins.contains(parsed.origin)
     }
 
-    static func isJSON(_ request: Request) -> Bool {
+    static func has(_ mediaType: MediaType, _ request: Request) -> Bool {
         guard let header = request.headers[.contentType], let type = MediaType(from: header) else { return false }
-        return type.isType(.applicationJson)
+        return type.isType(mediaType)
     }
 
     public func handle(
@@ -78,7 +78,11 @@ public struct RequestGuardMiddleware: RouterMiddleware {
         guard allowsOrigin(request) else {
             return Self.reject(.forbidden, "Forbidden: cross-origin requests are not allowed (see allowed_origins).", path: request.uri.path)
         }
-        if request.method == .post, !Self.isJSON(request) {
+        if request.method == .post, request.uri.path == TranscriptionsController.path {
+            guard Self.has(.multipartForm, request) else {
+                return Self.reject(.unsupportedMediaType, "Content-Type must be multipart/form-data.", path: request.uri.path)
+            }
+        } else if request.method == .post, !Self.has(.applicationJson, request) {
             return Self.reject(.unsupportedMediaType, "Content-Type must be application/json.", path: request.uri.path)
         }
         return try await next(request, context)
