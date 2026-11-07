@@ -24,8 +24,13 @@ public protocol CloudFallback: Sendable {
     func assess(_ request: GenerationRequest, localModel: String) async -> CloudAssessment?
     func recordLocalOutcome(_ request: GenerationRequest, response: GenerationResponse, localModel: String) async
     var routingBias: [String: [String: Double]]? { get async }
+    var cascadeDeferrals: Int { get async }
     func generate(_ request: GenerationRequest) async throws -> GenerationResponse
     func generateStream(_ request: GenerationRequest) async throws -> AsyncThrowingStream<StreamChunk, Error>
+}
+
+extension CloudFallback {
+    public var cascadeDeferrals: Int { 0 }
 }
 
 public struct HybridCandidate: Sendable, Equatable {

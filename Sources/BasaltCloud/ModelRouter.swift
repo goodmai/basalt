@@ -2,14 +2,15 @@ import Foundation
 import BasaltCore
 
 public actor ModelRouter: Sendable {
-    private let localOrchestrator: ModelOrchestratorActor
-    private let cloudClient: OpenRouterClient?
+    let localOrchestrator: ModelOrchestratorActor
+    let cloudClient: OpenRouterClient?
     private let strategy: RoutingStrategy
     private let mockAvailableRAM: Int64?
-    private let costTracker: CostTracker?
+    let costTracker: CostTracker?
     private let localFallbackModel: String?
     private let fallbackCloudModel: String?
-    private var state: RouterState
+    private let cascade: CascadeExecutionMode?
+    var state: RouterState
 
     public struct Options: Sendable {
         let strategy: RoutingStrategy
@@ -18,6 +19,7 @@ public actor ModelRouter: Sendable {
         let costTracker: CostTracker?
         let localFallbackModel: String?
         let fallbackCloudModel: String?
+        var cascade: CascadeExecutionMode?
 
         public init(
             strategy: RoutingStrategy = .auto, mockAvailableRAM: Int64? = nil, costRouting: CostRouting? = nil,
@@ -30,6 +32,12 @@ public actor ModelRouter: Sendable {
             self.localFallbackModel = localFallbackModel
             self.fallbackCloudModel = fallbackCloudModel
         }
+
+        public func withCascade(_ cascade: CascadeExecutionMode?) -> Options {
+            var copy = self
+            copy.cascade = cascade
+            return copy
+        }
     }
 
     public init(localOrchestrator: ModelOrchestratorActor, cloudClient: OpenRouterClient?, options: Options = Options()) {
@@ -40,6 +48,7 @@ public actor ModelRouter: Sendable {
         self.costTracker = options.costTracker
         self.localFallbackModel = options.localFallbackModel
         self.fallbackCloudModel = options.fallbackCloudModel
+        self.cascade = options.cascade
         self.state = RouterState(cost: options.costRouting.map { routing in
             CostRoutingState(
                 routing: routing,
@@ -67,7 +76,10 @@ public actor ModelRouter: Sendable {
         request: GenerationRequest, preferredModel: String?, context: RoutingContext = .init()
     ) async throws -> GenerationResponse {
         try await dispatch(request, preferredModel: preferredModel, context: context) { path in
-            try await self.localOrchestrator.generate(request: request, modelId: path)
+            if let cascade = self.cascade, CascadeExecutionMode.isEligible(request) {
+                return try await self.executeCascade(request: request, localPath: path, cascade: cascade, context: context)
+            }
+            return try await self.localOrchestrator.generate(request: request, modelId: path)
         } cloud: { client, model in
             let response = try await self.routeToCloud(client: client, model: model, request: request)
             await self.recordCloudCost(model: model, response: response, context: context)
@@ -79,7 +91,10 @@ public actor ModelRouter: Sendable {
         request: GenerationRequest, preferredModel: String?, context: RoutingContext = .init()
     ) async throws -> AsyncThrowingStream<StreamChunk, Error> {
         try await dispatch(request, preferredModel: preferredModel, context: context) { path in
-            try await self.routeToLocalStream(path: path, request: request)
+            if let cascade = self.cascade, CascadeExecutionMode.isEligible(request) {
+                return self.executeCascadeStream(request: request, localPath: path, cascade: cascade, context: context)
+            }
+            return try await self.routeToLocalStream(path: path, request: request)
         } cloud: { client, model in
             try await self.routeToCloudStream(client: client, model: model, request: request, context: context)
         }
@@ -145,24 +160,33 @@ public actor ModelRouter: Sendable {
         case .local(let path):
             return try await local(path)
         case .cloud(_, let cloudModels):
-            let client = try requireCloudClient()
-            if let fallback = try await localFallbackIfBudgetExhausted(context) {
-                return try await local(fallback)
-            }
-            var lastError: Error?
-            for model in cloudModels {
-                do {
-                    return try await cloud(client, model)
-                } catch {
-                    lastError = error
-                    log("Cloud model \(model) failed, trying the next in the chain: \(error)")
-                }
-            }
-            if let fallback = localFallbackModel {
-                return try await local(fallback)
-            }
-            throw lastError ?? BasaltError.modelInferenceError(details: "Empty cloud fallback chain")
+            return try await callCloudChain(cloudModels, context: context, local: local, cloud: cloud)
         }
+    }
+
+    func callCloudChain<Output>(
+        _ cloudModels: [String], context: RoutingContext,
+        localFallback: String? = nil,
+        local: (String) async throws -> Output,
+        cloud: (OpenRouterClient, String) async throws -> Output
+    ) async throws -> Output {
+        let client = try requireCloudClient()
+        if let fallback = try await localFallbackIfBudgetExhausted(context, override: localFallback) {
+            return try await local(fallback)
+        }
+        var lastError: Error?
+        for model in cloudModels {
+            do {
+                return try await cloud(client, model)
+            } catch {
+                lastError = error
+                log("Cloud model \(model) failed, trying the next in the chain: \(error)")
+            }
+        }
+        if let fallback = localFallback ?? localFallbackModel {
+            return try await local(fallback)
+        }
+        throw lastError ?? BasaltError.modelInferenceError(details: "Empty cloud fallback chain")
     }
 
     private func log(_ message: String) {
@@ -178,13 +202,13 @@ extension ModelRouter {
         return client
     }
 
-    private func localFallbackIfBudgetExhausted(_ context: RoutingContext) async throws(BasaltError) -> String? {
+    private func localFallbackIfBudgetExhausted(_ context: RoutingContext, override: String? = nil) async throws(BasaltError) -> String? {
         guard let costTracker, await costTracker.isExhausted(scopes: context.budgetScopes) else { return nil }
-        guard let localFallbackModel else {
+        guard let fallback = override ?? localFallbackModel else {
             throw .invalidRequestStructure(details: "Cloud budget exhausted and no local fallback model is configured")
         }
-        log("Cloud budget exhausted, serving locally with \(localFallbackModel)")
-        return localFallbackModel
+        log("Cloud budget exhausted, serving locally with \(fallback)")
+        return fallback
     }
 
     private func recordCloudCost(model: String, response: GenerationResponse, context: RoutingContext) async {
@@ -194,6 +218,28 @@ extension ModelRouter {
             try await costTracker.recordUsage(model: model, cost: cost, scopes: context.budgetScopes)
         } catch {
             log("Recording cloud cost for \(model) failed: \(error)")
+        }
+    }
+
+    func routeCloudChain(
+        modelId: String, request: GenerationRequest, context: RoutingContext, localFallback: String?
+    ) async throws -> GenerationResponse {
+        try await callCloudChain(ModelCatalog.cloudModels(for: modelId), context: context, localFallback: localFallback) { path in
+            try await self.localOrchestrator.generate(request: request, modelId: path)
+        } cloud: { client, model in
+            let response = try await self.routeToCloud(client: client, model: model, request: request)
+            await self.recordCloudCost(model: model, response: response, context: context)
+            return response
+        }
+    }
+
+    func routeCloudChainStream(
+        modelId: String, request: GenerationRequest, context: RoutingContext, localFallback: String?
+    ) async throws -> AsyncThrowingStream<StreamChunk, Error> {
+        try await callCloudChain(ModelCatalog.cloudModels(for: modelId), context: context, localFallback: localFallback) { path in
+            try await self.routeToLocalStream(path: path, request: request)
+        } cloud: { client, model in
+            try await self.routeToCloudStream(client: client, model: model, request: request, context: context)
         }
     }
 
@@ -289,7 +335,15 @@ extension ModelRouter: CloudFallback {
         guard let messages = request.messages, !messages.isEmpty else {
             return [.init(role: "user", content: request.prompt)]
         }
-        return (ChatMessageInput.splittingPrefill(messages)?.turns ?? messages).map { message in
+        let turns: [ChatMessageInput]
+        if let split = ChatMessageInput.splittingPrefill(messages) {
+            turns = split.prefill.isEmpty
+                ? split.turns
+                : split.turns + [ChatMessageInput(role: .assistant, text: split.prefill)]
+        } else {
+            turns = messages
+        }
+        return turns.map { message in
             switch message.role {
             case .tool:
                 return .init(role: "user", content: "Result of \(message.toolName ?? "the tool"): \(message.text)")

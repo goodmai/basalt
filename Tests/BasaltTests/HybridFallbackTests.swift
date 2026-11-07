@@ -220,5 +220,10 @@ struct ModelRouterCloudFallbackTests {
         let emptyPrefill = GenerationRequest(prompt: "flat", messages: [
             ChatMessageInput(role: .user, text: "weather?"), ChatMessageInput(role: .assistant, text: "")])
         #expect(ModelRouter.cloudMessages(emptyPrefill).map(\.role) == ["user"])
+        let withPrefill = GenerationRequest(prompt: "flat", messages: [
+            ChatMessageInput(role: .user, text: "weather?"), ChatMessageInput(role: .assistant, text: "Sunny, ")])
+        let prefilled = ModelRouter.cloudMessages(withPrefill)
+        #expect(prefilled.map(\.role) == ["user", "assistant"])
+        #expect(prefilled.last?.content == "Sunny, ")
     }
 }

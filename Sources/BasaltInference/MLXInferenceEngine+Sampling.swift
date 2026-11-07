@@ -58,6 +58,14 @@ extension MLXInferenceEngine {
         return (params, components, shaping, exclusion)
     }
 
+    func attachConfidenceProbe(
+        to components: GenerationComponents, for request: GenerationRequest
+    ) -> (GenerationComponents, ConfidenceProbe?) {
+        guard request.recordConfidence || configuration.recordConfidence else { return (components, nil) }
+        let probe = ConfidenceProbe()
+        return (components.appendingBasaltProcessor { ConfidenceProbeRecorder(probe: probe) }, probe)
+    }
+
     func sequenceBreakerIds(for request: GenerationRequest) async -> Set<Int> {
         guard (request.dryMultiplier ?? 0) > 0, let container else { return [] }
         let strings = request.drySequenceBreakers ?? DRYPenalty.defaultSequenceBreakers
@@ -103,6 +111,29 @@ struct LogitProbeRecorder: LogitProcessor {
     mutating func didSample(token: MLXArray) {
         probe.sampled(token.item(Int.self))
     }
+}
+
+struct ConfidenceProbeRecorder: LogitProcessor {
+    let probe: ConfidenceProbe
+
+    static func maxProbability(logits: MLXArray) -> Double? {
+        let row = logits.reshaped(-1).asType(.float32)
+        guard NonFiniteLogitGuard.isUsable(row) else { return nil }
+        let maxLogprob = (row - logSumExp(row)).max().item(Float.self)
+        let prob = Double(exp(maxLogprob))
+        return prob.isFinite ? min(max(prob, 0.0), 1.0) : nil
+    }
+
+    mutating func prompt(_ prompt: MLXArray) {}
+
+    func process(logits: MLXArray) -> MLXArray {
+        if let prob = Self.maxProbability(logits: logits) {
+            probe.record(prob)
+        }
+        return logits
+    }
+
+    mutating func didSample(token: MLXArray) {}
 }
 
 struct PromptAnchoredProcessor: LogitProcessor, ForcedTokenSource {

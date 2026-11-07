@@ -34,6 +34,7 @@ struct RelayRoute {
     var container: ModelContainer
     var alarm: NonFiniteLogitAlarm
     var startsThinking: Bool
+    var confidenceProbe: ConfidenceProbe?
 }
 
 struct CacheClaim {
@@ -228,13 +229,15 @@ extension MLXInferenceEngine {
 
     func checkedSampling(_ request: GenerationRequest) async throws(BasaltError) -> (
         GenerateParameters, GenerationComponents, shaping: (@Sendable () -> EntropyDynamicTemperature)?,
-        exclusion: (@Sendable () -> ExcludeTopChoices)?
+        exclusion: (@Sendable () -> ExcludeTopChoices)?, confidenceProbe: ConfidenceProbe?
     ) {
         if request.usesExperimentalSamplers, !configuration.experimentalSamplers {
             throw .invalidRequestStructure(
                 details: "dry_* and xtc_* are experimental (DRY can turn a detectable loop into one with corrupted facts on low-bit models); start the server with --experimental-samplers to use them")
         }
-        return sampling(for: request, breakers: await sequenceBreakerIds(for: request))
+        let (params, components, shaping, exclusion) = sampling(for: request, breakers: await sequenceBreakerIds(for: request))
+        let (probed, confidenceProbe) = attachConfidenceProbe(to: components, for: request)
+        return (params, probed, shaping, exclusion, confidenceProbe)
     }
 
     func boundary(_ namespace: String?, _ prompt: PromptInput, _ rendered: RenderedPrompt, container: ModelContainer, epoch: ModelEpoch) async throws -> Int {
@@ -258,7 +261,7 @@ extension MLXInferenceEngine {
             controlTokens: controlTokens.tokens, startsThinking: route.startsThinking,
             scansToolCallText: profile.writesToolCallsAsText && request.tools?.isEmpty == false,
             echoedPrefix: prompt.echoedPrefix, forcedTool: constraint?.toolName, prefixAnswer: prompt.prefixAnswer,
-            guardsRepetition: constraint == nil, draftSource: plan.draftSource))
+            guardsRepetition: constraint == nil, draftSource: plan.draftSource, confidenceProbe: route.confidenceProbe))
         let inputs = RelayInputs(
             stream: launch.stream, task: launch.task, prefillSeconds: launch.prefillSeconds,
             promptTokens: prompt.tokens, namespace: route.namespace, leaseID: route.leaseID, epoch: route.epoch, constraint: constraint,

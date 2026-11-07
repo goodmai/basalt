@@ -22,6 +22,7 @@ public struct ServerTelemetrySnapshot: Codable, Sendable, Equatable {
     public var memory: MemoryTelemetry?
     public var thermal: ThermalTelemetry?
     public var routingBias: [String: [String: Double]]?
+    public var cascadeDeferrals: Int?
     public var draftTokens: Int?
     public var acceptedDraftTokens: Int?
     public var health: HealthTelemetry?

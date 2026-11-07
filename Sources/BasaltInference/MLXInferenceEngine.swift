@@ -57,7 +57,7 @@ public actor MLXInferenceEngine: InferenceEngine {
         }
         guard request.adapter == activeAdapter else { throw .inferenceError("adapter \(request.adapter ?? "none") was asked for while \(activeAdapter ?? "the base model") is active") }
         let epoch = modelEpoch
-        let (params, unbudgeted, shaping, exclusion) = try await checkedSampling(request)
+        let (params, unbudgeted, shaping, exclusion, confidenceProbe) = try await checkedSampling(request)
         let settings = planSettings
         let toolSpecs = Self.toolSpecs(request.tools)
         let images = try await checkImages(request.messages, container: container)
@@ -98,7 +98,8 @@ public actor MLXInferenceEngine: InferenceEngine {
             launches[claim.leaseID] = launch
             let route = RelayRoute(
                 namespace: namespace, leaseID: claim.leaseID, epoch: epoch, container: container, alarm: alarm,
-                startsThinking: Self.relayStartsThinking(prompt, constrained: constraint != nil, policy: rendered.policy))
+                startsThinking: Self.relayStartsThinking(prompt, constrained: constraint != nil, policy: rendered.policy),
+                confidenceProbe: confidenceProbe)
             return relayStream(launch, request, prompt, constraint, plan, route: route)
         } catch let err as BasaltError {
             throw err

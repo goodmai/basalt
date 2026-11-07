@@ -210,6 +210,14 @@ struct CostRoutingState: Sendable {
 
     var trackedSessionCount: Int { sessions.count }
 
+    func warmPrefixTokens(sessionId: String?) -> Int {
+        sessionId.flatMap { sessions[$0]?.promptTokens } ?? 0
+    }
+
+    func sessionTier(sessionId: String?) -> StickyRoutingPolicy.Tier? {
+        sessionId.flatMap { sessions[$0]?.tier }
+    }
+
     func autoTier(for request: GenerationRequest, sessionId: String?, at now: Date) -> StickyRoutingPolicy.Tier {
         stickyTier(request, sessionId: sessionId, localModel: lastLocalModel ?? routing.policy.weakModel, at: now).tier
     }
@@ -245,6 +253,7 @@ enum RouterEvent: Sendable {
     case synced(Int, [OpenRouterClient.OpenRouterModel])
     case localModelSeen(String)
     case tierChosen(StickyRoutingPolicy.Tier, sessionId: String?, request: GenerationRequest)
+    case cascadeDeferred(sessionId: String?, request: GenerationRequest)
     case outcome(GenerationRequest, GenerationResponse, localModel: String, at: Date)
 }
 
@@ -253,6 +262,7 @@ struct RouterState: Sendable {
     private(set) var cost: CostRoutingState?
     private(set) var syncsStarted = 0
     private(set) var syncApplied = 0
+    private(set) var cascadeDeferrals = 0
 
     init(cost: CostRoutingState? = nil) {
         self.cost = cost
@@ -280,6 +290,9 @@ struct RouterState: Sendable {
             next.cost?.lastLocalModel = model
         case .tierChosen(let tier, let sessionId, let request):
             next.cost?.remember(tier, sessionId: sessionId, request: request)
+        case .cascadeDeferred(let sessionId, let request):
+            next.cascadeDeferrals += 1
+            next.cost?.remember(.strong, sessionId: sessionId, request: request)
         case .outcome(let request, let response, let localModel, let now):
             next.cost?.recordOutcome(request, response: response, localModel: localModel, at: now)
         }
