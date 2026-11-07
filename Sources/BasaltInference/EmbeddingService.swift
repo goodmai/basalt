@@ -8,10 +8,15 @@ import BasaltCore
 public struct EmbeddingService: EmbeddingEngine {
     public let models: [EmbeddingModelInfo]
     private let embedder: EmbedderModelContainer?
+    private let isCausal: Bool
+    private let poolingStrategyOverride: Pooling.Strategy?
     let reranker: RerankerContainer?
 
     public init(
-        embeddingModel: (id: String, directory: URL)?, rerankModel: (id: String, directory: URL)?
+        embeddingModel: (id: String, directory: URL)?,
+        rerankModel: (id: String, directory: URL)?,
+        embeddingAdapter: URL? = nil,
+        isCausal: Bool? = nil
     ) async throws(BasaltError) {
         var models: [EmbeddingModelInfo] = []
         if let (id, directory) = embeddingModel {
@@ -19,18 +24,35 @@ public struct EmbeddingService: EmbeddingEngine {
                 FileManager.default.fileExists(atPath: directory.appending(path: $0).path)
             }
             if let reason = Self.embedderRefusal(
-                config: ModelCache.config(at: directory) ?? [:], sentenceTransformersLayout: layout, name: id) {
+                config: ModelCache.config(at: directory) ?? [:], sentenceTransformersLayout: layout, name: id,
+                hasAdapter: embeddingAdapter != nil) {
                 throw .modelConfigurationInvalid(path: directory.path, reason: reason)
             }
-            embedder = try await Self.loading(directory) {
+            let loaded = try await Self.loading(directory) {
                 try await EmbedderModelFactory.shared.loadContainer(from: directory, using: DefaultTokenizerLoader())
             }
+            if let embeddingAdapter {
+                try await Self.loading(embeddingAdapter) {
+                    let lora = try LoRAContainer.from(directory: embeddingAdapter)
+                    try await loaded.perform { context in
+                        try LeJEPABackbone.applyLoRA(lora, to: context.model)
+                    }
+                }
+            }
+            let hasPoolingFile = FileManager.default.fileExists(
+                atPath: directory.appending(path: "1_Pooling/config.json").path)
+            let baseStrategy = await loaded.poolingStrategy
+            self.isCausal = isCausal ?? (embeddingAdapter == nil && baseStrategy == .last)
+            self.poolingStrategyOverride = (embeddingAdapter != nil || isCausal == false) && !hasPoolingFile && baseStrategy == .last ? .mean : nil
+            embedder = loaded
             let readme = (try? String(contentsOf: directory.appending(component: "README.md"), encoding: .utf8)) ?? ""
             models.append(EmbeddingModelInfo(
                 id: id, task: .embedding,
                 truncatesDimensions: readme.localizedCaseInsensitiveContains("matryoshka") || readme.contains("MRL")))
         } else {
             embedder = nil
+            self.isCausal = false
+            self.poolingStrategyOverride = nil
         }
         if let (id, directory) = rerankModel {
             reranker = try await Self.loading(directory) {
@@ -53,7 +75,9 @@ public struct EmbeddingService: EmbeddingEngine {
         }
     }
 
-    static func embedderRefusal(config: [String: Any], sentenceTransformersLayout: Bool, name: String) -> String? {
+    static func embedderRefusal(
+        config: [String: Any], sentenceTransformersLayout: Bool, name: String, hasAdapter: Bool = false
+    ) -> String? {
         let type = config["model_type"] as? String ?? ""
         let architectures = config["architectures"] as? [String] ?? []
         switch type {
@@ -61,7 +85,8 @@ public struct EmbeddingService: EmbeddingEngine {
             guard architectures.contains(where: { $0.hasSuffix("ForSequenceClassification") }) else { return nil }
             return "\(name) is a sequence-classification (reranker) checkpoint; pass it as --rerank-model."
         case "qwen3":
-            guard !sentenceTransformersLayout, !name.localizedCaseInsensitiveContains("embed") else { return nil }
+            guard !sentenceTransformersLayout, !hasAdapter, config["pooling"] == nil,
+                  !name.localizedCaseInsensitiveContains("embed") else { return nil }
             return "\(name) is a Qwen3 chat checkpoint (no sentence-transformers pooling config and no \"embed\" in its name); basalt does not pool embeddings from a chat model."
         case "lfm2":
             guard (config["mlx"] as? [String: Any])?["head"] as? String != "embedding" else { return nil }
@@ -73,6 +98,8 @@ public struct EmbeddingService: EmbeddingEngine {
 
     public func embed(_ inputs: [EmbeddingInput], dimensions: Int?, yieldingTo gate: GenerationGate?) async throws(BasaltError) -> Embeddings {
         guard let embedder else { throw .invalidRequestStructure(details: "no embedding model is loaded; start serve with --embedding-model") }
+        let causal = isCausal
+        let override = poolingStrategyOverride
         do {
             return try await embedder.perform { context in
                 let tokens = inputs.map { input in
@@ -102,7 +129,9 @@ public struct EmbeddingService: EmbeddingEngine {
                         pending.insert(contentsOf: batch.dropFirst().map { [$0] }, at: 0)
                         batch = [batch[0]]
                     }
-                    let rows = try Self.forward(context, tokens: batch.map { tokens[$0] }, dimensions: dimensions)
+                    let rows = try Self.forward(
+                        context, tokens: batch.map { tokens[$0] }, dimensions: dimensions,
+                        isCausal: causal, strategyOverride: override)
                     for (row, index) in batch.enumerated() { vectors[index] = rows[row] }
                 }
                 return Embeddings(vectors: vectors, promptTokens: total)
@@ -116,14 +145,21 @@ public struct EmbeddingService: EmbeddingEngine {
 
     static let generationWait = Duration.seconds(2)
 
-    static func forward(_ context: EmbedderModelContext, tokens: [[Int]], dimensions: Int?) throws -> [[Float]] {
+    static func forward(
+        _ context: EmbedderModelContext, tokens: [[Int]], dimensions: Int?,
+        isCausal: Bool = false, strategyOverride: Pooling.Strategy? = nil
+    ) throws -> [[Float]] {
         let length = tokens.map(\.count).max() ?? 0
         let ids = MLXArray(tokens.flatMap { $0 + Array(repeating: 0, count: length - $0.count) }).reshaped(tokens.count, length)
         let mask = MLXArray(tokens.flatMap {
             Array(repeating: Int32(1), count: $0.count) + Array(repeating: Int32(0), count: length - $0.count)
         }).reshaped(tokens.count, length)
-        var pooled = context.pooling(
-            context.model(ids, positionIds: nil, tokenTypeIds: MLXArray.zeros(like: ids), attentionMask: mask), mask: mask)
+        let output = LeJEPABackbone.encode(model: context.model, inputIds: ids, attentionMask: mask, isCausal: isCausal)
+        let strategy = strategyOverride ?? context.pooling.strategy
+        var pooled = LeJEPABackbone.pool(output, mask: mask, strategy: strategy)
+        if let poolDim = context.pooling.dimension, poolDim < pooled.dim(1) {
+            pooled = pooled[0..., ..<poolDim]
+        }
         if let dimensions {
             guard dimensions <= pooled.dim(1) else {
                 throw BasaltError.invalidRequestStructure(details: "dimensions \(dimensions) exceeds the model's \(pooled.dim(1))")

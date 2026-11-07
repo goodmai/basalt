@@ -53,8 +53,13 @@ extension ServeCommand {
             guard let id else { return nil }
             return (id, URL(fileURLWithPath: try await resolvedPath(id, quant: nil)))
         }
+        let adapterURL = embeddingAdapter.map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath) }
         do {
-            let service = try await EmbeddingService(embeddingModel: try await source(embeddingModel), rerankModel: try await source(rerankModel))
+            let service = try await EmbeddingService(
+                embeddingModel: try await source(embeddingModel),
+                rerankModel: try await source(rerankModel),
+                embeddingAdapter: adapterURL
+            )
             log("Serving \(service.models.map { "\($0.id) (\($0.task.rawValue))" }.joined(separator: ", "))")
             return service
         } catch let error as BasaltError {

@@ -36,6 +36,12 @@ struct ServeCommand: AsyncParsableCommand {
     var embeddingModel: String?
 
     @Option(
+        name: .customLong("embedding-adapter"),
+        help: "LoRA adapter directory (adapter_config.json and adapters.safetensors) applied to --embedding-model at startup for bidirectional mean-pooled embeddings"
+    )
+    var embeddingAdapter: String?
+
+    @Option(
         name: .customLong("rerank-model"),
         help: "Reranker served on /v1/rerank next to the chat model: repo ID or local path of an encoder cross-encoder, Qwen3-Reranker or Jina reranker (its name must contain \"rerank\")"
     )
