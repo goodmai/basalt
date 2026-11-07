@@ -271,6 +271,7 @@ enum ResearchTool: String, Sendable, CaseIterable {
     case tensorPack = "tensor_pack"
     case tensorUnpack = "tensor_unpack"
     case trainExperts = "train_experts"
+    case trainJepa = "train_jepa"
     case steerSearch = "steer_search"
     case steerCommit = "steer_commit"
 
@@ -278,7 +279,7 @@ enum ResearchTool: String, Sendable, CaseIterable {
         switch self {
         case .modelDescribe, .modelTensors, .modelTensor, .kvInspect, .traceRun: false
         case .intervene, .weightsDelta, .overlaysList, .overlayUndo, .experimentCompare, .adapterApply, .gateCheck: true
-        case .tensorPack, .tensorUnpack, .trainExperts, .steerSearch, .steerCommit: true
+        case .tensorPack, .tensorUnpack, .trainExperts, .trainJepa, .steerSearch, .steerCommit: true
         }
     }
 }
@@ -298,6 +299,8 @@ enum ResearchCall: Sendable, Equatable {
     case gate(GateRequest)
     case pack(PackRequest)
     case train(TrainRequest)
+    case trainJepa(LeJEPATrainRequest)
+    case trainJEPA(LeJEPATrainRequest)
     case contrast(ContrastRequest)
     case commitSteering(SteeringCommit)
 
@@ -319,7 +322,7 @@ enum ResearchCall: Sendable, Equatable {
         case .overlaysList: self = .overlays
         case .overlayUndo: self = .undo(OverlayID(try MCPArguments.required("id", MCPArguments.integer("id", in: args, Self.nonNegative))))
         case .experimentCompare: self = .compare(try CompareRequest(mcp: args))
-        case .adapterApply, .gateCheck, .tensorPack, .tensorUnpack, .trainExperts, .steerSearch, .steerCommit: self = try Self(lab: tool, args)
+        case .adapterApply, .gateCheck, .tensorPack, .tensorUnpack, .trainExperts, .trainJepa, .steerSearch, .steerCommit: self = try Self(lab: tool, args)
         }
     }
 
@@ -330,6 +333,7 @@ enum ResearchCall: Sendable, Equatable {
         case .tensorPack: self = .pack(try PackRequest(mcp: args, formats: PackRequest.packFormats))
         case .tensorUnpack: self = .pack(try PackRequest(mcp: args, formats: PackRequest.unpackFormats))
         case .trainExperts: self = .train(try TrainRequest(mcp: args))
+        case .trainJepa: self = .trainJepa(try LeJEPATrainRequest(mcp: args))
         case .steerSearch: self = .contrast(try ContrastRequest(mcp: args))
         case .steerCommit: self = .commitSteering(try SteeringCommit(mcp: args))
         case .modelDescribe, .modelTensors, .modelTensor, .kvInspect, .traceRun, .intervene, .weightsDelta, .overlaysList, .overlayUndo, .experimentCompare: throw .invalidParams("\(tool.rawValue) is not a lab tool")
@@ -586,5 +590,25 @@ extension SteeringCommit {
             scale: try MCPArguments.required("scale", MCPArguments.number("scale", in: args)),
             gate: gate)
         positive = try ContrastRequest.prompts("positive", in: args, 1...ContrastRequest.classPrompts.upperBound)
+    }
+}
+
+extension LeJEPATrainRequest {
+    init(mcp args: [String: Any]?) throws(MCPFailure) {
+        let datasetPathCandidate = (try? MCPArguments.string("datasetPath", in: args)) ?? (try? MCPArguments.string("dataset", in: args))
+        let datasetPath = try MCPArguments.required("datasetPath", datasetPathCandidate)
+        let iterations = try MCPArguments.integer("iterations", in: args, ResearchCall.nonNegative) ?? 100
+        self.init(datasetPath: datasetPath, iterations: iterations)
+        output = try MCPArguments.string("output", in: args)
+        if let rankValue = try MCPArguments.integer("rank", in: args, ResearchCall.nonNegative) { rank = rankValue }
+        layers = try MCPArguments.integers("layers", in: args)
+        if let batchSizeValue = try MCPArguments.integer("batchSize", in: args, ResearchCall.nonNegative) { batchSize = batchSizeValue }
+        if let maxSeqLenValue = try MCPArguments.integer("maxSeqLen", in: args, ResearchCall.nonNegative) { maxSeqLen = maxSeqLenValue }
+        if let lr = try MCPArguments.number("learningRate", in: args) { learningRate = lr }
+        if let wd = try MCPArguments.number("weightDecay", in: args) { weightDecay = wd }
+        if let wr = try MCPArguments.number("warmupRatio", in: args) { warmupRatio = wr }
+        if let lam = try MCPArguments.number("lambda", in: args) { lambda = lam }
+        if let mgn = try MCPArguments.number("maxGradNorm", in: args) { maxGradNorm = mgn }
+        if let causal = try MCPArguments.optionalBoolean("isCausal", in: args) { isCausal = causal }
     }
 }

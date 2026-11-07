@@ -213,6 +213,7 @@ extension ModelResearchTests {
         case .tensorPack: ["tensor": "w", "format": "affine", "bits": 3, "groupSize": 32]
         case .tensorUnpack: ["tensor": "w", "format": "float16"]
         case .trainExperts: ["count": 40, "seed": 7, "layers": [2, 3], "rank": 4, "iterations": 20, "heldOut": ["Name a colour."]]
+        case .trainJepa: ["datasetPath": "/tmp/data.jsonl", "iterations": 2]
         case .steerSearch: LabSteerTests.searchArguments
         case .steerCommit: LabSteerTests.commitArguments
         default: [:]
@@ -226,6 +227,7 @@ extension ModelResearchTests {
         case .tensorPack: .pack(PackRequest(tensor: "w", format: .affine(bits: 3, groupSize: 32)))
         case .tensorUnpack: .pack(PackRequest(tensor: "w", format: .float16))
         case .trainExperts: .train(Self.train)
+        case .trainJepa: .trainJepa(LeJEPATrainRequest(datasetPath: "/tmp/data.jsonl", iterations: 2))
         case .steerSearch: .contrast(LabSteerTests.searchRequest)
         case .steerCommit: .commitSteering(LabSteerTests.commitRequest)
         default: .describe

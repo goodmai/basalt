@@ -216,6 +216,7 @@ extension ResearchTool {
         case .tensorPack: "Experiment: re-pack the weight of one linear layer in memory (affine 2-8 bit with a group size, mxfp4, nf4:32 or nf4:64 (the 16-level NormalFloat codebook with an fp16 absmax scale per group; the live layer holds the decoded weights, the bytes are NF4's), or ternary absmean scale·{-1,0,1} per group of 64), dequantizing a quantized layer first. The layer is swapped live (the model is marked modified, prompt-cache reuse is off) as an overlay with TTL and bit-exact undo. Returns bytes before/after, RMSE, max abs error and relative error ||W-Ŵ||/||W||."
         case .tensorUnpack: "Experiment: replace one quantized linear layer by a dense float16 or bfloat16 layer holding its dequantized weight, live, as an overlay with TTL and bit-exact undo. Returns bytes before/after and the error of the cast."
         case .trainExperts: "Experiment, long-running: self-training. Collects the model's (and an optional teacher's) answers to checkable tasks, keeps only answers that match the known answer, trains a LoRA on them, saves it under ~/.basalt/adapters, reports loss and held-out accuracy before/after, then applies it through the quality gate as an undoable overlay."
+        case .trainJepa: "Experiment, long-running: JEPA training. Trains a LoRA backbone and projector with AdamW, warmup+cosine schedule and gradient clipping, with a WeightSpectrum rank-collapse guard; saves adapters.safetensors and jepa_projector.safetensors."
         case .steerSearch: "Experiment: contrastive steering search. The difference of mean residuals (positive minus negative prompts) per layer gives a direction; reports norm and class separation per layer, the best layer's unit direction, the heads whose ablation shrinks the gap most, and KL and projection shift when held-out prompts are steered by each scale. Directed search for activation directions, not self-awareness; leaves no overlay behind."
         case .steerCommit: "Experiment: turns a steering direction into a rank-1 update of the layer's output projection (input = mean module input over the positive prompts) and applies it as an adapter through the quality gate on the held-out prompts; undoable, never written to disk."
         }
@@ -237,6 +238,7 @@ extension ResearchTool {
         case .tensorPack: Self.object(Self.packProperties, required: ["tensor"])
         case .tensorUnpack: Self.object(Self.unpackProperties, required: ["tensor"])
         case .trainExperts: Self.object(Self.trainProperties, required: ["heldOut"])
+        case .trainJepa: Self.object(Self.trainJepaProperties, required: ["datasetPath"])
         case .steerSearch: Self.object(Self.steerSearchProperties, required: ["positive", "negative", "heldOut"])
         case .steerCommit: Self.object(Self.steerCommitProperties, required: ["layer", "direction", "scale", "positive", "heldOut"])
         }
@@ -345,6 +347,24 @@ extension ResearchTool {
         [
             "tensor": ["type": "string", "description": "Weight of a quantized linear layer as model_tensors lists it"],
             "format": ["type": "string", "enum": PackRequest.unpackFormats, "description": "Float type of the dense layer (default bfloat16)"],
+        ]
+    }
+
+    static var trainJepaProperties: [String: Any] {
+        [
+            "datasetPath": ["type": "string", "description": "Path to a JSONL dataset of multi-view scenes"],
+            "output": ["type": "string", "description": "Output directory for the adapter and projector (default: ~/.basalt/adapters)"],
+            "rank": ["type": "integer", "minimum": 1, "description": "LoRA rank (default: 16)"],
+            "layers": ["type": "array", "items": ["type": "integer", "minimum": 0], "description": "Transformer layers to adapt (default: all)"],
+            "batchSize": ["type": "integer", "minimum": 1, "description": "Scenes per batch (default: 256)"],
+            "maxSeqLen": ["type": "integer", "minimum": 4, "description": "Maximum sequence length (default: 64)"],
+            "iterations": ["type": "integer", "minimum": 1, "description": "Training iterations (default: 100)"],
+            "learningRate": ["type": "number", "description": "Peak learning rate (default: 1e-4)"],
+            "weightDecay": ["type": "number", "description": "AdamW weight decay (default: 0.05)"],
+            "warmupRatio": ["type": "number", "description": "Warmup fraction of iterations (default: 0.05)"],
+            "lambda": ["type": "number", "description": "SIGReg weight (default: 0.02)"],
+            "maxGradNorm": ["type": "number", "description": "Gradient clipping max norm (default: 1.0)"],
+            "isCausal": ["type": "boolean", "description": "Causal encoding (default: false)"],
         ]
     }
 
