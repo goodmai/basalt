@@ -10,8 +10,9 @@ import MLXLMCommon
 struct MTPPromptCacheTests {
     static func head() throws -> Qwen35MTPDraftModel {
         let config = try JSONDecoder.json5().decode(Qwen35TextConfiguration.self, from: Data(TinyModel.Family.qwen35.config.utf8))
-        MLXRandom.seed(5)
-        let head = Qwen35MTPDraftModel(config, preconvertedNorms: false)
+        let head = withRandomState(MLXRandom.RandomState(seed: 5)) {
+            Qwen35MTPDraftModel(config, preconvertedNorms: false)
+        }
         eval(head)
         return head
     }

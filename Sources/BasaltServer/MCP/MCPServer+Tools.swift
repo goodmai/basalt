@@ -28,6 +28,7 @@ extension MCPServer {
         case .harnessOptimize: try await optimizeHarness(args)
         case .research(let tool): try await research(tool, args)
         case .introspect: try await introspect(args)
+        case .transcribe: try await transcribe(args)
         }
     }
 
@@ -193,6 +194,26 @@ extension MCPServer {
         let request = try IntrospectRequest(mcp: args)
         do throws(BasaltError) {
             return .json(try await Introspector(orchestrator: orchestrator, interventions: request.allowInterventions).introspect(request))
+        } catch {
+            throw MCPFailure(error)
+        }
+    }
+}
+
+extension MCPServer {
+    private func transcribe(_ args: [String: Any]?) async throws(MCPFailure) -> ToolResult {
+        guard let audio = try MCPArguments.string("audio", in: args), let format = try MCPArguments.string("format", in: args) else {
+            throw .invalidParams("Missing required arguments: audio and format")
+        }
+        let language = try MCPArguments.string("language", in: args)
+        let temperature = try MCPArguments.number("temperature", in: args).map(Double.init)
+        do throws(BasaltError) {
+            guard audio.utf8.count <= (AudioClip.maxBytes + 2) / 3 * 4 else {
+                throw .invalidRequestStructure(details: "audio is over the limit of \(AudioClip.maxBytes >> 20) MB")
+            }
+            guard let data = Data(base64Encoded: audio) else { throw .invalidRequestStructure(details: "audio is not valid base64") }
+            let request = try TranscriptionRequest(audio: AudioClip(encoded: data, format: format), language: language, temperature: temperature)
+            return .text(try await orchestrator.transcribe(request).text)
         } catch {
             throw MCPFailure(error)
         }

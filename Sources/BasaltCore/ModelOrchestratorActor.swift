@@ -17,6 +17,7 @@ public actor ModelOrchestratorActor {
     private var thermal = ThermalLevel.current
     private var pacesThermally = false
     private var adaptiveThinkingBudget = false
+    var speechFallback: (any AudioTranscriber)?
 
     public struct KVOptions: Sendable {
         let precision: KVPrecision?

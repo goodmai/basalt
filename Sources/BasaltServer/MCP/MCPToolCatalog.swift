@@ -61,6 +61,16 @@ enum MCPToolCatalog {
         MCPToolDescriptor(name: "basalt_generate", description: "Generate text using the locally-running model via MLX.", inputSchema: generateSchema),
         MCPToolDescriptor(name: "basalt_status", description: statusDescription, inputSchema: emptySchema),
         MCPToolDescriptor(name: "basalt_add_knowledge", description: addKnowledgeDescription, inputSchema: addKnowledgeSchema),
+        MCPToolDescriptor(
+            name: "basalt_transcribe",
+            description: "Transcribe speech with the loaded speech model (or serve --experimental-speech-analyzer). The audio is base64 in audio, at most 25 MB and 30 minutes, decoded and resampled to 16 kHz mono.",
+            inputSchema: ResearchTool.object([
+                "audio": ["type": "string", "description": "The audio file, base64-encoded"],
+                "format": ["type": "string", "description": "File extension of the audio: \(AudioClip.fileExtensions.sorted().joined(separator: ", "))"],
+                "language": ["type": "string", "description": "ISO-639-1 code of the spoken language, such as en (default: detected)"],
+                "temperature": ["type": "number", "description": "Sampling temperature 0-1 (default 0)"],
+            ], required: ["audio", "format"])
+        ),
         MCPToolDescriptor(name: "gemma_generate", description: "Generate text using the locally-running Gemma model via MLX.", inputSchema: generateSchema),
         MCPToolDescriptor(name: "gemma_status", description: statusDescription, inputSchema: emptySchema),
         MCPToolDescriptor(name: "gemma_add_knowledge", description: addKnowledgeDescription, inputSchema: addKnowledgeSchema),

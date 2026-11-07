@@ -10,7 +10,7 @@ let package = Package(
     ],
     dependencies: [
         .package(url: "https://github.com/ml-explore/mlx-swift",     from: "0.33.0"),
-        .package(url: "https://github.com/goodmai/mlx-swift-lm",      revision: "b002cb09d3c818cf60e94cff4df6f80c7487c7c1"),
+        .package(url: "https://github.com/goodmai/mlx-swift-lm",      revision: "ab0c254a43164af1024f61cb5e8e96fe14c13af1"),
         .package(url: "https://github.com/hummingbird-project/hummingbird", from: "2.28.0"),
         .package(url: "https://github.com/apple/swift-argument-parser",    from: "1.8.2"),
         .package(url: "https://github.com/swift-server/swift-service-lifecycle", from: "2.12.0"),
@@ -64,6 +64,12 @@ let package = Package(
             path: "Sources/BasaltInference",
             swiftSettings: swiftSettings
         ),
+        .target(
+            name: "BasaltSpeech",
+            dependencies: ["BasaltCore"],
+            path: "Sources/BasaltSpeech",
+            swiftSettings: swiftSettings
+        ),
         // Cloud: OpenRouter client, router, cost tracking.
         .target(
             name: "BasaltCloud",
@@ -111,7 +117,7 @@ let package = Package(
         .target(
             name: "BasaltCLI",
             dependencies: [
-                "BasaltCore", "BasaltInference", "BasaltCloud", "BasaltServer", "BasaltUI", "BasaltHarness",
+                "BasaltCore", "BasaltInference", "BasaltCloud", "BasaltServer", "BasaltUI", "BasaltHarness", "BasaltSpeech",
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
                 .product(name: "Yams", package: "Yams"),
             ],

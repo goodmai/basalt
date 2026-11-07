@@ -25,6 +25,7 @@ struct ModelFacts: Sendable {
     var questApplies = false
     var capabilities = ModelCapabilities.unrestricted
     var imageToken: Int?
+    var transcribesAudio = false
     var deltas: [String: AppliedDelta] = [:]
     var cacheFence = 0
     var adapters: [String: ServedAdapter] = [:]
