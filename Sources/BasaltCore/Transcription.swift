@@ -10,6 +10,9 @@ public struct AudioClip: Sendable, Equatable {
 
     public init(samples: [Float]) throws(BasaltError) {
         guard !samples.isEmpty else { throw .invalidRequestStructure(details: "the audio holds no samples") }
+        guard samples.allSatisfy(\.isFinite) else {
+            throw .invalidRequestStructure(details: "the audio contains non-finite samples")
+        }
         let seconds = Double(samples.count) / Self.sampleRate
         guard seconds <= Self.maxSeconds else { throw Self.tooLong(seconds) }
         self.samples = samples

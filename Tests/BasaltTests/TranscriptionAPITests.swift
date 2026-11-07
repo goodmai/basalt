@@ -129,6 +129,8 @@ struct TranscriptionCoreTests {
         #expect(throws: BasaltError.self) { try TranscriptionRequest(audio: clip, language: "../en") }
         #expect(throws: BasaltError.self) { try TranscriptionRequest(audio: clip, temperature: 1.5) }
         #expect(throws: BasaltError.self) { try AudioClip(samples: []) }
+        #expect(throws: BasaltError.self) { try AudioClip(samples: [0.1, .nan]) }
+        #expect(throws: BasaltError.self) { try AudioClip(samples: [.infinity]) }
     }
 
     @Test("A clip converts back into an AVAudioPCMBuffer in another format, as the SpeechAnalyzer fallback feeds it")

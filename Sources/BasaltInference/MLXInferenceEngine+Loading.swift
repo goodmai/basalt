@@ -64,6 +64,11 @@ extension MLXInferenceEngine {
         await registry.registerModelType(PrismHadamard.modelType) { data in
             try PrismHadamard.model(configuration: data)
         }
+        await registry.registerModelType(NemotronTranscribeModel.modelType) { data in
+            NemotronTranscribeModel(
+                try JSONDecoder.json5().decode(NemotronTranscribeConfiguration.self, from: data)
+            )
+        }
     }
 
     public static func registerAliases() async {
@@ -105,13 +110,15 @@ extension MLXInferenceEngine {
             try await probe(loaded, directory: directory, modelPath: modelPath)
             let drafts = configuration.mtp ? await loadMTPDrafter(for: loaded, directory: directory, modelPath: modelPath) : false
             let capabilities = ModelCapabilities.of(modelType: modelType)
+            let transcribes = await loaded.perform { $0.model is NemotronTranscribeModel }
             let facts = ModelFacts(
                 profile: ModelProfileRegistry.profile(forModelAt: modelPath),
                 samplingDefaults: SamplingDefaults(generationConfig: ModelCache.generationConfig(at: directory)),
                 controlTokens: ControlTokenGuard(modelDirectory: directory),
                 fingerprint: promptCacheDisk == nil ? nil : PromptCacheDiskStore.fingerprint(modelDirectory: directory),
                 description: modelPath, hasMTPDrafter: drafts, expertReserve: await Self.expertReserve(loaded), capabilities: capabilities ?? .conservative,
-                imageToken: Self.imageToken(in: ModelCache.config(at: directory)))
+                imageToken: Self.imageToken(in: ModelCache.config(at: directory)),
+                transcribesAudio: transcribes)
             guard attach(loaded, facts: facts, epoch: epoch) else { return }
             if capabilities == nil { logger.warn(ModelCapabilities.unverifiedWarning(modelType: modelType)) }
             await probeKVZones()
