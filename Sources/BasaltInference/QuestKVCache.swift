@@ -66,7 +66,9 @@ final class QuestKVCache: KVCacheAttentionProtocol {
         let q = queries.reshaped(batch, kvHeads, queries.dim(1) / kvHeads, 1, k.dim(3))
         let upper = maxima[0..., 0..., first ..< last].expandedDimensions(axis: 2)
         let lower = minima[0..., 0..., first ..< last].expandedDimensions(axis: 2)
-        let score = maximum(q * upper, q * lower).sum(axis: -1).sum(axis: 2)
+        let positive = MLX.maximum(q, 0)
+        let negative = MLX.minimum(q, 0)
+        let score = (positive * upper).sum(axis: -1).sum(axis: 2) + (negative * lower).sum(axis: -1).sum(axis: 2)
         let chosen = argPartition(-score, kth: topK - 1, axis: -1)[.ellipsis, ..<topK].asType(.int32) + Int32(first)
         let blocks = (chosen.expandedDimensions(axis: -1) * Int32(Self.blockTokens) + blockSteps).reshaped(batch, kvHeads, -1)
         let windowStart = last * Self.blockTokens
