@@ -190,6 +190,9 @@ extension ModelOrchestratorActor {
         }
         snapshot.thermal = thermalTelemetry
         snapshot.routingBias = await cloudFallback?.routingBias
+        if let deferrals = await cloudFallback?.cascadeDeferrals, deferrals > 0 {
+            snapshot.cascadeDeferrals = deferrals
+        }
         return snapshot
     }
 

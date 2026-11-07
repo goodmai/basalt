@@ -55,7 +55,10 @@ extension MLXInferenceEngine {
             modelCalls: finalResponse.modelCalls,
             toolCallRepairs: finalResponse.toolCallRepairs,
             toolCallRejections: finalResponse.toolCallRejections
-        ).reporting(degenerate: finalResponse.degenerate, draftSource: finalResponse.draftSource, modelModified: finalResponse.modelModified)
+        ).reporting(
+            degenerate: finalResponse.degenerate, draftSource: finalResponse.draftSource,
+            modelModified: finalResponse.modelModified, confidence: finalResponse.confidence
+        )
     }
 
     struct GenerationLaunch {

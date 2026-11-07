@@ -17,6 +17,7 @@ struct GenerationRelay: Sendable {
         var prefixAnswer = ""
         var guardsRepetition = true
         var draftSource: DraftSource?
+        var confidenceProbe: ConfidenceProbe?
     }
 
     let setup: Setup
@@ -104,7 +105,11 @@ struct GenerationRelay: Sendable {
             modelCalls: telemetry?.targetModelCallCount,
             toolCallRepairs: toolCallRepairs,
             toolCallRejections: toolCallRejections
-        ).reporting(degenerate: health.verdict(answerExpected: gate.admitted == 0 && finishReason != .length), draftSource: setup.draftSource, modelModified: modelModified)
+        ).reporting(
+            degenerate: health.verdict(answerExpected: gate.admitted == 0 && finishReason != .length),
+            draftSource: setup.draftSource, modelModified: modelModified,
+            confidence: setup.confidenceProbe?.summary
+        )
     }
 
     private var finishReason: GenerationResponse.FinishReason {

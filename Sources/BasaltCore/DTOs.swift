@@ -93,7 +93,7 @@ public struct GenerationRequest: Codable, Sendable {
     public let tools: [ToolDefinition]?
     public var toolChoice: ToolChoice?
     public var cacheKey: String?
-    public let messages: [ChatMessageInput]?
+    public private(set) var messages: [ChatMessageInput]?
     public var assistantPrefix: String? = nil
     public var topK: Int?
     public var presencePenalty: Double?
@@ -114,6 +114,7 @@ public struct GenerationRequest: Codable, Sendable {
     public var xtcThreshold: Double?
     public var xtcProbability: Double?
     public var logitProbe: LogitProbe? = nil
+    public private(set) var recordConfidence = false
 
     enum CodingKeys: String, CodingKey {
         case prompt, maxTokens, temperature, topP, minP, dynamicTemperature, enableThinking, reasoningEffort
@@ -199,6 +200,18 @@ public struct GenerationRequest: Codable, Sendable {
     public func withGrammarJumpForward(_ grammarJumpForward: Bool?) -> GenerationRequest {
         var copy = self
         copy.grammarJumpForward = grammarJumpForward
+        return copy
+    }
+
+    public func withConfidenceRecording(_ enabled: Bool = true) -> GenerationRequest {
+        var copy = self
+        copy.recordConfidence = enabled
+        return copy
+    }
+
+    public func withMessages(_ messages: [ChatMessageInput]?) -> GenerationRequest {
+        var copy = self
+        copy.messages = messages
         return copy
     }
 
@@ -373,6 +386,7 @@ public struct GenerationResponse: Codable, Sendable {
     public private(set) var degenerate: DegenerateOutput?
     public private(set) var draftSource: DraftSource?
     public private(set) var modelModified = false
+    public private(set) var confidence: ResponseConfidence?
 
     public init(
         generatedText: String,
@@ -414,18 +428,29 @@ public struct GenerationResponse: Codable, Sendable {
         self.toolCallRejections = toolCallRejections
     }
 
-    public func reporting(degenerate: DegenerateOutput?, draftSource: DraftSource?, modelModified: Bool = false) -> GenerationResponse {
+    public func reporting(
+        degenerate: DegenerateOutput?, draftSource: DraftSource?, modelModified: Bool = false,
+        confidence: ResponseConfidence? = nil
+    ) -> GenerationResponse {
         var copy = self
         copy.degenerate = degenerate
         copy.draftSource = draftSource
         copy.modelModified = modelModified
+        copy.confidence = confidence ?? copy.confidence
+        return copy
+    }
+
+    public func withConfidence(_ confidence: ResponseConfidence?) -> GenerationResponse {
+        var copy = self
+        copy.confidence = confidence
         return copy
     }
 
     enum CodingKeys: String, CodingKey {
         case generatedText, reasoningText, promptTokens, cachedPromptTokens, completionTokens
         case tokensPerSecond, generationTime, timeToFirstToken, memory, finishReason, toolCalls, reasoningTokens
-        case draftTokens, acceptedDraftTokens, forcedTokens, modelCalls, toolCallRepairs, toolCallRejections, degenerate, draftSource, modelModified
+        case draftTokens, acceptedDraftTokens, forcedTokens, modelCalls, toolCallRepairs, toolCallRejections
+        case degenerate, draftSource, modelModified, confidence
     }
 
     public init(from decoder: Decoder) throws {
@@ -451,6 +476,7 @@ public struct GenerationResponse: Codable, Sendable {
         degenerate = try c.decodeIfPresent(DegenerateOutput.self, forKey: .degenerate)
         draftSource = try c.decodeIfPresent(DraftSource.self, forKey: .draftSource)
         modelModified = try c.decodeIfPresent(Bool.self, forKey: .modelModified) ?? false
+        confidence = try c.decodeIfPresent(ResponseConfidence.self, forKey: .confidence)
     }
 
     public struct MemoryUsage: Codable, Sendable {

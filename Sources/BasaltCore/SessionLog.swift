@@ -135,12 +135,13 @@ public enum SessionLogRecord {
         let toolCallsCount: Int
         let toolCallRepairs: Int?
         let toolCallRejections: Int?
+        let confidence: ResponseConfidence?
         let error: String?
 
         enum CodingKeys: String, CodingKey {
             case v, type, ts, session, requestId = "request_id", status, finishReason = "finish_reason"
             case tokens, timing, memory, output, toolCallsCount = "tool_calls_count", error
-            case toolCallRepairs = "tool_call_repairs", toolCallRejections = "tool_call_rejections"
+            case toolCallRepairs = "tool_call_repairs", toolCallRejections = "tool_call_rejections", confidence
         }
     }
 

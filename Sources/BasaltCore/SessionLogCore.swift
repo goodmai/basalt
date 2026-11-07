@@ -80,7 +80,7 @@ struct SessionLogFormat: Sendable {
             memory: meta.map { .init(activeBytes: $0.memory.activeBytes, peakBytes: $0.memory.peakBytes) },
             output: output(of: result),
             toolCallsCount: result.toolCalls.count, toolCallRepairs: meta?.toolCallRepairs,
-            toolCallRejections: meta?.toolCallRejections, error: error)
+            toolCallRejections: meta?.toolCallRejections, confidence: meta?.confidence, error: error)
     }
 
     func output(of result: SessionLogResult) -> SessionLogRecord.Output {

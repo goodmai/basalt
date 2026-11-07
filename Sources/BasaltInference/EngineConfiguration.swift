@@ -25,6 +25,7 @@ public struct EngineConfiguration: Sendable {
     public var wiresWorkingSet = false
     public var expertStreaming: ExpertStreaming? = nil
     public var probesModel = false
+    public var recordConfidence = false
 }
 
 extension EngineConfiguration {
