@@ -173,6 +173,7 @@ extension ServeConfigFile {
         "model.path": .text("--model-path"),
         "model.quant": .text("--quant"),
         "model.embedding": .text("--embedding-model"),
+        "model.embedding_adapter": .text("--embedding-adapter"),
         "model.rerank": .text("--rerank-model"),
         "serve.port": .int("--port"),
         "serve.host": .text("--host"),

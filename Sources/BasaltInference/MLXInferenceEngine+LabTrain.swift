@@ -133,36 +133,56 @@ extension MLXInferenceEngine {
         return TrainingRun(losses: reported(losses), accuracyAfter: after)
     }
 
-    static func attachLoRA(to model: any LanguageModel, layers: [Int]?, rank: Int) throws(BasaltError) -> LoRAConfiguration {
-        guard let lora = model as? LoRAModel else { throw .invalidRequestStructure(details: "train: this architecture has no LoRA layers in the fork") }
+    static func loraBlocks(of model: Module) -> [Module] {
+        LeJEPABackbone.layers(of: model)
+    }
+
+    static func attachLoRA(
+        to model: Module, blocks: [Module]? = nil, layers: [Int]? = nil, rank: Int, keys: [String]? = nil
+    ) throws(BasaltError) -> LoRAConfiguration {
+        let blocks = blocks ?? loraBlocks(of: model)
+        guard !blocks.isEmpty else { throw .invalidRequestStructure(details: "train: this architecture has no LoRA layers in the fork") }
         guard !model.namedModules().contains(where: { $0.1 is LoRALayer }) else {
             throw .invalidRequestStructure(details: "train: an adapter is applied; undo it before training another")
         }
-        let blocks = lora.loraLayers
         let chosen = layers ?? Array(blocks.indices)
         guard let first = chosen.min(), chosen.allSatisfy(blocks.indices.contains) else {
             throw .invalidRequestStructure(details: "train: layers must be a non-empty subset of 0..<\(blocks.count)")
         }
-        let keys = lora.loraDefaultKeys.sorted()
-        let parameters = LoRAConfiguration.LoRAParameters(rank: rank, keys: keys)
+        let defaultKeys = (model as? LoRAModel)?.loraDefaultKeys
+            ?? Array(Set(blocks.flatMap { $0.namedModules() }.compactMap { $0.1 is Linear ? $0.0 : nil }))
+        let targetKeys = (keys ?? defaultKeys).sorted()
+        let parameters = LoRAConfiguration.LoRAParameters(rank: rank, keys: targetKeys)
         model.freeze()
-        for index in Set(chosen) {
-            let update: [(String, Module)] = blocks[index].namedModules().compactMap { key, module -> (String, Module)? in
-                guard keys.contains(key), let linear = module as? Linear, restorable(linear) else { return nil }
-                return (key, LoRALinear.from(linear: linear, rank: rank, scale: parameters.scale))
-            }
-            if !update.isEmpty { blocks[index].update(modules: .unflattened(update)) }
-        }
+        replaceLoRA(in: blocks, indices: Set(chosen), parameters: parameters)
         model.invalidateCompiledTraces()
         guard !model.trainableParameters().flattened().isEmpty else {
-            detachLoRA(from: model)
+            detachLoRA(from: model, blocks: blocks)
             throw .invalidRequestStructure(details: "train: the chosen layers have no plain or quantized linear projection to adapt")
         }
         return LoRAConfiguration(numLayers: blocks.count - first, loraParameters: parameters)
     }
 
-    static func detachLoRA(from model: any LanguageModel) {
-        for block in (model as? LoRAModel)?.loraLayers ?? [] {
+    static func replaceLoRA(
+        in blocks: [Module], indices: Set<Int>, parameters: LoRAConfiguration.LoRAParameters,
+        fineTuneType: LoRAConfiguration.FineTuneType = .lora
+    ) {
+        let keys = parameters.keys ?? []
+        for index in indices where blocks.indices.contains(index) {
+            let update: [(String, Module)] = blocks[index].namedModules().compactMap { key, module -> (String, Module)? in
+                guard keys.contains(key), let linear = module as? Linear, restorable(linear) else { return nil }
+                let replacement: Module = switch fineTuneType {
+                case .lora: LoRALinear.from(linear: linear, rank: parameters.rank, scale: parameters.scale, dropout: parameters.dropout)
+                case .dora: DoRALinear.from(linear: linear, rank: parameters.rank, scale: parameters.scale, dropout: parameters.dropout)
+                }
+                return (key, replacement)
+            }
+            if !update.isEmpty { blocks[index].update(modules: .unflattened(update)) }
+        }
+    }
+
+    static func detachLoRA(from model: Module, blocks: [Module]? = nil) {
+        for block in blocks ?? loraBlocks(of: model) {
             let update: [(String, Module)] = block.namedModules().compactMap { key, module -> (String, Module)? in
                 (module as? LoRALayer).map { (key, $0.reverted()) }
             }
