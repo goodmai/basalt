@@ -11,13 +11,9 @@ import HTTPTypes
 
 final class ScriptedTranscriber: AudioTranscriber {
     let requests = Mutex<[TranscriptionRequest]>([])
-    let result: Transcription
-
-    init(_ result: Transcription = Transcription(
+    let result = Transcription(
         text: "hello world", language: "en",
-        segments: [.init(start: 0, end: 0.5, text: "hello"), .init(start: 0.5, end: 1, text: " world")])) {
-        self.result = result
-    }
+        segments: [.init(start: 0, end: 0.5, text: "hello"), .init(start: 0.5, end: 1, text: " world")])
 
     func transcribe(_ request: TranscriptionRequest) async throws(BasaltError) -> Transcription {
         requests.withLock { $0.append(request) }
@@ -44,7 +40,13 @@ enum AudioFixture {
         return wav(rate: rate, channels: channels, bits: 16, payload: payload)
     }
 
-    static func form(_ fields: [(String, String)], file: (name: String, type: String?, data: Data)? = (name: "clip.wav", type: "audio/wav", data: sine()),
+    struct File {
+        let name: String
+        let type: String?
+        let data: Data
+    }
+
+    static func form(_ fields: [(String, String)], file: File? = File(name: "clip.wav", type: "audio/wav", data: sine()),
                      boundary: String = "XyZ-boundary") -> Data {
         var body = Data()
         for (name, value) in fields {
@@ -64,7 +66,7 @@ struct TranscriptionCoreTests {
     @Test("A multipart form yields each field by name, with a quoted file name that holds a semicolon and binary content kept intact")
     func parsesForm() throws {
         let binary = Data([0, 13, 10, 45, 45, 255])
-        let body = AudioFixture.form([("model", "nemotron"), ("language", " en ")], file: (name: "a;b.wav", type: "audio/wav", data: binary))
+        let body = AudioFixture.form([("model", "nemotron"), ("language", " en ")], file: .init(name: "a;b.wav", type: "audio/wav", data: binary))
         let form = try MultipartForm(body, boundary: "XyZ-boundary")
         #expect(try form.text("model") == "nemotron")
         #expect(try form.text("language") == "en")
@@ -211,9 +213,9 @@ struct TranscriptionAPITests {
             #expect(try await post(client, AudioFixture.form([("model", "x")], file: nil)).status == .badRequest)
             #expect(try await post(client, AudioFixture.form([("response_format", "srt")])).status == .badRequest)
             #expect(try await post(client, AudioFixture.form([("temperature", "2")])).status == .badRequest)
-            #expect(try await post(client, AudioFixture.form([], file: (name: "a.wav", type: "text/html", data: AudioFixture.sine()))).status == .badRequest)
-            #expect(try await post(client, AudioFixture.form([], file: (name: "../../a.wav", type: nil, data: AudioFixture.sine()))).status == .badRequest)
-            #expect(try await post(client, AudioFixture.form([], file: (name: "noextension", type: nil, data: AudioFixture.sine()))).status == .badRequest)
+            #expect(try await post(client, AudioFixture.form([], file: .init(name: "a.wav", type: "text/html", data: AudioFixture.sine()))).status == .badRequest)
+            #expect(try await post(client, AudioFixture.form([], file: .init(name: "../../a.wav", type: nil, data: AudioFixture.sine()))).status == .badRequest)
+            #expect(try await post(client, AudioFixture.form([], file: .init(name: "noextension", type: nil, data: AudioFixture.sine()))).status == .badRequest)
         }
         #expect(transcriber.requests.withLock { $0.isEmpty })
     }
@@ -221,7 +223,7 @@ struct TranscriptionAPITests {
     @Test("A body over the 25 MB upload limit is refused with 413")
     func refusesLargeBody() async throws {
         try await app(fallback: ScriptedTranscriber()).test(.router) { (client) async throws in
-            let big = AudioFixture.form([], file: (name: "a.wav", type: "audio/wav", data: Data(count: TranscriptionsController.bodyLimit)))
+            let big = AudioFixture.form([], file: .init(name: "a.wav", type: "audio/wav", data: Data(count: TranscriptionsController.bodyLimit)))
             #expect(try await post(client, big).status == .contentTooLarge)
         }
     }
