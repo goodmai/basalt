@@ -8,6 +8,7 @@ final class QuestKVCache: KVCacheAttentionProtocol {
     static let windowTokens = 256
 
     let topK: Int
+    let usesKernel: Bool
     private let base = KVCacheSimple()
     private var maxima: MLXArray?
     private var minima: MLXArray?
@@ -18,12 +19,13 @@ final class QuestKVCache: KVCacheAttentionProtocol {
     private let windowSteps = MLXArray(Int32(0) ..< Int32(QuestKVCache.windowTokens + QuestKVCache.blockTokens))
     private let blockSteps = MLXArray(Int32(0) ..< Int32(QuestKVCache.blockTokens)).reshaped(1, 1, 1, -1)
 
-    init(topK: Int) {
+    init(topK: Int, usesKernel: Bool = true) {
         self.topK = topK
+        self.usesKernel = usesKernel
     }
 
-    static func replacingFullAttention(_ caches: [any KVCache], topK: Int) -> [any KVCache] {
-        caches.map { type(of: $0) == KVCacheSimple.self ? QuestKVCache(topK: topK) : $0 }
+    static func replacingFullAttention(_ caches: [any KVCache], topK: Int, usesKernel: Bool = true) -> [any KVCache] {
+        caches.map { type(of: $0) == KVCacheSimple.self ? QuestKVCache(topK: topK, usesKernel: usesKernel) : $0 }
     }
 
     static func modelAttendsThroughCache(_ model: any LanguageModel) throws -> Bool {
@@ -62,27 +64,53 @@ final class QuestKVCache: KVCacheAttentionProtocol {
     ) -> MLXArray {
         let (k, v) = base.update(keys: keys, values: values)
         index(k)
-        let first = Self.sinkTokens / Self.blockTokens
-        let last = (offset - Self.windowTokens) / Self.blockTokens
-        guard queries.dim(2) == 1, let maxima, let minima, last - first > topK else {
+        guard queries.dim(2) == 1, maxima != nil, middle.count > topK else {
             return MLXFast.scaledDotProductAttention(queries: queries, keys: k, values: v, scale: scale, mask: mask)
         }
         sparseSteps += 1
-        let (batch, kvHeads) = (k.dim(0), k.dim(1))
-        let q = queries.reshaped(batch, kvHeads, queries.dim(1) / kvHeads, k.dim(3))
-        let score = Self.blockScores(q, upper: maxima[0..., 0..., first ..< last], lower: minima[0..., 0..., first ..< last])
-        let chosen = argPartition(-score, kth: topK - 1, axis: -1)[.ellipsis, ..<topK].asType(.int32) + Int32(first)
+        let buffers = base.innerState()
+        guard usesKernel, QuestKernel.fits(queries: queries, keys: buffers[0], values: buffers[1], middleBlocks: middle.count) else {
+            return gatheredAttention(queries: queries, scale: scale)
+        }
+        return kernelAttention(queries: queries, scale: scale)
+    }
+
+    func kernelAttention(queries: MLXArray, scale: Float) -> MLXArray {
+        guard let maxima, let minima else { preconditionFailure("kernelAttention runs only once blocks are indexed") }
+        let buffers = base.innerState()
+        let selected = QuestKernel.selectedBlocks(
+            queries, upper: maxima, lower: minima, first: middle.lowerBound, last: middle.upperBound, topK: topK)
+        return QuestKernel.attention(
+            queries: queries, keys: buffers[0], values: buffers[1], selected: selected, offset: offset, scale: scale)
+    }
+
+    private var middle: Range<Int> {
+        let first = Self.sinkTokens / Self.blockTokens
+        return first ..< max(first, (offset - Self.windowTokens) / Self.blockTokens)
+    }
+
+    static func topBlocks(_ queries: MLXArray, upper: MLXArray, lower: MLXArray, middle: Range<Int>, topK: Int) -> MLXArray {
+        let (batch, kvHeads) = (upper.dim(0), upper.dim(1))
+        let q = queries.reshaped(batch, kvHeads, queries.dim(1) / kvHeads, upper.dim(3))
+        let score = blockScores(q, upper: upper[0..., 0..., middle], lower: lower[0..., 0..., middle])
+        return argPartition(-score, kth: topK - 1, axis: -1)[.ellipsis, ..<topK].asType(.int32) + Int32(middle.lowerBound)
+    }
+
+    func gatheredAttention(queries: MLXArray, scale: Float) -> MLXArray {
+        guard let maxima, let minima else { preconditionFailure("gatheredAttention runs only once blocks are indexed") }
+        let buffers = base.innerState()
+        let (batch, kvHeads) = (buffers[0].dim(0), buffers[0].dim(1))
+        let chosen = Self.topBlocks(queries, upper: maxima, lower: minima, middle: middle, topK: topK)
         let blocks = (chosen.expandedDimensions(axis: -1) * Int32(Self.blockTokens) + blockSteps).reshaped(batch, kvHeads, -1)
-        let windowStart = last * Self.blockTokens
+        let windowStart = middle.upperBound * Self.blockTokens
         let fixed = concatenated([sinks, windowSteps[..<(offset - windowStart)] + Int32(windowStart)])
         let rows = concatenated([broadcast(fixed.reshaped(1, 1, -1), to: [batch, kvHeads, fixed.dim(0)]), blocks], axis: -1)
             .expandedDimensions(axis: -1)
         let count = rows.dim(2)
-        let buffers = base.innerState()
         return MLXFast.scaledDotProductAttention(
             queries: queries,
-            keys: takeAlong(buffers[0], broadcast(rows, to: [batch, kvHeads, count, k.dim(3)]), axis: 2),
-            values: takeAlong(buffers[1], broadcast(rows, to: [batch, kvHeads, count, v.dim(3)]), axis: 2),
+            keys: takeAlong(buffers[0], broadcast(rows, to: [batch, kvHeads, count, buffers[0].dim(3)]), axis: 2),
+            values: takeAlong(buffers[1], broadcast(rows, to: [batch, kvHeads, count, buffers[1].dim(3)]), axis: 2),
             scale: scale, mask: .none)
     }
 
@@ -108,7 +136,7 @@ final class QuestKVCache: KVCacheAttentionProtocol {
     }
 
     func copy() -> any KVCache {
-        let copied = QuestKVCache(topK: topK)
+        let copied = QuestKVCache(topK: topK, usesKernel: usesKernel)
         if !base.state.isEmpty { copied.base.state = base.state }
         copied.maxima = maxima
         copied.minima = minima

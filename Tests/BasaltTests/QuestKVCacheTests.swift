@@ -136,3 +136,75 @@ struct QuestKVCacheTests {
         #expect(allClose(QuestKVCache.blockScores(q, upper: upper, lower: lower), bound, atol: 1e-4).item(Bool.self))
     }
 }
+
+@Suite("Quest kernels: block selection and sparse attention match the gathered MLX graph (#280)")
+struct QuestKernelParityTests {
+    static func normal(_ shape: [Int], _ seed: UInt64) -> MLXArray {
+        MLXRandom.normal(shape, key: MLXRandom.key(seed))
+    }
+
+    static func decoded(_ keys: MLXArray, _ values: MLXArray, query: MLXArray, topK: Int) -> (QuestKVCache, MLXArray) {
+        let (cache, tokens) = (QuestKVCache(topK: topK), keys.dim(2))
+        _ = cache.update(keys: keys[.ellipsis, ..<(tokens - 1), 0...], values: values[.ellipsis, ..<(tokens - 1), 0...])
+        let output = cache.updateAndAttend(
+            queries: query, keys: keys[.ellipsis, (tokens - 1)..., 0...], values: values[.ellipsis, (tokens - 1)..., 0...],
+            scale: Float(1) / Float(keys.dim(3)).squareRoot(), mask: .none)
+        return (cache, output)
+    }
+
+    @Test("The selection kernel picks exactly the blocks argPartition picks from the float32 matmul scores",
+          arguments: [(32, 4, 16, DType.float32), (128, 4, 16, .float32), (128, 4, 32, .bfloat16), (256, 4, 32, .float32), (64, 8, 1, .float32)])
+    func selectionMatchesArgPartition(dim: Int, groups: Int, topK: Int, dtype: DType) {
+        let (kvHeads, blocks) = (3, 300)
+        let q = Self.normal([2, kvHeads * groups, 1, dim], 30).asType(dtype)
+        let (a, b) = (Self.normal([2, kvHeads, blocks, dim], 31), Self.normal([2, kvHeads, blocks, dim], 32))
+        let (upper, lower) = (maximum(a, b).asType(dtype), minimum(a, b).asType(dtype))
+        let middle = 2 ..< 290
+        let reference = QuestKVCache.topBlocks(
+            q.asType(.float32), upper: upper.asType(.float32), lower: lower.asType(.float32), middle: middle, topK: topK)
+        let kernel = QuestKernel.selectedBlocks(
+            q, upper: upper, lower: lower, first: middle.lowerBound, last: middle.upperBound, topK: topK)
+        #expect(kernel.shape == reference.shape)
+        #expect((sorted(kernel, axis: -1) .== sorted(reference, axis: -1)).all().item(Bool.self))
+    }
+
+    @Test("A block whose bound is NaN is always selected, never silently skipped")
+    func nonFiniteBoundIsPicked() {
+        let q = Self.normal([1, 8, 1, 32], 33)
+        let (a, b) = (Self.normal([1, 2, 100, 32], 34), Self.normal([1, 2, 100, 32], 35))
+        let (upper, lower) = (maximum(a, b), minimum(a, b))
+        upper[0, 1, 40, 3] = MLXArray(Float.nan)
+        let chosen = QuestKernel.selectedBlocks(q, upper: upper, lower: lower, first: 2, last: 90, topK: 4)
+        #expect((chosen[0, 1] .== Int32(40)).any().item(Bool.self))
+    }
+
+    @Test("The sparse attention kernel equals the gathered SDPA over sinks, picked blocks and the window, scored in float32",
+          arguments: [(32, 4, 4, DType.float32), (128, 4, 16, .float32), (256, 4, 32, .float32), (128, 4, 16, .bfloat16), (256, 4, 32, .float16)])
+    func attentionMatchesGathered(dim: Int, groups: Int, topK: Int, dtype: DType) {
+        let (kvHeads, tokens) = (2, 4000)
+        let keys = Self.normal([1, kvHeads, tokens, dim], 36).asType(dtype)
+        let values = Self.normal([1, kvHeads, tokens, dim], 37).asType(dtype)
+        let query = Self.normal([1, kvHeads * groups, 1, dim], 38).asType(dtype)
+        let (cache, output) = Self.decoded(keys, values, query: query, topK: topK)
+        let (exact, _) = Self.decoded(keys.asType(.float32), values.asType(.float32), query: query.asType(.float32), topK: topK)
+        let reference = exact.gatheredAttention(queries: query.asType(.float32), scale: Float(1) / Float(dim).squareRoot())
+        #expect(cache.sparseSteps == 1)
+        #expect(output.shape == reference.shape && output.dtype == dtype)
+        #expect(allClose(output.asType(.float32), reference, atol: dtype == .float32 ? 1e-5 : 5e-3).item(Bool.self))
+    }
+
+    @Test("On a tiny Qwen3 with head dim 32, a long prompt decodes the same tokens through the kernels as through the gathered graph")
+    func tinyModelKernelMatchesGathered() throws {
+        let model = try TinyModel.make(.qwen3HeadDim32)
+        let prompt = MLXArray((0 ..< 700).map { Int32(1 + ($0 * 37) % 250) }).reshaped(1, -1)
+        let caches = try [true, false].map { QuestKVCache.replacingFullAttention(try model.newCache(parameters: nil), topK: 2, usesKernel: $0) }
+        var tokens = caches.map { argMax(model(prompt, cache: $0)[0, -1]).reshaped(1, 1) }
+        for _ in 0 ..< 8 {
+            let logits = zip(tokens, caches).map { model($0, cache: $1)[0, -1] }
+            #expect(allClose(logits[0], logits[1], atol: 1e-4).item(Bool.self))
+            tokens = logits.map { argMax($0).reshaped(1, 1) }
+            #expect(tokens[0].item(Int32.self) == tokens[1].item(Int32.self))
+        }
+        #expect(caches.allSatisfy { $0.compactMap { $0 as? QuestKVCache }.allSatisfy { $0.sparseSteps == 8 } })
+    }
+}
