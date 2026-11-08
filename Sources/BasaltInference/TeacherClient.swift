@@ -70,7 +70,8 @@ struct TeacherClient: Sendable {
 
     static let keyVariable = "BASALT_TEACHER_API_KEY"
     static let urlVariable = "BASALT_TEACHER_URL"
-    static let retries = 3
+    static let retries = 6
+    static let longestWait = 30.0
     let endpoint: URL
     let model: String
     let provider: TeacherProvider
@@ -108,13 +109,13 @@ struct TeacherClient: Sendable {
         let request = try request(prompt, maxTokens: maxTokens, temperature: temperature, reasoningEffort: reasoningEffort)
         var attempt = 0
         while true {
-            let (status, data) = try await send(request)
+            let (status, data, wait) = try await send(request)
             if status == 200, let completion = decode(data) { return completion }
             attempt += 1
             guard status == 429 || status >= 500 || status == 0, attempt <= Self.retries else {
-                throw .inferenceError("the teacher at \(endpoint.absoluteString) returned HTTP \(status) without a \(provider.rawValue) completion")
+                throw .inferenceError("the teacher at \(endpoint.absoluteString) returned HTTP \(status) without a \(provider.rawValue) completion after \(attempt) attempts")
             }
-            try? await Task.sleep(for: .milliseconds(250 << attempt))
+            try? await Task.sleep(for: .seconds(Self.delay(attempt: attempt, advised: wait)))
         }
     }
 
@@ -141,15 +142,22 @@ struct TeacherClient: Sendable {
         return request
     }
 
-    func send(_ request: URLRequest) async throws(BasaltError) -> (Int, Data) {
+    func send(_ request: URLRequest) async throws(BasaltError) -> (status: Int, data: Data, wait: Double?) {
         do {
             let (data, response) = try await session.data(for: request)
-            return ((response as? HTTPURLResponse)?.statusCode ?? 0, data)
+            let http = response as? HTTPURLResponse
+            let advised = (http?.value(forHTTPHeaderField: "Retry-After") ?? http?.value(forHTTPHeaderField: "x-ratelimit-reset-requests"))
+                .flatMap { Double($0.trimmingCharacters(in: CharacterSet(charactersIn: "s "))) }
+            return (http?.statusCode ?? 0, data, advised)
         } catch is CancellationError {
             throw .inferenceError("the teacher call was cancelled")
         } catch {
-            return (0, Data())
+            return (0, Data(), nil)
         }
+    }
+
+    static func delay(attempt: Int, advised: Double?) -> Double {
+        min(longestWait, max(advised ?? 0, 0.5 * Double(1 << min(attempt, 10))))
     }
 
     func decode(_ data: Data) -> Completion? {

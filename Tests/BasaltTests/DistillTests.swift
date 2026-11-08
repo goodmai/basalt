@@ -103,6 +103,15 @@ struct DistillTests {
         #expect(StubURLProtocol.requests(for: refusing).allSatisfy { $0.0.value(forHTTPHeaderField: "Authorization") == nil })
     }
 
+    @Test("Retry waits follow Retry-After or the rate-limit reset when given, back off exponentially otherwise, and never exceed 30 s")
+    func retryDelay() {
+        #expect(TeacherClient.delay(attempt: 1, advised: nil) == 1)
+        #expect(TeacherClient.delay(attempt: 3, advised: nil) == 4)
+        #expect(TeacherClient.delay(attempt: 1, advised: 7) == 7)
+        #expect(TeacherClient.delay(attempt: 1, advised: 11802) == 30)
+        #expect(TeacherClient.delay(attempt: 9, advised: nil) == 30)
+    }
+
     @Test("Empty, truncated, duplicate and unverified answers are rejected by reason; the held-out split is the tail")
     func filters() {
         var seen = Set<String>()
