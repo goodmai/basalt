@@ -217,6 +217,7 @@ extension ResearchTool {
         case .tensorUnpack: "Experiment: replace one quantized linear layer by a dense float16 or bfloat16 layer holding its dequantized weight, live, as an overlay with TTL and bit-exact undo. Returns bytes before/after and the error of the cast."
         case .trainExperts: "Experiment, long-running: self-training. Collects the model's (and an optional teacher's) answers to checkable tasks, keeps only answers that match the known answer, trains a LoRA on them, saves it under ~/.basalt/adapters, reports loss and held-out accuracy before/after, then applies it through the quality gate as an undoable overlay."
         case .trainJepa: "Experiment, long-running: JEPA training. Trains a LoRA backbone and projector on a JSONL file of multi-view scenes (each line a string array or {\"views\": [...]}) with the LeJEPA loss, AdamW, warmup+cosine and gradient clipping. Saves adapters.safetensors and jepa_projector.safetensors under ~/.basalt/adapters, reports losses, pre-clip gradient norms and the WeightSpectrum rank of the projected embeddings before and after (a falling rank is collapse). The model is left unchanged; attention-only architectures only."
+        case .distill: "Experiment, long-running: teacher → student distillation. A teacher behind an OpenAI-compatible or Anthropic endpoint answers the prompts (BASALT_TEACHER_API_KEY goes only to BASALT_TEACHER_URL's scheme, host and port); answers are cached under ~/.basalt/distill so a rerun pays nothing twice, spend stops at budgetUSD, empty, truncated, duplicate and (with filter verify) wrong answers are dropped. A LoRA is trained on the teacher's completions only (the prompt is masked), the teacher's per-token NLL on held-out prompts is reported before and after, and the adapter is applied through the quality gate as an undoable overlay. Mind the teacher's terms of use."
         case .steerSearch: "Experiment: contrastive steering search. The difference of mean residuals (positive minus negative prompts) per layer gives a direction; reports norm and class separation per layer, the best layer's unit direction, the heads whose ablation shrinks the gap most, and KL and projection shift when held-out prompts are steered by each scale. Directed search for activation directions, not self-awareness; leaves no overlay behind."
         case .steerCommit: "Experiment: turns a steering direction into a rank-1 update of the layer's output projection (input = mean module input over the positive prompts) and applies it as an adapter through the quality gate on the held-out prompts; undoable, never written to disk."
         }
@@ -239,6 +240,7 @@ extension ResearchTool {
         case .tensorUnpack: Self.object(Self.unpackProperties, required: ["tensor"])
         case .trainExperts: Self.object(Self.trainProperties, required: ["heldOut"])
         case .trainJepa: Self.object(Self.trainJepaProperties, required: ["datasetPath"])
+        case .distill: Self.object(Self.distillProperties, required: ["prompts", "teacherUrl", "teacherModel", "heldOut"])
         case .steerSearch: Self.object(Self.steerSearchProperties, required: ["positive", "negative", "heldOut"])
         case .steerCommit: Self.object(Self.steerCommitProperties, required: ["layer", "direction", "scale", "positive", "heldOut"])
         }
@@ -365,6 +367,34 @@ extension ResearchTool {
             "lambda": ["type": "number", "description": "SIGReg weight (default: 0.02)"],
             "maxGradNorm": ["type": "number", "description": "Gradient clipping max norm (default: 1.0)"],
             "isCausal": ["type": "boolean", "description": "Causal encoding (default: false)"],
+        ]
+    }
+
+    static var distillProperties: [String: Any] {
+        [
+            "prompts": ["type": "string", "description": "JSONL file, one {\"prompt\": …, \"answer\"?: …} per line; the last heldOutFraction are held out"],
+            "teacherUrl": ["type": "string", "description": "Base URL of the teacher (OpenAI-compatible /v1 or Anthropic /v1); BASALT_TEACHER_API_KEY is sent only when its scheme, host and port match BASALT_TEACHER_URL"],
+            "teacherModel": ["type": "string", "description": "Model name sent to the teacher"],
+            "provider": ["type": "string", "enum": TeacherProvider.allCases.map(\.rawValue), "description": "Response format of the teacher (default openai)"],
+            "maxTeacherTokens": ["type": "integer", "minimum": 16, "maximum": 32_768, "description": "Teacher completion limit; truncated answers are dropped (default 2048)"],
+            "temperature": ["type": "number", "minimum": 0, "maximum": 2, "description": "Teacher sampling temperature (default 0.7)"],
+            "concurrency": ["type": "integer", "minimum": 1, "maximum": 32, "description": "Parallel teacher calls (default 4)"],
+            "inputPricePerMillion": ["type": "number", "minimum": 0, "description": "Teacher price per million prompt tokens, USD"],
+            "outputPricePerMillion": ["type": "number", "minimum": 0, "description": "Teacher price per million completion tokens, USD; needed with budgetUSD"],
+            "budgetUSD": ["type": "number", "description": "Stop calling the teacher before this spend would be exceeded"],
+            "samplesPerPrompt": ["type": "integer", "minimum": 1, "maximum": 8, "description": "Teacher answers per prompt (default 1)"],
+            "filter": ["type": "string", "enum": DistillFilter.allCases.map(\.rawValue), "description": "verify keeps only answers that match the prompt's answer (default none)"],
+            "heldOutFraction": ["type": "number", "description": "Share of prompts held out for the NLL comparison (default 0.1)"],
+            "layers": ["type": "array", "items": ["type": "integer", "minimum": 0], "description": "Layers that get LoRA (default: all)"],
+            "rank": ["type": "integer", "minimum": 1, "maximum": 64, "description": "LoRA rank (default 16)"],
+            "iterations": ["type": "integer", "minimum": 1, "maximum": 10_000, "description": "Training iterations (default 200)"],
+            "batchSize": ["type": "integer", "minimum": 1, "maximum": 64, "description": "Examples per step (default 2)"],
+            "learningRate": ["type": "number", "description": "Adam learning rate (default 1e-4)"],
+            "maxSeqLen": ["type": "integer", "minimum": 16, "maximum": 32_768, "description": "Longer examples are dropped and counted (default 2048)"],
+            "output": ["type": "string", "description": "Adapter directory (default ~/.basalt/adapters/<fingerprint>/<timestamp>); never inside the model directory"],
+            "heldOut": ["type": "array", "items": ["type": "string"], "minItems": ResearchCall.comparePrompts.lowerBound, "maxItems": ResearchCall.comparePrompts.upperBound, "description": "General prompts the quality gate checks the adapter on"],
+            "maxKL": ["type": "number", "minimum": 0, "description": "Gate: largest mean KL on heldOut (default 0.5)"],
+            "maxPerplexityRise": ["type": "number", "minimum": 0, "description": "Gate: largest relative perplexity rise on heldOut (default 0.1)"],
         ]
     }
 

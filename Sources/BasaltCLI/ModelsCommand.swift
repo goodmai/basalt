@@ -19,6 +19,7 @@ struct ModelsCommand: AsyncParsableCommand {
             InspectSubcommand.self,
             ConvertSubcommand.self,
             TrainJepaSubcommand.self,
+            DistillSubcommand.self,
         ],
         defaultSubcommand: ListSubcommand.self
     )
