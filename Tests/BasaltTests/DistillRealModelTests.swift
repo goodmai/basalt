@@ -49,7 +49,9 @@ struct DistillRealModelTests {
         defer { log.releaseGPU() }
         let examples = Self.problems(count: 600, seed: 393)
         let prompts = FileManager.default.temporaryDirectory.appending(path: "distill-problems-393.jsonl")
-        let lines = try examples.map { String(decoding: try JSONEncoder().encode($0), as: UTF8.self) }
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .sortedKeys
+        let lines = try examples.map { String(decoding: try encoder.encode($0), as: UTF8.self) }
         try Data(lines.joined(separator: "\n").utf8).write(to: prompts)
         var request = try Self.request(prompts: prompts)
         request.output = FileManager.default.temporaryDirectory.appending(path: "distill-adapter-\(UUID().uuidString)").path
