@@ -66,7 +66,7 @@ enum TensorPacker {
         let error = measure(original, packed)
         let outcome = Outcome(
             original: PackedLayer(path: path, layer: layer), from: describe(layer), bytesBefore: bytes(layer),
-            bytesAfter: bytes(packed, as: request.format),
+            bytesAfter: bytes(packed),
             rmse: error.rmse, maxAbsError: error.maxAbsError, relativeError: error.relativeError)
         try MLXInferenceEngine.replace(path, with: packed, in: model)
         return outcome
@@ -114,10 +114,9 @@ enum TensorPacker {
             try divisible(columns, by: 32)
             return QuantizedLinear(weight: dense, bias: bias, groupSize: 32, bits: 4, mode: .mxfp4)
         case .nf4(let groupSize):
-            guard NF4Codec.groupSizes.contains(groupSize) else { throw refused("nf4 packs take a group size of 32 or 64; got \(groupSize)") }
+            guard groupSizes.contains(groupSize) else { throw refused("nf4 packs take a group size of 32, 64 or 128; got \(groupSize)") }
             try divisible(columns, by: groupSize)
-            let (codes, scales) = NF4Codec.quantized(dense, groupSize: groupSize)
-            return Linear(weight: NF4Codec.dequantized(codes, scales: scales, groupSize: groupSize).asType(dense.dtype), bias: bias)
+            return QuantizedLinear(weight: dense, bias: bias, groupSize: groupSize, bits: 4, mode: .nf4)
         case .ternary:
             try divisible(columns, by: ternaryGroupSize)
             return ternary(dense, bias: bias)
@@ -144,11 +143,6 @@ enum TensorPacker {
     }
 
     static func bytes(_ layer: Module) -> Int { layer.parameters().flattened().reduce(0) { $0 + $1.1.nbytes } }
-
-    static func bytes(_ layer: Linear, as format: PackFormat) -> Int {
-        guard case .nf4(let groupSize) = format else { return bytes(layer) }
-        return NF4Codec.bytes(elements: layer.weight.size, groupSize: groupSize) + (layer.bias?.nbytes ?? 0)
-    }
 
     static func describe(_ layer: Linear) -> String {
         (layer as? QuantizedLinear).map { "\($0.bits)-bit \($0.mode.rawValue) g\($0.groupSize)" } ?? "\(layer.weight.dtype)"

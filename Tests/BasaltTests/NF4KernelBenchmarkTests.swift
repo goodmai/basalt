@@ -5,7 +5,7 @@ import MLX
 import MLXLMCommon
 import BasaltCore
 
-@Suite("NF4 g32 qmv kernel against stock affine 4-bit g64 quantizedMatmul at equal 4.5 bpw, verify-window row counts (#357 phase b)", .serialized)
+@Suite("Native nf4 g32 quantizedMatmul against affine 4-bit g64 at equal 4.5 bpw, verify-window row counts (#357 phase c)", .serialized)
 struct NF4KernelBenchmarkTests {
     typealias Bench = SmallMQuantizedMatmulBenchmarkTests
 
@@ -20,14 +20,14 @@ struct NF4KernelBenchmarkTests {
     }
 
     static func nf4Micros(x: MLXArray, codes: MLXArray, scales: MLXArray) -> Double {
-        let run = { eval((0 ..< 16).map { _ in NF4.qmv(x, weight: codes, scales: scales, groupSize: 32) }) }
+        let run = { eval((0 ..< 16).map { _ in quantizedMM(x, codes, scales: scales, biases: nil, groupSize: 32, bits: 4, mode: .nf4) }) }
         run()
         return Bench.microseconds(run) / 16
     }
 
     static func kernelError(x: MLXArray, codes: MLXArray, scales: MLXArray) -> Float {
-        let reference = matmul(x.asType(.float32), NF4.dequantized(codes, scales: scales, groupSize: 32).asType(.float32).T)
-        let kernel = NF4.qmv(x, weight: codes, scales: scales, groupSize: 32).asType(.float32)
+        let reference = matmul(x.asType(.float32), dequantized(codes, scales: scales, biases: nil, groupSize: 32, bits: 4, mode: .nf4).asType(.float32).T)
+        let kernel = quantizedMM(x, codes, scales: scales, biases: nil, groupSize: 32, bits: 4, mode: .nf4).asType(.float32)
         return (abs(kernel - reference).max() / abs(reference).max()).item(Float.self)
     }
 
@@ -46,7 +46,7 @@ struct NF4KernelBenchmarkTests {
         Bench.log("shape | K x N | M | affine g64 us | nf4 g32 us | nf4 / affine | kernel rel max err", to: url)
         for shape in Bench.shapes where shape.name != "lm_head" {
             let dense = MLXRandom.normal([shape.outputs, shape.inputs], dtype: .bfloat16, scale: 0.02)
-            let (codes, scales) = try NF4.quantized(dense, groupSize: 32)
+            let (codes, scales, _) = quantized(dense, groupSize: 32, bits: 4, mode: .nf4)
             eval(codes, scales)
             for m in Self.rows {
                 let x = MLXRandom.normal([m, shape.inputs], dtype: .bfloat16)

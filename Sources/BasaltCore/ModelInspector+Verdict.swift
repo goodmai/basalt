@@ -66,7 +66,7 @@ extension ModelInspector {
             if let quantization = json["quantization"] as? [String: Any] {
                 bits = quantization["bits"] as? Int
                 groupSize = quantization["group_size"] as? Int
-                mode = quantization["mode"] as? String
+                mode = quantization["quant_method"] as? String == "nf4" ? "nf4" : quantization["mode"] as? String
                 for (layer, value) in quantization {
                     if let override = value as? [String: Any], let size = override["group_size"] as? Int {
                         layerGroupSizes[layer] = size
@@ -100,7 +100,7 @@ extension ModelInspector {
     }
 
     static func bitWidth(tensors: [String: Tensor], dtypes: Set<String>, config: QuantizationConfig, modelId: String) -> BitWidth {
-        let measured = quantizedBits(tensors: tensors, groupSize: config.groupSize(forLayer:))
+        let measured = quantizedBits(tensors: tensors, nf4: config.mode?.lowercased() == "nf4", groupSize: config.groupSize(forLayer:))
         guard let common = mostCommon(Array(measured.values)) else {
             return unmeasuredBitWidth(dtypes: dtypes, config: config, modelId: modelId)
         }
@@ -133,12 +133,16 @@ extension ModelInspector {
         return BitWidth(bits: 16, description: "16-bit (default)")
     }
 
-    static func quantizedBits(tensors: [String: Tensor], groupSize: (String) -> Int) -> [String: Int] {
+    static func quantizedBits(tensors: [String: Tensor], nf4: Bool = false, groupSize: (String) -> Int) -> [String: Int] {
         var bits: [String: Int] = [:]
         for (name, weight) in tensors where name.hasSuffix(".weight") && weight.dtype == "U32" {
             let layer = String(name.dropLast(".weight".count))
             guard let scales = tensors[layer + ".scales"],
                   let packed = weight.shape.last, let groups = scales.shape.last else { continue }
+            if nf4, tensors[layer + ".biases"] == nil {
+                bits[layer] = 4
+                continue
+            }
             let denominator = groups * groupSize(layer)
             if denominator > 0, (32 * packed) % denominator == 0 {
                 bits[layer] = 32 * packed / denominator

@@ -506,7 +506,7 @@ extension GateRequest {
 }
 
 extension PackRequest {
-    static let packFormats = ["affine", "mxfp4", "nf4:32", "nf4:64", "ternary"]
+    static let packFormats = ["affine", "mxfp4", "nf4:32", "nf4:64", "nf4:128", "ternary"]
     static let unpackFormats = ["bfloat16", "float16"]
     static let packBits = 2...8
     static let packGroupSizes = 32...128
