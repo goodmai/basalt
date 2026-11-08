@@ -17,6 +17,7 @@ public struct TeacherSpec: Sendable, Codable, Equatable {
     public var maxTokens = 2048
     public var temperature: Float = 0.7
     public var concurrency = 4
+    public var reasoningEffort: String?
     public var inputPricePerMillion: Double?
     public var outputPricePerMillion: Double?
 

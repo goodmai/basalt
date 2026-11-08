@@ -18,6 +18,7 @@ extension DistillRequest {
         teacher.maxTokens = try MCPArguments.integer("maxTeacherTokens", in: args, ResearchCall.nonNegative) ?? teacher.maxTokens
         teacher.temperature = try MCPArguments.number("temperature", in: args) ?? teacher.temperature
         teacher.concurrency = try MCPArguments.integer("concurrency", in: args, ResearchCall.nonNegative) ?? teacher.concurrency
+        teacher.reasoningEffort = try MCPArguments.string("reasoningEffort", in: args)
         teacher.inputPricePerMillion = try MCPArguments.number("inputPricePerMillion", in: args).map(Double.init)
         teacher.outputPricePerMillion = try MCPArguments.number("outputPricePerMillion", in: args).map(Double.init)
         self.init(prompts: try MCPArguments.required("prompts", MCPArguments.string("prompts", in: args)), teacher: teacher, gate: gate)

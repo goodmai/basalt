@@ -110,7 +110,7 @@ extension MLXInferenceEngine {
             return try await withThrowingTaskGroup(of: DistillEntry.self) { group in
                 for (index, sample) in wave {
                     group.addTask {
-                        DistillEntry(index: index, sample: sample, completion: try await teacher.complete(examples[index].prompt, maxTokens: spec.maxTokens, temperature: spec.temperature))
+                        DistillEntry(index: index, sample: sample, completion: try await teacher.complete(examples[index].prompt, maxTokens: spec.maxTokens, temperature: spec.temperature, reasoningEffort: spec.reasoningEffort))
                     }
                 }
                 return try await group.reduce(into: []) { $0.append($1) }.sorted { ($0.index, $0.sample) < ($1.index, $1.sample) }

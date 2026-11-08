@@ -19,7 +19,7 @@ struct DistillCache: Sendable {
 
     static func directory(for request: DistillRequest, prompts: Data, home: URL = FileManager.default.homeDirectoryForCurrentUser) -> URL {
         let teacher = request.teacher
-        let identity = [teacher.url, teacher.model, teacher.provider.rawValue, "\(teacher.maxTokens)", "\(teacher.temperature)"].joined(separator: "\n")
+        let identity = [teacher.url, teacher.model, teacher.provider.rawValue, "\(teacher.maxTokens)", "\(teacher.temperature)", teacher.reasoningEffort ?? ""].joined(separator: "\n")
         let digest = SHA256.hash(data: Data(identity.utf8) + prompts).map { String(format: "%02x", $0) }.joined()
         return home.appending(path: ".basalt/distill/\(digest.prefix(32))")
     }

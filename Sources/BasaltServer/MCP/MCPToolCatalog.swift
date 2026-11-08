@@ -379,6 +379,7 @@ extension ResearchTool {
             "maxTeacherTokens": ["type": "integer", "minimum": 16, "maximum": 32_768, "description": "Teacher completion limit; truncated answers are dropped (default 2048)"],
             "temperature": ["type": "number", "minimum": 0, "maximum": 2, "description": "Teacher sampling temperature (default 0.7)"],
             "concurrency": ["type": "integer", "minimum": 1, "maximum": 32, "description": "Parallel teacher calls (default 4)"],
+            "reasoningEffort": ["type": "string", "description": "Teacher reasoning effort passed through (reasoning_effort, or output_config.effort on Anthropic), e.g. low; reasoning tokens are billed as output"],
             "inputPricePerMillion": ["type": "number", "minimum": 0, "description": "Teacher price per million prompt tokens, USD"],
             "outputPricePerMillion": ["type": "number", "minimum": 0, "description": "Teacher price per million completion tokens, USD; needed with budgetUSD"],
             "budgetUSD": ["type": "number", "description": "Stop calling the teacher before this spend would be exceeded"],

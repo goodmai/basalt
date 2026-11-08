@@ -104,8 +104,8 @@ struct TeacherClient: Sendable {
         try await complete(prompt, maxTokens: 256, temperature: 0).text
     }
 
-    func complete(_ prompt: String, maxTokens: Int, temperature: Float) async throws(BasaltError) -> Completion {
-        let request = try request(prompt, maxTokens: maxTokens, temperature: temperature)
+    func complete(_ prompt: String, maxTokens: Int, temperature: Float, reasoningEffort: String? = nil) async throws(BasaltError) -> Completion {
+        let request = try request(prompt, maxTokens: maxTokens, temperature: temperature, reasoningEffort: reasoningEffort)
         var attempt = 0
         while true {
             let (status, data) = try await send(request)
@@ -118,7 +118,7 @@ struct TeacherClient: Sendable {
         }
     }
 
-    func request(_ prompt: String, maxTokens: Int, temperature: Float) throws(BasaltError) -> URLRequest {
+    func request(_ prompt: String, maxTokens: Int, temperature: Float, reasoningEffort: String? = nil) throws(BasaltError) -> URLRequest {
         var request = URLRequest(url: endpoint, timeoutInterval: 600)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -129,9 +129,10 @@ struct TeacherClient: Sendable {
             if let key { request.setValue(key, forHTTPHeaderField: "x-api-key") }
             request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
         }
-        let body: [String: Any] = [
+        var body: [String: Any] = [
             "model": model, "messages": [["role": "user", "content": prompt]], "temperature": Double(temperature), "max_tokens": maxTokens,
         ]
+        if let reasoningEffort { body[provider == .anthropic ? "output_config" : "reasoning_effort"] = provider == .anthropic ? ["effort": reasoningEffort] : reasoningEffort }
         do {
             request.httpBody = try JSONSerialization.data(withJSONObject: body)
         } catch {

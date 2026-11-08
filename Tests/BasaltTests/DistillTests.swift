@@ -77,6 +77,18 @@ struct DistillTests {
         #expect(anthropicRequest.value(forHTTPHeaderField: "anthropic-version") == "2023-06-01")
     }
 
+    @Test("A reasoning effort goes into reasoning_effort for OpenAI-compatible teachers and output_config.effort for Anthropic, and nowhere when unset")
+    func reasoningEffort() throws {
+        func body(_ provider: TeacherProvider, _ effort: String?) throws -> [String: Any] {
+            let request = try TeacherClient("https://t.test/v1", model: "m", provider: provider, environment: [:]).request("q", maxTokens: 8, temperature: 0, reasoningEffort: effort)
+            let data = try #require(request.httpBody)
+            return try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        }
+        #expect(try body(.openai, "low")["reasoning_effort"] as? String == "low")
+        #expect((try body(.anthropic, "low")["output_config"] as? [String: String]) == ["effort": "low"])
+        #expect(try body(.openai, nil)["reasoning_effort"] == nil)
+    }
+
     @Test("A 429 is retried; a 400 is an error that names neither the key nor the body; a key bound to another host is not sent")
     func retriesAndKeys() async throws {
         let calls = Mutex(0)

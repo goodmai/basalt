@@ -26,6 +26,9 @@ struct DistillSubcommand: AsyncParsableCommand {
     @Option(name: .long, help: "Teacher response format: openai or anthropic")
     var provider: String = TeacherProvider.openai.rawValue
 
+    @Option(name: .long, help: "Teacher reasoning effort, e.g. low (reasoning tokens are billed)")
+    var reasoningEffort: String?
+
     @Option(name: .long, help: "Stop calling the teacher before this spend in USD; needs --output-price")
     var budgetUsd: Double?
 
@@ -55,7 +58,7 @@ struct DistillSubcommand: AsyncParsableCommand {
             throw ValidationError("--provider takes openai or anthropic, --filter none or verify")
         }
         var teacher = TeacherSpec(url: teacherUrl, model: teacherModel)
-        (teacher.provider, teacher.inputPricePerMillion, teacher.outputPricePerMillion) = (provider, inputPrice, outputPrice)
+        (teacher.provider, teacher.inputPricePerMillion, teacher.outputPricePerMillion, teacher.reasoningEffort) = (provider, inputPrice, outputPrice, reasoningEffort)
         var request = DistillRequest(prompts: prompts, teacher: teacher, gate: GateRequest(heldOut: Self.generalPrompts))
         (request.filter, request.budgetUSD, request.iterations, request.rank, request.output) = (filter, budgetUsd, iterations, rank, output)
         let engine = MLXInferenceEngine()
