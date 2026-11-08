@@ -58,15 +58,10 @@ extension MLXInferenceEngine {
 
     static func validate(_ request: DistillRequest) throws(BasaltError) {
         func refused(_ reason: String) -> BasaltError { .invalidRequestStructure(details: "distill: \(reason)") }
-        let teacher = request.teacher
-        guard !teacher.model.isEmpty else { throw refused("teacher.model is required") }
-        guard distillTeacherTokens.contains(teacher.maxTokens) else { throw refused("teacher.maxTokens must be in \(distillTeacherTokens)") }
-        guard distillConcurrency.contains(teacher.concurrency) else { throw refused("teacher.concurrency must be in \(distillConcurrency)") }
-        guard teacher.temperature.isFinite, (0 ... 2).contains(teacher.temperature) else { throw refused("teacher.temperature must be in [0, 2]") }
-        guard [teacher.inputPricePerMillion, teacher.outputPricePerMillion].allSatisfy({ $0.map { $0.isFinite && $0 >= 0 } ?? true }) else { throw refused("prices must be finite and non-negative") }
+        try validate(request.teacher)
         if let budget = request.budgetUSD {
             guard budget.isFinite, budget > 0 else { throw refused("budgetUSD must be positive") }
-            guard teacher.outputPricePerMillion != nil else { throw refused("budgetUSD needs teacher.outputPricePerMillion (and inputPricePerMillion) to count spend") }
+            guard request.teacher.outputPricePerMillion != nil else { throw refused("budgetUSD needs teacher.outputPricePerMillion (and inputPricePerMillion) to count spend") }
         }
         guard distillSamples.contains(request.samplesPerPrompt) else { throw refused("samplesPerPrompt must be in \(distillSamples)") }
         guard request.heldOutFraction.isFinite, request.heldOutFraction > 0, request.heldOutFraction < 1 else { throw refused("heldOutFraction must be in (0, 1)") }
@@ -75,6 +70,15 @@ extension MLXInferenceEngine {
         guard (1 ... 64).contains(request.batchSize) else { throw refused("batchSize must be in 1...64") }
         guard (16 ... 32_768).contains(request.maxSeqLen) else { throw refused("maxSeqLen must be in 16...32768") }
         guard request.learningRate.isFinite, request.learningRate > 0, request.learningRate <= 1 else { throw refused("learningRate must be in (0, 1]") }
+    }
+
+    static func validate(_ teacher: TeacherSpec) throws(BasaltError) {
+        func refused(_ reason: String) -> BasaltError { .invalidRequestStructure(details: "distill: \(reason)") }
+        guard !teacher.model.isEmpty else { throw refused("teacher.model is required") }
+        guard distillTeacherTokens.contains(teacher.maxTokens) else { throw refused("teacher.maxTokens must be in \(distillTeacherTokens)") }
+        guard distillConcurrency.contains(teacher.concurrency) else { throw refused("teacher.concurrency must be in \(distillConcurrency)") }
+        guard teacher.temperature.isFinite, (0 ... 2).contains(teacher.temperature) else { throw refused("teacher.temperature must be in [0, 2]") }
+        guard [teacher.inputPricePerMillion, teacher.outputPricePerMillion].allSatisfy({ $0.map { $0.isFinite && $0 >= 0 } ?? true }) else { throw refused("prices must be finite and non-negative") }
     }
 
     static func collect(_ request: DistillRequest, examples: [DistillExample], teacher: TeacherClient, cache: DistillCache) async throws(BasaltError) -> DistillReport {
