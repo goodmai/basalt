@@ -43,7 +43,7 @@ struct AbliterationRealModelTests {
         }
     }
 
-    @Test("Every non-finite logit is counted, perplexity is taken over the finite ones, and the hidden-state norm of each layer is traced at the last 4k position",
+    @Test("Every non-finite logit is counted, perplexity is taken over the finite ones, and the hidden-state norm of each layer is traced at the last position of a 2k prompt (trace caps at 2048 tokens)",
           .enabled(if: !models.isEmpty, "set BASALT_E2E=1 and BASALT_E2E_ABLITERATION_MODELS"), arguments: models)
     func measure(entry: String) async throws {
         let path = NF4Run.path(entry)
@@ -61,7 +61,7 @@ struct AbliterationRealModelTests {
             total += result.nonFinite
         }
         let prompt = await container.perform { context in
-            context.tokenizer.decode(tokenIds: Array(context.tokenizer.encode(text: Self.corpus).prefix(4096)), skipSpecialTokens: true)
+            context.tokenizer.decode(tokenIds: Array(context.tokenizer.encode(text: Self.corpus).prefix(2000)), skipSpecialTokens: true)
         }
         let trace = try await log.step("trace") { try await engine.trace(TraceRequest(prompt: prompt, topK: 1)) }
         let norms = trace.layers.map(\.hiddenNorm)
