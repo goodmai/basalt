@@ -181,10 +181,10 @@ extension MLXInferenceEngine {
     }
 
     func loadMTPDrafter(for loaded: ModelContainer, directory: URL, modelPath: String) async -> Bool {
-        let logger = self.logger, speculativeLookup = configuration.speculativeLookup
+        let logger = self.logger, speculativeLookup = configuration.speculativeLookup, draftHead = configuration.mtpDraftHead
         return await useMTPDrafter(in: loaded) { context in
             do {
-                guard let drafter = try MTPSidecar.load(directory: directory, target: context.model) else {
+                guard let drafter = try MTPSidecar.load(directory: directory, target: context.model, draftHead: draftHead) else {
                     logger.warn("--mtp: \(modelPath) has no MTP head this build can use (Qwen3.5-family target plus mtp.safetensors); decoding stays plain")
                     return nil
                 }

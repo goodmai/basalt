@@ -184,6 +184,7 @@ extension ServeConfigFile {
         "serve.experimental_samplers": .flag(on: "--experimental-samplers", off: nil),
         "serve.experimental_zero_copy_body": .flag(on: "--experimental-zero-copy-body", off: nil),
         "serve.experimental_smallm_kernel": .flag(on: "--experimental-smallm-kernel", off: nil),
+        "serve.speculative.experimental_mtp_draft_head": .flag(on: "--experimental-mtp-draft-head", off: nil),
         "serve.experimental_adaptive_thinking_budget": .flag(on: "--experimental-adaptive-thinking-budget", off: nil),
         "serve.grammar_jump_forward": .flag(on: "--grammar-jump-forward", off: nil),
         "serve.expert_streaming.enabled": .flag(on: "--experimental-expert-streaming", off: nil),

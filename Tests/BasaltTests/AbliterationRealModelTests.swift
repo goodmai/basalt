@@ -30,11 +30,10 @@ struct AbliterationRealModelTests {
             while start < tokens.count - 1 {
                 let end = min(tokens.count - 1, start + 512)
                 let logits = context.model(MLXArray(tokens[start ..< end].map(Int32.init))[.newAxis], cache: cache)[0].asType(.float32)
-                let finite = isNaN(logits).logicalNot() .&& abs(logits) .< Float.infinity
-                nonFinite += (finite.logicalNot()).sum().item(Int.self)
+                nonFinite += logits.size - (abs(logits) .< Float.infinity).sum().item(Int.self)
                 let logp = logits - logSumExp(logits, axis: -1, keepDims: true)
                 let picked = takeAlong(logp, MLXArray(tokens[(start + 1) ... end].map(Int32.init))[0..., .newAxis], axis: -1)
-                let usable = isNaN(picked).logicalNot() .&& abs(picked) .< Float.infinity
+                let usable = abs(picked) .< Float.infinity
                 nll -= Double(which(usable, picked, 0).sum().item(Float.self))
                 counted += usable.sum().item(Int.self)
                 eval(cache)

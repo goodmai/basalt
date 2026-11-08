@@ -18,6 +18,7 @@ public struct EngineConfiguration: Sendable {
     public var speculativeRecycling = false
     public var mtp = false
     public var mtpBlockSize = 4
+    public var mtpDraftHead = false
     public var experimentalSamplers = false
     public var grammarJumpForward = false
     public var hybridAnchors = 8

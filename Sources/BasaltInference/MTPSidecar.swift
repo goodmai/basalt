@@ -100,7 +100,7 @@ enum MTPSidecar {
         return (inputs / scales.dim(1), bits)
     }
 
-    static func load(directory: URL, target: any LanguageModel) throws -> (any MTPDrafterModel)? {
+    static func load(directory: URL, target: any LanguageModel, draftHead: Bool = false) throws -> (any MTPDrafterModel)? {
         guard target is Qwen35Model || target is Qwen35TextModel, let url = file(in: directory) else { return nil }
         let data = try Data(contentsOf: directory.appending(component: "config.json"))
         let root = try JSONSerialization.jsonObject(with: data) as? [String: Any]
@@ -120,6 +120,7 @@ enum MTPSidecar {
         }
         try model.update(parameters: ModuleParameters.unflattened(weights), verify: [.all])
         eval(model)
+        if draftHead { model.useDraftHead(of: target) }
         return GreedyDraftingMTPDrafter(model)
     }
 }
