@@ -206,6 +206,16 @@ struct ModelResearchTests {
 }
 
 extension ModelResearchTests {
+    static var distill: DistillRequest {
+        var teacher = TeacherSpec(url: "https://t.test/v1", model: "m")
+        (teacher.provider, teacher.outputPricePerMillion) = (.anthropic, 10)
+        var request = DistillRequest(prompts: "/tmp/p.jsonl", teacher: teacher, gate: GateRequest(heldOut: ["Hi."]))
+        request.budgetUSD = 2
+        return request
+    }
+}
+
+extension ModelResearchTests {
     static func labArguments(_ tool: ResearchTool) -> [String: Any] {
         switch tool {
         case .adapterApply: ["module": "model.layers.0.mlp.down_proj", "input": [1.0], "output": [2.0], "scale": 0.5, "gate": ["heldOut": ["h"], "maxKL": 0.25, "target": [["prompt": "2 + 2 =", "expected": "4"]]]]
@@ -214,6 +224,7 @@ extension ModelResearchTests {
         case .tensorUnpack: ["tensor": "w", "format": "float16"]
         case .trainExperts: ["count": 40, "seed": 7, "layers": [2, 3], "rank": 4, "iterations": 20, "heldOut": ["Name a colour."]]
         case .trainJepa: ["datasetPath": "/tmp/data.jsonl", "iterations": 2]
+        case .distill: ["prompts": "/tmp/p.jsonl", "teacherUrl": "https://t.test/v1", "teacherModel": "m", "heldOut": ["Hi."], "budgetUSD": 2, "outputPricePerMillion": 10, "provider": "anthropic"]
         case .steerSearch: LabSteerTests.searchArguments
         case .steerCommit: LabSteerTests.commitArguments
         default: [:]
@@ -228,6 +239,7 @@ extension ModelResearchTests {
         case .tensorUnpack: .pack(PackRequest(tensor: "w", format: .float16))
         case .trainExperts: .train(Self.train)
         case .trainJepa: .trainJepa(LeJEPATrainRequest(datasetPath: "/tmp/data.jsonl", iterations: 2))
+        case .distill: .distill(Self.distill)
         case .steerSearch: .contrast(LabSteerTests.searchRequest)
         case .steerCommit: .commitSteering(LabSteerTests.commitRequest)
         default: .describe

@@ -8,6 +8,7 @@ public protocol ModelLab: ModelResearch {
     func commitSteering(_ commit: SteeringCommit) async throws(BasaltError) -> AdapterVerdict
     func train(_ request: TrainRequest) async throws(BasaltError) -> TrainReport
     func trainJEPA(_ request: LeJEPATrainRequest) async throws(BasaltError) -> LeJEPATrainReport
+    func distill(_ request: DistillRequest) async throws(BasaltError) -> DistillReport
 }
 
 extension ModelLab {
@@ -18,6 +19,7 @@ extension ModelLab {
     public func commitSteering(_ commit: SteeringCommit) async throws(BasaltError) -> AdapterVerdict { throw Self.unavailable("steering commit") }
     public func train(_ request: TrainRequest) async throws(BasaltError) -> TrainReport { throw Self.unavailable("expert training") }
     public func trainJEPA(_ request: LeJEPATrainRequest) async throws(BasaltError) -> LeJEPATrainReport { throw Self.unavailable("JEPA training") }
+    public func distill(_ request: DistillRequest) async throws(BasaltError) -> DistillReport { throw Self.unavailable("distillation") }
 
     static func unavailable(_ mode: String) -> BasaltError {
         .invalidRequestStructure(details: "\(mode) is not available on this engine")

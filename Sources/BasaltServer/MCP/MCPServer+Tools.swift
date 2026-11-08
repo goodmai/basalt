@@ -70,7 +70,7 @@ extension ResearchCall {
             try await model.undo(overlay)
             return .text("Overlay \(overlay) undone")
         case .compare(let request): return .json(try await model.compare(request))
-        case .adapter, .gate, .pack, .train, .trainJepa, .contrast, .commitSteering: return try await run(on: Self.lab(model))
+        case .adapter, .gate, .pack, .train, .trainJepa, .distill, .contrast, .commitSteering: return try await run(on: Self.lab(model))
         }
     }
 
@@ -81,6 +81,7 @@ extension ResearchCall {
         case .pack(let request): .json(try await lab.pack(request))
         case .train(let request): .json(try await lab.train(request))
         case .trainJepa(let request): .json(try await lab.trainJEPA(request))
+        case .distill(let request): .json(try await lab.distill(request))
         case .contrast(let request): .json(try await lab.contrast(request))
         case .commitSteering(let commit): .json(try await lab.commitSteering(commit))
         case .describe, .tensors, .tensor, .promptCache, .trace, .intervene, .delta, .overlays, .undo, .compare: throw .invalidRequestStructure(details: "not a lab call")
