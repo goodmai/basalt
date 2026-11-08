@@ -1,142 +1,96 @@
 import Foundation
 import MLX
-import MLXNN
 import BasaltCore
 
-public struct OrthogonalProcrustes {
-    public var q: MLXArray
-    public var meanX: MLXArray
-    public var meanY: MLXArray
-    public var meanCosine: Float
-    public var sigma: Float
-    public var recallAt1: Float
-    public var recallAt5: Float
-    public var recallAt10: Float
+struct ProcrustesAlignment {
+    var meanCosine: Float
+    var recallAt1: Float
+    var recallAt5: Float
+    var recallAt10: Float
 
-    public init(q: MLXArray, meanX: MLXArray, meanY: MLXArray, meanCosine: Float, sigma: Float, recallAt1: Float = 0, recallAt5: Float = 0, recallAt10: Float = 0) {
-        self.q = q
-        self.meanX = meanX
-        self.meanY = meanY
-        self.meanCosine = meanCosine
-        self.sigma = sigma
-        self.recallAt1 = recallAt1
-        self.recallAt5 = recallAt5
-        self.recallAt10 = recallAt10
+    var sigma: Float? { try? CalibratedNoiseInjector.sigma(forMeanCosine: meanCosine) }
+}
+
+struct OrthogonalProcrustes {
+    static let recallRows = 1024
+
+    var q: MLXArray
+    var meanX: MLXArray
+    var meanY: MLXArray
+
+    static func fit(x: MLXArray, y: MLXArray) throws(BasaltError) -> OrthogonalProcrustes {
+        try check(x, y)
+        let meanX = x.asType(.float32).mean(axis: 0)
+        let meanY = y.asType(.float32).mean(axis: 0)
+        let m = matmul(normalized(x, meanX).T, normalized(y, meanY)).asType(.float64, stream: .cpu)
+        let (u, _, vt) = MLXLinalg.svd(m, stream: .cpu)
+        let k = min(x.dim(1), y.dim(1))
+        let q = matmul(u.asType(.float32, stream: .cpu)[0..., ..<k], vt.asType(.float32, stream: .cpu)[..<k, 0...])
+        eval(q, meanX, meanY)
+        return OrthogonalProcrustes(q: q, meanX: meanX, meanY: meanY)
     }
 
-    public static func fit(x: MLXArray, y: MLXArray) throws -> OrthogonalProcrustes {
-        let x32 = x.asType(.float32)
-        let y32 = y.asType(.float32)
-        guard x32.ndim == 2, y32.ndim == 2 else {
-            throw BasaltError.invalidRequestStructure(details: "OrthogonalProcrustes: inputs must be 2-D")
-        }
-        let n = x32.dim(0)
-        guard n == y32.dim(0), n > 0 else {
-            throw BasaltError.invalidRequestStructure(details: "OrthogonalProcrustes: paired matrices need the same positive row count")
-        }
-        let dx = x32.dim(1)
-        let dy = y32.dim(1)
-
-        let meanX = MLX.mean(x32, axis: 0)
-        let meanY = MLX.mean(y32, axis: 0)
-        let xc = x32 - meanX
-        let yc = y32 - meanY
-
-        let xn = MLX.sqrt(MLX.sum(xc * xc, axis: 1, keepDims: true))
-        let yn = MLX.sqrt(MLX.sum(yc * yc, axis: 1, keepDims: true))
-        let xhat = xc / MLX.maximum(xn, MLXArray(Float(1e-9)))
-        let yhat = yc / MLX.maximum(yn, MLXArray(Float(1e-9)))
-
-        var m = MLXArray.zeros([dx, dy], dtype: .float32)
-        let chunk = 1024
-        for start in stride(from: 0, to: n, by: chunk) {
-            let end = min(n, start + chunk)
-            let xm = xhat[start ..< end]
-            let ym = yhat[start ..< end]
-            m = m + MLX.matmul(xm.T, ym)
-            eval(m)
-        }
-
-        let m64 = MLXArray(m.asArray(Float.self).map(Double.init), [dx, dy])
-        let (u64, _, vt64) = MLXLinalg.svd(m64, stream: .cpu)
-        eval(u64, vt64)
-        let u = u64.asType(.float32, stream: .cpu)
-        let vt = vt64.asType(.float32, stream: .cpu)
-
-        let k = min(dx, dy)
-        let uK = u[0..., 0 ..< k]
-        let vtK = vt[0 ..< k, 0...]
-        let q = MLX.matmul(uK, vtK, stream: .cpu)
-
-        let aligned = MLX.matmul(xhat, q)
-        let cosines = MLX.sum(aligned * yhat, axis: 1)
-        eval(cosines)
-        let meanCos = cosines.mean().item(Float.self)
-
-        let sigma = try CalibratedNoiseInjector.sigma(forMeanCosine: meanCos)
-
-        let (r1, r5, r10) = Self.recall(aligned: aligned, targets: yhat)
-
-        return OrthogonalProcrustes(q: q, meanX: meanX, meanY: meanY, meanCosine: meanCos, sigma: sigma, recallAt1: r1, recallAt5: r5, recallAt10: r10)
+    func align(_ x: MLXArray) -> MLXArray {
+        matmul(Self.normalized(x, meanX), q)
     }
 
-    public func save(to url: URL) throws {
-        try Self.save(self, to: url)
+    func evaluate(x: MLXArray, y: MLXArray) throws(BasaltError) -> ProcrustesAlignment {
+        try Self.check(x, y)
+        guard x.dim(1) == q.dim(0), y.dim(1) == q.dim(1) else {
+            throw .invalidRequestStructure(details: "procrustes: pairs are \(x.dim(1)) × \(y.dim(1)) wide, the rotation is \(q.dim(0)) × \(q.dim(1))")
+        }
+        let aligned = align(x)
+        let targets = Self.normalized(y, meanY)
+        let meanCosine = (aligned * targets).sum(axis: 1).mean().item(Float.self)
+        var hits = [0, 0, 0]
+        for start in stride(from: 0, to: x.dim(0), by: Self.recallRows) {
+            let rows = start ..< min(x.dim(0), start + Self.recallRows)
+            let similarity = matmul(aligned[rows], targets.T)
+            let own = similarity[MLXArray(0 ..< rows.count), MLXArray(Int32(rows.lowerBound) ..< Int32(rows.upperBound))]
+            let rank = (similarity .> own.expandedDimensions(axis: 1)).sum(axis: 1)
+            for (index, k) in [1, 5, 10].enumerated() { hits[index] += (rank .< k).sum().item(Int.self) }
+        }
+        let n = Float(x.dim(0))
+        return ProcrustesAlignment(meanCosine: meanCosine, recallAt1: Float(hits[0]) / n, recallAt5: Float(hits[1]) / n, recallAt10: Float(hits[2]) / n)
     }
 
-    public static func save(_ result: OrthogonalProcrustes, to url: URL) throws {
-        let arrays: [String: MLXArray] = [
-            "q": result.q,
-            "mean_x": result.meanX,
-            "mean_y": result.meanY,
-            "mean_cosine": MLXArray(result.meanCosine),
-            "sigma": MLXArray(result.sigma),
-        ]
+    func save(to url: URL, alignment: ProcrustesAlignment) throws {
+        var arrays = ["q": q, "mean_x": meanX, "mean_y": meanY, "mean_cosine": MLXArray(alignment.meanCosine)]
+        if let sigma = alignment.sigma { arrays["sigma"] = MLXArray(sigma) }
         try MLX.save(arrays: arrays, url: url)
     }
 
-    public static func load(from url: URL) throws -> OrthogonalProcrustes {
+    static func load(from url: URL) throws -> (OrthogonalProcrustes, meanCosine: Float) {
         let arrays = try MLX.loadArrays(url: url)
-        guard let q = arrays["q"], let mx = arrays["mean_x"], let my = arrays["mean_y"],
-              let mc = arrays["mean_cosine"], let sig = arrays["sigma"] else {
-            throw BasaltError.invalidRequestStructure(details: "OrthogonalProcrustes: missing tensors in \(url.path)")
+        guard let q = arrays["q"], let meanX = arrays["mean_x"], let meanY = arrays["mean_y"], let cosine = arrays["mean_cosine"],
+              q.ndim == 2, meanX.shape == [q.dim(0)], meanY.shape == [q.dim(1)] else {
+            throw BasaltError.invalidRequestStructure(details: "procrustes: \(url.path) lacks q [dx, dy], mean_x [dx], mean_y [dy] or mean_cosine")
         }
-        return OrthogonalProcrustes(
-            q: q, meanX: mx, meanY: my,
-            meanCosine: mc.item(Float.self), sigma: sig.item(Float.self))
+        return (OrthogonalProcrustes(q: q, meanX: meanX, meanY: meanY), cosine.item(Float.self))
     }
 
-    private static func recall(aligned: MLXArray, targets: MLXArray) -> (Float, Float, Float) {
-        let n = aligned.dim(0)
-        guard n > 0 else { return (0, 0, 0) }
-        let sim = MLX.matmul(aligned, targets.T)
-        eval(sim)
-        var r1 = 0, r5 = 0, r10 = 0
-        for i in 0 ..< n {
-            let row = sim[i].asArray(Float.self)
-            let indexed = row.enumerated().sorted { $0.element > $1.element }
-            let rank = indexed.firstIndex { $0.offset == i } ?? n
-            if rank < 1 { r1 += 1 }
-            if rank < 5 { r5 += 1 }
-            if rank < 10 { r10 += 1 }
+    static func check(_ x: MLXArray, _ y: MLXArray) throws(BasaltError) {
+        guard x.ndim == 2, y.ndim == 2, x.dim(0) == y.dim(0), x.dim(0) > 0 else {
+            throw .invalidRequestStructure(details: "procrustes: pairs must be two 2-D matrices with the same positive row count, got \(x.shape) and \(y.shape)")
         }
-        let denom = Float(n)
-        return (Float(r1) / denom, Float(r5) / denom, Float(r10) / denom)
+    }
+
+    static func normalized(_ rows: MLXArray, _ mean: MLXArray) -> MLXArray {
+        let centered = rows.asType(.float32) - mean
+        return centered / maximum(sqrt((centered * centered).sum(axis: -1, keepDims: true)), 1e-9)
     }
 }
 
-public enum CalibratedNoiseInjector {
-    public static func sigma(forMeanCosine c: Float) throws -> Float {
+enum CalibratedNoiseInjector {
+    static func sigma(forMeanCosine c: Float) throws(BasaltError) -> Float {
         guard c > 0, c <= 1 else {
-            throw BasaltError.invalidRequestStructure(details: "CalibratedNoiseInjector: mean cosine must be in (0, 1]")
+            throw .invalidRequestStructure(details: "noise calibration: the mean cosine must be in (0, 1], got \(c)")
         }
-        return (1.0 / (c * c) - 1.0).squareRoot()
+        return (1 / (c * c) - 1).squareRoot()
     }
 
-    public static func perturb(_ embeddings: MLXArray, sigma: Float, seed: UInt64 = 42) -> MLXArray {
-        let eps = MLXRandom.normal(embeddings.shape, dtype: .float32, key: MLXRandom.key(seed))
-        let noisy = embeddings.asType(.float32) + MLXArray(sigma) * eps
-        let norms = MLX.sqrt(MLX.sum(noisy * noisy, axis: -1, keepDims: true))
-        return noisy / MLX.maximum(norms, MLXArray(Float(1e-9)))
+    static func perturb(_ embeddings: MLXArray, sigma: Float, key: MLXArray? = nil) -> MLXArray {
+        let noisy = embeddings.asType(.float32) + sigma * MLXRandom.normal(embeddings.shape, dtype: .float32, key: key)
+        return noisy / maximum(sqrt((noisy * noisy).sum(axis: -1, keepDims: true)), 1e-9)
     }
 }

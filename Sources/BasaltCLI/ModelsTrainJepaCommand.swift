@@ -12,10 +12,10 @@ struct TrainJepaSubcommand: AsyncParsableCommand {
     @Argument(help: "Model repo id from the local cache, or a local model directory")
     var model: String
 
-    @Option(name: .long, help: "Path to a JSONL dataset of multi-view scenes")
+    @Option(name: .long, help: "JSONL file: one scene per line, a string array or {\"views\": [...]} with at least two views")
     var dataset: String
 
-    @Option(name: .long, help: "Output directory for adapters.safetensors and jepa_projector.safetensors")
+    @Option(name: .long, help: "New output directory for adapters.safetensors and jepa_projector.safetensors (default: ~/.basalt/adapters)")
     var output: String?
 
     @Option(name: .long, help: "Training iterations")
@@ -24,10 +24,10 @@ struct TrainJepaSubcommand: AsyncParsableCommand {
     @Option(name: .long, help: "LoRA rank")
     var rank: Int = 16
 
-    @Option(name: .long, help: "Maximum sequence length")
+    @Option(name: .long, help: "Maximum tokens per view")
     var maxSeqLen: Int = 64
 
-    @Option(name: .long, help: "Scenes per batch")
+    @Option(name: .long, help: "Scenes per batch, eight views each")
     var batchSize: Int = 256
 
     mutating func run() async throws {
@@ -36,14 +36,14 @@ struct TrainJepaSubcommand: AsyncParsableCommand {
         }
         let engine = MLXInferenceEngine()
         let orchestrator = ModelOrchestratorActor(engine: engine)
-        defer { Task { await orchestrator.shutdown() } }
+        defer { await orchestrator.shutdown() }
         try await orchestrator.loadModel(path: modelPath)
-        let request = LeJEPATrainRequest(
-            datasetPath: dataset, output: output, rank: rank, batchSize: batchSize,
-            maxSeqLen: maxSeqLen, iterations: iterations)
-        let report = try await engine.trainJepa(request)
-        print("adapter: \(report.adapterDirectory)")
-        print("projector: \(report.projectorPath)")
-        print("losses: \(report.losses.count)")
+        var request = LeJEPATrainRequest(datasetPath: dataset, iterations: iterations)
+        (request.output, request.rank, request.batchSize, request.maxSeqLen) = (output, rank, batchSize, maxSeqLen)
+        let report = try await engine.trainJEPA(request)
+        print("adapter: \(report.adapterDirectory ?? "-")")
+        print("projector: \(report.projectorPath ?? "-")")
+        print("loss: \(report.losses.first ?? .nan) -> \(report.losses.last ?? .nan)")
+        print("embedding rank: \(report.embeddingRankBefore.map(String.init) ?? "-") -> \(report.embeddingRankAfter.map(String.init) ?? "-")")
     }
 }
