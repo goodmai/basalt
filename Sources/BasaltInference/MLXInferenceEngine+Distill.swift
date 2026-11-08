@@ -132,7 +132,7 @@ extension MLXInferenceEngine {
                 report.rejected[reason, default: 0] += 1
                 continue
             }
-            let pair = TrainingTask(prompt: example.prompt, answer: entry.completion.text.trimmingCharacters(in: .whitespacesAndNewlines))
+            let pair = TrainingTask(prompt: example.prompt, answer: DistillCore.target(entry.completion, includeReasoning: request.includeReasoning))
             if entry.index >= heldOutStart { heldOut.append(pair) } else { train.append(pair) }
         }
         (report.kept, report.heldOut) = (train.count, heldOut.count)

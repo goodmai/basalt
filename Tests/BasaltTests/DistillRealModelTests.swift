@@ -36,7 +36,7 @@ struct DistillRealModelTests {
     static func accuracy(_ engine: MLXInferenceEngine, _ examples: [DistillExample]) async throws -> Float {
         var correct = 0
         for example in examples {
-            let reply = try await engine.generate(request: GenerationRequest(prompt: example.prompt, maxTokens: 384, temperature: 0)).generatedText
+            let reply = try await engine.generate(request: GenerationRequest(prompt: example.prompt, maxTokens: 2048, temperature: 0)).generatedText
             if TrainingTask(prompt: example.prompt, answer: example.answer ?? "").accepts(reply) { correct += 1 }
         }
         return Float(correct) / Float(max(examples.count, 1))
@@ -50,6 +50,7 @@ struct DistillRealModelTests {
         (request.filter, request.batchSize, request.rank, request.maxSeqLen, request.heldOutFraction) = (.verify, 2, 16, 1024, 0.1)
         request.iterations = env["BASALT_E2E_DISTILL_ITERATIONS"].flatMap(Int.init) ?? 300
         request.learningRate = env["BASALT_E2E_DISTILL_LR"].flatMap(Float.init) ?? 1e-4
+        request.includeReasoning = env["BASALT_E2E_DISTILL_REASONING"] == "1"
         return request
     }
 
@@ -82,7 +83,7 @@ struct DistillRealModelTests {
             _ = try await engine.applyAdapter(.directory(directory), gate: nil)
         }
         let after = try await log.step("accuracy after") { try await Self.accuracy(engine, heldOut) }
-        log.record("config", "set \(Self.env["BASALT_E2E_DISTILL_SET"] ?? "base"), iterations \(request.iterations), lr \(request.learningRate), effort \(request.teacher.reasoningEffort ?? "default")")
+        log.record("config", "set \(Self.env["BASALT_E2E_DISTILL_SET"] ?? "base"), iterations \(request.iterations), lr \(request.learningRate), effort \(request.teacher.reasoningEffort ?? "default"), reasoning \(request.includeReasoning)")
         log.record("RESULT", "held-out accuracy \(before) -> \(after) on \(heldOut.count), teacher NLL \(report.teacherNLLBefore ?? .nan) -> \(report.teacherNLLAfter ?? .nan)")
         #expect((report.teacherNLLAfter ?? .infinity) < (report.teacherNLLBefore ?? 0))
     }

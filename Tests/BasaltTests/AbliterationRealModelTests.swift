@@ -60,7 +60,7 @@ struct AbliterationRealModelTests {
             log.record("RESULT", "\(result.tokens) tokens, non-finite logits \(result.nonFinite), perplexity \(result.perplexity)")
             total += result.nonFinite
         }
-        let prompt = try await container.perform { context in
+        let prompt = await container.perform { context in
             context.tokenizer.decode(tokenIds: Array(context.tokenizer.encode(text: Self.corpus).prefix(4096)), skipSpecialTokens: true)
         }
         let trace = try await log.step("trace") { try await engine.trace(TraceRequest(prompt: prompt, topK: 1)) }

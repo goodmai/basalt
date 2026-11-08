@@ -32,6 +32,7 @@ extension DistillRequest {
         }
         samplesPerPrompt = try MCPArguments.integer("samplesPerPrompt", in: args, ResearchCall.nonNegative) ?? samplesPerPrompt
         heldOutFraction = try MCPArguments.number("heldOutFraction", in: args) ?? heldOutFraction
+        includeReasoning = try MCPArguments.optionalBoolean("includeReasoning", in: args) ?? includeReasoning
         budgetUSD = try MCPArguments.number("budgetUSD", in: args).map(Double.init)
         layers = try MCPArguments.integers("layers", in: args)
         rank = try MCPArguments.integer("rank", in: args, ResearchCall.nonNegative) ?? rank

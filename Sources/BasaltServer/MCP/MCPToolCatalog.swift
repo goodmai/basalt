@@ -386,6 +386,7 @@ extension ResearchTool {
             "samplesPerPrompt": ["type": "integer", "minimum": 1, "maximum": 8, "description": "Teacher answers per prompt (default 1)"],
             "filter": ["type": "string", "enum": DistillFilter.allCases.map(\.rawValue), "description": "verify keeps only answers that match the prompt's answer (default none)"],
             "heldOutFraction": ["type": "number", "description": "Share of prompts held out for the NLL comparison (default 0.1)"],
+            "includeReasoning": ["type": "boolean", "description": "Train on the teacher's reasoning followed by its answer, not the answer alone (default false)"],
             "layers": ["type": "array", "items": ["type": "integer", "minimum": 0], "description": "Layers that get LoRA (default: all)"],
             "rank": ["type": "integer", "minimum": 1, "maximum": 64, "description": "LoRA rank (default 16)"],
             "iterations": ["type": "integer", "minimum": 1, "maximum": 10_000, "description": "Training iterations (default 200)"],
