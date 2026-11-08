@@ -72,7 +72,7 @@ extension MLXInferenceEngine {
         let head = JEPAHead(
             backbone: context.model, inputDim: hidden.dim(-1), hiddenDim: jepaHidden, outputDim: jepaProjection,
             isCausal: request.isCausal, poolingStrategy: .mean)
-        head.train()
+        head.projector.train()
         let rankBefore = embeddingRank(head, probe)
         var history = try jepaSteps(request, dataset: dataset, collator: collator, encode: encode, head: head)
         history.embeddingRankBefore = rankBefore

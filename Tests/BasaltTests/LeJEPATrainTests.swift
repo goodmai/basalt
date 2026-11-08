@@ -45,6 +45,7 @@ struct LeJEPATrainTests {
         let early = report.losses.prefix(5).reduce(0, +), late = report.losses.suffix(5).reduce(0, +)
         #expect(late * 4 < early, "\(report.losses)")
         #expect(await Self.weights(container) == before)
+        #expect(await container.perform { context in context.model.training } == false)
         let rankBefore = try #require(report.embeddingRankBefore), rankAfter = try #require(report.embeddingRankAfter)
         #expect(rankAfter > 1 && rankAfter * 2 >= rankBefore, "rank \(rankBefore) -> \(rankAfter)")
         #expect(report.adapterDirectory == directory.path)
