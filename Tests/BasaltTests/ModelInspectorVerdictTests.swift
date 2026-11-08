@@ -100,6 +100,19 @@ struct ModelInspectorVerdictTests {
         #expect(uniform == .init(bits: 4, description: "4-bit quantized (measured from weights, affine)"))
     }
 
+    @Test("An nf4 checkpoint, mode nf4 or the older quant_method nf4, measures its bias-free layers as 4-bit whatever their group, and its affine layers from the config group", arguments: [false, true])
+    func nf4BitWidth(legacy: Bool) {
+        let json: [String: Any] = ["quantization": legacy
+            ? ["bits": 4, "group_size": 64, "mode": "affine", "quant_method": "nf4"] as [String: Any]
+            : ["bits": 4, "group_size": 64, "mode": "nf4"]]
+        let nf4g32: [String: Tensor] = [
+            "a.weight": Tensor(dtype: "U32", shape: [8, 512], end: 0), "a.scales": Tensor(dtype: "F16", shape: [8, 128], end: 0),
+        ]
+        let affine6 = Self.quantLayer("b", bits: 6).merging(["b.biases": Tensor(dtype: "BF16", shape: [8, 64], end: 0)]) { $1 }
+        let verdict = ModelInspector.bitWidth(tensors: nf4g32.merging(affine6) { $1 }, dtypes: ["U32"], config: .init(json: json), modelId: "m")
+        #expect(verdict.mismatch == nil && verdict.description == "mixed 4/6-bit quantized (measured over 2 layers)", "\(verdict)")
+    }
+
     @Test("Without packed layers: config, then dtypes, then repo name, then 16-bit")
     func unmeasuredBitWidthOrder() {
         func verdict(_ dtypes: Set<String>, _ json: [String: Any]? = nil, _ id: String = "m") -> ModelInspector.BitWidth {
