@@ -33,15 +33,17 @@ struct LeJEPATrainTests {
         let container = try TinyModel.container(.qwen3)
         let directory = try Self.scratch().appending(path: "adapter")
         var request = LeJEPATrainRequest(datasetPath: "-", iterations: 20)
-        (request.rank, request.layers, request.batchSize, request.maxSeqLen, request.learningRate, request.warmupRatio) = (4, [1, 3], 4, 16, 3e-3, 0.1)
+        (request.rank, request.layers, request.batchSize, request.maxSeqLen, request.learningRate, request.warmupRatio) = (4, [1, 3], 4, 16, 3e-4, 0.1)
         let dataset = try GoodViewDataset.parse(jsonl: Self.scenes)
         let before = await Self.weights(container)
         let report = try await container.performEvaluating(nonSendable: ()) { [request] context, _ in
-            try MLXInferenceEngine.trainJEPA(request, dataset: dataset, directory: directory, context: context)
+            try withRandomState(MLXRandom.RandomState(seed: 7)) {
+                try MLXInferenceEngine.trainJEPA(request, dataset: dataset, directory: directory, context: context)
+            }
         }
         #expect(report.losses.count == 20 && report.gradNorms.count == 20 && report.invarianceLosses.count == 20)
         let early = report.losses.prefix(5).reduce(0, +), late = report.losses.suffix(5).reduce(0, +)
-        #expect(late < early, "\(report.losses)")
+        #expect(late * 4 < early, "\(report.losses)")
         #expect(await Self.weights(container) == before)
         let rankBefore = try #require(report.embeddingRankBefore), rankAfter = try #require(report.embeddingRankAfter)
         #expect(rankAfter > 1 && rankAfter * 2 >= rankBefore, "rank \(rankBefore) -> \(rankAfter)")
