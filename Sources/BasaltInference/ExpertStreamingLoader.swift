@@ -94,10 +94,10 @@ struct ExpertPlan {
         var layout = ExpertLayout(path: path, numExperts: experts, weight: weight)
         (layout.scales, layout.biases, layout.bias) = (try tensor("scales", experts: experts), try tensor("biases", experts: experts), try tensor("bias", experts: experts))
         if layout.scales != nil {
-            guard let config = quantization?.quantization(layer: path), config.quantMethod != NF4.method else {
-                throw .inferenceError("expert streaming: \(path) is quantized without a quantization config this build can stream (NF4 is not streamed)")
+            guard let config = layerQuantization(of: path, weights: sanitized, quantization: nil, perLayerQuantization: quantization) else {
+                throw .inferenceError("expert streaming: \(path) is quantized without a quantization config this build can stream")
             }
-            layout.quantization = config.asTuple
+            layout.quantization = config
         }
         layouts.append(layout)
     }

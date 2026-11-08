@@ -130,7 +130,7 @@ enum NF4Run {
         let speed = try await log.step("decode \(arm)") { try await decodeSpeed(engine) }
         let perplexity = try await log.step("perplexity \(arm)") { try await NF4Run.perplexity(container, text: text) }
         let traces = try await GoldenRun.traces(engine, run: 0, log: log)
-        log.record("arm", "\(arm) decode \(speed) tok/s, perplexity \(perplexity), MLXLM_NF4_KERNEL=\(env["MLXLM_NF4_KERNEL"] ?? "unset")")
+        log.record("arm", "\(arm) decode \(speed) tok/s, perplexity \(perplexity)")
         return Arm(speed: speed, perplexity: perplexity, traces: traces)
     }
 

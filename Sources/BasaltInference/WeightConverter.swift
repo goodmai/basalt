@@ -71,7 +71,7 @@ package struct WeightConverter: Sendable {
         let numbers = parts.dropFirst().compactMap { Int($0) }
         let bitsValid = numbers.dropLast().allSatisfy { [2, 3, 4, 5, 6, 8].contains($0) } && [32, 64, 128].contains(numbers.last ?? 0)
         switch parts.first.map(String.init) {
-        case "nf4" where parts.count == 2 && numbers.count == 1 && NF4Codec.groupSizes.contains(numbers[0]):
+        case "nf4" where parts.count == 2 && numbers.count == 1 && [32, 64, 128].contains(numbers[0]):
             return .nf4(groupSize: numbers[0])
         case "affine" where parts.count == 3 && numbers.count == 2 && bitsValid:
             return .affine(bits: numbers[0], groupSize: numbers[1])
@@ -80,7 +80,7 @@ package struct WeightConverter: Sendable {
             return .mixed(MixedBits(low: numbers[0], high: numbers[1], groupSize: numbers[2], budgetBytes: Int(budgetGB * 1e9)))
         default:
             throw .options(
-                "--quantize takes affine:<bits>:<group> or mixed:<low>:<high>:<group> (bits 2-6 or 8, low below high, group 32, 64 or 128) or nf4:<group> (group 32 or 64), got '\(spec)'")
+                "--quantize takes affine:<bits>:<group> or mixed:<low>:<high>:<group> (bits 2-6 or 8, low below high, group 32, 64 or 128) or nf4:<group> (group 32, 64 or 128), got '\(spec)'")
         }
     }
 
@@ -152,7 +152,7 @@ package struct WeightConverter: Sendable {
         var weight = Self.dense(tensor, packed)
         if let pair, let lora { weight = try LoRAUpdate.merged(weight, pair, scale: lora.scale, layer: base) }
         if let nf4 {
-            let (codes, scales) = NF4Codec.quantized(weight, groupSize: nf4)
+            let (codes, scales, _) = MLX.quantized(weight, groupSize: nf4, bits: 4, mode: .nf4)
             return [base + ".weight": codes, base + ".scales": scales]
         }
         guard let target else { return [key: cast(weight)] }
@@ -203,7 +203,7 @@ package struct WeightConverter: Sendable {
     }
 
     static func takesNF4(_ key: String, _ tensor: MLXArray, packed: PackedWeight?, sourceQuantized: Bool, groupSize: Int) -> Bool {
-        guard tensor.ndim == 2, isLinearPath(key) else { return false }
+        guard (2 ... 3).contains(tensor.ndim), isLinearPath(key) else { return false }
         guard let packed else { return !sourceQuantized && tensor.dtype.isFloatingPoint && tensor.dim(-1) % groupSize == 0 }
         return packed.quantization.bits == 4 && packed.quantization.mode == .affine
             && (packed.scales.dim(-1) * packed.quantization.groupSize) % groupSize == 0
@@ -267,7 +267,8 @@ extension WeightConverter {
             config["quantization_config"] = mixed.configBlock
         case .nf4(let groupSize):
             var block = config["quantization"] as? [String: Any] ?? ["bits": 4, "group_size": groupSize, "mode": "affine"]
-            block["quant_method"] = "nf4"
+            block["mode"] = "nf4"
+            block["quant_method"] = nil
             config["quantization"] = block
             config["quantization_config"] = block
         }
