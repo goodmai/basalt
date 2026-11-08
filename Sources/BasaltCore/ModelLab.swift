@@ -7,6 +7,7 @@ public protocol ModelLab: ModelResearch {
     func contrast(_ request: ContrastRequest) async throws(BasaltError) -> ContrastReport
     func commitSteering(_ commit: SteeringCommit) async throws(BasaltError) -> AdapterVerdict
     func train(_ request: TrainRequest) async throws(BasaltError) -> TrainReport
+    func trainJEPA(_ request: LeJEPATrainRequest) async throws(BasaltError) -> LeJEPATrainReport
 }
 
 extension ModelLab {
@@ -16,6 +17,7 @@ extension ModelLab {
     public func contrast(_ request: ContrastRequest) async throws(BasaltError) -> ContrastReport { throw Self.unavailable("contrastive steering") }
     public func commitSteering(_ commit: SteeringCommit) async throws(BasaltError) -> AdapterVerdict { throw Self.unavailable("steering commit") }
     public func train(_ request: TrainRequest) async throws(BasaltError) -> TrainReport { throw Self.unavailable("expert training") }
+    public func trainJEPA(_ request: LeJEPATrainRequest) async throws(BasaltError) -> LeJEPATrainReport { throw Self.unavailable("JEPA training") }
 
     static func unavailable(_ mode: String) -> BasaltError {
         .invalidRequestStructure(details: "\(mode) is not available on this engine")
@@ -248,5 +250,44 @@ public struct TrainReport: Sendable, Codable {
         self.accuracyBefore = accuracyBefore
         self.accuracyAfter = accuracyAfter
         self.verdict = verdict
+    }
+}
+
+public struct LeJEPATrainRequest: Sendable, Codable, Equatable {
+    public var datasetPath: String
+    public var output: String?
+    public var rank: Int = 16
+    public var layers: [Int]?
+    public var batchSize: Int = 256
+    public var maxSeqLen: Int = 64
+    public var iterations: Int
+    public var learningRate: Float = 1e-4
+    public var weightDecay: Float = 0.05
+    public var warmupRatio: Float = 0.05
+    public var lambda: Float = 0.02
+    public var maxGradNorm: Float = 1.0
+    public var isCausal: Bool = false
+
+    public init(datasetPath: String, iterations: Int) {
+        self.datasetPath = datasetPath
+        self.iterations = iterations
+    }
+}
+
+public struct LeJEPATrainReport: Sendable, Codable, Equatable {
+    public var losses: [Float]
+    public var invarianceLosses: [Float]
+    public var sigRegLosses: [Float]
+    public var gradNorms: [Float]
+    public var embeddingRankBefore: Int?
+    public var embeddingRankAfter: Int?
+    public var adapterDirectory: String?
+    public var projectorPath: String?
+
+    public init(losses: [Float] = [], invarianceLosses: [Float] = [], sigRegLosses: [Float] = [], gradNorms: [Float] = []) {
+        self.losses = losses
+        self.invarianceLosses = invarianceLosses
+        self.sigRegLosses = sigRegLosses
+        self.gradNorms = gradNorms
     }
 }

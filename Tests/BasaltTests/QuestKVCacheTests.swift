@@ -125,4 +125,14 @@ struct QuestKVCacheTests {
         let next = MLXArray([Int32(5)]).reshaped(1, 1)
         #expect(allClose(model(next, cache: dense)[0, -1], model(next, cache: quest)[0, -1], atol: 1e-4).item(Bool.self))
     }
+
+    @Test("Block scores from the group-summed sign split equal the per-group max(q·upper, q·lower) bound")
+    func blockScoresMatchBound() {
+        let q = Self.normal([2, Self.kvHeads, Self.groups, Self.dim], 20)
+        let a = Self.normal([2, Self.kvHeads, 37, Self.dim], 21), b = Self.normal([2, Self.kvHeads, 37, Self.dim], 22)
+        let (upper, lower) = (maximum(a, b), minimum(a, b))
+        let wide = q.expandedDimensions(axis: 3)
+        let bound = maximum(wide * upper.expandedDimensions(axis: 2), wide * lower.expandedDimensions(axis: 2)).sum(axis: -1).sum(axis: 2)
+        #expect(allClose(QuestKVCache.blockScores(q, upper: upper, lower: lower), bound, atol: 1e-4).item(Bool.self))
+    }
 }

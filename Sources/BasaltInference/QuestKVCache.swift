@@ -38,6 +38,12 @@ final class QuestKVCache: KVCacheAttentionProtocol {
     var maxSize: Int? { nil }
     var isTrimmable: Bool { true }
 
+    static func blockScores(_ q: MLXArray, upper: MLXArray, lower: MLXArray) -> MLXArray {
+        let positive = maximum(q, 0).sum(axis: 2, keepDims: true)
+        let negative = minimum(q, 0).sum(axis: 2, keepDims: true)
+        return (matmul(positive, upper.swappedAxes(-1, -2)) + matmul(negative, lower.swappedAxes(-1, -2))).squeezed(axis: 2)
+    }
+
     func innerState() -> [MLXArray] { base.innerState() + [maxima, minima].compactMap { $0 } }
 
     var state: [MLXArray] {
@@ -63,10 +69,8 @@ final class QuestKVCache: KVCacheAttentionProtocol {
         }
         sparseSteps += 1
         let (batch, kvHeads) = (k.dim(0), k.dim(1))
-        let q = queries.reshaped(batch, kvHeads, queries.dim(1) / kvHeads, 1, k.dim(3))
-        let upper = maxima[0..., 0..., first ..< last].expandedDimensions(axis: 2)
-        let lower = minima[0..., 0..., first ..< last].expandedDimensions(axis: 2)
-        let score = maximum(q * upper, q * lower).sum(axis: -1).sum(axis: 2)
+        let q = queries.reshaped(batch, kvHeads, queries.dim(1) / kvHeads, k.dim(3))
+        let score = Self.blockScores(q, upper: maxima[0..., 0..., first ..< last], lower: minima[0..., 0..., first ..< last])
         let chosen = argPartition(-score, kth: topK - 1, axis: -1)[.ellipsis, ..<topK].asType(.int32) + Int32(first)
         let blocks = (chosen.expandedDimensions(axis: -1) * Int32(Self.blockTokens) + blockSteps).reshaped(batch, kvHeads, -1)
         let windowStart = last * Self.blockTokens

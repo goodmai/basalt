@@ -271,6 +271,7 @@ enum ResearchTool: String, Sendable, CaseIterable {
     case tensorPack = "tensor_pack"
     case tensorUnpack = "tensor_unpack"
     case trainExperts = "train_experts"
+    case trainJepa = "train_jepa"
     case steerSearch = "steer_search"
     case steerCommit = "steer_commit"
 
@@ -278,7 +279,7 @@ enum ResearchTool: String, Sendable, CaseIterable {
         switch self {
         case .modelDescribe, .modelTensors, .modelTensor, .kvInspect, .traceRun: false
         case .intervene, .weightsDelta, .overlaysList, .overlayUndo, .experimentCompare, .adapterApply, .gateCheck: true
-        case .tensorPack, .tensorUnpack, .trainExperts, .steerSearch, .steerCommit: true
+        case .tensorPack, .tensorUnpack, .trainExperts, .trainJepa, .steerSearch, .steerCommit: true
         }
     }
 }
@@ -298,6 +299,7 @@ enum ResearchCall: Sendable, Equatable {
     case gate(GateRequest)
     case pack(PackRequest)
     case train(TrainRequest)
+    case trainJepa(LeJEPATrainRequest)
     case contrast(ContrastRequest)
     case commitSteering(SteeringCommit)
 
@@ -319,7 +321,7 @@ enum ResearchCall: Sendable, Equatable {
         case .overlaysList: self = .overlays
         case .overlayUndo: self = .undo(OverlayID(try MCPArguments.required("id", MCPArguments.integer("id", in: args, Self.nonNegative))))
         case .experimentCompare: self = .compare(try CompareRequest(mcp: args))
-        case .adapterApply, .gateCheck, .tensorPack, .tensorUnpack, .trainExperts, .steerSearch, .steerCommit: self = try Self(lab: tool, args)
+        case .adapterApply, .gateCheck, .tensorPack, .tensorUnpack, .trainExperts, .trainJepa, .steerSearch, .steerCommit: self = try Self(lab: tool, args)
         }
     }
 
@@ -330,6 +332,7 @@ enum ResearchCall: Sendable, Equatable {
         case .tensorPack: self = .pack(try PackRequest(mcp: args, formats: PackRequest.packFormats))
         case .tensorUnpack: self = .pack(try PackRequest(mcp: args, formats: PackRequest.unpackFormats))
         case .trainExperts: self = .train(try TrainRequest(mcp: args))
+        case .trainJepa: self = .trainJepa(try LeJEPATrainRequest(mcp: args))
         case .steerSearch: self = .contrast(try ContrastRequest(mcp: args))
         case .steerCommit: self = .commitSteering(try SteeringCommit(mcp: args))
         case .modelDescribe, .modelTensors, .modelTensor, .kvInspect, .traceRun, .intervene, .weightsDelta, .overlaysList, .overlayUndo, .experimentCompare: throw .invalidParams("\(tool.rawValue) is not a lab tool")
