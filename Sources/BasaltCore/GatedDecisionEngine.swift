@@ -13,9 +13,11 @@ public struct GatedDecisionEngine: DecisionEngine {
 
     public func decide(_ request: SystemOneRequest) async throws(BasaltError) -> SystemOneResponse {
         do {
-            return try await gate.exclusively { [inner] in try await inner.decide(request) }
+            return try await gate.boundedExclusively { [inner] in try await inner.decide(request) }
         } catch let error as BasaltError {
             throw error
+        } catch is CancellationError {
+            throw .inferenceError("systemone: the request was cancelled while waiting for the generation gate")
         } catch {
             throw .inferenceError("systemone: \(error.localizedDescription)")
         }
