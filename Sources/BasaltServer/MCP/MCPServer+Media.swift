@@ -10,7 +10,7 @@ extension MCPServer {
         let (file, path) = (try MCPArguments.string("file", in: args), try MCPArguments.string("path", in: args))
         let (pages, task, format) = (
             try MCPArguments.string("pages", in: args), try MCPArguments.string("task", in: args), try MCPArguments.string("format", in: args))
-        let model = try MCPArguments.string("model", in: args)
+        let (model, resolution) = (try MCPArguments.string("model", in: args), try MCPArguments.string("resolution", in: args))
         do throws(BasaltError) {
             guard model == nil || model == OCRRequest.appleVision else {
                 throw BasaltError.invalidRequestStructure(details: "model must be \(OCRRequest.appleVision) or left out for the loaded OCR model")
@@ -20,7 +20,8 @@ extension MCPServer {
             case (nil, let path?): try OCRDocument(data: MCPImages.read(path, allowedIn: imageDirectories).data)
             default: throw BasaltError.invalidRequestStructure(details: "send exactly one of file (base64) and path (inside a serve --image-dir directory)")
             }
-            return .json(try await orchestrator.ocr(OCRRequest(document: document, pages: pages, task: task, format: format, model: model)))
+            return .json(try await orchestrator.ocr(OCRRequest(
+                document: document, pages: pages, task: task, format: format, model: model, resolution: resolution)))
         } catch {
             throw MCPFailure(error)
         }
@@ -43,13 +44,14 @@ extension MCPServer {
 extension MCPToolCatalog {
     static let ocr = MCPToolDescriptor(
         name: "basalt_ocr",
-        description: "Read a PDF or an image with the loaded OCR model (GLM-OCR, MinerU2.5 or PaddleOCR-VL), or with Apple's on-device Vision when model is apple-vision, and return Markdown per page, with blocks {type, bbox, text} when format is json. PDF pages render at 200 DPI; a request reads at most \(OCRPageSelection.maxPages) pages.",
+        description: "Read a PDF or an image with the loaded OCR model (GLM-OCR, MinerU2.5, PaddleOCR-VL or DeepSeek-OCR), or with Apple's on-device Vision when model is apple-vision, and return Markdown per page, with blocks {type, bbox, text} when format is json. PDF pages render at 200 DPI; a request reads at most \(OCRPageSelection.maxPages) pages.",
         inputSchema: ResearchTool.object([
             "file": ["type": "string", "description": "The PDF or image, base64-encoded or as a data: URI"],
             "path": ["type": "string", "description": "Instead of file: a PDF or image inside a directory given with serve --image-dir"],
             "pages": ["type": "string", "description": "PDF pages to read, such as 1-3,5 (default: all)"],
             "task": ["type": "string", "enum": OCRTask.allCases.map(\.rawValue), "description": "document (default), text, table, formula or chart"],
             "format": ["type": "string", "enum": OCRFormat.allCases.map(\.rawValue), "description": "markdown (default) or json, which adds blocks"],
+            "resolution": ["type": "string", "enum": OCRResolution.allCases.map(\.rawValue), "description": "DeepSeek-OCR only: tiny (512), small (640), base (1024), large (1280) or gundam (1024 plus 640 tiles, the default)"],
             "model": ["type": "string", "enum": [OCRRequest.appleVision], "description": "apple-vision reads with Apple's Vision framework, no model download; leave out for the loaded OCR model"],
         ]))
 

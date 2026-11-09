@@ -61,29 +61,10 @@ struct PaddleOCRVLProcessor: UserInputProcessor {
         }
         let extent = image.extent.integral
         let size = try config.resized(width: Int(extent.width), height: Int(extent.height))
-        let rgb = try Self.rgb(image, width: size.width, height: size.height).asType(.float32) / 255
+        let rgb = try ImageCanvas.rgb(image, width: size.width, height: size.height).asType(.float32) / 255
         let normalized = (rgb - MLXArray(config.imageMean)) / MLXArray(config.imageStd)
         let (p, rows, columns) = (config.patchSize, size.height / config.patchSize, size.width / config.patchSize)
         let patches = normalized.reshaped(rows, p, columns, p, 3).transposed(0, 2, 1, 3, 4).reshaped(rows * columns, p, p, 3)
         return (patches, THW(1, rows, columns))
-    }
-
-    static func rgb(_ image: CIImage, width: Int, height: Int) throws(BasaltError) -> MLXArray {
-        let context = CIContext(options: [.workingColorSpace: NSNull(), .outputColorSpace: NSNull()])
-        let rect = CGRect(x: 0, y: 0, width: width, height: height)
-        let origin = image.transformed(by: CGAffineTransform(translationX: -image.extent.minX, y: -image.extent.minY))
-        let scaled = origin.extent.size == rect.size ? origin : MediaProcessing.resampleBicubic(origin, to: rect.size)
-        guard let space = CGColorSpace(name: CGColorSpace.sRGB),
-              let source = context.createCGImage(scaled, from: rect, format: .RGBA8, colorSpace: space),
-              let canvas = CGContext(
-                data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4, space: space,
-                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else {
-            throw .inferenceError("PaddleOCR-VL cannot render the image")
-        }
-        canvas.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 1))
-        canvas.fill(rect)
-        canvas.draw(source, in: rect)
-        guard let data = canvas.data else { throw .inferenceError("PaddleOCR-VL cannot read the rendered image") }
-        return MLXArray(Data(bytes: data, count: width * height * 4), [height, width, 4], type: UInt8.self)[0..., 0..., ..<3]
     }
 }

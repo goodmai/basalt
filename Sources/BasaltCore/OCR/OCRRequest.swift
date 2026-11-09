@@ -97,8 +97,11 @@ public struct OCRRequest: Sendable {
     public let task: OCRTask
     public let format: OCRFormat
     public let model: String?
+    public let resolution: OCRResolution?
 
-    public init(document: OCRDocument, pages: String?, task: String?, format: String?, model: String?) throws(BasaltError) {
+    public init(
+        document: OCRDocument, pages: String?, task: String?, format: String?, model: String?, resolution: String? = nil
+    ) throws(BasaltError) {
         guard let parsedTask = OCRTask(rawValue: task ?? OCRTask.document.rawValue) else {
             throw .invalidRequestStructure(details: "task must be one of \(OCRTask.allCases.map(\.rawValue).joined(separator: ", "))")
         }
@@ -106,6 +109,10 @@ public struct OCRRequest: Sendable {
             throw .invalidRequestStructure(details: "format must be markdown or json")
         }
         guard (model?.count ?? 0) <= 256 else { throw .invalidRequestStructure(details: "model must be at most 256 characters") }
+        guard resolution.map({ OCRResolution(rawValue: $0) != nil }) ?? true else {
+            throw .invalidRequestStructure(details: "resolution must be one of \(OCRResolution.allCases.map(\.rawValue).joined(separator: ", "))")
+        }
+        self.resolution = resolution.flatMap(OCRResolution.init(rawValue:))
         self.document = document
         self.pages = try pages.map { text throws(BasaltError) in try OCRPageSelection(text) }
         self.task = parsedTask
