@@ -126,11 +126,8 @@ public enum PipelineCore {
     public static func receipt(
         _ stages: [PipelineStageReceipt], replies: [System2Reply], answers: [String: PipelineAnswer], ms: Int
     ) -> PipelineReceipt {
-        let answered = stages + replies.map {
-            PipelineStageReceipt(stage: .answer, model: $0.model, ms: $0.ms, tokens: $0.tokens, question: $0.call.question)
-        }
         return PipelineReceipt(
-            stages: answered, answeredBy: answers.mapValues(\.answeredBy), escalated: answers.values.contains { $0.answeredBy == .answer },
+            stages: stages + replies.map(PipelineStageReceipt.init), answeredBy: answers.mapValues(\.answeredBy), escalated: answers.values.contains { $0.answeredBy == .answer },
             system2Calls: replies.count, ms: ms)
     }
 
