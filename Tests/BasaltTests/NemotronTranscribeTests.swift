@@ -105,6 +105,15 @@ struct NemotronTranscribeUnitTests {
         )
     }
 
+    static func tinyEngine(seed: UInt64) async throws -> MLXInferenceEngine {
+        let model = try withRandomState(MLXRandom.RandomState(seed: seed)) { NemotronTranscribeModel(try tinyTranscribeConfig()) }
+        eval(model)
+        let engine = MLXInferenceEngine(EngineConfiguration(promptCacheBytes: 0))
+        await engine.attach(ModelContainer(context: ModelContext(
+            configuration: ModelConfiguration(id: "tiny-nemotron-transcribe"), model: model, processor: ByteInputProcessor(), tokenizer: SyntheticAudioTokenizer())))
+        return engine
+    }
+
     @Test("NemotronHConfiguration decodes layers_block_type and NemotronHModel matches between token ids and inputEmbeddings")
     func nemotronHInputEmbeddings() throws {
         let cfg = try Self.tinyLLMConfig()

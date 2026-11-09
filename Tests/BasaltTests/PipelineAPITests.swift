@@ -199,4 +199,31 @@ struct PipelineTinyModelTests {
         #expect(system2["stage"] as? String == "answer" && system2["question"] as? String == "red")
         #expect((system2["tokens"] as? Int ?? 0) > ByteTokenizer().encode(text: state, addSpecialTokens: false).count)
     }
+
+    @Test("Audio end to end: the tiny Nemotron Transcribe engine transcribes the clip in its own orchestrator, the abstaining decision engine escalates, and the tiny chat model answers over the transcript")
+    func audioReachesTinyModels() async throws {
+        let clip = AudioFixture.sine(seconds: 0.5, rate: 16_000, channels: 1)
+        let speech = ModelOrchestratorActor(engine: try await NemotronTranscribeUnitTests.tinyEngine(seed: 3), telemetry: TelemetryTracker())
+        await speech.setModelId("tiny-nemotron-transcribe")
+        let transcript = try await speech.transcribe(TranscriptionRequest(audio: AudioClip(encoded: clip, format: "wav"))).text
+        try #require(!transcript.isEmpty && transcript.count < 2_000)
+        let instructions = "The speaker is calm."
+        let state = PipelineCore.state(PipelinePerceived(transcript: transcript), text: nil)
+        let call = PipelineCore.System2Call.question(id: "calm", prompt: PipelineCore.prompt(SystemOneQuestion(type: .noul, instructions: instructions), state: state))
+        let reference = try await TinyModel.engine().generate(request: PipelineCore.request(for: call, origin: .unspecified)).generatedText
+        let chat = ModelOrchestratorActor(engine: try await TinyModel.engine(), telemetry: TelemetryTracker())
+        let decisions = GatingDecisionEngine(flat: ["calm"])
+        let body: [String: Any] = [
+            "attachments": [["kind": "audio", "data": clip.base64EncodedString(), "format": "wav"]],
+            "questions": ["calm": ["type": "noul", "instructions": instructions]],
+        ]
+        let response = try await PipelineAPITests.post(chat, decisions: decisions, stages: PipelineStages(audio: speech, abstainBelow: 1), body)
+        #expect(response.status == .ok)
+        #expect((response.json["perceived"] as? [String: Any])?["transcript"] as? String == transcript)
+        let stages = PipelineAPITests.stages(response.json)
+        #expect(stages.map { $0["stage"] as? String } == ["perceive", "decide", "answer"])
+        #expect(stages.first?["model"] as? String == "tiny-nemotron-transcribe" && stages[1]["model"] as? String == "org/stub-jev")
+        let answer = try #require(PipelineAPITests.answers(response.json)["calm"])
+        #expect(answer["answered_by"] as? String == "answer" && answer["text"] as? String == reference)
+    }
 }
