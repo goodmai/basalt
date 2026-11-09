@@ -210,7 +210,7 @@ extension ModelResearchTests {
         var teacher = TeacherSpec(url: "https://t.test/v1", model: "m")
         (teacher.provider, teacher.outputPricePerMillion) = (.anthropic, 10)
         var request = DistillRequest(prompts: "/tmp/p.jsonl", teacher: teacher, gate: GateRequest(heldOut: ["Hi."]))
-        request.budgetUSD = 2
+        (request.budgetUSD, request.onPolicy) = (2, true)
         return request
     }
 }
@@ -224,7 +224,7 @@ extension ModelResearchTests {
         case .tensorUnpack: ["tensor": "w", "format": "float16"]
         case .trainExperts: ["count": 40, "seed": 7, "layers": [2, 3], "rank": 4, "iterations": 20, "heldOut": ["Name a colour."]]
         case .trainJepa: ["datasetPath": "/tmp/data.jsonl", "iterations": 2]
-        case .distill: ["prompts": "/tmp/p.jsonl", "teacherUrl": "https://t.test/v1", "teacherModel": "m", "heldOut": ["Hi."], "budgetUSD": 2, "outputPricePerMillion": 10, "provider": "anthropic"]
+        case .distill: ["prompts": "/tmp/p.jsonl", "teacherUrl": "https://t.test/v1", "teacherModel": "m", "heldOut": ["Hi."], "budgetUSD": 2, "outputPricePerMillion": 10, "provider": "anthropic", "onPolicy": true]
         case .steerSearch: LabSteerTests.searchArguments
         case .steerCommit: LabSteerTests.commitArguments
         default: [:]
