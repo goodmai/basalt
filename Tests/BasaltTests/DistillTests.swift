@@ -129,6 +129,16 @@ struct DistillTests {
         #expect(throws: BasaltError.self) { try DistillCore.examples(jsonl: "{\"prompt\": \"a\"}\nnot json") }
     }
 
+    @Test("includeReasoning puts the teacher's reasoning before its answer, inside the model's thinking markers when it has them; without it, or without reasoning, the answer alone is the target")
+    func reasoningTarget() {
+        let completion = TeacherClient.Completion(text: " Answer: 4 ", reasoning: " 2 + 2 is 4 ", truncated: false, inputTokens: 0, outputTokens: 0)
+        #expect(DistillCore.target(completion, includeReasoning: true) == "2 + 2 is 4\n\nAnswer: 4")
+        #expect(DistillCore.target(completion, includeReasoning: false) == "Answer: 4")
+        #expect(DistillCore.target(completion, includeReasoning: true, markers: LiquidProfile().thinkingMarkers) == "<think>\n2 + 2 is 4\n</think>\n\nAnswer: 4")
+        #expect(DistillCore.target(completion, includeReasoning: false, markers: LiquidProfile().thinkingMarkers) == "Answer: 4")
+        #expect(DistillCore.target(.init(text: "x", reasoning: nil, truncated: false, inputTokens: 0, outputTokens: 0), includeReasoning: true) == "x")
+    }
+
     @Test("A 20-prompt run on a tiny model lowers the held-out teacher NLL, leaves the base weights, saves a loadable adapter, caches every answer and never writes the key")
     func endToEnd() async throws {
         let directory = try Self.scratch()

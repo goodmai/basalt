@@ -41,6 +41,9 @@ struct DistillSubcommand: AsyncParsableCommand {
     @Option(name: .long, help: "verify keeps only answers matching the prompt's \"answer\"")
     var filter: String = DistillFilter.none.rawValue
 
+    @Flag(name: .long, help: "Train on the teacher's reasoning followed by its answer")
+    var includeReasoning = false
+
     @Option(name: .long, help: "Training iterations")
     var iterations: Int = 200
 
@@ -60,7 +63,7 @@ struct DistillSubcommand: AsyncParsableCommand {
         var teacher = TeacherSpec(url: teacherUrl, model: teacherModel)
         (teacher.provider, teacher.inputPricePerMillion, teacher.outputPricePerMillion, teacher.reasoningEffort) = (provider, inputPrice, outputPrice, reasoningEffort)
         var request = DistillRequest(prompts: prompts, teacher: teacher, gate: GateRequest(heldOut: Self.generalPrompts))
-        (request.filter, request.budgetUSD, request.iterations, request.rank, request.output) = (filter, budgetUsd, iterations, rank, output)
+        (request.filter, request.budgetUSD, request.iterations, request.rank, request.output, request.includeReasoning) = (filter, budgetUsd, iterations, rank, output, includeReasoning)
         let engine = MLXInferenceEngine()
         let orchestrator = ModelOrchestratorActor(engine: engine)
         defer { await orchestrator.shutdown() }

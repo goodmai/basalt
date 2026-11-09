@@ -32,8 +32,14 @@ extension MLXInferenceEngine {
     }
 
     static func distillRow(_ pair: TrainingTask, _ context: ModelContext) throws -> DistillRow {
-        let prompt = try labPrompt(pair.prompt, context)
-        let completion = context.tokenizer.encode(text: pair.answer, addSpecialTokens: false) + [context.tokenizer.eosTokenId].compactMap { $0 }
+        let thinking = opensThinking(pair.answer)
+        let prompt = try labPrompt(pair.prompt, context, thinking: thinking)
+        var answer = Substring(pair.answer)
+        if thinking, tailOpensThinking(context.tokenizer.decode(tokenIds: prompt, skipSpecialTokens: false)),
+           let opener = thinkingOpeners.first(where: { answer.hasPrefix($0) }) {
+            answer = answer.dropFirst(opener.count).drop(while: \.isNewline)
+        }
+        let completion = context.tokenizer.encode(text: String(answer), addSpecialTokens: false) + [context.tokenizer.eosTokenId].compactMap { $0 }
         return DistillRow(tokens: prompt + completion, promptCount: prompt.count)
     }
 

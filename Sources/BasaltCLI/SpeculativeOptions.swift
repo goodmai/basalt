@@ -27,6 +27,12 @@ struct SpeculativeOptions: ParsableArguments {
     var mtpBlock = 4
 
     @Flag(
+        name: .customLong("experimental-mtp-draft-head"),
+        help: "With --mtp, draft through a 4-bit copy of the target's lm_head when that head is wider than 4 bits (fp16/bf16/8-bit targets; about 0.2 GB on 27B); verification keeps the original head, so output is unchanged and only acceptance can move"
+    )
+    var mtpDraftHead = false
+
+    @Flag(
         name: .customLong("grammar-jump-forward"),
         help: "Feed XGrammar-forced spans in one forward pass during constrained decoding (opt-in; JSON schema and forced tool calls)"
     )
@@ -34,7 +40,7 @@ struct SpeculativeOptions: ParsableArguments {
 
     func configure(_ configuration: inout EngineConfiguration) {
         (configuration.speculativeLookup, configuration.speculativeRecycling) = (speculativeLookup, speculativeRecycling)
-        (configuration.mtp, configuration.mtpBlockSize) = (mtp, mtpBlock)
+        (configuration.mtp, configuration.mtpBlockSize, configuration.mtpDraftHead) = (mtp, mtpBlock, mtpDraftHead)
         configuration.grammarJumpForward = grammarJumpForward
     }
 }

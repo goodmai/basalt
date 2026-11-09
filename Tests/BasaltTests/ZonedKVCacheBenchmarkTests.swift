@@ -11,7 +11,7 @@ import MLXLMCommon
 struct ZonedKVCacheBenchmarkTests {
     enum Mode: CustomStringConvertible, CaseIterable {
         case fp16, uniform8, uniform4, zoned8, zoned4, zonedK8V4, zonedK8V4H, zonedK8V4Evict25, zonedK8V4Evict50
-        case headSplit25, headSplit375, headSplit50, headSplit25K8V4, headSplit50K8V4, headSplitFidelity25, headSplitFidelity50, quest16, quest32
+        case headSplit25, headSplit375, headSplit50, headSplit25K8V4, headSplit50K8V4, headSplitFidelity25, headSplitFidelity50, quest16, quest32, quest16Ops, quest32Ops
 
         var description: String {
             switch self {
@@ -33,20 +33,16 @@ struct ZonedKVCacheBenchmarkTests {
             case .headSplitFidelity50: "head-split-fidelity-50"
             case .quest16: "quest-16"
             case .quest32: "quest-32"
+            case .quest16Ops: "quest-16-ops"
+            case .quest32Ops: "quest-32-ops"
             }
         }
 
-        var questTopK: Int? {
-            switch self {
-            case .quest16: 16
-            case .quest32: 32
-            default: nil
-            }
-        }
+        var questTopK: Int? { [.quest16: 16, .quest32: 32, .quest16Ops: 16, .quest32Ops: 32][self] }
 
         var precision: KVPrecision? {
             switch self {
-            case .fp16, .headSplit25, .headSplit375, .headSplit50, .headSplitFidelity25, .headSplitFidelity50, .quest16, .quest32: nil
+            case .fp16, .headSplit25, .headSplit375, .headSplit50, .headSplitFidelity25, .headSplitFidelity50, .quest16, .quest32, .quest16Ops, .quest32Ops: nil
             case .uniform8, .zoned8: .q8
             case .uniform4, .zoned4: .q4
             case .zonedK8V4, .zonedK8V4Evict25, .zonedK8V4Evict50, .headSplit25K8V4, .headSplit50K8V4: .k8v4
@@ -547,7 +543,7 @@ extension ZonedKVCacheBenchmarkTests {
                 ? try fidelityMask(context, ratio: ratio) : KVHeadMask.classify(scores: try ablationScores(context), ratio: ratio)
             return mask.replacingFullAttention(fresh, zoning: zoning)
         }
-        if let topK = mode.questTopK { return QuestKVCache.replacingFullAttention(fresh, topK: topK) }
+        if let topK = mode.questTopK { return QuestKVCache.replacingFullAttention(fresh, topK: topK, usesKernel: ![.quest16Ops, .quest32Ops].contains(mode)) }
         guard let zones = mode.zones, let precision = mode.precision else { return fresh }
         return ZonedKVCache.replacingFullAttention(fresh, zones: zones, precision: precision)
     }

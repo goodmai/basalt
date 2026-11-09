@@ -1,5 +1,5 @@
 {
-  "originHash" : "3f76e13b832169d6e257e20d7ce4d2e46539913efb895cc144a93b5a06d5db38",
+  "originHash" : "067e5d63abad93684cc7e957f10a9fa28ecf8efcffed405cde399a812c98e408",
   "pins" : [
     {
       "identity" : "async-http-client",
@@ -41,7 +41,7 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/goodmai/mlx-swift-lm",
       "state" : {
-        "revision" : "d0ae6e7aa591114801464530a8afc17744e5e713"
+        "revision" : "c4dcb1b613ebacf2fafa81c0a4f4a03de04f8197"
       }
     },
     {

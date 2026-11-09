@@ -66,7 +66,7 @@ struct JSONPieceInputProcessor: UserInputProcessor {
     static let renderedTools = Mutex<[String]>([])
 
     func prepare(input: UserInput) throws -> LMInput {
-        Self.renderedTools.withLock { $0 = (input.tools ?? []).map { "\($0)" } }
+        Self.renderedTools.withLock { $0 += (input.tools ?? []).map { "\($0)" } }
         let messages = DefaultMessageGenerator().generate(from: input)
         let tokens = try JSONPieceTokenizer().applyChatTemplate(messages: messages, tools: nil, additionalContext: nil)
         return LMInput(tokens: MLXArray((tokens + (opensThinking ? [JSONPieceTokenizer.open] : [])).map(Int32.init)))

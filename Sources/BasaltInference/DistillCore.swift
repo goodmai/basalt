@@ -79,6 +79,13 @@ enum DistillCore {
         return nil
     }
 
+    static func target(_ completion: TeacherClient.Completion, includeReasoning: Bool, markers: ThinkingMarkers = .none) -> String {
+        let text = completion.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard includeReasoning, let reasoning = completion.reasoning?.trimmingCharacters(in: .whitespacesAndNewlines), !reasoning.isEmpty else { return text }
+        guard let open = markers.open.first, let close = markers.close.first else { return reasoning + "\n\n" + text }
+        return open + "\n" + reasoning + "\n" + close + "\n\n" + text
+    }
+
     static func missing(_ entries: [DistillEntry], prompts: Int, samples: Int) -> [(index: Int, sample: Int)] {
         let have = Set(entries.map { "\($0.index):\($0.sample)" })
         return (0 ..< prompts).flatMap { index in (0 ..< samples).map { (index, $0) } }.filter { !have.contains("\($0.0):\($0.1)") }

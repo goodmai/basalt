@@ -33,6 +33,7 @@ public struct DistillRequest: Sendable, Codable, Equatable {
     public var samplesPerPrompt = 1
     public var filter: DistillFilter = .none
     public var heldOutFraction: Float = 0.1
+    public var includeReasoning = false
     public var budgetUSD: Double?
     public var layers: [Int]?
     public var rank = 16

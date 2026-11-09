@@ -85,6 +85,9 @@ struct Benchmark: AsyncParsableCommand {
     @Option(name: .customLong("mtp-block"), help: "With --mtp, the largest verify round, the target's own token plus up to N-1 drafted (default 4)")
     var mtpBlock = 4
 
+    @Flag(name: .customLong("experimental-mtp-draft-head"), help: "With --mtp, draft through a 4-bit copy of a target head wider than 4 bits (#209)")
+    var mtpDraftHead: Bool = false
+
     @Flag(name: .customLong("grammar-jump-forward"), help: "Feed XGrammar-forced spans in one forward pass during constrained decoding")
     var grammarJumpForward: Bool = false
 
@@ -245,7 +248,7 @@ extension Benchmark {
         configuration.repetitionPenalty = repetitionPenalty
         (configuration.topK, configuration.minP, configuration.seed) = (topK, minP, seed)
         (configuration.speculativeLookup, configuration.speculativeRecycling) = (speculativeLookup, speculativeRecycling)
-        (configuration.mtp, configuration.mtpBlockSize) = (mtp, mtpBlock)
+        (configuration.mtp, configuration.mtpBlockSize, configuration.mtpDraftHead) = (mtp, mtpBlock, mtpDraftHead)
         configuration.experimentalSamplers = dryMultiplier != nil
         configuration.grammarJumpForward = grammarJumpForward
         configuration.wiresWorkingSet = wiredLimit
