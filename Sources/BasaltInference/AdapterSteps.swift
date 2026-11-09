@@ -32,7 +32,7 @@ struct AdapterSteps: Sendable {
 
     func confirm() async throws(BasaltError) {
         guard await engine.trainsOn(epoch) else {
-            throw .inferenceError("the model was switched, or changed by an overlay or weights delta, during \(what); training stopped and the last checkpoint is kept")
+            throw .inferenceError("the model was switched, or changed by an overlay or weights delta, during \(what); training stopped")
         }
     }
 

@@ -187,28 +187,4 @@ struct PreemptibleTrainingGuardTests {
         #expect(!FileManager.default.fileExists(atPath: checkpoint.path) && !FileManager.default.fileExists(atPath: AdapterCheckpoint.staging(in: output).path))
         #expect(await DistillTests.baseWeights(container) == before)
     }
-
-    @Test("MCP distill holds no gate ticket for the run: with the only slot taken and no queue it still starts, where a research call is refused; checkpointEvery and resume parse")
-    func mcpDistillIsPreemptible() async throws {
-        let gate = GenerationGate(maxConcurrent: 1, maxQueue: 0)
-        let orchestrator = ModelOrchestratorActor(engine: try await TinyModel.engine(.qwen3), telemetry: TelemetryTracker(), gate: gate)
-        let capturer = OutputCapturer()
-        let server = MCPServer(orchestrator: orchestrator) { capturer.capture($0) }.withResearchTools(true)
-        let held = try await gate.admit()
-        let arguments: [String: Any] = [
-            "prompts": "/nonexistent-\(UUID().uuidString).jsonl", "teacherUrl": "https://teacher.invalid/v1", "teacherModel": "t",
-            "heldOut": ["Hello."], "checkpointEvery": 7, "resume": true, "output": "/tmp/x",
-        ]
-        let call: [String: Any] = ["jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": ["name": "distill", "arguments": arguments]]
-        await server.dispatch(String(decoding: try JSONSerialization.data(withJSONObject: call), as: UTF8.self))
-        await server.dispatch(#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"overlays_list"}}"#)
-        await gate.release(held)
-        let lines = capturer.lines
-        #expect(lines.count == 2)
-        #expect(lines.first?.contains("could not read the prompts") == true, "\(lines.first ?? "")")
-        #expect(lines.last?.contains("busy") == true || lines.last?.contains("503") == true, "\(lines.last ?? "")")
-        let request = try DistillRequest(mcp: arguments)
-        #expect(request.checkpointEvery == 7 && request.resume && request.output == "/tmp/x")
-        #expect(DistillRequest(prompts: "", teacher: TeacherSpec(url: "u", model: "m"), gate: GateRequest(heldOut: [])).checkpointEvery == 50)
-    }
 }

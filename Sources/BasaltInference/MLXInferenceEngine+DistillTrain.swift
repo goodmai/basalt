@@ -26,6 +26,10 @@ extension MLXInferenceEngine {
                 })
             }
             try await steps.confirm()
+            guard next.losses.last?.isFinite != false else {
+                AdapterCheckpoint.discard(in: directory)
+                throw .inferenceError("distill: the loss became non-finite at step \(progress.step); the checkpoint was discarded, since a resume would replay the same batch, and no adapter was saved")
+            }
             if next.checkpointDue(every: request.checkpointEvery, of: request.iterations) { try checkpoint(state, next, to: directory) }
             progress = next
         }
@@ -130,8 +134,6 @@ extension MLXInferenceEngine {
         let (values, gradients) = step(model as Module, [inputs, targets, mask])
         optimizer.update(model: model as Module, gradients: gradients)
         eval(model as Module, optimizer, values)
-        let loss = values[0].item(Float.self)
-        guard loss.isFinite else { throw BasaltError.inferenceError("distill: the loss became non-finite at step \(index); nothing was saved") }
-        return loss
+        return values[0].item(Float.self)
     }
 }
