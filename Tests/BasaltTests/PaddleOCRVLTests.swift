@@ -79,6 +79,7 @@ struct PaddleOCRVLTests {
         let textOnly = model(MLXArray(prompt.map(Int32.init)).reshaped(1, -1), cache: nil)[0, -1].asType(.float32)
         #expect(MLX.abs(withImage - textOnly).max().item(Float.self) > Self.logitTolerance)
         #expect(throws: BasaltError.self) { _ = try Self.prefillLogits(model, Array(prompt.dropFirst(4))) }
+        #expect(throws: BasaltError.self) { _ = try Self.prefillLogits(model, prompt + [250]) }
     }
 
     @Test("M-RoPE positions equal mlx-vlm get_rope_index on two non-square images (4x6 and 2x4 grids), and a short placeholder run is refused")
@@ -91,6 +92,8 @@ struct PaddleOCRVLTests {
         #expect(text.rows == [[0, 1, 2], [0, 1, 2], [0, 1, 2]] && text.delta == 0)
         #expect(throws: BasaltError.self) { try PaddleOCRVLPositions(tokens: [7, 250, 250], frames: [THW(1, 4, 4)], imageToken: 250, mergeSize: 2) }
         #expect(throws: BasaltError.self) { try PaddleOCRVLPositions(tokens: [7, 250, 250, 8, 250, 250], frames: [THW(1, 4, 4)], imageToken: 250, mergeSize: 2) }
+        #expect(throws: BasaltError.self) { try PaddleOCRVLPositions(tokens: [7, 250, 250, 250, 250, 8, 250], frames: [THW(1, 4, 4)], imageToken: 250, mergeSize: 2) }
+        #expect(throws: BasaltError.self) { try PaddleOCRVLPositions(tokens: [7, 250, 250, 250, 250, 8], frames: [THW(1, 4, 4), THW(1, 2, 2)], imageToken: 250, mergeSize: 2) }
     }
 
     static func goldenVision() throws -> PaddleOCRVLVision.Model {
@@ -105,11 +108,11 @@ struct PaddleOCRVLTests {
         return model.visual
     }
 
-    @Test("The vision tower (embeddings, 2D RoPE, encoder, projector) matches mlx-vlm VisionModel on a 4x6 grid within 1e-4 (golden from scripts/paddleocr_reference.swift)")
+    @Test("The vision tower (embeddings, 2D RoPE, encoder, projector) matches mlx-vlm VisionModel on two images (4x6 and 2x4 grids) within 1e-4 (golden from scripts/paddleocr_reference.swift)")
     func visionGolden() throws {
         let vision = try Self.goldenVision()
-        let pixels = MLXArray((0 ..< 24 * 14 * 14 * 3).map { Float(Foundation.sin(0.05 * Double($0))) }).reshaped(24, 14, 14, 3)
-        let features = vision(pixels, frames: [THW(1, 4, 6)])
+        let pixels = MLXArray((0 ..< 32 * 14 * 14 * 3).map { Float(Foundation.sin(0.05 * Double($0))) }).reshaped(32, 14, 14, 3)
+        let features = vision(pixels, frames: [THW(1, 4, 6), THW(1, 2, 4)])
         #expect(features.shape == PaddleOCRVLGolden.featureShape)
         #expect(MLX.abs(features.reshaped(-1) - MLXArray(PaddleOCRVLGolden.features)).max().item(Float.self) < Self.logitTolerance)
     }

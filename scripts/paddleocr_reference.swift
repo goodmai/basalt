@@ -10,7 +10,7 @@ let usage = """
     with the versions pinned below (checked with the Sonatype guide).
 
       golden  the mlx-vlm VisionModel output and get_rope_index on the tiny fixture's vision tower,
-              with closed-form weights and pixels and non-square grids; rewrites
+              with closed-form weights and pixels on two non-square grids (4x6, 2x4); rewrites
               Tests/BasaltTests/Fixtures/PaddleOCRVLGolden.swift
       pages   greedy tokens with the OCR: prompt for <pages-dir>/<name>.png: 64 tokens on the page
               pre-resized with PIL bicubic (<name>-sized.png, written here), and 256 tokens on the
@@ -39,9 +39,9 @@ let golden = """
         shift = 1.0 if "norm" in key and key.endswith(".weight") else 0.0
         return [0.1 * math.sin(0.7 * i + 0.3 * t) + shift for i in range(n)]
     vision.update(tree_unflatten([(k, mx.array(value(k, t, v.size), dtype=mx.float32).reshape(v.shape)) for t, (k, v) in enumerate(params)]))
-    count = 24 * 14 * 14 * 3
-    pixels = mx.array([math.sin(0.05 * i) for i in range(count)], dtype=mx.float32).reshape(24, 14, 14, 3).transpose(0, 3, 1, 2)[None]
-    features = vision(pixels, mx.array([[1, 4, 6]]))
+    count = 32 * 14 * 14 * 3
+    pixels = mx.array([math.sin(0.05 * i) for i in range(count)], dtype=mx.float32).reshape(32, 14, 14, 3).transpose(0, 3, 1, 2)[None]
+    features = vision(pixels, mx.array([[1, 4, 6], [1, 2, 4]]))
     tokens = [7, 101] + [250] * 6 + [102, 8, 101] + [250] * 2 + [102, 9]
     owner = SimpleNamespace(config=SimpleNamespace(vision_config=SimpleNamespace(spatial_merge_size=2), image_token_id=250,
                                                    video_token_id=251, vision_start_token_id=101))
