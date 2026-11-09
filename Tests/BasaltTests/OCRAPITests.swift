@@ -135,6 +135,19 @@ struct OCRAPITests {
         #expect(await engine.getRequests().isEmpty)
     }
 
+    @Test("An OCR page never goes to the cloud fallback: its prompt only means something to the local OCR model")
+    func staysLocal() async throws {
+        let engine = MockInferenceEngine()
+        try await engine.load(modelPath: "local")
+        let orchestrator = ModelOrchestratorActor(engine: engine, telemetry: TelemetryTracker())
+        let cloud = StubCloud(CloudAssessment(capabilityGap: 0.9, estimatedCost: 0.01, remainingBudget: 10, latencySeconds: 1))
+        await orchestrator.setCloudFallback(cloud, freeMemory: { 64 << 30 })
+        let image = try ImageInput(data: try OCRFixture.png(width: 2, height: 2), mime: "image/png")
+        let page = OCRRecipe(family: .glmOCR).request(prompt: "Text Recognition:", image: image, stage: .recognition)
+        #expect(await orchestrator.cloudFallbackReason(for: page) == nil)
+        #expect(await orchestrator.cloudFallbackReason(for: GenerationRequest(prompt: "Text Recognition:")) == .capability)
+    }
+
     @Test("basalt_ocr is listed, reads base64 or a path inside --image-dir, and refuses a path outside it")
     func mcpTool() async throws {
         let engine = MockInferenceEngine()

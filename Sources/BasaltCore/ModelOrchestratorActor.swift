@@ -221,7 +221,7 @@ extension ModelOrchestratorActor {
 
 extension ModelOrchestratorActor {
     func cloudFallbackReason(for request: GenerationRequest) async -> CloudFallbackReason? {
-        guard let cloudFallback, request.isServiceRequest != true, request.adapter == nil,
+        guard let cloudFallback, request.isServiceRequest != true, request.adapter == nil, request.origin != OCRRecipe.origin,
               let assessment = await cloudFallback.assess(request, localModel: routingModelKey)
         else { return nil }
         let promptTokens = Self.estimatedTokens(Self.budgetedText(request))

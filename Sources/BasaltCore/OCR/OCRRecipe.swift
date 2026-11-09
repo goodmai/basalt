@@ -17,6 +17,7 @@ public struct OCRRecipe: Sendable, Equatable {
 
     public static let pageDPI = 200.0
     public static let maxTokens = 8192
+    public static let origin = RequestOrigin(source: "ocr", endpoint: "/v1/ocr", stream: false)
 
     public let family: Family
 
@@ -63,7 +64,7 @@ public struct OCRRecipe: Sendable, Equatable {
         case (.minerU, .recognition): request.presencePenalty = 1
         case (.minerU, .layout): break
         }
-        return request.withOrigin(RequestOrigin(source: "ocr", endpoint: "/v1/ocr", stream: false))
+        return request.withOrigin(Self.origin)
     }
 
     public func finished(_ output: String, blockType: String) -> String {
