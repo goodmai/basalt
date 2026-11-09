@@ -6,7 +6,7 @@ import Foundation
 @Suite("basalt ocr: arguments and output (#400)")
 struct OCRCommandTests {
     static let result = OCRResult(
-        model: "mlx-community/GLM-OCR-bf16", family: .glmOCR, task: .document,
+        model: "mlx-community/GLM-OCR-bf16", family: OCRRecipe.Family.glmOCR.rawValue, task: .document,
         pages: [
             OCRPageResult(page: 1, markdown: "# One", blocks: [OCRBlock(type: "text", bbox: .page, text: "# One")], tokens: 3, ms: 5),
             OCRPageResult(page: 2, markdown: "Two", blocks: nil, tokens: 1, ms: 2),

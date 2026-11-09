@@ -89,6 +89,9 @@ public struct OCRPageSelection: Sendable, Equatable {
 }
 
 public struct OCRRequest: Sendable {
+    public static let appleVision = "apple-vision"
+    public static let appleVisionFamily = "Apple Vision"
+
     public let document: OCRDocument
     public let pages: OCRPageSelection?
     public let task: OCRTask
@@ -159,9 +162,9 @@ public struct OCRResult: Sendable, Encodable {
     public let task: OCRTask
     public let pages: [OCRPageResult]
 
-    init(model: String, family: OCRRecipe.Family, task: OCRTask, pages: [OCRPageResult], format: OCRFormat) {
+    init(model: String, family: String, task: OCRTask, pages: [OCRPageResult], format: OCRFormat) {
         self.model = model
-        self.family = family.rawValue
+        self.family = family
         self.task = task
         self.pages = pages.map { page in
             var page = page

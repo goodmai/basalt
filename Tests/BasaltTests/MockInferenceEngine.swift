@@ -37,12 +37,14 @@ actor MockInferenceEngine: InferenceEngine {
     var heldStreams: [CheckedContinuation<Void, Never>]?
     private(set) var persistCount = 0
     var mockTranscription: Transcription?
+    var mockTakesImages = true
 
     var kvMemoryBudget: ByteCount? { mockKVBudget.map { ByteCount($0) } }
     var supportsKVZones: Bool { mockSupportsKVZones }
     var supportsKVEviction: Bool { mockSupportsKVEviction }
     var isLoaded: Bool { loaded }
     var transcribesAudio: Bool { mockTranscription != nil }
+    var takesImages: Bool { mockTakesImages }
 
     func promptTokenCount(for request: GenerationRequest) async -> Int? { mockPromptTokens }
 
@@ -177,6 +179,7 @@ extension MockInferenceEngine {
     func setGenerateError(_ error: BasaltError) { generateError = error }
     func setShouldFailOnLoad(_ shouldFail: Bool) { shouldFailOnLoad = shouldFail }
     func setMockTranscription(_ transcription: Transcription?) { mockTranscription = transcription }
+    func setMockTakesImages(_ takes: Bool) { mockTakesImages = takes }
 }
 
 extension GenerationRequest {

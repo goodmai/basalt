@@ -183,7 +183,7 @@ struct ServeCommand: AsyncParsableCommand {
         try await load(orchestrator, from: resolvedPath)
         if !noMemoryCoordinator { await orchestrator.coordinateMemory(with: MemoryCoordinator()) }
         if !noThermalPolicy { await orchestrator.coordinateThermal() }
-        if experimental.speechAnalyzer { await orchestrator.setSpeechFallback(SpeechAnalyzerTranscriber()) }
+        await experimental.attachMediaFallbacks(to: orchestrator)
 
         try await attachCloudFallback(to: orchestrator, virtualKeys: config.virtualKeys)
 
