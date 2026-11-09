@@ -29,9 +29,15 @@ extension ModelOrchestratorActor {
     }
 
     func stepTicket() async throws(BasaltError) -> Int {
-        while await !gate.idle(within: .seconds(1)) {
-            guard !Task.isCancelled else { throw .cancelled }
+        while true {
+            while await !gate.idle(within: .seconds(1)) {
+                guard !Task.isCancelled else { throw .cancelled }
+            }
+            do {
+                return try await admitted(.background, adapter: nil)
+            } catch .serverBusy(retryAfterSeconds: .some) {
+                guard !Task.isCancelled else { throw .cancelled }
+            }
         }
-        return try await admitted(.background, adapter: nil)
     }
 }

@@ -3,7 +3,7 @@ import Foundation
 @testable import BasaltCore
 @testable import BasaltServer
 
-@Suite("/v1/pipeline perceive stage: the speech model, SpeechAnalyzer and Apple Vision fallbacks, and GPU stages gated between generations (#402 phase 2)")
+@Suite("/v1/pipeline perceive stage: the speech model, SpeechAnalyzer and Apple Vision fallbacks, and GPU stages gated between generations (#402 phase 2)", .timeLimit(.minutes(1)))
 struct PipelinePerceiveAPITests {
     static func speechModel(_ text: String) async throws -> ModelOrchestratorActor {
         let engine = MockInferenceEngine()
@@ -65,7 +65,22 @@ struct PipelinePerceiveAPITests {
         let response = try await PipelineAPITests.post(chat, decisions: TooLongDecisionEngine(), ["text": "The car is red.", "questions": PipelineAPITests.questions])
         #expect(response.status == .ok)
         let answers = try #require(response.json["answers"] as? [String: [String: Any]])
-        #expect(!answers.isEmpty && answers.values.allSatisfy { $0["answered_by"] as? String == "answer" })
+        #expect(answers.count == PipelineAPITests.questions.count && answers.values.allSatisfy { $0["answered_by"] as? String == "answer" })
+    }
+
+    struct BusyDecisionEngine: DecisionEngine {
+        let modelID = "org/busy"
+
+        func decide(_ request: SystemOneRequest) async throws(BasaltError) -> SystemOneResponse {
+            throw .serverBusy(retryAfterSeconds: 1)
+        }
+    }
+
+    @Test("A busy System One is a 503 for the pipeline, not a silent escalation of every question")
+    func busyDecisionIsServiceUnavailable() async throws {
+        let (_, chat) = try await PipelineAPITests.chat()
+        let response = try await PipelineAPITests.post(chat, decisions: BusyDecisionEngine(), ["text": "The car is red.", "questions": PipelineAPITests.questions])
+        #expect(response.status == .serviceUnavailable)
     }
 
     @Test("GPU stages are gated between generations: while a chat generation holds a slot, SpeechAnalyzer transcribes, but OCR in its own engine and the decision engine wait, and run once it ends")

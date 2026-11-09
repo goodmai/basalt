@@ -6,9 +6,10 @@ public struct GatedDecisionEngine: DecisionEngine {
 
     public var modelID: String { inner.modelID }
 
-    public static func serving(_ engine: (any DecisionEngine)?, gate: GenerationGate) -> (any DecisionEngine)? {
+    public static func serving(_ engine: (any DecisionEngine)?, gate: GenerationGate, besideDecode: Bool = true) -> (any DecisionEngine)? {
         guard let engine else { return nil }
-        return engine.runsBesideDecode ? engine : GatedDecisionEngine(inner: engine, gate: gate)
+        guard !(engine is GatedDecisionEngine), !(besideDecode && engine.runsBesideDecode) else { return engine }
+        return GatedDecisionEngine(inner: engine, gate: gate)
     }
 
     public func decide(_ request: SystemOneRequest) async throws(BasaltError) -> SystemOneResponse {

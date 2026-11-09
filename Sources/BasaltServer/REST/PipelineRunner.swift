@@ -72,7 +72,7 @@ struct PipelineRunner: Sendable {
     func betweenGenerations<T: Sendable>(_ gated: Bool, _ body: @Sendable () async throws(BasaltError) -> T) async throws(BasaltError) -> T {
         guard gated else { return try await body() }
         do {
-            return try await chat.gate.exclusively(body)
+            return try await chat.gate.boundedExclusively(body)
         } catch {
             throw error as? BasaltError ?? .cancelled
         }
@@ -103,12 +103,13 @@ struct PipelineRunner: Sendable {
         _ questions: [String: SystemOneQuestion], state: String, origin: RequestOrigin, sessionId: String?
     ) async throws(BasaltError) -> (SystemOneResponse?, PipelineStageReceipt?) {
         guard !questions.isEmpty, let decisions else { return (nil, nil) }
+        guard !state.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, state.count <= SystemOneCore.maxStateCharacters else { return (nil, nil) }
         let started = ContinuousClock.now
         let request = SystemOneRequest(state: state, questions: questions, abstainBelow: stages.abstainBelow, minMargin: stages.minMargin)
         do {
             let response = try await SystemOneController.decide(decisions, request, log: chat.sessionLog, origin: origin, sessionId: sessionId)
             return (response, PipelineCore.decided(response, ms: Self.elapsed(since: started)))
-        } catch .contextLengthExceeded {
+        } catch .contextLengthExceeded, .invalidRequestStructure {
             return (nil, nil)
         }
     }

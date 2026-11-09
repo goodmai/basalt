@@ -57,6 +57,23 @@ struct SystemOneAPITests {
         #expect(engine.calls.requests.withLock { $0.count } == 1)
     }
 
+    @Test("The REST server gates a GPU decision engine itself: with a generation running, /v1/systemone waits and then answers")
+    func restWaitsForGeneration() async throws {
+        let orchestrator = ModelOrchestratorActor(engine: MockInferenceEngine(), maxTokens: 65536, telemetry: TelemetryTracker())
+        let engine = StubDecisionEngine()
+        let app = Application(router: RESTServer(orchestrator: orchestrator, config: try ServerConfig(modelPath: "org/mock-model")).withDecisions(engine).makeRouter())
+        let generation = try await orchestrator.gate.admit()
+        try await app.test(.router) { client in
+            async let answered = post(client, Self.body)
+            while await orchestrator.gate.exclusiveWaiting < 1 { await Task.yield() }
+            #expect(engine.calls.requests.withLock { $0.isEmpty })
+            await orchestrator.gate.release(generation)
+            let (status, _) = try await answered
+            #expect(status == .ok)
+        }
+        #expect(engine.calls.requests.withLock { $0.count } == 1)
+    }
+
     @Test("Malformed bodies get 400 and invalid questions the engine's validation message; no decision model gets 404")
     func refusals() async throws {
         try await app(StubDecisionEngine()).test(.router) { client in

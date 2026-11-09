@@ -35,7 +35,7 @@ package struct RESTServer: Sendable {
 
     package func withDecisions(_ engine: (any DecisionEngine)?) -> RESTServer {
         var server = self
-        server.decisions = engine
+        server.decisions = GatedDecisionEngine.serving(engine, gate: orchestrator.gate)
         return server
     }
 

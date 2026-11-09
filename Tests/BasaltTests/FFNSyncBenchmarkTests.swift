@@ -78,19 +78,19 @@ struct FFNSyncBenchmarkTests {
         let outMs = await Self.milliseconds { eval(Self.handOut(output)) }
         let split = try await Self.milliseconds {
             let input = Self.handIn(x)
+            async let y = Self.run(function, input)
             let partial = rest(x)
-            asyncEval(partial)
-            let y = try await Self.run(function, input)
-            eval(partial + Self.handOut(y))
+            eval(partial)
+            eval(partial + Self.handOut(try await y))
         }
-        let layer = gpu / 0.6, splitLayer = layer - gpu + split
+        let ffnShare = 0.6, layer = gpu / ffnShare, splitLayer = layer - gpu + split
         let handOffShare = (inMs + outMs) / splitLayer
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
         let url = root.appendingPathComponent("logs/ffn-split-\(Date().ISO8601Format(.iso8601.year().month().day())).log")
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         QuestKernelBenchmarkTests.log("SYNC \(Date().ISO8601Format()) commit \(ModelRunLog.output("/usr/bin/git", ["-C", root.path, "rev-parse", "HEAD"])) machine \(SystemProfiler.detectChipModel()) load \(ModelRunLog.load()) model \(path)", to: url)
         QuestKernelBenchmarkTests.log(String(
-            format: "tokens %d | ANE share %.2f | GPU full %.2f ms | hand-in %.2f ms (GPU transpose %.2f) | ANE run %.2f ms | hand-out %.2f ms | split layer FFN %.2f ms (%.2fx) | hand-off %.1f%% of a split layer, %.0f ms per chunk over %d layers | gate < 10%%: %@",
-            Self.length, share, gpu, inMs, planarMs, aneMs, outMs, split, gpu / split, handOffShare * 100, (inMs + outMs) * Double(Self.layers), Self.layers, handOffShare < 0.1 ? "pass" : "fail"), to: url)
+            format: "tokens %d | ANE share %.2f | GPU full %.2f ms | hand-in %.2f ms (GPU transpose %.2f) | ANE run %.2f ms | hand-out %.2f ms | split layer FFN %.2f ms (%.2fx) | hand-off %.1f%% of a split layer (FFN assumed %.0f%% of a layer), %.0f ms per chunk over %d layers | gate < 10%%: %@",
+            Self.length, share, gpu, inMs, planarMs, aneMs, outMs, split, gpu / split, handOffShare * 100, ffnShare * 100, (inMs + outMs) * Double(Self.layers), Self.layers, handOffShare < 0.1 ? "pass" : "fail"), to: url)
     }
 }

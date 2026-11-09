@@ -24,14 +24,14 @@ extension ServeCommand {
         if let decisionModel, let decisions, decisionModel != "self" {
             let path = try await resolvedPath(decisionModel, quant: nil)
             let ane = decisions is CoreAIDecisionEngine
-            let bytes = ane ? Self.weightBytes(path + "/decision.aimodel")
+            let bytes = ane ? Self.weightBytes(path + "/decision.aimodel") + Self.weightBytes(path + "/token_table.aimodel")
                 : decisions is JevEvaluator ? 2 * Self.weightBytes(try await resolvedPath(try JevEvaluator.baseModel(of: URL(fileURLWithPath: path)), quant: nil)) : Self.weightBytes(path)
             workloads.append(Workload(name: decisionModel, role: "decide", unit: ane ? .ane : .gpu, kind: .encoder, residentBytes: bytes))
         }
         return workloads
     }
 
-    func admitComputePlan(chatPath: String, embeddings: (any EmbeddingEngine)?, decisions: (any DecisionEngine)?, perceive paths: PerceivePaths) async throws {
+    func admitComputePlan(chatPath: String, embeddings: (any EmbeddingEngine)?, decisions: (any DecisionEngine)?, perceive paths: PerceivePaths) async throws -> Bool {
         let chat = Workload(name: chatPath.split(separator: "/").last.map(String.init) ?? chatPath, role: "chat", unit: .gpu, kind: .decode, residentBytes: Self.weightBytes(chatPath))
         let perceive = [(pipeline.ocrModel, paths.ocr), (pipeline.audioModel, paths.audio)].compactMap { model, path in
             path.map { Self.perceiveWorkload(model ?? $0, path: $0) }
@@ -45,5 +45,6 @@ extension ServeCommand {
             log("\(red("[error]")) \(refusal); serve fewer or smaller models")
             throw ExitCode.failure
         }
+        return verdict.degraded
     }
 }

@@ -182,8 +182,8 @@ struct ServeCommand: AsyncParsableCommand {
         let embeddings = try await loadEmbeddings()
         let loadedDecisions = try await loadDecisions(chat: engine)
         let perceivePaths = try await pipelinePerceivePaths()
-        try await admitComputePlan(chatPath: resolvedPath, embeddings: embeddings, decisions: loadedDecisions, perceive: perceivePaths)
-        let decisions = GatedDecisionEngine.serving(loadedDecisions, gate: orchestrator.gate)
+        let degraded = try await admitComputePlan(chatPath: resolvedPath, embeddings: embeddings, decisions: loadedDecisions, perceive: perceivePaths)
+        let decisions = GatedDecisionEngine.serving(loadedDecisions, gate: orchestrator.gate, besideDecode: !degraded)
 
         try await load(orchestrator, from: resolvedPath)
         let stages = try await loadPipelineStages(perceivePaths)

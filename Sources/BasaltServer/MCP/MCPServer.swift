@@ -85,7 +85,7 @@ public final class MCPServer: Service, Sendable {
     }
 
     public func withDecisions(_ engine: (any DecisionEngine)?) -> MCPServer {
-        MCPServer(self, researchTools: researchTools, imageDirectories: imageDirectories, decisions: engine, pipeline: pipeline)
+        MCPServer(self, researchTools: researchTools, imageDirectories: imageDirectories, decisions: GatedDecisionEngine.serving(engine, gate: orchestrator.gate), pipeline: pipeline)
     }
 }
 
