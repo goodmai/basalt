@@ -103,10 +103,10 @@ struct OCRRecipeTests {
         #expect(OCRRecipe(family: .glmOCR).finished("\n<fcel>a\n", blockType: "table") == "<fcel>a")
     }
 
-    @Test("glm_ocr and qwen2_vl are known families with every unverified feature off")
+    @Test("glm_ocr and qwen2_vl stay unverified families, so every capability-gated feature stays off on them")
     func capabilities() {
-        #expect(ModelCapabilities.of(modelType: "glm_ocr") == .conservative)
-        #expect(ModelCapabilities.of(modelType: "qwen2_vl") == .conservative)
+        #expect(ModelCapabilities.of(modelType: "glm_ocr") == nil)
+        #expect(ModelCapabilities.of(modelType: "qwen2_vl") == nil)
     }
 }
 
