@@ -9,6 +9,9 @@ struct PipelineOptions: ParsableArguments {
     @Option(name: .customLong("pipeline-preset"), help: "A shipped pipeline profile: document-qa (PaddleOCR-VL, System One by readout of the chat model, the chat model), voice-agent (Nemotron Transcribe and the chat model) or support-triage (System One with the ticket questions on department, lateness and severity, asked when a /v1/pipeline request sends none, and the chat model). The chat model is Gemma 4 12B, or Qwen3.8-27B 3-bit when it fits beside the other models with 8 GB to spare. Sets --model, --pipeline-ocr-model, --pipeline-audio-model, --decision-model, --pipeline-abstain-below and --pipeline-min-margin; a flag or config key given explicitly wins over the preset")
     var preset: PipelinePreset?
 
+    @Option(name: .customLong("pipeline-memory"), help: "How pipeline models share memory: resident keeps every model loaded, so their sum must fit the working set; sequential loads each perceiver (OCR, speech) for its stage and unloads it after, keeping the chat model loaded when it fits beside the largest perceiver and unloading it around them otherwise, so only the largest stage plus 2 GB for KV and activations must fit; sequential requests to /v1/pipeline run one at a time and plain chat requests wait while models swap. auto picks resident when the sum fits, otherwise sequential, and refuses only when one stage alone does not fit (default: auto)")
+    var memory: PipelineMemory = .auto
+
     @Option(name: .customLong("pipeline-ocr-model"), help: "OCR model for /v1/pipeline and basalt_pipeline (GLM-OCR, MinerU2.5 or PaddleOCR-VL): repo ID or local path, loaded in its own engine beside the chat model so OCR never swaps it out; without it, documents are read by Apple Vision")
     var ocrModel: String?
 
@@ -29,6 +32,8 @@ struct PipelineOptions: ParsableArguments {
 }
 
 extension PipelinePreset: ExpressibleByArgument {}
+
+extension PipelineMemory: ExpressibleByArgument {}
 
 extension ServeCommand {
     mutating func applyPipelinePreset(budgetBytes: Int64? = nil) async {
@@ -72,22 +77,29 @@ extension ServeCommand {
         return paths
     }
 
-    func loadPipelineStages(_ paths: PerceivePaths) async throws -> PipelineStages {
-        let ocr = try await loadPerceiver(pipeline.ocrModel, path: paths.ocr, role: "OCR")
-        let audio = try await loadPerceiver(pipeline.audioModel, path: paths.audio, role: "speech")
-        if let audio, await !audio.transcribesAudio {
+    func loadPipelineStages(_ paths: PerceivePaths, plan: PlanVerdict? = nil) async throws -> PipelineStages {
+        let sequential = plan?.keep(of: Workload.perceiveRole) == .sequential
+        let swap = sequential ? PipelineSwap(ocrPath: paths.ocr, audioPath: paths.audio, unloadsChat: plan?.keep(ofKind: .decode) == .sequential, maxQueue: maxQueue) : nil
+        let ocr = try await loadPerceiver(pipeline.ocrModel, path: paths.ocr, role: "OCR", loads: !sequential)
+        let audio = try await loadPerceiver(pipeline.audioModel, path: paths.audio, role: "speech", loads: !sequential)
+        if !sequential, let audio, await !audio.transcribesAudio {
             log("\(red("[error]")) --pipeline-audio-model \(pipeline.audioModel ?? "") has no audio encoder; use Nemotron Transcribe")
             throw ExitCode.failure
         }
         return PipelineStages(ocr: ocr, audio: audio, speech: experimental.speechAnalyzer ? SpeechAnalyzerTranscriber() : nil, abstainBelow: pipeline.abstainBelow, minMargin: pipeline.minMargin,
-            questions: pipeline.preset?.questions ?? [:])
+            questions: pipeline.preset?.questions ?? [:], swap: swap)
     }
 
-    func loadPerceiver(_ model: String?, path: String?, role: String) async throws -> ModelOrchestratorActor? {
+    func loadPerceiver(_ model: String?, path: String?, role: String, loads: Bool = true) async throws -> ModelOrchestratorActor? {
         guard let model, let path else { return nil }
         var configuration = EngineConfiguration.standard
         configuration.promptCacheBytes = 0
         let orchestrator = ModelOrchestratorActor(engine: MLXInferenceEngine(configuration), telemetry: TelemetryTracker())
+        guard loads else {
+            await orchestrator.setModelId(model)
+            log("Serving \(model) (perceive, /v1/pipeline \(role)) sequentially: loaded for each request's \(role) stage and unloaded after it")
+            return orchestrator
+        }
         do {
             try await orchestrator.loadModel(path: path)
         } catch {

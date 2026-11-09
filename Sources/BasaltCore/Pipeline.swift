@@ -149,10 +149,11 @@ public struct PipelineReceipt: Codable, Sendable, Equatable {
     public let escalated: Bool
     public let system2Calls: Int
     public let ms: Int
+    public var swapMs: Int?
 
     enum CodingKeys: String, CodingKey {
         case stages, escalated, ms
-        case answeredBy = "answered_by", system2Calls = "system2_calls"
+        case answeredBy = "answered_by", system2Calls = "system2_calls", swapMs = "swap_ms"
     }
 }
 

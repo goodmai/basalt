@@ -99,7 +99,15 @@ extension ModelOrchestratorActor {
         }
     }
 
-    private func performLoad(path: String, modelId: String? = nil) async throws(BasaltError) {
+    func performUnload() async -> (path: String, modelId: String) {
+        let model = (state.modelPath, state.modelId)
+        await engine.unload()
+        state = .reduce(state, .unloaded)
+        await telemetry.setModelMemory(mb: 0)
+        return model
+    }
+
+    func performLoad(path: String, modelId: String? = nil) async throws(BasaltError) {
         let sizeMB = Int(UInt64(max(0, Self.resolvedDirectorySize(at: URL(fileURLWithPath: path)))) / 1_048_576)
         try await engine.load(modelPath: path)
         let geometry = KVCacheGeometry.forModel(

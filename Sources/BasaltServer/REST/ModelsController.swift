@@ -122,7 +122,9 @@ struct ModelsController: Sendable {
 
     @Sendable
     func previewModel(request: Request, context: BasicRequestContext) async throws -> Response {
-        if let name = request.uri.queryParameters.get("pipeline_preset") { return await previewPreset(String(name)) }
+        if let name = request.uri.queryParameters.get("pipeline_preset") {
+            return await previewPreset(String(name), memory: request.uri.queryParameters.get("pipeline_memory").map { String($0) } ?? PipelineMemory.auto.rawValue)
+        }
         guard let raw = request.uri.queryParameters.get("model_id"), !raw.isEmpty else {
             return makeErrorResponse(status: .badRequest, message: "model_id is required, e.g. ?model_id=mlx-community/Qwen3-4B-4bit")
         }
@@ -154,11 +156,14 @@ struct ModelsController: Sendable {
         return makeJSONResponse(body)
     }
 
-    func previewPreset(_ name: String) async -> Response {
+    func previewPreset(_ name: String, memory: String) async -> Response {
         guard let preset = PipelinePreset(rawValue: name) else {
             return makeErrorResponse(status: .badRequest, message: "pipeline_preset must be one of \(PipelinePreset.names)")
         }
-        let plan = preset.plan(budgetBytes: await SystemProfiler().detectResources().gpuMemory, power: PowerSource.current())
+        guard let memory = PipelineMemory(rawValue: memory) else {
+            return makeErrorResponse(status: .badRequest, message: "pipeline_memory must be resident, sequential or auto")
+        }
+        let plan = preset.plan(budgetBytes: await SystemProfiler().detectResources().gpuMemory, power: PowerSource.current(), memory: memory)
         let encoder = JSONEncoder()
         encoder.keyEncodingStrategy = .convertToSnakeCase
         var buffer = ByteBuffer()

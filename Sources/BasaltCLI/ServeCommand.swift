@@ -183,11 +183,11 @@ struct ServeCommand: AsyncParsableCommand {
         let embeddings = try await loadEmbeddings()
         let loadedDecisions = try await loadDecisions(chat: engine)
         let perceivePaths = try await pipelinePerceivePaths()
-        let degraded = try await admitComputePlan(chatPath: resolvedPath, embeddings: embeddings, decisions: loadedDecisions, perceive: perceivePaths)
-        let decisions = GatedDecisionEngine.serving(loadedDecisions, gate: orchestrator.gate, besideDecode: !degraded)
+        let plan = try await admitComputePlan(chatPath: resolvedPath, embeddings: embeddings, decisions: loadedDecisions, perceive: perceivePaths)
+        let decisions = GatedDecisionEngine.serving(loadedDecisions, gate: orchestrator.gate, besideDecode: !plan.degraded)
 
         try await load(orchestrator, from: resolvedPath)
-        let stages = try await loadPipelineStages(perceivePaths)
+        let stages = try await loadPipelineStages(perceivePaths, plan: plan)
         if !noMemoryCoordinator { await orchestrator.coordinateMemory(with: MemoryCoordinator()) }
         if !noThermalPolicy { await orchestrator.coordinateThermal() }
         await experimental.attachMediaFallbacks(to: orchestrator)
