@@ -47,6 +47,20 @@ extension OpenAIController {
 }
 
 extension OpenAIController {
+    @Sendable
+    func score(request: Request, context: BasicRequestContext) async throws -> Response {
+        let data = Data(try await request.body.collect(upTo: ChatPipeline.textBodyLimit).readableBytesView)
+        guard let dto = try? JSONDecoder().decode(ScoreRequest.self, from: data) else {
+            return ProviderErrorResponse.response(status: .badRequest, message: "A score request needs \"messages\", \"completion\" (token ids) and \"top_logprobs\".", shape: .openAI)
+        }
+        do {
+            let report = try await orchestrator.research { model throws(BasaltError) in try await ResearchCall.lab(model).score(dto) }
+            return makeDataResponse(try JSONEncoder().encode(report))
+        } catch {
+            return ProviderErrorResponse.response(for: error, path: "/v1/score")
+        }
+    }
+
     private func makeJSONResponse(_ body: [String: Any]) -> Response {
         let data = (try? JSONSerialization.data(withJSONObject: body)) ?? Data()
         return makeDataResponse(data)

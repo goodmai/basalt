@@ -98,8 +98,14 @@ extension MLXInferenceEngine {
     static func labRun<R: Sendable>(
         _ container: ModelContainer, _ what: String = "training", _ body: @Sendable (ModelContext) throws -> R
     ) async throws(BasaltError) -> R {
+        try await labRun(container, what, nonSendable: ()) { context, _ in try body(context) }
+    }
+
+    static func labRun<V, R>(
+        _ container: ModelContainer, _ what: String, nonSendable value: sending V, _ body: @Sendable (ModelContext, V) throws -> R
+    ) async throws(BasaltError) -> sending R {
         do {
-            return try await container.performEvaluating(nonSendable: ()) { context, _ in try withError { try body(context) } }
+            return try await container.performEvaluating(nonSendable: value) { context, value in try withError { try body(context, value) } }
         } catch let error as BasaltError {
             throw error
         } catch is CancellationError {
@@ -200,8 +206,11 @@ extension MLXInferenceEngine {
     }
 
     static func labPrompt(_ prompt: String, _ context: ModelContext, thinking: Bool = false) throws -> [Int] {
-        try context.tokenizer.applyChatTemplate(
-            messages: [["role": "user", "content": prompt]], tools: nil, additionalContext: ["enable_thinking": thinking])
+        try labPrompt(messages: [["role": "user", "content": prompt]], context.tokenizer, thinking: thinking)
+    }
+
+    static func labPrompt(messages: [[String: String]], _ tokenizer: any Tokenizer, thinking: Bool = false) throws -> [Int] {
+        try tokenizer.applyChatTemplate(messages: messages, tools: nil, additionalContext: ["enable_thinking": thinking])
     }
 
     static func labAnswer(_ prompt: String, _ context: ModelContext) throws -> String {

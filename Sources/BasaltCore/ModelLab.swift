@@ -9,6 +9,7 @@ public protocol ModelLab: ModelResearch {
     func train(_ request: TrainRequest) async throws(BasaltError) -> TrainReport
     func trainJEPA(_ request: LeJEPATrainRequest) async throws(BasaltError) -> LeJEPATrainReport
     func distill(_ request: DistillRequest) async throws(BasaltError) -> DistillReport
+    func score(_ request: ScoreRequest) async throws(BasaltError) -> ScoreReport
 }
 
 extension ModelLab {
@@ -20,6 +21,7 @@ extension ModelLab {
     public func train(_ request: TrainRequest) async throws(BasaltError) -> TrainReport { throw Self.unavailable("expert training") }
     public func trainJEPA(_ request: LeJEPATrainRequest) async throws(BasaltError) -> LeJEPATrainReport { throw Self.unavailable("JEPA training") }
     public func distill(_ request: DistillRequest) async throws(BasaltError) -> DistillReport { throw Self.unavailable("distillation") }
+    public func score(_ request: ScoreRequest) async throws(BasaltError) -> ScoreReport { throw Self.unavailable("scoring") }
 
     static func unavailable(_ mode: String) -> BasaltError {
         .invalidRequestStructure(details: "\(mode) is not available on this engine")

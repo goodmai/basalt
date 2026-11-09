@@ -119,6 +119,7 @@ package struct RESTServer: Sendable {
         oai.post("/chat/completions", use: openAI.chatCompletions)
         oai.post("/responses", use: openAI.responses)
         oai.post("/generate", use: openAI.generateRaw)
+        oai.post("/score", use: openAI.score)
         oai.post("/messages", use: AnthropicController(orchestrator: orchestrator, modelId: defaultId, zeroCopyBody: config.experimentalZeroCopyBody).messages)
         oai.post("/embeddings", use: embedding.embeddings)
         oai.post("/rerank", use: embedding.rerank)
@@ -184,6 +185,7 @@ extension RESTServer {
         "/v1/chat/completions":    { "post": { "summary": "OpenAI-compatible chat completions" } },
         "/v1/responses":           { "post": { "summary": "OpenAI Responses API (Codex/Cursor)" } },
         "/v1/messages":            { "post": { "summary": "Anthropic-compatible messages API" } },
+        "/v1/score":               { "post": { "summary": "Top-k logprobs of supplied completion token ids after chat messages, in one forward pass (teacher for on-policy distill)" } },
         "/v1/embeddings":          { "post": { "summary": "OpenAI-compatible embeddings (serve --embedding-model)" } },
         "/v1/rerank":              { "post": { "summary": "Cohere/Jina-compatible rerank (serve --rerank-model)" } },
         "/v1/audio/transcriptions": { "post": { "summary": "OpenAI-compatible speech to text (multipart: file, model, language, response_format, temperature)" } }
