@@ -50,6 +50,7 @@ struct ServeConfigFileTests {
         Group(yaml: "serve: { cloud: { fallback: org/cloud, cost_threshold: 0.7 } }", flags: ["--cloud-fallback", "org/cloud", "--cost-threshold", "0.7"]) {
             "\($0.cloud.model ?? "") \($0.cloud.costThreshold ?? 0)"
         },
+        Group(yaml: "serve: { pipeline: { preset: support-triage } }", flags: ["--pipeline-preset", "support-triage"]) { "\(String(describing: $0.pipeline.preset))" },
         Group(yaml: "mcp: { enabled: true, research_tools: true, image_dirs: [/tmp/a, /tmp/b] }", flags: ["--mcp", "--research-tools", "--image-dir", "/tmp/a", "--image-dir", "/tmp/b"]) {
             "\($0.mcp) \($0.researchTools) \($0.imageDirs)"
         },

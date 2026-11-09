@@ -31,7 +31,7 @@ extension MCPServer {
             throw .invalidParams("basalt_pipeline needs an object of attachments, text, questions, task and pages")
         }
         do throws(BasaltError) {
-            let request = try PipelineController.request(from: data, imageDirectories: imageDirectories)
+            let request = try PipelineController.request(from: data, imageDirectories: imageDirectories, defaultQuestions: pipeline.questions)
             let runner = PipelineRunner(chat: orchestrator, decisions: decisions, stages: pipeline)
             return .json(try await runner.run(request, origin: RequestOrigin(source: "mcp", endpoint: "basalt_pipeline", stream: false), sessionId: nil))
         } catch {

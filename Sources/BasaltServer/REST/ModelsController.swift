@@ -122,6 +122,7 @@ struct ModelsController: Sendable {
 
     @Sendable
     func previewModel(request: Request, context: BasicRequestContext) async throws -> Response {
+        if let name = request.uri.queryParameters.get("pipeline_preset") { return await previewPreset(String(name)) }
         guard let raw = request.uri.queryParameters.get("model_id"), !raw.isEmpty else {
             return makeErrorResponse(status: .badRequest, message: "model_id is required, e.g. ?model_id=mlx-community/Qwen3-4B-4bit")
         }
@@ -151,6 +152,18 @@ struct ModelsController: Sendable {
         body["warning"] = assessment.warning
         body["recommendation"] = assessment.recommendation
         return makeJSONResponse(body)
+    }
+
+    func previewPreset(_ name: String) async -> Response {
+        guard let preset = PipelinePreset(rawValue: name) else {
+            return makeErrorResponse(status: .badRequest, message: "pipeline_preset must be one of \(PipelinePreset.names)")
+        }
+        let plan = preset.plan(budgetBytes: await SystemProfiler().detectResources().gpuMemory, power: PowerSource.current())
+        let encoder = JSONEncoder()
+        encoder.keyEncodingStrategy = .convertToSnakeCase
+        var buffer = ByteBuffer()
+        buffer.writeBytes((try? encoder.encode(plan)) ?? Data())
+        return Response(status: .ok, headers: [.contentType: "application/json"], body: ResponseBody(byteBuffer: buffer))
     }
 
     // MARK: — POST /v1/models/load

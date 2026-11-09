@@ -6,6 +6,9 @@ import BasaltServer
 import BasaltSpeech
 
 struct PipelineOptions: ParsableArguments {
+    @Option(name: .customLong("pipeline-preset"), help: "A shipped pipeline profile: document-qa (PaddleOCR-VL, System One by readout of the chat model, the chat model), voice-agent (Nemotron Transcribe and the chat model) or support-triage (System One with the ticket questions on department, lateness and severity, asked when a /v1/pipeline request sends none, and the chat model). The chat model is Gemma 4 12B, or Qwen3.8-27B 3-bit when it fits beside the other models with 8 GB to spare. Sets --model, --pipeline-ocr-model, --pipeline-audio-model, --decision-model, --pipeline-abstain-below and --pipeline-min-margin; a flag or config key given explicitly wins over the preset")
+    var preset: PipelinePreset?
+
     @Option(name: .customLong("pipeline-ocr-model"), help: "OCR model for /v1/pipeline and basalt_pipeline (GLM-OCR, MinerU2.5 or PaddleOCR-VL): repo ID or local path, loaded in its own engine beside the chat model so OCR never swaps it out; without it, documents are read by Apple Vision")
     var ocrModel: String?
 
@@ -25,7 +28,22 @@ struct PipelineOptions: ParsableArguments {
     }
 }
 
+extension PipelinePreset: ExpressibleByArgument {}
+
 extension ServeCommand {
+    mutating func applyPipelinePreset(budgetBytes: Int64? = nil) async {
+        guard let preset = pipeline.preset else { return }
+        let budget = if let budgetBytes { budgetBytes } else { await SystemProfiler().detectResources().gpuMemory }
+        let explicit = PipelineChoices(
+            chat: model ?? modelPath, ocr: pipeline.ocrModel, audio: pipeline.audioModel, decide: decisionModel,
+            abstainBelow: pipeline.abstainBelow, minMargin: pipeline.minMargin)
+        let chosen = preset.choices(budgetBytes: budget).overridden(by: explicit)
+        if modelPath == nil { model = chosen.chat }
+        (pipeline.ocrModel, pipeline.audioModel, decisionModel) = (chosen.ocr, chosen.audio, chosen.decide)
+        (pipeline.abstainBelow, pipeline.minMargin) = (chosen.abstainBelow, chosen.minMargin)
+        log("Pipeline preset \(preset.rawValue) for a \(ComputePlan.gigabytes(budget)) working set: " + chosen.summary)
+    }
+
     static func perceiveWorkload(_ model: String, path: String) -> Workload {
         Workload(name: model, role: "perceive", unit: .gpu, kind: .encoder, residentBytes: weightBytes(path))
     }
@@ -61,7 +79,8 @@ extension ServeCommand {
             log("\(red("[error]")) --pipeline-audio-model \(pipeline.audioModel ?? "") has no audio encoder; use Nemotron Transcribe")
             throw ExitCode.failure
         }
-        return PipelineStages(ocr: ocr, audio: audio, speech: experimental.speechAnalyzer ? SpeechAnalyzerTranscriber() : nil, abstainBelow: pipeline.abstainBelow, minMargin: pipeline.minMargin)
+        return PipelineStages(ocr: ocr, audio: audio, speech: experimental.speechAnalyzer ? SpeechAnalyzerTranscriber() : nil, abstainBelow: pipeline.abstainBelow, minMargin: pipeline.minMargin,
+            questions: pipeline.preset?.questions ?? [:])
     }
 
     func loadPerceiver(_ model: String?, path: String?, role: String) async throws -> ModelOrchestratorActor? {

@@ -7,12 +7,14 @@ package struct PipelineStages: Sendable {
     package let speech: (any AudioTranscriber)?
     package let abstainBelow: Double?
     package let minMargin: Double?
+    package let questions: [String: SystemOneQuestion]
 
     package init(
         ocr: ModelOrchestratorActor? = nil, audio: ModelOrchestratorActor? = nil, speech: (any AudioTranscriber)? = nil,
-        abstainBelow: Double? = nil, minMargin: Double? = nil
+        abstainBelow: Double? = nil, minMargin: Double? = nil, questions: [String: SystemOneQuestion] = [:]
     ) {
         (self.ocr, self.audio, self.speech, self.abstainBelow, self.minMargin) = (ocr, audio, speech, abstainBelow, minMargin)
+        self.questions = questions
     }
 }
 

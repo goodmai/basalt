@@ -50,7 +50,7 @@ public struct Placement: Sendable, Equatable, Codable {
     public var note: String
 }
 
-public struct PlanVerdict: Sendable, Equatable {
+public struct PlanVerdict: Sendable, Equatable, Codable {
     public var placements: [Placement]
     public var residentBytes: Int64
     public var budgetBytes: Int64

@@ -154,6 +154,7 @@ struct ServeCommand: AsyncParsableCommand {
     mutating func run() async throws {
         if wiredLimit { MLXInferenceEngine.renewsResidency() }
         if experimental.smallMKernel { MLXInferenceEngine.enablesSmallMKernel() }
+        await applyPipelinePreset()
         if dryRun { return await assessMemory() }
 
         let network = try resolveAccess()

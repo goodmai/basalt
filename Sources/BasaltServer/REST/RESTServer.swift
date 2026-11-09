@@ -198,7 +198,7 @@ extension RESTServer {
         "/v1/models":              { "get":  { "summary": "List cached models (OpenAI format)" } },
         "/api/v1/stats":           { "get":  { "summary": "Telemetry of the serving process (same snapshot as serve --stats and MCP status)" } },
         "/v1/models/current":      { "get":  { "summary": "Currently loaded model + status" } },
-        "/v1/models/preview":      { "get":  { "summary": "Memory a model would need, without loading it (?model_id=&context=)" } },
+        "/v1/models/preview":      { "get":  { "summary": "Memory a model would need, without loading it (?model_id=&context=), or the compute plan of a pipeline preset (?pipeline_preset=document-qa|voice-agent|support-triage)" } },
         "/v1/models/load":         { "post": { "summary": "Hot-swap model at runtime" } },
         "/v1/chat/completions":    { "post": { "summary": "OpenAI-compatible chat completions" } },
         "/v1/responses":           { "post": { "summary": "OpenAI Responses API (Codex/Cursor)" } },
