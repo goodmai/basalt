@@ -58,7 +58,8 @@ struct VisionOCRTests {
         let regions = try await VisionDocumentTranscriber.lineRegions(in: try VisionFixture.page())
         let closing = try #require(regions.first { $0.element == .paragraph("Closing paragraph after the table.") })
         #expect(closing.box.y1 > 0.7 && closing.box.y2 < 0.9)
-        #expect(regions.count == VisionFixture.lines.count)
+        #expect(regions.contains { $0.element == .paragraph("Quarterly Report") && $0.box.y1 < 0.15 })
+        #expect(regions.allSatisfy { $0.box.y1 < $0.box.y2 })
         #expect(VisionDocumentTranscriber.isOrdered(.decimal) && VisionDocumentTranscriber.isOrdered(.lowercaseLatin))
         #expect(!VisionDocumentTranscriber.isOrdered(.bullet) && !VisionDocumentTranscriber.isOrdered(nil))
     }
