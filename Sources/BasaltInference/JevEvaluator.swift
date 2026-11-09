@@ -17,7 +17,7 @@ public struct JevEvaluator: DecisionEngine {
 
     public static func baseModel(of directory: URL) throws(BasaltError) -> String { try JevBundle(directory: directory).baseModel }
 
-    public init(directory: URL, base: URL) async throws(BasaltError) {
+    public init(directory: URL, base: URL, float32: Bool = true) async throws(BasaltError) {
         bundle = try JevBundle(directory: directory)
         modelID = bundle.modelID
         do {
@@ -32,6 +32,7 @@ public struct JevEvaluator: DecisionEngine {
                 guard context.model is Qwen3Model else {
                     throw BasaltError.modelConfigurationInvalid(path: base.path, reason: "the Jev base must be a Qwen3 checkpoint")
                 }
+                if float32 { context.model.update(parameters: context.model.parameters().mapValues { $0.dtype == .bfloat16 || $0.dtype == .float16 ? $0.asType(.float32) : $0 }) }
                 let base = Dictionary(uniqueKeysWithValues: context.model.parameters().flattened())
                 let adapter = FileManager.default.fileExists(atPath: adapterFile.path) ? try loadArrays(url: adapterFile) : [:]
                 let merged = try JevBundle.mergedLoRA(adapter, base: base, scale: scale)
