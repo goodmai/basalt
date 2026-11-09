@@ -33,8 +33,7 @@ extension MLXInferenceEngine {
     static let onPolicyTopK = 20
     static let tailFloor: Float = 1e-6
 
-    func onPolicyDistill(_ request: DistillRequest, examples: [DistillExample], teacher: TeacherClient, directory: URL, lease: StepLease?) async throws(BasaltError) -> DistillReport {
-        guard let container else { throw .modelNotLoaded }
+    func onPolicyDistill(_ request: DistillRequest, examples: [DistillExample], teacher: TeacherClient, directory: URL, steps: AdapterSteps) async throws(BasaltError) -> DistillReport {
         guard request.teacher.provider == .openai else {
             throw .invalidRequestStructure(details: "distill: onPolicy needs a basalt teacher that serves /v1/score, so the provider must be openai")
         }
@@ -43,7 +42,6 @@ extension MLXInferenceEngine {
         }
         let heldOutStart = examples.count - DistillCore.heldOutCount(examples.count, fraction: request.heldOutFraction)
         let maxSeqLen = request.maxSeqLen
-        let steps = AdapterSteps(engine: self, container: container, layers: request.layers, rank: request.rank, lease: lease, what: "on-policy distillation")
         let plan = try await steps.read { context in try Self.onPolicyPlan(examples, heldOutStart: heldOutStart, maxSeqLen: maxSeqLen, context) }
         var report = DistillReport()
         (report.prompts, report.kept, report.heldOut) = (examples.count, plan.train.count, plan.heldOut.count)
@@ -52,7 +50,6 @@ extension MLXInferenceEngine {
             throw .invalidRequestStructure(details: "distill: no training or no held-out prompt fits in maxSeqLen \(maxSeqLen) tokens")
         }
         let outcome = try await OnPolicyRun(request: request, plan: plan, teacher: teacher, steps: steps).train(saving: directory)
-        guard self.container === container else { throw .inferenceError("the model changed during on-policy distillation; the adapter in \(directory.path) was not applied") }
         (report.losses, report.reverseKLBefore, report.reverseKLAfter) = (Self.reported(outcome.losses), outcome.before, outcome.after)
         report.teacherCalls = request.iterations * min(request.batchSize, plan.train.count) + plan.heldOut.count
         report.adapterDirectory = directory.path

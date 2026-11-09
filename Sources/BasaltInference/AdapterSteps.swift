@@ -12,6 +12,8 @@ struct AdapterState {
 struct AdapterSteps: Sendable {
     let engine: MLXInferenceEngine
     let container: ModelContainer
+    let epoch: ModelEpoch
+    let fingerprint: String
     let layers: [Int]?
     let rank: Int
     let lease: StepLease?
@@ -19,9 +21,9 @@ struct AdapterSteps: Sendable {
 
     func enter() async throws(BasaltError) -> Int? {
         let ticket = try await lease?.enter()
-        guard await engine.container === container else {
+        guard await engine.trainsOn(epoch) else {
             await leave(ticket)
-            throw .inferenceError("the model changed during \(what); training stopped")
+            throw .inferenceError("the model was switched, or changed by an overlay or weights delta, during \(what); training stopped and the last checkpoint is kept")
         }
         return ticket
     }
@@ -77,78 +79,23 @@ struct AdapterSteps: Sendable {
         eval(state.weights.map(\.1))
         return result
     }
-}
 
-struct AdapterProgress: Sendable, Codable, Equatable {
-    var step = 0
-    var losses: [Float] = []
-    var rank: Int
-    var layers: [Int]?
-    var batchSize: Int
-    var learningRate: Float
-
-    init(_ request: DistillRequest) {
-        (rank, layers, batchSize, learningRate) = (request.rank, request.layers, request.batchSize, request.learningRate)
-    }
-
-    func advanced(by loss: Float) -> AdapterProgress {
-        var next = self
-        next.step += 1
-        next.losses.append(loss)
-        return next
-    }
-
-    func checkpointDue(every: Int, of iterations: Int) -> Bool {
-        every > 0 && step % every == 0 && step < iterations
-    }
-
-    func resumable(by request: DistillRequest) -> String? {
-        var fresh = AdapterProgress(request)
-        (fresh.step, fresh.losses) = (step, losses)
-        guard fresh == self else { return "the checkpoint was trained with rank \(rank), layers \(layers.map { "\($0)" } ?? "all"), batch size \(batchSize) and learning rate \(learningRate); resume with the same settings" }
-        guard step < request.iterations else { return "the checkpoint is at step \(step); iterations must be larger to resume" }
-        return nil
+    func restore(_ state: inout AdapterState, from adapter: URL, context: ModelContext) throws {
+        let trainable = try withLoRA(&state, context: context) { context, _, _ in
+            Dictionary(uniqueKeysWithValues: context.model.trainableParameters().flattened().map { ($0.0, $0.1.shape) })
+        }
+        try AdapterCheckpoint.restore(&state, from: adapter, trainable: trainable)
     }
 }
 
-enum AdapterCheckpoint {
-    static func directory(in adapter: URL) -> URL { adapter.appending(component: "checkpoint") }
-
-    static func write(_ state: AdapterState, _ progress: AdapterProgress, to adapter: URL) throws {
-        try withTaskCancellationShield {
-            let files = FileManager.default
-            let next = adapter.appending(component: "checkpoint.next")
-            try? files.removeItem(at: next)
-            try files.createDirectory(at: next, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-            try MLX.save(arrays: Dictionary(uniqueKeysWithValues: state.weights), url: next.appending(component: "adapter.safetensors"))
-            try MLX.save(arrays: Dictionary(uniqueKeysWithValues: state.optimizer.state().flattened()), url: next.appending(component: "optimizer.safetensors"))
-            try JSONEncoder().encode(progress).write(to: next.appending(component: "progress.json"))
-            let current = directory(in: adapter)
-            if files.fileExists(atPath: current.path) {
-                _ = try files.replaceItemAt(current, withItemAt: next)
-            } else {
-                try files.moveItem(at: next, to: current)
-            }
+extension MLXInferenceEngine {
+    func adapterSteps(layers: [Int]?, rank: Int, lease: StepLease?, what: String) throws(BasaltError) -> AdapterSteps {
+        guard let container else { throw .modelNotLoaded }
+        guard !modelModified else {
+            throw .invalidRequestStructure(details: "\(what): an overlay or weights delta changes the live model; undo it before training on the base weights")
         }
+        return AdapterSteps(engine: self, container: container, epoch: modelEpoch, fingerprint: modelFingerprint ?? modelDescription, layers: layers, rank: rank, lease: lease, what: what)
     }
 
-    static func progress(in adapter: URL, for request: DistillRequest) throws(BasaltError) -> AdapterProgress {
-        let file = directory(in: adapter).appending(component: "progress.json")
-        guard let data = try? Data(contentsOf: file), let progress = try? JSONDecoder().decode(AdapterProgress.self, from: data) else {
-            throw .invalidRequestStructure(details: "distill: resume needs the checkpoint of an interrupted run in output; \(file.path) is missing or unreadable")
-        }
-        if let refusal = progress.resumable(by: request) { throw .invalidRequestStructure(details: "distill: \(refusal)") }
-        return progress
-    }
-
-    static func restore(_ state: inout AdapterState, from adapter: URL) throws {
-        let directory = directory(in: adapter)
-        state.weights = try MLX.loadArrays(url: directory.appending(component: "adapter.safetensors")).sorted { $0.key < $1.key }.map { ($0.key, $0.value) }
-        state.optimizer.update(parameters: .unflattened(try MLX.loadArrays(url: directory.appending(component: "optimizer.safetensors"))))
-        eval(state.weights.map(\.1), state.optimizer)
-    }
-
-    static func discard(in adapter: URL) {
-        try? FileManager.default.removeItem(at: directory(in: adapter))
-    }
+    func trainsOn(_ epoch: ModelEpoch) -> Bool { modelEpoch == epoch && !modelModified }
 }
