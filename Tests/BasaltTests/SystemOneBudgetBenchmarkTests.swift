@@ -79,7 +79,7 @@ struct SystemOneBudgetBenchmarkTests {
     }
 
     @Test("LLM-only vs System One with escalation at four thresholds, then System One running during a long generation; tokens, time, accuracy and decode tok/s are logged",
-          .enabled(if: chat != nil, "set BASALT_E2E=1 and BASALT_E2E_BUDGET_CHAT_MODEL; optional BASALT_E2E_JEV_MODEL + BASALT_E2E_JEV_BASE (OpenJev head) and BASALT_E2E_BUDGET_FLASH (OpenJev-Flash-9B path)"))
+          .enabled(if: chat != nil, "set BASALT_E2E=1 and BASALT_E2E_BUDGET_CHAT_MODEL; optional BASALT_E2E_JEV_MODEL + BASALT_E2E_JEV_BASE (OpenJev head) BASALT_E2E_BUDGET_FLASH (OpenJev-Flash-9B path) and BASALT_E2E_BUDGET_COREAI (Core AI decision bundle, run last and used for the concurrent arm)"))
     func budget() async throws {
         let path = NF4Run.path(try #require(Self.chat))
         let log = try await ModelRunLog("systemone-budget", modelPath: path)
@@ -102,6 +102,9 @@ struct SystemOneBudgetBenchmarkTests {
             try await log.step("load flash") { try await flashEngine.load(modelPath: flash) }
             deciders.append(("openjev-flash-9b", ReadoutDecisionEngine(engine: flashEngine, modelID: "flash", readout: SystemOneReadout.known("openjev/OpenJev-Flash-9B") ?? .uncalibrated)))
         }
+        if let laya = Self.env["BASALT_E2E_BUDGET_COREAI"] {
+            deciders.append(("laya-ane", try await log.step("load laya") { try await CoreAIDecisionEngine(directory: URL(fileURLWithPath: laya)) }))
+        }
         for (label, decider) in deciders {
             for threshold in Self.thresholds {
                 try await Self.arm(label, decider, threshold: threshold, run: Run(engine: engine, items: items, baseline: baseline, log: log))
@@ -112,6 +115,30 @@ struct SystemOneBudgetBenchmarkTests {
         let (overlapTally, _) = try await Self.withSystemOne(engine, deciders[deciders.count - 1].1, items, threshold: 0.75)
         let overlap = try await concurrent
         log.record("RESULT", "C concurrent \(deciders[deciders.count - 1].0) @0.75: long answer \(String(format: "%.2f", overlap.tokensPerSecond)) tok/s (\(String(format: "%+.1f", (overlap.tokensPerSecond / max(solo.tokensPerSecond, 1e-9) - 1) * 100))% vs solo), decisions accuracy \(overlapTally.accuracy), wall \(String(format: "%.1f", Self.seconds(since: clock))) s vs A+long \(String(format: "%.1f", baselineSeconds + solo.generationTime)) s")
+        if let ane = deciders.last?.1 as? CoreAIDecisionEngine { try await Self.continuous(engine, ane, items, log: log) }
+    }
+
+    static func continuous(_ engine: MLXInferenceEngine, _ decider: CoreAIDecisionEngine, _ items: [LabelledDecision], log: ModelRunLog) async throws {
+        let requests = Dictionary(grouping: items, by: \.state).values.map { group in
+            SystemOneRequest(state: group[0].state, questions: Dictionary(uniqueKeysWithValues: group.map { ($0.name, $0.question) }))
+        }
+        let solo = try await log.step("long answer solo, before D") { try await Self.longAnswer(engine) }
+        let loop = Task {
+            var count = 0
+            while !Task.isCancelled {
+                for request in requests where !Task.isCancelled {
+                    _ = try await decider.decide(request)
+                    count += 1
+                }
+            }
+            return count
+        }
+        let clock = ContinuousClock.now
+        let overlap = try await log.step("long answer beside continuous ANE decisions") { try await Self.longAnswer(engine) }
+        let seconds = Self.seconds(since: clock)
+        loop.cancel()
+        let decided = try await loop.value
+        log.record("RESULT", "D continuous \(decider.modelID) on the ANE, no escalation: long answer \(String(format: "%.2f", overlap.tokensPerSecond)) tok/s against \(String(format: "%.2f", solo.tokensPerSecond)) solo (\(String(format: "%+.1f", (overlap.tokensPerSecond / max(solo.tokensPerSecond, 1e-9) - 1) * 100))%), \(decided) requests in \(String(format: "%.1f", seconds)) s, \(String(format: "%.1f", Double(decided) / max(seconds, 1e-9))) requests/s")
     }
 
     struct Run {

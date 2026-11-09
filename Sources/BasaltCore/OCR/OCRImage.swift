@@ -112,3 +112,15 @@ enum OCRImage {
         return resized(image, width: Int((Double(image.width) * scale).rounded(.up)), height: Int((Double(image.height) * scale).rounded(.up)))
     }
 }
+
+extension OCRDocument {
+    public func pageNumbers(_ selection: String?) throws(BasaltError) -> [Int]? {
+        guard case .pdf(let data) = self else { return nil }
+        guard let document = PDFDocument(data: data), document.pageCount > 0 else {
+            throw .invalidRequestStructure(details: "the PDF cannot be read or has no pages")
+        }
+        var parsed: OCRPageSelection?
+        if let selection { parsed = try OCRPageSelection(selection) }
+        return try OCRPageSelection.resolve(parsed, pageCount: document.pageCount)
+    }
+}

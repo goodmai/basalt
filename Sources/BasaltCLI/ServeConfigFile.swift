@@ -229,6 +229,7 @@ extension ServeConfigFile {
         "serve.access.allow_origins": .list("--allow-origin"),
         "serve.access.auto_generate_key": .flag(on: "--auto-generate-key", off: nil),
         "serve.pipeline.ocr_model": .text("--pipeline-ocr-model"),
+        "serve.pipeline.audio_model": .text("--pipeline-audio-model"),
         "serve.pipeline.decide": .text("--decision-model"),
         "serve.pipeline.abstain_below": .number("--pipeline-abstain-below"),
         "serve.pipeline.min_margin": .number("--pipeline-min-margin"),

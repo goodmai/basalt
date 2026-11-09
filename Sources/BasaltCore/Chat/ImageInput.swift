@@ -1,10 +1,12 @@
 import Foundation
 import CryptoKit
+import ImageIO
 
 public struct ImageInput: Sendable, Codable, Hashable {
     public static let maxCount = 8
     public static let maxBytes = 20 * 1024 * 1024
     public static let maxTotalBytes = 32 * 1024 * 1024
+    public static let maxPixels = 50_000_000
     public static let mimeTypes: Set<String> = ["image/png", "image/jpeg", "image/webp", "image/heic"]
     public static let remoteRefusal = "remote image URLs are not fetched; send the image as a data: URI"
 
@@ -26,7 +28,17 @@ public struct ImageInput: Sendable, Codable, Hashable {
         guard data.count <= Self.maxBytes else {
             throw .invalidRequestStructure(details: "an image of \(data.count) bytes is over the limit of 20 MB per image")
         }
+        try Self.checkPixels(data)
         self.init(data: data, mime: mime, digest: SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined())
+    }
+
+    public static func checkPixels(_ data: Data) throws(BasaltError) {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let width = properties[kCGImagePropertyPixelWidth] as? Int, let height = properties[kCGImagePropertyPixelHeight] as? Int else { return }
+        guard width <= maxPixels, height <= maxPixels, width * height <= maxPixels else {
+            throw .invalidRequestStructure(details: "an image of \(width)x\(height) pixels is over the limit of \(maxPixels / 1_000_000) megapixels")
+        }
     }
 
     public init(base64: some StringProtocol, mime: String) throws(BasaltError) {

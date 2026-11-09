@@ -82,6 +82,18 @@ struct OCRRecipeTests {
         #expect(try recipe.step(for: .chart) == .recognize(prompt: "\nImage Analysis:", blockType: "chart"))
     }
 
+    @Test("paddleocr_vl is PaddleOCR-VL with its four published element prompts; a document is page-level OCR and its requests are plain greedy",
+          arguments: [(OCRTask.document, "OCR:", "text"), (.text, "OCR:", "text"), (.table, "Table Recognition:", "table"),
+                      (.formula, "Formula Recognition:", "equation"), (.chart, "Chart Recognition:", "chart")])
+    func paddlePrompts(_ task: OCRTask, _ prompt: String, _ type: String) throws {
+        let recipe = try #require(OCRRecipe.of(modelType: "paddleocr_vl", hints: []))
+        #expect(recipe.family == .paddleOCR)
+        #expect(try recipe.step(for: task) == .recognize(prompt: prompt, blockType: type))
+        let image = try ImageInput(data: try OCRFixture.png(width: 4, height: 4), mime: "image/png")
+        let request = recipe.request(prompt: prompt, image: image, stage: .recognition)
+        #expect(request.temperature == 0 && request.repetitionPenalty == nil && request.presencePenalty == nil)
+    }
+
     @Test("A recipe request is greedy, carries the page as the only image, and takes the family's repetition settings")
     func requests() throws {
         let image = try ImageInput(data: try OCRFixture.png(width: 4, height: 4), mime: "image/png")
@@ -93,7 +105,7 @@ struct OCRRecipeTests {
         #expect(OCRRecipe(family: .minerU).request(prompt: "\nText Recognition:", image: image, stage: .recognition).presencePenalty == 1)
     }
 
-    @Test("Post-processing: MinerU tables turn from OTSL into HTML and equations get display brackets; GLM-OCR output is only trimmed")
+    @Test("Post-processing: MinerU and PaddleOCR-VL tables turn from OTSL into HTML, MinerU equations get display brackets; GLM-OCR output is only trimmed")
     func postProcessing() {
         let minerU = OCRRecipe(family: .minerU)
         #expect(minerU.finished(" <fcel>a<fcel>b<nl> ", blockType: "table") == "<table><tr><td>a</td><td>b</td></tr></table>")
@@ -101,12 +113,17 @@ struct OCRRecipeTests {
         #expect(minerU.finished("\\[x\\]", blockType: "equation") == "\\[x\\]")
         #expect(minerU.finished("", blockType: "equation") == "")
         #expect(OCRRecipe(family: .glmOCR).finished("\n<fcel>a\n", blockType: "table") == "<fcel>a")
+        let paddle = OCRRecipe(family: .paddleOCR)
+        #expect(paddle.finished("<fcel>Model<fcel>Size<nl><fcel>GLM-OCR<fcel>0.9B<nl>", blockType: "table")
+            == "<table><tr><td>Model</td><td>Size</td></tr><tr><td>GLM-OCR</td><td>0.9B</td></tr></table>")
+        #expect(paddle.finished(" x^2 ", blockType: "equation") == "x^2")
     }
 
-    @Test("glm_ocr and qwen2_vl stay unverified families, so every capability-gated feature stays off on them")
+    @Test("glm_ocr and qwen2_vl stay unverified families; paddleocr_vl verifies lookup, batched decode, prompt-cache reuse and grammar jump-forward on text turns; no MTP, CacheBlend, quantized KV, KV zones, head split or Quest")
     func capabilities() {
         #expect(ModelCapabilities.of(modelType: "glm_ocr") == nil)
         #expect(ModelCapabilities.of(modelType: "qwen2_vl") == nil)
+        #expect(ModelCapabilities.of(modelType: "paddleocr_vl")?.verified == Set(ModelCapabilities.Feature.allCases).subtracting([.mtp, .cacheBlend, .kvQuantization, .kvZones, .kvHeadSplit, .quest]))
     }
 }
 

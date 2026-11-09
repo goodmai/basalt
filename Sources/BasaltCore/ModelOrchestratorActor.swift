@@ -47,6 +47,11 @@ public actor ModelOrchestratorActor {
 
     private var kv: KVPlanner { state.kv }
 
+    func markTraining(_ running: Bool) throws(BasaltError) {
+        guard !running || !state.training else { throw .invalidRequestStructure(details: "a distillation is already running on this server; wait for it to finish or cancel it before starting another") }
+        state = .reduce(state, running ? .trainingStarted : .trainingEnded)
+    }
+
     public var currentModelId: String { state.modelId }
 
     var kvReservations: [Int: ByteCount] { state.reservations.bytes }
@@ -221,7 +226,7 @@ extension ModelOrchestratorActor {
 
 extension ModelOrchestratorActor {
     func cloudFallbackReason(for request: GenerationRequest) async -> CloudFallbackReason? {
-        guard let cloudFallback, request.isServiceRequest != true, request.adapter == nil, request.origin != OCRRecipe.origin,
+        guard let cloudFallback, request.isServiceRequest != true, request.adapter == nil, request.origin != OCRRecipe.origin, request.origin.source != PipelineCore.perceivedSource,
               let assessment = await cloudFallback.assess(request, localModel: routingModelKey)
         else { return nil }
         let promptTokens = Self.estimatedTokens(Self.budgetedText(request))
@@ -314,6 +319,8 @@ extension ModelOrchestratorActor {
     private func admit(
         _ request: GenerationRequest
     ) async throws(BasaltError) -> (request: GenerationRequest, ticket: Int, queueWait: Duration) {
+        await gate.arrive()
+        defer { await gate.arrived() }
         var plan = try await capped(request)
         let queued = ContinuousClock.now
         let ticket = try await admitted(request)

@@ -43,7 +43,7 @@ extension MCPServer {
 extension MCPToolCatalog {
     static let ocr = MCPToolDescriptor(
         name: "basalt_ocr",
-        description: "Read a PDF or an image with the loaded OCR model (GLM-OCR or MinerU2.5), or with Apple's on-device Vision when model is apple-vision, and return Markdown per page, with blocks {type, bbox, text} when format is json. PDF pages render at 200 DPI; a request reads at most \(OCRPageSelection.maxPages) pages.",
+        description: "Read a PDF or an image with the loaded OCR model (GLM-OCR, MinerU2.5 or PaddleOCR-VL), or with Apple's on-device Vision when model is apple-vision, and return Markdown per page, with blocks {type, bbox, text} when format is json. PDF pages render at 200 DPI; a request reads at most \(OCRPageSelection.maxPages) pages.",
         inputSchema: ResearchTool.object([
             "file": ["type": "string", "description": "The PDF or image, base64-encoded or as a data: URI"],
             "path": ["type": "string", "description": "Instead of file: a PDF or image inside a directory given with serve --image-dir"],
@@ -55,7 +55,7 @@ extension MCPToolCatalog {
 
     static let pipeline = MCPToolDescriptor(
         name: "basalt_pipeline",
-        description: "One call for perceive → decide → answer: pdf and image attachments are read by the OCR model (serve --pipeline-ocr-model) and audio is transcribed; typed questions go to System One (serve --decision-model), and only the questions it abstains on, plus a free-form task, go to the chat model. Returns the perceived text, answers per question with answered_by decide or answer, the System 2 reply to the task, and a route receipt with model, ms, tokens, confidence and escalation per stage.",
+        description: "One call for perceive → decide → answer: pdf and image attachments are read by the OCR model (serve --pipeline-ocr-model) or Apple Vision, and audio is transcribed by the speech model (serve --pipeline-audio-model), the chat model's audio encoder or SpeechAnalyzer (with --experimental-speech-analyzer); typed questions go to System One (serve --decision-model), and only the questions it abstains on, plus a free-form task, go to the chat model. Returns the perceived text, answers per question with answered_by decide or answer, the System 2 reply to the task, and a route receipt with model, ms, tokens, confidence and escalation per stage.",
         inputSchema: ResearchTool.object([
             "attachments": ["type": "array", "description": "Items {kind: pdf|image|audio, data: base64, format?} or {kind, path} with a path inside a serve --image-dir directory; audio needs format, such as wav"],
             "text": ["type": "string", "description": "Client text added to the perceived text"],

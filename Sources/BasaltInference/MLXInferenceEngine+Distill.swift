@@ -15,6 +15,7 @@ struct DistillRun: Sendable {
     var nllBefore: Float
     var nllAfter: Float
     var tooLong: Int
+    var resumedAt: Int?
 }
 
 extension MLXInferenceEngine {
@@ -22,38 +23,54 @@ extension MLXInferenceEngine {
     static let distillConcurrency = 1...32
     static let distillTeacherTokens = 16...32_768
 
-    public func distill(_ request: DistillRequest) async throws(BasaltError) -> DistillReport {
-        try await distill(request, session: .shared, home: FileManager.default.homeDirectoryForCurrentUser)
+    public func distill(_ request: DistillRequest, lease: StepLease?) async throws(BasaltError) -> DistillReport {
+        try await distill(request, session: .shared, home: FileManager.default.homeDirectoryForCurrentUser, lease: lease)
     }
 
-    func distill(_ request: DistillRequest, session: URLSession, home: URL, environment: [String: String] = ProcessInfo.processInfo.environment) async throws(BasaltError) -> DistillReport {
-        guard let container else { throw .modelNotLoaded }
+    func distill(
+        _ request: DistillRequest, session: URLSession, home: URL, environment: [String: String] = ProcessInfo.processInfo.environment, lease: StepLease? = nil
+    ) async throws(BasaltError) -> DistillReport {
         try Self.validate(request)
+        let steps = try adapterSteps(layers: request.layers, rank: request.rank, lease: lease, what: request.onPolicy ? "on-policy distillation" : "distillation")
         let data: Data
         do { data = try Data(contentsOf: URL(fileURLWithPath: (request.prompts as NSString).expandingTildeInPath)) } catch {
             throw .invalidRequestStructure(details: "distill: could not read the prompts \(request.prompts): \(error.localizedDescription)")
         }
         let examples = try DistillCore.examples(jsonl: String(decoding: data, as: UTF8.self))
-        let directory = try adapterDirectory(request.output)
         let teacher = try TeacherClient(request.teacher.url, model: request.teacher.model, provider: request.teacher.provider, environment: environment, session: session)
-        if request.onPolicy { return try await onPolicyDistill(request, examples: examples, teacher: teacher, directory: directory) }
         let cache = DistillCache(directory: DistillCache.directory(for: request, prompts: data, home: home))
+        let directory = request.resume ? try resumedDirectory(request.output) : try adapterDirectory(request.output)
+        do {
+            return try await distilled(request, examples: examples, teacher: teacher, cache: cache, directory: directory, steps: steps)
+        } catch {
+            throw AdapterCheckpoint.withResumeHint(error, in: directory)
+        }
+    }
+
+    func distilled(
+        _ request: DistillRequest, examples: [DistillExample], teacher: TeacherClient, cache: DistillCache, directory: URL, steps: AdapterSteps
+    ) async throws(BasaltError) -> DistillReport {
+        if request.onPolicy {
+            return try await reserving(directory, resume: false) { () async throws(BasaltError) in
+                try await onPolicyDistill(request, examples: examples, teacher: teacher, directory: directory, steps: steps)
+            }
+        }
         var report = try await Self.collect(request, examples: examples, teacher: teacher, cache: cache)
         let (train, heldOut) = Self.pairs(request, examples: examples, entries: cache.load(), markers: profile.thinkingMarkers, report: &report)
         guard !train.isEmpty, !heldOut.isEmpty else { return report }
-        guard self.container === container else { throw .inferenceError("the model changed while the teacher answered; nothing was trained") }
-        let run = try await Self.labRun(container, "distillation") { context in
-            try Self.distillAdapter(train, heldOut: heldOut, request: request, directory: directory, context: context)
+        let run = try await reserving(directory, resume: request.resume) { () async throws(BasaltError) in
+            try await Self.distillAdapter(train, heldOut: heldOut, request: request, directory: directory, steps: steps)
         }
-        guard self.container === container else { throw .inferenceError("the model changed during distillation; the adapter in \(directory.path) was not applied") }
-        (report.losses, report.teacherNLLBefore, report.teacherNLLAfter) = (run.losses, run.nllBefore, run.nllAfter)
+        (report.losses, report.teacherNLLBefore, report.teacherNLLAfter, report.resumedAt) = (run.losses, run.nllBefore, run.nllAfter, run.resumedAt)
         report.rejected["too_long", default: 0] += run.tooLong
         report.adapterDirectory = directory.path
-        report.verdict = try await applyDistilled(directory, gate: request.gate)
+        report.verdict = try await applyDistilled(directory, gate: request.gate, steps: steps)
         return report
     }
 
-    func applyDistilled(_ directory: URL, gate: GateRequest) async throws(BasaltError) -> AdapterVerdict {
+    func applyDistilled(_ directory: URL, gate: GateRequest, steps: AdapterSteps) async throws(BasaltError) -> AdapterVerdict {
+        let ticket = try await steps.enter()
+        defer { await steps.leave(ticket) }
         do {
             return try await applyAdapter(.directory(directory.path), gate: gate)
         } catch {
@@ -75,6 +92,8 @@ extension MLXInferenceEngine {
         guard (1 ... 64).contains(request.batchSize) else { throw refused("batchSize must be in 1...64") }
         guard (16 ... 32_768).contains(request.maxSeqLen) else { throw refused("maxSeqLen must be in 16...32768") }
         guard request.learningRate.isFinite, request.learningRate > 0, request.learningRate <= 1 else { throw refused("learningRate must be in (0, 1]") }
+        guard request.checkpointEvery >= 0 else { throw refused("checkpointEvery must be 0 (off) or a positive number of steps") }
+        guard !(request.onPolicy && request.resume) else { throw refused("resume continues offline distillation; an on-policy run starts over") }
     }
 
     static func validate(_ teacher: TeacherSpec) throws(BasaltError) {

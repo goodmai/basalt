@@ -35,9 +35,46 @@ public enum PipelineCore {
         }
     }
 
-    public static func missingStage(_ request: PipelineRequest, hasOCR: Bool, hasDecisions: Bool) -> String? {
-        if request.needsOCR, !hasOCR {
-            return "A pdf or image attachment needs an OCR model; start basalt serve with --pipeline-ocr-model <GLM-OCR or MinerU2.5 repo|dir>."
+    public enum Perceiver: String, Sendable, Equatable {
+        case ocrModel, appleVision, speechModel, chatModel, speechAnalyzer
+
+        public var betweenGenerations: Bool {
+            switch self {
+            case .ocrModel, .speechModel: true
+            case .appleVision, .chatModel, .speechAnalyzer: false
+            }
+        }
+    }
+
+    public struct Perceivers: Sendable, Equatable {
+        public var ocrModel = false
+        public var appleVision = false
+        public var speechModel = false
+        public var chatAudio = false
+        public var speechAnalyzer = false
+
+        public init(ocrModel: Bool = false, appleVision: Bool = false, speechModel: Bool = false, chatAudio: Bool = false, speechAnalyzer: Bool = false) {
+            (self.ocrModel, self.appleVision, self.speechModel, self.chatAudio, self.speechAnalyzer) = (ocrModel, appleVision, speechModel, chatAudio, speechAnalyzer)
+        }
+
+        public func perceiver(for attachment: PipelineAttachment) -> Perceiver? {
+            switch attachment {
+            case .document: ocrModel ? .ocrModel : appleVision ? .appleVision : nil
+            case .audio: speechModel ? .speechModel : chatAudio ? .chatModel : speechAnalyzer ? .speechAnalyzer : nil
+            }
+        }
+    }
+
+    public static let speechAnalyzerModel = "apple-speech-analyzer"
+
+    public static func missingStage(_ request: PipelineRequest, perceivers: Perceivers, hasDecisions: Bool) -> String? {
+        for attachment in request.attachments where perceivers.perceiver(for: attachment) == nil {
+            switch attachment {
+            case .document:
+                return "A pdf or image attachment needs an OCR model; start basalt serve with --pipeline-ocr-model <GLM-OCR, MinerU2.5 or PaddleOCR-VL repo|dir>."
+            case .audio:
+                return "An audio attachment needs a speech model; start basalt serve with --pipeline-audio-model <Nemotron Transcribe repo|dir>, a chat model with an audio encoder, or --experimental-speech-analyzer."
+            }
         }
         if !request.questions.isEmpty, !hasDecisions {
             return "Typed questions need a decision model; start basalt serve with --decision-model <self|repo|dir>."
@@ -115,6 +152,12 @@ public enum PipelineCore {
             answers[id] = PipelineAnswer(answeredBy: .answer, label: label, decision: decision?.answers[id], text: reply.text)
         }
         return (answers, system2)
+    }
+
+    public static let perceivedSource = "pipeline-perceived"
+
+    public static func skipped(_ model: String, ms: Int) -> PipelineStageReceipt {
+        PipelineStageReceipt(stage: .decide, model: model, ms: ms, tokens: 0, escalated: true)
     }
 
     public static func decided(_ response: SystemOneResponse, ms: Int) -> PipelineStageReceipt {

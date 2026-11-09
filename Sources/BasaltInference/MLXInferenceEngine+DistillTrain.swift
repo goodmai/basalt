@@ -8,23 +8,74 @@ import BasaltCore
 
 extension MLXInferenceEngine {
     static func distillAdapter(
-        _ train: [TrainingTask], heldOut: [TrainingTask], request: DistillRequest, directory: URL, context: ModelContext
-    ) throws -> DistillRun {
+        _ train: [TrainingTask], heldOut: [TrainingTask], request: DistillRequest, directory: URL, steps: AdapterSteps
+    ) async throws(BasaltError) -> DistillRun {
+        let (rows, layerCount) = try await steps.read { context in
+            (try distillRows(train, heldOut: heldOut, maxSeqLen: request.maxSeqLen, context), loraBlocks(of: context.model).count)
+        }
+        let identity = AdapterProgress(request, model: steps.fingerprint, data: AdapterProgress.digest(rows.train + rows.heldOut), layerCount: layerCount)
+        var state = AdapterState(optimizer: Adam(learningRate: request.learningRate))
+        var progress = try await started(&state, identity, request: request, directory: directory, steps: steps)
+        let resumedAt = request.resume ? progress.step : nil
+        var before: Float = 0
+        for row in rows.heldOut { before += try await steps.read { context in nll([row], context.model) } }
+        while progress.step < request.iterations {
+            let next = try await steps.section(&state) { [progress, rows] context, state in
+                progress.advanced(by: try steps.withLoRA(&state, context: context) { context, optimizer, _ in
+                    try distillStep(rows.train, index: progress.step, batchSize: request.batchSize, optimizer: optimizer, model: context.model)
+                })
+            }
+            try await steps.confirm()
+            guard next.losses.last?.isFinite != false else {
+                AdapterCheckpoint.discard(in: directory)
+                throw .inferenceError("distill: the loss became non-finite at step \(progress.step); the checkpoint was discarded, since a resume would replay the same batch, and no adapter was saved")
+            }
+            if next.checkpointDue(every: request.checkpointEvery, of: request.iterations) { try checkpoint(state, next, to: directory) }
+            progress = next
+        }
+        var after: Float = 0
+        for row in rows.heldOut { after += try await steps.trained(&state) { context, _, _ in nll([row], context.model) } }
+        try await steps.trained(&state) { context, _, configuration in try saveAdapter(configuration, model: context.model, to: directory) }
+        AdapterCheckpoint.discard(in: directory)
+        let count = Float(rows.heldOut.count)
+        return DistillRun(losses: reported(progress.losses), nllBefore: before / count, nllAfter: after / count, tooLong: rows.tooLong, resumedAt: resumedAt)
+    }
+
+    static func started(
+        _ state: inout sending AdapterState, _ identity: AdapterProgress, request: DistillRequest, directory: URL, steps: AdapterSteps
+    ) async throws(BasaltError) -> AdapterProgress {
+        if request.resume {
+            let progress = try AdapterCheckpoint.progress(in: directory, as: identity, iterations: request.iterations)
+            try await steps.section(&state) { context, state in try steps.restore(&state, from: directory, context: context) }
+            return progress
+        }
+        if request.checkpointEvery > 0 {
+            try await steps.section(&state) { context, state in try steps.withLoRA(&state, context: context) { _, _, _ in } }
+            try await steps.confirm()
+            try checkpoint(state, identity, to: directory)
+        }
+        return identity
+    }
+
+    static func checkpoint(_ state: AdapterState, _ progress: AdapterProgress, to directory: URL) throws(BasaltError) {
+        do {
+            try AdapterCheckpoint.write(state, progress, to: directory)
+        } catch {
+            throw .inferenceError("distill: the checkpoint in \(directory.path) could not be written: \(briefly(error))")
+        }
+    }
+
+    static func distillRows(
+        _ train: [TrainingTask], heldOut: [TrainingTask], maxSeqLen: Int, _ context: ModelContext
+    ) throws -> (train: [DistillRow], heldOut: [DistillRow], tooLong: Int) {
         let all = try (train + heldOut).map { try distillRow($0, context) }
-        let fits = all.map { $0.tokens.count <= request.maxSeqLen }
+        let fits = all.map { $0.tokens.count <= maxSeqLen }
         let trainRows = zip(all.prefix(train.count), fits.prefix(train.count)).filter(\.1).map(\.0)
         let heldOutRows = zip(all.suffix(heldOut.count), fits.suffix(heldOut.count)).filter(\.1).map(\.0)
-        let tooLong = fits.filter { !$0 }.count
         guard !trainRows.isEmpty, !heldOutRows.isEmpty else {
-            throw BasaltError.invalidRequestStructure(details: "distill: every training or held-out example is longer than maxSeqLen \(request.maxSeqLen) tokens")
+            throw BasaltError.invalidRequestStructure(details: "distill: every training or held-out example is longer than maxSeqLen \(maxSeqLen) tokens")
         }
-        let before = nll(heldOutRows, context.model)
-        let configuration = try attachLoRA(to: context.model, layers: request.layers, rank: request.rank)
-        defer { detachLoRA(from: context.model) }
-        let losses = try distillSteps(trainRows, request: request, model: context.model)
-        let after = nll(heldOutRows, context.model)
-        try saveAdapter(configuration, model: context.model, to: directory)
-        return DistillRun(losses: reported(losses), nllBefore: before, nllAfter: after, tooLong: tooLong)
+        return (trainRows, heldOutRows, fits.filter { !$0 }.count)
     }
 
     static func saveAdapter(_ configuration: LoRAConfiguration, model: Module, to directory: URL) throws {
@@ -75,21 +126,14 @@ extension MLXInferenceEngine {
         return total / Float(rows.count)
     }
 
-    static func distillSteps(_ rows: [DistillRow], request: DistillRequest, model: any LanguageModel) throws -> [Float] {
-        let optimizer = Adam(learningRate: request.learningRate)
+    static func distillStep(_ rows: [DistillRow], index: Int, batchSize: Int, optimizer: Adam, model: any LanguageModel) throws -> Float {
+        try Task.checkCancellation()
         let step = valueAndGrad(model: model as Module) { _, arrays in [maskedLoss(model, arrays[0], arrays[1], arrays[2])] }
-        let size = min(request.batchSize, rows.count)
-        var losses: [Float] = []
-        for index in 0 ..< request.iterations {
-            try Task.checkCancellation()
-            let (inputs, targets, mask) = distillBatch((0 ..< size).map { rows[(index * size + $0) % rows.count] })
-            let (values, gradients) = step(model as Module, [inputs, targets, mask])
-            optimizer.update(model: model as Module, gradients: gradients)
-            eval(model as Module, optimizer, values)
-            let loss = values[0].item(Float.self)
-            guard loss.isFinite else { throw BasaltError.inferenceError("distill: the loss became non-finite at step \(index); nothing was saved") }
-            losses.append(loss)
-        }
-        return losses
+        let size = min(batchSize, rows.count)
+        let (inputs, targets, mask) = distillBatch((0 ..< size).map { rows[(index * size + $0) % rows.count] })
+        let (values, gradients) = step(model as Module, [inputs, targets, mask])
+        optimizer.update(model: model as Module, gradients: gradients)
+        eval(model as Module, optimizer, values)
+        return values[0].item(Float.self)
     }
 }

@@ -47,6 +47,13 @@ public struct PipelineRequest: Sendable {
     public let task: String?
     public let pages: String?
 
+    static func audioSeconds(_ attachments: [PipelineAttachment]) -> Double {
+        attachments.reduce(0) { total, attachment in
+            guard case .audio(let clip) = attachment else { return total }
+            return total + Double(clip.samples.count) / AudioClip.sampleRate
+        }
+    }
+
     public init(
         attachments: [PipelineAttachment], text: String?, questions: [String: SystemOneQuestion]?, task: String?, pages: String?
     ) throws(BasaltError) {
@@ -54,6 +61,7 @@ public struct PipelineRequest: Sendable {
         let (text, task, questions) = (Self.nonBlank(text), Self.nonBlank(task), questions ?? [:])
         guard attachments.count <= Self.maxAttachments else { throw refuse("a request carries at most \(Self.maxAttachments) attachments") }
         guard !attachments.isEmpty || text != nil else { throw refuse("send attachments, text or both") }
+        guard Self.audioSeconds(attachments) <= AudioClip.maxSeconds else { throw refuse("the audio attachments together last over \(Int(AudioClip.maxSeconds)) s") }
         guard !questions.isEmpty || task != nil else { throw refuse("send questions for System One, a task for System 2, or both") }
         guard [text, task].allSatisfy({ ($0?.count ?? 0) <= SystemOneCore.maxStateCharacters }) else {
             throw refuse("text and task hold at most \(SystemOneCore.maxStateCharacters) characters each")
@@ -69,10 +77,6 @@ public struct PipelineRequest: Sendable {
 
     static func nonBlank(_ text: String?) -> String? {
         text.flatMap { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 }
-    }
-
-    public var needsOCR: Bool {
-        attachments.contains { if case .document = $0 { true } else { false } }
     }
 }
 

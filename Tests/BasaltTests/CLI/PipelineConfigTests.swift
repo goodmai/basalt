@@ -16,13 +16,13 @@ struct PipelineConfigTests {
 
     @Test("serve.pipeline keys in the config file give the same options as the flags, JSON syntax included; decide maps to --decision-model")
     func configMatchesFlags() throws {
-        let read: (ServeCommand) -> String = { "\($0.pipeline.ocrModel ?? "") \($0.decisionModel ?? "") \($0.pipeline.abstainBelow ?? -1) \($0.pipeline.minMargin ?? -1)" }
-        let yaml = "defaults:\n  serve:\n    pipeline: { ocr_model: zai-org/GLM-OCR, decide: self, abstain_below: 0.75, min_margin: 0.1 }\n"
-        let json = #"{"version": 1, "defaults": {"serve": {"pipeline": {"ocr_model": "zai-org/GLM-OCR", "decide": "self", "abstain_below": 0.75, "min_margin": 0.1}}}}"#
-        let flags = try ServeCommand.parse(["--pipeline-ocr-model", "zai-org/GLM-OCR", "--decision-model", "self", "--pipeline-abstain-below", "0.75", "--pipeline-min-margin", "0.1"])
+        let read: (ServeCommand) -> String = { "\($0.pipeline.ocrModel ?? "") \($0.pipeline.audioModel ?? "") \($0.decisionModel ?? "") \($0.pipeline.abstainBelow ?? -1) \($0.pipeline.minMargin ?? -1)" }
+        let yaml = "defaults:\n  serve:\n    pipeline: { ocr_model: zai-org/GLM-OCR, audio_model: nvidia/Transcribe, decide: self, abstain_below: 0.75, min_margin: 0.1 }\n"
+        let json = #"{"version": 1, "defaults": {"serve": {"pipeline": {"ocr_model": "zai-org/GLM-OCR", "audio_model": "nvidia/Transcribe", "decide": "self", "abstain_below": 0.75, "min_margin": 0.1}}}}"#
+        let flags = try ServeCommand.parse(["--pipeline-ocr-model", "zai-org/GLM-OCR", "--pipeline-audio-model", "nvidia/Transcribe", "--decision-model", "self", "--pipeline-abstain-below", "0.75", "--pipeline-min-margin", "0.1"])
         #expect(read(try ServeConfigFileTests.serve(yaml)) == read(flags))
         #expect(read(try ServeConfigFileTests.serve(json)) == read(flags))
-        #expect(read(flags) == "zai-org/GLM-OCR self 0.75 0.1")
+        #expect(read(flags) == "zai-org/GLM-OCR nvidia/Transcribe self 0.75 0.1")
         #expect(ServeConfigFileTests.issues("defaults:\n  serve:\n    pipeline: { ocr: x, abstain_below: high }\n").map(\.path) == ["defaults.serve.pipeline.ocr", "defaults.serve.pipeline.abstain_below"])
     }
 
@@ -49,5 +49,11 @@ struct PipelineConfigTests {
         let admitted = ComputePlan.admit([chat, workload], budgetBytes: 20_000)
         #expect(admitted.refusal == nil && admitted.placements.last?.concurrentWithDecode == false)
         #expect(ComputePlan.admit([chat, workload], budgetBytes: 12_000).refusal?.contains("zai-org/GLM-OCR") == true)
+    }
+
+    @Test("SpeechAnalyzer is the pipeline's speech fallback only with --experimental-speech-analyzer, as for /v1/audio/transcriptions")
+    func speechAnalyzerBehindFlag() async throws {
+        #expect(try await ServeCommand.parse([]).loadPipelineStages(.init()).speech == nil)
+        #expect(try await ServeCommand.parse(["--experimental-speech-analyzer"]).loadPipelineStages(.init()).speech != nil)
     }
 }

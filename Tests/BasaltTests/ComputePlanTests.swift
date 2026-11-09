@@ -47,7 +47,7 @@ struct ComputePlanTests {
         #expect(state == PowerState(onAC: true, charging: true, batteryPercent: 41, adapterWatts: 68))
     }
 
-    @Test("Weight bytes follow Hugging Face cache symlinks and count only safetensors and aimodel files")
+    @Test("Weight bytes follow Hugging Face cache symlinks and count only safetensors, aimodel and Core AI mlirb weight files")
     func weightBytes() throws {
         let root = FileManager.default.temporaryDirectory.appending(path: "plan-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }
@@ -58,5 +58,9 @@ struct ComputePlanTests {
         try Data(count: 50).write(to: snapshot.appending(path: "config.json"))
         try FileManager.default.createSymbolicLink(at: snapshot.appending(path: "model.safetensors"), withDestinationURL: blobs.appending(path: "a"))
         #expect(ServeCommand.weightBytes(snapshot.path) == 1000)
+        let asset = snapshot.appending(path: "decision.aimodel")
+        try FileManager.default.createDirectory(at: asset, withIntermediateDirectories: true)
+        try Data(count: 300).write(to: asset.appending(path: "main.mlirb"))
+        #expect(ServeCommand.weightBytes(asset.path) == 300)
     }
 }

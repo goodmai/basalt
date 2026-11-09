@@ -72,19 +72,23 @@ extension MLXInferenceEngine {
         let stamp = String(Int(Date().timeIntervalSince1970 * 1000))
         let directory = output.map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath) }
             ?? FileManager.default.homeDirectoryForCurrentUser.appending(path: ".basalt/adapters/\(fingerprint)/\(stamp)")
-        guard modelDescription.isEmpty || !Self.isInside(directory, URL(fileURLWithPath: modelDescription)) else {
-            throw .invalidRequestStructure(details: "train: the adapter is never written next to the source weights; choose an output outside \(modelDescription)")
-        }
+        try refuseInsideModel(directory)
         guard !FileManager.default.fileExists(atPath: directory.path) else {
             throw .invalidRequestStructure(details: "train: \(directory.path) already exists; the adapter goes to a new directory, nothing is overwritten")
         }
         return directory
     }
 
+    func refuseInsideModel(_ directory: URL) throws(BasaltError) {
+        guard modelDescription.isEmpty || !Self.isInside(directory, URL(fileURLWithPath: modelDescription)) else {
+            throw .invalidRequestStructure(details: "train: the adapter is never written next to the source weights; choose an output outside \(modelDescription)")
+        }
+    }
+
     static func isInside(_ target: URL, _ directory: URL) -> Bool {
         func identity(_ url: URL) -> NSObject? { try? url.resourceValues(forKeys: [.fileResourceIdentifierKey]).fileResourceIdentifier as? NSObject }
-        guard let model = identity(directory) else { return false }
-        var url = target.standardizedFileURL
+        guard let model = identity(resolved(directory)) else { return false }
+        var url = resolved(target)
         for _ in url.pathComponents {
             if identity(url)?.isEqual(model) == true { return true }
             url.deleteLastPathComponent()
@@ -92,6 +96,12 @@ extension MLXInferenceEngine {
         return false
     }
 
+    static func resolved(_ url: URL) -> URL {
+        let components = url.absoluteURL.pathComponents
+        func path(_ count: Int) -> URL { URL(fileURLWithPath: NSString.path(withComponents: Array(components.prefix(count)))) }
+        let existing = (1 ... max(1, components.count)).last { FileManager.default.fileExists(atPath: path($0).path) } ?? 1
+        return components.dropFirst(existing).reduce(path(existing).resolvingSymlinksInPath()) { $0.appending(component: $1) }.standardizedFileURL
+    }
 }
 
 extension MLXInferenceEngine {

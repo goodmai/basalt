@@ -92,6 +92,8 @@ enum OrchestratorEvent {
     case released(Int)
     case limitsApplied(MemoryLimits)
     case refusedForMemory
+    case trainingStarted
+    case trainingEnded
 }
 
 struct OrchestratorState: Sendable {
@@ -103,6 +105,7 @@ struct OrchestratorState: Sendable {
     var pendingSwitch: (modelId: String, task: Task<Void, Error>)?
     var memoryLimits: MemoryLimits?
     var memoryRefusals = 0
+    var training = false
 
     func checkInvariants(after previous: OrchestratorState) -> [String] {
         modelEpoch < previous.modelEpoch ? ["the model epoch went back from \(previous.modelEpoch) to \(modelEpoch)"] : []
@@ -132,6 +135,10 @@ struct OrchestratorState: Sendable {
             next.memoryLimits = limits
         case .refusedForMemory:
             next.memoryRefusals += 1
+        case .trainingStarted:
+            next.training = true
+        case .trainingEnded:
+            next.training = false
         }
         return next
     }
