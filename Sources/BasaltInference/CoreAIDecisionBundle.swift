@@ -52,15 +52,17 @@ struct CoreAIDecisionBundle: Sendable, Equatable {
             return Function(name: name, batch: batch, length: length)
         }.sorted { ($0.length, $0.batch) < ($1.length, $1.batch) }
         let temperatures = manifest["temperature"] as? [Double] ?? []
+        let byOptions = manifest["temperature_by_options"] as? [String: Double] ?? [:]
         guard let cls = tokens["cls"], let sep = tokens["sep"], let mask = tokens["mask"], let pad = tokens["pad"], !functions.isEmpty, temperatures.count == 3,
-              let maxLength = manifest["max_len"] as? Int, let headMaxLength = manifest["head_max_len"] as? Int, maxLength <= functions[functions.count - 1].length
-        else { throw .modelConfigurationInvalid(path: path, reason: "the decision bundle needs cls/sep/mask/pad token ids, three temperatures, max_len and head_max_len, and functions up to max_len") }
+              (temperatures + byOptions.values).allSatisfy({ $0.isFinite && $0 > 0 }),
+              let maxLength = manifest["max_len"] as? Int, let headMaxLength = manifest["head_max_len"] as? Int, headMaxLength < maxLength, maxLength <= functions[functions.count - 1].length
+        else { throw .modelConfigurationInvalid(path: path, reason: "the decision bundle needs cls/sep/mask/pad token ids, three finite positive temperatures (and positive temperature_by_options), head_max_len below max_len, and functions up to max_len") }
         modelID = manifest["model_id"] as? String ?? URL(fileURLWithPath: path).lastPathComponent
         (self.maxLength, self.headMaxLength, maxOptionTokens) = (maxLength, headMaxLength, manifest["max_option_tokens"] as? Int ?? 48)
         (self.cls, self.sep, self.mask, self.pad) = (cls, sep, mask, pad)
         masked = Float(manifest["masked"] as? Double ?? -30000)
         self.temperatures = temperatures
-        temperaturesByOptions = manifest["temperature_by_options"] as? [String: Double] ?? [:]
+        temperaturesByOptions = byOptions
         self.functions = functions
     }
 
@@ -99,20 +101,20 @@ struct CoreAIDecisionBundle: Sendable, Equatable {
             options = options.map { Array($0.prefix(each)) }
             budget = headMaxLength - options.reduce(0) { $0 + $1.count }
         }
-        var ids = [cls] + tokenize("\(question.type.rawValue) question: \(clean(question.instructions))").prefix(max(8, budget)) + [sep]
+        let head = Array(tokenize("\(question.type.rawValue) question: \(clean(question.instructions))").prefix(max(8, budget)))
+        guard head.count + options.reduce(0, { $0 + $1.count }) <= headMaxLength else {
+            throw .invalidRequestStructure(details: "systemone: the options of a question do not fit in \(headMaxLength) tokens of \(modelID)")
+        }
+        var ids = [cls] + head + [sep]
         var markers: [Int] = []
         for option in options {
             markers.append(ids.count)
             ids += option
         }
         ids.append(sep)
-        ids += state.prefix(max(0, maxLength - ids.count - 1))
-        ids = Array((ids + [sep]).prefix(maxLength))
-        markers = markers.filter { $0 < maxLength }
-        guard markers.count == options.count else {
-            throw .invalidRequestStructure(details: "systemone: the options of a question do not fit in \(headMaxLength) tokens of \(modelID)")
-        }
-        return Encoded(ids: ids, markers: markers)
+        let requested = ids.count + state.count + 1
+        guard requested <= maxLength else { throw .contextLengthExceeded(maxTokens: maxLength, requested: requested) }
+        return Encoded(ids: ids + state + [sep], markers: markers)
     }
 
     static func clean(_ text: String) -> String { text.replacingOccurrences(of: maskText, with: " ") }
