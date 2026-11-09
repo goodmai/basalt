@@ -18,10 +18,10 @@ struct PreemptibleTrainingTests {
         return request
     }
 
-    static func run(_ engine: MLXInferenceEngine, _ request: DistillRequest, lease: StepLease? = nil) async throws -> DistillRun {
+    static func run(_ engine: MLXInferenceEngine, _ request: DistillRequest, lease: StepLease? = nil, train: [TrainingTask] = train) async throws -> DistillRun {
         let directory = request.resume ? URL(fileURLWithPath: try #require(request.output)) : try await engine.reservedDirectory(request.output)
         let steps = try await engine.adapterSteps(layers: request.layers, rank: request.rank, lease: lease, what: "distillation")
-        return try await MLXInferenceEngine.distillAdapter(train, heldOut: heldOut, request: request, directory: directory, steps: steps)
+        return try await MLXInferenceEngine.distillAdapter(train, heldOut: Self.heldOut, request: request, directory: directory, steps: steps)
     }
 
     static func savedStep(_ output: URL) -> Int? { try? AdapterCheckpoint.saved(in: output).step }

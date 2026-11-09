@@ -35,6 +35,7 @@ actor MockInferenceEngine: InferenceEngine {
     var requests: [GenerationRequest] = []
     var failure: (@Sendable (GenerationRequest) -> BasaltError?)?
     var heldStreams: [CheckedContinuation<Void, Never>]?
+    var heldTokenCounts: [CheckedContinuation<Void, Never>]?
     private(set) var persistCount = 0
     var mockTranscription: Transcription?
     var mockTakesImages = true
@@ -46,7 +47,18 @@ actor MockInferenceEngine: InferenceEngine {
     var transcribesAudio: Bool { mockTranscription != nil }
     var takesImages: Bool { mockTakesImages }
 
-    func promptTokenCount(for request: GenerationRequest) async -> Int? { mockPromptTokens }
+    func promptTokenCount(for request: GenerationRequest) async -> Int? {
+        if heldTokenCounts != nil { await withCheckedContinuation { heldTokenCounts?.append($0) } }
+        return mockPromptTokens
+    }
+
+    func holdTokenCounts() { heldTokenCounts = [] }
+
+    func releaseTokenCounts() {
+        let held = heldTokenCounts ?? []
+        heldTokenCounts = nil
+        held.forEach { $0.resume() }
+    }
 
     func apply(_ directive: MemoryDirective) async -> MemoryLimits? {
         appliedDirectives.append(directive)

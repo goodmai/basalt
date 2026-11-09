@@ -109,7 +109,7 @@ struct PreemptibleTrainingRealModelTests {
 
 extension PreemptibleTrainingRealModelTests {
     @Test("TTFT p95 idle and during a running distillation, step time, and steps/s with no requests against today's exclusive run",
-          .enabled(if: !models.isEmpty, "set BASALT_E2E=1 and BASALT_E2E_PREEMPT_MODELS"), arguments: models)
+          .enabled(if: !models.isEmpty, "set BASALT_E2E=1 and BASALT_E2E_PREEMPT_MODELS"), .timeLimit(.minutes(30)), arguments: models)
     func preemptible(entry: String) async throws {
         let log = try await ModelRunLog("preempt", modelPath: NF4Run.path(entry))
         defer { log.releaseGPU() }
@@ -147,8 +147,15 @@ extension PreemptibleTrainingRealModelTests {
     ) async throws {
         let container = try #require(await engine.container)
         let sections = Sections()
-        let training = Task { try await Self.distill(orchestrator, engine, iterations: 10_000, sections: sections) }
-        while sections.list.withLock({ $0.count }) < 8 { try await Task.sleep(for: .milliseconds(100)) }
+        let ended = Mutex(false)
+        let training = Task {
+            defer { ended.withLock { $0 = true } }
+            return try await Self.distill(orchestrator, engine, iterations: 10_000, sections: sections)
+        }
+        while sections.list.withLock({ $0.count }) < 8 {
+            guard !ended.withLock({ $0 }) else { throw BasaltError.inferenceError("training ended before its fourth step: \(await training.result)") }
+            try await Task.sleep(for: .milliseconds(100))
+        }
         let stepTime = Self.percentile(Self.stepSeconds(sections.list.withLock { $0 }, first: 5, count: 3).each, 0.5)
         var generator = SplitMix64(seed: 399)
         var during: [Double] = []
