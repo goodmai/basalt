@@ -24,7 +24,7 @@ struct FFNSplitBenchmarkTests {
 
         func callAsFunction(_ x: MLXArray) -> MLXArray {
             func project(_ input: MLXArray, _ w: (MLXArray, MLXArray, MLXArray)) -> MLXArray {
-                quantizedMatmul(input, w.0, scales: w.1, biases: w.2, transpose: true, groupSize: 64, bits: 4)
+                quantizedMM(input, w.0, scales: w.1, biases: w.2, transpose: true, groupSize: 64, bits: 4)
             }
             return project(silu(project(x, gate)) * project(x, up), down)
         }
