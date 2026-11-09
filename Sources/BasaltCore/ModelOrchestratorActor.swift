@@ -6,7 +6,7 @@ public actor ModelOrchestratorActor {
     private var state: OrchestratorState
     private let logger = BasaltLogger(module: "ModelOrchestrator")
     nonisolated public let gate: GenerationGate
-    public let sessionLog: SessionLogWriter?
+    nonisolated public let sessionLog: SessionLogWriter?
     public let telemetry: TelemetryTracker
     private var shutdownTask: Task<Void, Never>?
     private var cloudFallback: (any CloudFallback)?
@@ -17,7 +17,7 @@ public actor ModelOrchestratorActor {
     private var thermal = ThermalLevel.current
     private var pacesThermally = false
     private var adaptiveThinkingBudget = false
-    var speechFallback: (any AudioTranscriber)?
+    var media = MediaFallbacks()
 
     public struct KVOptions: Sendable {
         let precision: KVPrecision?
@@ -50,6 +50,8 @@ public actor ModelOrchestratorActor {
     public var currentModelId: String { state.modelId }
 
     var kvReservations: [Int: ByteCount] { state.reservations.bytes }
+
+    var loaded: (path: String, epoch: Int) { (state.modelPath, state.modelEpoch) }
 
     var routingModelKey: String {
         "\(modelInfo)@\(URL(fileURLWithPath: state.modelPath).lastPathComponent)"
@@ -145,7 +147,7 @@ extension ModelOrchestratorActor {
         }
     }
 
-    private func autoSwitch(to modelId: String?) async throws(BasaltError) {
+    func autoSwitch(to modelId: String?) async throws(BasaltError) {
         guard let id = modelId, !id.isEmpty, id != "basalt" else { return }
         if await engine.isLoaded { return }
         guard id != currentModelId else { return }
@@ -219,7 +221,7 @@ extension ModelOrchestratorActor {
 
 extension ModelOrchestratorActor {
     func cloudFallbackReason(for request: GenerationRequest) async -> CloudFallbackReason? {
-        guard let cloudFallback, request.isServiceRequest != true, request.adapter == nil,
+        guard let cloudFallback, request.isServiceRequest != true, request.adapter == nil, request.origin != OCRRecipe.origin,
               let assessment = await cloudFallback.assess(request, localModel: routingModelKey)
         else { return nil }
         let promptTokens = Self.estimatedTokens(Self.budgetedText(request))

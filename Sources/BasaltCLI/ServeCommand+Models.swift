@@ -77,6 +77,35 @@ extension ServeCommand {
         }
     }
 
+    func loadDecisions(chat: MLXInferenceEngine) async throws -> (any DecisionEngine)? {
+        guard let decisionModel else { return nil }
+        do {
+            if decisionModel == "self" {
+                log("Serving decisions (/v1/systemone) by option-letter readout of the chat model")
+                return ReadoutDecisionEngine(engine: chat, modelID: "self", readout: .uncalibrated)
+            }
+            let directory = URL(fileURLWithPath: try await resolvedPath(decisionModel, quant: nil))
+            guard JevEvaluator.isBundle(directory) else { return try await readoutDecisions(decisionModel, directory: directory) }
+            let base = URL(fileURLWithPath: try await resolvedPath(try JevEvaluator.baseModel(of: directory), quant: nil))
+            let evaluator = try await JevEvaluator(directory: directory, base: base)
+            log("Serving \(evaluator.modelID) (decision, /v1/systemone) on base \(base.lastPathComponent)")
+            return evaluator
+        } catch let error as BasaltError {
+            log("\(red("[error]")) \(error.localizedDescription)")
+            throw ExitCode.failure
+        }
+    }
+
+    func readoutDecisions(_ model: String, directory: URL) async throws(BasaltError) -> any DecisionEngine {
+        var configuration = EngineConfiguration.standard
+        configuration.promptCacheBytes = 0
+        let engine = MLXInferenceEngine(configuration)
+        try await engine.load(modelPath: directory.path)
+        let readout = SystemOneReadout.known(model) ?? .uncalibrated
+        log("Serving \(model) (decision, /v1/systemone) by option-letter readout\(readout == .uncalibrated ? ", uncalibrated" : ", calibrated T \(readout.temperature)")")
+        return ReadoutDecisionEngine(engine: engine, modelID: model, readout: readout)
+    }
+
     func resolveModelPath() async throws -> String {
         let path = try await requestedModelPath()
         if requireVerified { try await refuseUnverified(path) }

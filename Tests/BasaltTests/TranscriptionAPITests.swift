@@ -246,7 +246,7 @@ struct TranscriptionAPITests {
         await orchestrator.setSpeechFallback(ScriptedTranscriber())
         let capturer = OutputCapturer()
         let server = MCPServer(orchestrator: orchestrator) { capturer.capture($0) }
-        #expect(MCPTool(name: "basalt_transcribe") == .transcribe)
+        #expect(MCPTool(name: "basalt_transcribe") == .media(.transcribe))
         await server.dispatch(#"{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}"#)
         #expect(capturer.lines.last?.contains("basalt_transcribe") == true)
         let audio = AudioFixture.sine().base64EncodedString()

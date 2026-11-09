@@ -21,6 +21,7 @@ public protocol InferenceEngine: AudioTranscriber {
     func loadAdapters(_ directories: [String: URL]) async throws(BasaltError)
     func useAdapter(_ name: String?) async throws(BasaltError)
     var transcribesAudio: Bool { get async }
+    var takesImages: Bool { get async }
 }
 
 extension InferenceEngine {
@@ -39,6 +40,7 @@ extension InferenceEngine {
     public var activeAdapter: String? { get async { nil } }
     public func useAdapter(_ name: String?) async throws(BasaltError) {}
     public var transcribesAudio: Bool { get async { false } }
+    public var takesImages: Bool { get async { true } }
 
     public func transcribe(_ request: TranscriptionRequest) async throws(BasaltError) -> Transcription {
         throw .noAudioEncoder("")

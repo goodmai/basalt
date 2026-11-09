@@ -367,7 +367,7 @@ extension SessionLogWriter {
         }
     }
 
-    private func stamp(_ session: String) -> SessionLogRecord.Stamp {
+    func stamp(_ session: String) -> SessionLogRecord.Stamp {
         .init(ts: ISO8601DateFormatter.string(from: clock(), timeZone: .gmt, formatOptions: [.withInternetDateTime, .withFractionalSeconds]),
               session: session)
     }
@@ -411,7 +411,7 @@ extension SessionLogWriter {
         writePending()
     }
 
-    private func append(_ record: some Encodable, session: String) {
+    func append(_ record: some Encodable, session: String) {
         let line = state.pending.count < bufferLimit ? SessionLogFormat.line(record) : nil
         state = SessionLogState.reduce(state, .appended(session: session, line: line, limit: bufferLimit))
     }

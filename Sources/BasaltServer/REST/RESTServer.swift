@@ -9,6 +9,8 @@ package struct RESTServer: Sendable {
     let orchestrator: ModelOrchestratorActor
     let config: ServerConfig
     let embeddings: (any EmbeddingEngine)?
+    private(set) var decisions: (any DecisionEngine)?
+    private(set) var pipeline = PipelineStages()
 
     let shutdownDeadline: Duration
     let handleSignals: Bool
@@ -25,9 +27,22 @@ package struct RESTServer: Sendable {
         self.orchestrator = orchestrator
         self.config = config
         self.embeddings = embeddings
+        self.decisions = nil
         self.shutdownDeadline = shutdownDeadline
         self.handleSignals = handleSignals
         self.rateClock = rateClock
+    }
+
+    package func withDecisions(_ engine: (any DecisionEngine)?) -> RESTServer {
+        var server = self
+        server.decisions = engine
+        return server
+    }
+
+    package func withPipeline(_ stages: PipelineStages) -> RESTServer {
+        var server = self
+        server.pipeline = stages
+        return server
     }
 
     package func run() async throws {
@@ -123,7 +138,10 @@ package struct RESTServer: Sendable {
         oai.post("/messages", use: AnthropicController(orchestrator: orchestrator, modelId: defaultId, zeroCopyBody: config.experimentalZeroCopyBody).messages)
         oai.post("/embeddings", use: embedding.embeddings)
         oai.post("/rerank", use: embedding.rerank)
+        oai.post("/systemone", use: SystemOneController(engine: decisions, log: orchestrator.sessionLog).decide)
         oai.post("/audio/transcriptions", use: TranscriptionsController(orchestrator: orchestrator).transcriptions)
+        oai.post("/ocr", use: OCRController(orchestrator: orchestrator).ocr)
+        oai.post("/pipeline", use: PipelineController(runner: PipelineRunner(chat: orchestrator, decisions: decisions, stages: pipeline)).pipeline)
     }
 
     private func addDocumentationRoutes(to router: Router<BasicRequestContext>) {
@@ -187,8 +205,11 @@ extension RESTServer {
         "/v1/messages":            { "post": { "summary": "Anthropic-compatible messages API" } },
         "/v1/score":               { "post": { "summary": "Top-k logprobs of supplied completion token ids after chat messages, in one forward pass (teacher for on-policy distill)" } },
         "/v1/embeddings":          { "post": { "summary": "OpenAI-compatible embeddings (serve --embedding-model)" } },
+        "/v1/systemone":           { "post": { "summary": "Single-pass typed decisions: noul, choice, score (serve --decision-model)" } },
         "/v1/rerank":              { "post": { "summary": "Cohere/Jina-compatible rerank (serve --rerank-model)" } },
-        "/v1/audio/transcriptions": { "post": { "summary": "OpenAI-compatible speech to text (multipart: file, model, language, response_format, temperature)" } }
+        "/v1/audio/transcriptions": { "post": { "summary": "OpenAI-compatible speech to text (multipart: file, model, language, response_format, temperature)" } },
+        "/v1/ocr":                 { "post": { "summary": "Document OCR with GLM-OCR or MinerU2.5 (JSON: file as base64 PDF or image, pages such as 1-3, task document|text|table|formula|chart, format markdown|json, model)" } },
+        "/v1/pipeline":            { "post": { "summary": "Perceive (OCR of pdf/image attachments with serve --pipeline-ocr-model, transcription of audio) → decide (System One on typed questions) → answer (the chat model, only for abstained questions and a task); returns perceived text, answers, the System 2 reply and a route receipt" } }
       }
     }
     """

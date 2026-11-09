@@ -30,6 +30,7 @@ struct ServeConfigFileTests {
             "\($0.sampling.topK ?? 0) \($0.sampling.minP ?? 0) \($0.sampling.seed ?? 0) \($0.sampling.reasoningEffort ?? "")"
         },
         Group(yaml: "serve: { experimental_adaptive_thinking_budget: true }", flags: ["--experimental-adaptive-thinking-budget"]) { "\($0.thinking.experimentalAdaptiveThinkingBudget)" },
+        Group(yaml: "serve: { image_fallback: ocr }", flags: ["--image-fallback", "ocr"]) { "\(String(describing: $0.experimental.imageFallback))" },
         Group(yaml: "serve: { expert_streaming: { enabled: true, cache_gb: 2.5 } }", flags: ["--experimental-expert-streaming", "--expert-cache-gb", "2.5"]) {
             "\($0.expertStreaming.enabled) \($0.expertStreaming.cacheGB ?? 0)"
         },

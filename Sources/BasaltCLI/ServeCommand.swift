@@ -41,6 +41,9 @@ struct ServeCommand: AsyncParsableCommand {
     )
     var embeddingAdapter: String?
 
+    @Option(name: .customLong("decision-model"), help: "OpenJev decision model served on /v1/systemone (single-pass noul/choice/score): \"self\" reads option letters from the chat model; an OpenJev head bundle (openjev_config.json, head.safetensors, PEFT adapter) runs on its Qwen3 base; any other repo, such as openjev/OpenJev-Flash-9B-MLX, is loaded beside the chat model and read out by option letters")
+    var decisionModel: String?
+
     @Option(
         name: .customLong("rerank-model"),
         help: "Reranker served on /v1/rerank next to the chat model: repo ID or local path of an encoder cross-encoder, Qwen3-Reranker or Jina reranker (its name must contain \"rerank\")"
@@ -64,6 +67,8 @@ struct ServeCommand: AsyncParsableCommand {
     @OptionGroup var thinking: ThinkingOptions
 
     @OptionGroup var network: ServeNetworkOptions
+
+    @OptionGroup var pipeline: PipelineOptions
 
     @Option(
         name: .customLong("max-concurrent"),
@@ -171,14 +176,19 @@ struct ServeCommand: AsyncParsableCommand {
 
         BasaltLogger.globalLevel = config.logLevel.basaltLevel
 
-        let orchestrator = try await makeOrchestrator(maxTokens: config.maxTokens)
+        let engine = try makeEngine()
+        let orchestrator = try await makeOrchestrator(engine: engine, maxTokens: config.maxTokens)
 
         let embeddings = try await loadEmbeddings()
+        let decisions = try await loadDecisions(chat: engine)
+        let ocrPath = try await pipelineOCRPath()
+        try await admitComputePlan(chatPath: resolvedPath, embeddings: embeddings, decisions: decisions, ocrPath: ocrPath)
 
         try await load(orchestrator, from: resolvedPath)
+        let stages = try await loadPipelineStages(ocrPath: ocrPath)
         if !noMemoryCoordinator { await orchestrator.coordinateMemory(with: MemoryCoordinator()) }
         if !noThermalPolicy { await orchestrator.coordinateThermal() }
-        if experimental.speechAnalyzer { await orchestrator.setSpeechFallback(SpeechAnalyzerTranscriber()) }
+        await experimental.attachMediaFallbacks(to: orchestrator)
 
         try await attachCloudFallback(to: orchestrator, virtualKeys: config.virtualKeys)
 
@@ -192,19 +202,18 @@ struct ServeCommand: AsyncParsableCommand {
             orchestrator: orchestrator,
             modelId: resolvedPath.split(separator: "/").last.map { String($0) },
             library: HarnessExperienceLibrary(rootDirectory: HarnessExperienceLibrary.defaultRoot)
-        ).withResearchTools(researchTools).withImageDirectories(imageDirs.map { URL(fileURLWithPath: $0) }) : nil
+        ).withResearchTools(researchTools).withImageDirectories(imageDirs.map { URL(fileURLWithPath: $0) }).withDecisions(decisions).withPipeline(stages) : nil
 
         try await Self.runServers(
             ServerLaunch(
-                config: config, startREST: startREST, mcpServer: mcpServer, embeddings: embeddings,
+                config: config, startREST: startREST, mcpServer: mcpServer, embeddings: embeddings, decisions: decisions, pipeline: stages,
                 statsInterval: stats ? min(max(1, statsInterval), 86_400) : nil, canaryInterval: canaryMinutes.map { .seconds($0 * 60) }),
             orchestrator: orchestrator)
     }
 }
 
 extension ServeCommand {
-    private func makeOrchestrator(maxTokens: Int) async throws -> ModelOrchestratorActor {
-        let engine = try makeEngine()
+    private func makeOrchestrator(engine: MLXInferenceEngine, maxTokens: Int) async throws -> ModelOrchestratorActor {
         if batchSlots > 1, maxConcurrent < 2 {
             log("\(yellow("[warn]")) --batch-slots \(batchSlots) has no effect with --max-concurrent \(maxConcurrent): only one generation runs at a time")
         }

@@ -1,4 +1,6 @@
 import ArgumentParser
+import BasaltCore
+import BasaltSpeech
 
 struct ExperimentalServeOptions: ParsableArguments {
     @Flag(
@@ -18,4 +20,19 @@ struct ExperimentalServeOptions: ParsableArguments {
         help: "Serve /v1/audio/transcriptions and the basalt_transcribe MCP tool through macOS SpeechAnalyzer on the Neural Engine when the loaded model has no audio encoder. The first request for a language may install its system speech assets (#222, #230). Off by default until its word error rate is measured"
     )
     var speechAnalyzer = false
+
+    @Option(
+        name: .customLong("image-fallback"),
+        help: "ocr: when the loaded model takes no images, read each image of a chat request with Apple's on-device Vision OCR and send its Markdown as a text block ([image N, OCR]) instead of refusing the request; responses say so in the X-Basalt-Image-Fallback header and, when not streamed, a basalt field (#403). Off by default until its quality is measured"
+    )
+    var imageFallback: ImageFallback?
+
+    enum ImageFallback: String, ExpressibleByArgument {
+        case ocr
+    }
+
+    func attachMediaFallbacks(to orchestrator: ModelOrchestratorActor) async {
+        if speechAnalyzer { await orchestrator.setSpeechFallback(SpeechAnalyzerTranscriber()) }
+        await orchestrator.setDocumentTranscriber(VisionDocumentTranscriber(), imageFallback: imageFallback == .ocr)
+    }
 }

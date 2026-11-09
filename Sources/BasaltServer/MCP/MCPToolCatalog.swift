@@ -71,6 +71,17 @@ enum MCPToolCatalog {
                 "temperature": ["type": "number", "description": "Sampling temperature 0-1 (default 0)"],
             ], required: ["audio", "format"])
         ),
+        MCPToolDescriptor(
+            name: "basalt_systemone_decide",
+            description: "Single-pass typed decisions with the loaded OpenJev decision model (serve --decision-model): noul (P(true)), choice (one of 2–255 named candidates) and score (expected level of 2–10 ordered levels). The state is encoded once and every candidate is scored as a branch over it; no text is generated. Probabilities are calibrated per type unless calibrated is false.",
+            inputSchema: ResearchTool.object([
+                "state": ["description": "The evidence: text, or a JSON object/array (serialized with sorted keys)"],
+                "questions": ["type": "object", "description": "Map of question ID → {type: noul|choice|score, instructions, criteria}: choice criteria are {name: description}, score criteria a list of level descriptions, noul criteria optional {false, true}"],
+                "calibrated": ["type": "boolean", "description": "Apply the model's per-type temperature (default true)"],
+            ], required: ["state", "questions"])
+        ),
+        ocr,
+        pipeline,
         MCPToolDescriptor(name: "gemma_generate", description: "Generate text using the locally-running Gemma model via MLX.", inputSchema: generateSchema),
         MCPToolDescriptor(name: "gemma_status", description: statusDescription, inputSchema: emptySchema),
         MCPToolDescriptor(name: "gemma_add_knowledge", description: addKnowledgeDescription, inputSchema: addKnowledgeSchema),
