@@ -39,23 +39,28 @@ extension MLXInferenceEngine {
         let examples = try DistillCore.examples(jsonl: String(decoding: data, as: UTF8.self))
         let teacher = try TeacherClient(request.teacher.url, model: request.teacher.model, provider: request.teacher.provider, environment: environment, session: session)
         let cache = DistillCache(directory: DistillCache.directory(for: request, prompts: data, home: home))
-        let directory = request.resume ? try resumedDirectory(request.output) : try reservedDirectory(request.output)
+        let directory = request.resume ? try resumedDirectory(request.output) : try adapterDirectory(request.output)
         do {
             return try await distilled(request, examples: examples, teacher: teacher, cache: cache, directory: directory, steps: steps)
         } catch {
-            if !request.resume { Self.releaseIfEmpty(directory) }
-            throw error
+            throw AdapterCheckpoint.withResumeHint(error, in: directory)
         }
     }
 
     func distilled(
         _ request: DistillRequest, examples: [DistillExample], teacher: TeacherClient, cache: DistillCache, directory: URL, steps: AdapterSteps
     ) async throws(BasaltError) -> DistillReport {
-        if request.onPolicy { return try await onPolicyDistill(request, examples: examples, teacher: teacher, directory: directory, steps: steps) }
+        if request.onPolicy {
+            return try await reserving(directory, resume: false) { () async throws(BasaltError) in
+                try await onPolicyDistill(request, examples: examples, teacher: teacher, directory: directory, steps: steps)
+            }
+        }
         var report = try await Self.collect(request, examples: examples, teacher: teacher, cache: cache)
         let (train, heldOut) = Self.pairs(request, examples: examples, entries: cache.load(), markers: profile.thinkingMarkers, report: &report)
         guard !train.isEmpty, !heldOut.isEmpty else { return report }
-        let run = try await Self.distillAdapter(train, heldOut: heldOut, request: request, directory: directory, steps: steps)
+        let run = try await reserving(directory, resume: request.resume) { () async throws(BasaltError) in
+            try await Self.distillAdapter(train, heldOut: heldOut, request: request, directory: directory, steps: steps)
+        }
         (report.losses, report.teacherNLLBefore, report.teacherNLLAfter, report.resumedAt) = (run.losses, run.nllBefore, run.nllAfter, run.resumedAt)
         report.rejected["too_long", default: 0] += run.tooLong
         report.adapterDirectory = directory.path

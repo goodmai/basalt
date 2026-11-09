@@ -84,10 +84,9 @@ extension ResearchCall {
         case .pack(let request): .json(try await lab.pack(request))
         case .train(let request): .json(try await lab.train(request))
         case .trainJepa(let request): .json(try await lab.trainJEPA(request))
-        case .distill(let request): .json(try await lab.distill(request, lease: nil))
         case .contrast(let request): .json(try await lab.contrast(request))
         case .commitSteering(let commit): .json(try await lab.commitSteering(commit))
-        case .describe, .tensors, .tensor, .promptCache, .trace, .intervene, .delta, .overlays, .undo, .compare: throw .invalidRequestStructure(details: "not a lab call")
+        case .describe, .tensors, .tensor, .promptCache, .trace, .intervene, .delta, .overlays, .undo, .compare, .distill: throw .invalidRequestStructure(details: "not a lab call")
         }
     }
 }

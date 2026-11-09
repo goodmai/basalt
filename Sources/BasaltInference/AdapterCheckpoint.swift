@@ -130,6 +130,12 @@ enum AdapterCheckpoint {
         return nil
     }
 
+    static func withResumeHint(_ error: BasaltError, in adapter: URL) -> BasaltError {
+        guard case .inferenceError(let message) = error,
+              FileManager.default.fileExists(atPath: directory(in: adapter).appending(component: "progress.json").path) else { return error }
+        return .inferenceError("\(message); its checkpoint is in \(directory(in: adapter).path): resume with output \(adapter.path) and resume true")
+    }
+
     static func discard(in adapter: URL) {
         try? FileManager.default.removeItem(at: directory(in: adapter))
         try? FileManager.default.removeItem(at: staging(in: adapter))
@@ -159,6 +165,17 @@ extension MLXInferenceEngine {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
         } catch {
             throw .invalidRequestStructure(details: "distill: \(directory.path) could not be reserved (\(error.localizedDescription)); the adapter goes to a new directory, nothing is overwritten")
+        }
+    }
+
+    func reserving<R>(_ directory: URL, resume: Bool, _ body: () async throws(BasaltError) -> R) async throws(BasaltError) -> R {
+        guard !resume else { return try await body() }
+        try Self.reserve(directory)
+        do {
+            return try await body()
+        } catch {
+            Self.releaseIfEmpty(directory)
+            throw error
         }
     }
 

@@ -24,6 +24,8 @@ extension ModelOrchestratorActor {
         guard let lab = engine as? any ModelLab else {
             throw .invalidRequestStructure(details: "the inference engine of this server has no lab tools")
         }
+        try markTraining(true)
+        defer { try? markTraining(false) }
         let gate = gate
         return try await body(lab, StepLease(enter: { () async throws(BasaltError) -> Int in try await self.stepTicket() }, leave: { await gate.release($0) }))
     }

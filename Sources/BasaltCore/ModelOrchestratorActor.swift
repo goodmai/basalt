@@ -47,6 +47,11 @@ public actor ModelOrchestratorActor {
 
     private var kv: KVPlanner { state.kv }
 
+    func markTraining(_ running: Bool) throws(BasaltError) {
+        guard !running || !state.training else { throw .invalidRequestStructure(details: "a distillation is already running on this server; wait for it to finish or cancel it before starting another") }
+        state = .reduce(state, running ? .trainingStarted : .trainingEnded)
+    }
+
     public var currentModelId: String { state.modelId }
 
     var kvReservations: [Int: ByteCount] { state.reservations.bytes }
