@@ -3,11 +3,16 @@ import BasaltCore
 
 package struct PipelineStages: Sendable {
     package let ocr: ModelOrchestratorActor?
+    package let audio: ModelOrchestratorActor?
+    package let speech: (any AudioTranscriber)?
     package let abstainBelow: Double?
     package let minMargin: Double?
 
-    package init(ocr: ModelOrchestratorActor? = nil, abstainBelow: Double? = nil, minMargin: Double? = nil) {
-        (self.ocr, self.abstainBelow, self.minMargin) = (ocr, abstainBelow, minMargin)
+    package init(
+        ocr: ModelOrchestratorActor? = nil, audio: ModelOrchestratorActor? = nil, speech: (any AudioTranscriber)? = nil,
+        abstainBelow: Double? = nil, minMargin: Double? = nil
+    ) {
+        (self.ocr, self.audio, self.speech, self.abstainBelow, self.minMargin) = (ocr, audio, speech, abstainBelow, minMargin)
     }
 }
 
@@ -16,12 +21,18 @@ struct PipelineRunner: Sendable {
     let decisions: (any DecisionEngine)?
     let stages: PipelineStages
 
-    func missingStage(_ request: PipelineRequest) -> String? {
-        PipelineCore.missingStage(request, hasOCR: stages.ocr != nil, hasDecisions: decisions != nil)
+    func perceivers() async -> PipelineCore.Perceivers {
+        PipelineCore.Perceivers(
+            ocrModel: stages.ocr != nil, appleVision: await chat.readsDocuments, speechModel: stages.audio != nil,
+            chatAudio: await chat.transcribesAudio, speechAnalyzer: stages.speech != nil)
+    }
+
+    func missingStage(_ request: PipelineRequest) async -> String? {
+        PipelineCore.missingStage(request, perceivers: await perceivers(), hasDecisions: decisions != nil)
     }
 
     func run(_ request: PipelineRequest, origin: RequestOrigin, sessionId: String?) async throws(BasaltError) -> PipelineResponse {
-        if let missing = missingStage(request) { throw .invalidRequestStructure(details: missing) }
+        if let missing = await missingStage(request) { throw .invalidRequestStructure(details: missing) }
         let started = ContinuousClock.now
         let (perceived, perceiving) = try await perceive(request)
         let state = PipelineCore.state(perceived, text: request.text)
@@ -38,27 +49,56 @@ struct PipelineRunner: Sendable {
 
     func perceive(_ request: PipelineRequest) async throws(BasaltError) -> (PipelinePerceived, [PipelineStageReceipt]) {
         var (pages, transcripts, receipts) = ([PipelinePage](), [String](), [PipelineStageReceipt]())
+        let perceivers = await perceivers()
         for (index, attachment) in request.attachments.enumerated() {
+            guard let perceiver = perceivers.perceiver(for: attachment) else { throw .invalidRequestStructure(details: "pipeline: no perceiver for attachment \(index + 1)") }
             let started = ContinuousClock.now
             switch attachment {
             case .document(let document):
-                let result = try await read(document, pages: request.pages)
+                let result = try await betweenGenerations(perceiver) { () async throws(BasaltError) in try await read(document, pages: request.pages, with: perceiver) }
                 pages += result.pages.map { PipelinePage(attachment: index, page: $0.page, markdown: $0.markdown) }
                 receipts.append(PipelineStageReceipt(
                     stage: .perceive, model: result.model, ms: Self.elapsed(since: started), tokens: result.pages.reduce(0) { $0 + $1.tokens }))
             case .audio(let clip):
-                transcripts.append(try await chat.transcribe(TranscriptionRequest(audio: clip)).text)
-                receipts.append(PipelineStageReceipt(stage: .perceive, model: await chat.modelInfo, ms: Self.elapsed(since: started), tokens: 0))
+                let heard = try await betweenGenerations(perceiver) { () async throws(BasaltError) in try await transcribe(clip, with: perceiver) }
+                transcripts.append(heard.text)
+                receipts.append(PipelineStageReceipt(stage: .perceive, model: heard.model, ms: Self.elapsed(since: started), tokens: 0))
             }
         }
         let transcript = transcripts.isEmpty ? nil : transcripts.joined(separator: "\n\n")
         return (PipelinePerceived(pages: pages.isEmpty ? nil : pages, transcript: transcript), receipts)
     }
 
-    func read(_ document: OCRDocument, pages: String?) async throws(BasaltError) -> OCRResult {
-        guard let ocr = stages.ocr else { throw .invalidRequestStructure(details: "pipeline: no OCR model is configured") }
+    func betweenGenerations<T: Sendable>(
+        _ perceiver: PipelineCore.Perceiver, _ body: @Sendable () async throws(BasaltError) -> T
+    ) async throws(BasaltError) -> T {
+        guard perceiver.betweenGenerations else { return try await body() }
+        do {
+            return try await chat.gate.exclusively(body)
+        } catch {
+            throw error as? BasaltError ?? .cancelled
+        }
+    }
+
+    func read(_ document: OCRDocument, pages: String?, with perceiver: PipelineCore.Perceiver) async throws(BasaltError) -> OCRResult {
         let selection = if case .pdf = document { pages } else { String?.none }
+        guard perceiver == .ocrModel, let ocr = stages.ocr else {
+            return try await chat.ocr(OCRRequest(document: document, pages: selection, task: nil, format: nil, model: OCRRequest.appleVision))
+        }
         return try await ocr.ocr(OCRRequest(document: document, pages: selection, task: nil, format: nil, model: nil))
+    }
+
+    func transcribe(_ clip: AudioClip, with perceiver: PipelineCore.Perceiver) async throws(BasaltError) -> (text: String, model: String) {
+        let request = try TranscriptionRequest(audio: clip)
+        switch perceiver {
+        case .speechModel:
+            if let audio = stages.audio { return (try await audio.transcribe(request).text, await audio.modelInfo) }
+        case .speechAnalyzer:
+            if let speech = stages.speech { return (try await speech.transcribe(request).text, PipelineCore.speechAnalyzerModel) }
+        case .chatModel, .ocrModel, .appleVision:
+            break
+        }
+        return (try await chat.transcribe(request).text, await chat.modelInfo)
     }
 
     func decide(

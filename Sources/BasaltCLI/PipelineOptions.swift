@@ -3,10 +3,14 @@ import ArgumentParser
 import BasaltCore
 import BasaltInference
 import BasaltServer
+import BasaltSpeech
 
 struct PipelineOptions: ParsableArguments {
     @Option(name: .customLong("pipeline-ocr-model"), help: "OCR model for /v1/pipeline and basalt_pipeline (GLM-OCR or MinerU2.5): repo ID or local path, loaded in its own engine beside the chat model so OCR never swaps it out")
     var ocrModel: String?
+
+    @Option(name: .customLong("pipeline-audio-model"), help: "Speech model for audio in /v1/pipeline and basalt_pipeline (Nemotron Transcribe): repo ID or local path, loaded in its own engine beside the chat model; without it, audio goes to the chat model when it has an audio encoder, otherwise to macOS SpeechAnalyzer")
+    var audioModel: String?
 
     @Option(name: .customLong("pipeline-abstain-below"), help: "In /v1/pipeline, System One abstains, and the question goes to the chat model, when its confidence is below this value (0 to 1; default: never)")
     var abstainBelow: Double?
@@ -32,31 +36,47 @@ extension ServeCommand {
         return "--pipeline-ocr-model \(model) (model_type \(modelType ?? "unknown")) has no OCR recipe; use GLM-OCR (glm_ocr) or MinerU2.5 (qwen2_vl)"
     }
 
-    func pipelineOCRPath() async throws -> String? {
-        guard let ocrModel = pipeline.ocrModel else { return nil }
+    struct PerceivePaths: Sendable {
+        var ocr: String?
+        var audio: String?
+    }
+
+    func pipelinePerceivePaths() async throws -> PerceivePaths {
+        var paths = PerceivePaths()
+        if let audioModel = pipeline.audioModel { paths.audio = try await resolvedPath(audioModel, quant: nil) }
+        guard let ocrModel = pipeline.ocrModel else { return paths }
         let path = try await resolvedPath(ocrModel, quant: nil)
         if let refusal = Self.ocrRefusal(ocrModel, path: path) {
             log("\(red("[error]")) \(refusal)")
             throw ExitCode.failure
         }
-        return path
+        paths.ocr = path
+        return paths
     }
 
-    func loadPipelineStages(ocrPath: String?) async throws -> PipelineStages {
-        guard let ocrPath, let ocrModel = pipeline.ocrModel else {
-            return PipelineStages(abstainBelow: pipeline.abstainBelow, minMargin: pipeline.minMargin)
+    func loadPipelineStages(_ paths: PerceivePaths) async throws -> PipelineStages {
+        let ocr = try await loadPerceiver(pipeline.ocrModel, path: paths.ocr, role: "OCR")
+        let audio = try await loadPerceiver(pipeline.audioModel, path: paths.audio, role: "speech")
+        if let audio, await !audio.transcribesAudio {
+            log("\(red("[error]")) --pipeline-audio-model \(pipeline.audioModel ?? "") has no audio encoder; use Nemotron Transcribe")
+            throw ExitCode.failure
         }
+        return PipelineStages(ocr: ocr, audio: audio, speech: SpeechAnalyzerTranscriber(), abstainBelow: pipeline.abstainBelow, minMargin: pipeline.minMargin)
+    }
+
+    func loadPerceiver(_ model: String?, path: String?, role: String) async throws -> ModelOrchestratorActor? {
+        guard let model, let path else { return nil }
         var configuration = EngineConfiguration.standard
         configuration.promptCacheBytes = 0
         let orchestrator = ModelOrchestratorActor(engine: MLXInferenceEngine(configuration), telemetry: TelemetryTracker())
         do {
-            try await orchestrator.loadModel(path: ocrPath)
+            try await orchestrator.loadModel(path: path)
         } catch {
             log("\(red("[error]")) \(error.localizedDescription)")
             throw ExitCode.failure
         }
-        await orchestrator.setModelId(ocrModel)
-        log("Serving \(ocrModel) (perceive, /v1/pipeline OCR) in its own engine")
-        return PipelineStages(ocr: orchestrator, abstainBelow: pipeline.abstainBelow, minMargin: pipeline.minMargin)
+        await orchestrator.setModelId(model)
+        log("Serving \(model) (perceive, /v1/pipeline \(role)) in its own engine")
+        return orchestrator
     }
 }

@@ -114,10 +114,24 @@ struct PipelineCoreTests {
         #expect(throws: BasaltError.self) { try PipelineAttachment(kind: "video", encoded: "AA==", format: nil) }
         #expect(throws: BasaltError.self) { try PipelineAttachment(kind: "audio", data: Data([1]), format: nil) }
         let request = try PipelineRequest(attachments: [], text: "s", questions: ["q": Self.rain], task: nil, pages: "1-2")
-        #expect(PipelineCore.missingStage(request, hasOCR: false, hasDecisions: false)?.contains("--decision-model") == true)
-        #expect(PipelineCore.missingStage(request, hasOCR: false, hasDecisions: true) == nil)
+        #expect(PipelineCore.missingStage(request, perceivers: .init(), hasDecisions: false)?.contains("--decision-model") == true)
+        #expect(PipelineCore.missingStage(request, perceivers: .init(), hasDecisions: true) == nil)
+    }
+
+    @Test("Perceive routing: documents go to the OCR model, else Apple Vision; audio to the speech model, else the chat model's audio encoder, else SpeechAnalyzer; only GPU encoders wait between generations; a missing perceiver names its flag")
+    func perceiverRouting() throws {
         let image = try PipelineAttachment(kind: "image", data: try OCRFixture.png(width: 2, height: 2), format: nil)
-        let document = try PipelineRequest(attachments: [image], text: nil, questions: nil, task: "t", pages: nil)
-        #expect(PipelineCore.missingStage(document, hasOCR: false, hasDecisions: false)?.contains("--pipeline-ocr-model") == true)
+        let audio = try PipelineAttachment(kind: "audio", data: AudioFixture.sine(seconds: 0.1), format: "wav")
+        let all = PipelineCore.Perceivers(ocrModel: true, appleVision: true, speechModel: true, chatAudio: true, speechAnalyzer: true)
+        #expect(all.perceiver(for: image) == .ocrModel && all.perceiver(for: audio) == .speechModel)
+        #expect(PipelineCore.Perceivers(appleVision: true, chatAudio: true, speechAnalyzer: true).perceiver(for: audio) == .chatModel)
+        #expect(PipelineCore.Perceivers(appleVision: true, speechAnalyzer: true).perceiver(for: audio) == .speechAnalyzer)
+        #expect(PipelineCore.Perceivers(appleVision: true, speechAnalyzer: true).perceiver(for: image) == .appleVision)
+        #expect(PipelineCore.Perceivers(ocrModel: true).perceiver(for: audio) == nil && PipelineCore.Perceivers(speechModel: true).perceiver(for: image) == nil)
+        #expect([PipelineCore.Perceiver.ocrModel, .appleVision, .speechModel, .chatModel, .speechAnalyzer].filter(\.betweenGenerations) == [.ocrModel, .speechModel])
+        let mixed = try PipelineRequest(attachments: [image, audio], text: nil, questions: nil, task: "t", pages: nil)
+        #expect(PipelineCore.missingStage(mixed, perceivers: .init(), hasDecisions: false)?.contains("--pipeline-ocr-model") == true)
+        #expect(PipelineCore.missingStage(mixed, perceivers: .init(appleVision: true), hasDecisions: false)?.contains("--pipeline-audio-model") == true)
+        #expect(PipelineCore.missingStage(mixed, perceivers: .init(appleVision: true, speechAnalyzer: true), hasDecisions: false) == nil)
     }
 }

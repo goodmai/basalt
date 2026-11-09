@@ -48,7 +48,7 @@ struct PipelineController: Sendable {
         do {
             let data = Data(try await request.body.collect(upTo: Self.bodyLimit).readableBytesView)
             let parsed = try Self.request(from: data, imageDirectories: [])
-            if let missing = runner.missingStage(parsed) {
+            if let missing = await runner.missingStage(parsed) {
                 return ProviderErrorResponse.response(status: .notFound, message: missing, shape: .openAI)
             }
             let response = try await runner.run(

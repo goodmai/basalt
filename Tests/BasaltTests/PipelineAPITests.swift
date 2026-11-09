@@ -114,6 +114,70 @@ struct PipelineAPITests {
         #expect(await engine.getRequests().isEmpty)
     }
 
+    static func speechModel(_ text: String) async throws -> ModelOrchestratorActor {
+        let engine = MockInferenceEngine()
+        await engine.setMockTranscription(Transcription(text: text))
+        let orchestrator = ModelOrchestratorActor(engine: engine, telemetry: TelemetryTracker())
+        try await orchestrator.loadModel(path: "org/nemotron-transcribe")
+        await orchestrator.setModelId("org/nemotron-transcribe")
+        return orchestrator
+    }
+
+    static var audio: [String: Any] { ["kind": "audio", "data": AudioFixture.sine(seconds: 0.2).base64EncodedString(), "format": "wav"] }
+
+    @Test("Audio goes to the speech model when one is loaded, else to SpeechAnalyzer; the transcript reaches System One and the receipt names the perceiver; with neither it is a 404 naming --pipeline-audio-model")
+    func audioRouting() async throws {
+        let (_, chat) = try await Self.chat()
+        let fallback = ScriptedTranscriber()
+        let decisions = GatingDecisionEngine()
+        let nemotron = try await Self.post(
+            chat, decisions: decisions, stages: PipelineStages(audio: try await Self.speechModel("the car is red"), speech: fallback),
+            ["attachments": [Self.audio], "questions": Self.questions])
+        #expect(nemotron.status == .ok)
+        #expect((nemotron.json["perceived"] as? [String: Any])?["transcript"] as? String == "the car is red")
+        #expect(Self.stages(nemotron.json).first?["model"] as? String == "org/nemotron-transcribe")
+        #expect(decisions.calls.requests.withLock { $0.first?.state } == "[transcript]\nthe car is red")
+        #expect(fallback.requests.withLock { $0.isEmpty })
+        let analyzer = try await Self.post(chat, decisions: decisions, stages: PipelineStages(speech: fallback), ["attachments": [Self.audio], "text": "Note.", "questions": Self.questions])
+        #expect(analyzer.status == .ok)
+        #expect(Self.stages(analyzer.json).map { $0["model"] as? String } == [PipelineCore.speechAnalyzerModel, "org/stub-jev"])
+        #expect(decisions.calls.requests.withLock { $0.last?.state } == "[transcript]\nhello world\n\nNote.")
+        #expect(fallback.requests.withLock { $0.count } == 1)
+        let none = try await Self.post(chat, decisions: decisions, ["attachments": [Self.audio], "task": "t"])
+        #expect(none.status == .notFound)
+        #expect(((none.json["error"] as? [String: Any])?["message"] as? String)?.contains("--pipeline-audio-model") == true)
+    }
+
+    @Test("Without an OCR model a document is read by Apple Vision on the chat orchestrator, and the receipt says so")
+    func documentFallsBackToVision() async throws {
+        let (engine, chat) = try await Self.chat()
+        await chat.setDocumentTranscriber(ScriptedDocumentTranscriber(text: "Invoice total: 42"))
+        let response = try await Self.post(
+            chat, decisions: GatingDecisionEngine(), ["attachments": [["kind": "image", "data": try OCRFixture.png(width: 4, height: 4).base64EncodedString()]], "questions": Self.questions])
+        #expect(response.status == .ok)
+        #expect(((response.json["perceived"] as? [String: Any])?["pages"] as? [[String: Any]])?.first?["markdown"] as? String == "Invoice total: 42")
+        #expect(Self.stages(response.json).first?["model"] as? String == OCRRequest.appleVision)
+        #expect(await engine.getRequests().isEmpty)
+    }
+
+    @Test("GPU perceivers are gated between generations: OCR in its own engine waits while a chat generation holds a slot and runs once it ends; SpeechAnalyzer does not wait")
+    func gpuPerceiversWaitForGeneration() async throws {
+        let ocrEngine = MockInferenceEngine()
+        await ocrEngine.setResponder { _ in "Invoice total: 42" }
+        let ocr = try await OCRAPITests.orchestrator("GLM-OCR", modelType: "glm_ocr", engine: ocrEngine)
+        let (_, chat) = try await Self.chat()
+        let generation = try await chat.gate.admit()
+        let speech = try await Self.post(chat, decisions: GatingDecisionEngine(), stages: PipelineStages(speech: ScriptedTranscriber()), ["attachments": [Self.audio], "questions": Self.questions])
+        #expect(speech.status == .ok)
+        let image: [String: Any] = ["kind": "image", "data": try OCRFixture.png(width: 4, height: 4).base64EncodedString()]
+        async let read = Self.post(chat, decisions: GatingDecisionEngine(), stages: PipelineStages(ocr: ocr), ["attachments": [image], "questions": Self.questions])
+        while await chat.gate.exclusiveWaiting == 0 { await Task.yield() }
+        #expect(await ocrEngine.getRequests().isEmpty)
+        await chat.gate.release(generation)
+        #expect(try await read.status == .ok)
+        #expect(await ocrEngine.getRequests().count == 1)
+    }
+
     @Test("Refusals: an image without an OCR model and questions without a decision model are 404 naming the flag; malformed input is 400; nothing runs")
     func refusals() async throws {
         let (engine, chat) = try await Self.chat()
@@ -198,5 +262,32 @@ struct PipelineTinyModelTests {
         let system2 = try #require(PipelineAPITests.stages(response.json).last)
         #expect(system2["stage"] as? String == "answer" && system2["question"] as? String == "red")
         #expect((system2["tokens"] as? Int ?? 0) > ByteTokenizer().encode(text: state, addSpecialTokens: false).count)
+    }
+
+    @Test("Audio end to end: the tiny Nemotron Transcribe engine transcribes the clip in its own orchestrator, the abstaining decision engine escalates, and the tiny chat model answers over the transcript")
+    func audioReachesTinyModels() async throws {
+        let clip = AudioFixture.sine(seconds: 0.5, rate: 16_000, channels: 1)
+        let speech = ModelOrchestratorActor(engine: try await NemotronTranscribeUnitTests.tinyEngine(seed: 3), telemetry: TelemetryTracker())
+        await speech.setModelId("tiny-nemotron-transcribe")
+        let transcript = try await speech.transcribe(TranscriptionRequest(audio: AudioClip(encoded: clip, format: "wav"))).text
+        try #require(!transcript.isEmpty && transcript.count < 2_000)
+        let instructions = "The speaker is calm."
+        let state = PipelineCore.state(PipelinePerceived(transcript: transcript), text: nil)
+        let call = PipelineCore.System2Call.question(id: "calm", prompt: PipelineCore.prompt(SystemOneQuestion(type: .noul, instructions: instructions), state: state))
+        let reference = try await TinyModel.engine().generate(request: PipelineCore.request(for: call, origin: .unspecified)).generatedText
+        let chat = ModelOrchestratorActor(engine: try await TinyModel.engine(), telemetry: TelemetryTracker())
+        let decisions = GatingDecisionEngine(flat: ["calm"])
+        let body: [String: Any] = [
+            "attachments": [["kind": "audio", "data": clip.base64EncodedString(), "format": "wav"]],
+            "questions": ["calm": ["type": "noul", "instructions": instructions]],
+        ]
+        let response = try await PipelineAPITests.post(chat, decisions: decisions, stages: PipelineStages(audio: speech, abstainBelow: 1), body)
+        #expect(response.status == .ok)
+        #expect((response.json["perceived"] as? [String: Any])?["transcript"] as? String == transcript)
+        let stages = PipelineAPITests.stages(response.json)
+        #expect(stages.map { $0["stage"] as? String } == ["perceive", "decide", "answer"])
+        #expect(stages.first?["model"] as? String == "tiny-nemotron-transcribe" && stages[1]["model"] as? String == "org/stub-jev")
+        let answer = try #require(PipelineAPITests.answers(response.json)["calm"])
+        #expect(answer["answered_by"] as? String == "answer" && answer["text"] as? String == reference)
     }
 }

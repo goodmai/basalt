@@ -70,10 +70,6 @@ public struct PipelineRequest: Sendable {
     static func nonBlank(_ text: String?) -> String? {
         text.flatMap { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 }
     }
-
-    public var needsOCR: Bool {
-        attachments.contains { if case .document = $0 { true } else { false } }
-    }
 }
 
 public enum PipelineStage: String, Codable, Sendable, Equatable {
