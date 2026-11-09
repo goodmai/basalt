@@ -230,6 +230,7 @@ extension ResearchTool {
         case .trainJepa: "Experiment, long-running: JEPA training. Trains a LoRA backbone and projector on a JSONL file of multi-view scenes (each line a string array or {\"views\": [...]}) with the LeJEPA loss, AdamW, warmup+cosine and gradient clipping. Saves adapters.safetensors and jepa_projector.safetensors under ~/.basalt/adapters, reports losses, pre-clip gradient norms and the WeightSpectrum rank of the projected embeddings before and after (a falling rank is collapse). The model is left unchanged; attention-only architectures only."
         case .distill: "Experiment, long-running: teacher → student distillation. A teacher behind an OpenAI-compatible or Anthropic endpoint answers the prompts (BASALT_TEACHER_API_KEY goes only to BASALT_TEACHER_URL's scheme, host and port); answers are cached under ~/.basalt/distill so a rerun pays nothing twice, spend stops at budgetUSD, empty, truncated, duplicate and (with filter verify) wrong answers are dropped. A LoRA is trained on the teacher's completions only (the prompt is masked), the teacher's per-token NLL on held-out prompts is reported before and after, and the adapter is applied through the quality gate as an undoable overlay. With onPolicy the student samples (temperature, maxTeacherTokens) and a basalt teacher with the same tokenizer scores those token ids through its /v1/score; the loss is the per-token reverse KL over the teacher's top 20, and the reverse KL on the base student's held-out samples is reported before and after. The model is held one optimizer step at a time, so serve keeps answering between steps; offline runs checkpoint every checkpointEvery steps and continue with resume. Mind the teacher's terms of use."
         case .steerSearch: "Experiment: contrastive steering search. The difference of mean residuals (positive minus negative prompts) per layer gives a direction; reports norm and class separation per layer, the best layer's unit direction, the heads whose ablation shrinks the gap most, and KL and projection shift when held-out prompts are steered by each scale. Directed search for activation directions, not self-awareness; leaves no overlay behind."
+        case .traceTokens: Self.traceTokensSummary
         case .steerCommit: "Experiment: turns a steering direction into a rank-1 update of the layer's output projection (input = mean module input over the positive prompts) and applies it as an adapter through the quality gate on the held-out prompts; undoable, never written to disk."
         }
     }
@@ -254,6 +255,7 @@ extension ResearchTool {
         case .distill: Self.object(Self.distillProperties, required: ["prompts", "teacherUrl", "teacherModel", "heldOut"])
         case .steerSearch: Self.object(Self.steerSearchProperties, required: ["positive", "negative", "heldOut"])
         case .steerCommit: Self.object(Self.steerCommitProperties, required: ["layer", "direction", "scale", "positive", "heldOut"])
+        case .traceTokens: Self.object(Self.traceTokensProperties, required: ["prompt"])
         }
     }
 

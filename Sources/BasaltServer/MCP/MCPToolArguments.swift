@@ -279,12 +279,13 @@ enum ResearchTool: String, Sendable, CaseIterable {
     case distill
     case steerSearch = "steer_search"
     case steerCommit = "steer_commit"
+    case traceTokens = "trace_tokens"
 
     var isExperiment: Bool {
         switch self {
         case .modelDescribe, .modelTensors, .modelTensor, .kvInspect, .traceRun: false
         case .intervene, .weightsDelta, .overlaysList, .overlayUndo, .experimentCompare, .adapterApply, .gateCheck: true
-        case .tensorPack, .tensorUnpack, .trainExperts, .trainJepa, .distill, .steerSearch, .steerCommit: true
+        case .tensorPack, .tensorUnpack, .trainExperts, .trainJepa, .distill, .steerSearch, .steerCommit, .traceTokens: true
         }
     }
 }
@@ -308,6 +309,7 @@ enum ResearchCall: Sendable, Equatable {
     case distill(DistillRequest)
     case contrast(ContrastRequest)
     case commitSteering(SteeringCommit)
+    case traceTokens(TokenTraceRequest)
 
     static let maxValues = 0...4096
     static let topK = 1...100
@@ -327,7 +329,8 @@ enum ResearchCall: Sendable, Equatable {
         case .overlaysList: self = .overlays
         case .overlayUndo: self = .undo(OverlayID(try MCPArguments.required("id", MCPArguments.integer("id", in: args, Self.nonNegative))))
         case .experimentCompare: self = .compare(try CompareRequest(mcp: args))
-        case .adapterApply, .gateCheck, .tensorPack, .tensorUnpack, .trainExperts, .trainJepa, .distill, .steerSearch, .steerCommit: self = try Self(lab: tool, args)
+        case .adapterApply, .gateCheck, .tensorPack, .tensorUnpack, .trainExperts, .trainJepa, .distill, .steerSearch, .steerCommit, .traceTokens:
+            self = try Self(lab: tool, args)
         }
     }
 
@@ -342,6 +345,7 @@ enum ResearchCall: Sendable, Equatable {
         case .distill: self = .distill(try DistillRequest(mcp: args))
         case .steerSearch: self = .contrast(try ContrastRequest(mcp: args))
         case .steerCommit: self = .commitSteering(try SteeringCommit(mcp: args))
+        case .traceTokens: self = .traceTokens(try TokenTraceRequest(mcp: args))
         case .modelDescribe, .modelTensors, .modelTensor, .kvInspect, .traceRun, .intervene, .weightsDelta, .overlaysList, .overlayUndo, .experimentCompare: throw .invalidParams("\(tool.rawValue) is not a lab tool")
         }
     }
@@ -560,41 +564,5 @@ extension TrainRequest {
         iterations = try MCPArguments.integer("iterations", in: args, ResearchCall.nonNegative) ?? iterations
         learningRate = try MCPArguments.number("learningRate", in: args) ?? learningRate
         output = try MCPArguments.string("output", in: args)
-    }
-}
-
-extension ContrastRequest {
-    static let headLimit = 0...64
-
-    static func prompts(_ key: String, in args: [String: Any]?, _ range: ClosedRange<Int>) throws(MCPFailure) -> [String] {
-        guard let prompts = MCPArguments.present(key, in: args) as? [String], range.contains(prompts.count) else {
-            throw .invalidParams("\(key) must be an array of \(range) strings")
-        }
-        return prompts
-    }
-
-    init(mcp args: [String: Any]?) throws(MCPFailure) {
-        let positive = try Self.prompts("positive", in: args, Self.classPrompts)
-        let negative = try Self.prompts("negative", in: args, Self.classPrompts)
-        let heldOut = try Self.prompts("heldOut", in: args, Self.heldOutPrompts)
-        self.init(positive: positive, negative: negative, heldOut: heldOut, layers: try MCPArguments.integers("layers", in: args))
-        topHeads = try MCPArguments.integer("topHeads", in: args, Self.headLimit) ?? topHeads
-        if let scales = try MCPArguments.numbers("scales", in: args) {
-            guard Self.scaleCount.contains(scales.count) else { throw .invalidParams("scales must hold \(Self.scaleCount) numbers") }
-            self.scales = scales
-        }
-    }
-}
-
-extension SteeringCommit {
-    init(mcp args: [String: Any]?) throws(MCPFailure) {
-        var gate = GateRequest(heldOut: try ContrastRequest.prompts("heldOut", in: args, ContrastRequest.heldOutPrompts))
-        try gate.readLimits(args)
-        self.init(
-            layer: try MCPArguments.required("layer", MCPArguments.integer("layer", in: args, ResearchCall.nonNegative)),
-            direction: try MCPArguments.required("direction", MCPArguments.numbers("direction", in: args)),
-            scale: try MCPArguments.required("scale", MCPArguments.number("scale", in: args)),
-            gate: gate)
-        positive = try ContrastRequest.prompts("positive", in: args, 1...ContrastRequest.classPrompts.upperBound)
     }
 }
