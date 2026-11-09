@@ -7,7 +7,7 @@ import MLXLLM
 
 enum TinyModel {
     enum Family: String, CaseIterable, Sendable {
-        case qwen3Small, qwen3, qwen3HeadDim32, qwen35, qwen35Moe, gemma3, gemma4, gemma4Moe, qwen3Moe, sigmoidMoe, nemotronH, lfm2, lfm2Moe, prism
+        case qwen3Small, qwen3, qwen3HeadDim32, qwen35, qwen35Moe, gemma3, gemma4, gemma4Moe, qwen3Moe, sigmoidMoe, nemotronH, lfm2, lfm2Moe, prism, paddleOCR
 
         func model(_ config: Data) throws -> any LanguageModel {
             let decoder = JSONDecoder.json5()
@@ -21,6 +21,7 @@ enum TinyModel {
             case .lfm2: LFM2Model(try decoder.decode(LFM2Configuration.self, from: config))
             case .lfm2Moe: LFM2MoEModel(try decoder.decode(LFM2MoEConfiguration.self, from: config))
             case .prism: MLXLLM.Qwen35Model(try decoder.decode(MLXLLM.Qwen35Configuration.self, from: config))
+            case .paddleOCR: PaddleOCRVL(try decoder.decode(PaddleOCRVLConfiguration.self, from: config))
             }
         }
 
@@ -35,13 +36,14 @@ enum TinyModel {
             case .lfm2: 97
             case .lfm2Moe: 83
             case .prism: 7
+            case .paddleOCR: 400
             }
         }
 
         var weightScale: Float {
             switch self {
             case .qwen3Small, .gemma3: 4
-            case .qwen3, .qwen3HeadDim32, .gemma4, .gemma4Moe, .qwen35, .qwen35Moe, .qwen3Moe, .sigmoidMoe, .nemotronH, .lfm2, .lfm2Moe, .prism: 1
+            case .qwen3, .qwen3HeadDim32, .gemma4, .gemma4Moe, .qwen35, .qwen35Moe, .qwen3Moe, .sigmoidMoe, .nemotronH, .lfm2, .lfm2Moe, .prism, .paddleOCR: 1
             }
         }
 
@@ -115,6 +117,14 @@ enum TinyModel {
                 """
             case .prism: """
                 {"model_type": "qwen3_5", "text_config": \(Self.qwen35.config)}
+                """
+            case .paddleOCR: """
+                {"model_type": "paddleocr_vl", "hidden_size": 64, "num_hidden_layers": 4, "intermediate_size": 128,
+                 "num_attention_heads": 4, "num_key_value_heads": 2, "head_dim": 16, "rms_norm_eps": 1e-5,
+                 "vocab_size": 256, "rope_theta": 500000.0, "rope_scaling": {"mrope_section": [2, 3, 3], "type": "default"},
+                 "image_token_id": 250,
+                 "vision_config": {"hidden_size": 32, "intermediate_size": 64, "num_hidden_layers": 2, "num_attention_heads": 2,
+                  "num_channels": 3, "image_size": 56, "patch_size": 14, "layer_norm_eps": 1e-6, "spatial_merge_size": 2}}
                 """
             }
         }

@@ -82,6 +82,18 @@ struct OCRRecipeTests {
         #expect(try recipe.step(for: .chart) == .recognize(prompt: "\nImage Analysis:", blockType: "chart"))
     }
 
+    @Test("paddleocr_vl is PaddleOCR-VL with its four published element prompts; a document is page-level OCR and its requests are plain greedy",
+          arguments: [(OCRTask.document, "OCR:", "text"), (.text, "OCR:", "text"), (.table, "Table Recognition:", "table"),
+                      (.formula, "Formula Recognition:", "equation"), (.chart, "Chart Recognition:", "chart")])
+    func paddlePrompts(_ task: OCRTask, _ prompt: String, _ type: String) throws {
+        let recipe = try #require(OCRRecipe.of(modelType: "paddleocr_vl", hints: []))
+        #expect(recipe.family == .paddleOCR)
+        #expect(try recipe.step(for: task) == .recognize(prompt: prompt, blockType: type))
+        let image = try ImageInput(data: try OCRFixture.png(width: 4, height: 4), mime: "image/png")
+        let request = recipe.request(prompt: prompt, image: image, stage: .recognition)
+        #expect(request.temperature == 0 && request.repetitionPenalty == nil && request.presencePenalty == nil)
+    }
+
     @Test("A recipe request is greedy, carries the page as the only image, and takes the family's repetition settings")
     func requests() throws {
         let image = try ImageInput(data: try OCRFixture.png(width: 4, height: 4), mime: "image/png")
@@ -103,10 +115,11 @@ struct OCRRecipeTests {
         #expect(OCRRecipe(family: .glmOCR).finished("\n<fcel>a\n", blockType: "table") == "<fcel>a")
     }
 
-    @Test("glm_ocr and qwen2_vl stay unverified families, so every capability-gated feature stays off on them")
+    @Test("glm_ocr and qwen2_vl stay unverified families; paddleocr_vl verifies what the feature matrix runs on its tiny family, without MTP, CacheBlend or a quantized KV cache")
     func capabilities() {
         #expect(ModelCapabilities.of(modelType: "glm_ocr") == nil)
         #expect(ModelCapabilities.of(modelType: "qwen2_vl") == nil)
+        #expect(ModelCapabilities.of(modelType: "paddleocr_vl")?.verified == Set(ModelCapabilities.Feature.allCases).subtracting([.mtp, .cacheBlend, .kvQuantization]))
     }
 }
 

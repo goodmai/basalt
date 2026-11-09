@@ -5,7 +5,7 @@ import BasaltInference
 import BasaltServer
 
 struct PipelineOptions: ParsableArguments {
-    @Option(name: .customLong("pipeline-ocr-model"), help: "OCR model for /v1/pipeline and basalt_pipeline (GLM-OCR or MinerU2.5): repo ID or local path, loaded in its own engine beside the chat model so OCR never swaps it out")
+    @Option(name: .customLong("pipeline-ocr-model"), help: "OCR model for /v1/pipeline and basalt_pipeline (GLM-OCR, MinerU2.5 or PaddleOCR-VL): repo ID or local path, loaded in its own engine beside the chat model so OCR never swaps it out")
     var ocrModel: String?
 
     @Option(name: .customLong("pipeline-abstain-below"), help: "In /v1/pipeline, System One abstains, and the question goes to the chat model, when its confidence is below this value (0 to 1; default: never)")
@@ -29,7 +29,7 @@ extension ServeCommand {
     static func ocrRefusal(_ model: String, path: String) -> String? {
         let modelType = ModelCache.config(at: URL(fileURLWithPath: path))?["model_type"] as? String
         guard OCRRecipe.of(modelType: modelType, hints: [path, model]) == nil else { return nil }
-        return "--pipeline-ocr-model \(model) (model_type \(modelType ?? "unknown")) has no OCR recipe; use GLM-OCR (glm_ocr) or MinerU2.5 (qwen2_vl)"
+        return "--pipeline-ocr-model \(model) (model_type \(modelType ?? "unknown")) has no OCR recipe; use GLM-OCR (glm_ocr), MinerU2.5 (qwen2_vl) or PaddleOCR-VL (paddleocr_vl)"
     }
 
     func pipelineOCRPath() async throws -> String? {

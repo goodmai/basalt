@@ -43,7 +43,7 @@ extension MCPServer {
 extension MCPToolCatalog {
     static let ocr = MCPToolDescriptor(
         name: "basalt_ocr",
-        description: "Read a PDF or an image with the loaded OCR model (GLM-OCR or MinerU2.5), or with Apple's on-device Vision when model is apple-vision, and return Markdown per page, with blocks {type, bbox, text} when format is json. PDF pages render at 200 DPI; a request reads at most \(OCRPageSelection.maxPages) pages.",
+        description: "Read a PDF or an image with the loaded OCR model (GLM-OCR, MinerU2.5 or PaddleOCR-VL), or with Apple's on-device Vision when model is apple-vision, and return Markdown per page, with blocks {type, bbox, text} when format is json. PDF pages render at 200 DPI; a request reads at most \(OCRPageSelection.maxPages) pages.",
         inputSchema: ResearchTool.object([
             "file": ["type": "string", "description": "The PDF or image, base64-encoded or as a data: URI"],
             "path": ["type": "string", "description": "Instead of file: a PDF or image inside a directory given with serve --image-dir"],

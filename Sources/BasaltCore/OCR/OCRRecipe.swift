@@ -4,6 +4,7 @@ public struct OCRRecipe: Sendable, Equatable {
     public enum Family: String, Sendable {
         case glmOCR = "GLM-OCR"
         case minerU = "MinerU2.5"
+        case paddleOCR = "PaddleOCR-VL"
     }
 
     public enum Step: Sendable, Equatable {
@@ -24,6 +25,7 @@ public struct OCRRecipe: Sendable, Equatable {
     public static func of(modelType: String?, hints: [String]) -> OCRRecipe? {
         switch modelType?.lowercased() {
         case "glm_ocr": OCRRecipe(family: .glmOCR)
+        case "paddleocr_vl": OCRRecipe(family: .paddleOCR)
         case "qwen2_vl" where hints.contains(where: { $0.lowercased().contains("mineru") }): OCRRecipe(family: .minerU)
         default: nil
         }
@@ -33,6 +35,16 @@ public struct OCRRecipe: Sendable, Equatable {
         switch family {
         case .glmOCR: try Self.glmStep(task)
         case .minerU: Self.minerUStep(task)
+        case .paddleOCR: Self.paddleStep(task)
+        }
+    }
+
+    static func paddleStep(_ task: OCRTask) -> Step {
+        switch task {
+        case .document, .text: .recognize(prompt: "OCR:", blockType: "text")
+        case .table: .recognize(prompt: "Table Recognition:", blockType: "table")
+        case .formula: .recognize(prompt: "Formula Recognition:", blockType: "equation")
+        case .chart: .recognize(prompt: "Chart Recognition:", blockType: "chart")
         }
     }
 
@@ -62,7 +74,7 @@ public struct OCRRecipe: Sendable, Equatable {
         switch (family, stage) {
         case (.glmOCR, _): request.repetitionPenalty = 1.1
         case (.minerU, .recognition): request.presencePenalty = 1
-        case (.minerU, .layout): break
+        case (.minerU, .layout), (.paddleOCR, _): break
         }
         return request.withOrigin(Self.origin)
     }

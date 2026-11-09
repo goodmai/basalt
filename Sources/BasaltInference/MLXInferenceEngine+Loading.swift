@@ -2,6 +2,7 @@ import Foundation
 import MLX
 import MLXLLM
 import MLXLMCommon
+import MLXVLM
 import MLXHuggingFace
 import Tokenizers
 import Hub
@@ -68,6 +69,12 @@ extension MLXInferenceEngine {
             NemotronTranscribeModel(
                 try JSONDecoder.json5().decode(NemotronTranscribeConfiguration.self, from: data)
             )
+        }
+        await VLMTypeRegistry.shared.registerModelType(PaddleOCRVL.modelType) { data in
+            PaddleOCRVL(try JSONDecoder.json5().decode(PaddleOCRVLConfiguration.self, from: data))
+        }
+        await VLMProcessorTypeRegistry.shared.registerProcessorType(PaddleOCRVLProcessor.processorType) { data, tokenizer in
+            PaddleOCRVLProcessor(try JSONDecoder.json5().decode(PaddleOCRVLProcessorConfiguration.self, from: data), tokenizer: tokenizer)
         }
     }
 
