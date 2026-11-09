@@ -55,12 +55,12 @@ struct PipelineRunner: Sendable {
             let started = ContinuousClock.now
             switch attachment {
             case .document(let document):
-                let result = try await betweenGenerations(perceiver) { () async throws(BasaltError) in try await read(document, pages: request.pages, with: perceiver) }
+                let result = try await betweenGenerations(perceiver.betweenGenerations) { () async throws(BasaltError) in try await read(document, pages: request.pages, with: perceiver) }
                 pages += result.pages.map { PipelinePage(attachment: index, page: $0.page, markdown: $0.markdown) }
                 receipts.append(PipelineStageReceipt(
                     stage: .perceive, model: result.model, ms: Self.elapsed(since: started), tokens: result.pages.reduce(0) { $0 + $1.tokens }))
             case .audio(let clip):
-                let heard = try await betweenGenerations(perceiver) { () async throws(BasaltError) in try await transcribe(clip, with: perceiver) }
+                let heard = try await betweenGenerations(perceiver.betweenGenerations) { () async throws(BasaltError) in try await transcribe(clip, with: perceiver) }
                 transcripts.append(heard.text)
                 receipts.append(PipelineStageReceipt(stage: .perceive, model: heard.model, ms: Self.elapsed(since: started), tokens: 0))
             }
@@ -69,10 +69,8 @@ struct PipelineRunner: Sendable {
         return (PipelinePerceived(pages: pages.isEmpty ? nil : pages, transcript: transcript), receipts)
     }
 
-    func betweenGenerations<T: Sendable>(
-        _ perceiver: PipelineCore.Perceiver, _ body: @Sendable () async throws(BasaltError) -> T
-    ) async throws(BasaltError) -> T {
-        guard perceiver.betweenGenerations else { return try await body() }
+    func betweenGenerations<T: Sendable>(_ gated: Bool, _ body: @Sendable () async throws(BasaltError) -> T) async throws(BasaltError) -> T {
+        guard gated else { return try await body() }
         do {
             return try await chat.gate.exclusively(body)
         } catch {
@@ -107,7 +105,10 @@ struct PipelineRunner: Sendable {
         guard !questions.isEmpty, let decisions else { return (nil, nil) }
         let started = ContinuousClock.now
         let request = SystemOneRequest(state: state, questions: questions, abstainBelow: stages.abstainBelow, minMargin: stages.minMargin)
-        let response = try await SystemOneController.decide(decisions, request, log: chat.sessionLog, origin: origin, sessionId: sessionId)
+        let log = chat.sessionLog
+        let response = try await betweenGenerations(true) { () async throws(BasaltError) in
+            try await SystemOneController.decide(decisions, request, log: log, origin: origin, sessionId: sessionId)
+        }
         return (response, PipelineCore.decided(response, ms: Self.elapsed(since: started)))
     }
 

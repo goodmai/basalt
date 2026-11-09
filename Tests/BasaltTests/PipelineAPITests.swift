@@ -160,22 +160,26 @@ struct PipelineAPITests {
         #expect(await engine.getRequests().isEmpty)
     }
 
-    @Test("GPU perceivers are gated between generations: OCR in its own engine waits while a chat generation holds a slot and runs once it ends; SpeechAnalyzer does not wait")
-    func gpuPerceiversWaitForGeneration() async throws {
+    @Test("GPU stages are gated between generations: while a chat generation holds a slot, SpeechAnalyzer transcribes, but OCR in its own engine and the decision engine wait, and run once it ends")
+    func gpuStagesWaitForGeneration() async throws {
         let ocrEngine = MockInferenceEngine()
         await ocrEngine.setResponder { _ in "Invoice total: 42" }
         let ocr = try await OCRAPITests.orchestrator("GLM-OCR", modelType: "glm_ocr", engine: ocrEngine)
         let (_, chat) = try await Self.chat()
+        let (transcriber, decisions) = (ScriptedTranscriber(), GatingDecisionEngine())
         let generation = try await chat.gate.admit()
-        let speech = try await Self.post(chat, decisions: GatingDecisionEngine(), stages: PipelineStages(speech: ScriptedTranscriber()), ["attachments": [Self.audio], "questions": Self.questions])
-        #expect(speech.status == .ok)
         let image: [String: Any] = ["kind": "image", "data": try OCRFixture.png(width: 4, height: 4).base64EncodedString()]
-        async let read = Self.post(chat, decisions: GatingDecisionEngine(), stages: PipelineStages(ocr: ocr), ["attachments": [image], "questions": Self.questions])
-        while await chat.gate.exclusiveWaiting == 0 { await Task.yield() }
+        async let heard = Self.post(chat, decisions: decisions, stages: PipelineStages(speech: transcriber), ["attachments": [Self.audio], "questions": Self.questions])
+        async let read = Self.post(chat, decisions: decisions, stages: PipelineStages(ocr: ocr), ["attachments": [image], "questions": Self.questions])
+        while await chat.gate.exclusiveWaiting < 2 { await Task.yield() }
+        #expect(transcriber.requests.withLock { $0.count } == 1)
         #expect(await ocrEngine.getRequests().isEmpty)
+        #expect(decisions.calls.requests.withLock { $0.isEmpty })
         await chat.gate.release(generation)
+        #expect(try await heard.status == .ok)
         #expect(try await read.status == .ok)
         #expect(await ocrEngine.getRequests().count == 1)
+        #expect(decisions.calls.requests.withLock { $0.count } == 2)
     }
 
     @Test("Refusals: an image without an OCR model and questions without a decision model are 404 naming the flag; malformed input is 400; nothing runs")
