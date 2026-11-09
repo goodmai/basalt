@@ -103,7 +103,7 @@ struct SystemOneBudgetBenchmarkTests {
         }
         for (label, decider) in deciders {
             for threshold in Self.thresholds {
-                try await Self.arm(label, decider, threshold: threshold, engine: engine, items: items, baseline: baseline, log: log)
+                try await Self.arm(label, decider, threshold: threshold, run: Run(engine: engine, items: items, baseline: baseline, log: log))
             }
         }
         clock = ContinuousClock.now
@@ -113,9 +113,15 @@ struct SystemOneBudgetBenchmarkTests {
         log.record("RESULT", "C concurrent @0.75: long answer \(String(format: "%.2f", overlap.tokensPerSecond)) tok/s (\(String(format: "%+.1f", (overlap.tokensPerSecond / max(solo.tokensPerSecond, 1e-9) - 1) * 100))% vs solo), decisions accuracy \(overlapTally.accuracy), wall \(String(format: "%.1f", Self.seconds(since: clock))) s vs A+long \(String(format: "%.1f", baselineSeconds + solo.generationTime)) s")
     }
 
-    static func arm(
-        _ label: String, _ decider: any DecisionEngine, threshold: Double, engine: MLXInferenceEngine, items: [LabelledDecision], baseline: Tally, log: ModelRunLog
-    ) async throws {
+    struct Run {
+        let engine: MLXInferenceEngine
+        let items: [LabelledDecision]
+        let baseline: Tally
+        let log: ModelRunLog
+    }
+
+    static func arm(_ label: String, _ decider: any DecisionEngine, threshold: Double, run: Run) async throws {
+        let (engine, items, baseline, log) = (run.engine, run.items, run.baseline, run.log)
         let clock = ContinuousClock.now
         let (tally, latencies) = try await log.step("\(label) @\(threshold)") { try await Self.withSystemOne(engine, decider, items, threshold: threshold) }
         log.record("RESULT", "B \(label) abstain_below=\(threshold): accuracy \(tally.accuracy) [\(tally.breakdown)], escalated \(tally.escalated)/\(tally.total), \(tally.llmCalls) calls, \(tally.promptTokens)+\(tally.completionTokens) tokens (\(String(format: "%.1f", 100 * (1 - Double(tally.tokens) / Double(max(baseline.tokens, 1)))))% fewer), \(String(format: "%.1f", Self.seconds(since: clock))) s, decide p50 \(String(format: "%.1f", latencies[latencies.count / 2])) ms p95 \(String(format: "%.1f", latencies[latencies.count * 95 / 100])) ms")
