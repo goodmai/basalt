@@ -68,7 +68,7 @@ enum GPULock {
     static let owner = String(ProcessInfo.processInfo.processIdentifier)
 
     static func holding<T>(_ body: () throws -> T) rethrows -> T {
-        while (try? FileManager.default.createDirectory(atPath: path, withIntermediateDirectories: false)) == nil { sleep(10) }
+        while (try? FileManager.default.createDirectory(atPath: path, withIntermediateDirectories: false)) == nil { sleep(2) }
         try? owner.write(toFile: path + "/owner", atomically: true, encoding: .utf8)
         defer {
             if (try? String(contentsOfFile: path + "/owner", encoding: .utf8)) == owner { try? FileManager.default.removeItem(atPath: path) }
