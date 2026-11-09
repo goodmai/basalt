@@ -66,3 +66,15 @@ extension TokenTraceRequest {
         return directions
     }
 }
+
+extension ActivationContrastRequest {
+    init(mcp args: [String: Any]?) throws(MCPFailure) {
+        self.init(
+            a: try ContrastRequest.prompts("a", in: args, ContrastRequest.classPrompts),
+            b: try ContrastRequest.prompts("b", in: args, ContrastRequest.classPrompts))
+        maxTokens = try MCPArguments.integer("maxTokens", in: args, Self.generatedTokens) ?? maxTokens
+        layers = try MCPArguments.integers("layers", in: args)
+        onsetWindow = try MCPArguments.integer("onsetWindow", in: args, Self.onsetTokens) ?? onsetWindow
+        topK = try MCPArguments.integer("topK", in: args, Self.ranked) ?? topK
+    }
+}

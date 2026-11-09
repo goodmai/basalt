@@ -23,3 +23,18 @@ extension ResearchTool {
         ]
     }
 }
+
+extension ResearchTool {
+    static let activationContrastSummary = "Experiment: statistics that separate two behaviours. Traces every prompt of set a (e.g. refused) and set b (e.g. answered) over the prompt and a greedy generation, then ranks attention heads (output norm) and experts (gate when routed, else 0) by Cohen's d and AUROC of the per-prompt mean activation, with the activation rate (head norm above its pooled mean, expert routed) and mean per set, and the mean over the onsetWindow prompt tokens before the generation starts. Also the residual direction between the sets at the last prompt token per traced layer (norm, separation, the best layer's unit direction), usable as a trace_tokens projection or a conditional intervene trigger. Labels come from the two sets."
+
+    static var activationContrastProperties: [String: Any] {
+        [
+            "a": ["type": "array", "items": ["type": "string"], "minItems": ContrastRequest.classPrompts.lowerBound, "maxItems": ContrastRequest.classPrompts.upperBound, "description": "Prompts showing the behaviour"],
+            "b": ["type": "array", "items": ["type": "string"], "minItems": ContrastRequest.classPrompts.lowerBound, "maxItems": ContrastRequest.classPrompts.upperBound, "description": "Prompts without it"],
+            "maxTokens": ["type": "integer", "minimum": ActivationContrastRequest.generatedTokens.lowerBound, "maximum": ActivationContrastRequest.generatedTokens.upperBound, "description": "Greedy tokens traced after each prompt (default 16)"],
+            "layers": ["type": "array", "items": ["type": "integer", "minimum": 0], "description": "Layers to trace (default: all)"],
+            "onsetWindow": ["type": "integer", "minimum": ActivationContrastRequest.onsetTokens.lowerBound, "maximum": ActivationContrastRequest.onsetTokens.upperBound, "description": "Prompt tokens before the generation averaged as the onset activation (default 4)"],
+            "topK": ["type": "integer", "minimum": ActivationContrastRequest.ranked.lowerBound, "maximum": ActivationContrastRequest.ranked.upperBound, "description": "Ranked components returned (default 20)"],
+        ]
+    }
+}

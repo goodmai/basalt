@@ -280,12 +280,13 @@ enum ResearchTool: String, Sendable, CaseIterable {
     case steerSearch = "steer_search"
     case steerCommit = "steer_commit"
     case traceTokens = "trace_tokens"
+    case activationContrast = "activation_contrast"
 
     var isExperiment: Bool {
         switch self {
         case .modelDescribe, .modelTensors, .modelTensor, .kvInspect, .traceRun: false
         case .intervene, .weightsDelta, .overlaysList, .overlayUndo, .experimentCompare, .adapterApply, .gateCheck: true
-        case .tensorPack, .tensorUnpack, .trainExperts, .trainJepa, .distill, .steerSearch, .steerCommit, .traceTokens: true
+        case .tensorPack, .tensorUnpack, .trainExperts, .trainJepa, .distill, .steerSearch, .steerCommit, .traceTokens, .activationContrast: true
         }
     }
 }
@@ -310,6 +311,7 @@ enum ResearchCall: Sendable, Equatable {
     case contrast(ContrastRequest)
     case commitSteering(SteeringCommit)
     case traceTokens(TokenTraceRequest)
+    case activationContrast(ActivationContrastRequest)
 
     static let maxValues = 0...4096
     static let topK = 1...100
@@ -329,7 +331,8 @@ enum ResearchCall: Sendable, Equatable {
         case .overlaysList: self = .overlays
         case .overlayUndo: self = .undo(OverlayID(try MCPArguments.required("id", MCPArguments.integer("id", in: args, Self.nonNegative))))
         case .experimentCompare: self = .compare(try CompareRequest(mcp: args))
-        case .adapterApply, .gateCheck, .tensorPack, .tensorUnpack, .trainExperts, .trainJepa, .distill, .steerSearch, .steerCommit, .traceTokens:
+        case .adapterApply, .gateCheck, .tensorPack, .tensorUnpack, .trainExperts, .trainJepa, .distill, .steerSearch, .steerCommit, .traceTokens,
+             .activationContrast:
             self = try Self(lab: tool, args)
         }
     }
@@ -346,6 +349,7 @@ enum ResearchCall: Sendable, Equatable {
         case .steerSearch: self = .contrast(try ContrastRequest(mcp: args))
         case .steerCommit: self = .commitSteering(try SteeringCommit(mcp: args))
         case .traceTokens: self = .traceTokens(try TokenTraceRequest(mcp: args))
+        case .activationContrast: self = .activationContrast(try ActivationContrastRequest(mcp: args))
         case .modelDescribe, .modelTensors, .modelTensor, .kvInspect, .traceRun, .intervene, .weightsDelta, .overlaysList, .overlayUndo, .experimentCompare: throw .invalidParams("\(tool.rawValue) is not a lab tool")
         }
     }

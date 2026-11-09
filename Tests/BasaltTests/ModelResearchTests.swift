@@ -98,6 +98,8 @@ struct ModelResearchTests {
             (.traceTokens, ["prompt": "x", "lensTopK": 21], "lensTopK must be an integer in 0...20"),
             (.traceTokens, ["prompt": "x", "projections": [["layer": 1]]], "Missing required argument: vector"),
             (.traceTokens, ["prompt": "x", "projections": "v"], "projections must be an array"),
+            (.activationContrast, ["a": ["x"], "b": ["y", "z"]], "a must be an array of 2...32 strings"),
+            (.activationContrast, ["a": ["x", "y"], "b": ["y", "z"], "onsetWindow": 0], "onsetWindow must be an integer in 1...64"),
         ]
         for (tool, args, fragment) in cases {
             let failure = #expect(throws: MCPFailure.self) { try ResearchCall(tool, args) }
@@ -222,6 +224,12 @@ extension ModelResearchTests {
 }
 
 extension ModelResearchTests {
+    static var activationContrast: ActivationContrastRequest {
+        var request = ActivationContrastRequest(a: ["x", "y"], b: ["z", "w"], maxTokens: 2, layers: [0])
+        (request.onsetWindow, request.topK) = (2, 3)
+        return request
+    }
+
     static var tokenTrace: TokenTraceRequest {
         var request = TokenTraceRequest(prompt: "hi", maxTokens: 4, layers: [1])
         (request.experts, request.attentionEntropy, request.lensTopK, request.topK, request.maxFileBytes) = (false, true, 3, 2, 4096)
@@ -240,6 +248,7 @@ extension ModelResearchTests {
         case .distill: ["prompts": "/tmp/p.jsonl", "teacherUrl": "https://t.test/v1", "teacherModel": "m", "heldOut": ["Hi."], "budgetUSD": 2, "outputPricePerMillion": 10, "provider": "anthropic", "onPolicy": true]
         case .steerSearch: LabSteerTests.searchArguments
         case .steerCommit: LabSteerTests.commitArguments
+        case .activationContrast: ["a": ["x", "y"], "b": ["z", "w"], "maxTokens": 2, "layers": [0], "onsetWindow": 2, "topK": 3]
         case .traceTokens: ["prompt": "hi", "maxTokens": 4, "layers": [1], "experts": false, "attentionEntropy": true, "lensTopK": 3, "topK": 2, "maxFileBytes": 4096, "projections": [["layer": 1, "vector": [0.5, 1.0], "threshold": 2.0]]]
         default: [:]
         }
@@ -257,6 +266,7 @@ extension ModelResearchTests {
         case .steerSearch: .contrast(LabSteerTests.searchRequest)
         case .steerCommit: .commitSteering(LabSteerTests.commitRequest)
         case .traceTokens: .traceTokens(Self.tokenTrace)
+        case .activationContrast: .activationContrast(Self.activationContrast)
         default: .describe
         }
     }

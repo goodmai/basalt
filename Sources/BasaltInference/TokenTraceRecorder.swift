@@ -14,8 +14,8 @@ final class TokenTraceRecorder: ForwardProbe {
     private var floatRows: [MLXArray] = []
     private var intRows: [MLXArray] = []
     private(set) var layout: TokenTraceLayout?
-    private(set) var lastResiduals: [Int: MLXArray] = [:]
-    var keepsLastResiduals = false
+    private(set) var promptResiduals: [Int: MLXArray] = [:]
+    var capturesPromptResiduals = false
 
     init(_ request: TokenTraceRequest, readout: ((MLXArray) -> MLXArray)?, edits: (any ForwardProbe)? = nil) {
         self.request = request
@@ -39,7 +39,7 @@ final class TokenTraceRecorder: ForwardProbe {
         let edited = edits?.residual(layer: layer, hidden) ?? hidden
         guard traces(layer) else { return edited }
         let states = edited[0].asType(.float32)
-        if keepsLastResiduals { lastResiduals[layer] = states[states.dim(0) - 1] }
+        if capturesPromptResiduals { promptResiduals[layer] = states[states.dim(0) - 1] }
         if let direction = directions[layer] { record(.projection, layer, matmul(states, direction).reshaped(-1, 1)) }
         if request.lensTopK > 0, let readout { recordLens(layer, readout(edited[0])) }
         return edited
@@ -93,7 +93,7 @@ final class TokenTraceRecorder: ForwardProbe {
     func expertMask(layer: Int) -> MLXArray? { edits?.expertMask(layer: layer) }
 
     func collect(positions: Int) throws(BasaltError) -> [MLXArray] {
-        defer { (pendingFloats, pendingInts) = ([], []) }
+        defer { (pendingFloats, pendingInts, capturesPromptResiduals) = ([], [], false) }
         let step = TokenTraceLayout(floats: pendingFloats.map(\.segment), ints: pendingInts.map(\.segment))
         guard layout == nil || layout == step else {
             throw .inferenceError("the traced hooks changed between forwards; trace fewer options or layers")
@@ -106,7 +106,7 @@ final class TokenTraceRecorder: ForwardProbe {
         let ints = pendingInts.isEmpty ? MLXArray.zeros([positions, 0], type: Int32.self) : concatenated(pendingInts.map(\.values), axis: 1)
         floatRows.append(floats)
         intRows.append(ints)
-        return [floats, ints] + Array(lastResiduals.values)
+        return [floats, ints] + Array(promptResiduals.values)
     }
 
     func table() -> (floats: MLXArray, ints: MLXArray)? {
