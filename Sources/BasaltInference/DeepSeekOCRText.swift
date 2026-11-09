@@ -52,7 +52,7 @@ enum DeepSeekOCRText {
             _down.wrappedValue = Linear(hidden, dimensions, bias: false)
         }
 
-        func callAsFunction(_ x: MLXArray) -> MLXArray { down(silu(gate(x)) * up(x)) }
+        func callAsFunction(_ x: MLXArray) -> MLXArray { down(compiledSiluProduct(gate(x), up(x))) }
     }
 
     final class MoE: Module, UnaryLayer {
@@ -72,13 +72,14 @@ enum DeepSeekOCRText {
 
         func route(_ x: MLXArray) -> (indices: MLXArray, scores: MLXArray) {
             let scores = softmax(gate(x), axis: -1, precise: true)
-            let indices = stopGradient(argPartition(-scores, kth: topK - 1, axis: -1)[.ellipsis, ..<topK])
+            let experts = scores.dim(-1)
+            let indices = stopGradient(argPartition(scores, kth: experts - topK, axis: -1)[.ellipsis, (experts - topK)...])
             return (indices, takeAlong(scores, indices, axis: -1) * scaling)
         }
 
         func callAsFunction(_ x: MLXArray) -> MLXArray {
             let (indices, scores) = route(x)
-            let routed = weightedExpertSum(switchMLP(x, indices), scores)
+            let routed = (switchMLP(x, indices) * scores[.ellipsis, .newAxis]).sum(axis: -2)
             return shared.map { routed + $0(x) } ?? routed
         }
     }

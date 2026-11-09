@@ -20,7 +20,7 @@ enum DeepSeekOCRSAM {
             _relPosW.wrappedValue = zeros([2 * side - 1, dimensions / heads])
         }
 
-        func callAsFunction(_ x: MLXArray, queryRows: Int = 1024) -> MLXArray {
+        func callAsFunction(_ x: MLXArray, queryRows: Int = 4096) -> MLXArray {
             let (b, h, w) = (x.dim(0), x.dim(1), x.dim(2))
             let parts = qkv(x).reshaped(b, h * w, 3, heads, -1).transposed(2, 0, 3, 1, 4)
             let (q, k, v) = (parts[0], parts[1], parts[2])
@@ -30,8 +30,8 @@ enum DeepSeekOCRSAM {
                 let last = min(first + rows, h)
                 let block = q[0..., 0..., (first * w) ..< (last * w)]
                 let grid = block.reshaped(b * heads, last - first, w, -1)
-                let relH = matmul(grid, tableH[first ..< last].transposed(0, 2, 1))
-                let relW = matmul(grid.transposed(0, 2, 1, 3), tableW.transposed(0, 2, 1)).transposed(0, 2, 1, 3)
+                let relH = einsum("bhwc,hkc->bhwk", grid, tableH[first ..< last])
+                let relW = einsum("bhwc,wkc->bhwk", grid, tableW)
                 let bias = (relH.expandedDimensions(axis: -1) + relW.expandedDimensions(axis: -2)).reshaped(b, heads, (last - first) * w, h * w)
                 return MLXFast.scaledDotProductAttention(queries: block, keys: k, values: v, scale: scale, mask: .array(bias))
             }
