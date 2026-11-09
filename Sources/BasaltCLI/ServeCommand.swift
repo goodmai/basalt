@@ -68,6 +68,8 @@ struct ServeCommand: AsyncParsableCommand {
 
     @OptionGroup var network: ServeNetworkOptions
 
+    @OptionGroup var pipeline: PipelineOptions
+
     @Option(
         name: .customLong("max-concurrent"),
         help: "Generations decoding at the same time; each holds its own KV cache (default: 1)"
@@ -179,9 +181,11 @@ struct ServeCommand: AsyncParsableCommand {
 
         let embeddings = try await loadEmbeddings()
         let decisions = try await loadDecisions(chat: engine)
-        try await admitComputePlan(chatPath: resolvedPath, embeddings: embeddings, decisions: decisions)
+        let ocrPath = try await pipelineOCRPath()
+        try await admitComputePlan(chatPath: resolvedPath, embeddings: embeddings, decisions: decisions, ocrPath: ocrPath)
 
         try await load(orchestrator, from: resolvedPath)
+        let stages = try await loadPipelineStages(ocrPath: ocrPath)
         if !noMemoryCoordinator { await orchestrator.coordinateMemory(with: MemoryCoordinator()) }
         if !noThermalPolicy { await orchestrator.coordinateThermal() }
         if experimental.speechAnalyzer { await orchestrator.setSpeechFallback(SpeechAnalyzerTranscriber()) }
@@ -198,11 +202,11 @@ struct ServeCommand: AsyncParsableCommand {
             orchestrator: orchestrator,
             modelId: resolvedPath.split(separator: "/").last.map { String($0) },
             library: HarnessExperienceLibrary(rootDirectory: HarnessExperienceLibrary.defaultRoot)
-        ).withResearchTools(researchTools).withImageDirectories(imageDirs.map { URL(fileURLWithPath: $0) }).withDecisions(decisions) : nil
+        ).withResearchTools(researchTools).withImageDirectories(imageDirs.map { URL(fileURLWithPath: $0) }).withDecisions(decisions).withPipeline(stages) : nil
 
         try await Self.runServers(
             ServerLaunch(
-                config: config, startREST: startREST, mcpServer: mcpServer, embeddings: embeddings, decisions: decisions,
+                config: config, startREST: startREST, mcpServer: mcpServer, embeddings: embeddings, decisions: decisions, pipeline: stages,
                 statsInterval: stats ? min(max(1, statsInterval), 86_400) : nil, canaryInterval: canaryMinutes.map { .seconds($0 * 60) }),
             orchestrator: orchestrator)
     }

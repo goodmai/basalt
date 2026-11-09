@@ -10,6 +10,7 @@ struct ServerLaunch: Sendable {
     let mcpServer: MCPServer?
     var embeddings: (any EmbeddingEngine)? = nil
     var decisions: (any DecisionEngine)? = nil
+    var pipeline = PipelineStages()
     var statsInterval: Int? = nil
     var canaryInterval: Duration? = nil
     var shutdownDeadline: Duration = .seconds(5)
@@ -83,7 +84,7 @@ extension ServeCommand {
                     embeddings: launch.embeddings,
                     shutdownDeadline: launch.shutdownDeadline,
                     handleSignals: launch.handleSignals
-                ).withDecisions(launch.decisions)
+                ).withDecisions(launch.decisions).withPipeline(launch.pipeline)
                 group.addTask { try await restServer.run() }
             }
             if let mcpServer = launch.mcpServer {

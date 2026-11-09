@@ -14,6 +14,7 @@ public final class MCPServer: Service, Sendable {
     let researchTools: Bool
     let imageDirectories: [URL]
     let decisions: (any DecisionEngine)?
+    let pipeline: PipelineStages
     private let makeInput: @Sendable () -> AsyncStream<String>
     let writer: @Sendable (String) -> Void
 
@@ -33,6 +34,7 @@ public final class MCPServer: Service, Sendable {
         self.researchTools = false
         self.imageDirectories = []
         self.decisions = nil
+        self.pipeline = PipelineStages()
         self.makeInput = Self.stdinStream
         self.writer = writer
     }
@@ -51,11 +53,12 @@ public final class MCPServer: Service, Sendable {
         self.researchTools = false
         self.imageDirectories = []
         self.decisions = nil
+        self.pipeline = PipelineStages()
         self.makeInput = { input }
         self.writer = writer
     }
 
-    private init(_ server: MCPServer, researchTools: Bool, imageDirectories: [URL], decisions: (any DecisionEngine)?) {
+    private init(_ server: MCPServer, researchTools: Bool, imageDirectories: [URL], decisions: (any DecisionEngine)?, pipeline: PipelineStages) {
         orchestrator = server.orchestrator
         modelId = server.modelId
         library = server.library
@@ -64,20 +67,25 @@ public final class MCPServer: Service, Sendable {
         self.researchTools = researchTools
         self.imageDirectories = imageDirectories
         self.decisions = decisions
+        self.pipeline = pipeline
         makeInput = server.makeInput
         writer = server.writer
     }
 
     public func withResearchTools(_ enabled: Bool) -> MCPServer {
-        MCPServer(self, researchTools: enabled, imageDirectories: imageDirectories, decisions: decisions)
+        MCPServer(self, researchTools: enabled, imageDirectories: imageDirectories, decisions: decisions, pipeline: pipeline)
     }
 
     public func withImageDirectories(_ directories: [URL]) -> MCPServer {
-        MCPServer(self, researchTools: researchTools, imageDirectories: directories.map(MCPImages.resolved), decisions: decisions)
+        MCPServer(self, researchTools: researchTools, imageDirectories: directories.map(MCPImages.resolved), decisions: decisions, pipeline: pipeline)
+    }
+
+    package func withPipeline(_ stages: PipelineStages) -> MCPServer {
+        MCPServer(self, researchTools: researchTools, imageDirectories: imageDirectories, decisions: decisions, pipeline: stages)
     }
 
     public func withDecisions(_ engine: (any DecisionEngine)?) -> MCPServer {
-        MCPServer(self, researchTools: researchTools, imageDirectories: imageDirectories, decisions: engine)
+        MCPServer(self, researchTools: researchTools, imageDirectories: imageDirectories, decisions: engine, pipeline: pipeline)
     }
 }
 
