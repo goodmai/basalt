@@ -41,5 +41,6 @@ extension DistillRequest {
         learningRate = try MCPArguments.number("learningRate", in: args) ?? learningRate
         maxSeqLen = try MCPArguments.integer("maxSeqLen", in: args, ResearchCall.nonNegative) ?? maxSeqLen
         output = try MCPArguments.string("output", in: args)
+        onPolicy = try MCPArguments.optionalBoolean("onPolicy", in: args) ?? onPolicy
     }
 }

@@ -23,12 +23,16 @@ extension MLXInferenceEngine {
         defer { detachLoRA(from: context.model) }
         let losses = try distillSteps(trainRows, request: request, model: context.model)
         let after = nll(heldOutRows, context.model)
+        try saveAdapter(configuration, model: context.model, to: directory)
+        return DistillRun(losses: reported(losses), nllBefore: before, nllAfter: after, tooLong: tooLong)
+    }
+
+    static func saveAdapter(_ configuration: LoRAConfiguration, model: Module, to directory: URL) throws {
         try withTaskCancellationShield {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
             try JSONEncoder().encode(configuration).write(to: directory.appending(component: "adapter_config.json"))
-            try LoRATrain.saveLoRAWeights(model: context.model, url: directory.appending(component: "adapters.safetensors"))
+            try LoRATrain.saveLoRAWeights(model: model, url: directory.appending(component: "adapters.safetensors"))
         }
-        return DistillRun(losses: reported(losses), nllBefore: before, nllAfter: after, tooLong: tooLong)
     }
 
     static func distillRow(_ pair: TrainingTask, _ context: ModelContext) throws -> DistillRow {
