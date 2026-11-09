@@ -100,6 +100,12 @@ struct Benchmark: AsyncParsableCommand {
     @Flag(name: .customLong("degradation-test"), help: "Run context degradation benchmark (1k -> 128k) and output to JSON")
     var degradationTest: Bool = false
 
+    @Option(name: .customLong("suite"), help: "Run a suite instead of the timed runs: fae-scaling measures TTFT, prefill and decode tok/s and peak memory at 1K, 4K, 16K, 32K, 64K and 128K tokens of context (capped by the model's context and the fit check), -i runs per context, and writes JSON and Markdown to logs/")
+    var suite: Suite?
+
+    @Option(name: .customLong("max-context"), help: "With --suite fae-scaling, skip contexts above this many tokens")
+    var maxContext: Int?
+
     @Flag(name: .customLong("share"), help: "Export benchmark results to JSON format suitable for sharing (bench --share)")
     var share: Bool = false
 
@@ -112,11 +118,14 @@ struct Benchmark: AsyncParsableCommand {
         }
         print("  iterations: \(iterations)  tokens: \(tokens)  warmup: \(!noWarmup)\n")
 
+        let plan = suite == nil ? nil : try await faeScalingPlan(path: resolvedPath)
         let orchestrator = makeOrchestrator()
 
         print("Loading model…", terminator: ""); fflush(stdout)
         try await orchestrator.loadModel(path: resolvedPath)
         print(" done\n")
+
+        if let plan { return try await runFaeScaling(orchestrator, plan: plan) }
 
         if degradationTest {
             try await runDegradationTest(orchestrator: orchestrator)
@@ -214,6 +223,9 @@ extension Benchmark {
     func validate() throws {
         if let conflict = KVPrecision.flagConflict(kvBitsSet: kvBits != nil, fixed: kvBits, zones: kvZones) {
             throw ValidationError(conflict)
+        }
+        if maxContext != nil, suite == nil {
+            throw ValidationError("--max-context needs --suite fae-scaling")
         }
         if let questTopK, !(1 ... 4096).contains(questTopK) {
             throw ValidationError("--quest-top-k takes a number of blocks in 1...4096")

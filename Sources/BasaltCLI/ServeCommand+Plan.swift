@@ -32,7 +32,9 @@ extension ServeCommand {
     }
 
     func admitComputePlan(chatPath: String, embeddings: (any EmbeddingEngine)?, decisions: (any DecisionEngine)?, perceive paths: PerceivePaths) async throws -> Bool {
-        let chat = Workload(name: chatPath.split(separator: "/").last.map(String.init) ?? chatPath, role: "chat", unit: .gpu, kind: .decode, residentBytes: Self.weightBytes(chatPath))
+        let weights = ByteCount(Self.weightBytes(chatPath))
+        let resident = expertStreaming.setting?.residentBytes(weights: weights, modelId: targetModel) ?? weights
+        let chat = Workload(name: chatPath.split(separator: "/").last.map(String.init) ?? chatPath, role: "chat", unit: .gpu, kind: .decode, residentBytes: resident.rawValue)
         let perceive = [(pipeline.ocrModel, paths.ocr), (pipeline.audioModel, paths.audio)].compactMap { model, path in
             path.map { Self.perceiveWorkload(model ?? $0, path: $0) }
         }

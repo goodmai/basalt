@@ -156,15 +156,27 @@ On reasoning, lookup is below plain decoding on hybrids as it is on Qwen3-4B (0.
 
 "Same text as off" is what these runs observed, not a guarantee. Lookup spends exactly one sampler draw per emitted token, in plain-decoding order, so a seeded run follows plain decoding as long as the logits match. But a multi-token verify uses different matmul kernels than a one-token step, so on a quantized model a near-tie can flip, at T 0 and at T > 0 alike (#146). That happened on Qwen3-4B's greedy prose. The Qwen3-4B prose row at T 0.7 drafted nothing, so its "yes" shows nothing about lookup.
 
-## MoE context scaling (#242)
+## Context scaling: `--suite fae-scaling` (#242)
 
-`MoEContextScalingBenchmarkTests` measures TTFT, prefill tok/s, decode tok/s and peak memory of one MoE model at 1k, 4k, 16k and 32k tokens of context. Run it on a release build, one model per invocation:
+`PerformanceBenchmark --suite fae-scaling` measures TTFT, prefill tok/s, decode tok/s and peak memory at 1K, 4K, 16K, 32K, 64K and 128K tokens of context, the grid community MLX comparisons (FaeBenchmark) report. Run it on a release build, one model per invocation, holding the GPU lock:
 
 ```
-BASALT_E2E=1 BASALT_E2E_MOE_SCALING_MODEL_PATH=~/.cache/huggingface/hub/models--LiquidAI--LFM2.5-24B-A2B-MLX-4bit/snapshots/<rev> \
-  swift test -c release --filter MoEContextScalingBenchmarkTests
+swift run -c release PerformanceBenchmark --suite fae-scaling -m mlx-community/gemma-4-12B-it-qat-4bit -i 2 -t 128 --temperature 0.7
 ```
 
-Optional: `BASALT_E2E_MOE_SCALING_CONTEXTS` (comma-separated token counts), `_RUNS` (timed runs per context, default 3) and `_TOKENS` (generated tokens per run, default 128). The runner inspects the snapshot, takes the GPU lock, logs the model's fit tier from `MemoryEvaluator` (resident tier, or `Streaming` with its resident + expert cache + KV arithmetic), refuses a model whose id names no active-parameter count, and skips a context above the fit's context budget. Each prompt starts with a unique tag, so the prompt cache cannot shorten prefill. The log `logs/moe-context-scaling-<date>.log` ends with a Markdown table, and the rows go to `logs/moe-context-scaling-<date>-<org>--<model>.json`.
+- `-i` is the number of timed runs per context, `-t` the tokens generated per run, and `--max-context N` skips the contexts above N (for a busy machine or a quick check). The KV options (`--kv-bits`, `--kv-zones`) apply as in a normal run.
+- Before loading, the suite inspects the snapshot and fails if it is incomplete. It then drops each context whose prompt plus generated tokens exceed the model's `max_position_embeddings`, or that `MemoryEvaluator` does not fit in the Metal working set at that length. A dropped context is listed as not measured, with the reason.
+- Every prompt starts with a unique tag, so the prompt cache cannot shorten prefill. The prompt length is calibrated with the model's tokenizer, and the table shows the real prompt token count. Peak memory is reset before each context.
+- Prefill tok/s is the uncached prompt tokens divided by TTFT. Decode tok/s is the engine's generation rate.
+- Each step prints a timestamped line with the 1-minute load average. Treat speed rows taken at a load above 4 as contaminated.
+- Results go to `logs/fae-scaling-<date>-<org>--<model>.json` (model, chip, fit tier, rows, not-measured contexts) and to a `.md` file with the same table. The run exits non-zero if a context fails or nothing was measured.
 
-The `Streaming` fit tier (`FitLevel.moeTieredStreaming`) marks a sparse MoE that does not fit the Metal working set resident but would with expert streaming: the active share of the weights resident, a quarter of the remaining expert weights as expert cache, plus the KV cache. `models check` and `serve --dry-run` print that arithmetic and still refuse the model, because expert streaming (#225) is not implemented; the benchmark therefore measures resident MoE models only.
+The suite replaces the MoE-only `MoEContextScalingBenchmarkTests` from phase 1. Phase 1 measured resident decode from 1K to 32K: LFM2.5-24B-A2B went from 107 to 75 tok/s, Gemma 4 26B-A4B from 57 to 20 tok/s.
+
+### The `Streaming` fit tier
+
+`FitLevel.moeTieredStreaming` marks a sparse MoE that does not fit the Metal working set resident but fits with expert streaming (#225): the active share of the weights stays resident, plus an expert cache (a quarter of the remaining expert weights, or `--expert-cache-gb`), plus the KV cache. A dense model never gets this tier.
+
+- `basalt fit` shows it as `Stre` in the table and as `streaming` in `--json`.
+- `models check` and `serve --dry-run` print the resident + cache + KV arithmetic. Without `--experimental-expert-streaming` they refuse the model as "needs expert streaming". With the flag they admit it and size the context after the resident weights and the cache.
+- `serve --experimental-expert-streaming` counts the chat model in the compute plan the same way: resident weights plus expert cache, not the whole checkpoint. Without the flag, the compute plan refuses an oversized MoE.
