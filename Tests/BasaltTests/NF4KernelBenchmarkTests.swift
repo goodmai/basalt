@@ -117,7 +117,7 @@ struct NF4KernelBenchmarkTests {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
         let url = root.appendingPathComponent("logs/nf4-kernel-\(Date().ISO8601Format(.iso8601.year().month().day())).log")
         Bench.log("RUN gather \(Date().ISO8601Format()) commit \(ModelRunLog.output("/usr/bin/git", ["-C", root.path, "rev-parse", "HEAD"])) machine \(SystemProfiler.detectChipModel()) load \(ModelRunLog.load())", to: url)
-        Bench.log("experts | E top-k K x N | affine g64 us | nf4 g32 us | nf4 / affine", to: url)
+        Bench.log("experts | E top-k K x N | affine g64 us | nf4 g32 us | nf4 / affine | kernel rel max err", to: url)
         for shape in Self.experts {
             let dense = MLXRandom.normal([shape.experts, shape.outputs, shape.inputs], dtype: .bfloat16, scale: 0.02)
             let micros = Self.interleavedMedians([
@@ -125,7 +125,12 @@ struct NF4KernelBenchmarkTests {
                 Self.gatherRun(shape, dense: dense, mode: .nf4, groupSize: 32),
             ])
             let (affine, nf4) = (micros[0], micros[1])
-            Bench.log("\(shape.name) | \(shape.experts) \(shape.topK) \(shape.inputs) x \(shape.outputs) | " + String(format: "%.1f | %.1f | %.2fx", affine, nf4, nf4 / affine), to: url)
+            let (codes, scales, _) = quantized(dense, groupSize: 32, bits: 4, mode: .nf4)
+            let picks = (0 ..< shape.topK).map { UInt32(($0 * 37) % shape.experts) }
+            let x = MLXRandom.normal([shape.topK, 1, shape.inputs], dtype: .bfloat16)
+            let error = NF4KernelParityTests.gatherError(x: x, codes: codes, scales: scales, experts: picks, groupSize: 32)
+            Bench.log("\(shape.name) | \(shape.experts) \(shape.topK) \(shape.inputs) x \(shape.outputs) | " + String(format: "%.1f | %.1f | %.2fx | %.2e", affine, nf4, nf4 / affine, error), to: url)
+            #expect(error < NF4KernelParityTests.tolerance)
         }
         Bench.log("END gather \(Date().ISO8601Format()) log \(url.path)", to: url)
     }
