@@ -1,7 +1,7 @@
 import Foundation
 import BasaltCore
 
-public enum RemoteDecisionCore {
+enum RemoteDecisionCore {
     struct Body: Encodable {
         let model: String
         let state: String
@@ -27,7 +27,7 @@ public enum RemoteDecisionCore {
         let usage: Usage?
     }
 
-    public static func body(_ request: SystemOneRequest, model: String) throws(BasaltError) -> Data {
+    static func body(_ request: SystemOneRequest, model: String) throws(BasaltError) -> Data {
         do {
             return try JSONEncoder().encode(Body(model: model, state: SecretRedactor.redact(request.state), questions: request.questions, calibrated: request.calibrated))
         } catch {
@@ -35,7 +35,7 @@ public enum RemoteDecisionCore {
         }
     }
 
-    public static func response(_ data: Data, for request: SystemOneRequest) -> SystemOneResponse? {
+    static func response(_ data: Data, for request: SystemOneRequest) -> SystemOneResponse? {
         guard let wire = try? JSONDecoder().decode(Wire.self, from: data) else { return nil }
         var answers: [String: SystemOneAnswer] = [:]
         for (id, question) in request.questions {
