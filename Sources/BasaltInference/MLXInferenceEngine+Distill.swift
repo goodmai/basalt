@@ -36,6 +36,7 @@ extension MLXInferenceEngine {
         let examples = try DistillCore.examples(jsonl: String(decoding: data, as: UTF8.self))
         let directory = try adapterDirectory(request.output)
         let teacher = try TeacherClient(request.teacher.url, model: request.teacher.model, provider: request.teacher.provider, environment: environment, session: session)
+        if request.onPolicy { return try await onPolicyDistill(request, examples: examples, teacher: teacher, directory: directory) }
         let cache = DistillCache(directory: DistillCache.directory(for: request, prompts: data, home: home))
         var report = try await Self.collect(request, examples: examples, teacher: teacher, cache: cache)
         let (train, heldOut) = Self.pairs(request, examples: examples, entries: cache.load(), markers: profile.thinkingMarkers, report: &report)
@@ -48,12 +49,16 @@ extension MLXInferenceEngine {
         (report.losses, report.teacherNLLBefore, report.teacherNLLAfter) = (run.losses, run.nllBefore, run.nllAfter)
         report.rejected["too_long", default: 0] += run.tooLong
         report.adapterDirectory = directory.path
+        report.verdict = try await applyDistilled(directory, gate: request.gate)
+        return report
+    }
+
+    func applyDistilled(_ directory: URL, gate: GateRequest) async throws(BasaltError) -> AdapterVerdict {
         do {
-            report.verdict = try await applyAdapter(.directory(directory.path), gate: request.gate)
+            return try await applyAdapter(.directory(directory.path), gate: gate)
         } catch {
             throw .inferenceError("the adapter was distilled and saved in \(directory.path) but not applied: \(Self.briefly(error))")
         }
-        return report
     }
 
     static func validate(_ request: DistillRequest) throws(BasaltError) {

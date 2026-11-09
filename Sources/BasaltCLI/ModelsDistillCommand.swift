@@ -53,6 +53,9 @@ struct DistillSubcommand: AsyncParsableCommand {
     @Option(name: .long, help: "New adapter directory (default ~/.basalt/adapters)")
     var output: String?
 
+    @Flag(name: .long, help: "The student samples and a basalt teacher with the same tokenizer scores its tokens on /v1/score; per-token reverse KL")
+    var onPolicy = false
+
     mutating func run() async throws {
         guard let modelPath = FileManager.default.fileExists(atPath: model) ? model : ModelCache.resolve(repoId: model)?.path else {
             throw ValidationError("Model '\(model)' is not in the local cache; run `basalt models download \(model)` first")
@@ -64,6 +67,7 @@ struct DistillSubcommand: AsyncParsableCommand {
         (teacher.provider, teacher.inputPricePerMillion, teacher.outputPricePerMillion, teacher.reasoningEffort) = (provider, inputPrice, outputPrice, reasoningEffort)
         var request = DistillRequest(prompts: prompts, teacher: teacher, gate: GateRequest(heldOut: Self.generalPrompts))
         (request.filter, request.budgetUSD, request.iterations, request.rank, request.output, request.includeReasoning) = (filter, budgetUsd, iterations, rank, output, includeReasoning)
+        request.onPolicy = onPolicy
         let engine = MLXInferenceEngine()
         let orchestrator = ModelOrchestratorActor(engine: engine)
         defer { await orchestrator.shutdown() }
@@ -72,6 +76,7 @@ struct DistillSubcommand: AsyncParsableCommand {
         print("teacher: \(report.teacherCalls) calls (\(report.cached) cached), \(report.teacherOutputTokens) completion tokens, $\(String(format: "%.4f", report.spentUSD)), stopped by \(report.stoppedBy.rawValue)")
         print("kept \(report.kept), held out \(report.heldOut), rejected \(report.rejected.sorted { $0.key < $1.key }.map { "\($0.key) \($0.value)" }.joined(separator: ", "))")
         print("held-out teacher NLL: \(report.teacherNLLBefore.map { String(format: "%.3f", $0) } ?? "-") -> \(report.teacherNLLAfter.map { String(format: "%.3f", $0) } ?? "-")")
+        print("held-out reverse KL: \(report.reverseKLBefore.map { String(format: "%.3f", $0) } ?? "-") -> \(report.reverseKLAfter.map { String(format: "%.3f", $0) } ?? "-")")
         print("adapter: \(report.adapterDirectory ?? "-"), gate: \(report.verdict?.overlay.map { "applied as overlay \($0.id)" } ?? "not applied")")
     }
 }

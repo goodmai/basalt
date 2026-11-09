@@ -106,21 +106,36 @@ struct TeacherClient: Sendable {
     }
 
     func complete(_ prompt: String, maxTokens: Int, temperature: Float, reasoningEffort: String? = nil) async throws(BasaltError) -> Completion {
-        let request = try request(prompt, maxTokens: maxTokens, temperature: temperature, reasoningEffort: reasoningEffort)
+        try await retrying(try request(prompt, maxTokens: maxTokens, temperature: temperature, reasoningEffort: reasoningEffort), decode)
+    }
+
+    func retrying<Reply>(_ request: URLRequest, _ decode: (Data) -> Reply?) async throws(BasaltError) -> Reply {
         var attempt = 0
         while true {
             let (status, data, wait) = try await send(request)
-            if status == 200, let completion = decode(data) { return completion }
+            if status == 200, let reply = decode(data) { return reply }
             attempt += 1
             guard status == 429 || status >= 500 || status == 0, attempt <= Self.retries else {
-                throw .inferenceError("the teacher at \(endpoint.absoluteString) returned HTTP \(status) without a \(provider.rawValue) completion after \(attempt) attempts")
+                throw .inferenceError("the teacher at \(request.url?.absoluteString ?? endpoint.absoluteString) returned HTTP \(status) without a valid \(provider.rawValue) reply after \(attempt) attempts")
             }
             try? await Task.sleep(for: .seconds(Self.delay(attempt: attempt, advised: wait)))
         }
     }
 
     func request(_ prompt: String, maxTokens: Int, temperature: Float, reasoningEffort: String? = nil) throws(BasaltError) -> URLRequest {
-        var request = URLRequest(url: endpoint, timeoutInterval: 600)
+        var body: [String: Any] = [
+            "model": model, "messages": [["role": "user", "content": prompt]], "temperature": Double(temperature), "max_tokens": maxTokens,
+        ]
+        if let reasoningEffort { body[provider == .anthropic ? "output_config" : "reasoning_effort"] = provider == .anthropic ? ["effort": reasoningEffort] : reasoningEffort }
+        do {
+            return post(endpoint, body: try JSONSerialization.data(withJSONObject: body))
+        } catch {
+            throw .invalidRequestStructure(details: "teacher request: \(error.localizedDescription)")
+        }
+    }
+
+    func post(_ url: URL, body: Data) -> URLRequest {
+        var request = URLRequest(url: url, timeoutInterval: 600)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         switch provider {
@@ -130,15 +145,7 @@ struct TeacherClient: Sendable {
             if let key { request.setValue(key, forHTTPHeaderField: "x-api-key") }
             request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
         }
-        var body: [String: Any] = [
-            "model": model, "messages": [["role": "user", "content": prompt]], "temperature": Double(temperature), "max_tokens": maxTokens,
-        ]
-        if let reasoningEffort { body[provider == .anthropic ? "output_config" : "reasoning_effort"] = provider == .anthropic ? ["effort": reasoningEffort] : reasoningEffort }
-        do {
-            request.httpBody = try JSONSerialization.data(withJSONObject: body)
-        } catch {
-            throw .invalidRequestStructure(details: "teacher request: \(error.localizedDescription)")
-        }
+        request.httpBody = body
         return request
     }
 
@@ -176,5 +183,17 @@ struct TeacherClient: Sendable {
                 truncated: reply.stopReason == "max_tokens",
                 inputTokens: reply.usage?.inputTokens ?? 0, outputTokens: reply.usage?.outputTokens ?? 0)
         }
+    }
+}
+
+extension TeacherClient {
+    var scoreEndpoint: URL { endpoint.deletingLastPathComponent().deletingLastPathComponent().appending(path: "score") }
+
+    func score(_ request: ScoreRequest) async throws(BasaltError) -> ScoreReport {
+        let body: Data
+        do { body = try JSONEncoder().encode(request) } catch {
+            throw .invalidRequestStructure(details: "teacher score request: \(error.localizedDescription)")
+        }
+        return try await retrying(post(scoreEndpoint, body: body)) { try? JSONDecoder().decode(ScoreReport.self, from: $0) }
     }
 }

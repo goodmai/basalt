@@ -43,6 +43,7 @@ public struct DistillRequest: Sendable, Codable, Equatable {
     public var maxSeqLen = 2048
     public var gate: GateRequest
     public var output: String?
+    public var onPolicy = false
 
     public init(prompts: String, teacher: TeacherSpec, gate: GateRequest) {
         self.prompts = prompts
@@ -70,9 +71,55 @@ public struct DistillReport: Sendable, Codable {
     public var heldOut = 0
     public var teacherNLLBefore: Float?
     public var teacherNLLAfter: Float?
+    public var reverseKLBefore: Float?
+    public var reverseKLAfter: Float?
     public var cacheDirectory: String?
     public var adapterDirectory: String?
     public var verdict: AdapterVerdict?
 
     public init() {}
+}
+
+public struct ScoreRequest: Sendable, Codable, Equatable {
+    public var messages: [[String: String]]
+    public var completion: [Int]
+    public var topLogprobs: Int
+
+    enum CodingKeys: String, CodingKey {
+        case messages, completion
+        case topLogprobs = "top_logprobs"
+    }
+
+    public init(messages: [[String: String]], completion: [Int], topLogprobs: Int) {
+        self.messages = messages
+        self.completion = completion
+        self.topLogprobs = topLogprobs
+    }
+}
+
+public struct TopLogprobs: Sendable, Codable, Equatable {
+    public var ids: [Int]
+    public var logprobs: [Float]
+
+    public init(ids: [Int], logprobs: [Float]) {
+        self.ids = ids
+        self.logprobs = logprobs
+    }
+}
+
+public struct ScoreReport: Sendable, Codable, Equatable {
+    public var tokenizer: String
+    public var promptTokens: Int
+    public var positions: [TopLogprobs]
+
+    enum CodingKeys: String, CodingKey {
+        case tokenizer, positions
+        case promptTokens = "prompt_tokens"
+    }
+
+    public init(tokenizer: String, promptTokens: Int, positions: [TopLogprobs]) {
+        self.tokenizer = tokenizer
+        self.promptTokens = promptTokens
+        self.positions = positions
+    }
 }

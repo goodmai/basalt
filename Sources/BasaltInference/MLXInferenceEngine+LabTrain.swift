@@ -100,12 +100,16 @@ extension MLXInferenceEngine {
     ) async throws(BasaltError) -> R {
         do {
             return try await container.performEvaluating(nonSendable: ()) { context, _ in try withError { try body(context) } }
-        } catch let error as BasaltError {
-            throw error
-        } catch is CancellationError {
-            throw .inferenceError("\(what) was cancelled; the model is unchanged")
         } catch {
-            throw .inferenceError("\(what) failed: \(briefly(error))")
+            throw labFailure(error, what)
+        }
+    }
+
+    static func labFailure(_ error: any Error, _ what: String) -> BasaltError {
+        switch error {
+        case let error as BasaltError: error
+        case is CancellationError: .inferenceError("\(what) was cancelled; the model is unchanged")
+        default: .inferenceError("\(what) failed: \(briefly(error))")
         }
     }
 
@@ -200,8 +204,11 @@ extension MLXInferenceEngine {
     }
 
     static func labPrompt(_ prompt: String, _ context: ModelContext, thinking: Bool = false) throws -> [Int] {
-        try context.tokenizer.applyChatTemplate(
-            messages: [["role": "user", "content": prompt]], tools: nil, additionalContext: ["enable_thinking": thinking])
+        try labPrompt(messages: [["role": "user", "content": prompt]], context.tokenizer, thinking: thinking)
+    }
+
+    static func labPrompt(messages: [[String: String]], _ tokenizer: any Tokenizer, thinking: Bool = false) throws -> [Int] {
+        try tokenizer.applyChatTemplate(messages: messages, tools: nil, additionalContext: ["enable_thinking": thinking])
     }
 
     static func labAnswer(_ prompt: String, _ context: ModelContext) throws -> String {
