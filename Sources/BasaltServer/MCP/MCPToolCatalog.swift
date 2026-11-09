@@ -80,6 +80,7 @@ enum MCPToolCatalog {
                 "calibrated": ["type": "boolean", "description": "Apply the model's per-type temperature (default true)"],
             ], required: ["state", "questions"])
         ),
+        ocr,
         MCPToolDescriptor(name: "gemma_generate", description: "Generate text using the locally-running Gemma model via MLX.", inputSchema: generateSchema),
         MCPToolDescriptor(name: "gemma_status", description: statusDescription, inputSchema: emptySchema),
         MCPToolDescriptor(name: "gemma_add_knowledge", description: addKnowledgeDescription, inputSchema: addKnowledgeSchema),

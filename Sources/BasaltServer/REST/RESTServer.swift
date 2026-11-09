@@ -133,6 +133,7 @@ package struct RESTServer: Sendable {
         oai.post("/rerank", use: embedding.rerank)
         oai.post("/systemone", use: SystemOneController(engine: decisions, log: orchestrator.sessionLog).decide)
         oai.post("/audio/transcriptions", use: TranscriptionsController(orchestrator: orchestrator).transcriptions)
+        oai.post("/ocr", use: OCRController(orchestrator: orchestrator).ocr)
     }
 
     private func addDocumentationRoutes(to router: Router<BasicRequestContext>) {
@@ -198,7 +199,8 @@ extension RESTServer {
         "/v1/embeddings":          { "post": { "summary": "OpenAI-compatible embeddings (serve --embedding-model)" } },
         "/v1/systemone":           { "post": { "summary": "Single-pass typed decisions: noul, choice, score (serve --decision-model)" } },
         "/v1/rerank":              { "post": { "summary": "Cohere/Jina-compatible rerank (serve --rerank-model)" } },
-        "/v1/audio/transcriptions": { "post": { "summary": "OpenAI-compatible speech to text (multipart: file, model, language, response_format, temperature)" } }
+        "/v1/audio/transcriptions": { "post": { "summary": "OpenAI-compatible speech to text (multipart: file, model, language, response_format, temperature)" } },
+        "/v1/ocr":                 { "post": { "summary": "Document OCR with GLM-OCR or MinerU2.5 (JSON: file as base64 PDF or image, pages such as 1-3, task document|text|table|formula|chart, format markdown|json, model)" } }
       }
     }
     """

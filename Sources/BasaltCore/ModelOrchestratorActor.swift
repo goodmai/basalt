@@ -51,6 +51,8 @@ public actor ModelOrchestratorActor {
 
     var kvReservations: [Int: ByteCount] { state.reservations.bytes }
 
+    var loaded: (path: String, epoch: Int) { (state.modelPath, state.modelEpoch) }
+
     var routingModelKey: String {
         "\(modelInfo)@\(URL(fileURLWithPath: state.modelPath).lastPathComponent)"
     }
@@ -145,7 +147,7 @@ extension ModelOrchestratorActor {
         }
     }
 
-    private func autoSwitch(to modelId: String?) async throws(BasaltError) {
+    func autoSwitch(to modelId: String?) async throws(BasaltError) {
         guard let id = modelId, !id.isEmpty, id != "basalt" else { return }
         if await engine.isLoaded { return }
         guard id != currentModelId else { return }
@@ -219,7 +221,7 @@ extension ModelOrchestratorActor {
 
 extension ModelOrchestratorActor {
     func cloudFallbackReason(for request: GenerationRequest) async -> CloudFallbackReason? {
-        guard let cloudFallback, request.isServiceRequest != true, request.adapter == nil,
+        guard let cloudFallback, request.isServiceRequest != true, request.adapter == nil, request.origin != OCRRecipe.origin,
               let assessment = await cloudFallback.assess(request, localModel: routingModelKey)
         else { return nil }
         let promptTokens = Self.estimatedTokens(Self.budgetedText(request))
