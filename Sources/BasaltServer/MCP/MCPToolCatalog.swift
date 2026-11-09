@@ -217,7 +217,7 @@ extension ResearchTool {
         case .modelTensor: "Statistics of one parameter tensor by name (mean, std, min, max, L2, percentiles of |x|), dequantized, with at most maxValues values of an optional slice. Never returns a whole tensor."
         case .kvInspect: "The prompt-cache tree: budget, bytes, evictions and per namespace its nodes, leaves, tokens, bytes, recurrent snapshots, pins and last use."
         case .traceRun: "One capture run of a prompt at background priority: per-layer hidden-state norms, logit lens, per-head attention for one position and MoE router choices, each bounded to topK."
-        case .intervene: "Experiment: add a steering vector to a layer's residual stream, or zero one attention head or one expert. Creates an overlay (id, 30 min TTL, undo) that applies to research calls only, never to user requests."
+        case .intervene: "Experiment: add a steering vector to a layer's residual stream, or zero one attention head or one expert; with when, only on the tokens a trigger selects (conditional ablation). Creates an overlay (id, 30 min TTL, undo) that applies to research calls only, never to user requests."
         case .weightsDelta: "Experiment: a temporary in-memory delta on one tensor (optionally a slice), undoable; weights on disk are never written."
         case .overlaysList: "Experiment: the active overlays with id, description, creation and expiry time."
         case .overlayUndo: "Experiment: undo one overlay by id."
@@ -305,6 +305,7 @@ extension ResearchTool {
             "scale": ["type": "number", "description": "steer: factor on the vector (default 1)"],
             "head": ["type": "integer", "minimum": 0, "description": "ablate_head: head to zero"],
             "expert": ["type": "integer", "minimum": 0, "description": "ablate_expert: expert to zero"],
+            "when": whenProperty,
         ]
     }
 

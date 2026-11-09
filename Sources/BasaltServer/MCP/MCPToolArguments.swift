@@ -453,6 +453,7 @@ extension Intervention {
         default:
             throw .invalidParams("kind must be one of: \(Self.kinds.joined(separator: ", "))")
         }
+        if let when = MCPArguments.present("when", in: args) { self = .conditional(try ConditionalIntervention(self, mcp: when)) }
     }
 }
 

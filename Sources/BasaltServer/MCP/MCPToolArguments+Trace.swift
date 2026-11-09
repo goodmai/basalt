@@ -78,3 +78,26 @@ extension ActivationContrastRequest {
         topK = try MCPArguments.integer("topK", in: args, Self.ranked) ?? topK
     }
 }
+
+extension ConditionalIntervention {
+    static let triggerKinds = ["projection", "expert"]
+
+    init(_ action: Intervention, mcp value: Any) throws(MCPFailure) {
+        guard let args = value as? [String: Any] else { throw .invalidParams("when must be an object") }
+        let layer = try MCPArguments.required("when.layer", MCPArguments.integer("layer", in: args, ResearchCall.nonNegative))
+        let trigger: InterventionTrigger
+        switch try MCPArguments.string("kind", in: args) {
+        case "projection"?:
+            trigger = .projection(
+                layer: layer, vector: try MCPArguments.required("when.vector", MCPArguments.numbers("vector", in: args)),
+                above: try MCPArguments.required("when.threshold", MCPArguments.number("threshold", in: args)))
+        case "expert"?:
+            trigger = .expertRouted(
+                layer: layer, expert: try MCPArguments.required("when.expert", MCPArguments.integer("expert", in: args, ResearchCall.nonNegative)),
+                gateAbove: try MCPArguments.number("gate", in: args) ?? 0)
+        default:
+            throw .invalidParams("when.kind must be one of: \(Self.triggerKinds.joined(separator: ", "))")
+        }
+        self.init(action: action, trigger: trigger, window: try MCPArguments.integer("window", in: args, Self.windowTokens))
+    }
+}

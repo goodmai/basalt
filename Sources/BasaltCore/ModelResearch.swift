@@ -244,6 +244,7 @@ public enum Intervention: Sendable, Codable, Equatable {
     case steer(layer: Int, vector: [Float], scale: Float)
     case ablateHead(layer: Int, head: Int)
     case ablateExpert(layer: Int, expert: Int)
+    indirect case conditional(ConditionalIntervention)
 }
 
 public struct WeightDelta: Sendable, Codable, Equatable {
@@ -301,6 +302,7 @@ public struct CompareRow: Sendable, Codable {
     public var klDivergence: Float
     public var baselinePerplexity: Float
     public var overlayPerplexity: Float
+    public var triggerRate: Float?
 
     public init(
         prompt: String, baselineText: String, overlayText: String, klDivergence: Float,

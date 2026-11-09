@@ -37,8 +37,11 @@ extension MLXInferenceEngine {
         let maxTokens = min(max(request.maxTokens, 1), Self.compareTokenLimit)
         do {
             let rows = try await container.performEvaluating(nonSendable: ()) { context, _ in
-                let probe = interventions.isEmpty ? nil : InterventionProbe(interventions, anatomy: anatomy)
-                return try prompts.map { try Self.compareRow($0, context: context, probe: probe, maxTokens: maxTokens) }
+                try prompts.map { prompt in
+                    try Self.compareRow(prompt, context: context, maxTokens: maxTokens) {
+                        interventions.isEmpty ? nil : InterventionProbe(interventions, anatomy: anatomy)
+                    }
+                }
             }
             return CompareReport(rows: rows)
         } catch let error as BasaltError {
@@ -119,6 +122,8 @@ extension MLXInferenceEngine {
             guard (0 ..< experts).contains(expert) else {
                 throw .invalidRequestStructure(details: "layer \(index) has \(experts) experts; expert \(expert) does not exist")
             }
+        case .conditional(let rule):
+            try validate(rule, against: anatomy)
         }
     }
 
@@ -127,6 +132,7 @@ extension MLXInferenceEngine {
         case .steer(let layer, let vector, let scale): "steer the residual after layer \(layer) by \(scale) × a \(vector.count)-value vector"
         case .ablateHead(let layer, let head): "ablate head \(head) of layer \(layer)"
         case .ablateExpert(let layer, let expert): "ablate expert \(expert) of layer \(layer)"
+        case .conditional(let rule): describe(rule)
         }
     }
 
@@ -134,7 +140,7 @@ extension MLXInferenceEngine {
 
 extension MLXInferenceEngine {
     static func compareRow(
-        _ prompt: String, context: ModelContext, probe: (any ForwardProbe)?, maxTokens: Int, pristine: [String: AppliedDelta]? = nil
+        _ prompt: String, context: ModelContext, maxTokens: Int, pristine: [String: AppliedDelta]? = nil, probe: () -> InterventionProbe?
     ) throws -> CompareRow {
         let ids = context.tokenizer.encode(text: prompt, addSpecialTokens: true)
         guard !ids.isEmpty else { throw BasaltError.invalidRequestStructure(details: "an empty prompt has no next token to compare") }
@@ -146,8 +152,9 @@ extension MLXInferenceEngine {
             return (tokens, base)
         }
         let (baseline, base) = try pristine.map { try lifted($0, in: context.model, reference) } ?? reference()
-        let overlay = try greedy(ids, context: context, probe: probe, maxTokens: maxTokens, stops: stops)
-        let steered = try logProbabilities(ids + baseline, from: ids.count - 1, context: context, probe: probe)
+        let overlayProbe = probe()
+        let overlay = try greedy(ids, context: context, probe: overlayProbe, maxTokens: maxTokens, stops: stops)
+        let steered = try logProbabilities(ids + baseline, from: ids.count - 1, context: context, probe: probe())
         let p = exp(base)
         let kl = which(p .> 0, p * (base - steered), 0).sum(axis: -1).mean()
         let targets = MLXArray(baseline)[0..., .newAxis]
@@ -157,9 +164,11 @@ extension MLXInferenceEngine {
         func text(_ tokens: [Int]) -> String {
             context.tokenizer.decode(tokenIds: tokens.filter { !stops.contains($0) }, skipSpecialTokens: true)
         }
-        return CompareRow(
+        var row = CompareRow(
             prompt: prompt, baselineText: text(baseline), overlayText: text(overlay), klDivergence: kl.item(Float.self),
             baselinePerplexity: basePerplexity.item(Float.self), overlayPerplexity: steeredPerplexity.item(Float.self))
+        row.triggerRate = overlayProbe?.triggerRate
+        return row
     }
 
     static func greedy(_ ids: [Int], context: ModelContext, probe: (any ForwardProbe)?, maxTokens: Int, stops: Set<Int>) throws -> [Int] {
@@ -190,9 +199,11 @@ final class InterventionProbe: ForwardProbe {
     private let steering: [Int: MLXArray]
     private let heads: [Int: MLXArray]
     private let experts: [Int: MLXArray]
+    let conditions: [ConditionalEdit]
 
     init(_ interventions: [Intervention], anatomy: ModelAnatomy) {
         var steering: [Int: [Float]] = [:], heads: [Int: [Bool]] = [:], experts: [Int: [Bool]] = [:]
+        var conditions: [ConditionalEdit] = []
         for intervention in interventions {
             switch intervention {
             case .steer(let layer, let vector, let scale):
@@ -202,24 +213,42 @@ final class InterventionProbe: ForwardProbe {
                 heads[layer, default: Array(repeating: true, count: anatomy.layers[layer].heads ?? 0)][head] = false
             case .ablateExpert(let layer, let expert):
                 experts[layer, default: Array(repeating: true, count: anatomy.layers[layer].experts ?? 0)][expert] = false
+            case .conditional(let rule):
+                conditions.append(ConditionalEdit(rule, anatomy: anatomy))
             }
         }
         self.steering = steering.mapValues { MLXArray($0) }
-        self.heads = heads.mapValues { MLXArray($0) }
-        self.experts = experts.mapValues { MLXArray($0) }
+        self.heads = heads.mapValues { MLXArray($0).asType(.float32) }
+        self.experts = experts.mapValues { MLXArray($0).asType(.float32) }
+        self.conditions = conditions
     }
 
+    var triggerRate: Float? { conditions.compactMap(\.gate.rate).max() }
+
     func residual(layer: Int, _ hidden: MLXArray) -> MLXArray {
-        steering[layer].map { hidden + $0.asType(hidden.dtype) } ?? hidden
+        let steered = steering[layer].map { hidden + $0.asType(hidden.dtype) } ?? hidden
+        return conditions.reduce(steered) { $1.residual(layer: layer, $0) }
     }
 
     func attentionWeights(layer: Int, _ weights: MLXArray) {}
 
     func wantsAttention(layer: Int) -> Bool { false }
 
-    func headMask(layer: Int) -> MLXArray? { heads[layer] }
+    func headMask(layer: Int) -> MLXArray? {
+        Self.product([heads[layer]] + conditions.map { $0.headMask(layer: layer) })
+    }
 
     func routerLogits(layer: Int, _ logits: MLXArray) {}
 
-    func expertMask(layer: Int) -> MLXArray? { experts[layer] }
+    func routerTopK(layer: Int, indices: MLXArray, gates: MLXArray) {
+        for condition in conditions { condition.routed(layer: layer, indices: indices, gates: gates) }
+    }
+
+    func expertMask(layer: Int) -> MLXArray? {
+        Self.product([experts[layer]] + conditions.map { $0.expertMask(layer: layer) })
+    }
+
+    static func product(_ masks: [MLXArray?]) -> MLXArray? {
+        masks.compactMap { $0 }.reduce(nil) { product, mask in product.map { $0 * mask } ?? mask }
+    }
 }

@@ -38,3 +38,21 @@ extension ResearchTool {
         ]
     }
 }
+
+extension ResearchTool {
+    static var whenProperty: [String: Any] {
+        [
+            "type": "object", "required": ["kind", "layer"],
+            "description": "Conditional: apply the action only on tokens where the trigger fires, evaluated per token in the same forward; the action's layer must come after the trigger layer",
+            "properties": [
+                "kind": ["type": "string", "enum": ConditionalIntervention.triggerKinds, "description": "projection: residual · vector after layer above threshold; expert: expert routed at layer with gate above gate"],
+                "layer": ["type": "integer", "minimum": 0, "description": "Trigger layer"],
+                "vector": numbers.merging(["description": "projection: direction of the hidden size, e.g. from activation_contrast or steer_search"]) { $1 },
+                "threshold": ["type": "number", "description": "projection: fire when the projection is above this"],
+                "expert": ["type": "integer", "minimum": 0, "description": "expert: the routed expert that fires the trigger"],
+                "gate": ["type": "number", "description": "expert: fire only when its gate is above this (default 0)"],
+                "window": ["type": "integer", "minimum": ConditionalIntervention.windowTokens.lowerBound, "maximum": ConditionalIntervention.windowTokens.upperBound, "description": "Keep the action on for this many tokens from the first trigger, whether or not it fires again (default: only on firing tokens)"],
+            ],
+        ]
+    }
+}
