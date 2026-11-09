@@ -39,6 +39,9 @@ struct CoreAIDecisionBundleTests {
         #expect(throws: BasaltError.self) { try Self.bundle { $0["temperature_by_options"] = ["noul:2": 0.0] } }
         #expect(throws: BasaltError.self) { try Self.bundle { $0["head_max_len"] = 512 } }
         #expect(throws: BasaltError.self) { try Self.bundle { $0["temperature"] = [1.0, 1.0] } }
+        #expect(throws: BasaltError.self) { try Self.bundle { $0["max_option_tokens"] = 0 } }
+        #expect(throws: BasaltError.self) { try Self.bundle { $0["tokens"] = ["cls": -1, "sep": 50282, "mask": 50284, "pad": 50283] } }
+        #expect(throws: BasaltError.self) { try Self.bundle { $0["tokens"] = ["cls": 50281, "sep": Int(Int32.max), "mask": 50284, "pad": 50283] } }
         #expect(throws: BasaltError.self) { try Self.bundle { $0["temperature"] = [1.0, Double.infinity, 1.0] } }
         #expect(throws: BasaltError.self) { try Self.bundle { $0["temperature"] = [1.0, 1.0, Double.nan] } }
         #expect(throws: BasaltError.self) { try Self.bundle { $0["temperature_by_options"] = ["choice:2": Double.infinity] } }
@@ -174,5 +177,34 @@ struct CoreAIDecisionBundleTests {
         }
         let usage = bundle.readout(SystemOneRequest(state: "s", questions: Self.readoutQuestions), encoded: encoded, calls: calls, scores: scores).usage
         #expect((usage.prefixTokens, usage.candidateBranches, usage.prefixEvaluations, usage.branchForwardCalls, usage.suffixTokens) == (140, 11, 4, 2, 0))
+    }
+
+    @Test("The manifest alone marks a decision bundle; loading names the first missing part instead of falling through to another loader")
+    func detection() throws {
+        let directory = FileManager.default.temporaryDirectory.appending(path: "laya-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try JSONSerialization.data(withJSONObject: ["laya_decision": Self.manifest]).write(to: directory.appending(path: CoreAIDecisionBundle.manifest))
+        #expect(CoreAIDecisionEngine.isBundle(directory))
+        for part in CoreAIDecisionBundle.parts {
+            let refused = #expect(throws: BasaltError.self) { try CoreAIDecisionBundle(directory: directory) }
+            guard case .modelConfigurationInvalid(_, let reason)? = refused else { Issue.record("expected modelConfigurationInvalid, got \(String(describing: refused))"); return }
+            #expect(reason.hasSuffix("no \(part)"), "\(reason)")
+            let url = directory.appending(path: part)
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try Data().write(to: url)
+        }
+        #expect(try CoreAIDecisionBundle(directory: directory).modelID == "convaiinnovations/laya")
+        #expect(!CoreAIDecisionEngine.isBundle(directory.appending(path: "tokenizer")))
+    }
+
+    @Test("The in-flight limit admits up to its limit, refuses the next request, and admits again once one leaves")
+    func inFlightLimit() async {
+        let limit = InFlightLimit(CoreAIDecisionEngine.maxInFlight)
+        for _ in 0 ..< CoreAIDecisionEngine.maxInFlight { #expect(await limit.enter()) }
+        #expect(await limit.enter() == false)
+        await limit.leave()
+        #expect(await limit.enter())
+        #expect(await limit.running == CoreAIDecisionEngine.maxInFlight)
     }
 }
