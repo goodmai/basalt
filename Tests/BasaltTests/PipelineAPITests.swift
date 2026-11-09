@@ -34,8 +34,9 @@ struct PipelineAPITests {
         "hard": ["type": "choice", "instructions": "Which wheel is flat?", "criteria": ["left": "Left.", "right": "Right."]],
     ] }
 
-    static func chat(_ text: @escaping @Sendable (GenerationRequest) -> String = { _ in "left" }, log: SessionLogWriter? = nil) async -> (MockInferenceEngine, ModelOrchestratorActor) {
+    static func chat(_ text: @escaping @Sendable (GenerationRequest) -> String = { _ in "left" }, log: SessionLogWriter? = nil) async throws -> (MockInferenceEngine, ModelOrchestratorActor) {
         let engine = MockInferenceEngine()
+        try await engine.load(modelPath: "org/mock-chat")
         await engine.setResponder(text)
         return (engine, ModelOrchestratorActor(engine: engine, telemetry: TelemetryTracker(), sessionLog: log))
     }
@@ -57,7 +58,7 @@ struct PipelineAPITests {
 
     @Test("Confident questions are answered by System One alone: the chat model gets no request")
     func confidentSkipsSystem2() async throws {
-        let (engine, chat) = await Self.chat()
+        let (engine, chat) = try await Self.chat()
         let decisions = GatingDecisionEngine()
         let response = try await Self.post(chat, decisions: decisions, ["text": "The car is red.", "questions": Self.questions])
         #expect(response.status == .ok)
@@ -71,7 +72,7 @@ struct PipelineAPITests {
 
     @Test("An abstained question goes to the chat model as a constrained prompt and its label comes back; a task gets the chat reply as system2")
     func abstainAndTaskReachSystem2() async throws {
-        let (engine, chat) = await Self.chat { $0.prompt.contains("Options:") ? "Left." : "The car is red and a wheel is flat." }
+        let (engine, chat) = try await Self.chat { $0.prompt.contains("Options:") ? "Left." : "The car is red and a wheel is flat." }
         let response = try await Self.post(
             chat, decisions: GatingDecisionEngine(flat: ["hard"]), ["text": "The car is red.", "questions": Self.questions, "task": "Describe the car."])
         #expect(response.status == .ok)
@@ -94,7 +95,7 @@ struct PipelineAPITests {
         let ocrEngine = MockInferenceEngine()
         await ocrEngine.setResponder { _ in "Invoice total: 42" }
         let ocr = try await OCRAPITests.orchestrator("GLM-OCR-bf16", modelType: "glm_ocr", engine: ocrEngine)
-        let (engine, chat) = await Self.chat()
+        let (engine, chat) = try await Self.chat()
         await engine.setMockTranscription(Transcription(text: "pay it today"))
         let decisions = GatingDecisionEngine()
         let attachments: [[String: Any]] = [
@@ -115,7 +116,7 @@ struct PipelineAPITests {
 
     @Test("Refusals: an image without an OCR model and questions without a decision model are 404 naming the flag; malformed input is 400; nothing runs")
     func refusals() async throws {
-        let (engine, chat) = await Self.chat()
+        let (engine, chat) = try await Self.chat()
         let png = try OCRFixture.png(width: 2, height: 2).base64EncodedString()
         let noOCR = try await Self.post(chat, decisions: GatingDecisionEngine(), ["attachments": [["kind": "image", "data": png]], "task": "t"])
         #expect(noOCR.status == .notFound)
@@ -139,7 +140,7 @@ struct PipelineAPITests {
         let dir = FileManager.default.temporaryDirectory.appending(path: "pipeline-log-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: dir) }
         let writer = SessionLogWriter(mode: .meta, directory: dir, defaultSession: "d")
-        let (_, chat) = await Self.chat(log: writer)
+        let (_, chat) = try await Self.chat(log: writer)
         #expect(try await Self.post(chat, decisions: GatingDecisionEngine(flat: ["hard"]), ["text": "The car is red.", "questions": Self.questions]).status == .ok)
         await writer.flush()
         await writer.close()
@@ -158,7 +159,7 @@ struct PipelineAPITests {
         let ocrEngine = MockInferenceEngine()
         await ocrEngine.setResponder { _ in "Scanned: the car is blue" }
         let ocr = try await OCRAPITests.orchestrator("GLM-OCR", modelType: "glm_ocr", engine: ocrEngine)
-        let (_, chat) = await Self.chat()
+        let (_, chat) = try await Self.chat()
         let inside = FileManager.default.temporaryDirectory.appendingPathComponent("pipeline-mcp-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: inside, withIntermediateDirectories: true)
         let image = inside.appendingPathComponent("scan.png")
