@@ -1,13 +1,17 @@
 #!/usr/bin/env swift
 import Foundation
 
+let resolvedBefore = "2026-11-09T00:00:00Z"
+
 let usage = """
     Usage:
       swift scripts/paddleocr_reference.swift golden
       swift scripts/paddleocr_reference.swift pages <model-dir> <pages-dir> <out.json> <page-name>...
 
     Python mlx-vlm references for the PaddleOCR-VL port (#400), run in a throwaway uv environment
-    with the versions pinned below (checked with the Sonatype guide).
+    with the versions pinned below (checked with the Sonatype guide) and every transitive package
+    resolved as of \(resolvedBefore). The model loads with trust_remote_code=False, so Python files
+    shipped in a model directory never run.
 
       golden  the mlx-vlm VisionModel output and get_rope_index on the tiny fixture's vision tower,
               with closed-form weights and pixels on two non-square grids (4x6, 2x4); rewrites
@@ -58,7 +62,7 @@ let pages = """
     from mlx_vlm.models.paddleocr_vl.processing_paddleocr_vl import smart_resize
 
     model_path, pages_dir, out_path, names = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4:]
-    model, processor = load(model_path)
+    model, processor = load(model_path, trust_remote_code=False)
     ip = processor.image_processor
     messages = [{"role": "user", "content": [{"type": "image"}, {"type": "text", "text": "OCR:"}]}]
     prompt = processor.apply_chat_template(messages, add_generation_prompt=True, tokenize=False)
@@ -83,7 +87,7 @@ let pages = """
 func python(_ code: String, _ arguments: [String]) throws -> Data {
     let process = Process()
     process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-    process.arguments = ["uv", "run", "--quiet", "--no-project", "--python", "3.12"] + pins.flatMap { ["--with", $0] }
+    process.arguments = ["uv", "run", "--quiet", "--no-project", "--python", "3.12", "--exclude-newer", resolvedBefore] + pins.flatMap { ["--with", $0] }
         + ["python", "-I", "-c", code] + arguments
     let output = Pipe()
     process.standardOutput = output
