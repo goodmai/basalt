@@ -99,4 +99,29 @@ struct CoreAIDecisionRealModelTests {
         #expect((workloads.first?.residentBytes ?? 0) > 500_000_000)
         #expect(ComputePlan.admit(workloads, budgetBytes: 0).placements.first?.concurrentWithDecode == true && engine.runsBesideDecode)
     }
+
+    @Test("A burst of parallel decisions beyond the in-flight limit is refused with serverBusy(1) instead of queueing on the Neural Engine; admitted ones answer",
+          .enabled(if: bundle != nil, "set BASALT_E2E=1 and BASALT_E2E_COREAI_DECISION_BUNDLE"))
+    func backpressure() async throws {
+        let engine = try await CoreAIDecisionEngine(directory: URL(fileURLWithPath: try #require(Self.bundle)))
+        let request = SystemOneRequest(state: "The color is red.", questions: ["color": SystemOneQuestion(type: .choice, instructions: "Which color?", criteria: .named(["red": "Red.", "blue": "Blue."]))])
+        let outcomes = await withTaskGroup(of: String.self) { group in
+            for _ in 0 ..< 32 {
+                group.addTask {
+                    do throws(BasaltError) {
+                        return try await engine.decide(request).answers["color"]?.choice ?? "none"
+                    } catch {
+                        if case .serverBusy(let retry) = error { return "busy \(retry ?? -1)" }
+                        return "error \(error)"
+                    }
+                }
+            }
+            return await group.reduce(into: [String]()) { $0.append($1) }
+        }
+        print("RESULT laya-ane burst of 32: \(Dictionary(grouping: outcomes, by: { $0 }).mapValues(\.count))")
+        #expect(outcomes.allSatisfy { $0 == "red" || $0 == "busy 1" }, "\(outcomes)")
+        #expect(outcomes.contains("busy 1") && outcomes.filter { $0 == "red" }.count >= CoreAIDecisionEngine.maxInFlight)
+        #expect(await engine.admission.running == 0)
+        #expect(try await engine.decide(request).answers["color"]?.choice == "red")
+    }
 }

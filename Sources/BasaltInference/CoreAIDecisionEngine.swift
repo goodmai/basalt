@@ -3,9 +3,26 @@ import CoreAI
 import Tokenizers
 import BasaltCore
 
+actor InFlightLimit {
+    let limit: Int
+    private(set) var running = 0
+
+    init(_ limit: Int) { self.limit = limit }
+
+    func enter() -> Bool {
+        guard running < limit else { return false }
+        running += 1
+        return true
+    }
+
+    func leave() { running = max(0, running - 1) }
+}
+
 public struct CoreAIDecisionEngine: DecisionEngine {
+    public static let maxInFlight = 4
     public let modelID: String
     public let runsBesideDecode = true
+    let admission = InFlightLimit(maxInFlight)
     let bundle: CoreAIDecisionBundle
     let tokenizer: any Tokenizers.Tokenizer
     private let table: InferenceFunction
@@ -42,6 +59,8 @@ public struct CoreAIDecisionEngine: DecisionEngine {
 
     public func decide(_ request: SystemOneRequest) async throws(BasaltError) -> SystemOneResponse {
         try SystemOneCore.validate(request)
+        guard await admission.enter() else { throw .serverBusy(retryAfterSeconds: 1) }
+        defer { await admission.leave() }
         let names = request.questions.keys.sorted()
         let questions = names.map { request.questions[$0]! }
         let tokenize = { (text: String) in tokenizer.encode(text: text, addSpecialTokens: false) }
@@ -81,8 +100,8 @@ public struct CoreAIDecisionEngine: DecisionEngine {
         var typeView = types.mutableView(as: Float16.self)
         typeView.copyElements(from: bundle.types(kinds, to: function).map(Float16.init))
         var outputs = try await encoder.run(inputs: ["inputs_embeds": embeds, "bias": bias, "qtype": types])
-        guard let scores = outputs.remove("scores")?.ndArray, let values = scores.view(as: Float16.self).contiguousElements else {
-            throw BasaltError.inferenceError("the decision encoder returned no contiguous scores")
+        guard let scores = outputs.remove("scores")?.ndArray, let values = scores.view(as: Float16.self).contiguousElements, values.count == function.batch * function.length else {
+            throw BasaltError.inferenceError("the decision encoder \(function.name) returned no contiguous [\(function.batch), \(function.length)] scores")
         }
         return (0 ..< values.count).map { Float(values[$0]) }
     }

@@ -34,14 +34,19 @@ struct CoreAIDecisionBundle: Sendable, Equatable {
     static let manifest = "laya_decision.json"
     static let maskText = "[MASK]"
 
+    static let parts = ["decision.aimodel", "token_table.aimodel", "tokenizer/tokenizer.json"]
+
     static func isBundle(_ directory: URL) -> Bool {
-        [manifest, "decision.aimodel", "token_table.aimodel"].allSatisfy { FileManager.default.fileExists(atPath: directory.appending(component: $0).path) }
+        FileManager.default.fileExists(atPath: directory.appending(component: manifest).path)
     }
 
     init(directory: URL) throws(BasaltError) {
         guard let data = try? Data(contentsOf: directory.appending(component: Self.manifest)),
               let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any], let body = root["laya_decision"] as? [String: Any]
         else { throw .modelConfigurationInvalid(path: directory.path, reason: "\(Self.manifest) has no \"laya_decision\" section") }
+        if let missing = Self.parts.first(where: { !FileManager.default.fileExists(atPath: directory.appending(path: $0).path) }) {
+            throw .modelConfigurationInvalid(path: directory.path, reason: "the Core AI decision bundle has \(Self.manifest) but no \(missing)")
+        }
         try self.init(manifest: body, path: directory.path)
     }
 
@@ -53,12 +58,14 @@ struct CoreAIDecisionBundle: Sendable, Equatable {
         }.sorted { ($0.length, $0.batch) < ($1.length, $1.batch) }
         let temperatures = manifest["temperature"] as? [Double] ?? []
         let byOptions = manifest["temperature_by_options"] as? [String: Double] ?? [:]
+        let maxOptionTokens = manifest["max_option_tokens"] as? Int ?? 48
         guard let cls = tokens["cls"], let sep = tokens["sep"], let mask = tokens["mask"], let pad = tokens["pad"], !functions.isEmpty, temperatures.count == 3,
+              [cls, sep, mask, pad].allSatisfy({ (0 ..< Int(Int32.max)).contains($0) }), maxOptionTokens >= 1,
               (temperatures + byOptions.values).allSatisfy({ $0.isFinite && $0 > 0 }),
               let maxLength = manifest["max_len"] as? Int, let headMaxLength = manifest["head_max_len"] as? Int, headMaxLength < maxLength, maxLength <= functions[functions.count - 1].length
-        else { throw .modelConfigurationInvalid(path: path, reason: "the decision bundle needs cls/sep/mask/pad token ids, three finite positive temperatures (and positive temperature_by_options), head_max_len below max_len, and functions up to max_len") }
+        else { throw .modelConfigurationInvalid(path: path, reason: "the decision bundle needs cls/sep/mask/pad token ids in 0..<Int32.max, max_option_tokens >= 1, three finite positive temperatures (and positive temperature_by_options), head_max_len below max_len, and functions up to max_len") }
         modelID = manifest["model_id"] as? String ?? URL(fileURLWithPath: path).lastPathComponent
-        (self.maxLength, self.headMaxLength, maxOptionTokens) = (maxLength, headMaxLength, manifest["max_option_tokens"] as? Int ?? 48)
+        (self.maxLength, self.headMaxLength, self.maxOptionTokens) = (maxLength, headMaxLength, maxOptionTokens)
         (self.cls, self.sep, self.mask, self.pad) = (cls, sep, mask, pad)
         masked = Float(manifest["masked"] as? Double ?? -30000)
         self.temperatures = temperatures
