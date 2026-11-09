@@ -7,7 +7,7 @@ extension ServeCommand {
     static func weightBytes(_ path: String) -> Int64 {
         let root = URL(fileURLWithPath: path).resolvingSymlinksInPath()
         let files = (try? FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)) ?? []
-        return files.filter { ["safetensors", "aimodel"].contains($0.pathExtension) }.reduce(Int64(0)) { total, file in
+        return files.filter { ["safetensors", "aimodel", "mlirb"].contains($0.pathExtension) }.reduce(Int64(0)) { total, file in
             let resolved = file.resolvingSymlinksInPath()
             let size = (try? resolved.resourceValues(forKeys: [.fileSizeKey, .totalFileAllocatedSizeKey]))
             return total + Int64(size?.fileSize ?? size?.totalFileAllocatedSize ?? 0)
@@ -23,8 +23,10 @@ extension ServeCommand {
         }
         if let decisionModel, let decisions, decisionModel != "self" {
             let path = try await resolvedPath(decisionModel, quant: nil)
-            let bytes = decisions is JevEvaluator ? 2 * Self.weightBytes(try await resolvedPath(try JevEvaluator.baseModel(of: URL(fileURLWithPath: path)), quant: nil)) : Self.weightBytes(path)
-            workloads.append(Workload(name: decisionModel, role: "decide", unit: .gpu, kind: .encoder, residentBytes: bytes))
+            let ane = decisions is CoreAIDecisionEngine
+            let bytes = ane ? Self.weightBytes(path + "/decision.aimodel")
+                : decisions is JevEvaluator ? 2 * Self.weightBytes(try await resolvedPath(try JevEvaluator.baseModel(of: URL(fileURLWithPath: path)), quant: nil)) : Self.weightBytes(path)
+            workloads.append(Workload(name: decisionModel, role: "decide", unit: ane ? .ane : .gpu, kind: .encoder, residentBytes: bytes))
         }
         return workloads
     }
