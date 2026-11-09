@@ -90,7 +90,7 @@ struct CoreAIDecisionBundleTests {
 
     @Test("Inputs are padded per row: ids with [PAD], a [row, key] bias masking padded keys, and a one-hot type per row")
     func inputs() throws {
-        let bundle = try Self.bundle { $0["functions"] = [["function": "b2_l3", "batch": 2, "length": 3]]; $0["max_len"] = 3 }
+        let bundle = try Self.bundle { $0["functions"] = [["function": "b2_l3", "batch": 2, "length": 3]]; $0["max_len"] = 3; $0["head_max_len"] = 2 }
         let function = bundle.functions[0]
         #expect(bundle.padded([[7, 8]], to: function) == [7, 8, 50283, 50283, 50283, 50283])
         #expect(bundle.bias([2], to: function) == [0, 0, -30000, -30000, -30000, -30000])
