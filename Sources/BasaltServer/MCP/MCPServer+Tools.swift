@@ -29,6 +29,7 @@ extension MCPServer {
         case .research(let tool): try await research(tool, args)
         case .introspect: try await introspect(args)
         case .transcribe: try await transcribe(args)
+        case .systemOne: try await decide(args)
         }
     }
 
@@ -216,6 +217,19 @@ extension MCPServer {
             guard let data = Data(base64Encoded: audio) else { throw .invalidRequestStructure(details: "audio is not valid base64") }
             let request = try TranscriptionRequest(audio: AudioClip(encoded: data, format: format), language: language, temperature: temperature)
             return .text(try await orchestrator.transcribe(request).text)
+        } catch {
+            throw MCPFailure(error)
+        }
+    }
+
+    private func decide(_ args: [String: Any]?) async throws(MCPFailure) -> ToolResult {
+        guard let decisions else { throw .methodNotFound("basalt_systemone_decide needs a decision model: start serve with --decision-model <OpenJev repo|dir>") }
+        guard let args, JSONSerialization.isValidJSONObject(args), let data = try? JSONSerialization.data(withJSONObject: args),
+              let request = SystemOneController.request(from: data)
+        else { throw .invalidParams("basalt_systemone_decide needs state (text, object or array) and questions {id: {type, instructions, criteria?}}") }
+        do throws(BasaltError) {
+            return .json(try await SystemOneController.decide(
+                decisions, request, log: orchestrator.sessionLog, origin: RequestOrigin(source: "mcp", endpoint: "basalt_systemone_decide", stream: false), sessionId: nil))
         } catch {
             throw MCPFailure(error)
         }

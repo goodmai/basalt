@@ -41,6 +41,9 @@ struct ServeCommand: AsyncParsableCommand {
     )
     var embeddingAdapter: String?
 
+    @Option(name: .customLong("decision-model"), help: "OpenJev decision model served on /v1/systemone (single-pass noul/choice/score): repo ID or directory with openjev_config.json, head.safetensors and a PEFT adapter; its Qwen3 base is resolved from the Hugging Face cache")
+    var decisionModel: String?
+
     @Option(
         name: .customLong("rerank-model"),
         help: "Reranker served on /v1/rerank next to the chat model: repo ID or local path of an encoder cross-encoder, Qwen3-Reranker or Jina reranker (its name must contain \"rerank\")"
@@ -174,6 +177,7 @@ struct ServeCommand: AsyncParsableCommand {
         let orchestrator = try await makeOrchestrator(maxTokens: config.maxTokens)
 
         let embeddings = try await loadEmbeddings()
+        let decisions = try await loadDecisions()
 
         try await load(orchestrator, from: resolvedPath)
         if !noMemoryCoordinator { await orchestrator.coordinateMemory(with: MemoryCoordinator()) }
@@ -192,11 +196,11 @@ struct ServeCommand: AsyncParsableCommand {
             orchestrator: orchestrator,
             modelId: resolvedPath.split(separator: "/").last.map { String($0) },
             library: HarnessExperienceLibrary(rootDirectory: HarnessExperienceLibrary.defaultRoot)
-        ).withResearchTools(researchTools).withImageDirectories(imageDirs.map { URL(fileURLWithPath: $0) }) : nil
+        ).withResearchTools(researchTools).withImageDirectories(imageDirs.map { URL(fileURLWithPath: $0) }).withDecisions(decisions) : nil
 
         try await Self.runServers(
             ServerLaunch(
-                config: config, startREST: startREST, mcpServer: mcpServer, embeddings: embeddings,
+                config: config, startREST: startREST, mcpServer: mcpServer, embeddings: embeddings, decisions: decisions,
                 statsInterval: stats ? min(max(1, statsInterval), 86_400) : nil, canaryInterval: canaryMinutes.map { .seconds($0 * 60) }),
             orchestrator: orchestrator)
     }

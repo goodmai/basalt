@@ -77,6 +77,23 @@ extension ServeCommand {
         }
     }
 
+    func loadDecisions() async throws -> (any DecisionEngine)? {
+        guard let decisionModel else { return nil }
+        do {
+            let directory = URL(fileURLWithPath: try await resolvedPath(decisionModel, quant: nil))
+            guard JevEvaluator.isBundle(directory) else {
+                throw BasaltError.modelConfigurationInvalid(path: directory.path, reason: "not an OpenJev decision model (needs openjev_config.json and head.safetensors)")
+            }
+            let base = URL(fileURLWithPath: try await resolvedPath(try JevEvaluator.baseModel(of: directory), quant: nil))
+            let evaluator = try await JevEvaluator(directory: directory, base: base)
+            log("Serving \(evaluator.modelID) (decision, /v1/systemone) on base \(base.lastPathComponent)")
+            return evaluator
+        } catch let error as BasaltError {
+            log("\(red("[error]")) \(error.localizedDescription)")
+            throw ExitCode.failure
+        }
+    }
+
     func resolveModelPath() async throws -> String {
         let path = try await requestedModelPath()
         if requireVerified { try await refuseUnverified(path) }

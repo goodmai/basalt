@@ -3,7 +3,7 @@ import BasaltCore
 import BasaltHarness
 
 enum MCPTool: Sendable, Equatable {
-    case status, checkHardware, inspectModel, switchModel, generate, health, addKnowledge, transcribe
+    case status, checkHardware, inspectModel, switchModel, generate, health, addKnowledge, transcribe, systemOne
     case harnessValidate, harnessLibraryQuery, harnessOptimize
     case research(ResearchTool)
     case introspect
@@ -22,6 +22,7 @@ enum MCPTool: Sendable, Equatable {
         case "harness_optimize": self = .harnessOptimize
         case "introspect": self = .introspect
         case "basalt_transcribe": self = .transcribe
+        case "basalt_systemone_decide": self = .systemOne
         default:
             guard let tool = ResearchTool(rawValue: name) else { return nil }
             self = .research(tool)

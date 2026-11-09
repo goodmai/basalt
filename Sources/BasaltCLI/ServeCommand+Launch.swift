@@ -9,6 +9,7 @@ struct ServerLaunch: Sendable {
     let startREST: Bool
     let mcpServer: MCPServer?
     var embeddings: (any EmbeddingEngine)? = nil
+    var decisions: (any DecisionEngine)? = nil
     var statsInterval: Int? = nil
     var canaryInterval: Duration? = nil
     var shutdownDeadline: Duration = .seconds(5)
@@ -80,6 +81,7 @@ extension ServeCommand {
                     orchestrator: orchestrator,
                     config: launch.config,
                     embeddings: launch.embeddings,
+                    decisions: launch.decisions,
                     shutdownDeadline: launch.shutdownDeadline,
                     handleSignals: launch.handleSignals
                 )

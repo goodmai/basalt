@@ -6,7 +6,7 @@ public actor ModelOrchestratorActor {
     private var state: OrchestratorState
     private let logger = BasaltLogger(module: "ModelOrchestrator")
     nonisolated public let gate: GenerationGate
-    public let sessionLog: SessionLogWriter?
+    nonisolated public let sessionLog: SessionLogWriter?
     public let telemetry: TelemetryTracker
     private var shutdownTask: Task<Void, Never>?
     private var cloudFallback: (any CloudFallback)?

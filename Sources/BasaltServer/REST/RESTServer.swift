@@ -9,6 +9,7 @@ package struct RESTServer: Sendable {
     let orchestrator: ModelOrchestratorActor
     let config: ServerConfig
     let embeddings: (any EmbeddingEngine)?
+    let decisions: (any DecisionEngine)?
 
     let shutdownDeadline: Duration
     let handleSignals: Bool
@@ -18,6 +19,7 @@ package struct RESTServer: Sendable {
         orchestrator: ModelOrchestratorActor,
         config: ServerConfig,
         embeddings: (any EmbeddingEngine)? = nil,
+        decisions: (any DecisionEngine)? = nil,
         shutdownDeadline: Duration = .seconds(5),
         handleSignals: Bool = true,
         rateClock: @escaping @Sendable () -> Double = { ProcessInfo.processInfo.systemUptime }
@@ -25,6 +27,7 @@ package struct RESTServer: Sendable {
         self.orchestrator = orchestrator
         self.config = config
         self.embeddings = embeddings
+        self.decisions = decisions
         self.shutdownDeadline = shutdownDeadline
         self.handleSignals = handleSignals
         self.rateClock = rateClock
@@ -123,6 +126,7 @@ package struct RESTServer: Sendable {
         oai.post("/messages", use: AnthropicController(orchestrator: orchestrator, modelId: defaultId, zeroCopyBody: config.experimentalZeroCopyBody).messages)
         oai.post("/embeddings", use: embedding.embeddings)
         oai.post("/rerank", use: embedding.rerank)
+        oai.post("/systemone", use: SystemOneController(engine: decisions, log: orchestrator.sessionLog).decide)
         oai.post("/audio/transcriptions", use: TranscriptionsController(orchestrator: orchestrator).transcriptions)
     }
 
@@ -187,6 +191,7 @@ extension RESTServer {
         "/v1/messages":            { "post": { "summary": "Anthropic-compatible messages API" } },
         "/v1/score":               { "post": { "summary": "Top-k logprobs of supplied completion token ids after chat messages, in one forward pass (teacher for on-policy distill)" } },
         "/v1/embeddings":          { "post": { "summary": "OpenAI-compatible embeddings (serve --embedding-model)" } },
+        "/v1/systemone":           { "post": { "summary": "Single-pass typed decisions: noul, choice, score (serve --decision-model)" } },
         "/v1/rerank":              { "post": { "summary": "Cohere/Jina-compatible rerank (serve --rerank-model)" } },
         "/v1/audio/transcriptions": { "post": { "summary": "OpenAI-compatible speech to text (multipart: file, model, language, response_format, temperature)" } }
       }
