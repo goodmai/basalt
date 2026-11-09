@@ -38,11 +38,14 @@ enum PaddleOCRVLVision {
             _positionEmbedding.wrappedValue = Embedding(embeddingCount: side * side, dimensions: config.hiddenSize)
         }
 
+        func positions(_ frame: THW) -> MLXArray {
+            let table = positionEmbedding(MLXArray(0 ..< side * side)).reshaped(side, side, -1)
+            return PaddleOCRVLVision.bilinear(table, height: frame.h, width: frame.w).asType(table.dtype).reshaped(frame.h * frame.w, -1)
+        }
+
         func callAsFunction(_ patches: MLXArray, frame: THW) -> MLXArray {
             let embedded = patchEmbedding(patches).reshaped(patches.dim(0), -1)
-            let table = positionEmbedding(MLXArray(0 ..< side * side)).reshaped(side, side, -1)
-            let positions = PaddleOCRVLVision.bilinear(table, height: frame.h, width: frame.w).asType(table.dtype)
-            return embedded + tiled(positions.reshaped(frame.h * frame.w, -1), repetitions: [frame.t, 1])
+            return embedded + tiled(positions(frame), repetitions: [frame.t, 1])
         }
     }
 

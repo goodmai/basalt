@@ -76,7 +76,7 @@ extension MLXInferenceEngine {
                 turns ?? [], refusal: error, tools: tools, context: context, images: images, container: container)
         }
         return RenderedPrompt(
-            input: input, makeInput: draft.makeInput, template: draft.template, anchorTurns: anchorTurns, context: context,
+            input: try await encodingImages(input, container: container), makeInput: draft.makeInput, template: draft.template, anchorTurns: anchorTurns, context: context,
             policy: policy, prefill: prefill, images: images)
     }
 
