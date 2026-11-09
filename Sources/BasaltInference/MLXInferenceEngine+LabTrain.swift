@@ -98,20 +98,18 @@ extension MLXInferenceEngine {
     static func labRun<R: Sendable>(
         _ container: ModelContainer, _ what: String = "training", _ body: @Sendable (ModelContext) throws -> R
     ) async throws(BasaltError) -> R {
-        try await labRun(container, what, nonSendable: ()) { context, _ in try body(context) }
+        do {
+            return try await container.performEvaluating(nonSendable: ()) { context, _ in try withError { try body(context) } }
+        } catch {
+            throw labFailure(error, what)
+        }
     }
 
-    static func labRun<V, R>(
-        _ container: ModelContainer, _ what: String, nonSendable value: sending V, _ body: @Sendable (ModelContext, V) throws -> R
-    ) async throws(BasaltError) -> sending R {
-        do {
-            return try await container.performEvaluating(nonSendable: value) { context, value in try withError { try body(context, value) } }
-        } catch let error as BasaltError {
-            throw error
-        } catch is CancellationError {
-            throw .inferenceError("\(what) was cancelled; the model is unchanged")
-        } catch {
-            throw .inferenceError("\(what) failed: \(briefly(error))")
+    static func labFailure(_ error: any Error, _ what: String) -> BasaltError {
+        switch error {
+        case let error as BasaltError: error
+        case is CancellationError: .inferenceError("\(what) was cancelled; the model is unchanged")
+        default: .inferenceError("\(what) failed: \(briefly(error))")
         }
     }
 

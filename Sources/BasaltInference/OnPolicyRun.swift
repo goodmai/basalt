@@ -11,50 +11,58 @@ struct OnPolicyRun: Sendable {
     let container: ModelContainer
 
     func train(saving directory: URL) async throws(BasaltError) -> OnPolicyOutcome {
-        let final = try await steps(try await heldOutKL(OnPolicyState(optimizer: Adam(learningRate: request.learningRate))), from: 0, saving: directory)
-        return OnPolicyOutcome(losses: final.losses, before: final.heldOutKL.first ?? 0, after: final.heldOutKL.last ?? 0)
-    }
-
-    func steps(_ state: sending OnPolicyState, from step: Int, saving directory: URL) async throws(BasaltError) -> sending OnPolicyState {
+        var state = OnPolicyState(optimizer: Adam(learningRate: request.learningRate))
+        let heldOutRows = try await adapted(&state) { context, _, _ in try sample(plan.heldOut, context) }
+        let heldOut = try await scored(plan.heldOut, heldOutRows)
+        let before = try await adapted(&state) { context, _, _ in MLXInferenceEngine.meanKL(heldOut, model: context.model) }
         let size = min(request.batchSize, plan.train.count)
-        let prompts = (0 ..< size).map { plan.train[(step * size + $0) % plan.train.count] }
-        let (sampled, rows) = try await adapted(state) { context, _, _ in try sample(prompts, context) }
-        let batch = try await scored(prompts, rows)
-        var (trained, loss) = try await adapted(sampled) { context, optimizer, _ in try MLXInferenceEngine.onPolicyStep(batch, optimizer: optimizer, model: context.model) }
-        trained.losses.append(loss)
-        return step + 1 < request.iterations ? try await steps(trained, from: step + 1, saving: directory) : try await heldOutKL(trained, saving: directory)
-    }
-
-    func heldOutKL(_ state: sending OnPolicyState, saving directory: URL? = nil) async throws(BasaltError) -> sending OnPolicyState {
-        let (state, rows) = try await adapted(state) { context, _, _ in try sample(plan.heldOut, context) }
-        let batch = try await scored(plan.heldOut, rows)
-        var (measured, kl) = try await adapted(state) { context, _, configuration in
-            let kl = batch.reduce(Float(0)) { $0 + MLXInferenceEngine.onPolicyLoss([$1], model: context.model).item(Float.self) } / Float(batch.count)
-            if let directory { try MLXInferenceEngine.saveAdapter(configuration, model: context.model, to: directory) }
-            return kl
+        var losses: [Float] = []
+        for step in 0 ..< request.iterations {
+            let prompts = (0 ..< size).map { plan.train[(step * size + $0) % plan.train.count] }
+            let rows = try await adapted(&state) { context, _, _ in try sample(prompts, context) }
+            let batch = try await scored(prompts, rows)
+            losses.append(try await adapted(&state) { context, optimizer, _ in try MLXInferenceEngine.onPolicyStep(batch, optimizer: optimizer, model: context.model) })
         }
-        measured.heldOutKL.append(kl)
-        return measured
+        let after = try await adapted(&state) { context, _, configuration in
+            try MLXInferenceEngine.saveAdapter(configuration, model: context.model, to: directory)
+            return MLXInferenceEngine.meanKL(heldOut, model: context.model)
+        }
+        return OnPolicyOutcome(losses: losses, before: before, after: after)
     }
 
     func adapted<R: Sendable>(
-        _ state: sending OnPolicyState, _ body: @Sendable (ModelContext, Adam, LoRAConfiguration) throws -> R
-    ) async throws(BasaltError) -> sending (OnPolicyState, R) {
+        _ state: inout sending OnPolicyState, _ body: @Sendable (ModelContext, Adam, LoRAConfiguration) throws -> R
+    ) async throws(BasaltError) -> R {
         let (layers, rank) = (request.layers, request.rank)
-        return try await MLXInferenceEngine.labRun(container, "on-policy distillation", nonSendable: state) { context, state in
-            var adapter = state
-            let configuration = try MLXInferenceEngine.attachLoRA(to: context.model, layers: layers, rank: rank)
-            defer { MLXInferenceEngine.detachLoRA(from: context.model) }
-            if adapter.weights.isEmpty {
-                adapter.weights = context.model.trainableParameters().flattened()
-            } else {
-                context.model.update(parameters: .unflattened(adapter.weights))
+        let (next, outcome) = await container.performEvaluating(nonSendable: state) { context, state in
+            var state = state
+            let outcome = Result { () throws(BasaltError) -> R in
+                do {
+                    return try withError { try Self.withLoRA(&state, layers: layers, rank: rank, context: context, body) }
+                } catch {
+                    throw MLXInferenceEngine.labFailure(error, "on-policy distillation")
+                }
             }
-            let result = try body(context, adapter.optimizer, configuration)
-            adapter.weights = context.model.trainableParameters().flattened()
-            eval(adapter.weights.map(\.1))
-            return (adapter, result)
+            return (state, outcome)
         }
+        state = next
+        return try outcome.get()
+    }
+
+    static func withLoRA<R>(
+        _ state: inout OnPolicyState, layers: [Int]?, rank: Int, context: ModelContext, _ body: (ModelContext, Adam, LoRAConfiguration) throws -> R
+    ) throws -> R {
+        let configuration = try MLXInferenceEngine.attachLoRA(to: context.model, layers: layers, rank: rank)
+        defer { MLXInferenceEngine.detachLoRA(from: context.model) }
+        if state.weights.isEmpty {
+            state.weights = context.model.trainableParameters().flattened()
+        } else {
+            context.model.update(parameters: .unflattened(state.weights))
+        }
+        let result = try body(context, state.optimizer, configuration)
+        state.weights = context.model.trainableParameters().flattened()
+        eval(state.weights.map(\.1))
+        return result
     }
 
     func sample(_ prompts: [OnPolicyPrompt], _ context: ModelContext) throws -> [DistillRow] {

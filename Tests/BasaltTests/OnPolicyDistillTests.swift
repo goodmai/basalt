@@ -37,7 +37,7 @@ struct OnPolicyDistillTests {
     static func expectedTop(_ row: [Float], k: Int) -> (ids: [Int], logprobs: [Float]) {
         let peak = Double(row.max() ?? 0)
         let normalizer = peak + log(row.reduce(0.0) { $0 + exp(Double($1) - peak) })
-        let ranked = row.indices.sorted { row[$0] > row[$1] }.prefix(k)
+        let ranked = row.indices.sorted { (row[$0], -$0) > (row[$1], -$1) }.prefix(k)
         return (Array(ranked), ranked.map { Float(Double(row[$0]) - normalizer) })
     }
 
@@ -95,7 +95,23 @@ struct OnPolicyDistillTests {
         #expect(await orchestrator.gate.inFlight == 0)
     }
 
-    @Test("A 16-prompt greedy on-policy run on a tiny model lowers the held-out reverse KL to a different tiny teacher, sends the student's token ids to /v1/score, saves a loadable adapter and leaves the base weights bit-identical")
+    @Test("Scoring a completion in 5-token chunks against a prefilled KV cache gives the top-20 ids of one cache-free forward pass exactly and logprobs within 1e-4; the vocabulary size comes from the weights")
+    func chunkedMatchesSinglePass() throws {
+        let model = try TinyModel.make(.qwen3)
+        let prompt = try ByteTokenizer().applyChatTemplate(messages: Self.messages, tools: nil, additionalContext: nil)
+        let completion = (0 ..< 23).map { ($0 * 37 + 11) % 256 }
+        let logits = model(MLXArray((prompt + completion).map(Int32.init))[.newAxis], cache: nil).asType(.float32)
+        let chunked = try MLXInferenceEngine.topLogprobs(prompt: prompt, completion: completion, k: 20, model: model, chunk: 5)
+        #expect(chunked.count == completion.count)
+        for (offset, position) in chunked.enumerated() {
+            let expected = Self.expectedTop(logits[0, prompt.count - 1 + offset].asArray(Float.self), k: 20)
+            #expect(position.ids == expected.ids, "position \(offset)")
+            #expect(zip(position.logprobs, expected.logprobs).allSatisfy { abs($0 - $1) < Self.logprobTolerance }, "position \(offset)")
+        }
+        #expect(MLXInferenceEngine.vocabularySize(model) == 256)
+    }
+
+    @Test("A 16-prompt on-policy run on a tiny model lowers the reverse KL to a different tiny teacher on the base student's held-out samples, sends the student's token ids to /v1/score, saves a loadable adapter and leaves the base weights bit-identical")
     func endToEnd() async throws {
         let directory = try DistillTests.scratch()
         let host = try Self.teacherHost()
@@ -103,14 +119,14 @@ struct OnPolicyDistillTests {
         let container = try #require(await engine.container)
         let before = await DistillTests.baseWeights(container)
         var request = try Self.onPolicy(host, prompts: 16, in: directory)
-        (request.teacher.temperature, request.iterations, request.learningRate) = (0, 60, 1e-2)
+        request.iterations = 60
         let report = try await engine.distill(request, session: URLSession(configuration: StubURLProtocol.configuration), home: directory, environment: [:])
         #expect(report.kept == 12 && report.heldOut == 4 && report.cached == 0)
         let klBefore = try #require(report.reverseKLBefore), klAfter = try #require(report.reverseKLAfter)
         #expect(klAfter < klBefore, "\(klBefore) -> \(klAfter), losses \(report.losses)")
         #expect(!report.losses.isEmpty && report.losses.allSatisfy(\.isFinite))
         let calls = StubURLProtocol.requests(for: host)
-        #expect(report.teacherCalls == request.iterations * request.batchSize + 2 * 4 && calls.count == report.teacherCalls)
+        #expect(report.teacherCalls == request.iterations * request.batchSize + 4 && calls.count == report.teacherCalls)
         let sent = try calls.map { try JSONDecoder().decode(ScoreRequest.self, from: try #require($0.1)) }
         #expect(sent.allSatisfy { $0.topLogprobs == MLXInferenceEngine.onPolicyTopK && !$0.completion.isEmpty && $0.completion.count <= 16 })
         _ = try LoRAContainer.from(directory: directory.appending(path: "adapter"))

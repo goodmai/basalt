@@ -26,14 +26,12 @@ struct ScoredRow: Sendable {
 struct OnPolicyState {
     var weights: [(String, MLXArray)] = []
     let optimizer: Adam
-    var losses: [Float] = []
-    var heldOutKL: [Float] = []
 }
 
 struct OnPolicyOutcome: Sendable {
-    var losses: [Float] = []
-    var before: Float = 0
-    var after: Float = 0
+    var losses: [Float]
+    var before: Float
+    var after: Float
 }
 
 extension MLXInferenceEngine {
@@ -44,6 +42,9 @@ extension MLXInferenceEngine {
         guard let container else { throw .modelNotLoaded }
         guard request.teacher.provider == .openai else {
             throw .invalidRequestStructure(details: "distill: onPolicy needs a basalt teacher that serves /v1/score, so the provider must be openai")
+        }
+        guard Self.scoreTokens.contains(request.teacher.maxTokens) else {
+            throw .invalidRequestStructure(details: "distill: in onPolicy mode maxTeacherTokens caps the student's samples, which the teacher scores up to \(Self.scoreTokens.upperBound) tokens")
         }
         let heldOutStart = examples.count - DistillCore.heldOutCount(examples.count, fraction: request.heldOutFraction)
         let maxSeqLen = request.maxSeqLen
@@ -59,7 +60,7 @@ extension MLXInferenceEngine {
         let outcome = try await OnPolicyRun(request: request, plan: plan, teacher: teacher, container: container).train(saving: directory)
         guard self.container === container else { throw .inferenceError("the model changed during on-policy distillation; the adapter in \(directory.path) was not applied") }
         (report.losses, report.reverseKLBefore, report.reverseKLAfter) = (Self.reported(outcome.losses), outcome.before, outcome.after)
-        report.teacherCalls = request.iterations * min(request.batchSize, plan.train.count) + 2 * plan.heldOut.count
+        report.teacherCalls = request.iterations * min(request.batchSize, plan.train.count) + plan.heldOut.count
         report.adapterDirectory = directory.path
         report.verdict = try await applyDistilled(directory, gate: request.gate)
         return report
@@ -112,6 +113,10 @@ extension MLXInferenceEngine {
         let (inputs, _, mask) = distillBatch(batch.map(\.row))
         let (ids, logprobs) = teacherTensors(batch, width: inputs.dim(1))
         return reverseKL(model(inputs, cache: nil).asType(.float32), teacherIds: ids, teacherLogprobs: logprobs, mask: mask)
+    }
+
+    static func meanKL(_ batch: [ScoredRow], model: any LanguageModel) -> Float {
+        batch.reduce(Float(0)) { $0 + onPolicyLoss([$1], model: model).item(Float.self) } / Float(batch.count)
     }
 
     static func onPolicyStep(_ batch: [ScoredRow], optimizer: Adam, model: any LanguageModel) throws -> Float {
