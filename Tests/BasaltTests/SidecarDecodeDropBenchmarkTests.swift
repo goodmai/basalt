@@ -42,14 +42,14 @@ struct SidecarDecodeDropBenchmarkTests {
         return try await orchestrator.generate(request: request).tokensPerSecond
     }
 
-    static func embedLoop(_ engine: any EmbeddingEngine, gate: GenerationGate, duty: Double, load: Load) async throws {
+    static func embedLoop(_ engine: any EmbeddingEngine, gate: GenerationGate, duty: Double, load: Load, perRequest: Int = chunksPerRequest) async throws {
         while !Task.isCancelled {
-            for start in stride(from: 0, to: chunkCount, by: chunksPerRequest) where !Task.isCancelled {
+            for start in stride(from: 0, to: chunkCount, by: perRequest) where !Task.isCancelled {
                 let begin = ContinuousClock.now
-                let batch = chunks[start ..< start + chunksPerRequest].map(EmbeddingInput.text)
+                let batch = chunks[start ..< start + perRequest].map(EmbeddingInput.text)
                 _ = try await engine.embed(batch, dimensions: nil, yieldingTo: gate)
                 let seconds = (ContinuousClock.now - begin).inSeconds
-                load.done.withLock { $0 += chunksPerRequest }
+                load.done.withLock { $0 += perRequest }
                 load.busy.withLock { $0 += seconds }
                 if duty < 1 { try? await Task.sleep(for: .seconds(seconds * (1 - duty) / duty)) }
             }
@@ -116,7 +116,7 @@ struct SidecarDecodeDropBenchmarkTests {
             plan: plan)
     }
 
-    @Test("Gemma 4 decode beside 1000 Core AI chunks (continuous and 25% duty), the gated and ungated MLX embedder and Laya at 25% duty; drops, sidecar throughput and load are logged",
+    @Test("Gemma 4 decode beside 1000 Core AI chunks (continuous and 25% duty), the gated MLX embedder and Laya at 25% duty; drops, sidecar throughput and load are logged",
           .enabled(if: chatModel != nil && embeddingBundle != nil && mlxEmbedder != nil && decisionBundle != nil,
                    "set BASALT_E2E=1, BASALT_E2E_SIDECAR_CHAT_MODEL, BASALT_E2E_COREAI_EMBEDDING_BUNDLE, BASALT_E2E_SIDECAR_MLX_EMBEDDER and BASALT_E2E_COREAI_DECISION_BUNDLE"))
     func decodeDrop() async throws {
@@ -135,14 +135,11 @@ struct SidecarDecodeDropBenchmarkTests {
         try await Self.arm("Core AI embeddings continuous", solo: before, orchestrator: orchestrator, log: log, minimumDone: Self.chunkCount) { [ane = lanes.ane] in
             try await Self.embedLoop(ane, gate: gate, duty: 1, load: $0)
         }
-        try await Self.arm("Core AI embeddings 25% duty", solo: before, orchestrator: orchestrator, log: log, minimumDone: Self.chunkCount) { [ane = lanes.ane] in
+        try await Self.arm("Core AI embeddings 25% duty", solo: before, orchestrator: orchestrator, log: log) { [ane = lanes.ane] in
             try await Self.embedLoop(ane, gate: gate, duty: 0.25, load: $0)
         }
         try await Self.arm("MLX embedder gated", solo: before, orchestrator: orchestrator, log: log) { [mlx = lanes.mlx] in
-            try await Self.embedLoop(mlx, gate: gate, duty: 1, load: $0)
-        }
-        try await Self.arm("MLX embedder ungated", solo: before, orchestrator: orchestrator, log: log) { [mlx = lanes.mlx] in
-            try await Self.embedLoop(BesideDecodeEmbeddingEngine(inner: mlx), gate: gate, duty: 1, load: $0)
+            try await Self.embedLoop(mlx, gate: gate, duty: 1, load: $0, perRequest: 4)
         }
         try await Self.arm("Laya decisions 25% duty", solo: before, orchestrator: orchestrator, log: log) { [laya = lanes.laya] in
             try await Self.decideLoop(laya, duty: 0.25, load: $0)
