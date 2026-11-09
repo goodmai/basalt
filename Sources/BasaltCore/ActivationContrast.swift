@@ -131,9 +131,7 @@ public enum ActivationStatistics {
     static func experts(in samples: [TracedSample], layer: Int) -> [Int] {
         var seen = Set<Int>()
         for sample in samples {
-            for token in 0 ..< sample.table.tokens {
-                sample.table.row(.experts, layer: layer, token: token)?.forEach { seen.insert(Int($0)) }
-            }
+            for (ids, _) in sample.table.routed(layer: layer) ?? [] { ids.forEach { seen.insert(Int($0)) } }
         }
         return seen.sorted()
     }
@@ -158,11 +156,8 @@ public enum ActivationStatistics {
         switch kind {
         case .head: return sample.table.column(.heads, layer: layer, index) ?? []
         case .expert:
-            return (0 ..< sample.table.tokens).map { token in
-                guard let ids = sample.table.row(.experts, layer: layer, token: token),
-                      let gates = sample.table.floatRow(.gates, layer: layer, token: token),
-                      let slot = ids.firstIndex(of: Int32(index)) else { return 0 }
-                return gates[slot]
+            return (sample.table.routed(layer: layer) ?? []).map { ids, gates in
+                ids.firstIndex(of: Int32(index)).map { gates[gates.startIndex + ($0 - ids.startIndex)] } ?? 0
             }
         }
     }

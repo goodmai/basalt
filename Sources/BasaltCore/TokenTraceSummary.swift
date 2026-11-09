@@ -32,6 +32,16 @@ public struct TokenTraceTable: Sendable, Equatable {
         return Array(floats[start ..< start + columns.count])
     }
 
+    public func routed(layer: Int) -> [(ids: ArraySlice<Int32>, gates: ArraySlice<Float>)]? {
+        guard let ids = TokenTraceLayout.columns(.experts, layer: layer, in: layout.ints),
+              let gates = TokenTraceLayout.columns(.gates, layer: layer, in: layout.floats) else { return nil }
+        let (intWidth, floatWidth) = (layout.intWidth, layout.floatWidth)
+        return (0 ..< tokens).map { token in
+            (ints[token * intWidth + ids.lowerBound ..< token * intWidth + ids.upperBound],
+             floats[token * floatWidth + gates.lowerBound ..< token * floatWidth + gates.upperBound])
+        }
+    }
+
     public var layers: [Int] { Array(Set(layout.floats.map(\.layer) + layout.ints.map(\.layer))).sorted() }
 }
 
@@ -60,8 +70,7 @@ public enum TokenTraceSummary {
 
     static func experts(_ table: TokenTraceTable, layer: Int, topK: Int) -> [ExpertUsage] {
         var counts: [Int: (tokens: Int, gate: Float)] = [:]
-        for token in 0 ..< table.tokens {
-            guard let ids = table.row(.experts, layer: layer, token: token), let gates = table.floatRow(.gates, layer: layer, token: token) else { return [] }
+        for (ids, gates) in table.routed(layer: layer) ?? [] {
             for (id, gate) in zip(ids, gates) {
                 let previous = counts[Int(id), default: (0, 0)]
                 counts[Int(id)] = (previous.tokens + 1, previous.gate + gate)
