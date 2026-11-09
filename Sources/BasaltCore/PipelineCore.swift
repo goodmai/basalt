@@ -37,7 +37,7 @@ public enum PipelineCore {
 
     public static func missingStage(_ request: PipelineRequest, hasOCR: Bool, hasDecisions: Bool) -> String? {
         if request.needsOCR, !hasOCR {
-            return "A pdf or image attachment needs an OCR model; start basalt serve with --pipeline-ocr-model <GLM-OCR or MinerU2.5 repo|dir>."
+            return "A pdf or image attachment needs an OCR model; start basalt serve with --pipeline-ocr-model <GLM-OCR, MinerU2.5 or PaddleOCR-VL repo|dir>."
         }
         if !request.questions.isEmpty, !hasDecisions {
             return "Typed questions need a decision model; start basalt serve with --decision-model <self|repo|dir>."

@@ -208,7 +208,7 @@ extension RESTServer {
         "/v1/systemone":           { "post": { "summary": "Single-pass typed decisions: noul, choice, score (serve --decision-model)" } },
         "/v1/rerank":              { "post": { "summary": "Cohere/Jina-compatible rerank (serve --rerank-model)" } },
         "/v1/audio/transcriptions": { "post": { "summary": "OpenAI-compatible speech to text (multipart: file, model, language, response_format, temperature)" } },
-        "/v1/ocr":                 { "post": { "summary": "Document OCR with GLM-OCR or MinerU2.5 (JSON: file as base64 PDF or image, pages such as 1-3, task document|text|table|formula|chart, format markdown|json, model)" } },
+        "/v1/ocr":                 { "post": { "summary": "Document OCR with GLM-OCR, MinerU2.5 or PaddleOCR-VL (JSON: file as base64 PDF or image, pages such as 1-3, task document|text|table|formula|chart, format markdown|json, model)" } },
         "/v1/pipeline":            { "post": { "summary": "Perceive (OCR of pdf/image attachments with serve --pipeline-ocr-model, transcription of audio) → decide (System One on typed questions) → answer (the chat model, only for abstained questions and a task); returns perceived text, answers, the System 2 reply and a route receipt" } }
       }
     }

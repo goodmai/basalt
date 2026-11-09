@@ -7,7 +7,7 @@ import Foundation
 struct OCRCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "ocr",
-        abstract: "Read a PDF or an image to Markdown with GLM-OCR, MinerU2.5 or Apple Vision"
+        abstract: "Read a PDF or an image to Markdown with GLM-OCR, MinerU2.5, PaddleOCR-VL or Apple Vision"
     )
 
     @Argument(help: "PDF or image file (PNG, JPEG, WebP, HEIC)")
