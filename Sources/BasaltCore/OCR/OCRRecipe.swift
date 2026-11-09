@@ -81,10 +81,9 @@ public struct OCRRecipe: Sendable, Equatable {
 
     public func finished(_ output: String, blockType: String) -> String {
         let text = output.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard family == .minerU else { return text }
-        switch blockType {
-        case "table": return OTSLTable.html(text)
-        case "equation": return MinerULayout.bracketed(text)
+        switch (family, blockType) {
+        case (.minerU, "table"), (.paddleOCR, "table"): return OTSLTable.html(text)
+        case (.minerU, "equation"): return MinerULayout.bracketed(text)
         default: return text
         }
     }

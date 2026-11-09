@@ -105,7 +105,7 @@ struct OCRRecipeTests {
         #expect(OCRRecipe(family: .minerU).request(prompt: "\nText Recognition:", image: image, stage: .recognition).presencePenalty == 1)
     }
 
-    @Test("Post-processing: MinerU tables turn from OTSL into HTML and equations get display brackets; GLM-OCR output is only trimmed")
+    @Test("Post-processing: MinerU and PaddleOCR-VL tables turn from OTSL into HTML, MinerU equations get display brackets; GLM-OCR output is only trimmed")
     func postProcessing() {
         let minerU = OCRRecipe(family: .minerU)
         #expect(minerU.finished(" <fcel>a<fcel>b<nl> ", blockType: "table") == "<table><tr><td>a</td><td>b</td></tr></table>")
@@ -113,6 +113,10 @@ struct OCRRecipeTests {
         #expect(minerU.finished("\\[x\\]", blockType: "equation") == "\\[x\\]")
         #expect(minerU.finished("", blockType: "equation") == "")
         #expect(OCRRecipe(family: .glmOCR).finished("\n<fcel>a\n", blockType: "table") == "<fcel>a")
+        let paddle = OCRRecipe(family: .paddleOCR)
+        #expect(paddle.finished("<fcel>Model<fcel>Size<nl><fcel>GLM-OCR<fcel>0.9B<nl>", blockType: "table")
+            == "<table><tr><td>Model</td><td>Size</td></tr><tr><td>GLM-OCR</td><td>0.9B</td></tr></table>")
+        #expect(paddle.finished(" x^2 ", blockType: "equation") == "x^2")
     }
 
     @Test("glm_ocr and qwen2_vl stay unverified families; paddleocr_vl verifies what the feature matrix runs on its tiny family, without MTP, CacheBlend or a quantized KV cache")
