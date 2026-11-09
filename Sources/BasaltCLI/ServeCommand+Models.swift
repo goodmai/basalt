@@ -85,6 +85,12 @@ extension ServeCommand {
                 return ReadoutDecisionEngine(engine: chat, modelID: "self", readout: .uncalibrated)
             }
             let directory = URL(fileURLWithPath: try await resolvedPath(decisionModel, quant: nil))
+            if CoreAIDecisionEngine.isBundle(directory) {
+                log("Specializing the Core AI decision bundle for the Neural Engine (first start only; cached afterwards)…")
+                let engine = try await CoreAIDecisionEngine(directory: directory)
+                log("Serving \(engine.modelID) (decision, /v1/systemone, Core AI on the Neural Engine)")
+                return engine
+            }
             guard JevEvaluator.isBundle(directory) else { return try await readoutDecisions(decisionModel, directory: directory) }
             let base = URL(fileURLWithPath: try await resolvedPath(try JevEvaluator.baseModel(of: directory), quant: nil))
             let evaluator = try await JevEvaluator(directory: directory, base: base)

@@ -79,7 +79,7 @@ struct SystemOneBudgetBenchmarkTests {
     }
 
     @Test("LLM-only vs System One with escalation at four thresholds, then System One running during a long generation; tokens, time, accuracy and decode tok/s are logged",
-          .enabled(if: chat != nil, "set BASALT_E2E=1 and BASALT_E2E_BUDGET_CHAT_MODEL; optional BASALT_E2E_JEV_MODEL + BASALT_E2E_JEV_BASE (OpenJev head) and BASALT_E2E_BUDGET_FLASH (OpenJev-Flash-9B path)"))
+          .enabled(if: chat != nil, "set BASALT_E2E=1 and BASALT_E2E_BUDGET_CHAT_MODEL; optional BASALT_E2E_JEV_MODEL + BASALT_E2E_JEV_BASE (OpenJev head) BASALT_E2E_BUDGET_FLASH (OpenJev-Flash-9B path) and BASALT_E2E_BUDGET_COREAI (Core AI decision bundle, run last and used for the concurrent arm)"))
     func budget() async throws {
         let path = NF4Run.path(try #require(Self.chat))
         let log = try await ModelRunLog("systemone-budget", modelPath: path)
@@ -101,6 +101,9 @@ struct SystemOneBudgetBenchmarkTests {
             let flashEngine = MLXInferenceEngine(EngineConfiguration(promptCacheBytes: 0))
             try await log.step("load flash") { try await flashEngine.load(modelPath: flash) }
             deciders.append(("openjev-flash-9b", ReadoutDecisionEngine(engine: flashEngine, modelID: "flash", readout: SystemOneReadout.known("openjev/OpenJev-Flash-9B") ?? .uncalibrated)))
+        }
+        if let laya = Self.env["BASALT_E2E_BUDGET_COREAI"] {
+            deciders.append(("laya-ane", try await log.step("load laya") { try await CoreAIDecisionEngine(directory: URL(fileURLWithPath: laya)) }))
         }
         for (label, decider) in deciders {
             for threshold in Self.thresholds {
