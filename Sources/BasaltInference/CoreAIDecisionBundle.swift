@@ -90,8 +90,8 @@ struct CoreAIDecisionBundle: Sendable, Equatable {
         return temperaturesByOptions["\(kind.rawValue):\(size)"] ?? temperatures[Self.typeIndex(kind)]
     }
 
-    func encode(_ question: SystemOneQuestion, state: String, tokenize: (String) -> [Int]) throws(BasaltError) -> Encoded {
-        let clean = { (text: String) in text.replacingOccurrences(of: Self.maskText, with: " ") }
+    func encode(_ question: SystemOneQuestion, state: [Int], tokenize: (String) -> [Int]) throws(BasaltError) -> Encoded {
+        let clean = Self.clean
         var options = Self.options(question).map { [mask] + tokenize(" " + clean($0)).prefix(maxOptionTokens) }
         var budget = headMaxLength - options.reduce(0) { $0 + $1.count }
         if budget < 16 {
@@ -106,7 +106,7 @@ struct CoreAIDecisionBundle: Sendable, Equatable {
             ids += option
         }
         ids.append(sep)
-        ids += tokenize(clean(state)).prefix(max(0, maxLength - ids.count - 1))
+        ids += state.prefix(max(0, maxLength - ids.count - 1))
         ids = Array((ids + [sep]).prefix(maxLength))
         markers = markers.filter { $0 < maxLength }
         guard markers.count == options.count else {
@@ -114,6 +114,8 @@ struct CoreAIDecisionBundle: Sendable, Equatable {
         }
         return Encoded(ids: ids, markers: markers)
     }
+
+    static func clean(_ text: String) -> String { text.replacingOccurrences(of: maskText, with: " ") }
 
     func plan(_ lengths: [Int]) -> [Call] {
         guard let longest = lengths.max() else { return [] }
@@ -140,7 +142,7 @@ struct CoreAIDecisionBundle: Sendable, Equatable {
     func bias(_ reals: [Int], to function: Function) -> [Float] {
         (0 ..< function.batch).flatMap { row in
             let real = row < reals.count ? reals[row] : 0
-            return (0 ..< function.length).flatMap { key in Array(repeating: key < real ? 0 : masked, count: function.length) }
+            return (0 ..< function.length).map { $0 < real ? 0 : masked }
         }
     }
 

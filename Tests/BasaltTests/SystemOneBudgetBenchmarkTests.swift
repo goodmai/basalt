@@ -115,6 +115,30 @@ struct SystemOneBudgetBenchmarkTests {
         let (overlapTally, _) = try await Self.withSystemOne(engine, deciders[deciders.count - 1].1, items, threshold: 0.75)
         let overlap = try await concurrent
         log.record("RESULT", "C concurrent \(deciders[deciders.count - 1].0) @0.75: long answer \(String(format: "%.2f", overlap.tokensPerSecond)) tok/s (\(String(format: "%+.1f", (overlap.tokensPerSecond / max(solo.tokensPerSecond, 1e-9) - 1) * 100))% vs solo), decisions accuracy \(overlapTally.accuracy), wall \(String(format: "%.1f", Self.seconds(since: clock))) s vs A+long \(String(format: "%.1f", baselineSeconds + solo.generationTime)) s")
+        if let ane = deciders.last?.1 as? CoreAIDecisionEngine { try await Self.continuous(engine, ane, items, log: log) }
+    }
+
+    static func continuous(_ engine: MLXInferenceEngine, _ decider: CoreAIDecisionEngine, _ items: [LabelledDecision], log: ModelRunLog) async throws {
+        let requests = Dictionary(grouping: items, by: \.state).values.map { group in
+            SystemOneRequest(state: group[0].state, questions: Dictionary(uniqueKeysWithValues: group.map { ($0.name, $0.question) }))
+        }
+        let solo = try await log.step("long answer solo, before D") { try await Self.longAnswer(engine) }
+        let loop = Task {
+            var count = 0
+            while !Task.isCancelled {
+                for request in requests where !Task.isCancelled {
+                    _ = try await decider.decide(request)
+                    count += 1
+                }
+            }
+            return count
+        }
+        let clock = ContinuousClock.now
+        let overlap = try await log.step("long answer beside continuous ANE decisions") { try await Self.longAnswer(engine) }
+        let seconds = Self.seconds(since: clock)
+        loop.cancel()
+        let decided = try await loop.value
+        log.record("RESULT", "D continuous \(decider.modelID) on the ANE, no escalation: long answer \(String(format: "%.2f", overlap.tokensPerSecond)) tok/s against \(String(format: "%.2f", solo.tokensPerSecond)) solo (\(String(format: "%+.1f", (overlap.tokensPerSecond / max(solo.tokensPerSecond, 1e-9) - 1) * 100))%), \(decided) requests in \(String(format: "%.1f", seconds)) s, \(String(format: "%.1f", Double(decided) / max(seconds, 1e-9))) requests/s")
     }
 
     struct Run {

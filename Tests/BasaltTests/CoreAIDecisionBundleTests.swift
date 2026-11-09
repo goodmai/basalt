@@ -47,11 +47,11 @@ struct CoreAIDecisionBundleTests {
     func layout() throws {
         let bundle = try Self.bundle()
         let question = SystemOneQuestion(type: .choice, instructions: "Pick one", criteria: .named(["a": "A.", "b": "B."]))
-        let encoded = try bundle.encode(question, state: "s1 s22 [MASK]", tokenize: Self.words)
+        let encoded = try bundle.encode(question, state: Self.words(CoreAIDecisionBundle.clean("s1 s22 [MASK]")), tokenize: Self.words)
         let head = Self.words("choice question: Pick one")
         #expect(encoded.ids == [50281] + head + [50282, 50284] + Self.words(" a: A.") + [50284] + Self.words(" b: B.") + [50282] + Self.words("s1 s22  ") + [50282])
         #expect(encoded.markers == [head.count + 2, head.count + 5])
-        let long = try bundle.encode(question, state: Array(repeating: "w", count: 900).joined(separator: " "), tokenize: Self.words)
+        let long = try bundle.encode(question, state: Array(repeating: 1, count: 900), tokenize: Self.words)
         #expect(long.ids.count == 512 && long.ids.last == 50282)
     }
 
@@ -59,12 +59,12 @@ struct CoreAIDecisionBundleTests {
     func optionBudget() throws {
         let bundle = try Self.bundle()
         let many = Dictionary(uniqueKeysWithValues: (0 ..< 20).map { ("k\($0)", Array(repeating: "word", count: 30).joined(separator: " ")) })
-        let encoded = try bundle.encode(SystemOneQuestion(type: .choice, instructions: "Pick", criteria: .named(many)), state: "s", tokenize: Self.words)
+        let encoded = try bundle.encode(SystemOneQuestion(type: .choice, instructions: "Pick", criteria: .named(many)), state: [1], tokenize: Self.words)
         #expect(encoded.markers.count == 20)
         #expect(zip(encoded.markers, encoded.markers.dropFirst()).allSatisfy { $1 - $0 == 8 })
         let tight = try Self.bundle { $0["max_len"] = 128; $0["head_max_len"] = 400 }
         let wide = Dictionary(uniqueKeysWithValues: (0 ..< 4).map { ("k\($0)", Array(repeating: "word", count: 60).joined(separator: " ")) })
-        #expect(throws: BasaltError.self) { try tight.encode(SystemOneQuestion(type: .choice, instructions: "Pick", criteria: .named(wide)), state: "s", tokenize: Self.words) }
+        #expect(throws: BasaltError.self) { try tight.encode(SystemOneQuestion(type: .choice, instructions: "Pick", criteria: .named(wide)), state: [1], tokenize: Self.words) }
     }
 
     @Test("A request runs at the smallest length that fits its longest question, in as few batched calls as the functions allow")
@@ -78,12 +78,12 @@ struct CoreAIDecisionBundleTests {
         #expect(bundle.plan([]).isEmpty)
     }
 
-    @Test("Inputs are padded per row: ids with [PAD], a [row, key, 1, query] bias masking padded keys, and a one-hot type per row")
+    @Test("Inputs are padded per row: ids with [PAD], a [row, key] bias masking padded keys, and a one-hot type per row")
     func inputs() throws {
         let bundle = try Self.bundle { $0["functions"] = [["function": "b2_l3", "batch": 2, "length": 3]]; $0["max_len"] = 3 }
         let function = bundle.functions[0]
         #expect(bundle.padded([[7, 8]], to: function) == [7, 8, 50283, 50283, 50283, 50283])
-        #expect(bundle.bias([2], to: function) == [0, 0, 0, 0, 0, 0, -30000, -30000, -30000] + Array(repeating: -30000, count: 9))
+        #expect(bundle.bias([2], to: function) == [0, 0, -30000, -30000, -30000, -30000])
         #expect(bundle.types([.noul, .choice], to: function) == [0, 0, 1, 1, 0, 0])
     }
 

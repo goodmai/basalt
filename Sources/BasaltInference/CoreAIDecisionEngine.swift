@@ -5,6 +5,7 @@ import BasaltCore
 
 public struct CoreAIDecisionEngine: DecisionEngine {
     public let modelID: String
+    public let runsBesideDecode = true
     let bundle: CoreAIDecisionBundle
     let tokenizer: any Tokenizers.Tokenizer
     private let table: InferenceFunction
@@ -43,9 +44,11 @@ public struct CoreAIDecisionEngine: DecisionEngine {
         try SystemOneCore.validate(request)
         let names = request.questions.keys.sorted()
         let questions = names.map { request.questions[$0]! }
+        let tokenize = { (text: String) in tokenizer.encode(text: text, addSpecialTokens: false) }
+        let state = tokenize(CoreAIDecisionBundle.clean(request.state))
         var encoded: [CoreAIDecisionBundle.Encoded] = []
         for question in questions {
-            encoded.append(try bundle.encode(question, state: request.state) { tokenizer.encode(text: $0, addSpecialTokens: false) })
+            encoded.append(try bundle.encode(question, state: state, tokenize: tokenize))
         }
         let calls = bundle.plan(encoded.map(\.ids.count))
         var logits = [[Double]](repeating: [], count: questions.count)
@@ -85,7 +88,7 @@ public struct CoreAIDecisionEngine: DecisionEngine {
         idView.copyElements(from: bundle.padded(rows, to: function))
         var tableOutputs = try await table.run(inputs: ["input_ids": ids])
         guard let embeds = tableOutputs.remove("inputs_embeds")?.ndArray else { throw BasaltError.inferenceError("token_table returned no inputs_embeds") }
-        var bias = NDArray(shape: [function.batch, function.length, 1, function.length], scalarType: .float16)
+        var bias = NDArray(shape: [function.batch, function.length, 1, 1], scalarType: .float16)
         var biasView = bias.mutableView(as: Float16.self)
         biasView.copyElements(from: bundle.bias(rows.map(\.count), to: function).map(Float16.init))
         var types = NDArray(shape: [function.batch, 3], scalarType: .float16)

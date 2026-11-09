@@ -40,7 +40,8 @@ struct CoreAIDecisionRealModelTests {
         var worst = 0.0
         for item in cases {
             for (name, expected) in item.answers {
-                let encoded = try engine.bundle.encode(try #require(item.questions[name]), state: item.state) { engine.tokenizer.encode(text: $0, addSpecialTokens: false) }
+                let tokenize = { (text: String) in engine.tokenizer.encode(text: text, addSpecialTokens: false) }
+                let encoded = try engine.bundle.encode(try #require(item.questions[name]), state: tokenize(CoreAIDecisionBundle.clean(item.state)), tokenize: tokenize)
                 #expect(encoded.ids == expected.ids && encoded.markers == expected.markers, "question \(name) tokenizes differently")
             }
             let response = try await engine.decide(SystemOneRequest(state: item.state, questions: item.questions))
@@ -96,6 +97,6 @@ struct CoreAIDecisionRealModelTests {
         let workloads = try await ServeCommand.parse(["--decision-model", path]).sidecarWorkloads(embeddings: nil, decisions: engine)
         #expect(workloads.map(\.unit) == [.ane] && workloads.map(\.kind) == [.encoder])
         #expect((workloads.first?.residentBytes ?? 0) > 500_000_000)
-        #expect(ComputePlan.admit(workloads, budgetBytes: 0).placements.first?.concurrentWithDecode == true)
+        #expect(ComputePlan.admit(workloads, budgetBytes: 0).placements.first?.concurrentWithDecode == true && engine.runsBesideDecode)
     }
 }
