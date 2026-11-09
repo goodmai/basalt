@@ -58,10 +58,11 @@ struct PipelinePerceiveAPITests {
         let ocr = try await OCRAPITests.orchestrator("GLM-OCR", modelType: "glm_ocr", engine: ocrEngine)
         let (_, chat) = try await PipelineAPITests.chat()
         let (transcriber, decisions) = (ScriptedTranscriber(), GatingDecisionEngine())
+        let served = GatedDecisionEngine.serving(decisions, gate: chat.gate)
         let generation = try await chat.gate.admit()
         let image: [String: Any] = ["kind": "image", "data": try OCRFixture.png(width: 4, height: 4).base64EncodedString()]
-        async let heard = PipelineAPITests.post(chat, decisions: decisions, stages: PipelineStages(speech: transcriber), ["attachments": [Self.audio], "questions": PipelineAPITests.questions])
-        async let read = PipelineAPITests.post(chat, decisions: decisions, stages: PipelineStages(ocr: ocr), ["attachments": [image], "questions": PipelineAPITests.questions])
+        async let heard = PipelineAPITests.post(chat, decisions: served, stages: PipelineStages(speech: transcriber), ["attachments": [Self.audio], "questions": PipelineAPITests.questions])
+        async let read = PipelineAPITests.post(chat, decisions: served, stages: PipelineStages(ocr: ocr), ["attachments": [image], "questions": PipelineAPITests.questions])
         while await chat.gate.exclusiveWaiting < 2 { await Task.yield() }
         #expect(transcriber.requests.withLock { $0.count } == 1)
         #expect(await ocrEngine.getRequests().isEmpty)

@@ -105,10 +105,7 @@ struct PipelineRunner: Sendable {
         guard !questions.isEmpty, let decisions else { return (nil, nil) }
         let started = ContinuousClock.now
         let request = SystemOneRequest(state: state, questions: questions, abstainBelow: stages.abstainBelow, minMargin: stages.minMargin)
-        let log = chat.sessionLog
-        let response = try await betweenGenerations(true) { () async throws(BasaltError) in
-            try await SystemOneController.decide(decisions, request, log: log, origin: origin, sessionId: sessionId)
-        }
+        let response = try await SystemOneController.decide(decisions, request, log: chat.sessionLog, origin: origin, sessionId: sessionId)
         return (response, PipelineCore.decided(response, ms: Self.elapsed(since: started)))
     }
 

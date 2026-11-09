@@ -24,7 +24,7 @@ struct GatedDecisionEngineTests {
         #expect(gated is GatedDecisionEngine)
         let generation = try await gate.admit()
         let decision = Task { try await gated.decide(Self.request) }
-        while await !gate.checkInvariants(idle: true).contains(where: { $0.contains("1 waiting for it") }) { await Task.yield() }
+        while await gate.exclusiveWaiting < 1 { await Task.yield() }
         #expect(stub.calls.requests.withLock { $0.isEmpty })
         await gate.release(generation)
         _ = try await decision.value
