@@ -122,7 +122,7 @@ extension MCPServer {
     private func generate(_ args: [String: Any]?) async throws(MCPFailure) -> ToolResult {
         let request = try MCPArguments.generation(args, images: try MCPImages.parse(args?["images"], allowedIn: imageDirectories))
         do throws(BasaltError) {
-            return .generated(try await orchestrator.generate(request: request))
+            return .generated(try await orchestrator.generate(request: try await orchestrator.transcribingImages(in: request).request))
         } catch {
             throw MCPFailure(error)
         }

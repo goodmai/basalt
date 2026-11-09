@@ -1,6 +1,7 @@
 import Foundation
 import MLX
 import MLXLMCommon
+import MLXVLM
 import BasaltCore
 
 extension MLXInferenceEngine {
@@ -9,6 +10,13 @@ extension MLXInferenceEngine {
             guard let container else { return false }
             if modelFacts.transcribesAudio { return true }
             return await container.perform { $0.model is NemotronTranscribeModel }
+        }
+    }
+
+    public var takesImages: Bool {
+        get async {
+            guard let container else { return true }
+            return await container.perform { $0.model is any VLMModel }
         }
     }
 

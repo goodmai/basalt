@@ -4,6 +4,7 @@ import Foundation
 extension ModelOrchestratorActor {
     @concurrent
     public nonisolated func ocr(_ request: OCRRequest) async throws(BasaltError) -> OCRResult {
+        if request.model == OCRRequest.appleVision { return try await readWithVision(request) }
         let (recipe, epoch) = try await ocrRecipe(switchingTo: request.model)
         let step = try recipe.step(for: request.task)
         var pages: [OCRPageResult] = []
@@ -13,11 +14,10 @@ extension ModelOrchestratorActor {
             case .recognize(let prompt, let type): try await recognize(page.image, prompt: prompt, type: type, recipe: recipe, epoch: epoch)
             case .layout(let prompt, let side): try await parseLayout(page.image, prompt: prompt, side: side, recipe: recipe, epoch: epoch)
             }
-            let elapsed = (ContinuousClock.now - started).components
-            let ms = Int(elapsed.seconds * 1000 + elapsed.attoseconds / 1_000_000_000_000_000)
-            pages.append(OCRPageResult(page: page.number, markdown: read.markdown, blocks: read.blocks, tokens: read.tokens, ms: ms))
+            pages.append(OCRPageResult(
+                page: page.number, markdown: read.markdown, blocks: read.blocks, tokens: read.tokens, ms: Self.milliseconds(since: started)))
         }
-        return OCRResult(model: await modelInfo, family: recipe.family, task: request.task, pages: pages, format: request.format)
+        return OCRResult(model: await modelInfo, family: recipe.family.rawValue, task: request.task, pages: pages, format: request.format)
     }
 
     func ocrRecipe(switchingTo model: String?) async throws(BasaltError) -> (recipe: OCRRecipe, epoch: Int) {
@@ -25,7 +25,7 @@ extension ModelOrchestratorActor {
         let modelType = ModelCache.config(at: URL(fileURLWithPath: loaded.path))?["model_type"] as? String
         guard let recipe = OCRRecipe.of(modelType: modelType, hints: [loaded.path, currentModelId]) else {
             throw .invalidRequestStructure(
-                details: "the loaded model \(modelInfo) (model_type \(modelType ?? "unknown")) has no OCR recipe; load GLM-OCR (glm_ocr) or MinerU2.5 (qwen2_vl)")
+                details: "the loaded model \(modelInfo) (model_type \(modelType ?? "unknown")) has no OCR recipe; load GLM-OCR (glm_ocr) or MinerU2.5 (qwen2_vl), or send model \(OCRRequest.appleVision)")
         }
         return (recipe, loaded.epoch)
     }

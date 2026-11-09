@@ -186,6 +186,7 @@ extension ServeConfigFile {
         "serve.experimental_smallm_kernel": .flag(on: "--experimental-smallm-kernel", off: nil),
         "serve.speculative.experimental_mtp_draft_head": .flag(on: "--experimental-mtp-draft-head", off: nil),
         "serve.experimental_adaptive_thinking_budget": .flag(on: "--experimental-adaptive-thinking-budget", off: nil),
+        "serve.image_fallback": .text("--image-fallback"),
         "serve.grammar_jump_forward": .flag(on: "--grammar-jump-forward", off: nil),
         "serve.expert_streaming.enabled": .flag(on: "--experimental-expert-streaming", off: nil),
         "serve.expert_streaming.cache_gb": .number("--expert-cache-gb"),
