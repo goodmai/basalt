@@ -17,7 +17,7 @@ struct ExperimentalServeOptions: ParsableArguments {
 
     @Flag(
         name: .customLong("experimental-speech-analyzer"),
-        help: "Serve /v1/audio/transcriptions and the basalt_transcribe MCP tool through macOS SpeechAnalyzer on the Neural Engine when the loaded model has no audio encoder. The first request for a language may install its system speech assets (#222, #230). Off by default until its word error rate is measured"
+        help: "Serve /v1/audio/transcriptions, the basalt_transcribe MCP tool and audio in /v1/pipeline through macOS SpeechAnalyzer on the Neural Engine when the loaded model has no audio encoder. The first request for a language may install its system speech assets (#222, #230). Off by default until its word error rate is measured"
     )
     var speechAnalyzer = false
 

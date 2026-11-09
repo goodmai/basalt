@@ -9,7 +9,7 @@ struct PipelineOptions: ParsableArguments {
     @Option(name: .customLong("pipeline-ocr-model"), help: "OCR model for /v1/pipeline and basalt_pipeline (GLM-OCR or MinerU2.5): repo ID or local path, loaded in its own engine beside the chat model so OCR never swaps it out")
     var ocrModel: String?
 
-    @Option(name: .customLong("pipeline-audio-model"), help: "Speech model for audio in /v1/pipeline and basalt_pipeline (Nemotron Transcribe): repo ID or local path, loaded in its own engine beside the chat model; without it, audio goes to the chat model when it has an audio encoder, otherwise to macOS SpeechAnalyzer")
+    @Option(name: .customLong("pipeline-audio-model"), help: "Speech model for audio in /v1/pipeline and basalt_pipeline (Nemotron Transcribe): repo ID or local path, loaded in its own engine beside the chat model; without it, audio goes to the chat model when it has an audio encoder, otherwise to macOS SpeechAnalyzer when serve runs with --experimental-speech-analyzer")
     var audioModel: String?
 
     @Option(name: .customLong("pipeline-abstain-below"), help: "In /v1/pipeline, System One abstains, and the question goes to the chat model, when its confidence is below this value (0 to 1; default: never)")
@@ -61,7 +61,7 @@ extension ServeCommand {
             log("\(red("[error]")) --pipeline-audio-model \(pipeline.audioModel ?? "") has no audio encoder; use Nemotron Transcribe")
             throw ExitCode.failure
         }
-        return PipelineStages(ocr: ocr, audio: audio, speech: SpeechAnalyzerTranscriber(), abstainBelow: pipeline.abstainBelow, minMargin: pipeline.minMargin)
+        return PipelineStages(ocr: ocr, audio: audio, speech: experimental.speechAnalyzer ? SpeechAnalyzerTranscriber() : nil, abstainBelow: pipeline.abstainBelow, minMargin: pipeline.minMargin)
     }
 
     func loadPerceiver(_ model: String?, path: String?, role: String) async throws -> ModelOrchestratorActor? {
