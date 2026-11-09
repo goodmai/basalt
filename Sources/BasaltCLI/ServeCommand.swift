@@ -179,11 +179,12 @@ struct ServeCommand: AsyncParsableCommand {
         let engine = try makeEngine()
         let orchestrator = try await makeOrchestrator(engine: engine, maxTokens: config.maxTokens)
 
-        let embeddings = try await loadEmbeddings()
+        let loadedEmbeddings = try await loadEmbeddings()
         let loadedDecisions = try await loadDecisions(chat: engine)
         let perceivePaths = try await pipelinePerceivePaths()
-        let degraded = try await admitComputePlan(chatPath: resolvedPath, embeddings: embeddings, decisions: loadedDecisions, perceive: perceivePaths)
-        let decisions = GatedDecisionEngine.serving(loadedDecisions, gate: orchestrator.gate, besideDecode: !degraded)
+        let plan = try await admitComputePlan(chatPath: resolvedPath, embeddings: loadedEmbeddings, decisions: loadedDecisions, perceive: perceivePaths)
+        let embeddings = BesideDecodeEmbeddingEngine.serving(loadedEmbeddings, besideDecode: plan.runsBesideDecode("embed"))
+        let decisions = GatedDecisionEngine.serving(loadedDecisions, gate: orchestrator.gate, besideDecode: plan.runsBesideDecode("decide"))
 
         try await load(orchestrator, from: resolvedPath)
         let stages = try await loadPipelineStages(perceivePaths)

@@ -4,7 +4,9 @@ import Tokenizers
 import BasaltCore
 
 public struct CoreAIEmbeddingService: EmbeddingEngine {
+    public static let maxInFlight = 4
     public let models: [EmbeddingModelInfo]
+    let admission = InFlightLimit(maxInFlight)
     let bundle: CoreAIEmbeddingBundle
     private let tokenizer: any Tokenizers.Tokenizer
     private let table: InferenceFunction
@@ -40,7 +42,7 @@ public struct CoreAIEmbeddingService: EmbeddingEngine {
         models = [EmbeddingModelInfo(id: bundle.id, task: .embedding, truncatesDimensions: bundle.matryoshka.count > 1)]
     }
 
-    public func embed(_ inputs: [EmbeddingInput], dimensions: Int?, yieldingTo _: GenerationGate?) async throws(BasaltError) -> Embeddings {
+    public func embed(_ inputs: [EmbeddingInput], dimensions: Int?, yieldingTo gate: GenerationGate?) async throws(BasaltError) -> Embeddings {
         let tokens = inputs.map { input in
             switch input {
             case .text(let text): bundle.tokens(tokenizer.encode(text: bundle.documentPrompt + text, addSpecialTokens: false))
@@ -49,10 +51,13 @@ public struct CoreAIEmbeddingService: EmbeddingEngine {
         }
         let total = tokens.reduce(0) { $0 + $1.count }
         guard total <= EmbeddingLimits.maxTokens else { throw .contextLengthExceeded(maxTokens: EmbeddingLimits.maxTokens, requested: total) }
+        guard await admission.enter() else { throw .serverBusy(retryAfterSeconds: 1) }
+        defer { await admission.leave() }
         var vectors: [[Float]] = []
         for row in tokens {
             do {
                 try Task.checkCancellation()
+                if let gate { _ = await gate.idle(within: EmbeddingService.generationWait) }
                 vectors.append(try bundle.truncated(try await vector(row), to: dimensions))
             } catch let error as BasaltError {
                 throw error
