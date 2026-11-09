@@ -38,7 +38,7 @@ extension MLXInferenceEngine {
         let teacher = try TeacherClient(request.teacher.url, model: request.teacher.model, provider: request.teacher.provider, environment: environment, session: session)
         let cache = DistillCache(directory: DistillCache.directory(for: request, prompts: data, home: home))
         var report = try await Self.collect(request, examples: examples, teacher: teacher, cache: cache)
-        let (train, heldOut) = Self.pairs(request, examples: examples, entries: cache.load(), report: &report)
+        let (train, heldOut) = Self.pairs(request, examples: examples, entries: cache.load(), markers: profile.thinkingMarkers, report: &report)
         guard !train.isEmpty, !heldOut.isEmpty else { return report }
         guard self.container === container else { throw .inferenceError("the model changed while the teacher answered; nothing was trained") }
         let run = try await Self.labRun(container, "distillation") { context in
@@ -122,7 +122,9 @@ extension MLXInferenceEngine {
         }
     }
 
-    static func pairs(_ request: DistillRequest, examples: [DistillExample], entries: [DistillEntry], report: inout DistillReport) -> (train: [TrainingTask], heldOut: [TrainingTask]) {
+    static func pairs(
+        _ request: DistillRequest, examples: [DistillExample], entries: [DistillEntry], markers: ThinkingMarkers = .none, report: inout DistillReport
+    ) -> (train: [TrainingTask], heldOut: [TrainingTask]) {
         let heldOutStart = examples.count - DistillCore.heldOutCount(examples.count, fraction: request.heldOutFraction)
         var seen = Set<String>()
         var (train, heldOut) = ([TrainingTask](), [TrainingTask]())
@@ -132,7 +134,7 @@ extension MLXInferenceEngine {
                 report.rejected[reason, default: 0] += 1
                 continue
             }
-            let pair = TrainingTask(prompt: example.prompt, answer: DistillCore.target(entry.completion, includeReasoning: request.includeReasoning))
+            let pair = TrainingTask(prompt: example.prompt, answer: DistillCore.target(entry.completion, includeReasoning: request.includeReasoning, markers: markers))
             if entry.index >= heldOutStart { heldOut.append(pair) } else { train.append(pair) }
         }
         (report.kept, report.heldOut) = (train.count, heldOut.count)

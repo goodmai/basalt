@@ -199,9 +199,9 @@ extension MLXInferenceEngine {
         return ((crossEntropy(logits: logits, targets: targets) * mask).sum() / tokens, tokens)
     }
 
-    static func labPrompt(_ prompt: String, _ context: ModelContext) throws -> [Int] {
+    static func labPrompt(_ prompt: String, _ context: ModelContext, thinking: Bool = false) throws -> [Int] {
         try context.tokenizer.applyChatTemplate(
-            messages: [["role": "user", "content": prompt]], tools: nil, additionalContext: ["enable_thinking": false])
+            messages: [["role": "user", "content": prompt]], tools: nil, additionalContext: ["enable_thinking": thinking])
     }
 
     static func labAnswer(_ prompt: String, _ context: ModelContext) throws -> String {

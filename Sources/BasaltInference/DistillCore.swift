@@ -79,10 +79,11 @@ enum DistillCore {
         return nil
     }
 
-    static func target(_ completion: TeacherClient.Completion, includeReasoning: Bool) -> String {
+    static func target(_ completion: TeacherClient.Completion, includeReasoning: Bool, markers: ThinkingMarkers = .none) -> String {
         let text = completion.text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard includeReasoning, let reasoning = completion.reasoning?.trimmingCharacters(in: .whitespacesAndNewlines), !reasoning.isEmpty else { return text }
-        return reasoning + "\n\n" + text
+        guard let open = markers.open.first, let close = markers.close.first else { return reasoning + "\n\n" + text }
+        return open + "\n" + reasoning + "\n" + close + "\n\n" + text
     }
 
     static func missing(_ entries: [DistillEntry], prompts: Int, samples: Int) -> [(index: Int, sample: Int)] {
