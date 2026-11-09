@@ -234,7 +234,7 @@ extension MCPServer {
     }
 
     private func decide(_ args: [String: Any]?) async throws(MCPFailure) -> ToolResult {
-        guard let decisions else { throw .methodNotFound("basalt_systemone_decide needs a decision model: start serve with --decision-model <OpenJev repo|dir>") }
+        guard let decisions else { throw .methodNotFound("basalt_systemone_decide needs a decision model: start serve with --decision-model <self|repo|dir>") }
         guard let args, JSONSerialization.isValidJSONObject(args), let data = try? JSONSerialization.data(withJSONObject: args),
               let request = SystemOneController.request(from: data)
         else { throw .invalidParams("basalt_systemone_decide needs state (text, object or array) and questions {id: {type, instructions, criteria?}}") }

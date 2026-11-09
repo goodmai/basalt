@@ -41,7 +41,7 @@ struct ServeCommand: AsyncParsableCommand {
     )
     var embeddingAdapter: String?
 
-    @Option(name: .customLong("decision-model"), help: "OpenJev decision model served on /v1/systemone (single-pass noul/choice/score): \"self\" reads option letters from the chat model; a Core AI decision bundle (laya_decision.json with decision.aimodel, token_table.aimodel and tokenizer/) runs on the Neural Engine beside decode; an OpenJev head bundle (openjev_config.json, head.safetensors, PEFT adapter) runs on its Qwen3 base; any other repo, such as openjev/OpenJev-Flash-9B-MLX, is loaded beside the chat model and read out by option letters")
+    @Option(name: .customLong("decision-model"), help: "OpenJev decision model served on /v1/systemone (single-pass noul/choice/score): \"self\" reads option letters from the chat model; a Core AI decision bundle (laya_decision.json with decision.aimodel, token_table.aimodel and tokenizer/) runs on the Neural Engine beside decode (on a weak power source it waits between generations); an OpenJev head bundle (openjev_config.json, head.safetensors, PEFT adapter) runs on its Qwen3 base; any other repo, such as openjev/OpenJev-Flash-9B-MLX, is loaded beside the chat model and read out by option letters")
     var decisionModel: String?
 
     @Option(

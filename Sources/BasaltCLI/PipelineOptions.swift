@@ -6,7 +6,7 @@ import BasaltServer
 import BasaltSpeech
 
 struct PipelineOptions: ParsableArguments {
-    @Option(name: .customLong("pipeline-ocr-model"), help: "OCR model for /v1/pipeline and basalt_pipeline (GLM-OCR, MinerU2.5 or PaddleOCR-VL): repo ID or local path, loaded in its own engine beside the chat model so OCR never swaps it out")
+    @Option(name: .customLong("pipeline-ocr-model"), help: "OCR model for /v1/pipeline and basalt_pipeline (GLM-OCR, MinerU2.5 or PaddleOCR-VL): repo ID or local path, loaded in its own engine beside the chat model so OCR never swaps it out; without it, documents are read by Apple Vision")
     var ocrModel: String?
 
     @Option(name: .customLong("pipeline-audio-model"), help: "Speech model for audio in /v1/pipeline and basalt_pipeline (Nemotron Transcribe): repo ID or local path, loaded in its own engine beside the chat model; without it, audio goes to the chat model when it has an audio encoder, otherwise to macOS SpeechAnalyzer when serve runs with --experimental-speech-analyzer")

@@ -66,6 +66,28 @@ struct PipelinePerceiveAPITests {
         #expect(response.status == .ok)
         let answers = try #require(response.json["answers"] as? [String: [String: Any]])
         #expect(answers.count == PipelineAPITests.questions.count && answers.values.allSatisfy { $0["answered_by"] as? String == "answer" })
+        let decide = PipelineAPITests.stages(response.json).first { $0["stage"] as? String == "decide" }
+        #expect(decide?["model"] as? String == "org/short-context" && decide?["escalated"] as? Bool == true)
+    }
+
+    @Test("A PDF read by the OCR model holds the gate one page at a time, and chat calls that carry perceived pages are marked local-only")
+    func ocrPerPageAndLocalAnswers() async throws {
+        let ocrEngine = MockInferenceEngine()
+        await ocrEngine.setResponder { _ in "Invoice total: 42" }
+        let ocr = try await OCRAPITests.orchestrator("GLM-OCR", modelType: "glm_ocr", engine: ocrEngine)
+        let (chatEngine, chat) = try await PipelineAPITests.chat()
+        let pdf: [String: Any] = ["kind": "pdf", "data": OCRFixture.pdf(pages: ["One", "Two"]).base64EncodedString()]
+        let response = try await PipelineAPITests.post(chat, decisions: nil, stages: PipelineStages(ocr: ocr), ["attachments": [pdf], "task": "Sum it."])
+        #expect(response.status == .ok)
+        #expect(await ocrEngine.getRequests().count == 2)
+        #expect(((response.json["perceived"] as? [String: Any])?["pages"] as? [Any])?.count == 2)
+        #expect(await chatEngine.getRequests().allSatisfy { $0.origin.source == PipelineCore.perceivedSource })
+    }
+
+    @Test("Audio length is summed over every attachment of a request")
+    func audioSecondsAddUp() throws {
+        let clip = try AudioClip(samples: Array(repeating: 0.1, count: Int(AudioClip.sampleRate)))
+        #expect(PipelineRequest.audioSeconds([.audio(clip), .audio(clip)]) == 2)
     }
 
     struct BusyDecisionEngine: DecisionEngine {
