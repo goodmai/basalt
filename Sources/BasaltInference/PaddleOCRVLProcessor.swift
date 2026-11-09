@@ -55,8 +55,9 @@ struct PaddleOCRVLProcessor: UserInputProcessor {
     }
 
     func patches(_ image: CIImage) throws -> (patches: MLXArray, frame: THW) {
-        guard !image.extent.isInfinite, image.extent.width.isFinite, image.extent.height.isFinite else {
-            throw BasaltError.invalidRequestStructure(details: "PaddleOCR-VL cannot read an image with an unbounded extent (\(image.extent.size))")
+        guard !image.extent.isInfinite, image.extent.width.isFinite, image.extent.height.isFinite,
+              image.extent.width * image.extent.height <= CGFloat(ImageInput.maxPixels) else {
+            throw BasaltError.invalidRequestStructure(details: "PaddleOCR-VL cannot read an image with an unbounded or oversized extent (\(image.extent.size))")
         }
         let extent = image.extent.integral
         let size = try config.resized(width: Int(extent.width), height: Int(extent.height))
@@ -70,8 +71,10 @@ struct PaddleOCRVLProcessor: UserInputProcessor {
     static func rgb(_ image: CIImage, width: Int, height: Int) throws(BasaltError) -> MLXArray {
         let context = CIContext(options: [.workingColorSpace: NSNull(), .outputColorSpace: NSNull()])
         let rect = CGRect(x: 0, y: 0, width: width, height: height)
+        let origin = image.transformed(by: CGAffineTransform(translationX: -image.extent.minX, y: -image.extent.minY))
+        let scaled = origin.extent.size == rect.size ? origin : MediaProcessing.resampleBicubic(origin, to: rect.size)
         guard let space = CGColorSpace(name: CGColorSpace.sRGB),
-              let source = context.createCGImage(image, from: image.extent, format: .RGBA8, colorSpace: space),
+              let source = context.createCGImage(scaled, from: rect, format: .RGBA8, colorSpace: space),
               let canvas = CGContext(
                 data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4, space: space,
                 bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else {
@@ -79,7 +82,6 @@ struct PaddleOCRVLProcessor: UserInputProcessor {
         }
         canvas.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 1))
         canvas.fill(rect)
-        canvas.interpolationQuality = .high
         canvas.draw(source, in: rect)
         guard let data = canvas.data else { throw .inferenceError("PaddleOCR-VL cannot read the rendered image") }
         return MLXArray(Data(bytes: data, count: width * height * 4), [height, width, 4], type: UInt8.self)[0..., 0..., ..<3]

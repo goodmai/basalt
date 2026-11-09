@@ -256,3 +256,38 @@ struct ImagePromptEngineTests {
         #expect(error?.localizedDescription.contains("tiny-qwen3 does not take images") == true, "\(String(describing: error))")
     }
 }
+
+@Suite("Image inputs over the pixel cap are refused from the header, before any decode")
+struct ImagePixelCapTests {
+    static func crc(_ bytes: [UInt8]) -> UInt32 {
+        var c: UInt32 = 0xFFFF_FFFF
+        for byte in bytes {
+            c ^= UInt32(byte)
+            for _ in 0 ..< 8 { c = c & 1 == 1 ? 0xEDB8_8320 ^ (c >> 1) : c >> 1 }
+        }
+        return ~c
+    }
+
+    static func bigEndian(_ value: UInt32) -> [UInt8] { [24, 16, 8, 0].map { UInt8(value >> $0 & 0xFF) } }
+
+    static func chunk(_ type: String, _ body: [UInt8]) -> [UInt8] {
+        bigEndian(UInt32(body.count)) + Array(type.utf8) + body + bigEndian(crc(Array(type.utf8) + body))
+    }
+
+    static func blankPNG(side: UInt32) throws -> Data {
+        let rows = Data(count: Int(side) * (Int(side) / 8 + 1))
+        let deflated = try (rows as NSData).compressed(using: .zlib) as Data
+        let adler = UInt32(rows.count % 65_521) << 16 | 1
+        let header = chunk("IHDR", bigEndian(side) + bigEndian(side) + [1, 0, 0, 0, 0])
+        return Data([137, 80, 78, 71, 13, 10, 26, 10] + header + chunk("IDAT", [0x78, 0x9C] + Array(deflated) + bigEndian(adler)) + chunk("IEND", []))
+    }
+
+    @Test("A 20000x20000 one-bit PNG of a few dozen KB is refused as over 50 megapixels; a 200-DPI Letter page passes")
+    func refusesLargeDimensions() throws {
+        let bomb = try Self.blankPNG(side: 20_000)
+        #expect(bomb.count < 100_000)
+        #expect(throws: BasaltError.self) { try ImageInput(data: bomb, mime: "image/png") }
+        #expect(throws: BasaltError.self) { try ImageInput(base64: bomb.base64EncodedString(), mime: "image/png") }
+        _ = try ImageInput(data: try OCRFixture.png(width: 1700, height: 2200), mime: "image/png")
+    }
+}
