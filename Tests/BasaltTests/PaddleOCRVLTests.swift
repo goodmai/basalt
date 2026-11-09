@@ -143,3 +143,34 @@ struct PaddleOCRVLTests {
         #expect(content == [["type": "image"], ["type": "text", "text": "OCR:"]])
     }
 }
+
+@Suite("PaddleOCR-VL real checkpoint: greedy tokens match Python mlx-vlm on rendered pages (#400)", .serialized)
+struct PaddleOCRVLRealModelTests {
+    static var paths: (model: String, reference: String)? {
+        let env = ProcessInfo.processInfo.environment
+        guard env["BASALT_E2E"] == "1", let model = env["BASALT_E2E_PADDLE_MODEL_PATH"], let reference = env["BASALT_E2E_PADDLE_REFERENCE"] else { return nil }
+        return (model, reference)
+    }
+
+    @Test("The prompt ids and the first 64 greedy tokens equal mlx-vlm's on every page of the reference file",
+          .enabled(if: paths != nil, "set BASALT_E2E=1, BASALT_E2E_PADDLE_MODEL_PATH and BASALT_E2E_PADDLE_REFERENCE"))
+    func matchesMLXVLM() async throws {
+        let (model, referencePath) = try #require(Self.paths)
+        let reference = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: referencePath))) as? [String: Any])
+        await MLXInferenceEngine.registerAliases()
+        let container = try await loadModelContainer(from: URL(fileURLWithPath: model), using: DefaultTokenizerLoader())
+        let directory = URL(fileURLWithPath: referencePath).deletingLastPathComponent()
+        for name in reference.keys.sorted() where name != "prompt" {
+            let page = try #require(reference[name] as? [String: Any])
+            let url = directory.appending(path: "\(name)-sized.png")
+            let (prompt, tokens) = try await container.perform { context in
+                let input = try await context.processor.prepare(input: UserInput(chat: [.user("OCR:", images: [.url(url)])]))
+                let tokens = Array(try TokenIterator(input: input, model: context.model, processor: nil, sampler: ArgMaxSampler(), maxTokens: 64))
+                return (input.text.tokens.asArray(Int.self), tokens)
+            }
+            #expect(prompt == page["prompt_ids"] as? [Int], "\(name): prompt ids")
+            expectTokenSequence(tokens, Array(try #require(page["tokens"] as? [Int]).prefix(64)))
+            print("PADDLE-PARITY \(name) prompt=\(prompt.count) tokens=\(tokens.count) exact=\(Array(tokens) == Array((page["tokens"] as? [Int] ?? []).prefix(64)))")
+        }
+    }
+}
