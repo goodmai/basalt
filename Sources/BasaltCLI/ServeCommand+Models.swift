@@ -47,7 +47,7 @@ extension ServeCommand {
         return directories
     }
 
-    func loadEmbeddings() async throws -> EmbeddingService? {
+    func loadEmbeddings() async throws -> (any EmbeddingEngine)? {
         guard embeddingModel != nil || rerankModel != nil else { return nil }
         func source(_ id: String?) async throws -> (id: String, directory: URL)? {
             guard let id else { return nil }
@@ -55,6 +55,15 @@ extension ServeCommand {
         }
         let adapterURL = embeddingAdapter.map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath) }
         do {
+            if let embedding = try await source(embeddingModel), CoreAIEmbeddingService.isBundle(embedding.directory) {
+                guard rerankModel == nil, adapterURL == nil else {
+                    throw BasaltError.invalidRequestStructure(details: "a Core AI embedding bundle serves /v1/embeddings alone; --rerank-model and --embedding-adapter need an MLX embedding model")
+                }
+                log("Specializing the Core AI embedding bundle for the Neural Engine (first start only; cached afterwards)…")
+                let service = try await CoreAIEmbeddingService(directory: embedding.directory)
+                log("Serving \(service.models.map(\.id).joined(separator: ", ")) (embedding, Core AI on the Neural Engine)")
+                return service
+            }
             let service = try await EmbeddingService(
                 embeddingModel: try await source(embeddingModel),
                 rerankModel: try await source(rerankModel),
