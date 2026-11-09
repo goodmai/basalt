@@ -26,7 +26,9 @@ struct JevDecisionTests {
         #expect(abs((noul.noul ?? 0) - 0.75) < 1e-12)
         let choice = SystemOneCore.answer(
             SystemOneQuestion(type: .choice, instructions: "x", criteria: .named(["k1": "zeta", "k2": "Alpha"])), scores: [2, 2], temperature: 1)
-        #expect(choice.choice == "k2" && abs((choice.confidence ?? 0) - 0.5) < 1e-12)
+        #expect(choice.choice == "k2" && abs(choice.confidence ?? 1) < 1e-12)
+        #expect(abs(SystemOneCore.choiceConfidence([0.7, 0.1, 0.1, 0.1]) - 0.6) < 1e-12)
+        #expect(abs(SystemOneCore.scoreConfidence([0, 0, 1, 0]) - 1) < 1e-12 && SystemOneCore.scoreConfidence([0.25, 0.25, 0.25, 0.25]) < 1e-12)
         let score = SystemOneCore.answer(
             SystemOneQuestion(type: .score, instructions: "x", criteria: .levels(["a", "b", "c"])), scores: [0, 0, 0], temperature: 2)
         #expect(abs((score.score ?? 0) - 1) < 1e-12 && score.legend == ["a", "b", "c"])

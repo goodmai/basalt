@@ -41,7 +41,7 @@ struct ServeCommand: AsyncParsableCommand {
     )
     var embeddingAdapter: String?
 
-    @Option(name: .customLong("decision-model"), help: "OpenJev decision model served on /v1/systemone (single-pass noul/choice/score): repo ID or directory with openjev_config.json, head.safetensors and a PEFT adapter; its Qwen3 base is resolved from the Hugging Face cache")
+    @Option(name: .customLong("decision-model"), help: "OpenJev decision model served on /v1/systemone (single-pass noul/choice/score): \"self\" reads option letters from the chat model; an OpenJev head bundle (openjev_config.json, head.safetensors, PEFT adapter) runs on its Qwen3 base; any other repo, such as openjev/OpenJev-Flash-9B-MLX, is loaded beside the chat model and read out by option letters")
     var decisionModel: String?
 
     @Option(
@@ -174,10 +174,11 @@ struct ServeCommand: AsyncParsableCommand {
 
         BasaltLogger.globalLevel = config.logLevel.basaltLevel
 
-        let orchestrator = try await makeOrchestrator(maxTokens: config.maxTokens)
+        let engine = try makeEngine()
+        let orchestrator = try await makeOrchestrator(engine: engine, maxTokens: config.maxTokens)
 
         let embeddings = try await loadEmbeddings()
-        let decisions = try await loadDecisions()
+        let decisions = try await loadDecisions(chat: engine)
 
         try await load(orchestrator, from: resolvedPath)
         if !noMemoryCoordinator { await orchestrator.coordinateMemory(with: MemoryCoordinator()) }
@@ -207,8 +208,7 @@ struct ServeCommand: AsyncParsableCommand {
 }
 
 extension ServeCommand {
-    private func makeOrchestrator(maxTokens: Int) async throws -> ModelOrchestratorActor {
-        let engine = try makeEngine()
+    private func makeOrchestrator(engine: MLXInferenceEngine, maxTokens: Int) async throws -> ModelOrchestratorActor {
         if batchSlots > 1, maxConcurrent < 2 {
             log("\(yellow("[warn]")) --batch-slots \(batchSlots) has no effect with --max-concurrent \(maxConcurrent): only one generation runs at a time")
         }

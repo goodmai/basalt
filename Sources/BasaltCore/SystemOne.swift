@@ -163,11 +163,12 @@ public enum SystemOneCore {
         var answer = SystemOneAnswer()
         guard question.type != .noul else {
             answer.noul = p.count > 1 ? p[1] : nil
+            answer.confidence = answer.noul.map { abs(2 * $0 - 1) }
             return answer
         }
         let best = p.max() ?? 0
         answer.probabilities = Dictionary(uniqueKeysWithValues: zip(keys, p))
-        answer.confidence = best
+        answer.confidence = question.type == .score ? scoreConfidence(p) : choiceConfidence(p)
         if question.type == .choice {
             let tied = p.indices.filter { p[$0] >= best - 1e-7 }
             let selected = tied.min { (descriptions[$0].lowercased(), descriptions[$0]) < (descriptions[$1].lowercased(), descriptions[$1]) }
@@ -179,12 +180,26 @@ public enum SystemOneCore {
         return answer
     }
 
+    public static func choiceConfidence(_ p: [Double]) -> Double {
+        guard p.count > 1, let top = p.max() else { return 1 }
+        let uniform = 1 / Double(p.count)
+        return max(0, (top - uniform) / (1 - uniform))
+    }
+
+    public static func scoreConfidence(_ p: [Double]) -> Double {
+        guard p.count > 1, let mode = p.indices.max(by: { p[$0] < p[$1] }) else { return 1 }
+        let spread = zip(p, p.indices).reduce(0) { $0 + $1.0 * Double(abs($1.1 - mode)) }
+        let center = Double(p.count - 1) / 2
+        let uniform = p.indices.reduce(0) { $0 + abs(Double($1) - center) } / Double(p.count)
+        return max(0, 1 - spread / uniform)
+    }
+
     public static func gated(_ answer: SystemOneAnswer, abstainBelow: Double?, minMargin: Double?) -> SystemOneAnswer {
         let ranked = (answer.noul.map { [max($0, 1 - $0), min($0, 1 - $0)] } ?? answer.probabilities.map { $0.values.sorted(by: >) } ?? [])
         guard let top = ranked.first else { return answer }
         var gated = answer
         gated.margin = top - (ranked.dropFirst().first ?? 0)
-        gated.abstain = top < (abstainBelow ?? 0) || (gated.margin ?? 1) < (minMargin ?? 0)
+        gated.abstain = (answer.confidence ?? top) < (abstainBelow ?? 0) || (gated.margin ?? 1) < (minMargin ?? 0)
         return gated
     }
 }
