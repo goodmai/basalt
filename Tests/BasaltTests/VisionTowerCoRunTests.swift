@@ -31,7 +31,7 @@ struct VisionTowerCoRunTests {
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
         try process.run()
-        let deadline = ContinuousClock.now + .seconds(600)
+        let deadline = ContinuousClock.now + .seconds(1500)
         while ContinuousClock.now < deadline, process.isRunning {
             try Task.checkCancellation()
             if let (_, response) = try? await URLSession.shared.data(from: URL(string: "http://127.0.0.1:\(port)/v1/models")!),

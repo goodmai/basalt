@@ -21,12 +21,17 @@ extension MLXInferenceEngine {
     }
 
     func encodingImages(_ input: LMInput, container: ModelContainer) async throws -> LMInput {
-        guard let tower = modelFacts.visionTower, input.image != nil else { return input }
+        guard let tower = modelFacts.visionTower, let image = input.image else { return input }
+        let encoded = try await container.performEvaluating(nonSendable: image) { context, image in
+            try (context.model as? PaddleOCRVL).flatMap { try tower.inputs(image, visual: $0.visual) }
+        }
+        guard let encoded else { return input }
+        let outputs = try await tower.run(encoded)
         return try await container.performSending(nonSendable: input) { context, input in
-            guard let model = context.model as? PaddleOCRVL, let image = input.image,
-                  let features = try await tower.features(image, visual: model.visual) else { return input }
+            let dtype = (context.model as? PaddleOCRVL)?.visual.embeddings.patchEmbedding.weight.dtype ?? .bfloat16
+            let features = try CoreAIVisionTower.features(outputs, encoded: encoded, dtype: dtype)
             eval(features)
-            return LMInput(text: input.text, image: LMInput.ProcessedImage(pixels: features, frames: image.frames))
+            return LMInput(text: input.text, image: LMInput.ProcessedImage(pixels: features, frames: input.image?.frames))
         }
     }
 }

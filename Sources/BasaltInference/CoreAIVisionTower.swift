@@ -36,20 +36,43 @@ public struct CoreAIVisionTower: Sendable {
             && visual.projector.linear2.weight.dim(0) == bundle.textHidden && frames.allSatisfy { bundle.function(for: $0) != nil }
     }
 
-    func features(_ image: LMInput.ProcessedImage, visual: PaddleOCRVLVision.Model) async throws -> MLXArray? {
-        guard let frames = image.frames, !frames.isEmpty, fits(visual, frames: frames) else { return nil }
-        var start = 0
-        var parts: [MLXArray] = []
-        for frame in frames {
-            let count = frame.h * frame.w
-            parts.append(try await encode(image.pixels[start ..< start + count], frame: frame, visual: visual))
-            start += count
-        }
-        return concatenated(parts, axis: 0).asType(visual.embeddings.patchEmbedding.weight.dtype)
+    struct Encoded: Sendable {
+        let function: String
+        let inputs: [String: NDArray]
+        let rows: Int
     }
 
-    func encode(_ patches: MLXArray, frame: THW, visual: PaddleOCRVLVision.Model) async throws -> MLXArray {
-        guard let function = bundle.function(for: frame), let inference = functions[function.name] else {
+    func inputs(_ image: LMInput.ProcessedImage, visual: PaddleOCRVLVision.Model) throws -> [Encoded]? {
+        guard let frames = image.frames, !frames.isEmpty, fits(visual, frames: frames) else { return nil }
+        var start = 0
+        return try frames.map { frame in
+            defer { start += frame.h * frame.w }
+            return try encoded(image.pixels[start ..< start + frame.h * frame.w], frame: frame, visual: visual)
+        }
+    }
+
+    func run(_ encoded: [Encoded]) async throws -> [NDArray] {
+        var results: [NDArray] = []
+        for item in encoded {
+            guard let inference = functions[item.function] else { throw BasaltError.inferenceError("the vision tower has no function \(item.function)") }
+            var outputs = try await inference.run(inputs: item.inputs)
+            guard let features = outputs.remove("features")?.ndArray else { throw BasaltError.inferenceError("the vision tower returned no features") }
+            results.append(features)
+        }
+        return results
+    }
+
+    static func features(_ outputs: [NDArray], encoded: [Encoded], dtype: DType) throws -> MLXArray {
+        concatenated(try zip(outputs, encoded).map { try rows($0, count: $1.rows) }, axis: 0).asType(dtype)
+    }
+
+    func features(_ image: LMInput.ProcessedImage, visual: PaddleOCRVLVision.Model) async throws -> MLXArray? {
+        guard let encoded = try inputs(image, visual: visual) else { return nil }
+        return try Self.features(try await run(encoded), encoded: encoded, dtype: visual.embeddings.patchEmbedding.weight.dtype)
+    }
+
+    func encoded(_ patches: MLXArray, frame: THW, visual: PaddleOCRVLVision.Model) throws -> Encoded {
+        guard let function = bundle.function(for: frame) else {
             throw BasaltError.inferenceError("the vision tower has no bucket for a \(frame.h)x\(frame.w) grid")
         }
         let (count, length) = (frame.h * frame.w, function.tokens)
@@ -61,23 +84,26 @@ public struct CoreAIVisionTower: Sendable {
         let inputs = [
             "patches": try Self.planar(patches.reshaped(count, -1).take(order, axis: 0), length: length),
             "pos": try Self.planar(visual.embeddings.positions(frame).take(order, axis: 0), length: length),
-            "cos": try Self.planar(cos.reshaped(count, -1).take(order, axis: 0), length: length),
-            "sin": try Self.planar(sin.reshaped(count, -1).take(order, axis: 0), length: length),
+            "cos": try Self.planar(cos.reshaped(count, -1).take(order, axis: 0), length: length, perHead: true),
+            "sin": try Self.planar(sin.reshaped(count, -1).take(order, axis: 0), length: length, perHead: true),
             "bias": bias,
         ]
-        var outputs = try await inference.run(inputs: inputs)
-        guard let features = outputs.remove("features")?.ndArray else { throw BasaltError.inferenceError("the vision tower returned no features") }
-        return try Self.rows(features, count: count / (bundle.merge * bundle.merge))
+        return Encoded(function: function.name, inputs: inputs, rows: count / (bundle.merge * bundle.merge))
     }
 
-    static func planar(_ rows: MLXArray, length: Int) throws -> NDArray {
+    static func strides(of shape: [Int]) -> [Int] {
+        shape.indices.map { shape[($0 + 1)...].reduce(1, *) }
+    }
+
+    static func planar(_ rows: MLXArray, length: Int, perHead: Bool = false) throws -> NDArray {
         let (count, channels) = (rows.dim(0), rows.dim(1))
         let padded = count == length ? rows : concatenated([rows, MLXArray.zeros([length - count, channels], dtype: rows.dtype)], axis: 0)
         let planar = contiguous(padded.transposed().asType(.float16))
         eval(planar)
         let bytes = planar.asData(access: .noCopyIfContiguous).data
-        var array = NDArray(shape: [1, channels, 1, length], scalarType: .float16)
-        guard Array(array.strides) == [channels * length, length, length, 1] else {
+        let shape = perHead ? [1, 1, channels, length] : [1, channels, 1, length]
+        var array = NDArray(shape: shape, scalarType: .float16)
+        guard Array(array.strides) == strides(of: shape) else {
             throw BasaltError.inferenceError("a Core AI input of \(channels)x\(length) is not row-major")
         }
         let view = array.mutableView(as: Float16.self)
@@ -89,7 +115,7 @@ public struct CoreAIVisionTower: Sendable {
 
     static func rows(_ planar: NDArray, count: Int) throws -> MLXArray {
         let (channels, length) = (planar.shape[1], planar.shape[3])
-        guard Array(planar.strides) == [channels * length, length, length, 1], count <= length else {
+        guard Array(planar.strides) == strides(of: planar.shape), count <= length else {
             throw BasaltError.inferenceError("the vision tower output is not a row-major (1, C, 1, N) array")
         }
         let values = planar.view(as: Float16.self).withUnsafePointer { pointer, _, _ in

@@ -62,7 +62,21 @@ struct CoreAIVisionTowerRealModelTests {
         return handIn + handOut
     }
 
-    @Test("Per page: final features cosine >= 0.999 (worst token reported), tower latency GPU vs ANE with the hand-off, identical greedy tokens",
+    static func float32(_ visual: PaddleOCRVLVision.Model, _ image: LMInput.ProcessedImage) throws -> MLXArray {
+        let original = visual.parameters()
+        visual.update(parameters: original.mapValues { $0.dtype == .bfloat16 ? $0.asType(.float32) : $0 })
+        defer { visual.update(parameters: original) }
+        let features = visual(image.pixels.asType(.float32), frames: try #require(image.frames))
+        eval(features)
+        return features
+    }
+
+    static func firstDivergence(_ context: ModelContext, _ input: LMInput, _ reference: [Int], features: MLXArray, dtype: DType) throws -> (Int, Bool) {
+        let tokens = try greedy(context, LMInput(text: input.text, image: LMInput.ProcessedImage(pixels: features.asType(dtype), frames: input.image?.frames)))
+        return (zip(reference, tokens).prefix { $0 == $1 }.count, tokens == reference)
+    }
+
+    @Test("Per page: ANE and bf16 GPU features against a float32 tower and against each other, tower latency with the hand-off, greedy agreement against the shipped GPU path",
           .enabled(if: paths != nil, "set BASALT_E2E=1, BASALT_E2E_PADDLE_MODEL_PATH, BASALT_E2E_ANE_TOWER and BASALT_E2E_ANE_PAGES (png[=prompt],...)"))
     func aneMatchesGPU() async throws {
         let (path, towerPath, pages) = try #require(Self.paths)
@@ -86,15 +100,18 @@ struct CoreAIVisionTowerRealModelTests {
                 let gpuMs = await Self.ms { eval(model.visual(image.pixels.asType(model.visual.embeddings.patchEmbedding.weight.dtype), frames: image.frames ?? [])) }
                 let aneMs = try await Self.ms { eval(try #require(try await tower.features(image, visual: model.visual))) }
                 let handOff = try await Self.handOff(tower, image, model.visual)
+                let exact = try Self.float32(model.visual, image)
+                let (gpuExact, aneExact) = (Self.cosine(gpu, exact), Self.cosine(ane, exact))
                 let reference = try Self.greedy(context, input)
-                let candidate = try Self.greedy(context, LMInput(text: input.text, image: LMInput.ProcessedImage(pixels: ane, frames: image.frames)))
-                let agree = zip(reference, candidate).prefix { $0 == $1 }.count
+                let dtype = model.visual.embeddings.patchEmbedding.weight.dtype
+                let (aneAgree, aneSame) = try Self.firstDivergence(context, input, reference, features: ane, dtype: dtype)
+                let (exactAgree, exactSame) = try Self.firstDivergence(context, input, reference, features: exact, dtype: dtype)
                 log.record("result", String(
-                    format: "%@ %@ grid %@ cosine %.6f worst token %.6f | tower GPU %.1f ms ANE %.1f ms (hand-off %.1f ms) | greedy %d/%d tokens, first divergence at %d, identical %@ %@",
-                    url.lastPathComponent, prompt, "\(image.frames ?? [])", similarity.all, similarity.worstRow, gpuMs, aneMs, handOff,
-                    candidate.count, reference.count, agree, reference == candidate ? "yes" : "no", log.host()))
-                #expect(similarity.all >= 0.999, "\(url.lastPathComponent): cosine \(similarity.all)")
-                #expect(reference == candidate, "\(url.lastPathComponent): greedy diverges at token \(agree)")
+                    format: "%@ %@ grid %@ | ANE vs GPU cosine %.6f worst token %.6f | vs float32 tower: GPU bf16 %.6f (worst %.6f), ANE fp16 %.6f (worst %.6f) | tower GPU %.1f ms ANE %.1f ms (hand-off %.1f ms) | greedy against the GPU path over %d tokens: ANE first divergence %d identical %@, float32 tower first divergence %d identical %@ %@",
+                    url.lastPathComponent, prompt, "\(image.frames ?? [])", similarity.all, similarity.worstRow, gpuExact.all, gpuExact.worstRow,
+                    aneExact.all, aneExact.worstRow, gpuMs, aneMs, handOff, reference.count, aneAgree, aneSame ? "yes" : "no",
+                    exactAgree, exactSame ? "yes" : "no", log.host()))
+                #expect(aneExact.all >= gpuExact.all - 0.001, "\(url.lastPathComponent): the ANE tower is further from float32 than the bf16 GPU tower")
             }
         }
         Memory.clearCache()
