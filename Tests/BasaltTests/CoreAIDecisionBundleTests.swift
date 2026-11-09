@@ -38,6 +38,10 @@ struct CoreAIDecisionBundleTests {
         #expect(throws: BasaltError.self) { try Self.bundle { $0["temperature"] = [1.0, -1.0, 1.0] } }
         #expect(throws: BasaltError.self) { try Self.bundle { $0["temperature_by_options"] = ["noul:2": 0.0] } }
         #expect(throws: BasaltError.self) { try Self.bundle { $0["head_max_len"] = 512 } }
+        #expect(throws: BasaltError.self) { try Self.bundle { $0["temperature"] = [1.0, 1.0] } }
+        #expect(throws: BasaltError.self) { try Self.bundle { $0["temperature"] = [1.0, Double.infinity, 1.0] } }
+        #expect(throws: BasaltError.self) { try Self.bundle { $0["temperature"] = [1.0, 1.0, Double.nan] } }
+        #expect(throws: BasaltError.self) { try Self.bundle { $0["temperature_by_options"] = ["choice:2": Double.infinity] } }
     }
 
     @Test("Options render as Laya trained them: noul false then true with defaults, score levels by index, choice key: description in key order")
@@ -82,6 +86,8 @@ struct CoreAIDecisionBundleTests {
         let bundle = try Self.bundle()
         #expect(bundle.plan([84, 109, 120]).map(\.function.name) == ["b3_l128"])
         #expect(bundle.plan([84]).map(\.function.name) == ["b1_l128"])
+        #expect(bundle.plan([128]).map(\.function.name) == ["b1_l128"])
+        #expect(bundle.plan([129]).map(\.function.name) == ["b3_l256"])
         #expect(bundle.plan([84, 137, 109]) == [CoreAIDecisionBundle.Call(function: bundle.functions[2], rows: [0, 1, 2])])
         #expect(bundle.plan([50, 50, 50, 50]).map(\.rows) == [[0, 1, 2], [3]])
         #expect(bundle.plan([300, 10]).map(\.function.name) == ["b1_l512", "b1_l512"])
@@ -110,5 +116,63 @@ struct CoreAIDecisionBundleTests {
         let urgency = SystemOneCore.answer(SystemOneQuestion(type: .score, instructions: "How urgent is this?", criteria: .levels(["not urgent", "soon", "blocking"])), scores: [-0.7835437655448914, 0.9054975509643555, 3.0173721313476562], temperature: bundle.temperature(.score, options: 3))
         #expect(abs((urgency.probabilities?["2"] ?? 0) - 0.8110728563330039) < 1e-9)
         #expect(bundle.temperature(.choice, options: 12) == 1.6369030475616455)
+    }
+
+    static func phrase(_ count: Int) -> String { Array(repeating: "word", count: count).joined(separator: " ") }
+
+    @Test("A long instruction is cut to the head budget, so head plus options fill head_max_len exactly; an option is cut at max_option_tokens")
+    func headAndOptionCuts() throws {
+        let bundle = try Self.bundle()
+        let long = try bundle.encode(SystemOneQuestion(type: .choice, instructions: Self.phrase(300), criteria: .named(["a": "x", "b": "y"])), state: [1], tokenize: Self.words)
+        #expect(long.markers == [188, 191])
+        #expect(long.ids.count - 3 - 1 - 1 == 192)
+        let capped = try bundle.encode(SystemOneQuestion(type: .choice, instructions: "Pick", criteria: .named(["a": Self.phrase(60), "b": "y"])), state: [1], tokenize: Self.words)
+        #expect(capped.markers[1] - capped.markers[0] == 49)
+    }
+
+    @Test("Shrunk options plus the 8-token head floor: exactly head_max_len passes, one token over is refused")
+    func headBudgetBoundary() throws {
+        let bundle = try Self.bundle { $0["head_max_len"] = 40 }
+        let longs = (0 ..< 8).map { ("a\($0)", Self.phrase(30)) }
+        let exact = try bundle.encode(SystemOneQuestion(type: .choice, instructions: Self.phrase(20), criteria: .named(Dictionary(uniqueKeysWithValues: longs))), state: [1], tokenize: Self.words)
+        #expect(exact.markers.first == 10 && exact.markers.count == 8)
+        #expect(exact.ids.count == 1 + 8 + 1 + 32 + 1 + 1 + 1)
+        let over = Dictionary(uniqueKeysWithValues: Array(longs.prefix(6)) + (0 ..< 3).map { ("b\($0)", "x") })
+        #expect(throws: BasaltError.self) { try bundle.encode(SystemOneQuestion(type: .choice, instructions: Self.phrase(20), criteria: .named(over)), state: [1], tokenize: Self.words) }
+    }
+
+    static let readoutQuestions: [String: SystemOneQuestion] = [
+        "a": SystemOneQuestion(type: .choice, instructions: "Pick", criteria: .named(["x": "X.", "y": "Y.", "z": "Z."])),
+        "b": SystemOneQuestion(type: .noul, instructions: "True?"),
+        "c": SystemOneQuestion(type: .score, instructions: "Rate", criteria: .levels(["low", "mid", "high", "top"])),
+        "d": SystemOneQuestion(type: .choice, instructions: "Pick", criteria: .named(["p": "P.", "q": "Q."])),
+    ]
+
+    @Test("Readout gathers each row's marker scores from its slot in its call, maps them to the sorted question names, uses T = 1 when uncalibrated, and counts usage")
+    func readoutGather() throws {
+        let bundle = try Self.bundle()
+        let encoded = [(3, 30), (2, 20), (4, 40), (2, 50)].map { count, length in CoreAIDecisionBundle.Encoded(ids: Array(repeating: 7, count: length), markers: (0 ..< count).map { 5 + 3 * $0 }) }
+        let calls = bundle.plan(encoded.map(\.ids.count))
+        #expect(calls.map(\.rows) == [[0, 1, 2], [3]])
+        let scores = calls.map { call in
+            var values = [Float](repeating: -999, count: 8 * call.function.length)
+            for (slot, row) in call.rows.enumerated() {
+                for (order, marker) in encoded[row].markers.enumerated() { values[slot * call.function.length + marker] = Float(row) + Float(order) / 4 }
+            }
+            return values
+        }
+        let logits = encoded.indices.map { row in encoded[row].markers.indices.map { Double(row) + Double($0) / 4 } }
+        let names = Self.readoutQuestions.keys.sorted()
+        for calibrated in [false, true] {
+            let response = bundle.readout(SystemOneRequest(state: "s", questions: Self.readoutQuestions, calibrated: calibrated), encoded: encoded, calls: calls, scores: scores)
+            for (row, name) in names.enumerated() {
+                let question = try #require(Self.readoutQuestions[name])
+                let scale = calibrated ? bundle.temperature(question.type, options: logits[row].count) : 1
+                #expect(response.answers[name] == SystemOneCore.gated(SystemOneCore.answer(question, scores: logits[row], temperature: scale), abstainBelow: nil, minMargin: nil), "\(name) calibrated \(calibrated)")
+            }
+            #expect(response.calibrated == calibrated)
+        }
+        let usage = bundle.readout(SystemOneRequest(state: "s", questions: Self.readoutQuestions), encoded: encoded, calls: calls, scores: scores).usage
+        #expect((usage.prefixTokens, usage.candidateBranches, usage.prefixEvaluations, usage.branchForwardCalls, usage.suffixTokens) == (140, 11, 4, 2, 0))
     }
 }

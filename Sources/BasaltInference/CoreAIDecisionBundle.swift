@@ -155,3 +155,27 @@ struct CoreAIDecisionBundle: Sendable, Equatable {
         }
     }
 }
+
+extension CoreAIDecisionBundle {
+    func readout(_ request: SystemOneRequest, encoded: [Encoded], calls: [Call], scores: [[Float]]) -> SystemOneResponse {
+        let names = request.questions.keys.sorted()
+        var logits = [[Double]](repeating: [], count: names.count)
+        for (call, values) in zip(calls, scores) {
+            for (slot, row) in call.rows.enumerated() {
+                logits[row] = encoded[row].markers.map { Double(values[slot * call.function.length + $0]) }
+            }
+        }
+        let calibrated = request.calibrated ?? true
+        var answers: [String: SystemOneAnswer] = [:]
+        for (index, name) in names.enumerated() {
+            guard let question = request.questions[name] else { continue }
+            let scale = calibrated ? temperature(question.type, options: logits[index].count) : 1
+            answers[name] = SystemOneCore.gated(
+                SystemOneCore.answer(question, scores: logits[index], temperature: scale), abstainBelow: request.abstainBelow, minMargin: request.minMargin)
+        }
+        let usage = SystemOneUsage(
+            prefixTokens: encoded.reduce(0) { $0 + $1.ids.count }, candidateBranches: encoded.reduce(0) { $0 + $1.markers.count },
+            prefixEvaluations: names.count, branchForwardCalls: calls.count, suffixTokens: 0)
+        return SystemOneResponse(model: modelID, answers: answers, usage: usage, calibrated: calibrated)
+    }
+}

@@ -51,14 +51,11 @@ public struct CoreAIDecisionEngine: DecisionEngine {
             encoded.append(try bundle.encode(question, state: state, tokenize: tokenize))
         }
         let calls = bundle.plan(encoded.map(\.ids.count))
-        var logits = [[Double]](repeating: [], count: questions.count)
+        var scores: [[Float]] = []
         do {
             for call in calls {
                 try Task.checkCancellation()
-                let scores = try await run(call.function, rows: call.rows.map { encoded[$0].ids }, kinds: call.rows.map { questions[$0].type })
-                for (slot, row) in call.rows.enumerated() {
-                    logits[row] = encoded[row].markers.map { Double(scores[slot * call.function.length + $0]) }
-                }
+                scores.append(try await run(call.function, rows: call.rows.map { encoded[$0].ids }, kinds: call.rows.map { questions[$0].type }))
             }
         } catch let error as BasaltError {
             throw error
@@ -67,18 +64,7 @@ public struct CoreAIDecisionEngine: DecisionEngine {
         } catch {
             throw .inferenceError("systemone: Core AI decision failed: \(error.localizedDescription)")
         }
-        let calibrated = request.calibrated ?? true
-        var answers: [String: SystemOneAnswer] = [:]
-        for (index, name) in names.enumerated() {
-            let question = questions[index]
-            let temperature = calibrated ? bundle.temperature(question.type, options: logits[index].count) : 1
-            answers[name] = SystemOneCore.gated(
-                SystemOneCore.answer(question, scores: logits[index], temperature: temperature), abstainBelow: request.abstainBelow, minMargin: request.minMargin)
-        }
-        let usage = SystemOneUsage(
-            prefixTokens: encoded.reduce(0) { $0 + $1.ids.count }, candidateBranches: encoded.reduce(0) { $0 + $1.markers.count },
-            prefixEvaluations: questions.count, branchForwardCalls: calls.count, suffixTokens: 0)
-        return SystemOneResponse(model: modelID, answers: answers, usage: usage, calibrated: calibrated)
+        return bundle.readout(request, encoded: encoded, calls: calls, scores: scores)
     }
 
     func run(_ function: CoreAIDecisionBundle.Function, rows: [[Int]], kinds: [SystemOneKind]) async throws -> [Float] {
