@@ -55,6 +55,9 @@ struct PaddleOCRVLProcessor: UserInputProcessor {
     }
 
     func patches(_ image: CIImage) throws -> (patches: MLXArray, frame: THW) {
+        guard !image.extent.isInfinite, image.extent.width.isFinite, image.extent.height.isFinite else {
+            throw BasaltError.invalidRequestStructure(details: "PaddleOCR-VL cannot read an image with an unbounded extent (\(image.extent.size))")
+        }
         let extent = image.extent.integral
         let size = try config.resized(width: Int(extent.width), height: Int(extent.height))
         let rgb = try Self.rgb(image, width: size.width, height: size.height).asType(.float32) / 255

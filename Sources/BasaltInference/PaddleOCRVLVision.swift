@@ -59,17 +59,19 @@ enum PaddleOCRVLVision {
             _outProj.wrappedValue = Linear(dimensions, dimensions, bias: true)
         }
 
-        func callAsFunction(_ x: MLXArray, cos: MLXArray, sin: MLXArray) -> MLXArray {
+        func callAsFunction(_ x: MLXArray, cos: MLXArray, sin: MLXArray, queryBlock: Int = 1024) -> MLXArray {
             let n = x.dim(0)
             let parts = qkv(x).reshaped(n, 3, heads, -1).transposed(1, 0, 2, 3)
             func rotated(_ t: MLXArray) -> MLXArray {
                 (t * cos + PaddleOCRVLVision.rotateHalf(t) * sin).asType(t.dtype)
             }
-            let (q, k, v) = (rotated(parts[0]), rotated(parts[1]), parts[2])
-            let output = MLXFast.scaledDotProductAttention(
-                queries: q.transposed(1, 0, 2)[.newAxis], keys: k.transposed(1, 0, 2)[.newAxis],
-                values: v.transposed(1, 0, 2)[.newAxis], scale: scale, mask: .none)
-            return outProj(output[0].transposed(1, 0, 2).reshaped(n, -1))
+            let q = rotated(parts[0]).transposed(1, 0, 2)[.newAxis]
+            let (k, v) = (rotated(parts[1]).transposed(1, 0, 2)[.newAxis], parts[2].transposed(1, 0, 2)[.newAxis])
+            let blocks = stride(from: 0, to: n, by: queryBlock).map { start in
+                MLXFast.scaledDotProductAttention(
+                    queries: q[0..., 0..., start ..< min(start + queryBlock, n)], keys: k, values: v, scale: scale, mask: .none)
+            }
+            return outProj(concatenated(blocks, axis: 2)[0].transposed(1, 0, 2).reshaped(n, -1))
         }
     }
 
