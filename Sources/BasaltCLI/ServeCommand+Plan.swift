@@ -32,7 +32,7 @@ extension ServeCommand {
     }
 
     func admitComputePlan(chatPath: String, embeddings: (any EmbeddingEngine)?, decisions: (any DecisionEngine)?, perceive paths: PerceivePaths) async throws -> Bool {
-        let chat = Workload(name: chatPath.split(separator: "/").last.map(String.init) ?? chatPath, role: "chat", unit: .gpu, kind: .decode, residentBytes: Self.weightBytes(chatPath))
+        let chat = Workload(name: model ?? chatPath.split(separator: "/").last.map(String.init) ?? chatPath, role: "chat", unit: .gpu, kind: .decode, residentBytes: Self.weightBytes(chatPath))
         let perceive = [(pipeline.ocrModel, paths.ocr), (pipeline.audioModel, paths.audio)].compactMap { model, path in
             path.map { Self.perceiveWorkload(model ?? $0, path: $0) }
         }

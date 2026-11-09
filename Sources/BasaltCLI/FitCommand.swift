@@ -94,7 +94,7 @@ struct FitCommand: AsyncParsableCommand {
     static func printPlan(_ plan: PipelinePresetPlan, json: Bool) {
         guard json else { return print(plan.lines.joined(separator: "\n")) }
         let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
         encoder.keyEncodingStrategy = .convertToSnakeCase
         print(String(decoding: (try? encoder.encode(plan)) ?? Data(), as: UTF8.self))
     }
