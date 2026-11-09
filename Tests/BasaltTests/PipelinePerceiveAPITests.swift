@@ -51,6 +51,23 @@ struct PipelinePerceiveAPITests {
         #expect(await engine.getRequests().isEmpty)
     }
 
+    struct TooLongDecisionEngine: DecisionEngine {
+        let modelID = "org/short-context"
+
+        func decide(_ request: SystemOneRequest) async throws(BasaltError) -> SystemOneResponse {
+            throw .contextLengthExceeded(maxTokens: 512, requested: 513)
+        }
+    }
+
+    @Test("A state too long for the decision model sends every question to System 2 instead of failing the request")
+    func tooLongStateEscalates() async throws {
+        let (_, chat) = try await PipelineAPITests.chat()
+        let response = try await PipelineAPITests.post(chat, decisions: TooLongDecisionEngine(), ["text": "The car is red.", "questions": PipelineAPITests.questions])
+        #expect(response.status == .ok)
+        let answers = try #require(response.json["answers"] as? [String: [String: Any]])
+        #expect(!answers.isEmpty && answers.values.allSatisfy { $0["answered_by"] as? String == "answer" })
+    }
+
     @Test("GPU stages are gated between generations: while a chat generation holds a slot, SpeechAnalyzer transcribes, but OCR in its own engine and the decision engine wait, and run once it ends")
     func gpuStagesWaitForGeneration() async throws {
         let ocrEngine = MockInferenceEngine()
