@@ -69,7 +69,12 @@ extension MLXInferenceEngine {
             let tail = context.tokenizer.encode(text: SystemOneReadout.tail(question) + userTail, addSpecialTokens: false)
             let letters = try letterIds(context.tokenizer, count: SystemOneReadout.options(question).count)
             let branch = cache.map { $0.copy() }
-            let output = context.model(LMInput.Text(tokens: MLXArray(tail.map(Int32.init))[.newAxis]), cache: branch, state: warm.state)
+            var state = warm.state
+            if tail.count > 1 {
+                state = context.model(LMInput.Text(tokens: MLXArray(tail.dropLast().map(Int32.init))[.newAxis]), cache: branch, state: state).state
+                eval(branch)
+            }
+            let output = context.model(LMInput.Text(tokens: MLXArray([Int32(tail[tail.count - 1])])[.newAxis]), cache: branch, state: state)
             let last = output.logits[0, -1].asType(.float32)
             rows.append(last[MLXArray(letters.map(Int32.init))].asArray(Float.self).map(Double.init))
             suffixTokens += tail.count
