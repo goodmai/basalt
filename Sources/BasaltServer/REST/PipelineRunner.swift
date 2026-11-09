@@ -8,14 +8,14 @@ package struct PipelineStages: Sendable {
     package let abstainBelow: Double?
     package let minMargin: Double?
     package let questions: [String: SystemOneQuestion]
-    package let swap: PipelineSwap?
+    package var swap: PipelineSwap?
 
     package init(
         ocr: ModelOrchestratorActor? = nil, audio: ModelOrchestratorActor? = nil, speech: (any AudioTranscriber)? = nil,
-        abstainBelow: Double? = nil, minMargin: Double? = nil, questions: [String: SystemOneQuestion] = [:], swap: PipelineSwap? = nil
+        abstainBelow: Double? = nil, minMargin: Double? = nil, questions: [String: SystemOneQuestion] = [:]
     ) {
         (self.ocr, self.audio, self.speech, self.abstainBelow, self.minMargin) = (ocr, audio, speech, abstainBelow, minMargin)
-        (self.questions, self.swap) = (questions, swap)
+        self.questions = questions
     }
 }
 

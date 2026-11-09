@@ -86,8 +86,10 @@ extension ServeCommand {
             log("\(red("[error]")) --pipeline-audio-model \(pipeline.audioModel ?? "") has no audio encoder; use Nemotron Transcribe")
             throw ExitCode.failure
         }
-        return PipelineStages(ocr: ocr, audio: audio, speech: experimental.speechAnalyzer ? SpeechAnalyzerTranscriber() : nil, abstainBelow: pipeline.abstainBelow, minMargin: pipeline.minMargin,
-            questions: pipeline.preset?.questions ?? [:], swap: swap)
+        var stages = PipelineStages(ocr: ocr, audio: audio, speech: experimental.speechAnalyzer ? SpeechAnalyzerTranscriber() : nil, abstainBelow: pipeline.abstainBelow, minMargin: pipeline.minMargin,
+            questions: pipeline.preset?.questions ?? [:])
+        stages.swap = swap
+        return stages
     }
 
     func loadPerceiver(_ model: String?, path: String?, role: String, loads: Bool = true) async throws -> ModelOrchestratorActor? {

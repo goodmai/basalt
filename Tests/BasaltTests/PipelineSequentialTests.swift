@@ -108,7 +108,9 @@ struct PipelineSequentialTests {
         let speech = ModelOrchestratorActor(engine: speechEngine, telemetry: TelemetryTracker())
         await speech.setModelId("tiny-nemotron-transcribe")
         let swap = PipelineSwap(ocrPath: nil, audioPath: "/tiny/speech", unloadsChat: unloadsChat)
-        return (chat, chatEngine, speechEngine, PipelineStages(audio: speech, abstainBelow: 1, swap: swap))
+        var stages = PipelineStages(audio: speech, abstainBelow: 1)
+        stages.swap = swap
+        return (chat, chatEngine, speechEngine, stages)
     }
 
     static var body: [String: Any] {
