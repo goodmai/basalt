@@ -17,7 +17,9 @@ struct PaddleOCRVLPositions: Equatable {
             next += Int32(count)
         }
         for (number, frame) in frames.enumerated() {
-            guard let index = tokens[start...].firstIndex(of: imageToken) else { break }
+            guard let index = tokens[start...].firstIndex(of: imageToken) else {
+                throw .invalidRequestStructure(details: "PaddleOCR-VL: \(frames.count) images but placeholders for only \(number)")
+            }
             let (t, h, w) = (frame.t, frame.h / mergeSize, frame.w / mergeSize)
             guard index + t * h * w <= tokens.count, tokens[index ..< index + t * h * w].allSatisfy({ $0 == imageToken }) else {
                 throw .invalidRequestStructure(details: "PaddleOCR-VL: image \(number + 1) needs \(t * h * w) placeholder tokens in a row")
@@ -32,6 +34,9 @@ struct PaddleOCRVLPositions: Equatable {
             }
             next += Int32(max(t, h, w))
             start = index + t * h * w
+        }
+        guard !tokens[start...].contains(imageToken) else {
+            throw .invalidRequestStructure(details: "PaddleOCR-VL: image placeholders after the last of \(frames.count) images")
         }
         text(tokens.count - start)
         delta = Int(next) - tokens.count
@@ -71,14 +76,10 @@ final class PaddleOCRVL: Module, VLMModel, KVCacheDimensionProvider {
         return languageModel.lmHead(hidden(languageModel.model.embedTokens(ids), cache: cache, positions: positions))
     }
 
-    func merged(_ ids: MLXArray, pixels: MLXArray, frames: [THW]) throws(BasaltError) -> MLXArray {
+    func merged(_ ids: MLXArray, pixels: MLXArray, frames: [THW]) -> MLXArray {
         let embeddings = languageModel.model.embedTokens(ids)
         let features = visual(pixels.asType(visual.embeddings.patchEmbedding.weight.dtype), frames: frames)
         let mask = ids .== config.imageTokenId
-        let count = mask.asType(.int32).sum().item(Int32.self)
-        guard Int(count) == features.dim(0) else {
-            throw .invalidRequestStructure(details: "PaddleOCR-VL: \(count) image tokens for \(features.dim(0)) image features")
-        }
         let index = maximum(cumsum(mask.asType(.int32), axis: -1) - 1, 0)
         return which(mask[.ellipsis, .newAxis], features.take(index, axis: 0), embeddings)
     }
@@ -91,7 +92,7 @@ final class PaddleOCRVL: Module, VLMModel, KVCacheDimensionProvider {
         let ids = input.text.tokens.ndim == 1 ? input.text.tokens[.newAxis] : input.text.tokens
         let layout = try PaddleOCRVLPositions(
             tokens: ids[0].asArray(Int.self), frames: frames, imageToken: config.imageTokenId, mergeSize: config.vision.mergeSize)
-        let h = hidden(try merged(ids, pixels: image.pixels, frames: frames), cache: cache, positions: layout.array)
+        let h = hidden(merged(ids, pixels: image.pixels, frames: frames), cache: cache, positions: layout.array)
         var state = LMOutput.State()
         state[Self.ropeDelta] = MLXArray(Int32(layout.delta))
         prefill.progress?(ids.dim(1), ids.dim(1))
