@@ -100,6 +100,11 @@ enum MTPSidecar {
         return (inputs / scales.dim(1), bits)
     }
 
+    static func preconvertedNorms(_ weights: [String: MLXArray]) -> Bool? {
+        guard let norm = weights["mtp.layers.0.input_layernorm.weight"] ?? weights["mtp.norm.weight"] else { return nil }
+        return norm.asType(.float32).mean().item(Float.self) > 0.5
+    }
+
     static func load(directory: URL, target: any LanguageModel, draftHead: Bool = false) throws -> (any MTPDrafterModel)? {
         guard target is Qwen35Model || target is Qwen35TextModel, let url = file(in: directory) else { return nil }
         let data = try Data(contentsOf: directory.appending(component: "config.json"))
@@ -107,8 +112,7 @@ enum MTPSidecar {
         let textConfig = root?["text_config"] as? [String: Any] ?? root
         guard let hiddenSize = textConfig?["hidden_size"] as? Int else { throw MTPSidecarError.malformed("config.json has no hidden_size") }
         var weights = try loadArrays(url: url)
-        guard let norm = weights["mtp.norm.weight"] else { throw MTPSidecarError.malformed("\(url.lastPathComponent) has no mtp.norm.weight") }
-        let preconvertedNorms = norm.asType(.float32).mean().item(Float.self) > 0.5
+        guard let preconvertedNorms = preconvertedNorms(weights) else { throw MTPSidecarError.malformed("\(url.lastPathComponent) has no mtp.norm.weight") }
         let model = target is Qwen35Model
             ? Qwen35MTPDraftModel(try JSONDecoder.json5().decode(Qwen35Configuration.self, from: data), preconvertedNorms: preconvertedNorms)
             : Qwen35MTPDraftModel(try JSONDecoder.json5().decode(Qwen35TextConfiguration.self, from: data), preconvertedNorms: preconvertedNorms)

@@ -49,3 +49,16 @@ struct MTPDraftHeadTests {
         #expect(drafter.draftHead == nil)
     }
 }
+
+@Suite("MTP sidecar norms: a raw Hugging Face head gets the +1 shift, a converted one does not")
+struct MTPSidecarNormTests {
+    @Test("The first layer's input norm decides, even when the final norm of a raw head sits above 0.5 as in Qwen3.5-9B")
+    func layerNormDecides() {
+        let raw = ["mtp.layers.0.input_layernorm.weight": MLXArray.full([8], values: MLXArray(Float(0.1))), "mtp.norm.weight": MLXArray.full([8], values: MLXArray(Float(1.43)))]
+        let converted = ["mtp.layers.0.input_layernorm.weight": MLXArray.full([8], values: MLXArray(Float(1.04))), "mtp.norm.weight": MLXArray.full([8], values: MLXArray(Float(2.25)))]
+        #expect(MTPSidecar.preconvertedNorms(raw) == false)
+        #expect(MTPSidecar.preconvertedNorms(converted) == true)
+        #expect(MTPSidecar.preconvertedNorms(["mtp.norm.weight": MLXArray.full([8], values: MLXArray(Float(0.2)))]) == false)
+        #expect(MTPSidecar.preconvertedNorms([:]) == nil)
+    }
+}
