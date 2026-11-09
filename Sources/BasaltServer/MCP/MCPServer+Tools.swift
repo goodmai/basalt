@@ -208,6 +208,7 @@ extension MCPServer {
         case .transcribe: try await transcribe(args)
         case .ocr: try await ocr(args)
         case .decide: try await decide(args)
+        case .pipeline: try await pipeline(args)
         }
     }
 

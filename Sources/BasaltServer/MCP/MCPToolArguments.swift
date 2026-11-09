@@ -25,6 +25,7 @@ enum MCPTool: Sendable, Equatable {
         case "basalt_transcribe": self = .media(.transcribe)
         case "basalt_ocr": self = .media(.ocr)
         case "basalt_systemone_decide": self = .media(.decide)
+        case "basalt_pipeline": self = .media(.pipeline)
         default:
             guard let tool = ResearchTool(rawValue: name) else { return nil }
             self = .research(tool)

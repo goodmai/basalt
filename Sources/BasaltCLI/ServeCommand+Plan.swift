@@ -29,9 +29,10 @@ extension ServeCommand {
         return workloads
     }
 
-    func admitComputePlan(chatPath: String, embeddings: (any EmbeddingEngine)?, decisions: (any DecisionEngine)?) async throws {
+    func admitComputePlan(chatPath: String, embeddings: (any EmbeddingEngine)?, decisions: (any DecisionEngine)?, ocrPath: String?) async throws {
         let chat = Workload(name: chatPath.split(separator: "/").last.map(String.init) ?? chatPath, role: "chat", unit: .gpu, kind: .decode, residentBytes: Self.weightBytes(chatPath))
-        let workloads = [chat] + (try await sidecarWorkloads(embeddings: embeddings, decisions: decisions))
+        let perceive = ocrPath.map { [Self.perceiveWorkload(pipeline.ocrModel ?? $0, path: $0)] } ?? []
+        let workloads = [chat] + (try await sidecarWorkloads(embeddings: embeddings, decisions: decisions)) + perceive
         let budget = await SystemProfiler().detectResources().gpuMemory
         let verdict = ComputePlan.admit(workloads, budgetBytes: budget, power: PowerSource.current())
         for line in ComputePlan.describe(verdict) { log(line) }
