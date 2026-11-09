@@ -179,6 +179,7 @@ struct ServeCommand: AsyncParsableCommand {
 
         let embeddings = try await loadEmbeddings()
         let decisions = try await loadDecisions(chat: engine)
+        try await admitComputePlan(chatPath: resolvedPath, embeddings: embeddings, decisions: decisions)
 
         try await load(orchestrator, from: resolvedPath)
         if !noMemoryCoordinator { await orchestrator.coordinateMemory(with: MemoryCoordinator()) }
