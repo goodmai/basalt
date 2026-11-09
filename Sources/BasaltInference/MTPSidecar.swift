@@ -120,7 +120,9 @@ enum MTPSidecar {
         }
         try model.update(parameters: ModuleParameters.unflattened(weights), verify: [.all])
         eval(model)
-        if draftHead { model.useDraftHead(of: target) }
+        if draftHead, !model.useDraftHead(of: target) {
+            BasaltLogger(module: "MTPSidecar").warn("--experimental-mtp-draft-head: the target head is 4-bit or narrower, so the MTP head drafts through it unchanged")
+        }
         return GreedyDraftingMTPDrafter(model)
     }
 }
