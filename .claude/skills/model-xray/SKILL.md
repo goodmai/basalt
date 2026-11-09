@@ -14,6 +14,7 @@ Reference for every tool, argument and the safety model: `docs/research-tools.md
 - **A suspicious tensor.** `model_tensors` with a filter, then `model_tensor` for statistics. An outlier max, a zero std or a NaN-free but huge L2 points at a bad conversion or quantization.
 - **A prompt-cache question** (no reuse, memory growth, evictions): `kv_inspect` shows namespaces, tokens, bytes, snapshots and pins as the engine holds them.
 - **Testing a hypothesis** (needs `--research-tools`): ablate a head or an expert, or steer a layer, with `intervene`, then `experiment_compare` on a few prompts against the baseline. Interventions affect research calls only.
+- **A behaviour over a whole answer** (refusal, a style switch; needs `--research-tools`): `trace_tokens` to see which heads fire and which experts route on every prompt and generated token, `activation_contrast` on a set that shows it against one that does not, then `intervene` with `when` (a projection or expert trigger) to ablate the top components only on the tokens where the behaviour starts, and `experiment_compare` against the static ablation. Procedure: `docs/research-tools.md`, "Per-token trace and conditional ablation".
 
 ## Weight deltas: use sparingly
 
