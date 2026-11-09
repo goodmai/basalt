@@ -28,8 +28,7 @@ extension MCPServer {
         case .harnessOptimize: try await optimizeHarness(args)
         case .research(let tool): try await research(tool, args)
         case .introspect: try await introspect(args)
-        case .transcribe: try await transcribe(args)
-        case .ocr: try await ocr(args)
+        case .media(let tool): try await media(tool, args)
         }
     }
 
@@ -204,6 +203,13 @@ extension MCPServer {
 }
 
 extension MCPServer {
+    private func media(_ tool: MediaTool, _ args: [String: Any]?) async throws(MCPFailure) -> ToolResult {
+        switch tool {
+        case .transcribe: try await transcribe(args)
+        case .ocr: try await ocr(args)
+        }
+    }
+
     private func transcribe(_ args: [String: Any]?) async throws(MCPFailure) -> ToolResult {
         guard let audio = try MCPArguments.string("audio", in: args), let format = try MCPArguments.string("format", in: args) else {
             throw .invalidParams("Missing required arguments: audio and format")

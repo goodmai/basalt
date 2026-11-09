@@ -146,7 +146,7 @@ struct OCRAPITests {
         try OCRFixture.pdf(pages: ["one", "two"]).write(to: pdfPath)
         let capturer = OutputCapturer()
         let server = MCPServer(orchestrator: orchestrator) { capturer.capture($0) }.withImageDirectories([inside])
-        #expect(MCPTool(name: "basalt_ocr") == .ocr)
+        #expect(MCPTool(name: "basalt_ocr") == .media(.ocr))
         await server.dispatch(#"{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}"#)
         #expect(capturer.lines.last?.contains("basalt_ocr") == true)
         let png = try OCRFixture.png(width: 2, height: 2).base64EncodedString()

@@ -1,6 +1,10 @@
 import Foundation
 import BasaltCore
 
+enum MediaTool: Sendable, Equatable {
+    case transcribe, ocr
+}
+
 extension MCPServer {
     func ocr(_ args: [String: Any]?) async throws(MCPFailure) -> ToolResult {
         let (file, path) = (try MCPArguments.string("file", in: args), try MCPArguments.string("path", in: args))
