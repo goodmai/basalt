@@ -25,6 +25,36 @@ struct NF4KernelBenchmarkTests {
         return Bench.microseconds(run) / 16
     }
 
+    struct Experts: Sendable {
+        let name: String
+        let experts: Int
+        let topK: Int
+        let inputs: Int
+        let outputs: Int
+    }
+
+    static let experts = [
+        Experts(name: "gemma4-26b-a4b gate/up", experts: 128, topK: 8, inputs: 2816, outputs: 704),
+        Experts(name: "gemma4-26b-a4b down", experts: 128, topK: 8, inputs: 704, outputs: 2816),
+        Experts(name: "lfm2.5-24b-a2b gate/up", experts: 64, topK: 4, inputs: 2048, outputs: 1536),
+        Experts(name: "lfm2.5-24b-a2b down", experts: 64, topK: 4, inputs: 1536, outputs: 2048),
+    ]
+
+    static func gatherMicros(_ shape: Experts, dense: MLXArray, mode: QuantizationMode, groupSize: Int) -> Double {
+        let (wq, scales, biases) = quantized(dense, groupSize: groupSize, bits: 4, mode: mode)
+        eval([wq, scales] + (biases.map { [$0] } ?? []))
+        let x = MLXRandom.normal([shape.topK, 1, shape.inputs], dtype: .bfloat16)
+        let picks = (0 ..< 32).map { call in MLXArray((0 ..< shape.topK).map { UInt32(($0 * 37 + call * 11) % shape.experts) }) }
+        eval([x] + picks)
+        let run = {
+            eval(picks.map {
+                gatherQuantizedMM(x, wq, scales: scales, biases: biases, rhsIndices: $0, groupSize: groupSize, bits: 4, mode: mode)
+            })
+        }
+        run()
+        return Bench.microseconds(run) / Double(picks.count)
+    }
+
     static func kernelError(x: MLXArray, codes: MLXArray, scales: MLXArray) -> Float {
         let reference = matmul(x.asType(.float32), dequantized(codes, scales: scales, biases: nil, groupSize: 32, bits: 4, mode: .nf4).asType(.float32).T)
         let kernel = quantizedMM(x, codes, scales: scales, biases: nil, groupSize: 32, bits: 4, mode: .nf4).asType(.float32)
@@ -58,5 +88,27 @@ struct NF4KernelBenchmarkTests {
             }
         }
         Bench.log("END \(Date().ISO8601Format()) log \(url.path)", to: url)
+    }
+
+    @Test("µs per decode-step gatherQuantizedMM (one token, top-k experts) on the Gemma 4 26B-A4B and LFM2.5-24B-A2B expert shapes",
+          .enabled(if: Bench.enabled, "set BASALT_BENCH_SMALLM=1 and run a release build"))
+    func nf4GatherAgainstAffine() throws {
+        guard case .taken = try ModelRunLog.claim(ModelRunLog.gpuLock, pid: getpid()) else {
+            Issue.record("\(ModelRunLog.gpuLock) is held by another run; relaunch when it is free")
+            return
+        }
+        var lock = GPULockGuard(path: ModelRunLog.gpuLock, pid: getpid())
+        defer { _ = lock.release() }
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let url = root.appendingPathComponent("logs/nf4-kernel-\(Date().ISO8601Format(.iso8601.year().month().day())).log")
+        Bench.log("RUN gather \(Date().ISO8601Format()) commit \(ModelRunLog.output("/usr/bin/git", ["-C", root.path, "rev-parse", "HEAD"])) machine \(SystemProfiler.detectChipModel()) load \(ModelRunLog.load())", to: url)
+        Bench.log("experts | E top-k K x N | affine g64 us | nf4 g32 us | nf4 / affine", to: url)
+        for shape in Self.experts {
+            let dense = MLXRandom.normal([shape.experts, shape.outputs, shape.inputs], dtype: .bfloat16, scale: 0.02)
+            let affine = Self.gatherMicros(shape, dense: dense, mode: .affine, groupSize: 64)
+            let nf4 = Self.gatherMicros(shape, dense: dense, mode: .nf4, groupSize: 32)
+            Bench.log("\(shape.name) | \(shape.experts) \(shape.topK) \(shape.inputs) x \(shape.outputs) | " + String(format: "%.1f | %.1f | %.2fx", affine, nf4, nf4 / affine), to: url)
+        }
+        Bench.log("END gather \(Date().ISO8601Format()) log \(url.path)", to: url)
     }
 }
