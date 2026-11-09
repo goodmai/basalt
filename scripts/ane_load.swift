@@ -72,7 +72,8 @@ while elapsed(since: start) < options.seconds {
         FileHandle.standardOutput.write(Data(String(format: "window t=%.1f per_s=%.2f weight_gb_s=%.1f\n", Date().timeIntervalSince1970, rate, options.weightBytes * rate / 1e9).utf8))
         (windowStart, windowRuns) = (ContinuousClock.now, 0)
     }
-    if options.duty < 1 { try await Task.sleep(for: .seconds(took * (1 - options.duty) / options.duty)) }
+    let ahead = busy / options.duty - elapsed(since: start)
+    if options.duty < 1, ahead > 0 { try await Task.sleep(for: .seconds(ahead)) }
 }
 let wall = elapsed(since: start)
 let perSecond = Double(runs) / wall
