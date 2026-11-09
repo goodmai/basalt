@@ -50,4 +50,10 @@ struct PipelineConfigTests {
         #expect(admitted.refusal == nil && admitted.placements.last?.concurrentWithDecode == false)
         #expect(ComputePlan.admit([chat, workload], budgetBytes: 12_000).refusal?.contains("zai-org/GLM-OCR") == true)
     }
+
+    @Test("SpeechAnalyzer is the pipeline's speech fallback only with --experimental-speech-analyzer, as for /v1/audio/transcriptions")
+    func speechAnalyzerBehindFlag() async throws {
+        #expect(try await ServeCommand.parse([]).loadPipelineStages(.init()).speech == nil)
+        #expect(try await ServeCommand.parse(["--experimental-speech-analyzer"]).loadPipelineStages(.init()).speech != nil)
+    }
 }
