@@ -43,6 +43,12 @@ struct PipelineTally {
 
     var accuracy: Double { Double(correct) / Double(max(total, 1)) }
 
+    mutating func add(_ other: PipelineTally) {
+        (correct, total, llmCalls, llmTokens, escalated) = (correct + other.correct, total + other.total, llmCalls + other.llmCalls, llmTokens + other.llmTokens, escalated + other.escalated)
+        (perceiveMs, decideMs, answerMs, wallMs) = (perceiveMs + other.perceiveMs, decideMs + other.decideMs, answerMs + other.answerMs, wallMs + other.wallMs)
+        kinds.merge(other.kinds) { ($0.correct + $1.correct, $0.total + $1.total) }
+    }
+
     mutating func score(_ item: PipelineWorkItem, labels: [String: String?]) {
         for decision in item.decisions {
             let ok = labels[decision.name] == decision.label
@@ -183,20 +189,28 @@ struct PipelineBudgetBenchmarkTests {
 
     static func overlap(_ client: BenchClient, _ chat: ModelOrchestratorActor, _ items: [PipelineWorkItem]) async throws -> (GenerationResponse, PipelineTally) {
         async let long = longAnswer(chat)
-        var tally = PipelineTally()
-        for item in items { try await piped(client, item, tally: &tally) }
-        return (try await long, tally)
+        let tallies = try await withThrowingTaskGroup(of: PipelineTally.self) { group in
+            for item in items {
+                group.addTask {
+                    var tally = PipelineTally()
+                    try await piped(client, item, tally: &tally)
+                    return tally
+                }
+            }
+            return try await group.reduce(into: [PipelineTally]()) { $0.append($1) }
+        }
+        return (try await long, tallies.reduce(into: PipelineTally()) { $0.add($1) })
     }
 
-    static func verdicts(_ arms: Arms, solo: GenerationResponse, overlapped: GenerationResponse) -> [String] {
+    static func verdicts(_ arms: Arms, solo: Double, overlapped: GenerationResponse) -> [String] {
         let saved = 1 - Double(arms.piped.llmTokens) / Double(max(arms.llm.llmTokens, 1))
-        let drop = 1 - overlapped.tokensPerSecond / max(solo.tokensPerSecond, 1e-9)
+        let drop = 1 - overlapped.tokensPerSecond / max(solo, 1e-9)
         let mark = { (ok: Bool) in ok ? "PASS" : "FAIL" }
         return [
             "\(mark(arms.piped.wallMs < arms.chained.wallMs)) b faster than a: \(arms.piped.wallMs) ms vs \(arms.chained.wallMs) ms (\(String(format: "%+.1f", (Double(arms.piped.wallMs) / Double(max(arms.chained.wallMs, 1)) - 1) * 100))%)",
             "\(mark(saved >= 0.5)) LLM tokens b vs llm-only: \(arms.piped.llmTokens) vs \(arms.llm.llmTokens) (\(String(format: "%.1f", saved * 100))% fewer, need >= 50%)",
             "\(mark(abs(arms.piped.accuracy - arms.llm.accuracy) <= 0.02 || arms.piped.accuracy > arms.llm.accuracy)) accuracy b vs llm-only: \(String(format: "%.4f", arms.piped.accuracy)) vs \(String(format: "%.4f", arms.llm.accuracy)) (within 2 points)",
-            "\(mark(drop <= decodeRule)) System 2 decode: \(String(format: "%.2f", solo.tokensPerSecond)) tok/s solo, \(String(format: "%.2f", overlapped.tokensPerSecond)) tok/s beside the pipeline (\(String(format: "%+.1f", -drop * 100))%, #273 rule <= \(Int(decodeRule * 100))%)",
+            "\(mark(drop <= decodeRule)) System 2 decode: \(String(format: "%.2f", solo)) tok/s solo (mean of before and after), \(String(format: "%.2f", overlapped.tokensPerSecond)) tok/s beside the pipeline (\(String(format: "%+.1f", -drop * 100))%, #273 rule <= \(Int(decodeRule * 100))%)",
         ]
     }
 
@@ -222,7 +236,9 @@ struct PipelineBudgetBenchmarkTests {
             log.record("RESULT", "llm-only: \(arms.llm.summary(states: items.count))")
             let (overlapped, beside) = try await log.step("long answer beside b") { try await Self.overlap(client, chat, Array(items.prefix(6))) }
             log.record("RESULT", "b beside the long answer: \(beside.summary(states: 6))")
-            for verdict in Self.verdicts(arms, solo: solo, overlapped: overlapped) { log.record("VERDICT", verdict) }
+            let after = try await log.step("long answer solo again") { try await Self.longAnswer(chat) }
+            log.record("RESULT", "long answer: solo before \(String(format: "%.2f", solo.tokensPerSecond)) tok/s, beside b \(String(format: "%.2f", overlapped.tokensPerSecond)) tok/s, solo after \(String(format: "%.2f", after.tokensPerSecond)) tok/s")
+            for verdict in Self.verdicts(arms, solo: (solo.tokensPerSecond + after.tokensPerSecond) / 2, overlapped: overlapped) { log.record("VERDICT", verdict) }
         }
     }
 }
