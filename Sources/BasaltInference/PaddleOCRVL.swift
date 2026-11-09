@@ -9,17 +9,20 @@ struct PaddleOCRVLPositions: Equatable {
     var rows: [[Int32]] = [[], [], []]
     var delta = 0
 
-    init(tokens: [Int], frames: [THW], imageToken: Int, mergeSize: Int) {
+    init(tokens: [Int], frames: [THW], imageToken: Int, mergeSize: Int) throws(BasaltError) {
         var next: Int32 = 0
         var start = 0
         func text(_ count: Int) {
             for row in 0 ..< 3 { rows[row] += (0 ..< Int32(count)).map { next + $0 } }
             next += Int32(count)
         }
-        for frame in frames {
+        for (number, frame) in frames.enumerated() {
             guard let index = tokens[start...].firstIndex(of: imageToken) else { break }
-            text(index - start)
             let (t, h, w) = (frame.t, frame.h / mergeSize, frame.w / mergeSize)
+            guard index + t * h * w <= tokens.count, tokens[index ..< index + t * h * w].allSatisfy({ $0 == imageToken }) else {
+                throw .invalidRequestStructure(details: "PaddleOCR-VL: image \(number + 1) needs \(t * h * w) placeholder tokens in a row")
+            }
+            text(index - start)
             for ti in 0 ..< t {
                 for hi in 0 ..< h {
                     rows[0] += Array(repeating: next + Int32(ti), count: w)
@@ -86,7 +89,7 @@ final class PaddleOCRVL: Module, VLMModel, KVCacheDimensionProvider {
             throw BasaltError.invalidRequestStructure(details: "PaddleOCR-VL reads an image only at the start of a prompt, not after a cached prefix")
         }
         let ids = input.text.tokens.ndim == 1 ? input.text.tokens[.newAxis] : input.text.tokens
-        let layout = PaddleOCRVLPositions(
+        let layout = try PaddleOCRVLPositions(
             tokens: ids[0].asArray(Int.self), frames: frames, imageToken: config.imageTokenId, mergeSize: config.vision.mergeSize)
         let h = hidden(try merged(ids, pixels: image.pixels, frames: frames), cache: cache, positions: layout.array)
         var state = LMOutput.State()

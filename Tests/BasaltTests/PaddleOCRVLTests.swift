@@ -81,13 +81,47 @@ struct PaddleOCRVLTests {
         #expect(throws: BasaltError.self) { _ = try Self.prefillLogits(model, Array(prompt.dropFirst(4))) }
     }
 
-    @Test("M-RoPE positions follow mlx-vlm get_rope_index: text runs count on, an image takes t/h/w grid indices, and the delta anchors decode")
-    func positions() {
-        let layout = PaddleOCRVLPositions(tokens: [7, 250, 250, 250, 250, 8], frames: [THW(1, 4, 4)], imageToken: 250, mergeSize: 2)
-        #expect(layout.rows == [[0, 1, 1, 1, 1, 3], [0, 1, 1, 2, 2, 3], [0, 1, 2, 1, 2, 3]])
-        #expect(layout.delta == -2)
-        let text = PaddleOCRVLPositions(tokens: [7, 8, 9], frames: [], imageToken: 250, mergeSize: 2)
+    @Test("M-RoPE positions equal mlx-vlm get_rope_index on two non-square images (4x6 and 2x4 grids), and a short placeholder run is refused")
+    func positions() throws {
+        let frames = [THW(1, 4, 6), THW(1, 2, 4)]
+        let layout = try PaddleOCRVLPositions(tokens: PaddleOCRVLGolden.tokens, frames: frames, imageToken: 250, mergeSize: 2)
+        #expect(layout.rows == PaddleOCRVLGolden.positions)
+        #expect(layout.delta == PaddleOCRVLGolden.delta)
+        let text = try PaddleOCRVLPositions(tokens: [7, 8, 9], frames: [], imageToken: 250, mergeSize: 2)
         #expect(text.rows == [[0, 1, 2], [0, 1, 2], [0, 1, 2]] && text.delta == 0)
+        #expect(throws: BasaltError.self) { try PaddleOCRVLPositions(tokens: [7, 250, 250], frames: [THW(1, 4, 4)], imageToken: 250, mergeSize: 2) }
+        #expect(throws: BasaltError.self) { try PaddleOCRVLPositions(tokens: [7, 250, 250, 8, 250, 250], frames: [THW(1, 4, 4)], imageToken: 250, mergeSize: 2) }
+    }
+
+    static func goldenVision() throws -> PaddleOCRVLVision.Model {
+        let model = try #require(try TinyModel.make(.paddleOCR) as? PaddleOCRVL)
+        let parameters = model.visual.parameters().flattened().sorted { $0.0 < $1.0 }
+        let weights = parameters.enumerated().map { t, entry in
+            let shift: Float = entry.0.contains("norm") && entry.0.hasSuffix(".weight") ? 1 : 0
+            let values = (0 ..< entry.1.size).map { Float(0.1 * Foundation.sin(0.7 * Double($0) + 0.3 * Double(t))) + shift }
+            return (entry.0, MLXArray(values).reshaped(entry.1.shape))
+        }
+        try model.visual.update(parameters: ModuleParameters.unflattened(weights), verify: [.all])
+        return model.visual
+    }
+
+    @Test("The vision tower (embeddings, 2D RoPE, encoder, projector) matches mlx-vlm VisionModel on a 4x6 grid within 1e-4 (golden from scripts/paddleocr_reference.swift)")
+    func visionGolden() throws {
+        let vision = try Self.goldenVision()
+        let pixels = MLXArray((0 ..< 24 * 14 * 14 * 3).map { Float(Foundation.sin(0.05 * Double($0))) }).reshaped(24, 14, 14, 3)
+        let features = vision(pixels, frames: [THW(1, 4, 6)])
+        #expect(features.shape == PaddleOCRVLGolden.featureShape)
+        #expect(MLX.abs(features.reshaped(-1) - MLXArray(PaddleOCRVLGolden.features)).max().item(Float.self) < Self.logitTolerance)
+    }
+
+    @Test("Vision attention split into query blocks gives the same output as one block")
+    func blockedVisionAttention() throws {
+        let vision = try Self.goldenVision()
+        let x = MLXRandom.normal([24, 32], key: MLXRandom.key(3))
+        let (cos, sin) = vision.rotary(THW(1, 4, 6))
+        let attention = vision.layers[0].attention
+        let whole = attention(x, cos: cos, sin: sin, queryBlock: 1024)
+        #expect(MLX.abs(whole - attention(x, cos: cos, sin: sin, queryBlock: 5)).max().item(Float.self) < 1e-6)
     }
 
     @Test("smart_resize matches the PaddleOCR-VL image processor: multiples of 28 within the pixel budget, short sides scaled up first",
@@ -97,6 +131,10 @@ struct PaddleOCRVLTests {
         let resized = try config.resized(width: size.0, height: size.1)
         #expect(resized.width == expected.0 && resized.height == expected.1)
         #expect(throws: BasaltError.self) { try config.resized(width: 6000, height: 28) }
+        #expect(throws: BasaltError.self) { try config.resized(width: 0, height: 28) }
+        #expect(throws: BasaltError.self) { try config.resized(width: 0, height: 0) }
+        let processor = PaddleOCRVLProcessor(config, tokenizer: ByteTokenizer())
+        #expect(throws: BasaltError.self) { try processor.patches(CIImage(color: .white)) }
     }
 
     @Test("A page already at its target size reaches the encoder byte-exact: patches are (x/255 - 0.5)/0.5 in row-major 14x14 tiles")
@@ -129,11 +167,35 @@ struct PaddleOCRVLTests {
         #expect(throws: BasaltError.self) { try PaddleOCRVLProcessor.expanded([1, 9], token: 9, frames: frames, mergeSize: 2) }
     }
 
-    @Test("Position embeddings interpolate bilinearly with half-pixel centres and clamped edges, as mlx-vlm bilinear_interpolate")
+    @Test("Position embeddings interpolate bilinearly with half-pixel centres and clamped edges onto a non-square grid, as mlx-vlm bilinear_interpolate")
     func bilinear() {
         let grid = MLXArray([Float(0), 1, 2, 3]).reshaped(2, 2, 1)
-        let out = PaddleOCRVLVision.bilinear(grid, height: 3, width: 3).reshaped(-1)
-        #expect(MLX.abs(out - MLXArray([Float(0), 0.5, 1, 1, 1.5, 2, 2, 2.5, 3])).max().item(Float.self) < 1e-6)
+        let out = PaddleOCRVLVision.bilinear(grid, height: 2, width: 3)
+        #expect(out.shape == [2, 3, 1])
+        #expect(MLX.abs(out.reshaped(-1) - MLXArray([Float(0), 0.5, 1, 2, 2.5, 3])).max().item(Float.self) < 1e-6)
+    }
+
+    struct ImageProcessor: UserInputProcessor {
+        func prepare(input: UserInput) throws -> LMInput {
+            input.images.isEmpty ? try ByteInputProcessor().prepare(input: input) : PaddleOCRVLTests.imageInput(PaddleOCRVLTests.imagePrompt())
+        }
+    }
+
+    @Test("An image request through the engine with the prompt cache on reuses nothing, twice, and answers like TokenIterator")
+    func engineImageRequest() async throws {
+        let model = try #require(try TinyModel.make(.paddleOCR) as? PaddleOCRVL)
+        let iterator = try TokenIterator(input: Self.imageInput(Self.imagePrompt()), model: model, processor: nil, sampler: ArgMaxSampler(), maxTokens: 8)
+        let expected = ByteTokenizer().decode(tokenIds: Array(iterator), skipSpecialTokens: false)
+        let engine = try await TinyModel.engine(.paddleOCR, promptCacheBytes: 1 << 30, processor: ImageProcessor())
+        let image = try ImageInput(data: try OCRFixture.png(width: 4, height: 4), mime: "image/png")
+        let request = GenerationRequest(
+            prompt: "OCR:", maxTokens: 8, temperature: 0, messages: [ChatMessageInput(role: .user, text: "OCR:", images: [image])]
+        ).with { $0.cacheKey = "ns" }
+        for _ in 0 ..< 2 {
+            let reply = try await engine.generate(request: request)
+            #expect(reply.cachedPromptTokens == 0)
+            #expect(reply.generatedText == expected)
+        }
     }
 
     @Test("A user turn renders image parts before its text, as the PaddleOCR-VL chat template expects")
@@ -152,7 +214,9 @@ struct PaddleOCRVLRealModelTests {
         return (model, reference)
     }
 
-    @Test("The prompt ids and the first 64 greedy tokens equal mlx-vlm's on every page of the reference file",
+    static let unsizedEditBudget = 0.05
+
+    @Test("Pre-sized pages: prompt ids and the first 64 greedy tokens equal mlx-vlm's. Unsized pages (CoreGraphics resize against PIL bicubic): the 256-token text stays within 5% character edit distance",
           .enabled(if: paths != nil, "set BASALT_E2E=1, BASALT_E2E_PADDLE_MODEL_PATH and BASALT_E2E_PADDLE_REFERENCE"))
     func matchesMLXVLM() async throws {
         let (model, referencePath) = try #require(Self.paths)
@@ -160,17 +224,24 @@ struct PaddleOCRVLRealModelTests {
         await MLXInferenceEngine.registerAliases()
         let container = try await loadModelContainer(from: URL(fileURLWithPath: model), using: DefaultTokenizerLoader())
         let directory = URL(fileURLWithPath: referencePath).deletingLastPathComponent()
-        for name in reference.keys.sorted() where name != "prompt" {
+        for name in reference.keys.sorted() {
             let page = try #require(reference[name] as? [String: Any])
-            let url = directory.appending(path: "\(name)-sized.png")
-            let (prompt, tokens) = try await container.perform { context in
+            let (url, count) = (directory.appending(path: try #require(page["image"] as? String)), try #require(page["max_tokens"] as? Int))
+            let (prompt, tokens, text) = try await container.perform { context in
                 let input = try await context.processor.prepare(input: UserInput(chat: [.user("OCR:", images: [.url(url)])]))
-                let tokens = Array(try TokenIterator(input: input, model: context.model, processor: nil, sampler: ArgMaxSampler(), maxTokens: 64))
-                return (input.text.tokens.asArray(Int.self), tokens)
+                let tokens = Array(try TokenIterator(input: input, model: context.model, processor: nil, sampler: ArgMaxSampler(), maxTokens: count))
+                return (input.text.tokens.asArray(Int.self), tokens, context.tokenizer.decode(tokenIds: tokens, skipSpecialTokens: false))
             }
-            #expect(prompt == page["prompt_ids"] as? [Int], "\(name): prompt ids")
-            expectTokenSequence(tokens, Array(try #require(page["tokens"] as? [Int]).prefix(64)))
-            print("PADDLE-PARITY \(name) prompt=\(prompt.count) tokens=\(tokens.count) exact=\(Array(tokens) == Array((page["tokens"] as? [Int] ?? []).prefix(64)))")
+            let expected = Array(try #require(page["tokens"] as? [Int]).prefix(count))
+            let expectedText = try #require(page["text"] as? String)
+            let distance = MLXInferenceEngine.editDistance(text, expectedText)
+            print("PADDLE-PARITY \(name) prompt=\(prompt.count)/\((page["prompt_ids"] as? [Int])?.count ?? 0) tokens=\(tokens.count) exact=\(tokens == expected) edit=\(distance)/\(expectedText.utf8.count)")
+            if name.hasSuffix("-unsized") {
+                #expect(Double(distance) <= Self.unsizedEditBudget * Double(expectedText.utf8.count), "\(name): edit distance \(distance)")
+            } else {
+                #expect(prompt == page["prompt_ids"] as? [Int], "\(name): prompt ids")
+                expectTokenSequence(tokens, expected)
+            }
         }
     }
 }

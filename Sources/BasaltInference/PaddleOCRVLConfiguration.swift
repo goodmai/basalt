@@ -83,6 +83,9 @@ struct PaddleOCRVLProcessorConfiguration: Codable, Sendable {
     }
 
     func resized(width: Int, height: Int) throws(BasaltError) -> (width: Int, height: Int) {
+        guard width > 0, height > 0 else {
+            throw .invalidRequestStructure(details: "PaddleOCR-VL cannot read a \(width)x\(height) image")
+        }
         var (width, height) = (Double(width), Double(height))
         let factor = Double(factor)
         if height < factor { (width, height) = ((width * factor / height).rounded(.toNearestOrEven), factor) }

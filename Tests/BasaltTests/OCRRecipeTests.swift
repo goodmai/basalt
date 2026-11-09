@@ -119,11 +119,11 @@ struct OCRRecipeTests {
         #expect(paddle.finished(" x^2 ", blockType: "equation") == "x^2")
     }
 
-    @Test("glm_ocr and qwen2_vl stay unverified families; paddleocr_vl verifies what the feature matrix runs on its tiny family, without MTP, CacheBlend or a quantized KV cache")
+    @Test("glm_ocr and qwen2_vl stay unverified families; paddleocr_vl verifies lookup, batched decode, prompt-cache reuse and grammar jump-forward on text turns; no MTP, CacheBlend, quantized KV, KV zones, head split or Quest")
     func capabilities() {
         #expect(ModelCapabilities.of(modelType: "glm_ocr") == nil)
         #expect(ModelCapabilities.of(modelType: "qwen2_vl") == nil)
-        #expect(ModelCapabilities.of(modelType: "paddleocr_vl")?.verified == Set(ModelCapabilities.Feature.allCases).subtracting([.mtp, .cacheBlend, .kvQuantization]))
+        #expect(ModelCapabilities.of(modelType: "paddleocr_vl")?.verified == Set(ModelCapabilities.Feature.allCases).subtracting([.mtp, .cacheBlend, .kvQuantization, .kvZones, .kvHeadSplit, .quest]))
     }
 }
 

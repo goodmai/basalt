@@ -52,7 +52,7 @@ struct ModelCapabilities: Equatable, Sendable {
             (["nemotron_h", NemotronTranscribeModel.modelType, "lfm2", "lfm2_moe"], recurrent),
             (["gemma3", "gemma3_text"], gemma3),
             (["gemma4", "gemma4_text"], gemma4),
-            ([PaddleOCRVL.modelType], ModelCapabilities(verified: all.subtracting([.mtp, .cacheBlend, .kvQuantization]))),
+            ([PaddleOCRVL.modelType], ModelCapabilities(verified: all.subtracting([.mtp, .cacheBlend, .kvQuantization, .kvZones, .kvHeadSplit, .quest]))),
         ]
         return Dictionary(uniqueKeysWithValues: table.flatMap { types, capabilities in types.map { ($0, capabilities) } })
     }()
