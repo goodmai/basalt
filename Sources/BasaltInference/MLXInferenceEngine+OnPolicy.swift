@@ -23,11 +23,6 @@ struct ScoredRow: Sendable {
     var teacher: [TopLogprobs]
 }
 
-struct OnPolicyState {
-    var weights: [(String, MLXArray)] = []
-    let optimizer: Adam
-}
-
 struct OnPolicyOutcome: Sendable {
     var losses: [Float]
     var before: Float
@@ -38,7 +33,7 @@ extension MLXInferenceEngine {
     static let onPolicyTopK = 20
     static let tailFloor: Float = 1e-6
 
-    func onPolicyDistill(_ request: DistillRequest, examples: [DistillExample], teacher: TeacherClient, directory: URL) async throws(BasaltError) -> DistillReport {
+    func onPolicyDistill(_ request: DistillRequest, examples: [DistillExample], teacher: TeacherClient, directory: URL, lease: StepLease?) async throws(BasaltError) -> DistillReport {
         guard let container else { throw .modelNotLoaded }
         guard request.teacher.provider == .openai else {
             throw .invalidRequestStructure(details: "distill: onPolicy needs a basalt teacher that serves /v1/score, so the provider must be openai")
@@ -48,21 +43,20 @@ extension MLXInferenceEngine {
         }
         let heldOutStart = examples.count - DistillCore.heldOutCount(examples.count, fraction: request.heldOutFraction)
         let maxSeqLen = request.maxSeqLen
-        let plan = try await Self.labRun(container, "on-policy distillation") { context in
-            try Self.onPolicyPlan(examples, heldOutStart: heldOutStart, maxSeqLen: maxSeqLen, context)
-        }
+        let steps = AdapterSteps(engine: self, container: container, layers: request.layers, rank: request.rank, lease: lease, what: "on-policy distillation")
+        let plan = try await steps.read { context in try Self.onPolicyPlan(examples, heldOutStart: heldOutStart, maxSeqLen: maxSeqLen, context) }
         var report = DistillReport()
         (report.prompts, report.kept, report.heldOut) = (examples.count, plan.train.count, plan.heldOut.count)
         if plan.tooLong > 0 { report.rejected["too_long"] = plan.tooLong }
         guard !plan.train.isEmpty, !plan.heldOut.isEmpty else {
             throw .invalidRequestStructure(details: "distill: no training or no held-out prompt fits in maxSeqLen \(maxSeqLen) tokens")
         }
-        let outcome = try await OnPolicyRun(request: request, plan: plan, teacher: teacher, container: container).train(saving: directory)
+        let outcome = try await OnPolicyRun(request: request, plan: plan, teacher: teacher, steps: steps).train(saving: directory)
         guard self.container === container else { throw .inferenceError("the model changed during on-policy distillation; the adapter in \(directory.path) was not applied") }
         (report.losses, report.reverseKLBefore, report.reverseKLAfter) = (Self.reported(outcome.losses), outcome.before, outcome.after)
         report.teacherCalls = request.iterations * min(request.batchSize, plan.train.count) + plan.heldOut.count
         report.adapterDirectory = directory.path
-        report.verdict = try await applyDistilled(directory, gate: request.gate)
+        report.verdict = try await applyDistilled(directory, gate: request.gate, steps: steps)
         return report
     }
 

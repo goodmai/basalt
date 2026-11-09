@@ -8,7 +8,7 @@ public protocol ModelLab: ModelResearch {
     func commitSteering(_ commit: SteeringCommit) async throws(BasaltError) -> AdapterVerdict
     func train(_ request: TrainRequest) async throws(BasaltError) -> TrainReport
     func trainJEPA(_ request: LeJEPATrainRequest) async throws(BasaltError) -> LeJEPATrainReport
-    func distill(_ request: DistillRequest) async throws(BasaltError) -> DistillReport
+    func distill(_ request: DistillRequest, lease: StepLease?) async throws(BasaltError) -> DistillReport
     func score(_ request: ScoreRequest) async throws(BasaltError) -> ScoreReport
 }
 
@@ -20,7 +20,7 @@ extension ModelLab {
     public func commitSteering(_ commit: SteeringCommit) async throws(BasaltError) -> AdapterVerdict { throw Self.unavailable("steering commit") }
     public func train(_ request: TrainRequest) async throws(BasaltError) -> TrainReport { throw Self.unavailable("expert training") }
     public func trainJEPA(_ request: LeJEPATrainRequest) async throws(BasaltError) -> LeJEPATrainReport { throw Self.unavailable("JEPA training") }
-    public func distill(_ request: DistillRequest) async throws(BasaltError) -> DistillReport { throw Self.unavailable("distillation") }
+    public func distill(_ request: DistillRequest, lease: StepLease?) async throws(BasaltError) -> DistillReport { throw Self.unavailable("distillation") }
     public func score(_ request: ScoreRequest) async throws(BasaltError) -> ScoreReport { throw Self.unavailable("scoring") }
 
     static func unavailable(_ mode: String) -> BasaltError {

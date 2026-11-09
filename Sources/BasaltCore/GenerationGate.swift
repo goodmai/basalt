@@ -16,6 +16,7 @@ public actor GenerationGate {
     private var running: [Int: @Sendable () -> Void] = [:]
     private var queue: [(id: Int, priority: RequestPriority, continuation: CheckedContinuation<Void, Error>)] = []
     private var cancelledBeforeQueued: Set<Int> = []
+    private(set) var arriving = 0
     private var exclusiveHeld = false
     private var exclusiveQueue: [CheckedContinuation<Void, Never>] = []
     private var closed = false
@@ -78,6 +79,14 @@ public actor GenerationGate {
         return id
     }
 
+    public func arrive() {
+        arriving += 1
+    }
+
+    public func arrived() {
+        arriving = max(0, arriving - 1)
+    }
+
     public func onCancel(_ id: Int, _ cancel: @escaping @Sendable () -> Void) {
         guard running[id] != nil else { return }
         if aborted {
@@ -99,8 +108,8 @@ public actor GenerationGate {
         if queue.count > maxQueue { problems.append("\(queue.count) queued for \(maxQueue) places") }
         if exclusiveHeld, !running.isEmpty { problems.append("held exclusively while \(running.count) run") }
         if canRun, !queue.isEmpty { problems.append("\(queue.count) wait while a slot is free") }
-        if idle, !running.isEmpty || !queue.isEmpty || exclusiveHeld || !exclusiveQueue.isEmpty {
-            problems.append("not idle: \(running.count) running, \(queue.count) queued, exclusive \(exclusiveHeld), \(exclusiveQueue.count) waiting for it")
+        if idle, !running.isEmpty || !queue.isEmpty || exclusiveHeld || !exclusiveQueue.isEmpty || arriving > 0 {
+            problems.append("not idle: \(running.count) running, \(queue.count) queued, \(arriving) arriving, exclusive \(exclusiveHeld), \(exclusiveQueue.count) waiting for it")
         }
         return problems
     }
@@ -139,7 +148,7 @@ public actor GenerationGate {
 
     public func idle(within limit: Duration) async -> Bool {
         let end = now() + limit
-        while !running.isEmpty || !queue.isEmpty {
+        while !running.isEmpty || !queue.isEmpty || arriving > 0 {
             guard now() < end, (try? await sleep(.milliseconds(20))) != nil else { return false }
         }
         return true

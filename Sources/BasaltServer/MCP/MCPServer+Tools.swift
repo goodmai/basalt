@@ -41,6 +41,9 @@ extension MCPServer {
             throw .methodNotFound("model_tensor spectrum holds the model for seconds: start the server with serve --research-tools to use it")
         }
         do throws(BasaltError) {
+            if case .distill(let request) = call {
+                return .json(try await orchestrator.preemptibly { lab, lease throws(BasaltError) in try await lab.distill(request, lease: lease) })
+            }
             return try await orchestrator.research { model throws(BasaltError) in try await call.run(on: model) }
         } catch {
             throw MCPFailure(error)
@@ -81,7 +84,7 @@ extension ResearchCall {
         case .pack(let request): .json(try await lab.pack(request))
         case .train(let request): .json(try await lab.train(request))
         case .trainJepa(let request): .json(try await lab.trainJEPA(request))
-        case .distill(let request): .json(try await lab.distill(request))
+        case .distill(let request): .json(try await lab.distill(request, lease: nil))
         case .contrast(let request): .json(try await lab.contrast(request))
         case .commitSteering(let commit): .json(try await lab.commitSteering(commit))
         case .describe, .tensors, .tensor, .promptCache, .trace, .intervene, .delta, .overlays, .undo, .compare: throw .invalidRequestStructure(details: "not a lab call")

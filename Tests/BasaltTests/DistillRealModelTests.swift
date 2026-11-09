@@ -73,7 +73,7 @@ struct DistillRealModelTests {
         try await log.step("load") { try await engine.load(modelPath: path) }
         let heldOut = Array(examples.suffix(DistillCore.heldOutCount(examples.count, fraction: request.heldOutFraction)))
         let before = try await log.step("accuracy before") { try await Self.accuracy(engine, heldOut) }
-        let report = try await log.step("distill") { try await engine.distill(request) }
+        let report = try await log.step("distill") { try await engine.distill(request, lease: nil) }
         log.record("teacher", "\(report.teacherCalls) calls, \(report.cached) cached, \(report.teacherInputTokens) prompt + \(report.teacherOutputTokens) completion tokens, stopped by \(report.stoppedBy.rawValue)")
         log.record("data", "kept \(report.kept), held out \(report.heldOut), rejected \(report.rejected.sorted { $0.key < $1.key })")
         log.record("training", "losses \(report.losses.map { String(format: "%.3f", $0) }.joined(separator: " "))")

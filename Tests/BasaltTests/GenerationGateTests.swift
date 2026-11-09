@@ -113,6 +113,18 @@ struct GenerationGateTests {
         #expect(await gate.checkInvariants(idle: true) == [])
     }
 
+    @Test("A request still planning before admission keeps the gate from looking idle, so a training step does not slip in ahead of it")
+    func arrivingRequestIsNotIdle() async {
+        let gate = GenerationGate(maxConcurrent: 1, maxQueue: 2)
+        #expect(await gate.idle(within: .zero))
+        await gate.arrive()
+        #expect(await !gate.idle(within: .zero))
+        #expect(await gate.checkInvariants(idle: true).count == 1)
+        await gate.arrived()
+        #expect(await gate.idle(within: .zero))
+        #expect(await gate.checkInvariants(idle: true) == [])
+    }
+
     @Test("Two concurrent switches to the same model load it once; a switch to another model meanwhile is 503")
     func singleFlightSwitch() async throws {
         let engine = CountingEngine()
