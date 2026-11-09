@@ -79,23 +79,24 @@ struct SystemOneBudgetBenchmarkTests {
     }
 
     @Test("LLM-only vs System One with escalation at four thresholds, then System One running during a long generation; tokens, time, accuracy and decode tok/s are logged",
-          .enabled(if: chat != nil && env["BASALT_E2E_JEV_MODEL"] != nil && env["BASALT_E2E_JEV_BASE"] != nil, "set BASALT_E2E=1, BASALT_E2E_BUDGET_CHAT_MODEL, BASALT_E2E_JEV_MODEL and BASALT_E2E_JEV_BASE"))
+          .enabled(if: chat != nil, "set BASALT_E2E=1 and BASALT_E2E_BUDGET_CHAT_MODEL; optional BASALT_E2E_JEV_MODEL + BASALT_E2E_JEV_BASE (OpenJev head) and BASALT_E2E_BUDGET_FLASH (OpenJev-Flash-9B path)"))
     func budget() async throws {
         let path = NF4Run.path(try #require(Self.chat))
         let log = try await ModelRunLog("systemone-budget", modelPath: path)
         defer { log.releaseGPU() }
         let engine = MLXInferenceEngine(EngineConfiguration(promptCacheBytes: 1 << 30))
         try await log.step("load chat") { try await engine.load(modelPath: path) }
-        let jev = try await log.step("load jev") {
-            try await JevEvaluator(directory: URL(fileURLWithPath: try #require(Self.env["BASALT_E2E_JEV_MODEL"])), base: URL(fileURLWithPath: try #require(Self.env["BASALT_E2E_JEV_BASE"])))
-        }
         let items = SystemOneDecisionSet.generate(states: Int(Self.env["BASALT_E2E_BUDGET_STATES"] ?? "") ?? 100, seed: 234)
         let solo = try await log.step("long answer solo") { try await Self.longAnswer(engine) }
         var clock = ContinuousClock.now
         let baseline = try await log.step("LLM only") { try await Self.llmOnly(engine, items) }
         let baselineSeconds = Self.seconds(since: clock)
         log.record("RESULT", "A llm-only: \(baseline.total) decisions, accuracy \(baseline.accuracy) [\(baseline.breakdown)], \(baseline.llmCalls) calls, \(baseline.promptTokens)+\(baseline.completionTokens) tokens, \(String(format: "%.1f", baselineSeconds)) s; long answer solo \(String(format: "%.2f", solo.tokensPerSecond)) tok/s")
-        var deciders: [(String, any DecisionEngine)] = [("openjev-0.6b", jev), ("readout-self", ReadoutDecisionEngine(engine: engine, modelID: "self", readout: .uncalibrated))]
+        var deciders: [(String, any DecisionEngine)] = [("readout-self", ReadoutDecisionEngine(engine: engine, modelID: "self", readout: .uncalibrated))]
+        if let model = Self.env["BASALT_E2E_JEV_MODEL"], let base = Self.env["BASALT_E2E_JEV_BASE"] {
+            let jev = try await log.step("load jev") { try await JevEvaluator(directory: URL(fileURLWithPath: model), base: URL(fileURLWithPath: base)) }
+            deciders.insert(("openjev-0.6b", jev), at: 0)
+        }
         if let flash = Self.env["BASALT_E2E_BUDGET_FLASH"] {
             let flashEngine = MLXInferenceEngine(EngineConfiguration(promptCacheBytes: 0))
             try await log.step("load flash") { try await flashEngine.load(modelPath: flash) }
@@ -108,9 +109,9 @@ struct SystemOneBudgetBenchmarkTests {
         }
         clock = ContinuousClock.now
         async let concurrent = Self.longAnswer(engine)
-        let (overlapTally, _) = try await Self.withSystemOne(engine, jev, items, threshold: 0.75)
+        let (overlapTally, _) = try await Self.withSystemOne(engine, deciders[deciders.count - 1].1, items, threshold: 0.75)
         let overlap = try await concurrent
-        log.record("RESULT", "C concurrent @0.75: long answer \(String(format: "%.2f", overlap.tokensPerSecond)) tok/s (\(String(format: "%+.1f", (overlap.tokensPerSecond / max(solo.tokensPerSecond, 1e-9) - 1) * 100))% vs solo), decisions accuracy \(overlapTally.accuracy), wall \(String(format: "%.1f", Self.seconds(since: clock))) s vs A+long \(String(format: "%.1f", baselineSeconds + solo.generationTime)) s")
+        log.record("RESULT", "C concurrent \(deciders[deciders.count - 1].0) @0.75: long answer \(String(format: "%.2f", overlap.tokensPerSecond)) tok/s (\(String(format: "%+.1f", (overlap.tokensPerSecond / max(solo.tokensPerSecond, 1e-9) - 1) * 100))% vs solo), decisions accuracy \(overlapTally.accuracy), wall \(String(format: "%.1f", Self.seconds(since: clock))) s vs A+long \(String(format: "%.1f", baselineSeconds + solo.generationTime)) s")
     }
 
     struct Run {
