@@ -121,7 +121,7 @@ enum MTPSidecar {
         try model.update(parameters: ModuleParameters.unflattened(weights), verify: [.all])
         eval(model)
         if draftHead, !model.useDraftHead(of: target) {
-            BasaltLogger(module: "MTPSidecar").warn("--experimental-mtp-draft-head: the target head is 4-bit or narrower, so the MTP head drafts through it unchanged")
+            BasaltLogger(module: "MTPSidecar").warn("--experimental-mtp-draft-head: the target head is already 4-bit or narrower, or its width is not a multiple of 64, so the MTP head drafts through it unchanged")
         }
         return GreedyDraftingMTPDrafter(model)
     }

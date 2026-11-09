@@ -38,13 +38,7 @@ struct ZonedKVCacheBenchmarkTests {
             }
         }
 
-        var questTopK: Int? {
-            switch self {
-            case .quest16, .quest16Ops: 16
-            case .quest32, .quest32Ops: 32
-            default: nil
-            }
-        }
+        var questTopK: Int? { [.quest16: 16, .quest32: 32, .quest16Ops: 16, .quest32Ops: 32][self] }
 
         var precision: KVPrecision? {
             switch self {
