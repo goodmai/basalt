@@ -55,7 +55,7 @@ struct VisionOCRTests {
 
     @Test("The RecognizeTextRequest fallback returns one line region per text line with a top-left box")
     func lineFallback() async throws {
-        let regions = try await VisionDocumentTranscriber.lineRegions(in: try VisionFixture.page())
+        let regions = try await VisionDocumentTranscriber.lineRegions(in: try OCRImage.decode(try VisionFixture.page()))
         let closing = try #require(regions.first { $0.element == .paragraph("Closing paragraph after the table.") })
         #expect(closing.box.y1 > 0.7 && closing.box.y2 < 0.9)
         #expect(regions.contains { $0.element == .paragraph("Quarterly Report") && $0.box.y1 < 0.15 })

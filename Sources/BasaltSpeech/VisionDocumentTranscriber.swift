@@ -1,15 +1,20 @@
 import Foundation
 import Vision
+import ImageIO
 import BasaltCore
 
 public struct VisionDocumentTranscriber: DocumentTranscriber {
     public init() {}
 
     public func transcribe(_ image: ImageInput) async throws(BasaltError) -> DocumentMarkdown {
-        let regions = (try? await RecognizeDocumentsRequest().perform(on: image.data).flatMap { Self.regions(of: $0.document) }) ?? []
+        guard let source = CGImageSourceCreateWithData(image.data as CFData, nil),
+              let page = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
+            throw .invalidRequestStructure(details: "the page image cannot be decoded")
+        }
+        let regions = (try? await RecognizeDocumentsRequest().perform(on: page).flatMap { Self.regions(of: $0.document) }) ?? []
         guard regions.isEmpty else { return DocumentMarkdown(regions) }
         do {
-            return DocumentMarkdown(try await Self.lineRegions(in: image.data))
+            return DocumentMarkdown(try await Self.lineRegions(in: page))
         } catch {
             throw .inferenceError("Vision could not read the image: \(error.localizedDescription)")
         }
@@ -32,8 +37,8 @@ public struct VisionDocumentTranscriber: DocumentTranscriber {
         return (title.map { [$0] } ?? []) + paragraphs + lists + tables
     }
 
-    static func lineRegions(in data: Data) async throws -> [DocumentRegion] {
-        try await RecognizeTextRequest().perform(on: data).compactMap { line in
+    static func lineRegions(in page: CGImage) async throws -> [DocumentRegion] {
+        try await RecognizeTextRequest().perform(on: page).compactMap { line in
             line.topCandidates(1).first.map { DocumentRegion(.paragraph($0.string), box: box(line.boundingBox)) }
         }
     }
