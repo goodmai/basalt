@@ -149,13 +149,17 @@ extension MLXInferenceEngine {
 
     func reservedDirectory(_ output: String?) throws(BasaltError) -> URL {
         let directory = try adapterDirectory(output)
+        try Self.reserve(directory)
+        return directory
+    }
+
+    static func reserve(_ directory: URL) throws(BasaltError) {
         do {
             try FileManager.default.createDirectory(at: directory.deletingLastPathComponent(), withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
         } catch {
             throw .invalidRequestStructure(details: "distill: \(directory.path) could not be reserved (\(error.localizedDescription)); the adapter goes to a new directory, nothing is overwritten")
         }
-        return directory
     }
 
     static func releaseIfEmpty(_ directory: URL) {

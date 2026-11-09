@@ -20,13 +20,14 @@ extension MLXInferenceEngine {
         var before: Float = 0
         for row in rows.heldOut { before += try await steps.read { context in nll([row], context.model) } }
         while progress.step < request.iterations {
-            progress = try await steps.section(&state) { [progress, rows] context, state in
-                let next = progress.advanced(by: try steps.withLoRA(&state, context: context) { context, optimizer, _ in
+            let next = try await steps.section(&state) { [progress, rows] context, state in
+                progress.advanced(by: try steps.withLoRA(&state, context: context) { context, optimizer, _ in
                     try distillStep(rows.train, index: progress.step, batchSize: request.batchSize, optimizer: optimizer, model: context.model)
                 })
-                if next.checkpointDue(every: request.checkpointEvery, of: request.iterations) { try AdapterCheckpoint.write(state, next, to: directory) }
-                return next
             }
+            try await steps.confirm()
+            if next.checkpointDue(every: request.checkpointEvery, of: request.iterations) { try checkpoint(state, next, to: directory) }
+            progress = next
         }
         var after: Float = 0
         for row in rows.heldOut { after += try await steps.trained(&state) { context, _, _ in nll([row], context.model) } }
@@ -45,12 +46,19 @@ extension MLXInferenceEngine {
             return progress
         }
         if request.checkpointEvery > 0 {
-            try await steps.section(&state) { context, state in
-                try steps.withLoRA(&state, context: context) { _, _, _ in }
-                try AdapterCheckpoint.write(state, identity, to: directory)
-            }
+            try await steps.section(&state) { context, state in try steps.withLoRA(&state, context: context) { _, _, _ in } }
+            try await steps.confirm()
+            try checkpoint(state, identity, to: directory)
         }
         return identity
+    }
+
+    static func checkpoint(_ state: AdapterState, _ progress: AdapterProgress, to directory: URL) throws(BasaltError) {
+        do {
+            try AdapterCheckpoint.write(state, progress, to: directory)
+        } catch {
+            throw .inferenceError("distill: the checkpoint in \(directory.path) could not be written: \(briefly(error))")
+        }
     }
 
     static func distillRows(

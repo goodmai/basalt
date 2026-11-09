@@ -125,6 +125,22 @@ struct GenerationGateTests {
         #expect(await gate.checkInvariants(idle: true) == [])
     }
 
+    @Test("A generate still counting its prompt tokens before admission keeps the orchestrator's gate from looking idle", .timeLimit(.minutes(1)))
+    func planningRequestIsArriving() async throws {
+        let engine = MockInferenceEngine()
+        try await engine.load(modelPath: "/mock")
+        let orchestrator = ModelOrchestratorActor(engine: engine, telemetry: TelemetryTracker())
+        await engine.holdTokenCounts()
+        let request = Task { try await orchestrator.generate(request: GenerationRequest(prompt: "hi", maxTokens: 4)) }
+        #expect(await Self.eventually { await engine.heldTokenCounts?.count == 1 })
+        #expect(await !orchestrator.gate.idle(within: .zero), "the request is arriving, not yet queued or running")
+        #expect(await orchestrator.gate.inFlight == 0)
+        #expect(await orchestrator.gate.queued == 0)
+        await engine.releaseTokenCounts()
+        _ = try await request.value
+        #expect(await orchestrator.gate.idle(within: .zero))
+    }
+
     @Test("Two concurrent switches to the same model load it once; a switch to another model meanwhile is 503")
     func singleFlightSwitch() async throws {
         let engine = CountingEngine()
