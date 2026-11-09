@@ -39,7 +39,8 @@ struct PipelineRunner: Sendable {
         let (decision, deciding) = try await decide(request.questions, state: state, origin: origin, sessionId: sessionId)
         let route = PipelineCore.route(questions: request.questions, decision: decision, task: request.task, state: state)
         var replies: [PipelineCore.System2Reply] = []
-        for call in route.calls { replies.append(try await answer(call, origin: origin, sessionId: sessionId)) }
+        let answering = perceived.pages == nil && perceived.transcript == nil ? origin : RequestOrigin(source: PipelineCore.perceivedSource, endpoint: origin.endpoint, stream: false)
+        for call in route.calls { replies.append(try await answer(call, origin: answering, sessionId: sessionId)) }
         let (answers, system2) = PipelineCore.answers(route, replies: replies, questions: request.questions, decision: decision)
         let receipt = PipelineCore.receipt(
             perceiving + [deciding].compactMap { $0 }, replies: replies, answers: answers, ms: Self.elapsed(since: started))
@@ -55,7 +56,7 @@ struct PipelineRunner: Sendable {
             let started = ContinuousClock.now
             switch attachment {
             case .document(let document):
-                let result = try await betweenGenerations(perceiver.betweenGenerations) { () async throws(BasaltError) in try await read(document, pages: request.pages, with: perceiver) }
+                let result = try await readPaged(document, pages: request.pages, with: perceiver)
                 pages += result.pages.map { PipelinePage(attachment: index, page: $0.page, markdown: $0.markdown) }
                 receipts.append(PipelineStageReceipt(
                     stage: .perceive, model: result.model, ms: Self.elapsed(since: started), tokens: result.pages.reduce(0) { $0 + $1.tokens }))
@@ -76,6 +77,19 @@ struct PipelineRunner: Sendable {
         } catch {
             throw error as? BasaltError ?? .cancelled
         }
+    }
+
+    func readPaged(_ document: OCRDocument, pages: String?, with perceiver: PipelineCore.Perceiver) async throws(BasaltError) -> (model: String, pages: [OCRPageResult]) {
+        guard perceiver.betweenGenerations, let numbers = try document.pageNumbers(pages), numbers.count > 1 else {
+            let result = try await betweenGenerations(perceiver.betweenGenerations) { () async throws(BasaltError) in try await read(document, pages: pages, with: perceiver) }
+            return (result.model, result.pages)
+        }
+        var (model, read) = ("", [OCRPageResult]())
+        for number in numbers {
+            let page = try await betweenGenerations(true) { () async throws(BasaltError) in try await self.read(document, pages: String(number), with: perceiver) }
+            (model, read) = (page.model, read + page.pages)
+        }
+        return (model, read)
     }
 
     func read(_ document: OCRDocument, pages: String?, with perceiver: PipelineCore.Perceiver) async throws(BasaltError) -> OCRResult {
@@ -103,14 +117,16 @@ struct PipelineRunner: Sendable {
         _ questions: [String: SystemOneQuestion], state: String, origin: RequestOrigin, sessionId: String?
     ) async throws(BasaltError) -> (SystemOneResponse?, PipelineStageReceipt?) {
         guard !questions.isEmpty, let decisions else { return (nil, nil) }
-        guard !state.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, state.count <= SystemOneCore.maxStateCharacters else { return (nil, nil) }
         let started = ContinuousClock.now
+        guard !state.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, state.count <= SystemOneCore.maxStateCharacters else {
+            return (nil, PipelineCore.skipped(decisions.modelID, ms: Self.elapsed(since: started)))
+        }
         let request = SystemOneRequest(state: state, questions: questions, abstainBelow: stages.abstainBelow, minMargin: stages.minMargin)
         do {
             let response = try await SystemOneController.decide(decisions, request, log: chat.sessionLog, origin: origin, sessionId: sessionId)
             return (response, PipelineCore.decided(response, ms: Self.elapsed(since: started)))
         } catch .contextLengthExceeded, .invalidRequestStructure {
-            return (nil, nil)
+            return (nil, PipelineCore.skipped(decisions.modelID, ms: Self.elapsed(since: started)))
         }
     }
 

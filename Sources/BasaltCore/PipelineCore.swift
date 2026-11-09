@@ -154,6 +154,12 @@ public enum PipelineCore {
         return (answers, system2)
     }
 
+    public static let perceivedSource = "pipeline-perceived"
+
+    public static func skipped(_ model: String, ms: Int) -> PipelineStageReceipt {
+        PipelineStageReceipt(stage: .decide, model: model, ms: ms, tokens: 0, escalated: true)
+    }
+
     public static func decided(_ response: SystemOneResponse, ms: Int) -> PipelineStageReceipt {
         PipelineStageReceipt(
             stage: .decide, model: response.model, ms: ms, tokens: response.usage.prefixTokens + response.usage.suffixTokens,
