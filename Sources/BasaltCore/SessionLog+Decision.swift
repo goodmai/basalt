@@ -27,9 +27,11 @@ extension SessionLogRecord {
         public let prefixTokens: Int
         public let branches: Int
         public let latencyMs: Double
+        public let cost: Double?
+        public let stages: [SystemOneStage]?
 
         enum CodingKeys: String, CodingKey {
-            case v, type, ts, session, source, endpoint, model, state, questions, escalate, calibrated, branches
+            case v, type, ts, session, source, endpoint, model, state, questions, escalate, calibrated, branches, cost, stages
             case stateText = "state_text", prefixTokens = "prefix_tokens", latencyMs = "latency_ms"
         }
     }
@@ -50,6 +52,6 @@ extension SessionLogWriter {
             source: origin.source, endpoint: origin.endpoint, model: response.model, state: .init(request.state),
             stateText: mode == .full ? (redacts ? SecretRedactor.redact(request.state) : request.state) : nil, questions: questions, escalate: response.escalate,
             calibrated: response.calibrated, prefixTokens: response.usage.prefixTokens, branches: response.usage.candidateBranches,
-            latencyMs: latencyMs), session: stamped.session)
+            latencyMs: latencyMs, cost: response.usage.cost, stages: response.usage.stages), session: stamped.session)
     }
 }

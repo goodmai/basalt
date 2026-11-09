@@ -114,6 +114,17 @@ package final class HubHeadRedirects: NSObject, URLSessionTaskDelegate, Sendable
     }
 }
 
+package final class NoRedirects: NSObject, URLSessionTaskDelegate, Sendable {
+    package override init() {}
+
+    package func urlSession(
+        _ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+        newRequest request: URLRequest
+    ) async -> URLRequest? {
+        nil
+    }
+}
+
 package enum HubDigest: Equatable, Sendable {
     case sha256(String)
     case gitBlobSHA1(String)

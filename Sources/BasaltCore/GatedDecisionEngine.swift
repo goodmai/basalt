@@ -8,7 +8,7 @@ public struct GatedDecisionEngine: DecisionEngine {
 
     public static func serving(_ engine: (any DecisionEngine)?, gate: GenerationGate, besideDecode: Bool = true) -> (any DecisionEngine)? {
         guard let engine else { return nil }
-        guard !(engine is GatedDecisionEngine), !(besideDecode && engine.runsBesideDecode) else { return engine }
+        guard !(engine is GatedDecisionEngine), !(engine is CascadeDecisionEngine), !(besideDecode && engine.runsBesideDecode) else { return engine }
         return GatedDecisionEngine(inner: engine, gate: gate)
     }
 

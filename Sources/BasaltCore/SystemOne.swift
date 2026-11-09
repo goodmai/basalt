@@ -56,6 +56,8 @@ public struct SystemOneAnswer: Codable, Sendable, Equatable {
     public var legend: [String]?
     public var margin: Double?
     public var abstain: Bool?
+
+    public init() {}
 }
 
 public struct SystemOneUsage: Codable, Sendable, Equatable {
@@ -65,6 +67,8 @@ public struct SystemOneUsage: Codable, Sendable, Equatable {
     public var branchForwardCalls: Int
     public var suffixTokens: Int
     public var outputDecodingTokens = 0
+    public var cost: Double?
+    public var stages: [SystemOneStage]?
 
     public init(prefixTokens: Int, candidateBranches: Int, prefixEvaluations: Int, branchForwardCalls: Int, suffixTokens: Int) {
         (self.prefixTokens, self.candidateBranches, self.prefixEvaluations) = (prefixTokens, candidateBranches, prefixEvaluations)
@@ -74,6 +78,23 @@ public struct SystemOneUsage: Codable, Sendable, Equatable {
     enum CodingKeys: String, CodingKey {
         case prefixTokens = "prefix_tokens", candidateBranches = "candidate_branches", prefixEvaluations = "prefix_evaluations"
         case branchForwardCalls = "branch_forward_calls", suffixTokens = "suffix_tokens", outputDecodingTokens = "output_decoding_tokens"
+        case cost, stages
+    }
+}
+
+public struct SystemOneStage: Codable, Sendable, Equatable {
+    public var model: String
+    public var questions: [String]
+    public var latencyMs: Int
+    public var cost: Double?
+    public var fallback: String?
+
+    public init(model: String, questions: [String], latencyMs: Int, cost: Double? = nil, fallback: String? = nil) {
+        (self.model, self.questions, self.latencyMs, self.cost, self.fallback) = (model, questions, latencyMs, cost, fallback)
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case model, questions, cost, fallback, latencyMs = "latency_ms"
     }
 }
 
@@ -93,11 +114,13 @@ public struct SystemOneResponse: Codable, Sendable, Equatable {
 public protocol DecisionEngine: Sendable {
     var modelID: String { get }
     var runsBesideDecode: Bool { get }
+    var onDevice: (any DecisionEngine)? { get }
     func decide(_ request: SystemOneRequest) async throws(BasaltError) -> SystemOneResponse
 }
 
 extension DecisionEngine {
     public var runsBesideDecode: Bool { false }
+    public var onDevice: (any DecisionEngine)? { self }
 }
 
 public enum SystemOneCore {
