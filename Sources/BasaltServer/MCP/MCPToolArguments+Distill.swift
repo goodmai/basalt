@@ -42,5 +42,7 @@ extension DistillRequest {
         maxSeqLen = try MCPArguments.integer("maxSeqLen", in: args, ResearchCall.nonNegative) ?? maxSeqLen
         output = try MCPArguments.string("output", in: args)
         onPolicy = try MCPArguments.optionalBoolean("onPolicy", in: args) ?? onPolicy
+        checkpointEvery = try MCPArguments.integer("checkpointEvery", in: args, ResearchCall.nonNegative) ?? checkpointEvery
+        resume = try MCPArguments.optionalBoolean("resume", in: args) ?? resume
     }
 }

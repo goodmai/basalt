@@ -85,7 +85,7 @@ public enum ComputePlan {
         case (.bandwidthStreaming, _):
             return Placement(workload: workload, concurrentWithDecode: false, maxDuty: degraded ? 0 : 0.1, expectedDecodeDrop: 0.06...0.08, note: "bandwidth-bound: queued, or paced to at most 10% duty")
         case (.training, _):
-            return Placement(workload: workload, concurrentWithDecode: false, maxDuty: nil, expectedDecodeDrop: nil, note: "training holds the model exclusively until preemptible steps land (#399 phase 2)")
+            return Placement(workload: workload, concurrentWithDecode: false, maxDuty: nil, expectedDecodeDrop: nil, note: "distillation is time-sliced on the shared base weights, one optimizer step per hold, so requests wait at most one step; train and JEPA still hold the model for the whole run")
         }
     }
 

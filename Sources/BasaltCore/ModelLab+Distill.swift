@@ -44,6 +44,8 @@ public struct DistillRequest: Sendable, Codable, Equatable {
     public var gate: GateRequest
     public var output: String?
     public var onPolicy = false
+    public var checkpointEvery = 50
+    public var resume = false
 
     public init(prompts: String, teacher: TeacherSpec, gate: GateRequest) {
         self.prompts = prompts
@@ -75,6 +77,7 @@ public struct DistillReport: Sendable, Codable {
     public var reverseKLAfter: Float?
     public var cacheDirectory: String?
     public var adapterDirectory: String?
+    public var resumedAt: Int?
     public var verdict: AdapterVerdict?
 
     public init() {}

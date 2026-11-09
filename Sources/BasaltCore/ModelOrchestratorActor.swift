@@ -314,6 +314,8 @@ extension ModelOrchestratorActor {
     private func admit(
         _ request: GenerationRequest
     ) async throws(BasaltError) -> (request: GenerationRequest, ticket: Int, queueWait: Duration) {
+        await gate.arrive()
+        defer { await gate.arrived() }
         var plan = try await capped(request)
         let queued = ContinuousClock.now
         let ticket = try await admitted(request)
