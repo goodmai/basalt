@@ -22,6 +22,7 @@ public struct BasaltCLI: AsyncParsableCommand {
           basalt models download mlx-community/…             Download specific model
           basalt serve --model mlx-community/…               Start inference server
           basalt chat  --model mlx-community/…               Interactive chat
+          basalt ocr page.pdf --model mlx-community/GLM-OCR-bf16  PDF or image to Markdown
         RECOMMENDED MODELS (by RAM)
           mlx-community/gemma-4-e2b-it-4bit               Gemma 4 2B   ~2.7 GB
           mlx-community/Qwen3.5-4B-4bit                   Qwen3.5 4B   ~3.0 GB
@@ -73,6 +74,7 @@ public struct BasaltCLI: AsyncParsableCommand {
             ServeCommand.self,
             ModelsCommand.self,
             ChatCommand.self,
+            OCRCommand.self,
             SessionsCommand.self,
             CloudCommand.self,
             HarnessCommand.self,

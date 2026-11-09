@@ -51,6 +51,8 @@ public actor ModelOrchestratorActor {
 
     var kvReservations: [Int: ByteCount] { state.reservations.bytes }
 
+    var loaded: (path: String, epoch: Int) { (state.modelPath, state.modelEpoch) }
+
     var routingModelKey: String {
         "\(modelInfo)@\(URL(fileURLWithPath: state.modelPath).lastPathComponent)"
     }
@@ -145,7 +147,7 @@ extension ModelOrchestratorActor {
         }
     }
 
-    private func autoSwitch(to modelId: String?) async throws(BasaltError) {
+    func autoSwitch(to modelId: String?) async throws(BasaltError) {
         guard let id = modelId, !id.isEmpty, id != "basalt" else { return }
         if await engine.isLoaded { return }
         guard id != currentModelId else { return }

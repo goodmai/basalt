@@ -27,6 +27,11 @@ enum MCPImages {
     }
 
     static func file(_ path: String, allowedIn directories: [URL]) throws(BasaltError) -> ImageInput {
+        let (target, data) = try read(path, allowedIn: directories)
+        return try ImageInput(data: data, mime: UTType(filenameExtension: target.pathExtension)?.preferredMIMEType ?? target.pathExtension)
+    }
+
+    static func read(_ path: String, allowedIn directories: [URL]) throws(BasaltError) -> (url: URL, data: Data) {
         let target = resolved(URL(fileURLWithPath: path))
         guard directories.contains(where: { contains($0, target) }) else {
             throw .invalidRequestStructure(details: "the image path \(path) is not inside a directory given with serve --image-dir")
@@ -34,7 +39,7 @@ enum MCPImages {
         guard let data = try? Data(contentsOf: target, options: .mappedIfSafe) else {
             throw .invalidRequestStructure(details: "the image at \(path) cannot be read")
         }
-        return try ImageInput(data: data, mime: UTType(filenameExtension: target.pathExtension)?.preferredMIMEType ?? target.pathExtension)
+        return (target, data)
     }
 
     static func resolved(_ url: URL) -> URL {

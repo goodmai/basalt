@@ -71,6 +71,7 @@ enum MCPToolCatalog {
                 "temperature": ["type": "number", "description": "Sampling temperature 0-1 (default 0)"],
             ], required: ["audio", "format"])
         ),
+        ocr,
         MCPToolDescriptor(name: "gemma_generate", description: "Generate text using the locally-running Gemma model via MLX.", inputSchema: generateSchema),
         MCPToolDescriptor(name: "gemma_status", description: statusDescription, inputSchema: emptySchema),
         MCPToolDescriptor(name: "gemma_add_knowledge", description: addKnowledgeDescription, inputSchema: addKnowledgeSchema),

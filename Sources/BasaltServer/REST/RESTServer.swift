@@ -124,6 +124,7 @@ package struct RESTServer: Sendable {
         oai.post("/embeddings", use: embedding.embeddings)
         oai.post("/rerank", use: embedding.rerank)
         oai.post("/audio/transcriptions", use: TranscriptionsController(orchestrator: orchestrator).transcriptions)
+        oai.post("/ocr", use: OCRController(orchestrator: orchestrator).ocr)
     }
 
     private func addDocumentationRoutes(to router: Router<BasicRequestContext>) {
@@ -188,7 +189,8 @@ extension RESTServer {
         "/v1/score":               { "post": { "summary": "Top-k logprobs of supplied completion token ids after chat messages, in one forward pass (teacher for on-policy distill)" } },
         "/v1/embeddings":          { "post": { "summary": "OpenAI-compatible embeddings (serve --embedding-model)" } },
         "/v1/rerank":              { "post": { "summary": "Cohere/Jina-compatible rerank (serve --rerank-model)" } },
-        "/v1/audio/transcriptions": { "post": { "summary": "OpenAI-compatible speech to text (multipart: file, model, language, response_format, temperature)" } }
+        "/v1/audio/transcriptions": { "post": { "summary": "OpenAI-compatible speech to text (multipart: file, model, language, response_format, temperature)" } },
+        "/v1/ocr":                 { "post": { "summary": "Document OCR with GLM-OCR or MinerU2.5 (JSON: file as base64 PDF or image, pages such as 1-3, task document|text|table|formula|chart, format markdown|json, model)" } }
       }
     }
     """

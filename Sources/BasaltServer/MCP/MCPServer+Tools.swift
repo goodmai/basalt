@@ -29,6 +29,7 @@ extension MCPServer {
         case .research(let tool): try await research(tool, args)
         case .introspect: try await introspect(args)
         case .transcribe: try await transcribe(args)
+        case .ocr: try await ocr(args)
         }
     }
 
