@@ -81,10 +81,9 @@ extension ServeCommand {
                     orchestrator: orchestrator,
                     config: launch.config,
                     embeddings: launch.embeddings,
-                    decisions: launch.decisions,
                     shutdownDeadline: launch.shutdownDeadline,
                     handleSignals: launch.handleSignals
-                )
+                ).withDecisions(launch.decisions)
                 group.addTask { try await restServer.run() }
             }
             if let mcpServer = launch.mcpServer {

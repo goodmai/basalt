@@ -28,9 +28,12 @@ extension MCPServer {
         case .harnessOptimize: try await optimizeHarness(args)
         case .research(let tool): try await research(tool, args)
         case .introspect: try await introspect(args)
-        case .transcribe: try await transcribe(args)
-        case .systemOne: try await decide(args)
+        case .transcribe, .systemOne: try await sidecar(tool, args)
         }
+    }
+
+    private func sidecar(_ tool: MCPTool, _ args: [String: Any]?) async throws(MCPFailure) -> ToolResult {
+        tool == .systemOne ? try await decide(args) : try await transcribe(args)
     }
 
     private func research(_ tool: ResearchTool, _ args: [String: Any]?) async throws(MCPFailure) -> ToolResult {

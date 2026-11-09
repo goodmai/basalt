@@ -32,7 +32,7 @@ struct SystemOneAPITests {
 
     private func app(_ engine: StubDecisionEngine?) throws -> Application<RouterResponder<BasicRequestContext>> {
         let orchestrator = ModelOrchestratorActor(engine: MockInferenceEngine(), maxTokens: 65536, telemetry: TelemetryTracker())
-        return Application(router: RESTServer(orchestrator: orchestrator, config: try ServerConfig(modelPath: "org/mock-model"), decisions: engine).makeRouter())
+        return Application(router: RESTServer(orchestrator: orchestrator, config: try ServerConfig(modelPath: "org/mock-model")).withDecisions(engine).makeRouter())
     }
 
     private func post(_ client: some TestClientProtocol, _ body: String) async throws -> (HTTPResponse.Status, [String: Any]) {

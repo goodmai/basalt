@@ -9,7 +9,7 @@ package struct RESTServer: Sendable {
     let orchestrator: ModelOrchestratorActor
     let config: ServerConfig
     let embeddings: (any EmbeddingEngine)?
-    let decisions: (any DecisionEngine)?
+    private(set) var decisions: (any DecisionEngine)?
 
     let shutdownDeadline: Duration
     let handleSignals: Bool
@@ -19,7 +19,6 @@ package struct RESTServer: Sendable {
         orchestrator: ModelOrchestratorActor,
         config: ServerConfig,
         embeddings: (any EmbeddingEngine)? = nil,
-        decisions: (any DecisionEngine)? = nil,
         shutdownDeadline: Duration = .seconds(5),
         handleSignals: Bool = true,
         rateClock: @escaping @Sendable () -> Double = { ProcessInfo.processInfo.systemUptime }
@@ -27,10 +26,16 @@ package struct RESTServer: Sendable {
         self.orchestrator = orchestrator
         self.config = config
         self.embeddings = embeddings
-        self.decisions = decisions
+        self.decisions = nil
         self.shutdownDeadline = shutdownDeadline
         self.handleSignals = handleSignals
         self.rateClock = rateClock
+    }
+
+    package func withDecisions(_ engine: (any DecisionEngine)?) -> RESTServer {
+        var server = self
+        server.decisions = engine
+        return server
     }
 
     package func run() async throws {
