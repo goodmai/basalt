@@ -121,6 +121,6 @@ public struct OCRRecipe: Sendable, Equatable {
             let text = finished(output, blockType: blockType)
             return (text, [OCRBlock(type: blockType, bbox: .page, text: text)])
         }
-        return DeepSeekGrounding.parse(output)
+        return DeepSeekGrounding.parse(output, blockType: blockType)
     }
 }

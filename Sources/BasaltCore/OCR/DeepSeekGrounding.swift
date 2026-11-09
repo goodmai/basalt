@@ -4,12 +4,12 @@ enum DeepSeekGrounding {
     static let prefix = "<|grounding|>"
     static let scale = 999.0
 
-    static func parse(_ output: String) -> (markdown: String, blocks: [OCRBlock]) {
+    static func parse(_ output: String, blockType: String) -> (markdown: String, blocks: [OCRBlock]) {
         let tag = #/<\|ref\|>(?<type>.*?)<\|/ref\|><\|det\|>(?<boxes>.*?)<\|/det\|>/#
         let matches = output.matches(of: tag)
         guard !matches.isEmpty else {
             let text = output.trimmingCharacters(in: .whitespacesAndNewlines)
-            return (text, [OCRBlock(type: "text", bbox: .page, text: text)])
+            return (text, [OCRBlock(type: blockType, bbox: .page, text: text)])
         }
         let blocks = matches.enumerated().map { index, match in
             let end = index + 1 < matches.count ? matches[index + 1].range.lowerBound : output.endIndex

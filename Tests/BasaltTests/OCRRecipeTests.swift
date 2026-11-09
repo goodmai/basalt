@@ -138,6 +138,7 @@ struct OCRRecipeTests {
         #expect(read.blocks[2].bbox.x2 == 1)
         let plain = OCRRecipe(family: .deepSeekOCR).read(" plain text \n", blockType: "text")
         #expect(plain.markdown == "plain text" && plain.blocks == [OCRBlock(type: "text", bbox: .page, text: "plain text")])
+        #expect(OCRRecipe(family: .deepSeekOCR).read("a chart", blockType: "chart").blocks.map(\.type) == ["chart"])
         #expect(DeepSeekGrounding.box("[[1, 2, 3]]") == .page)
         #expect(OCRRecipe(family: .paddleOCR).read(" x ", blockType: "text").blocks == [OCRBlock(type: "text", bbox: .page, text: "x")])
     }

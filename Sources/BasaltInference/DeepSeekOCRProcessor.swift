@@ -73,7 +73,7 @@ struct DeepSeekOCRProcessor: UserInputProcessor {
 
     static func contained(width: Int, height: Int, side: Int) -> CGRect {
         let (w, h, s) = (Double(width), Double(height), Double(side))
-        let size = w == h ? (s, s) : w > h ? (s, (h / w * s).rounded(.toNearestOrEven)) : ((w / h * s).rounded(.toNearestOrEven), s)
+        let size = w == h ? (s, s) : w > h ? (s, max(1, (h / w * s).rounded(.toNearestOrEven))) : (max(1, (w / h * s).rounded(.toNearestOrEven)), s)
         let top = ((s - size.1) * 0.5).rounded(.toNearestOrEven)
         let left = ((s - size.0) * 0.5).rounded(.toNearestOrEven)
         return CGRect(x: left, y: s - top - size.1, width: size.0, height: size.1)

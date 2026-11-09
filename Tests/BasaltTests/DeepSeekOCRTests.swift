@@ -178,6 +178,7 @@ struct DeepSeekOCRProcessorTests {
             let rect = DeepSeekOCRProcessor.contained(width: size[0], height: size[1], side: 1024)
             #expect([Int(rect.minX), 1024 - Int(rect.maxY), Int(rect.maxX), 1024 - Int(rect.minY)] == box, "\(size)")
         }
+        #expect(DeepSeekOCRProcessor.contained(width: 50_000, height: 1, side: 1024).height == 1)
     }
 
     @Test("The prompt follows mlx-vlm: images then the text of each turn plus a space, grounding on the last turn, BOS first, image runs sized by the layout and the trailing token dropped")
