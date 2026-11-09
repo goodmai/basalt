@@ -10,11 +10,13 @@ extension MLXInferenceEngine {
     static func distillAdapter(
         _ train: [TrainingTask], heldOut: [TrainingTask], request: DistillRequest, directory: URL, steps: AdapterSteps
     ) async throws(BasaltError) -> DistillRun {
-        let rows = try await steps.read { context in try distillRows(train, heldOut: heldOut, maxSeqLen: request.maxSeqLen, context) }
-        var progress = request.resume ? try AdapterCheckpoint.progress(in: directory, for: request) : AdapterProgress(request)
-        let resumedAt = request.resume ? progress.step : nil
+        let (rows, layerCount) = try await steps.read { context in
+            (try distillRows(train, heldOut: heldOut, maxSeqLen: request.maxSeqLen, context), loraBlocks(of: context.model).count)
+        }
+        let identity = AdapterProgress(request, model: steps.fingerprint, data: AdapterProgress.digest(rows.train + rows.heldOut), layerCount: layerCount)
         var state = AdapterState(optimizer: Adam(learningRate: request.learningRate))
-        if request.resume { try await steps.section(&state) { _, state in try AdapterCheckpoint.restore(&state, from: directory) } }
+        var progress = try await started(&state, identity, request: request, directory: directory, steps: steps)
+        let resumedAt = request.resume ? progress.step : nil
         var before: Float = 0
         for row in rows.heldOut { before += try await steps.read { context in nll([row], context.model) } }
         while progress.step < request.iterations {
@@ -32,6 +34,23 @@ extension MLXInferenceEngine {
         AdapterCheckpoint.discard(in: directory)
         let count = Float(rows.heldOut.count)
         return DistillRun(losses: reported(progress.losses), nllBefore: before / count, nllAfter: after / count, tooLong: rows.tooLong, resumedAt: resumedAt)
+    }
+
+    static func started(
+        _ state: inout sending AdapterState, _ identity: AdapterProgress, request: DistillRequest, directory: URL, steps: AdapterSteps
+    ) async throws(BasaltError) -> AdapterProgress {
+        if request.resume {
+            let progress = try AdapterCheckpoint.progress(in: directory, as: identity, iterations: request.iterations)
+            try await steps.section(&state) { context, state in try steps.restore(&state, from: directory, context: context) }
+            return progress
+        }
+        if request.checkpointEvery > 0 {
+            try await steps.section(&state) { context, state in
+                try steps.withLoRA(&state, context: context) { _, _, _ in }
+                try AdapterCheckpoint.write(state, identity, to: directory)
+            }
+        }
+        return identity
     }
 
     static func distillRows(

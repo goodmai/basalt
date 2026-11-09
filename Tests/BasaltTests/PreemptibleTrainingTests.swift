@@ -6,7 +6,7 @@ import Synchronization
 @testable import BasaltCore
 @testable import BasaltInference
 
-@Suite("Preemptible distillation: one model hold per optimizer step, requests served between steps, checkpoint and resume (#399 phase 2)", .serialized)
+@Suite("Preemptible distillation: one model hold per optimizer step, requests served between steps, checkpoint and resume (#399 phase 2)", .serialized, .timeLimit(.minutes(1)))
 struct PreemptibleTrainingTests {
     static let train = (0 ..< 8).map { TrainingTask(prompt: "Name the colour number \($0).", answer: "The colour is blue, as in \($0 % 2 == 0 ? "sky" : "sea").") }
     static let heldOut = (8 ..< 10).map { TrainingTask(prompt: "Name the colour number \($0).", answer: "The colour is blue.") }
@@ -18,13 +18,13 @@ struct PreemptibleTrainingTests {
         return request
     }
 
-    static func steps(_ engine: MLXInferenceEngine, _ request: DistillRequest, lease: StepLease?) async throws -> AdapterSteps {
-        AdapterSteps(engine: engine, container: try #require(await engine.container), layers: request.layers, rank: request.rank, lease: lease, what: "distillation")
+    static func run(_ engine: MLXInferenceEngine, _ request: DistillRequest, lease: StepLease? = nil) async throws -> DistillRun {
+        let directory = request.resume ? URL(fileURLWithPath: try #require(request.output)) : try await engine.reservedDirectory(request.output)
+        let steps = try await engine.adapterSteps(layers: request.layers, rank: request.rank, lease: lease, what: "distillation")
+        return try await MLXInferenceEngine.distillAdapter(train, heldOut: heldOut, request: request, directory: directory, steps: steps)
     }
 
-    static func run(_ engine: MLXInferenceEngine, _ request: DistillRequest, lease: StepLease? = nil) async throws -> DistillRun {
-        try await MLXInferenceEngine.distillAdapter(train, heldOut: heldOut, request: request, directory: URL(fileURLWithPath: try #require(request.output)), steps: try await steps(engine, request, lease: lease))
-    }
+    static func savedStep(_ output: URL) -> Int? { try? AdapterCheckpoint.saved(in: output).step }
 
     @Test("Requests queued during a step are served before the next step; training then finishes every step on unchanged base weights")
     func requestsServedBetweenSteps() async throws {
@@ -45,7 +45,7 @@ struct PreemptibleTrainingTests {
                     let tasks = (0 ..< count).map { _ in Task { try await orchestrator.generate(request: GenerationRequest(prompt: "Hi", maxTokens: 4, temperature: 0)) } }
                     replies.withLock { $0 = tasks }
                     let gate = orchestrator.gate
-                    while await gate.arriving + gate.queued < count { await Task.yield() }
+                    while await gate.arriving + gate.queued < count, !Task.isCancelled { await Task.yield() }
                 case 4:
                     let gate = orchestrator.gate
                     let state = (await gate.queued + gate.arriving, await gate.inFlight)
@@ -77,7 +77,7 @@ struct PreemptibleTrainingTests {
         let copied = Mutex(false)
         let snapshot = StepLease(enter: {
             let source = AdapterCheckpoint.directory(in: full)
-            if FileManager.default.fileExists(atPath: source.path), !copied.withLock({ $0 }) {
+            if Self.savedStep(full) == 2, !copied.withLock({ $0 }) {
                 try? FileManager.default.createDirectory(at: copy, withIntermediateDirectories: true)
                 try? FileManager.default.copyItem(at: source, to: AdapterCheckpoint.directory(in: copy))
                 copied.withLock { $0 = true }
@@ -89,7 +89,7 @@ struct PreemptibleTrainingTests {
 
         var resume = Self.request(output: copy)
         resume.resume = true
-        let saved = try AdapterCheckpoint.progress(in: copy, for: resume)
+        let saved = try AdapterCheckpoint.saved(in: copy)
         #expect(saved.step == 2 && saved.losses == Array(reference.losses.prefix(2)))
         let resumed = try await Self.run(engine, resume)
         #expect(resumed.resumedAt == 2)
@@ -105,7 +105,7 @@ struct PreemptibleTrainingTests {
         let output = try DistillTests.scratch().appending(path: "interrupted")
         let progress = AdapterCheckpoint.directory(in: output).appending(component: "progress.json")
         let cancelling = StepLease(enter: {
-            if FileManager.default.fileExists(atPath: progress.path) { withUnsafeCurrentTask { $0?.cancel() } }
+            if Self.savedStep(output) == 2 { withUnsafeCurrentTask { $0?.cancel() } }
             return 0
         }, leave: { _ in })
         let failure = await #expect(throws: BasaltError.self) {
@@ -118,27 +118,43 @@ struct PreemptibleTrainingTests {
         #expect(!FileManager.default.fileExists(atPath: output.appending(component: "adapters.safetensors").path))
     }
 
-    @Test("Checkpoints fall every N steps but never on the last; resume refuses other settings, a finished step count or a missing checkpoint")
-    func checkpointRules() throws {
-        let request = Self.request(output: URL(fileURLWithPath: "/nonexistent-\(UUID().uuidString)"))
-        var progress = AdapterProgress(request)
+    @Test("Checkpoints fall every N steps but never on the last; resume refuses another model, other rows, other settings or a finished step count")
+    func checkpointRules() {
+        let request = Self.request(output: URL(fileURLWithPath: "/"))
+        let identity = AdapterProgress(request, model: "m", data: "d", layerCount: 4)
+        var progress = identity
         let due = (1 ... 6).map { _ in
             progress = progress.advanced(by: 1)
             return progress.checkpointDue(every: 2, of: 6)
         }
         #expect(due == [false, true, false, true, false, false])
         #expect(!progress.checkpointDue(every: 0, of: 100))
-        #expect(progress.resumable(by: Self.request(output: URL(fileURLWithPath: "/"), iterations: 9)) == nil)
-        #expect(progress.resumable(by: request)?.contains("iterations must be larger") == true)
-        var otherRank = Self.request(output: URL(fileURLWithPath: "/"), iterations: 9)
+        #expect(identity.layers == [0, 1, 2, 3])
+        #expect(progress.resumable(as: identity, iterations: 9) == nil)
+        #expect(progress.resumable(as: identity, iterations: 6)?.contains("iterations must be larger") == true)
+        #expect(progress.resumable(as: AdapterProgress(request, model: "other", data: "d", layerCount: 4), iterations: 9)?.contains("another model") == true)
+        #expect(progress.resumable(as: AdapterProgress(request, model: "m", data: "other", layerCount: 4), iterations: 9)?.contains("training rows differ") == true)
+        #expect(progress.resumable(as: AdapterProgress(request, model: "m", data: "d", layerCount: 5), iterations: 9)?.contains("same settings") == true)
+        var otherRank = request
         otherRank.rank = 8
-        #expect(progress.resumable(by: otherRank)?.contains("same settings") == true)
+        #expect(progress.resumable(as: AdapterProgress(otherRank, model: "m", data: "d", layerCount: 4), iterations: 9)?.contains("same settings") == true)
         var resume = request
-        resume.resume = true
-        #expect(throws: BasaltError.self) { try MLXInferenceEngine.resumedDirectory(resume) }
-        resume.output = nil
-        #expect(throws: BasaltError.self) { try MLXInferenceEngine.resumedDirectory(resume) }
-        resume.onPolicy = true
+        (resume.resume, resume.onPolicy) = (true, true)
         #expect(throws: BasaltError.self) { try MLXInferenceEngine.validate(resume) }
+    }
+
+    @Test("Restore takes exactly the LoRA keys and shapes and Adam's m, v and step per key; anything else is refused before it touches the model")
+    func restoreChecksKeys() {
+        let trainable = ["a.lora_a": [4, 8], "a.lora_b": [8, 4]]
+        let optimizer = trainable.reduce(into: [String: [Int]]()) { all, entry in
+            (all["\(entry.key).m"], all["\(entry.key).v"], all["\(entry.key).step"]) = (entry.value, entry.value, [])
+        }
+        #expect(AdapterCheckpoint.mismatch(weights: trainable, optimizer: optimizer, trainable: trainable) == nil)
+        #expect(AdapterCheckpoint.mismatch(weights: trainable, optimizer: [:], trainable: trainable) == nil)
+        #expect(AdapterCheckpoint.mismatch(weights: trainable.merging(["model.embed_tokens.weight": [16, 8]]) { $1 }, optimizer: optimizer, trainable: trainable)?.contains("model.embed_tokens.weight") == true)
+        #expect(AdapterCheckpoint.mismatch(weights: ["a.lora_a": [4, 8], "a.lora_b": [4, 4]], optimizer: optimizer, trainable: trainable) != nil)
+        #expect(AdapterCheckpoint.mismatch(weights: trainable, optimizer: optimizer.merging(["layers.0.m": [1]]) { $1 }, trainable: trainable) != nil)
+        #expect(AdapterCheckpoint.mismatch(weights: trainable, optimizer: optimizer.filter { $0.key != "a.lora_b.step" }, trainable: trainable) != nil)
+        #expect(AdapterCheckpoint.mismatch(weights: trainable, optimizer: optimizer.merging(["a.lora_a.step": [2]]) { $1 }, trainable: trainable) != nil)
     }
 }

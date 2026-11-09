@@ -30,21 +30,31 @@ extension MLXInferenceEngine {
     func distill(
         _ request: DistillRequest, session: URLSession, home: URL, environment: [String: String] = ProcessInfo.processInfo.environment, lease: StepLease? = nil
     ) async throws(BasaltError) -> DistillReport {
-        guard let container else { throw .modelNotLoaded }
         try Self.validate(request)
+        let steps = try adapterSteps(layers: request.layers, rank: request.rank, lease: lease, what: request.onPolicy ? "on-policy distillation" : "distillation")
         let data: Data
         do { data = try Data(contentsOf: URL(fileURLWithPath: (request.prompts as NSString).expandingTildeInPath)) } catch {
             throw .invalidRequestStructure(details: "distill: could not read the prompts \(request.prompts): \(error.localizedDescription)")
         }
         let examples = try DistillCore.examples(jsonl: String(decoding: data, as: UTF8.self))
-        let directory = request.resume ? try Self.resumedDirectory(request) : try adapterDirectory(request.output)
         let teacher = try TeacherClient(request.teacher.url, model: request.teacher.model, provider: request.teacher.provider, environment: environment, session: session)
-        if request.onPolicy { return try await onPolicyDistill(request, examples: examples, teacher: teacher, directory: directory, lease: lease) }
         let cache = DistillCache(directory: DistillCache.directory(for: request, prompts: data, home: home))
+        let directory = request.resume ? try resumedDirectory(request.output) : try reservedDirectory(request.output)
+        do {
+            return try await distilled(request, examples: examples, teacher: teacher, cache: cache, directory: directory, steps: steps)
+        } catch {
+            if !request.resume { Self.releaseIfEmpty(directory) }
+            throw error
+        }
+    }
+
+    func distilled(
+        _ request: DistillRequest, examples: [DistillExample], teacher: TeacherClient, cache: DistillCache, directory: URL, steps: AdapterSteps
+    ) async throws(BasaltError) -> DistillReport {
+        if request.onPolicy { return try await onPolicyDistill(request, examples: examples, teacher: teacher, directory: directory, steps: steps) }
         var report = try await Self.collect(request, examples: examples, teacher: teacher, cache: cache)
         let (train, heldOut) = Self.pairs(request, examples: examples, entries: cache.load(), markers: profile.thinkingMarkers, report: &report)
         guard !train.isEmpty, !heldOut.isEmpty else { return report }
-        let steps = AdapterSteps(engine: self, container: container, layers: request.layers, rank: request.rank, lease: lease, what: "distillation")
         let run = try await Self.distillAdapter(train, heldOut: heldOut, request: request, directory: directory, steps: steps)
         (report.losses, report.teacherNLLBefore, report.teacherNLLAfter, report.resumedAt) = (run.losses, run.nllBefore, run.nllAfter, run.resumedAt)
         report.rejected["too_long", default: 0] += run.tooLong
@@ -61,15 +71,6 @@ extension MLXInferenceEngine {
         } catch {
             throw .inferenceError("the adapter was distilled and saved in \(directory.path) but not applied: \(Self.briefly(error))")
         }
-    }
-
-    static func resumedDirectory(_ request: DistillRequest) throws(BasaltError) -> URL {
-        guard let output = request.output else {
-            throw .invalidRequestStructure(details: "distill: resume continues the run in output; give the adapter directory of the interrupted run")
-        }
-        let directory = URL(fileURLWithPath: (output as NSString).expandingTildeInPath)
-        _ = try AdapterCheckpoint.progress(in: directory, for: request)
-        return directory
     }
 
     static func validate(_ request: DistillRequest) throws(BasaltError) {

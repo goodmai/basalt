@@ -57,7 +57,7 @@ struct PreemptibleTrainingRealModelTests {
     }
 
     static func exclusiveSeconds(_ engine: MLXInferenceEngine, _ container: ModelContainer, rows: [DistillRow], steps: Int) async throws -> Double {
-        let adapter = AdapterSteps(engine: engine, container: container, layers: nil, rank: 16, lease: nil, what: "distillation")
+        let adapter = try await engine.adapterSteps(layers: nil, rank: 16, lease: nil, what: "distillation")
         return try await container.performEvaluating(nonSendable: ()) { context, _ in
             var state = AdapterState(optimizer: Adam(learningRate: 1e-4))
             let start = ContinuousClock.now
@@ -88,11 +88,10 @@ struct PreemptibleTrainingRealModelTests {
 
     static func distill(_ orchestrator: ModelOrchestratorActor, _ engine: MLXInferenceEngine, iterations: Int, sections: Sections) async throws(BasaltError) -> DistillRun {
         let request = request(iterations: iterations)
-        let container = await engine.container
+        let directory = try await engine.reservedDirectory(request.output)
         return try await orchestrator.preemptibly { _, lease throws(BasaltError) in
-            guard let container else { throw .modelNotLoaded }
-            let steps = AdapterSteps(engine: engine, container: container, layers: nil, rank: request.rank, lease: recorded(lease, sections), what: "distillation")
-            return try await MLXInferenceEngine.distillAdapter(tasks(0 ..< 64), heldOut: tasks(64 ..< 68), request: request, directory: URL(fileURLWithPath: request.output ?? ""), steps: steps)
+            let steps = try await engine.adapterSteps(layers: nil, rank: request.rank, lease: recorded(lease, sections), what: "distillation")
+            return try await MLXInferenceEngine.distillAdapter(tasks(0 ..< 64), heldOut: tasks(64 ..< 68), request: request, directory: directory, steps: steps)
         }
     }
 

@@ -72,13 +72,17 @@ extension MLXInferenceEngine {
         let stamp = String(Int(Date().timeIntervalSince1970 * 1000))
         let directory = output.map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath) }
             ?? FileManager.default.homeDirectoryForCurrentUser.appending(path: ".basalt/adapters/\(fingerprint)/\(stamp)")
-        guard modelDescription.isEmpty || !Self.isInside(directory, URL(fileURLWithPath: modelDescription)) else {
-            throw .invalidRequestStructure(details: "train: the adapter is never written next to the source weights; choose an output outside \(modelDescription)")
-        }
+        try refuseInsideModel(directory)
         guard !FileManager.default.fileExists(atPath: directory.path) else {
             throw .invalidRequestStructure(details: "train: \(directory.path) already exists; the adapter goes to a new directory, nothing is overwritten")
         }
         return directory
+    }
+
+    func refuseInsideModel(_ directory: URL) throws(BasaltError) {
+        guard modelDescription.isEmpty || !Self.isInside(directory, URL(fileURLWithPath: modelDescription)) else {
+            throw .invalidRequestStructure(details: "train: the adapter is never written next to the source weights; choose an output outside \(modelDescription)")
+        }
     }
 
     static func isInside(_ target: URL, _ directory: URL) -> Bool {
