@@ -92,7 +92,12 @@ public struct SystemOneResponse: Codable, Sendable, Equatable {
 
 public protocol DecisionEngine: Sendable {
     var modelID: String { get }
+    var runsBesideDecode: Bool { get }
     func decide(_ request: SystemOneRequest) async throws(BasaltError) -> SystemOneResponse
+}
+
+extension DecisionEngine {
+    public var runsBesideDecode: Bool { false }
 }
 
 public enum SystemOneCore {

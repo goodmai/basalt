@@ -180,9 +180,10 @@ struct ServeCommand: AsyncParsableCommand {
         let orchestrator = try await makeOrchestrator(engine: engine, maxTokens: config.maxTokens)
 
         let embeddings = try await loadEmbeddings()
-        let decisions = try await loadDecisions(chat: engine)
+        let loadedDecisions = try await loadDecisions(chat: engine)
         let ocrPath = try await pipelineOCRPath()
-        try await admitComputePlan(chatPath: resolvedPath, embeddings: embeddings, decisions: decisions, ocrPath: ocrPath)
+        try await admitComputePlan(chatPath: resolvedPath, embeddings: embeddings, decisions: loadedDecisions, ocrPath: ocrPath)
+        let decisions = GatedDecisionEngine.serving(loadedDecisions, gate: orchestrator.gate)
 
         try await load(orchestrator, from: resolvedPath)
         let stages = try await loadPipelineStages(ocrPath: ocrPath)
