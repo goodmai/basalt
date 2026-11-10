@@ -59,6 +59,17 @@ extension ServeCommand {
         return "--pipeline-ocr-model \(model) (model_type \(modelType ?? "unknown")) has no OCR recipe; use GLM-OCR (glm_ocr), MinerU2.5 (qwen2_vl), PaddleOCR-VL (paddleocr_vl) or DeepSeek-OCR (deepseekocr)"
     }
 
+    static func audioRefusal(_ model: String, path: String) -> String? {
+        let modelType = ModelCache.config(at: URL(fileURLWithPath: path))?["model_type"] as? String
+        guard !MLXInferenceEngine.transcribesAudio(modelType: modelType) else { return nil }
+        return "--pipeline-audio-model \(model) (model_type \(modelType ?? "unknown")) has no audio encoder; use Nemotron Transcribe (nemotron_transcribe)"
+    }
+
+    static func adapterRefusal(_ adapters: [String], plan: PlanVerdict?) -> String? {
+        guard !adapters.isEmpty, plan?.keep(ofKind: .decode) == .sequential else { return nil }
+        return "--adapter needs the chat model to stay loaded, but this pipeline plan unloads it while a perceiver runs; drop --adapter, or serve with --pipeline-memory resident on a machine where the set fits"
+    }
+
     struct PerceivePaths: Sendable {
         var ocr: String?
         var audio: String?
@@ -66,7 +77,14 @@ extension ServeCommand {
 
     func pipelinePerceivePaths() async throws -> PerceivePaths {
         var paths = PerceivePaths()
-        if let audioModel = pipeline.audioModel { paths.audio = try await resolvedPath(audioModel, quant: nil) }
+        if let audioModel = pipeline.audioModel {
+            let path = try await resolvedPath(audioModel, quant: nil)
+            if let refusal = Self.audioRefusal(audioModel, path: path) {
+                log("\(red("[error]")) \(refusal)")
+                throw ExitCode.failure
+            }
+            paths.audio = path
+        }
         guard let ocrModel = pipeline.ocrModel else { return paths }
         let path = try await resolvedPath(ocrModel, quant: nil)
         if let refusal = Self.ocrRefusal(ocrModel, path: path) {
@@ -78,14 +96,14 @@ extension ServeCommand {
     }
 
     func loadPipelineStages(_ paths: PerceivePaths, plan: PlanVerdict? = nil) async throws -> PipelineStages {
+        if let refusal = Self.adapterRefusal(adapters, plan: plan) {
+            log("\(red("[error]")) \(refusal)")
+            throw ExitCode.failure
+        }
         let sequential = plan?.keep(of: Workload.perceiveRole) == .sequential
         let swap = sequential ? PipelineSwap(ocrPath: paths.ocr, audioPath: paths.audio, unloadsChat: plan?.keep(ofKind: .decode) == .sequential, maxQueue: maxQueue) : nil
         let ocr = try await loadPerceiver(pipeline.ocrModel, path: paths.ocr, role: "OCR", loads: !sequential)
         let audio = try await loadPerceiver(pipeline.audioModel, path: paths.audio, role: "speech", loads: !sequential)
-        if !sequential, let audio, await !audio.transcribesAudio {
-            log("\(red("[error]")) --pipeline-audio-model \(pipeline.audioModel ?? "") has no audio encoder; use Nemotron Transcribe")
-            throw ExitCode.failure
-        }
         var stages = PipelineStages(ocr: ocr, audio: audio, speech: experimental.speechAnalyzer ? SpeechAnalyzerTranscriber() : nil, abstainBelow: pipeline.abstainBelow, minMargin: pipeline.minMargin,
             questions: pipeline.preset?.questions ?? [:])
         stages.swap = swap

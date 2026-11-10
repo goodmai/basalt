@@ -4,6 +4,7 @@ import MLXLMCommon
 @testable import BasaltCore
 @testable import BasaltInference
 @testable import BasaltServer
+@testable import BasaltCLI
 
 actor ReloadingEngine: InferenceEngine {
     let inner: MLXInferenceEngine
@@ -157,5 +158,96 @@ struct PipelineSequentialTests {
         #expect(try await pipeline.value == .ok)
         let (chatLoaded, speechLoaded) = (await served.chatEngine.isLoaded, await served.speechEngine.isLoaded)
         #expect(chatLoaded && !speechLoaded)
+    }
+}
+
+@Suite("Sequential swap edge cases on stub engines: chat-encoder audio outside the swap, failed loads, stub mode, prompt caches, startup refusals (#402 review)")
+struct PipelineSwapEdgeTests {
+    static func chat(loaded: Bool = true) async throws -> (MockInferenceEngine, ModelOrchestratorActor) {
+        let engine = MockInferenceEngine()
+        await engine.setResponder { _ in "left" }
+        await engine.setMockTranscription(Transcription(text: "pay it today"))
+        let chat = ModelOrchestratorActor(engine: engine, telemetry: TelemetryTracker())
+        if loaded { try await chat.loadModel(path: "/models/chat") }
+        return (engine, chat)
+    }
+
+    static func sequentialOCR(_ engine: MockInferenceEngine, unloadsChat: Bool) async throws -> PipelineStages {
+        let ocr = try await OCRAPITests.orchestrator("GLM-OCR", modelType: "glm_ocr", engine: engine)
+        let path = await ocr.loaded.path
+        await ocr.unloadModel()
+        var stages = PipelineStages(ocr: ocr, abstainBelow: 0.5)
+        stages.swap = PipelineSwap(ocrPath: path, audioPath: nil, unloadsChat: unloadsChat)
+        return stages
+    }
+
+    static var attachments: [[String: Any]] { [
+        ["kind": "audio", "data": AudioFixture.sine(seconds: 0.2).base64EncodedString(), "format": "wav"],
+        ["kind": "image", "data": (try? OCRFixture.png(width: 4, height: 4).base64EncodedString()) ?? ""],
+    ] }
+
+    @Test("Audio for the chat model's own encoder runs outside the swap: no deadlock with the chat model resident, no missing encoder with it unloaded; results merge by attachment", .timeLimit(.minutes(1)), arguments: [false, true])
+    func chatAudioOutsideSwap(unloadsChat: Bool) async throws {
+        let ocrEngine = MockInferenceEngine()
+        await ocrEngine.setResponder { _ in "Invoice total: 42" }
+        let stages = try await Self.sequentialOCR(ocrEngine, unloadsChat: unloadsChat)
+        let (engine, chat) = try await Self.chat()
+        let response = try await PipelineAPITests.post(chat, decisions: GatingDecisionEngine(), stages: stages, ["attachments": Self.attachments, "questions": PipelineAPITests.questions])
+        #expect(response.status == .ok)
+        let perceived = try #require(response.json["perceived"] as? [String: Any])
+        #expect(perceived["transcript"] as? String == "pay it today")
+        #expect((perceived["pages"] as? [[String: Any]])?.first?["attachment"] as? Int == 1)
+        #expect(PipelineAPITests.stages(response.json).map { $0["model"] as? String } == ["chat", "GLM-OCR", "org/stub-jev"])
+        let (ocrLoaded, chatLoaded, released) = (await ocrEngine.isLoaded, await engine.isLoaded, await engine.releasedCaches)
+        #expect(!ocrLoaded && chatLoaded)
+        #expect(released == (unloadsChat ? 0 : 1))
+    }
+
+    @Test("A perceiver whose load fails after its weights arrived is unloaded again, and the chat model is reloaded", .timeLimit(.minutes(1)))
+    func failedPerceiverLoadIsRolledBack() async throws {
+        let ocrEngine = MockInferenceEngine()
+        let stages = try await Self.sequentialOCR(ocrEngine, unloadsChat: true)
+        await ocrEngine.failLoads(1, afterLoading: true)
+        let (engine, chat) = try await Self.chat()
+        let response = try await PipelineAPITests.post(chat, decisions: nil, stages: stages, ["attachments": [Self.attachments[1]], "task": "t"])
+        #expect(response.status != .ok)
+        let (ocrLoaded, chatLoaded) = (await ocrEngine.isLoaded, await engine.isLoaded)
+        #expect(!ocrLoaded && chatLoaded)
+    }
+
+    @Test("Stub mode: with no chat model loaded the swap neither unloads nor reloads it", .timeLimit(.minutes(1)))
+    func stubModeSkipsSwap() async throws {
+        let (engine, chat) = try await Self.chat(loaded: false)
+        let (value, swap) = try await chat.exclusively(unloadingModel: true) { () async throws(BasaltError) in 7 }
+        let loads = await engine.loadCount
+        #expect(value == 7 && swap == .zero && loads == 0)
+    }
+
+    @Test("A failed reload is retried once; two failures leave the request failed and the chat model unloaded", .timeLimit(.minutes(1)))
+    func reloadRetries() async throws {
+        let (engine, chat) = try await Self.chat()
+        await engine.failLoads(1)
+        let (value, _) = try await chat.exclusively(unloadingModel: true) { () async throws(BasaltError) in 1 }
+        let (loads, loaded) = (await engine.loadCount, await engine.isLoaded)
+        #expect(value == 1 && loads == 3 && loaded)
+        await engine.failLoads(2)
+        await #expect(throws: BasaltError.self) { _ = try await chat.exclusively(unloadingModel: true) { () async throws(BasaltError) in 1 } }
+        let stillLoaded = await engine.isLoaded
+        #expect(!stillLoaded)
+    }
+
+    @Test("Startup refuses an audio model without the Nemotron Transcribe architecture, and --adapter when the plan unloads the chat model", .timeLimit(.minutes(1)))
+    func startupRefusals() async throws {
+        let wrong = try OCRAPITests.modelDirectory("Qwen3-8B", modelType: "qwen3")
+        let right = try OCRAPITests.modelDirectory("Transcribe", modelType: "nemotron_transcribe")
+        #expect(ServeCommand.audioRefusal("org/qwen3", path: wrong.path)?.contains("model_type qwen3") == true)
+        #expect(ServeCommand.audioRefusal("org/transcribe", path: right.path) == nil)
+        let gb: Int64 = 1_000_000_000
+        let swapsChat = ComputePlan.admit(
+            [Workload(name: "c", role: "chat", unit: .gpu, kind: .decode, residentBytes: 11 * gb), Workload(name: "s", role: Workload.perceiveRole, unit: .gpu, kind: .encoder, residentBytes: 15 * gb)],
+            budgetBytes: 19 * gb, memory: .auto)
+        #expect(ServeCommand.adapterRefusal(["a=/x"], plan: swapsChat) != nil)
+        #expect(ServeCommand.adapterRefusal([], plan: swapsChat) == nil && ServeCommand.adapterRefusal(["a=/x"], plan: nil) == nil)
+        await #expect(throws: (any Error).self) { _ = try await ServeCommand.parse(["--adapter", "a=/x"]).loadPipelineStages(ServeCommand.PerceivePaths(), plan: swapsChat) }
     }
 }

@@ -64,44 +64,55 @@ struct PipelineRunner: Sendable {
         return PipelineResponse(perceived: perceived, answers: answers, system2: system2, receipt: receipt)
     }
 
+    struct Perceived: Sendable {
+        let index: Int
+        let receipt: PipelineStageReceipt
+        let pages: [PipelinePage]
+        let transcript: String?
+    }
+
     struct Perception: Sendable {
-        var perceived = PipelinePerceived()
-        var receipts: [PipelineStageReceipt] = []
+        var items: [Perceived] = []
         var swap = Duration.zero
+
+        var ordered: [Perceived] { items.sorted { $0.index < $1.index } }
+        var receipts: [PipelineStageReceipt] { ordered.map(\.receipt) }
+
+        var perceived: PipelinePerceived {
+            let (pages, transcripts) = (ordered.flatMap(\.pages), ordered.compactMap(\.transcript))
+            return PipelinePerceived(pages: pages.isEmpty ? nil : pages, transcript: transcripts.isEmpty ? nil : transcripts.joined(separator: "\n\n"))
+        }
     }
 
     func perceive(_ order: [PipelineCore.Perceiving], pages selection: String?, swap: PipelineSwap?) async throws(BasaltError) -> Perception {
-        var (pages, transcripts, perception) = ([PipelinePage](), [String](), Perception())
+        var perception = Perception()
         var resident: ModelOrchestratorActor?
         do throws(BasaltError) {
             for item in order {
                 guard let perceiver = item.perceiver else { throw .invalidRequestStructure(details: "pipeline: no perceiver for attachment \(item.index + 1)") }
                 if let swap { perception.swap += try await bring(perceiver, swap: swap, resident: &resident) }
-                let one = try await perceive(item, with: perceiver, gated: swap == nil && perceiver.betweenGenerations, pages: selection)
-                (pages, perception.receipts) = (pages + one.pages, perception.receipts + [one.receipt])
-                if let text = one.transcript { transcripts.append(text) }
+                perception.items.append(try await perceive(item, with: perceiver, gated: swap == nil && perceiver.betweenGenerations, pages: selection))
             }
         } catch {
-            if let resident { await resident.unloadModel() }
+            if let resident { await withTaskCancellationShield { await resident.unloadModel() } }
             throw error
         }
-        if let resident { perception.swap += await Self.timed { await resident.unloadModel() } }
-        perception.perceived = PipelinePerceived(pages: pages.isEmpty ? nil : pages, transcript: transcripts.isEmpty ? nil : transcripts.joined(separator: "\n\n"))
+        if let resident { perception.swap += await withTaskCancellationShield { await Self.timed { await resident.unloadModel() } } }
         return perception
     }
 
     func perceive(
         _ item: PipelineCore.Perceiving, with perceiver: PipelineCore.Perceiver, gated: Bool, pages selection: String?
-    ) async throws(BasaltError) -> (receipt: PipelineStageReceipt, pages: [PipelinePage], transcript: String?) {
+    ) async throws(BasaltError) -> Perceived {
         let started = ContinuousClock.now
         switch item.attachment {
         case .document(let document):
             let result = try await readPaged(document, pages: selection, with: perceiver, gated: gated)
             let receipt = PipelineStageReceipt(stage: .perceive, model: result.model, ms: Self.elapsed(since: started), tokens: result.pages.reduce(0) { $0 + $1.tokens })
-            return (receipt, result.pages.map { PipelinePage(attachment: item.index, page: $0.page, markdown: $0.markdown) }, nil)
+            return Perceived(index: item.index, receipt: receipt, pages: result.pages.map { PipelinePage(attachment: item.index, page: $0.page, markdown: $0.markdown) }, transcript: nil)
         case .audio(let clip):
             let heard = try await betweenGenerations(gated) { () async throws(BasaltError) in try await transcribe(clip, with: perceiver) }
-            return (PipelineStageReceipt(stage: .perceive, model: heard.model, ms: Self.elapsed(since: started), tokens: 0), [], heard.text)
+            return Perceived(index: item.index, receipt: PipelineStageReceipt(stage: .perceive, model: heard.model, ms: Self.elapsed(since: started), tokens: 0), pages: [], transcript: heard.text)
         }
     }
 

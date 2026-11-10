@@ -16,7 +16,11 @@ extension ModelOrchestratorActor {
     }
 
     func swapped<T: Sendable>(_ unloads: Bool, _ body: @Sendable () async throws(BasaltError) -> T) async throws(BasaltError) -> (value: T, swap: Duration) {
-        guard unloads else { return (try await body(), .zero) }
+        let loaded = await engine.isLoaded
+        guard unloads, loaded else {
+            if loaded { await engine.releaseCaches() }
+            return (try await body(), .zero)
+        }
         let clock = ContinuousClock()
         let unloading = clock.now
         let model = await performUnload()
@@ -28,15 +32,22 @@ extension ModelOrchestratorActor {
             result = .failure(error)
         }
         let reloading = clock.now
-        let reload: Result<Void, BasaltError> = await withTaskCancellationShield {
+        try await withTaskCancellationShield { await reload(model) }.get()
+        return (try result.get(), unloaded + (clock.now - reloading))
+    }
+
+    func reload(_ model: (path: String, modelId: String), attempts: Int = 2) async -> Result<Void, BasaltError> {
+        var failure = BasaltError.modelNotLoaded
+        for attempt in 1 ... attempts {
             do throws(BasaltError) {
                 try await performLoad(path: model.path, modelId: model.modelId)
                 return .success(())
             } catch {
-                return .failure(error)
+                failure = error
+                logger.error("Reloading \(model.modelId.isEmpty ? model.path : model.modelId) after a pipeline swap failed (attempt \(attempt) of \(attempts)): \(error.localizedDescription)")
             }
         }
-        try reload.get()
-        return (try result.get(), unloaded + (clock.now - reloading))
+        logger.error("The chat model is not loaded: every request fails until it is loaded again with POST /v1/models/load or a restart")
+        return .failure(failure)
     }
 }
