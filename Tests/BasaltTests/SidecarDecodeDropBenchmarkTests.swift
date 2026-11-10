@@ -4,7 +4,7 @@ import Testing
 @testable import BasaltCore
 @testable import BasaltInference
 
-@Suite("Concurrent sidecars by rule: Gemma 4 decode drop while 1000 chunks embed on the ANE, against the MLX embedder and Laya decisions (#399 phase 3)", .serialized)
+@Suite("Concurrent sidecars by rule: Gemma 4 decode drop while 1000 chunks embed on the ANE, against the MLX embedder and Laya decisions (#399 phase 3)", .serialized, .timeLimit(.minutes(20)))
 struct SidecarDecodeDropBenchmarkTests {
     static let env = ProcessInfo.processInfo.environment
     static let enabled = env["BASALT_E2E"] == "1"
@@ -34,6 +34,7 @@ struct SidecarDecodeDropBenchmarkTests {
     final class Load: Sendable {
         let done = Mutex(0)
         let busy = Mutex(0.0)
+        let finished = Mutex(false)
     }
 
     static func chat(_ orchestrator: ModelOrchestratorActor) async throws -> Double {
@@ -72,14 +73,18 @@ struct SidecarDecodeDropBenchmarkTests {
         _ sidecar: @escaping @Sendable (Load) async throws -> Void
     ) async throws {
         let load = Load()
-        let worker = Task { try await sidecar(load) }
+        let worker = Task {
+            defer { load.finished.withLock { $0 = true } }
+            try await sidecar(load)
+        }
         let start = ContinuousClock.now
         var rates: [Double] = []
         try await log.step(name) {
-            while rates.count < 2 || load.done.withLock({ $0 }) < minimumDone {
+            while rates.count < 2 || (load.done.withLock({ $0 }) < minimumDone && !load.finished.withLock({ $0 })) {
                 rates.append(try await chat(orchestrator))
             }
         }
+        if load.finished.withLock({ $0 }) { try await worker.value }
         let wall = (ContinuousClock.now - start).inSeconds
         worker.cancel()
         _ = try? await worker.value
