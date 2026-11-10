@@ -19,12 +19,16 @@ public enum CascadeCore {
         return sub
     }
 
-    public static func merged(_ request: SystemOneRequest, _ parts: [Part], failed: SystemOneStage? = nil) -> SystemOneResponse {
+    public static func merged(_ request: SystemOneRequest, _ parts: [Part], failed: SystemOneStage?) -> SystemOneResponse {
+        merged(request, parts, skipped: [failed].compactMap { $0 })
+    }
+
+    public static func merged(_ request: SystemOneRequest, _ parts: [Part], skipped: [SystemOneStage] = []) -> SystemOneResponse {
         var answers: [String: SystemOneAnswer] = [:]
         for part in parts {
             answers.merge(part.response.answers.filter { part.stage.questions.contains($0.key) && request.questions[$0.key] != nil }) { $1 }
         }
-        let stages = [failed].compactMap { $0 } + parts.map(\.stage)
+        let stages = skipped + parts.map(\.stage)
         let costs = stages.compactMap(\.cost)
         var usage = parts.last?.response.usage ?? SystemOneUsage(prefixTokens: 0, candidateBranches: 0, prefixEvaluations: 0, branchForwardCalls: 0, suffixTokens: 0)
         (usage.cost, usage.stages) = (costs.isEmpty ? nil : costs.reduce(0, +), stages)
@@ -35,40 +39,49 @@ public enum CascadeCore {
 }
 
 public struct CascadeDecisionEngine: DecisionEngine {
-    public let remote: any DecisionEngine
-    public let local: any DecisionEngine
+    public let stages: [any DecisionEngine]
     public let escalateBelow: Double
     public let runsBesideDecode = true
 
-    public var modelID: String { remote.modelID + "+" + local.modelID }
-    public var onDevice: (any DecisionEngine)? { local }
+    public var remote: any DecisionEngine { stages[0] }
+    public var local: any DecisionEngine { stages[stages.count - 1] }
+    public var modelID: String { stages.map(\.modelID).joined(separator: "+") }
+
+    public var onDevice: (any DecisionEngine)? {
+        let local = stages.filter { $0.onDevice != nil }
+        return local.count > 1 ? CascadeDecisionEngine(stages: local, escalateBelow: escalateBelow) : local.first
+    }
+
+    public init(stages: [any DecisionEngine], escalateBelow: Double) {
+        precondition(!stages.isEmpty, "a cascade needs at least one stage")
+        (self.stages, self.escalateBelow) = (stages, escalateBelow)
+    }
 
     public init(remote: any DecisionEngine, local: any DecisionEngine, escalateBelow: Double, gate: GenerationGate, besideDecode: Bool = true) {
-        (self.remote, self.escalateBelow) = (remote, escalateBelow)
-        self.local = GatedDecisionEngine.serving(local, gate: gate, besideDecode: besideDecode) ?? local
+        self.init(stages: [remote, GatedDecisionEngine.serving(local, gate: gate, besideDecode: besideDecode) ?? local], escalateBelow: escalateBelow)
     }
 
     public func decide(_ request: SystemOneRequest) async throws(BasaltError) -> SystemOneResponse {
         try SystemOneCore.validate(request)
-        let started = ContinuousClock.now
-        let first: SystemOneResponse
-        do {
-            first = try await remote.decide(request)
-        } catch {
-            if Task.isCancelled { throw .cancelled }
-            let failed = SystemOneStage(model: remote.modelID, questions: [], latencyMs: Self.milliseconds(since: started), fallback: error.localizedDescription)
-            return CascadeCore.merged(request, [try await locally(request)], failed: failed)
+        var (remaining, parts, skipped) = (request.questions.keys.sorted(), [CascadeCore.Part](), [SystemOneStage]())
+        for (index, stage) in stages.enumerated() {
+            let last = index == stages.count - 1
+            let started = ContinuousClock.now
+            let response: SystemOneResponse
+            do {
+                response = try await stage.decide(CascadeCore.subrequest(request, remaining))
+            } catch {
+                if Task.isCancelled { throw .cancelled }
+                if last { throw error }
+                skipped.append(SystemOneStage(model: stage.modelID, questions: [], latencyMs: Self.milliseconds(since: started), fallback: error.localizedDescription))
+                continue
+            }
+            let split = last ? (kept: remaining, escalated: []) : CascadeCore.split(CascadeCore.subrequest(request, remaining), response, below: escalateBelow)
+            parts.append((response, SystemOneStage(model: response.model, questions: split.kept, latencyMs: Self.milliseconds(since: started), cost: response.usage.cost)))
+            remaining = split.escalated
+            if remaining.isEmpty { break }
         }
-        let split = CascadeCore.split(request, first, below: escalateBelow)
-        let answered = (first, SystemOneStage(model: first.model, questions: split.kept, latencyMs: Self.milliseconds(since: started), cost: first.usage.cost))
-        guard !split.escalated.isEmpty else { return CascadeCore.merged(request, [answered]) }
-        return CascadeCore.merged(request, [answered, try await locally(CascadeCore.subrequest(request, split.escalated))])
-    }
-
-    func locally(_ request: SystemOneRequest) async throws(BasaltError) -> CascadeCore.Part {
-        let started = ContinuousClock.now
-        let response = try await local.decide(request)
-        return (response, SystemOneStage(model: response.model, questions: request.questions.keys.sorted(), latencyMs: Self.milliseconds(since: started)))
+        return CascadeCore.merged(request, parts, skipped: skipped)
     }
 
     static func milliseconds(since start: ContinuousClock.Instant) -> Int {

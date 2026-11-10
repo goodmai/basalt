@@ -30,6 +30,7 @@ public struct ComposeSpec: Sendable, Equatable {
         public var idleUnload: Int?
         public var apiKeyEnv: String?
         public var data: String?
+        public var budget: Double?
 
         public init(source: Source, keep: Keep? = nil, idleUnload: Int? = nil, apiKeyEnv: String? = nil, data: String? = nil) {
             (self.source, self.keep, self.idleUnload, self.apiKeyEnv, self.data) = (source, keep, idleUnload, apiKeyEnv, data)
@@ -56,6 +57,8 @@ public struct ComposeSpec: Sendable, Equatable {
     public var abstainBelow: Double?
     public var minMargin: Double?
     public var answer: String
+    public var routes: [AnswerRoute] = []
+    public var budget: Double?
 
     public init(name: String, models: [String: Model], answer: String) {
         (self.name, self.models, self.answer) = (name, models, answer)
@@ -64,6 +67,14 @@ public struct ComposeSpec: Sendable, Equatable {
     public func local(_ name: String) -> String? {
         guard case .local(let source)? = models[name]?.source else { return nil }
         return source
+    }
+
+    public var answerModels: [String] {
+        var names = [answer]
+        for route in routes {
+            for name in [route.model] + (route.fallback.map { [$0] } ?? []) where !names.contains(name) { names.append(name) }
+        }
+        return names
     }
 
     public var ocr: String? { documents.first { models[$0] != nil } }

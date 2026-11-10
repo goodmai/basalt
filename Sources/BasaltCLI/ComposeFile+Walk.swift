@@ -117,3 +117,60 @@ extension ComposeFile {
             """,
     ]
 }
+
+extension ComposeFile.Walk {
+    mutating func routes(_ node: Node) -> [AnswerRoute] {
+        guard let items = node.sequence, !items.isEmpty else {
+            issue("pipeline.answer.routes", node, "a list of routes, each with when, model and an optional fallback")
+            return []
+        }
+        return items.enumerated().compactMap { index, item in
+            let path = "pipeline.answer.routes[\(index)]"
+            guard let field = fields(item, path: path, allowed: ["when", "model", "fallback"]) else { return nil }
+            var route = AnswerRoute(model: text(field["model"], "\(path).model") ?? "", fallback: text(field["fallback"], "\(path).fallback"))
+            if let when = field["when"] { route.when = self.when(when, path: "\(path).when") }
+            return route
+        }
+    }
+
+    mutating func when(_ node: Node, path: String) -> AnswerRoute.When {
+        guard let field = fields(node, path: path, allowed: ["modality", "decide", "prompt_tokens", "escalated", "cost_left"]) else { return .init() }
+        var when = AnswerRoute.When()
+        if let modality = text(field["modality"], "\(path).modality") {
+            when.modality = AnswerRoute.Modality(rawValue: modality)
+            if when.modality == nil { issue("\(path).modality", field["modality"]!, "must be documents, audio or text") }
+        }
+        if let decide = field["decide"] {
+            var labels: [String: String] = [:]
+            for (key, value) in decide.mapping ?? [:] {
+                if let name = key.string, let label = value.scalar?.string { labels[name] = label }
+            }
+            if decide.mapping == nil || labels.count != decide.mapping?.count { issue("\(path).decide", decide, "a mapping of question ID to the label that selects this route") }
+            when.decide = labels
+        }
+        if let tokens = field["prompt_tokens"] {
+            when.promptTokensOver = tokens.mapping?["over"]?.int
+            if when.promptTokensOver == nil { issue("\(path).prompt_tokens", tokens, "{ over: <tokens> }") }
+        }
+        (when.escalated, when.costLeft) = (flag(field["escalated"], "\(path).escalated"), flag(field["cost_left"], "\(path).cost_left"))
+        return when
+    }
+
+    mutating func flag(_ node: Node?, _ path: String) -> Bool? {
+        guard let node else { return nil }
+        guard let value = node.bool else {
+            issue(path, node, "must be true or false")
+            return nil
+        }
+        return value
+    }
+
+    mutating func budget(_ node: Node?, _ path: String) -> Double? {
+        guard let node, let field = fields(node, path: path, allowed: ["usd_per_day"]) else { return nil }
+        guard let value = field["usd_per_day"].flatMap({ $0.int.map(Double.init) ?? $0.float }) else {
+            issue(path, node, "{ usd_per_day: <amount> }")
+            return nil
+        }
+        return value
+    }
+}

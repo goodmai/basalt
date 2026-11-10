@@ -61,6 +61,14 @@ enum RemoteStub {
             for await _ in hang {}
             return Response(status: .ok)
         }
+        router.post("auth/decisions") { request, _ in
+            _ = try await record(request)
+            return Response(status: .unauthorized)
+        }
+        router.post("limited/decisions") { request, _ in
+            _ = try await record(request)
+            return Response(status: .tooManyRequests, headers: [HTTPField.Name("Retry-After")!: "7"])
+        }
         router.post("redirect/decisions") { request, _ in
             _ = try await record(request)
             return Response(status: .temporaryRedirect, headers: [.location: "/ok/decisions"])

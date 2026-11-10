@@ -92,6 +92,13 @@ extension OpenRouterClient {
         public let maxTokens: Int?
         public let stream: Bool?
         public var provider: ProviderPreferences? = nil
+        public var usage: UsageAccounting? = nil
+
+        public struct UsageAccounting: Codable, Sendable {
+            public let include: Bool
+
+            public init(include: Bool) { self.include = include }
+        }
 
         public struct ProviderPreferences: Codable, Sendable {
             public let order: [String]?
@@ -126,6 +133,7 @@ extension OpenRouterClient {
             case maxTokens = "max_tokens"
             case stream
             case provider
+            case usage
         }
 
         public init(

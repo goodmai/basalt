@@ -2,6 +2,7 @@ import Testing
 import Foundation
 @testable import BasaltCore
 @testable import BasaltCLI
+@testable import BasaltCloud
 
 @Suite("basalt compose: the YAML schema, refusals with line numbers, the serve flags it expands to, and the plan for each memory mode (#412)")
 struct ComposeFileTests {
@@ -61,10 +62,15 @@ struct ComposeFileTests {
         (replacing("api_key_env: OPENROUTER_API_KEY", "api_key: sk-or-v1-0123456789abcdef0123456789abcdef"), "secrets never go in a compose file"),
         (replacing("name: support-desk", "name: sk-or-v1-0123456789abcdef0123456789abcdef"), "looks like a secret"),
         (replacing("name: support-desk", "name: ${DESK}"), "environment interpolation"),
-        (replacing("cascade: [jev, chat]", "cascade: [jev]"), "needs a local one after it"),
+        (replacing("cascade: [jev, chat]", "cascade: [jev]"), "a cascade ends with a local model"),
+        (replacing("cascade: [jev, chat]", "cascade: [chat, jev]"), "a cascade ends with a local model"),
+        (replacing("answer: chat", "answer: { routes: [{ when: { modality: text }, model: chat }] }"), "the last route takes every request left"),
+        (replacing("answer: chat", "answer: { routes: [{ model: gpt }] }"), "gpt is not a model declared under models"),
+        (replacing("    data: no-perceived", "    data: no-perceived\n    budget: { usd_per_day: -1 }"), "usd_per_day must be positive"),
+        (replacing("    keep: on-demand\n", "    keep: on-demand\n    budget: { usd_per_day: 1 }\n"), "applies only to cloud models"),
+        (replacing("answer: chat", "answer: { routes: [{ when: { modality: fax }, model: chat }] }"), "must be documents, audio or text"),
         (replacing("cascade: [jev, chat]", "cascade: [jev, laya]"), "laya is not a declared model"),
         (replacing("documents: [ocr, apple-vision]", "documents: [jev]"), "never leave the machine"),
-        (replacing("answer: chat", "answer: { routes: [] }"), "routes come in phase 2"),
         (replacing("documents: [ocr, apple-vision]", "documents: [ocr, scanner]"), "scanner is neither a declared model nor apple-vision"),
         (replacing("  answer: chat", "  answer: ocr"), "one model serves one role"),
         (replacing("idle_unload: 2m", "idle_unload: soon"), "a duration such as"),
@@ -119,5 +125,72 @@ struct ComposeFileTests {
         #expect(throws: (any Error).self) { try ComposeCommand.Source.parse(["document-qa", "-f", "x.yaml"]) }
         #expect(try ComposeCommand.Source.parse(["document-qa"]).spec().name == "document-qa")
         #expect(throws: (any Error).self) { try ComposeCommand.Source.parse(["-f", "/nonexistent/compose.yaml"]).spec() }
+    }
+
+    static let routed = """
+        version: 1
+        name: mom
+        budget: { usd_per_day: 3 }
+        models:
+          chat:
+            source: mlx-community/gemma-4-12B-it-qat-4bit
+          big:
+            source: lukaskremla/Qwen3.8-27B-3bit-MLX-TextOnly
+            keep: on-demand
+            idle_unload: 2m
+          jev:
+            source: cloud:openrouter/~typesafe/jev-latest
+            api_key_env: HOME
+          jev2:
+            source: cloud:openrouter/~typesafe/jev-backup
+            api_key_env: HOME
+          frontier:
+            source: cloud:openrouter/anthropic/claude-sonnet-5.5
+            api_key_env: HOME
+            budget: { usd_per_day: 2 }
+        pipeline:
+          decide:
+            cascade: [jev, jev2, chat]
+            escalate_below: 0.6
+          answer:
+            routes:
+              - when: { decide: { route: code }, cost_left: true }
+                model: frontier
+                fallback: big
+              - when: { prompt_tokens: { over: 8000 } }
+                model: big
+              - model: chat
+        """
+
+    @Test("Routes, budgets and a two-cloud cascade parse; the plan counts the routed local model and prints the budgets")
+    func routedFile() throws {
+        let spec = try ComposeFile.parse(Self.routed, file: "mom.yaml")
+        #expect(spec.answer == "chat" && spec.answerModels == ["chat", "frontier", "big"] && spec.budget == 3)
+        #expect(spec.routes.first?.when == AnswerRoute.When(decide: ["route": "code"], costLeft: true) && spec.routes.first?.fallback == "big")
+        #expect(spec.routes[1].when.promptTokensOver == 8000 && spec.models["frontier"]?.budget == 2)
+        #expect(spec.serveArguments.prefix(2) == ["--model", "mlx-community/gemma-4-12B-it-qat-4bit"] && spec.serveArguments.contains("cloud:~typesafe/jev-latest"))
+        let workloads = spec.workloads(Self.sizes(["mlx-community/gemma-4-12B-it-qat-4bit": 11 * Self.gb, "lukaskremla/Qwen3.8-27B-3bit-MLX-TextOnly": 12 * Self.gb])).workloads
+        #expect(workloads.map(\.role) == ["chat", "answer"])
+        #expect(spec.cloudLines.first?.contains("$3.00 a day in total") == true && spec.cloudLines.contains { $0.contains("frontier") && $0.contains("$2.00 a day") })
+        #expect(spec.onDemandLines.contains { $0.hasPrefix("  big on demand") })
+    }
+
+    @Test("serve --compose builds the cascade from every cloud stage before the local one, and a router with cloud targets behind one budget gate")
+    func composedRuntime() async throws {
+        let directory = FileManager.default.temporaryDirectory.appending(path: "mom-\(UUID().uuidString).yaml")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let runtime = Self.routed.replacingOccurrences(of: "  big:\n    source: lukaskremla/Qwen3.8-27B-3bit-MLX-TextOnly\n    keep: on-demand\n    idle_unload: 2m\n", with: "")
+            .replacingOccurrences(of: "fallback: big", with: "fallback: chat").replacingOccurrences(of: "    model: big\n", with: "    model: frontier\n")
+        try Data(runtime.utf8).write(to: directory)
+        let spec = try ComposeFile.load(directory.path)
+        let serve = try ServeCommand.parse(spec.serveArguments + ["--compose", directory.path])
+        let gate = serve.cloudGate(try serve.composeSpec())
+        let cascade = try #require(try serve.composedDecisions(spec, local: StubDecisionEngine(), gate: GenerationGate(), besideDecode: true, cloudGate: gate) as? CascadeDecisionEngine)
+        #expect(cascade.stages.map(\.modelID) == ["~typesafe/jev-latest", "~typesafe/jev-backup", "org/stub-jev"])
+        #expect(cascade.stages.prefix(2).allSatisfy { $0 is GuardedDecisionEngine })
+        let (_, chat) = try await PipelineSwapEdgeTests.chat()
+        let router = try #require(try await serve.answerRouter(spec, chat: chat, cloudGate: gate))
+        #expect(Set(router.targets.keys) == ["chat", "frontier"] && router.targets["frontier"]?.isCloud == true)
+        #expect(await router.costLeft() == ["chat", "frontier"])
     }
 }

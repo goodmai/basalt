@@ -10,6 +10,7 @@ package struct PipelineStages: Sendable {
     package let questions: [String: SystemOneQuestion]
     package var swap: PipelineSwap?
     package var onDemand: [PipelineCore.Perceiver: OnDemandModel] = [:]
+    package var answers: AnswerRouter?
 
     package init(
         ocr: ModelOrchestratorActor? = nil, audio: ModelOrchestratorActor? = nil, speech: (any AudioTranscriber)? = nil,
@@ -56,7 +57,8 @@ struct PipelineRunner: Sendable {
         let route = PipelineCore.route(questions: request.questions, decision: decision, task: request.task, state: state)
         var replies: [PipelineCore.System2Reply] = []
         let answering = typed ? origin : RequestOrigin(source: PipelineCore.perceivedSource, endpoint: origin.endpoint, stream: false)
-        for call in route.calls { replies.append(try await answer(call, origin: answering, sessionId: sessionId)) }
+        let situation = await situation(request, decision: decision, route: route)
+        for call in route.calls { replies.append(try await answer(call, origin: answering, sessionId: sessionId, situation: situation)) }
         let (answers, system2) = PipelineCore.answers(route, replies: replies, questions: request.questions, decision: decision)
         var receipt = PipelineCore.receipt(
             perception.receipts + [deciding].compactMap { $0 }, replies: replies, answers: answers, ms: Self.elapsed(since: started))
@@ -192,14 +194,6 @@ struct PipelineRunner: Sendable {
         } catch .contextLengthExceeded, .invalidRequestStructure {
             return (nil, PipelineCore.skipped(decisions.modelID, ms: Self.elapsed(since: started)))
         }
-    }
-
-    func answer(_ call: PipelineCore.System2Call, origin: RequestOrigin, sessionId: String?) async throws(BasaltError) -> PipelineCore.System2Reply {
-        let started = ContinuousClock.now
-        let response = try await chat.generate(request: PipelineCore.request(for: call, origin: origin).withRouting(sessionId: sessionId, budgetKey: nil))
-        return PipelineCore.System2Reply(
-            call: call, model: await chat.modelInfo, text: response.generatedText,
-            tokens: response.promptTokens + response.completionTokens, ms: Self.elapsed(since: started))
     }
 
     static func elapsed(since start: ContinuousClock.Instant) -> Int {

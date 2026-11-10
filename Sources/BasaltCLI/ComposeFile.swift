@@ -35,7 +35,7 @@ enum ComposeFile {
 
         mutating func root(_ node: Node) -> ComposeSpec? {
             scan(node, path: "")
-            guard let top = fields(node, path: "", allowed: ["version", "name", "memory", "models", "pipeline"]) else { return nil }
+            guard let top = fields(node, path: "", allowed: ["version", "name", "memory", "models", "pipeline", "budget"]) else { return nil }
             let models = (top["models"]?.mapping.map { mapping in
                 Dictionary(mapping.compactMap { key, value in key.string.flatMap { name in model(value, path: "models.\(name)").map { (name, $0) } } }) { first, _ in first }
             }) ?? [:]
@@ -43,6 +43,8 @@ enum ComposeFile {
             let pipeline = fields(top["pipeline"] ?? node, path: "pipeline", allowed: ["perceive", "decide", "answer"]) ?? [:]
             var spec = ComposeSpec(name: text(top["name"], "name") ?? "", models: models, answer: answer(pipeline["answer"]) ?? "")
             spec.version = top["version"]?.int ?? 0
+            spec.budget = budget(top["budget"], "budget")
+            if let routes = pipeline["answer"]?.mapping?["routes"] { spec.routes = self.routes(routes) }
             if let memory = text(top["memory"], "memory") {
                 if let parsed = PipelineMemory(rawValue: memory) { spec.memory = parsed } else { issue("memory", top["memory"]!, "must be resident, sequential or auto") }
             }
@@ -53,7 +55,7 @@ enum ComposeFile {
 
         mutating func model(_ node: Node, path: String) -> ComposeSpec.Model? {
             lines[path] = node.mark?.line
-            guard let field = fields(node, path: path, allowed: ["source", "keep", "idle_unload", "api_key_env", "data"]) else { return nil }
+            guard let field = fields(node, path: path, allowed: ["source", "keep", "idle_unload", "api_key_env", "data", "budget"]) else { return nil }
             var model = ComposeSpec.Model(source: .init(text(field["source"], "\(path).source") ?? ""))
             if let keep = text(field["keep"], "\(path).keep") {
                 model.keep = ComposeSpec.Keep(rawValue: keep)
@@ -64,6 +66,7 @@ enum ComposeFile {
                 if model.idleUnload == nil { issue("\(path).idle_unload", idle, "a duration such as 120s, 5m or 1h") }
             }
             (model.apiKeyEnv, model.data) = (text(field["api_key_env"], "\(path).api_key_env"), text(field["data"], "\(path).data"))
+            model.budget = budget(field["budget"], "\(path).budget")
             return model
         }
 
@@ -82,8 +85,9 @@ enum ComposeFile {
         mutating func answer(_ node: Node?) -> String? {
             guard let node else { return nil }
             if let name = node.scalar?.string { return name }
-            if node.mapping?["routes"] != nil { issue("pipeline.answer.routes", node, "routes come in phase 2; name one answer model: answer: <model>") }
-            return fields(node, path: "pipeline.answer", allowed: ["model", "routes"]).flatMap { text($0["model"], "pipeline.answer.model") }
+            guard let field = fields(node, path: "pipeline.answer", allowed: ["model", "routes"]) else { return nil }
+            if let model = field["model"] { return text(model, "pipeline.answer.model") }
+            return field["routes"]?.sequence?.last.flatMap { $0.mapping?["model"]?.scalar?.string }
         }
     }
 }

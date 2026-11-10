@@ -23,7 +23,7 @@ extension ComposeSpec {
 
     var roles: [String: [String]] {
         var roles: [String: [String]] = [:]
-        for (role, names) in [("answer", [answer]), ("documents", documents), ("audio", audio), ("cascade", cascade)] {
+        for (role, names) in [("answer", answerModels), ("documents", documents), ("audio", audio), ("cascade", cascade)] {
             for name in names where models[name] != nil { roles[name, default: []].append(role) }
         }
         return roles
@@ -31,11 +31,17 @@ extension ComposeSpec {
 
     var answerIssues: [Issue] {
         guard let model = models[answer] else { return [Issue("pipeline.answer", "\(answer) is not a model declared under models")] }
-        if model.isCloud { return [Issue("pipeline.answer", "a cloud answer model comes with routes in phase 2; answer with a local model")] }
+        if model.isCloud { return [Issue("pipeline.answer", "the default answer model is local: perceived text never leaves the machine, so routes end with a local model")] }
+        var issues: [Issue] = []
         if let keep = model.keep, keep != .resident {
-            return [Issue("models.\(answer).keep", "the answer model stays resident; set memory: sequential to unload it around perceivers that do not fit beside it")]
+            issues.append(Issue("models.\(answer).keep", "the answer model stays resident; set memory: sequential to unload it around perceivers that do not fit beside it"))
         }
-        return []
+        if let last = routes.last, last.when != AnswerRoute.When() {
+            issues.append(Issue("pipeline.answer.routes", "the last route takes every request left: give it no when"))
+        }
+        for name in answerModels where models[name] == nil { issues.append(Issue("pipeline.answer.routes", "\(name) is not a declared model")) }
+        if let total = budget, !(total > 0) { issues.append(Issue("budget", "usd_per_day must be positive")) }
+        return issues
     }
 
     var perceiveIssues: [Issue] {
@@ -68,12 +74,12 @@ extension ComposeSpec {
         for name in cascade where models[name] == nil { issues.append(Issue("pipeline.decide.cascade", "\(name) is not a declared model")) }
         if Set(cascade).count != cascade.count { issues.append(Issue("pipeline.decide.cascade", "a model appears twice")) }
         let cloud = cascade.map { models[$0]?.isCloud == true }
-        switch cloud {
-        case [false], [true, false]: break
-        case [true]: issues.append(Issue("pipeline.decide.cascade", "a cloud decision model needs a local one after it for unsure questions and failed calls"))
-        default: issues.append(Issue("pipeline.decide.cascade", "phase 1 takes one local model, or one cloud model followed by one local model"))
+        if cloud.last != false {
+            issues.append(Issue("pipeline.decide.cascade", "a cascade ends with a local model, which takes unsure questions, failed calls and perceived text"))
+        } else if cloud.dropLast().contains(false) || cascade.count > 4 {
+            issues.append(Issue("pipeline.decide.cascade", "a cascade is up to three cloud models followed by one local model"))
         }
-        if escalateBelow != nil, cloud != [true, false] { issues.append(Issue("pipeline.decide.escalate_below", "applies only to a cloud model followed by a local one")) }
+        if escalateBelow != nil, cascade.count < 2 { issues.append(Issue("pipeline.decide.escalate_below", "applies only to a cascade of more than one model")) }
         for (key, value) in [("escalate_below", escalateBelow), ("abstain_below", abstainBelow), ("min_margin", minMargin)] {
             if let value, !(0 ... 1).contains(value) { issues.append(Issue("pipeline.decide.\(key)", "must lie between 0 and 1")) }
         }
@@ -82,8 +88,10 @@ extension ComposeSpec {
 
     func modelIssues(_ name: String, _ model: Model) -> [Issue] {
         let path = "models.\(name)"
-        var issues = keepIssues(path, model, perceiver: name == ocr || name == speech)
-        if (roles[name]?.filter { $0 != "cascade" || name != answer }.count ?? 0) > 1 { issues.append(Issue(path, "one model serves one role; the answer model may also decide")) }
+        var issues = keepIssues(path, model, perceiver: name == ocr || name == speech, answer: name != answer && answerModels.contains(name))
+        if !model.isCloud, (roles[name]?.filter { $0 != "cascade" || name != answer }.count ?? 0) > 1 { issues.append(Issue(path, "one model serves one role; the answer model may also decide")) }
+        if model.budget != nil, !model.isCloud { issues.append(Issue("\(path).budget", "applies only to cloud models")) }
+        if let budget = model.budget, !(budget > 0) { issues.append(Issue("\(path).budget", "usd_per_day must be positive")) }
         switch model.source {
         case .local(let source):
             if source.isEmpty { issues.append(Issue("\(path).source", "is empty")) }
@@ -94,9 +102,10 @@ extension ComposeSpec {
         return issues
     }
 
-    func keepIssues(_ path: String, _ model: Model, perceiver: Bool) -> [Issue] {
+    func keepIssues(_ path: String, _ model: Model, perceiver: Bool, answer: Bool) -> [Issue] {
         var issues: [Issue] = []
-        if let keep = model.keep, keep != .resident, !perceiver { issues.append(Issue("\(path).keep", "\(keep.rawValue) applies only to a perceiver (pipeline.perceive)")) }
+        let allowed = perceiver || (answer && model.keep == .onDemand)
+        if let keep = model.keep, keep != .resident, !allowed { issues.append(Issue("\(path).keep", "\(keep.rawValue) applies only to a perceiver, or on-demand to a routed answer model")) }
         if model.idleUnload != nil, model.keep != .onDemand { issues.append(Issue("\(path).idle_unload", "applies only to keep: on-demand")) }
         if let idle = model.idleUnload, idle <= 0 { issues.append(Issue("\(path).idle_unload", "must be a positive duration")) }
         return issues
