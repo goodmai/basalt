@@ -131,6 +131,9 @@ public struct PipelineStageReceipt: Codable, Sendable, Equatable {
     public let confidence: Double?
     public let escalated: Bool
     public let question: String?
+    public var route: Int?
+    public var cost: Double?
+    public var skipped: [String]?
 
     public init(stage: PipelineStage, model: String, ms: Int, tokens: Int, confidence: Double? = nil, escalated: Bool = false) {
         (self.stage, self.model, self.ms, self.tokens) = (stage, model, ms, tokens)
@@ -140,6 +143,7 @@ public struct PipelineStageReceipt: Codable, Sendable, Equatable {
     public init(_ reply: PipelineCore.System2Reply) {
         (stage, model, ms, tokens) = (.answer, reply.model, reply.ms, reply.tokens)
         (confidence, escalated, question) = (nil, false, reply.call.question)
+        (route, cost, skipped) = (reply.route, reply.cost, reply.skipped.isEmpty ? nil : reply.skipped)
     }
 }
 

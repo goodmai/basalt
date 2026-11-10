@@ -29,6 +29,9 @@ public enum PipelineCore {
         public let text: String
         public let tokens: Int
         public let ms: Int
+        public var route: Int?
+        public var cost: Double?
+        public var skipped: [String] = []
 
         public init(call: System2Call, model: String, text: String, tokens: Int, ms: Int) {
             (self.call, self.model, self.text, self.tokens, self.ms) = (call, model, text, tokens, ms)

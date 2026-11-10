@@ -61,6 +61,7 @@ public struct CloudGateCore: Sendable, Equatable, Codable {
         switch error {
         case .authenticationFailed(let details): disabled[model] = details
         case .serverBusy(let seconds): pausedUntil[model] = now.addingTimeInterval(TimeInterval(seconds ?? Int(Self.defaultPause)))
+        case .rateLimitExceeded(let retryAfter): pausedUntil[model] = now.addingTimeInterval(retryAfter.flatMap(TimeInterval.init).map { min(max($0, 1), 3600) } ?? Self.defaultPause)
         default: break
         }
     }
@@ -120,6 +121,37 @@ public struct GuardedDecisionEngine: DecisionEngine {
         } catch {
             await gate.failed(modelID, error)
             throw error
+        }
+    }
+}
+
+public struct CloudAnswer: AnswerTarget {
+    public let client: OpenRouterClient
+    public let model: String
+    public let gate: CloudGate
+    public var isCloud: Bool { true }
+
+    public init(client: OpenRouterClient, model: String, gate: CloudGate) {
+        (self.client, self.model, self.gate) = (client, model, gate)
+    }
+
+    public func unavailable() async -> String? { await gate.refusal(model)?.reason }
+
+    public func answer(_ request: GenerationRequest) async throws(BasaltError) -> AnswerReply {
+        let turns = request.messages ?? [ChatMessageInput(role: .user, text: request.prompt)]
+        var chat = OpenRouterClient.ChatRequest(
+            model: model, messages: turns.map { .init(role: $0.role.rawValue, content: SecretRedactor.redact($0.text)) },
+            temperature: request.temperature, maxTokens: request.maxTokens)
+        chat.usage = .init(include: true)
+        do {
+            let response = try await client.chat(request: chat)
+            let cost = response.usage?.cost
+            await gate.record(model, cost: cost ?? 0)
+            return AnswerReply(text: response.choices.first?.message.content ?? "", model: response.model, tokens: response.usage?.totalTokens ?? 0, cost: cost)
+        } catch {
+            let failure = error as? BasaltError ?? .modelInferenceError(details: "cloud answer: \(error.localizedDescription)")
+            await gate.failed(model, failure)
+            throw failure
         }
     }
 }

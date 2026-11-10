@@ -50,11 +50,13 @@ extension OpenRouterClient {
             public let promptTokens: Int
             public let completionTokens: Int
             public let totalTokens: Int
+            public var cost: Double? = nil
 
             public enum CodingKeys: String, CodingKey {
                 case promptTokens = "prompt_tokens"
                 case completionTokens = "completion_tokens"
                 case totalTokens = "total_tokens"
+                case cost
             }
         }
     }
