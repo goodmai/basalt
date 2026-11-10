@@ -7,12 +7,15 @@ package struct PipelineStages: Sendable {
     package let speech: (any AudioTranscriber)?
     package let abstainBelow: Double?
     package let minMargin: Double?
+    package let questions: [String: SystemOneQuestion]
+    package var swap: PipelineSwap?
 
     package init(
         ocr: ModelOrchestratorActor? = nil, audio: ModelOrchestratorActor? = nil, speech: (any AudioTranscriber)? = nil,
-        abstainBelow: Double? = nil, minMargin: Double? = nil
+        abstainBelow: Double? = nil, minMargin: Double? = nil, questions: [String: SystemOneQuestion] = [:]
     ) {
         (self.ocr, self.audio, self.speech, self.abstainBelow, self.minMargin) = (ocr, audio, speech, abstainBelow, minMargin)
+        self.questions = questions
     }
 }
 
@@ -32,42 +35,85 @@ struct PipelineRunner: Sendable {
     }
 
     func run(_ request: PipelineRequest, origin: RequestOrigin, sessionId: String?) async throws(BasaltError) -> PipelineResponse {
-        if let missing = await missingStage(request) { throw .invalidRequestStructure(details: missing) }
+        guard let swap = stages.swap else { return try await runStages(request, origin: origin, sessionId: sessionId) }
+        do {
+            return try await swap.serial.boundedExclusively { try await self.runStages(request, origin: origin, sessionId: sessionId) }
+        } catch {
+            throw error as? BasaltError ?? .cancelled
+        }
+    }
+
+    func runStages(_ request: PipelineRequest, origin: RequestOrigin, sessionId: String?) async throws(BasaltError) -> PipelineResponse {
+        let perceivers = await perceivers()
+        if let missing = PipelineCore.missingStage(request, perceivers: perceivers, hasDecisions: decisions != nil) { throw .invalidRequestStructure(details: missing) }
         let started = ContinuousClock.now
-        let (perceived, perceiving) = try await perceive(request)
+        let perception = try await perceiveStage(request, perceivers: perceivers)
+        let perceived = perception.perceived
         let state = PipelineCore.state(perceived, text: request.text)
-        let (decision, deciding) = try await decide(request.questions, state: state, origin: origin, sessionId: sessionId)
+        let typed = perceived.pages == nil && perceived.transcript == nil
+        let (decision, deciding) = try await decide(request.questions, state: state, by: typed ? decisions : decisions?.onDevice, origin: origin, sessionId: sessionId)
         let route = PipelineCore.route(questions: request.questions, decision: decision, task: request.task, state: state)
         var replies: [PipelineCore.System2Reply] = []
-        let answering = perceived.pages == nil && perceived.transcript == nil ? origin : RequestOrigin(source: PipelineCore.perceivedSource, endpoint: origin.endpoint, stream: false)
+        let answering = typed ? origin : RequestOrigin(source: PipelineCore.perceivedSource, endpoint: origin.endpoint, stream: false)
         for call in route.calls { replies.append(try await answer(call, origin: answering, sessionId: sessionId)) }
         let (answers, system2) = PipelineCore.answers(route, replies: replies, questions: request.questions, decision: decision)
-        let receipt = PipelineCore.receipt(
-            perceiving + [deciding].compactMap { $0 }, replies: replies, answers: answers, ms: Self.elapsed(since: started))
+        var receipt = PipelineCore.receipt(
+            perception.receipts + [deciding].compactMap { $0 }, replies: replies, answers: answers, ms: Self.elapsed(since: started))
+        receipt.swapMs = stages.swap == nil ? nil : PipelineCore.milliseconds(perception.swap)
         await chat.sessionLog?.logPipeline(origin: origin, sessionId: sessionId, receipt: receipt)
         return PipelineResponse(perceived: perceived, answers: answers, system2: system2, receipt: receipt)
     }
 
-    func perceive(_ request: PipelineRequest) async throws(BasaltError) -> (PipelinePerceived, [PipelineStageReceipt]) {
-        var (pages, transcripts, receipts) = ([PipelinePage](), [String](), [PipelineStageReceipt]())
-        let perceivers = await perceivers()
-        for (index, attachment) in request.attachments.enumerated() {
-            guard let perceiver = perceivers.perceiver(for: attachment) else { throw .invalidRequestStructure(details: "pipeline: no perceiver for attachment \(index + 1)") }
-            let started = ContinuousClock.now
-            switch attachment {
-            case .document(let document):
-                let result = try await readPaged(document, pages: request.pages, with: perceiver)
-                pages += result.pages.map { PipelinePage(attachment: index, page: $0.page, markdown: $0.markdown) }
-                receipts.append(PipelineStageReceipt(
-                    stage: .perceive, model: result.model, ms: Self.elapsed(since: started), tokens: result.pages.reduce(0) { $0 + $1.tokens }))
-            case .audio(let clip):
-                let heard = try await betweenGenerations(perceiver.betweenGenerations) { () async throws(BasaltError) in try await transcribe(clip, with: perceiver) }
-                transcripts.append(heard.text)
-                receipts.append(PipelineStageReceipt(stage: .perceive, model: heard.model, ms: Self.elapsed(since: started), tokens: 0))
-            }
+    struct Perceived: Sendable {
+        let index: Int
+        let receipt: PipelineStageReceipt
+        let pages: [PipelinePage]
+        let transcript: String?
+    }
+
+    struct Perception: Sendable {
+        var items: [Perceived] = []
+        var swap = Duration.zero
+
+        var ordered: [Perceived] { items.sorted { $0.index < $1.index } }
+        var receipts: [PipelineStageReceipt] { ordered.map(\.receipt) }
+
+        var perceived: PipelinePerceived {
+            let (pages, transcripts) = (ordered.flatMap(\.pages), ordered.compactMap(\.transcript))
+            return PipelinePerceived(pages: pages.isEmpty ? nil : pages, transcript: transcripts.isEmpty ? nil : transcripts.joined(separator: "\n\n"))
         }
-        let transcript = transcripts.isEmpty ? nil : transcripts.joined(separator: "\n\n")
-        return (PipelinePerceived(pages: pages.isEmpty ? nil : pages, transcript: transcript), receipts)
+    }
+
+    func perceive(_ order: [PipelineCore.Perceiving], pages selection: String?, swap: PipelineSwap?) async throws(BasaltError) -> Perception {
+        var perception = Perception()
+        var resident: ModelOrchestratorActor?
+        do throws(BasaltError) {
+            for item in order {
+                guard let perceiver = item.perceiver else { throw .invalidRequestStructure(details: "pipeline: no perceiver for attachment \(item.index + 1)") }
+                if let swap { perception.swap += try await bring(perceiver, swap: swap, resident: &resident) }
+                perception.items.append(try await perceive(item, with: perceiver, gated: swap == nil && perceiver.betweenGenerations, pages: selection))
+            }
+        } catch {
+            if let resident { await withTaskCancellationShield { await resident.unloadModel() } }
+            throw error
+        }
+        if let resident { perception.swap += await withTaskCancellationShield { await Self.timed { await resident.unloadModel() } } }
+        return perception
+    }
+
+    func perceive(
+        _ item: PipelineCore.Perceiving, with perceiver: PipelineCore.Perceiver, gated: Bool, pages selection: String?
+    ) async throws(BasaltError) -> Perceived {
+        let started = ContinuousClock.now
+        switch item.attachment {
+        case .document(let document):
+            let result = try await readPaged(document, pages: selection, with: perceiver, gated: gated)
+            let receipt = PipelineStageReceipt(stage: .perceive, model: result.model, ms: Self.elapsed(since: started), tokens: result.pages.reduce(0) { $0 + $1.tokens })
+            return Perceived(index: item.index, receipt: receipt, pages: result.pages.map { PipelinePage(attachment: item.index, page: $0.page, markdown: $0.markdown) }, transcript: nil)
+        case .audio(let clip):
+            let heard = try await betweenGenerations(gated) { () async throws(BasaltError) in try await transcribe(clip, with: perceiver) }
+            return Perceived(index: item.index, receipt: PipelineStageReceipt(stage: .perceive, model: heard.model, ms: Self.elapsed(since: started), tokens: 0), pages: [], transcript: heard.text)
+        }
     }
 
     func betweenGenerations<T: Sendable>(_ gated: Bool, _ body: @Sendable () async throws(BasaltError) -> T) async throws(BasaltError) -> T {
@@ -79,9 +125,9 @@ struct PipelineRunner: Sendable {
         }
     }
 
-    func readPaged(_ document: OCRDocument, pages: String?, with perceiver: PipelineCore.Perceiver) async throws(BasaltError) -> (model: String, pages: [OCRPageResult]) {
-        guard perceiver.betweenGenerations, let numbers = try document.pageNumbers(pages), numbers.count > 1 else {
-            let result = try await betweenGenerations(perceiver.betweenGenerations) { () async throws(BasaltError) in try await read(document, pages: pages, with: perceiver) }
+    func readPaged(_ document: OCRDocument, pages: String?, with perceiver: PipelineCore.Perceiver, gated: Bool) async throws(BasaltError) -> (model: String, pages: [OCRPageResult]) {
+        guard gated, let numbers = try document.pageNumbers(pages), numbers.count > 1 else {
+            let result = try await betweenGenerations(gated) { () async throws(BasaltError) in try await read(document, pages: pages, with: perceiver) }
             return (result.model, result.pages)
         }
         var (model, read) = ("", [OCRPageResult]())
@@ -114,7 +160,7 @@ struct PipelineRunner: Sendable {
     }
 
     func decide(
-        _ questions: [String: SystemOneQuestion], state: String, origin: RequestOrigin, sessionId: String?
+        _ questions: [String: SystemOneQuestion], state: String, by decisions: (any DecisionEngine)?, origin: RequestOrigin, sessionId: String?
     ) async throws(BasaltError) -> (SystemOneResponse?, PipelineStageReceipt?) {
         guard !questions.isEmpty, let decisions else { return (nil, nil) }
         let started = ContinuousClock.now

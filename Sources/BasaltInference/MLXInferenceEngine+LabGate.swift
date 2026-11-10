@@ -76,7 +76,7 @@ extension MLXInferenceEngine {
     static func gate(_ request: GateRequest, context: ModelContext, live: [String: AppliedDelta], family: String?) throws -> GateReport {
         let pristine = try lifted(live, in: context.model) { try ModelProbe.facts(context) }
         let current = try ModelProbe.facts(context)
-        let rows = try request.heldOut.map { try compareRow($0, context: context, probe: nil, maxTokens: gateTokens, pristine: live) }
+        let rows = try request.heldOut.map { try compareRow($0, context: context, maxTokens: gateTokens, pristine: live) { nil } }
         let targets = try request.target.map { target in
             let answer = try ModelProbe.known(target.prompt, expected: target.expected.lowercased(), context: context, tokens: targetTokens)
             let hit: Float = ModelProbe.answer(answer) == nil ? 1 : 0

@@ -105,12 +105,16 @@ struct NemotronTranscribeUnitTests {
         )
     }
 
-    static func tinyEngine(seed: UInt64) async throws -> MLXInferenceEngine {
+    static func tinyContainer(seed: UInt64) throws -> ModelContainer {
         let model = try withRandomState(MLXRandom.RandomState(seed: seed)) { NemotronTranscribeModel(try tinyTranscribeConfig()) }
         eval(model)
+        return ModelContainer(context: ModelContext(
+            configuration: ModelConfiguration(id: "tiny-nemotron-transcribe"), model: model, processor: ByteInputProcessor(), tokenizer: SyntheticAudioTokenizer()))
+    }
+
+    static func tinyEngine(seed: UInt64) async throws -> MLXInferenceEngine {
         let engine = MLXInferenceEngine(EngineConfiguration(promptCacheBytes: 0))
-        await engine.attach(ModelContainer(context: ModelContext(
-            configuration: ModelConfiguration(id: "tiny-nemotron-transcribe"), model: model, processor: ByteInputProcessor(), tokenizer: SyntheticAudioTokenizer())))
+        await engine.attach(try tinyContainer(seed: seed))
         return engine
     }
 
@@ -135,7 +139,7 @@ struct NemotronTranscribeUnitTests {
     @Test("MelFeatures, ParallelExpertEncoder, speaker fusion, and prompt splice produce aligned embeddings and run end-to-end")
     func encoderFusionAndSplice() throws {
         let cfg = try Self.tinyTranscribeConfig()
-        let model = NemotronTranscribeModel(cfg)
+        let model = withRandomState(MLXRandom.RandomState(seed: 1)) { NemotronTranscribeModel(cfg) }
         let samples = (0 ..< 24_000).map { i in
             Float(0.25 * sin(2.0 * .pi * 440.0 * Double(i) / 16_000.0))
         }

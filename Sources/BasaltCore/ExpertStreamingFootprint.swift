@@ -10,6 +10,13 @@ public struct ExpertStreaming: Sendable, Equatable {
     public func cache(forExperts experts: ByteCount) -> ByteCount {
         cacheBytes ?? ByteCount(Int64(Double(experts.rawValue) * ExpertStreamingFootprint.expertCacheShare))
     }
+
+    public func residentBytes(weights: ByteCount, modelId: String) -> ByteCount {
+        let total = ModelDefinition.inferTotalParameters(id: modelId, name: "", ramMB: weights.rawValue >> 20)
+        let active = ModelDefinition.inferActiveParameters(id: modelId, name: "", total: total)
+        let footprint = ExpertStreamingFootprint(weights: weights, totalParameters: total, activeParameters: active, kv: .zero, streaming: self)
+        return footprint.map { $0.residentWeights + $0.expertCache } ?? weights
+    }
 }
 
 public struct ExpertStreamingFootprint: Sendable, Codable, Equatable {

@@ -41,8 +41,7 @@ struct ServeCommand: AsyncParsableCommand {
     )
     var embeddingAdapter: String?
 
-    @Option(name: .customLong("decision-model"), help: "OpenJev decision model served on /v1/systemone (single-pass noul/choice/score): \"self\" reads option letters from the chat model; a Core AI decision bundle (laya_decision.json with decision.aimodel, token_table.aimodel and tokenizer/) runs on the Neural Engine beside decode (on a weak power source it waits between generations); an OpenJev head bundle (openjev_config.json, head.safetensors, PEFT adapter) runs on its Qwen3 base; any other repo, such as openjev/OpenJev-Flash-9B-MLX, is loaded beside the chat model and read out by option letters")
-    var decisionModel: String?
+    @OptionGroup var decision: DecisionOptions
 
     @Option(
         name: .customLong("rerank-model"),
@@ -154,6 +153,7 @@ struct ServeCommand: AsyncParsableCommand {
     mutating func run() async throws {
         if wiredLimit { MLXInferenceEngine.renewsResidency() }
         if experimental.smallMKernel { MLXInferenceEngine.enablesSmallMKernel() }
+        await applyPipelinePreset()
         if dryRun { return await assessMemory() }
 
         let network = try resolveAccess()
@@ -179,14 +179,15 @@ struct ServeCommand: AsyncParsableCommand {
         let engine = try makeEngine()
         let orchestrator = try await makeOrchestrator(engine: engine, maxTokens: config.maxTokens)
 
-        let embeddings = try await loadEmbeddings()
+        let loadedEmbeddings = try await loadEmbeddings()
         let loadedDecisions = try await loadDecisions(chat: engine)
         let perceivePaths = try await pipelinePerceivePaths()
-        let degraded = try await admitComputePlan(chatPath: resolvedPath, embeddings: embeddings, decisions: loadedDecisions, perceive: perceivePaths)
-        let decisions = GatedDecisionEngine.serving(loadedDecisions, gate: orchestrator.gate, besideDecode: !degraded)
+        let plan = try await admitComputePlan(chatPath: resolvedPath, embeddings: loadedEmbeddings, decisions: loadedDecisions, perceive: perceivePaths)
+        let embeddings = BesideDecodeEmbeddingEngine.serving(loadedEmbeddings, besideDecode: plan.runsBesideDecode("embed"))
+        let decisions = try servedDecisions(loadedDecisions, gate: orchestrator.gate, besideDecode: plan.runsBesideDecode("decide"))
 
         try await load(orchestrator, from: resolvedPath)
-        let stages = try await loadPipelineStages(perceivePaths)
+        let stages = try await loadPipelineStages(perceivePaths, plan: plan)
         if !noMemoryCoordinator { await orchestrator.coordinateMemory(with: MemoryCoordinator()) }
         if !noThermalPolicy { await orchestrator.coordinateThermal() }
         await experimental.attachMediaFallbacks(to: orchestrator)

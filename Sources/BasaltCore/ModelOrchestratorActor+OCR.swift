@@ -5,7 +5,8 @@ extension ModelOrchestratorActor {
     @concurrent
     public nonisolated func ocr(_ request: OCRRequest) async throws(BasaltError) -> OCRResult {
         if request.model == OCRRequest.appleVision { return try await readWithVision(request) }
-        let (recipe, epoch) = try await ocrRecipe(switchingTo: request.model)
+        let (loaded, epoch) = try await ocrRecipe(switchingTo: request.model)
+        let recipe = try loaded.with(resolution: request.resolution)
         let step = try recipe.step(for: request.task)
         var pages: [OCRPageResult] = []
         for page in try request.document.pages(request.pages, dpi: OCRRecipe.pageDPI) {
@@ -15,7 +16,8 @@ extension ModelOrchestratorActor {
             case .layout(let prompt, let side): try await parseLayout(page.image, prompt: prompt, side: side, recipe: recipe, epoch: epoch)
             }
             pages.append(OCRPageResult(
-                page: page.number, markdown: read.markdown, blocks: read.blocks, tokens: read.tokens, ms: Self.milliseconds(since: started)))
+                page: page.number, markdown: read.markdown, blocks: read.blocks, tokens: read.tokens, ms: Self.milliseconds(since: started),
+                ttftMs: Int((read.firstToken * 1000).rounded())))
         }
         return OCRResult(model: await modelInfo, family: recipe.family.rawValue, task: request.task, pages: pages, format: request.format)
     }
@@ -25,7 +27,7 @@ extension ModelOrchestratorActor {
         let modelType = ModelCache.config(at: URL(fileURLWithPath: loaded.path))?["model_type"] as? String
         guard let recipe = OCRRecipe.of(modelType: modelType, hints: [loaded.path, currentModelId]) else {
             throw .invalidRequestStructure(
-                details: "the loaded model \(modelInfo) (model_type \(modelType ?? "unknown")) has no OCR recipe; load GLM-OCR (glm_ocr), MinerU2.5 (qwen2_vl) or PaddleOCR-VL (paddleocr_vl), or send model \(OCRRequest.appleVision)")
+                details: "the loaded model \(modelInfo) (model_type \(modelType ?? "unknown")) has no OCR recipe; load GLM-OCR (glm_ocr), MinerU2.5 (qwen2_vl), PaddleOCR-VL (paddleocr_vl) or DeepSeek-OCR (deepseekocr), or send model \(OCRRequest.appleVision)")
         }
         return (recipe, loaded.epoch)
     }
@@ -38,15 +40,15 @@ extension ModelOrchestratorActor {
 
     nonisolated func recognize(
         _ image: ImageInput, prompt: String, type: String, recipe: OCRRecipe, epoch: Int
-    ) async throws(BasaltError) -> (markdown: String, blocks: [OCRBlock], tokens: Int) {
+    ) async throws(BasaltError) -> (markdown: String, blocks: [OCRBlock], tokens: Int, firstToken: Double) {
         let response = try await generated(recipe.request(prompt: prompt, image: image, stage: .recognition), epoch: epoch)
-        let text = recipe.finished(response.generatedText, blockType: type)
-        return (text, [OCRBlock(type: type, bbox: .page, text: text)], response.completionTokens)
+        let read = recipe.read(response.generatedText, blockType: type)
+        return (read.markdown, read.blocks, response.completionTokens, response.timeToFirstToken)
     }
 
     nonisolated func parseLayout(
         _ page: ImageInput, prompt: String, side: Int, recipe: OCRRecipe, epoch: Int
-    ) async throws(BasaltError) -> (markdown: String, blocks: [OCRBlock], tokens: Int) {
+    ) async throws(BasaltError) -> (markdown: String, blocks: [OCRBlock], tokens: Int, firstToken: Double) {
         let image = try OCRImage.decode(page.data)
         guard let downsampled = OCRImage.resized(image, width: side, height: side) else {
             throw .inferenceError("cannot downsample the page for layout detection")
@@ -64,7 +66,7 @@ extension ModelOrchestratorActor {
             recognized.append((block, recipe.finished(response.generatedText, blockType: block.type)))
         }
         let assembled = MinerULayout.assemble(recognized)
-        return (assembled.markdown, assembled.blocks, tokens)
+        return (assembled.markdown, assembled.blocks, tokens, layout.timeToFirstToken)
     }
 
     nonisolated static func crop(_ page: CGImage, _ block: MinerULayout.Block) -> CGImage? {

@@ -71,8 +71,24 @@ actor MockInferenceEngine: InferenceEngine {
 
     func load(modelPath: String) async throws(BasaltError) {
         if shouldFailOnLoad { throw loadError }
+        loadCount += 1
+        guard loadFailures == 0 else {
+            loadFailures -= 1
+            if failsAfterLoading { loaded = true }
+            throw loadError
+        }
         loaded = true
     }
+
+    private(set) var releasedCaches = 0
+    private(set) var loadCount = 0
+    private var loadFailures = 0
+    private var failsAfterLoading = false
+
+    func failLoads(_ count: Int, afterLoading: Bool = false) { (loadFailures, failsAfterLoading) = (count, afterLoading) }
+
+    func unload() async { loaded = false }
+    func releaseCaches() async { releasedCaches += 1 }
 
     func transcribe(_ request: TranscriptionRequest) async throws(BasaltError) -> Transcription {
         guard let mockTranscription else { throw .noAudioEncoder("") }

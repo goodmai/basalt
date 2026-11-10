@@ -73,7 +73,7 @@ enum MCPToolCatalog {
         ),
         MCPToolDescriptor(
             name: "basalt_systemone_decide",
-            description: "Single-pass typed decisions with the loaded OpenJev decision model (serve --decision-model): noul (P(true)), choice (one of 2–255 named candidates) and score (expected level of 2–10 ordered levels). With an OpenJev or letter-readout model the state is encoded once and every candidate is scored over it; a Core AI bundle (Laya) reads the state once per question, takes states of about 500 tokens and choices of about 45 short options, and refuses longer ones. No text is generated. Probabilities are calibrated per type unless calibrated is false.",
+            description: "Single-pass typed decisions with the loaded OpenJev decision model (serve --decision-model): noul (P(true)), choice (one of 2–255 named candidates) and score (expected level of 2–10 ordered levels). With an OpenJev or letter-readout model the state is encoded once and every candidate is scored over it; a Core AI bundle (Laya) reads the state once per question, takes states of about 500 tokens and choices of about 45 short options, and refuses longer ones. No text is generated. Probabilities are calibrated per type unless calibrated is false. With serve --decision-model cloud:<model>, OpenRouter answers first (the state redacted of secrets) and questions below --decision-escalate-below, or the whole request when the cloud call fails, go to the local --decision-escalate model; usage.stages lists each stage.",
             inputSchema: ResearchTool.object([
                 "state": ["description": "The evidence: text, or a JSON object/array (serialized with sorted keys)"],
                 "questions": ["type": "object", "description": "Map of question ID → {type: noul|choice|score, instructions, criteria}: choice criteria are {name: description}, score criteria a list of level descriptions, noul criteria optional {false, true}"],
@@ -217,7 +217,7 @@ extension ResearchTool {
         case .modelTensor: "Statistics of one parameter tensor by name (mean, std, min, max, L2, percentiles of |x|), dequantized, with at most maxValues values of an optional slice. Never returns a whole tensor."
         case .kvInspect: "The prompt-cache tree: budget, bytes, evictions and per namespace its nodes, leaves, tokens, bytes, recurrent snapshots, pins and last use."
         case .traceRun: "One capture run of a prompt at background priority: per-layer hidden-state norms, logit lens, per-head attention for one position and MoE router choices, each bounded to topK."
-        case .intervene: "Experiment: add a steering vector to a layer's residual stream, or zero one attention head or one expert. Creates an overlay (id, 30 min TTL, undo) that applies to research calls only, never to user requests."
+        case .intervene: "Experiment: add a steering vector to a layer's residual stream, or zero one attention head or one expert; with when, only on the tokens a trigger selects (conditional ablation). Creates an overlay (id, 30 min TTL, undo) that applies to research calls only, never to user requests."
         case .weightsDelta: "Experiment: a temporary in-memory delta on one tensor (optionally a slice), undoable; weights on disk are never written."
         case .overlaysList: "Experiment: the active overlays with id, description, creation and expiry time."
         case .overlayUndo: "Experiment: undo one overlay by id."
@@ -230,6 +230,8 @@ extension ResearchTool {
         case .trainJepa: "Experiment, long-running: JEPA training. Trains a LoRA backbone and projector on a JSONL file of multi-view scenes (each line a string array or {\"views\": [...]}) with the LeJEPA loss, AdamW, warmup+cosine and gradient clipping. Saves adapters.safetensors and jepa_projector.safetensors under ~/.basalt/adapters, reports losses, pre-clip gradient norms and the WeightSpectrum rank of the projected embeddings before and after (a falling rank is collapse). The model is left unchanged; attention-only architectures only."
         case .distill: "Experiment, long-running: teacher → student distillation. A teacher behind an OpenAI-compatible or Anthropic endpoint answers the prompts (BASALT_TEACHER_API_KEY goes only to BASALT_TEACHER_URL's scheme, host and port); answers are cached under ~/.basalt/distill so a rerun pays nothing twice, spend stops at budgetUSD, empty, truncated, duplicate and (with filter verify) wrong answers are dropped. A LoRA is trained on the teacher's completions only (the prompt is masked), the teacher's per-token NLL on held-out prompts is reported before and after, and the adapter is applied through the quality gate as an undoable overlay. With onPolicy the student samples (temperature, maxTeacherTokens) and a basalt teacher with the same tokenizer scores those token ids through its /v1/score; the loss is the per-token reverse KL over the teacher's top 20, and the reverse KL on the base student's held-out samples is reported before and after. The model is held one optimizer step at a time, so serve keeps answering between steps; offline runs checkpoint every checkpointEvery steps and continue with resume. Mind the teacher's terms of use."
         case .steerSearch: "Experiment: contrastive steering search. The difference of mean residuals (positive minus negative prompts) per layer gives a direction; reports norm and class separation per layer, the best layer's unit direction, the heads whose ablation shrinks the gap most, and KL and projection shift when held-out prompts are steered by each scale. Directed search for activation directions, not self-awareness; leaves no overlay behind."
+        case .traceTokens: Self.traceTokensSummary
+        case .activationContrast: Self.activationContrastSummary
         case .steerCommit: "Experiment: turns a steering direction into a rank-1 update of the layer's output projection (input = mean module input over the positive prompts) and applies it as an adapter through the quality gate on the held-out prompts; undoable, never written to disk."
         }
     }
@@ -254,6 +256,8 @@ extension ResearchTool {
         case .distill: Self.object(Self.distillProperties, required: ["prompts", "teacherUrl", "teacherModel", "heldOut"])
         case .steerSearch: Self.object(Self.steerSearchProperties, required: ["positive", "negative", "heldOut"])
         case .steerCommit: Self.object(Self.steerCommitProperties, required: ["layer", "direction", "scale", "positive", "heldOut"])
+        case .traceTokens: Self.object(Self.traceTokensProperties, required: ["prompt"])
+        case .activationContrast: Self.object(Self.activationContrastProperties, required: ["a", "b"])
         }
     }
 
@@ -301,6 +305,7 @@ extension ResearchTool {
             "scale": ["type": "number", "description": "steer: factor on the vector (default 1)"],
             "head": ["type": "integer", "minimum": 0, "description": "ablate_head: head to zero"],
             "expert": ["type": "integer", "minimum": 0, "description": "ablate_expert: expert to zero"],
+            "when": whenProperty,
         ]
     }
 

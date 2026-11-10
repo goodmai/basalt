@@ -92,6 +92,14 @@ struct ModelResearchTests {
             (.weightsDelta, ["tensor": "w", "values": [Double]()], "values must be a non-empty array of numbers"),
             (.trainExperts, ["count": 40], "heldOut must be an array of 1...16"),
             (.trainExperts, ["heldOut": ["p"], "count": 1], "count must be an integer in 2...10000"),
+            (.traceTokens, ["maxTokens": 4], "Missing required argument: prompt"),
+            (.traceTokens, ["prompt": "x", "maxTokens": 2000], "maxTokens must be an integer in 0...1024"),
+            (.traceTokens, ["prompt": "x", "maxFileBytes": 0], "maxFileBytes must be an integer in 1...67108864"),
+            (.traceTokens, ["prompt": "x", "lensTopK": 21], "lensTopK must be an integer in 0...20"),
+            (.traceTokens, ["prompt": "x", "projections": [["layer": 1]]], "Missing required argument: vector"),
+            (.traceTokens, ["prompt": "x", "projections": "v"], "projections must be an array"),
+            (.activationContrast, ["a": ["x"], "b": ["y", "z"]], "a must be an array of 2...32 strings"),
+            (.activationContrast, ["a": ["x", "y"], "b": ["y", "z"], "onsetWindow": 0], "onsetWindow must be an integer in 1...64"),
         ]
         for (tool, args, fragment) in cases {
             let failure = #expect(throws: MCPFailure.self) { try ResearchCall(tool, args) }
@@ -216,6 +224,19 @@ extension ModelResearchTests {
 }
 
 extension ModelResearchTests {
+    static var activationContrast: ActivationContrastRequest {
+        var request = ActivationContrastRequest(a: ["x", "y"], b: ["z", "w"], maxTokens: 2, layers: [0])
+        (request.onsetWindow, request.topK) = (2, 3)
+        return request
+    }
+
+    static var tokenTrace: TokenTraceRequest {
+        var request = TokenTraceRequest(prompt: "hi", maxTokens: 4, layers: [1])
+        (request.experts, request.attentionEntropy, request.lensTopK, request.topK, request.maxFileBytes) = (false, true, 3, 2, 4096)
+        request.projections = [TraceDirection(layer: 1, vector: [0.5, 1], threshold: 2)]
+        return request
+    }
+
     static func labArguments(_ tool: ResearchTool) -> [String: Any] {
         switch tool {
         case .adapterApply: ["module": "model.layers.0.mlp.down_proj", "input": [1.0], "output": [2.0], "scale": 0.5, "gate": ["heldOut": ["h"], "maxKL": 0.25, "target": [["prompt": "2 + 2 =", "expected": "4"]]]]
@@ -227,6 +248,8 @@ extension ModelResearchTests {
         case .distill: ["prompts": "/tmp/p.jsonl", "teacherUrl": "https://t.test/v1", "teacherModel": "m", "heldOut": ["Hi."], "budgetUSD": 2, "outputPricePerMillion": 10, "provider": "anthropic", "onPolicy": true]
         case .steerSearch: LabSteerTests.searchArguments
         case .steerCommit: LabSteerTests.commitArguments
+        case .activationContrast: ["a": ["x", "y"], "b": ["z", "w"], "maxTokens": 2, "layers": [0], "onsetWindow": 2, "topK": 3]
+        case .traceTokens: ["prompt": "hi", "maxTokens": 4, "layers": [1], "experts": false, "attentionEntropy": true, "lensTopK": 3, "topK": 2, "maxFileBytes": 4096, "projections": [["layer": 1, "vector": [0.5, 1.0], "threshold": 2.0]]]
         default: [:]
         }
     }
@@ -242,6 +265,8 @@ extension ModelResearchTests {
         case .distill: .distill(Self.distill)
         case .steerSearch: .contrast(LabSteerTests.searchRequest)
         case .steerCommit: .commitSteering(LabSteerTests.commitRequest)
+        case .traceTokens: .traceTokens(Self.tokenTrace)
+        case .activationContrast: .activationContrast(Self.activationContrast)
         default: .describe
         }
     }

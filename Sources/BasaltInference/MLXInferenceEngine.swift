@@ -177,6 +177,13 @@ extension MLXInferenceEngine {
         return true
     }
 
+    public func unload() async { await unloadCurrentModel() }
+
+    public func releaseCaches() async {
+        dropPromptCaches()
+        Memory.clearCache()
+    }
+
     func unloadCurrentModel() async {
         await persistPromptCache(within: Self.modelSwitchPersistDeadline)
         state = .reduce(state, .unloaded)

@@ -67,11 +67,22 @@ public enum PipelineCore {
 
     public static let speechAnalyzerModel = "apple-speech-analyzer"
 
+    public struct Perceiving: Sendable {
+        public let index: Int
+        public let attachment: PipelineAttachment
+        public let perceiver: Perceiver?
+    }
+
+    public static func perceiveOrder(_ attachments: [PipelineAttachment], perceivers: Perceivers, grouped: Bool) -> [Perceiving] {
+        let items = attachments.enumerated().map { Perceiving(index: $0.offset, attachment: $0.element, perceiver: perceivers.perceiver(for: $0.element)) }
+        return grouped ? items.sorted { ($0.perceiver?.rawValue ?? "", $0.index) < ($1.perceiver?.rawValue ?? "", $1.index) } : items
+    }
+
     public static func missingStage(_ request: PipelineRequest, perceivers: Perceivers, hasDecisions: Bool) -> String? {
         for attachment in request.attachments where perceivers.perceiver(for: attachment) == nil {
             switch attachment {
             case .document:
-                return "A pdf or image attachment needs an OCR model; start basalt serve with --pipeline-ocr-model <GLM-OCR, MinerU2.5 or PaddleOCR-VL repo|dir>."
+                return "A pdf or image attachment needs an OCR model; start basalt serve with --pipeline-ocr-model <GLM-OCR, MinerU2.5, PaddleOCR-VL or DeepSeek-OCR repo|dir>."
             case .audio:
                 return "An audio attachment needs a speech model; start basalt serve with --pipeline-audio-model <Nemotron Transcribe repo|dir>, a chat model with an audio encoder, or --experimental-speech-analyzer."
             }

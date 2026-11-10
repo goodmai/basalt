@@ -23,7 +23,7 @@ struct PipelineController: Sendable {
         let pages: String?
     }
 
-    static func request(from data: Data, imageDirectories: [URL]) throws(BasaltError) -> PipelineRequest {
+    static func request(from data: Data, imageDirectories: [URL], defaultQuestions: [String: SystemOneQuestion] = [:]) throws(BasaltError) -> PipelineRequest {
         guard let body = try? JSONDecoder().decode(Body.self, from: data) else {
             throw .invalidRequestStructure(
                 details: "a pipeline request is JSON with attachments [{kind: pdf|image|audio, data: base64, format?}], text, questions {id: {type, instructions, criteria?}}, task and pages")
@@ -40,14 +40,14 @@ struct PipelineController: Sendable {
                 throw .invalidRequestStructure(details: "pipeline: each attachment needs exactly one of data (base64) and path (MCP, inside a serve --image-dir directory)")
             }
         }
-        return try PipelineRequest(attachments: attachments, text: body.text, questions: body.questions, task: body.task, pages: body.pages)
+        return try PipelineRequest(attachments: attachments, text: body.text, questions: body.questions ?? defaultQuestions, task: body.task, pages: body.pages)
     }
 
     @Sendable
     func pipeline(request: Request, context: BasicRequestContext) async throws -> Response {
         do {
             let data = Data(try await request.body.collect(upTo: Self.bodyLimit).readableBytesView)
-            let parsed = try Self.request(from: data, imageDirectories: [])
+            let parsed = try Self.request(from: data, imageDirectories: [], defaultQuestions: runner.stages.questions)
             if let missing = await runner.missingStage(parsed) {
                 return ProviderErrorResponse.response(status: .notFound, message: missing, shape: .openAI)
             }

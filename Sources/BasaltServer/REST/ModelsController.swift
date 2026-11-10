@@ -122,6 +122,9 @@ struct ModelsController: Sendable {
 
     @Sendable
     func previewModel(request: Request, context: BasicRequestContext) async throws -> Response {
+        if let name = request.uri.queryParameters.get("pipeline_preset") {
+            return await previewPreset(String(name), memory: request.uri.queryParameters.get("pipeline_memory").map { String($0) } ?? PipelineMemory.auto.rawValue)
+        }
         guard let raw = request.uri.queryParameters.get("model_id"), !raw.isEmpty else {
             return makeErrorResponse(status: .badRequest, message: "model_id is required, e.g. ?model_id=mlx-community/Qwen3-4B-4bit")
         }

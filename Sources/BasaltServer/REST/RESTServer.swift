@@ -198,18 +198,18 @@ extension RESTServer {
         "/v1/models":              { "get":  { "summary": "List cached models (OpenAI format)" } },
         "/api/v1/stats":           { "get":  { "summary": "Telemetry of the serving process (same snapshot as serve --stats and MCP status)" } },
         "/v1/models/current":      { "get":  { "summary": "Currently loaded model + status" } },
-        "/v1/models/preview":      { "get":  { "summary": "Memory a model would need, without loading it (?model_id=&context=)" } },
+        "/v1/models/preview":      { "get":  { "summary": "Memory a model would need, without loading it (?model_id=&context=), or the compute plan of a pipeline preset (?pipeline_preset=document-qa|voice-agent|support-triage&pipeline_memory=auto|resident|sequential)" } },
         "/v1/models/load":         { "post": { "summary": "Hot-swap model at runtime" } },
         "/v1/chat/completions":    { "post": { "summary": "OpenAI-compatible chat completions" } },
         "/v1/responses":           { "post": { "summary": "OpenAI Responses API (Codex/Cursor)" } },
         "/v1/messages":            { "post": { "summary": "Anthropic-compatible messages API" } },
         "/v1/score":               { "post": { "summary": "Top-k logprobs of supplied completion token ids after chat messages, in one forward pass (teacher for on-policy distill)" } },
         "/v1/embeddings":          { "post": { "summary": "OpenAI-compatible embeddings (serve --embedding-model)" } },
-        "/v1/systemone":           { "post": { "summary": "Single-pass typed decisions: noul, choice, score (serve --decision-model)" } },
+        "/v1/systemone":           { "post": { "summary": "Single-pass typed decisions: noul, choice, score (serve --decision-model; with cloud:<model> OpenRouter answers first and questions below --decision-escalate-below go to --decision-escalate, listed per stage in usage.stages)" } },
         "/v1/rerank":              { "post": { "summary": "Cohere/Jina-compatible rerank (serve --rerank-model)" } },
         "/v1/audio/transcriptions": { "post": { "summary": "OpenAI-compatible speech to text (multipart: file, model, language, response_format, temperature)" } },
-        "/v1/ocr":                 { "post": { "summary": "Document OCR with GLM-OCR, MinerU2.5 or PaddleOCR-VL (JSON: file as base64 PDF or image, pages such as 1-3, task document|text|table|formula|chart, format markdown|json, model)" } },
-        "/v1/pipeline":            { "post": { "summary": "Perceive (OCR of pdf/image attachments with serve --pipeline-ocr-model or Apple Vision, transcription of audio with serve --pipeline-audio-model, the chat model's audio encoder or SpeechAnalyzer (with --experimental-speech-analyzer)) → decide (System One on typed questions) → answer (the chat model, only for abstained questions and a task); returns perceived text, answers, the System 2 reply and a route receipt" } }
+        "/v1/ocr":                 { "post": { "summary": "Document OCR with GLM-OCR, MinerU2.5, PaddleOCR-VL or DeepSeek-OCR (JSON: file as base64 PDF or image, pages such as 1-3, task document|text|table|formula|chart, format markdown|json, model, resolution tiny|small|base|large|gundam for DeepSeek-OCR)" } },
+        "/v1/pipeline":            { "post": { "summary": "Perceive (OCR of pdf/image attachments with serve --pipeline-ocr-model or Apple Vision, transcription of audio with serve --pipeline-audio-model, the chat model's audio encoder or SpeechAnalyzer (with --experimental-speech-analyzer)) → decide (System One on typed questions) → answer (the chat model, only for abstained questions and a task); returns perceived text, answers, the System 2 reply and a route receipt (swap_ms when serve --pipeline-memory loads models per stage; --pipeline-preset fills the models)" } }
       }
     }
     """

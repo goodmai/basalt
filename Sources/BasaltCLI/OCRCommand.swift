@@ -7,7 +7,7 @@ import Foundation
 struct OCRCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "ocr",
-        abstract: "Read a PDF or an image to Markdown with GLM-OCR, MinerU2.5, PaddleOCR-VL or Apple Vision"
+        abstract: "Read a PDF or an image to Markdown with GLM-OCR, MinerU2.5, PaddleOCR-VL, DeepSeek-OCR or Apple Vision"
     )
 
     @Argument(help: "PDF or image file (PNG, JPEG, WebP, HEIC)")
@@ -25,13 +25,17 @@ struct OCRCommand: AsyncParsableCommand {
     @Option(name: .long, help: "markdown, or json with blocks {type, bbox, text}")
     var format = OCRFormat.markdown.rawValue
 
+    @Option(name: .long, help: "DeepSeek-OCR resolution mode: tiny (512, 64 vision tokens), small (640, 100), base (1024, 256), large (1280, 400) or gundam (1024 plus 640 tiles; the default)")
+    var resolution: String?
+
     mutating func run() async throws {
         guard let data = FileManager.default.contents(atPath: (file as NSString).expandingTildeInPath) else {
             throw ValidationError("Cannot read \(file)")
         }
         let vision = model == OCRRequest.appleVision
         let request = try OCRRequest(
-            document: OCRDocument(data: data), pages: pages, task: task, format: format, model: vision ? model : nil)
+            document: OCRDocument(data: data), pages: pages, task: task, format: format, model: vision ? model : nil,
+            resolution: resolution)
         print(try Self.render(try await vision ? Self.readWithVision(request) : Self.read(request, model: model), as: request.format))
     }
 
