@@ -78,7 +78,7 @@ final class PaddleOCRVL: Module, VLMModel, KVCacheDimensionProvider {
 
     func merged(_ ids: MLXArray, pixels: MLXArray, frames: [THW]) -> MLXArray {
         let embeddings = languageModel.model.embedTokens(ids)
-        let features = pixels.ndim == 2 ? pixels : visual(pixels.asType(visual.embeddings.patchEmbedding.weight.dtype), frames: frames)
+        let features = visual(pixels.asType(visual.embeddings.patchEmbedding.weight.dtype), frames: frames)
         let mask = ids .== config.imageTokenId
         let index = maximum(cumsum(mask.asType(.int32), axis: -1) - 1, 0)
         return which(mask[.ellipsis, .newAxis], features.take(index, axis: 0), embeddings)

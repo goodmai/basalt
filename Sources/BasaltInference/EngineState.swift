@@ -26,7 +26,6 @@ struct ModelFacts: Sendable {
     var capabilities = ModelCapabilities.unrestricted
     var imageToken: Int?
     var transcribesAudio = false
-    var visionTower: CoreAIVisionTower?
     var deltas: [String: AppliedDelta] = [:]
     var cacheFence = 0
     var adapters: [String: ServedAdapter] = [:]

@@ -27,7 +27,6 @@ public struct EngineConfiguration: Sendable {
     public var expertStreaming: ExpertStreaming? = nil
     public var probesModel = false
     public var recordConfidence = false
-    public var visionTowerBundle: String? = nil
 }
 
 extension EngineConfiguration {
