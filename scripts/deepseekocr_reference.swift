@@ -188,6 +188,20 @@ func python(_ code: String, _ arguments: [String]) throws -> Data {
     return data
 }
 
+enum GPULock {
+    static let path = "/private/tmp/basalt-gpu.lock"
+    static let owner = String(ProcessInfo.processInfo.processIdentifier)
+
+    static func holding<T>(_ body: () throws -> T) rethrows -> T {
+        while (try? FileManager.default.createDirectory(atPath: path, withIntermediateDirectories: false)) == nil { sleep(2) }
+        try? owner.write(toFile: path + "/owner", atomically: true, encoding: .utf8)
+        defer {
+            if (try? String(contentsOfFile: path + "/owner", encoding: .utf8)) == owner { try? FileManager.default.removeItem(atPath: path) }
+        }
+        return try body()
+    }
+}
+
 func floats(_ values: [Double]) -> String {
     stride(from: 0, to: values.count, by: 8).map { start in
         "            " + values[start ..< min(start + 8, values.count)].map { String(format: "%.9g", $0) }.joined(separator: ", ") + ","
@@ -243,7 +257,7 @@ case "golden":
     try goldenSource(json).write(to: target, atomically: true, encoding: .utf8)
     print("wrote \(target.path)")
 case "pages" where arguments.count >= 5:
-    _ = try python(pages, Array(arguments.dropFirst()))
+    _ = try GPULock.holding { try python(pages, Array(arguments.dropFirst())) }
     print("wrote \(arguments[3])")
 default:
     print(usage)

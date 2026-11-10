@@ -19,6 +19,11 @@ struct DeepSeekOCRConfiguration: Codable, Sendable {
         let rmsNormEps: Float?
         let ropeTheta: Float?
         let routedScalingFactor: Float?
+        let scoringFunction: String?
+        let normalizesTopK: Bool?
+        let moeLayerFrequency: Int?
+        let groups: Int?
+        let topKGroups: Int?
 
         var eps: Float { rmsNormEps ?? 1e-6 }
         var theta: Float { ropeTheta ?? 10_000 }
@@ -43,6 +48,11 @@ struct DeepSeekOCRConfiguration: Codable, Sendable {
             case rmsNormEps = "rms_norm_eps"
             case ropeTheta = "rope_theta"
             case routedScalingFactor = "routed_scaling_factor"
+            case scoringFunction = "scoring_func"
+            case normalizesTopK = "norm_topk_prob"
+            case moeLayerFrequency = "moe_layer_freq"
+            case groups = "n_group"
+            case topKGroups = "topk_group"
         }
     }
 
@@ -135,6 +145,10 @@ struct DeepSeekOCRConfiguration: Codable, Sendable {
         let reasons = [
             (text.qkNopeHeadDim ?? 0) != 0 ? "multi-head latent attention (qk_nope_head_dim \(text.qkNopeHeadDim ?? 0))" : nil,
             (text.topkMethod ?? "greedy") != "greedy" ? "expert routing \(text.topkMethod ?? "")" : nil,
+            (text.scoringFunction ?? "softmax") != "softmax" ? "expert scoring \(text.scoringFunction ?? "")" : nil,
+            text.normalizesTopK == true ? "normalized top-k expert weights" : nil,
+            (text.moeLayerFrequency ?? 1) != 1 ? "experts every \(text.moeLayerFrequency ?? 1) layers" : nil,
+            max(text.groups ?? 1, text.topKGroups ?? 1) > 1 ? "grouped expert routing (n_group \(text.groups ?? 1), topk_group \(text.topKGroups ?? 1))" : nil,
             projector.type != "linear" ? "projector \(projector.type)" : nil,
             sam.downsampleChannels.count != 2 ? "\(sam.downsampleChannels.count) SAM downsample stages" : nil,
             clip.width != sam.downsampleChannels.last ? "SAM features of \(sam.downsampleChannels.last ?? 0) channels into CLIP width \(clip.width)" : nil,
