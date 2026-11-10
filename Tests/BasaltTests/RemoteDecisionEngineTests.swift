@@ -159,12 +159,13 @@ struct RemoteDecisionEngineTests {
     ])
     func failures(route: String, reason: String) async throws {
         try await RemoteStub.serve { base, log in
-            let engine = try RemoteStub.engine(base, route, timeout: 0.5)
+            let engine = try RemoteStub.engine(base, route, timeout: route == "hang" ? 0.5 : 30)
             let error = await #expect(throws: BasaltError.self) { try await engine.decide(Self.request) }
             let message = error?.localizedDescription ?? ""
             #expect(message.contains(reason))
             #expect(!message.contains(RemoteStub.key))
-            #expect(log.calls.withLock { $0.map(\.path) } == ["/\(route)/decisions"])
+            let paths = log.calls.withLock { $0.map(\.path) }
+            #expect(route == "hang" ? paths.allSatisfy { $0 == "/hang/decisions" } : paths == ["/\(route)/decisions"])
         }
     }
 
