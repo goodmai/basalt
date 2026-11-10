@@ -82,6 +82,20 @@ struct PaddleOCRVLTests {
         #expect(throws: BasaltError.self) { _ = try Self.prefillLogits(model, prompt + [250]) }
     }
 
+    @Test("Encoded features handed in place of pixels, as the Neural Engine tower does, prefill to exactly the logits of the pixels they came from (#224)")
+    func encodedFeatures() throws {
+        let model = try #require(try TinyModel.make(.paddleOCR) as? PaddleOCRVL)
+        let prompt = Self.imagePrompt()
+        let input = Self.imageInput(prompt)
+        let features = model.visual(try #require(input.image).pixels, frames: [Self.frame])
+        let encoded = LMInput(text: input.text, image: .init(pixels: features, frames: [Self.frame]))
+        guard case .logits(let output) = try model.prepare(encoded, cache: try model.newCache(parameters: nil), state: nil, prefill: .init()) else {
+            Issue.record("encoded features must prefill to logits")
+            return
+        }
+        #expect(MLX.abs(output.logits[0, -1].asType(.float32) - (try Self.prefillLogits(model, prompt))).max().item(Float.self) == 0)
+    }
+
     @Test("M-RoPE positions equal mlx-vlm get_rope_index on two non-square images (4x6 and 2x4 grids), and a short placeholder run is refused")
     func positions() throws {
         let frames = [THW(1, 4, 6), THW(1, 2, 4)]

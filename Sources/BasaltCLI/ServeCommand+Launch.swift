@@ -67,6 +67,7 @@ extension ServeCommand {
         configuration.wiresWorkingSet = wiredLimit
         configuration.expertStreaming = expertStreaming.setting
         configuration.probesModel = modelProbe
+        configuration.visionTowerBundle = experimental.aneVisionTower
         return MLXInferenceEngine(configuration, promptCacheDisk: try promptCacheDisk.store())
     }
 
