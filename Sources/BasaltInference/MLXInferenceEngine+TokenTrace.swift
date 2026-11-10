@@ -19,7 +19,10 @@ extension MLXInferenceEngine {
         let anatomy = try await self.anatomy()
         guard modelEpoch == epoch else { throw .inferenceError("the model changed while the trace was prepared; retry") }
         try request.validate(against: anatomy)
-        let run = try await Self.labRun(container, "the token trace") { context in try Self.tokenTrace(request, anatomy: anatomy, context: context) }
+        let interventions = activeInterventions()
+        let run = try await Self.labRun(container, "the token trace") { context in
+            try Self.tokenTrace(request, anatomy: anatomy, interventions: interventions, context: context)
+        }
         let url: URL
         let data: Data
         do {
@@ -41,7 +44,7 @@ extension MLXInferenceEngine {
         return report
     }
 
-    static func tokenTrace(_ request: TokenTraceRequest, anatomy: ModelAnatomy, context: ModelContext) throws -> TokenTraceRun {
+    static func tokenTrace(_ request: TokenTraceRequest, anatomy: ModelAnatomy, interventions: [Intervention], context: ModelContext) throws -> TokenTraceRun {
         let prompt = context.tokenizer.encode(text: request.prompt, addSpecialTokens: true)
         guard !prompt.isEmpty else { throw BasaltError.invalidRequestStructure(details: "the prompt encodes to no tokens") }
         let total = prompt.count + request.maxTokens
@@ -54,7 +57,7 @@ extension MLXInferenceEngine {
         guard request.lensTopK == 0 || lens != nil else {
             throw BasaltError.invalidRequestStructure(details: "this model has no readout for the logit lens; set lensTopK to 0")
         }
-        let recorder = TokenTraceRecorder(request, readout: lens)
+        let recorder = TokenTraceRecorder(request, readout: lens, edits: interventions.isEmpty ? nil : InterventionProbe(interventions, anatomy: anatomy))
         let generated = try tracedGreedy(prompt, maxTokens: request.maxTokens, recorder: recorder, context: context)
         guard let layout = recorder.layout, layout.floatWidth + layout.intWidth > 0, let (floats, ints) = recorder.table() else {
             throw BasaltError.invalidRequestStructure(details: "this model's family reports none of the requested signals to the forward probe")

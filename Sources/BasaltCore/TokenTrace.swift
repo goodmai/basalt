@@ -51,6 +51,9 @@ public struct TokenTraceRequest: Sendable, Codable, Equatable {
             throw .invalidRequestStructure(details: "layers must list at least one layer in 0..<\(count)")
         }
         let traced = Set(tracedLayers(of: count))
+        guard Set(projections.map(\.layer)).count == projections.count else {
+            throw .invalidRequestStructure(details: "at most one projection per layer")
+        }
         for direction in projections {
             guard traced.contains(direction.layer) else {
                 throw .invalidRequestStructure(details: "projection layer \(direction.layer) is not among the traced layers")
