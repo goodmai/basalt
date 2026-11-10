@@ -5,7 +5,9 @@ import MLXLMCommon
 import BasaltCore
 
 public struct CoreAIVisionTower: Sendable {
+    static let maxInFlight = 2
     let bundle: CoreAIVisionTowerBundle
+    let admission = InFlightLimit(maxInFlight)
     private let functions: [String: InferenceFunction]
 
     public static func isBundle(_ directory: URL) -> Bool { CoreAIVisionTowerBundle.isBundle(directory) }
@@ -100,16 +102,17 @@ public struct CoreAIVisionTower: Sendable {
         let padded = count == length ? rows : concatenated([rows, MLXArray.zeros([length - count, channels], dtype: rows.dtype)], axis: 0)
         let planar = contiguous(padded.transposed().asType(.float16))
         eval(planar)
-        let bytes = planar.asData(access: .noCopyIfContiguous).data
         let shape = perHead ? [1, 1, channels, length] : [1, channels, 1, length]
         var array = NDArray(shape: shape, scalarType: .float16)
         guard Array(array.strides) == strides(of: shape) else {
             throw BasaltError.inferenceError("a Core AI input of \(channels)x\(length) is not row-major")
         }
+        let bytes = planar.asData(access: .noCopyIfContiguous).data
         let view = array.mutableView(as: Float16.self)
         view.withUnsafeMutablePointer { pointer, _, _ in
             bytes.withUnsafeBytes { source in _ = memcpy(pointer, source.baseAddress!, min(source.count, channels * length * 2)) }
         }
+        withExtendedLifetime(planar) {}
         return array
     }
 

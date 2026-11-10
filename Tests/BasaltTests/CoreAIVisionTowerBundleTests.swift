@@ -1,3 +1,4 @@
+import CoreAI
 import Foundation
 import MLX
 import MLXLMCommon
@@ -59,5 +60,30 @@ struct CoreAIVisionTowerBundleTests {
         let engine = try command.makeEngine()
         #expect(await engine.configuration.visionTowerBundle == directory.path)
         #expect(try ServeCommand.parse([]).experimental.aneVisionTower == nil)
+    }
+
+    @Test("Hand-off on the tiny PaddleOCR-VL: tower features go to a padded fp16 (1, C, 1, N) array and back unchanged except for the fp16 cast, and prefill on them equals prefill on the cast features (#228)")
+    func handOffRoundTrip() throws {
+        let model = try #require(try TinyModel.make(.paddleOCR) as? PaddleOCRVL)
+        let prompt = PaddleOCRVLTests.imagePrompt()
+        let input = PaddleOCRVLTests.imageInput(prompt)
+        let frame = PaddleOCRVLTests.frame
+        let reference = model.visual(try #require(input.image).pixels, frames: [frame])
+        let (rows, channels) = (reference.dim(0), reference.dim(1))
+        let planar = try CoreAIVisionTower.planar(reference, length: rows + 4)
+        #expect(planar.shape == [1, channels, 1, rows + 4])
+        #expect(try CoreAIVisionTower.planar(reference, length: rows, perHead: true).shape == [1, 1, channels, rows])
+        let back = try CoreAIVisionTower.features(
+            [planar], encoded: [CoreAIVisionTower.Encoded(function: "n", inputs: [:], rows: rows)], dtype: reference.dtype)
+        let cast = reference.asType(.float16).asType(reference.dtype)
+        #expect(back.shape == reference.shape)
+        #expect(arrayEqual(back, cast).item(Bool.self))
+        func logits(_ features: MLXArray) throws -> MLXArray? {
+            let encoded = LMInput(text: input.text, image: .init(pixels: features, frames: [frame]))
+            guard case .logits(let output) = try model.prepare(encoded, cache: try model.newCache(parameters: nil), state: nil, prefill: .init()) else { return nil }
+            return output.logits[0, -1]
+        }
+        let (handed, direct) = (try #require(try logits(back)), try #require(try logits(cast)))
+        #expect(arrayEqual(handed, direct).item(Bool.self))
     }
 }
