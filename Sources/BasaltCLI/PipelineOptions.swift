@@ -40,11 +40,11 @@ extension ServeCommand {
         guard let preset = pipeline.preset else { return }
         let budget = if let budgetBytes { budgetBytes } else { await SystemProfiler().detectResources().gpuMemory }
         let explicit = PipelineChoices(
-            chat: model ?? modelPath, ocr: pipeline.ocrModel, audio: pipeline.audioModel, decide: decisionModel,
+            chat: model ?? modelPath, ocr: pipeline.ocrModel, audio: pipeline.audioModel, decide: decision.model,
             abstainBelow: pipeline.abstainBelow, minMargin: pipeline.minMargin)
         let chosen = preset.choices(budgetBytes: budget).overridden(by: explicit)
         if modelPath == nil { model = chosen.chat }
-        (pipeline.ocrModel, pipeline.audioModel, decisionModel) = (chosen.ocr, chosen.audio, chosen.decide)
+        (pipeline.ocrModel, pipeline.audioModel, decision.model) = (chosen.ocr, chosen.audio, chosen.decide)
         (pipeline.abstainBelow, pipeline.minMargin) = (chosen.abstainBelow, chosen.minMargin)
         log("Pipeline preset \(preset.rawValue) for a \(ComputePlan.gigabytes(budget)) working set: " + chosen.summary)
     }

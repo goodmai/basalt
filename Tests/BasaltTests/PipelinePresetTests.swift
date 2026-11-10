@@ -74,20 +74,20 @@ struct PipelinePresetTests {
     func serveExpansion() async throws {
         var plain = try ServeCommand.parse(["--pipeline-preset", "document-qa"])
         await plain.applyPipelinePreset(budgetBytes: 18 * Self.gb)
-        #expect(plain.model == PipelinePreset.gemma.model && plain.pipeline.ocrModel == PipelinePreset.paddleOCR.model && plain.decisionModel == "self")
+        #expect(plain.model == PipelinePreset.gemma.model && plain.pipeline.ocrModel == PipelinePreset.paddleOCR.model && plain.decision.model == "self")
         #expect(plain.pipeline.abstainBelow == 0.75 && plain.pipeline.minMargin == 0.1 && plain.pipeline.audioModel == nil)
         var explicit = try ServeCommand.parse([
             "--pipeline-preset", "document-qa", "--model", "org/chat", "--pipeline-ocr-model", "mlx-community/GLM-OCR-8bit", "--decision-model", "/bundles/laya", "--pipeline-min-margin", "0.2",
         ])
         await explicit.applyPipelinePreset(budgetBytes: 18 * Self.gb)
-        #expect(explicit.model == "org/chat" && explicit.pipeline.ocrModel == "mlx-community/GLM-OCR-8bit" && explicit.decisionModel == "/bundles/laya")
+        #expect(explicit.model == "org/chat" && explicit.pipeline.ocrModel == "mlx-community/GLM-OCR-8bit" && explicit.decision.model == "/bundles/laya")
         #expect(explicit.pipeline.minMargin == 0.2 && explicit.pipeline.abstainBelow == 0.75)
         var local = try ServeCommand.parse(["--pipeline-preset", "voice-agent", "--model-path", "/models/chat"])
         await local.applyPipelinePreset(budgetBytes: 18 * Self.gb)
-        #expect(local.model == nil && local.modelPath == "/models/chat" && local.pipeline.audioModel == PipelinePreset.nemotronTranscribe.model && local.decisionModel == nil)
+        #expect(local.model == nil && local.modelPath == "/models/chat" && local.pipeline.audioModel == PipelinePreset.nemotronTranscribe.model && local.decision.model == nil)
         var none = try ServeCommand.parse([])
         await none.applyPipelinePreset(budgetBytes: 18 * Self.gb)
-        #expect(none.model == nil && none.decisionModel == nil)
+        #expect(none.model == nil && none.decision.model == nil)
         #expect(throws: (any Error).self) { try ServeCommand.parse(["--pipeline-preset", "llama-desk"]) }
     }
 
@@ -161,7 +161,7 @@ struct PipelinePresetTinyModelTests {
     func supportTriage() async throws {
         var serve = try ServeCommand.parse(["--pipeline-preset", "support-triage"])
         await serve.applyPipelinePreset(budgetBytes: 18 * PipelinePresetTests.gb)
-        #expect(serve.decisionModel == "self" && serve.pipeline.ocrModel == nil)
+        #expect(serve.decision.model == "self" && serve.pipeline.ocrModel == nil)
         let stages = try await serve.loadPipelineStages(ServeCommand.PerceivePaths())
         let ticket = "Ticket: I was charged twice for order #4521.\nIncident: Users affected: 1."
         let late = try #require(PipelinePreset.triageQuestions["late"])
