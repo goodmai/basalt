@@ -5,7 +5,7 @@ import Synchronization
 @testable import BasaltCloud
 @testable import BasaltInference
 
-@Suite("Cascade System One on the decision set: jev-latest first, local readout below 0.6; accuracy, escalation, latency, cost and decode tok/s beside it (#407)", .serialized)
+@Suite("Cascade System One on the decision set: jev-latest first, local readout below 0.6; accuracy, escalation, latency, cost and decode tok/s beside it (#407)", .serialized, .timeLimit(.minutes(45)))
 struct CascadeDecisionRealModelTests {
     struct Arm {
         var correct = 0
