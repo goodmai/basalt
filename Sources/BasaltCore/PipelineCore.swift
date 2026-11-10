@@ -82,7 +82,7 @@ public enum PipelineCore {
         for attachment in request.attachments where perceivers.perceiver(for: attachment) == nil {
             switch attachment {
             case .document:
-                return "A pdf or image attachment needs an OCR model; start basalt serve with --pipeline-ocr-model <GLM-OCR, MinerU2.5 or PaddleOCR-VL repo|dir>."
+                return "A pdf or image attachment needs an OCR model; start basalt serve with --pipeline-ocr-model <GLM-OCR, MinerU2.5, PaddleOCR-VL or DeepSeek-OCR repo|dir>."
             case .audio:
                 return "An audio attachment needs a speech model; start basalt serve with --pipeline-audio-model <Nemotron Transcribe repo|dir>, a chat model with an audio encoder, or --experimental-speech-analyzer."
             }

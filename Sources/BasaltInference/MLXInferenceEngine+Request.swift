@@ -57,7 +57,7 @@ extension MLXInferenceEngine {
         let turns = (continued?.turns ?? request.messages).flatMap {
             $0.isEmpty ? nil : profile.turns(controlTokens.neutralize($0), for: policy)
         }
-        let templateContext = profile.templateContext(for: policy)
+        let templateContext = profile.templateContext(for: policy).merging(request.ocrMode?.templateContext ?? [:]) { $1 }
         let context = templateContext.isEmpty ? nil : templateContext
         var draft: Draft
         var anchorTurns: [ChatMessageInput] = []

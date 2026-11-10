@@ -12,7 +12,7 @@ struct PipelineOptions: ParsableArguments {
     @Option(name: .customLong("pipeline-memory"), help: "How pipeline models share memory: resident keeps every model loaded, so their sum must fit the working set; sequential loads each perceiver (OCR, speech) for its stage and unloads it after, keeping the chat model loaded when it fits beside the largest perceiver and unloading it around them otherwise, so only the largest stage plus 2 GB for KV and activations must fit; sequential requests to /v1/pipeline run one at a time and plain chat requests wait while models swap. auto picks resident when the sum fits, otherwise sequential, and refuses only when one stage alone does not fit (default: auto)")
     var memory: PipelineMemory = .auto
 
-    @Option(name: .customLong("pipeline-ocr-model"), help: "OCR model for /v1/pipeline and basalt_pipeline (GLM-OCR, MinerU2.5 or PaddleOCR-VL): repo ID or local path, loaded in its own engine beside the chat model so OCR never swaps it out; without it, documents are read by Apple Vision")
+    @Option(name: .customLong("pipeline-ocr-model"), help: "OCR model for /v1/pipeline and basalt_pipeline (GLM-OCR, MinerU2.5, PaddleOCR-VL or DeepSeek-OCR): repo ID or local path, loaded in its own engine beside the chat model so OCR never swaps it out; without it, documents are read by Apple Vision")
     var ocrModel: String?
 
     @Option(name: .customLong("pipeline-audio-model"), help: "Speech model for audio in /v1/pipeline and basalt_pipeline (Nemotron Transcribe): repo ID or local path, loaded in its own engine beside the chat model; without it, audio goes to the chat model when it has an audio encoder, otherwise to macOS SpeechAnalyzer when serve runs with --experimental-speech-analyzer")
@@ -56,7 +56,7 @@ extension ServeCommand {
     static func ocrRefusal(_ model: String, path: String) -> String? {
         let modelType = ModelCache.config(at: URL(fileURLWithPath: path))?["model_type"] as? String
         guard OCRRecipe.of(modelType: modelType, hints: [path, model]) == nil else { return nil }
-        return "--pipeline-ocr-model \(model) (model_type \(modelType ?? "unknown")) has no OCR recipe; use GLM-OCR (glm_ocr), MinerU2.5 (qwen2_vl) or PaddleOCR-VL (paddleocr_vl)"
+        return "--pipeline-ocr-model \(model) (model_type \(modelType ?? "unknown")) has no OCR recipe; use GLM-OCR (glm_ocr), MinerU2.5 (qwen2_vl), PaddleOCR-VL (paddleocr_vl) or DeepSeek-OCR (deepseekocr)"
     }
 
     struct PerceivePaths: Sendable {

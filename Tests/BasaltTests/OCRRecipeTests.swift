@@ -94,6 +94,63 @@ struct OCRRecipeTests {
         #expect(request.temperature == 0 && request.repetitionPenalty == nil && request.presencePenalty == nil)
     }
 
+    @Test("deepseekocr is DeepSeek-OCR with its published prompts: a document converts to markdown with grounding, text is Free OCR, a chart is Parse the figure; table and formula are refused",
+          arguments: [(OCRTask.document, "<|grounding|>Convert the document to markdown.", "text"), (.text, "Free OCR.", "text"), (.chart, "Parse the figure.", "chart")])
+    func deepSeekPrompts(_ task: OCRTask, _ prompt: String, _ type: String) throws {
+        let recipe = try #require(OCRRecipe.of(modelType: "deepseekocr", hints: []))
+        #expect(recipe.family == .deepSeekOCR && recipe.resolution == nil)
+        #expect(try recipe.step(for: task) == .recognize(prompt: prompt, blockType: type))
+        #expect(throws: BasaltError.self) { try recipe.step(for: .table) }
+        #expect(throws: BasaltError.self) { try recipe.step(for: .formula) }
+    }
+
+    @Test("A DeepSeek-OCR request moves the grounding token out of the user text into its OCR mode, with the chosen resolution or Gundam; other families carry no mode and refuse a resolution")
+    func deepSeekRequests() throws {
+        let image = try ImageInput(data: try OCRFixture.png(width: 4, height: 4), mime: "image/png")
+        let grounded = try OCRRecipe(family: .deepSeekOCR).with(resolution: .large)
+            .request(prompt: "<|grounding|>Convert the document to markdown.", image: image, stage: .recognition)
+        #expect(grounded.messages?.first?.text == "Convert the document to markdown." && grounded.prompt == "Convert the document to markdown.")
+        #expect(grounded.ocrMode == OCRMode(resolution: .large, grounding: true))
+        #expect(grounded.temperature == 0 && grounded.repetitionPenalty == nil)
+        let free = OCRRecipe(family: .deepSeekOCR).request(prompt: "Free OCR.", image: image, stage: .recognition)
+        #expect(free.ocrMode == OCRMode(resolution: .gundam, grounding: false) && free.messages?.first?.text == "Free OCR.")
+        #expect(OCRRecipe(family: .paddleOCR).request(prompt: "<|grounding|>OCR:", image: image, stage: .recognition).ocrMode == nil)
+        #expect(throws: BasaltError.self) { try OCRRecipe(family: .paddleOCR).with(resolution: .base) }
+        #expect(try OCRRecipe(family: .glmOCR).with(resolution: nil).family == .glmOCR)
+    }
+
+    @Test("DeepSeek-OCR grounding output becomes blocks with boxes scaled from 0-999 to the page and Markdown without the tags; image blocks stay empty; ungrounded output is one page block")
+    func deepSeekGrounding() {
+        let output = """
+            <|ref|>title<|/ref|><|det|>[[99, 0, 999, 99]]<|/det|>
+            # Contributing
+
+            <|ref|>image<|/ref|><|det|>[[0, 100, 499, 300], [500, 150, 999, 400]]<|/det|>
+
+            <|ref|>table<|/ref|><|det|>[[10, 500, 2000, 600]]<|/det|>
+            <table><tr><td>a</td></tr></table>
+            """
+        let read = OCRRecipe(family: .deepSeekOCR).read(output, blockType: "text")
+        #expect(read.markdown == "# Contributing\n\n<table><tr><td>a</td></tr></table>")
+        #expect(read.blocks.map(\.type) == ["title", "image", "table"])
+        #expect(read.blocks[0].bbox == OCRBox(x1: 99.0 / 999, y1: 0, x2: 1, y2: 99.0 / 999))
+        #expect(read.blocks[1].bbox == OCRBox(x1: 0, y1: 100.0 / 999, x2: 1, y2: 400.0 / 999) && read.blocks[1].text.isEmpty)
+        #expect(read.blocks[2].bbox.x2 == 1)
+        let plain = OCRRecipe(family: .deepSeekOCR).read(" plain text \n", blockType: "text")
+        #expect(plain.markdown == "plain text" && plain.blocks == [OCRBlock(type: "text", bbox: .page, text: "plain text")])
+        #expect(OCRRecipe(family: .deepSeekOCR).read("a chart", blockType: "chart").blocks.map(\.type) == ["chart"])
+        #expect(DeepSeekGrounding.box("[[1, 2, 3]]") == .page)
+        #expect(OCRRecipe(family: .paddleOCR).read(" x ", blockType: "text").blocks == [OCRBlock(type: "text", bbox: .page, text: "x")])
+    }
+
+    @Test("A request's resolution parses to a mode and an unknown one is refused at the boundary")
+    func resolutionParsing() throws {
+        let document = OCRDocument.image(try ImageInput(data: try OCRFixture.png(width: 4, height: 4), mime: "image/png"))
+        #expect(try OCRRequest(document: document, pages: nil, task: nil, format: nil, model: nil, resolution: "tiny").resolution == .tiny)
+        #expect(try OCRRequest(document: document, pages: nil, task: nil, format: nil, model: nil).resolution == nil)
+        #expect(throws: BasaltError.self) { try OCRRequest(document: document, pages: nil, task: nil, format: nil, model: nil, resolution: "huge") }
+    }
+
     @Test("A recipe request is greedy, carries the page as the only image, and takes the family's repetition settings")
     func requests() throws {
         let image = try ImageInput(data: try OCRFixture.png(width: 4, height: 4), mime: "image/png")
@@ -124,6 +181,7 @@ struct OCRRecipeTests {
         #expect(ModelCapabilities.of(modelType: "glm_ocr") == nil)
         #expect(ModelCapabilities.of(modelType: "qwen2_vl") == nil)
         #expect(ModelCapabilities.of(modelType: "paddleocr_vl")?.verified == Set(ModelCapabilities.Feature.allCases).subtracting([.mtp, .cacheBlend, .kvQuantization, .kvZones, .kvHeadSplit, .quest]))
+        #expect(ModelCapabilities.of(modelType: "deepseekocr")?.verified == Set(ModelCapabilities.Feature.allCases).subtracting([.mtp, .cacheBlend, .kvQuantization, .kvZones, .kvHeadSplit, .quest]))
     }
 }
 

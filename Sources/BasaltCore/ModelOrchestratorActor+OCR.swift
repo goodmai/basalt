@@ -5,7 +5,8 @@ extension ModelOrchestratorActor {
     @concurrent
     public nonisolated func ocr(_ request: OCRRequest) async throws(BasaltError) -> OCRResult {
         if request.model == OCRRequest.appleVision { return try await readWithVision(request) }
-        let (recipe, epoch) = try await ocrRecipe(switchingTo: request.model)
+        let (loaded, epoch) = try await ocrRecipe(switchingTo: request.model)
+        let recipe = try loaded.with(resolution: request.resolution)
         let step = try recipe.step(for: request.task)
         var pages: [OCRPageResult] = []
         for page in try request.document.pages(request.pages, dpi: OCRRecipe.pageDPI) {
@@ -25,7 +26,7 @@ extension ModelOrchestratorActor {
         let modelType = ModelCache.config(at: URL(fileURLWithPath: loaded.path))?["model_type"] as? String
         guard let recipe = OCRRecipe.of(modelType: modelType, hints: [loaded.path, currentModelId]) else {
             throw .invalidRequestStructure(
-                details: "the loaded model \(modelInfo) (model_type \(modelType ?? "unknown")) has no OCR recipe; load GLM-OCR (glm_ocr), MinerU2.5 (qwen2_vl) or PaddleOCR-VL (paddleocr_vl), or send model \(OCRRequest.appleVision)")
+                details: "the loaded model \(modelInfo) (model_type \(modelType ?? "unknown")) has no OCR recipe; load GLM-OCR (glm_ocr), MinerU2.5 (qwen2_vl), PaddleOCR-VL (paddleocr_vl) or DeepSeek-OCR (deepseekocr), or send model \(OCRRequest.appleVision)")
         }
         return (recipe, loaded.epoch)
     }
@@ -40,8 +41,8 @@ extension ModelOrchestratorActor {
         _ image: ImageInput, prompt: String, type: String, recipe: OCRRecipe, epoch: Int
     ) async throws(BasaltError) -> (markdown: String, blocks: [OCRBlock], tokens: Int) {
         let response = try await generated(recipe.request(prompt: prompt, image: image, stage: .recognition), epoch: epoch)
-        let text = recipe.finished(response.generatedText, blockType: type)
-        return (text, [OCRBlock(type: type, bbox: .page, text: text)], response.completionTokens)
+        let read = recipe.read(response.generatedText, blockType: type)
+        return (read.markdown, read.blocks, response.completionTokens)
     }
 
     nonisolated func parseLayout(

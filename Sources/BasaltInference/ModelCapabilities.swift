@@ -53,6 +53,7 @@ struct ModelCapabilities: Equatable, Sendable {
             (["gemma3", "gemma3_text"], gemma3),
             (["gemma4", "gemma4_text"], gemma4),
             ([PaddleOCRVL.modelType], ModelCapabilities(verified: all.subtracting([.mtp, .cacheBlend, .kvQuantization, .kvZones, .kvHeadSplit, .quest]))),
+            ([DeepSeekOCR.modelType], ModelCapabilities(verified: all.subtracting([.mtp, .cacheBlend, .kvQuantization, .kvZones, .kvHeadSplit, .quest]))),
         ]
         return Dictionary(uniqueKeysWithValues: table.flatMap { types, capabilities in types.map { ($0, capabilities) } })
     }()

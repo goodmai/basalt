@@ -148,6 +148,28 @@ struct OCRAPITests {
         #expect(await orchestrator.cloudFallbackReason(for: GenerationRequest(prompt: "Text Recognition:")) == .capability)
     }
 
+    @Test("DeepSeek-OCR over /v1/ocr and basalt_ocr: the resolution and grounding reach the engine as the OCR mode, grounding tags become blocks, and a resolution for another family or an unknown one is a 400")
+    func deepSeekResolution() async throws {
+        let engine = MockInferenceEngine()
+        await engine.setResponder { _ in "<|ref|>title<|/ref|><|det|>[[0, 0, 999, 99]]<|/det|>\n# Title\n" }
+        let orchestrator = try await Self.orchestrator("DeepSeek-OCR-8bit", modelType: "deepseekocr", engine: engine)
+        let png = try OCRFixture.png(width: 8, height: 4).base64EncodedString()
+        let response = try await post(orchestrator, ["file": png, "resolution": "small", "format": "json"])
+        #expect(response.status == .ok && response.json["family"] as? String == "DeepSeek-OCR")
+        let page = try #require(pages(response.json).first)
+        #expect(page["markdown"] as? String == "# Title")
+        #expect((page["blocks"] as? [[String: Any]])?.first?["type"] as? String == "title")
+        let server = MCPServer(orchestrator: orchestrator) { _ in }
+        await server.dispatch(#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"basalt_ocr","arguments":{"file":"\#(png)","resolution":"tiny","task":"text"}}}"#)
+        let requests = await engine.getRequests()
+        #expect(requests.map(\.ocrMode) == [OCRMode(resolution: .small, grounding: true), OCRMode(resolution: .tiny, grounding: false)])
+        #expect(requests.first?.prompt == "Convert the document to markdown.")
+        #expect(try await post(orchestrator, ["file": png, "resolution": "huge"]).status == .badRequest)
+        let glm = try await Self.orchestrator("GLM-OCR", modelType: "glm_ocr", engine: engine)
+        #expect(try await post(glm, ["file": png, "resolution": "base"]).status == .badRequest)
+        #expect(await engine.getRequests().count == 2)
+    }
+
     @Test("basalt_ocr is listed, reads base64 or a path inside --image-dir, and refuses a path outside it")
     func mcpTool() async throws {
         let engine = MockInferenceEngine()

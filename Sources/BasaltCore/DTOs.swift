@@ -115,6 +115,7 @@ public struct GenerationRequest: Codable, Sendable {
     public var xtcProbability: Double?
     public var logitProbe: LogitProbe? = nil
     public private(set) var recordConfidence = false
+    public var ocrMode: OCRMode? = nil
 
     enum CodingKeys: String, CodingKey {
         case prompt, maxTokens, temperature, topP, minP, dynamicTemperature, enableThinking, reasoningEffort
