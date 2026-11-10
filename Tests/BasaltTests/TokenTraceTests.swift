@@ -168,6 +168,46 @@ struct TokenTraceEngineTests {
         #expect((folder[.posixPermissions] as? NSNumber)?.intValue == 0o700)
     }
 
+    @Test("Active overlays apply to the traced run: a static head ablation zeroes that head on every token, a conditional one exactly on the tokens its expert trigger fires, and undo restores the heads")
+    func seesOverlays() async throws {
+        let engine = try await TinyModel.engine(.lfm2Moe)
+        var request = TokenTraceRequest(prompt: TokenTraceParityTests.prompt, maxTokens: 4)
+        request.directory = Self.directory()
+        defer { try? FileManager.default.removeItem(at: request.directory) }
+        let rule = ConditionalIntervention(action: .ablateHead(layer: 3, head: 1), trigger: .expertRouted(layer: 1, expert: 2, gateAbove: 0))
+        let overlays = [try await engine.intervene(.ablateHead(layer: 1, head: 0)), try await engine.intervene(.conditional(rule))]
+        let table = try Self.table(try await engine.traceTokens(request))
+        let routed = (0 ..< table.tokens).map { table.row(.experts, layer: 1, token: $0)?.contains(2) == true }
+        #expect(routed.contains(true) && routed.contains(false))
+        #expect(table.column(.heads, layer: 1, 0)?.allSatisfy { $0 == 0 } == true)
+        let conditional = try #require(table.column(.heads, layer: 3, 1))
+        #expect(zip(conditional, routed).allSatisfy { norm, fired in fired ? norm == 0 : norm > 0 })
+        for overlay in overlays { try await engine.undo(overlay.id) }
+        let clean = try Self.table(try await engine.traceTokens(request))
+        #expect(clean.column(.heads, layer: 1, 0)?.allSatisfy { $0 > 0 } == true)
+    }
+
+    @Test("The logit lens over a prompt longer than one lens chunk ranks probabilities per token, and the last layer's top-1 at the last prompt position is the first greedy token")
+    func lensAcrossChunks() async throws {
+        let engine = try await TinyModel.engine(.lfm2Moe)
+        var request = TokenTraceRequest(prompt: String(repeating: "the cat sat on the mat ", count: 14), maxTokens: 2, layers: [3])
+        (request.heads, request.experts, request.lensTopK, request.directory) = (false, false, 4, Self.directory())
+        defer { try? FileManager.default.removeItem(at: request.directory) }
+        let report = try await engine.traceTokens(request)
+        #expect(report.promptTokens > 2 * TokenTraceRecorder.lensRows)
+        let table = try Self.table(report)
+        for token in 0 ..< table.tokens {
+            let probabilities = try #require(table.floatRow(.lensProbabilities, layer: 3, token: token))
+            #expect(probabilities == probabilities.sorted(by: >) && probabilities.reduce(0, +) <= 1 + 1e-4)
+        }
+        #expect(table.row(.lens, layer: 3, token: report.promptTokens - 1)?.first.map(Int.init) == report.generated.first)
+    }
+
+    static func table(_ report: TokenTraceReport) throws -> TokenTraceTable {
+        let (header, records, floats) = try parse(try Data(contentsOf: URL(fileURLWithPath: report.file)))
+        return TokenTraceTable(layout: header.layout, tokens: header.tokens, floats: floats, ints: records.flatMap(\.ints))
+    }
+
     @Test("Caps are refused before any file is written",
           arguments: [
             { (r: inout TokenTraceRequest) in r.maxFileBytes = 1024 },
@@ -176,6 +216,7 @@ struct TokenTraceEngineTests {
             { (r: inout TokenTraceRequest) in r.layers = [] },
             { (r: inout TokenTraceRequest) in r.projections = [TraceDirection(layer: 1, vector: [1], threshold: 0)] },
             { (r: inout TokenTraceRequest) in (r.heads, r.experts) = (false, false) },
+            { (r: inout TokenTraceRequest) in r.projections = [1, 1].map { TraceDirection(layer: $0, vector: Array(repeating: 1, count: 64), threshold: Float($0)) } },
             { (r: inout TokenTraceRequest) in r.prompt = String(repeating: "a", count: 2040) },
           ] as [@Sendable (inout TokenTraceRequest) -> Void])
     func refused(change: @Sendable (inout TokenTraceRequest) -> Void) async throws {

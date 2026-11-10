@@ -20,7 +20,7 @@ final class TokenTraceRecorder: ForwardProbe {
     init(_ request: TokenTraceRequest, readout: ((MLXArray) -> MLXArray)?, edits: (any ForwardProbe)? = nil) {
         self.request = request
         traced = request.layers.map(Set.init)
-        directions = Dictionary(request.projections.map { ($0.layer, MLXArray($0.vector)) }, uniquingKeysWith: { first, _ in first })
+        directions = Dictionary(uniqueKeysWithValues: request.projections.map { ($0.layer, MLXArray($0.vector)) })
         self.readout = readout
         self.edits = edits
     }
@@ -41,18 +41,26 @@ final class TokenTraceRecorder: ForwardProbe {
         let states = edited[0].asType(.float32)
         if capturesPromptResiduals { promptResiduals[layer] = states[states.dim(0) - 1] }
         if let direction = directions[layer] { record(.projection, layer, matmul(states, direction).reshaped(-1, 1)) }
-        if request.lensTopK > 0, let readout { recordLens(layer, readout(edited[0])) }
+        if request.lensTopK > 0, let readout { recordLens(layer, edited[0], readout: readout) }
         return edited
     }
 
-    private func recordLens(_ layer: Int, _ logits: MLXArray) {
+    static let lensRows = 128
+
+    private func recordLens(_ layer: Int, _ states: MLXArray, readout: (MLXArray) -> MLXArray) {
         let k = request.lensTopK
-        let probabilities = softmax(logits.asType(.float32), axis: -1)
-        let ids = argPartition(-probabilities, kth: k - 1, axis: -1)[0..., ..<k]
-        let picked = takeAlong(probabilities, ids, axis: -1)
-        let order = argSort(-picked, axis: -1)
-        record(ints: .lens, layer, takeAlong(ids, order, axis: -1))
-        record(.lensProbabilities, layer, takeAlong(picked, order, axis: -1))
+        var ids: [MLXArray] = [], probabilities: [MLXArray] = []
+        for start in stride(from: 0, to: states.dim(0), by: Self.lensRows) {
+            let logits = readout(states[start ..< min(start + Self.lensRows, states.dim(0))]).asType(.float32)
+            let top = argPartition(-logits, kth: k - 1, axis: -1)[0..., ..<k]
+            let picked = exp(takeAlong(logits, top, axis: -1) - logSumExp(logits, axis: -1, keepDims: true))
+            let order = argSort(-picked, axis: -1)
+            ids.append(takeAlong(top, order, axis: -1))
+            probabilities.append(takeAlong(picked, order, axis: -1))
+            eval(ids[ids.count - 1], probabilities[probabilities.count - 1])
+        }
+        record(ints: .lens, layer, concatenated(ids, axis: 0))
+        record(.lensProbabilities, layer, concatenated(probabilities, axis: 0))
     }
 
     func headOutputs(layer: Int, _ perHead: MLXArray) {

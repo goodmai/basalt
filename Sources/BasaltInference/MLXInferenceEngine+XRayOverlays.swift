@@ -68,6 +68,11 @@ extension MLXInferenceEngine {
         return removed
     }
 
+    func activeInterventions() -> [Intervention] {
+        refreshOverlays(at: Date())
+        return experiments.registry.overlays.compactMap(\.intervention)
+    }
+
     private func refreshOverlays(at now: Date) {
         if experiments.epoch != modelEpoch {
             experiments.epoch = modelEpoch
