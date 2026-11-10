@@ -1,0 +1,71 @@
+import Foundation
+
+public struct ComposeSpec: Sendable, Equatable {
+    public enum Source: Sendable, Equatable {
+        case local(String)
+        case cloud(provider: String, model: String)
+
+        public static let cloudPrefix = "cloud:"
+        public static let providers = ["openrouter"]
+
+        public init(_ text: String) {
+            guard text.hasPrefix(Self.cloudPrefix) else {
+                self = .local(text)
+                return
+            }
+            let rest = text.dropFirst(Self.cloudPrefix.count)
+            let provider = rest.prefix { $0 != "/" }
+            self = .cloud(provider: String(provider), model: String(rest.dropFirst(provider.count + 1)))
+        }
+    }
+
+    public enum Keep: String, Sendable, Equatable, CaseIterable {
+        case resident, sequential
+        case onDemand = "on-demand"
+    }
+
+    public struct Model: Sendable, Equatable {
+        public var source: Source
+        public var keep: Keep?
+        public var idleUnload: Int?
+        public var apiKeyEnv: String?
+        public var data: String?
+
+        public init(source: Source, keep: Keep? = nil, idleUnload: Int? = nil, apiKeyEnv: String? = nil, data: String? = nil) {
+            (self.source, self.keep, self.idleUnload, self.apiKeyEnv, self.data) = (source, keep, idleUnload, apiKeyEnv, data)
+        }
+
+        public var isCloud: Bool {
+            if case .cloud = source { true } else { false }
+        }
+    }
+
+    public static let appleVision = "apple-vision"
+    public static let speechAnalyzer = "speech-analyzer"
+    public static let defaultIdleUnload = 120
+    public static let noPerceived = "no-perceived"
+
+    public var version = 1
+    public var name: String
+    public var memory: PipelineMemory = .auto
+    public var models: [String: Model]
+    public var documents: [String] = []
+    public var audio: [String] = []
+    public var cascade: [String] = []
+    public var escalateBelow: Double?
+    public var abstainBelow: Double?
+    public var minMargin: Double?
+    public var answer: String
+
+    public init(name: String, models: [String: Model], answer: String) {
+        (self.name, self.models, self.answer) = (name, models, answer)
+    }
+
+    public func local(_ name: String) -> String? {
+        guard case .local(let source)? = models[name]?.source else { return nil }
+        return source
+    }
+
+    public var ocr: String? { documents.first { models[$0] != nil } }
+    public var speech: String? { audio.first { models[$0] != nil } }
+}

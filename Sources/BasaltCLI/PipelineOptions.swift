@@ -24,9 +24,20 @@ struct PipelineOptions: ParsableArguments {
     @Option(name: .customLong("pipeline-min-margin"), help: "In /v1/pipeline, System One abstains when the margin between its top two options is below this value (0 to 1; default: never)")
     var minMargin: Double?
 
+    @Option(name: .customLong("pipeline-ocr-idle-unload"), help: "Keep --pipeline-ocr-model on demand: load it on the first /v1/pipeline request that reads a document and unload it after this many seconds without one. The compute plan still counts it as resident, since it may be loaded at any time (default: always loaded)")
+    var ocrIdleUnload: Int?
+
+    @Option(name: .customLong("pipeline-audio-idle-unload"), help: "Keep --pipeline-audio-model on demand: load it on the first /v1/pipeline request with audio and unload it after this many seconds without one; counted as resident by the compute plan (default: always loaded)")
+    var audioIdleUnload: Int?
+
     func validate() throws {
         for (flag, value) in [("--pipeline-abstain-below", abstainBelow), ("--pipeline-min-margin", minMargin)] {
             if let value, !(0 ... 1).contains(value) { throw ValidationError("\(flag) must lie between 0 and 1, got \(value)") }
+        }
+        for (flag, value, model) in [("--pipeline-ocr-idle-unload", ocrIdleUnload, ocrModel), ("--pipeline-audio-idle-unload", audioIdleUnload, audioModel)] {
+            guard let value else { continue }
+            guard value > 0 else { throw ValidationError("\(flag) must be a positive number of seconds, got \(value)") }
+            guard model != nil || preset != nil else { throw ValidationError("\(flag) needs the model it unloads (\(flag.replacingOccurrences(of: "-idle-unload", with: "-model")))") }
         }
     }
 }
@@ -102,22 +113,27 @@ extension ServeCommand {
         }
         let sequential = plan?.keep(of: Workload.perceiveRole) == .sequential
         let swap = sequential ? PipelineSwap(ocrPath: paths.ocr, audioPath: paths.audio, unloadsChat: plan?.keep(ofKind: .decode) == .sequential, maxQueue: maxQueue) : nil
-        let ocr = try await loadPerceiver(pipeline.ocrModel, path: paths.ocr, role: "OCR", loads: !sequential)
-        let audio = try await loadPerceiver(pipeline.audioModel, path: paths.audio, role: "speech", loads: !sequential)
+        if sequential, pipeline.ocrIdleUnload != nil || pipeline.audioIdleUnload != nil {
+            log("\(red("[error]")) an on-demand perceiver (--pipeline-*-idle-unload) counts as resident, but this plan swaps perceivers per request because the set does not fit resident; drop the idle unload or serve smaller models")
+            throw ExitCode.failure
+        }
+        let ocr = try await loadPerceiver(pipeline.ocrModel, path: paths.ocr, role: "OCR", loads: !sequential, onDemand: pipeline.ocrIdleUnload != nil)
+        let audio = try await loadPerceiver(pipeline.audioModel, path: paths.audio, role: "speech", loads: !sequential, onDemand: pipeline.audioIdleUnload != nil)
         var stages = PipelineStages(ocr: ocr, audio: audio, speech: experimental.speechAnalyzer ? SpeechAnalyzerTranscriber() : nil, abstainBelow: pipeline.abstainBelow, minMargin: pipeline.minMargin,
             questions: pipeline.preset?.questions ?? [:])
         stages.swap = swap
+        stages.onDemand = onDemand([(.ocrModel, ocr, paths.ocr, pipeline.ocrIdleUnload, pipeline.ocrModel), (.speechModel, audio, paths.audio, pipeline.audioIdleUnload, pipeline.audioModel)])
         return stages
     }
 
-    func loadPerceiver(_ model: String?, path: String?, role: String, loads: Bool = true) async throws -> ModelOrchestratorActor? {
+    func loadPerceiver(_ model: String?, path: String?, role: String, loads: Bool = true, onDemand: Bool = false) async throws -> ModelOrchestratorActor? {
         guard let model, let path else { return nil }
         var configuration = EngineConfiguration.standard
         configuration.promptCacheBytes = 0
         let orchestrator = ModelOrchestratorActor(engine: MLXInferenceEngine(configuration), telemetry: TelemetryTracker())
-        guard loads else {
+        guard loads, !onDemand else {
             await orchestrator.setModelId(model)
-            log("Serving \(model) (perceive, /v1/pipeline \(role)) sequentially: loaded for each request's \(role) stage and unloaded after it")
+            if !onDemand { log("Serving \(model) (perceive, /v1/pipeline \(role)) sequentially: loaded for each request's \(role) stage and unloaded after it") }
             return orchestrator
         }
         do {
@@ -129,5 +145,16 @@ extension ServeCommand {
         await orchestrator.setModelId(model)
         log("Serving \(model) (perceive, /v1/pipeline \(role)) in its own engine")
         return orchestrator
+    }
+}
+
+extension ServeCommand {
+    func onDemand(_ perceivers: [(PipelineCore.Perceiver, ModelOrchestratorActor?, String?, Int?, String?)]) -> [PipelineCore.Perceiver: OnDemandModel] {
+        var held: [PipelineCore.Perceiver: OnDemandModel] = [:]
+        for case let (perceiver, model?, path?, seconds?, name) in perceivers {
+            held[perceiver] = OnDemandModel(model: model, path: path, idle: .seconds(seconds))
+            log("Serving \(name ?? path) on demand: loaded by the first request that needs it, unloaded after \(seconds) s idle")
+        }
+        return held
     }
 }

@@ -1,0 +1,15 @@
+version: 1
+name: too-big
+memory: sequential
+
+models:
+  chat:
+    source: Youssofal/Qwen3.8-27B-MTPLX-Optimized-Speed
+  asr:
+    source: divergentlabs/Nemotron-3.5-Transcribe-30B-A4B-MLX
+    keep: sequential
+
+pipeline:
+  perceive:
+    audio: [asr]
+  answer: chat
