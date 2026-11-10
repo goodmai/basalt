@@ -1,5 +1,7 @@
 import ArgumentParser
 import BasaltCore
+import BasaltInference
+import Foundation
 import BasaltSpeech
 
 struct ExperimentalServeOptions: ParsableArguments {
@@ -26,6 +28,18 @@ struct ExperimentalServeOptions: ParsableArguments {
         help: "ocr: when the loaded model takes no images, read each image of a chat request with Apple's on-device Vision OCR and send its Markdown as a text block ([image N, OCR]) instead of refusing the request; responses say so in the X-Basalt-Image-Fallback header and, when not streamed, a basalt field (#403). Off by default until its quality is measured"
     )
     var imageFallback: ImageFallback?
+
+    @Option(
+        name: .customLong("experimental-ane-vision-tower"),
+        help: "Run PaddleOCR-VL's vision encoder on the Neural Engine from a Core AI tower bundle (metadata.json + tower.aimodel, fixed patch-count buckets), specialized when the model loads (the first load in a process takes about 20 minutes for the 5120 bucket); images whose patch grid fits no bucket stay on the GPU tower. Build the bundle with swift scripts/paddle_tower_export.swift <snapshot> <out> (#224, #400)"
+    )
+    var aneVisionTower: String?
+
+    func validate() throws {
+        if let aneVisionTower, !CoreAIVisionTower.isBundle(URL(fileURLWithPath: aneVisionTower)) {
+            throw ValidationError("--experimental-ane-vision-tower \(aneVisionTower) is not a Core AI vision tower bundle (metadata.json and tower.aimodel)")
+        }
+    }
 
     enum ImageFallback: String, ExpressibleByArgument {
         case ocr
