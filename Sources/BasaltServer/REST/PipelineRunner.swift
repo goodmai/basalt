@@ -9,6 +9,7 @@ package struct PipelineStages: Sendable {
     package let minMargin: Double?
     package let questions: [String: SystemOneQuestion]
     package var swap: PipelineSwap?
+    package var onDemand: [PipelineCore.Perceiver: OnDemandModel] = [:]
 
     package init(
         ocr: ModelOrchestratorActor? = nil, audio: ModelOrchestratorActor? = nil, speech: (any AudioTranscriber)? = nil,
@@ -59,7 +60,7 @@ struct PipelineRunner: Sendable {
         let (answers, system2) = PipelineCore.answers(route, replies: replies, questions: request.questions, decision: decision)
         var receipt = PipelineCore.receipt(
             perception.receipts + [deciding].compactMap { $0 }, replies: replies, answers: answers, ms: Self.elapsed(since: started))
-        receipt.swapMs = stages.swap == nil ? nil : PipelineCore.milliseconds(perception.swap)
+        receipt.swapMs = stages.swap == nil && stages.onDemand.isEmpty ? nil : PipelineCore.milliseconds(perception.swap)
         await chat.sessionLog?.logPipeline(origin: origin, sessionId: sessionId, receipt: receipt)
         return PipelineResponse(perceived: perceived, answers: answers, system2: system2, receipt: receipt)
     }
@@ -91,7 +92,9 @@ struct PipelineRunner: Sendable {
             for item in order {
                 guard let perceiver = item.perceiver else { throw .invalidRequestStructure(details: "pipeline: no perceiver for attachment \(item.index + 1)") }
                 if let swap { perception.swap += try await bring(perceiver, swap: swap, resident: &resident) }
-                perception.items.append(try await perceive(item, with: perceiver, gated: swap == nil && perceiver.betweenGenerations, pages: selection))
+                let (perceived, load) = try await perceiveHeld(item, with: perceiver, gated: swap == nil && perceiver.betweenGenerations, pages: selection)
+                perception.items.append(perceived)
+                perception.swap += load
             }
         } catch {
             if let resident { await withTaskCancellationShield { await resident.unloadModel() } }
@@ -99,6 +102,21 @@ struct PipelineRunner: Sendable {
         }
         if let resident { perception.swap += await withTaskCancellationShield { await Self.timed { await resident.unloadModel() } } }
         return perception
+    }
+
+    func perceiveHeld(
+        _ item: PipelineCore.Perceiving, with perceiver: PipelineCore.Perceiver, gated: Bool, pages selection: String?
+    ) async throws(BasaltError) -> (Perceived, Duration) {
+        guard let held = stages.onDemand[perceiver] else { return (try await perceive(item, with: perceiver, gated: gated, pages: selection), .zero) }
+        let load = try await held.acquire()
+        do throws(BasaltError) {
+            let perceived = try await perceive(item, with: perceiver, gated: gated, pages: selection)
+            await held.release()
+            return (perceived, load)
+        } catch {
+            await held.release()
+            throw error
+        }
     }
 
     func perceive(

@@ -1,0 +1,23 @@
+version: 1
+name: document-qa-cloud
+memory: auto
+
+models:
+  chat:
+    source: mlx-community/gemma-4-12B-it-qat-4bit
+  ocr:
+    source: mlx-community/PaddleOCR-VL-1.5-8bit
+    keep: on-demand
+    idle_unload: 30s
+  jev:
+    source: cloud:openrouter/~typesafe/jev-latest
+    api_key_env: OPENROUTER_API_KEY
+    data: no-perceived
+
+pipeline:
+  perceive:
+    documents: [ocr, apple-vision]
+  decide:
+    cascade: [jev, chat]
+    escalate_below: 0.6
+  answer: chat

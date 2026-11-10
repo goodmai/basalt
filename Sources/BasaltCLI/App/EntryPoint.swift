@@ -72,6 +72,7 @@ public struct BasaltCLI: AsyncParsableCommand {
             OnboardCommand.self,
             FitCommand.self,
             ServeCommand.self,
+            ComposeCommand.self,
             ModelsCommand.self,
             ChatCommand.self,
             OCRCommand.self,

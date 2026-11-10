@@ -15,6 +15,9 @@ struct DecisionOptions: ParsableArguments {
     @Option(name: .customLong("decision-escalate-below"), help: "With --decision-model cloud:<model>, questions whose cloud confidence is below this value go to --decision-escalate (0 to 1; default: 0.6)")
     var escalateBelow: Double = 0.6
 
+    @Option(name: .customLong("decision-api-key-env"), help: "With --decision-model cloud:<model>, the environment variable that holds the OpenRouter key; the key itself is never a flag or a config value (default: OPENROUTER_API_KEY)")
+    var apiKeyEnv = "OPENROUTER_API_KEY"
+
     var cloudModel: String? {
         model.flatMap { $0.hasPrefix(Self.cloudPrefix) ? String($0.dropFirst(Self.cloudPrefix.count)) : nil }
     }
@@ -36,11 +39,11 @@ struct DecisionOptions: ParsableArguments {
 
 extension ServeCommand {
     func servedDecisions(
-        _ local: (any DecisionEngine)?, gate: GenerationGate, besideDecode: Bool, apiKey: String = ProcessInfo.processInfo.environment["OPENROUTER_API_KEY"] ?? ""
+        _ local: (any DecisionEngine)?, gate: GenerationGate, besideDecode: Bool, apiKey: String? = nil
     ) throws -> (any DecisionEngine)? {
         guard let cloud = decision.cloudModel, let local else { return GatedDecisionEngine.serving(local, gate: gate, besideDecode: besideDecode) }
         do {
-            let remote = try RemoteDecisionEngine(model: cloud, apiKey: apiKey)
+            let remote = try RemoteDecisionEngine(model: cloud, apiKey: apiKey ?? ProcessInfo.processInfo.environment[decision.apiKeyEnv] ?? "")
             log("Cloud decisions → \(bold(cloud)) at \(RemoteDecisionEngine.openRouter.host ?? ""); confidence below \(decision.escalateBelow) and failed calls go to \(local.modelID)")
             return CascadeDecisionEngine(remote: remote, local: local, escalateBelow: decision.escalateBelow, gate: gate, besideDecode: besideDecode)
         } catch {

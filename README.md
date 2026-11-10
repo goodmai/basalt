@@ -437,6 +437,49 @@ Measured on an M4 Pro, 24 GB (19.1 GB working set), release build, commit 1921c3
 | voice-agent | Gemma 4 12B 11.0 GB + Nemotron Transcribe 30B-A4B 14.9 GB | sequential (resident needs 25.9 GB), chat unloaded around speech | 21.4 s | 8.6 s | 6.0 s / 5.4 s | 15 GB |
 | document-qa | Qwen3.8-27B 3-bit + PaddleOCR-VL 1.5 | `--pipeline-memory sequential`, chat stays loaded | 23.2 s | 11.2 s | 0.4 s / 0.2 s | 14 GB |
 
+### basalt compose
+
+One YAML file describes a model system: local and cloud models, how each stays in memory, and the perceive → decide → answer pipeline. `basalt compose up` serves it on the same REST and MCP surfaces as `basalt serve`. `basalt compose plan` validates the file and shows the compute plan, and refuses a system whose largest stage does not fit.
+
+```yaml
+version: 1
+name: document-qa-cloud
+models:
+  chat:  { source: mlx-community/gemma-4-12B-it-qat-4bit }
+  ocr:   { source: mlx-community/PaddleOCR-VL-1.5-8bit, keep: on-demand, idle_unload: 30s }
+  jev:   { source: "cloud:openrouter/~typesafe/jev-latest", api_key_env: OPENROUTER_API_KEY }
+pipeline:
+  perceive: { documents: [ocr, apple-vision] }
+  decide:   { cascade: [jev, chat], escalate_below: 0.6 }
+  answer: chat
+```
+
+```bash
+basalt compose plan -f docs/examples/compose/document-qa-cloud.yaml
+basalt compose up -f docs/examples/compose/document-qa-cloud.yaml -- --port 8080
+basalt compose up voice-agent            # bundled: document-qa, voice-agent
+```
+
+- **`keep`:**
+  - `resident` (the default) stays loaded;
+  - `on-demand` loads on the first request that needs it and unloads after `idle_unload`; the plan still counts it as resident;
+  - `sequential` loads a perceiver for its stage only.
+- **Cloud models:** a cloud model names the environment variable that holds its key (`api_key_env`). A key written in the file, or `${…}` interpolation, is refused. Documents and transcripts never go to the cloud: a request with attachments is decided locally.
+- **Expansion:** the file expands to `basalt serve` flags, printed at start. Flags after `--` are added to them.
+- **Phase 1** takes one answer model and a decide cascade of one local model, or of one cloud model followed by one local model. Routing between answer models comes later (#412).
+
+Measured with `compose up` on an M4 Pro with 24 GB, release build:
+
+| File | Request | Receipt |
+|---|---|---|
+| document-qa-cloud | document (first) | OCR loaded on demand (489 ms), decided locally, answered: 6.1 s |
+| | document (again) | OCR already loaded (0 ms): 5.0 s |
+| | after 40 s idle | OCR unloaded, footprint 12 → 11 GB |
+| | typed question | decided by Jev in the cloud: 0.6 s |
+| | document | OCR reloaded (267 ms): 5.3 s |
+| voice-agent (bundled) | audio | chat unloaded around Nemotron Transcribe (swap 6.9 s): 17.3 s |
+| too-big (example) | `compose plan` | refused: one stage needs 20.7 GB plus 2 GB against a 19.1 GB working set |
+
 ### SSE streaming (native API)
 
 ```bash
