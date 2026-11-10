@@ -62,7 +62,7 @@ struct ComposeCommand: AsyncParsableCommand {
         func run() async throws {
             let spec = try source.spec()
             ComposeCommand.log("Compose \(bold(spec.name)) → basalt serve \(spec.serveArguments.joined(separator: " "))")
-            var command = try ServeCommand.parse(spec.serveArguments + serve)
+            var command = try ServeCommand.parse(spec.serveArguments + ["--compose", source.file ?? source.bundled ?? ""] + serve)
             try await command.run()
         }
     }

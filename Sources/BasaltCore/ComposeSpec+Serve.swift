@@ -24,13 +24,13 @@ extension ComposeSpec {
     var decideArguments: [String] {
         func local(_ name: String) -> String { name == answer ? "self" : (self.local(name) ?? name) }
         switch cascade.count {
+        case 0: return []
         case 1: return ["--decision-model", local(cascade[0])]
-        case 2:
-            guard case .cloud(_, let model)? = models[cascade[0]]?.source else { return [] }
-            return ["--decision-model", "cloud:\(model)", "--decision-escalate", local(cascade[1]),
+        default:
+            guard case .cloud(_, let model)? = models[cascade[0]]?.source, let last = cascade.last else { return [] }
+            return ["--decision-model", "cloud:\(model)", "--decision-escalate", local(last),
                     "--decision-api-key-env", models[cascade[0]]?.apiKeyEnv ?? "OPENROUTER_API_KEY"]
                 + (escalateBelow.map { ["--decision-escalate-below", String($0)] } ?? [])
-        default: return []
         }
     }
 
@@ -62,6 +62,9 @@ extension ComposeSpec {
             let keep: KeepPolicy = models[name]?.keep == .sequential ? .sequential : .resident
             workloads.append(Workload(name: name, role: Workload.perceiveRole, unit: .gpu, kind: .encoder, residentBytes: bytes(name), keep: keep))
         }
+        for name in answerModels where name != answer && local(name) != nil {
+            workloads.append(Workload(name: name, role: "answer", unit: .gpu, kind: .decode, residentBytes: bytes(name)))
+        }
         if let decider = cascade.last, decider != answer, let source = local(decider) {
             workloads.append(Workload(name: decider, role: "decide", unit: sizes.onNeuralEngine(source) ? .ane : .gpu, kind: .encoder, residentBytes: bytes(decider)))
         }
@@ -74,14 +77,15 @@ extension ComposeSpec {
     }
 
     public var cloudLines: [String] {
-        models.sorted { $0.key < $1.key }.compactMap { name, model in
+        (budget.map { [String(format: "  cloud spend at most $%.2f a day in total", $0)] } ?? []) + models.sorted { $0.key < $1.key }.compactMap { name, model in
             guard case .cloud(let provider, let id) = model.source else { return nil }
-            return "  \(name) cloud:\(provider)/\(id): no local memory; key from $\(model.apiKeyEnv ?? "?"); documents and transcripts stay local"
+            let budget = model.budget.map { String(format: "; at most $%.2f a day", $0) } ?? ""
+            return "  \(name) cloud:\(provider)/\(id): no local memory; key from $\(model.apiKeyEnv ?? "?")\(budget); documents and transcripts stay local"
         }
     }
 
     public var onDemandLines: [String] {
-        [ocr, speech].compactMap { $0 }.filter { models[$0]?.keep == .onDemand }.map {
+        ([ocr, speech].compactMap { $0 } + answerModels).filter { models[$0]?.keep == .onDemand }.map {
             "  \($0) on demand: loaded by the first request that needs it, unloaded after \(models[$0]?.idleUnload ?? Self.defaultIdleUnload) s idle; counted as resident above"
         }
     }
