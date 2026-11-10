@@ -33,10 +33,7 @@ public struct CoreAIVisionTower: Sendable {
         }
     }
 
-    func fits(_ visual: PaddleOCRVLVision.Model, frames: [THW]) -> Bool {
-        visual.headDim == bundle.headDim && visual.projector.merge == bundle.merge
-            && visual.projector.linear2.weight.dim(0) == bundle.textHidden && frames.allSatisfy { bundle.function(for: $0) != nil }
-    }
+    func fits(_ visual: PaddleOCRVLVision.Model, frames: [THW]) -> Bool { bundle.fits(visual, frames: frames) }
 
     struct Encoded: Sendable {
         let function: String
@@ -44,14 +41,7 @@ public struct CoreAIVisionTower: Sendable {
         let rows: Int
     }
 
-    func inputs(_ image: LMInput.ProcessedImage, visual: PaddleOCRVLVision.Model) throws -> [Encoded]? {
-        guard let frames = image.frames, !frames.isEmpty, fits(visual, frames: frames) else { return nil }
-        var start = 0
-        return try frames.map { frame in
-            defer { start += frame.h * frame.w }
-            return try encoded(image.pixels[start ..< start + frame.h * frame.w], frame: frame, visual: visual)
-        }
-    }
+    func inputs(_ image: LMInput.ProcessedImage, visual: PaddleOCRVLVision.Model) throws -> [Encoded]? { try bundle.inputs(image, visual: visual) }
 
     func run(_ encoded: [Encoded]) async throws -> [NDArray] {
         var results: [NDArray] = []
@@ -71,26 +61,6 @@ public struct CoreAIVisionTower: Sendable {
     func features(_ image: LMInput.ProcessedImage, visual: PaddleOCRVLVision.Model) async throws -> MLXArray? {
         guard let encoded = try inputs(image, visual: visual) else { return nil }
         return try Self.features(try await run(encoded), encoded: encoded, dtype: visual.embeddings.patchEmbedding.weight.dtype)
-    }
-
-    func encoded(_ patches: MLXArray, frame: THW, visual: PaddleOCRVLVision.Model) throws -> Encoded {
-        guard let function = bundle.function(for: frame) else {
-            throw BasaltError.inferenceError("the vision tower has no bucket for a \(frame.h)x\(frame.w) grid")
-        }
-        let (count, length) = (frame.h * frame.w, function.tokens)
-        let order = MLXArray(bundle.order(frame))
-        let (cos, sin) = visual.rotary(frame)
-        var bias = NDArray(shape: [1, length, 1, 1], scalarType: .float16)
-        var view = bias.mutableView(as: Float16.self)
-        view.copyElements(from: bundle.bias(real: count, length: length).map(Float16.init))
-        let inputs = [
-            "patches": try Self.planar(patches.reshaped(count, -1).take(order, axis: 0), length: length),
-            "pos": try Self.planar(visual.embeddings.positions(frame).take(order, axis: 0), length: length),
-            "cos": try Self.planar(cos.reshaped(count, -1).take(order, axis: 0), length: length, perHead: true),
-            "sin": try Self.planar(sin.reshaped(count, -1).take(order, axis: 0), length: length, perHead: true),
-            "bias": bias,
-        ]
-        return Encoded(function: function.name, inputs: inputs, rows: count / (bundle.merge * bundle.merge))
     }
 
     static func strides(of shape: [Int]) -> [Int] {
@@ -125,5 +95,41 @@ public struct CoreAIVisionTower: Sendable {
             MLXArray(UnsafeBufferPointer(start: pointer, count: channels * length), [channels, length])
         }
         return values[0..., ..<count].transposed()
+    }
+}
+
+extension CoreAIVisionTowerBundle {
+    func fits(_ visual: PaddleOCRVLVision.Model, frames: [THW]) -> Bool {
+        visual.headDim == headDim && visual.projector.merge == merge
+            && visual.projector.linear2.weight.dim(0) == textHidden && frames.allSatisfy { function(for: $0) != nil }
+    }
+
+    func inputs(_ image: LMInput.ProcessedImage, visual: PaddleOCRVLVision.Model) throws -> [CoreAIVisionTower.Encoded]? {
+        guard let frames = image.frames, !frames.isEmpty, fits(visual, frames: frames) else { return nil }
+        var start = 0
+        return try frames.map { frame in
+            defer { start += frame.h * frame.w }
+            return try encoded(image.pixels[start ..< start + frame.h * frame.w], frame: frame, visual: visual)
+        }
+    }
+
+    func encoded(_ patches: MLXArray, frame: THW, visual: PaddleOCRVLVision.Model) throws -> CoreAIVisionTower.Encoded {
+        guard let bucket = function(for: frame) else {
+            throw BasaltError.inferenceError("the vision tower has no bucket for a \(frame.h)x\(frame.w) grid")
+        }
+        let (count, length) = (frame.h * frame.w, bucket.tokens)
+        let gather = MLXArray(order(frame))
+        let (cos, sin) = visual.rotary(frame)
+        var mask = NDArray(shape: [1, length, 1, 1], scalarType: .float16)
+        var view = mask.mutableView(as: Float16.self)
+        view.copyElements(from: bias(real: count, length: length).map(Float16.init))
+        let inputs = [
+            "patches": try CoreAIVisionTower.planar(patches.reshaped(count, -1).take(gather, axis: 0), length: length),
+            "pos": try CoreAIVisionTower.planar(visual.embeddings.positions(frame).take(gather, axis: 0), length: length),
+            "cos": try CoreAIVisionTower.planar(cos.reshaped(count, -1).take(gather, axis: 0), length: length, perHead: true),
+            "sin": try CoreAIVisionTower.planar(sin.reshaped(count, -1).take(gather, axis: 0), length: length, perHead: true),
+            "bias": mask,
+        ]
+        return CoreAIVisionTower.Encoded(function: bucket.name, inputs: inputs, rows: count / (merge * merge))
     }
 }

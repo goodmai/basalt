@@ -86,4 +86,49 @@ struct CoreAIVisionTowerBundleTests {
         let (handed, direct) = (try #require(try logits(back)), try #require(try logits(cast)))
         #expect(arrayEqual(handed, direct).item(Bool.self))
     }
+
+    static func tinyTower(_ model: PaddleOCRVL, tokens: [Int], headDim: Int? = nil) throws -> CoreAIVisionTowerBundle {
+        try CoreAIVisionTowerBundle(tower: [
+            "asset": "tower", "masked": -30000.0, "merge": model.visual.projector.merge, "hidden": 0,
+            "text_hidden": model.visual.projector.linear2.weight.dim(0), "head_dim": headDim ?? model.visual.headDim,
+            "functions": tokens.map { ["function": "n\($0)", "tokens": $0] },
+        ], path: "/b")
+    }
+
+    @Test("Inputs on the tiny PaddleOCR-VL: the smallest bucket that holds the grid, (1, C, 1, N) planes and per-head cos/sin padded to it, the mask open on the real patches; a bundle for another head size or with no bucket that fits gives no inputs")
+    func tinyInputs() throws {
+        let model = try #require(try TinyModel.make(.paddleOCR) as? PaddleOCRVL)
+        let image = try #require(PaddleOCRVLTests.imageInput(PaddleOCRVLTests.imagePrompt()).image)
+        let frame = PaddleOCRVLTests.frame
+        let count = frame.h * frame.w
+        let encoded = try #require(try Self.tinyTower(model, tokens: [8, 32, 64]).inputs(image, visual: model.visual))
+        #expect(encoded.map(\.function) == ["n32"] && encoded.first?.rows == count / 4)
+        let inputs = try #require(encoded.first?.inputs)
+        #expect(Set(inputs.keys) == ["patches", "pos", "cos", "sin", "bias"])
+        let (patches, cos) = (try #require(inputs["patches"]), try #require(inputs["cos"]))
+        #expect(Array(patches.shape).last == 32)
+        #expect(Array(cos.shape) == [1, 1, model.visual.headDim, 32])
+        var bias = try #require(inputs["bias"])
+        let mask = bias.mutableView(as: Float16.self).withUnsafeMutablePointer { pointer, _, _ in Array(UnsafeBufferPointer(start: pointer, count: 32)) }
+        #expect(mask.prefix(count).allSatisfy { $0 == 0 } && mask.dropFirst(count).allSatisfy { $0 < -1000 })
+        #expect(try Self.tinyTower(model, tokens: [32], headDim: model.visual.headDim + 2).inputs(image, visual: model.visual) == nil)
+        #expect(try Self.tinyTower(model, tokens: [8]).inputs(image, visual: model.visual) == nil)
+    }
+
+    @Test("A bundle Core AI cannot load leaves the vision tower on the GPU and the loaded model serving")
+    func unloadableBundleStaysOnGPU() async throws {
+        let directory = FileManager.default.temporaryDirectory.appending(component: "ane-tower-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(at: directory.appending(component: "tower.aimodel"), withIntermediateDirectories: true)
+        let metadata: [String: Any] = ["paddle_vision_tower": Self.tower]
+        try JSONSerialization.data(withJSONObject: metadata).write(to: directory.appending(component: "metadata.json"))
+        var configuration = EngineConfiguration(promptCacheBytes: 0)
+        configuration.visionTowerBundle = directory.path
+        let engine = MLXInferenceEngine(configuration)
+        let container = try TinyModel.container(.paddleOCR)
+        await engine.attach(container)
+        await engine.loadVisionTower(container, epoch: await engine.modelEpoch)
+        #expect(await engine.modelFacts.visionTower == nil)
+        #expect(await engine.isLoaded)
+    }
 }
