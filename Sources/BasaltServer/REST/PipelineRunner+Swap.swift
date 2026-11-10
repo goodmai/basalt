@@ -27,9 +27,12 @@ extension PipelineRunner {
         guard let swap = stages.swap, order.contains(where: { swap.path(for: $0.perceiver) != nil }) else {
             return try await perceive(order, pages: request.pages, swap: nil)
         }
+        let swapped = order.filter { swap.path(for: $0.perceiver) != nil }
         var (perception, chatSwap) = try await chat.exclusively(unloadingModel: swap.unloadsChat) { () async throws(BasaltError) in
-            try await self.perceive(order, pages: request.pages, swap: swap)
+            try await self.perceive(swapped, pages: request.pages, swap: swap)
         }
+        let rest = try await perceive(order.filter { swap.path(for: $0.perceiver) == nil }, pages: request.pages, swap: nil)
+        perception.items += rest.items
         perception.swap += chatSwap
         return perception
     }
@@ -37,12 +40,9 @@ extension PipelineRunner {
     func bring(_ perceiver: PipelineCore.Perceiver, swap: PipelineSwap, resident: inout ModelOrchestratorActor?) async throws(BasaltError) -> Duration {
         guard let path = swap.path(for: perceiver), let target = perceiver == .ocrModel ? stages.ocr : stages.audio, target !== resident else { return .zero }
         let started = ContinuousClock.now
-        if let loaded = resident {
-            await loaded.unloadModel()
-            resident = nil
-        }
-        try await target.loadModel(path: path)
+        if let loaded = resident { await loaded.unloadModel() }
         resident = target
+        try await target.loadModel(path: path)
         return ContinuousClock.now - started
     }
 

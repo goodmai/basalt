@@ -200,3 +200,7 @@ final class NemotronTranscribeModel: Module, LLMModel, KVCacheDimensionProvider 
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
+
+extension MLXInferenceEngine {
+    public static func transcribesAudio(modelType: String?) -> Bool { modelType == NemotronTranscribeModel.modelType }
+}

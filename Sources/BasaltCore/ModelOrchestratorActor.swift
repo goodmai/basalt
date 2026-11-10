@@ -4,7 +4,7 @@ import os
 public actor ModelOrchestratorActor {
     let engine: any InferenceEngine
     private var state: OrchestratorState
-    private let logger = BasaltLogger(module: "ModelOrchestrator")
+    let logger = BasaltLogger(module: "ModelOrchestrator")
     nonisolated public let gate: GenerationGate
     nonisolated public let sessionLog: SessionLogWriter?
     public let telemetry: TelemetryTracker

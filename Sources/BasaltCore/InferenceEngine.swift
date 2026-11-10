@@ -3,6 +3,7 @@ import Foundation
 public protocol InferenceEngine: AudioTranscriber {
     func load(modelPath: String) async throws(BasaltError)
     func unload() async
+    func releaseCaches() async
     func generate(request: GenerationRequest) async throws(BasaltError) -> GenerationResponse
     func generateStream(request: GenerationRequest) async throws(BasaltError) -> AsyncStream<StreamChunk>
     var isLoaded: Bool { get async }
@@ -27,6 +28,7 @@ public protocol InferenceEngine: AudioTranscriber {
 
 extension InferenceEngine {
     public func unload() async {}
+    public func releaseCaches() async {}
     public var kvMemoryBudget: ByteCount? { get async { nil } }
     public var supportsKVZones: Bool { get async { true } }
     public var supportsKVEviction: Bool { get async { true } }
