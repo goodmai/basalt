@@ -56,7 +56,7 @@ extension ComposeFile.Walk {
     mutating func number(_ node: Node?, _ key: String) -> Double? {
         guard let node else { return nil }
         guard let value = node.int.map(Double.init) ?? node.float else {
-            issue("pipeline.decide.\(key)", node, "must be a number")
+            issue("\(prefix).decide.\(key)", node, "must be a number")
             return nil
         }
         return value
@@ -121,11 +121,11 @@ extension ComposeFile {
 extension ComposeFile.Walk {
     mutating func routes(_ node: Node) -> [AnswerRoute] {
         guard let items = node.sequence, !items.isEmpty else {
-            issue("pipeline.answer.routes", node, "a list of routes, each with when, model and an optional fallback")
+            issue("\(prefix).answer.routes", node, "a list of routes, each with when, model and an optional fallback")
             return []
         }
         return items.enumerated().compactMap { index, item in
-            let path = "pipeline.answer.routes[\(index)]"
+            let path = "\(prefix).answer.routes[\(index)]"
             guard let field = fields(item, path: path, allowed: ["when", "model", "fallback"]) else { return nil }
             var route = AnswerRoute(model: text(field["model"], "\(path).model") ?? "", fallback: text(field["fallback"], "\(path).fallback"))
             if let when = field["when"] { route.when = self.when(when, path: "\(path).when") }

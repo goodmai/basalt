@@ -1,0 +1,32 @@
+version: 1
+name: mac-16gb
+memory: auto
+
+models:
+  chat:
+    source: ornith-ai/Ornith-1.5-9B-MLX-4bit
+  ocr:
+    source: mlx-community/PaddleOCR-VL-1.5-8bit
+    keep: on-demand
+    idle_unload: 2m
+  jev:
+    source: cloud:openrouter/~typesafe/jev-latest
+    api_key_env: OPENROUTER_API_KEY
+  haiku:
+    source: cloud:openrouter/anthropic/claude-haiku-5.5
+    api_key_env: OPENROUTER_API_KEY
+    budget: { usd_per_day: 0.50 }
+
+pipeline:
+  perceive:
+    documents: [ocr, apple-vision]
+    audio: [speech-analyzer]
+  decide:
+    cascade: [jev, chat]
+    escalate_below: 0.6
+  answer:
+    routes:
+      - when: { prompt_tokens: { over: 6000 }, cost_left: true }
+        model: haiku
+        fallback: chat
+      - model: chat

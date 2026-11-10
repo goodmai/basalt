@@ -3,6 +3,7 @@ import ArgumentParser
 import BasaltCore
 import BasaltCloud
 import BasaltInference
+import BasaltServer
 
 extension ServeCommand {
     static let openRouterAnswers = URL(string: "https://openrouter.ai/api/v1")!
@@ -50,32 +51,22 @@ extension ServeCommand {
         }
     }
 
-    func answerRouter(_ spec: ComposeSpec, chat: ModelOrchestratorActor, cloudGate: CloudGate) async throws -> AnswerRouter? {
-        guard !spec.routes.isEmpty else { return nil }
-        var targets: [String: any AnswerTarget] = [spec.answer: LocalAnswer(chat)]
-        for name in spec.answerModels where name != spec.answer {
-            targets[name] = try await answerTarget(spec, name, cloudGate: cloudGate)
+    func composeHost(_ spec: ComposeSpec, start: ComposeStart) async throws -> ComposeHost {
+        let host = ComposeHost(serve: self, spec: spec, start: start)
+        do {
+            try await host.start(defaultDecisions: start.decisions)
+        } catch {
+            log("\(red("[error]")) compose: \(error.localizedDescription)")
+            throw ExitCode.failure
         }
-        log("Answer routes: " + spec.routes.enumerated().map { "\($0.offset): \($0.element.model)\($0.element.fallback.map { " → \($0)" } ?? "")" }.joined(separator: ", "))
-        return AnswerRouter(routes: spec.routes, targets: targets, fallback: LocalAnswer(chat))
+        log("Compose \(bold(spec.name)): pipelines \(spec.pipelineNames.map { $0 == ComposeSpec.defaultPipeline ? "/v1/pipeline" : "/v1/pipelines/\($0)" }.joined(separator: ", ")); GET /v1/compose for status")
+        return host
     }
+}
 
-    func answerTarget(_ spec: ComposeSpec, _ name: String, cloudGate: CloudGate) async throws -> any AnswerTarget {
-        guard let model = spec.models[name] else { throw ExitCode.failure }
-        switch model.source {
-        case .cloud(_, let id):
-            let client = try OpenRouterClient(config: .init(apiKey: key(spec, name), baseURL: Self.openRouterAnswers, timeout: 120, maxRetries: 1))
-            return CloudAnswer(client: client, model: id, gate: cloudGate)
-        case .local(let source):
-            let path = try await resolvedPath(source, quant: nil)
-            guard model.keep == .onDemand else {
-                guard let loaded = try await loadPerceiver(source, path: path, role: "answer") else { throw ExitCode.failure }
-                return LocalAnswer(loaded)
-            }
-            guard let orchestrator = try await loadPerceiver(source, path: path, role: "answer", loads: false, onDemand: true) else { throw ExitCode.failure }
-            let idle = model.idleUnload ?? ComposeSpec.defaultIdleUnload
-            log("Serving \(source) on demand for answers: unloaded after \(idle) s idle")
-            return OnDemandAnswer(OnDemandModel(model: orchestrator, path: path, idle: .seconds(idle)))
-        }
+extension Optional {
+    func asyncMap<T>(_ transform: (Wrapped) async throws -> T) async rethrows -> T? {
+        guard let value = self else { return nil }
+        return try await transform(value)
     }
 }

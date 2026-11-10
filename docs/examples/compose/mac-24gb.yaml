@@ -1,0 +1,37 @@
+version: 1
+name: mac-24gb
+memory: auto
+budget: { usd_per_day: 1.00 }
+
+models:
+  chat:
+    source: mlx-community/gemma-4-12B-it-qat-4bit
+  ocr:
+    source: mlx-community/PaddleOCR-VL-1.5-8bit
+    keep: on-demand
+    idle_unload: 5m
+  jev:
+    source: cloud:openrouter/~typesafe/jev-latest
+    api_key_env: OPENROUTER_API_KEY
+  haiku:
+    source: cloud:openrouter/anthropic/claude-haiku-5.5
+    api_key_env: OPENROUTER_API_KEY
+
+pipeline:
+  perceive:
+    documents: [ocr, apple-vision]
+  decide:
+    cascade: [jev, chat]
+    escalate_below: 0.6
+  answer:
+    routes:
+      - when: { decide: { route: code }, cost_left: true }
+        model: haiku
+        fallback: chat
+      - model: chat
+
+pipelines:
+  support:
+    decide:
+      cascade: [jev, chat]
+    answer: chat

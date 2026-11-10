@@ -11,6 +11,8 @@ package struct RESTServer: Sendable {
     let embeddings: (any EmbeddingEngine)?
     private(set) var decisions: (any DecisionEngine)?
     private(set) var pipeline = PipelineStages()
+    private(set) var pipelines: PipelineRegistry?
+    private(set) var compose: ComposeControl?
 
     let shutdownDeadline: Duration
     let handleSignals: Bool
@@ -42,6 +44,12 @@ package struct RESTServer: Sendable {
     package func withPipeline(_ stages: PipelineStages) -> RESTServer {
         var server = self
         server.pipeline = stages
+        return server
+    }
+
+    package func withPipelines(_ registry: PipelineRegistry?, compose: ComposeControl?) -> RESTServer {
+        var server = self
+        (server.pipelines, server.compose) = (registry, compose)
         return server
     }
 
@@ -141,7 +149,11 @@ package struct RESTServer: Sendable {
         oai.post("/systemone", use: SystemOneController(engine: decisions, log: orchestrator.sessionLog).decide)
         oai.post("/audio/transcriptions", use: TranscriptionsController(orchestrator: orchestrator).transcriptions)
         oai.post("/ocr", use: OCRController(orchestrator: orchestrator).ocr)
-        oai.post("/pipeline", use: PipelineController(runner: PipelineRunner(chat: orchestrator, decisions: decisions, stages: pipeline)).pipeline)
+        let registry = pipelines ?? PipelineRegistry([ComposeSpec.defaultPipeline: PipelineSystem(decisions: decisions, stages: pipeline)])
+        let pipelineController = PipelineController(registry: registry, chat: orchestrator)
+        oai.post("/pipeline", use: pipelineController.pipeline)
+        oai.post("/pipelines/{name}", use: pipelineController.pipeline)
+        if let compose { ComposeController(control: compose).add(to: oai) }
     }
 
     private func addDocumentationRoutes(to router: Router<BasicRequestContext>) {
@@ -209,7 +221,10 @@ extension RESTServer {
         "/v1/rerank":              { "post": { "summary": "Cohere/Jina-compatible rerank (serve --rerank-model)" } },
         "/v1/audio/transcriptions": { "post": { "summary": "OpenAI-compatible speech to text (multipart: file, model, language, response_format, temperature)" } },
         "/v1/ocr":                 { "post": { "summary": "Document OCR with GLM-OCR, MinerU2.5, PaddleOCR-VL or DeepSeek-OCR (JSON: file as base64 PDF or image, pages such as 1-3, task document|text|table|formula|chart, format markdown|json, model, resolution tiny|small|base|large|gundam for DeepSeek-OCR)" } },
-        "/v1/pipeline":            { "post": { "summary": "Perceive (OCR of pdf/image attachments with serve --pipeline-ocr-model or Apple Vision, transcription of audio with serve --pipeline-audio-model, the chat model's audio encoder or SpeechAnalyzer (with --experimental-speech-analyzer)) → decide (System One on typed questions) → answer (the chat model, only for abstained questions and a task); returns perceived text, answers, the System 2 reply and a route receipt (swap_ms when serve --pipeline-memory loads models per stage; --pipeline-preset fills the models)" } }
+        "/v1/pipeline":            { "post": { "summary": "Perceive (OCR of pdf/image attachments with serve --pipeline-ocr-model or Apple Vision, transcription of audio with serve --pipeline-audio-model, the chat model's audio encoder or SpeechAnalyzer (with --experimental-speech-analyzer)) → decide (System One on typed questions) → answer (the chat model, only for abstained questions and a task); returns perceived text, answers, the System 2 reply and a route receipt (swap_ms when serve --pipeline-memory loads models per stage; --pipeline-preset fills the models)" } },
+        "/v1/pipelines/{name}":    { "post": { "summary": "The same request as /v1/pipeline, for a named pipeline of the compose file served with basalt compose up" } },
+        "/v1/compose":             { "get":  { "summary": "Status of the compose system: pipelines, and per model whether it is loaded, the last use and idle unload of an on-demand model, and cloud spend today (basalt compose ps)" } },
+        "/v1/compose/apply":       { "post": { "summary": "Apply a changed compose file to the running system ({\"yaml\": ...}): loads added models, reloads changed ones, unloads removed ones and swaps the pipelines; refuses changes that need a restart (basalt compose up on a running system)" } }
       }
     }
     """

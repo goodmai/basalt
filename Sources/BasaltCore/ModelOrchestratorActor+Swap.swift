@@ -51,3 +51,7 @@ extension ModelOrchestratorActor {
         return .failure(failure)
     }
 }
+
+extension ModelOrchestratorActor {
+    public var isLoaded: Bool { get async { await engine.isLoaded } }
+}

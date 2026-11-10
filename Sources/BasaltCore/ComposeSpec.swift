@@ -59,6 +59,7 @@ public struct ComposeSpec: Sendable, Equatable {
     public var answer: String
     public var routes: [AnswerRoute] = []
     public var budget: Double?
+    public var pipelines: [String: PipelineSpec] = [:]
 
     public init(name: String, models: [String: Model], answer: String) {
         (self.name, self.models, self.answer) = (name, models, answer)
@@ -79,4 +80,41 @@ public struct ComposeSpec: Sendable, Equatable {
 
     public var ocr: String? { documents.first { models[$0] != nil } }
     public var speech: String? { audio.first { models[$0] != nil } }
+}
+
+public struct PipelineSpec: Sendable, Equatable {
+    public var documents: [String] = []
+    public var audio: [String] = []
+    public var cascade: [String] = []
+    public var escalateBelow: Double?
+    public var abstainBelow: Double?
+    public var minMargin: Double?
+    public var answer: String
+    public var routes: [AnswerRoute] = []
+
+    public init(answer: String) { self.answer = answer }
+}
+
+extension ComposeSpec {
+    public static let defaultPipeline = "default"
+
+    public var pipelineNames: [String] { [Self.defaultPipeline] + pipelines.keys.sorted() }
+
+    public var defaultSpec: PipelineSpec {
+        var spec = PipelineSpec(answer: answer)
+        (spec.documents, spec.audio, spec.cascade, spec.routes) = (documents, audio, cascade, routes)
+        (spec.escalateBelow, spec.abstainBelow, spec.minMargin) = (escalateBelow, abstainBelow, minMargin)
+        return spec
+    }
+
+    public func view(_ name: String) -> ComposeSpec? {
+        guard name != Self.defaultPipeline else { return self }
+        guard let pipeline = pipelines[name] else { return nil }
+        var view = self
+        (view.documents, view.audio, view.cascade, view.routes, view.answer) = (pipeline.documents, pipeline.audio, pipeline.cascade, pipeline.routes, pipeline.answer)
+        (view.escalateBelow, view.abstainBelow, view.minMargin, view.pipelines) = (pipeline.escalateBelow, pipeline.abstainBelow, pipeline.minMargin, [:])
+        return view
+    }
+
+    public var views: [(name: String, spec: ComposeSpec)] { pipelineNames.compactMap { name in view(name).map { (name, $0) } } }
 }

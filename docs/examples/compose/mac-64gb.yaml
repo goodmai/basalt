@@ -1,0 +1,37 @@
+version: 1
+name: mac-64gb
+memory: resident
+
+models:
+  chat:
+    source: mlx-community/gemma-4-26B-A4B-it-qat-4bit
+  big:
+    source: lukaskremla/Qwen3.8-27B-3bit-MLX-TextOnly
+    keep: on-demand
+    idle_unload: 10m
+  ocr:
+    source: mlx-community/PaddleOCR-VL-1.5-8bit
+  asr:
+    source: divergentlabs/Nemotron-3.5-Transcribe-30B-A4B-MLX
+    keep: on-demand
+    idle_unload: 10m
+  jev:
+    source: cloud:openrouter/~typesafe/jev-latest
+    api_key_env: OPENROUTER_API_KEY
+
+pipeline:
+  perceive:
+    documents: [ocr]
+    audio: [asr]
+  decide:
+    cascade: [jev, chat]
+    escalate_below: 0.6
+  answer:
+    routes:
+      - when: { prompt_tokens: { over: 16000 } }
+        model: big
+        fallback: chat
+      - when: { escalated: true }
+        model: big
+        fallback: chat
+      - model: chat
