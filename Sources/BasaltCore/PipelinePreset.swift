@@ -68,8 +68,6 @@ public struct PipelineProfile: Sendable, Equatable, Codable {
     public var minMargin: Double?
     public var questions: [String: SystemOneQuestion]
 
-    public func member(_ role: PipelineRole) -> PipelineMember? { members.first { $0.role == role } }
-
     func resolved(budgetBytes: Int64) -> [PipelineMember] {
         guard let larger = largerChat else { return members }
         let sidecars = members.filter { $0.role != .chat }.reduce(0) { $0 + $1.bytes }

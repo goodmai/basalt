@@ -139,7 +139,7 @@ struct NemotronTranscribeUnitTests {
     @Test("MelFeatures, ParallelExpertEncoder, speaker fusion, and prompt splice produce aligned embeddings and run end-to-end")
     func encoderFusionAndSplice() throws {
         let cfg = try Self.tinyTranscribeConfig()
-        let model = NemotronTranscribeModel(cfg)
+        let model = withRandomState(MLXRandom.RandomState(seed: 1)) { NemotronTranscribeModel(cfg) }
         let samples = (0 ..< 24_000).map { i in
             Float(0.25 * sin(2.0 * .pi * 440.0 * Double(i) / 16_000.0))
         }
