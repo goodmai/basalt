@@ -16,7 +16,8 @@ extension ModelOrchestratorActor {
             case .layout(let prompt, let side): try await parseLayout(page.image, prompt: prompt, side: side, recipe: recipe, epoch: epoch)
             }
             pages.append(OCRPageResult(
-                page: page.number, markdown: read.markdown, blocks: read.blocks, tokens: read.tokens, ms: Self.milliseconds(since: started)))
+                page: page.number, markdown: read.markdown, blocks: read.blocks, tokens: read.tokens, ms: Self.milliseconds(since: started),
+                ttftMs: Int((read.firstToken * 1000).rounded())))
         }
         return OCRResult(model: await modelInfo, family: recipe.family.rawValue, task: request.task, pages: pages, format: request.format)
     }
@@ -39,15 +40,15 @@ extension ModelOrchestratorActor {
 
     nonisolated func recognize(
         _ image: ImageInput, prompt: String, type: String, recipe: OCRRecipe, epoch: Int
-    ) async throws(BasaltError) -> (markdown: String, blocks: [OCRBlock], tokens: Int) {
+    ) async throws(BasaltError) -> (markdown: String, blocks: [OCRBlock], tokens: Int, firstToken: Double) {
         let response = try await generated(recipe.request(prompt: prompt, image: image, stage: .recognition), epoch: epoch)
         let read = recipe.read(response.generatedText, blockType: type)
-        return (read.markdown, read.blocks, response.completionTokens)
+        return (read.markdown, read.blocks, response.completionTokens, response.timeToFirstToken)
     }
 
     nonisolated func parseLayout(
         _ page: ImageInput, prompt: String, side: Int, recipe: OCRRecipe, epoch: Int
-    ) async throws(BasaltError) -> (markdown: String, blocks: [OCRBlock], tokens: Int) {
+    ) async throws(BasaltError) -> (markdown: String, blocks: [OCRBlock], tokens: Int, firstToken: Double) {
         let image = try OCRImage.decode(page.data)
         guard let downsampled = OCRImage.resized(image, width: side, height: side) else {
             throw .inferenceError("cannot downsample the page for layout detection")
@@ -65,7 +66,7 @@ extension ModelOrchestratorActor {
             recognized.append((block, recipe.finished(response.generatedText, blockType: block.type)))
         }
         let assembled = MinerULayout.assemble(recognized)
-        return (assembled.markdown, assembled.blocks, tokens)
+        return (assembled.markdown, assembled.blocks, tokens, layout.timeToFirstToken)
     }
 
     nonisolated static func crop(_ page: CGImage, _ block: MinerULayout.Block) -> CGImage? {

@@ -63,7 +63,7 @@ struct OCRAPITests {
         #expect(read.map { $0["page"] as? Int } == [2, 3])
         #expect(read.first?["markdown"] as? String == "| a | b |")
         #expect(read.first?["tokens"] as? Int == 10)
-        #expect(read.first?["ms"] is Int)
+        #expect(read.first?["ms"] is Int && read.first?["ttft_ms"] is Int)
         let block = (read.first?["blocks"] as? [[String: Any]])?.first
         #expect(block?["type"] as? String == "table" && block?["bbox"] as? [Double] == [0, 0, 1, 1] && block?["text"] as? String == "| a | b |")
         let requests = await engine.getRequests()
