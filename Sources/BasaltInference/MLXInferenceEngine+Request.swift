@@ -235,7 +235,8 @@ extension MLXInferenceEngine {
             throw .invalidRequestStructure(
                 details: "dry_* and xtc_* are experimental (DRY can turn a detectable loop into one with corrupted facts on low-bit models); start the server with --experimental-samplers to use them")
         }
-        let (params, components, shaping, exclusion) = sampling(for: request, breakers: await sequenceBreakerIds(for: request))
+        let (params, sampled, shaping, exclusion) = sampling(for: request, breakers: await sequenceBreakerIds(for: request))
+        let components = await ocrNoRepeat(for: request).map { sampled.appendingBasaltProcessor($0) } ?? sampled
         let (probed, confidenceProbe) = attachConfidenceProbe(to: components, for: request)
         return (params, probed, shaping, exclusion, confidenceProbe)
     }
