@@ -153,6 +153,7 @@ struct ServeCommand: AsyncParsableCommand {
     mutating func run() async throws {
         if wiredLimit { MLXInferenceEngine.renewsResidency() }
         if experimental.smallMKernel { MLXInferenceEngine.enablesSmallMKernel() }
+        await applyPipelinePreset()
         if dryRun { return await assessMemory() }
 
         let network = try resolveAccess()
@@ -186,7 +187,7 @@ struct ServeCommand: AsyncParsableCommand {
         let decisions = try servedDecisions(loadedDecisions, gate: orchestrator.gate, besideDecode: plan.runsBesideDecode("decide"))
 
         try await load(orchestrator, from: resolvedPath)
-        let stages = try await loadPipelineStages(perceivePaths)
+        let stages = try await loadPipelineStages(perceivePaths, plan: plan)
         if !noMemoryCoordinator { await orchestrator.coordinateMemory(with: MemoryCoordinator()) }
         if !noThermalPolicy { await orchestrator.coordinateThermal() }
         await experimental.attachMediaFallbacks(to: orchestrator)

@@ -74,6 +74,8 @@ actor MockInferenceEngine: InferenceEngine {
         loaded = true
     }
 
+    func unload() async { loaded = false }
+
     func transcribe(_ request: TranscriptionRequest) async throws(BasaltError) -> Transcription {
         guard let mockTranscription else { throw .noAudioEncoder("") }
         return mockTranscription

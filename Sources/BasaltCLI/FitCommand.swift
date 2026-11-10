@@ -25,8 +25,17 @@ struct FitCommand: AsyncParsableCommand {
     
     @Flag(name: .long, help: "Perform quick hardware diagnostic check and output machine-readable JSON without downloading or ranking models")
     var check = false
-    
+
+    @Option(name: .customLong("pipeline-preset"), help: "Show the compute plan of a pipeline preset on this Mac instead of ranking models: its models, where each runs, resident bytes against the working set, the power-degraded state, and the refusal when the set does not fit (\(PipelinePreset.names))")
+    var pipelinePreset: PipelinePreset?
+
+    @Option(name: .customLong("pipeline-memory"), help: "With --pipeline-preset: resident, sequential or auto, as serve --pipeline-memory (default: auto)")
+    var pipelineMemory: PipelineMemory = .auto
+
     mutating func run() async throws {
+        if let pipelinePreset {
+            return Self.printPlan(pipelinePreset.plan(budgetBytes: await SystemProfiler().detectResources().gpuMemory, power: PowerSource.current(), memory: pipelineMemory), json: json)
+        }
         if check {
             try printJSON(await SystemProfiler().generateReport())
             return
@@ -83,6 +92,14 @@ struct FitCommand: AsyncParsableCommand {
             models = models.filter { $0.modality == modEnum }
         }
         return models
+    }
+
+    static func printPlan(_ plan: PipelinePresetPlan, json: Bool) {
+        guard json else { return print(plan.lines.joined(separator: "\n")) }
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        encoder.keyEncodingStrategy = .convertToSnakeCase
+        print(String(decoding: (try? encoder.encode(plan)) ?? Data(), as: UTF8.self))
     }
 
     private static func printReport(_ report: JSONReport) {

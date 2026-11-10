@@ -10,21 +10,21 @@ struct LabelledDecision {
 
 enum SystemOneDecisionSet {
     static let departments = [
-        "billing": ("Billing: invoices, charges, refunds of payments.", ["I was charged twice for order #%d.", "My invoice for order #%d shows the wrong amount."]),
-        "shipping": ("Shipping: delivery status, tracking, couriers.", ["Where is my parcel for order #%d? Tracking has not moved.", "The courier never delivered order #%d."]),
-        "technical": ("Technical support: the app or device does not work.", ["The app crashes when I open order #%d.", "My device will not pair after the update; order #%d."]),
-        "account": ("Account: login, password, profile settings.", ["I cannot log in to the account linked to order #%d.", "Please change the e-mail on my profile; last order #%d."]),
-        "returns": ("Returns: sending items back and exchanges.", ["I want to return the shoes from order #%d, wrong size.", "How do I exchange the jacket from order #%d?"]),
-        "sales": ("Sales: prices, quotes and new purchases.", ["Can I get a bulk quote similar to order #%d?", "Is there a discount if I buy again what I got in order #%d?"]),
+        "billing": ["I was charged twice for order #%d.", "My invoice for order #%d shows the wrong amount."],
+        "shipping": ["Where is my parcel for order #%d? Tracking has not moved.", "The courier never delivered order #%d."],
+        "technical": ["The app crashes when I open order #%d.", "My device will not pair after the update; order #%d."],
+        "account": ["I cannot log in to the account linked to order #%d.", "Please change the e-mail on my profile; last order #%d."],
+        "returns": ["I want to return the shoes from order #%d, wrong size.", "How do I exchange the jacket from order #%d?"],
+        "sales": ["Can I get a bulk quote similar to order #%d?", "Is there a discount if I buy again what I got in order #%d?"],
     ]
-    static let severity = ["No impact: cosmetic or informational.", "Minor: one user affected, workaround exists.", "Major: many users affected or a key feature down.", "Critical: outage or data loss."]
+    static let questions = PipelinePreset.triageQuestions
 
     static func generate(states count: Int, seed: UInt64) -> [LabelledDecision] {
         var generator = SplitMix64(seed: seed)
         let names = departments.keys.sorted()
         return (0 ..< count).flatMap { _ -> [LabelledDecision] in
             let department = names[Int.random(in: 0 ..< names.count, using: &generator)]
-            let templates = departments[department]!.1
+            let templates = departments[department]!
             let order = Int.random(in: 1000 ... 9999, using: &generator)
             let ticket = String(format: templates[Int.random(in: 0 ..< templates.count, using: &generator)], order)
             let promised = Int.random(in: 2 ... 7, using: &generator)
@@ -34,11 +34,10 @@ enum SystemOneDecisionSet {
             let level = outage ? 3 : users >= 1000 ? 2 : users > 1 ? 2 : Int.random(in: 0 ... 1, using: &generator)
             let impact = outage ? "The service is completely down." : level == 0 ? "Only a label is misaligned." : "Users affected: \(users)."
             let state = "Ticket: \(ticket)\nOrder: {\"id\":\(order),\"promised_days\":\(promised),\"delivered_days\":\(delivered)}\nIncident: \(impact)"
-            let criteria = Dictionary(uniqueKeysWithValues: names.map { ($0, departments[$0]!.0) })
             return [
-                LabelledDecision(state: state, name: "department", question: SystemOneQuestion(type: .choice, instructions: "Which department should handle this ticket?", criteria: .named(criteria)), label: department),
-                LabelledDecision(state: state, name: "late", question: SystemOneQuestion(type: .noul, instructions: "The order was delivered later than promised.", criteria: .named(["false": "The order was delivered on time or early.", "true": "The order was delivered later than promised."])), label: delivered > promised ? "true" : "false"),
-                LabelledDecision(state: state, name: "severity", question: SystemOneQuestion(type: .score, instructions: "How severe is the incident?", criteria: .levels(severity)), label: String(level)),
+                LabelledDecision(state: state, name: "department", question: questions["department"]!, label: department),
+                LabelledDecision(state: state, name: "late", question: questions["late"]!, label: delivered > promised ? "true" : "false"),
+                LabelledDecision(state: state, name: "severity", question: questions["severity"]!, label: String(level)),
             ]
         }
     }

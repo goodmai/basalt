@@ -86,6 +86,7 @@ public struct CachedModelInfo: Sendable {
 enum OrchestratorEvent {
     case loaded(path: String, modelId: String?, geometry: KVCacheGeometry, takes: (zones: Bool, eviction: Bool, quantization: Bool, fullPrecisionEviction: Bool))
     case named(String)
+    case unloaded
     case switchStarted(String, Task<Void, Error>)
     case switchEnded(String)
     case reserved(ticket: Int, bytes: ByteCount, budget: ByteCount, epoch: Int)
@@ -122,6 +123,8 @@ struct OrchestratorState: Sendable {
             (next.kv.takesZones, next.kv.takesEviction, next.kv.takesQuantization, next.kv.takesFullPrecisionEviction) = takes
         case .named(let id):
             next.modelId = id
+        case .unloaded:
+            next.modelEpoch += 1
         case .switchStarted(let id, let task):
             next.pendingSwitch = (id, task)
         case .switchEnded(let id):
