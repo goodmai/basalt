@@ -24,6 +24,13 @@ public enum GGMLType: UInt32, Sendable, Equatable, CaseIterable {
     }
 
     public var bitsPerWeight: Double { Double(block.bytes * 8) / Double(block.elements) }
+
+    public var name: String { String(describing: self) }
+
+    public init?(name: String) {
+        guard let match = Self.allCases.first(where: { $0.name == name }) else { return nil }
+        self = match
+    }
 }
 
 public struct GGUFTensor: Sendable, Equatable {
@@ -81,6 +88,8 @@ public struct GGUFFile: Sendable {
     }
 
     public func tensor(_ name: String) -> GGUFTensor? { tensors.first { $0.name == name } }
+
+    public func payload(_ tensor: GGUFTensor) -> Data { data.subdata(in: tensor.offset ..< tensor.offset + tensor.byteCount) }
 
     public func floats(_ tensor: GGUFTensor) -> [Float] {
         data.withUnsafeBytes { raw in

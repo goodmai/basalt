@@ -14,6 +14,11 @@ struct GGUFTransferRealModelTests {
     static let context = Int(env["BASALT_E2E_GGUF_CONTEXT"] ?? "") ?? 4096
     static let chunks = Int(env["BASALT_E2E_GGUF_CHUNKS"] ?? "") ?? 8
 
+    static func load(_ url: URL) async throws -> ModelContainer {
+        if let native = try await GGUFNativeLoader.loadContainer(from: url, tokenizerLoader: DefaultTokenizerLoader()) { return native }
+        return try await loadModelContainer(from: url, using: DefaultTokenizerLoader())
+    }
+
     static func perplexity(_ container: ModelContainer, text: String) async throws -> (ppl: Double, scored: Int) {
         try await container.perform { model in
             let tokens = model.tokenizer.encode(text: text, addSpecialTokens: false)
@@ -50,7 +55,7 @@ struct GGUFTransferRealModelTests {
             let log = try await ModelRunLog("gguf-transfer", modelPath: path)
             defer { log.releaseGPU() }
             Memory.peakMemory = 0
-            let container = try await log.step("load") { try await loadModelContainer(from: URL(fileURLWithPath: path), using: DefaultTokenizerLoader()) }
+            let container = try await log.step("load") { try await Self.load(URL(fileURLWithPath: path)) }
             let (ppl, scored) = try await log.step("perplexity") { try await Self.perplexity(container, text: text) }
             log.record("RESULT", String(format: "%@: ppl %.4f over %d scored tokens (%d chunks of %d), peak %.2f GB, %@", entry, ppl, scored, Self.chunks, Self.context,
                                         Double(Memory.peakMemory) / 1e9, log.host()))

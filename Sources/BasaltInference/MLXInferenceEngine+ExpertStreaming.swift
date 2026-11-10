@@ -11,6 +11,10 @@ extension MLXInferenceEngine {
     }
 
     func loadContainer(from directory: URL) async throws -> ModelContainer {
+        if let native = try await GGUFNativeLoader.loadContainer(from: directory, tokenizerLoader: DefaultTokenizerLoader()) {
+            logger.info("Experimental GGUF native weights: \(directory.lastPathComponent) runs its i-quant and k-quant blocks on basalt's Metal kernels")
+            return native
+        }
         guard let expertStreaming = configuration.expertStreaming else { return try await loadModelContainer(from: directory, using: DefaultTokenizerLoader()) }
         guard let loaded = try await ExpertStreamingLoader.loadContainer(from: directory, streaming: expertStreaming, tokenizerLoader: DefaultTokenizerLoader()) else {
             logger.warn("--experimental-expert-streaming: \(directory.lastPathComponent) has no routed experts to stream; it loads resident")
