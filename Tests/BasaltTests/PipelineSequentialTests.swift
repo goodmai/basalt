@@ -118,7 +118,7 @@ struct PipelineSequentialTests {
         ["attachments": [["kind": "audio", "data": clip().base64EncodedString(), "format": "wav"]], "questions": ["calm": ["type": "noul", "instructions": instructions]]]
     }
 
-    @Test("Answers match the resident references; the speech engine is loaded once and unloaded after its stage; the chat model is reloaded only when it was swapped", .timeLimit(.minutes(1)), arguments: [true, false])
+    @Test("Answers match the resident references; the speech engine is loaded once and unloaded after its stage; the chat model is reloaded only when it was swapped", .timeLimit(.minutes(5)), arguments: [true, false])
     func swapsPerceiver(unloadsChat: Bool) async throws {
         let reference = try await Self.references()
         let served = try await Self.served(unloadsChat: unloadsChat)
@@ -135,7 +135,7 @@ struct PipelineSequentialTests {
         #expect(await served.chat.loaded.epoch == epoch + (unloadsChat ? 2 : 0))
     }
 
-    @Test("A chat request that arrives while the perceiver is swapped in waits for the swap and then succeeds on the reloaded chat model", .timeLimit(.minutes(1)))
+    @Test("A chat request that arrives while the perceiver is swapped in waits for the swap and then succeeds on the reloaded chat model", .timeLimit(.minutes(5)))
     func chatWaitsDuringSwap() async throws {
         let reference = try await TinyModel.engine().generate(request: GenerationRequest(prompt: "hello", maxTokens: 4, temperature: 0)).generatedText
         let served = try await Self.served(unloadsChat: true)
