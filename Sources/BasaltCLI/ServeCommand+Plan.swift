@@ -31,7 +31,7 @@ extension ServeCommand {
         return workloads
     }
 
-    func admitComputePlan(chatPath: String, embeddings: (any EmbeddingEngine)?, decisions: (any DecisionEngine)?, perceive paths: PerceivePaths) async throws -> Bool {
+    func admitComputePlan(chatPath: String, embeddings: (any EmbeddingEngine)?, decisions: (any DecisionEngine)?, perceive paths: PerceivePaths) async throws -> PlanVerdict {
         let chat = Workload(name: chatPath.split(separator: "/").last.map(String.init) ?? chatPath, role: "chat", unit: .gpu, kind: .decode, residentBytes: Self.weightBytes(chatPath))
         let perceive = [(pipeline.ocrModel, paths.ocr), (pipeline.audioModel, paths.audio)].compactMap { model, path in
             path.map { Self.perceiveWorkload(model ?? $0, path: $0) }
@@ -45,6 +45,6 @@ extension ServeCommand {
             log("\(red("[error]")) \(refusal); serve fewer or smaller models")
             throw ExitCode.failure
         }
-        return verdict.degraded
+        return verdict
     }
 }

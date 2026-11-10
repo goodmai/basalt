@@ -56,6 +56,10 @@ public struct PlanVerdict: Sendable, Equatable {
     public var budgetBytes: Int64
     public var degraded: Bool
     public var refusal: String?
+
+    public func runsBesideDecode(_ role: String) -> Bool {
+        placements.first { $0.workload.role == role }?.concurrentWithDecode ?? false
+    }
 }
 
 public enum ComputePlan {

@@ -38,3 +38,22 @@ public enum EmbeddingLimits {
     public static let maxTokens = 131_072
     public static let maxDocuments = 1_000
 }
+
+public struct BesideDecodeEmbeddingEngine: EmbeddingEngine {
+    public let inner: any EmbeddingEngine
+
+    public var models: [EmbeddingModelInfo] { inner.models }
+
+    public static func serving(_ engine: (any EmbeddingEngine)?, besideDecode: Bool) -> (any EmbeddingEngine)? {
+        guard let engine, besideDecode, !(engine is BesideDecodeEmbeddingEngine) else { return engine }
+        return BesideDecodeEmbeddingEngine(inner: engine)
+    }
+
+    public func embed(_ inputs: [EmbeddingInput], dimensions: Int?, yieldingTo _: GenerationGate?) async throws(BasaltError) -> Embeddings {
+        try await inner.embed(inputs, dimensions: dimensions, yieldingTo: nil)
+    }
+
+    public func rerank(query: String, documents: [String], yieldingTo gate: GenerationGate?) async throws(BasaltError) -> [Double] {
+        try await inner.rerank(query: query, documents: documents, yieldingTo: gate)
+    }
+}
