@@ -136,12 +136,3 @@ struct ReviewRemote: Sendable {
         return data
     }
 }
-
-final class NoRedirects: NSObject, URLSessionTaskDelegate, Sendable {
-    func urlSession(
-        _ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
-        newRequest request: URLRequest
-    ) async -> URLRequest? {
-        nil
-    }
-}

@@ -36,10 +36,11 @@ struct PipelineRunner: Sendable {
         let started = ContinuousClock.now
         let (perceived, perceiving) = try await perceive(request)
         let state = PipelineCore.state(perceived, text: request.text)
-        let (decision, deciding) = try await decide(request.questions, state: state, origin: origin, sessionId: sessionId)
+        let typed = perceived.pages == nil && perceived.transcript == nil
+        let (decision, deciding) = try await decide(request.questions, state: state, by: typed ? decisions : decisions?.onDevice, origin: origin, sessionId: sessionId)
         let route = PipelineCore.route(questions: request.questions, decision: decision, task: request.task, state: state)
         var replies: [PipelineCore.System2Reply] = []
-        let answering = perceived.pages == nil && perceived.transcript == nil ? origin : RequestOrigin(source: PipelineCore.perceivedSource, endpoint: origin.endpoint, stream: false)
+        let answering = typed ? origin : RequestOrigin(source: PipelineCore.perceivedSource, endpoint: origin.endpoint, stream: false)
         for call in route.calls { replies.append(try await answer(call, origin: answering, sessionId: sessionId)) }
         let (answers, system2) = PipelineCore.answers(route, replies: replies, questions: request.questions, decision: decision)
         let receipt = PipelineCore.receipt(
@@ -114,7 +115,7 @@ struct PipelineRunner: Sendable {
     }
 
     func decide(
-        _ questions: [String: SystemOneQuestion], state: String, origin: RequestOrigin, sessionId: String?
+        _ questions: [String: SystemOneQuestion], state: String, by decisions: (any DecisionEngine)?, origin: RequestOrigin, sessionId: String?
     ) async throws(BasaltError) -> (SystemOneResponse?, PipelineStageReceipt?) {
         guard !questions.isEmpty, let decisions else { return (nil, nil) }
         let started = ContinuousClock.now

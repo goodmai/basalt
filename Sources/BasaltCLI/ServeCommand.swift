@@ -41,8 +41,7 @@ struct ServeCommand: AsyncParsableCommand {
     )
     var embeddingAdapter: String?
 
-    @Option(name: .customLong("decision-model"), help: "OpenJev decision model served on /v1/systemone (single-pass noul/choice/score): \"self\" reads option letters from the chat model; a Core AI decision bundle (laya_decision.json with decision.aimodel, token_table.aimodel and tokenizer/) runs on the Neural Engine beside decode (on a weak power source it waits between generations); an OpenJev head bundle (openjev_config.json, head.safetensors, PEFT adapter) runs on its Qwen3 base; any other repo, such as openjev/OpenJev-Flash-9B-MLX, is loaded beside the chat model and read out by option letters")
-    var decisionModel: String?
+    @OptionGroup var decision: DecisionOptions
 
     @Option(
         name: .customLong("rerank-model"),
@@ -183,7 +182,7 @@ struct ServeCommand: AsyncParsableCommand {
         let loadedDecisions = try await loadDecisions(chat: engine)
         let perceivePaths = try await pipelinePerceivePaths()
         let degraded = try await admitComputePlan(chatPath: resolvedPath, embeddings: embeddings, decisions: loadedDecisions, perceive: perceivePaths)
-        let decisions = GatedDecisionEngine.serving(loadedDecisions, gate: orchestrator.gate, besideDecode: !degraded)
+        let decisions = try servedDecisions(loadedDecisions, gate: orchestrator.gate, besideDecode: !degraded)
 
         try await load(orchestrator, from: resolvedPath)
         let stages = try await loadPipelineStages(perceivePaths)

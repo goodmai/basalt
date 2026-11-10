@@ -21,7 +21,7 @@ extension ServeCommand {
             let ane = embeddings is CoreAIEmbeddingService
             workloads.append(Workload(name: embeddingModel, role: "embed", unit: ane ? .ane : .gpu, kind: .encoder, residentBytes: Self.weightBytes(ane ? path + "/encoder.aimodel" : path)))
         }
-        if let decisionModel, let decisions, decisionModel != "self" {
+        if let decisionModel = decision.localModel, let decisions, decisionModel != "self" {
             let path = try await resolvedPath(decisionModel, quant: nil)
             let ane = decisions is CoreAIDecisionEngine
             let bytes = ane ? Self.weightBytes(path + "/decision.aimodel") + Self.weightBytes(path + "/token_table.aimodel")
