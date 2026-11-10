@@ -466,7 +466,35 @@ basalt compose up voice-agent            # bundled: document-qa, voice-agent
   - `sequential` loads a perceiver for its stage only.
 - **Cloud models:** a cloud model names the environment variable that holds its key (`api_key_env`). A key written in the file, or `${…}` interpolation, is refused. Documents and transcripts never go to the cloud: a request with attachments is decided locally.
 - **Expansion:** the file expands to `basalt serve` flags, printed at start. Flags after `--` are added to them.
-- **Phase 1** takes one answer model and a decide cascade of one local model, or of one cloud model followed by one local model. Routing between answer models comes later (#412).
+- **Answer routes (mixture of models).** `answer.routes` is a list of rules. The first rule whose `when` matches picks the model, and `fallback` is tried if that model fails or is unavailable. A `when` can test:
+  - `modality`: documents, audio or text;
+  - `decide`: a System One label, such as `route: code`;
+  - `prompt_tokens: { over: N }`;
+  - `escalated`;
+  - `cost_left`.
+
+  The last rule has no `when` and names a local model. A cloud model never gets perceived text, and the receipt names the rule, the cost and any skipped model. An extra local answer model can be `keep: on-demand`.
+- **Decide cascade.** It takes up to three cloud models followed by one local model. Each stage answers the questions it is sure of and passes the rest on.
+- **Cloud spend.** `budget: { usd_per_day }` caps a cloud model, and the top-level `budget` caps the total. The day's spend is kept in `~/.basalt/cloud-spend.json` across restarts. A refused key (401/403) disables that model until restart, and a rate limit (429) pauses it for `Retry-After`. Meanwhile the local model answers.
+
+```yaml
+pipeline:
+  decide: { cascade: [jev, chat], escalate_below: 0.6 }
+  answer:
+    routes:
+      - when: { decide: { route: code }, cost_left: true }
+        model: haiku          # cloud:openrouter/anthropic/claude-haiku-5.5, budget: { usd_per_day: 0.5 }
+        fallback: chat
+      - model: chat
+```
+
+Mixed workload of 55 requests through `/v1/pipeline` (30 decisions, 10 code, 10 chat, 5 documents), M4 Pro, release build (`scripts/compose_mom_bench.swift`, `docs/examples/compose/mom.yaml`):
+
+| Setup | Labels right | Cloud per 1000 requests | p50 | p95 | Local stage time |
+|---|---|---|---|---|---|
+| local only (Gemma 4 12B decides and answers) | 55/55 | $0 | 0.92 s | 10.0 s | 176 s |
+| cloud first (Jev decides, Haiku answers all text) | 55/55 | $0.046 | 1.25 s | 4.8 s | 24 s |
+| MoM (Jev decides, code to Haiku while budget lasts, the rest Gemma) | 55/55 | $0.035 | 1.21 s | 4.8 s | 53 s |
 
 Measured with `compose up` on an M4 Pro with 24 GB, release build:
 

@@ -175,9 +175,12 @@ public enum PipelineCore {
     }
 
     public static func decided(_ response: SystemOneResponse, ms: Int) -> PipelineStageReceipt {
-        PipelineStageReceipt(
+        var receipt = PipelineStageReceipt(
             stage: .decide, model: response.model, ms: ms, tokens: response.usage.prefixTokens + response.usage.suffixTokens,
             confidence: response.answers.values.compactMap(\.confidence).min(), escalated: response.escalate)
+        receipt.cost = response.usage.cost
+        receipt.skipped = response.usage.stages?.compactMap { stage in stage.fallback.map { "\(stage.model): \($0)" } }.nilIfEmpty
+        return receipt
     }
 
     public static func receipt(
@@ -192,4 +195,8 @@ public enum PipelineCore {
         let parts = duration.components
         return Int(parts.seconds * 1000 + parts.attoseconds / 1_000_000_000_000_000)
     }
+}
+
+extension Array {
+    var nilIfEmpty: Self? { isEmpty ? nil : self }
 }
