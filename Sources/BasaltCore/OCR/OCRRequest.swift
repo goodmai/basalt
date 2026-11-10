@@ -161,6 +161,12 @@ public struct OCRPageResult: Sendable, Equatable, Encodable {
     public var blocks: [OCRBlock]?
     public let tokens: Int
     public let ms: Int
+    public var ttftMs: Int? = nil
+
+    enum CodingKeys: String, CodingKey {
+        case page, markdown, blocks, tokens, ms
+        case ttftMs = "ttft_ms"
+    }
 }
 
 public struct OCRResult: Sendable, Encodable {

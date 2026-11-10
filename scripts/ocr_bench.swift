@@ -5,7 +5,7 @@ let usage = """
     Usage: swift -O scripts/ocr_bench.swift <basalt-binary> <document.pdf> <truth.txt> <model-repo>[@<resolution>]...
 
     Reads the document once per step with `basalt ocr --format json` (release build), holding the GPU
-    lock for that step only, and logs per step: pages/s and tok/s over the summed page times, the
+    lock for that step only, and logs per step: pages/s and tok/s over the summed page times, the mean time to first token per page, the
     peak memory footprint from /usr/bin/time -l, the generated tokens, and the
     character error rate of the joined page Markdown against <truth.txt> (Levenshtein distance over
     the truth's characters). Each model is checked with `basalt models inspect --json` first.
@@ -89,13 +89,15 @@ func measure(_ model: String, resolution: String?, truth: [UInt8]) throws -> Str
     }
     let ms = pages.compactMap { $0["ms"] as? Int }.reduce(0, +)
     let tokens = pages.compactMap { $0["tokens"] as? Int }.reduce(0, +)
+    let ttft = pages.compactMap { $0["ttft_ms"] as? Int }
+    let meanTTFT = ttft.isEmpty ? 0 : Double(ttft.reduce(0, +)) / Double(ttft.count)
     let text = Array(pages.compactMap { $0["markdown"] as? String }.joined(separator: "\n").utf8)
     let peak = result.err.split(separator: "\n").first { $0.contains("peak memory footprint") }
         .flatMap { Double($0.trimmingCharacters(in: .whitespaces).split(separator: " ").first ?? "") } ?? 0
     let seconds = Double(ms) / 1000
     return String(
-        format: "pages=%d pages/s=%.3f tok/s=%.1f tokens=%d peak=%.2fGB cer=%.4f",
-        pages.count, Double(pages.count) / seconds, Double(tokens) / seconds, tokens, peak / 1e9,
+        format: "pages=%d pages/s=%.3f tok/s=%.1f tokens=%d ttft=%.0fms peak=%.2fGB cer=%.4f",
+        pages.count, Double(pages.count) / seconds, Double(tokens) / seconds, tokens, meanTTFT, peak / 1e9,
         Double(editDistance(text, truth)) / Double(max(truth.count, 1)))
 }
 

@@ -83,6 +83,17 @@ struct DeepSeekOCRTests {
         #expect(MLX.abs(attention(x, queryRows: 1024) - attention(x, queryRows: 20)).max().item(Float.self) < 1e-5)
     }
 
+    @Test("A config this port cannot route is refused at load: sigmoid scoring, normalized top-k, sparse MoE layers, grouped routing, multi-head latent attention",
+          arguments: [#""scoring_func": "sigmoid","#, #""norm_topk_prob": true,"#, #""moe_layer_freq": 2,"#, #""n_group": 8, "topk_group": 4,"#, #""qk_nope_head_dim": 128,"#])
+    func refusesUnsupportedRouting(_ key: String) throws {
+        let decoder = JSONDecoder.json5()
+        let config = TinyModel.Family.deepSeekOCR.config
+        #expect(try decoder.decode(DeepSeekOCRConfiguration.self, from: Data(config.utf8)).validated().text.layers == 3)
+        let edited = config.replacingOccurrences(of: #""qk_nope_head_dim": 0,"#, with: key)
+        #expect(edited != config)
+        #expect(throws: BasaltError.self) { try decoder.decode(DeepSeekOCRConfiguration.self, from: Data(edited.utf8)).validated() }
+    }
+
     @Test("Frames parse into one layout per image, and views that are not squares of a multiple of 64 are refused")
     func layouts() throws {
         let gundam = DeepSeekOCRImageLayout(side: 1024, columns: 2, rows: 3, tile: 640)
@@ -275,13 +286,17 @@ struct DeepSeekOCRRealModelTests {
         text.replacing(#/<\|det\|>.*?<\|/det\|>/#, with: "")
     }
 
-    @Test("Prompt ids equal mlx-vlm's on every page and mode. Pages pre-sized to tiny, small, base and large: the 64-token text without its grounding boxes, over the length both have, stays within 5% character edit distance at base and large and 25% at tiny and small (box digits on the 0-999 grid are bf16 near-ties, and the lower resolutions amplify them). Gundam on the unsized page (CoreGraphics resize against PIL bicubic): the 256-token text stays within 5%",
+    @Test("Prompt ids equal mlx-vlm's on every page and mode. Pages pre-sized to tiny, small, base and large: the 64-token text without its grounding boxes, over the length both have, stays within 5% character edit distance at base and large and 25% at tiny and small (box digits on the 0-999 grid are bf16 near-ties, and the lower resolutions amplify them). Gundam on the unsized page (CoreGraphics resize against PIL bicubic): the 256-token text stays within 5%. Every run decodes as many tokens as mlx-vlm",
           .enabled(if: paths != nil, "set BASALT_E2E=1, BASALT_E2E_DEEPSEEK_MODEL_PATH and BASALT_E2E_DEEPSEEK_REFERENCE"))
     func matchesMLXVLM() async throws {
         let (model, referencePath) = try #require(Self.paths)
         let reference = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: referencePath))) as? [String: Any])
+        let log = try await ModelRunLog("deepseek-ocr-parity", modelPath: model)
+        defer { log.releaseGPU() }
         await MLXInferenceEngine.registerAliases()
-        let container = try await loadModelContainer(from: URL(fileURLWithPath: model), using: DefaultTokenizerLoader())
+        let container = try await log.step("load") {
+            try await loadModelContainer(from: URL(fileURLWithPath: model), using: DefaultTokenizerLoader())
+        }
         let directory = URL(fileURLWithPath: referencePath).deletingLastPathComponent()
         for name in reference.keys.sorted() {
             let page = try #require(reference[name] as? [String: Any])
@@ -301,7 +316,9 @@ struct DeepSeekOCRRealModelTests {
             let common = min(plain.count, expectedPlain.count)
             let plainDistance = MLXInferenceEngine.editDistance(String(plain.prefix(common)), String(expectedPlain.prefix(common)))
             print("DEEPSEEK-PARITY \(name) prompt=\(prompt.count)/\((page["prompt_ids"] as? [Int])?.count ?? 0) tokens=\(tokens.count) exact=\(tokens == expected) first=\(zip(tokens, expected).enumerated().first { $1.0 != $1.1 }?.offset ?? -1) edit=\(distance)/\(expectedText.utf8.count) text-edit=\(plainDistance)/\(common)")
+            log.record(name, "tokens \(tokens.count)/\(expected.count) exact \(tokens == expected) text-edit \(plainDistance)/\(common)")
             #expect(prompt == page["prompt_ids"] as? [Int], "\(name): prompt ids")
+            #expect(tokens.count == expected.count, "\(name): \(tokens.count) tokens where mlx-vlm decoded \(expected.count)")
             if resolution == .gundam {
                 #expect(Double(distance) <= Self.gundamEditBudget * Double(expectedText.utf8.count), "\(name): edit distance \(distance)")
             } else {
