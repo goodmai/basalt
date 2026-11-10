@@ -97,13 +97,13 @@ public struct RemoteDecisionEngine: DecisionEngine {
 
     public func decide(_ request: SystemOneRequest) async throws(BasaltError) -> SystemOneResponse {
         try SystemOneCore.validate(request)
-        let (status, data) = try await send(try RemoteDecisionCore.body(request, model: modelID))
-        guard (200 ..< 300).contains(status) else { throw Self.failure(status >= 500 ? "server error, HTTP \(status)" : "refused, HTTP \(status)") }
+        let (status, data, retryAfter) = try await send(try RemoteDecisionCore.body(request, model: modelID))
+        guard (200 ..< 300).contains(status) else { throw Self.failure(status: status, retryAfter: retryAfter) }
         guard let response = RemoteDecisionCore.response(data, for: request) else { throw Self.failure("malformed response") }
         return response
     }
 
-    func send(_ body: Data) async throws(BasaltError) -> (status: Int, data: Data) {
+    func send(_ body: Data) async throws(BasaltError) -> (status: Int, data: Data, retryAfter: Int?) {
         var request = URLRequest(url: endpoint)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -111,11 +111,21 @@ public struct RemoteDecisionEngine: DecisionEngine {
         request.httpBody = body
         do {
             let (data, response) = try await session.data(for: request, delegate: NoRedirects())
-            return ((response as? HTTPURLResponse)?.statusCode ?? 0, data)
+            let http = response as? HTTPURLResponse
+            return (http?.statusCode ?? 0, data, http?.value(forHTTPHeaderField: "Retry-After").flatMap { Int($0) })
         } catch {
             guard !Task.isCancelled else { throw .cancelled }
             let code = (error as? URLError)?.code
             throw Self.failure(code == .timedOut ? "timeout" : "network error \(code?.rawValue ?? 0)")
+        }
+    }
+
+    static func failure(status: Int, retryAfter: Int?) -> BasaltError {
+        switch status {
+        case 401, 403: .authenticationFailed(details: "cloud decisions: refused, HTTP \(status): check the key")
+        case 429: .serverBusy(retryAfterSeconds: retryAfter.map { min(max($0, 1), 3600) } ?? Int(CloudGateCore.defaultPause))
+        case 500...: failure("server error, HTTP \(status)")
+        default: failure("refused, HTTP \(status)")
         }
     }
 
