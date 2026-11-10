@@ -31,7 +31,7 @@ struct ExperimentalServeOptions: ParsableArguments {
 
     @Option(
         name: .customLong("experimental-ane-vision-tower"),
-        help: "Run PaddleOCR-VL's vision encoder on the Neural Engine from a Core AI tower bundle (metadata.json + tower.aimodel, fixed patch-count buckets), specialized when the model loads; images whose patch grid fits no bucket stay on the GPU tower (#224, #400)"
+        help: "Run PaddleOCR-VL's vision encoder on the Neural Engine from a Core AI tower bundle (metadata.json + tower.aimodel, fixed patch-count buckets), specialized when the model loads (the first load in a process takes about 20 minutes for the 5120 bucket); images whose patch grid fits no bucket stay on the GPU tower. Build the bundle with swift scripts/paddle_tower_export.swift <snapshot> <out> (#224, #400)"
     )
     var aneVisionTower: String?
 

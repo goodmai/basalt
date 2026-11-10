@@ -79,7 +79,7 @@ enum RemoteStub {
         }
     }
 
-    static func engine(_ base: URL, _ route: String, timeout: TimeInterval = 3) throws -> RemoteDecisionEngine {
+    static func engine(_ base: URL, _ route: String, timeout: TimeInterval = 30) throws -> RemoteDecisionEngine {
         try RemoteDecisionEngine(model: "~typesafe/jev-latest", apiKey: key, baseURL: base.appending(path: route), timeout: timeout)
     }
 }

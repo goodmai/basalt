@@ -146,7 +146,7 @@ public enum ComputePlan {
         case (.decode, _):
             return Placement(workload: workload, concurrentWithDecode: false, maxDuty: nil, expectedDecodeDrop: nil, note: "decoder")
         case (.encoder, .ane) where !degraded:
-            return Placement(workload: workload, concurrentWithDecode: true, maxDuty: 1, expectedDecodeDrop: 0.0...0.07, note: "compute-bound on the Neural Engine: runs beside decode (#273: -0..3% at 25% duty, -3..7% continuous)")
+            return Placement(workload: workload, concurrentWithDecode: true, maxDuty: 1, expectedDecodeDrop: 0.0...0.07, note: "compute-bound on the Neural Engine: runs beside decode (#273, #399: -2..5% at 25% duty, -4..7% continuous)")
         case (.encoder, .ane):
             return Placement(workload: workload, concurrentWithDecode: false, maxDuty: nil, expectedDecodeDrop: nil, note: "power-degraded: queued behind decode")
         case (.encoder, _):
@@ -162,7 +162,7 @@ public enum ComputePlan {
 
     public static func describe(_ verdict: PlanVerdict) -> [String] {
         let sequential = verdict.memory == .sequential
-            ? ", sequential: about \(String(format: "%.0f", verdict.expectedSwapSeconds)) s of model loading per request (\(gigabytes(verdict.swapBytesPerRequest)) at \(gigabytes(Int64(loadBytesPerSecond)))/s)"
+            ? ", sequential: about \(String(format: "%.0f", verdict.expectedSwapSeconds)) s of model loading per request (\(gigabytes(verdict.swapBytesPerRequest)) at \(gigabytes(Int64(loadBytesPerSecond)))/s from a cold disk; about twice as fast from a warm page cache)"
             : ", resident"
         let header = "compute plan: \(gigabytes(verdict.residentBytes)) resident of \(gigabytes(verdict.budgetBytes))" + sequential + (verdict.degraded ? ", power-degraded (no concurrent sidecars)" : "")
         return [header] + verdict.placements.map { "  \($0.workload.role) \($0.workload.name) on \($0.workload.unit.rawValue): \($0.note)" }
