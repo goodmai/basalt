@@ -22,6 +22,19 @@ struct ComputePlanTests {
         #expect(!ComputePlan.place(Workload(name: "t", role: "trainer", unit: .gpu, kind: .training, residentBytes: 0), degraded: false).concurrentWithDecode)
     }
 
+    @Test("With expert streaming the chat model counts its resident weights plus the expert cache, so a Streaming-tier MoE is admitted; dense counts all its weights")
+    func streamingResidentBytes() {
+        let weights = ByteCount(35_000_000_000)
+        let streaming = ExpertStreaming(cacheBytes: ByteCount(2_000_000_000))
+        let resident = streaming.residentBytes(weights: weights, modelId: "mlx-community/Qwen3.5-35B-A3B-8bit")
+        #expect(resident == ByteCount(5_000_000_000))
+        #expect(ExpertStreaming().residentBytes(weights: weights, modelId: "org/Big-35B-A3B") == ByteCount(3_000_000_000 + 8_000_000_000))
+        #expect(streaming.residentBytes(weights: weights, modelId: "org/Dense-35B") == weights)
+        let chat = Workload(name: "qwen3.5-35b-a3b", role: "chat", unit: .gpu, kind: .decode, residentBytes: resident.rawValue)
+        #expect(ComputePlan.admit([chat, Self.embed], budgetBytes: 18_000_000_000).refusal == nil)
+        #expect(ComputePlan.admit([Workload(name: "resident", role: "chat", unit: .gpu, kind: .decode, residentBytes: weights.rawValue)], budgetBytes: 18_000_000_000).refusal != nil)
+    }
+
     @Test("A set past the working set is refused with each model's share in the message")
     func memoryRefusal() {
         let verdict = ComputePlan.admit([Self.chat, Self.jev, Workload(name: "glm-ocr", role: "ocr", unit: .gpu, kind: .encoder, residentBytes: 2_000_000_000)], budgetBytes: 18_000_000_000)
