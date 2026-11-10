@@ -14,19 +14,45 @@ extension ComposeSpec {
         var issues: [Issue] = []
         if version != 1 { issues.append(Issue("version", "only version 1 is supported")) }
         if name.trimmingCharacters(in: .whitespaces).isEmpty { issues.append(Issue("name", "a compose file needs a name")) }
-        issues += answerIssues + perceiveIssues + cascadeIssues + models.sorted { $0.key < $1.key }.flatMap { modelIssues($0.key, $0.value) }
-        for (name, _) in models.sorted(by: { $0.key < $1.key }) where !roles.keys.contains(name) {
-            issues.append(Issue("models.\(name)", "declared but not used by pipeline.perceive, pipeline.decide or pipeline.answer"))
+        for (pipeline, view) in views {
+            let prefix = pipeline == Self.defaultPipeline ? "pipeline" : "pipelines.\(pipeline)"
+            issues += (view.answerIssues + view.perceiveIssues + view.cascadeIssues).map { issue in
+                Issue(issue.path.hasPrefix("pipeline.") ? prefix + issue.path.dropFirst("pipeline".count) : issue.path, issue.message)
+            }
         }
-        return issues
+        issues += pipelineIssues + models.sorted { $0.key < $1.key }.flatMap { modelIssues($0.key, $0.value) }
+        for (name, _) in models.sorted(by: { $0.key < $1.key }) where !roles.keys.contains(name) {
+            issues.append(Issue("models.\(name)", "declared but not used by any pipeline's perceive, decide or answer"))
+        }
+        return issues.reduce(into: [Issue]()) { unique, issue in if !unique.contains(issue) { unique.append(issue) } }
     }
 
-    var roles: [String: [String]] {
-        var roles: [String: [String]] = [:]
+    var pipelineRoles: [String: Set<String>] {
+        var roles: [String: Set<String>] = [:]
         for (role, names) in [("answer", answerModels), ("documents", documents), ("audio", audio), ("cascade", cascade)] {
-            for name in names where models[name] != nil { roles[name, default: []].append(role) }
+            for name in names where models[name] != nil { roles[name, default: []].insert(role) }
         }
         return roles
+    }
+
+    var roles: [String: Set<String>] {
+        views.map(\.spec.pipelineRoles).reduce(into: [:]) { union, roles in union.merge(roles) { $0.union($1) } }
+    }
+
+    var pipelineIssues: [Issue] {
+        var issues: [Issue] = []
+        let deciders = Set([answer, cascade.last].compactMap { $0 })
+        for (pipeline, view) in views where pipeline != Self.defaultPipeline {
+            let path = "pipelines.\(pipeline)"
+            if !pipeline.allSatisfy({ $0.isLowercase || $0.isNumber || $0 == "-" }) { issues.append(Issue(path, "a pipeline name uses lowercase letters, digits and -")) }
+            if [view.ocr, view.speech].contains(where: { $0.flatMap { models[$0]?.keep } == .sequential }) {
+                issues.append(Issue("\(path).perceive", "sequential perceivers swap models around the default pipeline only; keep them resident or on-demand here"))
+            }
+            if let local = view.cascade.last, !deciders.contains(local) {
+                issues.append(Issue("\(path).decide.cascade", "every pipeline shares the default pipeline's local decision model (\(deciders.sorted().joined(separator: " or ")))"))
+            }
+        }
+        return issues
     }
 
     var answerIssues: [Issue] {
@@ -88,8 +114,11 @@ extension ComposeSpec {
 
     func modelIssues(_ name: String, _ model: Model) -> [Issue] {
         let path = "models.\(name)"
-        var issues = keepIssues(path, model, perceiver: name == ocr || name == speech, answer: name != answer && answerModels.contains(name))
-        if !model.isCloud, (roles[name]?.filter { $0 != "cascade" || name != answer }.count ?? 0) > 1 { issues.append(Issue(path, "one model serves one role; the answer model may also decide")) }
+        let perceiver = views.contains { $0.spec.ocr == name || $0.spec.speech == name }
+        let routed = views.contains { $0.spec.answer != name && $0.spec.answerModels.contains(name) }
+        var issues = keepIssues(path, model, perceiver: perceiver, answer: routed)
+        let answering = views.contains { $0.spec.answer == name }
+        if !model.isCloud, (roles[name]?.subtracting(answering ? ["cascade"] : []).count ?? 0) > 1 { issues.append(Issue(path, "one model serves one role; the answer model may also decide")) }
         if model.budget != nil, !model.isCloud { issues.append(Issue("\(path).budget", "applies only to cloud models")) }
         if let budget = model.budget, !(budget > 0) { issues.append(Issue("\(path).budget", "usd_per_day must be positive")) }
         switch model.source {

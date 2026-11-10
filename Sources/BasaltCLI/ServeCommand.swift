@@ -191,7 +191,11 @@ struct ServeCommand: AsyncParsableCommand {
 
         try await load(orchestrator, from: resolvedPath)
         var stages = try await loadPipelineStages(perceivePaths, plan: plan)
-        if let spec { stages.answers = try await answerRouter(spec, chat: orchestrator, cloudGate: cloudGate) }
+        let start = ComposeStart(chat: orchestrator, decider: loadedDecisions, decisions: decisions, cloudGate: cloudGate, startup: stages, besideDecode: plan.runsBesideDecode("decide"))
+        let host = try await spec.asyncMap { try await composeHost($0, start: start) }
+        if let host, let system = await host.registry.system(ComposeSpec.defaultPipeline) { stages = system.stages }
+        let record = try spec.flatMap { host == nil ? nil : try ComposeRecord.write(name: $0.name, port: network.port, file: pipeline.compose ?? "") }
+        defer { record.map(ComposeRecord.remove) }
         if !noMemoryCoordinator { await orchestrator.coordinateMemory(with: MemoryCoordinator()) }
         if !noThermalPolicy { await orchestrator.coordinateThermal() }
         await experimental.attachMediaFallbacks(to: orchestrator)
@@ -213,6 +217,7 @@ struct ServeCommand: AsyncParsableCommand {
         try await Self.runServers(
             ServerLaunch(
                 config: config, startREST: startREST, mcpServer: mcpServer, embeddings: embeddings, decisions: decisions, pipeline: stages,
+                pipelines: host?.registry, compose: host.map { host in ComposeControl(status: { await host.status() }, apply: { yaml throws(BasaltError) in try await host.apply(yaml) }) },
                 statsInterval: stats ? min(max(1, statsInterval), 86_400) : nil, canaryInterval: canaryMinutes.map { .seconds($0 * 60) }),
             orchestrator: orchestrator)
     }

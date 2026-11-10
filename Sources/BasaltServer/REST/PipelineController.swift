@@ -6,7 +6,13 @@ struct PipelineController: Sendable {
     static let path = "/v1/pipeline"
     static let bodyLimit = ChatPipeline.bodyLimit + (AudioClip.maxBytes + 2) / 3 * 4
 
-    let runner: PipelineRunner
+    let resolve: @Sendable (String) async -> PipelineRunner?
+
+    init(runner: PipelineRunner) { resolve = { _ in runner } }
+
+    init(registry: PipelineRegistry, chat: ModelOrchestratorActor) {
+        resolve = { name in await registry.system(name).map { PipelineRunner(chat: chat, decisions: $0.decisions, stages: $0.stages) } }
+    }
 
     struct Body: Decodable {
         struct Attachment: Decodable {
@@ -45,6 +51,10 @@ struct PipelineController: Sendable {
 
     @Sendable
     func pipeline(request: Request, context: BasicRequestContext) async throws -> Response {
+        let name = context.parameters.get("name") ?? ComposeSpec.defaultPipeline
+        guard let runner = await resolve(name) else {
+            return ProviderErrorResponse.response(status: .notFound, message: "no pipeline named \(name)", shape: .openAI)
+        }
         do {
             let data = Data(try await request.body.collect(upTo: Self.bodyLimit).readableBytesView)
             let parsed = try Self.request(from: data, imageDirectories: [], defaultQuestions: runner.stages.questions)

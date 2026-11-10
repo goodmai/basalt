@@ -32,10 +32,11 @@ enum ComposeFile {
     struct Walk {
         var issues: [ServeConfigError.Issue] = []
         var lines: [String: Int] = [:]
+        var prefix = "pipeline"
 
         mutating func root(_ node: Node) -> ComposeSpec? {
             scan(node, path: "")
-            guard let top = fields(node, path: "", allowed: ["version", "name", "memory", "models", "pipeline", "budget"]) else { return nil }
+            guard let top = fields(node, path: "", allowed: ["version", "name", "memory", "models", "pipeline", "pipelines", "budget"]) else { return nil }
             let models = (top["models"]?.mapping.map { mapping in
                 Dictionary(mapping.compactMap { key, value in key.string.flatMap { name in model(value, path: "models.\(name)").map { (name, $0) } } }) { first, _ in first }
             }) ?? [:]
@@ -50,7 +51,23 @@ enum ComposeFile {
             }
             perceive(pipeline["perceive"], into: &spec)
             decide(pipeline["decide"], into: &spec)
+            for (key, value) in top["pipelines"]?.mapping ?? [:] {
+                guard let name = key.string else { continue }
+                prefix = "pipelines.\(name)"
+                if let named = self.pipeline(value, models: models) { spec.pipelines[name] = named }
+            }
+            prefix = "pipeline"
+            if let named = top["pipelines"], named.mapping == nil { issue("pipelines", named, "a mapping of pipeline name to perceive, decide and answer") }
             return spec
+        }
+
+        mutating func pipeline(_ node: Node, models: [String: ComposeSpec.Model]) -> PipelineSpec? {
+            guard let field = fields(node, path: prefix, allowed: ["perceive", "decide", "answer"]) else { return nil }
+            var view = ComposeSpec(name: "", models: models, answer: answer(field["answer"]) ?? "")
+            if let routes = field["answer"]?.mapping?["routes"] { view.routes = self.routes(routes) }
+            perceive(field["perceive"], into: &view)
+            decide(field["decide"], into: &view)
+            return view.defaultSpec
         }
 
         mutating func model(_ node: Node, path: String) -> ComposeSpec.Model? {
@@ -71,22 +88,22 @@ enum ComposeFile {
         }
 
         mutating func perceive(_ node: Node?, into spec: inout ComposeSpec) {
-            guard let node, let field = fields(node, path: "pipeline.perceive", allowed: ["documents", "audio"]) else { return }
-            spec.documents = list(field["documents"], "pipeline.perceive.documents")
-            spec.audio = list(field["audio"], "pipeline.perceive.audio")
+            guard let node, let field = fields(node, path: "\(prefix).perceive", allowed: ["documents", "audio"]) else { return }
+            spec.documents = list(field["documents"], "\(prefix).perceive.documents")
+            spec.audio = list(field["audio"], "\(prefix).perceive.audio")
         }
 
         mutating func decide(_ node: Node?, into spec: inout ComposeSpec) {
-            guard let node, let field = fields(node, path: "pipeline.decide", allowed: ["cascade", "escalate_below", "abstain_below", "min_margin"]) else { return }
-            spec.cascade = list(field["cascade"], "pipeline.decide.cascade")
+            guard let node, let field = fields(node, path: "\(prefix).decide", allowed: ["cascade", "escalate_below", "abstain_below", "min_margin"]) else { return }
+            spec.cascade = list(field["cascade"], "\(prefix).decide.cascade")
             (spec.escalateBelow, spec.abstainBelow, spec.minMargin) = (number(field["escalate_below"], "escalate_below"), number(field["abstain_below"], "abstain_below"), number(field["min_margin"], "min_margin"))
         }
 
         mutating func answer(_ node: Node?) -> String? {
             guard let node else { return nil }
             if let name = node.scalar?.string { return name }
-            guard let field = fields(node, path: "pipeline.answer", allowed: ["model", "routes"]) else { return nil }
-            if let model = field["model"] { return text(model, "pipeline.answer.model") }
+            guard let field = fields(node, path: "\(prefix).answer", allowed: ["model", "routes"]) else { return nil }
+            if let model = field["model"] { return text(model, "\(prefix).answer.model") }
             return field["routes"]?.sequence?.last.flatMap { $0.mapping?["model"]?.scalar?.string }
         }
     }

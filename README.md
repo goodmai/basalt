@@ -466,6 +466,7 @@ basalt compose up voice-agent            # bundled: document-qa, voice-agent
   - `sequential` loads a perceiver for its stage only.
 - **Cloud models:** a cloud model names the environment variable that holds its key (`api_key_env`). A key written in the file, or `${…}` interpolation, is refused. Documents and transcripts never go to the cloud: a request with attachments is decided locally.
 - **Expansion:** the file expands to `basalt serve` flags, printed at start. Flags after `--` are added to them.
+- **Running systems.** `pipelines:` adds named pipelines, served at `/v1/pipelines/<name>`. Running `compose up` again on a running system applies the difference: it loads, reloads and unloads only the models that changed, and swaps the pipelines between requests. `basalt compose ps` shows what is loaded and when on-demand models unload, along with cloud spend. `basalt compose down <name>` stops the system. The full reference is in [docs/compose.md](docs/compose.md).
 - **Answer routes (mixture of models).** `answer.routes` is a list of rules. The first rule whose `when` matches picks the model, and `fallback` is tried if that model fails or is unavailable. A `when` can test:
   - `modality`: documents, audio or text;
   - `decide`: a System One label, such as `route: code`;

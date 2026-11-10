@@ -57,6 +57,7 @@ public actor OnDemandModel {
     private var core = OnDemandCore()
     private var transition: Task<Result<Void, BasaltError>, Never>?
     private var timer: Task<Void, Never>?
+    public private(set) var lastUsed: Date?
 
     public init(
         model: ModelOrchestratorActor, path: String, idle: Duration,
@@ -76,6 +77,7 @@ public actor OnDemandModel {
             timer = nil
             switch core.enter() {
             case .ready:
+                lastUsed = Date()
                 return loads ? ContinuousClock.now - started : .zero
             case .wait:
                 _ = await transition?.value
@@ -104,6 +106,7 @@ public actor OnDemandModel {
     }
 
     public func release() {
+        lastUsed = Date()
         guard let generation = core.leave() else { return }
         schedule(generation)
     }

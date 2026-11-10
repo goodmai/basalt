@@ -175,7 +175,7 @@ struct ComposeFileTests {
         #expect(spec.onDemandLines.contains { $0.hasPrefix("  big on demand") })
     }
 
-    @Test("serve --compose builds the cascade from every cloud stage before the local one, and a router with cloud targets behind one budget gate")
+    @Test("serve --compose builds the cascade from every cloud stage before the local one, behind one budget gate")
     func composedRuntime() async throws {
         let directory = FileManager.default.temporaryDirectory.appending(path: "mom-\(UUID().uuidString).yaml")
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -188,9 +188,5 @@ struct ComposeFileTests {
         let cascade = try #require(try serve.composedDecisions(spec, local: StubDecisionEngine(), gate: GenerationGate(), besideDecode: true, cloudGate: gate) as? CascadeDecisionEngine)
         #expect(cascade.stages.map(\.modelID) == ["~typesafe/jev-latest", "~typesafe/jev-backup", "org/stub-jev"])
         #expect(cascade.stages.prefix(2).allSatisfy { $0 is GuardedDecisionEngine })
-        let (_, chat) = try await PipelineSwapEdgeTests.chat()
-        let router = try #require(try await serve.answerRouter(spec, chat: chat, cloudGate: gate))
-        #expect(Set(router.targets.keys) == ["chat", "frontier"] && router.targets["frontier"]?.isCloud == true)
-        #expect(await router.costLeft() == ["chat", "frontier"])
     }
 }
