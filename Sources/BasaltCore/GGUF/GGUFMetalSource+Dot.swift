@@ -14,6 +14,39 @@ extension GGUFMetalSource {
         inline float gguf_dot4x2(ulong first, ulong second, uint signs, thread const float4* x) {
             return dot(gguf_signed4(uint(first), signs), x[0]) + dot(gguf_signed4(uint(second), signs >> 4), x[1]);
         }
+        inline void gguf_load_signed_grid(threadgroup uint* sgrid, uint first, uint stride) {
+            for (uint i = first; i < 8192u; i += stride) {
+                uint t = ((i >> 9) * 0x204081u) & 0x01010101u;
+                sgrid[i] = (gguf_iq3s[i & 511] ^ (t * 255u)) + t;
+            }
+            threadgroup_barrier(mem_flags::mem_threadgroup);
+        }
+        inline float gguf_dot_iq3s_signed(device const uchar* b, uint g, thread const float4* x, threadgroup const uint* sgrid) {
+            uint sc = b[106 + g / 2], qh = b[66 + g];
+            device const ushort* qs = (device const ushort*)(b + 2 + g * 8);
+            device const ushort* signs = (device const ushort*)(b + 74 + g * 4);
+            float s = 0.0f;
+            for (uint l = 0; l < 4; ++l) {
+                uint pair = qs[l];
+                uint sb = (signs[l / 2] >> (8 * (l & 1))) & 0xff;
+                uint first = (pair & 0xff) | ((qh << (8 - 2 * l)) & 256) | ((sb & 15) << 9);
+                uint second = (pair >> 8) | ((qh << (7 - 2 * l)) & 256) | ((sb >> 4) << 9);
+                s += dot(float4(as_type<char4>(sgrid[first])), x[2 * l]) + dot(float4(as_type<char4>(sgrid[second])), x[2 * l + 1]);
+            }
+            return gguf_h16(b, 0) * float(1 + 2 * ((g & 1) ? sc >> 4 : sc & 15)) * s;
+        }
+        inline float gguf_dot_iq3s_device(device const uchar* b, uint g, thread const float4* x, device const uint* dg) {
+            uint sc = b[106 + g / 2], qh = b[66 + g];
+            device const ushort* qs = (device const ushort*)(b + 2 + g * 8);
+            device const ushort* signs = (device const ushort*)(b + 74 + g * 4);
+            float s = 0.0f;
+            for (uint l = 0; l < 4; ++l) {
+                uint pair = qs[l];
+                uint first = (pair & 0xff) | ((qh << (8 - 2 * l)) & 256), second = (pair >> 8) | ((qh << (7 - 2 * l)) & 256);
+                s += gguf_dot4x2(dg[first], dg[second], (signs[l / 2] >> (8 * (l & 1))) & 0xff, x + 2 * l);
+            }
+            return gguf_h16(b, 0) * float(1 + 2 * ((g & 1) ? sc >> 4 : sc & 15)) * s;
+        }
         inline void gguf_load_float_grid(threadgroup float4* fgrid, threadgroup uint4* masks, uint first, uint stride) {
             for (uint i = first; i < 512u; i += stride) fgrid[i] = float4(as_type<uchar4>(gguf_iq3s[i]));
             for (uint i = first; i < 16u; i += stride) masks[i] = uint4(i & 1, (i >> 1) & 1, (i >> 2) & 1, (i >> 3) & 1) << 31;

@@ -26,10 +26,12 @@ enum GGUFKernels {
         let (rows, columns, outputs) = (x.dim(0), x.dim(1), packed.dim(0))
         let groups = (outputs + simdgroups * rowsPerSimdgroup - 1) / (simdgroups * rowsPerSimdgroup)
         return matvecKernel(
-            [x, packed], template: template(type, columns: columns, dtype: x.dtype) + [("M", rows), ("NR", rowsPerSimdgroup), ("SG", simdgroups), ("V", variant)],
+            [x, packed, deviceGrid], template: template(type, columns: columns, dtype: x.dtype) + [("M", rows), ("NR", rowsPerSimdgroup), ("SG", simdgroups), ("V", variant)],
             grid: (32, simdgroups * groups, 1), threadGroup: (32, simdgroups, 1),
             outputShapes: [[rows, outputs]], outputDTypes: [x.dtype])[0]
     }
+
+    static var deviceGrid: MLXArray { MLXArray(GGUFMetalSource.iq3sGrid) }
 
     static let dequantSource = """
         const uint GPR = K / 32u, SUB = BE / 32u, ROW = (K / BE) * BB;
@@ -46,8 +48,10 @@ enum GGUFKernels {
     static let matvecSource = """
         const uint GPR = K / 32u, SUB = BE / 32u, ROW = (K / BE) * BB;
         const uint N = uint(w_shape[0]);
-        threadgroup ulong grid[GN];
-        gguf_load_grid<Q, GN>(grid, thread_index_in_threadgroup, 32u * uint(SG));
+        threadgroup ulong grid[V == 11 ? 1 : GN];
+        gguf_load_grid<Q, V == 11 ? 1 : GN>(grid, thread_index_in_threadgroup, 32u * uint(SG));
+        threadgroup uint sgrid[V == 11 ? 8192 : 1];
+        if (V == 11) gguf_load_signed_grid(sgrid, thread_index_in_threadgroup, 32u * uint(SG));
         threadgroup float4 fgrid[V == 10 ? 512 : 1];
         threadgroup uint4 masks[V == 10 ? 16 : 1];
         if (V == 10) gguf_load_float_grid(fgrid, masks, thread_index_in_threadgroup, 32u * uint(SG));
@@ -60,6 +64,16 @@ enum GGUFKernels {
                 float4 xr[8];
                 device const T* xs = x + g * 32u;
                 for (uint j = 0; j < 8u; ++j) xr[j] = float4(xs[4 * j], xs[4 * j + 1], xs[4 * j + 2], xs[4 * j + 3]);
+                if (V == 12) {
+                    for (uint r = 0; r < uint(NR); ++r)
+                        acc[r][0] += gguf_dot_iq3s_device(w + min(row0 + r, N - 1) * ROW + (g / SUB) * BB, g % SUB, xr, dg);
+                    continue;
+                }
+                if (V == 11) {
+                    for (uint r = 0; r < uint(NR); ++r)
+                        acc[r][0] += gguf_dot_iq3s_signed(w + min(row0 + r, N - 1) * ROW + (g / SUB) * BB, g % SUB, xr, sgrid);
+                    continue;
+                }
                 if (V == 10) {
                     for (uint r = 0; r < uint(NR); ++r)
                         acc[r][0] += gguf_dot_iq3s_float(w + min(row0 + r, N - 1) * ROW + (g / SUB) * BB, g % SUB, xr, fgrid, masks);
@@ -111,7 +125,7 @@ private let dequantKernel = MLXFast.metalKernel(
     name: "gguf_dequant", inputNames: ["w"], outputNames: ["out"], source: GGUFKernels.dequantSource, header: GGUFMetalSource.header)
 
 private let matvecKernel = MLXFast.metalKernel(
-    name: "gguf_matvec", inputNames: ["x", "w"], outputNames: ["out"], source: GGUFKernels.matvecSource, header: GGUFMetalSource.header)
+    name: "gguf_matvec", inputNames: ["x", "w", "dg"], outputNames: ["out"], source: GGUFKernels.matvecSource, header: GGUFMetalSource.header)
 
 final class GGUFLinear: Linear {
     let type: GGMLType
