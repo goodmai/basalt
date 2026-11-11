@@ -38,6 +38,7 @@ public enum EngineEvent: Sendable, Equatable {
     case ready(epoch: Int)
     case exited(epoch: Int, at: Duration, log: [String])
     case retry(epoch: Int)
+    case adopted(port: Int)
 }
 
 public enum EngineEffect: Sendable, Equatable {
@@ -60,28 +61,40 @@ public enum EngineReducer {
 
     public static func reduce(_ state: inout EngineState, _ event: EngineEvent) -> [EngineEffect] {
         switch event {
-        case .start:
-            return state.isIdle ? spawn(&state) : []
-        case .stop:
-            guard state.phase != .stopped else { return [] }
-            let running = state.epoch
-            (state.phase, state.epoch, state.crashes) = (.stopped, state.epoch + 1, [])
-            return [.kill(epoch: running), .removeRecord]
-        case .handshake(let epoch, let port):
-            guard epoch == state.epoch, state.phase == .spawning else { return [] }
-            state.phase = .loading(port: port)
-            return [.writeRecord(port: port), .probe(epoch: epoch, port: port)]
-        case .ready(let epoch):
-            guard epoch == state.epoch, case .loading(let port) = state.phase else { return [] }
-            state.phase = .ready(port: port)
-            return []
+        case .start: return state.isIdle ? spawn(&state) : []
+        case .stop: return stop(&state)
+        case .handshake(let epoch, let port): return handshake(&state, epoch: epoch, port: port)
+        case .ready(let epoch): return ready(&state, epoch: epoch)
         case .exited(let epoch, let at, let log):
             guard epoch == state.epoch, state.phase != .stopped else { return [] }
             return crashed(&state, at: at, log: log)
+        case .adopted(let port):
+            guard state.isIdle else { return [] }
+            (state.phase, state.epoch) = (.ready(port: port), state.epoch + 1)
+            return []
         case .retry(let epoch):
             guard epoch == state.epoch, case .backingOff = state.phase else { return [] }
             return spawn(&state)
         }
+    }
+
+    static func stop(_ state: inout EngineState) -> [EngineEffect] {
+        guard state.phase != .stopped else { return [] }
+        let running = state.epoch
+        (state.phase, state.epoch, state.crashes) = (.stopped, state.epoch + 1, [])
+        return [.kill(epoch: running), .removeRecord]
+    }
+
+    static func handshake(_ state: inout EngineState, epoch: Int, port: Int) -> [EngineEffect] {
+        guard epoch == state.epoch, state.phase == .spawning else { return [] }
+        state.phase = .loading(port: port)
+        return [.writeRecord(port: port), .probe(epoch: epoch, port: port)]
+    }
+
+    static func ready(_ state: inout EngineState, epoch: Int) -> [EngineEffect] {
+        guard epoch == state.epoch, case .loading(let port) = state.phase else { return [] }
+        state.phase = .ready(port: port)
+        return []
     }
 
     static func crashed(_ state: inout EngineState, at: Duration, log: [String]) -> [EngineEffect] {
