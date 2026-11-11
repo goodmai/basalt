@@ -19,21 +19,23 @@ public struct ComposeDiff: Sendable, Equatable, Codable {
         diff.pipelines = new.pipelineNames
         if old.answer != new.answer || reloads(old, new, new.answer) { diff.chat = new.answer }
         if old.decider != new.decider || new.deciderModel.map({ reloads(old, new, $0) }) == true { diff.decider = new.decider ?? "none" }
-        for name in Set(old.models.keys).union(new.models.keys).sorted() {
-            switch (old.roleModels.contains(name) ? nil : old.models[name], new.roleModels.contains(name) ? nil : new.models[name]) {
-            case (nil, _?): diff.added.append(name)
-            case (_?, nil): diff.removed.append(name)
-            case (let before?, let after?):
-                needsReload(before, after) ? diff.reloaded.append(name) : diff.kept.append(name)
-                if after.isCloud, before.budget != after.budget { diff.budgets.append(name) }
-                if after.isCloud, before.apiKeyEnv != after.apiKeyEnv { diff.rekeyed.append(name) }
-            case (nil, nil):
-                if (name == new.answer && diff.chat == nil) || (name == new.deciderModel && diff.decider == nil) { diff.kept.append(name) }
-            }
-        }
+        for name in Set(old.models.keys).union(new.models.keys).sorted() { diff.classify(name, old, new) }
         if old.budget != new.budget { diff.budgets.append("total") }
         diff.restart = restartReason(old, new, touched: diff.added + diff.removed + diff.reloaded)
         return diff
+    }
+
+    mutating func classify(_ name: String, _ old: ComposeSpec, _ new: ComposeSpec) {
+        switch (old.roleModels.contains(name) ? nil : old.models[name], new.roleModels.contains(name) ? nil : new.models[name]) {
+        case (nil, _?): added.append(name)
+        case (_?, nil): removed.append(name)
+        case (let before?, let after?):
+            Self.needsReload(before, after) ? reloaded.append(name) : kept.append(name)
+            if after.isCloud, before.budget != after.budget { budgets.append(name) }
+            if after.isCloud, before.apiKeyEnv != after.apiKeyEnv { rekeyed.append(name) }
+        case (nil, nil):
+            if (name == new.answer && chat == nil) || (name == new.deciderModel && decider == nil) { kept.append(name) }
+        }
     }
 
     static func reloads(_ old: ComposeSpec, _ new: ComposeSpec, _ name: String) -> Bool {
