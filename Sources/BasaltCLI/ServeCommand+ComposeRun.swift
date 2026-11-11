@@ -12,21 +12,24 @@ struct ComposeBoot: Sendable {
 
 extension ServeCommand {
     func runComposed(_ spec: ComposeSpec, _ boot: ComposeBoot) async throws {
-        let embeddings = try await loadEmbeddings()
-        let slot = ComposeSlot(spec: spec, cloudGate: cloudGate(spec)) { [self] model in ProcessInfo.processInfo.environment[model?.apiKeyEnv ?? decision.keyEnvironment] ?? "" }
+        let launch = try await composedLaunch(spec, boot)
         try await prepare(boot.orchestrator, virtualKeys: boot.config.virtualKeys)
         log("REST → http://\(boot.config.host):\(boot.config.restPort); the models load after the bind, GET /v1/health/ready says when they are ready")
-        let file = pipeline.compose ?? ""
         defer { ComposeRecord.remove(spec.name) }
-        try await Self.runServers(
-            ServerLaunch(
-                config: boot.config, startREST: true, mcpServer: nil, embeddings: BesideDecodeEmbeddingEngine.serving(embeddings, besideDecode: false),
-                pipelines: slot.registry, compose: slot.control,
-                statsInterval: stats ? min(max(1, statsInterval), 86_400) : nil, canaryInterval: canaryMinutes.map { .seconds($0 * 60) },
-                announceReady: network.announceReady,
-                onBind: { port in Self.recordBind(spec.name, port: port, file: file) },
-                startup: { [self] in try await startComposed(spec, boot, embeddings: embeddings, slot: slot) }),
-            orchestrator: boot.orchestrator)
+        try await Self.runServers(launch, orchestrator: boot.orchestrator)
+    }
+
+    func composedLaunch(_ spec: ComposeSpec, _ boot: ComposeBoot) async throws -> ServerLaunch {
+        let embeddings = try await loadEmbeddings()
+        let slot = ComposeSlot(spec: spec, cloudGate: cloudGate(spec)) { [self] model in ProcessInfo.processInfo.environment[model?.apiKeyEnv ?? decision.keyEnvironment] ?? "" }
+        let file = pipeline.compose ?? ""
+        return ServerLaunch(
+            config: boot.config, startREST: true, mcpServer: nil, embeddings: BesideDecodeEmbeddingEngine.serving(embeddings, besideDecode: false),
+            pipelines: slot.registry, compose: slot.control,
+            statsInterval: stats ? min(max(1, statsInterval), 86_400) : nil, canaryInterval: canaryMinutes.map { .seconds($0 * 60) },
+            announceReady: network.announceReady,
+            onBind: { port in Self.recordBind(spec.name, port: port, file: file) },
+            startup: { [self] in try await startComposed(spec, boot, embeddings: embeddings, slot: slot) })
     }
 
     func startComposed(_ spec: ComposeSpec, _ boot: ComposeBoot, embeddings: (any EmbeddingEngine)?, slot: ComposeSlot) async throws {
