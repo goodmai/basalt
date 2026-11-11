@@ -66,13 +66,15 @@ actor ComposeHost {
         }
     }
 
-    func apply(_ yaml: String) async throws(BasaltError) -> ComposeDiff {
+    func apply(_ request: ComposeApply) async throws(BasaltError) -> ComposeDiff {
         guard !applying else { throw .serverBusy(retryAfterSeconds: 5) }
         applying = true
         defer { applying = false }
         let next: ComposeSpec
+        var context = ComposeContext.machine
+        (context.base, context.variables, context.profiles) = (request.base.map { URL(fileURLWithPath: $0) }, request.variables ?? [:], request.profiles)
         do {
-            next = try ComposeFile.parse(yaml, file: "compose apply")
+            next = try ComposeFile.parse(request.yaml, file: "compose apply", context: context)
         } catch {
             throw .invalidRequestStructure(details: error.description)
         }

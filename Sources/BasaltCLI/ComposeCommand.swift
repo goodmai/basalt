@@ -16,7 +16,7 @@ struct ComposeCommand: AsyncParsableCommand {
             never written in the file; a cloud model names the environment variable that holds its key. \
             Bundled files: \(ComposeFile.bundled.keys.sorted().joined(separator: ", ")).
             """,
-        subcommands: [Plan.self, Up.self, Ps.self, Down.self])
+        subcommands: [Config.self, Schema.self, Plan.self, Up.self, Ps.self, Down.self])
 
     struct Source: ParsableArguments {
         @Option(name: [.short, .customLong("file")], help: "The compose file")
@@ -25,24 +25,66 @@ struct ComposeCommand: AsyncParsableCommand {
         @Argument(help: "A bundled compose file instead of -f: \(ComposeFile.bundled.keys.sorted().joined(separator: ", "))")
         var bundled: String?
 
+        @Option(name: .customLong("set"), help: "Override a variable declared under variables: --set name=value (repeatable)")
+        var assignments: [String] = []
+
+        @Option(name: .customLong("profile"), help: "Turn on this profile instead of choosing profiles by their when (repeatable)")
+        var profiles: [String] = []
+
         func validate() throws {
             guard (file == nil) != (bundled == nil) else { throw ValidationError("give either -f <file> or the name of a bundled compose file") }
+            for assignment in assignments where !assignment.contains("=") { throw ValidationError("--set takes name=value, not \(assignment)") }
         }
 
-        func yaml() throws -> String {
-            if let bundled, let text = ComposeFile.bundled[bundled] { return text }
-            guard let file, let data = FileManager.default.contents(atPath: file) else { throw ExitCode.failure }
-            return String(decoding: data, as: UTF8.self)
+        var reference: String { file ?? bundled ?? "" }
+
+        var context: ComposeContext { ComposeContext.machine.overriding(assignments: assignments, profiles: profiles) }
+
+        var serveFlags: [String] {
+            ["--compose", reference] + assignments.flatMap { ["--compose-set", $0] } + profiles.flatMap { ["--compose-profile", $0] }
         }
 
-        func spec() throws -> ComposeSpec {
+        func source() throws -> (text: String, file: String, context: ComposeContext) {
             do {
-                return try ComposeFile.load(file ?? bundled ?? "")
+                let source = try ComposeFile.read(reference)
+                return (source.text, source.file, source.isFile ? context.with(base: reference) : context)
             } catch {
                 ComposeCommand.log("\(red("[error]")) \(error.description)")
                 throw ExitCode.failure
             }
         }
+
+        func load() throws -> (spec: ComposeSpec, text: String, file: String, context: ComposeContext) {
+            let source = try source()
+            do {
+                return (try ComposeFile.parse(source.text, file: source.file, context: source.context), source.text, source.file, source.context)
+            } catch {
+                ComposeCommand.log("\(red("[error]")) \(error.description)")
+                throw ExitCode.failure
+            }
+        }
+
+        func spec() throws -> ComposeSpec { try load().spec }
+    }
+
+    struct Config: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(abstract: "Print the compose file as it resolves on this Mac: the profiles that are on, with variables substituted")
+
+        @OptionGroup var source: Source
+
+        func run() async throws {
+            let (_, text, name, context) = try source.load()
+            let resolved = ComposeFile.resolve(text, root: try? ComposeFile.compose(text, file: name), context: context)
+            let on = resolved.active.sorted().joined(separator: ", ")
+            ComposeCommand.log("profiles on: \(on.isEmpty ? "none" : on) (declared: \(resolved.declared.sorted().joined(separator: ", ")))")
+            print(resolved.text)
+        }
+    }
+
+    struct Schema: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(abstract: "Print the JSON Schema of compose files, for editors and validators")
+
+        func run() async throws { print(ComposeSchema.jsonSchema) }
     }
 
     struct Plan: AsyncParsableCommand {
@@ -67,9 +109,10 @@ struct ComposeCommand: AsyncParsableCommand {
         var serve: [String] = []
 
         func run() async throws {
-            let spec = try source.spec()
+            let (spec, text, _, context) = try source.load()
             if let running = ComposeRecord.running(spec.name) {
-                let (status, body) = try await ComposeCommand.call(running, "/v1/compose/apply", body: try source.yaml())
+                let request = ComposeApply(yaml: text, base: context.base?.path, variables: context.variables, profiles: context.profiles)
+                let (status, body) = try await ComposeCommand.call(running, "/v1/compose/apply", body: try JSONEncoder().encode(request))
                 guard status == 200, let diff = try? JSONDecoder().decode(ComposeDiff.self, from: body) else {
                     ComposeCommand.log("\(red("[error]")) \(spec.name) is running (pid \(running.pid)) and refused the change: \(ComposeCommand.message(body))")
                     throw ExitCode.failure
@@ -79,7 +122,7 @@ struct ComposeCommand: AsyncParsableCommand {
                 return
             }
             ComposeCommand.log("Compose \(bold(spec.name)) → basalt serve \(spec.serveArguments.joined(separator: " "))")
-            var command = try ServeCommand.parse(spec.serveArguments + ["--compose", source.file ?? source.bundled ?? ""] + serve)
+            var command = try ServeCommand.parse(spec.serveArguments + source.serveFlags + serve)
             try await command.run()
         }
     }
@@ -130,11 +173,11 @@ struct ComposeCommand: AsyncParsableCommand {
         return decoder
     }()
 
-    static func call(_ record: ComposeRecord, _ path: String, body: String? = nil) async throws -> (Int, Data) {
+    static func call(_ record: ComposeRecord, _ path: String, body: Data? = nil) async throws -> (Int, Data) {
         var request = URLRequest(url: URL(string: "http://127.0.0.1:\(record.port)\(path)")!)
         request.timeoutInterval = 1800
         if let body {
-            (request.httpMethod, request.httpBody) = ("POST", try JSONEncoder().encode(["yaml": body]))
+            (request.httpMethod, request.httpBody) = ("POST", body)
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         }
         if let key = ProcessInfo.processInfo.environment["BASALT_API_KEY"] { request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization") }

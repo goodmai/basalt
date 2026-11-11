@@ -27,6 +27,12 @@ struct PipelineOptions: ParsableArguments {
     @Option(name: .customLong("compose"), help: ArgumentHelp("The compose file (or bundled name) that basalt compose up serves: answer routes, cascades of several cloud models and cloud budgets, which have no flags of their own", visibility: .hidden))
     var compose: String?
 
+    @Option(name: .customLong("compose-set"), help: ArgumentHelp("A compose variable override, name=value, passed on by basalt compose up --set", visibility: .hidden))
+    var composeSet: [String] = []
+
+    @Option(name: .customLong("compose-profile"), help: ArgumentHelp("A compose profile to turn on, passed on by basalt compose up --profile", visibility: .hidden))
+    var composeProfile: [String] = []
+
     @Option(name: .customLong("pipeline-ocr-idle-unload"), help: "Keep --pipeline-ocr-model on demand: load it on the first /v1/pipeline request that reads a document and unload it after this many seconds without one. The compute plan still counts it as resident, since it may be loaded at any time (default: always loaded)")
     var ocrIdleUnload: Int?
 

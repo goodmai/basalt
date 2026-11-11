@@ -75,7 +75,7 @@ struct ComposeFileTests {
         (replacing("  answer: chat", "  answer: ocr"), "one model serves one role"),
         (replacing("idle_unload: 2m", "idle_unload: soon"), "a duration such as"),
         (replacing("api_key_env: OPENROUTER_API_KEY", "api_key_env: openrouter-key"), "names the environment variable"),
-        (replacing("version: 1", "version: 2"), "only version 1"),
+        (replacing("version: 1", "version: 3"), "version 1 or 2"),
     ])
     func refusals(_ yaml: String, _ reason: String) throws {
         do {

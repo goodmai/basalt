@@ -12,7 +12,7 @@ extension ComposeSpec {
 
     public var issues: [Issue] {
         var issues: [Issue] = []
-        if version != 1 { issues.append(Issue("version", "only version 1 is supported")) }
+        if !ComposeSchema.versions.contains(version) { issues.append(Issue("version", "version 1 or 2 is supported")) }
         if name.trimmingCharacters(in: .whitespaces).isEmpty { issues.append(Issue("name", "a compose file needs a name")) }
         for (pipeline, view) in views {
             let prefix = pipeline == Self.defaultPipeline ? "pipeline" : "pipelines.\(pipeline)"
