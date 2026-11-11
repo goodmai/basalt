@@ -119,6 +119,12 @@ let package = Package(
             path: "Sources/BasaltApp",
             swiftSettings: swiftSettings
         ),
+        .executableTarget(
+            name: "BasaltMac",
+            dependencies: ["BasaltApp", "BasaltAppCore"],
+            path: "Sources/BasaltMac",
+            swiftSettings: swiftSettings
+        ),
         // CLI: ArgumentParser commands wiring everything together.
         .target(
             name: "BasaltCLI",
