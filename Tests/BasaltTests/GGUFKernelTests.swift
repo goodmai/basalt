@@ -75,6 +75,16 @@ struct GGUFKernelTests {
         }
     }
 
+    @Test("Prefill dequantizes the weight in row tiles, so no dense copy of a large matrix is held at once")
+    func tiledMatmul() {
+        let (outputs, inputs, type) = (600, 256, GGMLType.iq3S)
+        let bytes = Self.blocks(type, count: outputs, seed: 11)
+        let x = MLXRandom.normal([2, 16, inputs], key: MLXRandom.key(9))
+        let tiled = GGUFKernels.matmul(x, Self.packed(bytes, rows: outputs), type: type, columns: inputs, tileBytes: 256 * inputs * 4)
+        #expect(tiled.shape == [2, 16, outputs])
+        #expect(Self.relativeError(tiled, matmul(x, Self.dense(bytes, type, rows: outputs, columns: inputs).T)) < 1e-5)
+    }
+
     @Test("A permuted input gathers the activation columns before the kernel")
     func permutedInput() throws {
         let (outputs, inputs, type) = (8, 256, GGMLType.iq4XS)

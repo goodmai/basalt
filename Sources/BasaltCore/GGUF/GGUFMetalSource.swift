@@ -2,7 +2,6 @@ import Foundation
 
 public enum GGUFMetalSource {
     public static let header = helpers + grids + decoders + dots
-    public static let iq3sGrid = ggmlIQ3SGrid
 
     static func table<T: FixedWidthInteger>(_ name: String, _ type: String, _ values: [T], suffix: String = "") -> String {
         let body = values.map { "0x" + String(UInt64(truncatingIfNeeded: $0) & (T.bitWidth == 64 ? .max : (1 << T.bitWidth) - 1), radix: 16) + suffix }

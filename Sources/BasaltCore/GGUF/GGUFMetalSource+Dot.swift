@@ -2,8 +2,6 @@ import Foundation
 
 extension GGUFMetalSource {
     static let dots = """
-        inline float4 gguf_sign4(float4 x, uint s) { return select(x, -x, bool4(s & 1, s & 2, s & 4, s & 8)); }
-        inline float4 gguf_bytes4(uint v) { return float4(as_type<uchar4>(v)); }
         inline float4 gguf_signed4(uint g, uint nibble) {
             uint t = ((nibble & 15u) * 0x204081u) & 0x01010101u;
             return float4(as_type<char4>((g ^ (t * 255u)) + t));
@@ -14,59 +12,7 @@ extension GGUFMetalSource {
         inline float gguf_dot4x2(ulong first, ulong second, uint signs, thread const float4* x) {
             return dot(gguf_signed4(uint(first), signs), x[0]) + dot(gguf_signed4(uint(second), signs >> 4), x[1]);
         }
-        inline void gguf_load_signed_grid(threadgroup uint* sgrid, uint first, uint stride) {
-            for (uint i = first; i < 8192u; i += stride) {
-                uint t = ((i >> 9) * 0x204081u) & 0x01010101u;
-                sgrid[i] = (gguf_iq3s[i & 511] ^ (t * 255u)) + t;
-            }
-            threadgroup_barrier(mem_flags::mem_threadgroup);
-        }
-        inline float gguf_dot_iq3s_signed(device const uchar* b, uint g, thread const float4* x, threadgroup const uint* sgrid) {
-            uint sc = b[106 + g / 2], qh = b[66 + g];
-            device const ushort* qs = (device const ushort*)(b + 2 + g * 8);
-            device const ushort* signs = (device const ushort*)(b + 74 + g * 4);
-            float s = 0.0f;
-            for (uint l = 0; l < 4; ++l) {
-                uint pair = qs[l];
-                uint sb = (signs[l / 2] >> (8 * (l & 1))) & 0xff;
-                uint first = (pair & 0xff) | ((qh << (8 - 2 * l)) & 256) | ((sb & 15) << 9);
-                uint second = (pair >> 8) | ((qh << (7 - 2 * l)) & 256) | ((sb >> 4) << 9);
-                s += dot(float4(as_type<char4>(sgrid[first])), x[2 * l]) + dot(float4(as_type<char4>(sgrid[second])), x[2 * l + 1]);
-            }
-            return gguf_h16(b, 0) * float(1 + 2 * ((g & 1) ? sc >> 4 : sc & 15)) * s;
-        }
-        inline float gguf_dot_iq3s_device(device const uchar* b, uint g, thread const float4* x, device const uint* dg) {
-            uint sc = b[106 + g / 2], qh = b[66 + g];
-            device const ushort* qs = (device const ushort*)(b + 2 + g * 8);
-            device const ushort* signs = (device const ushort*)(b + 74 + g * 4);
-            float s = 0.0f;
-            for (uint l = 0; l < 4; ++l) {
-                uint pair = qs[l];
-                uint first = (pair & 0xff) | ((qh << (8 - 2 * l)) & 256), second = (pair >> 8) | ((qh << (7 - 2 * l)) & 256);
-                s += gguf_dot4x2(dg[first], dg[second], (signs[l / 2] >> (8 * (l & 1))) & 0xff, x + 2 * l);
-            }
-            return gguf_h16(b, 0) * float(1 + 2 * ((g & 1) ? sc >> 4 : sc & 15)) * s;
-        }
-        inline void gguf_load_float_grid(threadgroup float4* fgrid, threadgroup uint4* masks, uint first, uint stride) {
-            for (uint i = first; i < 512u; i += stride) fgrid[i] = float4(as_type<uchar4>(gguf_iq3s[i]));
-            for (uint i = first; i < 16u; i += stride) masks[i] = uint4(i & 1, (i >> 1) & 1, (i >> 2) & 1, (i >> 3) & 1) << 31;
-            threadgroup_barrier(mem_flags::mem_threadgroup);
-        }
-        inline float gguf_dot_iq3s_float(device const uchar* b, uint g, thread const float4* x, threadgroup const float4* fgrid, threadgroup const uint4* masks) {
-            uint sc = b[106 + g / 2], qh = b[66 + g];
-            device const ushort* qs = (device const ushort*)(b + 2 + g * 8);
-            device const ushort* signs = (device const ushort*)(b + 74 + g * 4);
-            float s = 0.0f;
-            for (uint l = 0; l < 4; ++l) {
-                uint pair = qs[l];
-                uint first = (pair & 0xff) | ((qh << (8 - 2 * l)) & 256), second = (pair >> 8) | ((qh << (7 - 2 * l)) & 256);
-                uint sb = (signs[l / 2] >> (8 * (l & 1))) & 0xff;
-                s += dot(as_type<float4>(as_type<uint4>(fgrid[first]) ^ masks[sb & 15]), x[2 * l]);
-                s += dot(as_type<float4>(as_type<uint4>(fgrid[second]) ^ masks[sb >> 4]), x[2 * l + 1]);
-            }
-            return gguf_h16(b, 0) * float(1 + 2 * ((g & 1) ? sc >> 4 : sc & 15)) * s;
-        }
-        template <int Q, int V = 0> inline float gguf_dot32(device const uchar* b, uint g, thread const float4* x, threadgroup const ulong* grid) {
+        template <int Q> inline float gguf_dot32(device const uchar* b, uint g, thread const float4* x, threadgroup const ulong* grid) {
             if (Q == 21) {
                 uint sc = b[106 + g / 2], qh = b[66 + g];
                 device const ushort* qs = (device const ushort*)(b + 2 + g * 8);
@@ -75,17 +21,7 @@ extension GGUFMetalSource {
                 for (uint l = 0; l < 4; ++l) {
                     uint pair = qs[l];
                     uint first = (pair & 0xff) | ((qh << (8 - 2 * l)) & 256), second = (pair >> 8) | ((qh << (7 - 2 * l)) & 256);
-                    if (V == 6) { first = l; second = l + 1; }
                     uint sb = (signs[l / 2] >> (8 * (l & 1))) & 0xff;
-                    if (V == 7) { s += dot(gguf_bytes4(uint(grid[first])), x[2 * l]) + dot(gguf_bytes4(uint(grid[second])), x[2 * l + 1]); continue; }
-                    if (V == 8) { s += dot(float4(float(first), float(second), float(sb), 1.0f), x[2 * l] + x[2 * l + 1]); continue; }
-                    if (V == 9) {
-                        uint t0 = ((sb & 15u) * 0x204081u) & 0x01010101u, t1 = (((sb >> 4) & 15u) * 0x204081u) & 0x01010101u;
-                        half4 a = half4(as_type<char4>((uint(grid[first]) ^ (t0 * 255u)) + t0));
-                        half4 c = half4(as_type<char4>((uint(grid[second]) ^ (t1 * 255u)) + t1));
-                        s += float(dot(a, half4(x[2 * l])) + dot(c, half4(x[2 * l + 1])));
-                        continue;
-                    }
                     s += gguf_dot4x2(grid[first], grid[second], sb, x + 2 * l);
                 }
                 return gguf_h16(b, 0) * float(1 + 2 * ((g & 1) ? sc >> 4 : sc & 15)) * s;
