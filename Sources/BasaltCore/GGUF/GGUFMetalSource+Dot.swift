@@ -16,13 +16,14 @@ extension GGUFMetalSource {
         inline float gguf_dot4x2_h(ulong first, ulong second, uint signs, thread const half4* x) {
             return float(dot(as_type<half4>(first ^ gguf_half_signs(signs)), x[0])) + float(dot(as_type<half4>(second ^ gguf_half_signs(signs >> 4)), x[1]));
         }
-        template <int GN> inline void gguf_load_half_grid(threadgroup ulong* hgrid, threadgroup const ulong* grid, uint first, uint stride) {
-            for (uint i = first; i < uint(GN); i += stride) hgrid[i] = as_type<ulong>(half4(float4(as_type<uchar4>(uint(grid[i]))) * 0.015625f));
+        template <int Q, int HN> inline void gguf_load_half_grid(threadgroup ulong* hgrid, threadgroup const ulong* grid, uint first, uint stride) {
+            for (uint i = first; i < uint(HN); i += stride)
+                hgrid[i] = as_type<ulong>(half4(float4(as_type<uchar4>(uint(grid[i]))) * 0.015625f));
             threadgroup_barrier(mem_flags::mem_threadgroup);
         }
         template <int Q> inline float gguf_dot32_h(device const uchar* b, uint g, thread const half4* x, threadgroup const ulong* hgrid) {
-            device const ushort* qs = (device const ushort*)(b + 2 + g * 8);
             float s = 0.0f;
+            device const ushort* qs = (device const ushort*)(b + 2 + g * 8);
             if (Q == 21) {
                 uint sc = b[106 + g / 2], qh = b[66 + g];
                 device const ushort* signs = (device const ushort*)(b + 74 + g * 4);

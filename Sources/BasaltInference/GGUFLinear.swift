@@ -35,13 +35,20 @@ enum GGUFKernels {
         let (rows, columns, outputs) = (x.dim(0), x.dim(1), packed.dim(0))
         let groups = (outputs + simdgroups * rowsPerSimdgroup - 1) / (simdgroups * rowsPerSimdgroup)
         return matvecKernel(
-            [x, packed], template: template(type, columns: columns, dtype: x.dtype) + [("M", rows), ("NR", rowsPerSimdgroup), ("SG", simdgroups), ("H", halfGrid(type, dtype: x.dtype))],
+            [x, packed], template: template(type, columns: columns, dtype: x.dtype) + [("M", rows), ("NR", rowsPerSimdgroup), ("SG", simdgroups), ("H", halfGrid(type, dtype: x.dtype)), ("HN", halfGridSize(type))],
             grid: (32, simdgroups * groups, 1), threadGroup: (32, simdgroups, 1),
             outputShapes: [[rows, outputs]], outputDTypes: [x.dtype])[0]
     }
 
+    static func halfGridSize(_ type: GGMLType) -> Int {
+        switch type {
+        case .iq3S, .iq3XXS: GGUFMetalSource.gridSize(type)
+        default: 1
+        }
+    }
+
     static func halfGrid(_ type: GGMLType, dtype: DType) -> Bool {
-        (type == .iq3S || type == .iq3XXS) && dtype != .float32
+        halfGridSize(type) > 1 && dtype != .float32
     }
 
     static let dequantSource = """
@@ -61,8 +68,8 @@ enum GGUFKernels {
         const uint N = uint(w_shape[0]);
         threadgroup ulong grid[GN];
         gguf_load_grid<Q, GN>(grid, thread_index_in_threadgroup, 32u * uint(SG));
-        threadgroup ulong hgrid[H ? GN : 1];
-        if (H) gguf_load_half_grid<GN>(hgrid, grid, thread_index_in_threadgroup, 32u * uint(SG));
+        threadgroup ulong hgrid[H ? HN : 1];
+        if (H) gguf_load_half_grid<Q, HN>(hgrid, grid, thread_index_in_threadgroup, 32u * uint(SG));
         uint lane = thread_index_in_simdgroup;
         uint row0 = (threadgroup_position_in_grid.y * uint(SG) + simdgroup_index_in_threadgroup) * uint(NR);
         float acc[NR][M];
