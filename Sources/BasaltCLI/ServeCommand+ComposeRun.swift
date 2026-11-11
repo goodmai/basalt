@@ -42,8 +42,11 @@ extension ServeCommand {
         let stages = try await loadPipelineStages(perceivePaths, plan: plan)
         var start = ComposeStart(chat: boot.orchestrator, decider: loadedDecisions, decisions: decisions, cloudGate: slot.cloudGate, startup: stages, besideDecode: besideDecode)
         start.registry = slot.registry
-        await slot.started(try await composeHost(spec, start: start, engine: boot.engine))
-        log("Compose \(bold(spec.name)) is ready")
+        let host = try await composeHost(spec, start: start, engine: boot.engine)
+        await host.probe(spec.models.keys.sorted(), in: spec)
+        for (name, failure) in await host.failures.sorted(by: { $0.key < $1.key }) { log("\(red("[error]")) \(name): \(failure)") }
+        await slot.started(host)
+        log("Compose \(bold(spec.name)) is up; GET /v1/health/ready says whether every model passed its startup probe")
     }
 
     static func recordBind(_ name: String, port: Int, file: String) {

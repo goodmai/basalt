@@ -10,6 +10,7 @@ struct ComposeServices: Sendable {
     var decisions: @Sendable (_ view: ComposeSpec, _ local: (any DecisionEngine)?, _ gate: GenerationGate, _ besideDecode: Bool, _ cloudGate: CloudGate) throws -> (any DecisionEngine)?
     var key: @Sendable (_ model: ComposeSpec.Model?) -> String
     var cloudLimits: @Sendable (_ spec: ComposeSpec) -> [String: Double]
+    var probe: @Sendable (_ model: ComposeHeld) async -> String? = { _ in nil }
 }
 
 extension ComposeServices {
@@ -22,6 +23,7 @@ extension ComposeServices {
                 try serve.composedDecisions(view, local: local, gate: gate, besideDecode: besideDecode, cloudGate: cloudGate)
             },
             key: { ProcessInfo.processInfo.environment[$0?.apiKeyEnv ?? serve.decision.keyEnvironment] ?? "" },
-            cloudLimits: { serve.cloudLimits($0) })
+            cloudLimits: { serve.cloudLimits($0) },
+            probe: ComposeProbe.live)
     }
 }

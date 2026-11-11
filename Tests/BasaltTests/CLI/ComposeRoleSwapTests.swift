@@ -86,7 +86,7 @@ struct ComposeRoleSwapTests {
         #expect(try await post() == .notFound)
     }
 
-    static func host(_ yaml: String = base) async throws -> (ComposeHost, ModelOrchestratorActor, KeyLog) {
+    static func host(_ yaml: String = base, probe: @escaping @Sendable (ComposeHeld) async -> String? = { _ in nil }) async throws -> (ComposeHost, ModelOrchestratorActor, KeyLog) {
         let asked = KeyLog()
         let services = ComposeServices(
             resolve: { "/models/" + ($0.split(separator: "/").last.map(String.init) ?? $0) },
@@ -101,7 +101,8 @@ struct ComposeRoleSwapTests {
                 return local
             },
             key: { _ in "test-key" },
-            cloudLimits: { _ in [:] })
+            cloudLimits: { _ in [:] },
+            probe: probe)
         let (_, chat) = try await PipelineSwapEdgeTests.chat()
         let spec = try ComposeFile.parse(yaml, file: "a.yaml")
         var start = ComposeStart(chat: chat, decider: NamedDecider(modelID: spec.deciderModel.flatMap(spec.local) ?? "self"), decisions: nil, cloudGate: CloudGate(limits: [:], storage: nil), startup: PipelineStages(), besideDecode: true)

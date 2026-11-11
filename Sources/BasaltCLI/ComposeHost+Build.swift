@@ -66,6 +66,7 @@ extension ComposeHost {
             case .decision: entry.state = .decision
             case nil: break
             }
+            if let failure = failures[name] { (entry.state, entry.refusal) = (.failed, failure) }
             models.append(entry)
         }
         return ComposeStatus(name: spec.name, pipelines: spec.pipelineNames, models: models, spentToday: await cloudGate.spent(CloudGateCore.total))

@@ -41,6 +41,7 @@ actor ComposeHost {
     let registry: PipelineRegistry
     private(set) var spec: ComposeSpec
     private(set) var held: [String: ComposeHeld] = [:]
+    var failures: [String: String] = [:]
     private var applying = false
 
     init(services: ComposeServices, spec: ComposeSpec, start: ComposeStart) {
@@ -109,6 +110,7 @@ actor ComposeHost {
             await registry.replace(built)
             await cloudGate.update(limits: services.cloudLimits(next), rekeyed: Set(diff.rekeyed.compactMap { Self.cloudID(next.models[$0]) }))
             if order == .loadFirst { for name in replaced { await Self.unload(previous[name]) } }
+            await probe(diff.added + diff.reloaded + (diff.chat.map { [$0] } ?? []), in: next)
         } catch {
             for model in fresh.values { await Self.unload(model) }
             if diff.chat != nil { await restoreChat(chatPath) }
