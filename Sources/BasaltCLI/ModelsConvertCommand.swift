@@ -4,6 +4,7 @@ import BasaltInference
 import Foundation
 
 extension WeightConverter.Format: ExpressibleByArgument {}
+extension GGUFImporter.Grid: ExpressibleByArgument {}
 
 struct ConvertSubcommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
@@ -13,11 +14,15 @@ struct ConvertSubcommand: AsyncParsableCommand {
             Reads the source shard by shard and writes a new directory; the source is never written. \
             Tokenizer files and the chat template are copied, config.json gets the new quantization block \
             and the weights get a model.safetensors.index.json with shards of at most 5 GB. \
-            GGUF is not supported.
+            Experimental: a .gguf source (Qwen3.5/3.8 hybrid models, such as the GSQ-RCO releases) keeps its GGUF \
+            blocks with --grid native (default), which basalt runs on its own i-quant and k-quant Metal kernels; \
+            --grid affine dequantizes tensor by tensor into MLX affine weights at the bit-width nearest each GGUF type \
+            (IQ1/IQ2/Q2_K → 2, IQ3 → 3, IQ4/Q4_K → 4, Q6_K → 6, Q8_0/BF16 → 8). --template names the MLX \
+            checkpoint of the same model whose config.json and tokenizer are copied.
             """
     )
 
-    @Argument(help: "Local MLX model directory or cached repo ID")
+    @Argument(help: "Local MLX model directory, cached repo ID, or a .gguf file with --template")
     var source: String
 
     @Option(name: .long, help: "New output directory; must not exist and must not be inside the source")
@@ -38,7 +43,20 @@ struct ConvertSubcommand: AsyncParsableCommand {
     @Option(name: .long, help: "mlx (default) or hf: dense tensors, no .scales/.biases, config.json without quantization")
     var format: WeightConverter.Format = .mlx
 
+    @Option(name: .long, help: "With a .gguf source: the MLX checkpoint (directory or cached repo) of the same model, for config.json and the tokenizer")
+    var template: String?
+
+    @Option(name: .long, help: "With a .gguf source: native (default) keeps the GGUF blocks for basalt's i-quant kernels, affine requantizes into MLX affine weights")
+    var grid: GGUFImporter.Grid = .native
+
+    @Option(name: .long, help: "With a .gguf source and --grid affine: the smallest MLX bit-width to write (2 to 8; default 2), to raise IQ2-class tensors to 3 bits")
+    var minBits = 2
+
+    @Option(name: .long, help: "With a .gguf source and --grid affine: the MLX group size (32, 64 or 128; default 64)")
+    var groupSize = 64
+
     mutating func run() async throws {
+        if source.lowercased().hasSuffix(".gguf") { return try importGGUF() }
         let precision: WeightConverter.Precision
         do {
             precision = try WeightConverter.precision(quantize: quantize, dequantize: dequantize, format: format, budgetGB: budgetGb)
@@ -70,5 +88,31 @@ struct ConvertSubcommand: AsyncParsableCommand {
             print("  Plan:      \(plan.highLayers.count) of \(plan.layers) layers at the high bits, \(plan.unscored) unscored kept low")
         }
         print("  Time:      \(elapsed.formatted(.units(allowed: [.minutes, .seconds], width: .abbreviated)))")
+    }
+}
+
+extension ConvertSubcommand {
+    func importGGUF() throws {
+        guard let template, let templateURL = FileManager.default.fileExists(atPath: (template as NSString).expandingTildeInPath)
+            ? URL(fileURLWithPath: (template as NSString).expandingTildeInPath) : ModelCache.resolve(repoId: template) else {
+            throw ValidationError("a .gguf source needs --template <MLX checkpoint of the same model>")
+        }
+        guard (2 ... 8).contains(minBits), [32, 64, 128].contains(groupSize) else { throw ValidationError("--min-bits takes 2 to 8 and --group-size 32, 64 or 128") }
+        let outURL = URL(fileURLWithPath: (out as NSString).expandingTildeInPath)
+        let start = ContinuousClock.now
+        do {
+            let file = try GGUFFile(url: URL(fileURLWithPath: (source as NSString).expandingTildeInPath))
+            let importer = GGUFImporter(file: file, layout: try GGUFImporter.layout(template: templateURL), grid: grid, groupSize: groupSize, minimumBits: minBits)
+            let summary = try importer.run(output: outURL, template: templateURL)
+            printSuccess("Imported \(file.url.lastPathComponent) → \(outURL.path)")
+            print("  Tensors:   \(summary.tensors), \(formatBytes(Int64(summary.bytes)))")
+            if !summary.types.isEmpty { print("  GGUF:      " + summary.types.sorted { $0.value > $1.value }.map { "\($0.key) × \($0.value)" }.joined(separator: ", ")) }
+            if !summary.bits.isEmpty { print("  Bits:      " + summary.bits.sorted { $0.key < $1.key }.map { "\($0.key)-bit × \($0.value)" }.joined(separator: ", ")) }
+            if !summary.skipped.isEmpty { print("  Skipped:   \(summary.skipped.count) tensors without an MLX counterpart (\(summary.skipped.prefix(4).joined(separator: ", ")))") }
+            print("  Time:      \((ContinuousClock.now - start).formatted(.units(allowed: [.minutes, .seconds], width: .abbreviated)))")
+        } catch {
+            printError(error.localizedDescription)
+            throw ExitCode.failure
+        }
     }
 }
