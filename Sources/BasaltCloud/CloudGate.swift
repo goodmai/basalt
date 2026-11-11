@@ -51,6 +51,11 @@ public struct CloudGateCore: Sendable, Equatable, Codable {
         return nil
     }
 
+    public mutating func update(limits: [String: Double], rekeyed: Set<String>) {
+        self.limits = limits
+        for model in rekeyed { disabled[model] = nil }
+    }
+
     public mutating func record(_ model: String, cost: Double) {
         guard cost.isFinite, cost > 0 else { return }
         spent[model, default: 0] += cost
@@ -96,6 +101,10 @@ public actor CloudGate {
 
     public func failed(_ model: String, _ error: BasaltError) {
         core.failed(model, error, now: now())
+    }
+
+    public func update(limits: [String: Double], rekeyed: Set<String>) {
+        core.update(limits: limits, rekeyed: rekeyed)
     }
 
     public func spent(_ model: String) -> Double { core.spent[model, default: 0] }

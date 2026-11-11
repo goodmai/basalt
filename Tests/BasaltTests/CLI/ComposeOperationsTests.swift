@@ -38,7 +38,13 @@ struct ComposeOperationsTests {
         #expect(diff.pipelines == ["default", "support"] && diff.lines.first == "  load: haiku")
         var budgeted = old
         budgeted.models["jev"]?.budget = 1
-        #expect(ComposeDiff.between(old, budgeted).kept == ["chat", "jev"])
+        #expect(ComposeDiff.between(old, budgeted).kept == ["chat", "jev"] && ComposeDiff.between(old, budgeted).budgets == ["jev"])
+        var rekeyed = budgeted
+        rekeyed.models["jev"]?.apiKeyEnv = "OPENROUTER_API_KEY"
+        rekeyed.budget = 3
+        let changes = ComposeDiff.between(budgeted, rekeyed)
+        #expect(changes.rekeyed == ["jev"] && changes.budgets == ["total"] && changes.restart == nil)
+        #expect(changes.lines.contains("  budget: total") && changes.lines.contains("  key: jev"))
         #expect(ComposeDiff.between(new, old).removed == ["haiku"])
     }
 
@@ -117,6 +123,16 @@ struct ComposeOperationsTests {
         let support = try #require(await host.registry.system("support"))
         #expect(support.stages.answers?.targets["haiku"]?.isCloud == true)
         await #expect(throws: BasaltError.self) { _ = try await host.apply(ComposeApply(yaml: Self.base.replacingOccurrences(of: "gemma-4-12B-it-qat-4bit", with: "other"))) }
+        await gate.record("~typesafe/jev-latest", cost: 0.5)
+        await gate.failed("anthropic/claude-haiku-5.5", .authenticationFailed(details: "OpenRouter 401: key refused"))
+        let (before, refused) = (await gate.refusal("~typesafe/jev-latest"), await gate.refusal("anthropic/claude-haiku-5.5"))
+        #expect(before == nil && refused != nil)
+        let tightened = Self.with(Self.haiku.replacingOccurrences(of: "api_key_env: HOME", with: "api_key_env: USER"), pipelines: Self.support)
+            .replacingOccurrences(of: "jev-latest\n    api_key_env: HOME\n", with: "jev-latest\n    api_key_env: HOME\n    budget: { usd_per_day: 0.25 }\n")
+        let applied = try await host.apply(ComposeApply(yaml: tightened))
+        #expect(applied.budgets == ["jev"] && applied.rekeyed == ["haiku"] && applied.restart == nil)
+        #expect(await gate.refusal("~typesafe/jev-latest")?.reason.contains("daily budget spent") == true)
+        #expect(await gate.refusal("anthropic/claude-haiku-5.5") == nil)
         let status = await host.status()
         #expect(status.pipelines == ["default", "support"] && status.models.map(\.name) == ["chat", "haiku", "jev"])
         #expect(status.models.first { $0.name == "haiku" }?.state == "cloud" && status.models.first { $0.name == "chat" }?.state == "loaded")

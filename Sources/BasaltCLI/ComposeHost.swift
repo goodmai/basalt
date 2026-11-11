@@ -88,12 +88,18 @@ actor ComposeHost {
             let previous = held
             (held, spec) = (nextHeld, next)
             await registry.replace(built)
+            await cloudGate.update(limits: serve.cloudLimits(next), rekeyed: Set(diff.rekeyed.compactMap { Self.cloudID(next.models[$0]) }))
             for name in diff.removed + diff.reloaded { await Self.unload(previous[name]) }
         } catch {
             for model in fresh.values { await Self.unload(model) }
             throw error as? BasaltError ?? .invalidRequestStructure(details: "compose apply: \(error.localizedDescription)")
         }
         return diff
+    }
+
+    static func cloudID(_ model: ComposeSpec.Model?) -> String? {
+        guard case .cloud(_, let id)? = model?.source else { return nil }
+        return id
     }
 
     static func unload(_ held: ComposeHeld?) async {
