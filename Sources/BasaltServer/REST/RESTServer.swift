@@ -13,6 +13,7 @@ package struct RESTServer: Sendable {
     private(set) var pipeline = PipelineStages()
     private(set) var pipelines: PipelineRegistry?
     private(set) var compose: ComposeControl?
+    private(set) var onReady: (@Sendable (Int) -> Void)?
 
     let shutdownDeadline: Duration
     let handleSignals: Bool
@@ -41,6 +42,18 @@ package struct RESTServer: Sendable {
         return server
     }
 
+    package func withReadyHandler(_ handler: (@Sendable (Int) -> Void)?) -> RESTServer {
+        var server = self
+        server.onReady = handler
+        return server
+    }
+
+    package static func readyLine(port: Int, pid: Int32 = ProcessInfo.processInfo.processIdentifier) -> String {
+        let fields: [String: Any] = ["port": port, "pid": Int(pid), "version": HealthResponse.version]
+        let json = (try? JSONSerialization.data(withJSONObject: fields, options: [.sortedKeys])).map { String(decoding: $0, as: UTF8.self) } ?? "{}"
+        return "basalt-ready \(json)"
+    }
+
     package func withPipeline(_ stages: PipelineStages) -> RESTServer {
         var server = self
         server.pipeline = stages
@@ -63,6 +76,9 @@ package struct RESTServer: Sendable {
             router: router,
             server: .http1(),
             configuration: ApplicationConfiguration(address: .hostname(config.host, port: config.restPort)),
+            onServerRunning: { [onReady] channel in
+                if let port = channel.localAddress?.port { onReady?(port) }
+            },
             logger: logger
         )
 

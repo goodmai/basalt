@@ -4,8 +4,13 @@ import BasaltCore
 import BasaltServer
 
 struct ServeNetworkOptions: ParsableArguments {
-    @Option(name: .shortAndLong, help: "REST API port (default: 8080)")
+    @Option(name: .shortAndLong, help: "REST API port (default: 8080; 0 picks a free port, reported by --announce-ready)")
     var port: Int?
+
+    @Flag(name: .customLong("announce-ready"), help: ArgumentHelp(
+        "Print one line, basalt-ready {\"port\":…,\"pid\":…,\"version\":…}, to stdout once the REST port is bound; for the Mac app's supervisor (not with --mcp, whose stdout is JSON-RPC)",
+        visibility: .hidden))
+    var announceReady = false
 
     @Option(name: .long, help: "Bind address (default: 127.0.0.1)")
     var host: String?
