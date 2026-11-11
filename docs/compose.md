@@ -12,6 +12,8 @@ basalt compose up document-qa             # bundled files: document-qa, voice-ag
 
 `compose up` starts `basalt serve` with the flags the file expands to; it prints them at start. It serves the same REST and MCP surfaces. Flags after `--` are passed to serve, for example `basalt compose up -f basalt.yaml -- --port 8090`.
 
+The server binds its port first and loads the models after. While they load, `compose ps` shows them as `loading`, `GET /v1/health/ready` answers 503, and the run record already exists, so a second `compose up` finds the system instead of starting another. With `--mcp` the models load before the server starts, as before.
+
 ## The file
 
 ```yaml
@@ -122,6 +124,8 @@ models:
 
 ## Running systems
 - **`compose up` on a running system:** if a system with the same `name` runs, `compose up` sends it the file (`POST /v1/compose/apply`) and applies the difference.
+  - While the system is still loading, or applying another change, it answers 503. `compose up` waits and sends the file again, up to `--wait-timeout` seconds (default 1800).
+  - With `--wait`, `compose up` then waits until `GET /v1/health/ready` answers 200, prints the models it is waiting for, and exits non-zero if the system is not ready within the timeout.
   - It loads added models, reloads changed ones and unloads removed ones.
   - It swaps the pipelines between requests.
   - It checks the new system against this Mac's memory first, as `compose plan` does, with the models of every pipeline counted. A system that does not fit is refused, and nothing changes.

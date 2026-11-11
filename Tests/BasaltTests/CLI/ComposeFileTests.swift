@@ -184,7 +184,7 @@ struct ComposeFileTests {
         try Data(runtime.utf8).write(to: directory)
         let spec = try ComposeFile.load(directory.path)
         let serve = try ServeCommand.parse(spec.serveArguments + ["--compose", directory.path])
-        let gate = serve.cloudGate(try serve.composeSpec())
+        let gate = CloudGate(limits: serve.cloudLimits(try serve.composeSpec()), storage: nil)
         let cascade = try #require(try serve.composedDecisions(spec, local: StubDecisionEngine(), gate: GenerationGate(), besideDecode: true, cloudGate: gate) as? CascadeDecisionEngine)
         #expect(cascade.stages.map(\.modelID) == ["~typesafe/jev-latest", "~typesafe/jev-backup", "org/stub-jev"])
         #expect(cascade.stages.prefix(2).allSatisfy { $0 is GuardedDecisionEngine })
