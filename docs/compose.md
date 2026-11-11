@@ -131,7 +131,7 @@ models:
 - **Changes that need a restart:** a different chat model, memory mode or local decision model, or a sequential perceiver. Run `compose down` and then `compose up`.
 - **`/v1/systemone`** keeps the cascade it started with.
 - **`compose ps`:** lists each running system (`GET /v1/compose`) with its pipelines and, per model:
-  - whether it is loaded;
+  - whether it is loaded, or `decision` for the local decision model, which the decision engine holds;
   - for an on-demand model, its phase, when it was last used and when it unloads;
   - for a cloud model, its spend today against its cap, and a refusal if one applies.
 - **`compose down`:** sends the server SIGINT. It finishes in-flight requests and unloads.
