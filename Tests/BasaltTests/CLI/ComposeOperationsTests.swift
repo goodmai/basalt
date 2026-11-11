@@ -140,7 +140,7 @@ struct ComposeOperationsTests {
         #expect(await host.registry.names == ["default", "support"])
         let status = await host.status()
         #expect(status.pipelines == ["default", "support"] && status.models.map(\.name) == ["chat", "haiku", "jev"])
-        #expect(status.models.first { $0.name == "haiku" }?.state == "cloud" && status.models.first { $0.name == "chat" }?.state == "loaded")
+        #expect(status.models.first { $0.name == "haiku" }?.state == .cloud && status.models.first { $0.name == "chat" }?.state == .ready)
     }
 
     @Test("A host runs on injected services, without serve flags; after a key change the cloud client is built with the new key variable")
@@ -173,7 +173,7 @@ struct ComposeOperationsTests {
         let host = ComposeHost(services: ComposeServices(serve: serve, chat: MLXInferenceEngine()), spec: spec, start: start)
         try await host.start(defaultDecisions: nil)
         let status = await host.status()
-        #expect(status.models.first { $0.name == "laya" }?.state == "decision")
+        #expect(status.models.first { $0.name == "laya" }?.state == .decision)
         #expect(status.models.first { $0.name == "laya" }?.source.hasSuffix("missing-laya-bundle") == true)
     }
 
@@ -199,7 +199,7 @@ struct ComposeOperationsTests {
     func endpoints() async throws {
         let (_, chat) = try await PipelineSwapEdgeTests.chat()
         let control = ComposeControl(
-            status: { ComposeStatus(name: "ops", pipelines: ["default"], models: [ComposeModelStatus(name: "chat", source: "org/chat", keep: "resident", state: "loaded")], spentToday: 0.01) },
+            status: { ComposeStatus(name: "ops", pipelines: ["default"], models: [ComposeModelStatus(name: "chat", source: "org/chat", keep: "resident", state: .ready)], spentToday: 0.01) },
             apply: { request throws(BasaltError) in
                 guard request.yaml.contains("version"), request.base == "/srv/compose" else { throw .invalidRequestStructure(details: "compose apply: not a compose file") }
                 var diff = ComposeDiff()

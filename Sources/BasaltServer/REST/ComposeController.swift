@@ -6,14 +6,14 @@ package struct ComposeModelStatus: Codable, Sendable, Equatable {
     package var name: String
     package var source: String
     package var keep: String
-    package var state: String
+    package var state: ComposeModelState
     package var lastUsed: Date?
     package var idleUnload: Int?
     package var spentToday: Double?
     package var limit: Double?
     package var refusal: String?
 
-    package init(name: String, source: String, keep: String, state: String) {
+    package init(name: String, source: String, keep: String, state: ComposeModelState) {
         (self.name, self.source, self.keep, self.state) = (name, source, keep, state)
     }
 

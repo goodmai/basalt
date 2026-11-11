@@ -132,11 +132,13 @@ models:
   - A pipeline's new local decision model is loaded like any added model. The default pipeline's is also printed as `decide`. The pipelines and `/v1/systemone` use it from the next request. A model that starts or stops deciding is reloaded in its new role.
 - **Changes that need a restart:** a different memory mode or a sequential perceiver. Run `compose down` and then `compose up`.
 - **`compose ps`:** lists each running system (`GET /v1/compose`) with its pipelines and, per model:
-  - whether it is loaded, or `decision` for the local decision model, which the decision engine holds;
-  - for an on-demand model, its phase, when it was last used and when it unloads;
+  - its state, one of `loading`, `ready`, `unloading`, `unloaded`, `idle-unloaded` (on demand, not loaded now), `decision` (held by the decision engine), `cloud`, `no-key`, `over-budget`, `rate-limited`, `refused` and `failed`;
+  - for an on-demand model, when it was last used and when it unloads;
   - for a cloud model, its spend today against its cap, and a refusal if one applies.
-- **`compose down`:** sends the server SIGINT. It finishes in-flight requests and unloads.
-- **Where state lives:** the running system's pid and port are in `~/.basalt/compose/<name>.json`.
+- **Health:** `GET /v1/health/live` answers 200 while the server answers HTTP. `GET /v1/health/ready` answers 200 once every model can serve. Until then it answers 503 and lists the models still waiting, such as `chat (loading)`. An idle on-demand model, an over-budget cloud model and a rate-limited cloud model count as able to serve; the cascade or the router goes past them.
+- **Cloud keys:** `compose up` refuses to start when a cloud model's `api_key_env` is not set, and names the variable. Up-as-diff checks the running server's environment instead.
+- **`compose down`:** sends the server SIGINT. It finishes in-flight requests and unloads. If the process is still running after 30 s, `down` says so and exits non-zero.
+- **Where state lives:** the running system's pid, port and process start time are in `~/.basalt/compose/<name>.json`. A record whose pid now belongs to another process, because the pid was reused, counts as not running.
 - **API key:** when the server has an API key, set `BASALT_API_KEY` for `ps` and up-as-diff.
 
 ## Receipts

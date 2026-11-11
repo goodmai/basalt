@@ -39,7 +39,7 @@ struct ComposePipelineDeciderTests {
         #expect(await host.registry.system("support")?.decisions?.modelID.hasSuffix("laya") == true)
         #expect(await host.registry.system("triage")?.decisions?.modelID.hasSuffix("laya") == true)
         #expect(await host.registry.system(ComposeSpec.defaultPipeline)?.decisions?.modelID == "self")
-        #expect(await host.status().models.first { $0.name == "laya" }?.state == "decision")
+        #expect(await host.status().models.first { $0.name == "laya" }?.state == .decision)
     }
 
     @Test("apply swaps one pipeline's decider; a model that stops deciding is reloaded in its new role")
