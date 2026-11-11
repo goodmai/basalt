@@ -128,8 +128,9 @@ models:
   - When the new system fits but old and new models do not fit side by side, it unloads the models it replaces before loading their successors. A request that needs one of them in that window waits for the load or fails. If a load then fails, it loads the old models back.
   - It prints `load`, `reload`, `unload` and `keep` per model, `budget` for each changed cloud budget (`total` for the file's) and `key` for each cloud model whose `api_key_env` changed.
   - A cloud model's budget or key variable changes without a reload. The new limits apply at once, and a model disabled by a refused key is enabled again when its key variable changes.
-- **Changes that need a restart:** a different chat model, memory mode or local decision model, or a sequential perceiver. Run `compose down` and then `compose up`.
-- **`/v1/systemone`** keeps the cascade it started with.
+  - A different chat model is loaded into the serving model's place and printed as `chat`. Requests wait while it loads. If a later step of the apply fails, the old chat model is loaded back.
+  - A different local decision model is loaded and printed as `decide`. The pipelines and `/v1/systemone` use it from the next request.
+- **Changes that need a restart:** a different memory mode or a sequential perceiver. Run `compose down` and then `compose up`.
 - **`compose ps`:** lists each running system (`GET /v1/compose`) with its pipelines and, per model:
   - whether it is loaded, or `decision` for the local decision model, which the decision engine holds;
   - for an on-demand model, its phase, when it was last used and when it unloads;

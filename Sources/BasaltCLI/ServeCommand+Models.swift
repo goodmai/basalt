@@ -78,7 +78,10 @@ extension ServeCommand {
     }
 
     func loadDecisions(chat: MLXInferenceEngine) async throws -> (any DecisionEngine)? {
-        guard let decisionModel = decision.localModel else { return nil }
+        try await decision.localModel.asyncMap { try await loadDecisions($0, chat: chat) }
+    }
+
+    func loadDecisions(_ decisionModel: String, chat: MLXInferenceEngine) async throws -> any DecisionEngine {
         do {
             if decisionModel == "self" {
                 log("Serving decisions (/v1/systemone) by option-letter readout of the chat model")

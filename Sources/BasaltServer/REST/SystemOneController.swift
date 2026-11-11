@@ -4,7 +4,7 @@ import HTTPTypes
 import BasaltCore
 
 struct SystemOneController: Sendable {
-    let engine: (any DecisionEngine)?
+    let engine: @Sendable () async -> (any DecisionEngine)?
     var log: SessionLogWriter? = nil
 
     static func decide(
@@ -41,7 +41,7 @@ struct SystemOneController: Sendable {
 
     @Sendable
     func decide(request: Request, context: BasicRequestContext) async throws -> Response {
-        guard let engine else {
+        guard let engine = await engine() else {
             return ProviderErrorResponse.response(status: .notFound, message: "No decision model is loaded; start basalt serve with --decision-model <OpenJev repo|dir>.", shape: .openAI)
         }
         let data = Data(try await request.body.collect(upTo: ChatPipeline.textBodyLimit).readableBytesView)

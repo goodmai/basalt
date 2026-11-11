@@ -192,7 +192,7 @@ struct ServeCommand: AsyncParsableCommand {
         try await load(orchestrator, from: resolvedPath)
         var stages = try await loadPipelineStages(perceivePaths, plan: plan)
         let start = ComposeStart(chat: orchestrator, decider: loadedDecisions, decisions: decisions, cloudGate: cloudGate, startup: stages, besideDecode: plan.runsBesideDecode("decide"))
-        let host = try await spec.asyncMap { try await composeHost($0, start: start) }
+        let host = try await spec.asyncMap { try await composeHost($0, start: start, engine: engine) }
         if let host, let system = await host.registry.system(ComposeSpec.defaultPipeline) { stages = system.stages }
         let record = try spec.flatMap { host == nil ? nil : try ComposeRecord.write(name: $0.name, port: network.port, file: pipeline.compose ?? "") }
         defer { record.map(ComposeRecord.remove) }
