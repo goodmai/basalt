@@ -8,6 +8,7 @@ enum ComposeHeld: Sendable {
     case resident(ModelOrchestratorActor)
     case onDemand(OnDemandModel)
     case cloud(String)
+    case decision(any DecisionEngine)
 }
 
 struct ComposeStart: Sendable {
@@ -54,6 +55,7 @@ actor ComposeHost {
 
     func startupHeld() -> [String: ComposeHeld] {
         var held: [String: ComposeHeld] = [spec.answer: .resident(chat)]
+        if let name = spec.decider, name != "self", let decider { held[name] = .decision(decider) }
         for (name, perceiver, orchestrator) in [(spec.ocr, PipelineCore.Perceiver.ocrModel, startup.ocr), (spec.speech, .speechModel, startup.audio)] {
             guard let name, let orchestrator else { continue }
             held[name] = startup.onDemand[perceiver].map(ComposeHeld.onDemand) ?? .resident(orchestrator)
@@ -135,7 +137,7 @@ actor ComposeHost {
         switch held {
         case .resident(let orchestrator): await orchestrator.unloadModel()
         case .onDemand(let model): await model.model.unloadModel()
-        case .cloud, nil: break
+        case .cloud, .decision, nil: break
         }
     }
 }

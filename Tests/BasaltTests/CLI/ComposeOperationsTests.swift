@@ -148,6 +148,20 @@ struct ComposeOperationsTests {
         #expect(status.models.first { $0.name == "haiku" }?.state == "cloud" && status.models.first { $0.name == "chat" }?.state == "loaded")
     }
 
+    @Test("A local decision model is held by serve's decision engine; the host neither loads it a second time nor counts it as missing")
+    func localDecider() async throws {
+        let yaml = Self.base.replacingOccurrences(of: "pipeline:\n", with: "  laya:\n    source: ./missing-laya-bundle\npipeline:\n").replacingOccurrences(of: "cascade: [jev, chat]", with: "cascade: [jev, laya]")
+        let spec = try ComposeFile.parse(yaml, file: "d.yaml")
+        let serve = try ServeCommand.parse(spec.serveArguments)
+        let (_, chat) = try await PipelineSwapEdgeTests.chat()
+        let start = ComposeStart(chat: chat, decider: StubDecisionEngine(), decisions: nil, cloudGate: serve.cloudGate(spec), startup: PipelineStages(), besideDecode: true)
+        let host = ComposeHost(serve: serve, spec: spec, start: start)
+        try await host.start(defaultDecisions: nil)
+        let status = await host.status()
+        #expect(status.models.first { $0.name == "laya" }?.state == "decision")
+        #expect(status.models.first { $0.name == "laya" }?.source.hasSuffix("missing-laya-bundle") == true)
+    }
+
     @Test("Admission on apply: a system that does not fit is refused; when old and new do not fit together the replaced models unload first")
     func admission() throws {
         let gb = ComposeFileTests.gb

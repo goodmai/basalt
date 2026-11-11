@@ -21,7 +21,7 @@ extension ComposeHost {
             switch name.flatMap({ held[$0] }) {
             case .resident(let model): model
             case .onDemand(let model): model.model
-            case .cloud, nil: nil
+            case .cloud, .decision, nil: nil
             }
         }
         let speech: (any AudioTranscriber)? = view.audio.contains(ComposeSpec.speechAnalyzer) ? (first ? startup.speech : SpeechAnalyzerTranscriber()) : nil
@@ -48,7 +48,7 @@ extension ComposeHost {
         case .cloud(let id):
             let client = try OpenRouterClient(config: .init(apiKey: serve.key(spec, name), baseURL: ServeCommand.openRouterAnswers, timeout: 120, maxRetries: 1))
             return CloudAnswer(client: client, model: id, gate: cloudGate)
-        case nil: throw BasaltError.invalidRequestStructure(details: "compose: \(name) is not loaded")
+        case .decision, nil: throw BasaltError.invalidRequestStructure(details: "compose: \(name) is not loaded as an answer model")
         }
     }
 
@@ -62,6 +62,7 @@ extension ComposeHost {
                 (entry.state, entry.lastUsed, entry.idleUnload) = ("\(await onDemand.phase)", await onDemand.lastUsed, model.idleUnload ?? ComposeSpec.defaultIdleUnload)
             case .cloud(let id):
                 (entry.state, entry.spentToday, entry.limit, entry.refusal) = ("cloud", await cloudGate.spent(id), model.budget, await cloudGate.refusal(id)?.reason)
+            case .decision: entry.state = "decision"
             case nil: break
             }
             models.append(entry)
