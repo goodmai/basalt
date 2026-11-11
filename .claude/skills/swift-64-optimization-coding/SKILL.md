@@ -60,7 +60,7 @@ You are an Expert Swift 6.4 Systems & Performance Engineer. Write deterministic,
 ## 5. Traps the compiler reports late (seen in basalt diffs)
 - **Typed throws stop at some closures.** `map`, `mapValues` and `Optional.map` carry `throws(E)`. `compactMap`, sequence `flatMap`, `reduce` and `sorted(by:)` are `rethrows` and widen to `any Error`. Inside a `throws(BasaltError)` function, write the loop.
 - **No `await` in an autoclosure.** `try await a() ?? b()` fails with "'async' call in an autoclosure that does not support concurrency". Use `if let` in a small function.
-- **A `static let` of a non-`Sendable` type is rejected** (`MLXArray`, a kernel input table). Make it a computed `static var`, or build it where it is used. Do not reach for `nonisolated(unsafe)`.
+- **A `static let` of a non-`Sendable` type is rejected** ("static property … is not concurrency-safe"): `MLXArray`, a kernel input table, and regex literals (`static let name = /…/` is a `Regex<…>`). Make it a computed `static var name: Regex<Substring> { /…/ }`, or build it where it is used. Do not reach for `nonisolated(unsafe)`.
 - **`swift run -c release Basalt`**, not `basalt`: the product name is capitalized. `models convert` takes `--out`.
 
 ## 6. Custom Metal kernels (`MLXFast.metalKernel`)
