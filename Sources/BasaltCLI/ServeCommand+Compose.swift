@@ -11,7 +11,7 @@ extension ServeCommand {
     func composeSpec() throws -> ComposeSpec? {
         guard let reference = pipeline.compose else { return nil }
         do {
-            return try ComposeFile.load(reference)
+            return try ComposeFile.load(reference, context: .machine.overriding(assignments: pipeline.composeSet, profiles: pipeline.composeProfile))
         } catch {
             log("\(red("[error]")) \(error.description)")
             throw ExitCode.failure

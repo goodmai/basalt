@@ -75,6 +75,7 @@ A system that does not fit is refused with the numbers before anything loads. A 
 - **Order:** `cascade` lists the decision models in order. Each stage answers the questions it is confident about (at least `escalate_below`) and passes the rest on.
 - **The local stage:** the last stage is local. It is either the chat model (read out as `self`) or a decision model such as a Laya Core AI bundle. Every pipeline shares this one local decision model.
 - **What the cloud gets:** requests with documents or audio go only to the local stage.
+- **Thresholds:** questions whose confidence is below `abstain_below`, or whose top two options are closer than `min_margin`, go to the answer model.
 
 ### Answer routes
 - **Matching:** a rule's `when` matches when every condition holds. Conditions:
@@ -85,6 +86,33 @@ A system that does not fit is refused with the numbers before anything loads. A 
   - `cost_left`: the rule's model still has budget.
 - **Order of tries:** the rule's `model` first, then its `fallback`, then the pipeline's default local model.
 - **Skips:** a cloud model is skipped for perceived text, without budget, after a refused key, or while rate limited. Each skip is named in the receipt.
+
+### Version 2: variables and profiles
+`version: 2` adds two blocks, so that one file serves several Macs. A version 1 file keeps working; using either block in it is refused with "needs version: 2".
+
+```yaml
+version: 2
+name: desk
+variables:
+  chat_repo: mlx-community/gemma-4-12B-it-qat-4bit
+profiles:
+  small:
+    when: { memory_gb: { under: 20 } }
+    variables: { chat_repo: mlx-community/gemma-4-E4B-it-4bit }
+  big:
+    when: { memory_gb: { over: 48 }, chip: Max }
+models:
+  chat:  { source: "${chat_repo}" }
+  large: { source: lukaskremla/Qwen3.8-27B-3bit-MLX-TextOnly, keep: on-demand, profiles: [big] }
+```
+
+- **`variables`:** lowercase names with one-line plain values. `${name}` is replaced anywhere in the file. An undeclared `${…}` is refused, so environment variables still never reach the file; secrets come only by `api_key_env`.
+- **`profiles`:** a profile is on when its `when` holds on this Mac: `memory_gb` with `under` and `over` (unified memory in GB), and `chip` (a case-insensitive part of the chip name, such as `M4 Pro` or `Max`). A profile without `when` is on only when named with `--profile`.
+  - An on profile's `variables` override the file's.
+  - A model or a named pipeline with `profiles: [...]` exists only while one of them is on.
+- **Overrides:** `--set name=value` overrides a declared variable and `--profile name` turns on exactly the named profiles, for `config`, `plan` and `up`. `compose up` passes them on to the server, and up-as-diff sends them with the file.
+- **Paths:** a `./` or `../` model path is relative to the compose file's folder.
+- **`basalt compose config -f <file>`** prints the file as it resolves on this Mac, with the profiles that are on. **`basalt compose schema`** prints the JSON Schema of the format for editors.
 
 ### Cloud failures and spend
 - A refused key (HTTP 401/403) disables that cloud model until the server restarts, with one log line saying so.
@@ -112,6 +140,7 @@ A system that does not fit is refused with the numbers before anything loads. A 
 Each `/v1/pipeline` response, and each session log record, carries a receipt. Per stage it gives the model, milliseconds and tokens. Decide stages also carry their cost and any cloud stages that were skipped. Answer stages carry the rule that fired (`route`), the cost and the skipped models. `swap_ms` is the time spent loading on-demand and sequential models.
 
 ## Examples
+- `docs/examples/compose/any-mac.yaml`: one version 2 file for 16, 24 and 64 GB Macs. The chat model comes from a profile chosen by memory, and the 64 GB profile adds a 27B model on demand and a `long` pipeline.
 - `docs/examples/compose/mac-16gb.yaml`: Ornith 9B local, OCR on demand, long prompts to Claude Haiku within $0.50 a day.
 - `docs/examples/compose/mac-24gb.yaml`: Gemma 4 12B, OCR on demand, code to Haiku, a second `support` pipeline, $1 a day in total.
 - `docs/examples/compose/mac-64gb.yaml`: Gemma 4 26B-A4B with Qwen3.8-27B and Nemotron Transcribe on demand, no cloud answers.

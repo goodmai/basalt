@@ -39,11 +39,22 @@ package struct ComposeStatus: Codable, Sendable, Equatable {
     }
 }
 
+package struct ComposeApply: Codable, Sendable, Equatable {
+    package var yaml: String
+    package var base: String?
+    package var variables: [String: String]?
+    package var profiles: [String]?
+
+    package init(yaml: String, base: String? = nil, variables: [String: String]? = nil, profiles: [String]? = nil) {
+        (self.yaml, self.base, self.variables, self.profiles) = (yaml, base, variables, profiles)
+    }
+}
+
 package struct ComposeControl: Sendable {
     package let status: @Sendable () async -> ComposeStatus
-    package let apply: @Sendable (String) async throws(BasaltError) -> ComposeDiff
+    package let apply: @Sendable (ComposeApply) async throws(BasaltError) -> ComposeDiff
 
-    package init(status: @escaping @Sendable () async -> ComposeStatus, apply: @escaping @Sendable (String) async throws(BasaltError) -> ComposeDiff) {
+    package init(status: @escaping @Sendable () async -> ComposeStatus, apply: @escaping @Sendable (ComposeApply) async throws(BasaltError) -> ComposeDiff) {
         (self.status, self.apply) = (status, apply)
     }
 }
@@ -58,10 +69,10 @@ struct ComposeController: Sendable {
         group.post("/compose/apply") { request, _ in
             do {
                 let data = Data(try await request.body.collect(upTo: Self.bodyLimit).readableBytesView)
-                guard let body = try? JSONDecoder().decode([String: String].self, from: data), let yaml = body["yaml"] else {
-                    throw BasaltError.invalidRequestStructure(details: "compose apply takes {\"yaml\": \"<compose file>\"}")
+                guard let request = try? JSONDecoder().decode(ComposeApply.self, from: data) else {
+                    throw BasaltError.invalidRequestStructure(details: "compose apply takes {\"yaml\": \"<compose file>\", \"base\", \"variables\", \"profiles\"}")
                 }
-                return Self.json(try await control.apply(yaml))
+                return Self.json(try await control.apply(request))
             } catch {
                 return ProviderErrorResponse.response(for: error, path: "/v1/compose/apply")
             }

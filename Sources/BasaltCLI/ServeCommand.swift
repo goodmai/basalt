@@ -217,7 +217,7 @@ struct ServeCommand: AsyncParsableCommand {
         try await Self.runServers(
             ServerLaunch(
                 config: config, startREST: startREST, mcpServer: mcpServer, embeddings: embeddings, decisions: decisions, pipeline: stages,
-                pipelines: host?.registry, compose: host.map { host in ComposeControl(status: { await host.status() }, apply: { yaml throws(BasaltError) in try await host.apply(yaml) }) },
+                pipelines: host?.registry, compose: host.map { host in ComposeControl(status: { await host.status() }, apply: { request throws(BasaltError) in try await host.apply(request) }) },
                 statsInterval: stats ? min(max(1, statsInterval), 86_400) : nil, canaryInterval: canaryMinutes.map { .seconds($0 * 60) }),
             orchestrator: orchestrator)
     }

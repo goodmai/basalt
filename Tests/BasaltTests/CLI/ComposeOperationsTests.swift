@@ -111,12 +111,12 @@ struct ComposeOperationsTests {
         let host = ComposeHost(serve: serve, spec: spec, start: start)
         try await host.start(defaultDecisions: nil)
         #expect(await host.registry.names == ["default"])
-        let diff = try await host.apply(Self.with(Self.haiku, pipelines: Self.support))
+        let diff = try await host.apply(ComposeApply(yaml: Self.with(Self.haiku, pipelines: Self.support)))
         #expect(diff.added == ["haiku"] && diff.restart == nil)
         #expect(await host.registry.names == ["default", "support"])
         let support = try #require(await host.registry.system("support"))
         #expect(support.stages.answers?.targets["haiku"]?.isCloud == true)
-        await #expect(throws: BasaltError.self) { _ = try await host.apply(Self.base.replacingOccurrences(of: "gemma-4-12B-it-qat-4bit", with: "other")) }
+        await #expect(throws: BasaltError.self) { _ = try await host.apply(ComposeApply(yaml: Self.base.replacingOccurrences(of: "gemma-4-12B-it-qat-4bit", with: "other"))) }
         let status = await host.status()
         #expect(status.pipelines == ["default", "support"] && status.models.map(\.name) == ["chat", "haiku", "jev"])
         #expect(status.models.first { $0.name == "haiku" }?.state == "cloud" && status.models.first { $0.name == "chat" }?.state == "loaded")
@@ -127,8 +127,8 @@ struct ComposeOperationsTests {
         let (_, chat) = try await PipelineSwapEdgeTests.chat()
         let control = ComposeControl(
             status: { ComposeStatus(name: "ops", pipelines: ["default"], models: [ComposeModelStatus(name: "chat", source: "org/chat", keep: "resident", state: "loaded")], spentToday: 0.01) },
-            apply: { yaml throws(BasaltError) in
-                guard yaml.contains("version") else { throw .invalidRequestStructure(details: "compose apply: not a compose file") }
+            apply: { request throws(BasaltError) in
+                guard request.yaml.contains("version"), request.base == "/srv/compose" else { throw .invalidRequestStructure(details: "compose apply: not a compose file") }
                 var diff = ComposeDiff()
                 diff.added = ["haiku"]
                 return diff
@@ -139,7 +139,7 @@ struct ComposeOperationsTests {
                 let json = try JSONSerialization.jsonObject(with: Data(buffer: response.body)) as? [String: Any]
                 #expect(response.status == .ok && json?["name"] as? String == "ops" && json?["spent_today"] as? Double == 0.01)
             }
-            try await client.execute(uri: "/v1/compose/apply", method: .post, headers: [.contentType: "application/json"], body: ByteBuffer(string: #"{"yaml": "version: 1"}"#)) { response in
+            try await client.execute(uri: "/v1/compose/apply", method: .post, headers: [.contentType: "application/json"], body: ByteBuffer(string: #"{"yaml": "version: 1", "base": "/srv/compose"}"#)) { response in
                 #expect(response.status == .ok && (try? JSONDecoder().decode(ComposeDiff.self, from: Data(buffer: response.body)))?.added == ["haiku"])
             }
             try await client.execute(uri: "/v1/compose/apply", method: .post, headers: [.contentType: "application/json"], body: ByteBuffer(string: #"{"yaml": "nope"}"#)) { #expect($0.status == .badRequest) }
