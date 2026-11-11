@@ -29,7 +29,7 @@ struct ComposeAdmission: Sendable {
 }
 
 actor ComposeHost {
-    let serve: ServeCommand
+    let services: ComposeServices
     let chat: ModelOrchestratorActor
     let decider: (any DecisionEngine)?
     let cloudGate: CloudGate
@@ -41,8 +41,8 @@ actor ComposeHost {
     private(set) var held: [String: ComposeHeld] = [:]
     private var applying = false
 
-    init(serve: ServeCommand, spec: ComposeSpec, start: ComposeStart) {
-        (self.serve, self.spec, self.chat, self.decider, self.cloudGate) = (serve, spec, start.chat, start.decider, start.cloudGate)
+    init(services: ComposeServices, spec: ComposeSpec, start: ComposeStart) {
+        (self.services, self.spec, self.chat, self.decider, self.cloudGate) = (services, spec, start.chat, start.decider, start.cloudGate)
         (self.startup, self.besideDecode, self.admission) = (start.startup, start.besideDecode, start.admission)
         registry = PipelineRegistry([:])
     }
@@ -68,11 +68,11 @@ actor ComposeHost {
         switch model.source {
         case .cloud(_, let id): return .cloud(id)
         case .local(let source):
-            let path = try await serve.resolvedPath(source, quant: nil)
+            let path = try await services.resolve(source)
             if spec.views.contains(where: { $0.spec.ocr == name }), let refusal = ServeCommand.ocrRefusal(source, path: path) { throw BasaltError.invalidRequestStructure(details: refusal) }
             if spec.views.contains(where: { $0.spec.speech == name }), let refusal = ServeCommand.audioRefusal(source, path: path) { throw BasaltError.invalidRequestStructure(details: refusal) }
             let onDemand = model.keep == .onDemand
-            guard let orchestrator = try await serve.loadPerceiver(source, path: path, role: name, loads: !onDemand, onDemand: onDemand) else { throw ExitCode.failure }
+            guard let orchestrator = try await services.load(source, path, name, onDemand) else { throw ExitCode.failure }
             return onDemand ? .onDemand(OnDemandModel(model: orchestrator, path: path, idle: .seconds(model.idleUnload ?? ComposeSpec.defaultIdleUnload))) : .resident(orchestrator)
         }
     }
@@ -95,7 +95,7 @@ actor ComposeHost {
             let previous = held
             (held, spec) = (nextHeld, next)
             await registry.replace(built)
-            await cloudGate.update(limits: serve.cloudLimits(next), rekeyed: Set(diff.rekeyed.compactMap { Self.cloudID(next.models[$0]) }))
+            await cloudGate.update(limits: services.cloudLimits(next), rekeyed: Set(diff.rekeyed.compactMap { Self.cloudID(next.models[$0]) }))
             if order == .loadFirst { for name in replaced { await Self.unload(previous[name]) } }
         } catch {
             for model in fresh.values { await Self.unload(model) }

@@ -10,7 +10,7 @@ extension ComposeHost {
         for (name, view) in spec.views {
             let first = name == ComposeSpec.defaultPipeline
             let decisions = try (first ? defaultDecisions : nil)
-                ?? serve.composedDecisions(view, local: decider, gate: chat.gate, besideDecode: besideDecode, cloudGate: cloudGate)
+                ?? services.decisions(view, decider, chat.gate, besideDecode, cloudGate)
             systems[name] = PipelineSystem(decisions: decisions, stages: try stages(view, held: held, first: first))
         }
         return systems
@@ -37,16 +37,16 @@ extension ComposeHost {
     func router(_ view: ComposeSpec, held: [String: ComposeHeld]) throws -> AnswerRouter? {
         guard !view.routes.isEmpty || view.answer != spec.answer else { return nil }
         var targets: [String: any AnswerTarget] = [:]
-        for name in view.answerModels { targets[name] = try target(name, held: held) }
-        return AnswerRouter(routes: view.routes.isEmpty ? [AnswerRoute(model: view.answer)] : view.routes, targets: targets, fallback: try target(view.answer, held: held))
+        for name in view.answerModels { targets[name] = try target(name, held: held, in: view) }
+        return AnswerRouter(routes: view.routes.isEmpty ? [AnswerRoute(model: view.answer)] : view.routes, targets: targets, fallback: try target(view.answer, held: held, in: view))
     }
 
-    func target(_ name: String, held: [String: ComposeHeld]) throws -> any AnswerTarget {
+    func target(_ name: String, held: [String: ComposeHeld], in spec: ComposeSpec) throws -> any AnswerTarget {
         switch held[name] {
         case .resident(let model): return LocalAnswer(model)
         case .onDemand(let model): return OnDemandAnswer(model)
         case .cloud(let id):
-            let client = try OpenRouterClient(config: .init(apiKey: serve.key(spec, name), baseURL: ServeCommand.openRouterAnswers, timeout: 120, maxRetries: 1))
+            let client = try OpenRouterClient(config: .init(apiKey: services.key(spec.models[name]), baseURL: ServeCommand.openRouterAnswers, timeout: 120, maxRetries: 1))
             return CloudAnswer(client: client, model: id, gate: cloudGate)
         case .decision, nil: throw BasaltError.invalidRequestStructure(details: "compose: \(name) is not loaded as an answer model")
         }

@@ -56,7 +56,7 @@ extension ServeCommand {
     }
 
     func composeHost(_ spec: ComposeSpec, start: ComposeStart) async throws -> ComposeHost {
-        let host = ComposeHost(serve: self, spec: spec, start: start)
+        let host = ComposeHost(services: ComposeServices(serve: self), spec: spec, start: start)
         do {
             try await host.start(defaultDecisions: start.decisions)
         } catch {
