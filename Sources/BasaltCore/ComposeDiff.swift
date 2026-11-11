@@ -60,3 +60,22 @@ extension ComposeSpec {
         return last == answer ? "self" : last
     }
 }
+
+extension ComposeDiff {
+    public enum Order: Sendable, Equatable {
+        case loadFirst, unloadFirst
+    }
+
+    public func admission(
+        previous: ComposeSpec, next: ComposeSpec, sizes: ComposeSpec.Sizes, budgetBytes: Int64, power: PowerState = .desktop
+    ) -> Result<Order, Refusal> {
+        let (verdict, _) = next.plan(sizes, budgetBytes: budgetBytes, power: power)
+        if let refusal = verdict.refusal { return .failure(Refusal(reason: refusal)) }
+        let replaced = (removed + reloaded).compactMap { previous.local($0).flatMap(sizes.bytes) }.reduce(0, +)
+        return .success(verdict.residentBytes + replaced > budgetBytes ? .unloadFirst : .loadFirst)
+    }
+
+    public struct Refusal: Error, Sendable, Equatable {
+        public let reason: String
+    }
+}
