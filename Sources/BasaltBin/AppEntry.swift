@@ -1,11 +1,13 @@
 import ArgumentParser
 import BasaltCLI
+import BasaltInference
 import Foundation
 
 @main
 @available(macOS 14.0, *)
 struct AppEntry {
     static func main() {
+        MetallibOverride.apply()
         Task {
             await BasaltCLI.main(BasaltCLI.configuredArguments())
             Darwin.exit(0)

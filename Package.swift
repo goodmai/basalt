@@ -102,15 +102,27 @@ let package = Package(
             path: "Sources/BasaltUI",
             swiftSettings: swiftSettings
         ),
+        .target(
+            name: "BasaltAppCore",
+            dependencies: ["BasaltCore"],
+            path: "Sources/BasaltAppCore",
+            swiftSettings: swiftSettings
+        ),
         // App: the SwiftUI REST chat client. Nothing links it yet (its launch command is #55),
         // so SwiftUI/AppKit stay out of the CLI binary.
         .target(
             name: "BasaltApp",
             dependencies: [
-                "BasaltCore",
+                "BasaltCore", "BasaltAppCore",
                 .product(name: "Markdown",      package: "swift-markdown"),
             ],
             path: "Sources/BasaltApp",
+            swiftSettings: swiftSettings
+        ),
+        .executableTarget(
+            name: "BasaltMac",
+            dependencies: ["BasaltApp", "BasaltAppCore"],
+            path: "Sources/BasaltMac",
             swiftSettings: swiftSettings
         ),
         // CLI: ArgumentParser commands wiring everything together.
@@ -129,7 +141,7 @@ let package = Package(
         .executableTarget(
             name: "Basalt",
             dependencies: [
-                "BasaltCLI",
+                "BasaltCLI", "BasaltInference",
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
             ],
             path: "Sources/BasaltBin",
@@ -141,7 +153,7 @@ let package = Package(
             name: "BasaltTests",
             dependencies: [
                 .product(name: "ServiceLifecycle", package: "swift-service-lifecycle"),
-                "BasaltCore", "BasaltInference", "BasaltCloud", "BasaltServer", "BasaltUI", "BasaltCLI", "BasaltApp", "BasaltHarness", "BasaltSpeech",
+                "BasaltCore", "BasaltInference", "BasaltCloud", "BasaltServer", "BasaltUI", "BasaltCLI", "BasaltApp", "BasaltAppCore", "BasaltHarness", "BasaltSpeech",
                 .product(name: "HummingbirdTesting", package: "hummingbird"),
                 .product(name: "MLXGuidedGeneration", package: "mlx-swift-lm"),
                 .product(name: "Jinja", package: "swift-jinja"),

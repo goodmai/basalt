@@ -17,11 +17,13 @@ struct ServerLaunch: Sendable {
     var canaryInterval: Duration? = nil
     var shutdownDeadline: Duration = .seconds(5)
     var handleSignals = true
+    var announceReady = false
 }
 
 extension ServeCommand {
     func validate() throws {
         try sessionLog.validateRetention()
+        if network.announceReady, mcp { throw ValidationError("--announce-ready writes to stdout, which --mcp uses for JSON-RPC; use one or the other") }
         _ = try Self.adapterDirectories(adapters)
         guard maxConcurrent >= 1 else {
             throw ValidationError("--max-concurrent must be at least 1, got \(maxConcurrent)")
@@ -73,6 +75,10 @@ extension ServeCommand {
         return MLXInferenceEngine(configuration, promptCacheDisk: try promptCacheDisk.store())
     }
 
+    @Sendable static func announce(port: Int) {
+        FileHandle.standardOutput.write(Data((RESTServer.readyLine(port: port) + "\n").utf8))
+    }
+
     static func runServers(_ launch: ServerLaunch, orchestrator: ModelOrchestratorActor) async throws {
         defer {
             await withTaskCancellationShield {
@@ -88,6 +94,7 @@ extension ServeCommand {
                     shutdownDeadline: launch.shutdownDeadline,
                     handleSignals: launch.handleSignals
                 ).withDecisions(launch.decisions).withPipeline(launch.pipeline).withPipelines(launch.pipelines, compose: launch.compose)
+                    .withReadyHandler(launch.announceReady ? Self.announce : nil)
                 group.addTask { try await restServer.run() }
             }
             if let mcpServer = launch.mcpServer {
