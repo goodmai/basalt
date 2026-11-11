@@ -17,7 +17,7 @@ extension ComposeCommand {
         let deadline = ContinuousClock.now + grace
         while ComposeRecord.alive(record), ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(100)) }
         guard ComposeRecord.alive(record) else { return print("\(record.name) stopped") }
-        log("\(red("[error]")) \(record.name) (pid \(record.pid)) is still running after \(grace.components.seconds) s; it may be finishing a request or a load. Run compose down again, or kill \(record.pid)")
+        log("\(red("[error]")) \(record.name) (pid \(record.pid)) is still running after \(grace); it may be finishing a request or a load. Run compose down again, or kill \(record.pid)")
         throw ExitCode.failure
     }
 }
