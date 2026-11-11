@@ -44,7 +44,7 @@ struct ComposeRoleSwapTests {
         #expect(await chat.loaded.path == "/models/chat-b")
         #expect(await chat.isLoaded)
         #expect(await host.spec.models["chat"]?.source == .local("org/chat-b"))
-        #expect(await host.status().models.first { $0.name == "chat" }?.state == "loaded")
+        #expect(await host.status().models.first { $0.name == "chat" }?.state == .ready)
     }
 
     @Test("apply builds the new decider, the pipelines and /v1/systemone use it, and the old one is let go")
@@ -53,7 +53,7 @@ struct ComposeRoleSwapTests {
         let diff = try await host.apply(ComposeApply(yaml: Self.laya))
         #expect(diff.decider == "laya" && asked.last?.hasSuffix("laya") == true)
         #expect(await host.registry.system(ComposeSpec.defaultPipeline)?.decisions?.modelID.hasSuffix("laya") == true)
-        #expect(await host.status().models.first { $0.name == "laya" }?.state == "decision")
+        #expect(await host.status().models.first { $0.name == "laya" }?.state == .decision)
         _ = try await host.apply(ComposeApply(yaml: Self.base))
         #expect(await host.registry.system(ComposeSpec.defaultPipeline)?.decisions?.modelID == "self")
         #expect(await host.status().models.allSatisfy { $0.name != "laya" })

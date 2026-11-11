@@ -55,19 +55,30 @@ extension ComposeHost {
     func status() async -> ComposeStatus {
         var models: [ComposeModelStatus] = []
         for (name, model) in spec.models.sorted(by: { $0.key < $1.key }) {
-            var entry = ComposeModelStatus(name: name, source: Self.describe(model.source), keep: model.keep?.rawValue ?? (model.isCloud ? "cloud" : "resident"), state: "unknown")
+            var entry = ComposeModelStatus(name: name, source: Self.describe(model.source), keep: model.keep?.rawValue ?? (model.isCloud ? "cloud" : "resident"), state: .failed)
             switch held[name] {
-            case .resident(let orchestrator): entry.state = await orchestrator.isLoaded ? "loaded" : "unloaded"
+            case .resident(let orchestrator): entry.state = await orchestrator.isLoaded ? .ready : .unloaded
             case .onDemand(let onDemand):
-                (entry.state, entry.lastUsed, entry.idleUnload) = ("\(await onDemand.phase)", await onDemand.lastUsed, model.idleUnload ?? ComposeSpec.defaultIdleUnload)
+                (entry.state, entry.lastUsed, entry.idleUnload) = (ComposeModelState(await onDemand.phase), await onDemand.lastUsed, model.idleUnload ?? ComposeSpec.defaultIdleUnload)
             case .cloud(let id):
-                (entry.state, entry.spentToday, entry.limit, entry.refusal) = ("cloud", await cloudGate.spent(id), model.budget, await cloudGate.refusal(id)?.reason)
-            case .decision: entry.state = "decision"
+                let refusal = await cloudGate.refusal(id)
+                (entry.state, entry.spentToday, entry.limit, entry.refusal) = (Self.cloudState(refusal, key: services.key(model)), await cloudGate.spent(id), model.budget, refusal?.reason)
+            case .decision: entry.state = .decision
             case nil: break
             }
             models.append(entry)
         }
         return ComposeStatus(name: spec.name, pipelines: spec.pipelineNames, models: models, spentToday: await cloudGate.spent(CloudGateCore.total))
+    }
+
+    static func cloudState(_ refusal: CloudGateCore.Refusal?, key: String) -> ComposeModelState {
+        switch refusal {
+        case _ where key.isEmpty: .noKey
+        case .budget?: .overBudget
+        case .paused?: .rateLimited
+        case .disabled?: .refused
+        case nil: .cloud
+        }
     }
 
     static func describe(_ source: ComposeSpec.Source) -> String {

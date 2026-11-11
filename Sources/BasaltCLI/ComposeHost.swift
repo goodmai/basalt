@@ -88,6 +88,7 @@ actor ComposeHost {
         let next = try Self.parse(request)
         let diff = ComposeDiff.between(spec, next)
         if let restart = diff.restart { throw .invalidRequestStructure(details: "compose apply: \(restart)") }
+        if let missing = next.missingKeys(ProcessInfo.processInfo.environment).first { throw .invalidRequestStructure(details: "compose apply: \(missing) in the server's environment") }
         let order = try await admit(diff, next)
         let replaced = diff.removed + diff.reloaded
         let chatPath = await chat.modelPath

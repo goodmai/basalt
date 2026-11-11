@@ -121,7 +121,7 @@ struct ComposeCommand: AsyncParsableCommand {
                 for line in diff.lines { print(line) }
                 return
             }
-            ComposeCommand.log("Compose \(bold(spec.name)) → basalt serve \(spec.serveArguments.joined(separator: " "))")
+            try ComposeCommand.announce(spec, environment: ProcessInfo.processInfo.environment)
             var command = try ServeCommand.parse(spec.serveArguments + source.serveFlags + serve)
             try await command.run()
         }
@@ -161,9 +161,7 @@ struct ComposeCommand: AsyncParsableCommand {
                 print("\(name) is not running")
                 return
             }
-            kill(record.pid, SIGINT)
-            for _ in 0 ..< 300 where kill(record.pid, 0) == 0 { try await Task.sleep(for: .milliseconds(100)) }
-            print(kill(record.pid, 0) == 0 ? "\(name) (pid \(record.pid)) is still stopping" : "\(name) stopped")
+            try await ComposeCommand.stop(record, grace: .seconds(30))
         }
     }
 
@@ -199,7 +197,7 @@ struct ComposeCommand: AsyncParsableCommand {
             if let spent = model.spentToday { notes.append(String(format: "$%.4f today", spent) + (model.limit.map { String(format: " of $%.2f", $0) } ?? "")) }
             if let refusal = model.refusal { notes.append(refusal) }
             let name = model.name.padding(toLength: 12, withPad: " ", startingAt: 0)
-            let state = model.state.padding(toLength: 10, withPad: " ", startingAt: 0)
+            let state = model.state.rawValue.padding(toLength: 13, withPad: " ", startingAt: 0)
             return "  \(name) \(state) \(model.keep.padding(toLength: 10, withPad: " ", startingAt: 0)) \(model.source)" + (notes.isEmpty ? "" : "  (\(notes.joined(separator: "; ")))")
         }
     }

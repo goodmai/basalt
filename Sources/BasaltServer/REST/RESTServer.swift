@@ -170,6 +170,7 @@ package struct RESTServer: Sendable {
         oai.post("/pipeline", use: pipelineController.pipeline)
         oai.post("/pipelines/{name}", use: pipelineController.pipeline)
         if let compose { ComposeController(control: compose).add(to: oai) }
+        HealthRoutes(orchestrator: orchestrator, compose: compose).add(to: oai)
     }
 
     private func addDocumentationRoutes(to router: Router<BasicRequestContext>) {
@@ -233,6 +234,8 @@ extension RESTServer {
         "/v1/messages":            { "post": { "summary": "Anthropic-compatible messages API" } },
         "/v1/score":               { "post": { "summary": "Top-k logprobs of supplied completion token ids after chat messages, in one forward pass (teacher for on-policy distill)" } },
         "/v1/embeddings":          { "post": { "summary": "OpenAI-compatible embeddings (serve --embedding-model)" } },
+        "/v1/health/live":         { "get":  { "summary": "Liveness: 200 while the process serves HTTP" } },
+        "/v1/health/ready":        { "get":  { "summary": "Readiness: 200 once the chat model and every resident compose model can serve, 503 with the models still waiting" } },
         "/v1/systemone":           { "post": { "summary": "Single-pass typed decisions: noul, choice, score (serve --decision-model; with cloud:<model> OpenRouter answers first and questions below --decision-escalate-below go to --decision-escalate, listed per stage in usage.stages)" } },
         "/v1/rerank":              { "post": { "summary": "Cohere/Jina-compatible rerank (serve --rerank-model)" } },
         "/v1/audio/transcriptions": { "post": { "summary": "OpenAI-compatible speech to text (multipart: file, model, language, response_format, temperature)" } },

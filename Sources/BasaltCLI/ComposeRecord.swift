@@ -5,6 +5,7 @@ struct ComposeRecord: Codable, Sendable, Equatable {
     var pid: Int32
     var port: Int
     var file: String
+    var started: Int?
 
     static let directory = FileManager.default.homeDirectoryForCurrentUser.appending(path: ".basalt/compose")
 
@@ -12,7 +13,7 @@ struct ComposeRecord: Codable, Sendable, Equatable {
 
     static func write(name: String, port: Int, file: String, pid: Int32 = ProcessInfo.processInfo.processIdentifier) throws -> String {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let record = ComposeRecord(name: name, pid: pid, port: port, file: file)
+        let record = ComposeRecord(name: name, pid: pid, port: port, file: file, started: startTime(pid))
         try JSONEncoder().encode(record).write(to: url(name), options: .atomic)
         return name
     }
@@ -28,11 +29,23 @@ struct ComposeRecord: Codable, Sendable, Equatable {
 
     static func running(_ name: String) -> ComposeRecord? {
         guard let record = read(name) else { return nil }
-        guard kill(record.pid, 0) == 0 else {
+        guard alive(record) else {
             try? FileManager.default.removeItem(at: url(name))
             return nil
         }
         return record
+    }
+
+    static func alive(_ record: ComposeRecord) -> Bool {
+        guard kill(record.pid, 0) == 0 else { return false }
+        return record.started.map { $0 == startTime(record.pid) } ?? true
+    }
+
+    static func startTime(_ pid: Int32) -> Int? {
+        var info = proc_bsdinfo()
+        let size = Int32(MemoryLayout<proc_bsdinfo>.size)
+        guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, size) == size else { return nil }
+        return Int(info.pbi_start_tvsec)
     }
 
     static func all() -> [ComposeRecord] {
