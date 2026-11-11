@@ -69,7 +69,8 @@ extension ComposeSpec {
         for name in routed {
             workloads.append(Workload(name: name, role: "answer", unit: .gpu, kind: .decode, residentBytes: bytes(name)))
         }
-        if let decider = cascade.last, decider != answer, let source = local(decider) {
+        for decider in deciderModels.sorted() {
+            guard let source = local(decider) else { continue }
             workloads.append(Workload(name: decider, role: "decide", unit: sizes.onNeuralEngine(source) ? .ane : .gpu, kind: .encoder, residentBytes: bytes(decider)))
         }
         return (workloads, unknown)

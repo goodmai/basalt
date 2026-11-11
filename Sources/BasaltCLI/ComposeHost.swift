@@ -31,7 +31,8 @@ struct ComposeAdmission: Sendable {
 actor ComposeHost {
     let services: ComposeServices
     let chat: ModelOrchestratorActor
-    private(set) var decider: (any DecisionEngine)?
+    let startDecider: (any DecisionEngine)?
+    var selfDecider: (any DecisionEngine)?
     let cloudGate: CloudGate
     let startup: PipelineStages
     let besideDecode: Bool
@@ -42,7 +43,8 @@ actor ComposeHost {
     private var applying = false
 
     init(services: ComposeServices, spec: ComposeSpec, start: ComposeStart) {
-        (self.services, self.spec, self.chat, self.decider, self.cloudGate) = (services, spec, start.chat, start.decider, start.cloudGate)
+        (self.services, self.spec, self.chat, self.cloudGate) = (services, spec, start.chat, start.cloudGate)
+        (startDecider, selfDecider) = spec.decider == "self" ? (nil, start.decider) : (start.decider, nil)
         (self.startup, self.besideDecode, self.admission) = (start.startup, start.besideDecode, start.admission)
         registry = PipelineRegistry([:])
     }
@@ -50,12 +52,13 @@ actor ComposeHost {
     func start(defaultDecisions: (any DecisionEngine)?) async throws {
         held = startupHeld()
         for name in spec.models.keys.sorted() where held[name] == nil { held[name] = try await load(name, in: spec) }
-        await registry.replace(try await systems(for: spec, held: held, decider: decider, defaultDecisions: defaultDecisions))
+        try await ensureSelfDecider(spec)
+        await registry.replace(try await systems(for: spec, held: held, defaultDecisions: defaultDecisions))
     }
 
     func startupHeld() -> [String: ComposeHeld] {
         var held: [String: ComposeHeld] = [spec.answer: .resident(chat)]
-        if let name = spec.decider, name != "self", let decider { held[name] = .decision(decider) }
+        if let name = spec.deciderModel, let startDecider { held[name] = .decision(startDecider) }
         for (name, perceiver, orchestrator) in [(spec.ocr, PipelineCore.Perceiver.ocrModel, startup.ocr), (spec.speech, .speechModel, startup.audio)] {
             guard let name, let orchestrator else { continue }
             held[name] = startup.onDemand[perceiver].map(ComposeHeld.onDemand) ?? .resident(orchestrator)
@@ -68,6 +71,7 @@ actor ComposeHost {
         switch model.source {
         case .cloud(_, let id): return .cloud(id)
         case .local(let source):
+            if spec.deciderModels.contains(name) { return .decision(try await services.decider(source)) }
             let path = try await services.resolve(source)
             if spec.views.contains(where: { $0.spec.ocr == name }), let refusal = ServeCommand.ocrRefusal(source, path: path) { throw BasaltError.invalidRequestStructure(details: refusal) }
             if spec.views.contains(where: { $0.spec.speech == name }), let refusal = ServeCommand.audioRefusal(source, path: path) { throw BasaltError.invalidRequestStructure(details: refusal) }
@@ -94,11 +98,12 @@ actor ComposeHost {
         var fresh: [String: ComposeHeld] = [:]
         do {
             for name in diff.added + diff.reloaded { fresh[name] = try await load(name, in: next) }
-            let roles = try await swapRoles(diff, next)
-            let nextHeld = held.filter { diff.kept.contains($0.key) }.merging(fresh) { $1 }.merging(roles.held) { $1 }
-            let built = try await systems(for: next, held: nextHeld, decider: roles.decider, defaultDecisions: nil)
+            try await switchChat(diff, next)
+            try await ensureSelfDecider(next)
+            let nextHeld = held.filter { diff.kept.contains($0.key) }.merging(fresh) { $1 }.merging([next.answer: .resident(chat)]) { $1 }
+            let built = try await systems(for: next, held: nextHeld, defaultDecisions: nil)
             let previous = held
-            (held, spec, decider) = (nextHeld, next, roles.decider)
+            (held, spec) = (nextHeld, next)
             await registry.replace(built)
             await cloudGate.update(limits: services.cloudLimits(next), rekeyed: Set(diff.rekeyed.compactMap { Self.cloudID(next.models[$0]) }))
             if order == .loadFirst { for name in replaced { await Self.unload(previous[name]) } }
@@ -131,7 +136,7 @@ actor ComposeHost {
 
     func restore(_ names: [String]) async {
         for name in names { if let model = try? await load(name, in: spec) { held[name] = model } }
-        if let built = try? await systems(for: spec, held: held, decider: decider, defaultDecisions: nil) { await registry.replace(built) }
+        if let built = try? await systems(for: spec, held: held, defaultDecisions: nil) { await registry.replace(built) }
     }
 
     static func cloudID(_ model: ComposeSpec.Model?) -> String? {

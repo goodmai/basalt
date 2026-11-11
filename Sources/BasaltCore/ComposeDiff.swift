@@ -30,11 +30,11 @@ public struct ComposeDiff: Sendable, Equatable, Codable {
         case (nil, _?): added.append(name)
         case (_?, nil): removed.append(name)
         case (let before?, let after?):
-            Self.needsReload(before, after) ? reloaded.append(name) : kept.append(name)
+            Self.needsReload(before, after) || old.deciderModels.contains(name) != new.deciderModels.contains(name) ? reloaded.append(name) : kept.append(name)
             if after.isCloud, before.budget != after.budget { budgets.append(name) }
             if after.isCloud, before.apiKeyEnv != after.apiKeyEnv { rekeyed.append(name) }
         case (nil, nil):
-            if (name == new.answer && chat == nil) || (name == new.deciderModel && decider == nil) { kept.append(name) }
+            if name == new.answer, chat == nil { kept.append(name) }
         }
     }
 
@@ -73,7 +73,11 @@ extension ComposeSpec {
 
     public var deciderModel: String? { decider == "self" ? nil : decider }
 
-    var roleModels: [String] { [answer] + (deciderModel.map { [$0] } ?? []) }
+    var roleModels: [String] { [answer] }
+
+    public var deciderModels: Set<String> {
+        Set(views.compactMap { $0.spec.cascade.last }.filter { $0 != answer && models[$0]?.isCloud == false })
+    }
 }
 
 extension ComposeDiff {
@@ -86,7 +90,7 @@ extension ComposeDiff {
     ) -> Result<Order, Refusal> {
         let (verdict, _) = next.plan(sizes, budgetBytes: budgetBytes, power: power)
         if let refusal = verdict.refusal { return .failure(Refusal(reason: refusal)) }
-        let roles = (chat == nil ? [] : [previous.answer]) + (decider == nil ? [] : previous.deciderModel.map { [$0] } ?? [])
+        let roles = chat == nil ? [] : [previous.answer]
         let replaced = (removed + reloaded + roles).compactMap { previous.local($0).flatMap(sizes.bytes) }.reduce(0, +)
         return .success(verdict.residentBytes + replaced > budgetBytes ? .unloadFirst : .loadFirst)
     }

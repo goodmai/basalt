@@ -73,7 +73,7 @@ A system that does not fit is refused with the numbers before anything loads. A 
 
 ### Decide
 - **Order:** `cascade` lists the decision models in order. Each stage answers the questions it is confident about (at least `escalate_below`) and passes the rest on.
-- **The local stage:** the last stage is local. It is either the chat model (read out as `self`) or a decision model such as a Laya Core AI bundle. Every pipeline shares this one local decision model.
+- **The local stage:** the last stage is local. It is either the chat model (read out as `self`) or a decision model such as a Laya Core AI bundle. Each pipeline names its own. A decision model that several pipelines name is loaded once. A decision model only decides; only the chat model both answers and decides.
 - **What the cloud gets:** requests with documents or audio go only to the local stage.
 - **Thresholds:** questions whose confidence is below `abstain_below`, or whose top two options are closer than `min_margin`, go to the answer model.
 
@@ -129,7 +129,7 @@ models:
   - It prints `load`, `reload`, `unload` and `keep` per model, `budget` for each changed cloud budget (`total` for the file's) and `key` for each cloud model whose `api_key_env` changed.
   - A cloud model's budget or key variable changes without a reload. The new limits apply at once, and a model disabled by a refused key is enabled again when its key variable changes.
   - A different chat model is loaded into the serving model's place and printed as `chat`. Requests wait while it loads. If a later step of the apply fails, the old chat model is loaded back.
-  - A different local decision model is loaded and printed as `decide`. The pipelines and `/v1/systemone` use it from the next request.
+  - A pipeline's new local decision model is loaded like any added model. The default pipeline's is also printed as `decide`. The pipelines and `/v1/systemone` use it from the next request. A model that starts or stops deciding is reloaded in its new role.
 - **Changes that need a restart:** a different memory mode or a sequential perceiver. Run `compose down` and then `compose up`.
 - **`compose ps`:** lists each running system (`GET /v1/compose`) with its pipelines and, per model:
   - whether it is loaded, or `decision` for the local decision model, which the decision engine holds;

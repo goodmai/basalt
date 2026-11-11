@@ -41,15 +41,11 @@ extension ComposeSpec {
 
     var pipelineIssues: [Issue] {
         var issues: [Issue] = []
-        let deciders = Set([answer, cascade.last].compactMap { $0 })
         for (pipeline, view) in views where pipeline != Self.defaultPipeline {
             let path = "pipelines.\(pipeline)"
             if !pipeline.allSatisfy({ $0.isLowercase || $0.isNumber || $0 == "-" }) { issues.append(Issue(path, "a pipeline name uses lowercase letters, digits and -")) }
             if [view.ocr, view.speech].contains(where: { $0.flatMap { models[$0]?.keep } == .sequential }) {
                 issues.append(Issue("\(path).perceive", "sequential perceivers swap models around the default pipeline only; keep them resident or on-demand here"))
-            }
-            if let local = view.cascade.last, !deciders.contains(local) {
-                issues.append(Issue("\(path).decide.cascade", "every pipeline shares the default pipeline's local decision model (\(deciders.sorted().joined(separator: " or ")))"))
             }
         }
         return issues
@@ -118,7 +114,11 @@ extension ComposeSpec {
         let routed = views.contains { $0.spec.answer != name && $0.spec.answerModels.contains(name) }
         var issues = keepIssues(path, model, perceiver: perceiver, answer: routed)
         let answering = views.contains { $0.spec.answer == name }
-        if !model.isCloud, (roles[name]?.subtracting(answering ? ["cascade"] : []).count ?? 0) > 1 { issues.append(Issue(path, "one model serves one role; the answer model may also decide")) }
+        if deciderModels.contains(name), roles[name] != ["cascade"] {
+            issues.append(Issue(path, "a decision model only decides; the chat model (the default pipeline's answer) may also decide"))
+        } else if !model.isCloud, (roles[name]?.subtracting(answering ? ["cascade"] : []).count ?? 0) > 1 {
+            issues.append(Issue(path, "one model serves one role; the answer model may also decide"))
+        }
         if model.budget != nil, !model.isCloud { issues.append(Issue("\(path).budget", "applies only to cloud models")) }
         if let budget = model.budget, !(budget > 0) { issues.append(Issue("\(path).budget", "usd_per_day must be positive")) }
         switch model.source {
