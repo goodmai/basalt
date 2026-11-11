@@ -81,7 +81,7 @@ package struct GGUFImporter: Sendable {
         return arrays
     }
 
-    func convert(_ tensor: GGUFTensor, _ plan: GGUFTensorPlan, bits: Int?) -> [String: MLXArray] {
+    func convert(_ tensor: GGUFTensor, _ plan: GGUFTensorPlan, bits: Int?, dense: DType = .bfloat16) -> [String: MLXArray] {
         let rows = tensor.count / tensor.rowLength
         var weight = MLXArray(file.floats(tensor), tensor.dims.count == 1 ? [tensor.count] : [rows, tensor.rowLength])
         switch plan.transform {
@@ -91,7 +91,7 @@ package struct GGUFImporter: Sendable {
         case .vHeadColumns: weight = weight.take(MLXArray(layout.tiledToGrouped(layout.valueHeadDim).map(Int32.init)), axis: 1)
         case .convChannels(let from): weight = Self.regroupRows(weight, from: from, order: layout.tiledToGrouped(layout.valueHeadDim)).expandedDimensions(axis: -1)
         }
-        guard let bits else { return [plan.target: weight.asType(.bfloat16)] }
+        guard let bits else { return [plan.target: weight.asType(dense)] }
         let (wq, scales, biases) = quantized(weight.asType(.bfloat16), groupSize: groupSize, bits: bits)
         let base = String(plan.target.dropLast(".weight".count))
         var arrays = [plan.target: wq, base + ".scales": scales]
