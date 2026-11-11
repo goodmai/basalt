@@ -53,6 +53,7 @@ public actor ModelOrchestratorActor {
     }
 
     public var currentModelId: String { state.modelId }
+    public var modelPath: String { state.modelPath }
 
     var kvReservations: [Int: ByteCount] { state.reservations.bytes }
 

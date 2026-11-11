@@ -8,6 +8,7 @@ import NIOCore
 @testable import BasaltCLI
 @testable import BasaltCloud
 @testable import BasaltServer
+import BasaltInference
 
 @Suite("basalt compose phase 3: named pipelines, compose up as a diff on a running system, compose ps and down (#412)", .timeLimit(.minutes(1)))
 struct ComposeOperationsTests {
@@ -50,15 +51,12 @@ struct ComposeOperationsTests {
         #expect(ComposeDiff.between(new, old).removed == ["haiku"])
     }
 
-    @Test("A restart is needed for another system, another chat model, another memory mode, a sequential perceiver or another local decider")
+    @Test("A restart is needed for another system, another memory mode or a sequential perceiver")
     func restarts() throws {
         let old = try ComposeFile.parse(Self.base, file: "a.yaml")
         var renamed = old
         renamed.name = "other"
         #expect(ComposeDiff.between(old, renamed).restart?.contains("another system") == true)
-        var chat = old
-        chat.models["chat"] = .init(source: .local("mlx-community/other"))
-        #expect(ComposeDiff.between(old, chat).restart?.contains("chat model") == true)
         var memory = old
         memory.memory = .sequential
         #expect(ComposeDiff.between(old, memory).restart?.contains("memory mode") == true)
@@ -66,10 +64,6 @@ struct ComposeOperationsTests {
         swapped.models["asr"] = .init(source: .local("divergentlabs/asr"), keep: .sequential)
         swapped.audio = ["asr"]
         #expect(ComposeDiff.between(old, swapped).restart != nil)
-        var decider = old
-        decider.models["laya"] = .init(source: .local("./laya"))
-        decider.cascade = ["jev", "laya"]
-        #expect(ComposeDiff.between(old, decider).restart?.contains("local decision model") == true)
     }
 
     @Test("Named pipelines parse; each is checked like the default one, shares its local decider, and keeps sequential perceivers to the default pipeline")
@@ -109,7 +103,7 @@ struct ComposeOperationsTests {
         #expect(try await post("/v1/pipelines/support") == .ok)
     }
 
-    @Test("A running host applies a diff that adds a cloud answer model and a named pipeline, refuses one that changes the chat model, and reports status")
+    @Test("A running host applies a diff that adds a cloud answer model and a named pipeline, refuses one that names another system, and reports status")
     func hostApply() async throws {
         let spec = try ComposeFile.parse(Self.base, file: "a.yaml")
         let serve = try ServeCommand.parse(spec.serveArguments)
@@ -117,7 +111,7 @@ struct ComposeOperationsTests {
         let gate = serve.cloudGate(spec)
         var start = ComposeStart(chat: chat, decider: StubDecisionEngine(), decisions: nil, cloudGate: gate, startup: PipelineStages(), besideDecode: true)
         start.admission = ComposeAdmission(sizes: ComposeFileTests.sizes(["mlx-community/gemma-4-12B-it-qat-4bit": 11 * ComposeFileTests.gb])) { (19 * ComposeFileTests.gb, .desktop) }
-        let host = ComposeHost(services: ComposeServices(serve: serve), spec: spec, start: start)
+        let host = ComposeHost(services: ComposeServices(serve: serve, chat: MLXInferenceEngine()), spec: spec, start: start)
         try await host.start(defaultDecisions: nil)
         #expect(await host.registry.names == ["default"])
         let diff = try await host.apply(ComposeApply(yaml: Self.with(Self.haiku, pipelines: Self.support)))
@@ -125,7 +119,7 @@ struct ComposeOperationsTests {
         #expect(await host.registry.names == ["default", "support"])
         let support = try #require(await host.registry.system("support"))
         #expect(support.stages.answers?.targets["haiku"]?.isCloud == true)
-        await #expect(throws: BasaltError.self) { _ = try await host.apply(ComposeApply(yaml: Self.base.replacingOccurrences(of: "gemma-4-12B-it-qat-4bit", with: "other"))) }
+        await #expect(throws: BasaltError.self) { _ = try await host.apply(ComposeApply(yaml: Self.base.replacingOccurrences(of: "name: ops", with: "name: other"))) }
         await gate.record("~typesafe/jev-latest", cost: 0.5)
         await gate.failed("anthropic/claude-haiku-5.5", .authenticationFailed(details: "OpenRouter 401: key refused"))
         let (before, refused) = (await gate.refusal("~typesafe/jev-latest"), await gate.refusal("anthropic/claude-haiku-5.5"))
@@ -137,7 +131,7 @@ struct ComposeOperationsTests {
         #expect(await gate.refusal("~typesafe/jev-latest")?.reason.contains("daily budget spent") == true)
         #expect(await gate.refusal("anthropic/claude-haiku-5.5") == nil)
         let tooBig = await #expect(throws: BasaltError.self) {
-            _ = try await ComposeHost(services: ComposeServices(serve: serve), spec: try ComposeFile.parse(tightened, file: "t.yaml"), start: {
+            _ = try await ComposeHost(services: ComposeServices(serve: serve, chat: MLXInferenceEngine()), spec: try ComposeFile.parse(tightened, file: "t.yaml"), start: {
                 var small = start
                 small.admission = ComposeAdmission(sizes: ComposeFileTests.sizes(["mlx-community/gemma-4-12B-it-qat-4bit": 11 * ComposeFileTests.gb])) { (8 * ComposeFileTests.gb, .desktop) }
                 return small
@@ -154,7 +148,7 @@ struct ComposeOperationsTests {
     func injectedServices() async throws {
         let asked = KeyLog()
         let services = ComposeServices(
-            resolve: { $0 }, load: { _, _, _, _ in nil },
+            resolve: { $0 }, load: { _, _, _, _ in nil }, decider: { _ in StubDecisionEngine() },
             decisions: { _, local, _, _, _ in local },
             key: { model in asked.record(model?.apiKeyEnv); return "test-key" },
             cloudLimits: { _ in [:] })
@@ -177,7 +171,7 @@ struct ComposeOperationsTests {
         let serve = try ServeCommand.parse(spec.serveArguments)
         let (_, chat) = try await PipelineSwapEdgeTests.chat()
         let start = ComposeStart(chat: chat, decider: StubDecisionEngine(), decisions: nil, cloudGate: serve.cloudGate(spec), startup: PipelineStages(), besideDecode: true)
-        let host = ComposeHost(services: ComposeServices(serve: serve), spec: spec, start: start)
+        let host = ComposeHost(services: ComposeServices(serve: serve, chat: MLXInferenceEngine()), spec: spec, start: start)
         try await host.start(defaultDecisions: nil)
         let status = await host.status()
         #expect(status.models.first { $0.name == "laya" }?.state == "decision")

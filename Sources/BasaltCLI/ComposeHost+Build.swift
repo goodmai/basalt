@@ -5,7 +5,7 @@ import BasaltServer
 import BasaltSpeech
 
 extension ComposeHost {
-    func systems(for spec: ComposeSpec, held: [String: ComposeHeld], defaultDecisions: (any DecisionEngine)?) async throws -> [String: PipelineSystem] {
+    func systems(for spec: ComposeSpec, held: [String: ComposeHeld], decider: (any DecisionEngine)?, defaultDecisions: (any DecisionEngine)?) async throws -> [String: PipelineSystem] {
         var systems: [String: PipelineSystem] = [:]
         for (name, view) in spec.views {
             let first = name == ComposeSpec.defaultPipeline

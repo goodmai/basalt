@@ -31,7 +31,7 @@ struct ComposeAdmission: Sendable {
 actor ComposeHost {
     let services: ComposeServices
     let chat: ModelOrchestratorActor
-    let decider: (any DecisionEngine)?
+    private(set) var decider: (any DecisionEngine)?
     let cloudGate: CloudGate
     let startup: PipelineStages
     let besideDecode: Bool
@@ -50,7 +50,7 @@ actor ComposeHost {
     func start(defaultDecisions: (any DecisionEngine)?) async throws {
         held = startupHeld()
         for name in spec.models.keys.sorted() where held[name] == nil { held[name] = try await load(name, in: spec) }
-        await registry.replace(try await systems(for: spec, held: held, defaultDecisions: defaultDecisions))
+        await registry.replace(try await systems(for: spec, held: held, decider: decider, defaultDecisions: defaultDecisions))
     }
 
     func startupHeld() -> [String: ComposeHeld] {
@@ -86,19 +86,25 @@ actor ComposeHost {
         if let restart = diff.restart { throw .invalidRequestStructure(details: "compose apply: \(restart)") }
         let order = try await admit(diff, next)
         let replaced = diff.removed + diff.reloaded
-        if order == .unloadFirst { for name in replaced { await Self.unload(held[name]) } }
+        let chatPath = await chat.modelPath
+        if order == .unloadFirst {
+            for name in replaced { await Self.unload(held[name]) }
+            if diff.chat != nil { await chat.unloadModel() }
+        }
         var fresh: [String: ComposeHeld] = [:]
         do {
             for name in diff.added + diff.reloaded { fresh[name] = try await load(name, in: next) }
-            let nextHeld = held.filter { diff.kept.contains($0.key) }.merging(fresh) { $1 }
-            let built = try await systems(for: next, held: nextHeld, defaultDecisions: nil)
+            let roles = try await swapRoles(diff, next)
+            let nextHeld = held.filter { diff.kept.contains($0.key) }.merging(fresh) { $1 }.merging(roles.held) { $1 }
+            let built = try await systems(for: next, held: nextHeld, decider: roles.decider, defaultDecisions: nil)
             let previous = held
-            (held, spec) = (nextHeld, next)
+            (held, spec, decider) = (nextHeld, next, roles.decider)
             await registry.replace(built)
             await cloudGate.update(limits: services.cloudLimits(next), rekeyed: Set(diff.rekeyed.compactMap { Self.cloudID(next.models[$0]) }))
             if order == .loadFirst { for name in replaced { await Self.unload(previous[name]) } }
         } catch {
             for model in fresh.values { await Self.unload(model) }
+            if diff.chat != nil { await restoreChat(chatPath) }
             if order == .unloadFirst { await restore(replaced) }
             throw error as? BasaltError ?? .invalidRequestStructure(details: "compose apply: \(error.localizedDescription)")
         }
@@ -125,7 +131,7 @@ actor ComposeHost {
 
     func restore(_ names: [String]) async {
         for name in names { if let model = try? await load(name, in: spec) { held[name] = model } }
-        if let built = try? await systems(for: spec, held: held, defaultDecisions: nil) { await registry.replace(built) }
+        if let built = try? await systems(for: spec, held: held, decider: decider, defaultDecisions: nil) { await registry.replace(built) }
     }
 
     static func cloudID(_ model: ComposeSpec.Model?) -> String? {
