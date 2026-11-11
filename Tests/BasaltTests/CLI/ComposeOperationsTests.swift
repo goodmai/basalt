@@ -1,3 +1,4 @@
+import Synchronization
 import Testing
 import Foundation
 import Hummingbird
@@ -5,6 +6,7 @@ import HummingbirdTesting
 import NIOCore
 @testable import BasaltCore
 @testable import BasaltCLI
+@testable import BasaltCloud
 @testable import BasaltServer
 
 @Suite("basalt compose phase 3: named pipelines, compose up as a diff on a running system, compose ps and down (#412)", .timeLimit(.minutes(1)))
@@ -115,7 +117,7 @@ struct ComposeOperationsTests {
         let gate = serve.cloudGate(spec)
         var start = ComposeStart(chat: chat, decider: StubDecisionEngine(), decisions: nil, cloudGate: gate, startup: PipelineStages(), besideDecode: true)
         start.admission = ComposeAdmission(sizes: ComposeFileTests.sizes(["mlx-community/gemma-4-12B-it-qat-4bit": 11 * ComposeFileTests.gb])) { (19 * ComposeFileTests.gb, .desktop) }
-        let host = ComposeHost(serve: serve, spec: spec, start: start)
+        let host = ComposeHost(services: ComposeServices(serve: serve), spec: spec, start: start)
         try await host.start(defaultDecisions: nil)
         #expect(await host.registry.names == ["default"])
         let diff = try await host.apply(ComposeApply(yaml: Self.with(Self.haiku, pipelines: Self.support)))
@@ -135,7 +137,7 @@ struct ComposeOperationsTests {
         #expect(await gate.refusal("~typesafe/jev-latest")?.reason.contains("daily budget spent") == true)
         #expect(await gate.refusal("anthropic/claude-haiku-5.5") == nil)
         let tooBig = await #expect(throws: BasaltError.self) {
-            _ = try await ComposeHost(serve: serve, spec: try ComposeFile.parse(tightened, file: "t.yaml"), start: {
+            _ = try await ComposeHost(services: ComposeServices(serve: serve), spec: try ComposeFile.parse(tightened, file: "t.yaml"), start: {
                 var small = start
                 small.admission = ComposeAdmission(sizes: ComposeFileTests.sizes(["mlx-community/gemma-4-12B-it-qat-4bit": 11 * ComposeFileTests.gb])) { (8 * ComposeFileTests.gb, .desktop) }
                 return small
@@ -148,6 +150,26 @@ struct ComposeOperationsTests {
         #expect(status.models.first { $0.name == "haiku" }?.state == "cloud" && status.models.first { $0.name == "chat" }?.state == "loaded")
     }
 
+    @Test("A host runs on injected services, without serve flags; after a key change the cloud client is built with the new key variable")
+    func injectedServices() async throws {
+        let asked = KeyLog()
+        let services = ComposeServices(
+            resolve: { $0 }, load: { _, _, _, _ in nil },
+            decisions: { _, local, _, _, _ in local },
+            key: { model in asked.record(model?.apiKeyEnv); return "test-key" },
+            cloudLimits: { _ in [:] })
+        let spec = try ComposeFile.parse(Self.with(Self.haiku, pipelines: Self.support), file: "s.yaml")
+        let (_, chat) = try await PipelineSwapEdgeTests.chat()
+        var start = ComposeStart(chat: chat, decider: StubDecisionEngine(), decisions: nil, cloudGate: CloudGate(limits: [:], storage: nil), startup: PipelineStages(), besideDecode: true)
+        start.admission = ComposeAdmission(sizes: ComposeFileTests.sizes([:])) { (64 * ComposeFileTests.gb, .desktop) }
+        let host = ComposeHost(services: services, spec: spec, start: start)
+        try await host.start(defaultDecisions: nil)
+        #expect(asked.last == "HOME")
+        let rekeyed = Self.with(Self.haiku.replacingOccurrences(of: "api_key_env: HOME", with: "api_key_env: USER"), pipelines: Self.support)
+        #expect(try await host.apply(ComposeApply(yaml: rekeyed)).rekeyed == ["haiku"])
+        #expect(asked.last == "USER")
+    }
+
     @Test("A local decision model is held by serve's decision engine; the host neither loads it a second time nor counts it as missing")
     func localDecider() async throws {
         let yaml = Self.base.replacingOccurrences(of: "pipeline:\n", with: "  laya:\n    source: ./missing-laya-bundle\npipeline:\n").replacingOccurrences(of: "cascade: [jev, chat]", with: "cascade: [jev, laya]")
@@ -155,7 +177,7 @@ struct ComposeOperationsTests {
         let serve = try ServeCommand.parse(spec.serveArguments)
         let (_, chat) = try await PipelineSwapEdgeTests.chat()
         let start = ComposeStart(chat: chat, decider: StubDecisionEngine(), decisions: nil, cloudGate: serve.cloudGate(spec), startup: PipelineStages(), besideDecode: true)
-        let host = ComposeHost(serve: serve, spec: spec, start: start)
+        let host = ComposeHost(services: ComposeServices(serve: serve), spec: spec, start: start)
         try await host.start(defaultDecisions: nil)
         let status = await host.status()
         #expect(status.models.first { $0.name == "laya" }?.state == "decision")
@@ -214,4 +236,12 @@ struct ComposeOperationsTests {
         _ = try ComposeRecord.write(name: name, port: 18_123, file: "x.yaml", pid: 999_999)
         #expect(ComposeRecord.running(name) == nil && ComposeRecord.read(name) == nil)
     }
+}
+
+final class KeyLog: Sendable {
+    private let names = Mutex<[String?]>([])
+
+    func record(_ name: String?) { names.withLock { $0.append(name) } }
+
+    var last: String? { names.withLock { $0.last ?? nil } }
 }
