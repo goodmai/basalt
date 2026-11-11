@@ -141,7 +141,7 @@ let package = Package(
         .executableTarget(
             name: "Basalt",
             dependencies: [
-                "BasaltCLI",
+                "BasaltCLI", "BasaltInference",
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
             ],
             path: "Sources/BasaltBin",

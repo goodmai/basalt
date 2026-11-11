@@ -39,10 +39,10 @@ public final class AppModel {
         await supervisor.start()
     }
 
-    public func stop() async { await supervisor.stop() }
+    public func stop() async { await supervisor.shutdown() }
 
     public func restart() async {
-        await supervisor.stop()
+        await supervisor.shutdown()
         await supervisor.start()
     }
 

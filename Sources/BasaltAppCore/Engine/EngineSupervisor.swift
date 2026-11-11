@@ -4,8 +4,11 @@ import Foundation
 public struct HelperLaunch: Sendable, Equatable {
     public var executable: URL
     public var arguments: [String]
+    public var environment: [String: String]
 
-    public init(executable: URL, arguments: [String]) { (self.executable, self.arguments) = (executable, arguments) }
+    public init(executable: URL, arguments: [String], environment: [String: String] = [:]) {
+        (self.executable, self.arguments, self.environment) = (executable, arguments, environment)
+    }
 
     public static let readyPrefix = "basalt-ready "
     public static let logLines = 200
@@ -23,6 +26,8 @@ public actor EngineSupervisor {
     private let environment: EngineEnvironment
     private var process: Process?
     private var adoptedPID: Int32?
+    private var ended: Set<Int32> = []
+    private var endWaiters: [Int32: [CheckedContinuation<Void, Never>]] = [:]
 
     public init(launch: HelperLaunch, environment: EngineEnvironment, token: String = EngineSupervisor.newToken()) {
         (self.launch, self.environment, self.token) = (launch, environment, token)
@@ -47,6 +52,24 @@ public actor EngineSupervisor {
     }
 
     public func stop() { send(.stop) }
+
+    public func shutdown() async {
+        guard let process else { return send(.stop) }
+        let pid = process.processIdentifier
+        send(.stop)
+        let sleep = environment.sleep
+        let deadline = Task {
+            guard (try? await sleep(HelperLaunch.stopGrace)) != nil else { return }
+            kill(pid, SIGKILL)
+        }
+        await end(of: pid)
+        deadline.cancel()
+    }
+
+    func end(of pid: Int32) async {
+        guard !ended.contains(pid) else { return }
+        await withCheckedContinuation { endWaiters[pid, default: []].append($0) }
+    }
 
     func send(_ event: EngineEvent) {
         for effect in EngineReducer.reduce(&state, event) { perform(effect) }
@@ -74,11 +97,12 @@ public actor EngineSupervisor {
         let process = Process()
         process.executableURL = launch.executable
         process.arguments = launch.arguments + ["--host", "127.0.0.1", "--port", "0", "--announce-ready"]
-        process.environment = ProcessInfo.processInfo.environment.merging(["BASALT_API_KEY": token]) { $1 }
+        process.environment = ProcessInfo.processInfo.environment.merging(launch.environment) { $1 }.merging(["BASALT_API_KEY": token]) { $1 }
         let (output, errors) = (Pipe(), Pipe())
         (process.standardOutput, process.standardError) = (output, errors)
-        process.terminationHandler = { [weak self] _ in
-            Task { await self?.exited(epoch) }
+        process.terminationHandler = { [weak self] ended in
+            let pid = ended.processIdentifier
+            Task { await self?.exited(epoch, pid: pid) }
         }
         do {
             try process.run()
@@ -133,7 +157,9 @@ public actor EngineSupervisor {
         log = Array((log + lines).suffix(HelperLaunch.logLines))
     }
 
-    func exited(_ epoch: Int) {
+    func exited(_ epoch: Int, pid: Int32) {
+        ended.insert(pid)
+        for waiter in endWaiters.removeValue(forKey: pid) ?? [] { waiter.resume() }
         if epoch == state.epoch { process = nil }
         send(.exited(epoch: epoch, at: environment.now(), log: log))
     }

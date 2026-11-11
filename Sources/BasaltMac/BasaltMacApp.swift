@@ -1,11 +1,27 @@
 import BasaltApp
 import BasaltAppCore
 import Foundation
+import AppKit
 import SwiftUI
+
+@MainActor
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    let model = BasaltMacApp.makeModel()
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard let model, !model.engine.isIdle else { return .terminateNow }
+        Task {
+            await model.stop()
+            sender.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
+    }
+}
 
 @main
 struct BasaltMacApp: App {
-    @State private var model: AppModel? = BasaltMacApp.makeModel()
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
+    private var model: AppModel? { delegate.model }
     @AppStorage("model") private var modelID = BasaltMacApp.defaultModel
 
     static let defaultModel = "mlx-community/gemma-4-12B-it-qat-4bit"
@@ -38,8 +54,10 @@ struct BasaltMacApp: App {
         let model = UserDefaults.standard.string(forKey: "model") ?? defaultModel
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appending(path: "Basalt")
         try? FileManager.default.createDirectory(at: support, withIntermediateDirectories: true)
+        let metallib = Bundle.main.bundleURL.appending(path: "Contents/Resources/mlx.metallib")
+        let environment = FileManager.default.fileExists(atPath: metallib.path) ? ["BASALT_METALLIB": metallib.path] : [:]
         return try? AppModel(
-            launch: HelperLaunch(executable: helper, arguments: ["serve", "--model", model]), model: model,
+            launch: HelperLaunch(executable: helper, arguments: ["serve", "--model", model], environment: environment), model: model,
             storeURL: support.appending(path: "Conversations.store"))
     }
 

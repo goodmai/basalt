@@ -60,9 +60,10 @@ struct EngineSupervisorTests {
         #expect(mode == 0o600)
         let endpoint = await supervisor.endpoint
         #expect(endpoint == .loopback(port: 4242, token: token))
-        await supervisor.stop()
+        await supervisor.shutdown()
         let stopped = await supervisor.state.phase
         #expect(stopped == .stopped && EngineRecords.file(fixture.recordURL).load() == nil)
+        #expect(kill(record.pid, 0) != 0, "the helper outlived shutdown")
     }
 
     @Test("A helper that exits at once is restarted twice with backoff, then the supervisor gives up with its stderr lines")

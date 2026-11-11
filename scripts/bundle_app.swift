@@ -8,7 +8,7 @@ let usage = """
     Builds the release products, then assembles Basalt.app:
       Contents/MacOS/Basalt          the SwiftUI app (BasaltMac)
       Contents/Helpers/basalt        the engine the app supervises (the basalt CLI)
-      Contents/Helpers/mlx.metallib  MLX's kernels, next to the engine
+      Contents/Resources/mlx.metallib  MLX's kernels; the app passes the path to the engine in BASALT_METALLIB
       Contents/Info.plist
 
     Options:
@@ -93,7 +93,7 @@ func assemble(_ options: Options, bin: String) {
     let layout = [
         ("\(bin)/BasaltMac", contents.appending(path: "MacOS/Basalt")),
         ("\(bin)/Basalt", contents.appending(path: "Helpers/basalt")),
-        ("\(bin)/mlx.metallib", contents.appending(path: "Helpers/mlx.metallib")),
+        ("\(bin)/mlx.metallib", contents.appending(path: "Resources/mlx.metallib")),
     ]
     for (source, target) in layout { print("  \(source) → \(target.path)") }
     guard !options.dryRun else { return }

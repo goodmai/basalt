@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import BasaltCore
+@testable import BasaltInference
 
 @Suite("scripts/bundle_app.swift: the plan, and the Basalt.app layout from a given bin folder (#434 phase 1)")
 struct BundleAppScriptTests {
@@ -28,8 +29,18 @@ struct BundleAppScriptTests {
         #expect(Self.run("scripts/bundle_app.swift", args: ["--bin", bin.path, "--out", app.path, "--no-sign"]) == 0)
         #expect(try String(contentsOf: app.appending(path: "Contents/MacOS/Basalt"), encoding: .utf8) == "BasaltMac")
         #expect(try String(contentsOf: app.appending(path: "Contents/Helpers/basalt"), encoding: .utf8) == "Basalt")
-        #expect(fm.fileExists(atPath: app.appending(path: "Contents/Helpers/mlx.metallib").path))
+        #expect(fm.fileExists(atPath: app.appending(path: "Contents/Resources/mlx.metallib").path))
         let plist = try #require(NSDictionary(contentsOf: app.appending(path: "Contents/Info.plist")) as? [String: Any])
         #expect(plist["CFBundleExecutable"] as? String == "Basalt" && plist["CFBundleShortVersionString"] as? String == HealthResponse.version)
+    }
+}
+
+@Suite("BASALT_METALLIB: the engine takes MLX's kernel library path from the app (#434 phase 1)")
+struct MetallibOverrideTests {
+    @Test("A missing or empty path changes nothing")
+    func ignoresMissing() {
+        #expect(MetallibOverride.apply([:]) == nil)
+        #expect(MetallibOverride.apply(["BASALT_METALLIB": ""]) == nil)
+        #expect(MetallibOverride.apply(["BASALT_METALLIB": "/nonexistent/mlx.metallib"]) == nil)
     }
 }
