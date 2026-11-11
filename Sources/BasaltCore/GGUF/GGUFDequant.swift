@@ -19,17 +19,10 @@ enum GGUFDequant {
         case .f16: y[0] = half(b, 0)
         case .bf16: y[0] = Float(bitPattern: UInt32(b.loadUnaligned(as: UInt16.self)) << 16)
         case .q8_0: for j in 0 ..< 32 { y[j] = half(b, 0) * Float(Int8(bitPattern: b[2 + j])) }
-        case .iq4NL: iq4NL(b, y)
         case .q2K: q2K(b, y)
         case .q4K: q4K(b, y)
         case .q6K: q6K(b, y)
-        case .iq4XS: iq4XS(b, y)
-        case .iq3S: iq3S(b, y)
-        case .iq3XXS: iq3XXS(b, y)
-        case .iq2S: iq2S(b, y)
-        case .iq2XS: iq2XS(b, y)
-        case .iq2XXS: iq2XXS(b, y)
-        case .iq1M: iq1M(b, y)
+        case .iq4NL, .iq4XS, .iq3S, .iq3XXS, .iq2S, .iq2XS, .iq2XXS, .iq1M: decodeIQ(b, type: type, into: y)
         }
     }
 

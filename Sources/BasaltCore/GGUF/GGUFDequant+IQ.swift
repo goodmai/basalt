@@ -1,6 +1,20 @@
 import Foundation
 
 extension GGUFDequant {
+    static func decodeIQ(_ b: UnsafeRawBufferPointer, type: GGMLType, into y: UnsafeMutableBufferPointer<Float>) {
+        switch type {
+        case .iq4NL: iq4NL(b, y)
+        case .iq4XS: iq4XS(b, y)
+        case .iq3S: iq3S(b, y)
+        case .iq3XXS: iq3XXS(b, y)
+        case .iq2S: iq2S(b, y)
+        case .iq2XS: iq2XS(b, y)
+        case .iq2XXS: iq2XXS(b, y)
+        case .iq1M: iq1M(b, y)
+        case .f32, .f16, .bf16, .q8_0, .q2K, .q4K, .q6K: decode(b, type: type, into: y)
+        }
+    }
+
     static func iq3S(_ b: UnsafeRawBufferPointer, _ y: UnsafeMutableBufferPointer<Float>) {
         let d = half(b, 0)
         for pair in 0 ..< 4 {
