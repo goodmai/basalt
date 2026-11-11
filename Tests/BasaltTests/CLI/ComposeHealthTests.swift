@@ -59,19 +59,24 @@ struct ComposeHealthTests {
         reused.started = 1
         try JSONEncoder().encode(reused).write(to: ComposeRecord.url(name))
         #expect(ComposeRecord.running(name) == nil)
-        let stubborn = try Self.spawn("trap '' INT; echo ready; exec sleep 20")
+        let stubborn = try await Self.spawn("trap '' INT; echo ready; exec sleep 20")
         defer { stubborn.terminate() }
         await #expect(throws: ExitCode.self) { try await ComposeCommand.stop(Self.record(stubborn), grace: .milliseconds(300)) }
-        let polite = try Self.spawn("echo ready; exec sleep 20")
+        let polite = try await Self.spawn("echo ready; exec sleep 20")
         try await ComposeCommand.stop(Self.record(polite), grace: .seconds(10))
         #expect(!ComposeRecord.alive(Self.record(polite)))
     }
 
-    static func spawn(_ script: String) throws -> Process {
+    static func spawn(_ script: String) async throws -> Process {
         let (process, output) = (Process(), Pipe())
         (process.executableURL, process.arguments, process.standardOutput) = (URL(fileURLWithPath: "/bin/sh"), ["-c", script], output)
         try process.run()
-        _ = output.fileHandleForReading.availableData
+        await withCheckedContinuation { (ready: CheckedContinuation<Void, Never>) in
+            output.fileHandleForReading.readabilityHandler = { handle in
+                handle.readabilityHandler = nil
+                ready.resume()
+            }
+        }
         return process
     }
 
