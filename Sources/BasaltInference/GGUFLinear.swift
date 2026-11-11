@@ -35,9 +35,13 @@ enum GGUFKernels {
         let (rows, columns, outputs) = (x.dim(0), x.dim(1), packed.dim(0))
         let groups = (outputs + simdgroups * rowsPerSimdgroup - 1) / (simdgroups * rowsPerSimdgroup)
         return matvecKernel(
-            [x, packed], template: template(type, columns: columns, dtype: x.dtype) + [("M", rows), ("NR", rowsPerSimdgroup), ("SG", simdgroups)],
+            [x, packed], template: template(type, columns: columns, dtype: x.dtype) + [("M", rows), ("NR", rowsPerSimdgroup), ("SG", simdgroups), ("H", halfGrid(type, dtype: x.dtype))],
             grid: (32, simdgroups * groups, 1), threadGroup: (32, simdgroups, 1),
             outputShapes: [[rows, outputs]], outputDTypes: [x.dtype])[0]
+    }
+
+    static func halfGrid(_ type: GGMLType, dtype: DType) -> Bool {
+        (type == .iq3S || type == .iq3XXS) && dtype != .float32
     }
 
     static let dequantSource = """
@@ -57,11 +61,21 @@ enum GGUFKernels {
         const uint N = uint(w_shape[0]);
         threadgroup ulong grid[GN];
         gguf_load_grid<Q, GN>(grid, thread_index_in_threadgroup, 32u * uint(SG));
+        threadgroup ulong hgrid[H ? GN : 1];
+        if (H) gguf_load_half_grid<GN>(hgrid, grid, thread_index_in_threadgroup, 32u * uint(SG));
         uint lane = thread_index_in_simdgroup;
         uint row0 = (threadgroup_position_in_grid.y * uint(SG) + simdgroup_index_in_threadgroup) * uint(NR);
         float acc[NR][M];
         for (uint r = 0; r < uint(NR); ++r) for (uint m = 0; m < uint(M); ++m) acc[r][m] = 0.0f;
         for (uint g = lane; g < GPR; g += 32u) {
+            if (M == 1 && H) {
+                half4 xh[8];
+                device const T* xs = x + g * 32u;
+                for (uint j = 0; j < 8u; ++j) xh[j] = half4(clamp(float4(xs[4 * j], xs[4 * j + 1], xs[4 * j + 2], xs[4 * j + 3]), -65504.0f, 65504.0f));
+                for (uint r = 0; r < uint(NR); ++r)
+                    acc[r][0] += gguf_dot32_h<Q>(w + min(row0 + r, N - 1) * ROW + (g / SUB) * BB, g % SUB, xh, hgrid);
+                continue;
+            }
             if (M == 1) {
                 float4 xr[8];
                 device const T* xs = x + g * 32u;

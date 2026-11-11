@@ -85,6 +85,20 @@ struct GGUFKernelTests {
         #expect(Self.relativeError(tiled, matmul(x, Self.dense(bytes, type, rows: outputs, columns: inputs).T)) < 1e-5)
     }
 
+    @Test("The half-precision lattice path for IQ3 types neither overflows nor drifts on activations in the thousands", arguments: [GGMLType.iq3S, .iq3XXS])
+    func halfPathRange(type: GGMLType) throws {
+        let (outputs, inputs) = (16, 1024)
+        #expect(GGUFKernels.halfGrid(type, dtype: .bfloat16) && !GGUFKernels.halfGrid(type, dtype: .float32) && !GGUFKernels.halfGrid(.q4K, dtype: .bfloat16))
+        let bytes = Self.blocks(type, count: outputs * inputs / type.block.elements, seed: 21, scale: 0.05)
+        let layer = GGUFLinear(type: type, outputs: outputs, inputs: inputs)
+        try layer.update(parameters: ModuleParameters.unflattened(["weight": Self.packed(bytes, rows: outputs)]), verify: .all)
+        let x = (MLXRandom.normal([1, inputs], key: MLXRandom.key(4)) * 3000).asType(.bfloat16)
+        let actual = layer(x).asType(.float32)
+        #expect(isFinite(actual).all().item(Bool.self))
+        let error = Self.relativeError(actual, matmul(x.asType(.float32), Self.dense(bytes, type, rows: outputs, columns: inputs).T))
+        #expect(error < 5e-3, "\(type.name) error \(error)")
+    }
+
     @Test("A permuted input gathers the activation columns before the kernel")
     func permutedInput() throws {
         let (outputs, inputs, type) = (8, 256, GGMLType.iq4XS)
