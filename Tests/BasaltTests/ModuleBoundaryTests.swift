@@ -18,11 +18,11 @@ struct ModuleBoundaryTests {
     static var banned: Regex<(Substring, Substring?, Substring?, Substring?, Substring?, Substring)> { /^\s*(@\w+(\([^)]*\))?\s+)*import\s+((struct|class|enum|protocol|func|var|let|typealias)\s+)?(SwiftUI|SwiftUICore|AppKit|Cocoa)(?!\w)/
         .anchorsMatchLineEndings() }
 
-    @Test("Every target except BasaltApp is free of SwiftUI, AppKit and Cocoa imports")
+    @Test("Every target except the Mac app's BasaltApp and BasaltMac is free of SwiftUI, AppKit and Cocoa imports; BasaltAppCore is checked too")
     func headless() throws {
         let targets = try FileManager.default.contentsOfDirectory(atPath: Self.sources.path)
-            .filter { $0 != "BasaltApp" && !$0.hasPrefix(".") }
-        for core in ["BasaltCore", "BasaltInference", "BasaltServer", "BasaltCLI"] {
+            .filter { !["BasaltApp", "BasaltMac"].contains($0) && !$0.hasPrefix(".") }
+        for core in ["BasaltCore", "BasaltInference", "BasaltServer", "BasaltCLI", "BasaltAppCore"] {
             #expect(targets.contains(core), "\(core) not found under Sources/")
         }
         for target in targets {
