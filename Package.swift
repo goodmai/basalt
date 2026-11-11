@@ -19,7 +19,7 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-nio.git",            from: "2.104.0"),
         // Provides the `Tokenizers` module used by MLXHuggingFace macros
         .package(url: "https://github.com/huggingface/swift-transformers",  from: "1.3.5"),
-        .package(url: "https://github.com/huggingface/swift-jinja.git",     from: "2.5.1"),
+        .package(url: "https://github.com/huggingface/swift-jinja.git",     from: "3.1.0"),
         // Epic 16: CLI Enhancements
         .package(url: "https://github.com/onevcat/Rainbow.git", from: "4.2.2"),
         .package(url: "https://github.com/apple/swift-markdown.git", from: "0.9.0"),
