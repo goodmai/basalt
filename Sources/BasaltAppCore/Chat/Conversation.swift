@@ -1,10 +1,25 @@
 import BasaltCore
 import Foundation
 
-public struct Identifier<Tag>: Hashable, Sendable {
+public struct Identifier<Tag>: Hashable, Sendable, Codable {
     public let raw: UUID
 
     public init(_ raw: UUID = UUID()) { self.raw = raw }
+
+    public init(from decoder: any Decoder) throws { raw = try decoder.singleValueContainer().decode(UUID.self) }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(raw)
+    }
+}
+
+public struct ConversationSummary: Sendable, Equatable, Identifiable {
+    public let id: ConversationID
+    public var title: String
+    public var updated: Date
+
+    public init(id: ConversationID, title: String, updated: Date) { (self.id, self.title, self.updated) = (id, title, updated) }
 }
 
 public enum ConversationTag {}
@@ -15,13 +30,13 @@ public typealias ConversationID = Identifier<ConversationTag>
 public typealias MessageID = Identifier<MessageTag>
 public typealias RunID = Identifier<RunTag>
 
-public enum MessagePart: Sendable, Equatable {
+public enum MessagePart: Sendable, Equatable, Codable {
     case text(String)
     case reasoning(String)
     case toolCall(ToolCallOutput)
 }
 
-public struct Receipt: Sendable, Equatable {
+public struct Receipt: Sendable, Equatable, Codable {
     public var model: String?
     public var promptTokens = 0
     public var completionTokens = 0
@@ -33,7 +48,7 @@ public struct Receipt: Sendable, Equatable {
 
 public struct MessageSnapshot: Sendable, Equatable, Identifiable {
     public enum Role: String, Sendable, Equatable, Codable { case system, user, assistant }
-    public enum State: String, Sendable, Equatable { case complete, streaming, stopped, failed }
+    public enum State: String, Sendable, Equatable, Codable { case complete, streaming, stopped, failed }
 
     public let id: MessageID
     public var role: Role

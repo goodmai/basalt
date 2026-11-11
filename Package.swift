@@ -113,7 +113,7 @@ let package = Package(
         .target(
             name: "BasaltApp",
             dependencies: [
-                "BasaltCore",
+                "BasaltCore", "BasaltAppCore",
                 .product(name: "Markdown",      package: "swift-markdown"),
             ],
             path: "Sources/BasaltApp",
