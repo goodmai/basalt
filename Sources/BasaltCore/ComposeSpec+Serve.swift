@@ -62,7 +62,11 @@ extension ComposeSpec {
             let keep: KeepPolicy = models[name]?.keep == .sequential ? .sequential : .resident
             workloads.append(Workload(name: name, role: Workload.perceiveRole, unit: .gpu, kind: .encoder, residentBytes: bytes(name), keep: keep))
         }
-        for name in answerModels where name != answer && local(name) != nil {
+        var routed: [String] = []
+        for view in views.map(\.spec) {
+            for name in view.answerModels where name != answer && local(name) != nil && !routed.contains(name) { routed.append(name) }
+        }
+        for name in routed {
             workloads.append(Workload(name: name, role: "answer", unit: .gpu, kind: .decode, residentBytes: bytes(name)))
         }
         if let decider = cascade.last, decider != answer, let source = local(decider) {

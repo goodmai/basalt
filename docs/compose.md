@@ -124,6 +124,8 @@ models:
 - **`compose up` on a running system:** if a system with the same `name` runs, `compose up` sends it the file (`POST /v1/compose/apply`) and applies the difference.
   - It loads added models, reloads changed ones and unloads removed ones.
   - It swaps the pipelines between requests.
+  - It checks the new system against this Mac's memory first, as `compose plan` does, with the models of every pipeline counted. A system that does not fit is refused, and nothing changes.
+  - When the new system fits but old and new models do not fit side by side, it unloads the models it replaces before loading their successors. A request that needs one of them in that window waits for the load or fails. If a load then fails, it loads the old models back.
   - It prints `load`, `reload`, `unload` and `keep` per model, `budget` for each changed cloud budget (`total` for the file's) and `key` for each cloud model whose `api_key_env` changed.
   - A cloud model's budget or key variable changes without a reload. The new limits apply at once, and a model disabled by a refused key is enabled again when its key variable changes.
 - **Changes that need a restart:** a different chat model, memory mode or local decision model, or a sequential perceiver. Run `compose down` and then `compose up`.

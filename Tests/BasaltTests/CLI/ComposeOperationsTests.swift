@@ -113,7 +113,8 @@ struct ComposeOperationsTests {
         let serve = try ServeCommand.parse(spec.serveArguments)
         let (_, chat) = try await PipelineSwapEdgeTests.chat()
         let gate = serve.cloudGate(spec)
-        let start = ComposeStart(chat: chat, decider: StubDecisionEngine(), decisions: nil, cloudGate: gate, startup: PipelineStages(), besideDecode: true)
+        var start = ComposeStart(chat: chat, decider: StubDecisionEngine(), decisions: nil, cloudGate: gate, startup: PipelineStages(), besideDecode: true)
+        start.admission = ComposeAdmission(sizes: ComposeFileTests.sizes(["mlx-community/gemma-4-12B-it-qat-4bit": 11 * ComposeFileTests.gb])) { (19 * ComposeFileTests.gb, .desktop) }
         let host = ComposeHost(serve: serve, spec: spec, start: start)
         try await host.start(defaultDecisions: nil)
         #expect(await host.registry.names == ["default"])
@@ -133,9 +134,36 @@ struct ComposeOperationsTests {
         #expect(applied.budgets == ["jev"] && applied.rekeyed == ["haiku"] && applied.restart == nil)
         #expect(await gate.refusal("~typesafe/jev-latest")?.reason.contains("daily budget spent") == true)
         #expect(await gate.refusal("anthropic/claude-haiku-5.5") == nil)
+        let tooBig = await #expect(throws: BasaltError.self) {
+            _ = try await ComposeHost(serve: serve, spec: try ComposeFile.parse(tightened, file: "t.yaml"), start: {
+                var small = start
+                small.admission = ComposeAdmission(sizes: ComposeFileTests.sizes(["mlx-community/gemma-4-12B-it-qat-4bit": 11 * ComposeFileTests.gb])) { (8 * ComposeFileTests.gb, .desktop) }
+                return small
+            }()).apply(ComposeApply(yaml: tightened))
+        }
+        #expect(tooBig.map { "\($0)" }?.contains("does not fit, nothing changed") == true)
+        #expect(await host.registry.names == ["default", "support"])
         let status = await host.status()
         #expect(status.pipelines == ["default", "support"] && status.models.map(\.name) == ["chat", "haiku", "jev"])
         #expect(status.models.first { $0.name == "haiku" }?.state == "cloud" && status.models.first { $0.name == "chat" }?.state == "loaded")
+    }
+
+    @Test("Admission on apply: a system that does not fit is refused; when old and new do not fit together the replaced models unload first")
+    func admission() throws {
+        let gb = ComposeFileTests.gb
+        let old = try ComposeFile.parse(Self.with("  big:\n    source: org/big-a\n    keep: on-demand\n", pipelines: "pipelines:\n  long:\n    answer:\n      routes:\n        - model: big\n        - model: chat\n"), file: "a.yaml")
+        var swapped = old
+        swapped.models["big"]?.source = .local("org/big-b")
+        let diff = ComposeDiff.between(old, swapped)
+        #expect(diff.reloaded == ["big"])
+        let sizes = ComposeFileTests.sizes(["mlx-community/gemma-4-12B-it-qat-4bit": 6 * gb, "org/big-a": 8 * gb, "org/big-b": 9 * gb])
+        #expect(diff.admission(previous: old, next: swapped, sizes: sizes, budgetBytes: 40 * gb) == .success(.loadFirst))
+        #expect(diff.admission(previous: old, next: swapped, sizes: sizes, budgetBytes: 19 * gb) == .success(.unloadFirst))
+        guard case .failure(let refusal) = diff.admission(previous: old, next: swapped, sizes: sizes, budgetBytes: 12 * gb) else {
+            Issue.record("a system larger than the budget was admitted")
+            return
+        }
+        #expect(refusal.reason.contains("GB"))
     }
 
     @Test("GET /v1/compose returns the status and POST /v1/compose/apply the diff, through the server's auth")
