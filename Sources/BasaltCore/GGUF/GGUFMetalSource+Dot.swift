@@ -91,10 +91,11 @@ extension GGUFMetalSource {
                 uint ls = ((uint(b[4 + g / 2]) >> (4 * (g % 2))) & 15) | (((high >> (2 * g)) & 3) << 4);
                 device const uchar* q = b + 8 + g * 16;
                 float s = 0.0f;
+                uint4 w = *(device const packed_uint4*)(q);
                 for (uint j = 0; j < 4; ++j) {
-                    uint v0 = q[4 * j], v1 = q[4 * j + 1], v2 = q[4 * j + 2], v3 = q[4 * j + 3];
-                    s += dot(float4(gguf_kvalues[v0 & 15], gguf_kvalues[v1 & 15], gguf_kvalues[v2 & 15], gguf_kvalues[v3 & 15]), x[j]);
-                    s += dot(float4(gguf_kvalues[v0 >> 4], gguf_kvalues[v1 >> 4], gguf_kvalues[v2 >> 4], gguf_kvalues[v3 >> 4]), x[j + 4]);
+                    uchar4 lo = as_type<uchar4>(w[j] & 0x0f0f0f0fu), hi = as_type<uchar4>((w[j] >> 4) & 0x0f0f0f0fu);
+                    s += dot(float4(gguf_kvalues[lo.x], gguf_kvalues[lo.y], gguf_kvalues[lo.z], gguf_kvalues[lo.w]), x[j]);
+                    s += dot(float4(gguf_kvalues[hi.x], gguf_kvalues[hi.y], gguf_kvalues[hi.z], gguf_kvalues[hi.w]), x[j + 4]);
                 }
                 return gguf_h16(b, 0) * float(int(ls) - 32) * s;
             } else if (Q == 12) {
