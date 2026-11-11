@@ -100,33 +100,6 @@ struct ComposeCommand: AsyncParsableCommand {
         }
     }
 
-    struct Up: AsyncParsableCommand {
-        static let configuration = CommandConfiguration(abstract: "Serve a compose file: the same REST and MCP surfaces as basalt serve, with the composed models; serve flags after -- are added")
-
-        @OptionGroup var source: Source
-
-        @Argument(parsing: .postTerminator, help: "More basalt serve flags, after --")
-        var serve: [String] = []
-
-        func run() async throws {
-            let (spec, text, _, context) = try source.load()
-            if let running = ComposeRecord.running(spec.name) {
-                let request = ComposeApply(yaml: text, base: context.base?.path, variables: context.variables, profiles: context.profiles)
-                let (status, body) = try await ComposeCommand.call(running, "/v1/compose/apply", body: try JSONEncoder().encode(request))
-                guard status == 200, let diff = try? JSONDecoder().decode(ComposeDiff.self, from: body) else {
-                    ComposeCommand.log("\(red("[error]")) \(spec.name) is running (pid \(running.pid)) and refused the change: \(ComposeCommand.message(body))")
-                    throw ExitCode.failure
-                }
-                print("compose \(spec.name): applied to the running system (pid \(running.pid), port \(running.port))")
-                for line in diff.lines { print(line) }
-                return
-            }
-            try ComposeCommand.announce(spec, environment: ProcessInfo.processInfo.environment)
-            var command = try ServeCommand.parse(spec.serveArguments + source.serveFlags + serve)
-            try await command.run()
-        }
-    }
-
     struct Ps: AsyncParsableCommand {
         static let configuration = CommandConfiguration(abstract: "Show each running compose system: its pipelines and, per model, whether it is loaded, when an on-demand model was last used and unloads, and cloud spend today")
 

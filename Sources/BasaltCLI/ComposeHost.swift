@@ -19,6 +19,7 @@ struct ComposeStart: Sendable {
     let startup: PipelineStages
     let besideDecode: Bool
     var admission = ComposeAdmission.machine
+    var registry = PipelineRegistry([:])
 }
 
 struct ComposeAdmission: Sendable {
@@ -46,7 +47,7 @@ actor ComposeHost {
         (self.services, self.spec, self.chat, self.cloudGate) = (services, spec, start.chat, start.cloudGate)
         (startDecider, selfDecider) = spec.decider == "self" ? (nil, start.decider) : (start.decider, nil)
         (self.startup, self.besideDecode, self.admission) = (start.startup, start.besideDecode, start.admission)
-        registry = PipelineRegistry([:])
+        registry = start.registry
     }
 
     func start(defaultDecisions: (any DecisionEngine)?) async throws {

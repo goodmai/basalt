@@ -55,7 +55,7 @@ extension ComposeHost {
     func status() async -> ComposeStatus {
         var models: [ComposeModelStatus] = []
         for (name, model) in spec.models.sorted(by: { $0.key < $1.key }) {
-            var entry = ComposeModelStatus(name: name, source: Self.describe(model.source), keep: model.keep?.rawValue ?? (model.isCloud ? "cloud" : "resident"), state: .failed)
+            var entry = ComposeModelStatus(name: name, source: Self.describe(model.source), keep: Self.keep(model), state: .failed)
             switch held[name] {
             case .resident(let orchestrator): entry.state = await orchestrator.isLoaded ? .ready : .unloaded
             case .onDemand(let onDemand):
@@ -70,6 +70,8 @@ extension ComposeHost {
         }
         return ComposeStatus(name: spec.name, pipelines: spec.pipelineNames, models: models, spentToday: await cloudGate.spent(CloudGateCore.total))
     }
+
+    static func keep(_ model: ComposeSpec.Model) -> String { model.keep?.rawValue ?? (model.isCloud ? "cloud" : "resident") }
 
     static func cloudState(_ refusal: CloudGateCore.Refusal?, key: String) -> ComposeModelState {
         switch refusal {

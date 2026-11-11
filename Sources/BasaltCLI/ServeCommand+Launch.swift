@@ -18,6 +18,19 @@ struct ServerLaunch: Sendable {
     var shutdownDeadline: Duration = .seconds(5)
     var handleSignals = true
     var announceReady = false
+    var onBind: (@Sendable (Int) -> Void)? = nil
+    var startup: (@Sendable () async throws -> Void)? = nil
+}
+
+extension ServerLaunch {
+    var readyHandler: (@Sendable (Int) -> Void)? {
+        guard announceReady || onBind != nil else { return nil }
+        let (announces, onBind) = (announceReady, onBind)
+        return { port in
+            if announces { ServeCommand.announce(port: port) }
+            onBind?(port)
+        }
+    }
 }
 
 extension ServeCommand {
@@ -85,7 +98,7 @@ extension ServeCommand {
                 await orchestrator.shutdown(deadline: launch.shutdownDeadline)
             }
         }
-        try await withThrowingTaskGroup(of: Void.self) { group in
+        try await withThrowingTaskGroup(of: Bool.self) { group in
             if launch.startREST {
                 let restServer = RESTServer(
                     orchestrator: orchestrator,
@@ -94,20 +107,21 @@ extension ServeCommand {
                     shutdownDeadline: launch.shutdownDeadline,
                     handleSignals: launch.handleSignals
                 ).withDecisions(launch.decisions).withPipeline(launch.pipeline).withPipelines(launch.pipelines, compose: launch.compose)
-                    .withReadyHandler(launch.announceReady ? Self.announce : nil)
-                group.addTask { try await restServer.run() }
+                    .withReadyHandler(launch.readyHandler)
+                group.addTask { try await restServer.run(); return true }
             }
             if let mcpServer = launch.mcpServer {
                 if launch.startREST {
-                    group.addTask { await mcpServer.run() }
+                    group.addTask { await mcpServer.run(); return true }
                 } else {
                     group.addTask {
                         try await mcpServer.runServiceGroup(shutdownDeadline: launch.shutdownDeadline, handleSignals: launch.handleSignals)
+                        return true
                     }
                 }
             }
             if let interval = launch.canaryInterval {
-                group.addTask { await Canary.run(every: interval, on: orchestrator) }
+                group.addTask { await Canary.run(every: interval, on: orchestrator); return true }
             }
             if let interval = launch.statsInterval {
                 group.addTask {
@@ -115,9 +129,11 @@ extension ServeCommand {
                         let snapshot = await orchestrator.telemetrySnapshot()
                         fputs("\(snapshot.formattedStatsLine)\n", stderr)
                     }
+                    return true
                 }
             }
-            try await group.next()
+            if let startup = launch.startup { group.addTask { try await startup(); return false } }
+            while let ends = try await group.next(), !ends {}
             group.cancelAll()
         }
     }

@@ -178,6 +178,7 @@ struct ServeCommand: AsyncParsableCommand {
 
         let engine = try makeEngine()
         let orchestrator = try await makeOrchestrator(engine: engine, maxTokens: config.maxTokens)
+        if let spec = try composeSpec(), !mcp { return try await runComposed(spec, ComposeBoot(config: config, engine: engine, orchestrator: orchestrator, chatPath: resolvedPath)) }
 
         let loadedEmbeddings = try await loadEmbeddings()
         let loadedDecisions = try await loadDecisions(chat: engine)
@@ -196,14 +197,9 @@ struct ServeCommand: AsyncParsableCommand {
         if let host, let system = await host.registry.system(ComposeSpec.defaultPipeline) { stages = system.stages }
         let record = try spec.flatMap { host == nil ? nil : try ComposeRecord.write(name: $0.name, port: network.port, file: pipeline.compose ?? "") }
         defer { record.map(ComposeRecord.remove) }
-        if !noMemoryCoordinator { await orchestrator.coordinateMemory(with: MemoryCoordinator()) }
-        if !noThermalPolicy { await orchestrator.coordinateThermal() }
-        await experimental.attachMediaFallbacks(to: orchestrator)
+        try await prepare(orchestrator, virtualKeys: config.virtualKeys)
 
-        try await attachCloudFallback(to: orchestrator, virtualKeys: config.virtualKeys)
-
-        let startREST = !mcp || rest
-        let startMCP  = mcp
+        let (startREST, startMCP) = (!mcp || rest, mcp)
 
         if startREST { log("REST → http://\(config.host):\(config.restPort)") }
         if startMCP  { log("MCP → JSON-RPC 2.0 on stdin/stdout") }
