@@ -107,7 +107,7 @@ struct ComposeOperationsTests {
         let spec = try ComposeFile.parse(Self.base, file: "a.yaml")
         let serve = try ServeCommand.parse(spec.serveArguments)
         let (_, chat) = try await PipelineSwapEdgeTests.chat()
-        let gate = serve.cloudGate(spec)
+        let gate = CloudGate(limits: serve.cloudLimits(spec), storage: nil)
         var start = ComposeStart(chat: chat, decider: StubDecisionEngine(), decisions: nil, cloudGate: gate, startup: PipelineStages(), besideDecode: true)
         start.admission = ComposeAdmission(sizes: ComposeFileTests.sizes(["mlx-community/gemma-4-12B-it-qat-4bit": 11 * ComposeFileTests.gb])) { (19 * ComposeFileTests.gb, .desktop) }
         let host = ComposeHost(services: ComposeServices(serve: serve, chat: MLXInferenceEngine()), spec: spec, start: start)
@@ -169,7 +169,7 @@ struct ComposeOperationsTests {
         let spec = try ComposeFile.parse(yaml, file: "d.yaml")
         let serve = try ServeCommand.parse(spec.serveArguments)
         let (_, chat) = try await PipelineSwapEdgeTests.chat()
-        let start = ComposeStart(chat: chat, decider: StubDecisionEngine(), decisions: nil, cloudGate: serve.cloudGate(spec), startup: PipelineStages(), besideDecode: true)
+        let start = ComposeStart(chat: chat, decider: StubDecisionEngine(), decisions: nil, cloudGate: CloudGate(limits: serve.cloudLimits(spec), storage: nil), startup: PipelineStages(), besideDecode: true)
         let host = ComposeHost(services: ComposeServices(serve: serve, chat: MLXInferenceEngine()), spec: spec, start: start)
         try await host.start(defaultDecisions: nil)
         let status = await host.status()
