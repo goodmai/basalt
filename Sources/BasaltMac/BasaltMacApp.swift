@@ -44,10 +44,11 @@ struct BasaltMacApp: App {
     }
 
     static func helperURL() -> URL? {
+        let inBundle = Bundle.main.bundleURL.pathExtension == "app"
         let candidates = [
             ProcessInfo.processInfo.environment["BASALT_HELPER"].map { URL(fileURLWithPath: $0) },
-            Bundle.main.bundleURL.appending(path: "Contents/Helpers/basalt"),
-            Bundle.main.executableURL?.deletingLastPathComponent().appending(path: "Basalt"),
+            inBundle ? Bundle.main.bundleURL.appending(path: "Contents/Helpers/basalt") : nil,
+            inBundle ? nil : Bundle.main.executableURL?.deletingLastPathComponent().appending(path: "Basalt"),
         ]
         return candidates.compactMap { $0 }.first { FileManager.default.isExecutableFile(atPath: $0.path) }
     }
