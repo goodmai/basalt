@@ -12,7 +12,12 @@ basalt compose up document-qa             # bundled files: document-qa, voice-ag
 
 `compose up` starts `basalt serve` with the flags the file expands to; it prints them at start. It serves the same REST and MCP surfaces. Flags after `--` are passed to serve, for example `basalt compose up -f basalt.yaml -- --port 8090`.
 
-The server binds its port first and loads the models after. While they load, `compose ps` shows them as `loading`, `GET /v1/health/ready` answers 503, and the run record already exists, so a second `compose up` finds the system instead of starting another. With `--mcp` the models load before the server starts, as before.
+The server binds its port first and loads the models after. While they load, `compose ps` shows them as `loading`, `GET /v1/health/ready` answers 503, and the run record already exists, so a second `compose up` finds the system instead of starting another. Once the models are loaded, each gets a startup probe:
+- the chat model and each local answer model generate one token;
+- each local decision model answers one question;
+- an on-demand model's files are checked without loading it.
+
+A model that fails its probe shows as `failed`, with the reason, in `compose ps`. `/v1/health/ready` stays 503 until a `compose up` replaces the model. A model that `compose up` loads or reloads gets the same probe. With `--mcp` the models load before the server starts, as before.
 
 ## The file
 
