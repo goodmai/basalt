@@ -3,6 +3,7 @@ import SwiftUI
 
 public struct RootView: View {
     @Bindable var model: AppModel
+    @SceneStorage("selection") private var restored = ""
 
     public init(model: AppModel) { self.model = model }
 
@@ -34,7 +35,10 @@ public struct RootView: View {
                 }
             }
         }
-        .task { await model.start() }
+        .onAppear {
+            if model.selection == nil, let uuid = UUID(uuidString: restored) { model.selection = ConversationID(uuid) }
+        }
+        .onChange(of: model.selection) { _, id in restored = id?.raw.uuidString ?? "" }
     }
 }
 
@@ -48,6 +52,7 @@ struct ConversationDetail: View {
             if let store { ChatView(store: store) } else { ProgressView() }
         }
         .task { store = await model.store(for: id) }
+        .onChange(of: store?.state.draft ?? "") { _, draft in model.drafts.save(id, draft) }
     }
 }
 

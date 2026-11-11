@@ -7,6 +7,22 @@ import SwiftUI
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let model = BasaltMacApp.makeModel()
+    var quickAsk: QuickAskController?
+    var openMain: (@MainActor () -> Void)?
+    private var hotKey: HotKey?
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        guard let model else { return }
+        let quickAsk = QuickAskController(model: model) { [weak self] in
+            self?.openMain?()
+            NSApplication.shared.activate()
+        }
+        self.quickAsk = quickAsk
+        if UserDefaults.standard.object(forKey: "quickAsk") as? Bool ?? true { hotKey = HotKey { quickAsk.toggle() } }
+        Task { await model.start() }
+    }
+
+    func applicationWillTerminate(_ notification: Notification) { hotKey?.unregister() }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard let model, !model.engine.isIdle else { return .terminateNow }
@@ -18,16 +34,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
+struct MenuBarLabel: View {
+    let delegate: AppDelegate
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        Image(systemName: "cube.transparent")
+            .onAppear { delegate.openMain = { openWindow(id: "main") } }
+    }
+}
+
 @main
 struct BasaltMacApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
     private var model: AppModel? { delegate.model }
-    @AppStorage("model") private var modelID = BasaltMacApp.defaultModel
-
-    static let defaultModel = "mlx-community/gemma-4-12B-it-qat-4bit"
 
     var body: some Scene {
-        WindowGroup("Basalt") {
+        WindowGroup("Basalt", id: "main") {
             if let model {
                 RootView(model: model).frame(minWidth: 720, minHeight: 480)
             } else {
@@ -39,23 +62,24 @@ struct BasaltMacApp: App {
             if let model { MonitorView(store: model.monitor) }
         }
         .keyboardShortcut("m", modifiers: [.command, .option])
-        Settings {
-            Form {
-                TextField("Model", text: $modelID)
-                Text("The engine loads this model at its next start.").font(.caption).foregroundStyle(.secondary)
-            }
-            .padding(20)
-            .frame(width: 420)
+        MenuBarExtra {
+            if let model { MenuBarContent(model: model) { delegate.quickAsk?.toggle() } }
+        } label: {
+            MenuBarLabel(delegate: delegate)
         }
+        .menuBarExtraStyle(.window)
+        Settings { SettingsView(keychain: .live()) }
     }
 
     static func makeModel() -> AppModel? {
         guard let helper = helperURL() else { return nil }
-        let model = UserDefaults.standard.string(forKey: "model") ?? defaultModel
+        let model = UserDefaults.standard.string(forKey: "model") ?? AppModel.defaultModel
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appending(path: "Basalt")
         try? FileManager.default.createDirectory(at: support, withIntermediateDirectories: true)
         let metallib = Bundle.main.bundleURL.appending(path: "Contents/Resources/mlx.metallib")
-        let environment = FileManager.default.fileExists(atPath: metallib.path) ? ["BASALT_METALLIB": metallib.path] : [:]
+        let names = (UserDefaults.standard.string(forKey: CloudKeys.defaultsKey) ?? "").split(separator: "\n").map(String.init)
+        var environment = CloudKeys.environment(names, keychain: .live())
+        if FileManager.default.fileExists(atPath: metallib.path) { environment["BASALT_METALLIB"] = metallib.path }
         return try? AppModel(
             launch: HelperLaunch(executable: helper, arguments: ["serve", "--model", model], environment: environment), model: model,
             storeURL: support.appending(path: "Conversations.store"))

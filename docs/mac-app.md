@@ -25,3 +25,19 @@ From a build folder without bundling, point the app at the engine: `BASALT_HELPE
 - **Relaunching:** the app adopts an engine that is still running from its record file (`~/Library/Application Support/Basalt/engine.json`, mode 0600), so the model is not loaded again.
 - **Conversations** are stored with SwiftData in `~/Library/Application Support/Basalt/Conversations.store`. An answer interrupted by a crash comes back marked as stopped.
 - **The model** is set in Settings (default `mlx-community/gemma-4-12B-it-qat-4bit`). It applies at the engine's next start.
+
+## Menu bar and quick ask
+- **The engine starts with the app**, not with the window. The menu bar item (a cube) is there even when every window is closed. It shows the engine's state and model and has these actions:
+  - new conversation and quick ask;
+  - the five most recent conversations;
+  - start, restart and stop the engine;
+  - the Monitor, Settings and Quit.
+- **Quick ask:** ⌥Space opens a floating panel from any app, including a full-screen one, without taking that app's focus.
+  - Type a question and press ↩. The answer streams in the panel.
+  - ⌘↩ opens the exchange as an ordinary conversation in the main window.
+  - Esc closes the panel and discards the exchange. Until ⌘↩, nothing from quick ask is stored.
+  - The shortcut is registered with `RegisterEventHotKey`, which needs no Accessibility permission. It can be turned off in Settings; that change applies at the next launch.
+- **Settings:**
+  - General: the model, quick ask, and open at login (`SMAppService`; it works once the app is signed and in Applications).
+  - Cloud Keys: environment variables, such as `OPENROUTER_API_KEY`, whose values are kept in the Keychain (service `app.basalt.mac`). The engine receives them at its next start, for compose cloud models. The app never writes them to disk.
+- **State restoration:** the selected conversation comes back after a relaunch. So does an unsent draft, per conversation, kept in the user defaults.
