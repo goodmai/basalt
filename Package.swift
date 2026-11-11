@@ -102,6 +102,12 @@ let package = Package(
             path: "Sources/BasaltUI",
             swiftSettings: swiftSettings
         ),
+        .target(
+            name: "BasaltAppCore",
+            dependencies: ["BasaltCore"],
+            path: "Sources/BasaltAppCore",
+            swiftSettings: swiftSettings
+        ),
         // App: the SwiftUI REST chat client. Nothing links it yet (its launch command is #55),
         // so SwiftUI/AppKit stay out of the CLI binary.
         .target(
@@ -141,7 +147,7 @@ let package = Package(
             name: "BasaltTests",
             dependencies: [
                 .product(name: "ServiceLifecycle", package: "swift-service-lifecycle"),
-                "BasaltCore", "BasaltInference", "BasaltCloud", "BasaltServer", "BasaltUI", "BasaltCLI", "BasaltApp", "BasaltHarness", "BasaltSpeech",
+                "BasaltCore", "BasaltInference", "BasaltCloud", "BasaltServer", "BasaltUI", "BasaltCLI", "BasaltApp", "BasaltAppCore", "BasaltHarness", "BasaltSpeech",
                 .product(name: "HummingbirdTesting", package: "hummingbird"),
                 .product(name: "MLXGuidedGeneration", package: "mlx-swift-lm"),
                 .product(name: "Jinja", package: "swift-jinja"),
