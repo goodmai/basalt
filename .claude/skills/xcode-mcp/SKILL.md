@@ -34,28 +34,31 @@ swift .claude/skills/xcode-mcp/scripts/xcode_mcp.swift DocumentationSearch '{"qu
 swift .claude/skills/xcode-mcp/scripts/xcode_mcp.swift DocumentationSearch '{"query":"MTLResidencySet"}'
 ```
 
-Two results already checked:
+**Pass `frameworks` for a symbol.** A bare symbol query searches every framework and returns about 20 long documents. `{"query":"UniqueBox"}` put the stdlib type eleventh, behind AudioToolbox and AppKit boxes; `{"query":"UniqueBox","frameworks":["Swift"]}` returned one document. Use `["Swift"]` for the stdlib, `["Synchronization"]`, `["Foundation"]`, `["Metal"]` and so on. Ask for one symbol per call.
+
+**What it does not hold.** The Metal Shading Language specification is a PDF that is not indexed: the search answers on `MTL*` APIs and the compute articles (threadgroups, SIMD groups, `[[thread_index_in_simdgroup]]`), not on MSL keywords, address-space rules or `simdgroup_matrix`. For shader text the Metal compiler decides: instantiate the kernel in a test.
+
+Results already checked:
 - `InlineArray`: the type can be spelled `[3 of Int]`, and every element must be initialized.
 - `withTaskCancellationShield(operation:)`: child tasks do not inherit the shield, and `UnsafeCurrentTask.hasActiveCancellationShield` is for debugging only.
+- Typed throws through closures: `Sequence.map`, `Dictionary.mapValues`, `Optional.map` and `Optional.flatMap` are `throws(E)`. `compactMap`, `flatMap` on sequences, `reduce` and `sorted(by:)` are still `rethrows`, so a `throws(BasaltError)` function that calls them with a throwing closure needs a loop.
+- `UniqueBox` and `UniqueArray` are in the stdlib under "Manual Memory Management: Heap Storage".
 
 When the documentation and the code disagree, the compiler decides: build with `swift build`. Quote the doc passage in the PR when a review turns on it.
 
-### 2. Workspace tools (not usable on basalt yet)
-These tools need an open workspace:
-- `XcodeRefreshCodeIssuesInFile`, compiler diagnostics for one file;
-- `RunCodeSnippet`, runs a snippet in the context of a file;
-- `GetTestList` / `RunSomeTests` / `RunAllTests`;
-- `BuildProject` / `GetBuildLog`;
-- `GetTargetBuildSettings`.
+### 2. Workspace tools
+`XcodeOpenWorkspace` with the repo folder works (checked 2026-11-11): it returns a `workspaceIdentifier`, scheme `Basalt-Package`, destination "My Mac". Pass that identifier, or the repo's absolute path, as `workspaceIdentifier` to the other tools. `XcodeListWorkspaces` shows what is open.
 
-On basalt, `XcodeOpenWorkspace` with the repo folder currently fails with "timed out waiting for hasResolvedInitialRunDestination … after 10.0s": headless Xcode does not settle a run destination for the SPM package in time.
+| Tool | State on basalt |
+|---|---|
+| `XcodeRefreshCodeIssuesInFile` | works. `filePath` starts with the root folder's name: `mlx/Sources/BasaltCore/ComposeDiff.swift`. Without the prefix it fails with `SourceEditorCallableDiagnosticError error 5` |
+| `XcodeGrep`, `XcodeGlob`, `XcodeLS`, `XcodeRead` | not needed; the normal file tools are faster |
+| `BuildProject`, `GetBuildLog`, `GetTestList`, `RunSomeTests`, `RunAllTests`, `RunCodeSnippet`, `GetTargetBuildSettings` | not tried on basalt. Try one before relying on it and record the result here |
 
-Until that works:
-- build with `swift build -Xswiftc -warnings-as-errors`;
-- test with `swift test --parallel --filter …`;
-- use the `LSP` tool (sourcekit-lsp) for definitions, references and diagnostics.
-
-To retry, call `XcodeOpenWorkspace '{"path":"<repo>"}'`, then `XcodeListWorkspaces` to get the `workspaceIdentifier` the other tools take. If it succeeds, update this section.
+- Use `XcodeRefreshCodeIssuesInFile` for a quick diagnostic on one file while editing. It is not a gate.
+- The gates stay on the command line, because CI runs them there: `swift build -Xswiftc -warnings-as-errors`, `swift test --parallel --filter …`.
+- A worktree is a different folder: open it by its own path, and prefix file paths with its folder name.
+- If `XcodeOpenWorkspace` times out ("hasResolvedInitialRunDestination … after 10.0s", seen before 2026-11), call it again; the `LSP` tool (sourcekit-lsp) covers definitions, references and diagnostics meanwhile.
 
 ### 3. Debugger
 `InvokeDebuggerCommand` drives Xcode's active debug session. basalt runs from the command line, so there is usually none. For a crash in `swift test` or `basalt serve`, run `lldb` from the CLI (`lldb .build/debug/basalt -- serve …`, then `bt all`). `xcrun lldb-mcp` exists in Xcode 27 but has not been tried here.

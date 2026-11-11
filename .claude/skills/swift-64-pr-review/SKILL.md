@@ -67,6 +67,13 @@ You are a Staff Swift Security & Quality Auditor executing a strict, zero-trust 
 ### Gate 3c: API Facts via Xcode MCP
 - When a finding or a diff depends on what a Swift 6.4 / stdlib / framework API does (signature, availability, `~Copyable`, isolation, whether a shield is inherited), check it with `DocumentationSearch` (the `xcode-mcp` skill) before reporting. Example: `swift .claude/skills/xcode-mcp/scripts/xcode_mcp.swift DocumentationSearch '{"query":"withTaskCancellationShield"}'`. Cite the doc passage in the finding.
 
+### Gate 3d: Custom Kernels and Loaders
+- A new `MLXFast.metalKernel` whose tests do not instantiate every template combination the model uses is `HIGH`: an uncompiled variant is a `fatalError` at the first token.
+- A kernel tested only against another kernel, with no CPU reference and no `TinyModel` token parity, is `HIGH` (#228).
+- Environment switches that select kernel variants (`GGUF_V`-style) left in a PR are `MEDIUM`.
+- A loader that materializes a dense copy of quantized weights per call is `HIGH`: check peak memory in the run log, not only speed.
+- A `compactMap`, `flatMap` or `reduce` with a throwing closure inside a `throws(E)` function is `MEDIUM`: it compiles only by widening the error.
+
 ### Gate 4: SwiftUI / Observation & Platform Hygiene (if applicable)
 - Flag view body side effects, unstable view identities, or `@Observable` property reads that trigger unnecessary view invalidation storms.
 - Reject legacy `ObservableObject` or `DispatchQueue.main.async` in favor of `@Observable` and `@MainActor`.

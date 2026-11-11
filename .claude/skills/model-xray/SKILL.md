@@ -1,11 +1,41 @@
 ---
 name: model-xray
-description: Use basalt's Model X-ray MCP tools (model_describe, model_tensors, model_tensor, kv_inspect, trace_run) and, with `serve --research-tools`, the experiment tools (intervene, weights_delta, overlays_list, overlay_undo, experiment_compare) to look inside the running model instead of guessing. Use when a model answers wrongly or degenerately and you want to know where (which layer, head, expert, norm), when a prompt-cache or KV question needs the actual tree, when you need a layer's anatomy or a tensor's statistics for a design or bug report, or when you want to test a hypothesis about a head, expert or norm with a reversible experiment.
+description: Use basalt's Model X-ray MCP tools (model_describe, model_tensors, model_tensor, kv_inspect, trace_run) and, with `serve --research-tools`, the experiment tools (intervene, weights_delta, overlays_list, overlay_undo, experiment_compare, trace_tokens, activation_contrast) to look inside the running model instead of guessing; also how to reach basalt's own MCP server from a coding session. Use when a model answers wrongly or degenerately and you want to know where (which layer, head, expert, norm), when a prompt-cache or KV question needs the actual tree, when you need a layer's anatomy or a tensor's statistics for a design or bug report, or when you want to test a hypothesis about a head, expert or norm with a reversible experiment.
 ---
 
 # Model X-ray
 
 Reference for every tool, argument and the safety model: `docs/research-tools.md`.
+
+## Reaching the tools
+
+The tools belong to basalt's own MCP server (`basalt serve --mcp`, JSON-RPC 2.0 on stdin and stdout, logs on stderr). It is not registered in `.mcp.json`, so a coding session does not see them as `mcp__…` tools. Two ways in:
+
+- **One-shot from the shell** (checked 2026-11-11 on gemma-4-12B). The server answers each line and exits when stdin closes:
+
+  ```bash
+  printf '%s\n' \
+    '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
+    '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"model_describe","arguments":{}}}' \
+    | .build/release/Basalt serve --mcp --model mlx-community/gemma-4-12B-it-qat-4bit 2>mcp.err
+  ```
+
+  Each answer is one JSON line; the tool's payload is a JSON string in `result.content[0].text`. Put every call for one question in the same pipe: the model loads once.
+- **A client that keeps the server open** (Claude Desktop, an agent): configure it as in `docs/AI_SETUP.md`.
+
+Rules for both:
+- The server loads weights, so it is a real-model run: take the GPU lock and use a release build (`basalt-model-runs`).
+- Add `--research-tools` only for the experiment tools. `tools/list` shows what the running server accepts.
+- Read stderr when a call returns nothing: load errors go there, not to stdout.
+
+Other tools on the same server, for when the question is about serving and not about the model's insides:
+
+| Tool | Use |
+|---|---|
+| `status`, `basalt_status`, `check_hardware` | readiness, telemetry, what this Mac can hold |
+| `inspect_model`, `switch_model` | a model's files and fit; swap the served model |
+| `basalt_generate`, `basalt_pipeline`, `basalt_ocr`, `basalt_transcribe`, `basalt_systemone_decide` | the serving paths themselves, same code as REST |
+| `harness_validate`, `harness_optimize`, `harness_library_query` | agent harness files |
 
 ## When to reach for it
 

@@ -56,3 +56,18 @@ You are an Expert Swift 6.4 Systems & Performance Engineer. Write deterministic,
   - `InlineArray` on per-token scratch, only with a micro-benchmark that shows the gain.
 
   Tracking issue: #284.
+
+## 5. Traps the compiler reports late (seen in basalt diffs)
+- **Typed throws stop at some closures.** `map`, `mapValues` and `Optional.map` carry `throws(E)`. `compactMap`, sequence `flatMap`, `reduce` and `sorted(by:)` are `rethrows` and widen to `any Error`. Inside a `throws(BasaltError)` function, write the loop.
+- **No `await` in an autoclosure.** `try await a() ?? b()` fails with "'async' call in an autoclosure that does not support concurrency". Use `if let` in a small function.
+- **A `static let` of a non-`Sendable` type is rejected** (`MLXArray`, a kernel input table). Make it a computed `static var`, or build it where it is used. Do not reach for `nonisolated(unsafe)`.
+- **`swift run -c release Basalt`**, not `basalt`: the product name is capitalized. `models convert` takes `--out`.
+
+## 6. Custom Metal kernels (`MLXFast.metalKernel`)
+- **A kernel that does not compile is a `fatalError` at its first call**, once per template instantiation. A parity test must call every combination the model will use (each type, each row count path), or the crash lands on a user's first token.
+- **MSL has its own reserved words.** A parameter named `thread` fails with "parameter may not be qualified with an address space". Name helpers' parameters plainly (`first`, `stride`).
+- **Admission is #228:** parity against a CPU reference on generated blocks for every type, and exact greedy tokens on a `TinyModel` fixture. A second kernel is not a reference.
+- **Find the floor before tuning.** Replace the decode with a trivial read of the same bytes and time it. That number is the memory floor; the rest is arithmetic. Then remove one cost at a time (lookups, sign application, conversion) to see which one pays.
+- **Benchmark shape:** release build, GPU lock, many calls evaluated in one `eval` (a single `eval` per call measures launch overhead), the stock kernel timed in the same process as the candidate.
+- **Experiment switches** go in as template integers read from the environment, so one build sweeps every variant with `--skip-build`. They never ship: remove them before the PR.
+- **What did not matter on M4 Pro** (#408): where a 512-entry table lives (constant, threadgroup or device buffer), rows per simdgroup from 2 to 8, simdgroups per threadgroup from 2 to 32, `half` arithmetic. A pre-converted `float4` table in threadgroup memory was three times slower.
