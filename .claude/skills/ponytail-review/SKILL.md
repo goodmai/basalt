@@ -106,3 +106,21 @@ Nothing found: `What this change does:`, then `Looks good. Ship.` and one line
 on what you checked.
 
 Lists findings, changes no code.
+
+## Related skills
+
+All skills live in `.claude/skills/<name>/SKILL.md` (mirrored at `.agents/skills/`). Start from `swiftcoder` when unsure.
+
+| Skill | Use it for |
+|---|---|
+| `swiftcoder` | the role and entry point: which skill to load, in what order, and the gates |
+| `ponytail` | scope and the smallest complete change |
+| `swift-64-architecture` | targets, boundaries, isolation domains, value core and actor shell |
+| `swift-64-optimization-coding` | writing Swift 6.4 code: ownership, typed throws, size limits, Metal kernels |
+| `swift-64-pr-review` | the 5-gate review of a Swift diff |
+| `swift-concurrency-pro` | async/await, actors, tasks, streams and cancellation in depth |
+| `swift-race-review` | races and deadlocks the compiler cannot see; MLX and Metal threading |
+| `swift-testing-pro` | Swift Testing in depth: structure, async tests, new features |
+| `xcode-mcp` | checking an API against Apple's documentation; Xcode workspace tools |
+| `basalt-model-runs` | runs that load model weights: benchmarks, ppl, memory, parity, GPU lock |
+| `model-xray` | looking inside a running model and calling basalt's own MCP server |

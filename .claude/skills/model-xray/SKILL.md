@@ -60,3 +60,21 @@ Other tools on the same server, for when the question is about serving and not a
 - Ask for small slices and a small `topK`; responses are bounded anyway, and large ones waste context.
 - Quote tool results (layer, head, values) in the issue or PR, not impressions. A change justified by X-ray still needs the usual parity run (`basalt-model-runs`).
 - This layer persists nothing. Turning a finding into a permanent change goes through the learning-loop layer (#328 layer 3) and its quality gates.
+
+## Related skills
+
+All skills live in `.claude/skills/<name>/SKILL.md` (mirrored at `.agents/skills/`). Start from `swiftcoder` when unsure.
+
+| Skill | Use it for |
+|---|---|
+| `swiftcoder` | the role and entry point: which skill to load, in what order, and the gates |
+| `ponytail` | scope and the smallest complete change |
+| `ponytail-review` | review of a change for correctness, safety, load, tests and need |
+| `swift-64-architecture` | targets, boundaries, isolation domains, value core and actor shell |
+| `swift-64-optimization-coding` | writing Swift 6.4 code: ownership, typed throws, size limits, Metal kernels |
+| `swift-64-pr-review` | the 5-gate review of a Swift diff |
+| `swift-concurrency-pro` | async/await, actors, tasks, streams and cancellation in depth |
+| `swift-race-review` | races and deadlocks the compiler cannot see; MLX and Metal threading |
+| `swift-testing-pro` | Swift Testing in depth: structure, async tests, new features |
+| `xcode-mcp` | checking an API against Apple's documentation; Xcode workspace tools |
+| `basalt-model-runs` | runs that load model weights: benchmarks, ppl, memory, parity, GPU lock |

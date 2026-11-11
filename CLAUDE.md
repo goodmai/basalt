@@ -5,11 +5,14 @@ Before proposing designs, writing code, running real-model benchmarks, or review
 
 | Task Intent | Trigger Condition | Required Skill Path |
 |---|---|---|
+| **Role & Entry Point** | Any task that reads, writes, reviews or debugs Swift here; unsure which skill applies | `.claude/skills/swiftcoder/SKILL.md` |
 | **Architecture & Modularity** | Designing targets, `Package.swift` topology, DI boundaries, actor isolation domains, or choosing patterns | `.claude/skills/swift-64-architecture/SKILL.md` |
 | **Coding & Optimization** | Writing features, optimizing memory/ARC, using `Span`/`UniqueBox`/`Ref`, or implementing async workflows | `.claude/skills/swift-64-optimization-coding/SKILL.md` |
 | **PR Review & Security Audit** | Reviewing diffs, auditing concurrency/reentrancy, checking CoW allocations, or verifying complexity | `.claude/skills/swift-64-pr-review/SKILL.md` |
 | **Lean Diff & YAGNI Discipline** | Choosing the smallest complete solution (`YAGNI -> reuse -> stdlib -> native`) and reviewing lean diffs | `.claude/skills/ponytail/SKILL.md`, `.claude/skills/ponytail-review/SKILL.md` |
 | **Races & Cross-Thread Hazards** | Reviewing or writing code that runs the model from more than one thread or task, adds a lock/condition/`@unchecked Sendable`, or debugging a crash/hang/divergence that appears only under load | `.claude/skills/swift-race-review/SKILL.md` |
+| **Concurrency in Depth** | `async`/`await`, actors, task groups, `AsyncStream`, continuations, cancellation, strict-concurrency diagnostics | `.claude/skills/swift-concurrency-pro/SKILL.md` |
+| **Swift Testing in Depth** | Writing or reviewing tests: structure, `#expect`/`#require`, parameterized and async tests, confirmations, traits | `.claude/skills/swift-testing-pro/SKILL.md` |
 | **Real-Model Benchmarks & Parity** | Running MLX weights on Metal (`PerformanceBenchmark`, PPL/passkey/memory, GPU lock, PR tables) | `.claude/skills/basalt-model-runs/SKILL.md` |
 | **Inside a Running Model & basalt MCP** | A model answers wrongly, a design needs a layer's anatomy or a tensor's statistics, a prompt-cache question, or any call to basalt's own MCP server (`basalt serve --mcp`) | `.claude/skills/model-xray/SKILL.md` |
 | **API Facts & Xcode MCP** | Relying on a Swift 6.2–6.4 / stdlib / framework API from memory, or a review turning on what an API guarantees (`DocumentationSearch` via `mcp__xcode__*` or the helper script) | `.claude/skills/xcode-mcp/SKILL.md` |

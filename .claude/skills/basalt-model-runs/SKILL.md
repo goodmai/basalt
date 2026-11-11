@@ -43,3 +43,21 @@ Gemma 3 and Ministral 3 are out of scope. One model at a time on a 24 GB Mac.
 ## In the PR
 
 A table per model with the numbers, the commit they were measured on, and the path or attachment of the runner's log. A model that wasn't run is listed as not measured, not left out.
+
+## Related skills
+
+All skills live in `.claude/skills/<name>/SKILL.md` (mirrored at `.agents/skills/`). Start from `swiftcoder` when unsure.
+
+| Skill | Use it for |
+|---|---|
+| `swiftcoder` | the role and entry point: which skill to load, in what order, and the gates |
+| `ponytail` | scope and the smallest complete change |
+| `ponytail-review` | review of a change for correctness, safety, load, tests and need |
+| `swift-64-architecture` | targets, boundaries, isolation domains, value core and actor shell |
+| `swift-64-optimization-coding` | writing Swift 6.4 code: ownership, typed throws, size limits, Metal kernels |
+| `swift-64-pr-review` | the 5-gate review of a Swift diff |
+| `swift-concurrency-pro` | async/await, actors, tasks, streams and cancellation in depth |
+| `swift-race-review` | races and deadlocks the compiler cannot see; MLX and Metal threading |
+| `swift-testing-pro` | Swift Testing in depth: structure, async tests, new features |
+| `xcode-mcp` | checking an API against Apple's documentation; Xcode workspace tools |
+| `model-xray` | looking inside a running model and calling basalt's own MCP server |

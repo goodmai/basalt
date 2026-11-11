@@ -68,3 +68,21 @@ If you find nothing, say which contexts and shared state you checked. "No races"
   - `BatchedTokenIterator` conforms to `SelfSerializingTokenIterator`, so the loop calls its `next()` without the lock and the row takes it itself only when it steps the batch.
 - **`--max-concurrent` > 1 is concurrency even with batching off.** A model with compiled traces (Qwen3.5 hybrids) crashed there before the shared lock existed.
 - **Bitwise equality has limits.** Tiny-model tests can demand bitwise equality. On real 4-bit models a batched or multi-token forward reduces in a different order. There, an output difference is not by itself a race: compare accuracy on a task pool (`scripts/task_pool_eval.swift`) and look for a near-tie at the divergence point before calling it a bug.
+
+## Related skills
+
+All skills live in `.claude/skills/<name>/SKILL.md` (mirrored at `.agents/skills/`). Start from `swiftcoder` when unsure.
+
+| Skill | Use it for |
+|---|---|
+| `swiftcoder` | the role and entry point: which skill to load, in what order, and the gates |
+| `ponytail` | scope and the smallest complete change |
+| `ponytail-review` | review of a change for correctness, safety, load, tests and need |
+| `swift-64-architecture` | targets, boundaries, isolation domains, value core and actor shell |
+| `swift-64-optimization-coding` | writing Swift 6.4 code: ownership, typed throws, size limits, Metal kernels |
+| `swift-64-pr-review` | the 5-gate review of a Swift diff |
+| `swift-concurrency-pro` | async/await, actors, tasks, streams and cancellation in depth |
+| `swift-testing-pro` | Swift Testing in depth: structure, async tests, new features |
+| `xcode-mcp` | checking an API against Apple's documentation; Xcode workspace tools |
+| `basalt-model-runs` | runs that load model weights: benchmarks, ppl, memory, parity, GPU lock |
+| `model-xray` | looking inside a running model and calling basalt's own MCP server |

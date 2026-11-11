@@ -71,3 +71,21 @@ You are an Expert Swift 6.4 Systems & Performance Engineer. Write deterministic,
 - **Benchmark shape:** release build, GPU lock, many calls evaluated in one `eval` (a single `eval` per call measures launch overhead), the stock kernel timed in the same process as the candidate.
 - **Experiment switches** go in as template integers read from the environment, so one build sweeps every variant with `--skip-build`. They never ship: remove them before the PR.
 - **What did not matter on M4 Pro** (#408): where a 512-entry table lives (constant, threadgroup or device buffer), rows per simdgroup from 2 to 8, simdgroups per threadgroup from 2 to 32, `half` arithmetic. A pre-converted `float4` table in threadgroup memory was three times slower.
+
+## Related skills
+
+All skills live in `.claude/skills/<name>/SKILL.md` (mirrored at `.agents/skills/`). Start from `swiftcoder` when unsure.
+
+| Skill | Use it for |
+|---|---|
+| `swiftcoder` | the role and entry point: which skill to load, in what order, and the gates |
+| `ponytail` | scope and the smallest complete change |
+| `ponytail-review` | review of a change for correctness, safety, load, tests and need |
+| `swift-64-architecture` | targets, boundaries, isolation domains, value core and actor shell |
+| `swift-64-pr-review` | the 5-gate review of a Swift diff |
+| `swift-concurrency-pro` | async/await, actors, tasks, streams and cancellation in depth |
+| `swift-race-review` | races and deadlocks the compiler cannot see; MLX and Metal threading |
+| `swift-testing-pro` | Swift Testing in depth: structure, async tests, new features |
+| `xcode-mcp` | checking an API against Apple's documentation; Xcode workspace tools |
+| `basalt-model-runs` | runs that load model weights: benchmarks, ppl, memory, parity, GPU lock |
+| `model-xray` | looking inside a running model and calling basalt's own MCP server |
