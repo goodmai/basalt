@@ -35,6 +35,7 @@ actor MockInferenceEngine: InferenceEngine {
     var requests: [GenerationRequest] = []
     var failure: (@Sendable (GenerationRequest) -> BasaltError?)?
     var heldStreams: [CheckedContinuation<Void, Never>]?
+    var requestWaiters: [CheckedContinuation<Void, Never>] = []
     var heldTokenCounts: [CheckedContinuation<Void, Never>]?
     private(set) var persistCount = 0
     var mockTranscription: Transcription?
@@ -128,6 +129,8 @@ actor MockInferenceEngine: InferenceEngine {
         guard loaded else { throw .inferenceHardwareFailure(reason: "not loaded") }
         if shouldFailOnGenerate { throw generateError }
         requests.append(request)
+        for waiter in requestWaiters { waiter.resume() }
+        requestWaiters.removeAll()
         if let error = failure?(request) { throw error }
         let mockText = (request.assistantPrefix ?? "") + (responder?(request) ?? self.mockText)
         return AsyncStream { continuation in
@@ -196,6 +199,10 @@ extension MockInferenceEngine {
         await withCheckedContinuation { heldStreams?.append($0) }
     }
     func getLastRequest() -> GenerationRequest? { lastRequest }
+    func waitForRequest() async {
+        guard requests.isEmpty else { return }
+        await withCheckedContinuation { requestWaiters.append($0) }
+    }
     func setMockReasoning(_ reasoning: String?) { mockReasoning = reasoning }
     func setMockToolCall(_ call: ToolCallOutput?, text: String = "Mock response", after: String? = nil) {
         setMockToolCalls(call.map { [$0] } ?? [], text: text, after: after)
