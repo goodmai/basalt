@@ -124,8 +124,8 @@ models:
 - **`compose up` on a running system:** if a system with the same `name` runs, `compose up` sends it the file (`POST /v1/compose/apply`) and applies the difference.
   - It loads added models, reloads changed ones and unloads removed ones.
   - It swaps the pipelines between requests.
-  - It prints `load`, `reload`, `unload` and `keep` per model.
-  - A cloud model's budget or key variable changes without a reload.
+  - It prints `load`, `reload`, `unload` and `keep` per model, `budget` for each changed cloud budget (`total` for the file's) and `key` for each cloud model whose `api_key_env` changed.
+  - A cloud model's budget or key variable changes without a reload. The new limits apply at once, and a model disabled by a refused key is enabled again when its key variable changes.
 - **Changes that need a restart:** a different chat model, memory mode or local decision model, or a sequential perceiver. Run `compose down` and then `compose up`.
 - **`/v1/systemone`** keeps the cascade it started with.
 - **`compose ps`:** lists each running system (`GET /v1/compose`) with its pipelines and, per model:

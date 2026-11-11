@@ -18,14 +18,18 @@ extension ServeCommand {
         }
     }
 
-    func cloudGate(_ spec: ComposeSpec?) -> CloudGate {
+    func cloudLimits(_ spec: ComposeSpec?) -> [String: Double] {
         var limits: [String: Double] = [:]
         for model in spec?.models.values ?? [:].values {
             if case .cloud(_, let id) = model.source, let budget = model.budget { limits[id] = budget }
         }
         if let total = spec?.budget { limits[CloudGateCore.total] = total }
         if let cloud = decision.cloudModel, let budget = decision.budgetPerDay { limits[cloud] = budget }
-        return CloudGate(limits: limits, storage: DecisionOptions.spendFile)
+        return limits
+    }
+
+    func cloudGate(_ spec: ComposeSpec?) -> CloudGate {
+        CloudGate(limits: cloudLimits(spec), storage: DecisionOptions.spendFile)
     }
 
     func key(_ spec: ComposeSpec, _ name: String) -> String {

@@ -6,6 +6,8 @@ public struct ComposeDiff: Sendable, Equatable, Codable {
     public var reloaded: [String] = []
     public var kept: [String] = []
     public var pipelines: [String] = []
+    public var budgets: [String] = []
+    public var rekeyed: [String] = []
     public var restart: String?
 
     public init() {}
@@ -17,10 +19,14 @@ public struct ComposeDiff: Sendable, Equatable, Codable {
             switch (old.models[name], new.models[name]) {
             case (nil, _?): diff.added.append(name)
             case (_?, nil): diff.removed.append(name)
-            case (let before?, let after?): needsReload(before, after) ? diff.reloaded.append(name) : diff.kept.append(name)
+            case (let before?, let after?):
+                needsReload(before, after) ? diff.reloaded.append(name) : diff.kept.append(name)
+                if after.isCloud, before.budget != after.budget { diff.budgets.append(name) }
+                if after.isCloud, before.apiKeyEnv != after.apiKeyEnv { diff.rekeyed.append(name) }
             case (nil, nil): break
             }
         }
+        if old.budget != new.budget { diff.budgets.append("total") }
         diff.restart = restartReason(old, new, touched: diff.added + diff.removed + diff.reloaded)
         return diff
     }
@@ -40,7 +46,7 @@ public struct ComposeDiff: Sendable, Equatable, Codable {
     }
 
     public var lines: [String] {
-        var lines = [("load", added), ("reload", reloaded), ("unload", removed), ("keep", kept)].compactMap { verb, names in
+        var lines = [("load", added), ("reload", reloaded), ("unload", removed), ("keep", kept), ("budget", budgets), ("key", rekeyed)].compactMap { verb, names in
             names.isEmpty ? nil : "  \(verb): \(names.joined(separator: ", "))"
         }
         lines.append("  pipelines: \(pipelines.joined(separator: ", "))")
