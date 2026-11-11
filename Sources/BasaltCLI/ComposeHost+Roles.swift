@@ -3,16 +3,21 @@ import BasaltCore
 import BasaltServer
 
 extension ComposeHost {
-    func swapRoles(_ diff: ComposeDiff, _ next: ComposeSpec) async throws -> (held: [String: ComposeHeld], decider: (any DecisionEngine)?) {
-        if diff.chat != nil { try await chat.loadModel(path: try await services.resolve(next.local(next.answer) ?? next.answer)) }
-        var decider = self.decider
-        if diff.decider != nil {
-            decider = nil
-            if let name = next.decider { decider = try await services.decider(name == "self" ? name : next.local(name) ?? name) }
-        }
-        var held: [String: ComposeHeld] = [next.answer: .resident(chat)]
-        if let name = next.deciderModel, let decider { held[name] = .decision(decider) }
-        return (held, decider)
+    func switchChat(_ diff: ComposeDiff, _ next: ComposeSpec) async throws {
+        guard diff.chat != nil else { return }
+        try await chat.loadModel(path: try await services.resolve(next.local(next.answer) ?? next.answer))
+    }
+
+    func ensureSelfDecider(_ spec: ComposeSpec) async throws {
+        guard selfDecider == nil, spec.views.contains(where: { $0.spec.cascade.last == spec.answer }) else { return }
+        selfDecider = try await services.decider("self")
+    }
+
+    func localDecider(_ view: ComposeSpec, of spec: ComposeSpec, held: [String: ComposeHeld]) -> (any DecisionEngine)? {
+        guard let name = view.cascade.last else { return nil }
+        if name == spec.answer { return selfDecider }
+        guard case .decision(let engine)? = held[name] else { return nil }
+        return engine
     }
 
     func restoreChat(_ path: String) async {

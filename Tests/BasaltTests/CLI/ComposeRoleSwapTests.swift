@@ -27,7 +27,7 @@ struct ComposeRoleSwapTests {
         #expect(toBig.chat == "big" && toBig.added == ["chat"] && toBig.removed.isEmpty && toBig.decider == nil)
         #expect(ComposeDiff.between(renamed, old).removed == ["chat"] && ComposeDiff.between(renamed, old).chat == "chat")
         let decider = ComposeDiff.between(old, try ComposeFile.parse(Self.laya, file: "c.yaml"))
-        #expect(decider.decider == "laya" && decider.added.isEmpty && decider.kept == ["chat", "jev"] && decider.restart == nil)
+        #expect(decider.decider == "laya" && decider.added == ["laya"] && decider.kept == ["chat", "jev"] && decider.restart == nil)
         #expect(decider.lines.contains("  decide: laya"))
         #expect(ComposeDiff.between(try ComposeFile.parse(Self.laya, file: "c.yaml"), old).decider == "self")
         let next = try ComposeFile.parse(Self.chatB, file: "b.yaml")
@@ -52,15 +52,14 @@ struct ComposeRoleSwapTests {
         let (host, _, asked) = try await Self.host()
         let diff = try await host.apply(ComposeApply(yaml: Self.laya))
         #expect(diff.decider == "laya" && asked.last?.hasSuffix("laya") == true)
-        #expect(await host.decider?.modelID.hasSuffix("laya") == true)
         #expect(await host.registry.system(ComposeSpec.defaultPipeline)?.decisions?.modelID.hasSuffix("laya") == true)
         #expect(await host.status().models.first { $0.name == "laya" }?.state == "decision")
         _ = try await host.apply(ComposeApply(yaml: Self.base))
-        #expect(asked.last == "self")
+        #expect(await host.registry.system(ComposeSpec.defaultPipeline)?.decisions?.modelID == "self")
         #expect(await host.status().models.allSatisfy { $0.name != "laya" })
     }
 
-    @Test("A failed decider load rolls the chat model back and leaves the running system as it was")
+    @Test("A failure after the chat switch rolls the chat model back and leaves the running system as it was")
     func rollsBack() async throws {
         let (host, chat, _) = try await Self.host()
         let broken = Self.chatB.replacingOccurrences(of: "pipeline:\n", with: "  laya:\n    source: ./broken\npipeline:\n").replacingOccurrences(of: "cascade: [jev, chat]", with: "cascade: [jev, laya]")
@@ -69,7 +68,7 @@ struct ComposeRoleSwapTests {
         #expect(await chat.isLoaded)
         let spec = await host.spec
         #expect(spec.models["chat"]?.source == .local("mlx-community/gemma-4-12B-it-qat-4bit") && spec.models["laya"] == nil)
-        #expect(await host.decider?.modelID == "self")
+        #expect(await host.registry.system(ComposeSpec.defaultPipeline)?.decisions?.modelID == "self")
     }
 
     @Test("/v1/systemone asks the default pipeline's current decisions, so a replaced registry is used by the next request")
@@ -87,23 +86,27 @@ struct ComposeRoleSwapTests {
         #expect(try await post() == .notFound)
     }
 
-    static func host() async throws -> (ComposeHost, ModelOrchestratorActor, KeyLog) {
+    static func host(_ yaml: String = base) async throws -> (ComposeHost, ModelOrchestratorActor, KeyLog) {
         let asked = KeyLog()
         let services = ComposeServices(
             resolve: { "/models/" + ($0.split(separator: "/").last.map(String.init) ?? $0) },
             load: { _, _, _, _ in nil },
             decider: { model in
                 asked.record(model)
-                if model.hasSuffix("broken") { throw BasaltError.invalidRequestStructure(details: "not a decision bundle") }
+                if model.hasSuffix("missing") { throw BasaltError.invalidRequestStructure(details: "not a decision bundle") }
                 return NamedDecider(modelID: model)
             },
-            decisions: { _, local, _, _, _ in local },
+            decisions: { _, local, _, _, _ in
+                if local?.modelID.hasSuffix("broken") == true { throw BasaltError.invalidRequestStructure(details: "no cascade for a broken decider") }
+                return local
+            },
             key: { _ in "test-key" },
             cloudLimits: { _ in [:] })
         let (_, chat) = try await PipelineSwapEdgeTests.chat()
-        var start = ComposeStart(chat: chat, decider: NamedDecider(modelID: "self"), decisions: nil, cloudGate: CloudGate(limits: [:], storage: nil), startup: PipelineStages(), besideDecode: true)
+        let spec = try ComposeFile.parse(yaml, file: "a.yaml")
+        var start = ComposeStart(chat: chat, decider: NamedDecider(modelID: spec.deciderModel.flatMap(spec.local) ?? "self"), decisions: nil, cloudGate: CloudGate(limits: [:], storage: nil), startup: PipelineStages(), besideDecode: true)
         start.admission = ComposeAdmission(sizes: ComposeFileTests.sizes([:])) { (64 * ComposeFileTests.gb, .desktop) }
-        let host = ComposeHost(services: services, spec: try ComposeFile.parse(Self.base, file: "a.yaml"), start: start)
+        let host = ComposeHost(services: services, spec: spec, start: start)
         try await host.start(defaultDecisions: nil)
         return (host, chat, asked)
     }

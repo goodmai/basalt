@@ -66,14 +66,13 @@ struct ComposeOperationsTests {
         #expect(ComposeDiff.between(old, swapped).restart != nil)
     }
 
-    @Test("Named pipelines parse; each is checked like the default one, shares its local decider, and keeps sequential perceivers to the default pipeline")
+    @Test("Named pipelines parse; each is checked like the default one and keeps sequential perceivers to the default pipeline")
     func namedPipelines() throws {
         let spec = try ComposeFile.parse(Self.with(Self.haiku, pipelines: Self.support), file: "c.yaml")
         #expect(spec.pipelineNames == ["default", "support"] && spec.view("support")?.answerModels == ["chat", "haiku"])
         #expect(spec.view("missing") == nil)
         for (yaml, reason) in [
             (Self.with(Self.haiku, pipelines: Self.support.replacingOccurrences(of: "  support:", with: "  Support:")), "lowercase"),
-            (Self.with(Self.haiku + "  laya:\n    source: ./laya\n", pipelines: Self.support.replacingOccurrences(of: "cascade: [chat]", with: "cascade: [laya]")), "shares the default pipeline's local decision model"),
             (Self.with(Self.haiku + "  asr:\n    source: divergentlabs/asr\n    keep: sequential\n", pipelines: Self.support.replacingOccurrences(of: "    decide:", with: "    perceive:\n      audio: [asr]\n    decide:")), "sequential perceivers"),
             (Self.with(Self.haiku), "declared but not used by any pipeline"),
         ] {
@@ -238,4 +237,6 @@ final class KeyLog: Sendable {
     func record(_ name: String?) { names.withLock { $0.append(name) } }
 
     var last: String? { names.withLock { $0.last ?? nil } }
+
+    var all: [String?] { names.withLock { $0 } }
 }

@@ -5,12 +5,12 @@ import BasaltServer
 import BasaltSpeech
 
 extension ComposeHost {
-    func systems(for spec: ComposeSpec, held: [String: ComposeHeld], decider: (any DecisionEngine)?, defaultDecisions: (any DecisionEngine)?) async throws -> [String: PipelineSystem] {
+    func systems(for spec: ComposeSpec, held: [String: ComposeHeld], defaultDecisions: (any DecisionEngine)?) async throws -> [String: PipelineSystem] {
         var systems: [String: PipelineSystem] = [:]
         for (name, view) in spec.views {
             let first = name == ComposeSpec.defaultPipeline
             let decisions = try (first ? defaultDecisions : nil)
-                ?? services.decisions(view, decider, chat.gate, besideDecode, cloudGate)
+                ?? services.decisions(view, localDecider(view, of: spec, held: held), chat.gate, besideDecode, cloudGate)
             systems[name] = PipelineSystem(decisions: decisions, stages: try stages(view, held: held, first: first))
         }
         return systems
