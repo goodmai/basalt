@@ -78,31 +78,32 @@ extension ServeCommand {
     }
 
     func loadDecisions(chat: MLXInferenceEngine) async throws -> (any DecisionEngine)? {
-        try await decision.localModel.asyncMap { try await loadDecisions($0, chat: chat) }
-    }
-
-    func loadDecisions(_ decisionModel: String, chat: MLXInferenceEngine) async throws -> any DecisionEngine {
+        guard let decisionModel = decision.localModel else { return nil }
         do {
-            if decisionModel == "self" {
-                log("Serving decisions (/v1/systemone) by option-letter readout of the chat model")
-                return ReadoutDecisionEngine(engine: chat, modelID: "self", readout: .uncalibrated)
-            }
-            let directory = URL(fileURLWithPath: try await resolvedPath(decisionModel, quant: nil))
-            if CoreAIDecisionEngine.isBundle(directory) {
-                log("Specializing the Core AI decision bundle for the Neural Engine (first start only; cached afterwards)…")
-                let engine = try await CoreAIDecisionEngine(directory: directory)
-                log("Serving \(engine.modelID) (decision, /v1/systemone, Core AI on the Neural Engine)")
-                return engine
-            }
-            guard JevEvaluator.isBundle(directory) else { return try await readoutDecisions(decisionModel, directory: directory) }
-            let base = URL(fileURLWithPath: try await resolvedPath(try JevEvaluator.baseModel(of: directory), quant: nil))
-            let evaluator = try await JevEvaluator(directory: directory, base: base)
-            log("Serving \(evaluator.modelID) (decision, /v1/systemone) on base \(base.lastPathComponent)")
-            return evaluator
+            return try await loadDecisions(decisionModel, chat: chat)
         } catch let error as BasaltError {
             log("\(red("[error]")) \(error.localizedDescription)")
             throw ExitCode.failure
         }
+    }
+
+    func loadDecisions(_ decisionModel: String, chat: MLXInferenceEngine) async throws -> any DecisionEngine {
+        if decisionModel == "self" {
+            log("Serving decisions (/v1/systemone) by option-letter readout of the chat model")
+            return ReadoutDecisionEngine(engine: chat, modelID: "self", readout: .uncalibrated)
+        }
+        let directory = URL(fileURLWithPath: try await resolvedPath(decisionModel, quant: nil))
+        if CoreAIDecisionEngine.isBundle(directory) {
+            log("Specializing the Core AI decision bundle for the Neural Engine (first start only; cached afterwards)…")
+            let engine = try await CoreAIDecisionEngine(directory: directory)
+            log("Serving \(engine.modelID) (decision, /v1/systemone, Core AI on the Neural Engine)")
+            return engine
+        }
+        guard JevEvaluator.isBundle(directory) else { return try await readoutDecisions(decisionModel, directory: directory) }
+        let base = URL(fileURLWithPath: try await resolvedPath(try JevEvaluator.baseModel(of: directory), quant: nil))
+        let evaluator = try await JevEvaluator(directory: directory, base: base)
+        log("Serving \(evaluator.modelID) (decision, /v1/systemone) on base \(base.lastPathComponent)")
+        return evaluator
     }
 
     func readoutDecisions(_ model: String, directory: URL) async throws(BasaltError) -> any DecisionEngine {
