@@ -3,13 +3,18 @@ import SwiftUI
 
 struct ChatView: View {
     let store: ChatStore
+    @State private var selected: MessageID?
+    @State private var inspecting = false
 
     var body: some View {
         VStack(spacing: 0) {
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 18) {
-                        ForEach(store.state.conversation.messages) { MessageRow(message: $0).id($0.id) }
+                        ForEach(store.state.conversation.messages) { message in
+                            MessageRow(message: message).id(message.id)
+                                .onTapGesture { if message.role == .assistant { (selected, inspecting) = (message.id, true) } }
+                        }
                     }
                     .padding(20)
                     .frame(maxWidth: 820)
@@ -32,6 +37,10 @@ struct ChatView: View {
             return !accepted.isEmpty
         }
         .navigationTitle(store.state.conversation.title.isEmpty ? "New Conversation" : store.state.conversation.title)
+        .inspector(isPresented: $inspecting) { InspectorView(store: store, selected: selected).inspectorColumnWidth(min: 260, ideal: 320) }
+        .toolbar {
+            Button("Inspector", systemImage: "sidebar.trailing") { inspecting.toggle() }.keyboardShortcut("i", modifiers: [.command, .option])
+        }
     }
 
     static func describe(_ error: EngineError) -> String {
