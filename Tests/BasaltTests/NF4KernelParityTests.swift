@@ -38,6 +38,18 @@ struct NF4KernelParityTests {
         }
     }
 
+    @Test("quantizedMM nf4 on Gemma 4 12B MLP shapes at M = 1, 16 and 512: decode, a verify window and prefill",
+          arguments: [(3840, 15360), (15360, 3840)])
+    func modelShapes(inputs: Int, outputs: Int) {
+        MLXRandom.seed(UInt64(inputs ^ outputs))
+        let (codes, scales, _) = quantized(MLXRandom.normal([outputs, inputs]) * 0.02, groupSize: 32, bits: 4, mode: .nf4)
+        for m in [1, 16, 512] {
+            let x = MLXRandom.normal([m, inputs]).asType(.bfloat16)
+            let error = Self.matmulError(x: x, codes: codes, scales: scales, groupSize: 32)
+            #expect(error < Self.tolerance, "K \(inputs) N \(outputs) M \(m): \(error)")
+        }
+    }
+
     @Test("gatherQuantizedMM nf4 on [topK, 1, K] matches each picked expert's dequantized matmul", arguments: [1024, 1056])
     func gather(inputs: Int) {
         MLXRandom.seed(UInt64(inputs))
