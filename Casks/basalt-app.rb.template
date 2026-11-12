@@ -1,0 +1,18 @@
+cask "basalt-app" do
+  version "@VERSION@"
+  sha256 "@SHA256@"
+
+  url "https://github.com/goodmai/basalt/releases/download/v#{version}/Basalt-#{version}.zip"
+  name "Basalt"
+  desc "Native Mac app for basalt: local LLM chat, quick ask, model library and compose"
+  homepage "https://github.com/goodmai/basalt"
+
+  depends_on arch: :arm64
+
+  app "Basalt.app"
+
+  zap trash: [
+    "~/Library/Application Support/Basalt",
+    "~/Library/Preferences/app.basalt.mac.plist",
+  ]
+end
