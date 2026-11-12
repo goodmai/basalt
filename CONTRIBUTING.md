@@ -148,7 +148,7 @@ Measure more than one model family. A claim about speed or quality names the mod
 
 - One issue per PR; link it with `Closes #N`.
 - No function or file over the limits in "Size and complexity", and none already over them grown.
-- `swift build --build-tests` and `swift test` pass locally with no new warnings (run `./scripts/build_metal.swift --skip-unsupported` once if MLX reports a missing metallib).
+- `swift build --build-tests` and `swift test` pass locally with no new warnings (run `./scripts/build_metal.swift --skip-unsupported` once if MLX reports a missing metallib). Run the full suite with `SWT_EXPERIMENTAL_MAXIMUM_PARALLELIZATION_WIDTH` set to half the cores, as CI does: MLX evaluates under one mutex, and more parallel tests only park cooperative threads on it until live-server tests hit their time limits (#427).
 - A test that guards against nondeterminism (sampling parity, speculative exactness, concurrency) runs with repetitions (ST-0024: `swift test --maximum-repetitions 10 --repeat-until fail --filter <SuiteName>`) before it is trusted.
 - Behaviour changes come with a test that fails without the change; the changed-line coverage step (see Coverage) checks the tests run it.
 - No new concurrency hatch outside `scripts/concurrency-hatches.allow`, and no stale line left in it.
