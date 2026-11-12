@@ -98,10 +98,10 @@ public actor TelemetryTracker {
         draftTokens += response.draftTokens ?? 0
         acceptedDraftTokens += response.acceptedDraftTokens ?? 0
         for warning in health.record(response, model: model) { logger.warn(warning) }
-        windows.record(TelemetrySample(
-            at: Date(), ttft: response.timeToFirstToken, tokensPerSecond: response.tokensPerSecond, completionTokens: response.completionTokens,
-            promptTokens: response.promptTokens, cachedPromptTokens: response.cachedPromptTokens,
-            draftTokens: response.draftTokens ?? 0, acceptedDraftTokens: response.acceptedDraftTokens ?? 0))
+        var sample = TelemetrySample(
+            at: Date(), ttft: response.timeToFirstToken, tokensPerSecond: response.tokensPerSecond, completionTokens: response.completionTokens, promptTokens: response.promptTokens)
+        (sample.cachedPromptTokens, sample.draftTokens, sample.acceptedDraftTokens) = (response.cachedPromptTokens, response.draftTokens ?? 0, response.acceptedDraftTokens ?? 0)
+        windows.record(sample)
     }
 
     public func recordDecision(_ response: SystemOneResponse, latencyMs: Double) {

@@ -14,8 +14,9 @@ struct TelemetryWindowsTests {
     func windows() {
         var windows = TelemetryWindows()
         for index in 0 ..< 10 {
-            windows.record(TelemetrySample(at: Self.start.addingTimeInterval(Double(index * 30)), ttft: Double(index + 1) / 10, tokensPerSecond: Double(20 + index),
-                                           completionTokens: 10, promptTokens: 100, cachedPromptTokens: index.isMultiple(of: 2) ? 100 : 0, draftTokens: 4, acceptedDraftTokens: 3))
+            var sample = TelemetrySample(at: Self.start.addingTimeInterval(Double(index * 30)), ttft: Double(index + 1) / 10, tokensPerSecond: Double(20 + index), completionTokens: 10, promptTokens: 100)
+            (sample.cachedPromptTokens, sample.draftTokens, sample.acceptedDraftTokens) = (index.isMultiple(of: 2) ? 100 : 0, 4, 3)
+            windows.record(sample)
         }
         let now = Self.start.addingTimeInterval(270)
         let minute = windows.window(seconds: 60, now: now)

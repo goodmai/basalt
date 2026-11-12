@@ -6,13 +6,12 @@ public struct TelemetrySample: Sendable, Equatable {
     public var tokensPerSecond: Double
     public var completionTokens: Int
     public var promptTokens: Int
-    public var cachedPromptTokens: Int
-    public var draftTokens: Int
-    public var acceptedDraftTokens: Int
+    public var cachedPromptTokens = 0
+    public var draftTokens = 0
+    public var acceptedDraftTokens = 0
 
-    public init(at: Date, ttft: Double, tokensPerSecond: Double, completionTokens: Int, promptTokens: Int, cachedPromptTokens: Int = 0, draftTokens: Int = 0, acceptedDraftTokens: Int = 0) {
-        (self.at, self.ttft, self.tokensPerSecond, self.completionTokens) = (at, ttft, tokensPerSecond, completionTokens)
-        (self.promptTokens, self.cachedPromptTokens, self.draftTokens, self.acceptedDraftTokens) = (promptTokens, cachedPromptTokens, draftTokens, acceptedDraftTokens)
+    public init(at: Date, ttft: Double, tokensPerSecond: Double, completionTokens: Int, promptTokens: Int) {
+        (self.at, self.ttft, self.tokensPerSecond, self.completionTokens, self.promptTokens) = (at, ttft, tokensPerSecond, completionTokens, promptTokens)
     }
 }
 
