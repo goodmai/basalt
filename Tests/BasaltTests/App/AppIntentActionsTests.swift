@@ -14,7 +14,7 @@ struct AppIntentActionsTests {
         await engine.setResponder { _ in "Pay it today." }
         let audio = try #require(ChatAttachment(name: "memo.wav", data: AudioFixture.sine(seconds: 0.2)))
         try await AppEngineClientTests.serve(engine) { endpoint in
-            let client = EngineClient.http(endpoint)
+            let client = EngineClient.http(endpoint, session: .isolated)
             let answer = try await IntentActions.ask("When do I pay?", model: nil, engine: client)
             let summary = try await IntentActions.summarize(audio, engine: client)
             let transcript = try await IntentActions.transcribe(audio, engine: client)

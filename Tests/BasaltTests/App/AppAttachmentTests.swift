@@ -61,7 +61,7 @@ struct AppAttachmentTests {
         try await AppEngineClientTests.serve(engine) { endpoint in
             let store = await MainActor.run {
                 Store(ChatState(conversation: ConversationSnapshot(id: ConversationID())), reduce: ChatReducer.reduce,
-                      handle: ChatEffects.handler(ChatEnvironment(engine: { EngineClient.http(endpoint) }, persist: { _ in })))
+                      handle: ChatEffects.handler(ChatEnvironment(engine: { EngineClient.http(endpoint, session: .isolated) }, persist: { _ in })))
             }
             await MainActor.run {
                 store.send(.attach(attachment))

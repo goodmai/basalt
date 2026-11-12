@@ -47,8 +47,8 @@ Details: [training commands](docs/commands.md) · [self-training, distillation a
 ## Compose: one YAML file for a whole model system
 
 - **docker-compose, for models.** Local and cloud models, how each stays in memory (`resident`, `on-demand`, `sequential`), and a perceive → decide → answer pipeline — OCR, speech, a decision cascade and the chat model — in one file.
-- **Refuses what will not fit.** `basalt compose plan` adds up the bytes and refuses a system that does not fit before anything loads.
-- **Change it live.** `compose up` on a running system loads, reloads and unloads only the models that changed and swaps pipelines between requests; `compose ps` shows state and spend, `compose down` stops it. Version 2 files pick models per Mac by memory and chip.
+- **Refuses what will not fit.** `basalt compose plan` adds up the bytes, sizing models you have not downloaded from the Hugging Face API, and refuses a system that does not fit before anything loads. `compose pull` fetches and verifies every model ahead of time.
+- **Change it live.** `compose diff` shows what would change; `compose up` on a running system then loads, reloads and unloads only the models that changed and swaps pipelines between requests, streaming progress events as it goes. `compose ps` shows state and spend, `compose down` stops it. Version 2 files pick models per Mac by memory and chip.
 - **A mixture of models with a budget.** Answer routes send code to a cloud model while its daily budget lasts and everything else to the local model. On a 55-request mixed workload: every label right, $0.035 per 1000 requests, p95 4.8 s against 10.0 s local only (M4 Pro).
 - **Private by default.** Keys come only from environment variables, and text read from your documents or audio never goes to a cloud model.
 

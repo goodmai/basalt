@@ -51,7 +51,28 @@ extension ComposeCommand {
         }
     }
 
+    static func follow(_ running: ComposeRecord) -> Task<Void, Never> {
+        Task {
+            var request = URLRequest(url: URL(string: "http://127.0.0.1:\(running.port)/v1/compose/events")!)
+            if let key = ProcessInfo.processInfo.environment["BASALT_API_KEY"] { request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization") }
+            guard let (lines, _) = try? await URLSession.shared.bytes(for: request) else { return }
+            do {
+                for try await line in lines.lines {
+                    if let event = Self.event(line) { log("  \(event)") }
+                }
+            } catch {}
+        }
+    }
+
+    static func event(_ line: String) -> String? {
+        guard line.hasPrefix("data: "), let json = try? JSONSerialization.jsonObject(with: Data(line.dropFirst(6).utf8)) as? [String: Any],
+              let kind = json["kind"] as? String, let message = json["message"] as? String else { return nil }
+        return [kind, json["model"] as? String, message.replacingOccurrences(of: "\n", with: "; ")].compactMap { $0 }.joined(separator: " ")
+    }
+
     static func waitReady(_ running: ComposeRecord, until deadline: ContinuousClock.Instant) async throws {
+        let events = follow(running)
+        defer { events.cancel() }
         var last: [String] = []
         while ContinuousClock.now < deadline {
             let (status, reply) = try await call(running, "/v1/health/ready")

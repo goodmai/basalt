@@ -20,6 +20,7 @@ struct ComposeStart: Sendable {
     let besideDecode: Bool
     var admission = ComposeAdmission.machine
     var registry = PipelineRegistry([:])
+    var events = ComposeEvents()
 }
 
 struct ComposeAdmission: Sendable {
@@ -39,6 +40,7 @@ actor ComposeHost {
     let besideDecode: Bool
     let admission: ComposeAdmission
     let registry: PipelineRegistry
+    let events: ComposeEvents
     private(set) var spec: ComposeSpec
     private(set) var held: [String: ComposeHeld] = [:]
     var failures: [String: String] = [:]
@@ -48,7 +50,7 @@ actor ComposeHost {
         (self.services, self.spec, self.chat, self.cloudGate) = (services, spec, start.chat, start.cloudGate)
         (startDecider, selfDecider) = spec.decider == "self" ? (nil, start.decider) : (start.decider, nil)
         (self.startup, self.besideDecode, self.admission) = (start.startup, start.besideDecode, start.admission)
-        registry = start.registry
+        (registry, events) = (start.registry, start.events)
     }
 
     func start(defaultDecisions: (any DecisionEngine)?) async throws {
@@ -78,12 +80,37 @@ actor ComposeHost {
             if spec.views.contains(where: { $0.spec.ocr == name }), let refusal = ServeCommand.ocrRefusal(source, path: path) { throw BasaltError.invalidRequestStructure(details: refusal) }
             if spec.views.contains(where: { $0.spec.speech == name }), let refusal = ServeCommand.audioRefusal(source, path: path) { throw BasaltError.invalidRequestStructure(details: refusal) }
             let onDemand = model.keep == .onDemand
+            await events.emit(onDemand ? "registered" : "loading", model: name, source)
             guard let orchestrator = try await services.load(source, path, name, onDemand) else { throw ExitCode.failure }
+            if !onDemand { await events.emit("ready", model: name, source) }
             return onDemand ? .onDemand(OnDemandModel(model: orchestrator, path: path, idle: .seconds(model.idleUnload ?? ComposeSpec.defaultIdleUnload))) : .resident(orchestrator)
         }
     }
 
     func apply(_ request: ComposeApply) async throws(BasaltError) -> ComposeDiff {
+        do {
+            let diff = try await change(request)
+            await events.emit("applied", diff.lines.joined(separator: "\n"))
+            return diff
+        } catch {
+            if case .serverBusy = error {} else { await events.emit("refused", "\(error)") }
+            throw error
+        }
+    }
+
+    func preview(_ request: ComposeApply) async throws(BasaltError) -> ComposeDiff {
+        let next = try Self.parse(request)
+        var diff = ComposeDiff.between(spec, next)
+        if let missing = next.missingKeys(ProcessInfo.processInfo.environment).first {
+            diff.refusal = "\(missing) in the server's environment"
+        } else if diff.restart == nil {
+            let (bytes, power) = await admission.budget()
+            if case .failure(let refusal) = diff.admission(previous: spec, next: next, sizes: admission.sizes, budgetBytes: bytes, power: power) { diff.refusal = refusal.reason }
+        }
+        return diff
+    }
+
+    private func change(_ request: ComposeApply) async throws(BasaltError) -> ComposeDiff {
         guard !applying else { throw .serverBusy(retryAfterSeconds: 5) }
         applying = true
         defer { applying = false }
