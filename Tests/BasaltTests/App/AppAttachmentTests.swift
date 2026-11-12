@@ -31,7 +31,7 @@ struct AppAttachmentTests {
         receipt.stages = [StageReceipt(stage: "perceive", model: "org/model", ms: 12)]
         let result = PipelineResult(perceived: ["pay it today"], answer: "Pay today.", receipt: receipt)
         #expect(ChatReducer.reduce(&state, .perceived(RunID(), result)).isEmpty)
-        #expect(ChatReducer.reduce(&state, .perceived(run, result)) == [.persist(state.conversation)])
+        #expect(ChatReducer.reduce(&state, .perceived(run, result)) == [.persist(state.conversation), .answered(state.conversation)])
         #expect(state.conversation.messages[0].attachments.first?.perceived == "pay it today" && state.conversation.messages[1].text == "Pay today.")
         #expect(state.conversation.messages[1].state == .complete && state.conversation.messages[1].receipt?.stages?.count == 1 && state.run == .idle)
         #expect(ChatRequest(state.conversation).messages.first?.content == "Attached audio memo.wav:\npay it today\n\n")

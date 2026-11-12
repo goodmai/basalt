@@ -26,6 +26,8 @@ public final class AppModel {
     public var model: String { library.state.models.first(where: \.isLoaded)?.id ?? configuredModel }
     @ObservationIgnored private var listening = false
 
+    @ObservationIgnored public var answered: @MainActor (ConversationSnapshot) -> Void = { _ in }
+
     public init(launch: HelperLaunch, model: String, storeURL: URL?, environment: EngineEnvironment = .live, drafts: DraftStore = .defaults()) throws {
         let supervisor = EngineSupervisor(launch: launch, environment: environment)
         (self.supervisor, self.configuredModel, self.drafts) = (supervisor, model, drafts)
@@ -56,6 +58,23 @@ public final class AppModel {
     }
 
     public func stop() async { await supervisor.shutdown() }
+
+    public func readyEndpoint(within limit: Duration = .seconds(180)) async -> EngineEndpoint? {
+        let deadline = ContinuousClock.now + limit
+        while ContinuousClock.now < deadline {
+            if case .ready = engine.phase, let endpoint = await supervisor.endpoint { return endpoint }
+            try? await Task.sleep(for: .milliseconds(250))
+        }
+        return nil
+    }
+
+    public func startConversation(text: String, attachments: [ChatAttachment] = []) {
+        newConversation()
+        guard let id = selection, let store = chats[id] else { return }
+        store.send(.draftChanged(text))
+        for attachment in attachments { store.send(.attach(attachment)) }
+        store.send(.send(message: MessageID(), reply: MessageID(), run: RunID()))
+    }
 
     nonisolated static let pendingKey = "pendingDownloads"
 
@@ -125,6 +144,10 @@ public final class AppModel {
                 guard await self?.persists(snapshot.id) == true else { return }
                 try? await repository.save(snapshot)
                 await self?.reload()
+            },
+            answered: { [weak self] snapshot in
+                guard await self?.persists(snapshot.id) == true else { return }
+                await self?.answered(snapshot)
             })
         let store = Store(ChatState(conversation: conversation), reduce: ChatReducer.reduce, handle: ChatEffects.handler(environment))
         let draft = drafts.load(conversation.id)

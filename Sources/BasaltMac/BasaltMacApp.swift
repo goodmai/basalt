@@ -10,9 +10,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var quickAsk: QuickAskController?
     var openMain: (@MainActor () -> Void)?
     private var hotKey: HotKey?
+    private var services: ServiceProvider?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         guard let model else { return }
+        AppServices.model = model
+        let services = ServiceProvider(model: model) { [weak self] in
+            self?.openMain?()
+            NSApplication.shared.activate()
+        }
+        (self.services, NSApplication.shared.servicesProvider) = (services, services)
+        model.answered = { AnswerNotifications.post($0) }
+        AnswerNotifications.request()
         let quickAsk = QuickAskController(model: model) { [weak self] in
             self?.openMain?()
             NSApplication.shared.activate()
@@ -23,6 +32,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) { hotKey?.unregister() }
+
+    func application(_ application: NSApplication, open urls: [URL]) { services?.open(urls) }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard let model, !model.engine.isIdle else { return .terminateNow }

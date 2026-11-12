@@ -43,7 +43,7 @@ struct AppReducerTests {
         #expect(state.conversation.messages[1].parts == [.reasoning("think"), .text("Hello"), .toolCall(call)])
         let effects = ChatReducer.reduce(&state, .finished(run, RunTiming(timeToFirstToken: .milliseconds(300), streaming: .seconds(2))))
         let answer = state.conversation.messages[1]
-        #expect(answer.state == .complete && state.run == .idle && effects == [.persist(state.conversation)])
+        #expect(answer.state == .complete && state.run == .idle && effects == [.persist(state.conversation), .answered(state.conversation)])
         #expect(answer.receipt?.promptTokens == 7 && answer.receipt?.tokensPerSecond == 10 && answer.receipt?.timeToFirstToken == .milliseconds(300))
     }
 
