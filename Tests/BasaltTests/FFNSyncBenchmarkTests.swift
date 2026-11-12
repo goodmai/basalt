@@ -9,14 +9,41 @@ import BasaltCore
 @Suite("Prefill FFN split spike step 2: the MLX ↔ Core AI hand-off per layer against the GPU-only block (#274)", .serialized)
 struct FFNSyncBenchmarkTests {
     static let modelPath = ProcessInfo.processInfo.environment["BASALT_BENCH_FFN_SYNC"]
-    static let (hidden, intermediate, layers, length) = (2560, 9728, 36, 2048)
+    struct Shape: Decodable {
+        var hidden = 2560, intermediate = 9728, tokens = 2048, columns: Int?, layers = 36
+
+        init() {}
+
+        init(from decoder: any Decoder) throws {
+            let values = try decoder.container(keyedBy: CodingKeys.self)
+            hidden = try values.decode(Int.self, forKey: .hidden)
+            intermediate = try values.decode(Int.self, forKey: .intermediate)
+            tokens = try values.decode(Int.self, forKey: .tokens)
+            columns = try values.decodeIfPresent(Int.self, forKey: .columns)
+            layers = try values.decodeIfPresent(Int.self, forKey: .layers) ?? 48
+        }
+
+        enum CodingKeys: String, CodingKey { case hidden, intermediate, tokens, columns, layers }
+    }
+
+    static let shape = modelPath.flatMap { path in
+        try? JSONDecoder().decode(Shape.self, from: Data(contentsOf: sibling(path, "json")))
+    } ?? Shape()
+    static let (hidden, intermediate, layers, length) = (shape.hidden, shape.intermediate, shape.layers, shape.tokens)
 
     static func planar(_ x: MLXArray) -> MLXArray {
         contiguous(x.reshaped([length, hidden]).transposed().asType(.float16))
     }
 
+    static func sibling(_ model: String, _ suffix: String) -> URL {
+        URL(fileURLWithPath: (model.hasSuffix("/") ? String(model.dropLast()) : model).replacingOccurrences(of: ".aimodel", with: "." + suffix), isDirectory: false)
+    }
+
     static func handIn(_ x: MLXArray) -> NDArray {
-        let planar = planar(x)
+        ndArray(planar: planar(x))
+    }
+
+    static func ndArray(planar: MLXArray) -> NDArray {
         eval(planar)
         let bytes = planar.asData(access: .noCopyIfContiguous).data
         var array = NDArray(shape: [1, hidden, 1, length], scalarType: .float16)
@@ -32,6 +59,19 @@ struct FFNSyncBenchmarkTests {
             MLXArray(UnsafeBufferPointer(start: pointer, count: hidden * length), [hidden, length])
         }
         return planar.transposed().asType(.bfloat16).reshaped([1, length, hidden])
+    }
+
+    static func referenceError(_ function: InferenceFunction, model path: String) async throws -> Double? {
+        let url = sibling(path, "reference.safetensors")
+        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+        let arrays = try loadArrays(url: url)
+        let (x, expected) = (try #require(arrays["x"]), try #require(arrays["y"]).asType(.float32).reshaped([hidden, length]))
+        let got = try await run(function, ndArray(planar: contiguous(x.asType(.float16).reshaped([hidden, length]))))
+        let actual = got.view(as: Float16.self).withUnsafePointer { pointer, _, _ in
+            MLXArray(UnsafeBufferPointer(start: pointer, count: hidden * length), [hidden, length])
+        }.asType(.float32)
+        let difference = actual - expected
+        return Double((sqrt((difference * difference).sum()) / sqrt((expected * expected).sum())).item(Float.self))
     }
 
     static func run(_ function: InferenceFunction, _ input: NDArray) async throws -> NDArray {
@@ -62,11 +102,13 @@ struct FFNSyncBenchmarkTests {
         }
         var lock = GPULockGuard(path: ModelRunLog.gpuLock, pid: getpid())
         defer { _ = lock.release() }
-        let share = Double(URL(fileURLWithPath: path).deletingPathExtension().lastPathComponent.split(separator: "-").last ?? "") ?? 0.5
+        let share = Self.shape.columns.map { Double($0) / Double(Self.intermediate) }
+            ?? Double(URL(fileURLWithPath: path).deletingPathExtension().lastPathComponent.split(separator: "-").last ?? "") ?? 0.5
         let model = try await AIModel.specialize(contentsOf: URL(fileURLWithPath: path), options: SpecializationOptions(preferredComputeUnitKind: .neuralEngine))
         let function = try #require(try model.loadFunction(named: "len\(Self.length)"))
         let columns = { (s: Double) in max(64, Int((Double(Self.intermediate) * s / 64).rounded()) * 64) }
-        let (full, rest) = (FFNSplitBenchmarkTests.Block(hidden: Self.hidden, columns: Self.intermediate), FFNSplitBenchmarkTests.Block(hidden: Self.hidden, columns: columns(1 - share)))
+        let restColumns = Self.shape.columns.map { Self.intermediate - $0 } ?? columns(1 - share)
+        let (full, rest) = (FFNSplitBenchmarkTests.Block(hidden: Self.hidden, columns: Self.intermediate), FFNSplitBenchmarkTests.Block(hidden: Self.hidden, columns: restColumns))
         let x = MLXRandom.normal([1, Self.length, Self.hidden], dtype: .bfloat16)
         eval(x, full(x), rest(x))
         let input = Self.handIn(x)
@@ -83,6 +125,7 @@ struct FFNSyncBenchmarkTests {
             eval(partial)
             eval(partial + Self.handOut(try await y))
         }
+        let reference = try await Self.referenceError(function, model: path)
         let ffnShare = 0.6, layer = gpu / ffnShare, splitLayer = layer - gpu + split
         let handOffShare = (inMs + outMs) / splitLayer
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
@@ -90,7 +133,7 @@ struct FFNSyncBenchmarkTests {
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         QuestKernelBenchmarkTests.log("SYNC \(Date().ISO8601Format()) commit \(ModelRunLog.output("/usr/bin/git", ["-C", root.path, "rev-parse", "HEAD"])) machine \(SystemProfiler.detectChipModel()) load \(ModelRunLog.load()) model \(path)", to: url)
         QuestKernelBenchmarkTests.log(String(
-            format: "tokens %d | ANE share %.2f | GPU full %.2f ms | hand-in %.2f ms (GPU transpose %.2f) | ANE run %.2f ms | hand-out %.2f ms | split layer FFN %.2f ms (%.2fx) | hand-off %.1f%% of a split layer (FFN assumed %.0f%% of a layer), %.0f ms per chunk over %d layers | gate < 10%%: %@",
-            Self.length, share, gpu, inMs, planarMs, aneMs, outMs, split, gpu / split, handOffShare * 100, ffnShare * 100, (inMs + outMs) * Double(Self.layers), Self.layers, handOffShare < 0.1 ? "pass" : "fail"), to: url)
+            format: "reference relative error %@ | tokens %d | ANE share %.2f | GPU full %.2f ms | hand-in %.2f ms (GPU transpose %.2f) | ANE run %.2f ms | hand-out %.2f ms | split layer FFN %.2f ms (%.2fx) | hand-off %.1f%% of a split layer (FFN assumed %.0f%% of a layer), %.0f ms per chunk over %d layers | gate < 10%%: %@",
+            reference.map { String(format: "%.4f", $0) } ?? "n/a", Self.length, share, gpu, inMs, planarMs, aneMs, outMs, split, gpu / split, handOffShare * 100, ffnShare * 100, (inMs + outMs) * Double(Self.layers), Self.layers, handOffShare < 0.1 ? "pass" : "fail"), to: url)
     }
 }
