@@ -16,7 +16,7 @@ struct FeatureMatrixTests {
             case .mtp: [.qwen35, .prism].contains(family)
             case .cacheBlend: [.qwen3, .qwen3HeadDim32].contains(family)
             case .kvZones, .headSplit, .headSplitZoned: family == .qwen3HeadDim32
-            case .quest: ![.gemma4, .gemma4Moe].contains(family)
+            case .quest: ![.gemma4, .gemma4Moe, .gemma4Unified].contains(family)
             }
         }
 
