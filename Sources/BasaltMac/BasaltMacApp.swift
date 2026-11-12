@@ -62,6 +62,10 @@ struct BasaltMacApp: App {
             if let model { MonitorView(store: model.monitor) }
         }
         .keyboardShortcut("m", modifiers: [.command, .option])
+        Window("Models", id: "library") {
+            if let model { LibraryView(store: model.library) }
+        }
+        .keyboardShortcut("l", modifiers: [.command, .option])
         MenuBarExtra {
             if let model { MenuBarContent(model: model) { delegate.quickAsk?.toggle() } }
         } label: {

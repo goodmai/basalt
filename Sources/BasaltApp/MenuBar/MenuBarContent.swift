@@ -24,6 +24,7 @@ public struct MenuBarContent: View {
             }
             Divider()
             engineButtons
+            Button("Models") { openWindow(id: "library") }
             Button("Monitor") { openWindow(id: "monitor") }
             SettingsLink { Text("Settings…") }
             Button("Quit Basalt") { NSApplication.shared.terminate(nil) }

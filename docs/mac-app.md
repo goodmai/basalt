@@ -41,3 +41,9 @@ From a build folder without bundling, point the app at the engine: `BASALT_HELPE
   - General: the model, quick ask, and open at login (`SMAppService`; it works once the app is signed and in Applications).
   - Cloud Keys: environment variables, such as `OPENROUTER_API_KEY`, whose values are kept in the Keychain (service `app.basalt.mac`). The engine receives them at its next start, for compose cloud models. The app never writes them to disk.
 - **State restoration:** the selected conversation comes back after a relaunch. So does an unsent draft, per conversation, kept in the user defaults.
+
+## Models
+- **The Models window** (⌥⌘L, or Models in the menu bar) lists the models in the Hugging Face cache (`~/.cache/huggingface/hub`) with their size and a fit verdict for this Mac, from `GET /v1/models/preview`.
+- **Load** switches the engine to that model (`POST /v1/models/load`) and makes it the model the engine starts with. A model whose verdict is "does not fit" cannot be loaded from the app; the window says why.
+- **Download** takes a repo id such as `mlx-community/gemma-4-12B-it-qat-4bit`. The app downloads in its own process, shows progress, and remembers unfinished downloads. On the next launch it resumes them from the partial files. A failed download waits for Retry.
+- **Delete** asks first, then removes the model's folder from the cache. The loaded model cannot be deleted.
