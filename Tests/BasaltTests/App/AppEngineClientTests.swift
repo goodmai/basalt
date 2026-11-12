@@ -38,7 +38,7 @@ struct AppEngineClientTests {
         await engine.setMockReasoning("weighing it")
         await engine.setResponder { _ in "Basalt is volcanic." }
         try await Self.serve(engine) { endpoint in
-            let client = EngineClient.http(endpoint)
+            let client = EngineClient.http(endpoint, session: .isolated)
             let deltas = try await Self.collect(client.chat(Self.request("What is basalt?")))
             #expect(deltas.first == .reasoning("weighing it"))
             #expect(deltas.compactMap { if case .text(let text) = $0 { text } else { nil } }.joined() == "Basalt is volcanic.")
@@ -54,7 +54,7 @@ struct AppEngineClientTests {
         try await Self.serve(MockInferenceEngine()) { endpoint in
             var wrong = endpoint
             wrong.token = "nope"
-            let client = EngineClient.http(wrong)
+            let client = EngineClient.http(wrong, session: .isolated)
             await #expect { _ = try await Self.collect(client.chat(Self.request("hi"))) } throws: { error in
                 if case EngineError.refused(401, _) = error { true } else { false }
             }
@@ -69,7 +69,7 @@ struct AppEngineClientTests {
         let engine = MockInferenceEngine()
         await engine.holdStreams()
         try await Self.serve(engine) { endpoint in
-            let client = EngineClient.http(endpoint)
+            let client = EngineClient.http(endpoint, session: .isolated)
             let consumer = Task {
                 var deltas: [ChatDelta] = []
                 for try await delta in client.chat(Self.request("long")) {
@@ -94,4 +94,8 @@ struct AppEngineClientTests {
         }
         #expect(await client.health() == false)
     }
+}
+
+extension URLSession {
+    static var isolated: URLSession { URLSession(configuration: .ephemeral) }
 }

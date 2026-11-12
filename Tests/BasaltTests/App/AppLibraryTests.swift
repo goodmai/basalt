@@ -104,7 +104,7 @@ struct AppLibraryTests {
     @Test("Against the live REST server the model list decodes and loading an uncached model is refused")
     func live() async throws {
         try await AppEngineClientTests.serve(MockInferenceEngine()) { endpoint in
-            let client = LibraryClient.live(endpoint)
+            let client = LibraryClient.live(endpoint, session: .isolated)
             _ = try await client.models()
             await #expect(throws: EngineError.self) { try await client.load("org/not-cached-\(UUID().uuidString.prefix(6))") }
         }
