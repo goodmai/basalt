@@ -92,3 +92,16 @@ From a build folder without bundling, point the app at the engine: `BASALT_HELPE
   - It writes `Casks/basalt-app.rb` from `Casks/basalt-app.rb.template` in the same PR that moves the formula.
   - Without the secrets, the release ships the formula only, with a notice.
 - **Install:** once a release carries the app, run `brew install --cask goodmai/basalt/basalt-app`.
+
+## Budgets
+Measured on an M4 Pro with 24 GB at 530aa28, with Gemma 4 12B in the engine (#434):
+
+| Budget | Measured | Limit | How |
+|---|---|---|---|
+| Window at a warm launch | 257 ms median of 5 (cold: 1.6 s) | 400 ms | `swift scripts/app_budgets.swift` |
+| Idle wakeups once the engine is up | 0 in 10 s | 0 | same |
+| App process | 40 MB, plus 33.5 MB for an open 2,000-message transcript | 150 MB | same, and `AppBudgetTests` |
+| A streamed token into a 2,000-message transcript | 7.4 ms p95, 6.0 ms median | 16.7 ms (60 fps) | `BASALT_APP_BUDGETS=1 swift test --filter AppBudgetTests` |
+| Quick ask: panel and first token over the engine's own time | 40 ms warm (panel 15 ms); the first SwiftUI view in a process 175 ms | 150 ms | same |
+
+`app_budgets.swift` takes the GPU lock, since the engine loads its model. Run both on a quiet Mac, with no CI job running. They need a hand check that is not automated: the panel over a full-screen app (it is a non-activating panel with `.fullScreenAuxiliary`), App Intents from Shortcuts with the app closed, and a cask install on a clean Mac, which needs the signing secrets.
