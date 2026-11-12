@@ -56,11 +56,12 @@ public struct JevEvaluator: DecisionEngine {
     }
 
     static func hidden(_ model: any LanguageModel, _ inputs: MLXArray, cache: [any KVCache]) throws -> MLXArray {
-        switch model {
-        case let qwen as Qwen3Model: return qwen.model(inputs, cache: cache)
-        case let qwen as Qwen35TextModel: return qwen.model(inputs, cache: cache)
-        default: throw BasaltError.inferenceError("systemone needs a Qwen3 or Qwen3.5 base")
+        let probe = FinalResidual()
+        _ = withForwardProbe(probe) { model(LMInput.Text(tokens: inputs), cache: cache, state: nil) }
+        guard let residual = probe.hidden, let norm = model.namedModules().first(where: { $0.0 == "model.norm" })?.1 as? any UnaryLayer else {
+            throw BasaltError.inferenceError("systemone needs a Qwen3 or Qwen3.5 base")
         }
+        return norm(residual)
     }
 
     static func template(_ tokenizer: any MLXLMCommon.Tokenizer) throws -> (String, String) {
@@ -127,7 +128,7 @@ public struct JevEvaluator: DecisionEngine {
             let longest = items.map(\.count).max() ?? 1
             let ids = items.flatMap { $0 + Array(repeating: 0, count: longest - $0.count) }.map(Int32.init)
             let branchCache = try model.newCache(parameters: nil)
-            for (fresh, state) in zip(branchCache, prefixState) { fresh.state = state.map { repeated($0, count: items.count, axis: 0) } }
+            for (fresh, state) in zip(branchCache, prefixState) { var fresh = fresh; fresh.state = state.map { repeated($0, count: items.count, axis: 0) } }
             let hidden = try hidden(model, MLXArray(ids).reshaped(items.count, longest), cache: branchCache)
             let last = MLXArray(items.enumerated().map { Int32($0.offset * longest + $0.element.count - 1) })
             let rows = hidden.reshaped(items.count * longest, -1)[last].asType(.float32)
@@ -135,4 +136,19 @@ public struct JevEvaluator: DecisionEngine {
         }
         return values
     }
+}
+
+final class FinalResidual: ForwardProbe {
+    private(set) var hidden: MLXArray?
+
+    func residual(layer: Int, _ hidden: MLXArray) -> MLXArray {
+        self.hidden = hidden
+        return hidden
+    }
+
+    func attentionWeights(layer: Int, _ weights: MLXArray) {}
+    func wantsAttention(layer: Int) -> Bool { false }
+    func headMask(layer: Int) -> MLXArray? { nil }
+    func routerLogits(layer: Int, _ logits: MLXArray) {}
+    func expertMask(layer: Int) -> MLXArray? { nil }
 }
