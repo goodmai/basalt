@@ -67,7 +67,7 @@ struct AppEngineSystemsTests {
         let settings = NSHostingView(rootView: EngineSettings { _ in }.frame(width: 480, height: 300))
         settings.layoutSubtreeIfNeeded()
         #expect(host.fittingSize.width == 400 && settings.fittingSize.width == 480)
-        let none = try await AppEngineClientTests.serve(MockInferenceEngine()) { endpoint in try await EngineClient.http(endpoint).compose() }
+        let none = try await AppEngineClientTests.serve(MockInferenceEngine()) { endpoint in try await EngineClient.http(endpoint, session: .isolated).compose() }
         #expect(none == nil)
     }
 
