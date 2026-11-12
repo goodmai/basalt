@@ -21,6 +21,7 @@ public struct SettingsView: View {
 struct GeneralSettings: View {
     @AppStorage("model") private var model = AppModel.defaultModel
     @AppStorage("quickAsk") private var quickAsk = true
+    @AppStorage(UpdateCheck.enabledKey) private var checkUpdates = true
     @State private var openAtLogin = SMAppService.mainApp.status == .enabled
     @State private var loginError: String?
 
@@ -29,6 +30,7 @@ struct GeneralSettings: View {
             TextField("Model", text: $model)
             Text("The engine loads this model at its next start.").font(.caption).foregroundStyle(.secondary)
             Toggle("Quick ask on ⌥Space", isOn: $quickAsk)
+            Toggle("Check GitHub for new versions once a day", isOn: $checkUpdates)
             Toggle("Open at login", isOn: $openAtLogin)
                 .onChange(of: openAtLogin) { _, on in
                     do {

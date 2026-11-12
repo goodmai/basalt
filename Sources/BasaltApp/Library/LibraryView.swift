@@ -97,9 +97,10 @@ struct FitBadge: View {
                 .font(.caption.weight(.medium))
                 .padding(.horizontal, 8).padding(.vertical, 2)
                 .background((fit.fits ? Color.green : Color.red).opacity(0.18), in: .capsule)
+                .accessibilityLabel(fit.fits ? Text("Fits on this Mac") : Text("Does not fit on this Mac"))
                 .help(fit.warning ?? "\(ByteCountFormatter.string(fromByteCount: fit.requiredBytes, countStyle: .memory)) needed, \(ByteCountFormatter.string(fromByteCount: fit.availableBytes, countStyle: .memory)) available")
         } else {
-            ProgressView().controlSize(.small)
+            ProgressView().controlSize(.small).accessibilityLabel("Checking whether it fits")
         }
     }
 }

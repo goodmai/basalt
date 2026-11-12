@@ -29,6 +29,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.quickAsk = quickAsk
         if UserDefaults.standard.object(forKey: "quickAsk") as? Bool ?? true { hotKey = HotKey { quickAsk.toggle() } }
         Task { await model.start() }
+        Task { await model.checkForUpdate() }
     }
 
     func applicationWillTerminate(_ notification: Notification) { hotKey?.unregister() }
@@ -51,6 +52,7 @@ struct MenuBarLabel: View {
 
     var body: some View {
         Image(systemName: "cube.transparent")
+            .accessibilityLabel("Basalt")
             .onAppear { delegate.openMain = { openWindow(id: "main") } }
     }
 }

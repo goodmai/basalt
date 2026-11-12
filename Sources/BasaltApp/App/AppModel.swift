@@ -17,6 +17,7 @@ public final class AppModel {
     public var selection: ConversationID?
     public private(set) var chats: [ConversationID: ChatStore] = [:]
     public private(set) var quickAsk: ChatStore?
+    public private(set) var update: AvailableUpdate?
     public let monitor: MonitorStore
     public let library: LibraryStore
     public let drafts: DraftStore
@@ -62,6 +63,13 @@ public final class AppModel {
     }
 
     public func stop() async { await supervisor.shutdown() }
+
+    public func checkForUpdate(defaults: UserDefaults = .standard, now: Date = Date(), fetch: @Sendable () async -> AvailableUpdate? = { await UpdateCheck.latest() }) async {
+        guard defaults.object(forKey: UpdateCheck.enabledKey) as? Bool ?? true,
+              UpdateCheck.due(last: defaults.object(forKey: UpdateCheck.lastKey) as? Date, now: now) else { return }
+        defaults.set(now, forKey: UpdateCheck.lastKey)
+        update = await fetch()
+    }
 
     public func readyEndpoint(within limit: Duration = .seconds(180)) async -> EngineEndpoint? {
         let deadline = ContinuousClock.now + limit

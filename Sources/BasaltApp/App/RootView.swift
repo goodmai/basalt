@@ -49,7 +49,7 @@ struct ConversationDetail: View {
 
     var body: some View {
         Group {
-            if let store { ChatView(store: store) } else { ProgressView() }
+            if let store { ChatView(store: store) } else { ProgressView().accessibilityLabel("Loading the conversation") }
         }
         .task { store = await model.store(for: id) }
         .onChange(of: store?.state.draft ?? "") { _, draft in model.drafts.save(id, draft) }
@@ -72,7 +72,7 @@ struct EngineBanner: View {
         }
     }
 
-    func bar(_ text: String, systemImage: String, action: (String, () -> Void)?) -> some View {
+    func bar(_ text: LocalizedStringKey, systemImage: String, action: (LocalizedStringKey, () -> Void)?) -> some View {
         HStack {
             Label(text, systemImage: systemImage).lineLimit(2)
             Spacer()
