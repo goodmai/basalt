@@ -52,7 +52,7 @@ Details: [training commands](docs/commands.md) · [self-training, distillation a
 - **A mixture of models with a budget.** Answer routes send code to a cloud model while its daily budget lasts and everything else to the local model. On a 55-request mixed workload: every label right, $0.035 per 1000 requests, p95 4.8 s against 10.0 s local only (M4 Pro).
 - **Private by default.** Keys come only from environment variables, and text read from your documents or audio never goes to a cloud model.
 
-- **Google's Gemini Decision 1 as a decision stage.**  answers yes/no, choice and score questions over text, images, audio, video and PDFs in one pass, in front of a local decider. It is also the ideal calibration teacher for local decision models (#448).
+- **Google's Gemini Decision 1 as a decision stage.** `cloud:gemini/gemini-decision-1` answers yes/no, choice and score questions over text, images, audio, video and PDFs in one pass, in front of a local decider. It is also the ideal calibration teacher for local decision models (#448).
 
 Details: [compose reference and measurements](docs/compose.md) · [pipeline presets and memory modes](docs/pipelines.md) · [cloud decisions with Gemini](docs/cloud-decisions.md)
 
