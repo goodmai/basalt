@@ -32,8 +32,8 @@ struct ExpertTelemetryTests {
 
     @Test("A streamed tiny MoE records routings for every MoE layer it ran, at least one per token")
     func streamed() async throws {
-        let container = try await ExpertStreamingTests.streamed(ExpertStreamingTests.fixtures.appendingPathComponent("qwen3_moe"), cache: ByteCount(1 << 30))
-        _ = try await ExpertStreamingTests.outputs(container)
+        let container = try await ExpertStreamingParityTests.streamed(ExpertStreamingParityTests.fixtures.appendingPathComponent("qwen3_moe"), cache: ByteCount(1 << 30))
+        _ = try await ExpertStreamingParityTests.outputs(container)
         let layers = try #require(await container.perform { ExpertStreamingLoader.store(in: $0.model)?.routing.layers() })
         #expect(!layers.isEmpty && layers.allSatisfy { $0.routed > 0 && $0.distinct > 0 && $0.topShare > 0 })
     }
