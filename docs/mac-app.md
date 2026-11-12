@@ -53,3 +53,9 @@ From a build folder without bundling, point the app at the engine: `BASALT_HELPE
 - **A message with attachments goes through `/v1/pipeline`.** The engine reads documents and images with its OCR model, or Apple Vision without one. It transcribes audio with its speech model, or the chat model. The chat model then answers the message (or "Summarize the attached files." when the message is empty).
 - **The perceived text stays in the conversation.** Each attachment shows as a chip, and the chip discloses the text the engine read. Later messages are sent with that text in front of the question, so follow-ups can refer to the file.
 - **The receipt** under the answer lists each pipeline stage with its model and milliseconds.
+
+## Inspector
+- **⌥⌘I**, or clicking an answer, opens the inspector beside the conversation.
+- **Conversation:** the model, and a system prompt for this conversation. It is saved with the conversation and sent before every message. An empty prompt clears it.
+- **Answer:** the selected answer's receipt: model, prompt and completion tokens, time to first token, speed, and each pipeline stage with its model and milliseconds.
+- **Attachments:** the text the engine read from each file of the question, page by page.

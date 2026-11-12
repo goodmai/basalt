@@ -47,7 +47,7 @@ struct AppViewRenderTests {
         conversation.messages = [MessageSnapshot(id: MessageID(), role: .user, parts: [.text("Total?"), .attachment(AttachmentPart(name: "bill.pdf", kind: "pdf", perceived: "Total 42"))]), answer]
         var chat = ChatState(conversation: conversation)
         chat.attachments = [try #require(ChatAttachment(name: "memo.wav", data: Data([1])))]
-        #expect(Self.render(ChatView(store: Store(chat, reduce: ChatReducer.reduce, handle: { _ in .none }))).width > 0)
+        #expect(Self.render(ChatView(store: Store(chat, reduce: ChatReducer.reduce, handle: { _ in .none })).frame(width: 800, height: 600)).width == 800)
         #expect(AttachmentChip.symbol("pdf") == "doc.richtext" && AttachmentChip.symbol("audio") == "waveform" && AttachmentChip.symbol("image") == "photo")
         #expect(MenuBarContent.status(.ready(port: 1)) == "Ready" && MenuBarContent.ready(.ready(port: 1)) && !MenuBarContent.ready(.stopped))
         #expect(MenuBarContent.status(.backingOff(attempt: 2)).contains("2") && MenuBarContent.status(.failed(log: [])).contains("failing"))

@@ -40,6 +40,7 @@ public enum ChatAction: Sendable, Equatable {
     case attach(ChatAttachment)
     case detach(UUID)
     case perceived(RunID, PipelineResult)
+    case systemPromptChanged(String)
 }
 
 public enum ChatEffect: Sendable, Equatable {
@@ -80,7 +81,7 @@ public enum ChatReducer {
             guard state.run == .streaming(run) else { return [] }
             close(&state, as: .failed, run: .failed(error))
             return [.persist(state.conversation)]
-        case .attach, .detach, .perceived:
+        case .attach, .detach, .perceived, .systemPromptChanged:
             return attachments(&state, action)
         }
     }
@@ -105,6 +106,11 @@ public enum ChatReducer {
             }
             (state.conversation.messages[answer].parts, state.conversation.messages[answer].receipt) = ([.text(result.answer)], result.receipt)
             close(&state, as: .complete, run: .idle)
+            return [.persist(state.conversation)]
+        case .systemPromptChanged(let text):
+            let prompt = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard (prompt.isEmpty ? nil : prompt) != state.conversation.systemPrompt else { return [] }
+            state.conversation.systemPrompt = prompt.isEmpty ? nil : prompt
             return [.persist(state.conversation)]
         default:
             return []
