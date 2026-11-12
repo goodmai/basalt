@@ -22,7 +22,7 @@ public actor EngineSupervisor {
     public private(set) var log: [String] = []
     public nonisolated let states: AsyncStream<EngineState>
     private let updates: AsyncStream<EngineState>.Continuation
-    private let launch: HelperLaunch
+    public private(set) var launch: HelperLaunch
     private let environment: EngineEnvironment
     private var process: Process?
     private var adoptedPID: Int32?
@@ -42,8 +42,8 @@ public actor EngineSupervisor {
     public var endpoint: EngineEndpoint? { state.port.map { .loopback(port: $0, token: token) } }
 
     public func start() async {
-        if let record = environment.records.load(), record.version == HealthResponse.version, environment.isAlive(record.pid),
-           await environment.probe(.loopback(port: record.port, token: record.token)) {
+        if let record = environment.records.load(), record.version == HealthResponse.version, record.arguments == launch.arguments,
+           environment.isAlive(record.pid), await environment.probe(.loopback(port: record.port, token: record.token)) {
             (token, adoptedPID) = (record.token, record.pid)
             send(.adopted(port: record.port))
             return
@@ -53,7 +53,14 @@ public actor EngineSupervisor {
 
     public func stop() { send(.stop) }
 
+    public func relaunch(_ next: HelperLaunch) async {
+        await shutdown()
+        launch = next
+        await start()
+    }
+
     public func shutdown() async {
+        if process == nil, let adopted = adoptedPID { return await stopAdopted(adopted) }
         guard let process else { return send(.stop) }
         let pid = process.processIdentifier
         send(.stop)
@@ -64,6 +71,16 @@ public actor EngineSupervisor {
         }
         await end(of: pid)
         deadline.cancel()
+    }
+
+    func stopAdopted(_ pid: Int32) async {
+        adoptedPID = nil
+        kill(pid, SIGINT)
+        let deadline = environment.now() + HelperLaunch.stopGrace
+        while environment.isAlive(pid), environment.now() < deadline { _ = try? await environment.sleep(.milliseconds(100)) }
+        if environment.isAlive(pid) { kill(pid, SIGKILL) }
+        environment.records.remove()
+        send(.stop)
     }
 
     func end(of pid: Int32) async {
@@ -88,7 +105,7 @@ public actor EngineSupervisor {
                 await self?.send(.retry(epoch: epoch))
             }
         case .writeRecord(let port):
-            if let pid = process?.processIdentifier { environment.records.save(EngineRecord(pid: pid, port: port, token: token)) }
+            if let pid = process?.processIdentifier { environment.records.save(EngineRecord(pid: pid, port: port, token: token, arguments: launch.arguments)) }
         case .removeRecord: environment.records.remove()
         }
     }

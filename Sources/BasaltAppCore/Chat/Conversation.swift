@@ -49,8 +49,11 @@ public struct StageReceipt: Sendable, Equatable, Codable {
     public var stage: String
     public var model: String
     public var ms: Int
+    public var cost: Double?
 
-    public init(stage: String, model: String, ms: Int) { (self.stage, self.model, self.ms) = (stage, model, ms) }
+    public init(stage: String, model: String, ms: Int, cost: Double? = nil) { (self.stage, self.model, self.ms, self.cost) = (stage, model, ms, cost) }
+
+    public var isCloud: Bool { cost != nil }
 }
 
 public struct Receipt: Sendable, Equatable, Codable {

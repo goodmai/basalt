@@ -57,7 +57,7 @@ struct ReceiptDetails: View {
         }
         if let speed = receipt.tokensPerSecond { LabeledContent("Speed", value: String(format: "%.1f tok/s", speed)) }
         ForEach(Array((receipt.stages ?? []).enumerated()), id: \.offset) { _, stage in
-            LabeledContent(stage.stage.capitalized, value: "\(stage.model) · \(stage.ms) ms")
+            LabeledContent(stage.stage.capitalized, value: "\(stage.model) · \(stage.ms) ms" + (stage.cost.map { String(format: " · cloud $%.4f", $0) } ?? ""))
         }
     }
 }

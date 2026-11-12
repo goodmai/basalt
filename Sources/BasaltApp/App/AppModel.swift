@@ -36,7 +36,11 @@ public final class AppModel {
             stats: {
                 guard let endpoint = await supervisor.endpoint else { throw EngineError.notRunning }
                 return try await EngineClient.http(endpoint).stats()
-            }, every: .seconds(2), sleep: { try await Task.sleep(for: $0) }))
+            }, every: .seconds(2), sleep: { try await Task.sleep(for: $0) },
+            compose: {
+                guard let endpoint = await supervisor.endpoint else { return nil }
+                return try await EngineClient.http(endpoint).compose()
+            }))
         library = Store(LibraryState(pending: UserDefaults.standard.stringArray(forKey: Self.pendingKey) ?? []), reduce: LibraryReducer.reduce, handle: LibraryEffects.handler(
             LibraryEnvironment(
                 client: { await supervisor.endpoint.map { LibraryClient.live($0) } },
@@ -77,6 +81,12 @@ public final class AppModel {
     }
 
     nonisolated static let pendingKey = "pendingDownloads"
+
+    public func switchEngine(_ arguments: [String]) async {
+        let current = await supervisor.launch
+        guard current.arguments != arguments else { return }
+        await supervisor.relaunch(HelperLaunch(executable: current.executable, arguments: arguments, environment: current.environment))
+    }
 
     public func restart() async {
         await supervisor.shutdown()

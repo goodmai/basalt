@@ -55,7 +55,7 @@ struct EngineSupervisorTests {
         #expect(fixture.file("token")?.trimmingCharacters(in: .newlines) == token)
         #expect(fixture.file("args")?.contains("serve --model org/m --host 127.0.0.1 --port 0 --announce-ready") == true)
         let record = try #require(EngineRecords.file(fixture.recordURL).load())
-        #expect(record.port == 4242 && record.token == token)
+        #expect(record.port == 4242 && record.token == token && record.arguments == ["serve", "--model", "org/m"])
         let mode = try FileManager.default.attributesOfItem(atPath: fixture.recordURL.path)[.posixPermissions] as? Int
         #expect(mode == 0o600)
         let endpoint = await supervisor.endpoint
@@ -96,7 +96,7 @@ struct EngineSupervisorTests {
     func adopts() async throws {
         let fixture = try Fixture()
         let pid = ProcessInfo.processInfo.processIdentifier
-        EngineRecords.file(fixture.recordURL).save(EngineRecord(pid: pid, port: 5151, token: "kept"))
+        EngineRecords.file(fixture.recordURL).save(EngineRecord(pid: pid, port: 5151, token: "kept", arguments: ["serve", "--model", "org/m"]))
         let marker = #"touch "$(dirname "$0")/spawned"; exit 1"#
         let supervisor = EngineSupervisor(launch: try fixture.script(marker), environment: fixture.environment { $0.token == "kept" })
         await supervisor.start()

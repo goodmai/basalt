@@ -132,6 +132,7 @@ struct ReceiptLine: View {
         let parts = [
             message.receipt?.model,
             message.receipt?.tokensPerSecond.map { String(format: "%.1f tok/s", $0) },
+            message.receipt?.stages.flatMap { stages in stages.contains(where: \.isCloud) ? String(format: "☁︎ cloud $%.4f", stages.compactMap(\.cost).reduce(0, +)) : nil },
             message.receipt?.stages.map { $0.map { "\($0.stage) \($0.model) \($0.ms) ms" }.joined(separator: ", ") },
             message.state == .stopped ? "stopped" : nil,
             message.state == .failed ? "failed" : nil,

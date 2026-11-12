@@ -6,6 +6,7 @@ public struct EngineClient: Sendable {
     public var health: @Sendable () async -> Bool
     public var stats: @Sendable () async throws -> ServerTelemetrySnapshot
     public var pipeline: @Sendable (PipelineCall) async throws -> PipelineResponse
+    public var compose: @Sendable () async throws -> ComposeInfo? = { nil }
 
     public init(
         chat: @escaping @Sendable (ChatRequest) -> AsyncThrowingStream<ChatDelta, any Error>,
@@ -38,7 +39,7 @@ public struct EngineEndpoint: Sendable, Equatable {
 
 extension EngineClient {
     public static func http(_ endpoint: EngineEndpoint, session: URLSession = .engine) -> EngineClient {
-        EngineClient(
+        var client = EngineClient(
             chat: { request in chatStream(endpoint, request, session: session) },
             health: {
                 guard let (_, response) = try? await session.data(for: endpoint.request("api/v1/health")) else { return false }
@@ -60,6 +61,13 @@ extension EngineClient {
                     throw EngineError.malformed("pipeline answer: \(error)")
                 }
             })
+        client.compose = {
+            let (data, response) = try await session.data(for: endpoint.request("v1/compose"))
+            if (response as? HTTPURLResponse)?.statusCode == 404 { return nil }
+            try check(response, data)
+            return try JSONDecoder().decode(ComposeInfo.self, from: data)
+        }
+        return client
     }
 
     static func chatStream(_ endpoint: EngineEndpoint, _ request: ChatRequest, session: URLSession) -> AsyncThrowingStream<ChatDelta, any Error> {
