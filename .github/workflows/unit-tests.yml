@@ -51,6 +51,10 @@ jobs:
     # once a run is approved.
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     timeout-minutes: 45
+    # MLX serializes every eval on one mutex, so tests past half the cores only park cooperative
+    # threads on it and starve live-server tests into their time limits; the run is no slower (#427).
+    env:
+      SWT_EXPERIMENTAL_MAXIMUM_PARALLELIZATION_WIDTH: 6
     steps:
       # clean: false keeps .build between runs on the self-hosted runner, so a run is an
       # incremental build instead of a from-scratch one. Safe only because fork PRs never
