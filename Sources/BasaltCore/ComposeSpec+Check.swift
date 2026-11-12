@@ -98,8 +98,8 @@ extension ComposeSpec {
         let cloud = cascade.map { models[$0]?.isCloud == true }
         if cloud.last != false {
             issues.append(Issue("pipeline.decide.cascade", "a cascade ends with a local model, which takes unsure questions, failed calls and perceived text"))
-        } else if cloud.dropLast().contains(false) || cascade.count > 4 {
-            issues.append(Issue("pipeline.decide.cascade", "a cascade is up to three cloud models followed by one local model"))
+        } else if cascade.count > 4 {
+            issues.append(Issue("pipeline.decide.cascade", "a cascade has at most four stages, cloud and local in any order"))
         }
         if escalateBelow != nil, cascade.count < 2 { issues.append(Issue("pipeline.decide.escalate_below", "applies only to a cascade of more than one model")) }
         for (key, value) in [("escalate_below", escalateBelow), ("abstain_below", abstainBelow), ("min_margin", minMargin)] {

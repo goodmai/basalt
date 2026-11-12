@@ -77,7 +77,7 @@ extension ComposeSpec {
     var roleModels: [String] { [answer] }
 
     public var deciderModels: Set<String> {
-        Set(views.compactMap { $0.spec.cascade.last }.filter { $0 != answer && models[$0]?.isCloud == false })
+        Set(views.flatMap { $0.spec.cascade }.filter { $0 != answer && models[$0]?.isCloud == false })
     }
 }
 

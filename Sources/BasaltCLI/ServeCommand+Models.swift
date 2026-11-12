@@ -111,7 +111,7 @@ extension ServeCommand {
         configuration.promptCacheBytes = 0
         let engine = MLXInferenceEngine(configuration)
         try await engine.load(modelPath: directory.path)
-        let readout = SystemOneReadout.known(model) ?? .uncalibrated
+        let readout = SystemOneReadout.calibration(for: model, in: directory)
         log("Serving \(model) (decision, /v1/systemone) by option-letter readout\(readout == .uncalibrated ? ", uncalibrated" : ", calibrated T \(readout.temperature)")")
         return ReadoutDecisionEngine(engine: engine, modelID: model, readout: readout)
     }

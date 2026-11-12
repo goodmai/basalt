@@ -9,15 +9,15 @@ extension ComposeHost {
     }
 
     func ensureSelfDecider(_ spec: ComposeSpec) async throws {
-        guard selfDecider == nil, spec.views.contains(where: { $0.spec.cascade.last == spec.answer }) else { return }
+        guard selfDecider == nil, spec.views.contains(where: { $0.spec.cascade.contains(spec.answer) }) else { return }
         selfDecider = try await services.decider("self")
     }
 
-    func localDecider(_ view: ComposeSpec, of spec: ComposeSpec, held: [String: ComposeHeld]) -> (any DecisionEngine)? {
-        guard let name = view.cascade.last else { return nil }
-        if name == spec.answer { return selfDecider }
-        guard case .decision(let engine)? = held[name] else { return nil }
-        return engine
+    func localDeciders(_ view: ComposeSpec, of spec: ComposeSpec, held: [String: ComposeHeld]) -> [String: any DecisionEngine] {
+        view.cascade.reduce(into: [:]) { deciders, name in
+            if name == spec.answer, let selfDecider { deciders[name] = selfDecider }
+            if case .decision(let engine)? = held[name] { deciders[name] = engine }
+        }
     }
 
     func restoreChat(_ path: String) async {
