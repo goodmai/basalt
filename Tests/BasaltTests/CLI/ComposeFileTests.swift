@@ -116,7 +116,7 @@ struct ComposeFileTests {
         let lines = ComposeCommand.lines(spec, verdict: verdict, unknown: unknown)
         #expect(lines.first?.hasPrefix("compose support-desk: basalt serve --model") == true)
         #expect(lines.contains { $0.contains("on demand") } && lines.contains { $0.contains("cloud:openrouter/~typesafe/jev-latest") })
-        #expect(lines.contains { $0.contains("ocr: not downloaded") } && lines.last?.hasPrefix("refused:") == true)
+        #expect(lines.contains { $0.contains("ocr: size unknown") } && lines.last?.hasPrefix("refused:") == true)
         let directory = try OCRAPITests.modelDirectory("compose-sized", modelType: "qwen3")
         try Data(count: 1000).write(to: directory.appendingPathComponent("model.safetensors"))
         #expect(ComposeCommand.sizes.bytes(directory.path) == 1000)
