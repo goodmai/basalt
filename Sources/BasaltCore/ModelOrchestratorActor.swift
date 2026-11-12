@@ -404,6 +404,7 @@ extension ModelOrchestratorActor {
         request: GenerationRequest,
         modelId: String? = nil
     ) async throws(BasaltError) -> GenerationResponse {
+        let request = await telemetry.sampled(request)
         guard let sessionLog else { return try await performGenerate(request: request, modelId: modelId).response }
         let id = Self.newRequestId()
         await sessionLog.logRequest(request, id: id, origin: request.origin, modelRequested: modelId)
@@ -423,6 +424,7 @@ extension ModelOrchestratorActor {
         request: GenerationRequest,
         modelId: String? = nil
     ) async throws(BasaltError) -> AsyncStream<StreamChunk> {
+        let request = await telemetry.sampled(request)
         guard let sessionLog else { return try await performStream(request: request, modelId: modelId).stream }
         let id = Self.newRequestId()
         await sessionLog.logRequest(request, id: id, origin: request.origin, modelRequested: modelId)

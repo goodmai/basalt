@@ -30,6 +30,7 @@ public struct ServerTelemetrySnapshot: Codable, Sendable, Equatable {
     public var windows: [TelemetryWindow]?
     public var decisions: [String: DecisionTelemetry]?
     public var experts: ExpertTelemetry?
+    public var confidence: ConfidenceTelemetry?
 
     public init() {}
 
@@ -85,6 +86,9 @@ public actor TelemetryTracker {
     private var health = HealthTelemetry()
     private var windows = TelemetryWindows()
     private var decisions: [String: DecisionTelemetry] = [:]
+    private var confidence = ConfidenceTelemetry()
+    private var confidenceEvery = 0
+    private var confidenceCounter = 0
     private let logger = BasaltLogger(module: "Telemetry")
 
     public init() {}
@@ -103,6 +107,15 @@ public actor TelemetryTracker {
             at: Date(), ttft: response.timeToFirstToken, tokensPerSecond: response.tokensPerSecond, completionTokens: response.completionTokens, promptTokens: response.promptTokens)
         (sample.cachedPromptTokens, sample.draftTokens, sample.acceptedDraftTokens) = (response.cachedPromptTokens, response.draftTokens ?? 0, response.acceptedDraftTokens ?? 0)
         windows.record(sample)
+        if let measured = response.confidence { confidence.record(measured) }
+    }
+
+    public func sampleConfidence(every requests: Int) { confidenceEvery = max(0, requests) }
+
+    public func sampled(_ request: GenerationRequest) -> GenerationRequest {
+        guard confidenceEvery > 0, !request.recordConfidence else { return request }
+        confidenceCounter += 1
+        return confidenceCounter % confidenceEvery == 0 ? request.withConfidenceRecording() : request
     }
 
     public func recordDecision(_ response: SystemOneResponse, latencyMs: Double) {
@@ -163,6 +176,7 @@ public actor TelemetryTracker {
         snapshot.health = health
         snapshot.windows = windows.windows(now: Date())
         snapshot.decisions = decisions.isEmpty ? nil : decisions
+        snapshot.confidence = confidence.responses > 0 ? confidence : nil
         return snapshot
     }
 }

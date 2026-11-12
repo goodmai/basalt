@@ -35,7 +35,14 @@ struct ExperimentalServeOptions: ParsableArguments {
     )
     var aneVisionTower: String?
 
+    @Option(
+        name: .customLong("telemetry-confidence-every"),
+        help: "Measure per-token confidence (top-token probability, entropy, top-two margin) on every Nth generation and add it to /api/v1/stats and /api/v1/metrics; 0 measures only requests that ask for it. Costs one GPU sync per measured token (#450)"
+    )
+    var telemetryConfidenceEvery = 0
+
     func validate() throws {
+        if telemetryConfidenceEvery < 0 { throw ValidationError("--telemetry-confidence-every takes 0 or a positive count, got \(telemetryConfidenceEvery)") }
         if let aneVisionTower, !CoreAIVisionTower.isBundle(URL(fileURLWithPath: aneVisionTower)) {
             throw ValidationError("--experimental-ane-vision-tower \(aneVisionTower) is not a Core AI vision tower bundle (metadata.json and tower.aimodel)")
         }
@@ -48,5 +55,6 @@ struct ExperimentalServeOptions: ParsableArguments {
     func attachMediaFallbacks(to orchestrator: ModelOrchestratorActor) async {
         if speechAnalyzer { await orchestrator.setSpeechFallback(SpeechAnalyzerTranscriber()) }
         await orchestrator.setDocumentTranscriber(VisionDocumentTranscriber(), imageFallback: imageFallback == .ocr)
+        await orchestrator.telemetry.sampleConfidence(every: telemetryConfidenceEvery)
     }
 }
