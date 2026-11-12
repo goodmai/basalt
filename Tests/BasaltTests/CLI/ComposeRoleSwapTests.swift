@@ -96,7 +96,8 @@ struct ComposeRoleSwapTests {
                 if model.hasSuffix("missing") { throw BasaltError.invalidRequestStructure(details: "not a decision bundle") }
                 return NamedDecider(modelID: model)
             },
-            decisions: { _, local, _, _, _ in
+            decisions: { view, locals, _, _, _ in
+                let local = view.cascade.last.flatMap { locals[$0] }
                 if local?.modelID.hasSuffix("broken") == true { throw BasaltError.invalidRequestStructure(details: "no cascade for a broken decider") }
                 return local
             },

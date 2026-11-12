@@ -39,16 +39,23 @@ extension ServeCommand {
     func composedDecisions(
         _ spec: ComposeSpec, local: (any DecisionEngine)?, gate: GenerationGate, besideDecode: Bool, cloudGate: CloudGate
     ) throws -> (any DecisionEngine)? {
-        let clouds = spec.cascade.dropLast().filter { spec.models[$0]?.isCloud == true }
-        guard let local, !clouds.isEmpty else { return GatedDecisionEngine.serving(local, gate: gate, besideDecode: besideDecode) }
+        try composedDecisions(spec, locals: spec.cascade.last.flatMap { last in local.map { [last: $0] } } ?? [:], gate: gate, besideDecode: besideDecode, cloudGate: cloudGate)
+    }
+
+    func composedDecisions(
+        _ spec: ComposeSpec, locals: [String: any DecisionEngine], gate: GenerationGate, besideDecode: Bool, cloudGate: CloudGate
+    ) throws -> (any DecisionEngine)? {
+        guard let last = spec.cascade.last, locals[last] != nil else { return nil }
         do {
-            let remotes: [any DecisionEngine] = try clouds.map { name in
-                guard case .cloud(let provider, let id)? = spec.models[name]?.source else { throw BasaltError.invalidRequestStructure(details: "\(name) is not a cloud model") }
+            let stages: [any DecisionEngine] = try spec.cascade.compactMap { name in
+                guard case .cloud(let provider, let id)? = spec.models[name]?.source else {
+                    return locals[name].map { GatedDecisionEngine.serving($0, gate: gate, besideDecode: besideDecode) ?? $0 }
+                }
                 return GuardedDecisionEngine(try RemoteDecisionEngine(model: id, apiKey: key(spec, name), provider: CloudDecisionProvider(rawValue: provider) ?? .openRouter), gate: cloudGate)
             }
-            log("Cloud decisions → \(clouds.joined(separator: " → ")) → \(local.modelID); confidence below \(spec.escalateBelow ?? decision.escalateBelow) goes on to the next stage")
-            let gated = GatedDecisionEngine.serving(local, gate: gate, besideDecode: besideDecode) ?? local
-            return CascadeDecisionEngine(stages: remotes + [gated], escalateBelow: spec.escalateBelow ?? decision.escalateBelow)
+            guard stages.count > 1 else { return stages.first }
+            log("Decisions → \(spec.cascade.joined(separator: " → ")); confidence below \(spec.escalateBelow ?? decision.escalateBelow) goes on to the next stage")
+            return CascadeDecisionEngine(stages: stages, escalateBelow: spec.escalateBelow ?? decision.escalateBelow)
         } catch {
             log("\(red("[error]")) \(error.localizedDescription)")
             throw ExitCode.failure

@@ -109,7 +109,7 @@ struct ComposeBindFirstTests {
     static func host(_ spec: ComposeSpec, chat: ModelOrchestratorActor, registry: PipelineRegistry) async throws -> ComposeHost {
         let services = ComposeServices(
             resolve: { $0 }, load: { _, _, _, _ in nil }, decider: { NamedDecider(modelID: $0) },
-            decisions: { _, local, _, _, _ in local }, key: { _ in "test-key" }, cloudLimits: { _ in [:] })
+            decisions: { view, locals, _, _, _ in view.cascade.last.flatMap { locals[$0] } }, key: { _ in "test-key" }, cloudLimits: { _ in [:] })
         var start = ComposeStart(chat: chat, decider: NamedDecider(modelID: "self"), decisions: nil, cloudGate: CloudGate(limits: [:], storage: nil), startup: PipelineStages(), besideDecode: true)
         (start.admission, start.registry) = (ComposeAdmission(sizes: ComposeFileTests.sizes([:])) { (64 * ComposeFileTests.gb, .desktop) }, registry)
         let host = ComposeHost(services: services, spec: spec, start: start)

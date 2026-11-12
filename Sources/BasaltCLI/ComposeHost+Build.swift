@@ -10,7 +10,7 @@ extension ComposeHost {
         for (name, view) in spec.views {
             let first = name == ComposeSpec.defaultPipeline
             let decisions = try (first ? defaultDecisions : nil)
-                ?? services.decisions(view, localDecider(view, of: spec, held: held), chat.gate, besideDecode, cloudGate)
+                ?? services.decisions(view, localDeciders(view, of: spec, held: held), chat.gate, besideDecode, cloudGate)
             systems[name] = PipelineSystem(decisions: decisions, stages: try stages(view, held: held, first: first))
         }
         return systems

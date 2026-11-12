@@ -148,7 +148,7 @@ struct ComposeOperationsTests {
         let asked = KeyLog()
         let services = ComposeServices(
             resolve: { $0 }, load: { _, _, _, _ in nil }, decider: { _ in StubDecisionEngine() },
-            decisions: { _, local, _, _, _ in local },
+            decisions: { view, locals, _, _, _ in view.cascade.last.flatMap { locals[$0] } },
             key: { model in asked.record(model?.apiKeyEnv); return "test-key" },
             cloudLimits: { _ in [:] })
         let spec = try ComposeFile.parse(Self.with(Self.haiku, pipelines: Self.support), file: "s.yaml")

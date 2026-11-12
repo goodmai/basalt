@@ -40,7 +40,7 @@ pipeline:                     # the default pipeline: /v1/pipeline and MCP basal
     documents: [ocr, apple-vision]     # the first available reads pdf and image attachments
     audio: [asr, speech-analyzer]
   decide:
-    cascade: [jev, chat]               # up to three cloud models, then one local model
+    cascade: [jev, chat]               # up to four stages, cloud and local in any order, the last one local
     escalate_below: 0.6
     abstain_below: 0.75                # questions below this confidence go to the answer model
   answer:
@@ -81,8 +81,14 @@ A system that does not fit is refused with the numbers before anything loads. A 
 
 ### Decide
 - **Order:** `cascade` lists the decision models in order. Each stage answers the questions it is confident about (at least `escalate_below`) and passes the rest on.
-- **The local stage:** the last stage is local. It is either the chat model (read out as `self`) or a decision model such as a Laya Core AI bundle. Each pipeline names its own. A decision model that several pipelines name is loaded once. A decision model only decides; only the chat model both answers and decides.
-- **What the cloud gets:** requests with documents or audio go only to the local stage.
+- **Stages in any order:** up to four stages, cloud and local in any order. An example is a small local judge first, a cloud model next and a larger local model last: `[laya, jev, chat]`.
+  - The last stage is local.
+  - Every local stage is held as a decision engine: the chat model, read out as `self`, or a decision model such as a Laya Core AI bundle or an OpenJev bundle.
+  - Each pipeline names its own stages. A decision model that several pipelines name is loaded once.
+  - A decision model only decides; only the chat model both answers and decides.
+- **Calibration:** a readout decision model takes its temperatures from a `basalt_readout.json` in its folder (`{"temperature": …, "noul_temperature": …, "noul_bias": …}`), if there is one. Otherwise it uses the known values for its name, and otherwise none. #448 plans to fit these files against Gemini Decision 1.
+- **Sizes:** `compose plan` sizes an OpenJev head bundle as its adapter plus twice its base model. That matches serve's own plan, because the base is held in float32.
+- **What the cloud gets:** requests with documents or audio skip the cloud stages and go only to the local ones, in their order.
 - **Thresholds:** questions whose confidence is below `abstain_below`, or whose top two options are closer than `min_margin`, go to the answer model.
 
 ### Answer routes

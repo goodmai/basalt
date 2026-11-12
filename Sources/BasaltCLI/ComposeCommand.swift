@@ -169,10 +169,15 @@ struct ComposeCommand: AsyncParsableCommand {
     static let sizes = ComposeSpec.Sizes(
         bytes: { source in
             guard let directory = ModelCache.resolve(repoId: source), FileManager.default.fileExists(atPath: directory.path) else { return nil }
-            let bytes = ServeCommand.weightBytes(directory.path)
+            let bytes = ServeCommand.weightBytes(directory.path) + jevBaseBytes(directory)
             return bytes > 0 ? bytes : nil
         },
         onNeuralEngine: { source in ModelCache.resolve(repoId: source).map(CoreAIDecisionEngine.isBundle) ?? false })
+
+    static func jevBaseBytes(_ directory: URL) -> Int64 {
+        guard JevEvaluator.isBundle(directory), let base = try? JevEvaluator.baseModel(of: directory), let path = ModelCache.resolve(repoId: base) else { return 0 }
+        return 2 * ServeCommand.weightBytes(path.path)
+    }
 
     static func lines(_ spec: ComposeSpec, verdict: PlanVerdict, unknown: [String]) -> [String] {
         ["compose \(spec.name): basalt serve \(spec.serveArguments.joined(separator: " "))"] + ComputePlan.describe(verdict) + spec.onDemandLines + spec.cloudLines

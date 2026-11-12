@@ -14,6 +14,22 @@ public struct SystemOneReadout: Sendable, Equatable {
 
     public static let uncalibrated = SystemOneReadout()
 
+    public static let bundleFile = "basalt_readout.json"
+
+    public static func bundled(in directory: URL) -> SystemOneReadout? {
+        guard let data = try? Data(contentsOf: directory.appending(path: bundleFile)),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let temperature = (json["temperature"] as? NSNumber)?.doubleValue, temperature > 0, temperature.isFinite else { return nil }
+        let noul = (json["noul_temperature"] as? NSNumber)?.doubleValue ?? temperature
+        let bias = (json["noul_bias"] as? NSNumber)?.doubleValue ?? 0
+        guard noul > 0, noul.isFinite, bias.isFinite else { return nil }
+        return SystemOneReadout(temperature: temperature, noulTemperature: noul, noulBias: bias)
+    }
+
+    public static func calibration(for model: String, in directory: URL) -> SystemOneReadout {
+        bundled(in: directory) ?? known(model) ?? .uncalibrated
+    }
+
     public static func known(_ model: String) -> SystemOneReadout? {
         let name = model.lowercased()
         if name.contains("openjev-flash-9b") { return SystemOneReadout(temperature: 1.07, noulTemperature: 1.074766) }
