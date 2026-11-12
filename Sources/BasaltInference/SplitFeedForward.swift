@@ -65,9 +65,10 @@ struct SplitFeedForward {
             throw .modelConfigurationInvalid(path: "feed-forward split", reason: "\(start) columns do not fall on a \(linear.groupSize)-wide group of \(linear.bits)-bit weights")
         }
         let (packed, group) = (start * linear.bits / 32, start / linear.groupSize)
-        return QuantizedLinear(
-            weight: linear.weight[0..., packed...], scales: linear.scales[0..., group...], biases: linear.biases?[0..., group...],
-            groupSize: linear.groupSize, bits: linear.bits, mode: linear.mode)
+        let (weight, scales, biases) = (contiguous(linear.weight[0..., packed...]), contiguous(linear.scales[0..., group...]), linear.biases.map { contiguous($0[0..., group...]) })
+        eval(weight, scales)
+        if let biases { eval(biases) }
+        return QuantizedLinear(weight: weight, scales: scales, biases: biases, groupSize: linear.groupSize, bits: linear.bits, mode: linear.mode)
     }
 
     func callAsFunction(_ layer: Int, _ x: MLXArray) async throws -> MLXArray {
