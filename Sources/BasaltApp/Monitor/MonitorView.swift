@@ -31,7 +31,7 @@ public struct MonitorView: View {
                 }
                 if let compose = store.state.compose { ComposeSection(compose: compose) }
             } else if store.state.problem == nil {
-                ProgressView()
+                ProgressView().accessibilityLabel("Waiting for the engine's statistics")
             }
         }
         .formStyle(.grouped)

@@ -71,3 +71,13 @@ From a build folder without bundling, point the app at the engine: `BASALT_HELPE
 - **Adoption is by arguments:** the app adopts an engine left running only if it was started with the same arguments. After a change of model or compose file, a new engine starts. Quitting stops an adopted engine as well.
 - **Monitor:** for a compose system, its name, pipelines and cloud spend today, and per model its state (`ready`, `loading`, `no-key`, `over-budget` and so on), keep policy, spend and cap, and any refusal. Cloud models carry a cloud symbol.
 - **The cloud mark:** an answer that used a cloud model says "☁︎ cloud" with its cost on the receipt line and in the inspector. Everything without the mark ran on this Mac.
+
+## Accessibility, languages and updates
+- **VoiceOver:**
+  - Every icon-only control has a spoken name: the menu bar item, send, stop, attach, delete and the inspector.
+  - Each message reads as one element, "You: …" or "Basalt: …".
+  - Progress indicators say what they wait for.
+  - The fit badge says "fits on this Mac" or "does not fit".
+  - Pending attachments read as "Remove <file>".
+- **Languages:** the app follows the system language. English and Russian ship now. A translation is `Localization/<language>.lproj/Localizable.strings`, which `scripts/bundle_app.swift` copies into the bundle and lists in `CFBundleLocalizations`. A test fails when a view gains a string that the Russian table lacks.
+- **Updates:** once a day the app asks the GitHub API for the latest basalt release. A newer, non-draft, non-pre-release version shows as "Update available" in the menu bar, with a link to the release page. The request sends nothing but the app's IP address and user agent to GitHub. Turn it off in Settings → General.

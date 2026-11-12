@@ -29,3 +29,6 @@ Choose with `--session-log full|meta|off`; the server prints the mode and direct
 
 ## 5. Third-Party Access
 No third party has access to your data through Gem. We do not use third-party tracking libraries or APIs that exfiltrate data.
+
+## Basalt for Mac: update check
+The Mac app asks `api.github.com` once a day for the latest basalt release, to show "Update available". The request carries no conversation, model or usage data, only what any HTTPS request reveals (IP address, user agent). It can be turned off in Settings → General ("Check GitHub for new versions once a day").

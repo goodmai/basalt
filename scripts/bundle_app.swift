@@ -84,6 +84,7 @@ func infoPlist(version: String) -> [String: Any] {
         "CFBundleExecutable": "Basalt", "CFBundlePackageType": "APPL", "CFBundleShortVersionString": version,
         "CFBundleVersion": version, "LSMinimumSystemVersion": "27.0", "NSHighResolutionCapable": true,
         "LSApplicationCategoryType": "public.app-category.developer-tools", "NSPrincipalClass": "NSApplication",
+        "CFBundleDevelopmentRegion": "en", "CFBundleLocalizations": ["en"] + localizations(),
         "NSServices": [[
             "NSMenuItem": ["default": "Ask Basalt"], "NSMessage": "askBasalt", "NSPortName": "Basalt",
             "NSSendTypes": ["NSStringPboardType", "public.utf8-plain-text"], "NSRequiredContext": [String: String](),
@@ -93,6 +94,18 @@ func infoPlist(version: String) -> [String: Any] {
             "LSItemContentTypes": ["com.adobe.pdf", "public.image", "public.audio"],
         ]],
     ]
+}
+
+func localizations() -> [String] {
+    ((try? FileManager.default.contentsOfDirectory(atPath: "Localization")) ?? []).filter { $0.hasSuffix(".lproj") }.map { String($0.dropLast(6)) }.sorted()
+}
+
+func copyLocalizations(to resources: URL) throws {
+    for language in localizations() {
+        let target = resources.appending(path: "\(language).lproj")
+        try? FileManager.default.removeItem(at: target)
+        try FileManager.default.copyItem(atPath: "Localization/\(language).lproj", toPath: target.path)
+    }
 }
 
 func intentsMetadata(bin: String, resources: URL, dryRun: Bool) {
@@ -137,6 +150,7 @@ func assemble(_ options: Options, bin: String) {
         }
         let plist = try PropertyListSerialization.data(fromPropertyList: infoPlist(version: version()), format: .xml, options: 0)
         try plist.write(to: contents.appending(path: "Info.plist"))
+        try copyLocalizations(to: contents.appending(path: "Resources"))
         intentsMetadata(bin: bin, resources: contents.appending(path: "Resources"), dryRun: false)
     } catch {
         FileHandle.standardError.write(Data("could not assemble \(options.out): \(error.localizedDescription)\n".utf8))

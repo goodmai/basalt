@@ -34,6 +34,7 @@ struct BundleAppScriptTests {
         #expect(plist["CFBundleExecutable"] as? String == "Basalt" && plist["CFBundleShortVersionString"] as? String == HealthResponse.version)
         #expect((plist["NSServices"] as? [[String: Any]])?.first?["NSMessage"] as? String == "askBasalt")
         #expect(((plist["CFBundleDocumentTypes"] as? [[String: Any]])?.first?["LSItemContentTypes"] as? [String])?.contains("com.adobe.pdf") == true)
+        #expect((plist["CFBundleLocalizations"] as? [String])?.contains("ru") == true && fm.fileExists(atPath: app.appending(path: "Contents/Resources/ru.lproj/Localizable.strings").path))
     }
 }
 

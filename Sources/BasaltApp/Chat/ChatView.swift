@@ -45,11 +45,11 @@ struct ChatView: View {
 
     static func describe(_ error: EngineError) -> String {
         switch error {
-        case .notRunning, .starting: "The engine is not ready yet."
-        case .refused(let status, let message): "The engine refused the request (\(status)): \(message)"
-        case .malformed: "The engine sent an answer that could not be read."
-        case .transport(let message): "Lost the connection to the engine: \(message)"
-        case .cancelled: "Stopped."
+        case .notRunning, .starting: String(localized: "The engine is not ready yet.")
+        case .refused(let status, let message): String(localized: "The engine refused the request (\(status)): \(message)")
+        case .malformed: String(localized: "The engine sent an answer that could not be read.")
+        case .transport(let message): String(localized: "Lost the connection to the engine: \(message)")
+        case .cancelled: String(localized: "Stopped.")
         }
     }
 }
@@ -58,6 +58,16 @@ struct MessageRow: View {
     let message: MessageSnapshot
 
     var body: some View {
+        content
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel(message.role == .user ? Text("You: \(summary)") : Text("Basalt: \(summary)"))
+    }
+
+    var summary: String {
+        message.text.isEmpty ? message.attachments.map(\.name).joined(separator: ", ") : message.text
+    }
+
+    @ViewBuilder var content: some View {
         if message.role == .user {
             HStack {
                 Spacer(minLength: 80)
@@ -75,7 +85,7 @@ struct MessageRow: View {
         } else {
             VStack(alignment: .leading, spacing: 8) {
                 ForEach(Array(message.parts.enumerated()), id: \.offset) { _, part in PartView(part: part) }
-                if message.state == .streaming, message.parts.isEmpty { ProgressView().controlSize(.small) }
+                if message.state == .streaming, message.parts.isEmpty { ProgressView().controlSize(.small).accessibilityLabel("Answering") }
                 ReceiptLine(message: message)
             }
         }
@@ -156,6 +166,7 @@ struct Composer: View {
                     ForEach(store.state.attachments) { attachment in
                         Button(attachment.name, systemImage: "xmark.circle.fill") { store.send(.detach(attachment.id)) }
                             .labelStyle(.titleAndIcon).font(.callout).buttonStyle(.bordered)
+                            .accessibilityLabel("Remove \(attachment.name)")
                     }
                 }
             }

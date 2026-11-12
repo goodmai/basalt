@@ -13,6 +13,9 @@ public struct MenuBarContent: View {
             Label(Self.status(model.engine.phase), systemImage: Self.ready(model.engine.phase) ? "circle.fill" : "circle.dotted")
                 .foregroundStyle(Self.ready(model.engine.phase) ? .green : .secondary)
             Text(model.model).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+            if let update = model.update {
+                Link("Update available: \(update.version)", destination: update.url).font(.callout)
+            }
             Divider()
             Button("New Conversation") { show { model.newConversation() } }
             Button("Quick Ask  ⌥Space", action: quickAsk)
@@ -55,12 +58,12 @@ public struct MenuBarContent: View {
 
     static func status(_ phase: EngineState.Phase) -> String {
         switch phase {
-        case .stopped: "Engine stopped"
-        case .spawning: "Starting the engine"
-        case .loading: "Loading the model"
-        case .ready: "Ready"
-        case .backingOff(let attempt): "Restarting (attempt \(attempt))"
-        case .failed: "The engine keeps failing"
+        case .stopped: String(localized: "Engine stopped")
+        case .spawning: String(localized: "Starting the engine")
+        case .loading: String(localized: "Loading the model")
+        case .ready: String(localized: "Ready")
+        case .backingOff(let attempt): String(localized: "Restarting (attempt \(attempt))")
+        case .failed: String(localized: "The engine keeps failing")
         }
     }
 }
