@@ -27,6 +27,8 @@ public struct ServerTelemetrySnapshot: Codable, Sendable, Equatable {
     public var acceptedDraftTokens: Int?
     public var health: HealthTelemetry?
     public var activeDeltas: [OverlayInfo]?
+    public var windows: [TelemetryWindow]?
+    public var decisions: [String: DecisionTelemetry]?
 
     public init() {}
 
@@ -80,6 +82,8 @@ public actor TelemetryTracker {
     private var hardware: SystemProfiler.SystemResources?
     private var model = ""
     private var health = HealthTelemetry()
+    private var windows = TelemetryWindows()
+    private var decisions: [String: DecisionTelemetry] = [:]
     private let logger = BasaltLogger(module: "Telemetry")
 
     public init() {}
@@ -94,6 +98,14 @@ public actor TelemetryTracker {
         draftTokens += response.draftTokens ?? 0
         acceptedDraftTokens += response.acceptedDraftTokens ?? 0
         for warning in health.record(response, model: model) { logger.warn(warning) }
+        var sample = TelemetrySample(
+            at: Date(), ttft: response.timeToFirstToken, tokensPerSecond: response.tokensPerSecond, completionTokens: response.completionTokens, promptTokens: response.promptTokens)
+        (sample.cachedPromptTokens, sample.draftTokens, sample.acceptedDraftTokens) = (response.cachedPromptTokens, response.draftTokens ?? 0, response.acceptedDraftTokens ?? 0)
+        windows.record(sample)
+    }
+
+    public func recordDecision(_ response: SystemOneResponse, latencyMs: Double) {
+        decisions[response.model, default: DecisionTelemetry()].record(response, latencyMs: latencyMs)
     }
 
     public func setModelMemory(mb: Int) {
@@ -148,6 +160,8 @@ public actor TelemetryTracker {
             snapshot.acceptedDraftTokens = acceptedDraftTokens
         }
         snapshot.health = health
+        snapshot.windows = windows.windows(now: Date())
+        snapshot.decisions = decisions.isEmpty ? nil : decisions
         return snapshot
     }
 }
