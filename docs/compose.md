@@ -87,7 +87,7 @@ A system that does not fit is refused with the numbers before anything loads. A 
   - Each pipeline names its own stages. A decision model that several pipelines name is loaded once.
   - A decision model only decides; only the chat model both answers and decides.
 - **Calibration:** a readout decision model takes its temperatures from a `basalt_readout.json` in its folder (`{"temperature": …, "noul_temperature": …, "noul_bias": …}`), if there is one. Otherwise it uses the known values for its name, and otherwise none. #448 plans to fit these files against Gemini Decision 1.
-- **Sizes:** `compose plan` sizes an OpenJev head bundle as its adapter plus twice its base model. That matches serve's own plan, because the base is held in float32.
+- **Sizes:** `compose plan` sizes an OpenJev head bundle as its base model plus its adapter, because the LoRA is applied unmerged on the base as it is stored, 4-bit included. serve's own plan does the same.
 - **What the cloud gets:** requests with documents or audio skip the cloud stages and go only to the local ones, in their order.
 - **Thresholds:** questions whose confidence is below `abstain_below`, or whose top two options are closer than `min_margin`, go to the answer model.
 

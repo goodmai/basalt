@@ -25,7 +25,7 @@ extension ServeCommand {
             let path = try await resolvedPath(decisionModel, quant: nil)
             let ane = decisions is CoreAIDecisionEngine
             let bytes = ane ? Self.weightBytes(path + "/decision.aimodel") + Self.weightBytes(path + "/token_table.aimodel")
-                : decisions is JevEvaluator ? 2 * Self.weightBytes(try await resolvedPath(try JevEvaluator.baseModel(of: URL(fileURLWithPath: path)), quant: nil)) : Self.weightBytes(path)
+                : decisions is JevEvaluator ? Self.weightBytes(path) + Self.weightBytes(try await resolvedPath(try JevEvaluator.baseModel(of: URL(fileURLWithPath: path)), quant: nil)) : Self.weightBytes(path)
             workloads.append(Workload(name: decisionModel, role: "decide", unit: ane ? .ane : .gpu, kind: .encoder, residentBytes: bytes))
         }
         return workloads

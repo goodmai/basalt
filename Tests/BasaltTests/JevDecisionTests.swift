@@ -61,19 +61,21 @@ struct JevDecisionTests {
         }
     }
 
-    @Test("Batched branches over the shared prefix cache score like one uncached forward per candidate (tiny Qwen3)")
-    func branchesMatchFullForward() throws {
-        let model = try #require(try TinyModel.make(.qwen3) as? Qwen3Model)
-        let head = MLXRandom.normal([model.model.callAsFunction(MLXArray([Int32(1)]).reshaped(1, 1)).dim(-1)])
+    @Test("Batched branches over the shared prefix cache score like one uncached forward per candidate", arguments: [TinyModel.Family.qwen3, .qwen35])
+    func branchesMatchFullForward(family: TinyModel.Family) throws {
+        let model = try TinyModel.make(family)
+        let full: ([Int]) throws -> MLXArray = { ids in
+            try JevEvaluator.hidden(model, MLXArray(ids.map(Int32.init)).reshaped(1, -1), cache: try model.newCache(parameters: nil))
+        }
+        let head = MLXRandom.normal([try full([1]).dim(-1)])
         let prefix = [3, 7, 11, 2, 9]
         let suffixes = [[4, 5], [6, 8, 10, 12], [13]]
         let batched = try JevEvaluator.scores(model, head: head, prefix: prefix, suffixes: suffixes, batch: 2)
-        let full = suffixes.map { suffix -> Double in
-            let ids = (prefix + suffix).map(Int32.init)
-            let hidden = model.model(MLXArray(ids).reshaped(1, -1), cache: nil)
-            return Double(matmul(hidden[0, ids.count - 1].asType(.float32), head).item(Float.self))
+        let reference = try suffixes.map { suffix -> Double in
+            let hidden = try full(prefix + suffix)
+            return Double(matmul(hidden[0, prefix.count + suffix.count - 1].asType(.float32), head).item(Float.self))
         }
-        #expect(zip(batched, full).allSatisfy { abs($0 - $1) < 1e-3 }, "\(batched) vs \(full)")
+        #expect(zip(batched, reference).allSatisfy { abs($0 - $1) < 1e-3 }, "\(family): \(batched) vs \(reference)")
     }
 
     @Test("The REST body takes state as text or as an object, which is serialized compactly with sorted keys")
