@@ -88,6 +88,17 @@ A system that does not fit is refused with the numbers before anything loads. A 
   - A decision model only decides; only the chat model both answers and decides.
 - **Calibration:** a readout decision model takes its temperatures from a `basalt_readout.json` in its folder (`{"temperature": …, "noul_temperature": …, "noul_bias": …}`), if there is one. Otherwise it uses the known values for its name, and otherwise none. #448 plans to fit these files against Gemini Decision 1.
 - **Sizes:** `compose plan` sizes an OpenJev head bundle as its base model plus its adapter, because the LoRA is applied unmerged on the base as it is stored, 4-bit included. serve's own plan does the same.
+  - Measured on OpenJev-0.6B: 100 labelled states, 300 questions, M4 Pro, commit 066da0a. The reference is the merged float32 path, which matches PyTorch within 1e-4 (#406).
+
+    | Base, LoRA unmerged | Accuracy | Same top answer as float32 | Active memory | Median per state |
+    |---|---|---|---|---|
+    | merged float32 (reference) | 176/300 | — | 2,273 MB | 185 ms |
+    | bf16, as the bundle names it (the default) | 175/300 | 288/300 | 1,141 MB | 181 ms |
+    | 8-bit | 176/300 | 279/300 | 608 MB | 184 ms |
+    | 4-bit | 149/300 | 215/300 | 324 MB | 185 ms |
+
+  - A 4-bit base costs this 0.6B model 9 points, while 8-bit keeps its accuracy at a quarter of the memory. serve and compose load the base the bundle names, so a quantized base is only reached through `JevEvaluator` directly.
+  - Rerun it with `BASALT_E2E=1 BASALT_E2E_JEV_MODEL=<bundle> BASALT_E2E_JEV_BASE=<bf16 base> BASALT_E2E_JEV_BASE_8BIT=… BASALT_E2E_JEV_BASE_4BIT=… swift test --filter JevRealModelTests/unmergedArms`.
 - **What the cloud gets:** requests with documents or audio skip the cloud stages and go only to the local ones, in their order.
 - **Thresholds:** questions whose confidence is below `abstain_below`, or whose top two options are closer than `min_margin`, go to the answer model.
 
