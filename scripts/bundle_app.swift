@@ -3,7 +3,8 @@ import Foundation
 
 let usage = """
     Usage:
-      ./scripts/bundle_app.swift [--out PATH] [--bin PATH] [--identity ID | --no-sign] [--skip-metal] [--dry-run]
+      ./scripts/bundle_app.swift [--out PATH] [--bin PATH] [--identity ID | --no-sign] [--skip-metal]
+                                 [--zip] [--dmg] [--notarize PROFILE] [--dry-run]
 
     Builds the release products, then assembles Basalt.app:
       Contents/MacOS/Basalt          the SwiftUI app (BasaltMac)
@@ -17,6 +18,11 @@ let usage = """
       --identity ID    Codesign identity with the hardened runtime (default: - for ad hoc)
       --no-sign        Leave the bundle unsigned
       --skip-metal     Do not run scripts/build_metal.swift (needs mlx.metallib in the bin folder)
+      --zip            Also write Basalt-<version>.zip next to the app (ditto, for a cask or a release)
+      --dmg            Also write Basalt-<version>.dmg next to the app (hdiutil, UDZO)
+      --notarize PROFILE  Submit the zip to Apple with notarytool (a keychain profile made by
+                       `xcrun notarytool store-credentials`), wait, staple the app, then zip it again.
+                       Needs --identity with a Developer ID Application certificate.
       --dry-run        Print the plan and change nothing
       -h, --help       Show this help
     """
@@ -27,6 +33,15 @@ struct Options {
     var identity: String? = "-"
     var skipMetal = false
     var dryRun = false
+    var zip = false
+    var dmg = false
+    var notarize: String?
+
+    var artifactsRefusal: String? {
+        guard notarize != nil else { return nil }
+        guard let identity, identity != "-" else { return "--notarize needs --identity with a Developer ID Application certificate; an ad hoc or missing signature cannot be notarized" }
+        return nil
+    }
 }
 
 func parse(_ arguments: [String]) -> Options {
@@ -40,6 +55,9 @@ func parse(_ arguments: [String]) -> Options {
         case "--no-sign": options.identity = nil
         case "--skip-metal": options.skipMetal = true
         case "--dry-run": options.dryRun = true
+        case "--zip": options.zip = true
+        case "--dmg": options.dmg = true
+        case "--notarize": options.notarize = iterator.next()
         case "-h", "--help":
             print(usage)
             exit(0)
@@ -166,7 +184,26 @@ func sign(_ options: Options) {
     }
 }
 
+func package(_ options: Options, version: String) {
+    let folder = URL(fileURLWithPath: options.out).deletingLastPathComponent()
+    let zip = folder.appending(path: "Basalt-\(version).zip").path
+    if options.zip || options.notarize != nil { run(["ditto", "-c", "-k", "--keepParent", options.out, zip], dryRun: options.dryRun) }
+    if let profile = options.notarize {
+        run(["xcrun", "notarytool", "submit", zip, "--keychain-profile", profile, "--wait"], dryRun: options.dryRun)
+        run(["xcrun", "stapler", "staple", options.out], dryRun: options.dryRun)
+        if !options.dryRun { try? FileManager.default.removeItem(atPath: zip) }
+        run(["ditto", "-c", "-k", "--keepParent", options.out, zip], dryRun: options.dryRun)
+    }
+    if options.dmg {
+        run(["hdiutil", "create", "-volname", "Basalt", "-srcfolder", options.out, "-ov", "-format", "UDZO", folder.appending(path: "Basalt-\(version).dmg").path], dryRun: options.dryRun)
+    }
+}
+
 let options = parse(Array(CommandLine.arguments.dropFirst()))
+if let refusal = options.artifactsRefusal {
+    FileHandle.standardError.write(Data("\(refusal)\n".utf8))
+    exit(2)
+}
 let bin: String
 if let given = options.bin {
     bin = given
@@ -178,4 +215,5 @@ if let given = options.bin {
 }
 assemble(options, bin: bin)
 sign(options)
+package(options, version: version())
 print(options.dryRun ? "dry run: nothing written" : "wrote \(options.out)")

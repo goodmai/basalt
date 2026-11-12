@@ -81,3 +81,14 @@ From a build folder without bundling, point the app at the engine: `BASALT_HELPE
   - Pending attachments read as "Remove <file>".
 - **Languages:** the app follows the system language. English and Russian ship now. A translation is `Localization/<language>.lproj/Localizable.strings`, which `scripts/bundle_app.swift` copies into the bundle and lists in `CFBundleLocalizations`. A test fails when a view gains a string that the Russian table lacks.
 - **Updates:** once a day the app asks the GitHub API for the latest basalt release. A newer, non-draft, non-pre-release version shows as "Update available" in the menu bar, with a link to the release page. The request sends nothing but the app's IP address and user agent to GitHub. Turn it off in Settings → General.
+
+## Shipping: signed, notarized, and a Homebrew cask
+- **Locally:** `./scripts/bundle_app.swift --identity "Developer ID Application: Name (TEAMID)" --notarize basalt-notary --dmg` signs with the hardened runtime and writes `Basalt-<version>.zip`. It submits the zip with `notarytool`, staples the ticket to the app and zips it again, then writes a `.dmg`.
+  - `--zip` alone packages without notarizing.
+  - `--notarize` refuses an ad hoc or missing signature.
+  - Create the keychain profile once with `xcrun notarytool store-credentials basalt-notary --apple-id <id> --team-id <TEAMID> --password <app-specific password>`.
+- **In a release:** when the repository has the secrets `MAC_SIGNING_IDENTITY` (the certificate's name in the runner's keychain) and `MAC_NOTARY_PROFILE` (that keychain profile), a `v*` tag builds, signs and notarizes the app.
+  - It attaches `Basalt-<version>.zip` to the GitHub release.
+  - It writes `Casks/basalt-app.rb` from `Casks/basalt-app.rb.template` in the same PR that moves the formula.
+  - Without the secrets, the release ships the formula only, with a notice.
+- **Install:** once a release carries the app, run `brew install --cask goodmai/basalt/basalt-app`.

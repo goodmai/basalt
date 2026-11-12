@@ -19,6 +19,9 @@ struct BundleAppScriptTests {
     func bundleApp() throws {
         #expect(Self.run("scripts/bundle_app.swift", args: ["--dry-run"]) == 0)
         #expect(Self.run("scripts/bundle_app.swift", args: ["--bogus"]) != 0)
+        #expect(Self.run("scripts/bundle_app.swift", args: ["--dry-run", "--zip", "--dmg", "--identity", "Developer ID Application: Test (TEAM123456)", "--notarize", "basalt-notary"]) == 0)
+        #expect(Self.run("scripts/bundle_app.swift", args: ["--dry-run", "--notarize", "basalt-notary"]) == 2)
+        #expect(Self.run("scripts/bundle_app.swift", args: ["--dry-run", "--no-sign", "--notarize", "basalt-notary"]) == 2)
         let fm = FileManager.default
         let folder = fm.temporaryDirectory.appending(path: "bundle-\(UUID().uuidString)")
         let bin = folder.appending(path: "bin")
