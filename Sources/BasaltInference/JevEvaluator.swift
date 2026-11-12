@@ -17,7 +17,7 @@ public struct JevEvaluator: DecisionEngine {
 
     public static func baseModel(of directory: URL) throws(BasaltError) -> String { try JevBundle(directory: directory).baseModel }
 
-    public init(directory: URL, base: URL, float32: Bool = true) async throws(BasaltError) {
+    public init(directory: URL, base: URL, float32: Bool = false) async throws(BasaltError) {
         bundle = try JevBundle(directory: directory)
         modelID = bundle.modelID
         do {
@@ -29,14 +29,12 @@ public struct JevEvaluator: DecisionEngine {
             head = weight.asType(.float32).reshaped(-1).asArray(Float.self)
             let scale = bundle.loraScale
             let prompt = try await container.perform { context in
-                guard context.model is Qwen3Model else {
-                    throw BasaltError.modelConfigurationInvalid(path: base.path, reason: "the Jev base must be a Qwen3 checkpoint")
+                guard Self.supports(context.model) else {
+                    throw BasaltError.modelConfigurationInvalid(path: base.path, reason: "the Jev base must be a Qwen3 or Qwen3.5 text checkpoint")
                 }
-                if float32 { context.model.update(parameters: context.model.parameters().mapValues { $0.dtype == .bfloat16 || $0.dtype == .float16 ? $0.asType(.float32) : $0 }) }
-                let base = Dictionary(uniqueKeysWithValues: context.model.parameters().flattened())
-                let adapter = FileManager.default.fileExists(atPath: adapterFile.path) ? try loadArrays(url: adapterFile) : [:]
-                let merged = try JevBundle.mergedLoRA(adapter, base: base, scale: scale)
-                try context.model.update(parameters: ModuleParameters.unflattened(merged), verify: [])
+                if FileManager.default.fileExists(atPath: adapterFile.path) {
+                    try Self.apply(adapter: directory, file: adapterFile, to: context.model, scale: scale, float32: float32)
+                }
                 eval(context.model)
                 return try Self.template(context.tokenizer)
             }
@@ -45,6 +43,23 @@ public struct JevEvaluator: DecisionEngine {
             throw error
         } catch {
             throw .modelConfigurationInvalid(path: directory.path, reason: error.localizedDescription)
+        }
+    }
+
+    static func supports(_ model: any LanguageModel) -> Bool { model is Qwen3Model || model is Qwen35TextModel }
+
+    static func apply(adapter directory: URL, file: URL, to model: any LanguageModel, scale: Float, float32: Bool) throws {
+        guard float32 else { return try LoRAContainer.fromPEFT(directory: directory).load(into: model) }
+        model.update(parameters: model.parameters().mapValues { $0.dtype == .bfloat16 || $0.dtype == .float16 ? $0.asType(.float32) : $0 })
+        let merged = try JevBundle.mergedLoRA(try loadArrays(url: file), base: Dictionary(uniqueKeysWithValues: model.parameters().flattened()), scale: scale)
+        try model.update(parameters: ModuleParameters.unflattened(merged), verify: [])
+    }
+
+    static func hidden(_ model: any LanguageModel, _ inputs: MLXArray, cache: [any KVCache]) throws -> MLXArray {
+        switch model {
+        case let qwen as Qwen3Model: return qwen.model(inputs, cache: cache)
+        case let qwen as Qwen35TextModel: return qwen.model(inputs, cache: cache)
+        default: throw BasaltError.inferenceError("systemone needs a Qwen3 or Qwen3.5 base")
         }
     }
 
@@ -103,21 +118,17 @@ public struct JevEvaluator: DecisionEngine {
     }
 
     static func scores(_ model: any LanguageModel, head: MLXArray, prefix: [Int], suffixes: [[Int]], batch: Int) throws -> [Double] {
-        guard let qwen = model as? Qwen3Model else { throw BasaltError.inferenceError("systemone needs a Qwen3 base") }
         let cache = try model.newCache(parameters: nil)
-        eval(qwen.model(MLXArray(prefix.map(Int32.init)).reshaped(1, -1), cache: cache))
+        eval(try hidden(model, MLXArray(prefix.map(Int32.init)).reshaped(1, -1), cache: cache))
         let prefixState = cache.map(\.state)
         var values: [Double] = []
         for start in stride(from: 0, to: suffixes.count, by: batch) {
             let items = Array(suffixes[start ..< min(start + batch, suffixes.count)])
             let longest = items.map(\.count).max() ?? 1
             let ids = items.flatMap { $0 + Array(repeating: 0, count: longest - $0.count) }.map(Int32.init)
-            let branchCache = prefixState.map { state -> any KVCache in
-                let fresh = KVCacheSimple()
-                fresh.state = state.map { repeated($0, count: items.count, axis: 0) }
-                return fresh
-            }
-            let hidden = qwen.model(MLXArray(ids).reshaped(items.count, longest), cache: branchCache)
+            let branchCache = try model.newCache(parameters: nil)
+            for (fresh, state) in zip(branchCache, prefixState) { fresh.state = state.map { repeated($0, count: items.count, axis: 0) } }
+            let hidden = try hidden(model, MLXArray(ids).reshaped(items.count, longest), cache: branchCache)
             let last = MLXArray(items.enumerated().map { Int32($0.offset * longest + $0.element.count - 1) })
             let rows = hidden.reshaped(items.count * longest, -1)[last].asType(.float32)
             values += matmul(rows, head).asArray(Float.self).map(Double.init)

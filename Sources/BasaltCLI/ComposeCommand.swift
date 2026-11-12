@@ -176,7 +176,7 @@ struct ComposeCommand: AsyncParsableCommand {
 
     static func jevBaseBytes(_ directory: URL) -> Int64 {
         guard JevEvaluator.isBundle(directory), let base = try? JevEvaluator.baseModel(of: directory), let path = ModelCache.resolve(repoId: base) else { return 0 }
-        return 2 * ServeCommand.weightBytes(path.path)
+        return ServeCommand.weightBytes(path.path)
     }
 
     static func lines(_ spec: ComposeSpec, verdict: PlanVerdict, unknown: [String]) -> [String] {
