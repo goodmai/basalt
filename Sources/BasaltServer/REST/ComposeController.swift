@@ -53,6 +53,9 @@ package struct ComposeApply: Codable, Sendable, Equatable {
 package struct ComposeControl: Sendable {
     package let status: @Sendable () async -> ComposeStatus
     package let apply: @Sendable (ComposeApply) async throws(BasaltError) -> ComposeDiff
+    package var preview: @Sendable (ComposeApply) async throws(BasaltError) -> ComposeDiff = { _ throws(BasaltError) in throw .invalidRequestStructure(details: "compose diff is not available") }
+    package var events: ComposeEvents?
+    package var heartbeat = Duration.seconds(15)
 
     package init(status: @escaping @Sendable () async -> ComposeStatus, apply: @escaping @Sendable (ComposeApply) async throws(BasaltError) -> ComposeDiff) {
         (self.status, self.apply) = (status, apply)
@@ -66,17 +69,44 @@ struct ComposeController: Sendable {
 
     func add(to group: RouterGroup<BasicRequestContext>) {
         group.get("/compose") { _, _ in Self.json(await control.status()) }
-        group.post("/compose/apply") { request, _ in
-            do {
-                let data = Data(try await request.body.collect(upTo: Self.bodyLimit).readableBytesView)
-                guard let request = try? JSONDecoder().decode(ComposeApply.self, from: data) else {
-                    throw BasaltError.invalidRequestStructure(details: "compose apply takes {\"yaml\": \"<compose file>\", \"base\", \"variables\", \"profiles\"}")
+        group.post("/compose/apply") { request, _ in await Self.change(request, path: "/v1/compose/apply", control.apply) }
+        group.post("/compose/diff") { request, _ in await Self.change(request, path: "/v1/compose/diff", control.preview) }
+        group.get("/compose/events") { _, _ in Self.events(control.events, heartbeat: control.heartbeat) }
+    }
+
+    static func change(_ request: Request, path: String, _ run: @Sendable (ComposeApply) async throws(BasaltError) -> ComposeDiff) async -> Response {
+        do {
+            let data = Data(try await request.body.collect(upTo: Self.bodyLimit).readableBytesView)
+            guard let request = try? JSONDecoder().decode(ComposeApply.self, from: data) else {
+                throw BasaltError.invalidRequestStructure(details: "\(path) takes {\"yaml\": \"<compose file>\", \"base\", \"variables\", \"profiles\"}")
+            }
+            return Self.json(try await run(request))
+        } catch {
+            return ProviderErrorResponse.response(for: error, path: path)
+        }
+    }
+
+    static func events(_ events: ComposeEvents?, heartbeat: Duration) -> Response {
+        guard let events else { return ProviderErrorResponse.response(status: .notFound, message: "this system has no compose events", shape: .openAI) }
+        let encoder = JSONEncoder()
+        (encoder.dateEncodingStrategy, encoder.outputFormatting) = (.iso8601, [.sortedKeys])
+        let body = AsyncStream<ByteBuffer> { continuation in
+            let task = Task {
+                for await event in await events.stream() {
+                    guard let data = try? encoder.encode(event) else { continue }
+                    continuation.yield(ByteBuffer(string: "event: \(event.kind)\ndata: \(String(decoding: data, as: UTF8.self))\n\n"))
                 }
-                return Self.json(try await control.apply(request))
-            } catch {
-                return ProviderErrorResponse.response(for: error, path: "/v1/compose/apply")
+                continuation.finish()
+            }
+            let heartbeat = Task {
+                while (try? await Task.sleep(for: heartbeat)) != nil { continuation.yield(ByteBuffer(string: ": keep-alive\n\n")) }
+            }
+            continuation.onTermination = { _ in
+                task.cancel()
+                heartbeat.cancel()
             }
         }
+        return Response(status: .ok, headers: [.contentType: "text/event-stream", .cacheControl: "no-cache"], body: ResponseBody(asyncSequence: body))
     }
 
     static func json(_ value: some Encodable) -> Response {

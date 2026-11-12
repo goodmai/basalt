@@ -11,6 +11,7 @@ public struct ComposeDiff: Sendable, Equatable, Codable {
     public var chat: String?
     public var decider: String?
     public var restart: String?
+    public var refusal: String?
 
     public init() {}
 
@@ -61,7 +62,7 @@ public struct ComposeDiff: Sendable, Equatable, Codable {
         }
         lines += [("chat", chat), ("decide", decider)].compactMap { verb, name in name.map { "  \(verb): \($0)" } }
         lines.append("  pipelines: \(pipelines.joined(separator: ", "))")
-        return lines + (restart.map { ["  needs a restart: \($0)"] } ?? [])
+        return lines + (restart.map { ["  needs a restart: \($0)"] } ?? []) + (refusal.map { ["  refused: \($0)"] } ?? [])
     }
 }
 

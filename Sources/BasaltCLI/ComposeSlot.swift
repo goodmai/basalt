@@ -7,6 +7,7 @@ actor ComposeSlot {
     let spec: ComposeSpec
     nonisolated let registry = PipelineRegistry([:])
     nonisolated let cloudGate: CloudGate
+    nonisolated let events = ComposeEvents()
     let key: @Sendable (ComposeSpec.Model?) -> String
     private(set) var host: ComposeHost?
 
@@ -29,7 +30,14 @@ actor ComposeSlot {
         return try await host.apply(request)
     }
 
+    func preview(_ request: ComposeApply) async throws(BasaltError) -> ComposeDiff {
+        guard let host else { throw .serverBusy(retryAfterSeconds: 5) }
+        return try await host.preview(request)
+    }
+
     nonisolated var control: ComposeControl {
-        ComposeControl(status: { await self.status() }, apply: { request throws(BasaltError) in try await self.apply(request) })
+        var control = ComposeControl(status: { await self.status() }, apply: { request throws(BasaltError) in try await self.apply(request) })
+        (control.preview, control.events) = ({ request throws(BasaltError) in try await self.preview(request) }, events)
+        return control
     }
 }

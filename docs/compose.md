@@ -128,6 +128,10 @@ models:
 - The day's spend per model and in total is kept in `~/.basalt/cloud-spend.json`, so a restart does not reset a cap. Days are UTC.
 
 ## Running systems
+- **`compose pull`:** downloads every local model of the file into the Hugging Face cache and verifies each file, printing progress every tenth. After a pull, `compose plan` has exact sizes and `compose up` loads without waiting for downloads.
+- **Sizes in `compose plan`:** a model in the cache is measured on disk. A model that is not downloaded is sized from the Hugging Face API's file list. If neither knows the size, `plan` refuses and names the model: run `compose pull`, or pass `--assume-size <GB>` to count it at that size. `plan` no longer counts an unknown model as 0 bytes.
+- **`compose diff`:** shows what `compose up` would change on the running system with the same name, without changing it (`POST /v1/compose/diff`). It lists loads, unloads, keys and budgets, a needed restart, or a refusal: a missing key, or a system that does not fit. It exits non-zero on a restart or a refusal.
+- **Events:** `GET /v1/compose/events` is a server-sent event stream of what the system does. Event kinds are `loading`, `ready`, `registered` (on demand), `failed` (a startup probe), `applied`, `refused` and `up`. A new client first gets the last 100 events. `compose up --wait` prints them while it waits.
 - **`compose up` on a running system:** if a system with the same `name` runs, `compose up` sends it the file (`POST /v1/compose/apply`) and applies the difference.
   - While the system is still loading, or applying another change, it answers 503. `compose up` waits and sends the file again, up to `--wait-timeout` seconds (default 1800).
   - With `--wait`, `compose up` then waits until `GET /v1/health/ready` answers 200, prints the models it is waiting for, and exits non-zero if the system is not ready within the timeout.

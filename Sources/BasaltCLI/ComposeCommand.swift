@@ -16,7 +16,7 @@ struct ComposeCommand: AsyncParsableCommand {
             never written in the file; a cloud model names the environment variable that holds its key. \
             Bundled files: \(ComposeFile.bundled.keys.sorted().joined(separator: ", ")).
             """,
-        subcommands: [Config.self, Schema.self, Plan.self, Up.self, Ps.self, Down.self])
+        subcommands: [Config.self, Schema.self, Pull.self, Plan.self, Diff.self, Up.self, Ps.self, Down.self])
 
     struct Source: ParsableArguments {
         @Option(name: [.short, .customLong("file")], help: "The compose file")
@@ -85,19 +85,6 @@ struct ComposeCommand: AsyncParsableCommand {
         static let configuration = CommandConfiguration(abstract: "Print the JSON Schema of compose files, for editors and validators")
 
         func run() async throws { print(ComposeSchema.jsonSchema) }
-    }
-
-    struct Plan: AsyncParsableCommand {
-        static let configuration = CommandConfiguration(abstract: "Validate a compose file and show its compute plan on this Mac, refusing a system whose largest stage does not fit")
-
-        @OptionGroup var source: Source
-
-        func run() async throws {
-            let spec = try source.spec()
-            let (verdict, unknown) = spec.plan(ComposeCommand.sizes, budgetBytes: await SystemProfiler().detectResources().gpuMemory, power: PowerSource.current())
-            for line in ComposeCommand.lines(spec, verdict: verdict, unknown: unknown) { print(line) }
-            if verdict.refusal != nil { throw ExitCode.failure }
-        }
     }
 
     struct Ps: AsyncParsableCommand {
@@ -189,7 +176,7 @@ struct ComposeCommand: AsyncParsableCommand {
 
     static func lines(_ spec: ComposeSpec, verdict: PlanVerdict, unknown: [String]) -> [String] {
         ["compose \(spec.name): basalt serve \(spec.serveArguments.joined(separator: " "))"] + ComputePlan.describe(verdict) + spec.onDemandLines + spec.cloudLines
-            + unknown.map { "  \($0): not downloaded, so its size is unknown and counted as 0; run basalt models download \(spec.local($0) ?? $0) for an exact plan" }
+            + unknown.map { "  \($0): size unknown — not downloaded, and the Hugging Face API did not say; run compose pull, or pass --assume-size <GB>" }
             + (verdict.refusal.map { ["refused: \($0)"] } ?? [])
     }
 }

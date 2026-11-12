@@ -297,6 +297,19 @@ extension HuggingFaceHub {
         }
     }
 
+    package func remoteWeightBytes(repoId: String) async throws -> Int64? {
+        guard Self.isRepoId(repoId), let url = URL(string: "\(apiURL)/models/\(repoId)?blobs=true") else { throw HFError.invalidRepoId(repoId) }
+        let (data, response) = try await session.data(from: url)
+        state = HubState.reduce(state, .fetched(bytes: data.count))
+        guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw HFError.modelNotFound(repoId) }
+        return Self.weightBytes(try JSONDecoder().decode(HFModelDetails.self, from: data))
+    }
+
+    package static func weightBytes(_ details: HFModelDetails) -> Int64? {
+        let total = (details.siblings ?? []).filter { ["safetensors", "aimodel", "mlirb"].contains(($0.rfilename as NSString).pathExtension) }.reduce(Int64(0)) { $0 + Int64($1.size ?? 0) }
+        return total > 0 ? total : nil
+    }
+
     package func modelDetails(repoId: String) async throws -> HFModelDetails {
         guard Self.isRepoId(repoId), let url = URL(string: "\(apiURL)/models/\(repoId)") else {
             throw HFError.invalidRepoId(repoId)

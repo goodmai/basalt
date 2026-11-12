@@ -9,6 +9,7 @@ extension ComposeHost {
             failures[name] = nil
             guard let model = held[name], Self.probes(model, answering: answering.contains(name)) else { continue }
             failures[name] = await services.probe(model)
+            if let failure = failures[name] { await events.emit("failed", model: name, failure) }
         }
     }
 
@@ -41,5 +42,13 @@ enum ComposeProbe {
         } catch {
             return "startup probe failed: \(error.localizedDescription)"
         }
+    }
+}
+
+extension ComposeHost {
+    nonisolated var control: ComposeControl {
+        var control = ComposeControl(status: { await self.status() }, apply: { request throws(BasaltError) in try await self.apply(request) })
+        (control.preview, control.events) = ({ request throws(BasaltError) in try await self.preview(request) }, events)
+        return control
     }
 }
