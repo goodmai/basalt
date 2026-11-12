@@ -47,3 +47,9 @@ From a build folder without bundling, point the app at the engine: `BASALT_HELPE
 - **Load** switches the engine to that model (`POST /v1/models/load`) and makes it the model the engine starts with. A model whose verdict is "does not fit" cannot be loaded from the app; the window says why.
 - **Download** takes a repo id such as `mlx-community/gemma-4-12B-it-qat-4bit`. The app downloads in its own process, shows progress, and remembers unfinished downloads. On the next launch it resumes them from the partial files. A failed download waits for Retry.
 - **Delete** asks first, then removes the model's folder from the cache. The loaded model cannot be deleted.
+
+## Attachments
+- **Attach** with the paper clip or by dropping files on the conversation: PDFs, images (PNG, JPEG, HEIC, TIFF, GIF, WebP) and audio (WAV, MP3, M4A, AAC, FLAC, CAF), up to 32 MB each.
+- **A message with attachments goes through `/v1/pipeline`.** The engine reads documents and images with its OCR model, or Apple Vision without one. It transcribes audio with its speech model, or the chat model. The chat model then answers the message (or "Summarize the attached files." when the message is empty).
+- **The perceived text stays in the conversation.** Each attachment shows as a chip, and the chip discloses the text the engine read. Later messages are sent with that text in front of the question, so follow-ups can refer to the file.
+- **The receipt** under the answer lists each pipeline stage with its model and milliseconds.
