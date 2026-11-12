@@ -32,6 +32,21 @@ public enum TelemetryExport {
         metric("decision_confidence", "gauge", "Answers per confidence decile per decision model.", decisions.flatMap { name, value in
             value.confidence.enumerated().map { ("model=\"\(escape(name))\",decile=\"\($0.offset)\"", Double($0.element)) }
         })
+        if let confidence = snapshot.confidence {
+            metric("confidence_responses", "counter", "Generations whose per-token confidence was measured.", [("", Double(confidence.responses))])
+            metric("confidence_min_probability", "gauge", "Measured generations per decile of their lowest top-token probability.", bins(confidence.minProbability, "decile"))
+            metric("confidence_mean_entropy", "gauge", "Measured generations per half-nat bin of their mean next-token entropy (the last bin is open).", bins(confidence.meanEntropy, "bin"))
+            metric("confidence_min_margin", "gauge", "Measured generations per decile of their smallest gap between the top two token probabilities.", bins(confidence.minMargin, "decile"))
+        }
+        if let experts = snapshot.experts {
+            metric("expert_cache_hits", "counter", "Streamed expert cache hits.", [("", Double(experts.cache.hits))])
+            metric("expert_cache_misses", "counter", "Streamed expert cache misses (loads from SSD).", [("", Double(experts.cache.misses))])
+            metric("expert_cache_evictions", "counter", "Streamed experts evicted from the cache.", [("", Double(experts.cache.evictions))])
+            metric("expert_bytes_read", "counter", "Bytes of expert weights read from SSD.", [("", Double(experts.cache.bytesRead.rawValue))])
+            metric("expert_cache_capacity_bytes", "gauge", "Size of the streamed expert cache.", [("", Double(experts.capacityBytes))])
+            metric("expert_layer_distinct", "gauge", "Distinct experts routed per MoE layer since load.", experts.layers.map { ("layer=\"\($0.layer)\"", Double($0.distinct)) })
+            metric("expert_layer_top_share", "gauge", "Share of routings that went to the layer's eight most used experts.", experts.layers.map { ("layer=\"\($0.layer)\"", $0.topShare) })
+        }
         return (lines + ["# EOF"]).joined(separator: "\n") + "\n"
     }
 
@@ -41,6 +56,10 @@ public enum TelemetryExport {
                 value.map { ("window=\"\(window.seconds)s\",quantile=\"\(quantile)\"", $0) }
             }
         }
+    }
+
+    static func bins(_ counts: [Int], _ label: String) -> [(labels: String, value: Double)] {
+        counts.enumerated().map { ("\(label)=\"\($0.offset)\"", Double($0.element)) }
     }
 
     static func value(_ number: Double) -> String { number.rounded() == number && abs(number) < 1e15 ? String(Int64(number)) : String(number) }

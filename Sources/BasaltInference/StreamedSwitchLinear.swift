@@ -52,6 +52,7 @@ final class ExpertStore {
     let layouts: [ExpertLayout]
     private let files: [FileHandle]
     private var lru: ExpertLRU
+    private(set) var routing = ExpertRouting()
     private var resident: [ExpertSlot: ExpertArrays] = [:]
 
     init(files urls: [URL], layouts: [ExpertLayout], capacity: ByteCount) throws {
@@ -71,6 +72,7 @@ final class ExpertStore {
     var unclaimedReserve: ByteCount { max(.zero, reserve - lru.resident) }
 
     func experts(module: Int, _ ids: [Int]) -> [ExpertArrays] {
+        routing.record(module: module, ids)
         let wanted = Set(ids.map { ExpertSlot(module: module, expert: $0) })
         let (missing, evicted) = lru.admit(wanted, bytes: layouts[module].expertBytes)
         for slot in evicted { resident[slot] = nil }

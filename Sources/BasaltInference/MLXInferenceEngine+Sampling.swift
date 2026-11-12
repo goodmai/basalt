@@ -126,9 +126,21 @@ struct ConfidenceProbeRecorder: LogitProcessor {
 
     mutating func prompt(_ prompt: MLXArray) {}
 
+    static func statistics(logits: MLXArray) -> (probability: Double, entropy: Double, margin: Double)? {
+        let row = logits.reshaped(-1).asType(.float32)
+        guard NonFiniteLogitGuard.isUsable(row) else { return nil }
+        let logprobs = row - logSumExp(row)
+        let best = top(logprobs, k: min(2, row.dim(0)))
+        let entropy = -(exp(logprobs) * logprobs).sum()
+        let values = concatenated([best.max().reshaped(1), best.min().reshaped(1), entropy.reshaped(1)]).asArray(Float.self)
+        let (first, second) = (Double(exp(values[0])), Double(exp(values[1])))
+        guard first.isFinite, second.isFinite, values[2].isFinite else { return nil }
+        return (min(max(first, 0), 1), Double(values[2]), max(0, first - second))
+    }
+
     func process(logits: MLXArray) -> MLXArray {
-        if let prob = Self.maxProbability(logits: logits) {
-            probe.record(prob)
+        if let stats = Self.statistics(logits: logits) {
+            probe.record(stats.probability, entropy: stats.entropy, margin: stats.margin)
         }
         return logits
     }

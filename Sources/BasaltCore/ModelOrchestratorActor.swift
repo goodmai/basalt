@@ -201,6 +201,7 @@ extension ModelOrchestratorActor {
         let anchors = await engine.hybridAnchorUsage
         (snapshot.hybridAnchors, snapshot.hybridAnchorBytes) = (anchors?.count, anchors?.bytes)
         snapshot.activeDeltas = await engine.activeDeltas
+        snapshot.experts = await engine.expertTelemetry
         if let memory {
             snapshot.memory = MemoryTelemetry(state: await memory.state, limits: state.memoryLimits, refusedAdmissions: state.memoryRefusals)
         }
@@ -403,6 +404,7 @@ extension ModelOrchestratorActor {
         request: GenerationRequest,
         modelId: String? = nil
     ) async throws(BasaltError) -> GenerationResponse {
+        let request = await telemetry.sampled(request)
         guard let sessionLog else { return try await performGenerate(request: request, modelId: modelId).response }
         let id = Self.newRequestId()
         await sessionLog.logRequest(request, id: id, origin: request.origin, modelRequested: modelId)
@@ -422,6 +424,7 @@ extension ModelOrchestratorActor {
         request: GenerationRequest,
         modelId: String? = nil
     ) async throws(BasaltError) -> AsyncStream<StreamChunk> {
+        let request = await telemetry.sampled(request)
         guard let sessionLog else { return try await performStream(request: request, modelId: modelId).stream }
         let id = Self.newRequestId()
         await sessionLog.logRequest(request, id: id, origin: request.origin, modelRequested: modelId)

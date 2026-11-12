@@ -60,6 +60,10 @@ enum MCPToolCatalog {
         ),
         MCPToolDescriptor(name: "basalt_generate", description: "Generate text using the locally-running model via MLX.", inputSchema: generateSchema),
         MCPToolDescriptor(name: "basalt_status", description: statusDescription, inputSchema: emptySchema),
+        MCPToolDescriptor(
+            name: "telemetry_query",
+            description: "Live aggregates of the serving process, for X-ray-style evaluation without parsing logs: trailing windows (1 m, 5 m, 1 h) with p50/p95 TTFT and tok/s, prompt-cache hit and draft acceptance ratios; per decision model counts, cost and confidence deciles; streamed-expert cache counters and per-layer routing; per-token confidence deciles; health and memory. Counts and timings only, never text.",
+            inputSchema: AnyCodable(["type": "object", "properties": ["sections": ["type": "array", "items": ["type": "string", "enum": TelemetryQuery.sections], "description": "Which parts to return (default: all)"]]])),
         MCPToolDescriptor(name: "basalt_add_knowledge", description: addKnowledgeDescription, inputSchema: addKnowledgeSchema),
         MCPToolDescriptor(
             name: "basalt_transcribe",

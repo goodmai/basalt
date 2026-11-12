@@ -100,3 +100,14 @@
 "Waiting for the engine's statistics" = "Жду статистику движка";
 "You: %@" = "Вы: %@";
 "⌘↩ open as a conversation · Esc close" = "⌘↩ открыть как разговор · Esc закрыть";
+"Recent traffic" = "Недавний трафик";
+"Window" = "Окно";
+"TTFT p50 / p95" = "TTFT p50 / p95";
+"tok/s p50 / p95" = "tok/s p50 / p95";
+"Cache hits" = "Попадания в кэш";
+"Decisions" = "Решения";
+"Confidence of %lld measured answers" = "Уверенность %lld измеренных ответов";
+"Answers per decile of their lowest top-token probability" = "Ответы по децилям наименьшей вероятности лучшего токена";
+"Lowest top-token probability (decile)" = "Наименьшая вероятность лучшего токена (дециль)";
+"Lowest top-token probability" = "Наименьшая вероятность лучшего токена";
+"Answers" = "Ответы";

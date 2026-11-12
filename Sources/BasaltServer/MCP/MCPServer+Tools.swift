@@ -23,12 +23,19 @@ extension MCPServer {
         case .generate: try await generate(args)
         case .health: await health()
         case .addKnowledge: try await addKnowledge(args)
-        case .harnessValidate: try validateHarness(args)
-        case .harnessLibraryQuery: try await queryLibrary(args)
-        case .harnessOptimize: try await optimizeHarness(args)
+        case .harnessValidate, .harnessLibraryQuery, .harnessOptimize: try await harness(tool, args)
         case .research(let tool): try await research(tool, args)
         case .introspect: try await introspect(args)
+        case .telemetryQuery: try await telemetryQuery(args)
         case .media(let tool): try await media(tool, args)
+        }
+    }
+
+    private func harness(_ tool: MCPTool, _ args: [String: Any]?) async throws(MCPFailure) -> ToolResult {
+        switch tool {
+        case .harnessValidate: try validateHarness(args)
+        case .harnessLibraryQuery: try await queryLibrary(args)
+        default: try await optimizeHarness(args)
         }
     }
 
@@ -100,6 +107,14 @@ extension MCPServer {
         let health = await orchestrator.healthSnapshot(modelId: loaded.isEmpty ? modelId : loaded)
         let telemetry = await orchestrator.telemetrySnapshot()
         return .json(StatusOutput(health: health, loaded: loaded, requested: args?["modelId"] as? String, telemetry: telemetry))
+    }
+
+    private func telemetryQuery(_ args: [String: Any]?) async throws(MCPFailure) -> ToolResult {
+        let requested = (args?["sections"] as? [String]) ?? TelemetryQuery.sections
+        guard let sections = TelemetryQuery.validated(requested) else {
+            throw .invalidParams("telemetry_query sections are \(TelemetryQuery.sections.joined(separator: ", "))")
+        }
+        return .json(TelemetryQuery(await orchestrator.telemetrySnapshot(), sections: sections))
     }
 
     private func health() async -> ToolResult {

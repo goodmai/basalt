@@ -1,5 +1,6 @@
 import BasaltAppCore
 import BasaltCore
+import Charts
 import SwiftUI
 
 public struct MonitorView: View {
@@ -29,6 +30,9 @@ public struct MonitorView: View {
                     LabeledContent("Chip", value: snapshot.chipModel)
                     LabeledContent("GPU", value: snapshot.gpuName)
                 }
+                if let windows = snapshot.windows, !windows.isEmpty { WindowsSection(windows: windows) }
+                if let decisions = snapshot.decisions, !decisions.isEmpty { DecisionsSection(decisions: decisions) }
+                if let confidence = snapshot.confidence { ConfidenceSection(confidence: confidence) }
                 if let compose = store.state.compose { ComposeSection(compose: compose) }
             } else if store.state.problem == nil {
                 ProgressView().accessibilityLabel("Waiting for the engine's statistics")
@@ -63,5 +67,73 @@ struct ComposeSection: View {
         if let spent = model.spentToday { parts.append(String(format: "$%.4f", spent) + (model.limit.map { String(format: " of $%.2f", $0) } ?? "")) }
         if let refusal = model.refusal { parts.append(refusal) }
         return parts.joined(separator: " · ")
+    }
+}
+
+struct WindowsSection: View {
+    let windows: [TelemetryWindow]
+
+    var body: some View {
+        Section("Recent traffic") {
+            Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 4) {
+                GridRow {
+                    Text("Window")
+                    Text("Requests")
+                    Text("TTFT p50 / p95")
+                    Text("tok/s p50 / p95")
+                    Text("Cache hits")
+                }
+                .font(.caption).foregroundStyle(.secondary)
+                ForEach(windows, id: \.seconds) { window in
+                    GridRow {
+                        Text(Self.span(window.seconds))
+                        Text("\(window.requests)")
+                        Text(Self.pair(window.ttftP50, window.ttftP95, format: "%.2f s"))
+                        Text(Self.pair(window.tokensPerSecondP50, window.tokensPerSecondP95, format: "%.1f"))
+                        Text(window.promptCacheHitRatio.map { String(format: "%.0f%%", $0 * 100) } ?? "–")
+                    }
+                    .monospacedDigit()
+                }
+            }
+        }
+    }
+
+    static func span(_ seconds: Int) -> String { seconds >= 3600 ? "\(seconds / 3600) h" : "\(seconds / 60) min" }
+
+    static func pair(_ low: Double?, _ high: Double?, format: String) -> String {
+        guard let low, let high else { return "–" }
+        return String(format: format, low) + " / " + String(format: format, high)
+    }
+}
+
+struct DecisionsSection: View {
+    let decisions: [String: DecisionTelemetry]
+
+    var body: some View {
+        Section("Decisions") {
+            ForEach(decisions.keys.sorted(), id: \.self) { model in
+                if let value = decisions[model] {
+                    LabeledContent(model) {
+                        Text("\(value.requests) requests · \(value.answers) answered · \(value.abstains) abstained" + (value.cost > 0 ? String(format: " · $%.4f", value.cost) : ""))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+        }
+    }
+}
+
+struct ConfidenceSection: View {
+    let confidence: ConfidenceTelemetry
+
+    var body: some View {
+        Section("Confidence of \(confidence.responses) measured answers") {
+            Chart(Array(confidence.minProbability.enumerated()), id: \.offset) { bin in
+                BarMark(x: .value("Lowest top-token probability", Double(bin.offset) / 10), y: .value("Answers", bin.element), width: .ratio(0.8))
+            }
+            .chartXAxisLabel("Lowest top-token probability (decile)")
+            .frame(height: 120)
+            .accessibilityLabel("Answers per decile of their lowest top-token probability")
+        }
     }
 }

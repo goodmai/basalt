@@ -3,10 +3,17 @@ import Synchronization
 public struct ResponseConfidence: Codable, Sendable, Equatable {
     public let min: Double
     public let mean: Double
+    public var meanEntropy: Double?
+    public var minMargin: Double?
 
     public init(min: Double, mean: Double) {
         self.min = min
         self.mean = mean
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case min, mean
+        case meanEntropy = "mean_entropy", minMargin = "min_margin"
     }
 
     public static func summarize(_ values: [Double]) -> ResponseConfidence? {
@@ -19,22 +26,33 @@ public struct ResponseConfidence: Codable, Sendable, Equatable {
     public func merged(with other: ResponseConfidence, weightSelf: Int, weightOther: Int) -> ResponseConfidence {
         let w1 = Double(max(1, weightSelf))
         let w2 = Double(max(1, weightOther))
-        return ResponseConfidence(
-            min: Swift.min(min, other.min),
-            mean: (mean * w1 + other.mean * w2) / (w1 + w2)
-        )
+        var merged = ResponseConfidence(min: Swift.min(min, other.min), mean: (mean * w1 + other.mean * w2) / (w1 + w2))
+        if let a = meanEntropy, let b = other.meanEntropy { merged.meanEntropy = (a * w1 + b * w2) / (w1 + w2) } else { merged.meanEntropy = meanEntropy ?? other.meanEntropy }
+        merged.minMargin = [minMargin, other.minMargin].compactMap { $0 }.min()
+        return merged
     }
 }
 
 public final class ConfidenceProbe: Sendable {
     private let recorded = Mutex<[Double]>([])
+    private let shape = Mutex<(entropy: [Double], margin: [Double])>(([], []))
 
     public init() {}
 
     public var values: [Double] { recorded.withLock { $0 } }
 
     public var summary: ResponseConfidence? {
-        ResponseConfidence.summarize(recorded.withLock { $0 })
+        guard var summary = ResponseConfidence.summarize(recorded.withLock { $0 }) else { return nil }
+        let (entropy, margin) = shape.withLock { $0 }
+        let entropies = entropy.filter(\.isFinite)
+        summary.meanEntropy = entropies.isEmpty ? nil : entropies.reduce(0, +) / Double(entropies.count)
+        summary.minMargin = margin.filter(\.isFinite).min()
+        return summary
+    }
+
+    public func record(_ maxProbability: Double, entropy: Double, margin: Double) {
+        record(maxProbability)
+        shape.withLock { $0.entropy.append(entropy); $0.margin.append(margin) }
     }
 
     public func record(_ maxProbability: Double) {

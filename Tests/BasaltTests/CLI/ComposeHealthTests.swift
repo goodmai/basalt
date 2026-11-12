@@ -64,7 +64,8 @@ struct ComposeHealthTests {
         await #expect(throws: ExitCode.self) { try await ComposeCommand.stop(Self.record(stubborn), grace: .milliseconds(300)) }
         let polite = try await Self.spawn("echo ready; exec sleep 20")
         try await ComposeCommand.stop(Self.record(polite), grace: .seconds(10))
-        #expect(!ComposeRecord.alive(Self.record(polite)))
+        polite.waitUntilExit()
+        #expect(!polite.isRunning)
     }
 
     static func spawn(_ script: String) async throws -> Process {

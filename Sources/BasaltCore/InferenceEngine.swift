@@ -13,6 +13,7 @@ public protocol InferenceEngine: AudioTranscriber {
     var supportsKVQuantization: Bool { get async }
     var evictsKVInFullPrecision: Bool { get async }
     var hybridAnchorUsage: (count: Int, bytes: Int64)? { get async }
+    var expertTelemetry: ExpertTelemetry? { get async }
     var activeDeltas: [OverlayInfo] { get async }
     func promptTokenCount(for request: GenerationRequest) async -> Int?
     func persistPromptCache(within deadline: Duration) async
@@ -35,6 +36,7 @@ extension InferenceEngine {
     public var supportsKVQuantization: Bool { get async { true } }
     public var evictsKVInFullPrecision: Bool { get async { false } }
     public var hybridAnchorUsage: (count: Int, bytes: Int64)? { get async { nil } }
+    public var expertTelemetry: ExpertTelemetry? { get async { nil } }
     public var activeDeltas: [OverlayInfo] { get async { [] } }
     public func promptTokenCount(for request: GenerationRequest) async -> Int? { nil }
     public func persistPromptCache(within deadline: Duration) async {}

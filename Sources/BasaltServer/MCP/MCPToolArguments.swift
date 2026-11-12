@@ -8,6 +8,7 @@ enum MCPTool: Sendable, Equatable {
     case harnessValidate, harnessLibraryQuery, harnessOptimize
     case research(ResearchTool)
     case introspect
+    case telemetryQuery
 
     init?(name: String) {
         switch name {
@@ -22,6 +23,7 @@ enum MCPTool: Sendable, Equatable {
         case "harness_library_query": self = .harnessLibraryQuery
         case "harness_optimize": self = .harnessOptimize
         case "introspect": self = .introspect
+        case "telemetry_query": self = .telemetryQuery
         case "basalt_transcribe": self = .media(.transcribe)
         case "basalt_ocr": self = .media(.ocr)
         case "basalt_systemone_decide": self = .media(.decide)
