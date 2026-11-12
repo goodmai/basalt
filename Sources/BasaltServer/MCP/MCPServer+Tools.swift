@@ -23,13 +23,19 @@ extension MCPServer {
         case .generate: try await generate(args)
         case .health: await health()
         case .addKnowledge: try await addKnowledge(args)
-        case .harnessValidate: try validateHarness(args)
-        case .harnessLibraryQuery: try await queryLibrary(args)
-        case .harnessOptimize: try await optimizeHarness(args)
+        case .harnessValidate, .harnessLibraryQuery, .harnessOptimize: try await harness(tool, args)
         case .research(let tool): try await research(tool, args)
         case .introspect: try await introspect(args)
         case .telemetryQuery: try await telemetryQuery(args)
         case .media(let tool): try await media(tool, args)
+        }
+    }
+
+    private func harness(_ tool: MCPTool, _ args: [String: Any]?) async throws(MCPFailure) -> ToolResult {
+        switch tool {
+        case .harnessValidate: try validateHarness(args)
+        case .harnessLibraryQuery: try await queryLibrary(args)
+        default: try await optimizeHarness(args)
         }
     }
 
