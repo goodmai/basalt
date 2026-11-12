@@ -83,7 +83,7 @@ struct BasaltMacApp: App {
             MenuBarLabel(delegate: delegate)
         }
         .menuBarExtraStyle(.window)
-        Settings { SettingsView(keychain: .live()) }
+        Settings { SettingsView(keychain: .live()) { arguments in await delegate.model?.switchEngine(arguments) } }
     }
 
     static func makeModel() -> AppModel? {
@@ -96,7 +96,7 @@ struct BasaltMacApp: App {
         var environment = CloudKeys.environment(names, keychain: .live())
         if FileManager.default.fileExists(atPath: metallib.path) { environment["BASALT_METALLIB"] = metallib.path }
         return try? AppModel(
-            launch: HelperLaunch(executable: helper, arguments: ["serve", "--model", model], environment: environment), model: model,
+            launch: HelperLaunch(executable: helper, arguments: EngineChoice.arguments(model: model, compose: UserDefaults.standard.string(forKey: EngineChoice.composeKey)), environment: environment), model: model,
             storeURL: support.appending(path: "Conversations.store"))
     }
 

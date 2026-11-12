@@ -29,6 +29,7 @@ public struct MonitorView: View {
                     LabeledContent("Chip", value: snapshot.chipModel)
                     LabeledContent("GPU", value: snapshot.gpuName)
                 }
+                if let compose = store.state.compose { ComposeSection(compose: compose) }
             } else if store.state.problem == nil {
                 ProgressView()
             }
@@ -37,5 +38,30 @@ public struct MonitorView: View {
         .frame(minWidth: 360, minHeight: 420)
         .onAppear { store.send(.appeared) }
         .onDisappear { store.send(.disappeared) }
+    }
+}
+
+struct ComposeSection: View {
+    let compose: ComposeInfo
+
+    var body: some View {
+        Section("Compose system \(compose.name)") {
+            LabeledContent("Pipelines", value: compose.pipelines.joined(separator: ", "))
+            LabeledContent("Cloud spend today", value: String(format: "$%.4f", compose.spentToday))
+            ForEach(compose.models, id: \.name) { model in
+                LabeledContent {
+                    Text(Self.detail(model)).foregroundStyle(model.state == "failed" || model.state == "no-key" ? .red : .secondary)
+                } label: {
+                    Label(model.name, systemImage: model.isCloud ? "cloud" : "desktopcomputer")
+                }
+            }
+        }
+    }
+
+    static func detail(_ model: ComposeInfo.Model) -> String {
+        var parts = [model.state, model.keep]
+        if let spent = model.spentToday { parts.append(String(format: "$%.4f", spent) + (model.limit.map { String(format: " of $%.2f", $0) } ?? "")) }
+        if let refusal = model.refusal { parts.append(refusal) }
+        return parts.joined(separator: " · ")
     }
 }

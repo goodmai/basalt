@@ -6,9 +6,10 @@ public struct EngineRecord: Codable, Sendable, Equatable {
     public var port: Int
     public var token: String
     public var version: String
+    public var arguments: [String]?
 
-    public init(pid: Int32, port: Int, token: String, version: String = HealthResponse.version) {
-        (self.pid, self.port, self.token, self.version) = (pid, port, token, version)
+    public init(pid: Int32, port: Int, token: String, version: String = HealthResponse.version, arguments: [String]? = nil) {
+        (self.pid, self.port, self.token, self.version, self.arguments) = (pid, port, token, version, arguments)
     }
 }
 

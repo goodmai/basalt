@@ -4,12 +4,14 @@ import SwiftUI
 
 public struct SettingsView: View {
     let keychain: KeychainClient
+    let restart: @MainActor ([String]) async -> Void
 
-    public init(keychain: KeychainClient) { self.keychain = keychain }
+    public init(keychain: KeychainClient, restart: @escaping @MainActor ([String]) async -> Void = { _ in }) { (self.keychain, self.restart) = (keychain, restart) }
 
     public var body: some View {
         TabView {
             Tab("General", systemImage: "gearshape") { GeneralSettings() }
+            Tab("Engine", systemImage: "cpu") { EngineSettings(restart: restart) }
             Tab("Cloud Keys", systemImage: "key") { CloudKeySettings(keychain: keychain) }
         }
         .frame(width: 480)
@@ -78,5 +80,35 @@ struct CloudKeySettings: View {
             }
         }
         .padding(20)
+    }
+}
+
+struct EngineSettings: View {
+    let restart: @MainActor ([String]) async -> Void
+    @AppStorage(EngineChoice.modelKey) private var model = AppModel.defaultModel
+    @AppStorage(EngineChoice.composeKey) private var compose = ""
+    @State private var choosing = false
+
+    var arguments: [String] { EngineChoice.arguments(model: model, compose: compose) }
+
+    var body: some View {
+        Form {
+            Picker("Run", selection: Binding(get: { compose.isEmpty ? 0 : 1 }, set: { if $0 == 0 { compose = "" } else { choosing = true } })) {
+                Text("One model").tag(0)
+                Text("A compose system").tag(1)
+            }
+            if compose.isEmpty {
+                LabeledContent("Model", value: model)
+            } else {
+                LabeledContent("Compose file", value: compose)
+                Button("Choose Another…") { choosing = true }
+            }
+            Text("basalt \(arguments.joined(separator: " "))").font(.caption.monospaced()).foregroundStyle(.secondary)
+            Button("Restart the Engine with This") { Task { await restart(arguments) } }
+        }
+        .padding(20)
+        .fileImporter(isPresented: $choosing, allowedContentTypes: [.yaml, .data]) { result in
+            if let url = try? result.get() { compose = url.path }
+        }
     }
 }

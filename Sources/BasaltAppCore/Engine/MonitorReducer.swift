@@ -3,6 +3,7 @@ import Foundation
 
 public struct MonitorState: Sendable, Equatable {
     public var snapshot: ServerTelemetrySnapshot?
+    public var compose: ComposeInfo?
     public var problem: String?
     public var polling = false
 
@@ -13,6 +14,7 @@ public enum MonitorAction: Sendable, Equatable {
     case appeared
     case disappeared
     case received(ServerTelemetrySnapshot)
+    case composed(ComposeInfo?)
     case failed(String)
 }
 
@@ -38,6 +40,10 @@ public enum MonitorReducer {
             guard state.polling else { return [] }
             (state.snapshot, state.problem) = (snapshot, nil)
             return []
+        case .composed(let compose):
+            guard state.polling else { return [] }
+            state.compose = compose
+            return []
         case .failed(let message):
             guard state.polling else { return [] }
             state.problem = message
@@ -47,7 +53,7 @@ public enum MonitorReducer {
 
     public static func handler(
         stats: @escaping @Sendable () async throws -> ServerTelemetrySnapshot, every interval: Duration,
-        sleep: @escaping @Sendable (Duration) async throws -> Void
+        sleep: @escaping @Sendable (Duration) async throws -> Void, compose: (@Sendable () async throws -> ComposeInfo?)? = nil
     ) -> @Sendable (MonitorEffect) -> EffectRun<MonitorAction> {
         { effect in
             switch effect {
@@ -57,6 +63,7 @@ public enum MonitorReducer {
                     repeat {
                         do {
                             await send(.received(try await stats()))
+                            if let compose { await send(.composed(try await compose())) }
                         } catch {
                             await send(.failed((error as? EngineError).map(String.init(describing:)) ?? error.localizedDescription))
                         }

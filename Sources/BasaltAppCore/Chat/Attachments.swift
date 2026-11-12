@@ -45,7 +45,7 @@ public struct PipelineResult: Sendable, Equatable {
         var perceived = (0 ..< count).map { index in pages.filter { $0.attachment == index }.map(\.markdown).joined(separator: "\n\n") }
         if let transcript = response.perceived.transcript, let empty = perceived.firstIndex(of: "") { perceived[empty] = transcript }
         var receipt = Receipt(model: response.system2?.model)
-        receipt.stages = response.receipt.stages.map { StageReceipt(stage: $0.stage.rawValue, model: $0.model, ms: $0.ms) }
+        receipt.stages = response.receipt.stages.map { StageReceipt(stage: $0.stage.rawValue, model: $0.model, ms: $0.ms, cost: $0.cost) }
         receipt.completionTokens = response.receipt.stages.last?.tokens ?? 0
         self.init(perceived: perceived, answer: response.system2?.text ?? response.answers.values.compactMap(\.text).first ?? "", receipt: receipt)
     }

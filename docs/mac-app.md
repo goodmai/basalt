@@ -65,3 +65,9 @@ From a build folder without bundling, point the app at the engine: `BASALT_HELPE
 - **Services:** select text in any app and choose Services → Ask Basalt. A new conversation opens with that text as the question.
 - **Dock:** a PDF, image or audio file dropped on the Dock icon starts a conversation with it attached.
 - **Notifications:** when an answer finishes while Basalt is in the background, a notification shows its first lines. The permission is asked once.
+
+## Compose systems and the cloud
+- **Settings → Engine:** run one model, or a compose system from a file (`basalt serve --compose <file>`). "Restart the Engine with This" stops the engine and starts it with the new arguments. The choice is also used at the next launch.
+- **Adoption is by arguments:** the app adopts an engine left running only if it was started with the same arguments. After a change of model or compose file, a new engine starts. Quitting stops an adopted engine as well.
+- **Monitor:** for a compose system, its name, pipelines and cloud spend today, and per model its state (`ready`, `loading`, `no-key`, `over-budget` and so on), keep policy, spend and cap, and any refusal. Cloud models carry a cloud symbol.
+- **The cloud mark:** an answer that used a cloud model says "☁︎ cloud" with its cost on the receipt line and in the inspector. Everything without the mark ran on this Mac.
