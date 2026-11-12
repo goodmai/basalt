@@ -242,7 +242,8 @@ extension MCPServer {
         else { throw .invalidParams("basalt_systemone_decide needs state (text, object or array) and questions {id: {type, instructions, criteria?}}") }
         do throws(BasaltError) {
             return .json(try await SystemOneController.decide(
-                decisions, request, log: orchestrator.sessionLog, origin: RequestOrigin(source: "mcp", endpoint: "basalt_systemone_decide", stream: false), sessionId: nil))
+                decisions, request, log: orchestrator.sessionLog, origin: RequestOrigin(source: "mcp", endpoint: "basalt_systemone_decide", stream: false), sessionId: nil,
+                telemetry: orchestrator.telemetry))
         } catch {
             throw MCPFailure(error)
         }

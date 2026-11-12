@@ -141,6 +141,10 @@ package struct RESTServer: Sendable {
     private func addNativeRoutes(to v1: RouterGroup<BasicRequestContext>, _ controller: GenerateController) {
         v1.get("/health") { try await controller.health(request: $0, context: $1) }
         v1.get("/stats") { try await controller.stats(request: $0, context: $1) }
+        v1.get("/metrics") { _, _ in
+            let text = TelemetryExport.openMetrics(await orchestrator.telemetrySnapshot())
+            return Response(status: .ok, headers: [.contentType: TelemetryExport.contentType], body: ResponseBody(byteBuffer: ByteBuffer(string: text)))
+        }
         v1.post("/generate", use: controller.generate)
         v1.post("/generate/stream", use: controller.generateStream)
     }
@@ -163,7 +167,7 @@ package struct RESTServer: Sendable {
         oai.post("/embeddings", use: embedding.embeddings)
         oai.post("/rerank", use: embedding.rerank)
         let registry = pipelines ?? PipelineRegistry([ComposeSpec.defaultPipeline: PipelineSystem(decisions: decisions, stages: pipeline)])
-        oai.post("/systemone", use: SystemOneController(engine: { await registry.system(ComposeSpec.defaultPipeline)?.decisions }, log: orchestrator.sessionLog).decide)
+        oai.post("/systemone", use: SystemOneController(engine: { await registry.system(ComposeSpec.defaultPipeline)?.decisions }, log: orchestrator.sessionLog, telemetry: orchestrator.telemetry).decide)
         oai.post("/audio/transcriptions", use: TranscriptionsController(orchestrator: orchestrator).transcriptions)
         oai.post("/ocr", use: OCRController(orchestrator: orchestrator).ocr)
         let pipelineController = PipelineController(registry: registry, chat: orchestrator)
@@ -222,6 +226,7 @@ extension RESTServer {
                 "description": "Local LLM inference — open on loopback; an API key (Bearer or x-api-key) is required when bound off loopback" },
       "paths": {
         "/api/v1/health":          { "get":  { "summary": "Health check" } },
+        "/api/v1/metrics":         { "get":  { "summary": "OpenMetrics text for Prometheus: counters, gauges, trailing-window quantiles of TTFT and tok/s, prompt-cache hit ratio, draft acceptance, per-model decision counts, cost and confidence deciles" } },
         "/api/v1/generate":        { "post": { "summary": "Raw text generation" } },
         "/api/v1/generate/stream": { "post": { "summary": "SSE streaming generation" } },
         "/v1/models":              { "get":  { "summary": "List cached models (OpenAI format)" } },

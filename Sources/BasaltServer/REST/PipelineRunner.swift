@@ -193,7 +193,7 @@ struct PipelineRunner: Sendable {
         var request = SystemOneRequest(state: state, questions: questions, abstainBelow: stages.abstainBelow, minMargin: stages.minMargin)
         request.media = media
         do {
-            let response = try await SystemOneController.decide(decisions, request, log: chat.sessionLog, origin: origin, sessionId: sessionId)
+            let response = try await SystemOneController.decide(decisions, request, log: chat.sessionLog, origin: origin, sessionId: sessionId, telemetry: chat.telemetry)
             return (response, PipelineCore.decided(response, ms: Self.elapsed(since: started)))
         } catch .contextLengthExceeded, .invalidRequestStructure {
             return (nil, PipelineCore.skipped(decisions.modelID, ms: Self.elapsed(since: started)))

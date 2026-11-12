@@ -114,6 +114,25 @@ curl -N http://localhost:8080/api/v1/generate/stream \
 
 Each event is a `data: {...}` line; the stream ends with `data: [DONE]`. A failure mid-stream arrives as `event: error` with `data: {"error": ...}`.
 
+## Telemetry and Prometheus
+
+- **`GET /api/v1/stats`** returns the telemetry snapshot as JSON.
+  - It also carries `windows`: the trailing 1 minute, 5 minutes and 1 hour with requests, tokens, p50/p95 time to first token and tok/s, the prompt-cache hit ratio and the draft acceptance ratio.
+  - It also carries `decisions`: per decision model, requests, answers, abstentions, escalations, cloud cost, latency and answers per confidence decile.
+- **`GET /api/v1/metrics`** returns the same data as OpenMetrics text for Prometheus or Grafana.
+  - Metric names start with `basalt_`. Window and quantile are labels, as is the decision model.
+  - It goes through the server's API key like every other endpoint: give the scraper the bearer token.
+
+```yaml
+scrape_configs:
+  - job_name: basalt
+    metrics_path: /api/v1/metrics
+    authorization: { credentials_file: /etc/prometheus/basalt.token }
+    static_configs: [{ targets: ["127.0.0.1:8080"] }]
+```
+
+Telemetry holds counts, timings and histograms only: no prompt or answer text (#450).
+
 ## Swagger UI
 
 Visit `http://localhost:8080/swagger` for interactive API docs.

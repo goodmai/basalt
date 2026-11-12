@@ -6,16 +6,18 @@ import BasaltCore
 struct SystemOneController: Sendable {
     let engine: @Sendable () async -> (any DecisionEngine)?
     var log: SessionLogWriter? = nil
+    var telemetry: TelemetryTracker? = nil
 
     static func decide(
-        _ engine: any DecisionEngine, _ request: SystemOneRequest, log: SessionLogWriter?, origin: RequestOrigin, sessionId: String?
+        _ engine: any DecisionEngine, _ request: SystemOneRequest, log: SessionLogWriter?, origin: RequestOrigin, sessionId: String?,
+        telemetry: TelemetryTracker? = nil
     ) async throws(BasaltError) -> SystemOneResponse {
         let start = ContinuousClock.now
         let response = try await engine.decide(request)
         let elapsed = ContinuousClock.now - start
-        await log?.logDecision(
-            origin: origin, sessionId: sessionId, request: request, response: response,
-            latencyMs: Double(elapsed.components.seconds) * 1000 + Double(elapsed.components.attoseconds) / 1e15)
+        let latency = Double(elapsed.components.seconds) * 1000 + Double(elapsed.components.attoseconds) / 1e15
+        await log?.logDecision(origin: origin, sessionId: sessionId, request: request, response: response, latencyMs: latency)
+        await telemetry?.recordDecision(response, latencyMs: latency)
         return response
     }
 
@@ -73,7 +75,7 @@ struct SystemOneController: Sendable {
             var buffer = ByteBuffer()
             let response = try await Self.decide(
                 engine, dto, log: log, origin: RequestOrigin(source: "systemone", endpoint: "/v1/systemone", stream: false),
-                sessionId: GenerationRequest.sessionId(in: request.headers))
+                sessionId: GenerationRequest.sessionId(in: request.headers), telemetry: telemetry)
             buffer.writeBytes(try JSONEncoder().encode(response))
             return Response(status: .ok, headers: [.contentType: "application/json"], body: ResponseBody(byteBuffer: buffer))
         } catch {
