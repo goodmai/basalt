@@ -16,7 +16,7 @@ struct ComposeCascadeTests {
         let spec = try ComposeFile.parse(Self.localFirst, file: "c.yaml")
         #expect(spec.cascade == ["laya", "jev", "chat"] && spec.deciderModels == ["laya"] && spec.decider == "self")
         for (yaml, reason) in [
-            (Self.localFirst.replacingOccurrences(of: "cascade: [laya, jev, chat]", with: "cascade: [laya, jev, chat, laya2, jev2]")
+            (Self.localFirst.replacingOccurrences(of: "cascade: [laya, jev, chat]", with: "cascade: [laya, jev, laya2, jev2, chat]")
                 .replacingOccurrences(of: "pipeline:\n", with: "  laya2:\n    source: ./laya2\n  jev2:\n    source: cloud:openrouter/x/y\n    api_key_env: HOME\npipeline:\n"), "at most four stages"),
             (Self.localFirst.replacingOccurrences(of: "cascade: [laya, jev, chat]", with: "cascade: [laya, jev]"), "ends with a local model"),
         ] {
