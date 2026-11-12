@@ -126,6 +126,17 @@ extension ComposeSpec {
         return issues
     }
 
+    func keepIssues(_ path: String, _ model: Model, perceiver: Bool, answer: Bool) -> [Issue] {
+        var issues: [Issue] = []
+        let allowed = perceiver || (answer && model.keep == .onDemand)
+        if let keep = model.keep, keep != .resident, !allowed { issues.append(Issue("\(path).keep", "\(keep.rawValue) applies only to a perceiver, or on-demand to a routed answer model")) }
+        if model.idleUnload != nil, model.keep != .onDemand { issues.append(Issue("\(path).idle_unload", "applies only to keep: on-demand")) }
+        if let idle = model.idleUnload, idle <= 0 { issues.append(Issue("\(path).idle_unload", "must be a positive duration")) }
+        return issues
+    }
+}
+
+extension ComposeSpec {
     func roleIssues(_ name: String, _ model: Model, path: String) -> [Issue] {
         var issues: [Issue] = []
         let answering = views.contains { $0.spec.answer == name }
@@ -137,15 +148,6 @@ extension ComposeSpec {
         if case .cloud("gemini", _) = model.source, roles[name] != ["cascade"] {
             issues.append(Issue(path, "cloud:gemini models serve decisions only; put them in a decide cascade"))
         }
-        return issues
-    }
-
-    func keepIssues(_ path: String, _ model: Model, perceiver: Bool, answer: Bool) -> [Issue] {
-        var issues: [Issue] = []
-        let allowed = perceiver || (answer && model.keep == .onDemand)
-        if let keep = model.keep, keep != .resident, !allowed { issues.append(Issue("\(path).keep", "\(keep.rawValue) applies only to a perceiver, or on-demand to a routed answer model")) }
-        if model.idleUnload != nil, model.keep != .onDemand { issues.append(Issue("\(path).idle_unload", "applies only to keep: on-demand")) }
-        if let idle = model.idleUnload, idle <= 0 { issues.append(Issue("\(path).idle_unload", "must be a positive duration")) }
         return issues
     }
 
