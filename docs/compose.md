@@ -99,6 +99,22 @@ A system that does not fit is refused with the numbers before anything loads. A 
 
   - A 4-bit base costs this 0.6B model 9 points, while 8-bit keeps its accuracy at a quarter of the memory. serve and compose load the base the bundle names, so a quantized base is only reached through `JevEvaluator` directly.
   - Rerun it with `BASALT_E2E=1 BASALT_E2E_JEV_MODEL=<bundle> BASALT_E2E_JEV_BASE=<bf16 base> BASALT_E2E_JEV_BASE_8BIT=… BASALT_E2E_JEV_BASE_4BIT=… swift test --filter JevRealModelTests/unmergedArms`.
+- **A 9B judge beside Gemma 4 12B on 24 GB:** measured with `openjev/OpenJev-Flash-9B-MLX` (8-bit, 9.5 GB) and `openjev/OpenJev-Flash-9B-MLX-4bit` (5.9 GB). Gemma 4 12B (`gemma-4-12B-it-qat-4bit`) answers the escalations. The set is 60 labelled states, 180 decisions, on an M4 Pro 24 GB at 8294bf7.
+  - Use the 4-bit judge. Beside Gemma it holds 15.3 GB active (peak 15.9 GB) of 24 GB.
+  - The 8-bit judge holds about 21 GB together with the chat model and a 0.6B head. It decides fine on its own (92.8% with no abstain, 1.85 s), but once Gemma decodes the escalations, the KV cache pushes the Mac into swap. A two-minute arm then ran for over 24 minutes and was stopped.
+
+    | Decider beside Gemma 4 12B (4-bit judge) | Accuracy | Sent to the LLM | LLM tokens saved | Decide p50 |
+    |---|---|---|---|---|
+    | LLM only | 97.8% | 180 | — | — |
+    | OpenJev-Flash-9B 4-bit, no abstain | 96.7% | 0 | 100% | 2.0 s |
+    | OpenJev-Flash-9B 4-bit, abstain below 0.6 | 98.9% | 20 | 88.7% | 2.2 s |
+    | OpenJev-Flash-9B 4-bit, abstain below 0.75 | 98.9% | 41 | 76.7% | 2.4 s |
+    | OpenJev-Flash-9B 4-bit, abstain below 0.9 | 97.8% | 74 | 58.5% | 2.5 s |
+    | readout of Gemma itself (`self`), abstain below 0.75 | 99.4% | 1 | 99.4% | 1.9 s |
+    | OpenJev-0.6B head (8-bit judge run), abstain below 0.75 | 82.8% | 86 | 48% | 0.26 s |
+
+  - Deciding while Gemma decodes a long answer drops decode from 21 to 3 tok/s (−86%). The wall time is 341 s against 202 s run one after the other. The GPU deciders therefore stay gated between generations.
+  - Rerun it with `BASALT_E2E=1 BASALT_E2E_BUDGET_CHAT_MODEL=<chat> BASALT_E2E_BUDGET_FLASH=<judge dir> swift test --filter SystemOneBudgetBenchmarkTests`.
 - **What the cloud gets:** requests with documents or audio skip the cloud stages and go only to the local ones, in their order.
 - **Thresholds:** questions whose confidence is below `abstain_below`, or whose top two options are closer than `min_margin`, go to the answer model.
 

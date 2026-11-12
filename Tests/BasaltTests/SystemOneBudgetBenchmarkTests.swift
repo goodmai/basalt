@@ -1,4 +1,5 @@
 import Foundation
+import MLX
 import Testing
 @testable import BasaltCore
 @testable import BasaltInference
@@ -102,6 +103,7 @@ struct SystemOneBudgetBenchmarkTests {
             try await log.step("load flash") { try await flashEngine.load(modelPath: flash) }
             deciders.append(("openjev-flash-9b", ReadoutDecisionEngine(engine: flashEngine, modelID: "flash", readout: SystemOneReadout.known("openjev/OpenJev-Flash-9B") ?? .uncalibrated)))
         }
+        log.record("RESULT", "memory with \(deciders.map(\.0).joined(separator: ", ")) beside the chat model: active \(Memory.activeMemory >> 20) MB, peak \(Memory.peakMemory >> 20) MB of \(ProcessInfo.processInfo.physicalMemory >> 20) MB")
         if let laya = Self.env["BASALT_E2E_BUDGET_COREAI"] {
             deciders.append(("laya-ane", try await log.step("load laya") { try await CoreAIDecisionEngine(directory: URL(fileURLWithPath: laya)) }))
         }
