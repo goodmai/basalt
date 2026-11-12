@@ -5,6 +5,7 @@ public struct GatedDecisionEngine: DecisionEngine {
     let gate: GenerationGate
 
     public var modelID: String { inner.modelID }
+    public var acceptsMedia: Bool { inner.acceptsMedia }
 
     public static func serving(_ engine: (any DecisionEngine)?, gate: GenerationGate, besideDecode: Bool = true) -> (any DecisionEngine)? {
         guard let engine else { return nil }

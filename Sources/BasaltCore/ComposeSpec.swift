@@ -6,7 +6,7 @@ public struct ComposeSpec: Sendable, Equatable {
         case cloud(provider: String, model: String)
 
         public static let cloudPrefix = "cloud:"
-        public static let providers = ["openrouter"]
+        public static let providers = ["openrouter", "gemini"]
 
         public init(_ text: String) {
             guard text.hasPrefix(Self.cloudPrefix) else {
@@ -45,6 +45,7 @@ public struct ComposeSpec: Sendable, Equatable {
     public static let speechAnalyzer = "speech-analyzer"
     public static let defaultIdleUnload = 120
     public static let noPerceived = "no-perceived"
+    public static let shareMedia = "media"
 
     public var version = 1
     public var name: String

@@ -43,8 +43,8 @@ extension ServeCommand {
         guard let local, !clouds.isEmpty else { return GatedDecisionEngine.serving(local, gate: gate, besideDecode: besideDecode) }
         do {
             let remotes: [any DecisionEngine] = try clouds.map { name in
-                guard case .cloud(_, let id)? = spec.models[name]?.source else { throw BasaltError.invalidRequestStructure(details: "\(name) is not a cloud model") }
-                return GuardedDecisionEngine(try RemoteDecisionEngine(model: id, apiKey: key(spec, name)), gate: cloudGate)
+                guard case .cloud(let provider, let id)? = spec.models[name]?.source else { throw BasaltError.invalidRequestStructure(details: "\(name) is not a cloud model") }
+                return GuardedDecisionEngine(try RemoteDecisionEngine(model: id, apiKey: key(spec, name), provider: CloudDecisionProvider(rawValue: provider) ?? .openRouter), gate: cloudGate)
             }
             log("Cloud decisions → \(clouds.joined(separator: " → ")) → \(local.modelID); confidence below \(spec.escalateBelow ?? decision.escalateBelow) goes on to the next stage")
             let gated = GatedDecisionEngine.serving(local, gate: gate, besideDecode: besideDecode) ?? local

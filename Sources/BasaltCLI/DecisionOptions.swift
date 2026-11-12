@@ -6,7 +6,7 @@ import BasaltCloud
 struct DecisionOptions: ParsableArguments {
     static let cloudPrefix = "cloud:"
 
-    @Option(name: .customLong("decision-model"), help: "OpenJev decision model served on /v1/systemone (single-pass noul/choice/score): \"self\" reads option letters from the chat model; a Core AI decision bundle (laya_decision.json with decision.aimodel, token_table.aimodel and tokenizer/) runs on the Neural Engine beside decode (on a weak power source it waits between generations); an OpenJev head bundle (openjev_config.json, head.safetensors, PEFT adapter) runs on its Qwen3 base; any other repo, such as openjev/OpenJev-Flash-9B-MLX, is loaded beside the chat model and read out by option letters; cloud:<model>, such as cloud:~typesafe/jev-latest, asks OpenRouter's decisions endpoint first (needs OPENROUTER_API_KEY and --decision-escalate; the state is redacted of secrets, and pipeline states read from documents or audio never leave the machine)")
+    @Option(name: .customLong("decision-model"), help: "OpenJev decision model served on /v1/systemone (single-pass noul/choice/score): \"self\" reads option letters from the chat model; a Core AI decision bundle (laya_decision.json with decision.aimodel, token_table.aimodel and tokenizer/) runs on the Neural Engine beside decode (on a weak power source it waits between generations); an OpenJev head bundle (openjev_config.json, head.safetensors, PEFT adapter) runs on its Qwen3 base; any other repo, such as openjev/OpenJev-Flash-9B-MLX, is loaded beside the chat model and read out by option letters; cloud:<model>, such as cloud:~typesafe/jev-latest, asks OpenRouter's decisions endpoint first (needs OPENROUTER_API_KEY and --decision-escalate); cloud:gemini/gemini-decision-1 asks Google's Gemini Decisions API instead (needs GEMINI_API_KEY), and also takes images, audio, video and PDFs sent as media to /v1/systemone; the state is redacted of secrets, and pipeline states read from documents or audio never leave the machine")
     var model: String?
 
     @Option(name: .customLong("decision-escalate"), help: "With --decision-model cloud:<model>, the local decision model (self, repo or directory, as for --decision-model) that answers the questions the cloud model is unsure of, and the whole request when the cloud call fails or times out (3 s)")
@@ -15,8 +15,8 @@ struct DecisionOptions: ParsableArguments {
     @Option(name: .customLong("decision-escalate-below"), help: "With --decision-model cloud:<model>, questions whose cloud confidence is below this value go to --decision-escalate (0 to 1; default: 0.6)")
     var escalateBelow: Double = 0.6
 
-    @Option(name: .customLong("decision-api-key-env"), help: "With --decision-model cloud:<model>, the environment variable that holds the OpenRouter key; the key itself is never a flag or a config value (default: OPENROUTER_API_KEY)")
-    var keyEnvironment = "OPENROUTER_API_KEY"
+    @Option(name: .customLong("decision-api-key-env"), help: "With --decision-model cloud:<model>, the environment variable that holds the key; the key itself is never a flag or a config value (default: OPENROUTER_API_KEY, or GEMINI_API_KEY for cloud:gemini/<model>)")
+    var keyOverride: String?
 
     @Option(name: .customLong("decision-budget-usd-per-day"), help: "With --decision-model cloud:<model>, stop calling the cloud model for the rest of the UTC day once this much is spent, and decide locally; spend is kept in ~/.basalt/cloud-spend.json across restarts (default: no cap)")
     var budgetPerDay: Double?
@@ -28,6 +28,10 @@ struct DecisionOptions: ParsableArguments {
     }
 
     var localModel: String? { cloudModel == nil ? model : escalate }
+
+    var cloud: (provider: CloudDecisionProvider, model: String)? { cloudModel.map(CloudDecisionProvider.parse) }
+
+    var keyEnvironment: String { keyOverride ?? (cloud?.provider ?? .openRouter).keyEnvironment }
 
     func validate() throws {
         guard (0 ... 1).contains(escalateBelow) else { throw ValidationError("--decision-escalate-below must lie between 0 and 1, got \(escalateBelow)") }
@@ -47,12 +51,12 @@ extension ServeCommand {
     func servedDecisions(
         _ local: (any DecisionEngine)?, gate: GenerationGate, besideDecode: Bool, apiKey: String? = nil, spendFile: URL? = DecisionOptions.spendFile
     ) throws -> (any DecisionEngine)? {
-        guard let cloud = decision.cloudModel, let local else { return GatedDecisionEngine.serving(local, gate: gate, besideDecode: besideDecode) }
+        guard let (provider, cloud) = decision.cloud, let local else { return GatedDecisionEngine.serving(local, gate: gate, besideDecode: besideDecode) }
         do {
-            let remote = try RemoteDecisionEngine(model: cloud, apiKey: apiKey ?? ProcessInfo.processInfo.environment[decision.keyEnvironment] ?? "")
+            let remote = try RemoteDecisionEngine(model: cloud, apiKey: apiKey ?? ProcessInfo.processInfo.environment[decision.keyEnvironment] ?? "", provider: provider)
             let cloudGate = CloudGate(limits: decision.budgetPerDay.map { [cloud: $0] } ?? [:], storage: spendFile)
             let budget = decision.budgetPerDay.map { String(format: ", at most $%.2f a day", $0) } ?? ""
-            log("Cloud decisions → \(bold(cloud)) at \(RemoteDecisionEngine.openRouter.host ?? "")\(budget); confidence below \(decision.escalateBelow), failed calls, a refused key (until restart) and rate limits go to \(local.modelID)")
+            log("Cloud decisions → \(bold(cloud)) at \(provider.baseURL.host ?? "")\(budget); confidence below \(decision.escalateBelow), failed calls, a refused key (until restart) and rate limits go to \(local.modelID)")
             return CascadeDecisionEngine(remote: GuardedDecisionEngine(remote, gate: cloudGate), local: local, escalateBelow: decision.escalateBelow, gate: gate, besideDecode: besideDecode)
         } catch {
             log("\(red("[error]")) \(error.localizedDescription)")
