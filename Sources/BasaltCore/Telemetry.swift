@@ -29,6 +29,7 @@ public struct ServerTelemetrySnapshot: Codable, Sendable, Equatable {
     public var activeDeltas: [OverlayInfo]?
     public var windows: [TelemetryWindow]?
     public var decisions: [String: DecisionTelemetry]?
+    public var experts: ExpertTelemetry?
 
     public init() {}
 

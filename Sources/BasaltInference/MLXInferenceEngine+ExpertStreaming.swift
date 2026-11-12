@@ -10,6 +10,15 @@ extension MLXInferenceEngine {
         }
     }
 
+    public var expertTelemetry: ExpertTelemetry? {
+        get async {
+            guard let container else { return nil }
+            return await container.performEvaluating(nonSendable: ()) { context, _ in
+                ExpertStreamingLoader.store(in: context.model).map { ExpertTelemetry(cache: $0.stats, capacityBytes: $0.capacity.rawValue, layers: $0.routing.layers()) }
+            }
+        }
+    }
+
     func loadContainer(from directory: URL) async throws -> ModelContainer {
         if let native = try await GGUFNativeLoader.loadContainer(from: directory, tokenizerLoader: DefaultTokenizerLoader()) {
             logger.info("Experimental GGUF native weights: \(directory.lastPathComponent) runs its i-quant and k-quant blocks on basalt's Metal kernels")

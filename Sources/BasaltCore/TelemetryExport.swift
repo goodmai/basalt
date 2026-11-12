@@ -32,6 +32,15 @@ public enum TelemetryExport {
         metric("decision_confidence", "gauge", "Answers per confidence decile per decision model.", decisions.flatMap { name, value in
             value.confidence.enumerated().map { ("model=\"\(escape(name))\",decile=\"\($0.offset)\"", Double($0.element)) }
         })
+        if let experts = snapshot.experts {
+            metric("expert_cache_hits", "counter", "Streamed expert cache hits.", [("", Double(experts.cache.hits))])
+            metric("expert_cache_misses", "counter", "Streamed expert cache misses (loads from SSD).", [("", Double(experts.cache.misses))])
+            metric("expert_cache_evictions", "counter", "Streamed experts evicted from the cache.", [("", Double(experts.cache.evictions))])
+            metric("expert_bytes_read", "counter", "Bytes of expert weights read from SSD.", [("", Double(experts.cache.bytesRead.rawValue))])
+            metric("expert_cache_capacity_bytes", "gauge", "Size of the streamed expert cache.", [("", Double(experts.capacityBytes))])
+            metric("expert_layer_distinct", "gauge", "Distinct experts routed per MoE layer since load.", experts.layers.map { ("layer=\"\($0.layer)\"", Double($0.distinct)) })
+            metric("expert_layer_top_share", "gauge", "Share of routings that went to the layer's eight most used experts.", experts.layers.map { ("layer=\"\($0.layer)\"", $0.topShare) })
+        }
         return (lines + ["# EOF"]).joined(separator: "\n") + "\n"
     }
 

@@ -119,6 +119,7 @@ Each event is a `data: {...}` line; the stream ends with `data: [DONE]`. A failu
 - **`GET /api/v1/stats`** returns the telemetry snapshot as JSON.
   - It also carries `windows`: the trailing 1 minute, 5 minutes and 1 hour with requests, tokens, p50/p95 time to first token and tok/s, the prompt-cache hit ratio and the draft acceptance ratio.
   - It also carries `decisions`: per decision model, requests, answers, abstentions, escalations, cloud cost, latency and answers per confidence decile.
+- With `--experimental-expert-streaming`, it also carries `experts`: the streamed expert cache's hits, misses, evictions and bytes read, and per MoE layer the experts routed since load (count, distinct, the eight most used and their share).
 - **`GET /api/v1/metrics`** returns the same data as OpenMetrics text for Prometheus or Grafana.
   - Metric names start with `basalt_`. Window and quantile are labels, as is the decision model.
   - It goes through the server's API key like every other endpoint: give the scraper the bearer token.

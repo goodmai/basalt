@@ -201,6 +201,7 @@ extension ModelOrchestratorActor {
         let anchors = await engine.hybridAnchorUsage
         (snapshot.hybridAnchors, snapshot.hybridAnchorBytes) = (anchors?.count, anchors?.bytes)
         snapshot.activeDeltas = await engine.activeDeltas
+        snapshot.experts = await engine.expertTelemetry
         if let memory {
             snapshot.memory = MemoryTelemetry(state: await memory.state, limits: state.memoryLimits, refusedAdmissions: state.memoryRefusals)
         }
