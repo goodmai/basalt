@@ -113,15 +113,7 @@ extension ComposeSpec {
         let perceiver = views.contains { $0.spec.ocr == name || $0.spec.speech == name }
         let routed = views.contains { $0.spec.answer != name && $0.spec.answerModels.contains(name) }
         var issues = keepIssues(path, model, perceiver: perceiver, answer: routed)
-        let answering = views.contains { $0.spec.answer == name }
-        if deciderModels.contains(name), roles[name] != ["cascade"] {
-            issues.append(Issue(path, "a decision model only decides; the chat model (the default pipeline's answer) may also decide"))
-        } else if !model.isCloud, (roles[name]?.subtracting(answering ? ["cascade"] : []).count ?? 0) > 1 {
-            issues.append(Issue(path, "one model serves one role; the answer model may also decide"))
-        }
-        if case .cloud("gemini", _) = model.source, roles[name] != ["cascade"] {
-            issues.append(Issue(path, "cloud:gemini models serve decisions only; put them in a decide cascade"))
-        }
+        issues += roleIssues(name, model, path: path)
         if model.budget != nil, !model.isCloud { issues.append(Issue("\(path).budget", "applies only to cloud models")) }
         if let budget = model.budget, !(budget > 0) { issues.append(Issue("\(path).budget", "usd_per_day must be positive")) }
         switch model.source {
@@ -130,6 +122,20 @@ extension ComposeSpec {
             if model.apiKeyEnv != nil || model.data != nil { issues.append(Issue(path, "api_key_env and data apply only to cloud models")) }
         case .cloud(let provider, let id):
             issues += cloudIssues(path, model, provider: provider, id: id)
+        }
+        return issues
+    }
+
+    func roleIssues(_ name: String, _ model: Model, path: String) -> [Issue] {
+        var issues: [Issue] = []
+        let answering = views.contains { $0.spec.answer == name }
+        if deciderModels.contains(name), roles[name] != ["cascade"] {
+            issues.append(Issue(path, "a decision model only decides; the chat model (the default pipeline's answer) may also decide"))
+        } else if !model.isCloud, (roles[name]?.subtracting(answering ? ["cascade"] : []).count ?? 0) > 1 {
+            issues.append(Issue(path, "one model serves one role; the answer model may also decide"))
+        }
+        if case .cloud("gemini", _) = model.source, roles[name] != ["cascade"] {
+            issues.append(Issue(path, "cloud:gemini models serve decisions only; put them in a decide cascade"))
         }
         return issues
     }
