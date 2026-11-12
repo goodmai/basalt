@@ -9,13 +9,14 @@ public struct ChatState: Sendable, Equatable {
 
     public var conversation: ConversationSnapshot
     public var draft = ""
+    public var attachments: [ChatAttachment] = []
     public var run = Run.idle
 
     public init(conversation: ConversationSnapshot) { self.conversation = conversation }
 
     public var canSend: Bool {
         if case .streaming = run { return false }
-        return !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        return !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty
     }
 }
 
@@ -36,10 +37,14 @@ public enum ChatAction: Sendable, Equatable {
     case delta(RunID, ChatDelta)
     case finished(RunID, RunTiming)
     case failed(RunID, EngineError)
+    case attach(ChatAttachment)
+    case detach(UUID)
+    case perceived(RunID, PipelineResult)
 }
 
 public enum ChatEffect: Sendable, Equatable {
     case start(RunID, ChatRequest)
+    case perceive(RunID, PipelineCall)
     case cancel(RunID)
     case persist(ConversationSnapshot)
 }
@@ -53,12 +58,7 @@ public enum ChatReducer {
             state.draft = text
             return []
         case .send(let message, let reply, let run):
-            guard state.canSend else { return [] }
-            let text = state.draft.trimmingCharacters(in: .whitespacesAndNewlines)
-            state.conversation.messages.append(MessageSnapshot(id: message, role: .user, parts: [.text(text)]))
-            if state.conversation.title.isEmpty { state.conversation.title = String(text.prefix(titleLength)) }
-            state.draft = ""
-            return begin(&state, reply: reply, run: run)
+            return send(&state, message: message, reply: reply, run: run)
         case .regenerate(let reply, let run):
             guard currentRun(state) == nil, state.conversation.messages.last?.role == .assistant else { return [] }
             state.conversation.messages.removeLast()
@@ -80,7 +80,47 @@ public enum ChatReducer {
             guard state.run == .streaming(run) else { return [] }
             close(&state, as: .failed, run: .failed(error))
             return [.persist(state.conversation)]
+        case .attach, .detach, .perceived:
+            return attachments(&state, action)
         }
+    }
+
+    static func attachments(_ state: inout ChatState, _ action: ChatAction) -> [ChatEffect] {
+        switch action {
+        case .attach(let attachment):
+            if !state.attachments.contains(where: { $0.id == attachment.id }) { state.attachments.append(attachment) }
+            return []
+        case .detach(let id):
+            state.attachments.removeAll { $0.id == id }
+            return []
+        case .perceived(let run, let result):
+            guard state.run == .streaming(run), state.conversation.messages.count >= 2 else { return [] }
+            let (question, answer) = (state.conversation.messages.count - 2, state.conversation.messages.count - 1)
+            var index = 0
+            for (offset, part) in state.conversation.messages[question].parts.enumerated() {
+                guard case .attachment(var attachment) = part, index < result.perceived.count else { continue }
+                attachment.perceived = result.perceived[index]
+                state.conversation.messages[question].parts[offset] = .attachment(attachment)
+                index += 1
+            }
+            (state.conversation.messages[answer].parts, state.conversation.messages[answer].receipt) = ([.text(result.answer)], result.receipt)
+            close(&state, as: .complete, run: .idle)
+            return [.persist(state.conversation)]
+        default:
+            return []
+        }
+    }
+
+    static func send(_ state: inout ChatState, message: MessageID, reply: MessageID, run: RunID) -> [ChatEffect] {
+        guard state.canSend else { return [] }
+        let text = state.draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        let attached = state.attachments.map { MessagePart.attachment(AttachmentPart(name: $0.name, kind: $0.kind)) }
+        state.conversation.messages.append(MessageSnapshot(id: message, role: .user, parts: (text.isEmpty ? [] : [.text(text)]) + attached))
+        if state.conversation.title.isEmpty { state.conversation.title = String((text.isEmpty ? state.attachments.map(\.name).joined(separator: ", ") : text).prefix(titleLength)) }
+        let call = PipelineCall(attachments: state.attachments, task: text.isEmpty ? "Summarize the attached files." : text)
+        (state.draft, state.attachments) = ("", [])
+        let effects = begin(&state, reply: reply, run: run)
+        return call.attachments.isEmpty ? effects : effects.map { if case .start = $0 { .perceive(run, call) } else { $0 } }
     }
 
     static func currentRun(_ state: ChatState) -> RunID? {

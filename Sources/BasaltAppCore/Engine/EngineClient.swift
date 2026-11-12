@@ -5,13 +5,15 @@ public struct EngineClient: Sendable {
     public var chat: @Sendable (ChatRequest) -> AsyncThrowingStream<ChatDelta, any Error>
     public var health: @Sendable () async -> Bool
     public var stats: @Sendable () async throws -> ServerTelemetrySnapshot
+    public var pipeline: @Sendable (PipelineCall) async throws -> PipelineResponse
 
     public init(
         chat: @escaping @Sendable (ChatRequest) -> AsyncThrowingStream<ChatDelta, any Error>,
         health: @escaping @Sendable () async -> Bool,
-        stats: @escaping @Sendable () async throws -> ServerTelemetrySnapshot
+        stats: @escaping @Sendable () async throws -> ServerTelemetrySnapshot,
+        pipeline: @escaping @Sendable (PipelineCall) async throws -> PipelineResponse = { _ in throw EngineError.notRunning }
     ) {
-        (self.chat, self.health, self.stats) = (chat, health, stats)
+        (self.chat, self.health, self.stats, self.pipeline) = (chat, health, stats, pipeline)
     }
 }
 
@@ -46,6 +48,17 @@ extension EngineClient {
                 let (data, response) = try await session.data(for: endpoint.request("api/v1/stats"))
                 try check(response, data)
                 return try JSONDecoder().decode(ServerTelemetrySnapshot.self, from: data)
+            },
+            pipeline: { call in
+                var request = endpoint.request("v1/pipeline", method: "POST", body: call.body)
+                request.timeoutInterval = 900
+                let (data, response) = try await session.data(for: request)
+                try check(response, data)
+                do {
+                    return try JSONDecoder().decode(PipelineResponse.self, from: data)
+                } catch {
+                    throw EngineError.malformed("pipeline answer: \(error)")
+                }
             })
     }
 

@@ -26,6 +26,11 @@ struct ChatView: View {
             }
             Composer(store: store)
         }
+        .dropDestination(for: URL.self) { urls, _ in
+            let accepted = urls.filter { ChatAttachment.accepts($0.lastPathComponent) }
+            for url in accepted { Composer.attach(url, to: store) }
+            return !accepted.isEmpty
+        }
         .navigationTitle(store.state.conversation.title.isEmpty ? "New Conversation" : store.state.conversation.title)
     }
 
@@ -47,11 +52,16 @@ struct MessageRow: View {
         if message.role == .user {
             HStack {
                 Spacer(minLength: 80)
-                Text(message.text)
-                    .textSelection(.enabled)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 9)
-                    .background(.tint.opacity(0.15), in: .rect(cornerRadius: 16))
+                VStack(alignment: .trailing, spacing: 6) {
+                    ForEach(Array(message.attachments.enumerated()), id: \.offset) { _, attachment in AttachmentChip(attachment: attachment) }
+                    if !message.text.isEmpty {
+                        Text(message.text)
+                            .textSelection(.enabled)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 9)
+                            .background(.tint.opacity(0.15), in: .rect(cornerRadius: 16))
+                    }
+                }
             }
         } else {
             VStack(alignment: .leading, spacing: 8) {
@@ -77,6 +87,31 @@ struct PartView: View {
             }
         case .toolCall(let call):
             Label("\(call.name)(\(call.arguments))", systemImage: "wrench.and.screwdriver").font(.callout.monospaced())
+        case .attachment(let attachment):
+            AttachmentChip(attachment: attachment)
+        }
+    }
+}
+
+struct AttachmentChip: View {
+    let attachment: AttachmentPart
+
+    var body: some View {
+        DisclosureGroup {
+            Text(attachment.perceived.isEmpty ? "Reading…" : attachment.perceived)
+                .font(.callout).foregroundStyle(.secondary).textSelection(.enabled).frame(maxWidth: 520, alignment: .leading)
+        } label: {
+            Label(attachment.name, systemImage: Self.symbol(attachment.kind))
+        }
+        .padding(.horizontal, 12).padding(.vertical, 6)
+        .background(.background.secondary, in: .rect(cornerRadius: 12))
+    }
+
+    static func symbol(_ kind: String) -> String {
+        switch kind {
+        case "pdf": "doc.richtext"
+        case "audio": "waveform"
+        default: "photo"
         }
     }
 }
@@ -88,6 +123,7 @@ struct ReceiptLine: View {
         let parts = [
             message.receipt?.model,
             message.receipt?.tokensPerSecond.map { String(format: "%.1f tok/s", $0) },
+            message.receipt?.stages.map { $0.map { "\($0.stage) \($0.model) \($0.ms) ms" }.joined(separator: ", ") },
             message.state == .stopped ? "stopped" : nil,
             message.state == .failed ? "failed" : nil,
         ].compactMap { $0 }
@@ -101,7 +137,35 @@ struct Composer: View {
     let store: ChatStore
     @FocusState private var focused: Bool
 
+    @State private var importing = false
+
     var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if !store.state.attachments.isEmpty {
+                HStack {
+                    ForEach(store.state.attachments) { attachment in
+                        Button(attachment.name, systemImage: "xmark.circle.fill") { store.send(.detach(attachment.id)) }
+                            .labelStyle(.titleAndIcon).font(.callout).buttonStyle(.bordered)
+                    }
+                }
+            }
+            HStack(alignment: .bottom, spacing: 8) {
+                Button("Attach", systemImage: "paperclip") { importing = true }
+                field
+            }
+        }
+        .fileImporter(isPresented: $importing, allowedContentTypes: [.pdf, .image, .audio], allowsMultipleSelection: true) { result in
+            for url in (try? result.get()) ?? [] { Composer.attach(url, to: store) }
+        }
+    }
+
+    static func attach(_ url: URL, to store: ChatStore) {
+        let scoped = url.startAccessingSecurityScopedResource()
+        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+        if let data = try? Data(contentsOf: url), let attachment = ChatAttachment(name: url.lastPathComponent, data: data) { store.send(.attach(attachment)) }
+    }
+
+    var field: some View {
         HStack(alignment: .bottom, spacing: 8) {
             TextField("Message", text: Binding(get: { store.state.draft }, set: { store.send(.draftChanged($0)) }), axis: .vertical)
                 .textFieldStyle(.plain)

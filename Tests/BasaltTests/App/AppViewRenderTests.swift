@@ -40,6 +40,15 @@ struct AppViewRenderTests {
         library.problem = "a problem"
         let libraryStore = Store(library, reduce: LibraryReducer.reduce, handle: { _ in .none })
         #expect(Self.render(LibraryView(store: libraryStore)).width > 0)
+        var conversation = ConversationSnapshot(id: ConversationID(), model: "org/model")
+        var answer = MessageSnapshot(id: MessageID(), role: .assistant, parts: [.text("Pay 42 today.")])
+        answer.receipt = Receipt(model: "org/model")
+        answer.receipt?.stages = [StageReceipt(stage: "perceive", model: "apple-vision", ms: 80)]
+        conversation.messages = [MessageSnapshot(id: MessageID(), role: .user, parts: [.text("Total?"), .attachment(AttachmentPart(name: "bill.pdf", kind: "pdf", perceived: "Total 42"))]), answer]
+        var chat = ChatState(conversation: conversation)
+        chat.attachments = [try #require(ChatAttachment(name: "memo.wav", data: Data([1])))]
+        #expect(Self.render(ChatView(store: Store(chat, reduce: ChatReducer.reduce, handle: { _ in .none }))).width > 0)
+        #expect(AttachmentChip.symbol("pdf") == "doc.richtext" && AttachmentChip.symbol("audio") == "waveform" && AttachmentChip.symbol("image") == "photo")
         #expect(MenuBarContent.status(.ready(port: 1)) == "Ready" && MenuBarContent.ready(.ready(port: 1)) && !MenuBarContent.ready(.stopped))
         #expect(MenuBarContent.status(.backingOff(attempt: 2)).contains("2") && MenuBarContent.status(.failed(log: [])).contains("failing"))
     }

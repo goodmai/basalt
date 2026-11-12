@@ -34,6 +34,23 @@ public enum MessagePart: Sendable, Equatable, Codable {
     case text(String)
     case reasoning(String)
     case toolCall(ToolCallOutput)
+    case attachment(AttachmentPart)
+}
+
+public struct AttachmentPart: Sendable, Equatable, Codable {
+    public var name: String
+    public var kind: String
+    public var perceived: String
+
+    public init(name: String, kind: String, perceived: String = "") { (self.name, self.kind, self.perceived) = (name, kind, perceived) }
+}
+
+public struct StageReceipt: Sendable, Equatable, Codable {
+    public var stage: String
+    public var model: String
+    public var ms: Int
+
+    public init(stage: String, model: String, ms: Int) { (self.stage, self.model, self.ms) = (stage, model, ms) }
 }
 
 public struct Receipt: Sendable, Equatable, Codable {
@@ -42,6 +59,7 @@ public struct Receipt: Sendable, Equatable, Codable {
     public var completionTokens = 0
     public var timeToFirstToken: Duration?
     public var tokensPerSecond: Double?
+    public var stages: [StageReceipt]?
 
     public init(model: String? = nil) { self.model = model }
 }
@@ -62,6 +80,15 @@ public struct MessageSnapshot: Sendable, Equatable, Identifiable {
 
     public var text: String {
         parts.reduce(into: "") { text, part in if case .text(let piece) = part { text += piece } }
+    }
+
+    public var attachments: [AttachmentPart] {
+        parts.compactMap { part in if case .attachment(let attachment) = part { attachment } else { nil } }
+    }
+
+    public var prompt: String {
+        let attached = attachments.filter { !$0.perceived.isEmpty }.map { "Attached \($0.kind) \($0.name):\n\($0.perceived)\n\n" }
+        return attached.joined() + text
     }
 }
 
@@ -102,6 +129,6 @@ public struct ChatRequest: Sendable, Equatable, Encodable {
     public init(_ conversation: ConversationSnapshot) {
         model = conversation.model
         let system = conversation.systemPrompt.map { [Message(role: .system, content: $0)] } ?? []
-        messages = system + conversation.messages.filter { !$0.text.isEmpty }.map { Message(role: $0.role, content: $0.text) }
+        messages = system + conversation.messages.filter { !$0.prompt.isEmpty }.map { Message(role: $0.role, content: $0.prompt) }
     }
 }
