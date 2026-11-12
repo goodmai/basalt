@@ -5,6 +5,7 @@ import Observation
 
 public typealias ChatStore = Store<ChatState, ChatAction, ChatEffect>
 public typealias MonitorStore = Store<MonitorState, MonitorAction, MonitorEffect>
+public typealias LibraryStore = Store<LibraryState, LibraryAction, LibraryEffect>
 
 @Observable @MainActor
 public final class AppModel {
@@ -17,21 +18,28 @@ public final class AppModel {
     public private(set) var chats: [ConversationID: ChatStore] = [:]
     public private(set) var quickAsk: ChatStore?
     public let monitor: MonitorStore
+    public let library: LibraryStore
     public let drafts: DraftStore
     @ObservationIgnored let supervisor: EngineSupervisor
     @ObservationIgnored let repository: ConversationRepository
-    @ObservationIgnored public let model: String
+    @ObservationIgnored let configuredModel: String
+    public var model: String { library.state.models.first(where: \.isLoaded)?.id ?? configuredModel }
     @ObservationIgnored private var listening = false
 
     public init(launch: HelperLaunch, model: String, storeURL: URL?, environment: EngineEnvironment = .live, drafts: DraftStore = .defaults()) throws {
         let supervisor = EngineSupervisor(launch: launch, environment: environment)
-        (self.supervisor, self.model, self.drafts) = (supervisor, model, drafts)
+        (self.supervisor, self.configuredModel, self.drafts) = (supervisor, model, drafts)
         repository = ConversationRepository(modelContainer: try ConversationRepository.container(at: storeURL))
         monitor = Store(MonitorState(), reduce: MonitorReducer.reduce, handle: MonitorReducer.handler(
             stats: {
                 guard let endpoint = await supervisor.endpoint else { throw EngineError.notRunning }
                 return try await EngineClient.http(endpoint).stats()
             }, every: .seconds(2), sleep: { try await Task.sleep(for: $0) }))
+        library = Store(LibraryState(pending: UserDefaults.standard.stringArray(forKey: Self.pendingKey) ?? []), reduce: LibraryReducer.reduce, handle: LibraryEffects.handler(
+            LibraryEnvironment(
+                client: { await supervisor.endpoint.map { LibraryClient.live($0) } },
+                savePending: { UserDefaults.standard.set($0, forKey: AppModel.pendingKey) },
+                chose: { id in UserDefaults.standard.set(id, forKey: "model") })))
     }
 
     public func start() async {
@@ -48,6 +56,8 @@ public final class AppModel {
     }
 
     public func stop() async { await supervisor.shutdown() }
+
+    nonisolated static let pendingKey = "pendingDownloads"
 
     public func restart() async {
         await supervisor.shutdown()

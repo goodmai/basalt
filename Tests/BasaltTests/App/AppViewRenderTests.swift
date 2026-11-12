@@ -33,6 +33,13 @@ struct AppViewRenderTests {
         #expect(Self.render(MenuBarContent(model: model) {}).width > 0)
         #expect(Self.render(SettingsView(keychain: .memory())).width > 0)
         #expect(Self.render(RootView(model: model)).width > 0)
+        var library = LibraryState(pending: ["org/coming"])
+        _ = LibraryReducer.reduce(&library, .listed([LibraryModel(id: "org/on", sizeBytes: 1 << 30, isLoaded: true), LibraryModel(id: "org/off", sizeBytes: 2 << 30, isLoaded: false)]))
+        _ = LibraryReducer.reduce(&library, .fitted("org/off", ModelFit(fits: false, level: "insufficient", requiredBytes: 4, availableBytes: 2, warning: "too big")))
+        _ = LibraryReducer.reduce(&library, .downloadFailed("org/coming", "offline"))
+        library.problem = "a problem"
+        let libraryStore = Store(library, reduce: LibraryReducer.reduce, handle: { _ in .none })
+        #expect(Self.render(LibraryView(store: libraryStore)).width > 0)
         #expect(MenuBarContent.status(.ready(port: 1)) == "Ready" && MenuBarContent.ready(.ready(port: 1)) && !MenuBarContent.ready(.stopped))
         #expect(MenuBarContent.status(.backingOff(attempt: 2)).contains("2") && MenuBarContent.status(.failed(log: [])).contains("failing"))
     }
