@@ -84,7 +84,38 @@ func infoPlist(version: String) -> [String: Any] {
         "CFBundleExecutable": "Basalt", "CFBundlePackageType": "APPL", "CFBundleShortVersionString": version,
         "CFBundleVersion": version, "LSMinimumSystemVersion": "27.0", "NSHighResolutionCapable": true,
         "LSApplicationCategoryType": "public.app-category.developer-tools", "NSPrincipalClass": "NSApplication",
+        "NSServices": [[
+            "NSMenuItem": ["default": "Ask Basalt"], "NSMessage": "askBasalt", "NSPortName": "Basalt",
+            "NSSendTypes": ["NSStringPboardType", "public.utf8-plain-text"], "NSRequiredContext": [String: String](),
+        ]],
+        "CFBundleDocumentTypes": [[
+            "CFBundleTypeName": "Attachment", "CFBundleTypeRole": "Viewer", "LSHandlerRank": "Alternate",
+            "LSItemContentTypes": ["com.adobe.pdf", "public.image", "public.audio"],
+        ]],
     ]
+}
+
+func intentsMetadata(bin: String, resources: URL, dryRun: Bool) {
+    let objects = URL(fileURLWithPath: bin).deletingLastPathComponent().deletingLastPathComponent()
+        .appending(path: "Intermediates.noindex/Basalt.build/\(URL(fileURLWithPath: bin).lastPathComponent)/BasaltMac-p.build/Objects-normal/arm64")
+    let fm = FileManager.default
+    let constants = ((try? fm.contentsOfDirectory(atPath: objects.path)) ?? []).filter { $0.hasSuffix(".swiftconstvalues") }.map { objects.appending(path: $0).path }
+    let sources = ((try? fm.contentsOfDirectory(atPath: "Sources/BasaltMac")) ?? []).filter { $0.hasSuffix(".swift") }.map { fm.currentDirectoryPath + "/Sources/BasaltMac/" + $0 }
+    print("  App Intents metadata → \(resources.path)/Metadata.appintents")
+    guard !dryRun else { return }
+    guard !constants.isEmpty else { return print("  no Swift constant values in \(objects.path); Shortcuts will not list the intents") }
+    let lists = fm.temporaryDirectory.appending(path: "basalt-intents-\(UUID().uuidString)")
+    try? fm.createDirectory(at: lists, withIntermediateDirectories: true)
+    defer { try? fm.removeItem(at: lists) }
+    try? sources.joined(separator: "\n").write(to: lists.appending(path: "sources"), atomically: true, encoding: .utf8)
+    try? constants.joined(separator: "\n").write(to: lists.appending(path: "constants"), atomically: true, encoding: .utf8)
+    let swift = run(["xcrun", "--find", "swift"], dryRun: false, capture: true)
+    let toolchain = URL(fileURLWithPath: swift).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().path
+    let xcode = run(["xcodebuild", "-version"], dryRun: false, capture: true).split(separator: " ").last.map(String.init) ?? "27A1"
+    run(["xcrun", "appintentsmetadataprocessor", "--output", resources.path, "--toolchain-dir", toolchain, "--module-name", "BasaltMac",
+         "--sdk-root", run(["xcrun", "--show-sdk-path"], dryRun: false, capture: true), "--xcode-version", xcode, "--platform-family", "macOS",
+         "--deployment-target", "27.0", "--target-triple", "arm64-apple-macos27.0", "--source-file-list", lists.appending(path: "sources").path,
+         "--swift-const-vals-list", lists.appending(path: "constants").path, "--binary-file", "\(bin)/BasaltMac"], dryRun: false)
 }
 
 func assemble(_ options: Options, bin: String) {
@@ -96,6 +127,7 @@ func assemble(_ options: Options, bin: String) {
         ("\(bin)/mlx.metallib", contents.appending(path: "Resources/mlx.metallib")),
     ]
     for (source, target) in layout { print("  \(source) → \(target.path)") }
+    if options.dryRun { intentsMetadata(bin: bin, resources: contents.appending(path: "Resources"), dryRun: true) }
     guard !options.dryRun else { return }
     try? fm.removeItem(atPath: options.out)
     do {
@@ -105,6 +137,7 @@ func assemble(_ options: Options, bin: String) {
         }
         let plist = try PropertyListSerialization.data(fromPropertyList: infoPlist(version: version()), format: .xml, options: 0)
         try plist.write(to: contents.appending(path: "Info.plist"))
+        intentsMetadata(bin: bin, resources: contents.appending(path: "Resources"), dryRun: false)
     } catch {
         FileHandle.standardError.write(Data("could not assemble \(options.out): \(error.localizedDescription)\n".utf8))
         exit(1)

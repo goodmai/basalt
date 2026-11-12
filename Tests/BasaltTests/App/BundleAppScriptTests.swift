@@ -32,6 +32,8 @@ struct BundleAppScriptTests {
         #expect(fm.fileExists(atPath: app.appending(path: "Contents/Resources/mlx.metallib").path))
         let plist = try #require(NSDictionary(contentsOf: app.appending(path: "Contents/Info.plist")) as? [String: Any])
         #expect(plist["CFBundleExecutable"] as? String == "Basalt" && plist["CFBundleShortVersionString"] as? String == HealthResponse.version)
+        #expect((plist["NSServices"] as? [[String: Any]])?.first?["NSMessage"] as? String == "askBasalt")
+        #expect(((plist["CFBundleDocumentTypes"] as? [[String: Any]])?.first?["LSItemContentTypes"] as? [String])?.contains("com.adobe.pdf") == true)
     }
 }
 

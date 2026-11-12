@@ -59,3 +59,9 @@ From a build folder without bundling, point the app at the engine: `BASALT_HELPE
 - **Conversation:** the model, and a system prompt for this conversation. It is saved with the conversation and sent before every message. An empty prompt clears it.
 - **Answer:** the selected answer's receipt: model, prompt and completion tokens, time to first token, speed, and each pipeline stage with its model and milliseconds.
 - **Attachments:** the text the engine read from each file of the question, page by page.
+
+## Shortcuts, Services and the Dock
+- **Shortcuts and Spotlight:** Ask Basalt, Summarize File, Transcribe Audio and Switch Model are App Intents. Shortcuts runs them with the app in the background. Each waits until the engine is ready (up to three minutes), and Switch Model refuses a model that does not fit. `scripts/bundle_app.swift` extracts the intents' metadata into `Contents/Resources/Metadata.appintents` with `appintentsmetadataprocessor`, because SwiftPM does not.
+- **Services:** select text in any app and choose Services → Ask Basalt. A new conversation opens with that text as the question.
+- **Dock:** a PDF, image or audio file dropped on the Dock icon starts a conversation with it attached.
+- **Notifications:** when an answer finishes while Basalt is in the background, a notification shows its first lines. The permission is asked once.

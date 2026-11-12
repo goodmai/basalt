@@ -3,9 +3,13 @@ import Foundation
 public struct ChatEnvironment: Sendable {
     public var engine: @Sendable () async -> EngineClient?
     public var persist: @Sendable (ConversationSnapshot) async -> Void
+    public var answered: @Sendable (ConversationSnapshot) async -> Void
 
-    public init(engine: @escaping @Sendable () async -> EngineClient?, persist: @escaping @Sendable (ConversationSnapshot) async -> Void) {
-        (self.engine, self.persist) = (engine, persist)
+    public init(
+        engine: @escaping @Sendable () async -> EngineClient?, persist: @escaping @Sendable (ConversationSnapshot) async -> Void,
+        answered: @escaping @Sendable (ConversationSnapshot) async -> Void = { _ in }
+    ) {
+        (self.engine, self.persist, self.answered) = (engine, persist, answered)
     }
 }
 
@@ -18,6 +22,8 @@ public enum ChatEffects {
             case .cancel: return .cancel(id: runID)
             case .persist(let conversation):
                 return .run(id: "persist-\(conversation.id.raw)") { _ in await environment.persist(conversation) }
+            case .answered(let conversation):
+                return .run(id: "answered-\(conversation.id.raw)") { _ in await environment.answered(conversation) }
             case .start(let run, let request):
                 return .run(id: runID) { send in await stream(run, request, environment, send) }
             case .perceive(let run, let call):
