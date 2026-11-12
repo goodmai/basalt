@@ -1,8 +1,8 @@
 <p align="center"><img src="images/logo.svg" alt="basalt logo" width="128"></p>
 
-# basalt — turn your Mac into a local LLM server. Point Claude Code at it.
+# basalt — your Mac is the AI lab now.
 
-> Gemma 4, Qwen 3 and any MLX model on your Apple Silicon GPU, behind the **OpenAI API, the Anthropic API and MCP**. One Swift binary. No Python at runtime. No cloud. No API bill.
+> Serve, train, compose and dissect open LLMs on Apple Silicon. One Swift binary speaks the **OpenAI API, the Anthropic API and MCP**, and a native Mac app sits on top. No Python at runtime. No cloud unless you ask for it.
 
 [English](README.md) · [Русский](README.ru.md)
 
@@ -10,43 +10,82 @@
 [![Security Audit](https://github.com/goodmai/basalt/actions/workflows/security-audit.yml/badge.svg)](https://github.com/goodmai/basalt/actions/workflows/security-audit.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-black.svg)](LICENSE)
 
-[![Platform](https://img.shields.io/badge/platform-macOS%2015%2B%20·%20Apple%20Silicon-black.svg)](#requirements)
+[![Platform](https://img.shields.io/badge/platform-macOS%2027%2B%20·%20Apple%20Silicon-black.svg)](docs/install.md#requirements)
 [![Swift 6](https://img.shields.io/badge/Swift-6-black.svg)](Package.swift)
-[![Homebrew](https://img.shields.io/badge/brew-goodmai%2Fbasalt%2Fbasalt-black.svg)](#install-with-homebrew)
-[![Ladder](https://img.shields.io/badge/ladder-6%20tasks-black.svg)](#benchmarks)
-[![ARC-AGI](https://img.shields.io/badge/ARC--AGI-pass%402-black.svg)](#benchmarks)
-
-```
-┌──────────────────────────────────────────────────────┐
-│                       Basalt                           │
-│                                                      │
-│   MCP stdio ──┐                                      │
-│               ├──► ModelOrchestratorActor ──► MLX   │
-│   REST :8080 ─┘        (actor, FIFO)      Metal GPU  │
-└──────────────────────────────────────────────────────┘
-```
-
-Two transports share a single actor instance — **MCP stdio** for IDE integration (Claude Desktop, Cursor) and **REST HTTP** for agent-to-agent workflows and Claude Code backends.
-
+[![Homebrew](https://img.shields.io/badge/brew-goodmai%2Fbasalt%2Fbasalt-black.svg)](docs/install.md#install-with-homebrew)
+[![Ladder](https://img.shields.io/badge/ladder-6%20tasks-black.svg)](docs/benchmarks.md#benchmarks)
+[![ARC-AGI](https://img.shields.io/badge/ARC--AGI-pass%402-black.svg)](docs/benchmarks.md#benchmarks)
 
 <p align="center"><img src="images/models-hive.svg" alt="Open models basalt runs: Qwen, Gemma, Ornith, gpt-oss, DeepSeek, Llama" width="240"></p>
-<p align="center"><sub>Runs open-weight models on Apple Silicon. Verified here today: Gemma, Qwen, Ornith (see <a href="#verified-models">the table</a>); gpt-oss, DeepSeek and Llama are MLX-compatible but not benchmarked here yet. Logos are trademarks of their owners, shown only to indicate compatibility. Anthropic's models are closed-weight, so they are not in the hive; the Anthropic <i>API</i> is supported so that Claude Code can talk to a local model.</sub></p>
+<p align="center"><sub>Runs open-weight models on Apple Silicon. Verified here today: Gemma, Qwen, Ornith (see <a href="docs/models.md#verified-models">the table</a>); gpt-oss, DeepSeek and Llama are MLX-compatible but not benchmarked here yet. Logos are trademarks of their owners, shown only to indicate compatibility. Anthropic's models are closed-weight, so they are not in the hive; the Anthropic <i>API</i> is supported so that Claude Code can talk to a local model.</sub></p>
 
-## Why basalt
+**Five things in one repo:** a local inference server your tools already know how to talk to, LoRA training and distillation from a stronger model, a docker-compose for model systems, a microscope for what happens inside the model, and a Mac app that puts it all one keystroke away.
 
-- **One server, two transports.** REST speaks OpenAI *and* Anthropic (`/v1/messages`), MCP stdio plugs into Claude Desktop and Cursor, and every generation route can stream over SSE. They share a single model actor, so nothing loads twice.
-- **Claude Code on a local model in two lines.** Set `ANTHROPIC_BASE_URL` and run `claude` — your real API key is never touched. See [Claude Code Integration](#claude-code-integration).
-- **Fast on a laptop.** Measured for 0.8 on an M4 Pro with 24 GB: ~80–89 tok/s on Qwen3-4B, and a 27B model (Ternary Bonsai 2) in 7.4 GB at ~21 tok/s, ~26 tok/s with its MTP head and ~31–38 tok/s with prompt lookup on code edits ([full table](#verified-models)).
-- **A whole local stack.** Chat, tool calls, JSON-schema output, `/v1/embeddings` and `/v1/rerank` from one server, so coding agents and RAG clients need nothing in the cloud.
-- **Pure Swift.** SwiftPM only — no Node, no Python, no Docker at runtime. Metal kernels compiled once, `mlx.metallib` shipped next to the binary.
-- **Honest numbers.** The model table lists what *broke* too (gibberish output, OOM). The benchmark ladder executes the model's own code against inputs the prompt never showed, so a plausible-looking wrong answer still fails ([Benchmarks](#benchmarks)).
+---
 
-## 60-second demo
+## Inference: a 27B model in 7.4 GB, behind the APIs you already use
+
+- **Claude Code on your own GPU in one line.** `ANTHROPIC_BASE_URL=http://localhost:8080 ANTHROPIC_AUTH_TOKEN=local claude` — your real API key is never touched. OpenAI SDKs, OpenCode, Continue, Cline and aider connect over the OpenAI API, Claude Desktop and Cursor over MCP.
+- **Fast on a laptop.** On an M4 Pro with 24 GB: Qwen3-4B decodes at 78–89 tok/s; Ternary Bonsai 2 27B fits in 7.4 GB and runs at 20.9–21.5 tok/s, 27.1 with its MTP head and 31–38 with prompt lookup on code.
+- **Speculative decoding that stays exact.** Prompt lookup gives 1.84–2.66× on code edits (Bonsai 2 27B) and 3.45–3.62× (Gemma 4 12B), with greedy output unchanged.
+- **The next turn costs only its new tokens.** A prefix-tree prompt cache, even for hybrid models: on Ornith-1.5-9B with a 12.6k-token agent prompt, the second turn takes about 1 s instead of about 36 s.
+- **Long contexts in less memory.** KV quantization with exact zones: a 16k prompt peaks at 1.03 GB instead of 3.11 GB on Qwen3-4B.
+- **A whole local stack.** Tool calls, JSON-schema, regex and grammar output (XGrammar), images, `/v1/embeddings`, `/v1/rerank`, LoRA adapters picked per request, and an optional cloud fallback for what does not fit.
+
+Details: [REST API](docs/rest-api.md) · [integrations](docs/integrations.md) · [commands and flags](docs/commands.md) · [models](docs/models.md) · [benchmarks](docs/benchmarks.md)
+
+## Training: make the local model learn from a better one
+
+- **Distill a frontier model into a LoRA.** `basalt models distill` sends your prompts to a teacher behind an OpenAI- or Anthropic-format API, caps the spend with `--budget-usd`, can keep only verified answers, and checkpoints so an interrupted run resumes (#393). `--on-policy` trains on the student's own samples with per-token reverse KL from a basalt teacher.
+- **Train while you serve.** The MCP `distill` tool is time-sliced: the model is held one optimizer step at a time, so `serve` keeps answering.
+- **Self-training that learns nothing unverified.** `train_experts` collects answers to checkable tasks, keeps only the verified ones, trains a LoRA and reports held-out accuracy before and after.
+- **A quality gate before anything sticks.** A gated adapter stays only if KL and perplexity on held-out prompts stay within limits; a failed gate undoes it bit for bit.
+- **JEPA and conversion.** `basalt models train-jepa` trains a JEPA adapter and projector on multi-view data; `basalt models convert` merges a LoRA, requantizes or exports HF safetensors.
+
+Details: [training commands](docs/commands.md) · [self-training, distillation and the quality gate](docs/research-tools.md#self-training-train_experts)
+
+## Compose: one YAML file for a whole model system
+
+- **docker-compose, for models.** Local and cloud models, how each stays in memory (`resident`, `on-demand`, `sequential`), and a perceive → decide → answer pipeline — OCR, speech, a decision cascade and the chat model — in one file.
+- **Refuses what will not fit.** `basalt compose plan` adds up the bytes and refuses a system that does not fit before anything loads.
+- **Change it live.** `compose up` on a running system loads, reloads and unloads only the models that changed and swaps pipelines between requests; `compose ps` shows state and spend, `compose down` stops it. Version 2 files pick models per Mac by memory and chip.
+- **A mixture of models with a budget.** Answer routes send code to a cloud model while its daily budget lasts and everything else to the local model. On a 55-request mixed workload: every label right, $0.035 per 1000 requests, p95 4.8 s against 10.0 s local only (M4 Pro).
+- **Private by default.** Keys come only from environment variables, and text read from your documents or audio never goes to a cloud model.
+
+Details: [compose reference and measurements](docs/compose.md) · [pipeline presets and memory modes](docs/pipelines.md)
+
+## Research: open the model up while it runs
+
+- **Model X-ray over MCP.** `model_describe`, `model_tensors`, `model_tensor`, `kv_inspect` and `trace_run` show layer anatomy, tensor statistics (with `--research-tools`, spectra too: Marchenko–Pastur, Gavish–Donoho rank), the prompt-cache tree and a logit lens with per-head attention and MoE router choices.
+- **Reversible experiments.** With `serve --research-tools`: steering and head or expert ablation (`intervene`), weight deltas, live re-packing of a layer to 2–8-bit, mxfp4, nf4 or ternary, and `experiment_compare` with KL and perplexity. Every experiment is an undoable overlay with a TTL and a journal; model files on disk are never written.
+- **Find the circuit behind a behaviour.** `trace_tokens` and `activation_contrast` rank heads and experts by Cohen's d and AUROC, then a conditional ablation fires only on the tokens that trigger it (#405). `steer_search` and `steer_commit` turn contrastive directions into gated adapters.
+- **The model studies itself.** `introspect` hands the X-ray tools to the served model and records its hypotheses, tests and outcomes.
+- **Papers in the engine.** CacheBlend (arXiv:2405.16444) with EPIC-style chunk heads (arXiv:2410.15332), L2-norm KV eviction (arXiv:2406.11430), DuoAttention head split, Token Recycling, Walsh–Hadamard value rotation — each opt-in, with its measured trade-offs next to its flag.
+- **Benchmarks that run the model's code.** A five-rung ladder ending in an Earth-to-Moon mission executes the model's own code against unseen inputs, and ARC-AGI runs under official pass@2 rules.
+
+Details: [research tools](docs/research-tools.md) · [benchmarks](docs/benchmarks.md) · [serve flags](docs/commands.md)
+
+## Basalt for Mac: the whole thing, one keystroke away
+
+- **A native SwiftUI app on a supervised engine.** The engine runs as a separate process: a crash restarts it with backoff instead of taking the app down, and a relaunch adopts the running engine so the model is not loaded again.
+- **Ask from anywhere.** ⌥Space opens a floating panel over any app, even a full-screen one, without an Accessibility permission. Conversations live in SwiftData, with a system prompt per conversation.
+- **A model library that knows your Mac.** The Models window lists the Hugging Face cache with a fit verdict for this machine, loads with one click, and resumes interrupted downloads.
+- **Drop in a PDF, image or recording.** Attachments go through the perceive → decide → answer pipeline; the inspector shows the text the engine read, tokens, time to first token, speed and each stage.
+- **Part of macOS.** Shortcuts and Spotlight (Ask Basalt, Summarize File, Transcribe Audio, Switch Model), Services → Ask Basalt, Dock drop, notifications, and a menu bar item that works with every window closed.
+- **Compose systems and cloud spend in view.** Run a model or a compose file from Settings; the Monitor shows each model's state and today's cloud spend, and any answer that used the cloud is marked on its receipt. Cloud keys live in the Keychain.
+
+Details: [Basalt for Mac](docs/mac-app.md)
+
+---
+
+## Quick start
+
+Requirements: macOS 27+, Xcode 27.0+ / Swift 6.4 with the Metal toolchain (`xcodebuild -downloadComponent MetalToolchain`), Apple Silicon M1–M4, 2–30 GB of disk depending on the model. Full steps, building from source and the `./basalt-claude` launcher are in [docs/install.md](docs/install.md).
 
 ```bash
 brew tap goodmai/basalt https://github.com/goodmai/basalt
 brew trust goodmai/basalt
-brew install goodmai/basalt/basalt          # builds from source, needs Xcode 27.0+ (macOS 27+)
+brew install goodmai/basalt/basalt          # builds from source
 
 basalt onboard                              # picks a model that fits your Mac and downloads it
 basalt serve --model mlx-community/Qwen3.5-4B-4bit --rest
@@ -55,862 +94,50 @@ basalt serve --model mlx-community/Qwen3.5-4B-4bit --rest
 ANTHROPIC_BASE_URL=http://localhost:8080 ANTHROPIC_AUTH_TOKEN=local claude
 ```
 
-Local 4B–9B models are not a drop-in replacement for a frontier model — they are for private, offline, zero-cost agentic work and for tinkering. `basalt fit` tells you what your machine can actually run.
-
-**Star it** if you want more MLX-native tooling in Swift, and open an issue with your Mac and your tok/s — [PRs adding a row to the benchmark table](#benchmarks) are welcome.
-
----
-
-## Requirements
-
-| | |
-|---|---|
-| **macOS** | 27+ |
-| **Xcode / Swift** | 27.0+ / Swift 6.4 |
-| **Metal toolchain** | `xcodebuild -downloadComponent MetalToolchain` — Xcode ships the Metal compiler separately, and MLX's kernels cannot be built without it |
-| **Hardware** | Apple Silicon M1–M4, Unified Memory |
-| **Disk** | 2–30 GB depending on model |
-
----
-
-## Quick Start
-
-### Install with Homebrew
-
-```bash
-brew tap goodmai/basalt https://github.com/goodmai/basalt
-brew install goodmai/basalt/basalt
-```
-
-The tap needs the explicit URL because the repository is not named
-`homebrew-basalt`. On Homebrew 7+, `brew trust goodmai/basalt` authorizes the
-third-party tap. There is no bottle: the formula builds from source, so Xcode
-27.0+ (macOS 27+) must be installed, along with the Metal toolchain — a
-separate download:
-
-```bash
-xcodebuild -downloadComponent MetalToolchain
-```
-
-The formula checks for it before building and stops with that command if it is
-missing, rather than burying you in per-kernel compiler errors.
-
-The build does two things, and both matter:
-
-1. `swift build -c release` — the server itself.
-2. `scripts/build_metal.swift` — compiles MLX's Metal kernels and puts
-   `mlx.metallib` next to the binary in `libexec`. A SwiftPM build of mlx-swift
-   ships no complete metallib, and MLX's fallback lookup is relative to the working
-   directory, so without this step `basalt` only runs from the directory holding
-   the library. Expect this step to dominate the install time.
-
-```bash
-brew install --HEAD goodmai/basalt/basalt   # build main instead of the last tag
-brew upgrade goodmai/basalt/basalt
-brew uninstall basalt && brew untap goodmai/basalt
-```
-
-### Build from source
-
-```bash
-git clone https://github.com/goodmai/basalt
-cd basalt
-
-# Build
-swift build -c release
-
-# Compile the MLX Metal kernels. Required once per checkout: a SwiftPM build of
-# mlx-swift ships no complete metallib, and without it the first inference call
-# fails with "Failed to load the default metallib". The script places it next to
-# the built binary, so the binary works from any directory.
-./scripts/build_metal.swift
-BIN="$(swift build -c release --show-bin-path)/Basalt"
-
-# Interactive chat
-"$BIN" chat --model mlx-community/Qwen3.5-4B-4bit
-
-# REST server on :8080 (OpenAI + Anthropic compatible)
-"$BIN" serve --model mlx-community/Qwen3.5-4B-4bit --rest
-
-# MCP stdio server (for Claude Desktop / Cursor)
-"$BIN" serve --model mlx-community/gemma-4-e4b-it-4bit --mcp
-```
-
-### One-command launcher: `./basalt-claude`
-
-The repo includes a self-contained Swift launcher that builds the server (if needed), waits for readiness, and opens Claude Code — all with local env vars scoped to that session:
-
-```bash
-chmod +x ./basalt-claude
-
-./basalt-claude                                             # Qwen 4B, port 8080
-./basalt-claude --model mlx-community/gemma-4-31b-it-4bit  # Gemma 4 31B
-./basalt-claude --port 8081                                 # custom port
-./basalt-claude -- --model haiku                            # pass --model haiku to claude
-```
-
-`basalt-claude` pins `ANTHROPIC_API_KEY=local` rather than inheriting it, so a real key is never forwarded to the local server or written into the `--settings` payload. Other terminals are untouched.
-
----
-
-## Commands
-
-`basalt` with no subcommand starts `chat`.
-
-| Command | What it does |
-|---|---|
-| `basalt onboard` | first-run wizard: picks a model for your machine and downloads it |
-| `basalt fit` | reads the hardware and ranks the model catalogue against it |
-| `basalt chat --model <id>` | interactive terminal chat |
-| `basalt serve --model <id> --rest` | REST server on :8080 (OpenAI + Anthropic compatible) |
-| `basalt serve --model <id> --mcp` | MCP stdio server for Claude Desktop / Cursor |
-| `basalt serve --model <id> --stats` | print telemetry to stderr every 5 s (`--stats-interval`); the same numbers at `GET /api/v1/stats` and in MCP `status` |
-| `basalt serve --model <id> --canary-minutes 30` | every 30 min, when idle, send one known-answer request at background priority; pass/fail, degenerate-output counts and per-model drift of tok/s and draft acceptance are under `health` in `GET /api/v1/stats` (#325) |
-| `basalt models list --author <org>` | browse a HuggingFace author's models |
-| `basalt models download <repo-id>` | download into the shared HF cache |
-| `basalt models info <repo-id>` | size, quantization, context window |
-| `basalt models cache` | what is on disk, and how much of it |
-| `basalt models check <repo-id>` | will it fit in memory (non-zero exit when it does not) |
-| `basalt models check --deep <repo-id>` | also, before downloading: fetch only the safetensors headers (a few hundred KB), build the model shape-only against them and render the chat template; lists missing, unexpected or mis-shaped tensors, an unsupported `model_type` or a template error, and exits non-zero |
-| `basalt models inspect <repo-id>` | verify a cached model is complete and measure its real bit width |
-| `basalt models inspect --verify <repo-id>` | also re-hash every cached file against its sidecar or the Hub's digest: `true`, `false` or `unknown` per file, read-only (#367) |
-| `basalt review --diff FILE\|- --model <id>` | review a diff on the local model; `--gitlab` / `--gitea URL --repo R --number N` fetch a merge request instead, `--post` posts the review back (`GITLAB_TOKEN` / `GITEA_TOKEN`) (#35) |
-| `basalt cloud configure` | OpenRouter fallback for what does not fit locally |
-| `basalt cloud cost` | spend so far on the cloud fallback |
-
-Inside `basalt chat`:
-
-| Input | Effect |
-|---|---|
-| `/clear` | wipe the conversation and the screen |
-| `/color`, `/theme` | cycle the terminal colour theme |
-| `exit`, `quit` | leave (no slash) |
-
-The flags worth knowing on `serve`:
-
-| Flag | Why you would reach for it |
-|---|---|
-| `--reasoning-effort none` | stop a reasoning model from spending the whole budget inside `<think>` |
-| `--reasoning-effort xhigh\|medium\|low` | Qwen-family thinking budget |
-| `--quant 4bit` | pick a quantization subfolder in repos that ship several |
-| `--kv-bits 4\|8\|auto` | quantize the KV cache — buys generation room on a memory-tight machine; turns off prompt-cache reuse. MLX prefills the prompt in fp16 and quantizes it afterwards, so the prompt itself is no longer than in fp16 (shorter: the conversion briefly holds both copies). `auto` stays fp16, with prompt-cache reuse, until a request's prompt plus `max_tokens` does not fit, then runs that request at 8, else 4 bits |
-| `--kv-bits k8v4` | with `--kv-zones`: the quantized middle stores keys at 8 bits and values at 4 (13 bits per K+V pair with group scales, 0.41× fp16, between 8-bit's 0.53× and 4-bit's 0.28×). `auto` with `--kv-zones` tries it between 8 and 4 bits. On a model the zones do not apply to (Gemma 4) it runs as uniform 8-bit. **Experimental:** `k8v4h` also applies a Walsh–Hadamard transform to the values before 4-bit quantization (and its inverse on read), to spread outlier channels; it is opt-in only, `auto` never picks it. Measured with 8k tokens scored after an 8k context, perplexity against `k8v4`: Qwen3-4B 6.568 vs 6.562, Ornith-1.5-9B 4.937 vs 4.920, LFM2.5-8B 8.723 vs 8.750 (one run each, within noise), and peak memory after a 16k prompt rose by about 85 MB on Ornith and 30–150 MB on Qwen3-4B (the fp32 copy of the values it rotates). It rotates head dimensions 2^k and 12·2^k, where MLX's transform is its own inverse; other head dimensions stay unrotated, and `serve` logs that at load. It may matter on longer contexts (32k+) or on models with outlier channels in V; that is untested |
-| `--kv-zones` | with `--kv-bits`: keep the first 64 and the last 1024 tokens of each full-attention layer in fp16 and quantize only the tokens between them, as the prompt is prefilled. No fp16 prefill to convert, so the prompt may use the whole quantized room and peak memory drops; on Qwen3-4B, 8k tokens scored after an 8k context, 4-bit perplexity is 6.58 against fp16 6.56 and uniform 4-bit 8.66 |
-| `--kv-evict F` | **Experimental**, with `--kv-zones`: drop the fraction `F` (0–0.9) of the quantized middle of each full-attention layer as tokens leave the recent window, per KV head the ones whose keys have the largest L2 norm (arXiv:2406.11430). Needs no attention weights, so attention stays on the fused kernels; sinks and the recent window are never dropped, and the room `serve` and `models check` report counts only the kept tokens. After a 16k prompt with k8v4, KV on Qwen3-4B drops from 1.11 GB to 0.89 GB at 0.25 and 0.66 GB at 0.5. It costs quality: perplexity (8k scored after 8k) 6.71 / 7.04 against 6.56 on Qwen3-4B, 9.06 / 9.52 against 8.75 on LFM2.5-8B, unchanged on Ornith-1.5-9B; a 16k passkey was lost at one of five depths on Qwen3-4B and Ornith at 0.25, and greedy output diverges from fp16 within the first tokens. Gemma 4, and a model that prefills more than the recent window in one pass (checked at load), keep every token and are sized that way |
-| `--kv-head-split R` | **Experimental**, not with uniform `--kv-bits`: keep the whole context only in the share `R` (0.05–1) of KV heads that read facts from the middle of a long prompt, scored once per model on a synthetic passkey set (DuoAttention, cached in `~/.basalt/head-scores`); the other heads keep 128 sink and 256 recent tokens. On Qwen3-4B at 32k with `R` 0.25: KV 4.76 → 1.26 GB, decode 27.2 → 36.2 tok/s, passkey 10/10 at 16k and 32k. Refused, with a warning, on the Qwen3.5-family and LFM2 / Nemotron-H hybrids and on models whose attention does not go through the cache (Gemma 4). On the hybrids the ablation-chosen 25% lost the passkey at 16k (Qwen3.8-27B 0/3 depths, LFM2.5-24B 2/3) and raised perplexity by 24% and 42%; choosing heads by output fidelity is #282. With `--kv-zones --kv-bits k8v4` (experimental, off unless both are given) the kept heads store their long context zoned: exact first 64 and last 1024 tokens, the middle at 8-bit keys and 4-bit values; the other heads stay as above. Like `--kv-zones`, it applies to requests without a prompt-cache namespace |
-| `--prompt-cache-mb N` | memory kept for the prompt-cache prefix tree (default: half of what Metal's recommended GPU working set leaves after the weights, logged at load; `0` disables), see below |
-| `--prompt-cache-disk-mb N` | persist the prompt cache to `~/.basalt/prompt-cache/` (`--prompt-cache-dir`) on graceful shutdown, before a model switch and when `basalt chat` exits, so a resumed session or restarted server restores its prefix from disk instead of prefilling it (default `0`, off). The hottest branches are written first, up to `N` MB and only those whose write fits the shutdown deadline at an assumed 1 GB/s; a longer path of the same conversation replaces the shorter files it covers, the least recently used files are deleted to make room, files unused for `--prompt-cache-disk-days` (7) go at start, and `basalt sessions prune` does the same offline. The directory must be new, empty or an earlier prompt-cache directory (one holding other files is refused). A file is used only by the same model (weight blobs, or sampled weight content outside the HF cache, config, tokenizer and chat template), basalt version and cache format; anything else, a truncated file or a different layer layout falls back to a normal prefill. Needs `--session-log full` (the files hold the conversation as KV tensors) and the in-memory prompt cache; `--kv-bits`, `--kv-zones` and multimodal prompts are never persisted |
-| `--cache-blend` | reuse cached prompt chunks in any order, approximately (CacheBlend); `--cache-blend-ratio R` sets the share recomputed (default 0.3), see below |
-| `--min-p`, `--top-k`, `--seed` | sampling; `--seed` makes a non-greedy run reproducible; a request's `min_p` overrides `--min-p` |
-| `--max-tokens` | default generation ceiling (2048–128000) |
-| `--dry-run` | memory feasibility check, then exit without loading |
-| `--config basalt.yaml` | serve options from a YAML file: keys under `defaults.{model,serve,mcp}` become the matching flags, flags on the command line win, unknown keys are reported with line and column (#344) |
-| `--adapter name=dir` | load an mlx-lm LoRA adapter on the resident base model (repeatable); a request picks one with `X-Basalt-Adapter: name`. Same-adapter requests run together, a switch waits for running generations, each adapter has its own prompt-cache namespace; an adapter whose tensors fit no layer of the base is refused at startup (#179) |
-| `--experimental-zero-copy-body` | **Experimental**: wrap each REST request body in `Data` without copying it. On Gemma 4 26B-A4B with 1–8 images, process footprint peak 70–95 MB lower, TTFT no better (#345) |
-| `--experimental-smallm-kernel` | **Experimental**, off by default (same as `BASALT_SMALLM_KERNEL=1`): 4–8 row forwards of 4-bit affine linear layers (speculative-lookup and MTP verify windows, batched decode) run through basalt's simdgroup-matrix kernel, which decodes each weight once for all rows. M4 Pro, Qwen3.8-27B shapes: 1.5–1.7× the one-token time at any of 4–8 rows, where stock takes 1.7–1.9× at 4 and 3.3–3.7× at 8; outputs differ from stock by bf16 rounding, so greedy identity on real models is still unchecked (#208) |
-| `--experimental-adaptive-thinking-budget` | **Experimental**, off by default: a request that sets neither `thinking_budget` nor `reasoning_effort` gets a thinking budget from a difficulty estimate of its last user message (keywords such as "prove" or "algorithm", length, tools): easy 512 tokens, medium 2048, hard uncapped. Reasoning models with a budget transition only (Qwen3.x, LFM2.5); unmeasured until the #41 run lands |
-| `--require-verified` | before loading, re-hash the snapshot against its sidecars or the Hub's digests and refuse to start on any unverified file (#367) |
-| `--port`, `--host` | default 127.0.0.1:8080; any other host needs an API key (`BASALT_API_KEY` or `--auto-generate-key`) |
-| `virtual_keys` (config only) | extra API keys with their own cloud budget: `"virtual_keys": [{"key": "vk-…", "id": "team-a", "max_budget": 2.0}]` in `~/.gem/config.json`; a key is at least 16 characters, ids and keys are unique; spend per key survives restarts |
-| `--max-concurrent N`, `--max-queue N` | generations decoding at once (default 1; each holds its own KV cache) and requests waiting for a slot (default 8), by priority — `basalt chat` first, then service requests (titles, summaries) and harness probes, then API traffic, then benchmarks — and in arrival order within a level; a higher-priority request finding the queue full turns away the lowest-priority waiter; beyond the queue the server answers 503 with `Retry-After` (a stream that already sent its headers gets an error event instead). A model switch waits for running generations and new requests queue behind it; two loads of the same model share one, a load of another model meanwhile is 503. On SIGTERM/SIGINT generations get 5 s to finish, then they are cancelled so the process exits |
-| `--batch-slots N` | with `--max-concurrent` 2 or more, up to N generations decode together in one batched forward (default 1, off). Only models whose layers are plain attention, recurrent state or a sliding window (Qwen3 dense, the Qwen3.5/3.8 and Nemotron-H hybrids, LFM2, Gemma 4: rows share one ring of the window, left-padded and masked like the full-attention rows, #255), and only requests without grammar jump-forward, prompt lookup, MTP, CacheBlend or `--kv-bits` (a `response_format` or a forced tool batches: each row keeps its own grammar mask); Gemma 3 and every other request decode on their own as before. Prefill and the prompt cache are unchanged; each row keeps its own sampler, stop tokens and `max_tokens`. Batched greedy output matches solo in quality, not bit for bit: MLX picks other kernels for one row than for several (quantized matmul), and a row left-padded for a longer neighbour reads its keys in another order, so which rows share a step can flip a near-tie (#319). Rows that add no padding to each other leave each other's logits unchanged |
-| `--session-log full\|meta\|off` | local JSONL session log under `~/.basalt/sessions/<date>/<session>.jsonl` (`0700`/`0600`): one `request` line before the engine call and one `response` line after it (status, tokens, timing, memory, finish reason) for every endpoint, plus `error` lines for rejected requests (size only, never the body or headers) and `model_switch`. `full` (default) also stores the conversation and the reply, `meta` only sizes and SHA-256 hashes; `--session-log-dir`, `--session-log-retention-days` (14), `--session-log-max-total-mb` (1024); the session is named by `X-Basalt-Session` (or `x-session-id`); without one, a request that extends an earlier conversation joins its session and anything else starts a new one. A known id appends to its existing file after a server restart (`session_resume`), and a session idle for `--session-idle-minutes` (30) is suspended. `basalt sessions list | show <id\|latest> | stats <id\|latest>` reads the files without loading a model; `basalt chat` keeps a multi-turn history in its own session and `basalt chat --resume <id\|latest>` continues it (not for `meta` sessions). In `full` mode private-key blocks and API tokens (`sk-`, `ghp_`/`github_pat_`, `AKIA`, `xox*-`, `Bearer`) are replaced by `[REDACTED:*]` (best effort, not a guarantee; `--session-log-redact off`), and a request that extends an earlier one of the session stores only its new messages plus `parent` and `prefix_count` |
-| `--rate-limit N` | server-wide requests per minute, 429 beyond it — default off on loopback, 120 otherwise; `0` disables; also `rate_limit` in `~/.gem/config.json` |
-| `--allow-origin URL` | a browser origin (`https://app.example:3000`, or a local UI such as `http://localhost:3000`) allowed to call the API besides the server's own; repeatable; also `allowed_origins` in `~/.gem/config.json` |
-| `--cloud-fallback MODEL` | answer from a model on an OpenAI-compatible server when the local model cannot: the request's KV does not fit in the generation memory budget (the same KV room that caps `max_tokens`), the prompt is longer than `--local-context-limit N`, or the cost router rates the task beyond the local model and the gain beats the price. `--cloud-base-url URL` picks the server (default OpenRouter; any `/v1` endpoint such as vLLM, Ollama, LM Studio or another Mac, no key needed there); `--no-cloud-fallback` turns it off. Also `cloud_fallback` in `~/.gem/config.json`: `{"enabled": true, "base_url": "http://192.168.1.20:8000/v1", "model": "qwen3-235b", "api_key_env": "LAN_KEY", "local_context_limit": 32768}`; `enabled: false` keeps it off. The OpenRouter key is sent only to openrouter.ai. Spend is capped by the `basalt cloud configure` daily/monthly budgets, by `cloud_fallback.session_budget` (USD per `x-session-id`) and by each virtual key's `max_budget`; over budget the cloud is not called. `--router-params FILE` (trained Bradley–Terry parameters: `strongEmbedding`, `weakEmbedding`, `weights`, `projection`) turns on the capability check, tuned by `--cost-threshold θ` (default 0.5) and `--cache-stickiness λ` (default 0.1; a warm `x-session-id` keeps its side until the margin beats λ times the switch cost); also `router_params`, `cost_threshold`, `cache_stickiness` in `cloud_fallback`. Requests with tools or `response_format` and service requests stay local; a failed cloud call is answered locally |
-
-**Prompt-cache reuse.** The server keeps the model's KV cache for recent prompts in a prefix tree: prompts that start with the same tokens share one stored copy of that start, and a request prefills only what follows the longest stored prefix. So the next turn of a conversation costs only its new tokens (a tool result appended to a long agent transcript, not the whole history again), and a second conversation that opens with the same system prompt and tools — a Claude Code subagent, another Codex thread — starts from the shared part instead of prefilling it again. Matching is by tokens, so no conversation id is needed (`prompt_cache_key`, `metadata.user_id` and `x-session-id` are ignored); a client that wants its prompts kept apart sends `X-Basalt-Cache-Key: <name>` (1-256 bytes, on every generation endpoint) and gets a tree of its own, which shares the byte budget but no prefix with the shared tree or other keys; title and other service requests never touch the cache. Under the `--prompt-cache-mb` budget the least recently used branch is cut from its end (a hybrid model's snapshot branch, see below, is removed whole, since its recurrent state is valid only at its end), so an idle conversation keeps its system prompt and tools longest, and the node a running request reuses up to is never evicted (for a hybrid model that is its snapshot node; the request has its own copy of the data, so evicting the rest of its branch cannot affect it); the tree also keeps at most 4096 branches, dropping the least recently used free one beyond that. Usage reports what was actually reused: `prompt_tokens_details.cached_tokens` (Chat Completions), `input_tokens_details.cached_tokens` (Responses), `cache_read_input_tokens` (Anthropic, where `input_tokens` counts only the prefilled rest). Hybrid attention/SSM models such as Qwen3.5/3.6 and Ornith-1.5, and Gemma 4 with its sliding-window layers, reuse a conversation's previous turn too: their recurrent or rotating state cannot be rewound, so while prefilling a prompt the server keeps a snapshot of it at the end of the request text, before the chat template's closing tokens, and the next turn that extends that text restores the snapshot and prefills only what follows (Ornith-1.5-9B, 12.6k-token agent prompt: the second turn takes about 1 s instead of about 36 s). A reused turn can differ from an uncached run after its first tokens: the prefill is chunked differently, which shifts bf16 results slightly (measured on Ornith: the restored state is bitwise equal to a from-scratch prefill cut at the same points, and differs from a one-phase prefill by at most 1.56 in the last-position logits with the same top 5; on Gemma 4 12B the restored cache is bitwise equal too, and over a twelve-turn session of ~4k tokens it differs from a one-phase prefill by 0.60–2.33 with the same greedy token, about as much as a one-phase prefill in 256-token instead of 512-token chunks differs from itself, 2.53, so at temperature 0 a near-tied token can still flip). They reuse only from such a snapshot, so a second conversation with the same system prompt prefills in full. `--kv-bits` always prefills the full prompt.
-
-**CacheBlend (opt-in, approximate).** The prefix tree only helps when a prompt starts the same way; an agent that pastes the same files in another order prefills them all again. `--cache-blend` also keeps the KV of each prompt chunk — a chunk ends after every blank line, whether the tokenizer writes it as one token or as two newline tokens, so files and messages separated by blank lines keep their own chunks; chunks under 16 tokens are always recomputed — and reuses a chunk wherever it lands in a later prompt (keys are stored before RoPE and rotated to the new position). The cached chunks were computed next to other text, so their KV is stale: following CacheBlend (arXiv:2405.16444), the first layer is recomputed for every token, and only `--cache-blend-ratio` of the reused tokens (default 0.3), plus every token not in the store, are recomputed on the later layers. The budget goes first to the first 32 tokens of each reused chunk, whose context changed the most when the chunk moved (as in EPIC, arXiv:2410.15332), ranked by how far their KV deviates on the second layer, and only then to the most deviating tokens of the rest. The blended forward costs about 1.2× the model's own prefill per recomputed token, so a prompt is blended only when (1 − ratio) × the share of reused tokens is at least 0.2, and only while the whole cache stays within 16 384 tokens; otherwise — a fresh prompt, little reuse, `--cache-blend-ratio 1`, a long context — it takes the model's own chunked prefill and its chunks are stored from that cache (keys are un-rotated from post-RoPE, exact up to the cache's dtype rounding, ~2⁻⁸ relative in bf16). The result is approximate. Measured on Qwen3-4B-4bit (M4 Pro) with six frozen files of 550–900 tokens (`benchmarks/cacheblend`) in four new orders, each with a new question (4 854 of ~5 066 tokens from chunks), scoring the full-prefill greedy answer (50 tokens) under teacher forcing — mean log-prob of the reference tokens and top-1 agreement per position, on this sample of 200 positions (0.01 is two positions):
-
-| cache | log-prob | top-1 | perplexity |
-|---|---|---|---|
-| full prefill | −0.094 | 0.995 | 1.099 |
-| ratio 0 | −0.180 | 0.925 | 1.198 |
-| ratio 0.15 (the paper's value) | −0.166 | 0.945 | 1.181 |
-| **ratio 0.3 (default)** | −0.123 | 0.960 | 1.131 |
-| ratio 0.5 | −0.125 | 0.970 | 1.134 |
-| ratio 1 (native prefill) | −0.094 | 0.995 | 1.099 |
-
-Recomputing chunk heads first is what makes 0.3 the default: with layer-1 deviation alone, ratio 0.3 left a perplexity gap of 0.085 and even 0.5 left 0.038; with chunk heads first, 0.3 leaves 0.032 (0.50: 0.035). On four other orders and questions of the same files the gap is larger (0.096 at 0.3, against 0.169 without chunk heads and 0.120 for the old default 0.5), so the 0.05 bound holds on the benchmark sample, not on every prompt. `--cache-blend-ratio 0` trades quality for the shortest prefill. Llama- and Qwen3-family dense models only; other models keep the exact prefix path. With the flag on, the prompt-cache budget is split in half between the tree and the chunk store. `cached_tokens` still counts only the exact prefix-tree tokens; blended tokens are counted in `prompt_tokens` and logged (`[CacheBlend] Blended N prompt tokens: R from cached chunks, X of them recomputed`), and the tree only stores the exact head of a blended prompt. A blended pass briefly holds the assembled cache and the chunks' un-rotated keys and values at once (about twice the prompt's KV, e.g. ~5 GB for 16k tokens of Qwen3-4B), which the memory estimates do not include. At small ratios the fixed cost of layers 0–1 and the deviation pass dominates, so 0.15 and 0.3 are slower than the linear cost model suggests. Off by default because it changes outputs; `--prompt-cache-mb 0` turns it off as well.
-
-Privacy: all clients share one prefix tree, and `cached_tokens` reveals how many leading tokens a prompt shares with earlier prompts, so a caller can probe what another client sent. On a server shared by people who must not see each other's prompts, run with `--prompt-cache-mb 0`; with `--cache-blend` the time to first token also shows which chunks another client sent.
-
----
-
-## Features at a glance
-
-Every speed-up is opt-in and keeps greedy output identical unless the row says otherwise. Numbers: M4 Pro 24 GB on power, release build.
-
-| Feature | Flag | What it does | Measured |
-|---|---|---|---|
-| Prompt lookup (speculative decoding) | `serve --speculative-lookup` | drafts up to 16 tokens copied from the prompt or output, verified in one forward | 1.84–2.66× on code edits (Bonsai 2 27B), 3.45–3.62× (Gemma 4 12B); ~1.0× on prose |
-| MTP head drafting | `serve --mtp [--mtp-block N]` | drafts with the model's multi-token-prediction head (`mtp.safetensors`, e.g. MTPLX packs); exact at any temperature. Rounds start at one drafted token and grow up to N−1 (default 4) after four fully accepted rounds; a rejection drops back to one | 1.30× on code, 1.04× on prose, 1.26× on reasoning (Bonsai 2 27B, T=0.7); a follow-up turn reuses the prompt cache like plain decoding does: TTFT 12.5 s → 0.75 s on a 1,149-token turn (Bonsai 2 27B) |
-| Ternary Bonsai 2 | (automatic) | loads Hadamard-rotated ternary checkpoints (`prism_hadamard_qwen35`) | 27B model in 7.4 GB |
-| Embeddings and rerank | `serve --embedding-model`, `--rerank-model` | OpenAI `/v1/embeddings`, Cohere/Jina `/v1/rerank` next to the chat model | bge-small 229–299 texts/s, Qwen3-Embedding-0.6B 20 texts/s (batch 32) |
-| Prompt cache on disk | `serve --prompt-cache-disk-mb N` | a resumed session or restarted server restores the longest matching prefix instead of prefilling it | — |
-| KV cache quantization and zones | `serve --kv-bits 4\|8\|auto\|k8v4`, `--kv-zones` | fits longer contexts in the same memory | 16k prompt peak 1.03 GB vs 3.11 GB (Qwen3-4B, 4-bit zones) |
-| Concurrent requests | `serve --max-concurrent N` | each running request reserves its KV room; one that does not fit gets 503 `Retry-After` instead of an out-of-memory | — |
-| DRY and XTC samplers (experimental) | `serve --experimental-samplers` | `dry_*` / `xtc_*` request fields | not an anti-loop tool: on a 2-bit model DRY hides loops behind corrupted facts (#177) |
-
-## Verified Models
-
-Models are downloaded from HuggingFace and cached in `~/.cache/huggingface/hub/`.
-
-```bash
-huggingface-cli download mlx-community/Qwen3.5-4B-4bit
-huggingface-cli download mlx-community/gemma-4-e4b-it-4bit
-```
-
-### Measured for 0.8
-
-M4 Pro, 24 GB, on a 68 W adapter, release build, greedy decoding, November 2026.
-
-| Model | Params | Active memory | Decode, tok/s | Notes |
-|---|---|---|---|---|
-| `mlx-community/Qwen3-4B-4bit` | 4B | ~2.2 GB | 78–89 | dense; prompt lookup and every KV mode apply |
-| `Youssofal/Ternary-Bonsai-2-27B-MTPLX-Optimized-Speed` | 27B ternary | 7.4 GB | 20.9–21.5 plain · 27.1 with `--mtp` on code · 31–38 with `--speculative-lookup` on code | hybrid (Gated DeltaNet); MTP head from Qwen3.8-27B |
-| `lukaskremla/Qwen3.8-27B-3bit-MLX-TextOnly` | 27B | not measured | 15–19 | hybrid |
-| `lukaskremla/Qwen3.8-27B-2bit-MLX-TextOnly` | 27B | not measured | 18–22 | loops on some prompts (3 of 8); `RepetitionGuard` stops them |
-
-| Embedding / rerank model | Task | Measured |
-|---|---|---|
-| `mlx-community/bge-small-en-v1.5-bf16` | embeddings (384-d) | 229–299 texts/s, batch 32 × ~240 tokens |
-| `mlx-community/Qwen3-Embedding-0.6B-8bit` | embeddings (1024-d) | 20 texts/s, same batch |
-| `mlx-community/Qwen3-Reranker-0.6B-4bit` | rerank | known pairs ranked correctly |
-| `jinaai/jina-reranker-v3-mlx` | rerank | known pairs ranked correctly |
-
-### Earlier reports (not re-measured for 0.8)
-
-| Model | Params | RAM | Status on 24GB Mac |
-|---|---|---|---|
-| `mlx-community/gemma-4-e2b-it-4bit` | 2B | 2.7 GB | ✅ ~110 TPS |
-| `mlx-community/gemma-4-e4b-it-4bit` | 4B | 4.3 GB | ✅ ~85 TPS |
-| `mlx-community/Qwen3.5-4B-4bit` | 4B | 2.3 GB | ✅ ~92 TPS |
-| `mlx-community/Qwen2.5-Coder-7B-Instruct-4bit` | 7B | 4.1 GB | ✅ ~60 TPS |
-| `mlx-community/Qwen3.5-9B-OptiQ-4bit` | 9B | 5.8 GB | ✅ ~37 TPS |
-| `AutisticAF/Huihui-Qwen3.8-27B-abliterated-mlx-4Bit` | 27B | 15.2 GB | ✅ ~12 TPS (Abliterated) |
-| `Ex0bit/MYTHOS-26B-A4B-PRISM-PRO-DQ-MLX` | 26B MoE | 14.5 GB | ✅ ~14 TPS (Dynamic Quant) |
-| `Ex0bit/Qwen3.6-35B-A3B-PRISM-MLX-NVFP4` | 35B MoE | 20.5 GB | ✅ ~8 TPS (NVFP4) |
-| `Ex0bit/Elbaz-Olmo-3-7B-Instruct-abliterated` | 7B | 4.5 GB | ✅ ~55 TPS |
-| `ornith-ai/Ornith-1.5-9B-MLX-4bit` | 9B | 4.7 GB | ✅ ~48 TPS (reasoning — see note) |
-| `ornith-ai/Ornith-1.5-35B-A3B-MLX-4bit` | 35B MoE | 21 GB | ✅ untested above 24 GB |
-| `LiquidAI/LFM2.5-8B-A1B-MLX-4bit` | 8B MoE | 4.5 GB | ✅ ~76 TPS (always reasons) |
-| `LiquidAI/LFM2.5-24B-A2B-MLX-4bit` | 24B MoE | 12.6 GB | ✅ ~40 TPS (always reasons) |
-| `huihui-ai/Huihui-Qwen3.8-27B-abliterated` (Base BF16) | 27B | ~54 GB | ❌ Needs 64GB+ (Use 4-bit MLX version on 24GB) |
-| `mlx-community/gemma-4-26b-a4b-it-4bit` | 26B MoE | 14.5 GB | ❌ Gibberish output |
-| `mlx-community/Qwen3.6-27B-4bit` | 27B | 14.5 GB | ❌ Gibberish output |
-| `mlx-community/gemma-4-31b-it-4bit` | 31B | 17 GB | ❌ OOM (Needs 32GB+) |
-
-> **Note on 24GB RAM Macs:** 
-> - Unquantized 27B/35B models (~54 GB weights) exceed physical memory. Use MLX 4-bit / Dynamic Quant (DQ) quantized weights (e.g. `AutisticAF/Huihui-Qwen3.8-27B-abliterated-mlx-4Bit`, `Ex0bit/MYTHOS-26B-A4B-PRISM-PRO-DQ-MLX`) which comfortably fit in ~15 GB RAM.
-> - Models > 10GB constrain KV-cache size under heavy multi-turn contexts. The KV cache takes `2 · layers · kv_heads · head_dim · 2 B` per token (fp16), read from the model's `config.json`; hybrid models count only their full-attention layers plus a fixed recurrent state, sliding-window layers stop at the window, `--kv-bits 4|8` stores `bits + 0.5` bits per element (`--kv-bits` does not apply to sliding-window layers). Qwen3-4B: 144 KiB per token, 4.5 GiB at 32k tokens; Ornith-1.5-9B (8 of 32 layers full attention): 32 KiB per token, 1.05 GiB at 32k. `serve --dry-run`, `models check`, `fit` (its quantization grid and decode-speed estimate — the RAM column and fit level still count weights only) and the memory-derived token budget use this figure (cap = min(requested max_tokens, --max-tokens, KV room − prompt tokens), where the KV room is Metal's recommended working set minus the loaded weights and the prompt-cache budget, and the prompt is counted with the model's tokenizer; a prompt that does not fit at all is refused with 413 before generation); without a downloaded config they fall back to a parameter-count estimate that is close for dense 7B–32B models but several times off for small, hybrid and MoE ones. Estimates, not measurements: the recurrent state of Mamba layers (Jamba, NemotronH) is not counted, only their attention layers; MLA models (DeepSeek V2/V3) are counted as the decompressed per-head K and V that MLX caches, not the compressed latent.
-
----
-
-## REST API
-
-Base URL: `http://127.0.0.1:8080` — **no authentication required**.
-
-### Security
-
-On loopback any local process may call the API without a key, but a web page in your browser may not:
-
-- **Host.** Bound to loopback, the server answers only requests whose `Host` is `localhost`, `127.0.0.1` or `[::1]` (any port), anything else gets 403; this stops DNS rebinding, where an attacker's domain re-resolves to 127.0.0.1 and its page reads your responses. Bound to a specific address, that address is accepted as well. Bound to `0.0.0.0`/`::`, any `Host` is accepted: the API key is mandatory there.
-- **Origin.** A request with an `Origin` header is refused (403) unless it is the server's own loopback origin (`http(s)://localhost|127.0.0.1|[::1]` on the port the server listens on; no port means 80 for http, 443 for https) or listed with `--allow-origin` / `allowed_origins` (`scheme://host[:port]`, no path, no trailing slash, no `*`; default ports match, so `https://app.example:443` equals `https://app.example`). Other local ports are not trusted: a page on a dev server (`localhost:3000`) or Jupyter could otherwise load models and run generation, so such a UI needs `--allow-origin http://localhost:3000`. Clients that send no `Origin` (curl, SDKs, Claude Code, Codex) are unaffected.
-- **Content-Type.** Every `POST` must send `Content-Type: application/json` (a `charset` parameter is fine), otherwise 415. `curl -d` without `-H "Content-Type: application/json"` sends a form type and is refused.
-- **Model ids.** REST `model` values are Hugging Face repo ids: `/v1/models/load` takes only `org/name`; in a generation request's `model` a path form (starting with `/`, `.` or `~`, or containing `..`, also hidden in `claude-local/..--x`; surrounding whitespace is ignored) is a 400, while any other value that is not a repo id (`basalt`, `qwen/qwen3-8b-instruct:free`) is an alias: the loaded model answers and nothing is switched. Local paths stay available to `basalt serve --model-path` and MCP. A failed load leaves the current model loaded, and error bodies never contain filesystem paths (they are in the server log).
-
-### Model management
-
-```bash
-# List all locally cached models (OpenAI-compatible format)
-curl http://localhost:8080/v1/models
-
-# Currently loaded model + readiness status
-curl http://localhost:8080/v1/models/current
-
-# Hot-swap to a different model at runtime (blocks until loaded)
-curl -s http://localhost:8080/v1/models/load \
-  -H "Content-Type: application/json" \
-  -d '{"model": "mlx-community/gemma-4-31b-it-4bit"}'
-```
-
-`GET /v1/models` returns IDs prefixed with `claude-local/` so Claude Code's automatic model picker adds them. The `display_name` field carries the original HuggingFace repo ID.
-
-### Raw generation
-
-```bash
-curl -s http://localhost:8080/api/v1/generate \
-  -H "Content-Type: application/json" \
-  -d '{"prompt": "Explain quantum entanglement.", "maxTokens": 256}'
-```
-
-| Field | Type | Default | Description |
-|---|---|---|---|
-| `prompt` | string | required | Input text |
-| `maxTokens` | int | 8192 | Max tokens to generate |
-| `temperature` | float | model | Sampling temperature (0–2); unset takes the model's `generation_config.json`, else 0.7 |
-| `topP` | float | model | Nucleus sampling (0–1); unset takes `generation_config.json`, else 0.9 |
-| `topK` | int | model | Keep the k most likely tokens; unset takes `--top-k`, then `generation_config.json`, else off |
-| `presencePenalty` | float | off | −2…2, subtracted from every token among the last 1024 generated tokens (the prompt is not penalised) |
-| `repetitionPenalty` | float | `--repetition-penalty` | (0, 2], multiplicative penalty on recent tokens |
-| `thinkingBudget` | int | off | Reasoning tokens before the server forces the end of thinking (Qwen: "Considering the limited time by the user…" + `</think>`) so the answer fits in `maxTokens`; lowered to fit `maxTokens` minus the transition and an answer reserve of min(512, maxTokens/4); a `maxTokens` leaving fewer than 64 tokens after the reserve is 400; ignored when thinking is off, the model has no reasoning protocol, or it is a non-Qwen model whose protocol declares no transition |
-| `minP` | float | server | Min-P 0–1: drop tokens below `minP × max p`. Overrides `--min-p` and the model profile; `0` turns it off |
-| `dynamicTemperature` | bool | false | Entropy-based dynamic temperature (EDT): per token `T = T0·0.8^(1.5/H) + 0.5·R`, clamped to 0.05–2 (a colder request keeps its own temperature as the floor; `top_p`/`min_p` cut the original distribution), where `H` is the entropy of the next-token distribution and `R ∈ [0,1]` a repetition index. Near-greedy on confident tokens, warmer when a loop starts. No effect at `temperature: 0` |
-| `speculativeLookup` | bool | `--speculative-lookup` | Prompt-lookup speculative decoding for this request: up to 16 tokens copied from an n-gram match in the prompt or the output are verified in one forward pass; after a rejected draft it pauses drafting for 1, 2, 4… up to 64 tokens. With `serve --speculative-recycling`, when no n-gram matches it drafts up to 6 tokens from the model's own argmax successors recorded twice in a row (Token Recycling, #38), with a pause of its own. Attention-only models and dense recurrent hybrids (Qwen3.5/Ornith, Nemotron-H: a rejected draft restores the recurrent state and replays the accepted tokens), sliding-window models (Gemma 4: each verify round is staged, so a rejected draft never overwrites the window's ring), without `--kv-bits` and text-only input; recurrent hybrids with expert routing (LFM2.5 MoE) are ignored. On Gemma 4 26B-A4B (MoE) lookup gains 1.97× on code edits and costs 3–6% on prose and reasoning |
-
-`/v1/chat/completions`, `/v1/responses` and `/v1/messages` take the same two fields as `min_p` and `dynamic_temperature`; MCP `gemma_generate` as `minP` and `dynamicTemperature`. The OpenAI endpoints take `top_k`, `presence_penalty`, `repetition_penalty` and `thinking_budget`; `/v1/messages` takes `top_k` and `thinking: {"type": "enabled", "budget_tokens": N}` as the thinking budget (1 ≤ N < `max_tokens`, else 400). All three take `speculative_lookup` (a non-boolean is 400); MCP `gemma_generate` takes `speculativeLookup` (a non-boolean is -32602). Usage reports `completion_tokens_details.reasoning_tokens` (chat; streamed with `stream_options.include_usage`) and `output_tokens_details.reasoning_tokens` (Responses): `0` when the model did not reason, and the forced transition counts as reasoning.
-
-### OpenAI-compatible
-
-```bash
-curl -s http://localhost:8080/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "basalt",
-    "messages": [{"role": "user", "content": "Hello"}],
-    "stream": true
-  }'
-```
-
-Supports streaming SSE, system prompts, and multi-turn conversation. Sending a HuggingFace model ID in the `"model"` field triggers a hot-swap automatically.
-
-A reasoning model's thinking comes back as `message.reasoning` (stream: `delta.reasoning`), the OpenRouter / Ollama name, and the same text again as `reasoning_content`, the name vLLM, DeepSeek, llama.cpp and LM Studio clients read. Assistant turns sent back with either field are accepted; the reasoning itself is not put back into the prompt.
-
-### Anthropic-compatible
-
-```bash
-curl -s http://localhost:8080/v1/messages \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "basalt",
-    "max_tokens": 1024,
-    "messages": [{"role": "user", "content": "Hello"}]
-  }'
-```
-
-Implements the full Anthropic SSE event sequence (`message_start`, `content_block_start`, `content_block_delta`, `message_stop`). Accepts plain-string and block-array content formats.
-
-`thinking` blocks carry an empty `signature`: basalt has no key to sign them with. They round-trip through basalt, but the real Anthropic API rejects a conversation that replays them, so drop them before sending the same history there.
-
-**Constrained output.** `response_format` constrains the answer, after any reasoning block, with XGrammar:
-- `{"type": "json_object"}` or `{"type": "json_schema", "json_schema": {"schema": …}}`;
-- `{"type": "regex", "regex": "[A-Z]{3}-\\d{4}"}`;
-- `{"type": "grammar", "grammar": "root ::= …"}`, XGrammar's EBNF/GBNF dialect with root rule `root`;
-- `{"type": "structural_tag", "format": …}`, XGrammar's structural-tag JSON (`sequence`, `const_string`, `regex`, `json_schema`, `tag`, …).
-
-vLLM's `guided_regex` and `guided_grammar` request fields work too, one of them at a time. The MCP `generate` tool takes `regex` or `grammar`. A source over 64 KB, or one XGrammar does not compile, is a 400 that names the format.
-
-**Prefill.** A conversation that ends with an assistant message continues that message instead of answering it in a new turn, on `/v1/messages`, `/v1/chat/completions` and `/v1/responses`, as on the Anthropic API, vLLM's `continue_final_message` and llama.cpp. The earlier turns are rendered up to the generation prompt with thinking off, the assistant text follows it unclosed, and the response holds only what the model writes after it: prefill `{"name":` and the reply is ` "Whiskers", "age": 3}`. With `response_format` or a forced tool the prefill is the start of the JSON document (a prefill the schema cannot start with is 400), and a forced tool's arguments include it. A prefill that opens a thinking block (`<think>…`) keeps the requested thinking and continues as reasoning. Several trailing assistant messages are joined as one prefill; an empty one is dropped; an assistant message with tool calls is still a finished turn. A prompt with images cannot be continued (400). Control tokens in the prefill (`<|im_end|>`, `<|im_start|>`, …) are neutralized like the rest of the conversation, so a prefill cannot forge a turn; only the thinking markers that open and close its reasoning stay real, and on a template that already opens `<think>` itself (Ornith, Qwen3.5+) the prefill's own leading `<think>` is dropped instead of doubled. With `--cloud-fallback` a prefilled request always stays local, since not every provider continues a trailing assistant message. On Nemotron Nano v2, which turns thinking off with a `/no_think` line in the system turn, a prefilled request renders a different system turn than a thinking-on request on the same history, so the two share only the prompt cache before it.
-
-### Image input
-
-A vision model (Gemma 4, Qwen3.5-VL, … — any model MLXVLM loads) takes images on `/v1/chat/completions`, `/v1/responses`, `/v1/messages` and the MCP `generate` tool:
-
-- **OpenAI:** a content part `{"type": "image_url", "image_url": {"url": "data:image/png;base64,…"}}` (`/v1/responses`: `{"type": "input_image", "image_url": "data:…"}`).
-- **Anthropic:** a content block `{"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "…"}}`.
-- **MCP:** `images: [{"data": "<base64>", "mime": "image/png"}]`, or `[{"path": "/abs/file.png"}]` for a file inside a directory given with `serve --image-dir <dir>` (repeatable). The path is checked after resolving symlinks; with no `--image-dir` every path is refused.
-
-PNG, JPEG, WebP and HEIC, at most 8 images per request, 20 MB of encoded bytes per image and 32 MB for all images of a request; each overflow is a 400 that names the limit. Remote URLs (`http(s)://` in `image_url`, `source.type: "url"`) are refused with 400 — basalt does not fetch them; send the image as a `data:` URI. An image sent to a model that is not a vision model is a 400 (`<model> does not take images`), never a silent drop, and a request with images never goes to `--cloud-fallback`. The prompt cache is keyed by the SHA-256 of each image: the same images in the same order reuse the cached prefix, different images reuse nothing. Session logs record digests and byte counts, never image bytes. Images inside tool results are still shown to the model as `[image omitted]`.
-
-### Pipeline presets and memory modes
-
-`/v1/pipeline` (MCP `basalt_pipeline`) runs perceive (OCR, speech) → decide (System One) → answer (the chat model) in one process. A preset fills the serve flags for a shipped profile; any flag you give explicitly wins:
-
-```bash
-basalt serve --pipeline-preset document-qa     # PaddleOCR-VL, System One by readout of the chat model, the chat model
-basalt serve --pipeline-preset voice-agent     # Nemotron Transcribe and the chat model
-basalt serve --pipeline-preset support-triage  # System One with the ticket questions, and the chat model
-```
-
-The chat model is Gemma 4 12B, or Qwen3.8-27B 3-bit when it fits beside the other models with 8 GB to spare. `--pipeline-memory` sets how the models share memory:
-
-- `resident` keeps every model loaded, so their sum must fit the working set.
-- `sequential` loads each perceiver for its stage and unloads it after. The chat model stays loaded when it fits beside the largest perceiver, and is unloaded around it otherwise. Only the largest stage plus 2 GB must fit, so a smaller Mac runs a heavy set more slowly. Sequential pipeline requests run one at a time, and plain chat requests wait while models swap.
-- `auto` (default) picks resident when the sum fits, otherwise sequential, and refuses only a stage too big on its own.
-
-Measured on an M4 Pro, 24 GB (19.1 GB working set), release build, commit 1921c3c. The second request has a warm page cache:
-
-| Preset | Models | Plan | Request 1 | Request 2 | Of which swapping | Peak footprint |
-|---|---|---|---|---|---|---|
-| voice-agent | Gemma 4 12B 11.0 GB + Nemotron Transcribe 30B-A4B 14.9 GB | sequential (resident needs 25.9 GB), chat unloaded around speech | 21.4 s | 8.6 s | 6.0 s / 5.4 s | 15 GB |
-| document-qa | Qwen3.8-27B 3-bit + PaddleOCR-VL 1.5 | `--pipeline-memory sequential`, chat stays loaded | 23.2 s | 11.2 s | 0.4 s / 0.2 s | 14 GB |
-
-### basalt compose
-
-One YAML file describes a model system: local and cloud models, how each stays in memory, and the perceive → decide → answer pipeline. `basalt compose up` serves it on the same REST and MCP surfaces as `basalt serve`. `basalt compose plan` validates the file and shows the compute plan, and refuses a system whose largest stage does not fit.
-
-```yaml
-version: 1
-name: document-qa-cloud
-models:
-  chat:  { source: mlx-community/gemma-4-12B-it-qat-4bit }
-  ocr:   { source: mlx-community/PaddleOCR-VL-1.5-8bit, keep: on-demand, idle_unload: 30s }
-  jev:   { source: "cloud:openrouter/~typesafe/jev-latest", api_key_env: OPENROUTER_API_KEY }
-pipeline:
-  perceive: { documents: [ocr, apple-vision] }
-  decide:   { cascade: [jev, chat], escalate_below: 0.6 }
-  answer: chat
-```
+A model system instead of one model:
 
 ```bash
 basalt compose plan -f docs/examples/compose/document-qa-cloud.yaml
-basalt compose up -f docs/examples/compose/document-qa-cloud.yaml -- --port 8080
-basalt compose up voice-agent            # bundled: document-qa, voice-agent
+basalt compose up voice-agent               # bundled: document-qa, voice-agent
 ```
 
-- **`keep`:**
-  - `resident` (the default) stays loaded;
-  - `on-demand` loads on the first request that needs it and unloads after `idle_unload`; the plan still counts it as resident;
-  - `sequential` loads a perceiver for its stage only.
-- **Cloud models:** a cloud model names the environment variable that holds its key (`api_key_env`). A key written in the file, or `${…}` interpolation, is refused. Documents and transcripts never go to the cloud: a request with attachments is decided locally.
-- **Expansion:** the file expands to `basalt serve` flags, printed at start. Flags after `--` are added to them.
-- **Running systems.** `pipelines:` adds named pipelines, served at `/v1/pipelines/<name>`. Running `compose up` again on a running system applies the difference: it loads, reloads and unloads only the models that changed, and swaps the pipelines between requests. `basalt compose ps` shows what is loaded and when on-demand models unload, along with cloud spend. `basalt compose down <name>` stops the system. The full reference is in [docs/compose.md](docs/compose.md).
-- **Answer routes (mixture of models).** `answer.routes` is a list of rules. The first rule whose `when` matches picks the model, and `fallback` is tried if that model fails or is unavailable. A `when` can test:
-  - `modality`: documents, audio or text;
-  - `decide`: a System One label, such as `route: code`;
-  - `prompt_tokens: { over: N }`;
-  - `escalated`;
-  - `cost_left`.
-
-  The last rule has no `when` and names a local model. A cloud model never gets perceived text, and the receipt names the rule, the cost and any skipped model. An extra local answer model can be `keep: on-demand`.
-- **Decide cascade.** It takes up to three cloud models followed by one local model. Each stage answers the questions it is sure of and passes the rest on.
-- **Cloud spend.** `budget: { usd_per_day }` caps a cloud model, and the top-level `budget` caps the total. The day's spend is kept in `~/.basalt/cloud-spend.json` across restarts. A refused key (401/403) disables that model until restart, and a rate limit (429) pauses it for `Retry-After`. Meanwhile the local model answers.
-
-```yaml
-pipeline:
-  decide: { cascade: [jev, chat], escalate_below: 0.6 }
-  answer:
-    routes:
-      - when: { decide: { route: code }, cost_left: true }
-        model: haiku          # cloud:openrouter/anthropic/claude-haiku-5.5, budget: { usd_per_day: 0.5 }
-        fallback: chat
-      - model: chat
-```
-
-Mixed workload of 55 requests through `/v1/pipeline` (30 decisions, 10 code, 10 chat, 5 documents), M4 Pro, release build (`scripts/compose_mom_bench.swift`, `docs/examples/compose/mom.yaml`):
-
-| Setup | Labels right | Cloud per 1000 requests | p50 | p95 | Local stage time |
-|---|---|---|---|---|---|
-| local only (Gemma 4 12B decides and answers) | 55/55 | $0 | 0.92 s | 10.0 s | 176 s |
-| cloud first (Jev decides, Haiku answers all text) | 55/55 | $0.046 | 1.25 s | 4.8 s | 24 s |
-| MoM (Jev decides, code to Haiku while budget lasts, the rest Gemma) | 55/55 | $0.035 | 1.21 s | 4.8 s | 53 s |
-
-Measured with `compose up` on an M4 Pro with 24 GB, release build:
-
-| File | Request | Receipt |
-|---|---|---|
-| document-qa-cloud | document (first) | OCR loaded on demand (489 ms), decided locally, answered: 6.1 s |
-| | document (again) | OCR already loaded (0 ms): 5.0 s |
-| | after 40 s idle | OCR unloaded, footprint 12 → 11 GB |
-| | typed question | decided by Jev in the cloud: 0.6 s |
-| | document | OCR reloaded (267 ms): 5.3 s |
-| voice-agent (bundled) | audio | chat unloaded around Nemotron Transcribe (swap 6.9 s): 17.3 s |
-| too-big (example) | `compose plan` | refused: one stage needs 20.7 GB plus 2 GB against a 19.1 GB working set |
-
-### SSE streaming (native API)
+The Mac app, from a checkout:
 
 ```bash
-curl -N http://localhost:8080/api/v1/generate/stream \
-  -H "Content-Type: application/json" \
-  -d '{"prompt": "Hello", "maxTokens": 512}'
+./scripts/bundle_app.swift                  # release build, Metal kernels, then .build/Basalt.app
+open .build/Basalt.app
 ```
 
-Each event is a `data: {...}` line; the stream ends with `data: [DONE]`. A failure mid-stream arrives as `event: error` with `data: {"error": ...}`.
+Local 4B–9B models are not a drop-in replacement for a frontier model — they are for private, offline, zero-cost agentic work and for tinkering. `basalt fit` tells you what your machine can actually run. The model table lists what *broke* too.
 
-### Swagger UI
-
-Visit `http://localhost:8080/swagger` for interactive API docs.
+**Star it** if you want more MLX-native tooling in Swift, and open an issue with your Mac and your tok/s — [PRs adding a row to the benchmark table](docs/benchmarks.md#benchmarks) are welcome.
 
 ---
 
-## Use it from your tools
+## Documentation
 
-basalt speaks three client protocols at once, so pick whatever your tool already uses.
-
-| Client | Endpoint | Setup |
-|---|---|---|
-| Any OpenAI client (Python/JS SDK, Continue, Cline, aider) | `http://localhost:8080/v1` | base URL + any API key on loopback |
-| OpenCode | `/v1/chat/completions` | see [OpenCode Integration](#opencode-integration) |
-| Claude Code in the terminal | `/v1/messages` (Anthropic) | see [Claude Code Integration](#claude-code-integration) |
-| Claude Desktop, Cursor | MCP stdio | see [MCP Integration](#mcp-integration-claude-desktop--cursor) |
-
-Start one server for all of them, with the extras you want:
-
-```bash
-basalt serve --rest --model Youssofal/Ternary-Bonsai-2-27B-MTPLX-Optimized-Speed --mtp \
-  --embedding-model mlx-community/bge-small-en-v1.5-bf16 \
-  --rerank-model mlx-community/Qwen3-Reranker-0.6B-4bit
-```
-
-The official OpenAI Python SDK works unchanged (checked with `openai` 3.19.2):
-
-```python
-from openai import OpenAI
-client = OpenAI(base_url="http://localhost:8080/v1", api_key="local")
-reply = client.chat.completions.create(model="basalt", messages=[{"role": "user", "content": "Hello"}])
-vectors = client.embeddings.create(model="basalt", input=["first text", "second text"])
-```
-
-Rerank uses the Cohere/Jina shape:
-
-```bash
-curl -s http://localhost:8080/v1/rerank -H "Content-Type: application/json" \
-  -d '{"query": "capital of France", "documents": ["Paris is the capital of France.", "Berlin is in Germany."], "top_n": 1}'
-```
-
-## Claude Code Integration
-
-### Option A — environment variables (per terminal session)
-
-```bash
-# Start Basalt
-"$(swift build -c release --show-bin-path)/Basalt" serve --model mlx-community/Qwen3.5-4B-4bit --rest
-
-# In another terminal — scope vars only to this claude process
-ANTHROPIC_BASE_URL=http://localhost:8080 \
-ANTHROPIC_AUTH_TOKEN=local \
-claude
-```
-
-`ANTHROPIC_AUTH_TOKEN` sends as `Authorization: Bearer local` (not `x-api-key`), so your real `ANTHROPIC_API_KEY` is never touched.
-
-### Option B — shell function (add to `~/.zshrc`)
-
-```bash
-function claude-local() {
-  ANTHROPIC_BASE_URL=http://localhost:8080          \
-  ANTHROPIC_AUTH_TOKEN=local                        \
-  ANTHROPIC_DEFAULT_HAIKU_MODEL=mlx-community/gemma-4-e4b-it-4bit    \
-  ANTHROPIC_DEFAULT_SONNET_MODEL=mlx-community/Qwen3.5-4B-4bit       \
-  ANTHROPIC_DEFAULT_OPUS_MODEL=mlx-community/gemma-4-31b-it-4bit     \
-  claude "$@"
-}
-
-claude-local                   # sonnet alias → Qwen 4B
-claude-local --model haiku     # haiku alias → Gemma 4B (fastest)
-claude-local --model opus      # opus alias → Gemma 31B (strongest)
-```
-
-### Option C — `./basalt-claude` launcher
-
-Starts the server and Claude Code in one command (see Quick Start above).
-
-### Tool calling
-
-Claude Code's tools work on `/v1/messages`: the `tools` it sends reach the model's chat template, the model's calls come back as `tool_use` blocks (streamed as `content_block_start` / `input_json_delta` / `content_block_stop`, `stop_reason: "tool_use"`), and the `tool_use` / `tool_result` blocks of the history are rendered into the prompt, so the model sees what its tools returned. `/v1/chat/completions` does the same in the OpenAI form (`tools`, `message.tool_calls` / `delta.tool_calls`, `finish_reason: "tool_calls"`, role `tool` messages), as `/v1/responses` already did. Tool results in the history are matched to their calls by `tool_use_id` / `tool_call_id`, so parallel calls keep their names; images in a tool result show as `[image omitted]`. `tool_choice: none` keeps the tools in the prompt and lets no call through; a named tool keeps every tool in the prompt and lets only that one through (naming a tool that is not in `tools` is a 400); `any` / `required` are not enforced and work as `auto` (see #42); `parallel_tool_calls: false` / `disable_parallel_tool_use: true` end the generation after the first call. Tool input that is not a JSON object goes out as `{}` with the original arguments in a visible note. A call the model botches beyond repair, or a call to a tool that was not offered, arrives as a visible `[tool call … rejected: …]` note in the text. The legacy Chat Completions `functions` / `function_call` fields are ignored. Checked with Claude Code 2.1 on `mlx-community/Qwen3-4B-4bit`: list a directory with `Bash`, and read a file then edit it with `Read` / `Edit`.
-
-### Model discovery
-
-Claude Code (v2.1.126+) queries `GET /v1/models` at startup and adds returned models to the `/model` picker — but only if the ID starts with `claude` or `anthropic`. Basalt returns IDs in `claude-local/<hf-id>` form so discovery works automatically.
-
----
-
-## OpenCode Integration
-
-[OpenCode](https://github.com/opencode-ai/opencode) is a terminal-native AI coding agent. Basalt provides a native OpenAI-compatible API (`/v1/chat/completions`, `/v1/models`) and Anthropic-compatible API that connects directly to OpenCode without cloud dependencies or API keys.
-
-### 1. Start Basalt Server
-
-Start Basalt with your desired local model (e.g. Huihui Qwen3.8 Abliterated, Ex0bit MYTHOS 26B, or Qwen3.5 4B):
-
-```bash
-# High capability (Abliterated / MoE)
-"$(swift build -c release --show-bin-path)/Basalt" serve --model AutisticAF/Huihui-Qwen3.8-27B-abliterated-mlx-4Bit --rest
-
-# Or fast coding model
-"$(swift build -c release --show-bin-path)/Basalt" serve --model mlx-community/Qwen2.5-Coder-7B-Instruct-4bit --rest
-```
-
-### 2. Connect OpenCode
-
-#### Option A — Terminal Environment Variables
-
-```bash
-# In your project folder:
-OPENAI_BASE_URL=http://localhost:8080/v1 \
-OPENAI_API_KEY=local \
-OPENAI_MODEL=basalt \
-opencode
-```
-
-#### Option B — OpenCode Configuration File (`~/.config/opencode/config.json` or `opencode.json`)
-
-```json
-{
-  "provider": "openai",
-  "base_url": "http://localhost:8080/v1",
-  "api_key": "local",
-  "model": "basalt",
-  "temperature": 0.7,
-  "max_tokens": 16384
-}
-```
-
-#### Option C — Shell Alias (add to `~/.zshrc`)
-
-```bash
-function basalt-opencode() {
-  OPENAI_BASE_URL=http://localhost:8080/v1 \
-  OPENAI_API_KEY=local \
-  OPENAI_MODEL=basalt \
-  opencode "$@"
-}
-```
-
----
-
-## Downloading Models (mlx-community, huihui-ai, Ex0bit)
-
-Basalt can browse, inspect, and download models from any creator or organization on Hugging Face:
-
-```bash
-# List models by author
-basalt models list --author Ex0bit
-basalt models list --author huihui-ai
-basalt models list --author mlx-community
-
-# Search with filters
-basalt models list --author Ex0bit --search PRISM
-basalt models list --search Huihui-Qwen3.8
-
-# Download specific models
-basalt models download AutisticAF/Huihui-Qwen3.8-27B-abliterated-mlx-4Bit
-basalt models download Ex0bit/MYTHOS-26B-A4B-PRISM-PRO-DQ-MLX
-basalt models download Ex0bit/Qwen3.6-35B-A3B-PRISM-MLX-NVFP4
-
-# Interactive picker with custom author
-basalt models download --author Ex0bit
-```
-
----
-
-## MCP Integration (Claude Desktop / Cursor)
-
-Add to your MCP config (`~/.config/claude/claude_desktop_config.json`):
-
-```json
-{
-  "mcpServers": {
-    "basalt": {
-      "command": "/path/to/basalt",
-      "args": ["serve", "--model", "mlx-community/Qwen3.5-4B-4bit", "--mcp"]
-    }
-  }
-}
-```
-
-Available MCP tools:
-
-| Tool | Description |
+| Topic | Doc |
 |---|---|
-| `gemma_generate` | Generate text — `prompt`, `maxTokens`, `temperature`, `topP`, `minP`, `dynamicTemperature`, `images` (see [Image input](#image-input)) |
-| `gemma_status` | Returns server readiness, version, and current model |
-| `status` | Engine health, loaded model, memory snapshot and telemetry — optional `modelId` to check |
-| `check_hardware` | Apple Silicon resources: chip, unified memory, GPU, disk |
-| `inspect_model` | `modelId` (repo ID or local path) — verify weight shards and detect the real bit width of MLX/Safetensors weights |
-| `switch_model` | Switch to another model from the local cache — `modelId` |
-| `gemma_add_knowledge` | Store a lesson in the Harness Experience Library (`~/.basalt/harness-library`) |
-| `harness_validate` | Validate a Claude Code / opencode / AGENTS.md harness under the working directory or `BASALT_HARNESS_ROOTS` |
-| `harness_optimize` | One Harness² propose–probe–compose pass on the loaded model (also `basalt harness optimize`) |
-| `harness_library_query` | Search the Experience Library |
-| `model_describe`, `model_tensors`, `model_tensor`, `kv_inspect`, `trace_run` | Model X-ray (read-only, background priority): layer anatomy, parameter list and bounded tensor statistics, the prompt-cache tree, one capture run of a prompt (#328) |
-| `intervene`, `weights_delta`, `overlays_list`, `overlay_undo`, `experiment_compare` | Sandboxed experiments, only with `serve --research-tools`: steering and head/expert ablation as undoable overlays applied to research calls only; weight deltas change the live model, so while one is active every response is marked as modified and prompt-cache reuse is off; see [docs/research-tools.md](docs/research-tools.md) (#328) |
-
----
-
-## Project Structure
-
-```
-Sources/                    — one SwiftPM target per directory; dependencies point down only
-  BasaltCore/               — DTOs, errors, config, logger, profilers, calculators, HF cache, orchestrator
-    Chat/                   — ModelProfile: everything that differs between model families
-    Config/                 — ServerConfig value type
-  BasaltInference/          — MLX inference engine, ContextDegradationProfiler, RepetitionGuard  (→ Core)
-  BasaltCloud/              — OpenRouter / cloud model fallback (CostTracker, ModelRouter)    (→ Core)
-  BasaltServer/             — REST (Hummingbird 2.x, Host/Origin/Content-Type guard, API key and rate-limit middleware) and MCP JSON-RPC stdio server (→ Core)
-  BasaltUI/                 — Terminal UI (Markdown, spinner, progress bar, diff, table)       (→ Core)
-  BasaltApp/                — SwiftUI REST chat client, not linked into the CLI (launch: #55)  (→ Core)
-  BasaltCLI/                — Subcommands and the CLI root command (App/)                     (→ all of the above)
-  BasaltBin/                — Thin executable wrapper (product `Basalt`, installed as `basalt`)
-  PerformanceBenchmark/     — Standalone benchmark CLI target
-
-Tests/
-  BasaltTests/              — Unit + integration tests
-    CLI/                    — Command parsing, Cloud, Fit, PromptContextBuilder
-    Cloud/                  — CostTracker, ModelRouter, OpenRouterClient
-    UI/                     — Clipboard, Diff, Markdown, ProgressBar, Spinner, Table, TerminalUI
-    MockInferenceEngine.swift — Controllable mock for orchestrator tests
-
-basalt-claude                       — Executable Swift launcher (build + serve + claude)
-scripts/                    — Build and maintenance Swift scripts
-docs/                       — Extended documentation
-```
-
-Only `BasaltApp` may import SwiftUI/AppKit; every target the CLI links stays headless (enforced by `ModuleBoundaryTests`).
-Symbols newly shared across targets use the `package` access level (existing public API stays `public`).
-
----
-
-## Architecture Notes
-
-**Dynamic Quantization & MoE** — `MLXInferenceEngine` automatically parses `config.json` to detect 2/3/4/8-bit quantization and dynamically switches between Dense and Sparse MoE (Mixture of Experts) architectures (e.g. using highly optimized `SwitchGLU` Metal kernels).
-
-**Actor isolation** — `ModelOrchestratorActor` is a Swift 6 actor. All inference calls are serialised (FIFO) without explicit locking. Both MCP and REST share one actor instance.
-
-**Model hot-swap** — `switchModel(to:)` resolves the HuggingFace repo ID from the local cache, unloads the current model (`container = nil` + `MLX.GPU.clearCache()`), then loads the new weights. The actor ensures in-flight requests finish before the swap begins.
-
-**Timeout protection** — every `generate` and `generateStream` call is wrapped in a 5-minute timeout with cooperative Task cancellation, preventing model hangs from blocking the server indefinitely.
-
-**Streaming** — Hummingbird 2's `AsyncStream<ByteBuffer>` response body is used for both SSE formats: OpenAI (`data: {...}`) and Anthropic (`event: content_block_delta`).
-
-**Think-block stripping** — `generateStream` runs a state machine to suppress `<think>...</think>` reasoning blocks before forwarding tokens to clients.
-
-**ID translation** — `ModelsController` translates between HuggingFace repo IDs (`mlx-community/Qwen3.5-4B-4bit`) and the `claude-local/mlx-community--Qwen3.5-4B-4bit` form required by Claude Code's model discovery filter. Both forms are accepted in API requests.
-
----
-
-## Maintenance Scripts
-
-| Script | Purpose |
-|---|---|
-| `scripts/build_metal.swift` | Compile Metal GPU kernels (skips if up to date) |
-| `scripts/cleanup.swift` | `--mode=daily` rotates logs/images/reports, `--mode=release` removes build/runtime artifacts before publishing, `--mode=all` both; dry run unless `--apply` |
-| `scripts/archive.sh` | Archive logs/reports/screenshots |
-
----
-
-## Benchmarks
-
-Two harnesses, both pointed at a running server, both reporting numbers you can
-reproduce on your own machine.
-
-**The ladder to the moon** — `benchmarks/ladder/run.py`. Five rungs, each
-strictly harder than the one below it, ending in a full Earth-to-Moon mission.
-Nothing is graded on how the answer reads: the model's own code is executed
-against inputs the prompt never showed it, so a plausible-looking wrong answer
-still fails.
-
-| Rung | Task | What it actually tests |
-|---|---|---|
-| 1 | Biquadratic, real roots | closed form plus the edge cases: none, repeated, zero |
-| 2 | Biquadratic, complex roots | branch handling — all four roots, with multiplicity |
-| 3 | Fourier coefficients | numeric integration, checked on sawtooth, square wave, cosine |
-| 4 | Pump head | units (mm vs m, L/s vs m³/s) + Colebrook, which has no closed form |
-| 5 | **Earth → Moon mission** | exhaust velocity from `sqrt(2ηQ)`, Tsiolkovsky per stage, four-body propagation, lunar braking, soft landing — every constant is in the prompt, nothing recallable from a textbook |
-
-The top rung is scored on six invariants rather than one answer, so a model that
-gets the energetics right but never propagates the trajectory still shows a
-number. Its prompt lives in `benchmarks/ladder/lunar_prompt.md`; the reference
-values in `lunar_task.md` are never shown to the model.
-
-`--warmup` prepends three cheap smoke tests (algebra, Fibonacci, translation)
-that any instruct model should clear. They are not part of the ladder score.
-
-**ARC-AGI** — `benchmarks/arc-agi/arc_agi_benchmark.py`, official pass@2 rules.
-The corpus is not vendored; fetch it into `benchmarks/arc-agi/dataset/` first
-(see `benchmarks/arc-agi/ARC_AGI.md`).
-
-### Results
-
-Measured on an M-series Mac with 24 GB unified memory. `thinking` is the chat
-template's `<think>` block: on by default for reasoning models, disabled with
-`--reasoning-effort none`.
-
-| Model | Warm-up | Ladder | Top rung | ARC-AGI mini | tok/s |
-|---|---|---|---|---|---|
-| `ornith-ai/Ornith-1.5-9B-MLX-4bit` (thinking off) | 3/3 | 1/4 ² | not run | 0/3 ¹ | ~45 |
-| `ornith-ai/Ornith-1.5-9B-MLX-4bit` (thinking on) | 2/3 | 0/4 ² | not run | not run | ~43 |
-
-Ornith 9B rung by rung, thinking off:
-
-| Rung | Result | Detail |
-|---|---|---|
-| 1 · biquadratic real | ✅ | roots correct, including the repeated and empty cases |
-| 2 · biquadratic complex | ❌ | `x⁴ + 1` returns 2 roots instead of 4 |
-| 3 · Fourier | ❌ | `a0 = 10.86` for `f(x) = x`, want 0 — the integration is wrong, not the formula |
-| 4 · pump head | ❌ | `v = 0.0298` m/s, want 1.79 — never converted mm to m |
-| 5 · lunar mission | — | not run |
-
-Warm-up, thinking off: algebra ✅ (163 tok, 4 s), Fibonacci ✅ (757 tok, 16 s),
-translation ✅ (303 tok, 7 s — German idiomatic, French paraphrased rather than
-translated).
-
-² Rungs 1 and 2 were measured before the ladder was split into separate
-prompts: one prompt asked for both functions, the real half was correct and the
-complex half was not. Rung 5 has not been run against this model yet.
-
-¹ The ARC-AGI column is a partial run: three training tasks (`007bbfb7`,
-`00d62c1b`, `017c7c7b`), none solved at pass@2, 330 s total. It was stopped
-before the remaining two, so treat it as a smoke test rather than a score.
-
-The validators are themselves checked, without a model or a GPU:
-
-```bash
-python3 benchmarks/ladder/selfcheck.py    # 9 assertions, both directions
-```
-
-With thinking **on**, all three hard tasks and the translation ended in
-`finish_reason: length` — the budget went into the `<think>` block and no answer
-was ever emitted. That is a budget failure, not a capability ceiling, which is
-why the table above reports the two modes separately.
-
-### Reproduce
-
-```bash
-basalt serve --model ornith-ai/Ornith-1.5-9B-MLX-4bit --rest --reasoning-effort none &
-
-python3 benchmarks/ladder/run.py --port 8080 --warmup --json ladder.json
-python3 benchmarks/arc-agi/arc_agi_benchmark.py --engine mlx --split training --limit 5
-```
-
-Adding a model to the table is one run of each — PRs with new rows are welcome.
-
----
-
-## Dependencies
-
-Everything is a SwiftPM package; there is no CocoaPods, no Node, no Python at
-runtime. `Package.resolved` pins the exact revisions.
-
-| Package | Used for |
-|---|---|
-| [mlx-swift](https://github.com/ml-explore/mlx-swift) | the array/NN layer on Metal |
-| [mlx-swift-lm](https://github.com/ml-explore/mlx-swift-lm) | model architectures and loading — `MLXLLM`, `MLXVLM`, `MLXLMCommon` |
-| [swift-transformers](https://github.com/huggingface/swift-transformers) | tokenizers and chat templates |
-| [hummingbird](https://github.com/hummingbird-project/hummingbird) | the HTTP server |
-| [swift-argument-parser](https://github.com/apple/swift-argument-parser) | the CLI |
-| [Rainbow](https://github.com/onevcat/Rainbow) | terminal colour and layout |
-| [swift-markdown](https://github.com/apple/swift-markdown), [Splash](https://github.com/JohnSundell/Splash) | Markdown rendering and syntax highlighting in the terminal |
-
-`MLXVLM` is not optional: Gemma 4 and the Ornith checkpoints declare
-`*ForConditionalGeneration`, and those architectures are registered there rather
-than in `MLXLLM`.
-
-Updates arrive as Dependabot PRs — weekly for SwiftPM, monthly for the GitHub
-Actions. mlx-swift moves fast and a model architecture is often one release
-away, which is the reason for the weekly cadence.
-
----
-
-## Contributing
-
-Issues and pull requests are welcome. Before opening a PR:
-
-```bash
-swift build          # must compile
-swift test           # must stay green
-```
-
-Never commit credentials, tokens, or `*.sqlite3` state — `.gitignore` blocks the
-usual suspects, and the release workflow runs a secret scan over the tree.
-
----
+| Install, requirements, build from source, `./basalt-claude` | [docs/install.md](docs/install.md) |
+| CLI commands, `serve` flags, prompt cache, CacheBlend | [docs/commands.md](docs/commands.md) |
+| REST API: security, model management, OpenAI, Anthropic, images, SSE, Swagger | [docs/rest-api.md](docs/rest-api.md) |
+| Claude Code, OpenCode, OpenAI SDKs, MCP for Claude Desktop and Cursor | [docs/integrations.md](docs/integrations.md) |
+| Verified models and downloading | [docs/models.md](docs/models.md) |
+| Features at a glance, benchmark ladder, ARC-AGI | [docs/benchmarks.md](docs/benchmarks.md) |
+| Pipeline presets and memory modes | [docs/pipelines.md](docs/pipelines.md) |
+| `basalt compose` reference and measurements | [docs/compose.md](docs/compose.md) |
+| Basalt for Mac | [docs/mac-app.md](docs/mac-app.md) |
+| Model X-ray, experiments, self-training, distillation | [docs/research-tools.md](docs/research-tools.md) |
+| Project structure, architecture notes, scripts, dependencies | [docs/architecture.md](docs/architecture.md) |
+| Architecture patterns and modules (Russian) | [docs/ARCHITECTURE_PATTERNS_AND_MODULES.md](docs/ARCHITECTURE_PATTERNS_AND_MODULES.md) |
+| Cloud: OpenRouter setup, cost optimization, model comparison | [docs/cloud/OPENROUTER_SETUP.md](docs/cloud/OPENROUTER_SETUP.md) · [docs/cloud/COST_OPTIMIZATION.md](docs/cloud/COST_OPTIMIZATION.md) · [docs/cloud/MODEL_COMPARISON.md](docs/cloud/MODEL_COMPARISON.md) |
+| Working on basalt with AI agents | [docs/AI_SETUP.md](docs/AI_SETUP.md) · [docs/AGENT_OPERATIONS.md](docs/AGENT_OPERATIONS.md) |
+| Roadmap, privacy policy | [docs/ROADMAP.md](docs/ROADMAP.md) · [docs/PRIVACY_POLICY.md](docs/PRIVACY_POLICY.md) |
+| Research notes on agent CLIs, checklists, specs (Russian) | [docs/features.md](docs/features.md) · [docs/specs/FEATURES_CHECKLIST.md](docs/specs/FEATURES_CHECKLIST.md) · [docs/specs/AUDIT_CHECKLIST.md](docs/specs/AUDIT_CHECKLIST.md) · [docs/specs/EMOJI_AS_CODE.md](docs/specs/EMOJI_AS_CODE.md) |
+| Contributing, changelog | [CONTRIBUTING.md](CONTRIBUTING.md) · [CHANGELOG.md](CHANGELOG.md) |
 
 ## License
 
 [MIT](LICENSE) © 2026 goodmai
 
-Model weights are **not** covered by this license — each model on HuggingFace
-carries its own terms.
+Model weights are **not** covered by this license — each model on HuggingFace carries its own terms.

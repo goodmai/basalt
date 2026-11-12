@@ -158,6 +158,58 @@ Each `/v1/pipeline` response, and each session log record, carries a receipt. Pe
 - `docs/examples/compose/mac-16gb.yaml`: Ornith 9B local, OCR on demand, long prompts to Claude Haiku within $0.50 a day.
 - `docs/examples/compose/mac-24gb.yaml`: Gemma 4 12B, OCR on demand, code to Haiku, a second `support` pipeline, $1 a day in total.
 - `docs/examples/compose/mac-64gb.yaml`: Gemma 4 26B-A4B with Qwen3.8-27B and Nemotron Transcribe on demand, no cloud answers.
-- `docs/examples/compose/document-qa-cloud.yaml`, `mom.yaml` and `too-big.yaml`: the files behind the README tables.
+- `docs/examples/compose/document-qa-cloud.yaml`, `mom.yaml` and `too-big.yaml`: the files behind the measurements below.
 
-The measurements are in the README section "basalt compose" and in #412.
+More measurements are in #412.
+
+## Measured
+
+```yaml
+version: 1
+name: document-qa-cloud
+models:
+  chat:  { source: mlx-community/gemma-4-12B-it-qat-4bit }
+  ocr:   { source: mlx-community/PaddleOCR-VL-1.5-8bit, keep: on-demand, idle_unload: 30s }
+  jev:   { source: "cloud:openrouter/~typesafe/jev-latest", api_key_env: OPENROUTER_API_KEY }
+pipeline:
+  perceive: { documents: [ocr, apple-vision] }
+  decide:   { cascade: [jev, chat], escalate_below: 0.6 }
+  answer: chat
+```
+
+```bash
+basalt compose plan -f docs/examples/compose/document-qa-cloud.yaml
+basalt compose up -f docs/examples/compose/document-qa-cloud.yaml -- --port 8080
+basalt compose up voice-agent            # bundled: document-qa, voice-agent
+```
+
+```yaml
+pipeline:
+  decide: { cascade: [jev, chat], escalate_below: 0.6 }
+  answer:
+    routes:
+      - when: { decide: { route: code }, cost_left: true }
+        model: haiku          # cloud:openrouter/anthropic/claude-haiku-5.5, budget: { usd_per_day: 0.5 }
+        fallback: chat
+      - model: chat
+```
+
+Mixed workload of 55 requests through `/v1/pipeline` (30 decisions, 10 code, 10 chat, 5 documents), M4 Pro, release build (`scripts/compose_mom_bench.swift`, `docs/examples/compose/mom.yaml`):
+
+| Setup | Labels right | Cloud per 1000 requests | p50 | p95 | Local stage time |
+|---|---|---|---|---|---|
+| local only (Gemma 4 12B decides and answers) | 55/55 | $0 | 0.92 s | 10.0 s | 176 s |
+| cloud first (Jev decides, Haiku answers all text) | 55/55 | $0.046 | 1.25 s | 4.8 s | 24 s |
+| MoM (Jev decides, code to Haiku while budget lasts, the rest Gemma) | 55/55 | $0.035 | 1.21 s | 4.8 s | 53 s |
+
+Measured with `compose up` on an M4 Pro with 24 GB, release build:
+
+| File | Request | Receipt |
+|---|---|---|
+| document-qa-cloud | document (first) | OCR loaded on demand (489 ms), decided locally, answered: 6.1 s |
+| | document (again) | OCR already loaded (0 ms): 5.0 s |
+| | after 40 s idle | OCR unloaded, footprint 12 → 11 GB |
+| | typed question | decided by Jev in the cloud: 0.6 s |
+| | document | OCR reloaded (267 ms): 5.3 s |
+| voice-agent (bundled) | audio | chat unloaded around Nemotron Transcribe (swap 6.9 s): 17.3 s |
+| too-big (example) | `compose plan` | refused: one stage needs 20.7 GB plus 2 GB against a 19.1 GB working set |
