@@ -85,6 +85,7 @@ extension ServeCommand {
         configuration.expertStreaming = expertStreaming.setting
         configuration.probesModel = modelProbe
         configuration.visionTowerBundle = experimental.aneVisionTower
+        configuration.feedForwardSplitBundle = experimental.aneFeedForwardSplit
         return MLXInferenceEngine(configuration, promptCacheDisk: try promptCacheDisk.store())
     }
 

@@ -134,6 +134,7 @@ extension MLXInferenceEngine {
                 transcribesAudio: transcribes)
             guard attach(loaded, facts: facts, epoch: epoch) else { return }
             await loadVisionTower(loaded, epoch: epoch)
+            await loadFeedForwardSplit(loaded, epoch: epoch)
             if capabilities == nil { logger.warn(ModelCapabilities.unverifiedWarning(modelType: modelType)) }
             await probeKVZones()
             await wireWorkingSet()

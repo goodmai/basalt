@@ -1,6 +1,7 @@
 import CoreAI
 import Foundation
 import MLX
+import Synchronization
 import MLXLMCommon
 import MLXNN
 import Testing
@@ -14,6 +15,11 @@ struct GPUFeedForwardShare: FeedForwardShare {
     let activation: FeedForwardActivation
     let weights: [Int: [[Float]]]
     var fails = false
+    let calls = Calls()
+
+    final class Calls: Sendable {
+        let count = Mutex(0)
+    }
 
     init(_ model: any SplitFeedForwardPrefill & Module, columns: Int, lengths: Set<Int>, fails: Bool = false) throws {
         let modules = Dictionary(model.namedModules(), uniquingKeysWith: { first, _ in first })
@@ -34,6 +40,7 @@ struct GPUFeedForwardShare: FeedForwardShare {
     func supports(layer: Int, tokens: Int) -> Bool { lengths.contains(tokens) && weights[layer] != nil }
 
     func run(layer: Int, planar: NDArray, tokens: Int) async throws -> NDArray {
+        calls.count.withLock { $0 += 1 }
         if fails { throw BasaltError.inferenceError("the test share fails") }
         let w = try #require(weights[layer])
         let x = SplitFeedForward.unplanar(planar, tokens: tokens, hidden: hidden).reshaped([tokens, hidden]).asType(.float32)
@@ -107,5 +114,32 @@ struct SplitFeedForwardTests {
         #expect(split.columns == 64 && split.lengths == [512, 2048] && split.layers == ["0": "ffn-0-0.5-int8.aimodel"])
         #expect(FeedForwardActivation(split.activation) == .geluTanh && FeedForwardActivation("silu") == .silu)
         await #expect(throws: BasaltError.self) { _ = try await CoreAIFeedForwardShare.load(folder) }
+    }
+
+    static func reply(columns: Int?, fails: Bool = false) async throws -> (text: String, calls: Int, lengths: [Int]?) {
+        let container = try TinyModel.container(.gemma4Unified)
+        await container.update { quantize(model: $0.model, groupSize: 64, bits: 4) { path, module in path.contains(".mlp.") && module is Linear && !(module is QuantizedLinear) } }
+        let engine = MLXInferenceEngine(EngineConfiguration(promptCacheBytes: 0))
+        await engine.attach(container)
+        var share: GPUFeedForwardShare?
+        if let columns {
+            let made = try await container.perform { context in
+                try GPUFeedForwardShare(try #require(context.model as? any SplitFeedForwardPrefill & Module), columns: columns, lengths: [8], fails: fails)
+            }
+            await engine.attachFeedForwardSplit(made, lengths: [8], activation: .geluTanh, to: container, epoch: await engine.modelEpoch, source: "test")
+            share = made
+        }
+        let reply = try await engine.generate(request: GenerationRequest(prompt: "Basalt splits the prefill of each dense layer.", maxTokens: 8, temperature: 0))
+        return (reply.generatedText, share?.calls.count.withLock { $0 } ?? 0, await engine.modelFacts.feedForwardSplitLengths)
+    }
+
+    @Test("Through the engine: the prompt prefilled with the split decodes the plain engine's greedy text; a failing share falls back to the GPU and decodes it too")
+    func engine() async throws {
+        let plain = try await Self.reply(columns: nil)
+        let split = try await Self.reply(columns: 64)
+        #expect(split.lengths == [8] && split.calls > 0, "the split prefill did not run: \(split.calls) share calls")
+        #expect(split.text == plain.text, "\(split.text) against \(plain.text)")
+        let failed = try await Self.reply(columns: 64, fails: true)
+        #expect(failed.calls > 0 && failed.text == plain.text)
     }
 }

@@ -36,6 +36,12 @@ struct ExperimentalServeOptions: ParsableArguments {
     var aneVisionTower: String?
 
     @Option(
+        name: .customLong("experimental-ane-ffn-split"),
+        help: "Prefill dense Gemma 4 models with each feed-forward layer split between the GPU and the Neural Engine, from a bundle built by swift scripts/ffn_split_export.swift (int8 shares of the first columns, one function per chunk length). Prompts shorter than the smallest chunk, MoE layers and any failure prefill on the GPU. Costs the bundle's size in memory; decode is unchanged (#274)"
+    )
+    var aneFeedForwardSplit: String?
+
+    @Option(
         name: .customLong("telemetry-confidence-every"),
         help: "Measure per-token confidence (top-token probability, entropy, top-two margin) on every Nth generation and add it to /api/v1/stats and /api/v1/metrics; 0 measures only requests that ask for it. Costs one GPU sync per measured token (#450)"
     )
@@ -43,6 +49,9 @@ struct ExperimentalServeOptions: ParsableArguments {
 
     func validate() throws {
         if telemetryConfidenceEvery < 0 { throw ValidationError("--telemetry-confidence-every takes 0 or a positive count, got \(telemetryConfidenceEvery)") }
+        if let aneFeedForwardSplit, !CoreAIFeedForwardShare.isBundle(URL(fileURLWithPath: aneFeedForwardSplit)) {
+            throw ValidationError("--experimental-ane-ffn-split \(aneFeedForwardSplit) has no manifest.json with ffn_split; build it with swift scripts/ffn_split_export.swift")
+        }
         if let aneVisionTower, !CoreAIVisionTower.isBundle(URL(fileURLWithPath: aneVisionTower)) {
             throw ValidationError("--experimental-ane-vision-tower \(aneVisionTower) is not a Core AI vision tower bundle (metadata.json and tower.aimodel)")
         }

@@ -215,9 +215,24 @@ extension MLXInferenceEngine {
 
     func launching(_ input: LMInput, _ prompt: CachedPrompt, options: LaunchOptions, container: ModelContainer) async throws -> GenerationLaunch {
         try faults.check(.launch)
-        return try await container.performEvaluating(nonSendable: (input, prompt)) { context, values in
-            try Self.launch(input: values.0, prompt: values.1, options: options, context: context)
+        let started = ContinuousClock.now
+        let split = await splitPrefill(input, prompt, options: options, container: container)
+        let splitReused = split.reuse.map { $0.reusedTokens } ?? 0
+        guard splitReused > (prompt.reuse?.reusedTokens ?? 0) else {
+            return try await container.performEvaluating(nonSendable: (input, split)) { context, values in
+                try Self.launch(input: values.0, prompt: values.1, options: options, context: context)
+            }
         }
+        let forced = { var forced = options; forced.keepsCache = true; return forced }()
+        let launch = try await container.performEvaluating(nonSendable: (input, split)) { context, values in
+            try Self.launch(input: values.0, prompt: values.1, options: forced, context: context)
+        }
+        var reported = GenerationLaunch(
+            stream: launch.stream, task: launch.task, cache: options.keepsCache ? launch.cache : nil,
+            reusedTokens: TokenCount(prompt.reuse?.reusedTokens ?? 0))
+        (reported.anchors, reported.exactTokens, reported.mtpPrefix) = (options.keepsCache ? launch.anchors : [], launch.exactTokens, launch.mtpPrefix)
+        reported.prefillSeconds = (ContinuousClock.now - started).inSeconds
+        return reported
     }
 
     var planSettings: GenerationPlan.Settings {

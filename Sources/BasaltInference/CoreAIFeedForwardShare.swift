@@ -2,7 +2,7 @@ import BasaltCore
 import CoreAI
 import Foundation
 
-struct CoreAIFeedForwardShare: FeedForwardShare {
+public struct CoreAIFeedForwardShare: FeedForwardShare {
     struct Manifest: Decodable {
         struct Split: Decodable {
             let hidden: Int
@@ -21,13 +21,14 @@ struct CoreAIFeedForwardShare: FeedForwardShare {
 
     let columns: Int
     let activation: FeedForwardActivation
+    let lengths: [Int]
     let functions: [Int: [Int: InferenceFunction]]
 
     static func manifest(_ directory: URL) -> Manifest.Split? {
         (try? Data(contentsOf: directory.appending(component: "manifest.json"))).flatMap { try? JSONDecoder().decode(Manifest.self, from: $0).split }
     }
 
-    static func isBundle(_ directory: URL) -> Bool { manifest(directory) != nil }
+    public static func isBundle(_ directory: URL) -> Bool { manifest(directory) != nil }
 
     static func load(_ directory: URL) async throws(BasaltError) -> CoreAIFeedForwardShare {
         guard let split = manifest(directory) else {
@@ -51,7 +52,7 @@ struct CoreAIFeedForwardShare: FeedForwardShare {
         } catch {
             throw .modelConfigurationInvalid(path: directory.path, reason: "Core AI could not load the feed-forward share: \(error.localizedDescription)")
         }
-        return CoreAIFeedForwardShare(columns: split.columns, activation: FeedForwardActivation(split.activation), functions: functions)
+        return CoreAIFeedForwardShare(columns: split.columns, activation: FeedForwardActivation(split.activation), lengths: split.lengths, functions: functions)
     }
 
     func supports(layer: Int, tokens: Int) -> Bool { functions[layer]?[tokens] != nil }
