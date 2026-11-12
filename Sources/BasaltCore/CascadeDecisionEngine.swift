@@ -46,6 +46,7 @@ public struct CascadeDecisionEngine: DecisionEngine {
     public var remote: any DecisionEngine { stages[0] }
     public var local: any DecisionEngine { stages[stages.count - 1] }
     public var modelID: String { stages.map(\.modelID).joined(separator: "+") }
+    public var acceptsMedia: Bool { stages.contains(where: \.acceptsMedia) }
 
     public var onDevice: (any DecisionEngine)? {
         let local = stages.filter { $0.onDevice != nil }

@@ -34,9 +34,24 @@ struct SystemOneController: Sendable {
         } else {
             return nil
         }
-        return SystemOneRequest(
+        guard let media = Self.media(root["media"]) else { return nil }
+        var request = SystemOneRequest(
             state: text, questions: decoded, calibrated: root["calibrated"] as? Bool,
             abstainBelow: (root["abstain_below"] as? NSNumber)?.doubleValue, minMargin: (root["min_margin"] as? NSNumber)?.doubleValue)
+        request.media = media
+        return request
+    }
+
+    static func media(_ value: Any?) -> [DecisionMedia]?? {
+        guard let value else { return .some(nil) }
+        guard let list = value as? [[String: Any]] else { return nil }
+        var media: [DecisionMedia] = []
+        for item in list {
+            guard let kind = item["kind"] as? String, let mime = item["mime_type"] as? String, let encoded = item["data"] as? String,
+                  let data = Data(base64Encoded: encoded), let entry = DecisionMedia(kind: kind, mimeType: mime, data: data) else { return nil }
+            media.append(entry)
+        }
+        return .some(media)
     }
 
     @Sendable
@@ -44,12 +59,15 @@ struct SystemOneController: Sendable {
         guard let engine = await engine() else {
             return ProviderErrorResponse.response(status: .notFound, message: "No decision model is loaded; start basalt serve with --decision-model <OpenJev repo|dir>.", shape: .openAI)
         }
-        let data = Data(try await request.body.collect(upTo: ChatPipeline.textBodyLimit).readableBytesView)
+        let data = Data(try await request.body.collect(upTo: PipelineController.bodyLimit).readableBytesView)
         guard let dto = Self.request(from: data) else {
             return ProviderErrorResponse.response(
                 status: .badRequest,
-                message: "A System One request needs \"state\" (text, object or array) and \"questions\": {id: {\"type\": \"noul\"|\"choice\"|\"score\", \"instructions\": ..., \"criteria\": ...}}.",
+                message: "A System One request needs \"state\" (text, object or array) and \"questions\": {id: {\"type\": \"noul\"|\"choice\"|\"score\", \"instructions\": ..., \"criteria\": ...}}, and optionally \"media\": [{\"kind\": \"image\"|\"audio\"|\"video\"|\"pdf\", \"mime_type\": ..., \"data\": base64}].",
                 shape: .openAI)
+        }
+        if dto.media?.isEmpty == false, !engine.acceptsMedia {
+            return ProviderErrorResponse.response(status: .badRequest, message: "media needs a decision model that reads images, audio, video and PDFs, such as --decision-model cloud:gemini/gemini-decision-1", shape: .openAI)
         }
         do {
             var buffer = ByteBuffer()

@@ -171,3 +171,29 @@ public struct PipelineResponse: Codable, Sendable, Equatable {
         (self.perceived, self.answers, self.system2, self.receipt) = (perceived, answers, system2, receipt)
     }
 }
+
+extension PipelineAttachment {
+    public var media: DecisionMedia? {
+        switch self {
+        case .document(.pdf(let data)): DecisionMedia(kind: "pdf", mimeType: "application/pdf", data: data)
+        case .document(.image(let image)): DecisionMedia(kind: "image", mimeType: image.mime, data: image.data)
+        case .audio(let clip): DecisionMedia(kind: "audio", mimeType: "audio/wav", data: clip.wav)
+        }
+    }
+}
+
+extension AudioClip {
+    public var wav: Data {
+        let pcm = samples.map { Int16(max(-1, min(1, $0)) * Float(Int16.max)) }
+        let rate = UInt32(Self.sampleRate)
+        var data = Data("RIFF".utf8)
+        func append<T: FixedWidthInteger>(_ value: T) { withUnsafeBytes(of: value.littleEndian) { data.append(contentsOf: $0) } }
+        append(UInt32(36 + pcm.count * 2))
+        data.append(contentsOf: Data("WAVEfmt ".utf8))
+        append(UInt32(16)); append(UInt16(1)); append(UInt16(1)); append(rate); append(rate * 2); append(UInt16(2)); append(UInt16(16))
+        data.append(contentsOf: Data("data".utf8))
+        append(UInt32(pcm.count * 2))
+        for sample in pcm { append(sample) }
+        return data
+    }
+}

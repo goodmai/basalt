@@ -27,8 +27,8 @@ extension ComposeSpec {
         case 0: return []
         case 1: return ["--decision-model", local(cascade[0])]
         default:
-            guard case .cloud(_, let model)? = models[cascade[0]]?.source, let last = cascade.last else { return [] }
-            return ["--decision-model", "cloud:\(model)", "--decision-escalate", local(last),
+            guard case .cloud(let provider, let model)? = models[cascade[0]]?.source, let last = cascade.last else { return [] }
+            return ["--decision-model", provider == "gemini" ? "cloud:gemini/\(model)" : "cloud:\(model)", "--decision-escalate", local(last),
                     "--decision-api-key-env", models[cascade[0]]?.apiKeyEnv ?? "OPENROUTER_API_KEY"]
                 + (escalateBelow.map { ["--decision-escalate-below", String($0)] } ?? [])
         }

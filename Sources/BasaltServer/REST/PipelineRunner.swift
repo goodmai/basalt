@@ -11,6 +11,7 @@ package struct PipelineStages: Sendable {
     package var swap: PipelineSwap?
     package var onDemand: [PipelineCore.Perceiver: OnDemandModel] = [:]
     package var answers: AnswerRouter?
+    package var shareMedia = false
 
     package init(
         ocr: ModelOrchestratorActor? = nil, audio: ModelOrchestratorActor? = nil, speech: (any AudioTranscriber)? = nil,
@@ -53,7 +54,9 @@ struct PipelineRunner: Sendable {
         let perceived = perception.perceived
         let state = PipelineCore.state(perceived, text: request.text)
         let typed = perceived.pages == nil && perceived.transcript == nil
-        let (decision, deciding) = try await decide(request.questions, state: state, by: typed ? decisions : decisions?.onDevice, origin: origin, sessionId: sessionId)
+        let share = !typed && stages.shareMedia && decisions?.acceptsMedia == true
+        let media = share ? request.attachments.compactMap(\.media) : nil
+        let (decision, deciding) = try await decide(request.questions, state: state, media: media, by: typed || share ? decisions : decisions?.onDevice, origin: origin, sessionId: sessionId)
         let route = PipelineCore.route(questions: request.questions, decision: decision, task: request.task, state: state)
         var replies: [PipelineCore.System2Reply] = []
         let answering = typed ? origin : RequestOrigin(source: PipelineCore.perceivedSource, endpoint: origin.endpoint, stream: false)
@@ -180,14 +183,15 @@ struct PipelineRunner: Sendable {
     }
 
     func decide(
-        _ questions: [String: SystemOneQuestion], state: String, by decisions: (any DecisionEngine)?, origin: RequestOrigin, sessionId: String?
+        _ questions: [String: SystemOneQuestion], state: String, media: [DecisionMedia]? = nil, by decisions: (any DecisionEngine)?, origin: RequestOrigin, sessionId: String?
     ) async throws(BasaltError) -> (SystemOneResponse?, PipelineStageReceipt?) {
         guard !questions.isEmpty, let decisions else { return (nil, nil) }
         let started = ContinuousClock.now
         guard !state.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, state.count <= SystemOneCore.maxStateCharacters else {
             return (nil, PipelineCore.skipped(decisions.modelID, ms: Self.elapsed(since: started)))
         }
-        let request = SystemOneRequest(state: state, questions: questions, abstainBelow: stages.abstainBelow, minMargin: stages.minMargin)
+        var request = SystemOneRequest(state: state, questions: questions, abstainBelow: stages.abstainBelow, minMargin: stages.minMargin)
+        request.media = media
         do {
             let response = try await SystemOneController.decide(decisions, request, log: chat.sessionLog, origin: origin, sessionId: sessionId)
             return (response, PipelineCore.decided(response, ms: Self.elapsed(since: started)))

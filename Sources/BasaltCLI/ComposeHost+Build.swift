@@ -30,6 +30,7 @@ extension ComposeHost {
             if case .onDemand(let model)? = name.flatMap({ held[$0] }) { stages.onDemand[perceiver] = model }
         }
         if first { stages.swap = startup.swap }
+        stages.shareMedia = view.cascade.contains { view.models[$0]?.data == ComposeSpec.shareMedia }
         stages.answers = try router(view, held: held)
         return stages
     }

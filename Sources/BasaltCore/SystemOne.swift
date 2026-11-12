@@ -34,12 +34,32 @@ public struct SystemOneQuestion: Codable, Sendable, Equatable {
     }
 }
 
+public struct DecisionMedia: Codable, Sendable, Equatable {
+    public static let kinds: [String: String] = ["image": "image", "audio": "audio", "video": "video", "pdf": "document", "document": "document"]
+    public static let byteLimit = 50 << 20
+
+    public var kind: String
+    public var mimeType: String
+    public var data: Data
+
+    public init?(kind: String, mimeType: String, data: Data) {
+        guard let kind = Self.kinds[kind], !mimeType.isEmpty, !data.isEmpty, data.count <= Self.byteLimit else { return nil }
+        (self.kind, self.mimeType, self.data) = (kind, mimeType, data)
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case kind, data
+        case mimeType = "mime_type"
+    }
+}
+
 public struct SystemOneRequest: Codable, Sendable, Equatable {
     public var state: String
     public var questions: [String: SystemOneQuestion]
     public var calibrated: Bool?
     public var abstainBelow: Double?
     public var minMargin: Double?
+    public var media: [DecisionMedia]?
 
     public init(state: String, questions: [String: SystemOneQuestion], calibrated: Bool? = nil, abstainBelow: Double? = nil, minMargin: Double? = nil) {
         (self.state, self.questions, self.calibrated) = (state, questions, calibrated)
@@ -114,12 +134,14 @@ public struct SystemOneResponse: Codable, Sendable, Equatable {
 public protocol DecisionEngine: Sendable {
     var modelID: String { get }
     var runsBesideDecode: Bool { get }
+    var acceptsMedia: Bool { get }
     var onDevice: (any DecisionEngine)? { get }
     func decide(_ request: SystemOneRequest) async throws(BasaltError) -> SystemOneResponse
 }
 
 extension DecisionEngine {
     public var runsBesideDecode: Bool { false }
+    public var acceptsMedia: Bool { false }
     public var onDevice: (any DecisionEngine)? { self }
 }
 

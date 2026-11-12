@@ -115,6 +115,7 @@ public struct GuardedDecisionEngine: DecisionEngine {
     public let gate: CloudGate
     public var modelID: String { inner.modelID }
     public var runsBesideDecode: Bool { inner.runsBesideDecode }
+    public var acceptsMedia: Bool { inner.acceptsMedia }
     public var onDevice: (any DecisionEngine)? { inner.onDevice }
 
     public init(_ inner: any DecisionEngine, gate: CloudGate) {

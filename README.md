@@ -52,7 +52,9 @@ Details: [training commands](docs/commands.md) · [self-training, distillation a
 - **A mixture of models with a budget.** Answer routes send code to a cloud model while its daily budget lasts and everything else to the local model. On a 55-request mixed workload: every label right, $0.035 per 1000 requests, p95 4.8 s against 10.0 s local only (M4 Pro).
 - **Private by default.** Keys come only from environment variables, and text read from your documents or audio never goes to a cloud model.
 
-Details: [compose reference and measurements](docs/compose.md) · [pipeline presets and memory modes](docs/pipelines.md)
+- **Google's Gemini Decision 1 as a decision stage.**  answers yes/no, choice and score questions over text, images, audio, video and PDFs in one pass, in front of a local decider. It is also the ideal calibration teacher for local decision models (#448).
+
+Details: [compose reference and measurements](docs/compose.md) · [pipeline presets and memory modes](docs/pipelines.md) · [cloud decisions with Gemini](docs/cloud-decisions.md)
 
 ## Research: open the model up while it runs
 
@@ -125,6 +127,7 @@ Local 4B–9B models are not a drop-in replacement for a frontier model — they
 | Verified models and downloading | [docs/models.md](docs/models.md) |
 | Features at a glance, benchmark ladder, ARC-AGI | [docs/benchmarks.md](docs/benchmarks.md) |
 | Pipeline presets and memory modes | [docs/pipelines.md](docs/pipelines.md) |
+| Cloud decisions: Gemini Decision 1, multimodal media, the calibration teacher | [docs/cloud-decisions.md](docs/cloud-decisions.md) |
 | `basalt compose` reference and measurements | [docs/compose.md](docs/compose.md) |
 | Basalt for Mac | [docs/mac-app.md](docs/mac-app.md) |
 | Model X-ray, experiments, self-training, distillation | [docs/research-tools.md](docs/research-tools.md) |

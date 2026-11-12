@@ -59,7 +59,7 @@ pipelines:                    # more pipelines, served at /v1/pipelines/<name>
 ```
 
 ### Models
-- **`source`:** a Hugging Face repo, a local path (`./`, `/` or `~`), or `cloud:openrouter/<model>`.
+- **`source`:** a Hugging Face repo, a local path (`./`, `/` or `~`), `cloud:openrouter/<model>`, or `cloud:gemini/<model>` for Google's decision models such as `gemini-decision-1` (decide cascades only, key usually in `GEMINI_API_KEY`).
 - **`keep`** applies to local models:
   - `resident` is the default and stays loaded;
   - `on-demand` loads on the first request that needs the model and unloads after `idle_unload`. Durations look like `30s`, `5m` or `1h`, and the default is 120 s;
@@ -67,7 +67,8 @@ pipelines:                    # more pipelines, served at /v1/pipelines/<name>
 - **Cloud models:**
   - Name the environment variable that holds the key with `api_key_env`. A key written in the file is refused, and so is `${…}` interpolation.
   - `budget: { usd_per_day }` caps one model's spend.
-  - `data: no-perceived` is the only data rule, and it is the default: text read from documents or audio never goes to a cloud model.
+  - `data: no-perceived` is the default: text read from documents or audio never goes to a cloud model.
+  - `data: media`, only for `cloud:gemini` decision models, sends a pipeline's attached files themselves (PDFs, images, audio as WAV) and their perceived text to that model for the decision. Use it only for documents that may leave this Mac.
 
 ### Memory and the plan
 `compose plan` adds up the resident bytes of every local model. It counts an on-demand model as resident, because it can be loaded at any time.
