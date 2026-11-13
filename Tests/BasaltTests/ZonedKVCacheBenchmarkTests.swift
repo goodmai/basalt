@@ -10,7 +10,7 @@ import MLXLMCommon
 @Suite("Zoned KV cache benchmark on real models", .serialized)
 struct ZonedKVCacheBenchmarkTests {
     enum Mode: CustomStringConvertible, CaseIterable {
-        case fp16, uniform8, uniform4, zoned8, zoned4, zonedK8V4, zonedK8V4H, zonedK8V4Evict25, zonedK8V4Evict50
+        case fp16, uniform8, uniform4, turbo3, turbo4, zoned8, zoned4, zonedK8V4, zonedK8V4H, zonedK8V4Evict25, zonedK8V4Evict50
         case headSplit25, headSplit375, headSplit50, headSplit25K8V4, headSplit50K8V4, headSplitFidelity25, headSplitFidelity50, quest16, quest32, quest16Ops, quest32Ops
 
         var description: String {
@@ -18,6 +18,8 @@ struct ZonedKVCacheBenchmarkTests {
             case .fp16: "fp16"
             case .uniform8: "uniform-q8"
             case .uniform4: "uniform-q4"
+            case .turbo3: "turbo3"
+            case .turbo4: "turbo4"
             case .zoned8: "zoned-q8"
             case .zoned4: "zoned-q4"
             case .zonedK8V4: "zoned-k8v4"
@@ -45,6 +47,8 @@ struct ZonedKVCacheBenchmarkTests {
             case .fp16, .headSplit25, .headSplit375, .headSplit50, .headSplitFidelity25, .headSplitFidelity50, .quest16, .quest32, .quest16Ops, .quest32Ops: nil
             case .uniform8, .zoned8: .q8
             case .uniform4, .zoned4: .q4
+            case .turbo3: .turbo3
+            case .turbo4: .turbo4
             case .zonedK8V4, .zonedK8V4Evict25, .zonedK8V4Evict50, .headSplit25K8V4, .headSplit50K8V4: .k8v4
             case .zonedK8V4H: .k8v4h
             }
@@ -493,8 +497,8 @@ struct ZonedKVCacheBenchmarkTests {
             eval(cache)
             start = end
         }
-        if mode.zones == nil, let bits = mode.precision?.keyBits {
-            maybeQuantizeKVCache(cache: &cache, kvBits: bits, quantizedKVStart: 0)
+        if mode.zones == nil, let precision = mode.precision {
+            maybeQuantizeKVCache(cache: &cache, kvBits: precision.turbo ? nil : precision.keyBits, quantizedKVStart: 0, kvScheme: precision.scheme)
         }
         var nll = 0.0
         while start < total {
@@ -557,7 +561,8 @@ extension ZonedKVCacheBenchmarkTests {
             let cache = try Self.cache(mode, context)
             return (try TokenIterator(input: input, model: context.model, cache: cache, parameters: parameters), cache)
         }
-        parameters.kvBits = mode.precision?.keyBits
+        parameters.kvBits = mode.precision?.turbo == true ? nil : mode.precision?.keyBits
+        parameters.kvScheme = mode.precision?.scheme
         parameters.quantizedKVStart = KVCacheGeometry.defaultQuantizedKVStart
         return (try TokenIterator(input: input, model: context.model, cache: nil, parameters: parameters), nil)
     }
