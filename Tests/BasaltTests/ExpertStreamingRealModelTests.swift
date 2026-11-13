@@ -81,8 +81,8 @@ struct ExpertStreamingRealModelTests {
         var expertMismatches: [String] = []
         for (index, layout) in store.layouts.enumerated() {
             for expert in [0, layout.numExperts / 2, layout.numExperts - 1] {
-                let loaded = store.experts(module: index, [expert])[0]
-                let parts: [(String, MLXArray?)] = [("weight", loaded.weight), ("scales", loaded.scales), ("biases", loaded.biases)]
+                let loaded = store.read(module: index, [expert])
+                let parts: [(String, MLXArray?)] = [("weight", loaded.weight[0]), ("scales", loaded.scales?[0]), ("biases", loaded.biases?[0])]
                 for (suffix, array) in parts {
                     guard let array, let file = files["\(layout.path).\(suffix)"] else { continue }
                     if !MLX.arrayEqual(file[expert], array).item(Bool.self) { expertMismatches.append("\(layout.path).\(suffix)[\(expert)]") }

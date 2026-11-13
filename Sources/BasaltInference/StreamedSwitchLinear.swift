@@ -39,21 +39,44 @@ struct ExpertArrays {
     let biases: MLXArray?
     let bias: MLXArray?
 
-    static func stacked(_ experts: [ExpertArrays]) -> ExpertArrays {
-        func stack(_ part: (ExpertArrays) -> MLXArray?) -> MLXArray? {
-            let parts = experts.compactMap(part)
-            return parts.isEmpty ? nil : MLX.stacked(parts)
+    func taking(_ slots: [Int]) -> ExpertArrays {
+        let pick = MLXArray(slots.map(Int32.init))
+        return ExpertArrays(weight: weight.take(pick, axis: 0), scales: scales?.take(pick, axis: 0), biases: biases?.take(pick, axis: 0), bias: bias?.take(pick, axis: 0))
+    }
+}
+
+struct ModuleSlots {
+    var table: ExpertSlotTable
+    let buffers: [(tensor: ExpertTensor, buffer: SlotBuffer)]
+    let arrays: ExpertArrays?
+
+    init(layout: ExpertLayout, slots: Int) throws(BasaltError) {
+        table = ExpertSlotTable(slots: slots)
+        let tensors = [layout.weight, layout.scales, layout.biases, layout.bias]
+        var buffers: [(ExpertTensor, SlotBuffer)] = []
+        var made: [MLXArray?] = []
+        for tensor in tensors {
+            guard let tensor, slots > 0 else {
+                made.append(nil)
+                continue
+            }
+            let buffer = try SlotBuffer(slots: slots, tensor: tensor)
+            buffers.append((tensor, buffer))
+            made.append(buffer.array)
         }
-        return ExpertArrays(weight: MLX.stacked(experts.map(\.weight)), scales: stack(\.scales), biases: stack(\.biases), bias: stack(\.bias))
+        self.buffers = buffers
+        arrays = made[0].map { ExpertArrays(weight: $0, scales: made[1], biases: made[2], bias: made[3]) }
     }
 }
 
 final class ExpertStore {
     let layouts: [ExpertLayout]
     private let files: [FileHandle]
-    private var lru: ExpertLRU
+    private var modules: [ModuleSlots]
+    private let siblings: [[Int]]
+    private(set) var stats = ExpertCacheStats()
     private(set) var routing = ExpertRouting()
-    private var resident: [ExpertSlot: ExpertArrays] = [:]
+    let capacity: ByteCount
 
     init(files urls: [URL], layouts: [ExpertLayout], capacity: ByteCount) throws {
         files = try urls.map { url in
@@ -62,48 +85,73 @@ final class ExpertStore {
             return handle
         }
         self.layouts = layouts
-        lru = ExpertLRU(capacity: capacity)
+        self.capacity = capacity
+        let perExpert = layouts.reduce(ByteCount.zero) { $0 + $1.expertBytes }
+        let slots = perExpert > .zero ? min(layouts.map(\.numExperts).min() ?? 0, Int(capacity.rawValue / perExpert.rawValue)) : 0
+        modules = try layouts.map { try ModuleSlots(layout: $0, slots: slots) }
+        let parents = layouts.map { $0.path.split(separator: ".").dropLast().joined(separator: ".") }
+        siblings = parents.map { parent in parents.indices.filter { parents[$0] == parent } }
     }
 
-    var stats: ExpertCacheStats { lru.stats }
-    var capacity: ByteCount { lru.capacity }
     var expertBytes: ByteCount { layouts.reduce(.zero) { $0 + $1.totalBytes } }
+    var slotBytes: ByteCount { ByteCount(Int64(modules.reduce(0) { $0 + $1.buffers.reduce(0) { $0 + $1.buffer.stride * $1.buffer.array.dim(0) } })) }
     var reserve: ByteCount { capacity + (layouts.map(\.totalBytes).max() ?? .zero) * 3 }
-    var unclaimedReserve: ByteCount { max(.zero, reserve - lru.resident) }
+    var unclaimedReserve: ByteCount { max(.zero, reserve - slotBytes) }
 
-    func experts(module: Int, _ ids: [Int]) -> [ExpertArrays] {
+    func slotArrays(module: Int) -> ExpertArrays? { modules[module].arrays }
+
+    func slots(module: Int, _ ids: [Int]) -> [Int]? {
         routing.record(module: module, ids)
-        let wanted = Set(ids.map { ExpertSlot(module: module, expert: $0) })
-        let (missing, evicted) = lru.admit(wanted, bytes: layouts[module].expertBytes)
-        for slot in evicted { resident[slot] = nil }
-        for slot in missing { resident[slot] = read(slot) }
-        return ids.map { resident[ExpertSlot(module: module, expert: $0)]! }
-    }
-
-    private func read(_ slot: ExpertSlot) -> ExpertArrays {
-        let layout = layouts[slot.module]
-        return ExpertArrays(
-            weight: read(layout.weight, expert: slot.expert), scales: layout.scales.map { read($0, expert: slot.expert) },
-            biases: layout.biases.map { read($0, expert: slot.expert) }, bias: layout.bias.map { read($0, expert: slot.expert) })
-    }
-
-    private func read(_ tensor: ExpertTensor, expert: Int) -> MLXArray {
-        let offset = tensor.offset + Int64(expert * tensor.expertBytes)
-        var data = Data(count: tensor.expertBytes)
-        let read = data.withUnsafeMutableBytes { Self.pread(files[tensor.file].fileDescriptor, into: $0, at: offset) }
-        precondition(read == tensor.expertBytes, "expert streaming: read \(read) of \(tensor.expertBytes) bytes at \(offset): \(String(cString: strerror(errno)))")
-        return MLXArray(data, tensor.shape, dtype: tensor.dtype)
-    }
-
-    private static func pread(_ descriptor: Int32, into buffer: UnsafeMutableRawBufferPointer, at offset: Int64) -> Int {
-        var done = 0
-        while done < buffer.count {
-            let count = Darwin.pread(descriptor, buffer.baseAddress! + done, buffer.count - done, off_t(offset) + off_t(done))
-            if count < 0, errno == EINTR { continue }
-            guard count > 0 else { return done }
-            done += count
+        guard let placement = modules[module].table.place(ids) else { return nil }
+        var requests = requests(module: module, placement.loads)
+        for sibling in siblings[module] where sibling != module {
+            if let ahead = modules[sibling].table.place(ids, prefetch: true) {
+                requests += self.requests(module: sibling, ahead.loads)
+                stats.evictions += ahead.evictions
+            }
         }
-        return done
+        ExpertReader.read(requests)
+        stats.hits += ids.count - placement.misses
+        stats.misses += placement.misses
+        stats.evictions += placement.evictions
+        return placement.slots
+    }
+
+    private func requests(module: Int, _ loads: [ExpertSlotTable.Load]) -> [ExpertReader.Request] {
+        loads.flatMap { load in
+            modules[module].buffers.map { tensor, buffer in
+                stats.bytesRead += ByteCount(Int64(tensor.expertBytes))
+                return ExpertReader.Request(
+                    descriptor: files[tensor.file].fileDescriptor, offset: tensor.offset + Int64(load.expert * tensor.expertBytes),
+                    destination: buffer.destination(slot: load.slot), count: tensor.expertBytes)
+            }
+        }
+    }
+
+    func read(module: Int, _ ids: [Int]) -> ExpertArrays {
+        stats.misses += ids.count
+        stats.evictions += ids.count
+        let layout = layouts[module]
+        let tensors = [layout.weight, layout.scales, layout.biases, layout.bias]
+        let pointers = tensors.map { tensor in
+            tensor.map { UnsafeMutableRawPointer.allocate(byteCount: SlotBuffer.padded(ids.count * $0.expertBytes), alignment: SlotBuffer.page) }
+        }
+        let requests = zip(tensors, pointers).flatMap { tensor, pointer -> [ExpertReader.Request] in
+            guard let tensor, let pointer else { return [] }
+            stats.bytesRead += ByteCount(Int64(ids.count * tensor.expertBytes))
+            return ids.enumerated().map { index, id in
+                ExpertReader.Request(
+                    descriptor: files[tensor.file].fileDescriptor, offset: tensor.offset + Int64(id * tensor.expertBytes),
+                    destination: pointer + index * tensor.expertBytes, count: tensor.expertBytes)
+            }
+        }
+        ExpertReader.read(requests)
+        let parts = zip(tensors, pointers).map { tensor, pointer -> MLXArray? in
+            guard let tensor, let pointer else { return nil }
+            let flat = MLXArray(rawPointer: pointer, [SlotBuffer.padded(ids.count * tensor.expertBytes)], dtype: .uint8) { pointer.deallocate() }
+            return flat[0 ..< ids.count * tensor.expertBytes].view(dtype: tensor.dtype).reshaped([ids.count] + tensor.shape)
+        }
+        return ExpertArrays(weight: parts[0]!, scales: parts[1], biases: parts[2], bias: parts[3])
     }
 }
 
@@ -123,22 +171,29 @@ final class StreamedSwitchLinear: SwitchLinear {
     }
 
     override func callAsFunction(_ x: MLXArray, _ indices: MLXArray, sortedIndices: Bool = false) -> MLXArray {
+        let layout = store.layouts[module]
         let routed = indices.asType(.int32).asArray(Int32.self).map(Int.init)
         let ids = Array(Set(routed)).sorted()
-        var rank = [Int](repeating: 0, count: store.layouts[module].numExperts)
-        for (position, id) in ids.enumerated() { rank[id] = position }
-        let local = MLXArray(routed.map { UInt32(rank[$0]) }, indices.shape)
-        return project(x, ExpertArrays.stacked(store.experts(module: module, ids)), local, sortedIndices: sortedIndices)
+        let sorted = Self.residentKernel(sorted: sortedIndices, assignments: indices.size, experts: layout.numExperts, quantized: layout.quantization != nil)
+        var position = [Int](repeating: 0, count: layout.numExperts)
+        guard let slots = store.slots(module: module, ids), let arrays = store.slotArrays(module: module) else {
+            for (rank, id) in ids.enumerated() { position[id] = rank }
+            return project(x, store.read(module: module, ids), MLXArray(routed.map { UInt32(position[$0]) }, indices.shape), sorted: sorted)
+        }
+        guard !sorted || zip(slots, slots.dropFirst()).allSatisfy(<) else {
+            for (rank, id) in ids.enumerated() { position[id] = rank }
+            return project(x, arrays.taking(slots), MLXArray(routed.map { UInt32(position[$0]) }, indices.shape), sorted: true)
+        }
+        for (slot, id) in zip(slots, ids) { position[id] = slot }
+        return project(x, arrays, MLXArray(routed.map { UInt32(position[$0]) }, indices.shape), sorted: sorted)
     }
 
     static func residentKernel(sorted: Bool, assignments: Int, experts: Int, quantized: Bool) -> Bool {
         quantized ? sorted && assignments / max(1, experts) >= 4 : sorted
     }
 
-    private func project(_ x: MLXArray, _ experts: ExpertArrays, _ indices: MLXArray, sortedIndices: Bool) -> MLXArray {
-        let layout = store.layouts[module]
-        let quantization = experts.scales == nil ? nil : layout.quantization
-        let sorted = Self.residentKernel(sorted: sortedIndices, assignments: indices.size, experts: layout.numExperts, quantized: quantization != nil)
+    private func project(_ x: MLXArray, _ experts: ExpertArrays, _ indices: MLXArray, sorted: Bool) -> MLXArray {
+        let quantization = experts.scales == nil ? nil : store.layouts[module].quantization
         var result =
             if let quantization, let scales = experts.scales {
                 MLX.gatherQuantizedMM(
