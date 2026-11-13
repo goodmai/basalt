@@ -5,41 +5,81 @@ struct ChatView: View {
     let store: ChatStore
     @State private var selected: MessageID?
     @State private var inspecting = false
+    @Environment(\.glassSurfacePolicy) private var policy
 
     var body: some View {
-        VStack(spacing: 0) {
-            ScrollViewReader { proxy in
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 18) {
-                        ForEach(store.state.conversation.messages) { message in
-                            MessageRow(message: message).id(message.id)
-                                .onTapGesture { if message.role == .assistant { (selected, inspecting) = (message.id, true) } }
-                        }
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 18) {
+                    ForEach(store.state.conversation.messages) { message in
+                        MessageRow(message: message)
+                            .id(message.id)
+                            .onTapGesture {
+                                if message.role == .assistant {
+                                    (selected, inspecting) = (message.id, true)
+                                }
+                            }
                     }
-                    .padding(20)
-                    .frame(maxWidth: 820)
-                    .frame(maxWidth: .infinity)
                 }
-                .onChange(of: store.state.conversation.messages.last?.text) {
-                    if let last = store.state.conversation.messages.last { proxy.scrollTo(last.id, anchor: .bottom) }
+                .padding(.horizontal, 20)
+                .padding(.top, 20)
+                .padding(.bottom, 12)
+                .frame(maxWidth: 820)
+                .frame(maxWidth: .infinity)
+            }
+            .scrollEdgeEffectStyle(policy.usesLiquidGlass ? .automatic : .hard, for: [.top, .bottom])
+            .onScrollGeometryChange(for: Bool.self) { geo in
+                geo.contentSize.height <= geo.containerSize.height
+                    || (geo.contentOffset.y + geo.containerSize.height >= geo.contentSize.height - 36)
+            } action: { _, atBottom in
+                if atBottom != store.state.scrollPin.isPinned {
+                    store.send(.scrolled(atBottom: atBottom))
+                }
+            }
+            .onChange(of: store.state.conversation.messages.last?.text) {
+                if store.state.scrollPin.isPinned, let last = store.state.conversation.messages.last {
+                    proxy.scrollTo(last.id, anchor: .bottom)
+                }
+            }
+            .onChange(of: store.state.scrollPin) { previous, current in
+                if !previous.isPinned, current.isPinned, let last = store.state.conversation.messages.last {
+                    proxy.scrollTo(last.id, anchor: .bottom)
+                }
+            }
+            .safeAreaBar(edge: .bottom) {
+                bottomChrome
+            }
+        }
+        .dropDestination(for: URL.self) { urls, _ in
+            let accepted = urls.filter { ChatAttachment.accepts($0.lastPathComponent) }
+            for url in accepted { ComposerGlassBar.attach(url, to: store) }
+            return !accepted.isEmpty
+        }
+        .navigationTitle(store.state.conversation.title.isEmpty ? "New Conversation" : store.state.conversation.title)
+        .inspector(isPresented: $inspecting) {
+            InspectorView(store: store, selected: selected).inspectorColumnWidth(min: 260, ideal: 320)
+        }
+        .toolbar {
+            Button("Inspector", systemImage: "sidebar.trailing") { inspecting.toggle() }
+                .keyboardShortcut("i", modifiers: [.command, .option])
+        }
+    }
+
+    private var bottomChrome: some View {
+        VStack(spacing: 8) {
+            if store.state.scrollPin.showsJumpControl {
+                JumpToLatestPill(unreadDeltas: store.state.scrollPin.unreadDeltas) {
+                    store.send(.jumpToBottom)
                 }
             }
             if case .failed(let error) = store.state.run {
                 Label(ChatView.describe(error), systemImage: "exclamationmark.triangle")
+                    .font(.callout)
                     .foregroundStyle(.secondary)
-                    .padding(.horizontal, 20)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 6)
             }
-            Composer(store: store)
-        }
-        .dropDestination(for: URL.self) { urls, _ in
-            let accepted = urls.filter { ChatAttachment.accepts($0.lastPathComponent) }
-            for url in accepted { Composer.attach(url, to: store) }
-            return !accepted.isEmpty
-        }
-        .navigationTitle(store.state.conversation.title.isEmpty ? "New Conversation" : store.state.conversation.title)
-        .inspector(isPresented: $inspecting) { InspectorView(store: store, selected: selected).inspectorColumnWidth(min: 260, ideal: 320) }
-        .toolbar {
-            Button("Inspector", systemImage: "sidebar.trailing") { inspecting.toggle() }.keyboardShortcut("i", modifiers: [.command, .option])
+            ComposerGlassBar(store: store)
         }
     }
 
@@ -72,7 +112,9 @@ struct MessageRow: View {
             HStack {
                 Spacer(minLength: 80)
                 VStack(alignment: .trailing, spacing: 6) {
-                    ForEach(Array(message.attachments.enumerated()), id: \.offset) { _, attachment in AttachmentChip(attachment: attachment) }
+                    ForEach(Array(message.attachments.enumerated()), id: \.offset) { _, attachment in
+                        AttachmentChip(attachment: attachment)
+                    }
                     if !message.text.isEmpty {
                         Text(message.text)
                             .textSelection(.enabled)
@@ -85,7 +127,9 @@ struct MessageRow: View {
         } else {
             VStack(alignment: .leading, spacing: 8) {
                 ForEach(Array(message.parts.enumerated()), id: \.offset) { _, part in PartView(part: part) }
-                if message.state == .streaming, message.parts.isEmpty { ProgressView().controlSize(.small).accessibilityLabel("Answering") }
+                if message.state == .streaming, message.parts.isEmpty {
+                    ProgressView().controlSize(.small).accessibilityLabel("Answering")
+                }
                 ReceiptLine(message: message)
             }
         }
@@ -150,66 +194,5 @@ struct ReceiptLine: View {
         if !parts.isEmpty, message.state != .streaming {
             Text(parts.joined(separator: " · ")).font(.caption).foregroundStyle(.secondary)
         }
-    }
-}
-
-struct Composer: View {
-    let store: ChatStore
-    @FocusState private var focused: Bool
-
-    @State private var importing = false
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            if !store.state.attachments.isEmpty {
-                HStack {
-                    ForEach(store.state.attachments) { attachment in
-                        Button(attachment.name, systemImage: "xmark.circle.fill") { store.send(.detach(attachment.id)) }
-                            .labelStyle(.titleAndIcon).font(.callout).buttonStyle(.bordered)
-                            .accessibilityLabel("Remove \(attachment.name)")
-                    }
-                }
-            }
-            HStack(alignment: .bottom, spacing: 8) {
-                Button("Attach", systemImage: "paperclip") { importing = true }
-                field
-            }
-        }
-        .fileImporter(isPresented: $importing, allowedContentTypes: [.pdf, .image, .audio], allowsMultipleSelection: true) { result in
-            for url in (try? result.get()) ?? [] { Composer.attach(url, to: store) }
-        }
-    }
-
-    static func attach(_ url: URL, to store: ChatStore) {
-        let scoped = url.startAccessingSecurityScopedResource()
-        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-        if let data = try? Data(contentsOf: url), let attachment = ChatAttachment(name: url.lastPathComponent, data: data) { store.send(.attach(attachment)) }
-    }
-
-    var field: some View {
-        HStack(alignment: .bottom, spacing: 8) {
-            TextField("Message", text: Binding(get: { store.state.draft }, set: { store.send(.draftChanged($0)) }), axis: .vertical)
-                .textFieldStyle(.plain)
-                .lineLimit(1 ... 10)
-                .focused($focused)
-                .onSubmit(send)
-            if case .streaming = store.state.run {
-                Button("Stop", systemImage: "stop.circle.fill") { store.send(.stop) }
-                    .keyboardShortcut(".", modifiers: .command)
-            } else {
-                Button("Send", systemImage: "arrow.up.circle.fill", action: send)
-                    .disabled(!store.state.canSend)
-            }
-        }
-        .labelStyle(.iconOnly)
-        .font(.title3)
-        .padding(12)
-        .background(.background.secondary, in: .rect(cornerRadius: 18))
-        .padding(16)
-        .onAppear { focused = true }
-    }
-
-    func send() {
-        store.send(.send(message: MessageID(), reply: MessageID(), run: RunID()))
     }
 }

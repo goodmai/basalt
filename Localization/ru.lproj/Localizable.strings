@@ -111,3 +111,12 @@
 "Lowest top-token probability (decile)" = "Наименьшая вероятность лучшего токена (дециль)";
 "Lowest top-token probability" = "Наименьшая вероятность лучшего токена";
 "Answers" = "Ответы";
+"Copy" = "Копировать";
+"Jump to Latest" = "К последнему";
+"Jump to Latest (%lld)" = "К последнему (%lld)";
+"Load" = "Загрузить";
+"Loading…" = "Загружаю…";
+"New conversation" = "Новый разговор";
+"Reading…" = "Читаю…";
+"fits" = "помещается";
+"does not fit" = "не помещается";
