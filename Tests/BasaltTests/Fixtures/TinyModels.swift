@@ -7,7 +7,7 @@ import MLXLLM
 
 enum TinyModel {
     enum Family: String, CaseIterable, Sendable {
-        case qwen3Small, qwen3, qwen3HeadDim32, qwen35, qwen35Moe, gemma3, gemma4, gemma4Moe, gemma4Unified, qwen3Moe, sigmoidMoe, nemotronH, lfm2, lfm2Moe, prism, paddleOCR, deepSeekOCR
+        case qwen3Small, qwen3, qwen3HeadDim32, qwen35, qwen35Moe, gemma3, gemma4, gemma4Moe, gemma4Unified, qwen3Moe, sigmoidMoe, nemotronH, lfm2, lfm2Moe, prism, paddleOCR, deepSeekOCR, deepSeekOCR2
 
         func model(_ config: Data) throws -> any LanguageModel {
             let decoder = JSONDecoder.json5()
@@ -24,6 +24,7 @@ enum TinyModel {
             case .prism: MLXLLM.Qwen35Model(try decoder.decode(MLXLLM.Qwen35Configuration.self, from: config))
             case .paddleOCR: PaddleOCRVL(try decoder.decode(PaddleOCRVLConfiguration.self, from: config))
             case .deepSeekOCR: DeepSeekOCR(try decoder.decode(DeepSeekOCRConfiguration.self, from: config).validated())
+            case .deepSeekOCR2: DeepSeekOCR2(try decoder.decode(DeepSeekOCR2Configuration.self, from: config).validated())
             }
         }
 
@@ -41,13 +42,14 @@ enum TinyModel {
             case .prism: 7
             case .paddleOCR: 400
             case .deepSeekOCR: 401
+            case .deepSeekOCR2: 413
             }
         }
 
         var weightScale: Float {
             switch self {
             case .qwen3Small, .gemma3: 4
-            case .qwen3, .qwen3HeadDim32, .gemma4, .gemma4Moe, .gemma4Unified, .qwen35, .qwen35Moe, .qwen3Moe, .sigmoidMoe, .nemotronH, .lfm2, .lfm2Moe, .prism, .paddleOCR, .deepSeekOCR: 1
+            case .qwen3, .qwen3HeadDim32, .gemma4, .gemma4Moe, .gemma4Unified, .qwen35, .qwen35Moe, .qwen3Moe, .sigmoidMoe, .nemotronH, .lfm2, .lfm2Moe, .prism, .paddleOCR, .deepSeekOCR, .deepSeekOCR2: 1
             }
         }
 
@@ -149,6 +151,17 @@ enum TinyModel {
                   "sam_vit_b": {"width": 32, "layers": 2, "heads": 2, "global_attn_indexes": [1], "downsample_channels": [512, 64], "window_size": 3},
                   "clip-l-14-224": {"width": 64, "layers": 2, "heads": 4, "patch_size": 14, "image_size": 224}}},
                  "projector_config": {"input_dim": 128, "n_embed": 64, "projector_type": "linear"}}
+                """
+            case .deepSeekOCR2: """
+                {"model_type": "deepseekocr_2", "image_token_index": 250,
+                 "language_config": {"hidden_size": 64, "num_hidden_layers": 3, "intermediate_size": 128, "moe_intermediate_size": 32,
+                  "num_attention_heads": 4, "num_key_value_heads": 2, "vocab_size": 256, "n_routed_experts": 4, "n_shared_experts": 1,
+                  "num_experts_per_tok": 2, "first_k_dense_replace": 1, "qk_nope_head_dim": 0, "topk_method": "greedy",
+                  "rms_norm_eps": 1e-6, "rope_theta": 10000.0},
+                 "vision_config": {"image_size": 1024, "width": {
+                  "sam_vit_b": {"width": 32, "layers": 2, "heads": 2, "global_attn_indexes": [1], "downsample_channels": [512, 1024], "window_size": 14},
+                  "qwen2-0-5b": {"dim": 64, "layers": 2, "heads": 4, "kv_heads": 2, "intermediate_size": 128}}},
+                 "projector_config": {"input_dim": 64, "n_embed": 64, "projector_type": "linear"}}
                 """
             }
         }

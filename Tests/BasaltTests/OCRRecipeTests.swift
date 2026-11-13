@@ -94,11 +94,12 @@ struct OCRRecipeTests {
         #expect(request.temperature == 0 && request.repetitionPenalty == nil && request.presencePenalty == nil)
     }
 
-    @Test("deepseekocr is DeepSeek-OCR with its published prompts: a document converts to markdown with grounding, text is Free OCR, a chart is Parse the figure; table and formula are refused",
+    @Test("deepseekocr and deepseekocr_2 are DeepSeek-OCR with its published prompts: a document converts to markdown with grounding, text is Free OCR, a chart is Parse the figure; table and formula are refused",
           arguments: [(OCRTask.document, "<|grounding|>Convert the document to markdown.", "text"), (.text, "Free OCR.", "text"), (.chart, "Parse the figure.", "chart")])
     func deepSeekPrompts(_ task: OCRTask, _ prompt: String, _ type: String) throws {
         let recipe = try #require(OCRRecipe.of(modelType: "deepseekocr", hints: []))
         #expect(recipe.family == .deepSeekOCR && recipe.resolution == nil)
+        #expect(OCRRecipe.of(modelType: "deepseekocr_2", hints: []) == recipe)
         #expect(try recipe.step(for: task) == .recognize(prompt: prompt, blockType: type))
         #expect(throws: BasaltError.self) { try recipe.step(for: .table) }
         #expect(throws: BasaltError.self) { try recipe.step(for: .formula) }

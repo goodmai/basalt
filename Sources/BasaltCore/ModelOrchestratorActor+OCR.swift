@@ -27,7 +27,7 @@ extension ModelOrchestratorActor {
         let modelType = ModelCache.config(at: URL(fileURLWithPath: loaded.path))?["model_type"] as? String
         guard let recipe = OCRRecipe.of(modelType: modelType, hints: [loaded.path, currentModelId]) else {
             throw .invalidRequestStructure(
-                details: "the loaded model \(modelInfo) (model_type \(modelType ?? "unknown")) has no OCR recipe; load GLM-OCR (glm_ocr), MinerU2.5 (qwen2_vl), PaddleOCR-VL (paddleocr_vl) or DeepSeek-OCR (deepseekocr), or send model \(OCRRequest.appleVision)")
+                details: "the loaded model \(modelInfo) (model_type \(modelType ?? "unknown")) has no OCR recipe; load GLM-OCR (glm_ocr), MinerU2.5 (qwen2_vl), PaddleOCR-VL (paddleocr_vl) or DeepSeek-OCR (deepseekocr, deepseekocr_2), or send model \(OCRRequest.appleVision)")
         }
         return (recipe, loaded.epoch)
     }

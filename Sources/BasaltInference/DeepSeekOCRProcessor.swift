@@ -17,17 +17,29 @@ struct DeepSeekOCRProcessorConfiguration: Codable, Sendable {
 }
 
 struct DeepSeekOCRProcessor: UserInputProcessor {
+    struct Geometry: Sendable {
+        static let v1 = Geometry(name: "DeepSeek-OCR", tile: OCRResolution.tileSide, maxTiles: 9, newlines: true, resolutions: OCRResolution.allCases)
+        static let v2 = Geometry(name: "DeepSeek-OCR-2", tile: 768, maxTiles: 6, newlines: false, resolutions: [.base, .gundam])
+
+        let name: String
+        let tile: Int
+        let maxTiles: Int
+        let newlines: Bool
+        let resolutions: [OCRResolution]
+    }
+
     static let processorType = "DeepseekVLV2Processor"
+    static let ocr2ProcessorType = "DeepseekOCR2Processor"
     static let imageToken = "<image>"
     static let groundingToken = "<|grounding|>"
     static let padding: CGFloat = 127 / 255
 
     let config: DeepSeekOCRProcessorConfiguration
     let tokenizer: any Tokenizer
+    var geometry = Geometry.v1
 
-    init(_ config: DeepSeekOCRProcessorConfiguration, tokenizer: any Tokenizer) {
-        self.config = config
-        self.tokenizer = tokenizer
+    init(_ config: DeepSeekOCRProcessorConfiguration, tokenizer: any Tokenizer, geometry: Geometry = .v1) {
+        (self.config, self.tokenizer, self.geometry) = (config, tokenizer, geometry)
     }
 
     static func mode(_ context: [String: any Sendable]?) -> OCRMode {
@@ -87,8 +99,13 @@ struct DeepSeekOCRProcessor: UserInputProcessor {
         let extent = image.extent.integral
         let (width, height, side) = (Int(extent.width), Int(extent.height), resolution.side)
         guard width > 0, height > 0 else { throw BasaltError.invalidRequestStructure(details: "DeepSeek-OCR cannot read a \(width)x\(height) image") }
-        let (columns, rows) = resolution.grid(width: width, height: height)
-        let layout = DeepSeekOCRImageLayout(side: side, columns: columns, rows: rows, tile: resolution == .gundam ? OCRResolution.tileSide : 0)
+        guard geometry.resolutions.contains(resolution) else {
+            throw BasaltError.invalidRequestStructure(
+                details: "\(geometry.name) has no \(resolution.rawValue) mode; use \(geometry.resolutions.map(\.rawValue).joined(separator: " or "))")
+        }
+        let (columns, rows) = resolution.grid(width: width, height: height, tile: geometry.tile, maxTiles: geometry.maxTiles)
+        let layout = DeepSeekOCRImageLayout(
+            side: side, columns: columns, rows: rows, tile: resolution == .gundam ? geometry.tile : 0, newlines: geometry.newlines)
         let stretched = resolution != .gundam && side <= OCRResolution.tileSide
         var views = [try ImageCanvas.rgb(
             image, width: side, height: side, placing: stretched ? nil : Self.contained(width: width, height: height, side: side), fill: Self.padding)]

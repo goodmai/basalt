@@ -76,7 +76,7 @@ extension ServeCommand {
     static func ocrRefusal(_ model: String, path: String) -> String? {
         let modelType = ModelCache.config(at: URL(fileURLWithPath: path))?["model_type"] as? String
         guard OCRRecipe.of(modelType: modelType, hints: [path, model]) == nil else { return nil }
-        return "--pipeline-ocr-model \(model) (model_type \(modelType ?? "unknown")) has no OCR recipe; use GLM-OCR (glm_ocr), MinerU2.5 (qwen2_vl), PaddleOCR-VL (paddleocr_vl) or DeepSeek-OCR (deepseekocr)"
+        return "--pipeline-ocr-model \(model) (model_type \(modelType ?? "unknown")) has no OCR recipe; use GLM-OCR (glm_ocr), MinerU2.5 (qwen2_vl), PaddleOCR-VL (paddleocr_vl) or DeepSeek-OCR (deepseekocr, deepseekocr_2)"
     }
 
     static func audioRefusal(_ model: String, path: String) -> String? {
