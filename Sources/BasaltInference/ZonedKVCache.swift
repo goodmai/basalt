@@ -45,7 +45,7 @@ final class ZonedKVCache: KVCacheAttentionProtocol {
     let zones: KVZones
     let precision: KVPrecision
     private let exact: KVCacheSimple
-    private var middle: (keys: QuantizedRows, values: QuantizedRows)?
+    private var middle: (keys: MiddleKeys, values: QuantizedRows)?
     private(set) var materializedForCaller = false
     private(set) var headsQuantize: Bool?
     private(set) var rotatesValues = false
@@ -126,7 +126,7 @@ final class ZonedKVCache: KVCacheAttentionProtocol {
     var metaState: [String] {
         get {
             [zones.sinkTokens, zones.windowTokens, zones.migrationStep, precision.keyBits, precision.valueBits].map(String.init)
-                + [String(rotatesValues), String(zones.evictedMiddleFraction), String(evictedCount), String(evictionRefused)]
+                + [String(rotatesValues), String(zones.evictedMiddleFraction), String(evictedCount), String(evictionRefused), "polar=\(precision.polarRotated ?? 0)"]
         }
         set { preconditionFailure("ZonedKVCache is never restored from a serialized prompt cache") }
     }
@@ -198,7 +198,7 @@ final class ZonedKVCache: KVCacheAttentionProtocol {
         let (sinks, moved, recent) = (sinkCount, sinkCount..<(sinkCount + overflow), (sinkCount + overflow)...)
         let tokens = exact.state
         var grown = middle ?? (
-            QuantizedRows(bits: precision.keyBits, groupSize: groupSize), QuantizedRows(bits: precision.valueBits, groupSize: groupSize))
+            MiddleKeys(precision: precision, groupSize: groupSize, headDim: keys.dim(3)), QuantizedRows(bits: precision.valueBits, groupSize: groupSize))
         let (keptKeys, keptValues) = evictingHighestKeyNorms(keys: tokens[0][.ellipsis, moved, 0...], values: tokens[1][.ellipsis, moved, 0...])
         if keptKeys.dim(2) > 0 {
             grown.keys.append(keptKeys)
@@ -223,7 +223,7 @@ final class ZonedKVCache: KVCacheAttentionProtocol {
 
     private func materialized() -> (MLXArray, MLXArray) {
         let tokens = exact.state
-        guard let middle, let keys = middle.keys.dequantizedRows(), let values = middle.values.dequantizedRows() else {
+        guard let middle, let keys = middle.keys.dequantizedRows(dtype: tokens[0].dtype), let values = middle.values.dequantizedRows() else {
             return (tokens[0], tokens[1])
         }
         let sinks = sinkCount
@@ -235,25 +235,25 @@ final class ZonedKVCache: KVCacheAttentionProtocol {
     }
 
     private func decodeAttention(
-        queries: MLXArray, middle: (keys: QuantizedRows, values: QuantizedRows), scale: Float
+        queries: MLXArray, middle: (keys: MiddleKeys, values: QuantizedRows), scale: Float
     ) -> MLXArray {
         let (batch, heads, length, dim) = (queries.dim(0), queries.dim(1), queries.dim(2), queries.dim(3))
-        guard let qk = middle.keys.parts, let qv = middle.values.parts else {
+        guard let qv = middle.values.parts else {
             preconditionFailure("the middle zone holds keys and values for the same tokens")
         }
         let tokens = exact.state.map { expandedDimensions($0, axis: 2) }
-        let kvHeads = qk.0.dim(1)
+        let kvHeads = qv.0.dim(1)
         let grouped = (queries * scale).reshaped(batch, kvHeads, heads / kvHeads, length, dim)
         let perGroup = { (part: QuantizedTokens) in
             (expandedDimensions(part.0, axis: 2), expandedDimensions(part.1, axis: 2), part.2.map { expandedDimensions($0, axis: 2) })
         }
-        let (keys, values) = (perGroup(qk), perGroup(qv))
-        let quantizedScores = quantizedMM(
-            grouped, keys.0, scales: keys.1, biases: keys.2,
-            transpose: true, groupSize: middle.keys.groupSize, bits: middle.keys.bits)
+        let values = perGroup(qv)
+        guard let quantizedScores = middle.keys.scores(grouped) else {
+            preconditionFailure("the middle zone holds keys and values for the same tokens")
+        }
         let exactScores = matmul(grouped, tokens[0].swappedAxes(-1, -2))
         let weights = softmax(concatenated([quantizedScores, exactScores], axis: -1), axis: -1, precise: true)
-        let split = qk.0.dim(2)
+        let split = qv.0.dim(2)
         let middleOutput = quantizedMM(
             weights[.ellipsis, ..<split], values.0, scales: values.1, biases: values.2,
             transpose: false, groupSize: middle.values.groupSize, bits: middle.values.bits)

@@ -27,6 +27,7 @@ struct ModelFacts: Sendable {
     var imageToken: Int?
     var transcribesAudio = false
     var visionTower: CoreAIVisionTower?
+    var polarRotated: Int?
     var deltas: [String: AppliedDelta] = [:]
     var cacheFence = 0
     var adapters: [String: ServedAdapter] = [:]
@@ -101,6 +102,10 @@ extension MLXInferenceEngine {
     var modelIsHybrid: Bool? { modelFacts.isHybrid }
     var modelHasRecurrentState: Bool? { modelFacts.hasRecurrentState }
     var modelAttendsThroughZones: Bool { modelFacts.attendsThroughZones }
+    var effectiveKVPrecision: KVPrecision? {
+        guard let precision = configuration.kvPrecision, precision.isPolar else { return configuration.kvPrecision }
+        return precision.resolvingPolar(rotated: modelFacts.polarRotated ?? 0)
+    }
     var modelPrefillsInChunks: Bool { modelFacts.prefillsInChunks }
     public var supportsKVEviction: Bool { modelPrefillsInChunks }
     public var evictsKVInFullPrecision: Bool { modelFacts.evictsThroughUpdate }
