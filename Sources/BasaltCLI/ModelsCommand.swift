@@ -355,7 +355,7 @@ struct CheckSubcommand: AsyncParsableCommand {
     @Flag(name: .long, help: "Before any download: fetch only the safetensors headers, build the model shape-only and render the chat template")
     var deep: Bool = false
 
-    @Option(name: .customLong("kv-bits"), help: "Size the context budget for `serve --kv-bits` (4, 8, k8v4, k8v4h, turbo3, turbo4, turbo8v4 or auto)")
+    @Option(name: .customLong("kv-bits"), help: "Size the context budget for `serve --kv-bits` (4, 8, k8v4, k8v4h, turbo3, turbo4, turbo8v4, polar4 or auto)")
     var kvBits: KVBitsSetting?
 
     @Flag(name: .customLong("kv-zones"), help: KVBitsSetting.zonesHelp)
