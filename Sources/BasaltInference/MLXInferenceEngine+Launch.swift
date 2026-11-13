@@ -82,7 +82,7 @@ extension MLXInferenceEngine {
         }
         guard options.keepsCache else {
             let plan = FreshCache.plan(
-                kvBitsSet: options.params.kvBits != nil, headMask: options.kvHeadMask, questTopK: options.questTopK,
+                kvBitsSet: options.params.kvBits != nil || options.params.kvScheme != nil, headMask: options.kvHeadMask, questTopK: options.questTopK,
                 zones: options.kvZones, precision: options.kvPrecision)
             return try start.fresh(plan, batch: options.batch, lookup: options.lookup)
         }

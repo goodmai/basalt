@@ -5,17 +5,23 @@ public struct KVPrecision: Sendable, Hashable, CustomStringConvertible {
     public let keyBits: Int
     public let valueBits: Int
     public let rotatesValues: Bool
+    public let turbo: Bool
 
     public static let q8 = KVPrecision(bits: 8)
     public static let q4 = KVPrecision(bits: 4)
     public static let k8v4 = KVPrecision(keyBits: 8, valueBits: 4)
     public static let k8v4h = KVPrecision(keyBits: 8, valueBits: 4, rotatesValues: true)
+    public static let turbo3 = KVPrecision(keyBits: 3, valueBits: 3, turbo: true)
+    public static let turbo4 = KVPrecision(keyBits: 4, valueBits: 4, turbo: true)
+    public static let turbo8v4 = KVPrecision(keyBits: 8, valueBits: 4, turbo: true)
     public static let supportedBits = [2, 3, 4, 5, 6, 8]
+    static let named = [k8v4, k8v4h, turbo3, turbo4, turbo8v4]
 
-    public init(keyBits: Int, valueBits: Int, rotatesValues: Bool = false) {
+    public init(keyBits: Int, valueBits: Int, rotatesValues: Bool = false, turbo: Bool = false) {
         self.keyBits = keyBits
         self.valueBits = valueBits
         self.rotatesValues = rotatesValues
+        self.turbo = turbo
     }
 
     public init(bits: Int) {
@@ -23,7 +29,7 @@ public struct KVPrecision: Sendable, Hashable, CustomStringConvertible {
     }
 
     public init?(argument: String) {
-        if let named = [Self.k8v4, .k8v4h].first(where: { $0.description == argument }) {
+        if let named = Self.named.first(where: { $0.description == argument }) {
             self = named
         } else if let bits = Int(argument), Self.supportedBits.contains(bits) {
             self.init(bits: bits)
@@ -35,23 +41,29 @@ public struct KVPrecision: Sendable, Hashable, CustomStringConvertible {
     public var isUniform: Bool { keyBits == valueBits }
 
     public static var accepted: String {
-        (supportedBits.map(String.init) + [k8v4, k8v4h].map(\.description)).joined(separator: ", ")
+        (supportedBits.map(String.init) + named.map(\.description)).joined(separator: ", ")
     }
 
     public static func flagConflict(kvBitsSet: Bool, fixed: KVPrecision?, zones: Bool) -> String? {
         if zones, !kvBitsSet {
             return "--kv-zones needs --kv-bits (one of \(accepted), or auto on serve and models check): it says which tokens stay fp16 in a quantized cache"
         }
-        if let fixed, !fixed.isUniform, !zones {
+        if let fixed, fixed.turbo, zones {
+            return "--kv-bits \(fixed) replaces each full-attention cache with the TurboQuant cache, so it does not combine with --kv-zones; use \(k8v4) with --kv-zones, or \(fixed) alone"
+        }
+        if let fixed, !fixed.isUniform, !fixed.turbo, !zones {
             return "--kv-bits \(fixed) needs --kv-zones: 8-bit keys and 4-bit values are a precision of the zoned cache's quantized middle"
         }
         return nil
     }
 
-    public var uniform: KVPrecision { isUniform ? self : KVPrecision(bits: max(keyBits, valueBits)) }
+    public var uniform: KVPrecision { isUniform || turbo ? self : KVPrecision(bits: max(keyBits, valueBits)) }
+
+    public var scheme: String? { turbo ? description : nil }
 
     public var description: String {
-        (isUniform ? "\(keyBits)-bit" : "k\(keyBits)v\(valueBits)") + (rotatesValues ? "h" : "")
+        if turbo { return isUniform ? "turbo\(keyBits)" : "turbo\(keyBits)v\(valueBits)" }
+        return (isUniform ? "\(keyBits)-bit" : "k\(keyBits)v\(valueBits)") + (rotatesValues ? "h" : "")
     }
 }
 

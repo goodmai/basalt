@@ -4,7 +4,7 @@ import BasaltCore
 struct KVCacheOptions: ParsableArguments {
     @Option(
         name: .customLong("kv-bits"),
-        help: "Quantize the KV cache to 4 or 8 bits, k8v4 (8-bit keys, 4-bit values; needs --kv-zones; experimental k8v4h also Walsh–Hadamard-rotates the values), or `auto`: fp16 until a request's max_tokens does not fit, then 8-bit, k8v4 with --kv-zones, then 4-bit (default: full precision)"
+        help: "Quantize the KV cache to 4 or 8 bits, k8v4 (8-bit keys, 4-bit values; needs --kv-zones; experimental k8v4h also Walsh–Hadamard-rotates the values; experimental turbo3, turbo4 and turbo8v4 run the TurboQuant cache on full-attention layers, without --kv-zones, measured in #471 at 8–13% slower decode than 4-bit and no smaller), or `auto`: fp16 until a request's max_tokens does not fit, then 8-bit, k8v4 with --kv-zones, then 4-bit (default: full precision)"
     )
     var bits: KVBitsSetting?
 

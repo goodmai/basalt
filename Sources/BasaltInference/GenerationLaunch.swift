@@ -104,7 +104,7 @@ struct GenerationLauncher {
         switch plan {
         case .headSplit(let mask, let zoning):
             var exact = params
-            exact.kvBits = nil
+            (exact.kvBits, exact.kvScheme) = (nil, nil)
             let cache = mask.replacingFullAttention(try model.newCache(parameters: exact), zoning: zoning)
             return uncached(try TokenIterator(input: input, model: model, cache: cache, parameters: exact, components: components))
         case .quest(let topK):
@@ -112,12 +112,12 @@ struct GenerationLauncher {
             return uncached(try TokenIterator(input: input, model: model, cache: cache, parameters: params, components: components))
         case .zoned(let zones, let precision):
             var exact = params
-            exact.kvBits = nil
+            (exact.kvBits, exact.kvScheme) = (nil, nil)
             let cache = ZonedKVCache.replacingFullAttention(try model.newCache(parameters: exact), zones: zones, precision: precision)
             return uncached(try TokenIterator(input: input, model: model, cache: cache, parameters: exact, components: components))
         case .evicting(let zones):
             var exact = params
-            exact.kvBits = nil
+            (exact.kvBits, exact.kvScheme) = (nil, nil)
             let cache = EvictingKVCache.replacingFullAttention(try model.newCache(parameters: exact), zones: zones)
             return uncached(try TokenIterator(input: input, model: model, cache: cache, parameters: exact, components: components))
         case .stock:
@@ -141,7 +141,7 @@ struct GenerationLauncher {
         }
         try components.validate(parameters: params)
         var quantizing = lookup
-        quantizing.kvQuantization = params.kvBits == nil ? nil : params
+        quantizing.kvQuantization = params.kvBits == nil && params.kvScheme == nil ? nil : params
         return uncached(try PromptLookupTokenIterator(
             prompt: PromptLookupTokenIterator.Prompt(input: input, history: input.text.tokens.asArray(Int.self)), model: model, cache: fresh,
             decoding: DecodingSettings(processor: components.makeProcessor(parameters: params), parameters: params),

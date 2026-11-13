@@ -17,6 +17,7 @@ extension MLXInferenceEngine {
             topP: Float(request.topP ?? samplingDefaults.topP ?? 0.9)
         )
         params.kvBits = modelFacts.capabilities.kvBits(request.kvPrecision ?? configuration.kvPrecision)
+        params.kvScheme = modelFacts.capabilities.kvScheme(request.kvPrecision ?? configuration.kvPrecision)
         params.quantizedKVStart = configuration.quantizedKVStart
         params.repetitionPenalty = request.repetitionPenalty.map(Float.init) ?? configuration.repetitionPenalty
             ?? samplingDefaults.repetitionPenalty.map(Float.init)
