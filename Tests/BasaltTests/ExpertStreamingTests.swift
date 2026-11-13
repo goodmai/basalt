@@ -8,39 +8,36 @@ import MLXLMCommon
 @testable import BasaltCLI
 @testable import BasaltInference
 
-@Suite("Expert LRU and the Streaming fit tier behind --experimental-expert-streaming (#225)")
+@Suite("Expert slot table and the Streaming fit tier behind --experimental-expert-streaming (#225)")
 struct ExpertLRUTests {
-    static func slots(_ module: Int, _ experts: Int...) -> Set<ExpertSlot> {
-        Set(experts.map { ExpertSlot(module: module, expert: $0) })
+    @Test("A repeat is a hit, a new expert a miss into a free slot, then the least recently used slot is reused; the experts of the current call keep their slots")
+    func leastRecentlyUsedSlotGoesFirst() throws {
+        var table = ExpertSlotTable(slots: 3)
+        let placements = [table.place([1, 2]), table.place([3]), table.place([1]), table.place([1, 4])]
+        let (first, third, again, next) = (try #require(placements[0]), try #require(placements[1]), try #require(placements[2]), try #require(placements[3]))
+        #expect(first.loads == [.init(expert: 1, slot: 0), .init(expert: 2, slot: 1)] && first.misses == 2 && first.evictions == 0)
+        #expect(third.slots == [2])
+        #expect(again.loads.isEmpty && again.misses == 0 && again.slots == [0])
+        #expect(next.loads == [.init(expert: 4, slot: 1)] && next.evictions == 1 && next.slots == [0, 1])
+        #expect(table.slot(of: 2) == nil && table.slot(of: 3) == 2)
     }
 
-    @Test("A repeat is a hit, a new expert a miss, and the least recently used one is evicted first")
-    func leastRecentlyUsedGoesFirst() {
-        var lru = ExpertLRU(capacity: ByteCount(30))
-        #expect(lru.admit(Self.slots(0, 1, 2), bytes: ByteCount(10)).missing.count == 2)
-        #expect(lru.admit(Self.slots(0, 3), bytes: ByteCount(10)).evicted.isEmpty)
-        #expect(lru.admit(Self.slots(0, 1), bytes: ByteCount(10)).missing.isEmpty)
-        let step = lru.admit(Self.slots(1, 1), bytes: ByteCount(10))
-        #expect(step.missing == [ExpertSlot(module: 1, expert: 1)])
-        #expect(step.evicted.count == 1)
-        #expect(lru.holds(ExpertSlot(module: 0, expert: 1)))
-        #expect(lru.holds(ExpertSlot(module: 0, expert: 3)))
-        #expect(lru.resident == ByteCount(30))
-        #expect(lru.stats.hits == 1)
-        #expect(lru.stats.misses == 4)
-        #expect(lru.stats.evictions == 1)
-        #expect(lru.stats.bytesRead == ByteCount(40))
-        #expect(abs(lru.stats.hitRate - 0.2) < 1e-9)
+    @Test("A call routed to more experts than there are slots, or naming one twice, is refused so the caller reads them without caching")
+    func overflowRefused() {
+        var table = ExpertSlotTable(slots: 2)
+        #expect(table.place([1, 2, 3]) == nil)
+        #expect(table.place([1, 1]) == nil)
+        #expect(ExpertSlotTable(slots: 0).capacity == 0)
     }
 
-    @Test("A call never evicts the experts it routes to, even when they alone exceed the capacity")
-    func currentCallStaysResident() {
-        var lru = ExpertLRU(capacity: ByteCount(5))
-        _ = lru.admit(Self.slots(0, 1), bytes: ByteCount(10))
-        let step = lru.admit(Self.slots(0, 2, 3), bytes: ByteCount(10))
-        #expect(step.evicted == [ExpertSlot(module: 0, expert: 1)])
-        #expect(lru.holds(ExpertSlot(module: 0, expert: 2)) && lru.holds(ExpertSlot(module: 0, expert: 3)))
-        #expect(lru.resident == ByteCount(20))
+    @Test("A prefetch for a sibling projection loads without counting; that projection's own call then counts the prefetched experts as misses once, not as hits")
+    func prefetchCountsOnce() throws {
+        var table = ExpertSlotTable(slots: 4)
+        let placements = [table.place([5, 6], prefetch: true), table.place([5, 6]), table.place([5, 6])]
+        let (ahead, own, later) = (try #require(placements[0]), try #require(placements[1]), try #require(placements[2]))
+        #expect(ahead.loads.count == 2 && ahead.misses == 0)
+        #expect(own.loads.isEmpty && own.misses == 2)
+        #expect(later.misses == 0)
     }
 
     @Test("The expert cache is the 25% placeholder of the expert weights unless --expert-cache-gb sets it")

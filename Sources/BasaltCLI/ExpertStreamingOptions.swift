@@ -4,7 +4,7 @@ import BasaltCore
 struct ExpertStreamingOptions: ParsableArguments {
     @Flag(
         name: .customLong("experimental-expert-streaming"),
-        help: "Experimental (#225): load a mixture-of-experts model with only its non-expert weights resident and read routed experts from the safetensors shards (pread, F_NOCACHE) into a bounded LRU expert cache on demand, so a model in the Streaming fit tier loads. Greedy output matches the resident model; decode is slower by the cache misses. Needs an mlx-lm converted checkpoint with stacked expert tensors"
+        help: "Experimental (#225): load a mixture-of-experts model with only its non-expert weights resident and read routed experts from the safetensors shards (batched asynchronous reads, F_NOCACHE) straight into fixed expert slots, the same number per layer, reused least recently used first, so a model in the Streaming fit tier loads. Greedy output matches the resident model; decode is slower by the cache misses. Needs an mlx-lm converted checkpoint with stacked expert tensors"
     )
     var enabled = false
 

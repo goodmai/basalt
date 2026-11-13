@@ -30,7 +30,7 @@ extension MLXInferenceEngine {
             return try await loadModelContainer(from: directory, using: DefaultTokenizerLoader())
         }
         if let capacity = await loaded.perform({ ExpertStreamingLoader.store(in: $0.model)?.capacity }) {
-            logger.info("Experimental expert streaming: routed experts stay in the safetensors shards and load on demand into a \(formatRAMBytes(capacity.rawValue)) LRU expert cache")
+            logger.info("Experimental expert streaming: routed experts stay in the safetensors shards and load on demand into \(formatRAMBytes(capacity.rawValue)) of expert slots")
         }
         return loaded
     }
