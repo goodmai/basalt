@@ -231,6 +231,19 @@ struct ExpertStreamingParityTests {
         #expect(streaming.count == 2)
     }
 
+    @Test("Dropping the model frees its expert slots: MLX active memory rises by at least the slot bytes at load and falls back below that once the container is gone")
+    func slotsFreedWithModel() async throws {
+        let before = Memory.activeMemory
+        var slotBytes = 0
+        do {
+            let container = try await Self.streamed(Self.fixtures.appendingPathComponent("lfm2_moe"), cache: ByteCount(1 << 30))
+            slotBytes = await container.perform { Int(ExpertStreamingLoader.store(in: $0.model)?.slotBytes.rawValue ?? 0) }
+            #expect(slotBytes > 0)
+            #expect(Memory.activeMemory - before >= slotBytes)
+        }
+        #expect(Memory.activeMemory - before < slotBytes)
+    }
+
     @Test("A dense model is refused: there are no routed experts to stream")
     func denseRefused() async throws {
         #expect(try await Self.streamedIfRouted(Self.fixtures.appendingPathComponent("qwen3"), cache: ByteCount(1)) == nil)
