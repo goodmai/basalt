@@ -1,0 +1,100 @@
+{
+  "description" : "Open-weight MLX checkpoints verified against reference top-64 logprobs and greedy token traces on every basalt inference change. Measurements include only logged 0.8 runs.",
+  "hardwareBaseline" : "Apple M4 Pro 24 GB, macOS 27, Swift 6.4 release build",
+  "items" : [
+    {
+      "architectureClass" : "sliding-window + full attention, MoE",
+      "fixturePath" : "Tests/BasaltTests/Fixtures/golden/mlx-community--gemma-4-26B-A4B-it-qat-4bit.json",
+      "hfURL" : "https://huggingface.co/mlx-community/gemma-4-26B-A4B-it-qat-4bit",
+      "klTolerance" : 0.0001,
+      "publishedMeasurements" : {
+
+      },
+      "repoId" : "mlx-community/gemma-4-26B-A4B-it-qat-4bit",
+      "revision" : "main",
+      "verifiedGreedySteps" : 220,
+      "verifiedPaths" : [
+        "single-turn chat",
+        "multilingual",
+        "code generation",
+        "JSON tool calling",
+        "8k multi-turn agent trace",
+        "prefix-cache anchor resume"
+      ],
+      "verifiedPrompts" : [
+        "agent-trace-8k",
+        "chat-capital",
+        "chat-commits",
+        "chat-russian",
+        "chat-sky",
+        "code-fibonacci",
+        "hybrid-anchor-resume",
+        "tool-call-json"
+      ]
+    },
+    {
+      "architectureClass" : "hybrid linear/full attention, dense",
+      "fixturePath" : "Tests/BasaltTests/Fixtures/golden/lukaskremla--Qwen3.8-27B-3bit-MLX-TextOnly.json",
+      "hfURL" : "https://huggingface.co/lukaskremla/Qwen3.8-27B-3bit-MLX-TextOnly",
+      "klTolerance" : 0.0001,
+      "publishedMeasurements" : {
+        "decodeTokPerSec" : "15–19"
+      },
+      "repoId" : "lukaskremla/Qwen3.8-27B-3bit-MLX-TextOnly",
+      "revision" : "dc755c911a7716a1db15cd8df8bab46a9dcfffdc",
+      "verifiedGreedySteps" : 256,
+      "verifiedPaths" : [
+        "single-turn chat",
+        "multilingual",
+        "code generation",
+        "JSON tool calling",
+        "8k multi-turn agent trace",
+        "prefix-cache anchor resume"
+      ],
+      "verifiedPrompts" : [
+        "agent-trace-8k",
+        "chat-capital",
+        "chat-commits",
+        "chat-russian",
+        "chat-sky",
+        "code-fibonacci",
+        "hybrid-anchor-resume",
+        "tool-call-json"
+      ]
+    },
+    {
+      "architectureClass" : "hybrid conv + attention, MoE",
+      "fixturePath" : "Tests/BasaltTests/Fixtures/golden/LiquidAI--LFM2.5-24B-A2B-MLX-4bit.json",
+      "hfURL" : "https://huggingface.co/LiquidAI/LFM2.5-24B-A2B-MLX-4bit",
+      "klTolerance" : 0.0001,
+      "publishedMeasurements" : {
+
+      },
+      "repoId" : "LiquidAI/LFM2.5-24B-A2B-MLX-4bit",
+      "revision" : "667408d494bde191c2cb9dd4f4549827816b9275",
+      "verifiedGreedySteps" : 256,
+      "verifiedPaths" : [
+        "single-turn chat",
+        "multilingual",
+        "code generation",
+        "JSON tool calling",
+        "8k multi-turn agent trace",
+        "prefix-cache anchor resume"
+      ],
+      "verifiedPrompts" : [
+        "agent-trace-8k",
+        "chat-capital",
+        "chat-commits",
+        "chat-russian",
+        "chat-sky",
+        "code-fibonacci",
+        "hybrid-anchor-resume",
+        "tool-call-json"
+      ]
+    }
+  ],
+  "publish" : false,
+  "requiresHumanReview" : true,
+  "schemaVersion" : 1,
+  "title" : "basalt — Golden-Verified Apple Silicon Checkpoints"
+}

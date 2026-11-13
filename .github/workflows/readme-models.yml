@@ -5,8 +5,14 @@ on:
     paths:
       - 'README.md'
       - 'README.ru.md'
+      - 'docs/benchmarks.md'
+      - 'docs/models.md'
+      - 'docs/benchmark-page/**'
+      - 'benchmarks/**'
       - 'Tests/BasaltTests/Fixtures/golden/**'
+      - 'Tests/BasaltTests/Fixtures/ReferenceLogits/**'
       - 'scripts/check_readme_models*'
+      - 'scripts/build_benchmark_page*'
       - '.github/workflows/readme-models.yml'
 
 permissions:
@@ -24,3 +30,7 @@ jobs:
         run: swift scripts/check_readme_models_test.swift
       - name: Every golden-tested model in the README links an existing fixture
         run: swift scripts/check_readme_models.swift
+      - name: Benchmark page generator self-test
+        run: swift scripts/build_benchmark_page_test.swift
+      - name: Benchmark page and HF collection manifest match tracked sources
+        run: swift scripts/build_benchmark_page.swift --check

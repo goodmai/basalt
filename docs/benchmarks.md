@@ -32,6 +32,8 @@ Each number on the README's first screen comes from a logged run, and the PR tha
 
 The golden-tested models in the README are checked by `scripts/check_readme_models.swift` in CI: a model listed there must link an existing fixture in `Tests/BasaltTests/Fixtures/golden`.
 
+A self-contained static benchmark page ([`docs/benchmark-page/index.html`](benchmark-page/index.html)) and a review-ready Hugging Face collection manifest ([`docs/benchmark-page/hf-collection.json`](benchmark-page/hf-collection.json)) are generated from these tables, `benchmarks/`, and the golden fixtures by `swift scripts/build_benchmark_page.swift` (and verified in CI with `--check`; pass `--logs logs` locally to append runner `summary` tables). Outward-facing publishing stays a human decision.
+
 ## Benchmarks
 
 Two harnesses, both pointed at a running server, both reporting numbers you can
