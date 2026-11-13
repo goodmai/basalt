@@ -140,7 +140,6 @@ enum ExpertStreamingLoader {
         tokenizerLoader: any TokenizerLoader
     ) async throws -> ModelContainer? {
         let model = try await family.types.createModel(configuration: configuration, modelType: base.modelType)
-        try refuseCompiledTraces(in: model)
         let shards = try shardURLs(in: directory).map { try SafetensorsShard(url: $0) }
         let plan = try ExpertPlan(model: model, shards: shards, quantization: base.perLayerQuantization)
         guard !plan.layouts.isEmpty else { return nil }
@@ -149,25 +148,9 @@ enum ExpertStreamingLoader {
         let view = try residentView(of: directory, shards: shards, plan: plan)
         defer { try? FileManager.default.removeItem(at: view) }
         let registry = ModelTypeRegistry<any LanguageModel>(creators: [base.modelType: { _ in model }])
-        return try await family.factory(registry).loadContainer(from: view, using: tokenizerLoader)
-    }
-
-    static func refuseCompiledTraces(in model: Module) throws(BasaltError) {
-        let modules = Dictionary(model.namedModules(), uniquingKeysWith: { first, _ in first })
-        for (path, module) in modules where module is SwitchLinear {
-            let parts = path.split(separator: ".").map(String.init)
-            for depth in 0 ..< parts.count {
-                guard let owner = depth == 0 ? model : modules[parts.prefix(depth).joined(separator: ".")], holdsCompiledTrace(owner) else { continue }
-                throw .invalidRequestStructure(
-                    details: "--experimental-expert-streaming: \(path) runs inside a compiled trace of \(type(of: owner)), where the router's expert indices cannot be read back to load experts; this architecture (Qwen3.5/3.6 MoE) cannot stream its experts yet")
-            }
-        }
-    }
-
-    static func holdsCompiledTrace(_ module: Module) -> Bool {
-        module.items().flattenedValues().contains { value in
-            if case .other(let held) = value { held is CompiledTraceInvalidating } else { false }
-        }
+        let container = try await family.factory(registry).loadContainer(from: view, using: tokenizerLoader)
+        await container.perform { Self.store(in: $0.model)?.attachRouters(in: $0.model) }
+        return container
     }
 
     static func store(in model: Module) -> ExpertStore? {

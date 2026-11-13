@@ -11,32 +11,69 @@ enum ExpertReader {
     }
 
     static let batch = 16
+    static let window = 128
 
-    static func read(_ requests: [Request]) {
-        for start in stride(from: 0, to: requests.count, by: batch) {
-            let group = Array(requests[start ..< min(start + batch, requests.count)])
-            var blocks = group.map { request in
+    struct InFlight: ~Copyable {
+        private let requests: [Request]
+        private var blocks: UnsafeMutableBufferPointer<aiocb>?
+
+        init(_ requests: [Request]) {
+            self.requests = requests
+            guard !requests.isEmpty else { return }
+            let buffer = UnsafeMutableBufferPointer<aiocb>.allocate(capacity: requests.count)
+            for (index, request) in requests.enumerated() {
                 var block = aiocb()
                 (block.aio_fildes, block.aio_offset, block.aio_buf) = (request.descriptor, off_t(request.offset), request.destination)
                 (block.aio_nbytes, block.aio_lio_opcode) = (request.count, LIO_READ)
-                return block
+                buffer.initializeElement(at: index, to: block)
             }
-            let done = blocks.withUnsafeMutableBufferPointer { buffer in
-                var list: [UnsafeMutablePointer<aiocb>?] = (0 ..< buffer.count).map { buffer.baseAddress! + $0 }
-                _ = lio_listio(LIO_WAIT, &list, Int32(list.count), nil)
-                return list.map { block in
-                    while aio_error(block!) == EINPROGRESS {
-                        var pending: [UnsafePointer<aiocb>?] = [UnsafePointer(block!)]
-                        _ = aio_suspend(&pending, 1, nil)
-                    }
-                    return max(0, aio_return(block!))
-                }
+            for start in stride(from: 0, to: requests.count, by: batch) {
+                let end = min(start + batch, requests.count)
+                var list: [UnsafeMutablePointer<aiocb>?] = (start ..< end).map { buffer.baseAddress! + $0 }
+                _ = lio_listio(LIO_NOWAIT, &list, Int32(list.count), nil)
             }
-            for (request, count) in zip(group, done) where count < request.count {
+            blocks = buffer
+        }
+
+        mutating func drain() {
+            guard let buffer = blocks else { return }
+            blocks = nil
+            defer {
+                buffer.deinitialize()
+                buffer.deallocate()
+            }
+            for (index, request) in requests.enumerated() {
+                let count = ExpertReader.wait(buffer.baseAddress! + index)
+                guard count < request.count else { continue }
                 let rest = UnsafeMutableRawBufferPointer(start: request.destination + count, count: request.count - count)
-                let read = pread(request.descriptor, into: rest, at: request.offset + Int64(count))
+                let read = ExpertReader.pread(request.descriptor, into: rest, at: request.offset + Int64(count))
                 precondition(read == rest.count, "expert streaming: read \(count + read) of \(request.count) bytes at \(request.offset): \(String(cString: strerror(errno)))")
             }
+        }
+
+        consuming func finish() {
+            drain()
+        }
+
+        deinit {
+            guard let buffer = blocks else { return }
+            for index in 0 ..< requests.count { _ = ExpertReader.wait(buffer.baseAddress! + index) }
+            buffer.deinitialize()
+            buffer.deallocate()
+        }
+    }
+
+    static func wait(_ block: UnsafeMutablePointer<aiocb>) -> Int {
+        while aio_error(block) == EINPROGRESS {
+            var pending: [UnsafePointer<aiocb>?] = [UnsafePointer(block)]
+            _ = aio_suspend(&pending, 1, nil)
+        }
+        return max(0, aio_return(block))
+    }
+
+    static func read(_ requests: [Request]) {
+        for start in stride(from: 0, to: requests.count, by: window) {
+            InFlight(Array(requests[start ..< min(start + window, requests.count)])).finish()
         }
     }
 
