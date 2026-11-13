@@ -30,6 +30,8 @@ public struct CoreAIDecisionEngine: DecisionEngine {
 
     public static func isBundle(_ directory: URL) -> Bool { CoreAIDecisionBundle.isBundle(directory) }
 
+    public static func validateBundle(_ directory: URL) throws(BasaltError) { _ = try CoreAIDecisionBundle(directory: directory) }
+
     public init(directory: URL) async throws(BasaltError) {
         bundle = try CoreAIDecisionBundle(directory: directory)
         modelID = bundle.modelID

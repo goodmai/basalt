@@ -2,6 +2,7 @@ import Foundation
 import ArgumentParser
 import BasaltCore
 import BasaltCloud
+import BasaltInference
 import BasaltServer
 
 enum ComposeHeld: Sendable {
@@ -9,6 +10,7 @@ enum ComposeHeld: Sendable {
     case onDemand(OnDemandModel)
     case cloud(String)
     case decision(any DecisionEngine)
+    case onDemandDecision(OnDemandDecision)
 }
 
 struct ComposeStart: Sendable {
@@ -62,7 +64,7 @@ actor ComposeHost {
 
     func startupHeld() -> [String: ComposeHeld] {
         var held: [String: ComposeHeld] = [spec.answer: .resident(chat)]
-        if let name = spec.deciderModel, let startDecider { held[name] = .decision(startDecider) }
+        if let name = spec.deciderModel, spec.models[name]?.keep != .onDemand, let startDecider { held[name] = .decision(startDecider) }
         for (name, perceiver, orchestrator) in [(spec.ocr, PipelineCore.Perceiver.ocrModel, startup.ocr), (spec.speech, .speechModel, startup.audio)] {
             guard let name, let orchestrator else { continue }
             held[name] = startup.onDemand[perceiver].map(ComposeHeld.onDemand) ?? .resident(orchestrator)
@@ -75,7 +77,7 @@ actor ComposeHost {
         switch model.source {
         case .cloud(_, let id): return .cloud(id)
         case .local(let source):
-            if spec.deciderModels.contains(name) { return .decision(try await services.decider(source)) }
+            if spec.deciderModels.contains(name) { return try await loadDecider(name, source: source, model: model) }
             let path = try await services.resolve(source)
             if spec.views.contains(where: { $0.spec.ocr == name }), let refusal = ServeCommand.ocrRefusal(source, path: path) { throw BasaltError.invalidRequestStructure(details: refusal) }
             if spec.views.contains(where: { $0.spec.speech == name }), let refusal = ServeCommand.audioRefusal(source, path: path) { throw BasaltError.invalidRequestStructure(details: refusal) }
@@ -179,7 +181,9 @@ actor ComposeHost {
         switch held {
         case .resident(let orchestrator): await orchestrator.unloadModel()
         case .onDemand(let model): await model.model.unloadModel()
-        case .cloud, .decision, nil: break
+        case .decision(let engine): await engine.unload()
+        case .onDemandDecision(let decider): await decider.unload()
+        case .cloud, nil: break
         }
     }
 }

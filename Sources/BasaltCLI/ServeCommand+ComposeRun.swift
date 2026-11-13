@@ -36,7 +36,7 @@ extension ServeCommand {
         let loadedDecisions = try await loadDecisions(chat: boot.engine)
         let perceivePaths = try await pipelinePerceivePaths()
         let plan = try await admitComputePlan(chatPath: boot.chatPath, embeddings: embeddings, decisions: loadedDecisions, perceive: perceivePaths)
-        let besideDecode = plan.runsBesideDecode("decide")
+        let besideDecode = !plan.degraded
         await slot.events.emit("loading", model: spec.answer, boot.chatPath)
         try await load(boot.orchestrator, from: boot.chatPath)
         await slot.events.emit("ready", model: spec.answer, boot.chatPath)

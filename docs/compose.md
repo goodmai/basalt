@@ -83,7 +83,7 @@ A system that does not fit is refused with the numbers before anything loads. A 
 - **Order:** `cascade` lists the decision models in order. Each stage answers the questions it is confident about (at least `escalate_below`) and passes the rest on.
 - **Stages in any order:** up to four stages, cloud and local in any order. An example is a small local judge first, a cloud model next and a larger local model last: `[laya, jev, chat]`.
   - The last stage is local.
-  - Every local stage is held as a decision engine: the chat model, read out as `self`, or a decision model such as a Laya Core AI bundle or an OpenJev bundle.
+  - Every local stage is held as a decision engine: the chat model, read out as `self`, or a decision model such as a Laya Core AI bundle or an OpenJev bundle. A dedicated local decision model may set `keep: on-demand` (and `idle_unload`) so it loads on the first decision that reaches it and unloads when idle.
   - Each pipeline names its own stages. A decision model that several pipelines name is loaded once.
   - A decision model only decides; only the chat model both answers and decides.
 - **Calibration:** a readout decision model takes its temperatures from a `basalt_readout.json` in its folder (`{"temperature": …, "noul_temperature": …, "noul_bias": …}`), if there is one. Otherwise it uses the known values for its name, and otherwise none. #448 plans to fit these files against Gemini Decision 1.

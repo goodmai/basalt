@@ -28,6 +28,10 @@ public struct ReadoutDecisionEngine: DecisionEngine {
         }
         return SystemOneResponse(model: modelID, answers: answers, usage: usage, calibrated: request.calibrated != false && calibration != .uncalibrated)
     }
+
+    public func unload() async {
+        if modelID != "self" { await engine.unload() }
+    }
 }
 
 extension MLXInferenceEngine {

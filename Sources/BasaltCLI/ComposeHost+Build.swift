@@ -21,7 +21,7 @@ extension ComposeHost {
             switch name.flatMap({ held[$0] }) {
             case .resident(let model): model
             case .onDemand(let model): model.model
-            case .cloud, .decision, nil: nil
+            case .cloud, .decision, .onDemandDecision, nil: nil
             }
         }
         let speech: (any AudioTranscriber)? = view.audio.contains(ComposeSpec.speechAnalyzer) ? (first ? startup.speech : SpeechAnalyzerTranscriber()) : nil
@@ -49,7 +49,7 @@ extension ComposeHost {
         case .cloud(let id):
             let client = try OpenRouterClient(config: .init(apiKey: services.key(spec.models[name]), baseURL: ServeCommand.openRouterAnswers, timeout: 120, maxRetries: 1))
             return CloudAnswer(client: client, model: id, gate: cloudGate)
-        case .decision, nil: throw BasaltError.invalidRequestStructure(details: "compose: \(name) is not loaded as an answer model")
+        case .decision, .onDemandDecision, nil: throw BasaltError.invalidRequestStructure(details: "compose: \(name) is not loaded as an answer model")
         }
     }
 
@@ -60,6 +60,8 @@ extension ComposeHost {
             switch held[name] {
             case .resident(let orchestrator): entry.state = await orchestrator.isLoaded ? .ready : .unloaded
             case .onDemand(let onDemand):
+                (entry.state, entry.lastUsed, entry.idleUnload) = (ComposeModelState(await onDemand.phase), await onDemand.lastUsed, model.idleUnload ?? ComposeSpec.defaultIdleUnload)
+            case .onDemandDecision(let onDemand):
                 (entry.state, entry.lastUsed, entry.idleUnload) = (ComposeModelState(await onDemand.phase), await onDemand.lastUsed, model.idleUnload ?? ComposeSpec.defaultIdleUnload)
             case .cloud(let id):
                 let refusal = await cloudGate.refusal(id)
