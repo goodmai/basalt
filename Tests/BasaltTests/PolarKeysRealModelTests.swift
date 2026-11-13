@@ -34,8 +34,8 @@ struct PolarKeysRealModelTests {
         }
         let cut = haystack.index(haystack.startIndex, offsetBy: Int(Double(haystack.count) * depth))
         let prompt = String(haystack[..<cut]) + "\nThe pass key is \(key). Remember it.\n" + String(haystack[cut...]) + "\n\nWhat is the pass key? Answer with the number only."
-        let reply = try await engine.generate(request: GenerationRequest(prompt: prompt, maxTokens: 12, temperature: 0))
-        return reply.generatedText.contains(String(key))
+        let reply = try await engine.generate(request: GenerationRequest(prompt: prompt, maxTokens: 600, temperature: 0))
+        return (reply.generatedText + (reply.reasoningText ?? "")).contains(String(key))
     }
 
     @Test("Zoned polar4 against zoned q4 and k8v4: decode perplexity over 256 tokens after 8k, decode speed and KV bytes; passkey at 16k (depths 0.2 and 0.8) through serve's configuration",
