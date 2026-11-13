@@ -175,6 +175,18 @@ func releaseCandidates() -> [String] {
 
 // MARK: — daily
 
+func newestEntryDate(in directory: URL, keys: [URLResourceKey]) -> Date {
+    let dirValues = try? directory.resourceValues(forKeys: Set(keys))
+    var newest = dirValues?.contentModificationDate ?? dirValues?.creationDate ?? .distantPast
+    guard let walk = fm.enumerator(at: directory, includingPropertiesForKeys: keys) else { return Date() }
+    for case let entry as URL in walk {
+        let values = try? entry.resourceValues(forKeys: Set(keys))
+        let entryDate = values?.contentModificationDate ?? values?.creationDate ?? Date()
+        if entryDate > newest { newest = entryDate }
+    }
+    return newest
+}
+
 func dailyCandidates() -> [String] {
     let cutoff = Date().addingTimeInterval(-maxAgeHours * 3600)
     var collected: [String] = []
@@ -188,10 +200,15 @@ func dailyCandidates() -> [String] {
         let keys: [URLResourceKey] = [.contentModificationDateKey, .creationDateKey]
         let contents = (try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: keys)) ?? []
         for file in contents where file.lastPathComponent != ".gitkeep" {
-            // Rotation is for files: a subdirectory's own mtime says nothing about what is
-            // inside it, so it is never removed by age.
             if (try? file.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true {
-                log("Kept directory: \(relative(file.path))", level: .debug)
+                if dirName == "logs",
+                   file.lastPathComponent.hasPrefix("ui-evidence-"),
+                   !containsWorkTree(file.path),
+                   maxAgeHours == 0 || newestEntryDate(in: file, keys: keys) < cutoff {
+                    collected.append(file.path)
+                } else {
+                    log("Kept directory: \(relative(file.path))", level: .debug)
+                }
                 continue
             }
             let values = try? file.resourceValues(forKeys: Set(keys))

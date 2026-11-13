@@ -4,7 +4,7 @@ import Foundation
 @Suite("Scripts Tests")
 struct ScriptsTests {
     
-    private func runScript(_ path: String, args: [String], in directory: URL? = nil) -> Int32 {
+    fileprivate func runScript(_ path: String, args: [String], in directory: URL? = nil) -> Int32 {
         let task = Process()
         let fm = FileManager.default
         let currentDir = fm.currentDirectoryPath
@@ -414,5 +414,44 @@ struct ScriptsTests {
                 #expect(sha.contains(hex40Pattern), "Action not pinned to 40-char SHA on line \(idx + 1) in \(file.lastPathComponent): \(sha)")
             }
         }
+    }
+}
+
+@Suite("UI Evidence Script & Cleanup Rotation Tests (#474)")
+struct UIEvidenceScriptsTests {
+    @Test("ui_evidence.swift runs --help and --dry-run, and cleanup.swift --mode=daily rotates aged logs/ui-evidence-*")
+    func testUIEvidenceScriptAndDailyRotation() throws {
+        let runner = ScriptsTests()
+        #expect(runner.runScript("scripts/ui_evidence.swift", args: ["--help"]) == 0)
+        #expect(runner.runScript("scripts/ui_evidence.swift", args: ["--dry-run", "--skip-videos"]) == 0)
+        #expect(runner.runScript("scripts/ui_evidence.swift", args: ["--record-before=logs/ui-evidence-dry", "--dry-run"]) == 0)
+
+        let fm = FileManager.default
+        let repo = fm.temporaryDirectory.appendingPathComponent("cleanup-ui-\(UUID().uuidString)")
+        defer { try? fm.removeItem(at: repo) }
+        let oldEvidence = repo.appendingPathComponent("logs/ui-evidence-2026-01-01")
+        let freshEvidence = repo.appendingPathComponent("logs/ui-evidence-2026-11-13")
+        for dir in [oldEvidence, freshEvidence] {
+            try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        }
+        let oldReport = oldEvidence.appendingPathComponent("report.md")
+        let freshReport = freshEvidence.appendingPathComponent("report.md")
+        try Data("old".utf8).write(to: oldReport)
+        try Data("fresh".utf8).write(to: freshReport)
+        let twoDaysAgo = Date().addingTimeInterval(-2 * 86_400)
+        try fm.setAttributes([.modificationDate: twoDaysAgo], ofItemAtPath: oldReport.path)
+        try fm.setAttributes([.modificationDate: twoDaysAgo], ofItemAtPath: oldEvidence.path)
+        try fm.setAttributes([.modificationDate: twoDaysAgo], ofItemAtPath: freshEvidence.path)
+
+        let git = Process()
+        git.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+        git.currentDirectoryURL = repo
+        git.arguments = ["-c", "init.defaultBranch=main", "init", "-q"]
+        try git.run()
+        git.waitUntilExit()
+
+        #expect(runner.runScript("scripts/cleanup.swift", args: ["--mode=daily", "--apply"], in: repo) == 0)
+        #expect(!fm.fileExists(atPath: oldEvidence.path))
+        #expect(fm.fileExists(atPath: freshReport.path))
     }
 }
