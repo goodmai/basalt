@@ -18,11 +18,11 @@ public enum OCRResolution: String, Sendable, CaseIterable, Codable {
 
     public var queries: Int { side / Self.pixelsPerQuery }
 
-    public func grid(width: Int, height: Int) -> (columns: Int, rows: Int) {
-        guard self == .gundam, width > Self.tileSide || height > Self.tileSide, width > 0, height > 0 else { return (1, 1) }
+    public func grid(width: Int, height: Int, tile: Int = OCRResolution.tileSide, maxTiles: Int = 9) -> (columns: Int, rows: Int) {
+        guard self == .gundam, width > tile || height > tile, width > 0, height > 0, maxTiles >= 2 else { return (1, 1) }
         let aspect = Double(width) / Double(height)
-        let candidates = (1 ... 9).flatMap { i in (1 ... 9).map { (i, $0) } }
-            .filter { (2 ... 9).contains($0.0 * $0.1) }
+        let candidates = (1 ... maxTiles).flatMap { i in (1 ... maxTiles).map { (i, $0) } }
+            .filter { (2 ... maxTiles).contains($0.0 * $0.1) }
             .sorted { ($0.0 * $0.1, $0.0) < ($1.0 * $1.1, $1.0) }
         var best = (columns: 1, rows: 1)
         var bestDifference = Double.infinity
@@ -30,7 +30,7 @@ public enum OCRResolution: String, Sendable, CaseIterable, Codable {
             let difference = abs(aspect - Double(columns) / Double(rows))
             if difference < bestDifference {
                 (best, bestDifference) = ((columns, rows), difference)
-            } else if difference == bestDifference, Double(width * height) > 0.5 * Double(Self.tileSide * Self.tileSide * columns * rows) {
+            } else if difference == bestDifference, Double(width * height) > 0.5 * Double(tile * tile * columns * rows) {
                 best = (columns, rows)
             }
         }

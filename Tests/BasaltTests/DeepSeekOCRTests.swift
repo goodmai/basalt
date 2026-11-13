@@ -265,7 +265,7 @@ struct DeepSeekOCRProcessorTests {
 
 }
 
-@Suite("DeepSeek-OCR real checkpoint: greedy tokens match Python mlx-vlm on rendered pages per resolution mode (#400)", .serialized)
+@Suite("DeepSeek-OCR and DeepSeek-OCR-2 real checkpoints: greedy tokens match Python mlx-vlm on rendered pages per resolution mode (#400, #413; OCR-2 references from deepseekocr_reference.swift pages2)", .serialized)
 struct DeepSeekOCRRealModelTests {
     static var paths: (model: String, reference: String)? {
         let env = ProcessInfo.processInfo.environment

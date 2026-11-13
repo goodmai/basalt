@@ -7,6 +7,8 @@ let usage = """
     Usage:
       swift scripts/deepseekocr_reference.swift golden
       swift scripts/deepseekocr_reference.swift pages <model-dir> <pages-dir> <out.json> <page-name>...
+      swift scripts/deepseekocr_reference.swift golden2
+      swift scripts/deepseekocr_reference.swift pages2 <model-dir> <pages-dir> <out.json> <page-name>...
 
     Python mlx-vlm references for the DeepSeek-OCR port (#400 phase 2), run in a throwaway uv
     environment with the versions pinned below (checked with the Sonatype guide) and every
@@ -31,6 +33,17 @@ let usage = """
               mode on the unsized page; read by DeepSeekOCRRealModelTests through
               BASALT_E2E_DEEPSEEK_REFERENCE; also writes <out>-stock-gundam.json, the 1024-token
               gundam text of stock mlx-vlm, for the quality comparison
+      golden2 DeepSeek-OCR-2 (#413) on the tiny fixture's config with closed-form weights: image
+              features (every 16th row and the last) plus last logits from mlx-vlm deepseekocr_2
+              get_input_embeddings for a 1024 global view, and for a 2x1 grid of 768 tiles beside
+              it; also the official tile grid (2 to 6 tiles of 768, none for pages up to 768 on
+              both sides); rewrites Tests/BasaltTests/Fixtures/DeepSeekOCR2Golden.swift. OCR-2's
+              SAM is v1's, so the SAM relative-position patch applies; its Qwen2 encoder matches
+              the official deepencoderv2.py as shipped
+      pages2  DeepSeek-OCR-2 greedy tokens with the document prompt for <pages-dir>/<name>.png: 64
+              tokens in base mode on the page padded to 1024 (<name>-base.png, written here), and 256
+              in gundam mode on the unsized page with the official tiling (768 tiles, min_patches 2,
+              max_patches 6); read by DeepSeekOCRRealModelTests through BASALT_E2E_DEEPSEEK_REFERENCE
     """
 
 let pins = ["mlx-vlm==0.6.17", "mlx==0.32.4", "transformers==5.22.2", "pillow==13.0.0", "sentencepiece==0.2.3", "starlette==1.10.0"]
@@ -121,6 +134,92 @@ let golden = official + """
     pads = [list(ImageOps.pad(Image.new("RGB", s, (255, 255, 255)), (1024, 1024), color=(0, 0, 0)).getbbox()) for s in sizes]
     json.dump({"decoder": decoder.reshape(-1).tolist(), "cases": [case(128, (1, 1, 0)), case(192, (1, 1, 0)), case(128, (2, 1, 64))],
                "sizes": [list(s) for s in sizes], "grids": grids, "pads": pads}, sys.stdout)
+    """
+
+let golden2 = official + """
+    import json, math, sys
+    import mlx.core as mx
+    from mlx.utils import tree_flatten, tree_unflatten
+    from PIL import Image
+    from mlx_vlm.models.deepseekocr_2.config import ModelConfig, TextConfig, VisionConfig, ProjectorConfig
+    from mlx_vlm.models.deepseekocr_2.deepseekocr_2 import Model
+    from mlx_vlm.models.deepseekocr_2.processing_deepseekocr import dynamic_preprocess
+    from mlx_vlm.models.deepseekocr.sam import SAMEncoder
+
+    text = TextConfig(model_type="deepseek_v2", vocab_size=256, hidden_size=64, intermediate_size=128, moe_intermediate_size=32,
+                      num_hidden_layers=3, num_attention_heads=4, num_key_value_heads=2, n_shared_experts=1, n_routed_experts=4,
+                      num_experts_per_tok=2, first_k_dense_replace=1, q_lora_rank=None, qk_rope_head_dim=0, qk_nope_head_dim=0,
+                      v_head_dim=0, rms_norm_eps=1e-6, rope_theta=10000.0)
+    qwen2 = dict(dim=64, layers=2, heads=4, kv_heads=2, intermediate_size=128, rms_norm_eps=1e-6, rope_theta=1000000.0)
+    vision = VisionConfig(model_type="vision", hidden_size=64, params={"qwen2": qwen2, "sam": {}})
+    config = ModelConfig(text_config=text, vision_config=vision, projector_config=ProjectorConfig(input_dim=64, n_embed=64),
+                         model_type="deepseekocr_2")
+    model = Model(config)
+    install_official()
+    model.sam_model = SAMEncoder(img_size=1024, patch_size=16, embed_dim=32, depth=2, num_heads=2, window_size=14,
+                                 global_attn_indexes=(1,), final_out_chans=64)
+    params = sorted(tree_flatten(model.parameters()), key=lambda kv: kv[0])
+    def value(key, t, n):
+        shift = 1.0 if "norm" in key and key.endswith(".weight") else 0.0
+        return [0.1 * math.sin(0.7 * i + 0.3 * t) + shift for i in range(n)]
+    model.update(tree_unflatten([(k, mx.array(value(k, t, v.size), dtype=mx.float32).reshape(v.shape)) for t, (k, v) in enumerate(params)]))
+
+    def pixels(count, side, phase):
+        return mx.array([math.sin(0.05 * i + phase) for i in range(count * side * side * 3)], dtype=mx.float32).reshape(count, side, side, 3)
+
+    def case(columns, rows):
+        tiles = columns * rows if columns * rows > 1 else 0
+        tokens = 257 + 144 * tiles
+        ids = mx.array([[1, 2] + [250] * tokens + [3, 4]])
+        crops = pixels(tiles, 768, 1.0) if tiles else mx.zeros((1, 8, 8, 3))
+        values = [crops.transpose(0, 3, 1, 2), pixels(1, 1024, 0.0).transpose(0, 3, 1, 2)]
+        embeds = model.get_input_embeddings(ids, values, mx.array([[rows, columns]]), ids == 250).inputs_embeds
+        logits = model.language_model(ids, inputs_embeds=embeds).logits
+        rows_kept = list(range(0, tokens, 16)) + [tokens - 1]
+        return {"tiles": [columns, rows], "rows": rows_kept, "features": embeds[0, 2:2 + tokens][mx.array(rows_kept)].reshape(-1).tolist(),
+                "logits": logits[0, -1].tolist()}
+
+    sizes = [(1700, 2200), (2200, 1700), (1240, 1754), (800, 600), (769, 2000), (3000, 500), (1000, 1000), (2000, 2000), (768, 768), (600, 900)]
+    grids = [list(dynamic_preprocess(Image.new("RGB", s), min_num=2, max_num=6, image_size=768)[1]) if max(s) > 768 else [1, 1] for s in sizes]
+    json.dump({"cases": [case(1, 1), case(2, 1)], "sizes": [list(s) for s in sizes], "grids": grids}, sys.stdout)
+    """
+
+let pages2 = official + """
+    import json, sys
+    import mlx.core as mx
+    from PIL import Image, ImageOps
+    from mlx_vlm import load
+    from mlx_vlm.models.cache import KVCache
+    from mlx_vlm.prompt_utils import apply_chat_template
+
+    model_path, pages_dir, out_path, names = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4:]
+    model, processor = load(model_path, trust_remote_code=False)
+    install_official()
+    prompt = apply_chat_template(processor, model.config, "<|grounding|>Convert the document to markdown.", num_images=1)
+    eos = processor.tokenizer.eos_token_id
+    def greedy(path, count, cropping):
+        inputs = processor(text=prompt, images=[Image.open(path).convert("RGB")], base_size=1024, image_size=768, cropping=cropping,
+                           min_patches=2, max_patches=6)
+        cache = [KVCache() for _ in model.language_model.model.layers]
+        logits = model(inputs["input_ids"], pixel_values=inputs["images"], cache=cache, images_spatial_crop=inputs["images_spatial_crop"],
+                       images_seq_mask=inputs["images_seq_mask"]).logits
+        tokens = []
+        while len(tokens) < count:
+            token = int(mx.argmax(logits[0, -1]).item())
+            tokens.append(token)
+            if token == eos:
+                break
+            logits = model(mx.array([[token]]), cache=cache).logits
+        return {"prompt": prompt, "prompt_ids": [int(t) for t in inputs["input_ids"][0].tolist()], "tokens": tokens,
+                "text": processor.tokenizer.decode(tokens), "max_tokens": count}
+    results = {}
+    for name in names:
+        page = Image.open(f"{pages_dir}/{name}.png").convert("RGB")
+        ImageOps.pad(page, (1024, 1024), color=(127, 127, 127)).save(f"{pages_dir}/{name}-base.png")
+        results[f"{name}-base"] = dict(greedy(f"{pages_dir}/{name}-base.png", 64, False), image=f"{name}-base.png", resolution="base")
+        results[f"{name}-gundam"] = dict(greedy(f"{pages_dir}/{name}.png", 256, True), image=f"{name}.png", resolution="gundam")
+        print(name, flush=True, file=sys.stderr)
+    json.dump(results, open(out_path, "w"))
     """
 
 let pages = official + """
@@ -249,6 +348,40 @@ func goldenSource(_ json: [String: Any]) throws -> String {
         """
 }
 
+func golden2Source(_ json: [String: Any]) throws -> String {
+    guard let cases = json["cases"] as? [[String: Any]], let sizes = json["sizes"] as? [[Int]], let grids = json["grids"] as? [[Int]] else {
+        throw NSError(domain: "golden2", code: 1)
+    }
+    let rendered = try cases.enumerated().map { index, item -> String in
+        guard let tiles = item["tiles"] as? [Int], let rows = item["rows"] as? [Int], let features = item["features"] as? [Double],
+              let logits = item["logits"] as? [Double] else { throw NSError(domain: "golden2", code: 2) }
+        return """
+            let deepSeekOCR2GoldenCase\(index) = DeepSeekOCR2Golden.Case(tiles: \(tiles), rows: \(rows), features: [
+            \(floats(features))
+            ], logits: [
+            \(floats(logits))
+            ])
+
+            """
+    }
+    return """
+        struct DeepSeekOCR2Golden {
+            struct Case {
+                let tiles: [Int]
+                let rows: [Int]
+                let features: [Float]
+                let logits: [Float]
+            }
+
+            static let sizes = \(sizes)
+            static let grids = \(grids)
+            static var cases: [Case] { [\(cases.indices.map { "deepSeekOCR2GoldenCase\($0)" }.joined(separator: ", "))] }
+        }
+
+        \(rendered.joined(separator: "\n"))
+        """
+}
+
 let arguments = Array(CommandLine.arguments.dropFirst())
 switch arguments.first {
 case "golden":
@@ -256,6 +389,14 @@ case "golden":
     let target = repo.appending(path: "Tests/BasaltTests/Fixtures/DeepSeekOCRGolden.swift")
     try goldenSource(json).write(to: target, atomically: true, encoding: .utf8)
     print("wrote \(target.path)")
+case "golden2":
+    let json = try JSONSerialization.jsonObject(with: try python(golden2, [])) as? [String: Any] ?? [:]
+    let target = repo.appending(path: "Tests/BasaltTests/Fixtures/DeepSeekOCR2Golden.swift")
+    try golden2Source(json).write(to: target, atomically: true, encoding: .utf8)
+    print("wrote \(target.path)")
+case "pages2" where arguments.count >= 5:
+    _ = try GPULock.holding { try python(pages2, Array(arguments.dropFirst())) }
+    print("wrote \(arguments[3])")
 case "pages" where arguments.count >= 5:
     _ = try GPULock.holding { try python(pages, Array(arguments.dropFirst())) }
     print("wrote \(arguments[3])")

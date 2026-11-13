@@ -82,6 +82,13 @@ extension MLXInferenceEngine {
         await VLMProcessorTypeRegistry.shared.registerProcessorType(DeepSeekOCRProcessor.processorType) { data, tokenizer in
             DeepSeekOCRProcessor(try JSONDecoder.json5().decode(DeepSeekOCRProcessorConfiguration.self, from: data), tokenizer: tokenizer)
         }
+        await VLMTypeRegistry.shared.registerModelType(DeepSeekOCR2.modelType) { data in
+            DeepSeekOCR2(try JSONDecoder.json5().decode(DeepSeekOCR2Configuration.self, from: data).validated())
+        }
+        await VLMProcessorTypeRegistry.shared.registerProcessorType(DeepSeekOCRProcessor.ocr2ProcessorType) { data, tokenizer in
+            DeepSeekOCRProcessor(try JSONDecoder.json5().decode(DeepSeekOCRProcessorConfiguration.self, from: data), tokenizer: tokenizer, geometry: .v2)
+        }
+        VLMProcessorLoadingRegistry.shared.register(ModelTypeProcessorResolver(processorTypes: [DeepSeekOCR2.modelType: DeepSeekOCRProcessor.ocr2ProcessorType]))
     }
 
     public static func registerAliases() async {

@@ -31,6 +31,17 @@ struct DeepSeekOCRConfiguration: Codable, Sendable {
 
         func usesExperts(_ layer: Int) -> Bool { routedExperts != nil && layer >= firstDenseLayers }
 
+        var unsupported: [String] {
+            [
+                (qkNopeHeadDim ?? 0) != 0 ? "multi-head latent attention (qk_nope_head_dim \(qkNopeHeadDim ?? 0))" : nil,
+                (topkMethod ?? "greedy") != "greedy" ? "expert routing \(topkMethod ?? "")" : nil,
+                (scoringFunction ?? "softmax") != "softmax" ? "expert scoring \(scoringFunction ?? "")" : nil,
+                normalizesTopK == true ? "normalized top-k expert weights" : nil,
+                (moeLayerFrequency ?? 1) != 1 ? "experts every \(moeLayerFrequency ?? 1) layers" : nil,
+                max(groups ?? 1, topKGroups ?? 1) > 1 ? "grouped expert routing (n_group \(groups ?? 1), topk_group \(topKGroups ?? 1))" : nil,
+            ].compactMap { $0 }
+        }
+
         enum CodingKeys: String, CodingKey {
             case hiddenSize = "hidden_size"
             case layers = "num_hidden_layers"
@@ -142,13 +153,7 @@ struct DeepSeekOCRConfiguration: Codable, Sendable {
     }
 
     func validated() throws(BasaltError) -> Self {
-        let reasons = [
-            (text.qkNopeHeadDim ?? 0) != 0 ? "multi-head latent attention (qk_nope_head_dim \(text.qkNopeHeadDim ?? 0))" : nil,
-            (text.topkMethod ?? "greedy") != "greedy" ? "expert routing \(text.topkMethod ?? "")" : nil,
-            (text.scoringFunction ?? "softmax") != "softmax" ? "expert scoring \(text.scoringFunction ?? "")" : nil,
-            text.normalizesTopK == true ? "normalized top-k expert weights" : nil,
-            (text.moeLayerFrequency ?? 1) != 1 ? "experts every \(text.moeLayerFrequency ?? 1) layers" : nil,
-            max(text.groups ?? 1, text.topKGroups ?? 1) > 1 ? "grouped expert routing (n_group \(text.groups ?? 1), topk_group \(text.topKGroups ?? 1))" : nil,
+        let reasons = text.unsupported + [
             projector.type != "linear" ? "projector \(projector.type)" : nil,
             sam.downsampleChannels.count != 2 ? "\(sam.downsampleChannels.count) SAM downsample stages" : nil,
             clip.width != sam.downsampleChannels.last ? "SAM features of \(sam.downsampleChannels.last ?? 0) channels into CLIP width \(clip.width)" : nil,

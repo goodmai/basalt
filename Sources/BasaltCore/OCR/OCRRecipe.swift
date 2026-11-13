@@ -32,7 +32,7 @@ public struct OCRRecipe: Sendable, Equatable {
         switch modelType?.lowercased() {
         case "glm_ocr": OCRRecipe(family: .glmOCR)
         case "paddleocr_vl": OCRRecipe(family: .paddleOCR)
-        case "deepseekocr": OCRRecipe(family: .deepSeekOCR)
+        case "deepseekocr", "deepseekocr_2": OCRRecipe(family: .deepSeekOCR)
         case "qwen2_vl" where hints.contains(where: { $0.lowercased().contains("mineru") }): OCRRecipe(family: .minerU)
         default: nil
         }

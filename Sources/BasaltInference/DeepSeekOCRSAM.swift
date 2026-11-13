@@ -101,7 +101,7 @@ enum DeepSeekOCRSAM {
         @ModuleInfo(key: "net_2") var net2: Conv2d
         @ModuleInfo(key: "net_3") var net3: Conv2d
 
-        init(_ config: DeepSeekOCRConfiguration.SAM, imageSize: Int) {
+        init(_ config: DeepSeekOCRConfiguration.SAM, imageSize: Int, outputChannels: Int? = nil) {
             let grid = imageSize / config.patchSize
             let (neck, down) = (config.neckChannels, config.downsampleChannels)
             _patchEmbed.wrappedValue = PatchEmbed(config)
@@ -114,7 +114,7 @@ enum DeepSeekOCRSAM {
                 LayerNorm(dimensions: neck, eps: 1e-6),
             ]
             _net2.wrappedValue = Conv2d(inputChannels: neck, outputChannels: down[0], kernelSize: 3, stride: 2, padding: 1, bias: false)
-            _net3.wrappedValue = Conv2d(inputChannels: down[0], outputChannels: down[1], kernelSize: 3, stride: 2, padding: 1, bias: false)
+            _net3.wrappedValue = Conv2d(inputChannels: down[0], outputChannels: outputChannels ?? down[1], kernelSize: 3, stride: 2, padding: 1, bias: false)
         }
 
         func callAsFunction(_ pixels: MLXArray) -> MLXArray {
