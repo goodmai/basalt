@@ -3,7 +3,7 @@ import BasaltApp
 import SwiftUI
 
 final class QuickAskPanel: NSPanel {
-    static let frame = NSRect(x: 0, y: 0, width: 640, height: 80)
+    static let frame = NSRect(x: 0, y: 0, width: 664, height: 92)
     static let style: NSWindow.StyleMask = [.nonactivatingPanel, .titled, .fullSizeContentView]
 
     init() {
@@ -20,6 +20,15 @@ final class QuickAskPanel: NSPanel {
     override var canBecomeKey: Bool { true }
 
     override func cancelOperation(_ sender: Any?) { close() }
+
+    func resizeKeepingTopEdge(to targetHeight: CGFloat) {
+        let clamped = min(max(targetHeight, Self.frame.height), 460)
+        guard abs(frame.height - clamped) > 1 else { return }
+        let topY = frame.maxY
+        let next = NSRect(x: frame.minX, y: topY - clamped, width: Self.frame.width, height: clamped)
+        let animate = !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        setFrame(next, display: true, animate: animate)
+    }
 }
 
 @MainActor
@@ -28,15 +37,22 @@ final class QuickAskController: NSObject, NSWindowDelegate {
     let openConversation: @MainActor () -> Void
     private var panel: QuickAskPanel?
 
-    init(model: AppModel, openConversation: @escaping @MainActor () -> Void) { (self.model, self.openConversation) = (model, openConversation) }
+    init(model: AppModel, openConversation: @escaping @MainActor () -> Void) {
+        (self.model, self.openConversation) = (model, openConversation)
+    }
 
     func toggle() {
         if let panel, panel.isVisible { return panel.close() }
         let panel = QuickAskPanel()
         panel.delegate = self
-        panel.contentView = NSHostingView(rootView: QuickAskView(store: model.openQuickAsk()) { [weak self] in self?.promote() })
+        let store = model.openQuickAsk()
+        let host = NSHostingView(rootView: QuickAskView(store: store) { [weak self] in self?.promote() })
+        host.sizingOptions = [.intrinsicContentSize]
+        panel.contentView = host
         panel.center()
-        panel.setFrameOrigin(NSPoint(x: panel.frame.minX, y: (NSScreen.main?.visibleFrame.maxY ?? 800) * 0.72))
+        let topAnchor = (NSScreen.main?.visibleFrame.maxY ?? 800) * 0.78
+        panel.setFrameTopLeftPoint(NSPoint(x: panel.frame.minX, y: topAnchor))
+        panel.resizeKeepingTopEdge(to: host.fittingSize.height)
         panel.makeKeyAndOrderFront(nil)
         self.panel = panel
     }

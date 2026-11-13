@@ -11,6 +11,7 @@ public struct ChatState: Sendable, Equatable {
     public var draft = ""
     public var attachments: [ChatAttachment] = []
     public var run = Run.idle
+    public var scrollPin = ScrollPinState.pinned
 
     public init(conversation: ConversationSnapshot) { self.conversation = conversation }
 
@@ -41,6 +42,8 @@ public enum ChatAction: Sendable, Equatable {
     case detach(UUID)
     case perceived(RunID, PipelineResult)
     case systemPromptChanged(String)
+    case scrolled(atBottom: Bool)
+    case jumpToBottom
 }
 
 public enum ChatEffect: Sendable, Equatable {
@@ -72,6 +75,7 @@ public enum ChatReducer {
         case .delta(let run, let delta):
             guard state.run == .streaming(run), let last = state.conversation.messages.indices.last else { return [] }
             apply(delta, to: &state.conversation.messages[last])
+            recordScrollDelta(delta, in: &state.scrollPin)
             return []
         case .finished(let run, let timing):
             guard state.run == .streaming(run), let last = state.conversation.messages.indices.last else { return [] }
@@ -84,6 +88,29 @@ public enum ChatReducer {
             return [.persist(state.conversation)]
         case .attach, .detach, .perceived, .systemPromptChanged:
             return attachments(&state, action)
+        case .scrolled, .jumpToBottom:
+            return scroll(&state, action)
+        }
+    }
+
+    static func scroll(_ state: inout ChatState, _ action: ChatAction) -> [ChatEffect] {
+        switch action {
+        case .scrolled(let atBottom):
+            state.scrollPin.applyUserScroll(atBottom: atBottom)
+        case .jumpToBottom:
+            state.scrollPin.jumpToBottom()
+        default:
+            break
+        }
+        return []
+    }
+
+    static func recordScrollDelta(_ delta: ChatDelta, in pin: inout ScrollPinState) {
+        switch delta {
+        case .text, .reasoning, .toolCall:
+            pin.recordStreamDelta()
+        case .usage, .finish:
+            break
         }
     }
 
@@ -140,6 +167,7 @@ public enum ChatReducer {
         answer.receipt = Receipt(model: state.conversation.model)
         state.conversation.messages.append(answer)
         state.run = .streaming(run)
+        state.scrollPin = .pinned
         return [.persist(state.conversation), .start(run, request)]
     }
 
