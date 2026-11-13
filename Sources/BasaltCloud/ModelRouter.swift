@@ -20,6 +20,8 @@ public actor ModelRouter: Sendable {
         let localFallbackModel: String?
         let fallbackCloudModel: String?
         var cascade: CascadeExecutionMode?
+        var fallbackTiers: [FallbackTier] = []
+        var probeConfig = FallbackTierProbeConfig()
 
         public init(
             strategy: RoutingStrategy = .auto, mockAvailableRAM: Int64? = nil, costRouting: CostRouting? = nil,
@@ -49,16 +51,19 @@ public actor ModelRouter: Sendable {
         self.localFallbackModel = options.localFallbackModel
         self.fallbackCloudModel = options.fallbackCloudModel
         self.cascade = options.cascade
-        self.state = RouterState(cost: options.costRouting.map { routing in
-            CostRoutingState(
-                routing: routing,
-                outcomeBias: routing.outcomeBiasURL.map(RoutingOutcomeBias.load(from:)) ?? RoutingOutcomeBias()
-            )
-        })
+        self.state = RouterState(
+            cost: options.costRouting.map { routing in
+                CostRoutingState(
+                    routing: routing,
+                    outcomeBias: routing.outcomeBiasURL.map(RoutingOutcomeBias.load(from:)) ?? RoutingOutcomeBias()
+                )
+            },
+            fallback: FallbackTierState(tiers: options.fallbackTiers, probeConfig: options.probeConfig)
+        )
     }
 
     public func syncCloudModels() async throws {
-        guard let client = cloudClient else { return }
+        guard let client = openRouterSyncClient() else { return }
         try await syncCloudModels { try await client.getModels() }
     }
 
@@ -211,7 +216,7 @@ extension ModelRouter {
         return fallback
     }
 
-    private func recordCloudCost(model: String, response: GenerationResponse, context: RoutingContext) async {
+    func recordCloudCost(model: String, response: GenerationResponse, context: RoutingContext) async {
         guard let costTracker else { return }
         let cost = state.catalog.estimateCost(model: model, promptTokens: response.promptTokens, completionTokens: response.completionTokens)
         do {
@@ -254,7 +259,7 @@ extension ModelRouter {
         }
     }
 
-    private func routeToCloud(
+    func routeToCloud(
         client: OpenRouterClient, model: String, request: GenerationRequest
     ) async throws -> GenerationResponse {
         let startTime = ContinuousClock.now
@@ -282,7 +287,7 @@ extension ModelRouter {
         }
     }
 
-    private static func chatRequest(_ request: GenerationRequest, model: String, stream: Bool) -> OpenRouterClient.ChatRequest {
+    static func chatRequest(_ request: GenerationRequest, model: String, stream: Bool) -> OpenRouterClient.ChatRequest {
         OpenRouterClient.ChatRequest(
             model: model,
             messages: cloudMessages(request),
@@ -358,10 +363,10 @@ extension ModelRouter: CloudFallback {
 
     public func assess(_ request: GenerationRequest, localModel: String) async -> CloudAssessment? {
         state = .reduce(state, .localModelSeen(localModel))
-        guard cloudClient != nil, let cloudModel = fallbackCloudModel,
-              request.tools?.isEmpty ?? true, request.responseFormat == nil, request.messages?.contains(where: { !$0.images.isEmpty }) != true,
-              ChatMessageInput.splittingPrefill(request.messages ?? [])?.prefill.isEmpty ?? true
-        else { return nil }
+        if state.fallback.isMultiTier {
+            return await assessFallbackTiers(request, localModel: localModel)
+        }
+        guard cloudClient != nil, let cloudModel = fallbackCloudModel, Self.isFallbackEligible(request) else { return nil }
         let context = RoutingContext(request)
         if let costTracker, await costTracker.isExhausted(scopes: context.budgetScopes) { return nil }
         let completionTokens = request.maxTokens ?? 1_024
@@ -377,10 +382,16 @@ extension ModelRouter: CloudFallback {
     }
 
     public func generate(_ request: GenerationRequest) async throws -> GenerationResponse {
-        try await route(request: request, preferredModel: fallbackCloudModel, context: RoutingContext(request))
+        if state.fallback.isMultiTier {
+            return try await generateFromFallbackTiers(request)
+        }
+        return try await route(request: request, preferredModel: fallbackCloudModel, context: RoutingContext(request))
     }
 
     public func generateStream(_ request: GenerationRequest) async throws -> AsyncThrowingStream<StreamChunk, Error> {
-        try await routeStream(request: request, preferredModel: fallbackCloudModel, context: RoutingContext(request))
+        if state.fallback.isMultiTier {
+            return try await generateStreamFromFallbackTiers(request)
+        }
+        return try await routeStream(request: request, preferredModel: fallbackCloudModel, context: RoutingContext(request))
     }
 }

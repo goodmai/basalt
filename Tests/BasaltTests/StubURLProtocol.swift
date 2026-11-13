@@ -6,6 +6,7 @@ final class StubURLProtocol: URLProtocol {
 
     private struct State: Sendable {
         var handlers: [String: Handler] = [:]
+        var unresponsive: Set<String> = []
         var requests: [String: [(URLRequest, Data?)]] = [:]
     }
 
@@ -23,6 +24,19 @@ final class StubURLProtocol: URLProtocol {
         return host
     }
 
+    static func unresponsiveHost() -> String {
+        let host = "stub-\(UUID().uuidString.lowercased()).test"
+        state.withLock { _ = $0.unresponsive.insert(host) }
+        return host
+    }
+
+    static func setHandler(for host: String, _ handler: Handler?) {
+        state.withLock {
+            $0.unresponsive.remove(host)
+            $0.handlers[host] = handler
+        }
+    }
+
     static func requests(for host: String) -> [(URLRequest, Data?)] {
         state.withLock { $0.requests[host] ?? [] }
     }
@@ -33,10 +47,11 @@ final class StubURLProtocol: URLProtocol {
     override func startLoading() {
         let host = request.url?.host ?? ""
         let body = request.httpBody ?? request.httpBodyStream.map(Self.read)
-        let handler = Self.state.withLock { state -> Handler? in
+        let (handler, hangs) = Self.state.withLock { state -> (Handler?, Bool) in
             state.requests[host, default: []].append((request, body))
-            return state.handlers[host]
+            return (state.handlers[host], state.unresponsive.contains(host))
         }
+        if hangs { return }
         guard let handler, let url = request.url else {
             client?.urlProtocol(self, didFailWithError: URLError(.cannotFindHost))
             return

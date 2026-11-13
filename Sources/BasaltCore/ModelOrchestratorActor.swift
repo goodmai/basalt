@@ -462,7 +462,9 @@ extension ModelOrchestratorActor {
         if let cloudFallback, let reason = await cloudFallbackReason(for: request) {
             do {
                 logger.info("Serving from the cloud: \(reason.rawValue)")
-                return (try await cloudFallback.generate(request), .zero)
+                let response = try await cloudFallback.generate(request)
+                await telemetry.recordRemote(response)
+                return (response, .zero)
             } catch {
                 logger.warn("Cloud fallback (\(reason.rawValue)) failed, serving locally: \(error)")
             }
@@ -496,7 +498,7 @@ extension ModelOrchestratorActor {
         if let cloudFallback, let reason = await cloudFallbackReason(for: request) {
             do {
                 logger.info("Streaming from the cloud: \(reason.rawValue)")
-                return (Self.endingWithErrorMetadata(try await cloudFallback.generateStream(request)), .zero)
+                return (Self.endingWithErrorMetadata(try await cloudFallback.generateStream(request), telemetry: telemetry), .zero)
             } catch {
                 logger.warn("Cloud fallback (\(reason.rawValue)) failed to start, serving locally: \(error)")
             }

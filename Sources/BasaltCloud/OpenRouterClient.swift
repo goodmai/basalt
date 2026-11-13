@@ -57,6 +57,19 @@ public actor OpenRouterClient: Sendable {
         ).data
     }
 
+    public func probeModelIDs(timeout: Duration) async throws -> Set<String> {
+        struct ModelList: Decodable, Sendable {
+            struct Entry: Decodable, Sendable { let id: String }
+            let data: [Entry]
+        }
+        let list = try await apiClient.performProbe(
+            endpoint: "models",
+            timeout: timeout,
+            responseType: ModelList.self
+        )
+        return Set(list.data.map(\.id))
+    }
+
     public func getMetrics() async -> (requests: Int, errors: Int) {
         await apiClient.getMetrics()
     }

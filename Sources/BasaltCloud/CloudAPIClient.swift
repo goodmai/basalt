@@ -166,4 +166,36 @@ public actor CloudAPIClient: Sendable {
     public func getMetrics() -> (requests: Int, errors: Int) {
         return (requestCount, errorCount)
     }
+
+    public func performProbe<T: Decodable & Sendable>(
+        endpoint: String,
+        timeout: Duration,
+        responseType: T.Type
+    ) async throws -> T {
+        var request = makeRequest(endpoint: endpoint, method: "GET", body: nil)
+        let seconds = Double(timeout.components.seconds) + Double(timeout.components.attoseconds) * 1e-18
+        request.timeoutInterval = max(0.01, seconds)
+        let probeRequest = request
+        let session = self.session
+        let (data, response) = try await withThrowingTaskGroup(of: (Data, URLResponse).self) { group in
+            group.addTask { try await session.data(for: probeRequest) }
+            group.addTask {
+                try await Task.sleep(for: timeout)
+                throw URLError(.timedOut)
+            }
+            guard let first = try await group.next() else { throw URLError(.timedOut) }
+            group.cancelAll()
+            return first
+        }
+        guard let httpResponse = response as? HTTPURLResponse else {
+            errorCount += 1
+            throw BasaltError.invalidRequestStructure(details: "Invalid response type")
+        }
+        if let failure = Self.failure(of: httpResponse, body: data) {
+            errorCount += 1
+            throw failure
+        }
+        requestCount += 1
+        return try JSONDecoder().decode(T.self, from: data)
+    }
 }

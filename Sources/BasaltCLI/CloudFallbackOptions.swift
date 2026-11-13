@@ -55,6 +55,13 @@ struct CloudFallbackOptions: ParsableArguments {
 
 extension ServeCommand {
     struct CloudFallbackSettings: Sendable, Equatable {
+        struct Tier: Sendable, Equatable {
+            let baseURL: URL
+            let model: String
+            let apiKey: String
+            var free: Bool = false
+        }
+
         let model: String
         let baseURL: URL
         let apiKey: String
@@ -63,6 +70,17 @@ extension ServeCommand {
         var costThreshold: Double? = nil
         var cacheStickiness: Double? = nil
         var sessionBudget: Double? = nil
+        var tiers: [Tier] = []
+
+        var usesOpenRouter: Bool {
+            tiers.isEmpty
+                ? OpenRouterClient.isOpenRouter(baseURL)
+                : tiers.contains { OpenRouterClient.isOpenRouter($0.baseURL) }
+        }
+
+        var paidModels: [String] {
+            tiers.isEmpty ? [model] : tiers.filter { !$0.free }.map(\.model)
+        }
 
         struct Flags: Sendable, Equatable {
             var model: String?
@@ -77,16 +95,46 @@ extension ServeCommand {
             _ flags: Flags, section: ConfigSection, environment: [String: String], savedOpenRouterKey: () -> String?
         ) throws -> CloudFallbackSettings? {
             if flags.model == nil, try section.value("enabled", as: Bool.self) == false { return nil }
-            guard let model = try flags.model ?? section.value("model", as: String.self), !model.isEmpty else { return nil }
-            let baseURL = try endpoint(flags.baseURL ?? section.value("base_url", as: String.self) ?? "https://openrouter.ai/api/v1")
-            let apiKey = try key(for: baseURL, in: section, environment: environment, savedOpenRouterKey: savedOpenRouterKey)
             let limit = try flags.localContextLimit ?? section.value("local_context_limit", as: Int.self)
             if let limit, limit <= 0 {
                 throw ValidationError("local_context_limit must be a positive number of tokens, got \(limit)")
             }
+            if flags.model == nil, flags.baseURL == nil,
+               let tiers = try resolveTiers(in: section, environment: environment, savedOpenRouterKey: savedOpenRouterKey) {
+                var settings = CloudFallbackSettings(
+                    model: tiers[0].model, baseURL: tiers[0].baseURL, apiKey: tiers[0].apiKey,
+                    localContextLimit: limit, tiers: tiers)
+                try settings.resolveRouting(flags, in: section)
+                return settings
+            }
+            guard let model = try flags.model ?? section.value("model", as: String.self), !model.isEmpty else { return nil }
+            let baseURL = try endpoint(flags.baseURL ?? section.value("base_url", as: String.self) ?? "https://openrouter.ai/api/v1")
+            let apiKey = try key(for: baseURL, in: section, environment: environment, savedOpenRouterKey: savedOpenRouterKey)
             var settings = CloudFallbackSettings(model: model, baseURL: baseURL, apiKey: apiKey, localContextLimit: limit)
             try settings.resolveRouting(flags, in: section)
             return settings
+        }
+
+        static func resolveTiers(
+            in section: ConfigSection, environment: [String: String], savedOpenRouterKey: () -> String?
+        ) throws -> [Tier]? {
+            guard let rawTiers = try section.value("tiers", as: [Any].self) else { return nil }
+            guard !rawTiers.isEmpty else {
+                throw ValidationError("--config: \"cloud_fallback.tiers\" must not be empty")
+            }
+            return try rawTiers.enumerated().map { index, rawItem in
+                guard let entry = rawItem as? [String: Any] else {
+                    throw ValidationError("--config: \"cloud_fallback.tiers[\(index)]\" must be an object")
+                }
+                let tierSection = ConfigSection(values: entry, keyPrefix: "cloud_fallback.tiers[\(index)].")
+                guard let model = try tierSection.value("model", as: String.self), !model.isEmpty else {
+                    throw ValidationError("--config: \"cloud_fallback.tiers[\(index)].model\" must be a non-empty string")
+                }
+                let baseURL = try endpoint(tierSection.value("base_url", as: String.self) ?? "https://openrouter.ai/api/v1")
+                let apiKey = try key(for: baseURL, in: tierSection, environment: environment, savedOpenRouterKey: savedOpenRouterKey)
+                let free = try tierSection.value("free", as: Bool.self) ?? false
+                return Tier(baseURL: baseURL, model: model, apiKey: apiKey, free: free)
+            }
         }
 
         static func endpoint(_ raw: String) throws -> URL {
@@ -130,10 +178,13 @@ extension ServeCommand {
             }
         }
     }
+}
 
+extension ServeCommand {
     static func cloudFallbackRouter(
         _ settings: CloudFallbackSettings, orchestrator: ModelOrchestratorActor, virtualKeys: [VirtualKey] = [],
-        costURL: URL = CloudCommand.costURL()
+        costURL: URL = CloudCommand.costURL(), configuration: URLSessionConfiguration = .default,
+        probe: FallbackTierProbeConfig = FallbackTierProbeConfig()
     ) async throws -> ModelRouter {
         let saved = CloudCommand.loadConfig()
         let budget = CostTracker.Budget(dailyLimit: saved?.dailyBudget ?? 5, monthlyLimit: saved?.monthlyBudget ?? 50)
@@ -142,43 +193,60 @@ extension ServeCommand {
         for key in virtualKeys {
             if let limit = key.maxBudget { await tracker.setMaxBudget(limit, for: .virtualKey(key.id)) }
         }
-        let costRouting: ModelRouter.CostRouting?
-        if let params = settings.routerParams {
-            let scorer: BradleyTerryRouter
-            do {
-                scorer = try BradleyTerryRouter.load(from: params)
-            } catch {
-                throw ValidationError("router_params \(params.path): \(error.localizedDescription)")
-            }
-            costRouting = ModelRouter.CostRouting(
-                policy: StickyRoutingPolicy(
-                    strongModel: settings.model, weakModel: "local",
-                    threshold: settings.costThreshold ?? 0.5, cacheStickinessPenalty: settings.cacheStickiness ?? 0.1),
-                scorer: scorer, outcomeBiasURL: CloudCommand.routerBiasURL(nextTo: costURL))
-        } else {
-            costRouting = nil
+        let costRouting = try makeCostRouting(settings, costURL: costURL)
+        let fallbackTiers = try settings.tiers.enumerated().map { index, tier in
+            FallbackTier(
+                id: "tier-\(index)-\(tier.baseURL.absoluteString)#\(tier.model)",
+                client: try OpenRouterClient(
+                    config: .init(apiKey: tier.apiKey, baseURL: tier.baseURL, timeout: 120, maxRetries: 2),
+                    configuration: configuration),
+                baseURL: tier.baseURL, model: tier.model, isFree: tier.free)
         }
+        let options = ModelRouter.Options(
+            strategy: .cloudOnly, costRouting: costRouting, costTracker: tracker, fallbackCloudModel: settings.model
+        ).withFallbackTiers(fallbackTiers, probe: probe)
         return ModelRouter(
             localOrchestrator: orchestrator,
-            cloudClient: try OpenRouterClient(config: .init(
-                apiKey: settings.apiKey, baseURL: settings.baseURL, timeout: 120, maxRetries: 2)),
-            options: .init(strategy: .cloudOnly, costRouting: costRouting, costTracker: tracker, fallbackCloudModel: settings.model))
+            cloudClient: try OpenRouterClient(
+                config: .init(apiKey: settings.apiKey, baseURL: settings.baseURL, timeout: 120, maxRetries: 2),
+                configuration: configuration),
+            options: options)
+    }
+
+    private static func makeCostRouting(_ settings: CloudFallbackSettings, costURL: URL) throws -> ModelRouter.CostRouting? {
+        guard let params = settings.routerParams else { return nil }
+        let scorer: BradleyTerryRouter
+        do {
+            scorer = try BradleyTerryRouter.load(from: params)
+        } catch {
+            throw ValidationError("router_params \(params.path): \(error.localizedDescription)")
+        }
+        return ModelRouter.CostRouting(
+            policy: StickyRoutingPolicy(
+                strongModel: settings.model, weakModel: "local",
+                threshold: settings.costThreshold ?? 0.5, cacheStickinessPenalty: settings.cacheStickiness ?? 0.1),
+            scorer: scorer, outcomeBiasURL: CloudCommand.routerBiasURL(nextTo: costURL))
     }
 
     func attachCloudFallback(to orchestrator: ModelOrchestratorActor, virtualKeys: [VirtualKey]) async throws {
         guard let fallback = try cloud.settings(configFile: network.configPath) else { return }
         let router = try await Self.cloudFallbackRouter(fallback, orchestrator: orchestrator, virtualKeys: virtualKeys)
-        if OpenRouterClient.isOpenRouter(fallback.baseURL) {
+        if fallback.usesOpenRouter {
             do {
                 try await router.syncCloudModels()
             } catch {
                 log("\(yellow("[warn]")) Could not fetch OpenRouter prices: \(error.localizedDescription)")
             }
         }
-        if await !router.knowsPrice(of: fallback.model) {
-            log("\(yellow("[warn]")) No price known for \(fallback.model): its cloud spend is counted as $0 and the budget does not limit it")
+        for paidModel in fallback.paidModels where await !router.knowsPrice(of: paidModel) {
+            log("\(yellow("[warn]")) No price known for \(paidModel): its cloud spend is counted as $0 and the budget does not limit it")
         }
         await orchestrator.setCloudFallback(router, arbiter: HybridArbiter(localContextLimit: fallback.localContextLimit))
-        log("Cloud fallback → \(bold(fallback.model)) at \(fallback.baseURL.absoluteString)")
+        if fallback.tiers.isEmpty {
+            log("Cloud fallback → \(bold(fallback.model)) at \(fallback.baseURL.absoluteString)")
+        } else {
+            let chain = fallback.tiers.map { "\($0.model)@\($0.baseURL.host ?? $0.baseURL.absoluteString)\($0.free ? " (free)" : "")" }
+            log("Cloud fallback tiers → \(chain.joined(separator: " → "))")
+        }
     }
 }

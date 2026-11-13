@@ -36,11 +36,16 @@ extension ModelOrchestratorActor {
         watchdogSeconds(maxTokens: request.maxTokens ?? 0, promptTokens: estimatedTokens(budgetedText(request)))
     }
 
-    static func endingWithErrorMetadata(_ source: AsyncThrowingStream<StreamChunk, Error>) -> AsyncStream<StreamChunk> {
+    static func endingWithErrorMetadata(
+        _ source: AsyncThrowingStream<StreamChunk, Error>, telemetry: TelemetryTracker? = nil
+    ) -> AsyncStream<StreamChunk> {
         AsyncStream { continuation in
             let task = Task {
                 do {
-                    for try await chunk in source { continuation.yield(chunk) }
+                    for try await chunk in source {
+                        if case .metadata(let metadata) = chunk { await telemetry?.recordRemote(metadata) }
+                        continuation.yield(chunk)
+                    }
                 } catch {
                     BasaltLogger(module: "ModelOrchestrator").warn("Cloud stream failed mid-way: \(error)")
                     continuation.yield(.metadata(GenerationResponse(

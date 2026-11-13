@@ -1,7 +1,10 @@
 import Testing
 import Foundation
+import ArgumentParser
+import Synchronization
 @testable import BasaltCore
 @testable import BasaltCloud
+@testable import BasaltCLI
 
 actor StubCloud: CloudFallback {
     var assessment: CloudAssessment?
@@ -225,5 +228,228 @@ struct ModelRouterCloudFallbackTests {
         let prefilled = ModelRouter.cloudMessages(withPrefill)
         #expect(prefilled.map(\.role) == ["user", "assistant"])
         #expect(prefilled.last?.content == "Sunny, ")
+    }
+}
+
+enum FallbackTierTestFixtures {
+    static func openAIServer(models: [String], answer: String, promptTokens: Int = 100, completionTokens: Int = 50) -> String {
+        StubURLProtocol.host { request, _ in
+            let path = request.url?.path ?? ""
+            if path.hasSuffix("/models") {
+                let items = models.map { "{\"id\":\"\($0)\",\"object\":\"model\"}" }.joined(separator: ",")
+                return (200, ["Content-Type": "application/json"], Data("{\"object\":\"list\",\"data\":[\(items)]}".utf8))
+            }
+            let body = """
+            {"id":"c1","model":"\(models.first ?? "m")","choices":[{"message":{"role":"assistant","content":"\(answer)"},"finish_reason":"stop"}],\
+            "usage":{"prompt_tokens":\(promptTokens),"completion_tokens":\(completionTokens),"total_tokens":\(promptTokens + completionTokens)}}
+            """
+            return (200, ["Content-Type": "application/json"], Data(body.utf8))
+        }
+    }
+
+    static func tier(host: String, model: String, isFree: Bool) throws -> FallbackTier {
+        let baseURL = URL(string: "http://\(host)/v1")!
+        let client = try OpenRouterClient(
+            config: .init(apiKey: isFree ? "" : "sk-cloud", baseURL: baseURL, timeout: 5, maxRetries: 1),
+            configuration: StubURLProtocol.configuration)
+        return FallbackTier(client: client, baseURL: baseURL, model: model, isFree: isFree)
+    }
+
+    static func stack(
+        tiers: [FallbackTier], dailyLimit: Double = 5.0, probe: FallbackTierProbeConfig = FallbackTierProbeConfig(),
+        sessionLogDir: URL? = nil
+    ) async throws -> (ModelOrchestratorActor, CostTracker, TelemetryTracker, URL) {
+        let engine = MockInferenceEngine()
+        try await engine.load(modelPath: "local")
+        let telemetry = TelemetryTracker()
+        let logWriter = sessionLogDir.map { SessionLogWriter(mode: .meta, directory: $0) }
+        let orchestrator = ModelOrchestratorActor(engine: engine, telemetry: telemetry, sessionLog: logWriter)
+        let costURL = FileManager.default.temporaryDirectory.appendingPathComponent("cost-\(UUID().uuidString).json")
+        let tracker = try CostTracker(storageURL: costURL, budget: .init(dailyLimit: dailyLimit, monthlyLimit: dailyLimit * 10))
+        let options = ModelRouter.Options(strategy: .cloudOnly, costTracker: tracker).withFallbackTiers(tiers, probe: probe)
+        let router = ModelRouter(localOrchestrator: orchestrator, cloudClient: nil, options: options)
+        await orchestrator.setCloudFallback(router, arbiter: HybridArbiter(), freeMemory: { 0 })
+        return (orchestrator, tracker, telemetry, costURL)
+    }
+}
+
+@Suite("Ordered LAN-before-cloud fallback tiers (#142)")
+struct OrderedFallbackTiersTests {
+    @Test("Fits-nowhere request goes to free LAN tier, records stats and session log, and charges $0")
+    func routesToFreeLanFirst() async throws {
+        let lanHost = FallbackTierTestFixtures.openAIServer(models: ["qwen3-235b"], answer: "lan-answer", promptTokens: 200, completionTokens: 80)
+        let cloudHost = FallbackTierTestFixtures.openAIServer(models: ["openai/gpt-4-turbo"], answer: "cloud-answer")
+        let logDir = FileManager.default.temporaryDirectory.appendingPathComponent("slog-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: logDir) }
+        let tiers = [
+            try FallbackTierTestFixtures.tier(host: lanHost, model: "qwen3-235b", isFree: true),
+            try FallbackTierTestFixtures.tier(host: cloudHost, model: "openai/gpt-4-turbo", isFree: false)
+        ]
+        let (orchestrator, tracker, telemetry, costURL) = try await FallbackTierTestFixtures.stack(tiers: tiers, sessionLogDir: logDir)
+        defer { try? FileManager.default.removeItem(at: costURL) }
+
+        let response = try await orchestrator.generate(request: GenerationRequest(prompt: "big task", maxTokens: 4_096))
+        await orchestrator.shutdown()
+        #expect(response.generatedText == "lan-answer")
+        #expect(StubURLProtocol.requests(for: cloudHost).isEmpty)
+        #expect(await tracker.getStats().dailyUsage == 0)
+        #expect(await tracker.remaining(scopes: []) == 5.0)
+        let stats = await telemetry.snapshot()
+        #expect(stats.totalRequests == 1)
+        #expect(stats.totalTokensGenerated == 80)
+        #expect(stats.windows?.first?.tokens == 80)
+        let logFiles = (try? FileManager.default.contentsOfDirectory(atPath: logDir.path)) ?? []
+        #expect(!logFiles.isEmpty)
+    }
+
+    @Test("Hanging LAN tier times out at 200 ms, reaches paid cloud within 250 ms of probe timeout, and caches backoff")
+    func deadLanReachesCloudFastAndBacksOff() async throws {
+        let nowBox = Mutex(ContinuousClock.now)
+        let probe = FallbackTierProbeConfig(timeout: .milliseconds(200), now: { nowBox.withLock { $0 } })
+        let deadLanHost = StubURLProtocol.unresponsiveHost()
+        let cloudHost = FallbackTierTestFixtures.openAIServer(
+            models: ["openai/gpt-4-turbo"], answer: "cloud-answer", promptTokens: 1_000, completionTokens: 1_000)
+        let tiers = [
+            try FallbackTierTestFixtures.tier(host: deadLanHost, model: "qwen3-235b", isFree: true),
+            try FallbackTierTestFixtures.tier(host: cloudHost, model: "openai/gpt-4-turbo", isFree: false)
+        ]
+        let (orchestrator, tracker, _, costURL) = try await FallbackTierTestFixtures.stack(tiers: tiers, probe: probe)
+        defer { try? FileManager.default.removeItem(at: costURL) }
+
+        let start = ContinuousClock.now
+        let first = try await orchestrator.generate(request: GenerationRequest(prompt: "hi", maxTokens: 4_096))
+        let firstElapsed = start.duration(to: ContinuousClock.now)
+        #expect(first.generatedText == "cloud-answer")
+        #expect(firstElapsed >= .milliseconds(180))
+        #expect(firstElapsed < .milliseconds(450))
+        #expect(StubURLProtocol.requests(for: deadLanHost).count == 1)
+        #expect(await tracker.getStats().dailyUsage > 0)
+
+        let cachedStart = ContinuousClock.now
+        let second = try await orchestrator.generate(request: GenerationRequest(prompt: "again", maxTokens: 4_096))
+        let cachedElapsed = cachedStart.duration(to: ContinuousClock.now)
+        #expect(second.generatedText == "cloud-answer")
+        #expect(cachedElapsed < .milliseconds(150))
+        #expect(StubURLProtocol.requests(for: deadLanHost).count == 1)
+
+        StubURLProtocol.setHandler(for: deadLanHost) { request, _ in
+            if (request.url?.path ?? "").hasSuffix("/models") {
+                return (200, ["Content-Type": "application/json"], Data(#"{"data":[{"id":"qwen3-235b"}]}"#.utf8))
+            }
+            return (200, ["Content-Type": "application/json"], Data(
+                #"{"id":"1","model":"qwen3-235b","choices":[{"message":{"role":"assistant","content":"lan-recovered"},"finish_reason":"stop"}]}"#.utf8))
+        }
+        nowBox.withLock { $0 = $0.advanced(by: .seconds(2)) }
+        let third = try await orchestrator.generate(request: GenerationRequest(prompt: "recovered", maxTokens: 4_096))
+        #expect(third.generatedText == "lan-recovered")
+    }
+
+    @Test("LAN tier without the configured model is skipped; when both tiers are down the local error is returned")
+    func missingModelAndBothDownReturnLocalError() async throws {
+        let wrongModelHost = FallbackTierTestFixtures.openAIServer(models: ["other-7b"], answer: "wrong")
+        let cloudHost = FallbackTierTestFixtures.openAIServer(models: ["openai/gpt-4-turbo"], answer: "cloud-ok")
+        let tiers = [
+            try FallbackTierTestFixtures.tier(host: wrongModelHost, model: "qwen3-235b", isFree: true),
+            try FallbackTierTestFixtures.tier(host: cloudHost, model: "openai/gpt-4-turbo", isFree: false)
+        ]
+        let (orchestrator, _, _, costURL) = try await FallbackTierTestFixtures.stack(tiers: tiers)
+        defer { try? FileManager.default.removeItem(at: costURL) }
+        #expect(try await orchestrator.generate(request: GenerationRequest(prompt: "hi", maxTokens: 4_096)).generatedText == "cloud-ok")
+
+        let bothDown = [
+            try FallbackTierTestFixtures.tier(host: "missing-lan-\(UUID().uuidString).test", model: "qwen3-235b", isFree: true),
+            try FallbackTierTestFixtures.tier(host: "missing-cloud-\(UUID().uuidString).test", model: "openai/gpt-4-turbo", isFree: false)
+        ]
+        let (offlineOrchestrator, _, _, offlineCostURL) = try await FallbackTierTestFixtures.stack(tiers: bothDown)
+        defer { try? FileManager.default.removeItem(at: offlineCostURL) }
+        await #expect(throws: BasaltError.self) {
+            try await offlineOrchestrator.generate(request: GenerationRequest(prompt: "hi", maxTokens: 4_096))
+        }
+    }
+}
+
+@Suite("Ordered fallback stickiness, budgets & config (#142)")
+struct OrderedFallbackStickinessAndConfigTests {
+    @Test("Free LAN tier still answers when paid daily and virtual-key budgets are exhausted")
+    func freeTierBypassesExhaustedBudgets() async throws {
+        let lanHost = FallbackTierTestFixtures.openAIServer(models: ["qwen3-235b"], answer: "free-lan")
+        let cloudHost = FallbackTierTestFixtures.openAIServer(models: ["openai/gpt-4-turbo"], answer: "paid-cloud")
+        let tiers = [
+            try FallbackTierTestFixtures.tier(host: lanHost, model: "qwen3-235b", isFree: true),
+            try FallbackTierTestFixtures.tier(host: cloudHost, model: "openai/gpt-4-turbo", isFree: false)
+        ]
+        let (orchestrator, tracker, _, costURL) = try await FallbackTierTestFixtures.stack(tiers: tiers, dailyLimit: 1.0)
+        defer { try? FileManager.default.removeItem(at: costURL) }
+        await tracker.setMaxBudget(0.5, for: .virtualKey("vk-1"))
+        try await tracker.recordUsage(model: "openai/gpt-4-turbo", cost: 1.0, scopes: [.virtualKey("vk-1")])
+        #expect(await tracker.isExhausted(scopes: [.virtualKey("vk-1")]))
+
+        let request = GenerationRequest(prompt: "still free", maxTokens: 4_096).withRouting(sessionId: nil, budgetKey: "vk-1")
+        let reply = try await orchestrator.generate(request: request)
+        #expect(reply.generatedText == "free-lan")
+        #expect(await tracker.getStats().dailyUsage == 1.0)
+    }
+
+    @Test("Session stickiness keeps a session on the tier it started on while that tier stays healthy")
+    func sessionStickinessAcrossTierRecovery() async throws {
+        let nowBox = Mutex(ContinuousClock.now)
+        let probe = FallbackTierProbeConfig(timeout: .milliseconds(200), now: { nowBox.withLock { $0 } })
+        let lanHost = StubURLProtocol.host { _, _ in (503, [:], Data("down".utf8)) }
+        let cloudHost = FallbackTierTestFixtures.openAIServer(models: ["openai/gpt-4-turbo"], answer: "cloud-sticky")
+        let tiers = [
+            try FallbackTierTestFixtures.tier(host: lanHost, model: "qwen3-235b", isFree: true),
+            try FallbackTierTestFixtures.tier(host: cloudHost, model: "openai/gpt-4-turbo", isFree: false)
+        ]
+        let (orchestrator, _, _, costURL) = try await FallbackTierTestFixtures.stack(tiers: tiers, probe: probe)
+        defer { try? FileManager.default.removeItem(at: costURL) }
+
+        let s1Turn1 = GenerationRequest(prompt: "turn 1", maxTokens: 4_096).withRouting(sessionId: "session-1", budgetKey: nil)
+        #expect(try await orchestrator.generate(request: s1Turn1).generatedText == "cloud-sticky")
+
+        StubURLProtocol.setHandler(for: lanHost) { request, _ in
+            if (request.url?.path ?? "").hasSuffix("/models") {
+                return (200, ["Content-Type": "application/json"], Data(#"{"data":[{"id":"qwen3-235b"}]}"#.utf8))
+            }
+            return (200, ["Content-Type": "application/json"], Data(
+                #"{"id":"1","model":"qwen3-235b","choices":[{"message":{"role":"assistant","content":"lan-fresh"},"finish_reason":"stop"}]}"#.utf8))
+        }
+        nowBox.withLock { $0 = $0.advanced(by: .seconds(5)) }
+
+        let s1Turn2 = GenerationRequest(prompt: "turn 2", maxTokens: 4_096).withRouting(sessionId: "session-1", budgetKey: nil)
+        #expect(try await orchestrator.generate(request: s1Turn2).generatedText == "cloud-sticky")
+        let s2Turn1 = GenerationRequest(prompt: "fresh session", maxTokens: 4_096).withRouting(sessionId: "session-2", budgetKey: nil)
+        #expect(try await orchestrator.generate(request: s2Turn1).generatedText == "lan-fresh")
+    }
+
+    @Test("cloud_fallback.tiers parses ordered LAN and cloud endpoints without leaking keys")
+    func multiTierSettingsResolution() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("tiers-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let json = """
+        {
+          "cloud_fallback": {
+            "local_context_limit": 16384,
+            "tiers": [
+              {"base_url": "http://192.168.1.20:8000/v1", "model": "qwen3-235b", "free": true},
+              {"model": "anthropic/claude-sonnet-4"}
+            ]
+          }
+        }
+        """
+        try Data(json.utf8).write(to: url)
+        let settings = try #require(try ServeCommand.resolveCloudFallback(
+            .init(), disabled: false, configFile: url.path,
+            environment: ["OPENROUTER_API_KEY": "sk-or"], savedOpenRouterKey: { nil }))
+        #expect(settings.tiers.count == 2)
+        #expect(settings.tiers[0] == .init(baseURL: URL(string: "http://192.168.1.20:8000/v1")!, model: "qwen3-235b", apiKey: "", free: true))
+        #expect(settings.tiers[1] == .init(baseURL: URL(string: "https://openrouter.ai/api/v1")!, model: "anthropic/claude-sonnet-4", apiKey: "sk-or", free: false))
+        #expect(settings.paidModels == ["anthropic/claude-sonnet-4"])
+
+        let emptyURL = FileManager.default.temporaryDirectory.appendingPathComponent("tiers-empty-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: emptyURL) }
+        try Data(#"{"cloud_fallback": {"tiers": []}}"#.utf8).write(to: emptyURL)
+        #expect(throws: ValidationError.self) {
+            try ServeCommand.resolveCloudFallback(.init(), disabled: false, configFile: emptyURL.path, environment: [:], savedOpenRouterKey: { nil })
+        }
     }
 }
