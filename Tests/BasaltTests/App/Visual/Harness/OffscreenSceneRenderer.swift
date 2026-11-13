@@ -3,6 +3,7 @@ import BasaltApp
 import BasaltAppCore
 import CoreGraphics
 import Foundation
+import QuartzCore
 import SwiftUI
 
 public struct FrameCaptureClient: Sendable {
@@ -20,9 +21,7 @@ public struct FrameCaptureClient: Sendable {
 
 @MainActor
 public enum OffscreenSceneRenderer {
-    private static let suiteName = "app.basalt.visual.harness"
-
-    public static func isolatedDefaults() -> UserDefaults {
+    public static func isolatedDefaults(suiteName: String) -> UserDefaults {
         let defaults = UserDefaults(suiteName: suiteName) ?? .standard
         defaults.removePersistentDomain(forName: suiteName)
         defaults.set("mlx-community/gemma-4-12B-it-qat-4bit", forKey: "model")
@@ -47,7 +46,9 @@ public enum OffscreenSceneRenderer {
         variant: TraitVariant,
         desktopBackdrop: Bool = false
     ) throws(VisualTestError) -> RenderedBitmap {
-        let defaults = isolatedDefaults()
+        let suiteName = "app.basalt.visual.\(UUID().uuidString)"
+        let defaults = isolatedDefaults(suiteName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
         let colorScheme: ColorScheme = variant.scheme == .dark ? .dark : .light
         let policy = GlassSurfacePolicy(
             reduceTransparency: variant.reduceTransparency,
@@ -65,6 +66,7 @@ public enum OffscreenSceneRenderer {
         .environment(\.locale, Locale(identifier: variant.localeIdentifier))
         .environment(\.glassPolicyOverride, policy)
         .defaultAppStorage(defaults)
+        .transaction { $0.disablesAnimations = true }
 
         let targetAppearance = appearance(for: variant)
         let savedAppAppearance = NSApp?.appearance
@@ -79,16 +81,16 @@ public enum OffscreenSceneRenderer {
         host.appearance = targetAppearance
         window.contentView = host
 
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
         NSAnimationContext.beginGrouping()
         NSAnimationContext.current.duration = 0
-        for _ in 0 ..< 2 {
-            host.layoutSubtreeIfNeeded()
-            RunLoop.main.run(until: Date())
-        }
+        host.layoutSubtreeIfNeeded()
         window.makeFirstResponder(nil)
-        RunLoop.main.run(until: Date())
         host.layoutSubtreeIfNeeded()
         NSAnimationContext.endGrouping()
+        CATransaction.commit()
+        CATransaction.flush()
         return try captureBitmap(from: host, spec: spec, appearance: targetAppearance)
     }
 

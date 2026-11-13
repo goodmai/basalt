@@ -137,12 +137,14 @@ public protocol DecisionEngine: Sendable {
     var acceptsMedia: Bool { get }
     var onDevice: (any DecisionEngine)? { get }
     func decide(_ request: SystemOneRequest) async throws(BasaltError) -> SystemOneResponse
+    func unload() async
 }
 
 extension DecisionEngine {
     public var runsBesideDecode: Bool { false }
     public var acceptsMedia: Bool { false }
     public var onDevice: (any DecisionEngine)? { self }
+    public func unload() async {}
 }
 
 public enum SystemOneCore {

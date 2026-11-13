@@ -5,10 +5,26 @@ import MLXLLM
 import MLXLMCommon
 import BasaltCore
 
+actor JevContainerSlot {
+    private var container: ModelContainer?
+
+    init(_ container: ModelContainer) { self.container = container }
+
+    func get() throws(BasaltError) -> ModelContainer {
+        guard let container else { throw .modelNotLoaded }
+        return container
+    }
+
+    func unload() {
+        container = nil
+        Memory.clearCache()
+    }
+}
+
 public struct JevEvaluator: DecisionEngine {
     public let modelID: String
     let bundle: JevBundle
-    let container: ModelContainer
+    let slot: JevContainerSlot
     let head: [Float]
     let header: String
     let tail: String
@@ -21,7 +37,8 @@ public struct JevEvaluator: DecisionEngine {
         bundle = try JevBundle(directory: directory)
         modelID = bundle.modelID
         do {
-            container = try await loadModelContainer(from: base, using: DefaultTokenizerLoader())
+            let container = try await loadModelContainer(from: base, using: DefaultTokenizerLoader())
+            slot = JevContainerSlot(container)
             let adapterFile = directory.appending(component: "adapter_model.safetensors")
             guard let weight = try loadArrays(url: directory.appending(component: "head.safetensors"))["weight"] else {
                 throw BasaltError.modelConfigurationInvalid(path: directory.path, reason: "head.safetensors has no weight")
@@ -73,8 +90,13 @@ public struct JevEvaluator: DecisionEngine {
         return (parts[0], parts[1])
     }
 
+    public func unload() async {
+        await slot.unload()
+    }
+
     public func decide(_ request: SystemOneRequest) async throws(BasaltError) -> SystemOneResponse {
         try SystemOneCore.validate(request)
+        let container = try await slot.get()
         let names = request.questions.keys.sorted()
         let questions = names.map { request.questions[$0]! }
         let (bundle, head, header, tail) = (bundle, head, header, tail)

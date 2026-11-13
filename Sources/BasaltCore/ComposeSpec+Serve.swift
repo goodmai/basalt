@@ -23,6 +23,7 @@ extension ComposeSpec {
 
     var decideArguments: [String] {
         func local(_ name: String) -> String { name == answer ? "self" : (self.local(name) ?? name) }
+        guard !cascade.contains(where: { models[$0]?.keep == .onDemand }) else { return [] }
         switch cascade.count {
         case 0: return []
         case 1: return ["--decision-model", local(cascade[0])]
@@ -90,7 +91,7 @@ extension ComposeSpec {
     }
 
     public var onDemandLines: [String] {
-        ([ocr, speech].compactMap { $0 } + answerModels).filter { models[$0]?.keep == .onDemand }.map {
+        models.keys.sorted().filter { models[$0]?.keep == .onDemand }.map {
             "  \($0) on demand: loaded by the first request that needs it, unloaded after \(models[$0]?.idleUnload ?? Self.defaultIdleUnload) s idle; counted as resident above"
         }
     }

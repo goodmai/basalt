@@ -1,5 +1,6 @@
 import Foundation
 import BasaltCore
+import BasaltInference
 import BasaltServer
 
 extension ComposeHost {
@@ -16,7 +17,7 @@ extension ComposeHost {
     static func probes(_ model: ComposeHeld, answering: Bool) -> Bool {
         switch model {
         case .resident: answering
-        case .decision, .onDemand: true
+        case .decision, .onDemand, .onDemandDecision: true
         case .cloud: false
         }
     }
@@ -35,6 +36,16 @@ enum ComposeProbe {
             case .onDemand(let onDemand):
                 let report = await ModelInspector().inspect(modelIdOrPath: onDemand.path)
                 if !report.intact { return "its files at \(onDemand.path) are incomplete; run basalt models inspect \(onDemand.path)" }
+            case .onDemandDecision(let onDemand):
+                let url = URL(fileURLWithPath: onDemand.path)
+                if CoreAIDecisionEngine.isBundle(url) {
+                    try CoreAIDecisionEngine.validateBundle(url)
+                } else if JevEvaluator.isBundle(url) {
+                    _ = try JevEvaluator.baseModel(of: url)
+                } else {
+                    let report = await ModelInspector().inspect(modelIdOrPath: onDemand.path)
+                    if !report.intact { return "its files at \(onDemand.path) are incomplete; run basalt models inspect \(onDemand.path)" }
+                }
             case .cloud:
                 break
             }

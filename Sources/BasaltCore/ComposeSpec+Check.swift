@@ -41,6 +41,10 @@ extension ComposeSpec {
 
     var pipelineIssues: [Issue] {
         var issues: [Issue] = []
+        let sequentialPerceiver = [ocr, speech].contains { $0.flatMap { models[$0]?.keep } == .sequential }
+        if deciderModels.contains(where: { models[$0]?.keep == .onDemand }), memory == .sequential || sequentialPerceiver {
+            issues.append(Issue("memory", "an on-demand decider may be loaded at any time, so the set must fit resident; use memory: auto or resident"))
+        }
         for (pipeline, view) in views where pipeline != Self.defaultPipeline {
             let path = "pipelines.\(pipeline)"
             if !pipeline.allSatisfy({ $0.isLowercase || $0.isNumber || $0 == "-" }) { issues.append(Issue(path, "a pipeline name uses lowercase letters, digits and -")) }
@@ -112,7 +116,7 @@ extension ComposeSpec {
         let path = "models.\(name)"
         let perceiver = views.contains { $0.spec.ocr == name || $0.spec.speech == name }
         let routed = views.contains { $0.spec.answer != name && $0.spec.answerModels.contains(name) }
-        var issues = keepIssues(path, model, perceiver: perceiver, answer: routed)
+        var issues = keepIssues(path, model, perceiver: perceiver, onDemandAllowed: routed || deciderModels.contains(name))
         issues += roleIssues(name, model, path: path)
         if model.budget != nil, !model.isCloud { issues.append(Issue("\(path).budget", "applies only to cloud models")) }
         if let budget = model.budget, !(budget > 0) { issues.append(Issue("\(path).budget", "usd_per_day must be positive")) }
@@ -126,10 +130,10 @@ extension ComposeSpec {
         return issues
     }
 
-    func keepIssues(_ path: String, _ model: Model, perceiver: Bool, answer: Bool) -> [Issue] {
+    func keepIssues(_ path: String, _ model: Model, perceiver: Bool, onDemandAllowed: Bool) -> [Issue] {
         var issues: [Issue] = []
-        let allowed = perceiver || (answer && model.keep == .onDemand)
-        if let keep = model.keep, keep != .resident, !allowed { issues.append(Issue("\(path).keep", "\(keep.rawValue) applies only to a perceiver, or on-demand to a routed answer model")) }
+        let allowed = perceiver || (onDemandAllowed && model.keep == .onDemand)
+        if let keep = model.keep, keep != .resident, !allowed { issues.append(Issue("\(path).keep", "\(keep.rawValue) applies only to a perceiver, or on-demand to a decider or routed answer model")) }
         if model.idleUnload != nil, model.keep != .onDemand { issues.append(Issue("\(path).idle_unload", "applies only to keep: on-demand")) }
         if let idle = model.idleUnload, idle <= 0 { issues.append(Issue("\(path).idle_unload", "must be a positive duration")) }
         return issues
