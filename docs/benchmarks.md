@@ -15,6 +15,23 @@ Every speed-up is opt-in and keeps greedy output identical unless the row says o
 | Concurrent requests | `serve --max-concurrent N` | each running request reserves its KV room; one that does not fit gets 503 `Retry-After` instead of an out-of-memory | — |
 | DRY and XTC samplers (experimental) | `serve --experimental-samplers` | `dry_*` / `xtc_*` request fields | not an anti-loop tool: on a 2-bit model DRY hides loops behind corrupted facts (#177) |
 
+## Where the README's numbers come from
+
+Each number on the README's first screen comes from a logged run, and the PR that landed the feature has the table, the commit and the log path. M4 Pro 24 GB, release build, unless the PR says otherwise.
+
+| Claim | Source |
+|---|---|
+| Qwen3-4B 78–89 tok/s; Ternary Bonsai 2 27B in 7.4 GB at 20.9–21.5 tok/s, 31–38 with prompt lookup on code | [#239](https://github.com/goodmai/basalt/pull/239), from [#218](https://github.com/goodmai/basalt/pull/218), [#231](https://github.com/goodmai/basalt/pull/231), [#232](https://github.com/goodmai/basalt/pull/232) |
+| Bonsai 2 27B with its MTP head, 27.1 tok/s on code | [#263](https://github.com/goodmai/basalt/pull/263) |
+| Prompt lookup 3.45–3.62× on Gemma 4 12B, greedy output unchanged | [#265](https://github.com/goodmai/basalt/pull/265) |
+| Second agent turn about 1 s instead of 36 s on Ornith-1.5-9B (12.6k-token prompt) | [#82](https://github.com/goodmai/basalt/pull/82) |
+| 16k prompt peak 1.03 GB instead of 3.11 GB with KV zones on Qwen3-4B | [#159](https://github.com/goodmai/basalt/pull/159) |
+| Mixture of models: every label right, $0.035 per 1000 requests, p95 4.8 s against 10.0 s | [#418](https://github.com/goodmai/basalt/pull/418) |
+| Mac app: warm window 257 ms, 0 idle wakeups, 7.4 ms p95 per streamed token | [#463](https://github.com/goodmai/basalt/pull/463) |
+| A 9B judge beside Gemma 4 12B on 24 GB: 4-bit fits (15.3 GB), 98.9% with 77% fewer LLM tokens | [#465](https://github.com/goodmai/basalt/pull/465) |
+
+The golden-tested models in the README are checked by `scripts/check_readme_models.swift` in CI: a model listed there must link an existing fixture in `Tests/BasaltTests/Fixtures/golden`.
+
 ## Benchmarks
 
 Two harnesses, both pointed at a running server, both reporting numbers you can

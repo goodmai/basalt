@@ -17,19 +17,27 @@
 [![ARC-AGI](https://img.shields.io/badge/ARC--AGI-pass%402-black.svg)](docs/benchmarks.md#benchmarks)
 
 <p align="center"><img src="images/models-hive.svg" alt="Open models basalt runs: Qwen, Gemma, Ornith, gpt-oss, DeepSeek, Llama" width="240"></p>
-<p align="center"><sub>Runs open-weight models on Apple Silicon. Verified here today: Gemma, Qwen, Ornith (see <a href="docs/models.md#verified-models">the table</a>); gpt-oss, DeepSeek and Llama are MLX-compatible but not benchmarked here yet. Logos are trademarks of their owners, shown only to indicate compatibility. Anthropic's models are closed-weight, so they are not in the hive; the Anthropic <i>API</i> is supported so that Claude Code can talk to a local model.</sub></p>
+<p align="center"><sub>Runs open-weight models on Apple Silicon. Logit-verified here: Gemma 4, Qwen3.8 and LFM2.5 (the table below); measured but without golden fixtures: Ornith and Bonsai (see <a href="docs/models.md#verified-models">the models table</a>); gpt-oss, DeepSeek and Llama are MLX-compatible but not benchmarked here yet. Logos are trademarks of their owners, shown only to indicate compatibility. Anthropic's models are closed-weight, so they are not in the hive; the Anthropic <i>API</i> is supported so that Claude Code can talk to a local model.</sub></p>
 
 **Five things in one repo:** a local inference server your tools already know how to talk to, LoRA training and distillation from a stronger model, a docker-compose for model systems, a microscope for what happens inside the model, and a Mac app that puts it all one keystroke away.
+
+**Checked against reference logits on every change** to the inference path: [`GoldenLogitsTests`](Tests/BasaltTests/GoldenLogitsTests.swift) replays recorded prompts and fails when a greedy token or a logit moves. Per-family reference logits for qwen3, qwen3_5, gemma4, lfm2 and nemotron_h, dense and MoE, are in [`Fixtures/ReferenceLogits`](Tests/BasaltTests/Fixtures/ReferenceLogits).
+
+| Golden-tested model | Class | Fixture |
+|---|---|---|
+| [`mlx-community/gemma-4-26B-A4B-it-qat-4bit`](https://huggingface.co/mlx-community/gemma-4-26B-A4B-it-qat-4bit) | sliding-window + full attention, MoE | [golden](Tests/BasaltTests/Fixtures/golden/mlx-community--gemma-4-26B-A4B-it-qat-4bit.json) |
+| [`lukaskremla/Qwen3.8-27B-3bit-MLX-TextOnly`](https://huggingface.co/lukaskremla/Qwen3.8-27B-3bit-MLX-TextOnly) | hybrid linear/full attention, dense | [golden](Tests/BasaltTests/Fixtures/golden/lukaskremla--Qwen3.8-27B-3bit-MLX-TextOnly.json) |
+| [`LiquidAI/LFM2.5-24B-A2B-MLX-4bit`](https://huggingface.co/LiquidAI/LFM2.5-24B-A2B-MLX-4bit) | hybrid conv + attention, MoE | [golden](Tests/BasaltTests/Fixtures/golden/LiquidAI--LFM2.5-24B-A2B-MLX-4bit.json) |
 
 ---
 
 ## Inference: a 27B model in 7.4 GB, behind the APIs you already use
 
 - **Claude Code on your own GPU in one line.** `ANTHROPIC_BASE_URL=http://localhost:8080 ANTHROPIC_AUTH_TOKEN=local claude` — your real API key is never touched. OpenAI SDKs, OpenCode, Continue, Cline and aider connect over the OpenAI API, Claude Desktop and Cursor over MCP.
-- **Fast on a laptop.** On an M4 Pro with 24 GB: Qwen3-4B decodes at 78–89 tok/s; Ternary Bonsai 2 27B fits in 7.4 GB and runs at 20.9–21.5 tok/s, 27.1 with its MTP head and 31–38 with prompt lookup on code.
-- **Speculative decoding that stays exact.** Prompt lookup gives 1.84–2.66× on code edits (Bonsai 2 27B) and 3.45–3.62× (Gemma 4 12B), with greedy output unchanged.
-- **The next turn costs only its new tokens.** A prefix-tree prompt cache, even for hybrid models: on Ornith-1.5-9B with a 12.6k-token agent prompt, the second turn takes about 1 s instead of about 36 s.
-- **Long contexts in less memory.** KV quantization with exact zones: a 16k prompt peaks at 1.03 GB instead of 3.11 GB on Qwen3-4B.
+- **Fast on a laptop.** On an M4 Pro with 24 GB: Qwen3-4B decodes at 78–89 tok/s; Ternary Bonsai 2 27B fits in 7.4 GB and runs at 20.9–21.5 tok/s, 27.1 with its MTP head and 31–38 with prompt lookup on code ([#239](https://github.com/goodmai/basalt/pull/239), [#263](https://github.com/goodmai/basalt/pull/263)).
+- **Speculative decoding that stays exact.** Prompt lookup gives 1.84–2.66× on code edits (Bonsai 2 27B, [#239](https://github.com/goodmai/basalt/pull/239)) and 3.45–3.62× (Gemma 4 12B, [#265](https://github.com/goodmai/basalt/pull/265)), with greedy output unchanged.
+- **The next turn costs only its new tokens.** A prefix-tree prompt cache, even for hybrid models: on Ornith-1.5-9B with a 12.6k-token agent prompt, the second turn takes about 1 s instead of about 36 s ([#82](https://github.com/goodmai/basalt/pull/82)).
+- **Long contexts in less memory.** KV quantization with exact zones: a 16k prompt peaks at 1.03 GB instead of 3.11 GB on Qwen3-4B ([#159](https://github.com/goodmai/basalt/pull/159)).
 - **A whole local stack.** Tool calls, JSON-schema, regex and grammar output (XGrammar), images, `/v1/embeddings`, `/v1/rerank`, LoRA adapters picked per request, and an optional cloud fallback for what does not fit.
 
 Details: [REST API](docs/rest-api.md) · [integrations](docs/integrations.md) · [commands and flags](docs/commands.md) · [models](docs/models.md) · [benchmarks](docs/benchmarks.md)
@@ -49,7 +57,7 @@ Details: [training commands](docs/commands.md) · [self-training, distillation a
 - **docker-compose, for models.** Local and cloud models, how each stays in memory (`resident`, `on-demand`, `sequential`), and a perceive → decide → answer pipeline — OCR, speech, a decision cascade and the chat model — in one file.
 - **Refuses what will not fit.** `basalt compose plan` adds up the bytes, sizing models you have not downloaded from the Hugging Face API, and refuses a system that does not fit before anything loads. `compose pull` fetches and verifies every model ahead of time.
 - **Change it live.** `compose diff` shows what would change; `compose up` on a running system then loads, reloads and unloads only the models that changed and swaps pipelines between requests, streaming progress events as it goes. `compose ps` shows state and spend, `compose down` stops it. Version 2 files pick models per Mac by memory and chip.
-- **A mixture of models with a budget.** Answer routes send code to a cloud model while its daily budget lasts and everything else to the local model. On a 55-request mixed workload: every label right, $0.035 per 1000 requests, p95 4.8 s against 10.0 s local only (M4 Pro).
+- **A mixture of models with a budget.** Answer routes send code to a cloud model while its daily budget lasts and everything else to the local model. On a 55-request mixed workload: every label right, $0.035 per 1000 requests, p95 4.8 s against 10.0 s local only (M4 Pro, [#418](https://github.com/goodmai/basalt/pull/418)).
 - **Private by default.** Keys come only from environment variables, and text read from your documents or audio never goes to a cloud model.
 - **Google's Gemini Decision 1 as a decision stage.** `cloud:gemini/gemini-decision-1` answers yes/no, choice and score questions over text, images, audio, video and PDFs in one pass, in front of a local decider. It is also the ideal calibration teacher for local decision models (#448).
 
