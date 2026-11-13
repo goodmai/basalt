@@ -1,0 +1,26 @@
+name: README Models
+
+on:
+  pull_request:
+    paths:
+      - 'README.md'
+      - 'README.ru.md'
+      - 'Tests/BasaltTests/Fixtures/golden/**'
+      - 'scripts/check_readme_models*'
+      - '.github/workflows/readme-models.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  readme-models:
+    name: README lists only golden-tested models
+    runs-on: ubuntu-latest
+    container: swift:6.1-noble
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Checker self-test
+        run: swift scripts/check_readme_models_test.swift
+      - name: Every golden-tested model in the README links an existing fixture
+        run: swift scripts/check_readme_models.swift
