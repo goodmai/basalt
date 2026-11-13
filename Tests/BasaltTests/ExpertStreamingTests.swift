@@ -40,6 +40,33 @@ struct ExpertLRUTests {
         #expect(later.misses == 0)
     }
 
+    @Test("Warm start seeds ranked prefill experts without re-reading resident ones and orders LRU so the coldest rank evicts first")
+    func warmStartRanksEvictionOrder() throws {
+        var table = ExpertSlotTable(slots: 3)
+        _ = table.place([20])
+        let warmed = table.warm([10, 20, 30, 40])
+        #expect(warmed.loads.map(\.expert) == [10, 30] && warmed.evictions == 0)
+        #expect(table.slot(of: 10) != nil && table.slot(of: 20) != nil && table.slot(of: 30) != nil && table.slot(of: 40) == nil)
+        let afterMissPlacement = table.place([99])
+        let afterMiss = try #require(afterMissPlacement)
+        #expect(afterMiss.evictions == 1 && table.slot(of: 30) == nil && table.slot(of: 10) != nil && table.slot(of: 20) != nil)
+    }
+
+    @Test("Per-layer prefetch gating throttles misses to zero and promotes consistently accurate ranks")
+    func prefetchGateAdaptsByPrecision() throws {
+        var gate = ExpertPrefetchGate(topK: 4)
+        #expect(gate.select([7, 8, 9, 10]) == [7, 8])
+        for _ in 0 ..< 3 { gate.observe(predicted: [7, 8, 9, 10], actual: [0, 1, 2, 3]) }
+        #expect(gate.budget == 0 && gate.select([7, 8, 9, 10]).isEmpty)
+        for _ in 0 ..< 6 { gate.observe(predicted: [7, 8, 9, 10], actual: [7, 8, 9, 10]) }
+        #expect(gate.budget == 4 && gate.select([7, 8, 9, 10]) == [7, 8, 9, 10])
+        var table = ExpertSlotTable(slots: 4)
+        let placements = [table.place([7, 8], prefetch: true, speculative: true), table.place([7, 1])]
+        let (ahead, used) = (try #require(placements[0]), try #require(placements[1]))
+        #expect(ahead.loads.count == 2 && ahead.prefetchHits == 0)
+        #expect(used.prefetchHits == 1)
+    }
+
     @Test("The expert cache is the 25% placeholder of the expert weights unless --expert-cache-gb sets it")
     func cacheSize() throws {
         let weights = ByteCount(35_000)
@@ -149,10 +176,6 @@ struct ExpertStreamingParityTests {
     @Test("Logits are bitwise equal and 16 greedy tokens identical with a cache that holds every expert, half of them, or none beyond the current call",
           arguments: ["lfm2_moe", "gemma4_moe", "qwen3_moe", "qwen3_5_moe"], [false, true])
     func parity(family: String, quantized: Bool) async throws {
-        if family == "qwen3_5_moe", let refusal = await Self.refusal(Self.fixtures.appendingPathComponent(family)) {
-            #expect(refusal.contains("compiled trace"))
-            return
-        }
         let directory = quantized ? try await Self.quantized(family) : Self.fixtures.appendingPathComponent(family)
         defer { if quantized { try? FileManager.default.removeItem(at: directory) } }
         let resident = try await Self.outputs(try await loadModelContainer(from: directory, using: ByteTokenizerLoader()))
@@ -301,5 +324,67 @@ struct ExpertStreamingParityTests {
         let plain = try await kvBudget(.zero)
         let reserved = try await kvBudget(ByteCount(8 << 30))
         #expect(reserved < plain)
+    }
+}
+
+@Suite("Expert streaming prefill warm-start and next-layer speculative prefetch (#225)", .serialized)
+struct ExpertStreamingPrefetchTests {
+    @Test("Warm start from prefill seeds empty decode slots after an overflowing prefill and raises first-decode hit rate without changing tokens")
+    func warmStartLiftsDecodeHitRate() async throws {
+        let directory = ExpertStreamingParityTests.fixtures.appendingPathComponent("qwen3_5_moe")
+        let full = try await ExpertStreamingParityTests.streamed(directory, cache: ByteCount(1 << 30))
+        let total = try #require(await full.perform { ExpertStreamingLoader.store(in: $0.model)?.expertBytes })
+        func decodeStats(warm: Bool) async throws -> (tokens: [Int], stats: ExpertCacheStats) {
+            let container = try await ExpertStreamingParityTests.streamed(directory, cache: total / 2)
+            return try await container.perform { context in
+                let store = try #require(ExpertStreamingLoader.store(in: context.model))
+                store.warmStart = warm
+                let cache = try context.model.newCache(parameters: nil)
+                var logits = context.model(MLXArray(ExpertStreamingParityTests.prompt.map(Int32.init)).reshaped(1, -1), cache: cache)
+                var next = logits[0, -1].argMax().item(Int.self)
+                store.resetStats()
+                var generated = [next]
+                for _ in 0 ..< 15 {
+                    logits = context.model(MLXArray([Int32(next)]).reshaped(1, 1), cache: cache)
+                    next = logits[0, -1].argMax().item(Int.self)
+                    generated.append(next)
+                }
+                return (generated, store.stats)
+            }
+        }
+        let cold = try await decodeStats(warm: false)
+        let warm = try await decodeStats(warm: true)
+        #expect(warm.tokens == cold.tokens)
+        #expect(warm.stats.warmed > 0 && cold.stats.warmed == 0)
+        #expect(warm.stats.hitRate > cold.stats.hitRate)
+    }
+
+    @Test("Next-layer speculative prefetch resolves routers across all four MoE families, issues async reads, and matches unprefetched greedy decode bitwise",
+          arguments: ["lfm2_moe", "gemma4_moe", "qwen3_moe", "qwen3_5_moe"])
+    func nextLayerPrefetchParity(family: String) async throws {
+        let directory = ExpertStreamingParityTests.fixtures.appendingPathComponent(family)
+        func runSingleToken(prefetch: Bool) async throws -> (tokens: [Int], logits: [Float], stats: ExpertCacheStats) {
+            let container = try await ExpertStreamingParityTests.streamed(directory, cache: ByteCount(1 << 30))
+            return try await container.perform { context in
+                let store = try #require(ExpertStreamingLoader.store(in: context.model))
+                store.nextLayerPrefetch = prefetch
+                let cache = try context.model.newCache(parameters: nil)
+                var current = 17
+                var tokens: [Int] = []
+                var lastLogits: [Float] = []
+                for step in 0 ..< 8 {
+                    let logits = context.model(MLXArray([Int32(current)]).reshaped(1, 1), cache: cache)
+                    current = logits[0, -1].argMax().item(Int.self)
+                    tokens.append(current)
+                    if step == 7 { lastLogits = logits[0, -1].asType(.float32).asArray(Float.self) }
+                }
+                return (tokens, lastLogits, store.stats)
+            }
+        }
+        let plain = try await runSingleToken(prefetch: false)
+        let prefetched = try await runSingleToken(prefetch: true)
+        #expect(prefetched.tokens == plain.tokens, "\(family)")
+        #expect(prefetched.logits == plain.logits, "\(family)")
+        #expect(prefetched.stats.prefetched > 0 && plain.stats.prefetched == 0, "\(family)")
     }
 }
