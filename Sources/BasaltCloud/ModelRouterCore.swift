@@ -255,17 +255,20 @@ enum RouterEvent: Sendable {
     case tierChosen(StickyRoutingPolicy.Tier, sessionId: String?, request: GenerationRequest)
     case cascadeDeferred(sessionId: String?, request: GenerationRequest)
     case outcome(GenerationRequest, GenerationResponse, localModel: String, at: Date)
+    case fallback(FallbackTierEvent)
 }
 
 struct RouterState: Sendable {
     private(set) var catalog = ModelCatalog()
     private(set) var cost: CostRoutingState?
+    private(set) var fallback: FallbackTierState
     private(set) var syncsStarted = 0
     private(set) var syncApplied = 0
     private(set) var cascadeDeferrals = 0
 
-    init(cost: CostRoutingState? = nil) {
+    init(cost: CostRoutingState? = nil, fallback: FallbackTierState = FallbackTierState()) {
         self.cost = cost
+        self.fallback = fallback
     }
 
     func checkInvariants(after previous: RouterState) -> [String] {
@@ -295,6 +298,8 @@ struct RouterState: Sendable {
             next.cost?.remember(.strong, sessionId: sessionId, request: request)
         case .outcome(let request, let response, let localModel, let now):
             next.cost?.recordOutcome(request, response: response, localModel: localModel, at: now)
+        case .fallback(let fallbackEvent):
+            next.fallback = .reduce(state.fallback, fallbackEvent)
         }
         return next
     }

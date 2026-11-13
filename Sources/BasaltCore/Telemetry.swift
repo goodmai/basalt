@@ -143,6 +143,15 @@ public actor TelemetryTracker {
         if let response { recordGeneration(response) }
     }
 
+    public func recordRemote(_ response: GenerationResponse) {
+        guard response.finishReason != .error else { return }
+        totalRequests += 1
+        totalTokens += response.completionTokens
+        windows.record(TelemetrySample(
+            at: Date(), ttft: response.timeToFirstToken, tokensPerSecond: response.tokensPerSecond,
+            completionTokens: response.completionTokens, promptTokens: response.promptTokens))
+    }
+
     public func snapshot(profiler: SystemProfiler = SystemProfiler()) async -> ServerTelemetrySnapshot {
         let hw: SystemProfiler.SystemResources
         if let cached = hardware {
