@@ -25,7 +25,7 @@ struct OCRCommand: AsyncParsableCommand {
     @Option(name: .long, help: "markdown, or json with blocks {type, bbox, text}")
     var format = OCRFormat.markdown.rawValue
 
-    @Option(name: .long, help: "DeepSeek-OCR resolution mode: tiny (512, 64 vision tokens), small (640, 100), base (1024, 256), large (1280, 400) or gundam (1024 plus 640 tiles; the default)")
+    @Option(name: .long, help: "DeepSeek-OCR resolution mode: tiny (512, 64 vision tokens), small (640, 100), base (1024, 256), large (1280, 400) or gundam (1024 plus 640 tiles; the default); DeepSeek-OCR-2 takes base or gundam (1024 plus 2 to 6 tiles of 768)")
     var resolution: String?
 
     mutating func run() async throws {

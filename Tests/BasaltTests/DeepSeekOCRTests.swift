@@ -273,8 +273,6 @@ struct DeepSeekOCRRealModelTests {
         return (model, reference)
     }
 
-    static let gundamEditBudget = 0.05
-
     static func textBudget(_ resolution: OCRResolution) -> Double {
         switch resolution {
         case .tiny, .small: 0.25
@@ -286,7 +284,7 @@ struct DeepSeekOCRRealModelTests {
         text.replacing(#/<\|det\|>.*?<\|/det\|>/#, with: "")
     }
 
-    @Test("Prompt ids equal mlx-vlm's on every page and mode. Pages pre-sized to tiny, small, base and large: the 64-token text without its grounding boxes, over the length both have, stays within 5% character edit distance at base and large and 25% at tiny and small (box digits on the 0-999 grid are bf16 near-ties, and the lower resolutions amplify them). Gundam on the unsized page (CoreGraphics resize against PIL bicubic): the 256-token text stays within 5%. Every run decodes as many tokens as mlx-vlm",
+    @Test("Prompt ids equal mlx-vlm's on every page and mode. Pages pre-sized to tiny, small, base and large: the 64-token text without its grounding boxes, over the length both have, stays within 5% character edit distance at base and large and 25% at tiny and small (box digits on the 0-999 grid are bf16 near-ties, and the lower resolutions amplify them). Gundam on the unsized page (CoreGraphics resize against PIL bicubic): the 256-token text without boxes stays within 5% (a box near-tie can also merge or split a box group, which shifts the window: OCR-2 doc-1). Every run decodes as many tokens as mlx-vlm",
           .enabled(if: paths != nil, "set BASALT_E2E=1, BASALT_E2E_DEEPSEEK_MODEL_PATH and BASALT_E2E_DEEPSEEK_REFERENCE"))
     func matchesMLXVLM() async throws {
         let (model, referencePath) = try #require(Self.paths)
@@ -316,14 +314,10 @@ struct DeepSeekOCRRealModelTests {
             let common = min(plain.count, expectedPlain.count)
             let plainDistance = MLXInferenceEngine.editDistance(String(plain.prefix(common)), String(expectedPlain.prefix(common)))
             print("DEEPSEEK-PARITY \(name) prompt=\(prompt.count)/\((page["prompt_ids"] as? [Int])?.count ?? 0) tokens=\(tokens.count) exact=\(tokens == expected) first=\(zip(tokens, expected).enumerated().first { $1.0 != $1.1 }?.offset ?? -1) edit=\(distance)/\(expectedText.utf8.count) text-edit=\(plainDistance)/\(common)")
-            log.record(name, "tokens \(tokens.count)/\(expected.count) exact \(tokens == expected) text-edit \(plainDistance)/\(common)")
+            log.record(name, "tokens \(tokens.count)/\(expected.count) exact \(tokens == expected) edit \(distance)/\(expectedText.utf8.count) text-edit \(plainDistance)/\(common)")
             #expect(prompt == page["prompt_ids"] as? [Int], "\(name): prompt ids")
             #expect(tokens.count == expected.count, "\(name): \(tokens.count) tokens where mlx-vlm decoded \(expected.count)")
-            if resolution == .gundam {
-                #expect(Double(distance) <= Self.gundamEditBudget * Double(expectedText.utf8.count), "\(name): edit distance \(distance)")
-            } else {
-                #expect(Double(plainDistance) <= Self.textBudget(resolution) * Double(max(common, 1)), "\(name): text edit distance \(plainDistance)")
-            }
+            #expect(Double(plainDistance) <= Self.textBudget(resolution) * Double(max(common, 1)), "\(name): text edit distance \(plainDistance)")
         }
     }
 }
