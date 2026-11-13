@@ -4,11 +4,12 @@ import MLXLMCommon
 import Testing
 @testable import BasaltInference
 
-@Suite("turbo probe") struct TurboProbe {
-    @Test(.enabled(if: ProcessInfo.processInfo.environment["TURBO_PROBE"] != nil)) func decodePerplexity() async throws {
-        let corpus = try String(contentsOfFile: ProcessInfo.processInfo.environment["TURBO_CORPUS"]!, encoding: .utf8)
+@Suite("TurboQuant KV on real models (#471, experimental): decode perplexity over 384 tokens after 8k, where the compressed keys are read; chunked prefill reads raw keys") struct TurboKVDecodeRealModelTests {
+    @Test("fp16, affine q4, turbo3 and turbo4: decode perplexity, decode speed and the cache kinds", .enabled(if: ProcessInfo.processInfo.environment["BASALT_E2E"] == "1" && ProcessInfo.processInfo.environment["BASALT_E2E_TURBO_MODEL"] != nil, "set BASALT_E2E=1, BASALT_E2E_TURBO_MODEL and BASALT_ZONED_CORPUS; run a release build"))
+    func decodePerplexity() async throws {
+        let corpus = try String(contentsOfFile: ProcessInfo.processInfo.environment["BASALT_ZONED_CORPUS"]!, encoding: .utf8)
         let engine = MLXInferenceEngine(EngineConfiguration(promptCacheBytes: 0))
-        try await engine.load(modelPath: NF4Run.path(ProcessInfo.processInfo.environment["TURBO_PROBE"]!))
+        try await engine.load(modelPath: NF4Run.path(ProcessInfo.processInfo.environment["BASALT_E2E_TURBO_MODEL"]!))
         let container = try #require(await engine.container)
         let lines = try await container.perform { context -> [String] in
             let tokens = Array(context.tokenizer.encode(text: corpus).prefix(8192 + 385)).map(Int32.init)
@@ -34,6 +35,6 @@ import Testing
             }
             return lines
         }
-        for line in lines { print("PROBE \(line)") }
+        for line in lines { print("RESULT \(line)") }
     }
 }
