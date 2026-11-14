@@ -54,6 +54,9 @@ struct ServeConfigFileTests {
         Group(yaml: "mcp: { enabled: true, research_tools: true, image_dirs: [/tmp/a, /tmp/b] }", flags: ["--mcp", "--research-tools", "--image-dir", "/tmp/a", "--image-dir", "/tmp/b"]) {
             "\($0.mcp) \($0.researchTools) \($0.imageDirs)"
         },
+        Group(yaml: "mcp: { enable: [surgery, intervene], disable: [switch_model] }", flags: ["--mcp-enable", "surgery", "--mcp-enable", "intervene", "--mcp-disable", "switch_model"]) {
+            "\($0.mcpOptions.enable) \($0.mcpOptions.disable)"
+        },
     ]
 
     static func serve(_ yaml: String, _ cli: [String] = []) throws -> ServeCommand {

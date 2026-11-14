@@ -12,6 +12,7 @@ public final class MCPServer: Service, Sendable {
     let harnessRoots: [URL]
     let harnessLimits: HarnessLoadLimits
     let researchTools: Bool
+    let toolFilter: MCPToolFilter
     let imageDirectories: [URL]
     let decisions: (any DecisionEngine)?
     let pipeline: PipelineStages
@@ -32,6 +33,7 @@ public final class MCPServer: Service, Sendable {
         self.harnessRoots = harnessRoots
         self.harnessLimits = harnessLimits
         self.researchTools = false
+        self.toolFilter = .standard
         self.imageDirectories = []
         self.decisions = nil
         self.pipeline = PipelineStages()
@@ -51,6 +53,7 @@ public final class MCPServer: Service, Sendable {
         self.harnessRoots = HarnessLoader.allowedRoots()
         self.harnessLimits = .standard
         self.researchTools = false
+        self.toolFilter = .standard
         self.imageDirectories = []
         self.decisions = nil
         self.pipeline = PipelineStages()
@@ -58,13 +61,21 @@ public final class MCPServer: Service, Sendable {
         self.writer = writer
     }
 
-    private init(_ server: MCPServer, researchTools: Bool, imageDirectories: [URL], decisions: (any DecisionEngine)?, pipeline: PipelineStages) {
+    private init(
+        _ server: MCPServer,
+        researchTools: Bool,
+        toolFilter: MCPToolFilter,
+        imageDirectories: [URL],
+        decisions: (any DecisionEngine)?,
+        pipeline: PipelineStages
+    ) {
         orchestrator = server.orchestrator
         modelId = server.modelId
         library = server.library
         harnessRoots = server.harnessRoots
         harnessLimits = server.harnessLimits
         self.researchTools = researchTools
+        self.toolFilter = toolFilter
         self.imageDirectories = imageDirectories
         self.decisions = decisions
         self.pipeline = pipeline
@@ -73,19 +84,23 @@ public final class MCPServer: Service, Sendable {
     }
 
     public func withResearchTools(_ enabled: Bool) -> MCPServer {
-        MCPServer(self, researchTools: enabled, imageDirectories: imageDirectories, decisions: decisions, pipeline: pipeline)
+        MCPServer(self, researchTools: enabled, toolFilter: toolFilter, imageDirectories: imageDirectories, decisions: decisions, pipeline: pipeline)
+    }
+
+    public func withToolFilter(_ filter: MCPToolFilter) -> MCPServer {
+        MCPServer(self, researchTools: researchTools, toolFilter: filter, imageDirectories: imageDirectories, decisions: decisions, pipeline: pipeline)
     }
 
     public func withImageDirectories(_ directories: [URL]) -> MCPServer {
-        MCPServer(self, researchTools: researchTools, imageDirectories: directories.map(MCPImages.resolved), decisions: decisions, pipeline: pipeline)
+        MCPServer(self, researchTools: researchTools, toolFilter: toolFilter, imageDirectories: directories.map(MCPImages.resolved), decisions: decisions, pipeline: pipeline)
     }
 
     package func withPipeline(_ stages: PipelineStages) -> MCPServer {
-        MCPServer(self, researchTools: researchTools, imageDirectories: imageDirectories, decisions: decisions, pipeline: stages)
+        MCPServer(self, researchTools: researchTools, toolFilter: toolFilter, imageDirectories: imageDirectories, decisions: decisions, pipeline: stages)
     }
 
     public func withDecisions(_ engine: (any DecisionEngine)?) -> MCPServer {
-        MCPServer(self, researchTools: researchTools, imageDirectories: imageDirectories, decisions: GatedDecisionEngine.serving(engine, gate: orchestrator.gate), pipeline: pipeline)
+        MCPServer(self, researchTools: researchTools, toolFilter: toolFilter, imageDirectories: imageDirectories, decisions: GatedDecisionEngine.serving(engine, gate: orchestrator.gate), pipeline: pipeline)
     }
 }
 
@@ -133,7 +148,7 @@ extension MCPServer {
         case .failed(let id, let failure): writer(MCPWire.error(id: id, failure))
         case .ignored: break
         case .initialize(let id): writer(MCPWire.result(id: id, MCPInitializeResult.current))
-        case .toolsList(let id): writer(MCPWire.result(id: id, MCPToolCatalog.catalog(researchTools: researchTools)))
+        case .toolsList(let id): writer(MCPWire.result(id: id, MCPToolCatalog.catalog(researchTools: researchTools, filter: toolFilter)))
         case .toolsCall(let id, let params): await handleToolsCall(id: id, params: params)
         }
     }

@@ -25,7 +25,7 @@ The tools belong to basalt's own MCP server (`basalt serve --mcp`, JSON-RPC 2.0 
 
 Rules for both:
 - The server loads weights, so it is a real-model run: take the GPU lock and use a release build (`basalt-model-runs`).
-- Add `--research-tools` only for the experiment tools. `tools/list` shows what the running server accepts.
+- Add `--research-tools` for the full experiment surface, or `--mcp-enable surgery` / `--mcp-enable <tool>` (`--mcp-disable <tool|group>` to lock tools off; deny wins) for a narrower subset (#484). `tools/list` shows what the running server accepts.
 - Read stderr when a call returns nothing: load errors go there, not to stdout.
 
 Other tools on the same server, for when the question is about serving and not about the model's insides:

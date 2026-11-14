@@ -98,21 +98,9 @@ struct ServeCommand: AsyncParsableCommand {
     @Option(name: .customLong("max-tokens"), help: "Default maximum tokens to generate (default: 65536, range: 2048-128000)")
     var maxTokens: Int = 65536
 
-    @Flag(help: "Start MCP stdio transport in addition to REST")
-    var mcp: Bool = false
-
-    @Flag(help: "Start REST only, suppress MCP stdio")
-    var rest: Bool = false
+    @OptionGroup var mcpOptions: MCPOptions
 
     @Option(name: .customLong("adapter"), help: "Serve a LoRA adapter on the loaded model as name=directory (an mlx-lm adapter directory: adapter_config.json and adapters.safetensors), checked against the model at startup; repeatable. A request picks one with the X-Basalt-Adapter header (unknown name: 400); requests for different adapters take turns, the same adapter runs concurrently") var adapters: [String] = []
-
-    @Option(name: .customLong("image-dir"), help: "With --mcp, a directory the generate tool may read image paths from, after resolving symlinks; repeatable (default: none, every path is refused)") var imageDirs: [String] = []
-
-    @Flag(
-        name: .customLong("research-tools"),
-        help: "With --mcp, also list and accept the experiment tools (intervene, weights_delta, overlays_list, overlay_undo, experiment_compare, adapter_apply, gate_check, tensor_pack, tensor_unpack, train_experts, steer_search, steer_commit, introspect): in-memory overlays with undo and a TTL (an adapter that passed its quality gate has none); steering and ablation apply to research calls only, while a weight delta, adapter or pack changes the live model, marks every response as modified and turns off prompt-cache reuse until it is undone; model files on disk are never written (train_experts saves its adapter to a new directory) (default: off; the read-only X-ray tools are always on)"
-    )
-    var researchTools = false
 
     @Flag(name: .customLong("dry-run"), help: "Perform a dry-run memory feasibility assessment and exit without starting the server")
     var dryRun: Bool = false
@@ -204,11 +192,7 @@ struct ServeCommand: AsyncParsableCommand {
         if startREST { log("REST → http://\(config.host):\(config.restPort)") }
         if startMCP  { log("MCP → JSON-RPC 2.0 on stdin/stdout") }
 
-        let mcpServer = startMCP ? MCPServer(
-            orchestrator: orchestrator,
-            modelId: resolvedPath.split(separator: "/").last.map { String($0) },
-            library: HarnessExperienceLibrary(rootDirectory: HarnessExperienceLibrary.defaultRoot)
-        ).withResearchTools(researchTools).withImageDirectories(imageDirs.map { URL(fileURLWithPath: $0) }).withDecisions(decisions).withPipeline(stages) : nil
+        let mcpServer = startMCP ? try makeMCPServer(orchestrator: orchestrator, resolvedPath: resolvedPath, decisions: decisions, stages: stages) : nil
 
         try await Self.runServers(
             ServerLaunch(
@@ -221,6 +205,29 @@ struct ServeCommand: AsyncParsableCommand {
 }
 
 extension ServeCommand {
+    var mcp: Bool { mcpOptions.mcp }
+    var rest: Bool { mcpOptions.rest }
+    var imageDirs: [String] { mcpOptions.imageDirs }
+    var researchTools: Bool { mcpOptions.researchTools }
+
+    func makeMCPServer(
+        orchestrator: ModelOrchestratorActor,
+        resolvedPath: String,
+        decisions: (any DecisionEngine)?,
+        stages: PipelineStages
+    ) throws -> MCPServer {
+        MCPServer(
+            orchestrator: orchestrator,
+            modelId: resolvedPath.split(separator: "/").last.map { String($0) },
+            library: HarnessExperienceLibrary(rootDirectory: HarnessExperienceLibrary.defaultRoot)
+        )
+        .withResearchTools(researchTools)
+        .withToolFilter(try mcpOptions.toolFilter())
+        .withImageDirectories(imageDirs.map { URL(fileURLWithPath: $0) })
+        .withDecisions(decisions)
+        .withPipeline(stages)
+    }
+
     private func makeOrchestrator(engine: MLXInferenceEngine, maxTokens: Int) async throws -> ModelOrchestratorActor {
         if batchSlots > 1, maxConcurrent < 2 {
             log("\(yellow("[warn]")) --batch-slots \(batchSlots) has no effect with --max-concurrent \(maxConcurrent): only one generation runs at a time")
@@ -303,7 +310,6 @@ enum KVBitsSetting: Equatable, ExpressibleByArgument {
     }
 }
 
-// The CLI parses the level; the type stays in BasaltCore without depending on ArgumentParser.
 extension ServerConfig.LogLevel: ExpressibleByArgument {}
 
 extension SessionLogMode: ExpressibleByArgument {}

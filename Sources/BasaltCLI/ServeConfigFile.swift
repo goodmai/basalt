@@ -247,6 +247,8 @@ extension ServeConfigFile {
         "mcp.enabled": .flag(on: "--mcp", off: nil),
         "mcp.rest": .flag(on: "--rest", off: nil),
         "mcp.research_tools": .flag(on: "--research-tools", off: nil),
+        "mcp.enable": .list("--mcp-enable"),
+        "mcp.disable": .list("--mcp-disable"),
         "mcp.image_dirs": .list("--image-dir"),
     ]
 }

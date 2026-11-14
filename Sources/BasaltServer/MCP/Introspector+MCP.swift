@@ -2,9 +2,15 @@ import Foundation
 import BasaltCore
 
 extension Introspector {
-    init(orchestrator: ModelOrchestratorActor, interventions: Bool, journal: URL? = OverlayRegistry.defaultJournal) {
-        let tools = ResearchTool.introspection(interventions: interventions).map(\.definition)
-        self.init(orchestrator: orchestrator, tools: tools, journal: journal) { call, model throws(BasaltError) in
+    init(
+        orchestrator: ModelOrchestratorActor,
+        interventions: Bool,
+        filter: MCPToolFilter = .standard,
+        researchTools: Bool = true,
+        journal: URL? = OverlayRegistry.defaultJournal
+    ) {
+        let allowed = ResearchTool.introspection(interventions: interventions).filter { filter.allows($0.rawValue, researchTools: researchTools) }
+        self.init(orchestrator: orchestrator, tools: allowed.map(\.definition), journal: journal) { call, model throws(BasaltError) in
             try await ResearchCall(introspected: call).run(on: model).text
         }
     }
