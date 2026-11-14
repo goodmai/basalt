@@ -7,6 +7,12 @@ extension MCPServer {
         do throws(MCPFailure) {
             let call = try MCPArguments.toolCall(params)
             guard let tool = MCPTool(name: call.name) else { throw MCPFailure.methodNotFound("Unknown tool: \(call.name)") }
+            guard toolFilter.allows(call.name, researchTools: researchTools) else {
+                if toolFilter.isExplicitlyDisabled(call.name) {
+                    throw MCPFailure.methodNotFound("Tool '\(call.name)' is disabled by server configuration (--mcp-disable)")
+                }
+                throw MCPFailure.methodNotFound("\(call.name) is an experiment tool: start the server with serve --research-tools or --mcp-enable \(call.name) to use it")
+            }
             let output = try await result(of: tool, args: call.arguments)
             writer(MCPWire.result(id: id, output))
         } catch {
@@ -40,11 +46,8 @@ extension MCPServer {
     }
 
     private func research(_ tool: ResearchTool, _ args: [String: Any]?) async throws(MCPFailure) -> ToolResult {
-        guard researchTools || !tool.isExperiment else {
-            throw .methodNotFound("\(tool.rawValue) is an experiment tool: start the server with serve --research-tools to use it")
-        }
         let call = try ResearchCall(tool, args)
-        if case .tensor(let request) = call, request.spectrum, !researchTools {
+        if case .tensor(let request) = call, request.spectrum, !toolFilter.allowsSpectrum(researchTools: researchTools) {
             throw .methodNotFound("model_tensor spectrum holds the model for seconds: start the server with serve --research-tools to use it")
         }
         do throws(BasaltError) {
@@ -210,12 +213,11 @@ extension MCPServer {
 
 extension MCPServer {
     private func introspect(_ args: [String: Any]?) async throws(MCPFailure) -> ToolResult {
-        guard researchTools else {
-            throw .methodNotFound("introspect is an experiment tool: start the server with serve --research-tools to use it")
-        }
         let request = try IntrospectRequest(mcp: args)
+        let introspector = Introspector(
+            orchestrator: orchestrator, interventions: request.allowInterventions, filter: toolFilter, researchTools: researchTools)
         do throws(BasaltError) {
-            return .json(try await Introspector(orchestrator: orchestrator, interventions: request.allowInterventions).introspect(request))
+            return .json(try await introspector.introspect(request))
         } catch {
             throw MCPFailure(error)
         }

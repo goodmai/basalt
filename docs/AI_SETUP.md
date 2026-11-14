@@ -120,6 +120,8 @@ Agents can launch the dual-transport server in MCP stdio mode and control it via
 ```bash
 basalt serve --mcp --model ornith-ai/Ornith-1.5-9B-MLX-4bit
 ```
+Pass `--mcp-enable <tool|group>` or `--mcp-disable <tool|group>` (repeatable or comma-separated; groups: `serving`, `gemma`, `media`, `harness`, `xray`, `surgery`, `research`, `all`) to restrict the advertised and accepted MCP tool surface—for example `--mcp-disable switch_model,gemma` on a locked-down client or `--mcp-enable surgery` without full `--research-tools`. `--mcp-disable` always overrides `--mcp-enable` and `--research-tools`.
+
 The server runs while its stdin is open. To stop it, close stdin (end of input) or send SIGTERM; there is no stop tool.
 
 ### 1. Initialize
