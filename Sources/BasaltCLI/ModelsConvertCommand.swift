@@ -55,6 +55,37 @@ struct ConvertSubcommand: AsyncParsableCommand {
     @Option(name: .long, help: "With a .gguf source and --grid affine: the MLX group size (32, 64 or 128; default 64)")
     var groupSize = 64
 
+    @Flag(
+        name: .customLong("experimental-pv-tune"),
+        help: "Experimental (#410): after writing quantized MLX weights (affine 2/3/4-bit or nf4), run PV-Tuning discrete code flips and continuous scale/norm refinement against top-64 teacher log-probabilities with monotone held-out KL rollback. Measured on M4 Pro: Gemma 4 26B-A4B 3-bit affine 16k PPL 130.97 → 119.62 (-8.7% in 185 s) and nf4 76.63 → 54.38 (-29.0% in 159 s); Qwen3.8-27B 3-bit affine 4.702 → 4.652 (-1.1%, behind GSQ-RCO IQ3_S at 4.169)"
+    )
+    var experimentalPvTune = false
+
+    @Option(name: .customLong("pv-teacher"), help: "With --experimental-pv-tune: teacher MLX directory or cached repo ID (default: the conversion source)")
+    var pvTeacher: String?
+
+    @Option(name: .customLong("pv-calibration"), help: "With --experimental-pv-tune: UTF-8 text file for teacher log-probability calibration (default: built-in prose/code/JSON corpus)")
+    var pvCalibration: String?
+
+    func validate() throws {
+        if (pvTeacher != nil || pvCalibration != nil), !experimentalPvTune {
+            throw ValidationError("--pv-teacher and --pv-calibration require --experimental-pv-tune")
+        }
+        if experimentalPvTune, format != .mlx || dequantize != nil || source.lowercased().hasSuffix(".gguf") {
+            throw ValidationError("--experimental-pv-tune applies to quantized MLX conversions (--format mlx without --dequantize)")
+        }
+    }
+
+    static func resolveModelDirectory(_ spec: String) throws -> URL {
+        let expanded = (spec as NSString).expandingTildeInPath
+        if FileManager.default.fileExists(atPath: expanded) { return URL(fileURLWithPath: expanded) }
+        if !spec.hasPrefix("/"), !spec.hasPrefix("."), !spec.hasPrefix("~"),
+           let cached = ModelCache.resolve(repoId: spec) {
+            return cached
+        }
+        throw ValidationError("\(spec) is neither a local directory nor a cached repo")
+    }
+
     mutating func run() async throws {
         if source.lowercased().hasSuffix(".gguf") { return try importGGUF() }
         let precision: WeightConverter.Precision
@@ -63,10 +94,15 @@ struct ConvertSubcommand: AsyncParsableCommand {
         } catch {
             throw ValidationError(error.localizedDescription)
         }
-        let expanded = (source as NSString).expandingTildeInPath
-        guard let sourceURL = FileManager.default.fileExists(atPath: expanded)
-            ? URL(fileURLWithPath: expanded) : ModelCache.resolve(repoId: source)
-        else { throw ValidationError("\(source) is neither a local directory nor a cached repo") }
+        let sourceURL = try Self.resolveModelDirectory(source)
+        let teacherURL = try pvTeacher.map(Self.resolveModelDirectory) ?? sourceURL
+        let calibrationText = try pvCalibration.map { path throws -> String in
+            let expanded = (path as NSString).expandingTildeInPath
+            guard let text = try? String(contentsOfFile: expanded, encoding: .utf8) else {
+                throw ValidationError("cannot read --pv-calibration file at \(expanded)")
+            }
+            return text
+        }
         let converter = WeightConverter(
             precision: precision, format: format,
             adapter: adapter.map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath) })
@@ -74,9 +110,14 @@ struct ConvertSubcommand: AsyncParsableCommand {
 
         let start = ContinuousClock.now
         let summary: WeightConverter.Summary
+        let pvSummary: PVTuneSummary?
         do {
             summary = try converter.run(source: sourceURL, output: outURL)
+            pvSummary = experimentalPvTune
+                ? try await PVTuner.tuneConvertedDirectory(output: outURL, teacher: teacherURL, calibrationText: calibrationText) { print("  [pv-tune] \($0)") }
+                : nil
         } catch {
+            if experimentalPvTune { try? FileManager.default.removeItem(at: outURL) }
             printError(error.localizedDescription)
             throw ExitCode.failure
         }
@@ -86,6 +127,11 @@ struct ConvertSubcommand: AsyncParsableCommand {
         print("  Bytes:     \(formatBytes(Int64(summary.bytesBefore))) → \(formatBytes(Int64(summary.bytesAfter)))")
         if let plan = summary.plan {
             print("  Plan:      \(plan.highLayers.count) of \(plan.layers) layers at the high bits, \(plan.unscored) unscored kept low")
+        }
+        if let pv = pvSummary {
+            print(String(
+                format: "  PV-Tune:   valKL %.4f → %.4f, %d code(s) updated, %d tensor(s) rewritten",
+                pv.valKLBefore, pv.valKLAfter, pv.totalUpdatedCodes, pv.rewrittenTensors))
         }
         print("  Time:      \(elapsed.formatted(.units(allowed: [.minutes, .seconds], width: .abbreviated)))")
     }
