@@ -139,6 +139,7 @@ struct ServeCommand: AsyncParsableCommand {
     static let defaultModel = "AutisticAF/Huihui-Qwen3.8-27B-abliterated-mlx-4Bit"
 
     mutating func run() async throws {
+        let spec = try prepareCompose()
         if wiredLimit { MLXInferenceEngine.renewsResidency() }
         if experimental.smallMKernel { MLXInferenceEngine.enablesSmallMKernel() }
         await applyPipelinePreset()
@@ -166,23 +167,22 @@ struct ServeCommand: AsyncParsableCommand {
 
         let engine = try makeEngine()
         let orchestrator = try await makeOrchestrator(engine: engine, maxTokens: config.maxTokens)
-        if let spec = try composeSpec(), !mcp { return try await runComposed(spec, ComposeBoot(config: config, engine: engine, orchestrator: orchestrator, chatPath: resolvedPath)) }
+        if let spec, !mcp { return try await runComposed(spec, ComposeBoot(config: config, engine: engine, orchestrator: orchestrator, chatPath: resolvedPath)) }
 
         let loadedEmbeddings = try await loadEmbeddings()
         let loadedDecisions = try await loadDecisions(chat: engine)
         let perceivePaths = try await pipelinePerceivePaths()
         let plan = try await admitComputePlan(chatPath: resolvedPath, embeddings: loadedEmbeddings, decisions: loadedDecisions, perceive: perceivePaths)
         let embeddings = BesideDecodeEmbeddingEngine.serving(loadedEmbeddings, besideDecode: plan.runsBesideDecode("embed"))
-        let spec = try composeSpec()
         let cloudGate = cloudGate(spec)
-        let decisions = try spec.map { try composedDecisions($0, local: loadedDecisions, gate: orchestrator.gate, besideDecode: plan.runsBesideDecode("decide"), cloudGate: cloudGate) }
+        var decisions = try spec.map { try composedDecisions($0, local: loadedDecisions, gate: orchestrator.gate, besideDecode: plan.runsBesideDecode("decide"), cloudGate: cloudGate) }
             ?? servedDecisions(loadedDecisions, gate: orchestrator.gate, besideDecode: plan.runsBesideDecode("decide"))
 
         try await load(orchestrator, from: resolvedPath)
         var stages = try await loadPipelineStages(perceivePaths, plan: plan)
         let start = ComposeStart(chat: orchestrator, decider: loadedDecisions, decisions: decisions, cloudGate: cloudGate, startup: stages, besideDecode: plan.runsBesideDecode("decide"))
         let host = try await spec.asyncMap { try await composeHost($0, start: start, engine: engine) }
-        if let host, let system = await host.registry.system(ComposeSpec.defaultPipeline) { stages = system.stages }
+        if let host, let system = await host.registry.system(ComposeSpec.defaultPipeline) { (stages, decisions) = (system.stages, system.decisions) }
         let record = try spec.flatMap { host == nil ? nil : try ComposeRecord.write(name: $0.name, port: network.port, file: pipeline.compose ?? "") }
         defer { record.map(ComposeRecord.remove) }
         try await prepare(orchestrator, virtualKeys: config.virtualKeys)

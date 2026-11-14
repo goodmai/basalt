@@ -20,7 +20,7 @@ extension ComposeSpec {
                 Issue(issue.path.hasPrefix("pipeline.") ? prefix + issue.path.dropFirst("pipeline".count) : issue.path, issue.message)
             }
         }
-        issues += pipelineIssues + models.sorted { $0.key < $1.key }.flatMap { modelIssues($0.key, $0.value) }
+        issues += pipelineIssues + experimentalIssues + mcpIssues + models.sorted { $0.key < $1.key }.flatMap { modelIssues($0.key, $0.value) }
         for (name, _) in models.sorted(by: { $0.key < $1.key }) where !roles.keys.contains(name) {
             issues.append(Issue("models.\(name)", "declared but not used by any pipeline's perceive, decide or answer"))
         }

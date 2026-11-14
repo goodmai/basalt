@@ -24,7 +24,7 @@ extension ComposeHost {
             case .cloud, .decision, .onDemandDecision, nil: nil
             }
         }
-        let speech: (any AudioTranscriber)? = view.audio.contains(ComposeSpec.speechAnalyzer) ? (first ? startup.speech : SpeechAnalyzerTranscriber()) : nil
+        let speech: (any AudioTranscriber)? = view.usesSpeechAnalyzer ? (first ? (startup.speech ?? SpeechAnalyzerTranscriber()) : SpeechAnalyzerTranscriber()) : nil
         var stages = PipelineStages(ocr: orchestrator(view.ocr), audio: orchestrator(view.speech), speech: speech, abstainBelow: view.abstainBelow, minMargin: view.minMargin)
         for (perceiver, name) in [(PipelineCore.Perceiver.ocrModel, view.ocr), (.speechModel, view.speech)] {
             if case .onDemand(let model)? = name.flatMap({ held[$0] }) { stages.onDemand[perceiver] = model }
@@ -92,5 +92,12 @@ extension ComposeHost {
         case .local(let source): source
         case .cloud(let provider, let id): "cloud:\(provider)/\(id)"
         }
+    }
+
+    func applyExperimental(_ spec: ComposeSpec) async {
+        await chat.setSpeechFallback(spec.usesSpeechAnalyzer ? SpeechAnalyzerTranscriber() : nil)
+        await chat.setDocumentTranscriber(VisionDocumentTranscriber(), imageFallback: spec.experimental.imageFallback == "ocr")
+        await chat.telemetry.sampleConfidence(every: spec.experimental.telemetryConfidenceEvery ?? 0)
+        await chat.setAdaptiveThinkingBudget(spec.experimental.adaptiveThinkingBudget)
     }
 }

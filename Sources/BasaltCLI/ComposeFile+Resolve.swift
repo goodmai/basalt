@@ -98,12 +98,17 @@ extension ComposeFile {
     static func number(_ node: Node) -> Double? { node.int.map(Double.init) ?? node.float }
 
     static func relative(_ spec: ComposeSpec, base: URL?) -> ComposeSpec {
-        guard let base else { return spec }
         var spec = spec
-        for (name, model) in spec.models {
-            guard case .local(let source) = model.source, source.hasPrefix("./") || source.hasPrefix("../") else { continue }
-            spec.models[name]?.source = .local(base.appending(path: source).standardizedFileURL.path)
+        if let base {
+            for (name, model) in spec.models {
+                guard case .local(let source) = model.source, source.hasPrefix("./") || source.hasPrefix("../") else { continue }
+                spec.models[name]?.source = .local(base.appending(path: source).standardizedFileURL.path)
+            }
         }
+        if let tower = spec.experimental.aneVisionTower {
+            spec.experimental.aneVisionTower = resolvedPath(tower, base: base)
+        }
+        spec.mcp.imageDirs = spec.mcp.imageDirs.map { resolvedPath($0, base: base) }
         return spec
     }
 }

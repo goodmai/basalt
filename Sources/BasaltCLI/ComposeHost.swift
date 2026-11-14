@@ -59,6 +59,7 @@ actor ComposeHost {
         held = startupHeld()
         for name in spec.models.keys.sorted() where held[name] == nil { held[name] = try await load(name, in: spec) }
         try await ensureSelfDecider(spec)
+        await applyExperimental(spec)
         await registry.replace(try await systems(for: spec, held: held, defaultDecisions: defaultDecisions))
     }
 
@@ -136,6 +137,7 @@ actor ComposeHost {
             let built = try await systems(for: next, held: nextHeld, defaultDecisions: nil)
             let previous = held
             (held, spec) = (nextHeld, next)
+            await applyExperimental(next)
             await registry.replace(built)
             await cloudGate.update(limits: services.cloudLimits(next), rekeyed: Set(diff.rekeyed.compactMap { Self.cloudID(next.models[$0]) }))
             if order == .loadFirst { for name in replaced { await Self.unload(previous[name]) } }

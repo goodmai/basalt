@@ -31,12 +31,12 @@ enum ComposeFile {
         let root = try compose(resolved.text, file: file)
         var walk = Walk(declared: resolved.declared, active: resolved.active)
         walk.issues = resolved.issues
-        let spec = root.flatMap { walk.root($0) }
+        let spec = root.flatMap { walk.root($0) }.map { relative($0, base: context.base) }
         if let spec, walk.issues.isEmpty {
             walk.issues += spec.issues.map { ServeConfigError.Issue(path: $0.path, line: walk.line($0.path), message: $0.message) }
         }
         guard let spec, walk.issues.isEmpty else { throw .invalid(file: file, issues: walk.issues.isEmpty ? [.init(path: "", message: "the file is empty")] : walk.issues) }
-        return relative(spec, base: context.base)
+        return spec
     }
 
     struct Walk {
@@ -83,6 +83,8 @@ enum ComposeFile {
             }
             perceive(pipeline["perceive"], into: &spec)
             decide(pipeline["decide"], into: &spec)
+            experimental(top["experimental"], into: &spec)
+            mcp(top["mcp"], into: &spec)
             for (name, value) in named(top["pipelines"], path: "pipelines") {
                 prefix = "pipelines.\(name)"
                 if let named = self.pipeline(value, models: spec.models) { spec.pipelines[name] = named }

@@ -61,6 +61,8 @@ public struct ComposeSpec: Sendable, Equatable {
     public var routes: [AnswerRoute] = []
     public var budget: Double?
     public var pipelines: [String: PipelineSpec] = [:]
+    public var experimental = Experimental()
+    public var mcp = MCP()
 
     public init(name: String, models: [String: Model], answer: String) {
         (self.name, self.models, self.answer) = (name, models, answer)

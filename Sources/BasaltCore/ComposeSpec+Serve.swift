@@ -13,12 +13,12 @@ extension ComposeSpec {
             arguments += [model, source]
             if models[name]?.keep == .onDemand { arguments += [idle, String(models[name]?.idleUnload ?? Self.defaultIdleUnload)] }
         }
-        if audio.contains(Self.speechAnalyzer) { arguments.append("--experimental-speech-analyzer") }
+        if usesSpeechAnalyzer { arguments.append("--experimental-speech-analyzer") }
         arguments += ["--pipeline-memory", effectiveMemory.rawValue] + decideArguments
         for (flag, value) in [("--pipeline-abstain-below", abstainBelow), ("--pipeline-min-margin", minMargin)] {
             if let value { arguments += [flag, String(value)] }
         }
-        return arguments
+        return arguments + optionArguments
     }
 
     var decideArguments: [String] {
