@@ -27,22 +27,10 @@ extension MLXInferenceEngine {
         }
         params.seed = configuration.seed
 
-        var components = GenerationComponents()
-        if let presencePenalty = request.presencePenalty.map(Float.init), presencePenalty != 0 {
-            components = components.appendingBasaltProcessor {
-                GeneratedTokensPresencePenalty(penalty: presencePenalty, window: Self.presenceContextSize)
-            }
-        }
-        if let multiplier = request.dryMultiplier.map(Float.init), multiplier > 0 {
-            let base = request.dryBase.map(Float.init) ?? DRYPenalty.defaultBase
-            let allowedLength = request.dryAllowedLength ?? DRYPenalty.defaultAllowedLength
-            components = components.appendingBasaltProcessor {
-                DRYPenalty(multiplier: multiplier, base: base, allowedLength: allowedLength, breakers: breakers)
-            }
-        }
-        if let probe = request.logitProbe {
-            components = components.appendingBasaltProcessor { LogitProbeRecorder(probe: probe) }
-        }
+        let components = BaseSamplingStages(request: request, breakers: breakers).map { stages in
+            GenerationComponents(logitProcessorFactory: { stages.build() })
+        } ?? GenerationComponents()
+
         var exclusion: (@Sendable () -> ExcludeTopChoices)?
         if let probability = request.xtcProbability.map(Float.init), probability > 0, temperature > 0 {
             let threshold = request.xtcThreshold.map(Float.init) ?? ExcludeTopChoices.defaultThreshold
@@ -75,6 +63,41 @@ extension MLXInferenceEngine {
         let ids = await container.perform { DRYPenalty.breakerIds(strings, tokenizer: $0.tokenizer) }
         if epoch == modelEpoch { sequenceBreakers = (strings, ids) }
         return ids
+    }
+}
+
+private struct BaseSamplingStages: Sendable {
+    let presence: Float?
+    let dryMultiplier: Float?
+    let dryBase: Float
+    let dryAllowedLength: Int
+    let breakers: Set<Int>
+    let probe: LogitProbe?
+
+    init?(request: GenerationRequest, breakers: Set<Int>) {
+        let presence = request.presencePenalty.map { Float($0) }
+        self.presence = presence != 0 ? presence : nil
+        let multiplier = request.dryMultiplier.map { Float($0) }
+        self.dryMultiplier = (multiplier ?? 0) > 0 ? multiplier : nil
+        self.dryBase = request.dryBase.map { Float($0) } ?? DRYPenalty.defaultBase
+        self.dryAllowedLength = request.dryAllowedLength ?? DRYPenalty.defaultAllowedLength
+        self.breakers = breakers
+        self.probe = request.logitProbe
+        if self.presence == nil, self.dryMultiplier == nil, self.probe == nil { return nil }
+    }
+
+    func build() -> any LogitProcessor {
+        var chain = LogitProcessorChain(capacity: 3)
+        if let presence {
+            chain.appendStage(.presence(GeneratedTokensPresencePenalty(penalty: presence, window: MLXInferenceEngine.presenceContextSize)))
+        }
+        if let dryMultiplier {
+            chain.appendStage(.dry(DRYPenalty(multiplier: dryMultiplier, base: dryBase, allowedLength: dryAllowedLength, breakers: breakers)))
+        }
+        if let probe {
+            chain.appendStage(.logitProbe(LogitProbeRecorder(probe: probe)))
+        }
+        return chain.stages.count == 1 ? chain.stages[0].erased : chain
     }
 }
 
@@ -118,25 +141,13 @@ struct ConfidenceProbeRecorder: LogitProcessor {
     let probe: ConfidenceProbe
 
     static func maxProbability(logits: MLXArray) -> Double? {
-        let row = logits.reshaped(-1).asType(.float32)
-        guard NonFiniteLogitGuard.isUsable(row) else { return nil }
-        let maxLogprob = (row - logSumExp(row)).max().item(Float.self)
-        let prob = Double(exp(maxLogprob))
-        return prob.isFinite ? min(max(prob, 0.0), 1.0) : nil
+        statistics(logits: logits)?.probability
     }
 
     mutating func prompt(_ prompt: MLXArray) {}
 
     static func statistics(logits: MLXArray) -> (probability: Double, entropy: Double, margin: Double)? {
-        let row = logits.reshaped(-1).asType(.float32)
-        guard NonFiniteLogitGuard.isUsable(row) else { return nil }
-        let logprobs = row - logSumExp(row)
-        let best = top(logprobs, k: min(2, row.dim(0)))
-        let entropy = -(exp(logprobs) * logprobs).sum()
-        let values = concatenated([best.max().reshaped(1), best.min().reshaped(1), entropy.reshaped(1)]).asArray(Float.self)
-        let (first, second) = (Double(exp(values[0])), Double(exp(values[1])))
-        guard first.isFinite, second.isFinite, values[2].isFinite else { return nil }
-        return (min(max(first, 0), 1), Double(values[2]), max(0, first - second))
+        FusedLogitConfidence.statistics(logits: logits)
     }
 
     func process(logits: MLXArray) -> MLXArray {
@@ -150,119 +161,85 @@ struct ConfidenceProbeRecorder: LogitProcessor {
 }
 
 struct PromptAnchoredProcessor: LogitProcessor, ForcedTokenSource {
-    var base: any LogitProcessor
+    var chain: LogitProcessorChain
     let prompt: MLXArray
 
+    init(base: any LogitProcessor, prompt: MLXArray) {
+        self.chain = (base as? LogitProcessorChain) ?? LogitProcessorChain(single: base)
+        self.prompt = prompt
+    }
+
+    init(chain: LogitProcessorChain, prompt: MLXArray) {
+        self.chain = chain
+        self.prompt = prompt
+    }
+
+    func copy() -> PromptAnchoredProcessor {
+        PromptAnchoredProcessor(chain: chain.copy(), prompt: prompt)
+    }
+
     mutating func prompt(_ tail: MLXArray) {
-        base.prompt(prompt)
+        chain.prompt(prompt)
     }
 
     func process(logits: MLXArray) -> MLXArray {
-        base.process(logits: logits)
+        chain.process(logits: logits)
     }
 
     mutating func didSample(token: MLXArray) {
-        base.didSample(token: token)
+        chain.didSample(token: token)
     }
 
     mutating func takeForcedTokens(limit: Int) -> [Int] {
-        if var source = base as? ForcedTokenSource {
-            let tokens = source.takeForcedTokens(limit: limit)
-            base = source
-            return tokens
-        }
-        return []
+        chain.takeForcedTokens(limit: limit)
     }
 
     mutating func didSampleForced(_ token: MLXArray) {
-        if var source = base as? ForcedTokenSource {
-            source.didSampleForced(token)
-            base = source
-        } else {
-            base.didSample(token: token)
-        }
-    }
-}
-
-struct BasaltChainedLogitProcessor: LogitProcessor, ForcedTokenSource {
-    var processors: [any LogitProcessor]
-
-    init(processors: [any LogitProcessor]) {
-        self.processors = processors
-    }
-
-    mutating func prompt(_ prompt: MLXArray) {
-        for index in processors.indices {
-            processors[index].prompt(prompt)
-        }
-    }
-
-    func process(logits: MLXArray) -> MLXArray {
-        processors.reduce(logits) { $1.process(logits: $0) }
-    }
-
-    mutating func didSample(token: MLXArray) {
-        for index in processors.indices {
-            processors[index].didSample(token: token)
-        }
-    }
-
-    mutating func takeForcedTokens(limit: Int) -> [Int] {
-        var result: [Int] = []
-        for index in processors.indices where result.count < limit {
-            if var source = processors[index] as? ForcedTokenSource {
-                result.append(contentsOf: source.takeForcedTokens(limit: limit - result.count))
-                processors[index] = source
-            }
-        }
-        return result
-    }
-
-    mutating func didSampleForced(_ token: MLXArray) {
-        for index in processors.indices {
-            if var source = processors[index] as? ForcedTokenSource {
-                source.didSampleForced(token)
-                processors[index] = source
-            } else {
-                processors[index].didSample(token: token)
-            }
-        }
+        chain.didSampleForced(token)
     }
 }
 
 extension GenerationComponents {
+    func appendingBasaltProcessor<P: LogitStageConvertible & SendableMetatype>(
+        _ factory: @escaping @Sendable () -> P
+    ) -> GenerationComponents {
+        let existingFactory = logitProcessorFactory
+        return GenerationComponents(
+            logitProcessorFactory: {
+                guard let existing = existingFactory?() else { return factory() }
+                var chain = (existing as? LogitProcessorChain) ?? LogitProcessorChain(single: existing)
+                chain.appendStage(factory().logitStage)
+                return chain
+            },
+            parameterValidator: parameterValidator)
+    }
+
     func appendingBasaltProcessor(
         _ factory: @escaping @Sendable () -> any LogitProcessor
     ) -> GenerationComponents {
         let existingFactory = logitProcessorFactory
         return GenerationComponents(
             logitProcessorFactory: {
-                guard let existing = existingFactory?() else {
-                    return factory()
-                }
-                if let chained = existing as? BasaltChainedLogitProcessor {
-                    return BasaltChainedLogitProcessor(processors: chained.processors + [factory()])
-                }
-                return BasaltChainedLogitProcessor(processors: [existing, factory()])
+                guard let existing = existingFactory?() else { return factory() }
+                var chain = (existing as? LogitProcessorChain) ?? LogitProcessorChain(single: existing)
+                chain.append(factory())
+                return chain
             },
             parameterValidator: parameterValidator)
     }
 
     func makeProcessor(parameters: GenerateParameters) -> (any LogitProcessor)? {
-        let penalty = parameters.processor()
-        let custom = logitProcessorFactory?()
-        switch (penalty, custom) {
+        switch (parameters.processor(), logitProcessorFactory?()) {
         case (nil, nil):
             return nil
-        case (let p?, nil):
-            return p
-        case (nil, let c?):
-            return c
-        case (let p?, let c?):
-            if let chained = c as? BasaltChainedLogitProcessor {
-                return BasaltChainedLogitProcessor(processors: [p] + chained.processors)
-            }
-            return BasaltChainedLogitProcessor(processors: [p, c])
+        case (let penalty?, nil):
+            return penalty
+        case (nil, let custom?):
+            return custom
+        case (let penalty?, let custom?):
+            var chain = (custom as? LogitProcessorChain) ?? LogitProcessorChain(single: custom)
+            chain.prepend(penalty)
+            return chain
         }
     }
 }

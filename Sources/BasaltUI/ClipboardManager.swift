@@ -1,15 +1,13 @@
 import Foundation
-
-/// Epic 16.6: Clipboard Integration
-/// Copy/Paste functionality with cross-platform support
-
-// MARK: - Clipboard Errors
+#if canImport(Glibc)
+import Glibc
+#endif
 
 public enum ClipboardError: Error, LocalizedError {
     case toolNotAvailable
     case operationFailed(String)
     case notSupported
-    
+
     public var errorDescription: String? {
         switch self {
         case .toolNotAvailable:
@@ -22,15 +20,13 @@ public enum ClipboardError: Error, LocalizedError {
     }
 }
 
-// MARK: - Clipboard Tool
-
 public enum ClipboardTool: String, Sendable {
     case pbcopy
     case pbpaste
     case xclip
     case xsel
     case none
-    
+
     var copyCommand: [String]? {
         switch self {
         case .pbcopy:
@@ -43,7 +39,7 @@ public enum ClipboardTool: String, Sendable {
             return nil
         }
     }
-    
+
     var pasteCommand: [String]? {
         switch self {
         case .pbpaste:
@@ -58,82 +54,187 @@ public enum ClipboardTool: String, Sendable {
     }
 }
 
-// MARK: - Clipboard Manager
+private struct ClipboardPipePump {
+    static let chunkSize = 65_536
 
-/// Cross-platform clipboard manager
-public actor ClipboardManager {
-    
-    private var detectedTool: ClipboardTool?
-    
-    public init() {}
-    
-    // MARK: - Main API
-    
-    /// Copy text to clipboard
-    public func copy(_ text: String) async throws {
-        // Don't try to copy in CI environments
-        if Self.isRunningInCI() {
-            throw ClipboardError.notSupported
-        }
-        
-        let tool = await detectClipboardTool()
-        
-        guard tool != .none else {
-            throw ClipboardError.toolNotAvailable
-        }
-        
-        guard let command = tool.copyCommand else {
-            throw ClipboardError.toolNotAvailable
-        }
-        
-        let _ = try await runClipboardCommand(command, input: text)
+    var stdinHandle: FileHandle?
+    var stdoutHandle: FileHandle?
+    var stderrHandle: FileHandle?
+    var offset = 0
+    var stdoutData = Data()
+    var stderrData = Data()
+
+    var isActive: Bool {
+        stdinHandle != nil || stdoutHandle != nil || stderrHandle != nil
     }
-    
-    /// Paste text from clipboard
-    public func paste() async throws -> String {
-        // Don't try to paste in CI environments
+
+    mutating func closeAll() {
+        try? stdinHandle?.close()
+        try? stdoutHandle?.close()
+        try? stderrHandle?.close()
+        stdinHandle = nil
+        stdoutHandle = nil
+        stderrHandle = nil
+    }
+
+    static func configure(_ handle: FileHandle, isWrite: Bool) {
+        let fd = handle.fileDescriptor
+        let flags = fcntl(fd, F_GETFL)
+        if flags >= 0 {
+            _ = fcntl(fd, F_SETFL, flags | O_NONBLOCK)
+        }
+        #if canImport(Darwin)
+        if isWrite {
+            _ = fcntl(fd, F_SETNOSIGPIPE, 1)
+        }
+        #endif
+    }
+
+    static func drainStdin(_ handle: FileHandle?, bytes: borrowing Span<UInt8>, offset: inout Int) -> FileHandle? {
+        guard let handle else { return nil }
+        let fd = handle.fileDescriptor
+        while offset < bytes.count {
+            let written = bytes.extracting(offset...).withUnsafeBytes { raw -> Int in
+                guard let base = raw.baseAddress, raw.count > 0 else { return 0 }
+                return write(fd, base, raw.count)
+            }
+            if written > 0 {
+                offset += written
+                continue
+            }
+            if written < 0 && errno == EINTR { continue }
+            if written < 0 && (errno == EAGAIN || errno == EWOULDBLOCK) { return handle }
+            try? handle.close()
+            return nil
+        }
+        try? handle.close()
+        return nil
+    }
+
+    static func drainOutput(_ handle: FileHandle?, into data: inout Data, scratch: UnsafeMutableBufferPointer<UInt8>) -> FileHandle? {
+        guard let handle, let base = scratch.baseAddress else { return nil }
+        let fd = handle.fileDescriptor
+        while true {
+            let count = read(fd, base, scratch.count)
+            if count > 0 {
+                data.append(base, count: count)
+                continue
+            }
+            if count == 0 {
+                try? handle.close()
+                return nil
+            }
+            if errno == EINTR { continue }
+            if errno == EAGAIN || errno == EWOULDBLOCK { return handle }
+            try? handle.close()
+            return nil
+        }
+    }
+
+    mutating func step(bytes: borrowing Span<UInt8>, scratch: UnsafeMutableBufferPointer<UInt8>) throws {
+        var fds: [3 of pollfd] = [
+            pollfd(fd: stdinHandle?.fileDescriptor ?? -1, events: Int16(POLLOUT), revents: 0),
+            pollfd(fd: stdoutHandle?.fileDescriptor ?? -1, events: Int16(POLLIN), revents: 0),
+            pollfd(fd: stderrHandle?.fileDescriptor ?? -1, events: Int16(POLLIN), revents: 0),
+        ]
+        var fdSpan = fds.mutableSpan
+        let ready = fdSpan.withUnsafeMutableBufferPointer { ptr in
+            poll(ptr.baseAddress, nfds_t(ptr.count), 50)
+        }
+        if ready == 0 { return }
+        if ready < 0 {
+            if errno == EINTR { return }
+            throw ClipboardError.operationFailed(String(cString: strerror(errno)))
+        }
+        if fds[0].revents & Int16(POLLOUT | POLLHUP | POLLERR) != 0 {
+            stdinHandle = Self.drainStdin(stdinHandle, bytes: bytes, offset: &offset)
+        } else if fds[0].revents & Int16(POLLNVAL) != 0 {
+            stdinHandle = nil
+        }
+        if fds[1].revents & Int16(POLLIN | POLLHUP | POLLERR) != 0 {
+            stdoutHandle = Self.drainOutput(stdoutHandle, into: &stdoutData, scratch: scratch)
+        } else if fds[1].revents & Int16(POLLNVAL) != 0 {
+            stdoutHandle = nil
+        }
+        if fds[2].revents & Int16(POLLIN | POLLHUP | POLLERR) != 0 {
+            stderrHandle = Self.drainOutput(stderrHandle, into: &stderrData, scratch: scratch)
+        } else if fds[2].revents & Int16(POLLNVAL) != 0 {
+            stderrHandle = nil
+        }
+    }
+
+    static func run(
+        stdin writer: FileHandle?,
+        inputBytes: borrowing Span<UInt8>,
+        stdout reader: FileHandle,
+        stderr errorReader: FileHandle
+    ) throws -> (stdout: Data, stderr: Data) {
+        var pump = ClipboardPipePump(stdinHandle: writer, stdoutHandle: reader, stderrHandle: errorReader)
+        defer { pump.closeAll() }
+        if let currentWriter = pump.stdinHandle {
+            if inputBytes.isEmpty {
+                try? currentWriter.close()
+                pump.stdinHandle = nil
+            } else {
+                configure(currentWriter, isWrite: true)
+            }
+        }
+        configure(reader, isWrite: false)
+        configure(errorReader, isWrite: false)
+        let scratch = UnsafeMutableBufferPointer<UInt8>.allocate(capacity: chunkSize)
+        defer { scratch.deallocate() }
+        while pump.isActive {
+            try Task.checkCancellation()
+            try pump.step(bytes: inputBytes, scratch: scratch)
+        }
+        return (pump.stdoutData, pump.stderrData)
+    }
+}
+
+public actor ClipboardManager {
+
+    private var detectedTool: ClipboardTool?
+
+    public init() {}
+
+    public func copy(_ text: String) async throws {
         if Self.isRunningInCI() {
             throw ClipboardError.notSupported
         }
-        
+        let tool = await detectClipboardTool()
+        guard tool != .none, let command = tool.copyCommand else {
+            throw ClipboardError.toolNotAvailable
+        }
+        _ = try await runClipboardCommand(command, input: text)
+    }
+
+    public func paste() async throws -> String {
+        if Self.isRunningInCI() {
+            throw ClipboardError.notSupported
+        }
         let tool = await detectPasteTool()
-        
-        guard tool != .none else {
+        guard tool != .none, let command = tool.pasteCommand else {
             throw ClipboardError.toolNotAvailable
         }
-        
-        guard let command = tool.pasteCommand else {
-            throw ClipboardError.toolNotAvailable
-        }
-        
         return try await runClipboardCommand(command)
     }
-    
-    /// Check if clipboard is available
+
     public func isAvailable() async -> Bool {
         if Self.isRunningInCI() {
             return false
         }
-        
         let tool = await detectClipboardTool()
         return tool != .none
     }
-    
-    // MARK: - Tool Detection
-    
-    /// Detect available clipboard tool for copying
+
     public func detectClipboardTool() async -> ClipboardTool {
         if let cached = detectedTool {
             return cached
         }
-        
         let tool: ClipboardTool
-        
         #if os(macOS)
-        // macOS always has pbcopy
         tool = FileManager.default.fileExists(atPath: "/usr/bin/pbcopy") ? .pbcopy : .none
         #elseif os(Linux)
-        // Check xclip first, then xsel
         if FileManager.default.fileExists(atPath: "/usr/bin/xclip") {
             tool = .xclip
         } else if FileManager.default.fileExists(atPath: "/usr/bin/xsel") {
@@ -144,14 +245,12 @@ public actor ClipboardManager {
         #else
         tool = .none
         #endif
-        
         detectedTool = tool
         return tool
     }
-    
+
     private func detectPasteTool() async -> ClipboardTool {
         let copyTool = await detectClipboardTool()
-        
         switch copyTool {
         case .pbcopy:
             return .pbpaste
@@ -163,61 +262,48 @@ public actor ClipboardManager {
             return .none
         }
     }
-    
-    // MARK: - Process Execution
-    
-    /// Run clipboard command with optional input
+
     func runClipboardCommand(_ command: [String], input: String? = nil) async throws -> String {
         guard !command.isEmpty else {
             throw ClipboardError.operationFailed("Empty command")
         }
-        
         let process = Process()
         process.executableURL = URL(fileURLWithPath: command[0])
-        
         if command.count > 1 {
             process.arguments = Array(command.dropFirst())
         }
-        
-        let inputPipe = Pipe()
+        let inputPipe = input.map { _ in Pipe() }
         let outputPipe = Pipe()
         let errorPipe = Pipe()
-        
-        if input != nil {
+        if let inputPipe {
             process.standardInput = inputPipe
         }
         process.standardOutput = outputPipe
         process.standardError = errorPipe
-        
         do {
             try process.run()
-            
-            if let input {
-                let writer = inputPipe.fileHandleForWriting
-                let data = Data(input.utf8)
-                Thread.detachNewThread {
-                    try? writer.write(contentsOf: data)
-                    try? writer.close()
-                }
-            }
-            let outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
-            let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
+            let inputBytes = ContiguousArray((input ?? "").utf8)
+            let (outputData, errorData) = try ClipboardPipePump.run(
+                stdin: inputPipe?.fileHandleForWriting,
+                inputBytes: inputBytes.span,
+                stdout: outputPipe.fileHandleForReading,
+                stderr: errorPipe.fileHandleForReading
+            )
             process.waitUntilExit()
             guard process.terminationStatus == 0 else {
                 throw ClipboardError.operationFailed(String(data: errorData, encoding: .utf8) ?? "Unknown error")
             }
             return String(data: outputData, encoding: .utf8) ?? ""
-            
+        } catch is CancellationError {
+            if process.isRunning { process.terminate() }
+            throw CancellationError()
         } catch let error as ClipboardError {
             throw error
         } catch {
             throw ClipboardError.operationFailed(error.localizedDescription)
         }
     }
-    
-    // MARK: - Static Helpers
-    
-    /// Get tool path for a specific tool
+
     public static func toolPath(for tool: ClipboardTool) -> String? {
         switch tool {
         case .pbcopy:
@@ -232,33 +318,30 @@ public actor ClipboardManager {
             return nil
         }
     }
-    
-    /// Check if running in CI environment
+
     public static func isRunningInCI() -> Bool {
         let ciKeys = ["CI", "CONTINUOUS_INTEGRATION", "GITHUB_ACTIONS", "GITLAB_CI", "CIRCLECI"]
         let env = ProcessInfo.processInfo.environment
-        
         return ciKeys.contains { env[$0] != nil }
     }
-    
-    /// Get installation instructions for missing tools
+
     public static func installationInstructions() -> String {
         #if os(macOS)
         return "Clipboard is built-in on macOS (pbcopy/pbpaste)"
         #elseif os(Linux)
         return """
         Install clipboard tools:
-        
+
         Ubuntu/Debian:
           sudo apt-get install xclip
           # or
           sudo apt-get install xsel
-        
+
         Fedora:
           sudo dnf install xclip
           # or
           sudo dnf install xsel
-        
+
         Arch:
           sudo pacman -S xclip
           # or
@@ -270,20 +353,14 @@ public actor ClipboardManager {
     }
 }
 
-// MARK: - String Extension
-
 extension String {
-    /// Copy this string to clipboard
     public func copyToClipboard() async throws {
         let manager = ClipboardManager()
         try await manager.copy(self)
     }
 }
 
-// MARK: - User-Friendly Helpers
-
 extension ClipboardManager {
-    /// Copy with user feedback
     public func copyWithFeedback(_ text: String) async -> Bool {
         do {
             try await copy(text)
@@ -294,15 +371,13 @@ extension ClipboardManager {
             print(Self.installationInstructions())
             return false
         } catch ClipboardError.notSupported {
-            // Silently fail in CI
             return false
         } catch {
             print("❌ Failed to copy: \(error.localizedDescription)")
             return false
         }
     }
-    
-    /// Paste with user feedback
+
     public func pasteWithFeedback() async -> String? {
         do {
             let text = try await paste()
@@ -315,7 +390,6 @@ extension ClipboardManager {
             print(Self.installationInstructions())
             return nil
         } catch ClipboardError.notSupported {
-            // Silently fail in CI
             return nil
         } catch {
             print("❌ Failed to paste: \(error.localizedDescription)")

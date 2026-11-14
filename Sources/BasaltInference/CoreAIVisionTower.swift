@@ -63,37 +63,33 @@ public struct CoreAIVisionTower: Sendable {
         return try Self.features(try await run(encoded), encoded: encoded, dtype: visual.embeddings.patchEmbedding.weight.dtype)
     }
 
-    static func strides(of shape: [Int]) -> [Int] {
-        shape.indices.map { shape[($0 + 1)...].reduce(1, *) }
-    }
-
     static func planar(_ rows: MLXArray, length: Int, perHead: Bool = false) throws -> NDArray {
         let (count, channels) = (rows.dim(0), rows.dim(1))
+        let total = channels * length
         let padded = count == length ? rows : concatenated([rows, MLXArray.zeros([length - count, channels], dtype: rows.dtype)], axis: 0)
         let planar = contiguous(padded.transposed().asType(.float16))
         eval(planar)
         let shape = perHead ? [1, 1, channels, length] : [1, channels, 1, length]
-        var array = NDArray(shape: shape, scalarType: .float16)
-        guard Array(array.strides) == strides(of: shape) else {
-            throw BasaltError.inferenceError("a Core AI input of \(channels)x\(length) is not row-major")
-        }
         let bytes = planar.asData(access: .noCopyIfContiguous).data
-        let view = array.mutableView(as: Float16.self)
-        view.withUnsafeMutablePointer { pointer, _, _ in
-            bytes.withUnsafeBytes { source in _ = memcpy(pointer, source.baseAddress!, min(source.count, channels * length * 2)) }
+        defer { withExtendedLifetime(planar) {} }
+        var array = NDArray(shape: shape, scalarType: .float16)
+        do {
+            guard var target = array.mutableView(as: Float16.self).contiguousElements, target.count == total else {
+                throw BasaltError.inferenceError("a Core AI input of \(channels)x\(length) is not row-major")
+            }
+            target.withUnsafeMutableBufferPointer { _ = bytes.copyBytes(to: $0) }
         }
-        withExtendedLifetime(planar) {}
         return array
     }
 
     static func rows(_ planar: NDArray, count: Int) throws -> MLXArray {
         let (channels, length) = (planar.shape[1], planar.shape[3])
-        guard Array(planar.strides) == strides(of: planar.shape), count <= length else {
+        let total = channels * length
+        guard count <= length, let elements = planar.view(as: Float16.self).contiguousElements, elements.count == total else {
             throw BasaltError.inferenceError("the vision tower output is not a row-major (1, C, 1, N) array")
         }
-        let values = planar.view(as: Float16.self).withUnsafePointer { pointer, _, _ in
-            MLXArray(UnsafeBufferPointer(start: pointer, count: channels * length), [channels, length])
-        }
+        guard total > 0, count > 0 else { return MLXArray.zeros([count, channels], dtype: .float16) }
+        let values = elements.withUnsafeBufferPointer { MLXArray($0, [channels, length]) }
         return values[0..., ..<count].transposed()
     }
 }
@@ -113,6 +109,25 @@ extension CoreAIVisionTowerBundle {
         }
     }
 
+    func mask(real count: Int, length: Int) -> NDArray {
+        var array = NDArray(shape: [1, length, 1, 1], scalarType: .float16)
+        let closed = Float16(masked)
+        var filled = false
+        do {
+            if var span = array.mutableView(as: Float16.self).contiguousElements, span.count == length {
+                for index in 0 ..< length {
+                    span[index] = index < count ? 0 : closed
+                }
+                filled = true
+            }
+        }
+        if !filled {
+            var view = array.mutableView(as: Float16.self)
+            view.copyElements(from: (0 ..< length).lazy.map { $0 < count ? Float16(0) : closed })
+        }
+        return array
+    }
+
     func encoded(_ patches: MLXArray, frame: THW, visual: PaddleOCRVLVision.Model) throws -> CoreAIVisionTower.Encoded {
         guard let bucket = function(for: frame) else {
             throw BasaltError.inferenceError("the vision tower has no bucket for a \(frame.h)x\(frame.w) grid")
@@ -120,15 +135,12 @@ extension CoreAIVisionTowerBundle {
         let (count, length) = (frame.h * frame.w, bucket.tokens)
         let gather = MLXArray(order(frame))
         let (cos, sin) = visual.rotary(frame)
-        var mask = NDArray(shape: [1, length, 1, 1], scalarType: .float16)
-        var view = mask.mutableView(as: Float16.self)
-        view.copyElements(from: bias(real: count, length: length).map(Float16.init))
         let inputs = [
             "patches": try CoreAIVisionTower.planar(patches.reshaped(count, -1).take(gather, axis: 0), length: length),
             "pos": try CoreAIVisionTower.planar(visual.embeddings.positions(frame).take(gather, axis: 0), length: length),
             "cos": try CoreAIVisionTower.planar(cos.reshaped(count, -1).take(gather, axis: 0), length: length, perHead: true),
             "sin": try CoreAIVisionTower.planar(sin.reshaped(count, -1).take(gather, axis: 0), length: length, perHead: true),
-            "bias": mask,
+            "bias": mask(real: count, length: length),
         ]
         return CoreAIVisionTower.Encoded(function: bucket.name, inputs: inputs, rows: count / (merge * merge))
     }

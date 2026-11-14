@@ -1,2 +1,0 @@
-Sources/BasaltServer/MCP/MCPServer.swift:Thread: readLine blocks, so stdin is read on its own thread instead of a cooperative-pool thread; it touches only the AsyncStream continuation and an Atomic stop flag
-Sources/BasaltUI/ClipboardManager.swift:Thread: writing a large input to the child's stdin pipe blocks until the child reads it, while this thread drains stdout; the writer thread owns only the pipe handle and the bytes it writes

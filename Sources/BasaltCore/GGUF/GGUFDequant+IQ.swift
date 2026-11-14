@@ -1,21 +1,21 @@
 import Foundation
 
 extension GGUFDequant {
-    static func decodeIQ(_ b: UnsafeRawBufferPointer, type: GGMLType, into y: UnsafeMutableBufferPointer<Float>) {
+    static func decodeIQ(_ b: RawSpan, type: GGMLType, into y: inout MutableSpan<Float>) {
         switch type {
-        case .iq4NL: iq4NL(b, y)
-        case .iq4XS: iq4XS(b, y)
-        case .iq3S: iq3S(b, y)
-        case .iq3XXS: iq3XXS(b, y)
-        case .iq2S: iq2S(b, y)
-        case .iq2XS: iq2XS(b, y)
-        case .iq2XXS: iq2XXS(b, y)
-        case .iq1M: iq1M(b, y)
-        case .f32, .f16, .bf16, .q8_0, .q2K, .q4K, .q6K: decode(b, type: type, into: y)
+        case .iq4NL: iq4NL(b, &y)
+        case .iq4XS: iq4XS(b, &y)
+        case .iq3S: iq3S(b, &y)
+        case .iq3XXS: iq3XXS(b, &y)
+        case .iq2S: iq2S(b, &y)
+        case .iq2XS: iq2XS(b, &y)
+        case .iq2XXS: iq2XXS(b, &y)
+        case .iq1M: iq1M(b, &y)
+        case .f32, .f16, .bf16, .q8_0, .q2K, .q4K, .q6K: decode(b, type: type, into: &y)
         }
     }
 
-    static func iq3S(_ b: UnsafeRawBufferPointer, _ y: UnsafeMutableBufferPointer<Float>) {
+    static func iq3S(_ b: RawSpan, _ y: inout MutableSpan<Float>) {
         let d = half(b, 0)
         for pair in 0 ..< 4 {
             let scales = Int(b[106 + pair])
@@ -35,7 +35,7 @@ extension GGUFDequant {
         }
     }
 
-    static func iq3XXS(_ b: UnsafeRawBufferPointer, _ y: UnsafeMutableBufferPointer<Float>) {
+    static func iq3XXS(_ b: RawSpan, _ y: inout MutableSpan<Float>) {
         let d = half(b, 0)
         for ib in 0 ..< 8 {
             let aux = u32(b, 66 + 4 * ib)
@@ -51,7 +51,7 @@ extension GGUFDequant {
         }
     }
 
-    static func iq2S(_ b: UnsafeRawBufferPointer, _ y: UnsafeMutableBufferPointer<Float>) {
+    static func iq2S(_ b: RawSpan, _ y: inout MutableSpan<Float>) {
         let d = half(b, 0)
         for ib in 0 ..< 8 {
             let scales = Int(b[74 + ib])
@@ -66,7 +66,7 @@ extension GGUFDequant {
         }
     }
 
-    static func iq2XS(_ b: UnsafeRawBufferPointer, _ y: UnsafeMutableBufferPointer<Float>) {
+    static func iq2XS(_ b: RawSpan, _ y: inout MutableSpan<Float>) {
         let d = half(b, 0)
         for ib in 0 ..< 8 {
             let scales = Int(b[66 + ib])
@@ -80,7 +80,7 @@ extension GGUFDequant {
         }
     }
 
-    static func iq2XXS(_ b: UnsafeRawBufferPointer, _ y: UnsafeMutableBufferPointer<Float>) {
+    static func iq2XXS(_ b: RawSpan, _ y: inout MutableSpan<Float>) {
         let d = half(b, 0)
         for ib in 0 ..< 8 {
             let (grid, scale) = (u32(b, 2 + 8 * ib), u32(b, 6 + 8 * ib))
@@ -93,17 +93,25 @@ extension GGUFDequant {
         }
     }
 
-    static func iq1M(_ b: UnsafeRawBufferPointer, _ y: UnsafeMutableBufferPointer<Float>) {
-        let sc = (0 ..< 4).map { u16(b, 48 + 2 * $0) }
+    static func iq1Delta(_ flag: Int) -> Float { flag != 0 ? -0.125 : 0.125 }
+
+    static func iq1M(_ b: RawSpan, _ y: inout MutableSpan<Float>) {
+        let sc: InlineArray<4, Int> = [u16(b, 48), u16(b, 50), u16(b, 52), u16(b, 54)]
         let bits = (sc[0] >> 12) | ((sc[1] >> 8) & 0x00f0) | ((sc[2] >> 4) & 0x0f00) | (sc[3] & 0xf000)
         let d = Float(Float16(bitPattern: UInt16(bits)))
         for ib in 0 ..< 8 {
             let shift = 6 * (ib % 2)
-            let dl = [d * Float(2 * ((sc[ib / 2] >> shift) & 7) + 1), d * Float(2 * ((sc[ib / 2] >> (shift + 3)) & 7) + 1)]
+            let dl: InlineArray<2, Float> = [
+                d * Float(2 * ((sc[ib / 2] >> shift) & 7) + 1),
+                d * Float(2 * ((sc[ib / 2] >> (shift + 3)) & 7) + 1),
+            ]
             let (qh0, qh1) = (Int(b[32 + ib * 2]), Int(b[33 + ib * 2]))
-            let qs = (0 ..< 4).map { Int(b[ib * 4 + $0]) }
-            let index = [qs[0] | ((qh0 << 8) & 0x700), qs[1] | ((qh0 << 4) & 0x700), qs[2] | ((qh1 << 8) & 0x700), qs[3] | ((qh1 << 4) & 0x700)]
-            let delta: [Float] = [qh0 & 0x08, qh0 & 0x80, qh1 & 0x08, qh1 & 0x80].map { $0 != 0 ? -0.125 : 0.125 }
+            let base = ib * 4
+            let index: InlineArray<4, Int> = [
+                Int(b[base]) | ((qh0 << 8) & 0x700), Int(b[base + 1]) | ((qh0 << 4) & 0x700),
+                Int(b[base + 2]) | ((qh1 << 8) & 0x700), Int(b[base + 3]) | ((qh1 << 4) & 0x700),
+            ]
+            let delta: InlineArray<4, Float> = [iq1Delta(qh0 & 0x08), iq1Delta(qh0 & 0x80), iq1Delta(qh1 & 0x08), iq1Delta(qh1 & 0x80)]
             for l in 0 ..< 4 {
                 for j in 0 ..< 8 {
                     let value = Float(Int8(truncatingIfNeeded: gridByte(ggmlIQ1SGrid, index[l], j)))

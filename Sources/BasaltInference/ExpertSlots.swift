@@ -89,14 +89,17 @@ enum ExpertReader {
     }
 }
 
-struct SlotBuffer {
+struct SlotBuffer: ~Copyable {
     static let page = 16_384
 
-    let pointer: UnsafeMutableRawPointer
+    let tensor: ExpertTensor
+    let slots: Int
+    private let pointer: UnsafeMutableRawPointer
     let array: MLXArray
     let stride: Int
 
     init(slots: Int, tensor: ExpertTensor) throws(BasaltError) {
+        precondition(slots > 0, "SlotBuffer requires at least one slot")
         let padded = Self.padded(slots * tensor.expertBytes)
         let pointer = UnsafeMutableRawPointer.allocate(byteCount: padded, alignment: Self.page)
         let flat = MLXArray(rawPointer: pointer, [padded], dtype: .uint8) { pointer.deallocate() }
@@ -105,8 +108,14 @@ struct SlotBuffer {
         guard Self.address(of: flat) == UnsafeRawPointer(pointer), Self.address(of: array) == UnsafeRawPointer(pointer) else {
             throw .inferenceError("expert streaming: Metal did not wrap the expert slot buffer in place, so slots cannot be filled from disk")
         }
-        (self.pointer, self.array, stride) = (pointer, array, tensor.expertBytes)
+        self.tensor = tensor
+        self.slots = slots
+        self.pointer = pointer
+        self.array = array
+        stride = tensor.expertBytes
     }
+
+    var byteCount: Int { slots * stride }
 
     static func padded(_ bytes: Int) -> Int { max(1, (bytes + page - 1) / page) * page }
 
@@ -114,5 +123,8 @@ struct SlotBuffer {
         array.asData(access: .noCopy).data.withUnsafeBytes { $0.baseAddress }
     }
 
-    func destination(slot: Int) -> UnsafeMutableRawPointer { pointer + slot * stride }
+    borrowing func destination(slot: Int) -> UnsafeMutableRawPointer {
+        precondition(slot >= 0 && slot < slots, "expert slot \(slot) out of bounds 0..<\(slots)")
+        return pointer + slot * stride
+    }
 }
