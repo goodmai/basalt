@@ -23,9 +23,10 @@ Bash only starts one of these. Don't write `for model in …; do …; done | tai
 - Appends one line per step to `logs/<runner>-<date>.log` and prints it: timestamp, model, mode, parameters, result.
 - Catches every error per step, logs `FAIL <step> <error>`, carries on to the next step only when the steps are independent, and exits non-zero if anything failed.
 - Writes a header line with `git rev-parse HEAD`, the model repo and snapshot revision, and the chip and memory.
-- Takes the GPU lock before loading weights and releases it in `defer`: create the directory `/private/tmp/basalt-gpu.lock` (failing while it exists means another run holds the GPU, so wait and retry), write the runner's pid into `owner` inside it, and on exit, including on error, remove it only if `owner` still holds that pid. Release exactly once: a second release (a `defer` plus a signal handler, or a wrapper that also cleans up) deletes the lock the next run has just taken, and two models then share the GPU. Hold it for one model, then release and take it again, so other runs can interleave.
+- Takes the GPU lock before loading weights and releases it in `defer`: first verify GitHub Actions is idle on this self-hosted Mac (`gh run list -L 2 --workflow="Unit Tests"` has no `in_progress` or `queued` run), create the directory `/private/tmp/basalt-gpu.lock` (failing while it exists means another run holds the GPU, so wait and retry; only remove a stale lock after confirming the pid in `owner` is dead via `ps -p <pid>`), write the runner's pid into `owner` inside it, and on exit, including on error, remove it only if `owner` still holds that pid. Release exactly once: a second release (a `defer` plus a signal handler, or a wrapper that also cleans up) deletes the lock the next run has just taken, and two models then share the GPU. Hold it for one model, then release and take it again, so other runs can interleave.
+- Wrap runs longer than 15 minutes in `caffeinate -dims` so macOS idle sleep never suspends an in-flight Metal command buffer (`kIOGPUCommandBufferCallbackErrorTimeout`, signal 5).
 - A run that was killed or shared the GPU invalidates its numbers from that point; discard and rerun them.
-- Speed numbers (tok/s, TTFT) come from a release build (`swift test -c release`, `swift run -c release`); a debug build is fine for memory, PPL and passkey.
+- Speed numbers (tok/s, TTFT) come from a release build (`swift test -c release --filter <Suite>`, `swift run -c release`; do not use `swift build --build-tests -c release`, which omits `-enable-testing` for `@testable import`); a debug build is fine for memory, PPL and passkey.
 
 ## Which models
 
@@ -61,3 +62,4 @@ All skills live in `.claude/skills/<name>/SKILL.md` (mirrored at `.agents/skills
 | `swift-testing-pro` | Swift Testing in depth: structure, async tests, new features |
 | `xcode-mcp` | checking an API against Apple's documentation; Xcode workspace tools |
 | `model-xray` | looking inside a running model and calling basalt's own MCP server |
+| `model-surgery` | surgical, gated weight edits via MCP overlays or Swift `MLXNN.Module` updates |
