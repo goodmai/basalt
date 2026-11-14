@@ -46,12 +46,12 @@ Other tools on the same server, for when the question is about serving and not a
 - **Testing a hypothesis** (needs `--research-tools`): ablate a head or an expert, or steer a layer, with `intervene`, then `experiment_compare` on a few prompts against the baseline. Interventions affect research calls only.
 - **A behaviour over a whole answer** (refusal, a style switch; needs `--research-tools`): `trace_tokens` to see which heads fire and which experts route on every prompt and generated token, `activation_contrast` on a set that shows it against one that does not, then `intervene` with `when` (a projection or expert trigger) to ablate the top components only on the tokens where the behaviour starts, and `experiment_compare` against the static ablation. Procedure: `docs/research-tools.md`, "Per-token trace and conditional ablation".
 
-## Weight deltas: use sparingly
+## Weight deltas and surgical edits: load `model-surgery`
 
-`weights_delta` changes the live weights, so user requests on the same server see it. Only use it on a server you started yourself for the experiment.
+`weights_delta`, rank-1 `adapter_apply`, `steer_commit`, and `tensor_pack`/`tensor_unpack` change the live weights, so user requests on the same server see them. Whenever an X-ray investigation moves from read-only tracing or `intervene` to mutating weights (via MCP or Swift `MLXNN.Module.update`), load `model-surgery` for the scalpel selection matrix, `gate_check` protocol, and `mlx-swift` aliasing/dtype invariants.
 
-- Float tensors only (norms, biases, unquantized embeddings); a quantized layer is refused.
-- While a delta is active, responses carry `modelModified: true`, prompt-cache reuse is off and telemetry lists it. Undo it with `overlay_undo` as soon as the comparison is done; otherwise it expires after 30 minutes.
+- `weights_delta` writes float tensors only (norms, biases, unquantized embeddings); a quantized layer is refused (use rank-1 `adapter_apply` or `tensor_pack` instead).
+- While a delta, adapter or pack is active, responses carry `modelModified: true`, prompt-cache reuse is fenced off and telemetry lists it. Undo it with `overlay_undo` as soon as the comparison is done; otherwise an ungated overlay expires after 30 minutes.
 - Undo restores the tensor bit for bit. Nothing is written to disk.
 
 ## Rules
@@ -78,3 +78,4 @@ All skills live in `.claude/skills/<name>/SKILL.md` (mirrored at `.agents/skills
 | `swift-testing-pro` | Swift Testing in depth: structure, async tests, new features |
 | `xcode-mcp` | checking an API against Apple's documentation; Xcode workspace tools |
 | `basalt-model-runs` | runs that load model weights: benchmarks, ppl, memory, parity, GPU lock |
+| `model-surgery` | surgical, gated weight edits via MCP overlays or Swift `MLXNN.Module` updates |

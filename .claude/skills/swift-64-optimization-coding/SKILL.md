@@ -62,6 +62,7 @@ You are an Expert Swift 6.4 Systems & Performance Engineer. Write deterministic,
 - **No `await` in an autoclosure.** `try await a() ?? b()` fails with "'async' call in an autoclosure that does not support concurrency". Use `if let` in a small function.
 - **A `static let` of a non-`Sendable` type is rejected** ("static property … is not concurrency-safe"): `MLXArray`, a kernel input table, and regex literals (`static let name = /…/` is a `Regex<…>`). Make it a computed `static var name: Regex<Substring> { /…/ }`, or build it where it is used. Do not reach for `nonisolated(unsafe)`.
 - **`swift run -c release Basalt`**, not `basalt`: the product name is capitalized. `models convert` takes `--out`.
+- **`MLX.Module.update` mutates `MLXArray` handles in place (`_updateInternal`).** Saving `let old = layer.weight` without cloning (`materialize(old)` or `old + MLXArray(0, dtype: old.dtype)`) aliases the live parameter, so rollback silently restores the mutated tensor. Keep `QuantizedLinear` `scales`/`biases` in their original `.bfloat16`/`.float16` dtype as well (`model-surgery`).
 
 ## 6. Custom Metal kernels (`MLXFast.metalKernel`)
 - **A kernel that does not compile is a `fatalError` at its first call**, once per template instantiation. A parity test must call every combination the model will use (each type, each row count path), or the crash lands on a user's first token.
@@ -89,3 +90,4 @@ All skills live in `.claude/skills/<name>/SKILL.md` (mirrored at `.agents/skills
 | `xcode-mcp` | checking an API against Apple's documentation; Xcode workspace tools |
 | `basalt-model-runs` | runs that load model weights: benchmarks, ppl, memory, parity, GPU lock |
 | `model-xray` | looking inside a running model and calling basalt's own MCP server |
+| `model-surgery` | surgical, gated weight edits via MCP overlays or Swift `MLXNN.Module` updates |

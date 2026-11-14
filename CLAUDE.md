@@ -14,10 +14,11 @@ Before proposing designs, writing code, running real-model benchmarks, or review
 | **Concurrency in Depth** | `async`/`await`, actors, task groups, `AsyncStream`, continuations, cancellation, strict-concurrency diagnostics | `.claude/skills/swift-concurrency-pro/SKILL.md` |
 | **Swift Testing in Depth** | Writing or reviewing tests: structure, `#expect`/`#require`, parameterized and async tests, confirmations, traits | `.claude/skills/swift-testing-pro/SKILL.md` |
 | **Real-Model Benchmarks & Parity** | Running MLX weights on Metal (`PerformanceBenchmark`, PPL/passkey/memory, GPU lock, PR tables) | `.claude/skills/basalt-model-runs/SKILL.md` |
-| **Inside a Running Model & basalt MCP** | A model answers wrongly, a design needs a layer's anatomy or a tensor's statistics, a prompt-cache question, or any call to basalt's own MCP server (`basalt serve --mcp`) | `.claude/skills/model-xray/SKILL.md` |
-| **API Facts & Xcode MCP** | Relying on a Swift 6.2–6.4 / stdlib / framework API from memory, or a review turning on what an API guarantees (`DocumentationSearch` via `mcp__xcode__*` or the helper script) | `.claude/skills/xcode-mcp/SKILL.md` |
+| **Inside a Running Model & basalt MCP** | Wrong answers, layer anatomy, tensor stats, prompt-cache tree, or calling `basalt serve --mcp` | `.claude/skills/model-xray/SKILL.md` |
+| **Model Surgery & Weight Edits** | Targeted weight edits (`weights_delta`, rank-1 `adapter_apply`, `steer_commit`, `tensor_pack`, `MLXNN.Module` code/scale updates) | `.claude/skills/model-surgery/SKILL.md` |
+| **API Facts & Xcode MCP** | Relying on a Swift 6.2–6.4 / stdlib / framework API from memory (`DocumentationSearch` via `mcp__xcode__*` or helper) | `.claude/skills/xcode-mcp/SKILL.md` |
 
-*Rule:* Never implement architectural changes or performance-critical paths from base memory alone—always read the matching `SKILL.md` and `CONTRIBUTING.md` first. External MCP/CLI runtime operations live in `docs/AGENT_OPERATIONS.md`.
+*Rule:* Never implement architectural changes or performance-critical paths from memory—always read the matching `SKILL.md` and `CONTRIBUTING.md` first. External runtime ops live in `docs/AGENT_OPERATIONS.md`.
 
 ---
 

@@ -19,6 +19,7 @@ You are basalt's Swift engineer. You own a change from the request to a green, r
 | Writing or changing tests | `swift-testing-pro` (its basalt section first) |
 | Loads model weights: speed, ppl, memory, parity | `basalt-model-runs` |
 | A model answers wrongly, or you need its anatomy, a tensor or the prompt cache | `model-xray` |
+| Targeted weight edits: `weights_delta`, rank-1 `adapter_apply`, `steer_commit`, `tensor_pack`, or Swift `MLXNN.Module` parameter/code updates | `model-xray` to localize, then `model-surgery` |
 | Before calling it done | `swift-64-pr-review` (5 gates) and `ponytail-review` |
 
 Load a skill when its row applies, not all of them up front. A row that applies is not optional.
@@ -45,6 +46,7 @@ Load a skill when its row applies, not all of them up front. A row that applies 
 - One owner per piece of mutable state. A design that needs a lock is redesigned.
 - A custom kernel or decode path needs parity on a `TinyModel` fixture against the stock path or a CPU reference (#228).
 - Research work merges behind an experimental flag on GO, and closes with numbers on NO-GO.
+- One heavy job on the self-hosted Mac at a time: never run local `swift build`, `swift test` or GPU runs while `gh run list -L 2 --workflow="Unit Tests"` shows `in_progress` or `queued`, and wait for a PR's CI to finish before starting the next local GPU run.
 - Report a failed gate with its output. Do not weaken a test or a gate to pass it.
 
 ## Related skills
@@ -64,3 +66,4 @@ All skills live in `.claude/skills/<name>/SKILL.md` (mirrored at `.agents/skills
 | `xcode-mcp` | checking an API against Apple's documentation; Xcode workspace tools |
 | `basalt-model-runs` | runs that load model weights: benchmarks, ppl, memory, parity, GPU lock |
 | `model-xray` | looking inside a running model and calling basalt's own MCP server |
+| `model-surgery` | surgical, gated weight edits via MCP overlays or Swift `MLXNN.Module` updates |
