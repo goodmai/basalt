@@ -155,6 +155,37 @@ models:
 - **Paths:** a `./` or `../` model path is relative to the compose file's folder.
 - **`basalt compose config -f <file>`** prints the file as it resolves on this Mac, with the profiles that are on. **`basalt compose schema`** prints the JSON Schema of the format for editors.
 
+### Experimental and MCP (`#485`)
+A compose file may declare top-level `experimental` and `mcp` sections (both supported in version 1 and 2) instead of passing long flag tails after `--`:
+
+```yaml
+experimental:
+  zero_copy_body: true
+  smallm_kernel: true
+  speech_analyzer: true
+  image_fallback: ocr
+  ane_vision_tower: ./tower-bundle
+  telemetry_confidence_every: 4
+  adaptive_thinking_budget: true
+  samplers: true
+  mtp_draft_head: true
+  expert_streaming: true
+  expert_cache_gb: 2.5
+  kv_head_split: 0.5            # or quest_top_k: 64 (mutually exclusive)
+
+mcp:
+  enabled: true
+  rest: true
+  research_tools: false
+  enable: [surgery, intervene]
+  disable: [switch_model]
+  image_dirs: [./images]
+```
+
+- **`experimental`:** lowers to the matching `serve` flags (`zero_copy_body`, `smallm_kernel`, `speech_analyzer`, `image_fallback`, `ane_vision_tower`, `telemetry_confidence_every`, `adaptive_thinking_budget`, `samplers`, `mtp_draft_head`, `expert_streaming`, `expert_cache_gb`, `kv_head_split`, `quest_top_k`), validated with exact YAML line numbers (`telemetry_confidence_every` >= 0, `image_fallback` `ocr`, `ane_vision_tower` containing `metadata.json` and `tower.aimodel`, `expert_cache_gb` > 0 with `expert_streaming: true`, `kv_head_split` in `0.05...1`, `quest_top_k` in `1...4096`). Relative paths (`./`, `../`, `~`) resolve against the compose file's folder.
+- **`mcp`:** configures the MCP stdio transport (`enabled`, `rest`, `research_tools`, `enable`, `disable`, `image_dirs`) using the same group and tool selectors as `--mcp-enable` / `--mcp-disable` (`serving`, `gemma`, `media`, `harness`, `xray`, `surgery`, `research`, `all`, or individual tool names; `disable` always wins).
+- **Hot reload vs restart:** `speech_analyzer`, `image_fallback`, `telemetry_confidence_every` and `adaptive_thinking_budget` update live on `compose up` (`POST /v1/compose/apply`, printed under `experimental:`). Engine- and transport-bound flags (`zero_copy_body`, `smallm_kernel`, `ane_vision_tower`, `samplers`, `mtp_draft_head`, `expert_streaming`, `expert_cache_gb`, `kv_head_split`, `quest_top_k` and `mcp`) report `needs a restart` in `compose diff` and are refused on live `apply`.
+
 ### Cloud failures and spend
 - A refused key (HTTP 401/403) disables that cloud model until the server restarts, with one log line saying so.
 - A rate limit (429) pauses it for `Retry-After`, or 60 s if the header is missing.
@@ -177,7 +208,7 @@ models:
   - A cloud model's budget or key variable changes without a reload. The new limits apply at once, and a model disabled by a refused key is enabled again when its key variable changes.
   - A different chat model is loaded into the serving model's place and printed as `chat`. Requests wait while it loads. If a later step of the apply fails, the old chat model is loaded back.
   - A pipeline's new local decision model is loaded like any added model. The default pipeline's is also printed as `decide`. The pipelines and `/v1/systemone` use it from the next request. A model that starts or stops deciding is reloaded in its new role.
-- **Changes that need a restart:** a different memory mode or a sequential perceiver. Run `compose down` and then `compose up`.
+- **Changes that need a restart:** a different memory mode, a sequential perceiver, engine/HTTP startup flags under `experimental`, or changes under `mcp`. Run `compose down` and then `compose up`.
 - **`compose ps`:** lists each running system (`GET /v1/compose`) with its pipelines and, per model:
   - its state, one of `loading`, `ready`, `unloading`, `unloaded`, `idle-unloaded` (on demand, not loaded now), `decision` (held by the decision engine), `cloud`, `no-key`, `over-budget`, `rate-limited`, `refused` and `failed`;
   - for an on-demand model, when it was last used and when it unloads;

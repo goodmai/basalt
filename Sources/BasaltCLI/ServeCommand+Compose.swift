@@ -8,6 +8,54 @@ import BasaltServer
 extension ServeCommand {
     static let openRouterAnswers = URL(string: "https://openrouter.ai/api/v1")!
 
+    mutating func prepareCompose() throws -> ComposeSpec? {
+        guard let spec = try composeSpec() else { return nil }
+        try applyComposeSpec(spec)
+        return spec
+    }
+
+    mutating func applyComposeSpec(_ spec: ComposeSpec) throws {
+        if model == nil, modelPath == nil {
+            let source = spec.local(spec.answer) ?? spec.answer
+            if source.hasPrefix("/") || source.hasPrefix(".") || source.hasPrefix("~") {
+                modelPath = (source as NSString).expandingTildeInPath
+            } else {
+                model = source
+            }
+        }
+        applyComposeExperimental(spec.experimental, usesSpeech: spec.usesSpeechAnalyzer)
+        applyComposeMCP(spec.mcp)
+        try experimental.validate()
+        try expertStreaming.validate()
+        try kvCache.validateCombination()
+        try mcpOptions.validate()
+    }
+
+    private mutating func applyComposeExperimental(_ exp: ComposeSpec.Experimental, usesSpeech: Bool) {
+        if exp.zeroCopyBody { experimental.zeroCopyBody = true }
+        if exp.smallMKernel { experimental.smallMKernel = true }
+        if usesSpeech { experimental.speechAnalyzer = true }
+        if experimental.imageFallback == nil, exp.imageFallback == "ocr" { experimental.imageFallback = .ocr }
+        if experimental.aneVisionTower == nil, let tower = exp.aneVisionTower { experimental.aneVisionTower = tower }
+        if experimental.telemetryConfidenceEvery == 0, let every = exp.telemetryConfidenceEvery { experimental.telemetryConfidenceEvery = every }
+        if exp.adaptiveThinkingBudget { thinking.experimentalAdaptiveThinkingBudget = true }
+        if exp.samplers { sampling.experimentalSamplers = true }
+        if exp.mtpDraftHead { speculative.mtpDraftHead = true }
+        if exp.expertStreaming { expertStreaming.enabled = true }
+        if expertStreaming.cacheGB == nil, let cacheGB = exp.expertCacheGB { expertStreaming.cacheGB = cacheGB }
+        if kvCache.headSplit == nil, let split = exp.kvHeadSplit { kvCache.headSplit = split }
+        if kvCache.questTopK == nil, let topK = exp.questTopK { kvCache.questTopK = topK }
+    }
+
+    private mutating func applyComposeMCP(_ specMCP: ComposeSpec.MCP) {
+        if specMCP.enabled { mcpOptions.mcp = true }
+        if specMCP.rest { mcpOptions.rest = true }
+        if specMCP.researchTools { mcpOptions.researchTools = true }
+        if mcpOptions.enable.isEmpty { mcpOptions.enable = specMCP.enable }
+        if mcpOptions.disable.isEmpty { mcpOptions.disable = specMCP.disable }
+        if mcpOptions.imageDirs.isEmpty { mcpOptions.imageDirs = specMCP.imageDirs }
+    }
+
     func composeSpec() throws -> ComposeSpec? {
         guard let reference = pipeline.compose else { return nil }
         do {

@@ -27,7 +27,20 @@ public enum ComposeSchema {
         "root": [
             Field("version", .integer), Field("name", .string), Field("memory", .choice(PipelineMemory.allCases.map(\.rawValue))),
             Field("budget", .section("budget")), Field("models", .sections("model")), Field("pipeline", .section("pipeline")),
-            Field("pipelines", .sections("pipeline")), Field("variables", .variables, since: 2), Field("profiles", .sections("profile"), since: 2),
+            Field("pipelines", .sections("pipeline")), Field("experimental", .section("experimental")), Field("mcp", .section("mcp")),
+            Field("variables", .variables, since: 2), Field("profiles", .sections("profile"), since: 2),
+        ],
+        "experimental": [
+            Field("zero_copy_body", .boolean), Field("smallm_kernel", .boolean), Field("speech_analyzer", .boolean),
+            Field("image_fallback", .choice(["ocr"])), Field("ane_vision_tower", .string),
+            Field("telemetry_confidence_every", .integer), Field("adaptive_thinking_budget", .boolean),
+            Field("samplers", .boolean), Field("mtp_draft_head", .boolean),
+            Field("expert_streaming", .boolean), Field("expert_cache_gb", .number),
+            Field("kv_head_split", .number), Field("quest_top_k", .integer),
+        ],
+        "mcp": [
+            Field("enabled", .boolean), Field("rest", .boolean), Field("research_tools", .boolean),
+            Field("enable", .names), Field("disable", .names), Field("image_dirs", .names),
         ],
         "model": [
             Field("source", .string), Field("keep", .choice(ComposeSpec.Keep.allCases.map(\.rawValue))), Field("idle_unload", .duration),

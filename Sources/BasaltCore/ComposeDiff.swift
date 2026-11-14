@@ -8,6 +8,7 @@ public struct ComposeDiff: Sendable, Equatable, Codable {
     public var pipelines: [String] = []
     public var budgets: [String] = []
     public var rekeyed: [String] = []
+    public var experimental: [String] = []
     public var chat: String?
     public var decider: String?
     public var restart: String?
@@ -22,6 +23,7 @@ public struct ComposeDiff: Sendable, Equatable, Codable {
         if old.decider != new.decider || new.deciderModel.map({ reloads(old, new, $0) }) == true { diff.decider = new.decider ?? "none" }
         for name in Set(old.models.keys).union(new.models.keys).sorted() { diff.classify(name, old, new) }
         if old.budget != new.budget { diff.budgets.append("total") }
+        diff.experimental = old.hotReloadedExperimentalKeys(to: new)
         diff.restart = restartReason(old, new, touched: diff.added + diff.removed + diff.reloaded)
         return diff
     }
@@ -53,11 +55,11 @@ public struct ComposeDiff: Sendable, Equatable, Codable {
         if old.effectiveMemory != new.effectiveMemory { return "the memory mode changes from \(old.effectiveMemory.rawValue) to \(new.effectiveMemory.rawValue)" }
         let sequential = [old, new].flatMap { spec in [spec.ocr, spec.speech].compactMap { $0 }.filter { spec.models[$0]?.keep == .sequential } }
         if let swapped = sequential.first(where: touched.contains) { return "\(swapped) swaps per request (keep: sequential), which is set up at start" }
-        return nil
+        return old.experimentalRestartReason(to: new)
     }
 
     public var lines: [String] {
-        var lines = [("load", added), ("reload", reloaded), ("unload", removed), ("keep", kept), ("budget", budgets), ("key", rekeyed)].compactMap { verb, names in
+        var lines = [("load", added), ("reload", reloaded), ("unload", removed), ("keep", kept), ("budget", budgets), ("key", rekeyed), ("experimental", experimental)].compactMap { verb, names in
             names.isEmpty ? nil : "  \(verb): \(names.joined(separator: ", "))"
         }
         lines += [("chat", chat), ("decide", decider)].compactMap { verb, name in name.map { "  \(verb): \($0)" } }
