@@ -528,28 +528,3 @@ extension PackRequest {
         self.init(tensor: tensor, format: format)
     }
 }
-
-extension TrainRequest {
-    static let taskCounts = 2...10_000
-
-    init(mcp args: [String: Any]?) throws(MCPFailure) {
-        let heldOut = MCPArguments.present("heldOut", in: args)
-        guard let heldOut = heldOut as? [String], ResearchCall.comparePrompts.contains(heldOut.count) else {
-            throw .invalidParams("heldOut must be an array of \(ResearchCall.comparePrompts) general prompts the quality gate checks the adapter on")
-        }
-        var gate = GateRequest(heldOut: heldOut)
-        try gate.readLimits(args)
-        let count = try MCPArguments.integer("count", in: args, Self.taskCounts) ?? 200
-        let seed = try MCPArguments.integer("seed", in: args, ResearchCall.nonNegative) ?? 0
-        let file = try MCPArguments.string("file", in: args)
-        self.init(tasks: file.map(TrainingTasks.file) ?? .arithmetic(count: count, seed: UInt64(seed)), gate: gate)
-        teacher = try MCPArguments.string("teacher", in: args)
-        teacherModel = try MCPArguments.string("teacherModel", in: args)
-        layers = try MCPArguments.integers("layers", in: args)
-        experts = try MCPArguments.integers("experts", in: args)
-        rank = try MCPArguments.integer("rank", in: args, ResearchCall.nonNegative) ?? rank
-        iterations = try MCPArguments.integer("iterations", in: args, ResearchCall.nonNegative) ?? iterations
-        learningRate = try MCPArguments.number("learningRate", in: args) ?? learningRate
-        output = try MCPArguments.string("output", in: args)
-    }
-}

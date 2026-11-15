@@ -12,14 +12,23 @@ extension WeightSpectrum {
             throw .invalidRequestStructure(details: "spectrum: the matrix is \(rows) × \(columns); the smaller side \(side) is above the cap \(sideCap)")
         }
         let start = ContinuousClock.now
-        let eigenvalues: [Float]
+        let (eigenvalues, squareDefect): ([Float], Float?)
         do {
-            eigenvalues = try withError {
+            (eigenvalues, squareDefect) = try withError {
                 let gram = Self.gram(rows: rows, columns: columns, block: block)
-                eval(gram)
+                let defect: Float?
+                if rows == columns {
+                    let diff = gram - MLXArray.eye(columns, dtype: .float32)
+                    let norm = (diff * diff).sum().sqrt()
+                    eval(gram, norm)
+                    defect = norm.item(Float.self)
+                } else {
+                    eval(gram)
+                    defect = nil
+                }
                 let values = MLXLinalg.eigvalsh(gram, stream: .cpu)
                 eval(values)
-                return values.asArray(Float.self)
+                return (values.asArray(Float.self), defect)
             }
         } catch {
             throw .invalidRequestStructure(details: "spectrum: eigvalsh failed: \(error)")
@@ -27,6 +36,7 @@ extension WeightSpectrum {
         guard var spectrum = WeightSpectrum(eigenvalues: eigenvalues.map(Double.init), rows: rows, columns: columns) else {
             throw .invalidRequestStructure(details: "spectrum: the Gram matrix is zero or not finite")
         }
+        spectrum.orthogonalityDefect = squareDefect
         spectrum.seconds = (ContinuousClock.now - start) / .seconds(1)
         return spectrum
     }

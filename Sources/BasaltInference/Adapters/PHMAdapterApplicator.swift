@@ -200,6 +200,19 @@ extension PHMAdapterApplicator {
                 replacements.append((target.fullPath, adapted))
             }
             return replacements
+        case .oft(let blockSize, let parameterization, let blockShared):
+            var replacements: [(String, Module)] = []
+            replacements.reserveCapacity(targets.count)
+            for target in targets {
+                let adapted = try OFTLinear.from(
+                    linear: target.linear,
+                    blockSize: blockSize,
+                    parameterization: parameterization,
+                    blockShared: blockShared
+                )
+                replacements.append((target.fullPath, adapted))
+            }
+            return replacements
         }
     }
 }

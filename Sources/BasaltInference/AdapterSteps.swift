@@ -130,6 +130,7 @@ extension MLXInferenceEngine {
         let rankValue: Int = switch method {
         case .lora(let r, _): r
         case .phm(_, let r, _, _): r
+        case .oft(let b, _, _): b
         }
         return AdapterSteps(engine: self, container: container, epoch: modelEpoch, fingerprint: modelFingerprint ?? modelDescription, layers: layers, rank: rankValue, method: method, lease: lease, what: what)
     }

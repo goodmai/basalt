@@ -36,6 +36,7 @@ extension DistillRequest {
         budgetUSD = try MCPArguments.number("budgetUSD", in: args).map(Double.init)
         layers = try MCPArguments.integers("layers", in: args)
         rank = try MCPArguments.integer("rank", in: args, ResearchCall.nonNegative) ?? rank
+        method = try AdapterMethod.fromMCP(args, fallbackRank: rank)
         iterations = try MCPArguments.integer("iterations", in: args, ResearchCall.nonNegative) ?? iterations
         batchSize = try MCPArguments.integer("batchSize", in: args, ResearchCall.nonNegative) ?? batchSize
         learningRate = try MCPArguments.number("learningRate", in: args) ?? learningRate
