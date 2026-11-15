@@ -44,18 +44,40 @@ public struct HarnessRunView: Codable, Sendable, Equatable {
     public let loopFree: Bool
     public let promptTokens: Int
     public let cachedPromptTokens: Int
+    public let tNorm: TNormSummary?
 
     init(candidateId: String, response: GenerationResponse, task: HarnessTask) {
         let text = HarnessText.withoutThinking(response.generatedText).trimmingCharacters(in: .whitespacesAndNewlines)
         self.candidateId = candidateId
         self.deliverable = text
-        self.delivered = !text.isEmpty && response.finishReason == .stop
+        let delivered = !text.isEmpty && response.finishReason == .stop
+        self.delivered = delivered
         let lower = text.lowercased()
-        self.conforms = task.requiredTerms.allSatisfy { lower.contains($0.lowercased()) }
-            && (!task.expectsJSON || HarnessText.jsonObject(in: text) != nil)
-        self.loopFree = !HarnessText.repeatsLine(text, times: 3)
+        let jsonValid = !task.expectsJSON || HarnessText.jsonObject(in: text) != nil
+        self.conforms = task.requiredTerms.allSatisfy { lower.contains($0.lowercased()) } && jsonValid
+        let maxRun = Self.maxRepeatedLineRun(text)
+        self.loopFree = maxRun < 3
         self.promptTokens = response.promptTokens
         self.cachedPromptTokens = response.cachedPromptTokens
+        let termSatisfaction = task.requiredTerms.isEmpty
+            ? 1.0
+            : Double(task.requiredTerms.filter { lower.contains($0.lowercased()) }.count) / Double(task.requiredTerms.count)
+        let conformsSatisfaction = jsonValid ? termSatisfaction : 0.0
+        let loopSatisfaction = ClauseMargin.upperCeiling(actual: Double(maxRun), limit: 3.0, ideal: 1.0)
+        let degrees: InlineArray<3, Double> = [delivered ? 1.0 : 0.0, conformsSatisfaction, loopSatisfaction]
+        self.tNorm = TNormSummary(degrees.span)
+    }
+
+    private static func maxRepeatedLineRun(_ text: String) -> Int {
+        var previous = ""
+        var run = 0
+        var longest = 0
+        for line in text.components(separatedBy: .newlines).map({ $0.trimmingCharacters(in: .whitespaces) }) where !line.isEmpty {
+            run = line == previous ? run + 1 : 1
+            previous = line
+            if run > longest { longest = run }
+        }
+        return longest
     }
 
     var measured: [Bool] { [delivered, conforms, loopFree] }

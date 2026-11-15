@@ -240,8 +240,13 @@ public struct ExpertChoice: Sendable, Codable {
     }
 }
 
+public enum SteerGeometry: String, Sendable, Codable, Equatable, CaseIterable {
+    case additive
+    case geodesic
+}
+
 public enum Intervention: Sendable, Codable, Equatable {
-    case steer(layer: Int, vector: [Float], scale: Float)
+    case steer(layer: Int, vector: [Float], scale: Float, geometry: SteerGeometry = .additive)
     case ablateHead(layer: Int, head: Int)
     case ablateExpert(layer: Int, expert: Int)
     indirect case conditional(ConditionalIntervention)
@@ -300,6 +305,8 @@ public struct CompareRow: Sendable, Codable {
     public var baselineText: String
     public var overlayText: String
     public var klDivergence: Float
+    public var fisherRaoDistance: Float = 0
+    public var maxFisherRaoDistance: Float = 0
     public var baselinePerplexity: Float
     public var overlayPerplexity: Float
     public var triggerRate: Float?

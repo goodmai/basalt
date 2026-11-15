@@ -9,7 +9,7 @@ final class ConditionalEdit {
     private var active: MLXArray?
     private let direction: MLXArray?
     private let column: MLXArray?
-    private let push: MLXArray?
+    private let steer: SteerStep?
 
     init(_ rule: ConditionalIntervention, anatomy: ModelAnatomy) {
         self.rule = rule
@@ -20,7 +20,11 @@ final class ConditionalEdit {
         case .ablateExpert(let layer, let expert): column = Self.oneHot(expert, count: anatomy.layers[layer].experts ?? 0)
         case .steer, .conditional: column = nil
         }
-        if case .steer(_, let vector, let scale) = rule.action { push = MLXArray(vector.map { $0 * scale }) } else { push = nil }
+        if case .steer(_, let vector, let scale, let geometry) = rule.action {
+            steer = SteerStep(direction: MLXArray(vector), scale: scale, geometry: geometry)
+        } else {
+            steer = nil
+        }
     }
 
     static func oneHot(_ index: Int, count: Int) -> MLXArray {
@@ -35,8 +39,9 @@ final class ConditionalEdit {
         if case .projection(let trigger, _, let threshold) = rule.trigger, trigger == layer, let direction {
             update(matmul(hidden[0].asType(.float32), direction) .> threshold)
         }
-        guard case .steer(let target, _, _) = rule.action, target == layer, let active, let push else { return hidden }
-        return hidden + (active[.newAxis, 0..., .newAxis] * push).asType(hidden.dtype)
+        guard case .steer(let target, _, _, _) = rule.action, target == layer, let active, let steer else { return hidden }
+        let edited = GeodesicSteer.apply(hidden: hidden, step: steer)
+        return which(active[.newAxis, 0..., .newAxis] .> 0, edited, hidden)
     }
 
     func routed(layer: Int, indices: MLXArray, gates: MLXArray) {

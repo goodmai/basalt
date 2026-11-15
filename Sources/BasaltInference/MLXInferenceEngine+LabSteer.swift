@@ -204,15 +204,21 @@ struct ContrastSearch {
         let baseline = try heldOut.map { try capture($0) }
         let last = baseline[0].states.dim(0) - 1
         return try request.scales.map { scale in
-            var divergence: Float = 0, shift: Float = 0
+            var divergence: Float = 0, fisherRao: Float = 0, shift: Float = 0
             for (ids, base) in zip(heldOut, baseline) {
-                let steered = try capture(ids, [.steer(layer: best, vector: vector, scale: scale)])
-                let p = exp(base.logProbabilities)
-                divergence += which(p .> 0, p * (base.logProbabilities - steered.logProbabilities), 0).sum().item(Float.self)
+                let steered = try capture(ids, [.steer(layer: best, vector: vector, scale: scale, geometry: request.geometry)])
+                let drift = LogitDrift.metrics(logP: base.logProbabilities, logQ: steered.logProbabilities)
+                divergence += drift.klDivergence
+                fisherRao += drift.meanFisherRao
                 shift += ((steered.states[last] - base.states[last]) * direction).sum().item(Float.self)
             }
             let count = Float(heldOut.count)
-            return SteerTrial(scale: scale, klDivergence: divergence / count, projectionShift: shift / count)
+            return SteerTrial(
+                scale: scale,
+                klDivergence: divergence / count,
+                projectionShift: shift / count,
+                fisherRaoDistance: fisherRao / count
+            )
         }
     }
 }

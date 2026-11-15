@@ -109,7 +109,7 @@ extension MLXInferenceEngine {
             return anatomy.layers[index]
         }
         switch intervention {
-        case .steer(let index, let vector, let scale):
+        case .steer(let index, let vector, let scale, _):
             _ = try layer(index)
             guard vector.count == anatomy.hiddenSize else {
                 throw .invalidRequestStructure(details: "the steering vector has \(vector.count) values; the hidden size is \(anatomy.hiddenSize)")
@@ -134,10 +134,15 @@ extension MLXInferenceEngine {
 
     static func describe(_ intervention: Intervention) -> String {
         switch intervention {
-        case .steer(let layer, let vector, let scale): "steer the residual after layer \(layer) by \(scale) × a \(vector.count)-value vector"
-        case .ablateHead(let layer, let head): "ablate head \(head) of layer \(layer)"
-        case .ablateExpert(let layer, let expert): "ablate expert \(expert) of layer \(layer)"
-        case .conditional(let rule): describe(rule)
+        case .steer(let layer, let vector, let scale, let geometry):
+            let suffix = geometry == .geodesic ? " (geodesic)" : ""
+            return "steer the residual after layer \(layer) by \(scale) × a \(vector.count)-value vector\(suffix)"
+        case .ablateHead(let layer, let head):
+            return "ablate head \(head) of layer \(layer)"
+        case .ablateExpert(let layer, let expert):
+            return "ablate expert \(expert) of layer \(layer)"
+        case .conditional(let rule):
+            return describe(rule)
         }
     }
 
@@ -160,18 +165,19 @@ extension MLXInferenceEngine {
         let overlayProbe = probe()
         let overlay = try greedy(ids, context: context, probe: overlayProbe, maxTokens: maxTokens, stops: stops)
         let steered = try logProbabilities(ids + baseline, from: ids.count - 1, context: context, probe: probe())
-        let p = exp(base)
-        let kl = which(p .> 0, p * (base - steered), 0).sum(axis: -1).mean()
+        let (kl, meanFR, maxFR) = LogitDrift.tensors(logP: base, logQ: steered)
         let targets = MLXArray(baseline)[0..., .newAxis]
         let basePerplexity = exp(-takeAlong(base, targets, axis: -1).mean())
         let steeredPerplexity = exp(-takeAlong(steered, targets, axis: -1).mean())
-        eval(kl, basePerplexity, steeredPerplexity)
+        eval(kl, meanFR, maxFR, basePerplexity, steeredPerplexity)
         func text(_ tokens: [Int]) -> String {
             context.tokenizer.decode(tokenIds: tokens.filter { !stops.contains($0) }, skipSpecialTokens: true)
         }
         var row = CompareRow(
             prompt: prompt, baselineText: text(baseline), overlayText: text(overlay), klDivergence: kl.item(Float.self),
             baselinePerplexity: basePerplexity.item(Float.self), overlayPerplexity: steeredPerplexity.item(Float.self))
+        row.fisherRaoDistance = meanFR.item(Float.self)
+        row.maxFisherRaoDistance = maxFR.item(Float.self)
         row.triggerRate = overlayProbe?.triggerRate
         return row
     }
@@ -201,19 +207,18 @@ extension MLXInferenceEngine {
 }
 
 final class InterventionProbe: ForwardProbe {
-    private let steering: [Int: MLXArray]
+    private let steering: [Int: [SteerStep]]
     private let heads: [Int: MLXArray]
     private let experts: [Int: MLXArray]
     let conditions: [ConditionalEdit]
 
     init(_ interventions: [Intervention], anatomy: ModelAnatomy) {
-        var steering: [Int: [Float]] = [:], heads: [Int: [Bool]] = [:], experts: [Int: [Bool]] = [:]
+        var steering: [Int: [SteerStep]] = [:], heads: [Int: [Bool]] = [:], experts: [Int: [Bool]] = [:]
         var conditions: [ConditionalEdit] = []
         for intervention in interventions {
             switch intervention {
-            case .steer(let layer, let vector, let scale):
-                let sum = steering[layer] ?? Array(repeating: 0, count: vector.count)
-                steering[layer] = zip(sum, vector).map { $0 + scale * $1 }
+            case .steer(let layer, let vector, let scale, let geometry):
+                steering[layer, default: []].append(SteerStep(direction: MLXArray(vector), scale: scale, geometry: geometry))
             case .ablateHead(let layer, let head):
                 heads[layer, default: Array(repeating: true, count: anatomy.layers[layer].heads ?? 0)][head] = false
             case .ablateExpert(let layer, let expert):
@@ -222,7 +227,7 @@ final class InterventionProbe: ForwardProbe {
                 conditions.append(ConditionalEdit(rule, anatomy: anatomy))
             }
         }
-        self.steering = steering.mapValues { MLXArray($0) }
+        self.steering = steering
         self.heads = heads.mapValues { MLXArray($0).asType(.float32) }
         self.experts = experts.mapValues { MLXArray($0).asType(.float32) }
         self.conditions = conditions
@@ -231,7 +236,7 @@ final class InterventionProbe: ForwardProbe {
     var triggerRate: Float? { conditions.compactMap(\.gate.rate).max() }
 
     func residual(layer: Int, _ hidden: MLXArray) -> MLXArray {
-        let steered = steering[layer].map { hidden + $0.asType(hidden.dtype) } ?? hidden
+        let steered = (steering[layer] ?? []).reduce(hidden) { GeodesicSteer.apply(hidden: $0, step: $1) }
         return conditions.reduce(steered) { $1.residual(layer: layer, $0) }
     }
 

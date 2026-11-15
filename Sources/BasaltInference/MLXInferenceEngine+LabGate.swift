@@ -72,7 +72,9 @@ extension MLXInferenceEngine {
         case .rankOne(let module, _, _, let scale): "rank-1 adapter on \(module) × \(scale)"
         }
     }
+}
 
+extension MLXInferenceEngine {
     static func gate(_ request: GateRequest, context: ModelContext, live: [String: AppliedDelta], family: String?) throws -> GateReport {
         let pristine = try lifted(live, in: context.model) { try ModelProbe.facts(context) }
         let current = try ModelProbe.facts(context)
@@ -80,20 +82,41 @@ extension MLXInferenceEngine {
         let targets = try request.target.map { target in
             let answer = try ModelProbe.known(target.prompt, expected: target.expected.lowercased(), context: context, tokens: targetTokens)
             let hit: Float = ModelProbe.answer(answer) == nil ? 1 : 0
-            return GateCheck(name: "target \(target.prompt) -> \(target.expected)", passed: hit == 1, value: hit, limit: 1)
+            return GateCheck(
+                name: "target \(target.prompt) -> \(target.expected)",
+                passed: hit == 1,
+                value: hit,
+                limit: 1,
+                satisfaction: Double(hit)
+            )
         }
         let checks = probeChecks(current, pristine: pristine, family: family, rise: request.maxPerplexityRise) + heldOutChecks(rows, request) + targets
-        return GateReport(checks: checks, compare: rows.isEmpty ? nil : CompareReport(rows: rows.map(finite)))
+        let sanitizedRows = rows.map(finite)
+        return GateReport(checks: checks, compare: sanitizedRows.isEmpty ? nil : CompareReport(rows: sanitizedRows))
     }
 
     static func probeChecks(_ current: ModelProbe.Facts, pristine: ModelProbe.Facts, family: String?, rise: Float) -> [GateCheck] {
         let ceiling = ModelProbe.perplexityCeiling(family: family)
         let limit = pristine.perplexity.isFinite ? max(ceiling, pristine.perplexity * (1 + rise)) : ceiling
-        let perplexity = GateCheck(name: "probe perplexity", passed: current.perplexity <= limit, value: finite(current.perplexity), limit: limit)
+        let ideal = pristine.perplexity.isFinite ? min(Double(pristine.perplexity), Double(limit)) : 0.0
+        let perplexitySatisfaction = ClauseMargin.upperCeiling(actual: Double(current.perplexity), limit: Double(limit), ideal: ideal)
+        let perplexity = GateCheck(
+            name: "probe perplexity",
+            passed: current.perplexity <= limit,
+            value: finite(current.perplexity),
+            limit: limit,
+            satisfaction: perplexitySatisfaction
+        )
         let answers = zip(current.answers, pristine.answers).map { now, before in
             let held: Float = ModelProbe.answer(now) == nil ? 1 : 0
             let had: Float = ModelProbe.answer(before) == nil ? 1 : 0
-            return GateCheck(name: "probe known answer \(now.expected)", passed: held >= had, value: held, limit: had)
+            return GateCheck(
+                name: "probe known answer \(now.expected)",
+                passed: held >= had,
+                value: held,
+                limit: had,
+                satisfaction: had <= 0 ? 1.0 : Double(held)
+            )
         }
         return [perplexity] + answers
     }
@@ -103,9 +126,23 @@ extension MLXInferenceEngine {
         let count = Float(rows.count)
         let kl = rows.map(\.klDivergence).reduce(0, +) / count
         let rise = rows.map { $0.overlayPerplexity / $0.baselinePerplexity - 1 }.reduce(0, +) / count
+        let klSatisfaction = ClauseMargin.upperCeiling(actual: Double(kl), limit: Double(request.maxKL), ideal: 0.0)
+        let riseSatisfaction = ClauseMargin.upperCeiling(actual: Double(rise), limit: Double(request.maxPerplexityRise), ideal: 0.0)
         return [
-            GateCheck(name: "held-out mean KL", passed: kl <= request.maxKL, value: finite(kl), limit: request.maxKL),
-            GateCheck(name: "held-out perplexity rise", passed: rise <= request.maxPerplexityRise, value: finite(rise), limit: request.maxPerplexityRise),
+            GateCheck(
+                name: "held-out mean KL",
+                passed: kl <= request.maxKL,
+                value: finite(kl),
+                limit: request.maxKL,
+                satisfaction: klSatisfaction
+            ),
+            GateCheck(
+                name: "held-out perplexity rise",
+                passed: rise <= request.maxPerplexityRise,
+                value: finite(rise),
+                limit: request.maxPerplexityRise,
+                satisfaction: riseSatisfaction
+            ),
         ]
     }
 
@@ -113,7 +150,11 @@ extension MLXInferenceEngine {
 
     static func finite(_ row: CompareRow) -> CompareRow {
         var row = row
-        (row.klDivergence, row.baselinePerplexity, row.overlayPerplexity) = (finite(row.klDivergence), finite(row.baselinePerplexity), finite(row.overlayPerplexity))
+        row.klDivergence = finite(row.klDivergence)
+        row.fisherRaoDistance = finite(row.fisherRaoDistance)
+        row.maxFisherRaoDistance = finite(row.maxFisherRaoDistance)
+        row.baselinePerplexity = finite(row.baselinePerplexity)
+        row.overlayPerplexity = finite(row.overlayPerplexity)
         return row
     }
 

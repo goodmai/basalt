@@ -14,6 +14,7 @@ public struct HarnessValidationReport: Codable, Sendable, Equatable {
     public let scriptCount: Int
     public let untriggeredSkills: [String]
     public let diversityScore: Double?
+    public let tNorm: TNormSummary?
 }
 
 enum HarnessDiversity {
@@ -56,7 +57,9 @@ public enum HarnessValidator {
         }
 
         let census = validateFiles(tree, spec: spec, errors: &errors, warnings: &warnings)
-        errors = Array(Set(errors + missingScriptErrors(tree))).sorted()
+        let missingScripts = missingScriptErrors(tree)
+        let structuralClean = (census.errorCount + missingScripts.count) == 0
+        errors = Array(Set(errors + missingScripts)).sorted()
 
         let untriggered = untriggeredSkills(census.skills, tree: tree, spec: spec, alwaysOnPaths: Set(alwaysOnPaths))
         var diversity: Double?
@@ -67,6 +70,14 @@ public enum HarnessValidator {
                 errors.append(String(format: "candidate diversity %.4f is below minimum %.4f", score, spec.minDiversity))
             }
         }
+        let summary = satisfactionSummary(
+            alwaysOnChars: alwaysOnChars,
+            structuralClean: structuralClean,
+            skillCount: census.skills.count,
+            untriggeredCount: untriggered.count,
+            diversity: diversity,
+            spec: spec
+        )
 
         return HarnessValidationReport(
             isValid: errors.isEmpty,
@@ -80,13 +91,33 @@ public enum HarnessValidator {
             subagentCount: census.subagents,
             scriptCount: census.scripts,
             untriggeredSkills: untriggered,
-            diversityScore: diversity
+            diversityScore: diversity,
+            tNorm: summary
         )
+    }
+
+    private static func satisfactionSummary(
+        alwaysOnChars: Int,
+        structuralClean: Bool,
+        skillCount: Int,
+        untriggeredCount: Int,
+        diversity: Double?,
+        spec: HarnessSurfaceSpec
+    ) -> TNormSummary {
+        let budget = ClauseMargin.upperCeiling(actual: Double(alwaysOnChars), limit: Double(spec.alwaysOnMaxChars), ideal: 0.0)
+        let structural = structuralClean ? 1.0 : 0.0
+        let skills = skillCount == 0 ? 1.0 : Double(skillCount - untriggeredCount) / Double(skillCount)
+        var degrees = [budget, structural, skills]
+        if let diversity {
+            degrees.append(ClauseMargin.lowerFloor(actual: diversity, floor: spec.minDiversity, ideal: 1.0))
+        }
+        return TNormSummary(degrees.span)
     }
 
     private static func validateFiles(
         _ tree: HarnessTree, spec: HarnessSurfaceSpec, errors: inout [String], warnings: inout [String]
-    ) -> (skills: [(path: String, name: String)], subagents: Int, scripts: Int) {
+    ) -> (skills: [(path: String, name: String)], subagents: Int, scripts: Int, errorCount: Int) {
+        let initialErrors = errors.count
         var skills: [(path: String, name: String)] = []
         var subagents = 0
         var scripts = 0
@@ -108,7 +139,7 @@ public enum HarnessValidator {
                 }
             }
         }
-        return (skills, subagents, scripts)
+        return (skills, subagents, scripts, errors.count - initialErrors)
     }
 
     private static func missingScriptErrors(_ tree: HarnessTree) -> [String] {
