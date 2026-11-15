@@ -7,7 +7,9 @@ import BasaltCore
 struct ChatRequestFastReader {
     struct DecodeError: Error, LocalizedError, Sendable, Equatable {
         let message: String
-        var errorDescription: String? { message }
+        var errorDescription: String? {
+            DecodingError.dataCorrupted(.init(codingPath: [], debugDescription: message)).localizedDescription
+        }
     }
 
     struct Parsed {
