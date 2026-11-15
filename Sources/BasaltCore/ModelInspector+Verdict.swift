@@ -59,6 +59,7 @@ extension ModelInspector {
         var groupSize: Int?
         var mode: String?
         var dtype: String?
+        var qtipBPW: Double?
         var layerGroupSizes: [String: Int] = [:]
 
         init(json: [String: Any]?) {
@@ -76,6 +77,11 @@ extension ModelInspector {
                 bits = quantization["bits"] as? Int ?? quantization["weight_bits"] as? Int
                 groupSize = quantization["group_size"] as? Int
                 mode = quantization["quant_method"] as? String
+            }
+            if let qtip = json["qtip_quantization"] as? [String: Any], let bpw = qtip["bpw"] as? Double {
+                qtipBPW = bpw
+                mode = "qtip"
+                groupSize = 16
             }
             dtype = json["torch_dtype"] as? String
         }
@@ -100,6 +106,9 @@ extension ModelInspector {
     }
 
     static func bitWidth(tensors: [String: Tensor], dtypes: Set<String>, config: QuantizationConfig, modelId: String) -> BitWidth {
+        if let bpw = config.qtipBPW {
+            return BitWidth(bits: Int(bpw.rounded(.down)), description: String(format: "%.1f-bit QTIP bitshift trellis", bpw))
+        }
         let measured = quantizedBits(tensors: tensors, nf4: config.mode?.lowercased() == "nf4", groupSize: config.groupSize(forLayer:))
         guard let common = mostCommon(Array(measured.values)) else {
             return unmeasuredBitWidth(dtypes: dtypes, config: config, modelId: modelId)

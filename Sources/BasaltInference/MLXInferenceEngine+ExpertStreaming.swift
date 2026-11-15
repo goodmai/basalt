@@ -20,6 +20,10 @@ extension MLXInferenceEngine {
     }
 
     func loadContainer(from directory: URL) async throws -> ModelContainer {
+        if let qtip = try await QTIPNativeLoader.loadContainer(from: directory, tokenizerLoader: DefaultTokenizerLoader()) {
+            logger.info("Experimental QTIP native weights: \(directory.lastPathComponent) runs bitshift trellis blocks on basalt's Metal decode kernel")
+            return qtip
+        }
         if let native = try await GGUFNativeLoader.loadContainer(from: directory, tokenizerLoader: DefaultTokenizerLoader()) {
             logger.info("Experimental GGUF native weights: \(directory.lastPathComponent) runs its i-quant and k-quant blocks on basalt's Metal kernels")
             return native

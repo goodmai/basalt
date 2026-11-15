@@ -154,4 +154,24 @@ struct ModelInspectorVerdictTests {
         #expect(report.errors == ["Model directory not found at: /nowhere"])
         #expect(report.bitWidthDescription == "Not downloaded / missing directory")
     }
+
+    @Test("QTIP checkpoint reports bitshift trellis bpw cleanly even alongside residual 8-bit embeddings")
+    func qtipBitWidthVerdict() {
+        var scan = ModelInspector.ShardScan()
+        let tensors = Self.quantLayer("model.embed_tokens", bits: 8).merging([
+            "model.layers.0.mlp.up_proj.weight": Tensor(dtype: "U32", shape: [4, 20], end: 0),
+            "model.layers.0.mlp.up_proj.row_scales": Tensor(dtype: "F16", shape: [4], end: 0),
+        ]) { $1 }
+        scan.record("model.safetensors", .present(sizeBytes: 4096, header: .success(Self.header(tensors))))
+        let config: [String: Any] = [
+            "quantization": ["bits": 4, "group_size": 64] as [String: Any],
+            "qtip_quantization": ["bpw": 2.5, "seed": 409, "layers": [:]] as [String: Any],
+        ]
+        let report = ModelInspector.Report(modelId: "goodmai/m-qtip", path: "/m", scan: scan, config: config)
+        #expect(report.intact)
+        #expect(report.detectedBitWidth == 2)
+        #expect(report.bitWidthDescription == "2.5-bit QTIP bitshift trellis")
+        #expect(report.quantizationMode == "qtip")
+        #expect(report.groupSize == 16)
+    }
 }
