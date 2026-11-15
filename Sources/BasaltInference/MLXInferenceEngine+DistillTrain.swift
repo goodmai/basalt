@@ -21,7 +21,7 @@ extension MLXInferenceEngine {
         for row in rows.heldOut { before += try await steps.read { context in nll([row], context.model) } }
         while progress.step < request.iterations {
             let next = try await steps.section(&state) { [progress, rows] context, state in
-                progress.advanced(by: try steps.withLoRA(&state, context: context) { context, optimizer, _ in
+                progress.advanced(by: try steps.withAdapter(&state, context: context) { context, optimizer, _ in
                     try distillStep(rows.train, index: progress.step, batchSize: request.batchSize, optimizer: optimizer, model: context.model)
                 })
             }
@@ -34,8 +34,8 @@ extension MLXInferenceEngine {
             progress = next
         }
         var after: Float = 0
-        for row in rows.heldOut { after += try await steps.trained(&state) { context, _, _ in nll([row], context.model) } }
-        try await steps.trained(&state) { context, _, configuration in try saveAdapter(configuration, model: context.model, to: directory) }
+        for row in rows.heldOut { after += try await steps.trainedAdapter(&state) { context, _, _ in nll([row], context.model) } }
+        try await steps.trainedAdapter(&state) { context, _, configuration in try saveConfiguredAdapter(configuration, model: context.model, to: directory) }
         AdapterCheckpoint.discard(in: directory)
         let count = Float(rows.heldOut.count)
         return DistillRun(losses: reported(progress.losses), nllBefore: before / count, nllAfter: after / count, tooLong: rows.tooLong, resumedAt: resumedAt)
@@ -50,7 +50,7 @@ extension MLXInferenceEngine {
             return progress
         }
         if request.checkpointEvery > 0 {
-            try await steps.section(&state) { context, state in try steps.withLoRA(&state, context: context) { _, _, _ in } }
+            try await steps.section(&state) { context, state in try steps.withAdapter(&state, context: context) { _, _, _ in } }
             try await steps.confirm()
             try checkpoint(state, identity, to: directory)
         }

@@ -171,8 +171,7 @@ extension MLXInferenceEngine {
     }
 
     static func attachDirectory(_ directory: URL, to model: any LanguageModel) throws(BasaltError) -> [String] {
-        func refused(_ reason: String) -> BasaltError { .invalidRequestStructure(details: "adapter_apply \(directory.path): \(reason)") }
-        return try attachContainer(try loraContainer(at: directory, refused), to: model, refused)
+        try attachAnyAdapterDirectory(directory, to: model)
     }
 
     static func loraContainer(at directory: URL, _ refused: (String) -> BasaltError) throws(BasaltError) -> LoRAContainer {

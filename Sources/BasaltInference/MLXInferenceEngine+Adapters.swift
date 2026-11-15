@@ -4,7 +4,7 @@ import MLXLMCommon
 import BasaltCore
 
 struct ServedAdapter: Sendable {
-    let weights: LoRAContainer
+    let weights: any ModelAdapter
     let namespace: String
 }
 
@@ -21,11 +21,8 @@ extension MLXInferenceEngine {
         let epoch = modelEpoch
         var served: [String: ServedAdapter] = [:]
         for (name, directory) in directories.sorted(by: { $0.key < $1.key }) {
-            let weights = try Self.loraContainer(at: directory, Self.adapterRefusal(name))
-            try await Self.labRun(container, "checking adapter \(name)") { context in
-                _ = try Self.attachContainer(weights, to: context.model, Self.adapterRefusal(name))
-                weights.unload(from: context.model)
-                Self.settle(context.model)
+            let weights = try await Self.labRun(container, "checking adapter \(name)") { context in
+                try Self.loadServedAdapter(at: directory, into: context.model, refused: Self.adapterRefusal(name))
             }
             served[name] = ServedAdapter(weights: weights, namespace: "\(name)@\(PromptCacheDiskStore.fingerprint(modelDirectory: directory))")
         }
@@ -48,7 +45,7 @@ extension MLXInferenceEngine {
         record(.learned(epoch) { $0.adapter = name })
     }
 
-    static func swapAdapter(_ current: LoRAContainer?, for next: LoRAContainer?, in model: any LanguageModel) throws {
+    static func swapAdapter(_ current: (any ModelAdapter)?, for next: (any ModelAdapter)?, in model: any LanguageModel) throws {
         current?.unload(from: model)
         settle(model)
         guard let next else { return }

@@ -12,13 +12,14 @@ struct AdapterProgress: Sendable, Codable, Equatable {
     var layers: [Int]
     var layerCount: Int
     var rank: Int
+    var method: AdapterMethod?
     var batchSize: Int
     var learningRate: Float
 
     init(_ request: DistillRequest, model: String, data: String, layerCount: Int) {
         (self.model, self.data, self.layerCount) = (model, data, layerCount)
         layers = request.layers ?? Array(0 ..< layerCount)
-        (rank, batchSize, learningRate) = (request.rank, request.batchSize, request.learningRate)
+        (rank, method, batchSize, learningRate) = (request.rank, request.method, request.batchSize, request.learningRate)
     }
 
     static func digest(_ rows: [DistillRow]) -> String {

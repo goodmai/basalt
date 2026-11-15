@@ -233,10 +233,13 @@ public struct TrainRequest: Sendable, Codable, Equatable {
     public var layers: [Int]?
     public var experts: [Int]?
     public var rank = 8
+    public var method: AdapterMethod?
     public var iterations = 200
     public var learningRate: Float = 1e-5
     public var gate: GateRequest
     public var output: String?
+
+    public var effectiveMethod: AdapterMethod { method ?? .lora(rank: rank) }
 
     public init(tasks: TrainingTasks, gate: GateRequest) {
         self.tasks = tasks
