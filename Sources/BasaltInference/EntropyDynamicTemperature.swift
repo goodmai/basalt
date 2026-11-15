@@ -38,11 +38,8 @@ public struct EntropyDynamicTemperature: LogitProcessor {
     }
 
     static func entropy(_ logits: MLXArray) -> MLXArray {
-        let z = logits.asType(.float32)
-        let logp = z - logSumExp(z, axis: -1, keepDims: true)
-        let p = exp(logp)
-        let h = -sum(MLX.where(p .> 0, p * logp, MLXArray(Float(0))), axis: -1, keepDims: true)
-        return maximum(h, MLXArray(Float(0)))
+        let h = FusedLogitConfidence.compute(logits).entropy
+        return expandedDimensions(MLX.where(isFinite(h), h, MLXArray(Float(0))), axis: -1)
     }
 
     func temperature(entropy: MLXArray, repetition: Float) -> MLXArray {

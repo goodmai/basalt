@@ -1,7 +1,6 @@
 import Foundation
 import Logging
 import ServiceLifecycle
-import Synchronization
 import BasaltCore
 import BasaltHarness
 
@@ -105,19 +104,25 @@ public final class MCPServer: Service, Sendable {
 }
 
 extension MCPServer {
-    private static func stdinStream() -> AsyncStream<String> {
+    static func lineStream(from handle: FileHandle) -> AsyncStream<String> {
         AsyncStream { continuation in
-            let stopped = Atomic<Bool>(false)
-            continuation.onTermination = { _ in
-                stopped.store(true, ordering: .relaxed)
-            }
-            Thread.detachNewThread {
-                while !stopped.load(ordering: .relaxed), let line = readLine(strippingNewline: true) {
-                    if case .terminated = continuation.yield(line) { break }
-                }
+            let reader = Task {
+                do {
+                    for try await line in handle.bytes.lines {
+                        guard !Task.isCancelled else { break }
+                        if case .terminated = continuation.yield(line) { break }
+                    }
+                } catch {}
                 continuation.finish()
             }
+            continuation.onTermination = { _ in
+                reader.cancel()
+            }
         }
+    }
+
+    private static func stdinStream() -> AsyncStream<String> {
+        lineStream(from: .standardInput)
     }
 
     public func run() async {

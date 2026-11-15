@@ -1,6 +1,5 @@
 import BasaltCore
 import CoreAI
-import Darwin
 import Foundation
 import MLX
 import MLXLMCommon
@@ -85,19 +84,41 @@ struct SplitFeedForward {
 
     static func planar(_ x: MLXArray) -> NDArray {
         let (tokens, hidden) = (x.dim(1), x.dim(2))
+        let count = hidden * tokens
+        let shape = [1, hidden, 1, tokens]
         let planar = contiguous(x.reshaped([tokens, hidden]).transposed().asType(.float16))
         eval(planar)
         let bytes = planar.asData(access: .noCopyIfContiguous).data
-        var array = NDArray(shape: [1, hidden, 1, tokens], scalarType: .float16)
-        array.mutableView(as: Float16.self).withUnsafeMutablePointer { pointer, _, _ in
-            bytes.withUnsafeBytes { source in _ = memcpy(pointer, source.baseAddress!, source.count) }
+        defer { withExtendedLifetime(planar) {} }
+        var array = NDArray(shape: shape, scalarType: .float16)
+        var copied = false
+        do {
+            if var target = array.mutableView(as: Float16.self).contiguousElements, target.count == count {
+                target.withUnsafeMutableBufferPointer { _ = bytes.copyBytes(to: $0) }
+                copied = true
+            }
+        }
+        if copied { return array }
+        let raw = NDArray.RawView(bytes: bytes.bytes, scalarType: .float16, shape: shape)
+        if let source = raw.view(as: Float16.self).contiguousElements {
+            return source.withUnsafeBufferPointer { NDArray(scalars: $0, shape: shape) }
         }
         return array
     }
 
     static func unplanar(_ y: NDArray, tokens: Int, hidden: Int) -> MLXArray {
-        let planar = y.view(as: Float16.self).withUnsafePointer { pointer, _, _ in
-            MLXArray(UnsafeBufferPointer(start: pointer, count: hidden * tokens), [hidden, tokens])
+        let count = hidden * tokens
+        guard count > 0 else { return MLXArray.zeros([1, tokens, hidden], dtype: .float16) }
+        let view = y.view(as: Float16.self)
+        let planar: MLXArray
+        if let elements = view.contiguousElements, elements.count >= count {
+            planar = elements.extracting(first: count).withUnsafeBufferPointer { MLXArray($0, [hidden, tokens]) }
+        } else {
+            let scalars = (0 ..< count).map { index -> Float16 in
+                let coords: InlineArray<4, Int> = [0, index / tokens, 0, index % tokens]
+                return view[scalarAt: coords]
+            }
+            planar = MLXArray(scalars, [hidden, tokens])
         }
         return planar.transposed().reshaped([1, tokens, hidden])
     }

@@ -138,53 +138,88 @@ extension OpenAIController.ChatCompletionResponse {
 }
 
 struct OpenAIChatStream: EventStreamEncoder {
-    let id = "chatcmpl-\(UUID().uuidString)"
-    let created = Int(Date().timeIntervalSince1970)
+    let id: String
+    let created: Int
     let model: String
     let includeUsage: Bool
+    let writer: SSEFastWriter
     var toolCallCount = 0
     var final: GenerationResponse?
+
+    init(
+        model: String, includeUsage: Bool,
+        id: String = "chatcmpl-\(UUID().uuidString)",
+        created: Int = Int(Date().timeIntervalSince1970)
+    ) {
+        self.id = id
+        self.created = created
+        self.model = model
+        self.includeUsage = includeUsage
+        self.writer = SSEFastWriter(id: id, created: created, model: model)
+    }
 
     func opening() -> [String] { [] }
 
     mutating func frames(for chunk: StreamChunk) -> [String] {
-        switch chunk {
-        case .toolCall(let call):
-            defer { toolCallCount += 1 }
-            return frame(delta: ["role": "assistant", "tool_calls": [[
-                "index": toolCallCount, "id": call.id, "type": "function",
-                "function": ["name": call.name, "arguments": call.arguments]
-            ] as [String: Any]]])
-        case .text(let text):
-            if toolCallCount > 0, text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return [] }
-            return frame(delta: ["role": "assistant", "content": text])
-        case .reasoning(let reasoning):
-            return frame(delta: ["role": "assistant", "reasoning": reasoning, "reasoning_content": reasoning])
-        case .metadata(let meta):
-            final = meta
-            return []
-        }
+        var out: [String] = []
+        emit(chunk) { out.append(String(decoding: $0.readableBytesView, as: UTF8.self)) }
+        return out
     }
 
     func closing() -> [String] {
+        var out: [String] = []
+        emitClosing { out.append(String(decoding: $0.readableBytesView, as: UTF8.self)) }
+        return out
+    }
+
+    mutating func emit(_ chunk: StreamChunk, yield: (ByteBuffer) -> Void) {
+        switch chunk {
+        case .toolCall(let call):
+            let index = toolCallCount
+            toolCallCount += 1
+            yield(writer.toolCallDelta(index: index, call: call))
+        case .text(let text):
+            if toolCallCount > 0, text.unicodeScalars.allSatisfy({ CharacterSet.whitespacesAndNewlines.contains($0) }) {
+                return
+            }
+            yield(writer.textDelta(text))
+        case .reasoning(let reasoning):
+            yield(writer.reasoningDelta(reasoning))
+        case .metadata(let meta):
+            final = meta
+        }
+    }
+
+    func emitClosing(yield: (ByteBuffer) -> Void) {
         if final?.finishReason == .error {
-            let error: [String: Any] = ["error": ["message": ModelsController.generationFailed, "type": "server_error"]]
-            return Self.json(error).map { ["event: error\ndata: \($0)\n\n"] } ?? []
+            yield(SSEFastWriter.errorFrame(message: ModelsController.generationFailed))
+            return
         }
-        var frames = frame(delta: [:], finish: OpenAIController.finishReason(final?.finishReason, calledTools: toolCallCount > 0))
+        yield(writer.finish(OpenAIController.finishReason(final?.finishReason, calledTools: toolCallCount > 0)))
         if includeUsage, let final {
-            frames += frame(["choices": [] as [Any], "usage": OpenAIController.chatUsage(final)])
+            yield(writer.usage(final))
         }
-        return frames + ["data: [DONE]\n\n"]
+        yield(SSEFastWriter.doneFrame())
     }
 
-    private func frame(delta: [String: Any], finish: String? = nil) -> [String] {
-        frame(["choices": [["index": 0, "delta": delta, "finish_reason": finish ?? NSNull()] as [String: Any]]])
-    }
-
-    private func frame(_ fields: [String: Any]) -> [String] {
-        var chunk: [String: Any] = ["id": id, "object": "chat.completion.chunk", "created": created, "model": model]
-        chunk.merge(fields) { _, new in new }
-        return Self.json(chunk).map { ["data: \($0)\n\n"] } ?? []
+    func response(streaming chunks: AsyncStream<StreamChunk>) -> Response {
+        let body = AsyncStream<ByteBuffer> { continuation in
+            let task = Task {
+                var encoder = self
+                for await chunk in chunks {
+                    encoder.emit(chunk) { _ = continuation.yield($0) }
+                }
+                if !Task.isCancelled {
+                    encoder.emitClosing { _ = continuation.yield($0) }
+                }
+                continuation.finish()
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+        return Response(
+            status: .ok,
+            headers: [.contentType: "text/event-stream", .cacheControl: "no-cache", .connection: "keep-alive"],
+            body: ResponseBody(asyncSequence: body)
+        )
     }
 }

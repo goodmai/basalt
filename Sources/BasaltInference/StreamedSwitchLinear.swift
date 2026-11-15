@@ -45,15 +45,16 @@ struct ExpertArrays {
     }
 }
 
-struct ModuleSlots {
+struct ModuleSlots: ~Copyable {
     var table: ExpertSlotTable
-    let buffers: [(tensor: ExpertTensor, buffer: SlotBuffer)]
+    let buffers: UniqueArray<SlotBuffer>
     let arrays: ExpertArrays?
 
     init(layout: ExpertLayout, slots: Int) throws(BasaltError) {
         table = ExpertSlotTable(slots: slots)
         let tensors = [layout.weight, layout.scales, layout.biases, layout.bias]
-        var buffers: [(ExpertTensor, SlotBuffer)] = []
+        var buffers = UniqueArray<SlotBuffer>()
+        buffers.reserveCapacity(tensors.count)
         var made: [MLXArray?] = []
         for tensor in tensors {
             guard let tensor, slots > 0 else {
@@ -61,11 +62,33 @@ struct ModuleSlots {
                 continue
             }
             let buffer = try SlotBuffer(slots: slots, tensor: tensor)
-            buffers.append((tensor, buffer))
             made.append(buffer.array)
+            buffers.append(buffer)
         }
         self.buffers = buffers
         arrays = made[0].map { ExpertArrays(weight: $0, scales: made[1], biases: made[2], bias: made[3]) }
+    }
+
+    var slotBytes: Int {
+        var total = 0
+        for index in 0 ..< buffers.count { total += buffers[index].byteCount }
+        return total
+    }
+
+    borrowing func appendRequests(for loads: [ExpertSlotTable.Load], files: [FileHandle], into out: inout [ExpertReader.Request]) -> ByteCount {
+        var bytes: Int64 = 0
+        for load in loads {
+            for index in 0 ..< buffers.count {
+                let tensor = buffers[index].tensor
+                bytes += Int64(tensor.expertBytes)
+                out.append(ExpertReader.Request(
+                    descriptor: files[tensor.file].fileDescriptor,
+                    offset: tensor.offset + Int64(load.expert * tensor.expertBytes),
+                    destination: buffers[index].destination(slot: load.slot),
+                    count: tensor.expertBytes))
+            }
+        }
+        return ByteCount(bytes)
     }
 }
 
@@ -154,7 +177,7 @@ final class LayerState {
 final class ExpertStore {
     let layouts: [ExpertLayout]
     private let files: [FileHandle]
-    private var modules: [ModuleSlots]
+    private var modules: UniqueArray<ModuleSlots>
     private let groups: [LayerState]
     private let groupOfModule: [Int]
     private var hasPrefill = false
@@ -174,7 +197,10 @@ final class ExpertStore {
         self.capacity = capacity
         let perExpert = layouts.reduce(ByteCount.zero) { $0 + $1.expertBytes }
         let slots = perExpert > .zero ? min(layouts.map(\.numExperts).min() ?? 0, Int(capacity.rawValue / perExpert.rawValue)) : 0
-        modules = try layouts.map { try ModuleSlots(layout: $0, slots: slots) }
+        var builtModules = UniqueArray<ModuleSlots>()
+        builtModules.reserveCapacity(layouts.count)
+        for layout in layouts { builtModules.append(try ModuleSlots(layout: layout, slots: slots)) }
+        modules = builtModules
         (groups, groupOfModule) = LayerState.partition(layouts)
     }
 
@@ -183,7 +209,11 @@ final class ExpertStore {
     }
 
     var expertBytes: ByteCount { layouts.reduce(.zero) { $0 + $1.totalBytes } }
-    var slotBytes: ByteCount { ByteCount(Int64(modules.reduce(0) { $0 + $1.buffers.reduce(0) { $0 + $1.buffer.stride * $1.buffer.array.dim(0) } })) }
+    var slotBytes: ByteCount {
+        var total: Int64 = 0
+        for index in 0 ..< modules.count { total += Int64(modules[index].slotBytes) }
+        return ByteCount(total)
+    }
     var reserve: ByteCount { capacity + (layouts.map(\.totalBytes).max() ?? .zero) * 3 }
     var unclaimedReserve: ByteCount { max(.zero, reserve - slotBytes) }
 
@@ -319,14 +349,9 @@ final class ExpertStore {
     }
 
     private func requests(module: Int, _ loads: [ExpertSlotTable.Load]) -> [ExpertReader.Request] {
-        loads.flatMap { load in
-            modules[module].buffers.map { tensor, buffer in
-                stats.bytesRead += ByteCount(Int64(tensor.expertBytes))
-                return ExpertReader.Request(
-                    descriptor: files[tensor.file].fileDescriptor, offset: tensor.offset + Int64(load.expert * tensor.expertBytes),
-                    destination: buffer.destination(slot: load.slot), count: tensor.expertBytes)
-            }
-        }
+        var batch: [ExpertReader.Request] = []
+        stats.bytesRead += modules[module].appendRequests(for: loads, files: files, into: &batch)
+        return batch
     }
 
     func read(module: Int, _ ids: [Int]) -> ExpertArrays {

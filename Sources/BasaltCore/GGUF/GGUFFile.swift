@@ -92,9 +92,7 @@ public struct GGUFFile: Sendable {
     public func payload(_ tensor: GGUFTensor) -> Data { data.subdata(in: tensor.offset ..< tensor.offset + tensor.byteCount) }
 
     public func floats(_ tensor: GGUFTensor) -> [Float] {
-        data.withUnsafeBytes { raw in
-            GGUFDequant.floats(UnsafeRawBufferPointer(rebasing: raw[tensor.offset ..< tensor.offset + tensor.byteCount]), type: tensor.type, count: tensor.count)
-        }
+        GGUFDequant.floats(data.bytes.extracting(tensor.offset ..< tensor.offset + tensor.byteCount), type: tensor.type, count: tensor.count)
     }
 }
 
@@ -103,15 +101,23 @@ struct GGUFReader {
     let path: String
     var position = 0
 
+    static func integer<T: FixedWidthInteger & BitwiseCopyable>(_ raw: RawSpan, at offset: Int, path: String) throws(BasaltError) -> T {
+        guard offset >= 0, offset + MemoryLayout<T>.size <= raw.byteCount else {
+            throw .modelConfigurationInvalid(path: path, reason: "the GGUF header is truncated")
+        }
+        return T(littleEndian: raw.unsafeLoadUnaligned(fromByteOffset: offset, as: T.self))
+    }
+
     mutating func bytes(_ count: Int) throws(BasaltError) -> Data {
         guard count >= 0, position + count <= data.count else { throw .modelConfigurationInvalid(path: path, reason: "the GGUF header is truncated") }
         defer { position += count }
-        return data.subdata(in: position ..< position + count)
+        return data[position ..< position + count]
     }
 
-    mutating func integer<T: FixedWidthInteger>(_: T.Type) throws(BasaltError) -> T {
-        let raw = try bytes(MemoryLayout<T>.size)
-        return raw.withUnsafeBytes { T(littleEndian: $0.loadUnaligned(as: T.self)) }
+    mutating func integer<T: FixedWidthInteger & BitwiseCopyable>(_: T.Type) throws(BasaltError) -> T {
+        let value: T = try Self.integer(data.bytes, at: position, path: path)
+        position += MemoryLayout<T>.size
+        return value
     }
 
     mutating func u32() throws(BasaltError) -> UInt32 { try integer(UInt32.self) }
