@@ -16,6 +16,7 @@ struct AdapterSteps: Sendable {
     let fingerprint: String
     let layers: [Int]?
     let rank: Int
+    let method: AdapterMethod
     let lease: StepLease?
     let what: String
 
@@ -74,6 +75,12 @@ struct AdapterSteps: Sendable {
         try await section(&state) { context, state in try withLoRA(&state, context: context, body) }
     }
 
+    func trainedAdapter<R: Sendable>(
+        _ state: inout sending AdapterState, _ body: @Sendable (ModelContext, Adam, ConfiguredAdapter) throws -> R
+    ) async throws(BasaltError) -> R {
+        try await section(&state) { context, state in try withAdapter(&state, context: context, body) }
+    }
+
     func withLoRA<R>(_ state: inout AdapterState, context: ModelContext, _ body: (ModelContext, Adam, LoRAConfiguration) throws -> R) throws -> R {
         let configuration = try MLXInferenceEngine.attachLoRA(to: context.model, layers: layers, rank: rank)
         defer { MLXInferenceEngine.detachLoRA(from: context.model) }
@@ -88,8 +95,22 @@ struct AdapterSteps: Sendable {
         return result
     }
 
+    func withAdapter<R>(_ state: inout AdapterState, context: ModelContext, _ body: (ModelContext, Adam, ConfiguredAdapter) throws -> R) throws -> R {
+        let configuration = try MLXInferenceEngine.attachConfiguredAdapter(to: context.model, layers: layers, method: method)
+        defer { _ = PHMAdapterApplicator.revert(in: context.model) }
+        if state.weights.isEmpty {
+            state.weights = context.model.trainableParameters().flattened()
+        } else {
+            context.model.update(parameters: .unflattened(state.weights))
+        }
+        let result = try body(context, state.optimizer, configuration)
+        state.weights = context.model.trainableParameters().flattened()
+        eval(state.weights.map(\.1))
+        return result
+    }
+
     func restore(_ state: inout AdapterState, from adapter: URL, context: ModelContext) throws {
-        let trainable = try withLoRA(&state, context: context) { context, _, _ in
+        let trainable = try withAdapter(&state, context: context) { context, _, _ in
             Dictionary(uniqueKeysWithValues: context.model.trainableParameters().flattened().map { ($0.0, $0.1.shape) })
         }
         try AdapterCheckpoint.restore(&state, from: adapter, trainable: trainable)
@@ -98,11 +119,19 @@ struct AdapterSteps: Sendable {
 
 extension MLXInferenceEngine {
     func adapterSteps(layers: [Int]?, rank: Int, lease: StepLease?, what: String) throws(BasaltError) -> AdapterSteps {
+        try adapterSteps(layers: layers, method: .lora(rank: rank, scale: 10.0), lease: lease, what: what)
+    }
+
+    func adapterSteps(layers: [Int]?, method: AdapterMethod, lease: StepLease?, what: String) throws(BasaltError) -> AdapterSteps {
         guard let container else { throw .modelNotLoaded }
         guard !modelModified else {
             throw .invalidRequestStructure(details: "\(what): an overlay or weights delta changes the live model; undo it before training on the base weights")
         }
-        return AdapterSteps(engine: self, container: container, epoch: modelEpoch, fingerprint: modelFingerprint ?? modelDescription, layers: layers, rank: rank, lease: lease, what: what)
+        let rankValue: Int = switch method {
+        case .lora(let r, _): r
+        case .phm(_, let r, _, _): r
+        }
+        return AdapterSteps(engine: self, container: container, epoch: modelEpoch, fingerprint: modelFingerprint ?? modelDescription, layers: layers, rank: rankValue, method: method, lease: lease, what: what)
     }
 
     func trainsOn(_ epoch: ModelEpoch) -> Bool { modelEpoch == epoch && !modelModified }

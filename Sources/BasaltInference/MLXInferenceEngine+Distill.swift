@@ -31,7 +31,7 @@ extension MLXInferenceEngine {
         _ request: DistillRequest, session: URLSession, home: URL, environment: [String: String] = ProcessInfo.processInfo.environment, lease: StepLease? = nil
     ) async throws(BasaltError) -> DistillReport {
         try Self.validate(request)
-        let steps = try adapterSteps(layers: request.layers, rank: request.rank, lease: lease, what: request.onPolicy ? "on-policy distillation" : "distillation")
+        let steps = try adapterSteps(layers: request.layers, method: Self.configuredMethod(explicit: request.method, fallbackRank: request.rank), lease: lease, what: request.onPolicy ? "on-policy distillation" : "distillation")
         let data: Data
         do { data = try Data(contentsOf: URL(fileURLWithPath: (request.prompts as NSString).expandingTildeInPath)) } catch {
             throw .invalidRequestStructure(details: "distill: could not read the prompts \(request.prompts): \(error.localizedDescription)")
@@ -87,7 +87,7 @@ extension MLXInferenceEngine {
         }
         guard distillSamples.contains(request.samplesPerPrompt) else { throw refused("samplesPerPrompt must be in \(distillSamples)") }
         guard request.heldOutFraction.isFinite, request.heldOutFraction > 0, request.heldOutFraction < 1 else { throw refused("heldOutFraction must be in (0, 1)") }
-        guard trainingRanks.contains(request.rank) else { throw refused("rank must be in \(trainingRanks)") }
+        if let method = request.method { try method.validate(prefix: "distill") } else if !trainingRanks.contains(request.rank) { throw refused("rank must be in \(trainingRanks)") }
         guard trainingIterations.contains(request.iterations) else { throw refused("iterations must be in \(trainingIterations)") }
         guard (1 ... 64).contains(request.batchSize) else { throw refused("batchSize must be in 1...64") }
         guard (16 ... 32_768).contains(request.maxSeqLen) else { throw refused("maxSeqLen must be in 16...32768") }

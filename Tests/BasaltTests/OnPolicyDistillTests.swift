@@ -120,7 +120,9 @@ struct OnPolicyDistillTests {
         let before = await DistillTests.baseWeights(container)
         var request = try Self.onPolicy(host, prompts: 16, in: directory)
         request.iterations = 60
-        let report = try await engine.distill(request, session: URLSession(configuration: StubURLProtocol.configuration), home: directory, environment: [:])
+        let report = try await withRandomState(MLXRandom.RandomState(seed: 42)) {
+            try await engine.distill(request, session: URLSession(configuration: StubURLProtocol.configuration), home: directory, environment: [:])
+        }
         #expect(report.kept == 12 && report.heldOut == 4 && report.cached == 0)
         let klBefore = try #require(report.reverseKLBefore), klAfter = try #require(report.reverseKLAfter)
         #expect(klAfter < klBefore, "\(klBefore) -> \(klAfter), losses \(report.losses)")

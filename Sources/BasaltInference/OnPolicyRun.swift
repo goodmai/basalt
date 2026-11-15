@@ -14,16 +14,16 @@ struct OnPolicyRun: Sendable {
         var state = AdapterState(optimizer: Adam(learningRate: request.learningRate))
         let heldOutRows = try await sampled(plan.heldOut, &state)
         let heldOut = try await scored(plan.heldOut, heldOutRows)
-        let before = try await steps.trained(&state) { context, _, _ in MLXInferenceEngine.meanKL(heldOut, model: context.model) }
+        let before = try await steps.trainedAdapter(&state) { context, _, _ in MLXInferenceEngine.meanKL(heldOut, model: context.model) }
         let size = min(request.batchSize, plan.train.count)
         var losses: [Float] = []
         for step in 0 ..< request.iterations {
             let prompts = (0 ..< size).map { plan.train[(step * size + $0) % plan.train.count] }
             let batch = try await scored(prompts, try await sampled(prompts, &state))
-            losses.append(try await steps.trained(&state) { context, optimizer, _ in try MLXInferenceEngine.onPolicyStep(batch, optimizer: optimizer, model: context.model) })
+            losses.append(try await steps.trainedAdapter(&state) { context, optimizer, _ in try MLXInferenceEngine.onPolicyStep(batch, optimizer: optimizer, model: context.model) })
         }
-        let after = try await steps.trained(&state) { context, _, configuration in
-            try MLXInferenceEngine.saveAdapter(configuration, model: context.model, to: directory)
+        let after = try await steps.trainedAdapter(&state) { context, _, configuration in
+            try MLXInferenceEngine.saveConfiguredAdapter(configuration, model: context.model, to: directory)
             return MLXInferenceEngine.meanKL(heldOut, model: context.model)
         }
         return OnPolicyOutcome(losses: losses, before: before, after: after)
@@ -32,7 +32,7 @@ struct OnPolicyRun: Sendable {
     func sampled(_ prompts: [OnPolicyPrompt], _ state: inout sending AdapterState) async throws(BasaltError) -> [DistillRow] {
         var rows: [DistillRow] = []
         for prompt in prompts {
-            rows += try await steps.trained(&state) { context, _, _ in try sample([prompt], context) }
+            rows += try await steps.trainedAdapter(&state) { context, _, _ in try sample([prompt], context) }
         }
         return rows
     }

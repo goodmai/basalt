@@ -4,6 +4,7 @@ import ArgumentParser
 import Hummingbird
 import HummingbirdTesting
 import NIOCore
+import Synchronization
 @testable import BasaltCore
 @testable import BasaltCLI
 @testable import BasaltCloud
@@ -63,20 +64,48 @@ struct ComposeHealthTests {
         defer { stubborn.terminate() }
         await #expect(throws: ExitCode.self) { try await ComposeCommand.stop(Self.record(stubborn), grace: .milliseconds(300)) }
         let polite = try await Self.spawn("echo ready; exec sleep 20")
+        defer { polite.terminate() }
         try await ComposeCommand.stop(Self.record(polite), grace: .seconds(10))
-        polite.waitUntilExit()
+        while polite.isRunning { try await Task.sleep(for: .milliseconds(10)) }
         #expect(!polite.isRunning)
     }
 
     static func spawn(_ script: String) async throws -> Process {
         let (process, output) = (Process(), Pipe())
+        defer { withExtendedLifetime(output) {} }
         (process.executableURL, process.arguments, process.standardOutput) = (URL(fileURLWithPath: "/bin/sh"), ["-c", script], output)
-        try process.run()
-        await withCheckedContinuation { (ready: CheckedContinuation<Void, Never>) in
-            output.fileHandleForReading.readabilityHandler = { handle in
-                handle.readabilityHandler = nil
-                ready.resume()
+        let state = Mutex<(done: Bool, continuation: CheckedContinuation<Void, Never>?)>((false, nil))
+        let finish: @Sendable () -> Void = {
+            let pending = state.withLock { slot -> CheckedContinuation<Void, Never>? in
+                guard !slot.done else { return nil }
+                slot.done = true
+                defer { slot.continuation = nil }
+                return slot.continuation
             }
+            pending?.resume()
+        }
+        try process.run()
+        await withTaskCancellationHandler {
+            await withCheckedContinuation { (ready: CheckedContinuation<Void, Never>) in
+                let immediate = state.withLock { slot -> Bool in
+                    if slot.done { return true }
+                    slot.continuation = ready
+                    return false
+                }
+                if immediate {
+                    ready.resume()
+                    return
+                }
+                output.fileHandleForReading.readabilityHandler = { handle in
+                    _ = handle.availableData
+                    handle.readabilityHandler = nil
+                    finish()
+                }
+            }
+        } onCancel: {
+            output.fileHandleForReading.readabilityHandler = nil
+            process.terminate()
+            finish()
         }
         return process
     }

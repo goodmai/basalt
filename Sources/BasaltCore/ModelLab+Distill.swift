@@ -37,6 +37,7 @@ public struct DistillRequest: Sendable, Codable, Equatable {
     public var budgetUSD: Double?
     public var layers: [Int]?
     public var rank = 16
+    public var method: AdapterMethod?
     public var iterations = 200
     public var batchSize = 2
     public var learningRate: Float = 1e-4
@@ -46,6 +47,8 @@ public struct DistillRequest: Sendable, Codable, Equatable {
     public var onPolicy = false
     public var checkpointEvery = 50
     public var resume = false
+
+    public var effectiveMethod: AdapterMethod { method ?? .lora(rank: rank) }
 
     public init(prompts: String, teacher: TeacherSpec, gate: GateRequest) {
         self.prompts = prompts

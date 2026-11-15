@@ -62,7 +62,11 @@ extension MLXInferenceEngine {
         guard request.experts == nil else {
             throw refused("per-expert LoRA is not available: the fork's SwitchLinear expert layers take no LoRA. Omit experts; LoRA then trains the attention and dense or shared-expert projections of the chosen layers")
         }
-        guard trainingRanks.contains(request.rank) else { throw refused("rank must be in \(trainingRanks)") }
+        if let method = request.method {
+            try method.validate(prefix: "train")
+        } else {
+            guard trainingRanks.contains(request.rank) else { throw refused("rank must be in \(trainingRanks)") }
+        }
         guard trainingIterations.contains(request.iterations) else { throw refused("iterations must be in \(trainingIterations)") }
         guard request.learningRate.isFinite, request.learningRate > 0, request.learningRate <= 1 else { throw refused("learningRate must be in (0, 1]") }
     }
@@ -126,8 +130,9 @@ extension MLXInferenceEngine {
     static func trainAdapter(
         _ pairs: [TrainingTask], heldOut: [TrainingTask], request: TrainRequest, directory: URL, context: ModelContext
     ) throws -> TrainingRun {
-        let configuration = try attachLoRA(to: context.model, layers: request.layers, rank: request.rank)
-        defer { detachLoRA(from: context.model) }
+        let method = configuredMethod(explicit: request.method, fallbackRank: request.rank)
+        let configuration = try attachConfiguredAdapter(to: context.model, layers: request.layers, method: method)
+        defer { _ = PHMAdapterApplicator.revert(in: context.model) }
         let texts = try pairs.map { try trainingText($0, context) }
         let parameters = LoRATrain.Parameters(
             batchSize: min(4, texts.count), iterations: request.iterations, stepsPerReport: 1, stepsPerEval: Int.max, validationBatches: 1)
@@ -140,9 +145,7 @@ extension MLXInferenceEngine {
             return Task.isCancelled ? .stop : .more
         }
         try Task.checkCancellation()
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-        try JSONEncoder().encode(configuration).write(to: directory.appending(component: "adapter_config.json"))
-        try LoRATrain.saveLoRAWeights(model: context.model, url: directory.appending(component: "adapters.safetensors"))
+        try saveConfiguredAdapter(configuration, model: context.model, to: directory)
         let after = accuracy(heldOut, try heldOut.map { try labAnswer($0.prompt, context) })
         return TrainingRun(losses: reported(losses), accuracyAfter: after)
     }
