@@ -27,7 +27,7 @@ public enum GGUFMetalSource {
 
     public static func gridSize(_ type: GGMLType) -> Int {
         switch type {
-        case .iq1M: ggmlIQ1SGrid.count
+        case .iq1S, .iq1M: ggmlIQ1SGrid.count
         case .iq2XXS: ggmlIQ2XXSGrid.count
         case .iq2XS: ggmlIQ2XSGrid.count
         case .iq2S: ggmlIQ2SGrid.count
@@ -39,7 +39,7 @@ public enum GGUFMetalSource {
 
     static let decoders = """
         template <int Q> inline ulong gguf_grid_value(uint i) {
-            if (Q == 29) return gguf_iq1s[i];
+            if (Q == 19 || Q == 29) return gguf_iq1s[i];
             if (Q == 16) return gguf_iq2xxs[i];
             if (Q == 17) return gguf_iq2xs[i];
             if (Q == 22) return gguf_iq2s[i];
@@ -72,12 +72,34 @@ public enum GGUFMetalSource {
                 uint ls = ((uint(b[4 + g / 2]) >> (4 * (g % 2))) & 15) | (((high >> (2 * g)) & 3) << 4);
                 float dl = gguf_h16(b, 0) * float(int(ls) - 32);
                 for (uint j = 0; j < 16; ++j) { uint q = b[8 + g * 16 + j]; y[j] = dl * gguf_kvalues[q & 15]; y[j + 16] = dl * gguf_kvalues[q >> 4]; }
+            } else if (Q == 11) {
+                float d = gguf_h16(b, 108);
+                for (uint h = 0; h < 2; ++h) {
+                    uint s = 2 * g + h;
+                    uint sc = ((uint(b[96 + s % 8]) >> (4 * (s / 8))) & 15) | (((uint(b[104 + s % 4]) >> (2 * (s / 4))) & 3) << 4);
+                    float dl = d * float(int(sc) - 32);
+                    for (uint l = 0; l < 16; ++l) {
+                        uint ql = (uint(b[32 + (g / 4) * 32 + h * 16 + l]) >> (2 * (g % 4))) & 3;
+                        uint qh = ((uint(b[h * 16 + l]) >> g) & 1) ^ 1;
+                        y[h * 16 + l] = dl * float(int(ql) - int(qh << 2));
+                    }
+                }
             } else if (Q == 12) {
                 uint s, m;
                 if (g < 4) { s = b[4 + g] & 63; m = b[8 + g] & 63; }
                 else { s = (b[8 + g] & 15) | ((b[g] >> 6) << 4); m = (b[8 + g] >> 4) | ((b[4 + g] >> 6) << 4); }
                 float scale = gguf_h16(b, 0) * float(s), offset = gguf_h16(b, 2) * float(m);
                 for (uint l = 0; l < 32; ++l) { uint q = b[16 + (g / 2) * 32 + l]; y[l] = scale * float((g & 1) ? q >> 4 : q & 15) - offset; }
+            } else if (Q == 13) {
+                uint s, m;
+                if (g < 4) { s = b[4 + g] & 63; m = b[8 + g] & 63; }
+                else { s = (b[8 + g] & 15) | ((b[g] >> 6) << 4); m = (b[8 + g] >> 4) | ((b[4 + g] >> 6) << 4); }
+                float scale = gguf_h16(b, 0) * float(s), offset = gguf_h16(b, 2) * float(m);
+                for (uint l = 0; l < 32; ++l) {
+                    uint ql = (uint(b[48 + (g / 2) * 32 + l]) >> (4 * (g & 1))) & 15;
+                    uint qh = (uint(b[16 + l]) >> g) & 1;
+                    y[l] = scale * float(ql | (qh << 4)) - offset;
+                }
             } else if (Q == 10) {
                 float d = gguf_h16(b, 80), dmin = gguf_h16(b, 82);
                 for (uint h = 0; h < 2; ++h) {
@@ -125,6 +147,14 @@ public enum GGUFMetalSource {
                 uint codes = gguf_u32(b, 2 + 8 * g), scale = gguf_u32(b, 6 + 8 * g);
                 float db = gguf_h16(b, 0) * (0.5f + float(scale >> 28)) * 0.25f;
                 for (uint l = 0; l < 4; ++l) gguf_lattice8(y + l * 8, db, grid[(codes >> (8 * l)) & 255], gguf_ksigns[(scale >> (7 * l)) & 127]);
+            } else if (Q == 19) {
+                uint qh = gguf_u16(b, 34 + 2 * g);
+                float dl = gguf_h16(b, 0) * float(2 * ((qh >> 12) & 7) + 1);
+                float delta = (qh & 0x8000u) ? -0.125f : 0.125f;
+                for (uint l = 0; l < 4; ++l) {
+                    uint idx = uint(b[2 + g * 4 + l]) | (((qh >> (3 * l)) & 7u) << 8);
+                    for (uint j = 0; j < 8; ++j) y[l * 8 + j] = dl * (float(as_type<char>(uchar((grid[idx] >> (8 * j)) & 0xff))) + delta);
+                }
             } else if (Q == 29) {
                 uint s0 = gguf_u16(b, 48), s1 = gguf_u16(b, 50), s2 = gguf_u16(b, 52), s3 = gguf_u16(b, 54);
                 float d = float(as_type<half>(ushort((s0 >> 12) | ((s1 >> 8) & 0xf0) | ((s2 >> 4) & 0xf00) | (s3 & 0xf000))));

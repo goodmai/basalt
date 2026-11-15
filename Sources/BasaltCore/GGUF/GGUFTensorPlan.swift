@@ -17,10 +17,10 @@ public struct GGUFTensorPlan: Sendable, Equatable {
     public static func bits(for type: GGMLType, rank: Int) -> Int? {
         guard rank == 2 else { return nil }
         switch type {
-        case .iq1M, .iq2XXS, .iq2XS, .iq2S, .q2K: return 2
-        case .iq3XXS, .iq3S: return 3
+        case .iq1S, .iq1M, .iq2XXS, .iq2XS, .iq2S, .q2K: return 2
+        case .iq3XXS, .iq3S, .q3K: return 3
         case .iq4XS, .iq4NL, .q4K: return 4
-        case .q6K: return 6
+        case .q5K, .q6K: return 6
         case .q8_0, .f16, .bf16, .f32: return 8
         }
     }

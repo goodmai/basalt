@@ -32,6 +32,15 @@ enum GGUFKernels {
     }
 
     static func matvec(_ x: MLXArray, _ packed: MLXArray, type: GGMLType) -> MLXArray {
+        if IQMetalKernels.supports(type) {
+            return x.dim(0) == 1
+                ? IQMetalKernels.matvec(x, packed, type: type)
+                : IQMetalKernels.smallM(x, packed, type: type)
+        }
+        return legacyMatvec(x, packed, type: type)
+    }
+
+    static func legacyMatvec(_ x: MLXArray, _ packed: MLXArray, type: GGMLType) -> MLXArray {
         let (rows, columns, outputs) = (x.dim(0), x.dim(1), packed.dim(0))
         let groups = (outputs + simdgroups * rowsPerSimdgroup - 1) / (simdgroups * rowsPerSimdgroup)
         return matvecKernel(
