@@ -204,7 +204,9 @@ extension AudioClip {
         let pcm = samples.map { Int16(max(-1, min(1, $0)) * Float(Int16.max)) }
         let rate = UInt32(Self.sampleRate)
         var data = Data("RIFF".utf8)
-        func append<T: FixedWidthInteger>(_ value: T) { withUnsafeBytes(of: value.littleEndian) { data.append(contentsOf: $0) } }
+        func append<T: FixedWidthInteger>(_ value: T) {
+            for shift in stride(from: 0, to: T.bitWidth, by: 8) { data.append(UInt8(truncatingIfNeeded: value >> shift)) }
+        }
         append(UInt32(36 + pcm.count * 2))
         data.append(contentsOf: Data("WAVEfmt ".utf8))
         append(UInt32(16)); append(UInt16(1)); append(UInt16(1)); append(rate); append(rate * 2); append(UInt16(2)); append(UInt16(16))

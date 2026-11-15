@@ -40,7 +40,7 @@ struct GGUFKernelTests {
     }
 
     static func dense(_ bytes: [UInt8], _ type: GGMLType, rows: Int, columns: Int) -> MLXArray {
-        let floats = bytes.withUnsafeBytes { GGUFDequant.floats($0, type: type, count: rows * columns) }
+        let floats = GGUFDequant.floats(bytes.span.bytes, type: type, count: rows * columns)
         return MLXArray(floats, [rows, columns])
     }
 

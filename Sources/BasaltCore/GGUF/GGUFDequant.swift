@@ -18,10 +18,6 @@ package enum GGUFDequant {
         floats(data.bytes, type: type, count: count)
     }
 
-    package static func floats(_ raw: UnsafeRawBufferPointer, type: GGMLType, count: Int) -> [Float] {
-        floats(raw.bytes, type: type, count: count)
-    }
-
     static func decode(_ b: RawSpan, type: GGMLType, into y: inout MutableSpan<Float>) {
         switch type {
         case .f32: y[0] = Float(bitPattern: u32(b, 0))

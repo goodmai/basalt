@@ -56,7 +56,7 @@ public enum PHMAdapterApplicator {
         return updates.map(\.0)
     }
 
-    private static func updateLeafModules(in model: Module, updates: [(String, Module)]) {
+    static func updateLeafModules(in model: Module, updates: [(String, Module)]) {
         guard !updates.isEmpty else { return }
         var parents: [String: Module] = ["": model]
         for (path, module) in model.namedModules() where !path.isEmpty {

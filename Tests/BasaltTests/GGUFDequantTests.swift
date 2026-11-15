@@ -22,7 +22,7 @@ struct GGUFDequantTests {
         let type = try #require(Self.types[name])
         let raw = Self.bytes(hex)
         #expect(raw.count == 2 * type.block.bytes)
-        let values = raw.withUnsafeBytes { GGUFDequant.floats($0, type: type, count: 2 * type.block.elements) }
+        let values = GGUFDequant.floats(raw.span.bytes, type: type, count: 2 * type.block.elements)
         #expect(values.count == expected.count)
         let worst = zip(values, expected).map { abs($0 - $1) / max(1, abs($1)) }.max() ?? 0
         #expect(worst <= 1e-6, "\(name): worst relative gap \(worst)")

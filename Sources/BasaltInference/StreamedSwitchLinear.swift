@@ -49,9 +49,14 @@ struct ModuleSlots: ~Copyable {
     var table: ExpertSlotTable
     let buffers: UniqueArray<SlotBuffer>
     let arrays: ExpertArrays?
+    private var _positions: UniqueArray<Int>
 
     init(layout: ExpertLayout, slots: Int) throws(BasaltError) {
         table = ExpertSlotTable(slots: slots)
+        var initialPositions = UniqueArray<Int>()
+        initialPositions.reserveCapacity(layout.numExperts)
+        for _ in 0 ..< layout.numExperts { initialPositions.append(0) }
+        _positions = initialPositions
         let tensors = [layout.weight, layout.scales, layout.biases, layout.bias]
         var buffers = UniqueArray<SlotBuffer>()
         buffers.reserveCapacity(tensors.count)
@@ -67,6 +72,27 @@ struct ModuleSlots: ~Copyable {
         }
         self.buffers = buffers
         arrays = made[0].map { ExpertArrays(weight: $0, scales: made[1], biases: made[2], bias: made[3]) }
+    }
+
+    var positions: UniqueArray<Int> {
+        borrow { _positions }
+        mutate { &_positions }
+    }
+
+    mutating func mapRouted(_ routed: [Int], ids: [Int], slots: [Int]?) -> [UInt32] {
+        do {
+            var span = _positions.mutableSpan
+            if let slots {
+                for (slot, id) in zip(slots, ids) { span[id] = slot }
+            } else {
+                for (rank, id) in ids.enumerated() { span[id] = rank }
+            }
+        }
+        let span = _positions.span
+        var mapped: [UInt32] = []
+        mapped.reserveCapacity(routed.count)
+        for id in routed { mapped.append(UInt32(span[id])) }
+        return mapped
     }
 
     var slotBytes: Int {
@@ -177,7 +203,7 @@ final class LayerState {
 final class ExpertStore {
     let layouts: [ExpertLayout]
     private let files: [FileHandle]
-    private var modules: UniqueArray<ModuleSlots>
+    fileprivate var modules: UniqueArray<ModuleSlots>
     private let groups: [LayerState]
     private let groupOfModule: [Int]
     private var hasPrefill = false
@@ -313,7 +339,7 @@ final class ExpertStore {
         let scores = router.scores(hidden)
         let count = min(topK, scores.dim(-1))
         guard count > 0 else { return nil }
-        return MLX.argSort(-scores, axis: -1)[0..., ..<count].asType(.int32)
+        return FusedMoERouterKernel.supports(scores, k: count) ? FusedMoERouterKernel.route(scores, k: count).indices : MLX.argSort(-scores, axis: -1)[0..., ..<count].asType(.int32)
     }
 
     private func observePrediction(on state: LayerState, actual: [Int]) {
@@ -381,6 +407,12 @@ final class ExpertStore {
     }
 }
 
+extension ExpertStore {
+    func mapRouted(module: Int, _ routed: [Int], ids: [Int], slots: [Int]?) -> [UInt32] {
+        modules[module].mapRouted(routed, ids: ids, slots: slots)
+    }
+}
+
 final class StreamedSwitchLinear: SwitchLinear, UntracedModule {
     let store: ExpertStore
     let module: Int
@@ -401,19 +433,18 @@ final class StreamedSwitchLinear: SwitchLinear, UntracedModule {
         let routed = store.step(module: module, x: x, indices: indices)
         let ids = Array(Set(routed)).sorted()
         let sorted = Self.residentKernel(sorted: sortedIndices, assignments: indices.size, experts: layout.numExperts, quantized: layout.quantization != nil)
-        var position = [Int](repeating: 0, count: layout.numExperts)
         let output: MLXArray
         if let slots = store.slots(module: module, ids), let arrays = store.slotArrays(module: module) {
             if sorted, !zip(slots, slots.dropFirst()).allSatisfy(<) {
-                for (rank, id) in ids.enumerated() { position[id] = rank }
-                output = project(x, arrays.taking(slots), MLXArray(routed.map { UInt32(position[$0]) }, indices.shape), sorted: true)
+                let mapped = store.mapRouted(module: module, routed, ids: ids, slots: nil)
+                output = project(x, arrays.taking(slots), MLXArray(mapped, indices.shape), sorted: true)
             } else {
-                for (slot, id) in zip(slots, ids) { position[id] = slot }
-                output = project(x, arrays, MLXArray(routed.map { UInt32(position[$0]) }, indices.shape), sorted: sorted)
+                let mapped = store.mapRouted(module: module, routed, ids: ids, slots: slots)
+                output = project(x, arrays, MLXArray(mapped, indices.shape), sorted: sorted)
             }
         } else {
-            for (rank, id) in ids.enumerated() { position[id] = rank }
-            output = project(x, store.read(module: module, ids), MLXArray(routed.map { UInt32(position[$0]) }, indices.shape), sorted: sorted)
+            let mapped = store.mapRouted(module: module, routed, ids: ids, slots: nil)
+            output = project(x, store.read(module: module, ids), MLXArray(mapped, indices.shape), sorted: sorted)
         }
         if store.isSingleTokenExit(module: module) { asyncEval(output) }
         return output
