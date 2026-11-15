@@ -36,7 +36,7 @@ public enum Canary {
         response.finishReason != .error && response.generatedText.contains("42")
     }
 
-    public static func run(every interval: Duration, on orchestrator: ModelOrchestratorActor) async {
+    public static func run(every interval: Duration, on orchestrator: some ModelOrchestrating) async {
         let clock = ContinuousClock()
         var schedule = CanarySchedule(interval: interval, start: clock.now)
         while !Task.isCancelled {
@@ -50,7 +50,7 @@ public enum Canary {
         }
     }
 
-    static func probe(_ orchestrator: ModelOrchestratorActor) async -> Bool? {
+    static func probe(_ orchestrator: some ModelOrchestrating) async -> Bool? {
         let logger = BasaltLogger(module: "Canary")
         do throws(BasaltError) {
             let response = try await orchestrator.generate(request: request)

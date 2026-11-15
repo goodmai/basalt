@@ -177,7 +177,7 @@ struct Benchmark: AsyncParsableCommand {
             .withOrigin(RequestOrigin(source: "benchmark", endpoint: "PerformanceBenchmark", stream: false))
     }
 
-    private func runDegradationTest(orchestrator: ModelOrchestratorActor) async throws {
+    private func runDegradationTest(orchestrator: ModelOrchestratorActor<MLXInferenceEngine>) async throws {
         let profiler = ContextDegradationProfiler(orchestrator: orchestrator)
         let sizes = [1024, 4096, 8192, 16384, 32768, 65536, 131072]
         
@@ -249,7 +249,7 @@ extension Benchmark {
         samples.isEmpty ? 0 : samples.reduce(0, +) / Double(samples.count)
     }
 
-    private func makeOrchestrator() -> ModelOrchestratorActor {
+    private func makeOrchestrator() -> ModelOrchestratorActor<MLXInferenceEngine> {
         var configuration = EngineConfiguration.standard
         configuration.reasoningEffort = reasoningEffort
         configuration.gpuCacheLimit = gpuCacheMB.map { $0 == 0 ? nil : $0 << 20 } ?? (512 << 20)
@@ -265,10 +265,10 @@ extension Benchmark {
         configuration.grammarJumpForward = grammarJumpForward
         configuration.wiresWorkingSet = wiredLimit
         let engine = MLXInferenceEngine(configuration)
-        return ModelOrchestratorActor(engine: engine, maxTokens: tokens, kv: ModelOrchestratorActor.KVOptions(precision: kvBits, zones: kvZones ? .standard : nil))
+        return ModelOrchestratorActor(engine: engine, maxTokens: tokens, kv: OrchestratorKVOptions(precision: kvBits, zones: kvZones ? .standard : nil))
     }
 
-    private func timedRuns(_ orchestrator: ModelOrchestratorActor) async throws -> [GenerationResponse] {
+    private func timedRuns(_ orchestrator: ModelOrchestratorActor<MLXInferenceEngine>) async throws -> [GenerationResponse] {
         print("  #     TPS         TTFT (s)    Time (s)")
         print("  " + String(repeating: "─", count: 42))
 

@@ -2,15 +2,11 @@ import Foundation
 import Hummingbird
 import BasaltCore
 
-// MARK: — Route handlers for REST / A2A interface
-
 struct GenerateController: Sendable {
 
-    let orchestrator: ModelOrchestratorActor
+    let orchestrator: any ModelOrchestrating
     let modelId: String?
     private let logger = BasaltLogger(module: "GenerateController")
-
-    // MARK: — POST /api/v1/generate
 
     @Sendable
     func generate(request: Request, context: BasicRequestContext) async throws -> Response {

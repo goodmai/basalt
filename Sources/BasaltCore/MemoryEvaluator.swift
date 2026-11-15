@@ -268,10 +268,7 @@ public actor MemoryEvaluator {
             recommendation: quantized ? nil : "Consider choosing a 4-bit quantized MLX model variant.")
     }
 
-    /// Follows symlinks: the HuggingFace cache keeps weights in `blobs/` and
-    /// fills `snapshots/` with links, so measuring the links reported a 16 GB
-    /// model as a few megabytes and the fit assessment always said "fits".
     private func directorySize(at url: URL) -> Int64 {
-        ModelOrchestratorActor.resolvedDirectorySize(at: url)
+        OrchestratorPolicy.resolvedDirectorySize(at: url)
     }
 }

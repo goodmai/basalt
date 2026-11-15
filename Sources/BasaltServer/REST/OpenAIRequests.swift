@@ -22,6 +22,10 @@ extension OpenAIController {
         struct ImageURL: Codable, Sendable {
             let url: String?
 
+            init(url: String?) {
+                self.url = url
+            }
+
             enum CodingKeys: String, CodingKey {
                 case url
             }
@@ -87,18 +91,6 @@ extension OpenAIController {
         var toolCallId: String? = nil
         var reasoning: String? = nil
 
-        init(role: String, content: MessageContent?, toolCalls: [ChatToolCall]?, reasoning: String?) {
-            self.type = nil
-            self.role = role
-            self.content = content
-            self.name = nil
-            self.arguments = nil
-            self.input = nil
-            self.output = nil
-            self.toolCalls = toolCalls
-            self.reasoning = reasoning
-        }
-
         enum CodingKeys: String, CodingKey {
             case type, role, content, name, arguments, input, output
             case toolCalls = "tool_calls"
@@ -137,6 +129,12 @@ extension OpenAIController {
         struct Function: Codable, Sendable {
             let name: String
             let arguments: String?
+        }
+
+        init(id: String?, type: String? = "function", function: Function) {
+            self.id = id
+            self.type = type
+            self.function = function
         }
 
         init(_ call: ToolCallOutput) {
@@ -289,6 +287,12 @@ extension OpenAIController {
 }
 
 extension OpenAIController.ChatMessage {
+    init(role: String, content: OpenAIController.MessageContent?, toolCalls: [OpenAIController.ChatToolCall]?, reasoning: String?) {
+        self = Self(
+            type: nil, role: role, content: content, name: nil, arguments: nil,
+            input: nil, output: nil, toolCalls: toolCalls, reasoning: reasoning)
+    }
+
     var chatRole: ChatMessageInput.Role {
         switch role {
         case "system", "developer": .system

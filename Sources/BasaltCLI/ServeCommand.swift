@@ -211,7 +211,7 @@ extension ServeCommand {
     var researchTools: Bool { mcpOptions.researchTools }
 
     func makeMCPServer(
-        orchestrator: ModelOrchestratorActor,
+        orchestrator: any ModelOrchestrating,
         resolvedPath: String,
         decisions: (any DecisionEngine)?,
         stages: PipelineStages
@@ -228,7 +228,7 @@ extension ServeCommand {
         .withPipeline(stages)
     }
 
-    private func makeOrchestrator(engine: MLXInferenceEngine, maxTokens: Int) async throws -> ModelOrchestratorActor {
+    private func makeOrchestrator(engine: MLXInferenceEngine, maxTokens: Int) async throws -> ModelOrchestratorActor<MLXInferenceEngine> {
         if batchSlots > 1, maxConcurrent < 2 {
             log("\(yellow("[warn]")) --batch-slots \(batchSlots) has no effect with --max-concurrent \(maxConcurrent): only one generation runs at a time")
         }

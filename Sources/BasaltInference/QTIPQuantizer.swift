@@ -13,6 +13,7 @@ package struct QTIPConfig: Sendable {
     package var minDimension = 64
     package var maxSourceBits = 8
     package var seed: UInt64 = 0x5154_4950_2026_0409
+    package var sharedMoERHT = true
 
     package init(rate: QTIPRate) {
         self.rate = rate
@@ -103,12 +104,11 @@ package enum QTIPQuantizer {
     package static func rotatedHessian(samples: [MLXArray], rhtIn: KroneckerRHT) -> MLXArray? {
         guard !samples.isEmpty else { return nil }
         let d = rhtIn.dimension
-        let signs = MLXArray(rhtIn.signsValues)
-        let qMat = rhtIn.qValues.map { MLXArray($0, [rhtIn.outer, rhtIn.outer]) }
+        let inBuffers = FusedKroneckerRHT.Buffers(rhtIn)
         var h = MLXArray.zeros([d, d], dtype: .float32)
         var count = 0
         for sample in samples {
-            let xRot = rhtIn.forwardFloat32(sample, signs: signs, qMatrix: qMat)
+            let xRot = FusedKroneckerRHT.forward(sample, buffers: inBuffers, outputDType: .float32)
             h = h + matmul(xRot.T, xRot)
             count += sample.dim(0)
             eval(h)
@@ -124,12 +124,10 @@ package enum QTIPQuantizer {
     ) -> (wNorm: MLXArray, rowScales: MLXArray) {
         let (m, n) = (rhtOut.dimension, rhtIn.dimension)
         let tileRows = m / 16
-        let inSigns = MLXArray(rhtIn.signsValues)
-        let outSigns = MLXArray(rhtOut.signsValues)
-        let inQ = rhtIn.qValues.map { MLXArray($0, [rhtIn.outer, rhtIn.outer]) }
-        let outQ = rhtOut.qValues.map { MLXArray($0, [rhtOut.outer, rhtOut.outer]) }
-        let wIn = rhtIn.forwardFloat32(weight, signs: inSigns, qMatrix: inQ)
-        let wRot = rhtOut.forwardFloat32(wIn.T, signs: outSigns, qMatrix: outQ).T
+        let inBuffers = FusedKroneckerRHT.Buffers(rhtIn)
+        let outBuffers = FusedKroneckerRHT.Buffers(rhtOut)
+        let wIn = FusedKroneckerRHT.forward(weight, buffers: inBuffers, outputDType: .float32)
+        let wRot = FusedKroneckerRHT.forward(wIn.T, buffers: outBuffers, outputDType: .float32).T
         let grouped = wRot.reshaped(tileRows, 16 * n)
         let rowScalesF16 = maximum(Float(1e-8), sqrt((grouped * grouped).mean(axis: -1))).asType(.float16)
         let scaleDiv = maximum(Float(1e-8), rowScalesF16.asType(.float32)).reshaped(tileRows, 1, 1)
@@ -222,16 +220,55 @@ package enum QTIPQuantizer {
 }
 
 extension QTIPQuantizer {
-    static func sharedInputGroupKey(path: String, inFeatures: Int) -> String {
-        let parts = path.split(separator: ".")
-        guard let leaf = parts.last else { return path }
+    static func canonicalExpertPath(_ path: String, sharedMoERHT: Bool = true) -> String {
+        guard sharedMoERHT else { return path }
+        let parts = path.split(separator: ".", omittingEmptySubsequences: false)
+        var out: [Substring] = []
+        out.reserveCapacity(parts.count)
+        var idx = 0
+        while idx < parts.count {
+            let part = parts[idx]
+            if (part == "experts" || part == "routed_experts"),
+               idx + 1 < parts.count,
+               !parts[idx + 1].isEmpty,
+               parts[idx + 1].allSatisfy(\.isNumber) {
+                out.append(part)
+                out.append("*")
+                idx += 2
+            } else {
+                out.append(part)
+                idx += 1
+            }
+        }
+        return out.joined(separator: ".")
+    }
+
+    static func sharedInputGroupKey(path: String, inFeatures: Int, sharedMoERHT: Bool = true) -> String {
+        let canonical = canonicalExpertPath(path, sharedMoERHT: sharedMoERHT)
+        let parts = canonical.split(separator: ".")
+        guard let leaf = parts.last else { return canonical }
         let parent = parts.dropLast().joined(separator: ".")
         switch leaf {
         case "q_proj", "k_proj", "v_proj": return "\(parent)._qkv_in_\(inFeatures)"
         case "in_proj_qkv", "in_proj_z": return "\(parent)._gdn_in_\(inFeatures)"
         case "gate_proj", "up_proj": return "\(parent)._mlp_in_\(inFeatures)"
-        default: return "\(path)_\(inFeatures)"
+        default: return "\(canonical)_\(inFeatures)"
         }
+    }
+
+    static func sharedOutputKey(path: String, sharedMoERHT: Bool = true) -> String {
+        canonicalExpertPath(path, sharedMoERHT: sharedMoERHT) + ".out"
+    }
+
+    static func cachedBuffers(
+        for rht: KroneckerRHT,
+        cache: inout [String: FusedKroneckerRHT.Buffers]
+    ) -> FusedKroneckerRHT.Buffers {
+        let key = "\(rht.dimension):\(rht.seed)"
+        if let existing = cache[key] { return existing }
+        let built = FusedKroneckerRHT.Buffers(rht)
+        cache[key] = built
+        return built
     }
 
     static func hashString(_ text: String, seed: UInt64) -> UInt64 {
@@ -259,7 +296,8 @@ extension QTIPQuantizer {
             guard let dims, dims.out >= config.minDimension, dims.inp >= config.minDimension,
                   KroneckerRHT.supports(dims.out), KroneckerRHT.supports(dims.inp) else { continue }
             out.append(QTIPTargetEntry(
-                path: path, groupKey: sharedInputGroupKey(path: path, inFeatures: dims.inp),
+                path: path,
+                groupKey: sharedInputGroupKey(path: path, inFeatures: dims.inp, sharedMoERHT: config.sharedMoERHT),
                 module: mod, outFeatures: dims.out, inFeatures: dims.inp))
         }
         return out
@@ -333,15 +371,18 @@ extension QTIPQuantizer {
     ) throws -> [String: QTIPActivationBox] {
         guard !batches.isEmpty else { return [:] }
         var boxes: [String: QTIPActivationBox] = [:]
+        var tappedInputs: Set<String> = []
         var tapped: [QTIPTargetEntry] = []
         defer {
             for entry in tapped { try? PVTuner.swapModule(entry.path, with: entry.module, in: root) }
         }
-        for entry in targets where boxes[entry.groupKey] == nil {
-            let box = QTIPActivationBox(inFeatures: entry.inFeatures, maxTokens: maxTokens)
+        for entry in targets {
+            let tapKey = sharedInputGroupKey(path: entry.path, inFeatures: entry.inFeatures, sharedMoERHT: false)
+            guard tappedInputs.insert(tapKey).inserted else { continue }
+            let box = boxes[entry.groupKey] ?? QTIPActivationBox(inFeatures: entry.inFeatures, maxTokens: maxTokens)
+            boxes[entry.groupKey] = box
             try PVTuner.swapModule(
                 entry.path, with: QTIPCalibrationTap(wrapping: entry.module, inFeatures: entry.inFeatures, box: box), in: root)
-            boxes[entry.groupKey] = box
             tapped.append(entry)
         }
         for tokens in batches {
@@ -360,6 +401,7 @@ extension QTIPQuantizer {
         onStep: ((String) -> Void)?
     ) throws -> (layers: Int, weights: Int) {
         var factorCache: [String: (rhtIn: KroneckerRHT, cholesky: (u: MLXArray, diagInv: MLXArray)?)] = [:]
+        var bufferCache: [String: FusedKroneckerRHT.Buffers] = [:]
         var remaining = Dictionary(targets.map { ($0.groupKey, 1) }, uniquingKeysWith: +)
         var (layers, weights) = (0, 0)
         for entry in targets {
@@ -368,12 +410,18 @@ extension QTIPQuantizer {
             remaining[entry.groupKey, default: 1] -= 1
             let releaseFactor = remaining[entry.groupKey, default: 0] <= 0
             if releaseFactor { factorCache.removeValue(forKey: entry.groupKey) }
-            let outSeed = hashString(entry.path + ".out", seed: config.seed)
+            let outSeed = hashString(sharedOutputKey(path: entry.path, sharedMoERHT: config.sharedMoERHT), seed: config.seed)
             guard let rhtOut = KroneckerRHT(dimension: entry.outFeatures, seed: outSeed) else { continue }
             let (dense, bias) = extractDenseWeight(entry.module)
             let spec = QTIPLayerSpec(rate: config.rate, rhtIn: inEntry.rhtIn, rhtOut: rhtOut)
-            let qLayer = quantizeMatrix(
-                weight: dense, bias: bias, spec: spec, choleskyFactors: inEntry.cholesky, tlut: tlut)
+            let inBuf = cachedBuffers(for: inEntry.rhtIn, cache: &bufferCache)
+            let outBuf = cachedBuffers(for: rhtOut, cache: &bufferCache)
+            let pair = FusedKroneckerRHT.Pair(inBuffers: inBuf, outBuffers: outBuf)
+            let (wNorm, rowScales) = prepareNormalizedWeight(weight: dense, rhtIn: inEntry.rhtIn, rhtOut: rhtOut)
+            let packed = encodeNormalizedWeight(wNorm: wNorm, choleskyFactors: inEntry.cholesky, tlut: tlut, rate: config.rate)
+            let qLayer = QTIPLinear(
+                packedWeight: packed, rowScales: rowScales, tlut: tlut, bias: bias, spec: spec, buffers: pair)
+            eval(qLayer)
             try PVTuner.swapModule(entry.path, with: qLayer, in: root)
             layers += 1
             weights += entry.outFeatures * entry.inFeatures

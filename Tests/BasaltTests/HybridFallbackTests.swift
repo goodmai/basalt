@@ -54,7 +54,7 @@ struct HybridFallbackTests {
 
     func orchestrator(
         _ cloud: StubCloud, arbiter: HybridArbiter = HybridArbiter(), freeMemory: @escaping @Sendable () -> Int64 = plenty
-    ) async throws -> ModelOrchestratorActor {
+    ) async throws -> ModelOrchestratorActor<MockInferenceEngine> {
         let engine = MockInferenceEngine()
         try await engine.load(modelPath: "local")
         let orchestrator = ModelOrchestratorActor(engine: engine, telemetry: TelemetryTracker())
@@ -258,7 +258,7 @@ enum FallbackTierTestFixtures {
     static func stack(
         tiers: [FallbackTier], dailyLimit: Double = 5.0, probe: FallbackTierProbeConfig = FallbackTierProbeConfig(),
         sessionLogDir: URL? = nil
-    ) async throws -> (ModelOrchestratorActor, CostTracker, TelemetryTracker, URL) {
+    ) async throws -> (ModelOrchestratorActor<MockInferenceEngine>, CostTracker, TelemetryTracker, URL) {
         let engine = MockInferenceEngine()
         try await engine.load(modelPath: "local")
         let telemetry = TelemetryTracker()

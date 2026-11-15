@@ -37,7 +37,7 @@ extension PipelineRunner {
         return perception
     }
 
-    func bring(_ perceiver: PipelineCore.Perceiver, swap: PipelineSwap, resident: inout ModelOrchestratorActor?) async throws(BasaltError) -> Duration {
+    func bring(_ perceiver: PipelineCore.Perceiver, swap: PipelineSwap, resident: inout (any ModelOrchestrating)?) async throws(BasaltError) -> Duration {
         guard let path = swap.path(for: perceiver), let target = perceiver == .ocrModel ? stages.ocr : stages.audio, target !== resident else { return .zero }
         let started = ContinuousClock.now
         if let loaded = resident { await loaded.unloadModel() }

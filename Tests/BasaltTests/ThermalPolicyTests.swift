@@ -122,7 +122,7 @@ struct ThermalPolicyTests {
         #expect(hot.pauses == hot.chunks - 1)
     }
 
-    static func refusedForHeat(_ orchestrator: ModelOrchestratorActor, _ request: GenerationRequest) async -> Bool {
+    static func refusedForHeat(_ orchestrator: some ModelOrchestrating, _ request: GenerationRequest) async -> Bool {
         do {
             _ = try await orchestrator.generate(request: request)
             return false
@@ -132,7 +132,7 @@ struct ThermalPolicyTests {
         }
     }
 
-    static func orchestrator(_ engine: MockInferenceEngine, _ thermal: FakeThermal) async throws -> ModelOrchestratorActor {
+    static func orchestrator(_ engine: MockInferenceEngine, _ thermal: FakeThermal) async throws -> ModelOrchestratorActor<MockInferenceEngine> {
         let orchestrator = try await MemoryCoordinatorTests.orchestrator(engine)
         await orchestrator.coordinateThermal(with: { thermal.read() })
         return orchestrator

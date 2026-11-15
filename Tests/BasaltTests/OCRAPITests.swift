@@ -22,7 +22,7 @@ struct OCRAPITests {
         return directory
     }
 
-    static func orchestrator(_ name: String, modelType: String, engine: MockInferenceEngine) async throws -> ModelOrchestratorActor {
+    static func orchestrator(_ name: String, modelType: String, engine: MockInferenceEngine) async throws -> ModelOrchestratorActor<MockInferenceEngine> {
         let orchestrator = ModelOrchestratorActor(engine: engine, telemetry: TelemetryTracker())
         try await orchestrator.loadModel(path: try modelDirectory(name, modelType: modelType).path)
         return orchestrator
@@ -36,7 +36,7 @@ struct OCRAPITests {
         }
     }
 
-    private func post(_ orchestrator: ModelOrchestratorActor, _ body: [String: Any]) async throws -> (status: HTTPResponse.Status, json: [String: Any]) {
+    private func post(_ orchestrator: some ModelOrchestrating, _ body: [String: Any]) async throws -> (status: HTTPResponse.Status, json: [String: Any]) {
         let app = Application(router: RESTServer(orchestrator: orchestrator, config: try ServerConfig(modelPath: "org/mock-model")).makeRouter())
         let data = try JSONSerialization.data(withJSONObject: body)
         return try await app.test(.router) { client in

@@ -352,13 +352,13 @@ public struct HarnessOptimizer: Sendable {
         public init() {}
     }
 
-    let orchestrator: ModelOrchestratorActor
+    let orchestrator: any ModelOrchestrating
     let spec: HarnessSurfaceSpec
     let library: HarnessExperienceLibrary?
     let tokens: TokenBudgets
 
     public init(
-        orchestrator: ModelOrchestratorActor, spec: HarnessSurfaceSpec,
+        orchestrator: any ModelOrchestrating, spec: HarnessSurfaceSpec,
         library: HarnessExperienceLibrary?, tokens: TokenBudgets = TokenBudgets()
     ) {
         self.orchestrator = orchestrator

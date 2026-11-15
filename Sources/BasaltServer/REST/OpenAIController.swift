@@ -4,7 +4,7 @@ import HTTPTypes
 import BasaltCore
 
 struct OpenAIController: Sendable {
-    let orchestrator: ModelOrchestratorActor
+    let orchestrator: any ModelOrchestrating
     let modelId: String
     var zeroCopyBody = false
 }

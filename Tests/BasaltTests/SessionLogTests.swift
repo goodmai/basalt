@@ -30,7 +30,7 @@ struct SessionLogTests {
     }
 
     static func server(_ mode: SessionLogMode, directory: URL, engine: MockInferenceEngine = MockInferenceEngine()) async throws
-        -> (Application<RouterResponder<BasicRequestContext>>, ModelOrchestratorActor, SessionLogWriter)
+        -> (Application<RouterResponder<BasicRequestContext>>, ModelOrchestratorActor<MockInferenceEngine>, SessionLogWriter)
     {
         let writer = SessionLogWriter(mode: mode, directory: directory, defaultSession: "test")
         let orchestrator = ModelOrchestratorActor(engine: engine, telemetry: TelemetryTracker(), sessionLog: writer)

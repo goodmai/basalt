@@ -51,7 +51,7 @@ extension Benchmark {
         return FaeScalingPlan(fitLevel: fitLevel, measured: measured, notMeasured: notMeasured)
     }
 
-    func runFaeScaling(_ orchestrator: ModelOrchestratorActor, plan: FaeScalingPlan) async throws {
+    func runFaeScaling(_ orchestrator: ModelOrchestratorActor<MLXInferenceEngine>, plan: FaeScalingPlan) async throws {
         let suite = ContextScalingSuite(runs: iterations, tokens: tokens, temperature: temperature)
         say("config", "runs \(suite.runs) tokens \(suite.tokens) temperature \(suite.temperature)")
         let result = try await suite.measure(orchestrator, contexts: plan.measured, log: say)

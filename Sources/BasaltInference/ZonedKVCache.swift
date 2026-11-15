@@ -180,11 +180,15 @@ final class ZonedKVCache: KVCacheAttentionProtocol {
         return .causal
     }
 
-    func copy() -> any KVCache {
+    func cloned() -> ZonedKVCache {
         guard let exactCopy = exact.copy() as? KVCacheSimple else {
             preconditionFailure("KVCacheSimple copies to its own type")
         }
         return ZonedKVCache(source: self, exact: exactCopy)
+    }
+
+    func copy() -> any KVCache {
+        cloned()
     }
 
     private func append(keys: MLXArray, values: MLXArray) {
@@ -216,12 +220,14 @@ final class ZonedKVCache: KVCacheAttentionProtocol {
         evictedCount += arriving - kept
         return EvictingKVCache.keepingLowestKeyNorms(keys: keys, values: values, count: kept)
     }
+}
 
-    private func rotatedValues(_ values: MLXArray) -> MLXArray {
+extension ZonedKVCache {
+    fileprivate func rotatedValues(_ values: MLXArray) -> MLXArray {
         rotatesValues ? hadamardTransform(values.asType(.float32)).asType(values.dtype) : values
     }
 
-    private func materialized() -> (MLXArray, MLXArray) {
+    fileprivate func materialized() -> (MLXArray, MLXArray) {
         let tokens = exact.state
         guard let middle, let keys = middle.keys.dequantizedRows(dtype: tokens[0].dtype), let values = middle.values.dequantizedRows() else {
             return (tokens[0], tokens[1])
@@ -234,7 +240,7 @@ final class ZonedKVCache: KVCacheAttentionProtocol {
         return (ordered[0], ordered[1])
     }
 
-    private func decodeAttention(
+    fileprivate func decodeAttention(
         queries: MLXArray, middle: (keys: MiddleKeys, values: QuantizedRows), scale: Float
     ) -> MLXArray {
         let (batch, heads, length, dim) = (queries.dim(0), queries.dim(1), queries.dim(2), queries.dim(3))

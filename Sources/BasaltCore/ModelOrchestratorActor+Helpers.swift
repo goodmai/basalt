@@ -1,20 +1,12 @@
 import Foundation
 
-extension ModelOrchestratorActor {
-    static func newRequestId() -> String {
-        "req_" + UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased().prefix(24)
-    }
-
+enum OrchestratorPolicy {
     static func logStatus(_ error: BasaltError) -> String {
         if case .inferenceError(let message) = error {
             if message.hasPrefix("Timeout after") { return "timeout" }
             if message == "Cancelled" { return "cancelled" }
         }
         return Task.isCancelled ? "cancelled" : "error"
-    }
-
-    static func basaltError(_ error: any Error, _ context: String) -> BasaltError {
-        error as? BasaltError ?? .inferenceError("\(context): \(error)")
     }
 
     static func budgetedText(_ request: GenerationRequest) -> String {
@@ -30,6 +22,46 @@ extension ModelOrchestratorActor {
         let decodeSeconds = UInt64(max(0, maxTokens)) / 4
         let prefillSeconds = UInt64(max(0, promptTokens)) / 50
         return max(floor, decodeSeconds + prefillSeconds)
+    }
+
+    static func resolvedDirectorySize(at url: URL) -> Int64 {
+        guard let e = FileManager.default.enumerator(at: url,
+                        includingPropertiesForKeys: [.fileSizeKey],
+                        options: []) else { return 0 }
+        var total: Int64 = 0
+        for case let f as URL in e {
+            let target = f.resolvingSymlinksInPath()
+            if let s = try? target.resourceValues(forKeys: [.fileSizeKey]).fileSize {
+                total += Int64(s)
+            }
+        }
+        return total
+    }
+}
+
+extension ModelOrchestratorActor {
+    static func newRequestId() -> String {
+        "req_" + UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased().prefix(24)
+    }
+
+    static func logStatus(_ error: BasaltError) -> String {
+        OrchestratorPolicy.logStatus(error)
+    }
+
+    static func basaltError(_ error: any Error, _ context: String) -> BasaltError {
+        error as? BasaltError ?? .inferenceError("\(context): \(error)")
+    }
+
+    static func budgetedText(_ request: GenerationRequest) -> String {
+        OrchestratorPolicy.budgetedText(request)
+    }
+
+    static func estimatedTokens(_ prompt: String) -> Int {
+        OrchestratorPolicy.estimatedTokens(prompt)
+    }
+
+    static func watchdogSeconds(maxTokens: Int, promptTokens: Int, floor: UInt64 = 300) -> UInt64 {
+        OrchestratorPolicy.watchdogSeconds(maxTokens: maxTokens, promptTokens: promptTokens, floor: floor)
     }
 
     static func timeout(for request: GenerationRequest) -> UInt64 {
@@ -60,17 +92,7 @@ extension ModelOrchestratorActor {
     }
 
     static func resolvedDirectorySize(at url: URL) -> Int64 {
-        guard let e = FileManager.default.enumerator(at: url,
-                        includingPropertiesForKeys: [.fileSizeKey],
-                        options: []) else { return 0 }
-        var total: Int64 = 0
-        for case let f as URL in e {
-            let target = f.resolvingSymlinksInPath()
-            if let s = try? target.resourceValues(forKeys: [.fileSizeKey]).fileSize {
-                total += Int64(s)
-            }
-        }
-        return total
+        OrchestratorPolicy.resolvedDirectorySize(at: url)
     }
 }
 

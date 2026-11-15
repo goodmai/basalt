@@ -79,7 +79,7 @@ struct ReviewCommand: AsyncParsableCommand {
         return try Self.readCapped(FileHandle(forReadingFrom: URL(fileURLWithPath: diff)))
     }
 
-    static func review(prompt: String, orchestrator: ModelOrchestratorActor, maxTokens: Int) async throws -> String {
+    static func review(prompt: String, orchestrator: some ModelOrchestrating, maxTokens: Int) async throws -> String {
         var request = GenerationRequest(prompt: prompt, maxTokens: maxTokens, temperature: 0,
                                         messages: [ChatMessageInput(role: .user, text: prompt)])
         request.enableThinking = false

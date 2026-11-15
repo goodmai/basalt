@@ -12,23 +12,21 @@ struct OrchestratorTests {
 
     @Test("The watchdog allows 4 tok/s decode plus 50 tok/s prefill (a 27B model at long context), never below the 300 s floor")
     func watchdogScalesWithDecodeAndPrefill() {
-        #expect(ModelOrchestratorActor.watchdogSeconds(maxTokens: 0, promptTokens: 0) == 300)
-        #expect(ModelOrchestratorActor.watchdogSeconds(maxTokens: 1000, promptTokens: 10_000) == 450)
-        #expect(ModelOrchestratorActor.watchdogSeconds(maxTokens: 12_288, promptTokens: 0) == 3072)
-        #expect(ModelOrchestratorActor.watchdogSeconds(maxTokens: 4096, promptTokens: 40_000) == 1824)
-        #expect(ModelOrchestratorActor.watchdogSeconds(maxTokens: 16, promptTokens: 64_000) == 1284)
+        #expect(OrchestratorPolicy.watchdogSeconds(maxTokens: 0, promptTokens: 0) == 300)
+        #expect(OrchestratorPolicy.watchdogSeconds(maxTokens: 1000, promptTokens: 10_000) == 450)
+        #expect(OrchestratorPolicy.watchdogSeconds(maxTokens: 12_288, promptTokens: 0) == 3072)
+        #expect(OrchestratorPolicy.watchdogSeconds(maxTokens: 4096, promptTokens: 40_000) == 1824)
+        #expect(OrchestratorPolicy.watchdogSeconds(maxTokens: 16, promptTokens: 64_000) == 1284)
     }
 
     @Test("A request with messages is budgeted on the turns the engine renders, whatever its prompt holds")
     func messagesOnlyRequestIsBudgetedOnItsTurns() {
         let turns = [ChatMessageInput(role: .system, text: "s"), ChatMessageInput(role: .user, text: "long question here")]
         let request = GenerationRequest(prompt: "", messages: turns)
-        #expect(ModelOrchestratorActor.budgetedText(request) == ChatMessageInput.plainText(turns))
-        #expect(ModelOrchestratorActor.budgetedText(GenerationRequest(prompt: "p", messages: turns)) == ChatMessageInput.plainText(turns))
-        #expect(ModelOrchestratorActor.budgetedText(GenerationRequest(prompt: "p")) == "p")
+        #expect(OrchestratorPolicy.budgetedText(request) == ChatMessageInput.plainText(turns))
+        #expect(OrchestratorPolicy.budgetedText(GenerationRequest(prompt: "p", messages: turns)) == ChatMessageInput.plainText(turns))
+        #expect(OrchestratorPolicy.budgetedText(GenerationRequest(prompt: "p")) == "p")
     }
-
-    // MARK: — generate before load
 
     @Test("generate before load throws inferenceHardwareFailure")
     func generateBeforeLoad() async throws {

@@ -52,7 +52,7 @@ struct ExperimentalServeOptions: ParsableArguments {
         case ocr
     }
 
-    func attachMediaFallbacks(to orchestrator: ModelOrchestratorActor) async {
+    func attachMediaFallbacks(to orchestrator: some ModelOrchestrating) async {
         if speechAnalyzer { await orchestrator.setSpeechFallback(SpeechAnalyzerTranscriber()) }
         await orchestrator.setDocumentTranscriber(VisionDocumentTranscriber(), imageFallback: imageFallback == .ocr)
         await orchestrator.telemetry.sampleConfidence(every: telemetryConfidenceEvery)

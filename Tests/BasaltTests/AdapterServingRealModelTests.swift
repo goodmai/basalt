@@ -32,11 +32,11 @@ struct AdapterServingRealModelTests {
         return directories
     }
 
-    static func ask(_ orchestrator: ModelOrchestratorActor, _ adapter: String?, maxTokens: Int = 48) async throws -> GenerationResponse {
+    static func ask(_ orchestrator: some ModelOrchestrating, _ adapter: String?, maxTokens: Int = 48) async throws -> GenerationResponse {
         try await orchestrator.generate(request: greedy(prompt, key: nil, maxTokens: maxTokens).withAdapter(adapter))
     }
 
-    static func text(_ orchestrator: ModelOrchestratorActor, _ adapter: String?) async throws -> String {
+    static func text(_ orchestrator: some ModelOrchestrating, _ adapter: String?) async throws -> String {
         let response = try await ask(orchestrator, adapter)
         return (response.reasoningText ?? "") + response.generatedText
     }

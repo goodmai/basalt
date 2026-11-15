@@ -10,7 +10,7 @@ struct PipelineController: Sendable {
 
     init(runner: PipelineRunner) { resolve = { _ in runner } }
 
-    init(registry: PipelineRegistry, chat: ModelOrchestratorActor) {
+    init(registry: PipelineRegistry, chat: any ModelOrchestrating) {
         resolve = { name in await registry.system(name).map { PipelineRunner(chat: chat, decisions: $0.decisions, stages: $0.stages) } }
     }
 

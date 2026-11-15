@@ -83,7 +83,7 @@ public struct ContextScalingSuite: Sendable {
     }
 
     public func measure(
-        _ orchestrator: ModelOrchestratorActor, contexts: [Int], log: (String, String) -> Void
+        _ orchestrator: some ModelOrchestrating, contexts: [Int], log: (String, String) -> Void
     ) async throws -> (rows: [ContextScalingRow], failed: [Int]) {
         let calibration = try await orchestrator.generate(request: GenerationRequest(prompt: Self.prompt("calibrate", words: 1000), maxTokens: 1))
         let tokensPerWord = max(0.1, Double(calibration.promptTokens) / 1000)
@@ -103,7 +103,7 @@ public struct ContextScalingSuite: Sendable {
         return (rows, failed)
     }
 
-    func measure(_ orchestrator: ModelOrchestratorActor, context: Int, words: Int) async throws -> ContextScalingRow {
+    func measure(_ orchestrator: some ModelOrchestrating, context: Int, words: Int) async throws -> ContextScalingRow {
         Memory.peakMemory = 0
         var responses: [GenerationResponse] = []
         for run in 0..<runs {

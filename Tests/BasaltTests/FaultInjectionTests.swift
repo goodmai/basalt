@@ -9,7 +9,7 @@ struct FaultInjectionTests {
         greedy(Conversation.firstTurn, key: "ns")
     }
 
-    static func orchestrator(_ engine: MLXInferenceEngine) -> ModelOrchestratorActor {
+    static func orchestrator(_ engine: MLXInferenceEngine) -> ModelOrchestratorActor<MLXInferenceEngine> {
         ModelOrchestratorActor(engine: engine, telemetry: TelemetryTracker())
     }
 
@@ -20,7 +20,7 @@ struct FaultInjectionTests {
         return directory
     }
 
-    static func expectRecovered(_ engine: MLXInferenceEngine, _ orchestrator: ModelOrchestratorActor) async throws {
+    static func expectRecovered(_ engine: MLXInferenceEngine, _ orchestrator: ModelOrchestratorActor<MLXInferenceEngine>) async throws {
         await engine.inject(FaultPlan())
         let fresh = try await Self.orchestrator(try await TinyModel.engine()).generate(request: request())
         let next = try await orchestrator.generate(request: request())
@@ -41,7 +41,7 @@ struct FaultInjectionTests {
         let endsStream = FaultPlan(point: point).endsStream
         let reason: String? = if case .inferenceHardwareFailure(let message)? = failure { message } else { nil }
         if fault == .cancellation, !endsStream {
-            #expect(failure.map(ModelOrchestratorActor.logStatus) == "cancelled", "\(String(describing: failure))")
+            #expect(failure.map(OrchestratorPolicy.logStatus) == "cancelled", "\(String(describing: failure))")
         } else {
             #expect(reason != nil, "\(String(describing: failure))")
             #expect((reason == "Stream finished without metadata") == endsStream)
@@ -60,7 +60,7 @@ struct FaultInjectionTests {
         await engine.inject(FaultPlan(point: point, fault: fault))
         let failure = await #expect(throws: BasaltError.self) { try await orchestrator.loadModel(path: directory.path) }
         let corrupted = if case .weightsCorrupted? = failure { true } else { false }
-        let cancelled = failure.map(ModelOrchestratorActor.logStatus) == "cancelled"
+        let cancelled = failure.map(OrchestratorPolicy.logStatus) == "cancelled"
         #expect(fault == .cancellation ? cancelled : corrupted, "\(String(describing: failure))")
         #expect(await !engine.isLoaded)
         #expect(await engine.readPromptCaches { $0.roots.isEmpty })

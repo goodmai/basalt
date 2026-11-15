@@ -76,12 +76,12 @@ public struct Introspector: Sendable {
         When you can answer the goal, reply without a tool call: list every hypothesis with its outcome, then the answer.
         """
 
-    let orchestrator: ModelOrchestratorActor
+    let orchestrator: any ModelOrchestrating
     let tools: [ToolDefinition]
     let journal: URL?
     let run: Run
 
-    public init(orchestrator: ModelOrchestratorActor, tools: [ToolDefinition], journal: URL? = OverlayRegistry.defaultJournal, run: @escaping Run) {
+    public init(orchestrator: any ModelOrchestrating, tools: [ToolDefinition], journal: URL? = OverlayRegistry.defaultJournal, run: @escaping Run) {
         self.orchestrator = orchestrator
         self.tools = tools
         self.journal = journal

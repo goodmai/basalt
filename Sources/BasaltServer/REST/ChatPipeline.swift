@@ -68,7 +68,7 @@ struct ChatPipeline: Sendable {
         let requestedModel: String?
     }
 
-    let orchestrator: ModelOrchestratorActor
+    let orchestrator: any ModelOrchestrating
     let label: String
     let source: String
     let endpoint: String
@@ -79,16 +79,22 @@ struct ChatPipeline: Sendable {
         Rejection(response: reject(status, message), message: message)
     }
 
-    func handle(_ request: Request, _ work: (Data) async throws -> Response) async throws -> Response {
-        let data = try await body(of: request)
+    func handleBuffer(_ request: Request, _ work: (ByteBuffer) async throws -> Response) async throws -> Response {
+        let buffer = try await request.body.collect(upTo: Self.bodyLimit)
         do {
-            return try await work(data)
+            return try await work(buffer)
         } catch let rejection as Rejection {
             await orchestrator.sessionLog?.logRejection(
                 origin: RequestOrigin(source: source, endpoint: endpoint, stream: false),
                 sessionId: GenerationRequest.sessionId(in: request.headers), code: Int(rejection.response.status.code),
-                message: rejection.message, bodyBytes: data.count)
+                message: rejection.message, bodyBytes: buffer.readableBytes)
             return rejection.response
+        }
+    }
+
+    func handle(_ request: Request, _ work: (Data) async throws -> Response) async throws -> Response {
+        try await handleBuffer(request) { buffer in
+            try await work(Self.data(of: buffer, zeroCopy: zeroCopyBody))
         }
     }
 
@@ -101,6 +107,14 @@ struct ChatPipeline: Sendable {
 
     static func data(of buffer: ByteBuffer, zeroCopy: Bool) -> Data {
         zeroCopy ? Data(buffer: buffer) : Data(buffer.readableBytesView)
+    }
+
+    func fastRead(from buffer: ByteBuffer, failure: String) throws -> ChatRequestFastReader.Parsed {
+        do {
+            return try ChatRequestFastReader.read(buffer)
+        } catch {
+            throw decodeFailure(error, failure, bodyBytes: buffer.readableBytes)
+        }
     }
 
     func decode<T: Decodable>(_ type: T.Type, from data: Data, failure: String) throws -> T {
@@ -136,7 +150,13 @@ struct ChatPipeline: Sendable {
         }
     }
 
-    func antiRepetition(_ decoded: Result<AntiRepetition, any Error>, bodyBytes: Int) throws -> AntiRepetition {
+    func tools(_ decoded: Result<OpenAIController.RequestedTools, OpenAIController.UndeclaredForcedTool>) throws -> OpenAIController.RequestedTools {
+        do { return try decoded.get() } catch {
+            throw rejection(.badRequest, error.message)
+        }
+    }
+
+    func antiRepetition<Failure: Error>(_ decoded: Result<AntiRepetition, Failure>, bodyBytes: Int) throws -> AntiRepetition {
         do { return try decoded.get() } catch {
             throw decodeFailure(error, "Invalid DRY or XTC parameter", bodyBytes: bodyBytes)
         }
@@ -144,6 +164,12 @@ struct ChatPipeline: Sendable {
 
     func responseFormat(in body: [String: Any]?, data: Data) throws -> ResponseFormat? {
         do { return try OpenAIController.responseFormat(in: body, data: data) } catch {
+            throw rejection(.badRequest, error.message)
+        }
+    }
+
+    func responseFormat(_ decoded: Result<ResponseFormat?, OpenAIController.InvalidResponseFormat>) throws -> ResponseFormat? {
+        do { return try decoded.get() } catch {
             throw rejection(.badRequest, error.message)
         }
     }

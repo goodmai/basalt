@@ -29,7 +29,7 @@ struct MemoryCoordinatorE2ETests {
 
     struct Rig {
         let engine: MLXInferenceEngine
-        let orchestrator: ModelOrchestratorActor
+        let orchestrator: ModelOrchestratorActor<MLXInferenceEngine>
         let source: FakeMemoryPressure
         let time: FakeElapsed
         let coordinator: MemoryCoordinator

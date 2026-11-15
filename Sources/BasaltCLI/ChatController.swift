@@ -5,7 +5,7 @@ import BasaltUI
 @available(macOS 10.15, iOS 13, *)
 actor ChatController {
     private let terminal: TerminalManager
-    private let orchestrator: ModelOrchestratorActor
+    private let orchestrator: any ModelOrchestrating
     private let maxTokens: Int
     
     private var messageQueue: [String] = []
@@ -14,7 +14,7 @@ actor ChatController {
     private let sessionId: String
     private var history: ChatHistoryDigest
 
-    init(orchestrator: ModelOrchestratorActor, maxTokens: Int, sessionId: String, history: [ChatMessageInput] = []) {
+    init(orchestrator: any ModelOrchestrating, maxTokens: Int, sessionId: String, history: [ChatMessageInput] = []) {
         self.terminal = TerminalManager()
         self.orchestrator = orchestrator
         self.maxTokens = maxTokens

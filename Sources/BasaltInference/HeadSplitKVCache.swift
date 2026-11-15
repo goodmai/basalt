@@ -27,7 +27,7 @@ final class HeadSplitKVCache: KVCacheAttentionProtocol {
     }
 
     let retrieval: [Int]
-    private let full: any KVCache
+    private let full: RetrievalCache
     private let stream: KVCacheSimple
     private(set) var offset = 0
     private(set) var materializedForCaller = false
@@ -44,20 +44,20 @@ final class HeadSplitKVCache: KVCacheAttentionProtocol {
         let queryHeads: Int
     }
 
-    private init(retrieval: [Int], full: any KVCache, stream: KVCacheSimple) {
+    private init(retrieval: [Int], full: RetrievalCache, stream: KVCacheSimple) {
         self.retrieval = retrieval
         self.full = full
         self.stream = stream
     }
 
     convenience init(retrieval: [Int], zoning: Zoning? = nil) {
-        let full: any KVCache = zoning.map { ZonedKVCache(zones: $0.zones, precision: $0.precision) } ?? KVCacheSimple()
+        let full: RetrievalCache = zoning.map { .zoned(ZonedKVCache(zones: $0.zones, precision: $0.precision)) } ?? .simple(KVCacheSimple())
         self.init(retrieval: retrieval, full: full, stream: KVCacheSimple())
     }
 
     convenience init(splitting dense: KVCacheSimple, retrieval: [Int]) {
         let full = KVCacheSimple()
-        self.init(retrieval: retrieval, full: full, stream: KVCacheSimple())
+        self.init(retrieval: retrieval, full: .simple(full), stream: KVCacheSimple())
         let state = dense.state
         guard state.count == 2 else { return }
         let heads = layout(kvHeads: state[0].dim(1), queryHeads: state[0].dim(1))
@@ -120,7 +120,7 @@ final class HeadSplitKVCache: KVCacheAttentionProtocol {
         offset += keys.dim(2)
         var parts: [MLXArray] = []
         if let index = heads.retrieval, let queryIndex = heads.retrievalQueries {
-            parts.append(attendRetrieval(
+            parts.append(full.attend(
                 queries: queries[0..., queryIndex], keys: keys[0..., index], values: values[0..., index], scale: scale, mask: mask))
         }
         if let index = heads.streaming, let queryIndex = heads.streamingQueries {
@@ -132,17 +132,6 @@ final class HeadSplitKVCache: KVCacheAttentionProtocol {
         }
         let output = parts.count == 1 ? parts[0] : concatenated(parts, axis: 1)
         return heads.inverse.map { output[0..., $0] } ?? output
-    }
-
-    private func attendRetrieval(
-        queries: MLXArray, keys: MLXArray, values: MLXArray, scale: Float, mask: MLXFast.ScaledDotProductAttentionMaskMode
-    ) -> MLXArray {
-        if let zoned = full as? ZonedKVCache {
-            return zoned.updateAndAttend(queries: queries, keys: keys, values: values, scale: scale, mask: mask)
-        }
-        let (k, v) = full.update(keys: keys, values: values)
-        return MLXFast.scaledDotProductAttention(
-            queries: queries, keys: k, values: v, scale: scale, mask: ZonedKVCache.trailingColumns(of: mask, keys: k.dim(2)))
     }
 
     func update(keys: MLXArray, values: MLXArray) -> (MLXArray, MLXArray) {
@@ -185,7 +174,7 @@ final class HeadSplitKVCache: KVCacheAttentionProtocol {
         guard let streamCopy = stream.copy() as? KVCacheSimple else {
             preconditionFailure("KVCacheSimple copies to its own type")
         }
-        let copied = HeadSplitKVCache(retrieval: retrieval, full: full.copy(), stream: streamCopy)
+        let copied = HeadSplitKVCache(retrieval: retrieval, full: full.cloned(), stream: streamCopy)
         (copied.offset, copied.materializedForCaller, copied.layout) = (offset, materializedForCaller, layout)
         return copied
     }
@@ -195,6 +184,79 @@ final class HeadSplitKVCache: KVCacheAttentionProtocol {
         guard count > Self.sinkTokens + Self.windowTokens + Self.trimStep else { return }
         stream.state = stream.state.map {
             concatenated([$0[.ellipsis, ..<Self.sinkTokens, 0...], $0[.ellipsis, (count - Self.windowTokens)..., 0...]], axis: 2)
+        }
+    }
+}
+
+private enum RetrievalCache {
+    case simple(KVCacheSimple)
+    case zoned(ZonedKVCache)
+
+    var offset: Int {
+        switch self {
+        case .simple(let cache): cache.offset
+        case .zoned(let cache): cache.offset
+        }
+    }
+
+    var isTrimmable: Bool {
+        switch self {
+        case .simple(let cache): cache.isTrimmable
+        case .zoned(let cache): cache.isTrimmable
+        }
+    }
+
+    var state: [MLXArray] {
+        switch self {
+        case .simple(let cache): cache.state
+        case .zoned(let cache): cache.state
+        }
+    }
+
+    func innerState() -> [MLXArray] {
+        switch self {
+        case .simple(let cache): cache.innerState()
+        case .zoned(let cache): cache.innerState()
+        }
+    }
+
+    func attend(
+        queries: MLXArray, keys: MLXArray, values: MLXArray, scale: Float,
+        mask: MLXFast.ScaledDotProductAttentionMaskMode
+    ) -> MLXArray {
+        switch self {
+        case .zoned(let zoned):
+            return zoned.updateAndAttend(queries: queries, keys: keys, values: values, scale: scale, mask: mask)
+        case .simple(let simple):
+            let (k, v) = simple.update(keys: keys, values: values)
+            return MLXFast.scaledDotProductAttention(
+                queries: queries, keys: k, values: v, scale: scale, mask: ZonedKVCache.trailingColumns(of: mask, keys: k.dim(2)))
+        }
+    }
+
+    func update(keys: MLXArray, values: MLXArray) -> (MLXArray, MLXArray) {
+        switch self {
+        case .simple(let cache): cache.update(keys: keys, values: values)
+        case .zoned(let cache): cache.update(keys: keys, values: values)
+        }
+    }
+
+    func trim(_ n: Int) -> Int {
+        switch self {
+        case .simple(let cache): cache.trim(n)
+        case .zoned(let cache): cache.trim(n)
+        }
+    }
+
+    func cloned() -> RetrievalCache {
+        switch self {
+        case .simple(let cache):
+            guard let simpleCopy = cache.copy() as? KVCacheSimple else {
+                preconditionFailure("KVCacheSimple copies to its own type")
+            }
+            return .simple(simpleCopy)
+        case .zoned(let cache):
+            return .zoned(cache.cloned())
         }
     }
 }

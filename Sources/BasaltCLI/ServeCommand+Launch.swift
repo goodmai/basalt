@@ -92,7 +92,7 @@ extension ServeCommand {
         FileHandle.standardOutput.write(Data((RESTServer.readyLine(port: port) + "\n").utf8))
     }
 
-    static func runServers(_ launch: ServerLaunch, orchestrator: ModelOrchestratorActor) async throws {
+    static func runServers(_ launch: ServerLaunch, orchestrator: any ModelOrchestrating) async throws {
         defer {
             await withTaskCancellationShield {
                 await orchestrator.shutdown(deadline: launch.shutdownDeadline)

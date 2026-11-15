@@ -302,7 +302,7 @@ struct BatchedRoutingTests {
         let metadata: GenerationResponse
     }
 
-    static func concurrently(_ orchestrator: ModelOrchestratorActor, count: Int) async throws -> [Reply] {
+    static func concurrently(_ orchestrator: ModelOrchestratorActor<MLXInferenceEngine>, count: Int) async throws -> [Reply] {
         try await withThrowingTaskGroup(of: (Int, Reply).self) { group in
             for index in 0 ..< count {
                 group.addTask {

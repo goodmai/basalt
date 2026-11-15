@@ -100,7 +100,7 @@ struct ChatCommand: AsyncParsableCommand {
         return resumed
     }
 
-    private func loadedOrchestrator(sessionLog writer: SessionLogWriter?) async throws -> ModelOrchestratorActor {
+    private func loadedOrchestrator(sessionLog writer: SessionLogWriter?) async throws -> ModelOrchestratorActor<MLXInferenceEngine> {
         let resolvedPath = try await resolveModelPath()
 
         let engine = MLXInferenceEngine(promptCacheDisk: try promptCacheDisk.store())
@@ -117,7 +117,7 @@ struct ChatCommand: AsyncParsableCommand {
     }
 
     private func answer(
-        _ initialPrompt: String, history: [ChatMessageInput], sessionId: String, orchestrator: ModelOrchestratorActor
+        _ initialPrompt: String, history: [ChatMessageInput], sessionId: String, orchestrator: some ModelOrchestrating
     ) async throws {
         let finalPrompt = try await PromptContextBuilder.build(prompt: initialPrompt)
         var digest = ChatHistoryDigest(turns: history)

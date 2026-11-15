@@ -23,9 +23,9 @@ extension AnswerTarget {
 }
 
 public struct LocalAnswer: AnswerTarget {
-    public let orchestrator: ModelOrchestratorActor
+    public let orchestrator: any ModelOrchestrating
 
-    public init(_ orchestrator: ModelOrchestratorActor) { self.orchestrator = orchestrator }
+    public init(_ orchestrator: any ModelOrchestrating) { self.orchestrator = orchestrator }
 
     public func answer(_ request: GenerationRequest) async throws(BasaltError) -> AnswerReply {
         let response = try await orchestrator.generate(request: request)

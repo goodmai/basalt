@@ -5,7 +5,7 @@ import BasaltCore
 import BasaltHarness
 
 public final class MCPServer: Service, Sendable {
-    let orchestrator: ModelOrchestratorActor
+    let orchestrator: any ModelOrchestrating
     let modelId: String?
     let library: HarnessExperienceLibrary?
     let harnessRoots: [URL]
@@ -19,7 +19,7 @@ public final class MCPServer: Service, Sendable {
     let writer: @Sendable (String) -> Void
 
     public init(
-        orchestrator: ModelOrchestratorActor,
+        orchestrator: any ModelOrchestrating,
         modelId: String? = nil,
         library: HarnessExperienceLibrary? = nil,
         harnessRoots: [URL] = HarnessLoader.allowedRoots(),
@@ -41,7 +41,7 @@ public final class MCPServer: Service, Sendable {
     }
 
     package init(
-        orchestrator: ModelOrchestratorActor,
+        orchestrator: any ModelOrchestrating,
         modelId: String? = nil,
         input: AsyncStream<String>,
         writer: @Sendable @escaping (String) -> Void

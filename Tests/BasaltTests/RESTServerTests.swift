@@ -17,14 +17,13 @@ struct RESTServerTests {
     private struct Setup {
         let app: Application<RouterResponder<BasicRequestContext>>
         let engine: MockInferenceEngine
-        let orchestrator: ModelOrchestratorActor
+        let orchestrator: ModelOrchestratorActor<MockInferenceEngine>
     }
 
     private func setup(load: Bool = true, reasoning: String? = nil, failGenerate: Bool = false, apiKey: String? = nil) async throws -> Setup {
         let engine = MockInferenceEngine()
         await engine.setMockReasoning(reasoning)
         await engine.setShouldFailOnGenerate(failGenerate)
-        // A budget above any request here, so the RAM-dependent cap never rewrites max_tokens.
         let orch = ModelOrchestratorActor(engine: engine, maxTokens: 65536, telemetry: TelemetryTracker())
         if load { try await orch.loadModel(path: "mock") }
         let server = RESTServer(orchestrator: orch, config: try ServerConfig(modelPath: "org/mock-model", apiKey: apiKey))

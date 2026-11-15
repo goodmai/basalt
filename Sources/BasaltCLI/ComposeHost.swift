@@ -6,7 +6,7 @@ import BasaltInference
 import BasaltServer
 
 enum ComposeHeld: Sendable {
-    case resident(ModelOrchestratorActor)
+    case resident(any ModelOrchestrating)
     case onDemand(OnDemandModel)
     case cloud(String)
     case decision(any DecisionEngine)
@@ -14,7 +14,7 @@ enum ComposeHeld: Sendable {
 }
 
 struct ComposeStart: Sendable {
-    let chat: ModelOrchestratorActor
+    let chat: any ModelOrchestrating
     let decider: (any DecisionEngine)?
     let decisions: (any DecisionEngine)?
     let cloudGate: CloudGate
@@ -34,7 +34,7 @@ struct ComposeAdmission: Sendable {
 
 actor ComposeHost {
     let services: ComposeServices
-    let chat: ModelOrchestratorActor
+    let chat: any ModelOrchestrating
     let startDecider: (any DecisionEngine)?
     var selfDecider: (any DecisionEngine)?
     let cloudGate: CloudGate

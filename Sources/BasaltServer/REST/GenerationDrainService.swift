@@ -3,7 +3,7 @@ import ServiceLifecycle
 import BasaltCore
 
 struct GenerationDrainService: Service {
-    let orchestrator: ModelOrchestratorActor
+    let orchestrator: any ModelOrchestrating
     let deadline: Duration
 
     func run() async throws {

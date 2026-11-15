@@ -8,7 +8,7 @@ struct TranscriptionsController: Sendable {
     static let bodyLimit = AudioClip.maxBytes + 64 * 1024
     static let fileTypes: Set<String> = ["application/octet-stream", "video/mp4", "video/mpeg"]
 
-    let orchestrator: ModelOrchestratorActor
+    let orchestrator: any ModelOrchestrating
 
     enum ResponseFormat: String {
         case json, text

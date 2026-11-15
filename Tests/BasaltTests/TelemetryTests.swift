@@ -99,7 +99,7 @@ struct TelemetryTests {
         #expect(decoded == original)
     }
 
-    private func loadedOrchestrator(_ tracker: TelemetryTracker) async throws -> (ModelOrchestratorActor, MockInferenceEngine) {
+    private func loadedOrchestrator(_ tracker: TelemetryTracker) async throws -> (ModelOrchestratorActor<MockInferenceEngine>, MockInferenceEngine) {
         let engine = MockInferenceEngine()
         let orch = ModelOrchestratorActor(engine: engine, telemetry: tracker)
         try await orch.loadModel(path: "test-model-path")

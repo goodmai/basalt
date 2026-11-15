@@ -106,7 +106,7 @@ struct ComposeBindFirstTests {
         #expect(await slot.host?.spec.models["haiku"] != nil)
     }
 
-    static func host(_ spec: ComposeSpec, chat: ModelOrchestratorActor, registry: PipelineRegistry) async throws -> ComposeHost {
+    static func host(_ spec: ComposeSpec, chat: any ModelOrchestrating, registry: PipelineRegistry) async throws -> ComposeHost {
         let services = ComposeServices(
             resolve: { $0 }, load: { _, _, _, _ in nil }, decider: { NamedDecider(modelID: $0) },
             decisions: { view, locals, _, _, _ in view.cascade.last.flatMap { locals[$0] } }, key: { _ in "test-key" }, cloudLimits: { _ in [:] })

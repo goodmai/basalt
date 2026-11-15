@@ -2,8 +2,8 @@ import Foundation
 import BasaltCore
 
 package struct PipelineStages: Sendable {
-    package let ocr: ModelOrchestratorActor?
-    package let audio: ModelOrchestratorActor?
+    package let ocr: (any ModelOrchestrating)?
+    package let audio: (any ModelOrchestrating)?
     package let speech: (any AudioTranscriber)?
     package let abstainBelow: Double?
     package let minMargin: Double?
@@ -14,7 +14,7 @@ package struct PipelineStages: Sendable {
     package var shareMedia = false
 
     package init(
-        ocr: ModelOrchestratorActor? = nil, audio: ModelOrchestratorActor? = nil, speech: (any AudioTranscriber)? = nil,
+        ocr: (any ModelOrchestrating)? = nil, audio: (any ModelOrchestrating)? = nil, speech: (any AudioTranscriber)? = nil,
         abstainBelow: Double? = nil, minMargin: Double? = nil, questions: [String: SystemOneQuestion] = [:]
     ) {
         (self.ocr, self.audio, self.speech, self.abstainBelow, self.minMargin) = (ocr, audio, speech, abstainBelow, minMargin)
@@ -23,7 +23,7 @@ package struct PipelineStages: Sendable {
 }
 
 struct PipelineRunner: Sendable {
-    let chat: ModelOrchestratorActor
+    let chat: any ModelOrchestrating
     let decisions: (any DecisionEngine)?
     let stages: PipelineStages
 
@@ -92,7 +92,7 @@ struct PipelineRunner: Sendable {
 
     func perceive(_ order: [PipelineCore.Perceiving], pages selection: String?, swap: PipelineSwap?) async throws(BasaltError) -> Perception {
         var perception = Perception()
-        var resident: ModelOrchestratorActor?
+        var resident: (any ModelOrchestrating)?
         do throws(BasaltError) {
             for item in order {
                 guard let perceiver = item.perceiver else { throw .invalidRequestStructure(details: "pipeline: no perceiver for attachment \(item.index + 1)") }

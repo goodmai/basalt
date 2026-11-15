@@ -1,8 +1,8 @@
 import Foundation
 import os
 
-public actor ModelOrchestratorActor {
-    let engine: any InferenceEngine
+public actor ModelOrchestratorActor<Engine: InferenceEngine>: ModelOrchestrating {
+    let engine: Engine
     private var state: OrchestratorState
     let logger = BasaltLogger(module: "ModelOrchestrator")
     nonisolated public let gate: GenerationGate
@@ -19,20 +19,10 @@ public actor ModelOrchestratorActor {
     private var adaptiveThinkingBudget = false
     var media = MediaFallbacks()
 
-    public struct KVOptions: Sendable {
-        let precision: KVPrecision?
-        let adaptive: Bool
-        let zones: KVZones?
-
-        public init(precision: KVPrecision? = nil, adaptive: Bool = false, zones: KVZones? = nil) {
-            self.precision = precision
-            self.adaptive = adaptive
-            self.zones = zones
-        }
-    }
+    public typealias KVOptions = OrchestratorKVOptions
 
     public init(
-        engine: any InferenceEngine, maxTokens: Int = 65_536, kv: KVOptions = KVOptions(), telemetry: TelemetryTracker = .shared,
+        engine: Engine, maxTokens: Int = 65_536, kv: KVOptions = KVOptions(), telemetry: TelemetryTracker = .shared,
         gate: GenerationGate = GenerationGate(), sessionLog: SessionLogWriter? = nil
     ) {
         self.gate = gate
@@ -69,9 +59,9 @@ public actor ModelOrchestratorActor {
             : currentModelId
     }
 
-    public func setCloudFallback(
-        _ fallback: (any CloudFallback)?, arbiter: HybridArbiter = HybridArbiter(),
-        freeMemory: @escaping @Sendable () -> Int64 = { SystemProfiler.availableSystemMemory() }
+    public func configureCloudFallback(
+        _ fallback: (any CloudFallback)?, arbiter: HybridArbiter,
+        freeMemory: @escaping @Sendable () -> Int64
     ) {
         self.cloudFallback = fallback
         self.arbiter = arbiter
