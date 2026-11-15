@@ -52,11 +52,47 @@ public struct EvidencePair: Sendable, Codable, Equatable {
     }
 }
 
-public enum BelnapState: String, Sendable, Codable, Equatable, CaseIterable {
+public struct EpistemicThresholds: Sendable, Codable, Equatable, Hashable {
+    public static let `default` = EpistemicThresholds()
+
+    public var supportThreshold: Double
+    public var refutationThreshold: Double
+    public var entropyCeiling: Double
+
+    public init(
+        supportThreshold: Double = 0.5,
+        refutationThreshold: Double = 0.5,
+        entropyCeiling: Double = 4.0
+    ) {
+        self.supportThreshold = EvidencePair.clamp(supportThreshold)
+        self.refutationThreshold = EvidencePair.clamp(refutationThreshold)
+        self.entropyCeiling = entropyCeiling.isFinite && entropyCeiling > 0 ? entropyCeiling : 4.0
+    }
+}
+
+public enum BelnapState: String, Sendable, Codable, Equatable, Hashable, CaseIterable {
     case neither
     case `true`
     case `false`
     case both
+
+    public init(bitPair: UInt8) {
+        switch bitPair & 0x03 {
+        case 0: self = .neither
+        case 1: self = .false
+        case 2: self = .true
+        default: self = .both
+        }
+    }
+
+    public var bitPair: UInt8 {
+        switch self {
+        case .neither: 0
+        case .false: 1
+        case .true: 2
+        case .both: 3
+        }
+    }
 
     public var flags: (supported: Bool, refuted: Bool) {
         switch self {
@@ -87,10 +123,23 @@ public enum BelnapState: String, Sendable, Codable, Equatable, CaseIterable {
         )
     }
 
+    public static func project(
+        _ evidence: EvidencePair,
+        thresholds: EpistemicThresholds
+    ) -> BelnapState {
+        project(
+            evidence,
+            supportThreshold: thresholds.supportThreshold,
+            refutationThreshold: thresholds.refutationThreshold
+        )
+    }
+
     public var negated: BelnapState {
         let pair = flags
         return Self.from(supported: pair.refuted, refuted: pair.supported)
     }
+
+    public var truthNegated: BelnapState { negated }
 
     public func truthJoin(_ other: BelnapState) -> BelnapState {
         let (lhs, rhs) = (flags, other.flags)
@@ -103,13 +152,19 @@ public enum BelnapState: String, Sendable, Codable, Equatable, CaseIterable {
     }
 
     public func knowledgeJoin(_ other: BelnapState) -> BelnapState {
-        let (lhs, rhs) = (flags, other.flags)
-        return Self.from(supported: lhs.supported || rhs.supported, refuted: lhs.refuted || rhs.refuted)
+        BelnapState(bitPair: bitPair | other.bitPair)
     }
 
     public func knowledgeMeet(_ other: BelnapState) -> BelnapState {
-        let (lhs, rhs) = (flags, other.flags)
-        return Self.from(supported: lhs.supported && rhs.supported, refuted: lhs.refuted && rhs.refuted)
+        BelnapState(bitPair: bitPair & other.bitPair)
+    }
+
+    public func infoJoin(_ other: BelnapState) -> BelnapState {
+        knowledgeJoin(other)
+    }
+
+    public func infoMeet(_ other: BelnapState) -> BelnapState {
+        knowledgeMeet(other)
     }
 
     public func truthPrecedesOrEquals(_ other: BelnapState) -> Bool {
@@ -118,8 +173,123 @@ public enum BelnapState: String, Sendable, Codable, Equatable, CaseIterable {
     }
 
     public func knowledgePrecedesOrEquals(_ other: BelnapState) -> Bool {
-        let (lhs, rhs) = (flags, other.flags)
-        return (!lhs.supported || rhs.supported) && (!lhs.refuted || rhs.refuted)
+        (bitPair & other.bitPair) == bitPair
+    }
+
+    public func infoPrecedesOrEquals(_ other: BelnapState) -> Bool {
+        knowledgePrecedesOrEquals(other)
+    }
+}
+
+public struct BelnapGeneralizedState: Sendable, Codable, Equatable, Hashable, CaseIterable {
+    private static let truthMask: UInt8 = 0x0C
+    private static let nonTruthMask: UInt8 = 0x03
+    private static let falsityMask: UInt8 = 0x0A
+    private static let nonFalsityMask: UInt8 = 0x05
+
+    public static let empty = BelnapGeneralizedState(rawBits: 0x0)
+    public static let all = BelnapGeneralizedState(rawBits: 0xF)
+    public static let neither = BelnapGeneralizedState(.neither)
+    public static let `false` = BelnapGeneralizedState(.false)
+    public static let `true` = BelnapGeneralizedState(.true)
+    public static let both = BelnapGeneralizedState(.both)
+
+    public static var allCases: [BelnapGeneralizedState] {
+        (0 ..< 16).map { BelnapGeneralizedState(rawBits: UInt8($0)) }
+    }
+
+    public let rawBits: UInt8
+
+    public init(rawBits: UInt8) {
+        self.rawBits = rawBits & 0x0F
+    }
+
+    public init(_ single: BelnapState) {
+        self.rawBits = 1 << single.bitPair
+    }
+
+    public init<S: Sequence>(_ states: S) where S.Element == BelnapState {
+        var mask: UInt8 = 0
+        for state in states { mask |= (1 << state.bitPair) }
+        self.rawBits = mask & 0x0F
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        rawBits = (try container.decode(UInt8.self)) & 0x0F
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawBits)
+    }
+
+    public func contains(_ state: BelnapState) -> Bool {
+        (rawBits & (1 << state.bitPair)) != 0
+    }
+
+    public func infoMeet(_ other: BelnapGeneralizedState) -> BelnapGeneralizedState {
+        BelnapGeneralizedState(rawBits: rawBits & other.rawBits)
+    }
+
+    public func infoJoin(_ other: BelnapGeneralizedState) -> BelnapGeneralizedState {
+        BelnapGeneralizedState(rawBits: rawBits | other.rawBits)
+    }
+
+    public static func & (lhs: BelnapGeneralizedState, rhs: BelnapGeneralizedState) -> BelnapGeneralizedState {
+        lhs.infoMeet(rhs)
+    }
+
+    public static func | (lhs: BelnapGeneralizedState, rhs: BelnapGeneralizedState) -> BelnapGeneralizedState {
+        lhs.infoJoin(rhs)
+    }
+
+    public func truthMeet(_ other: BelnapGeneralizedState) -> BelnapGeneralizedState {
+        let positive = (rawBits & other.rawBits) & Self.truthMask
+        let negative = (rawBits | other.rawBits) & Self.nonTruthMask
+        return BelnapGeneralizedState(rawBits: positive | negative)
+    }
+
+    public func truthJoin(_ other: BelnapGeneralizedState) -> BelnapGeneralizedState {
+        let positive = (rawBits | other.rawBits) & Self.truthMask
+        let negative = (rawBits & other.rawBits) & Self.nonTruthMask
+        return BelnapGeneralizedState(rawBits: positive | negative)
+    }
+
+    public func falsityMeet(_ other: BelnapGeneralizedState) -> BelnapGeneralizedState {
+        let positive = (rawBits & other.rawBits) & Self.falsityMask
+        let negative = (rawBits | other.rawBits) & Self.nonFalsityMask
+        return BelnapGeneralizedState(rawBits: positive | negative)
+    }
+
+    public func falsityJoin(_ other: BelnapGeneralizedState) -> BelnapGeneralizedState {
+        let positive = (rawBits | other.rawBits) & Self.falsityMask
+        let negative = (rawBits & other.rawBits) & Self.nonFalsityMask
+        return BelnapGeneralizedState(rawBits: positive | negative)
+    }
+
+    public var truthNegated: BelnapGeneralizedState {
+        BelnapGeneralizedState(rawBits: ((rawBits & Self.nonTruthMask) << 2) | ((rawBits & Self.truthMask) >> 2))
+    }
+
+    public var falsityNegated: BelnapGeneralizedState {
+        BelnapGeneralizedState(rawBits: ((rawBits & Self.nonFalsityMask) << 1) | ((rawBits & Self.falsityMask) >> 1))
+    }
+
+    public var infoNegated: BelnapGeneralizedState {
+        BelnapGeneralizedState(rawBits: ~rawBits)
+    }
+
+    public func infoPrecedesOrEquals(_ other: BelnapGeneralizedState) -> Bool {
+        infoJoin(other) == other
+    }
+
+    public func truthPrecedesOrEquals(_ other: BelnapGeneralizedState) -> Bool {
+        truthJoin(other) == other
+    }
+
+    public func falsityPrecedesOrEquals(_ other: BelnapGeneralizedState) -> Bool {
+        falsityJoin(other) == other
     }
 }
 

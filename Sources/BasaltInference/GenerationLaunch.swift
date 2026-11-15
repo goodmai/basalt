@@ -149,9 +149,10 @@ struct GenerationLauncher {
     }
 
     func mtp(_ request: MTPRequest, prompt: CachedPrompt, keepsCache: Bool) throws -> MLXInferenceEngine.GenerationLaunch {
+        let drafter = MTPSidecar.probing(request.drafter, processor: components.makeProcessor(parameters: params))
         let (reuse, boundary) = (prompt.reuse, prompt.boundary)
         let reused = reuse?.reusedTokens ?? 0
-        let stateful = request.drafter as? any StatefulMTPDrafterModel
+        let stateful = drafter as? any StatefulMTPDrafterModel
         let staged = keepsCache && stateful != nil && boundary >= reused && boundary < input.text.tokens.dim(-1)
         var cache: PromptCache?
         var drafterState: MTPDrafterState?
@@ -168,7 +169,7 @@ struct GenerationLauncher {
         let start = staged ? boundary : 0
         let iterator = try MTPSpeculativeTokenIterator(
             input: LMInput(tokens: input.text.tokens[.ellipsis, start...]), mainModel: context.model,
-            drafter: request.drafter, mainCache: cache?.layers, drafterState: drafterState, parameters: params,
+            drafter: drafter, mainCache: cache?.layers, drafterState: drafterState, parameters: params,
             blockSize: request.blockSize, components: components)
         let (stream, task, prefill) = handing(iterator, promptTokens: input.text.tokens.dim(-1) - start)
         return MLXInferenceEngine.GenerationLaunch(

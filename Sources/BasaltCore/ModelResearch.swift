@@ -168,12 +168,68 @@ public struct TraceReport: Sendable, Codable {
     public var position: Int
     public var layers: [LayerTrace]
     public var final: [TokenScore]
+    public var lateLayerFlipRate: Double? = nil
+    public var evidencePair: EvidencePair? = nil
+    public var evidenceState: BelnapState? = nil
 
-    public init(tokens: [String], position: Int, layers: [LayerTrace], final: [TokenScore]) {
+    public init(
+        tokens: [String],
+        position: Int,
+        layers: [LayerTrace],
+        final: [TokenScore]
+    ) {
         self.tokens = tokens
         self.position = position
         self.layers = layers
         self.final = final
+    }
+
+    public static func evaluateEvidence(
+        layers: [LayerTrace],
+        final: [TokenScore],
+        totalLayers: Int? = nil,
+        thresholds: EpistemicThresholds = .default
+    ) -> (lateLayerFlipRate: Double?, evidencePair: EvidencePair, evidenceState: BelnapState)? {
+        guard let finalTop = final.first else { return nil }
+        let support = EvidencePair.clamp(Double(finalTop.probability))
+        let lensTop = layers
+            .sorted { $0.index < $1.index }
+            .compactMap { layer -> (index: Int, id: Int)? in
+                guard let top = layer.lens?.first else { return nil }
+                return (layer.index, top.id)
+            }
+        guard !lensTop.isEmpty else {
+            let pair = EvidencePair(support: support, refutation: 0.0)
+            return (nil, pair, BelnapState.project(pair, thresholds: thresholds))
+        }
+        let preFinal: [(index: Int, id: Int)]
+        if let totalLayers, totalLayers > 1 {
+            let earlier = lensTop.filter { $0.index < totalLayers - 1 }
+            preFinal = earlier.isEmpty ? lensTop : earlier
+        } else if lensTop.count > 1 {
+            preFinal = Array(lensTop.dropLast())
+        } else {
+            preFinal = lensTop
+        }
+        let window = preFinal[(preFinal.count / 2)...]
+        let flips = window.filter { $0.id != finalTop.id }.count
+        let flipRate = EvidencePair.clamp(Double(flips) / Double(Swift.max(1, window.count)))
+        let pair = EvidencePair(support: support, refutation: flipRate)
+        return (flipRate, pair, BelnapState.project(pair, thresholds: thresholds))
+    }
+
+    public func withEvaluatedEvidence(
+        totalLayers: Int? = nil,
+        thresholds: EpistemicThresholds = .default
+    ) -> TraceReport {
+        guard let evaluated = Self.evaluateEvidence(
+            layers: layers, final: final, totalLayers: totalLayers, thresholds: thresholds
+        ) else { return self }
+        var copy = self
+        copy.lateLayerFlipRate = evaluated.lateLayerFlipRate
+        copy.evidencePair = evaluated.evidencePair
+        copy.evidenceState = evaluated.evidenceState
+        return copy
     }
 }
 

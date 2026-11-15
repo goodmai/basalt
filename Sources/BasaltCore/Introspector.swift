@@ -32,13 +32,33 @@ public struct IntrospectStep: Sendable, Codable, Equatable {
 
 public struct Hypothesis: Sendable, Codable, Equatable {
     public var statement: String
-    public var test = ""
-    public var outcome = ""
+    public var test: String
+    public var outcome: String
+    public var evidenceState: BelnapState
 
-    public init(statement: String, test: String = "", outcome: String = "") {
+    public init(
+        statement: String,
+        test: String = "",
+        outcome: String = "",
+        evidenceState: BelnapState? = nil
+    ) {
         self.statement = statement
         self.test = test
         self.outcome = outcome
+        self.evidenceState = evidenceState ?? Self.classifyOutcome(outcome)
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let statement = try container.decode(String.self, forKey: .statement)
+        let test = try container.decodeIfPresent(String.self, forKey: .test) ?? ""
+        let outcome = try container.decodeIfPresent(String.self, forKey: .outcome) ?? ""
+        let state = try container.decodeIfPresent(BelnapState.self, forKey: .evidenceState)
+        self.init(statement: statement, test: test, outcome: outcome, evidenceState: state)
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case statement, test, outcome, evidenceState
     }
 }
 
@@ -58,6 +78,10 @@ public struct IntrospectReport: Sendable, Codable, Equatable {
 
     public init(goal: String) {
         self.goal = goal
+    }
+
+    public static func reduceHypotheses(_ reports: [IntrospectReport]) -> [Hypothesis] {
+        Hypothesis.reduceRuns(reports.map(\.hypotheses))
     }
 }
 
@@ -217,6 +241,62 @@ public struct Introspector: Sendable {
 }
 
 extension Hypothesis {
+    public static func classifyOutcome(_ outcome: String) -> BelnapState {
+        let words = outcome.lowercased().split { !$0.isLetter }.map(String.init)
+        guard !words.isEmpty else { return .neither }
+        let positiveTerms: Set<String> = ["confirmed", "confirm", "confirms", "supported", "supports", "proven", "verified", "true"]
+        let negativeTerms: Set<String> = ["refuted", "refute", "refutes", "falsified", "disproved", "disproven", "contradicted", "false"]
+        let bothTerms: Set<String> = ["conflicted", "contradictory", "both"]
+        var supported = false
+        var refuted = false
+        for (index, word) in words.enumerated() {
+            let negated = index > 0 && (words[index - 1] == "not" || words[index - 1] == "never")
+            if bothTerms.contains(word) && !negated {
+                supported = true
+                refuted = true
+            } else if positiveTerms.contains(word) {
+                if negated { refuted = true } else { supported = true }
+            } else if negativeTerms.contains(word) {
+                if negated { supported = true } else { refuted = true }
+            }
+        }
+        return BelnapState.from(supported: supported, refuted: refuted)
+    }
+
+    public func infoJoin(_ other: Hypothesis) -> Hypothesis {
+        let joinedState = evidenceState.infoJoin(other.evidenceState)
+        let joinedTest = Self.joinClauses(test, other.test)
+        let joinedOutcome: String
+        switch (evidenceState == .neither, other.evidenceState == .neither) {
+        case (true, false):
+            joinedOutcome = other.outcome.isEmpty ? outcome : other.outcome
+        case (false, true):
+            joinedOutcome = outcome.isEmpty ? other.outcome : outcome
+        case (true, true), (false, false):
+            joinedOutcome = Self.joinClauses(outcome, other.outcome)
+        }
+        return Hypothesis(
+            statement: statement,
+            test: joinedTest,
+            outcome: joinedOutcome,
+            evidenceState: joinedState
+        )
+    }
+
+    public static func reduceRuns(_ runs: [[Hypothesis]]) -> [Hypothesis] {
+        var byStatement: [String: Hypothesis] = [:]
+        for run in runs {
+            for hypothesis in run {
+                if let existing = byStatement[hypothesis.statement] {
+                    byStatement[hypothesis.statement] = existing.infoJoin(hypothesis)
+                } else {
+                    byStatement[hypothesis.statement] = hypothesis
+                }
+            }
+        }
+        return byStatement.keys.sorted().compactMap { byStatement[$0] }
+    }
+
     static func parse(_ text: String) -> [Hypothesis] {
         var found: [Hypothesis] = []
         for line in text.split(whereSeparator: \.isNewline) {
@@ -227,6 +307,9 @@ extension Hypothesis {
                 found[found.count - 1].test = value
             } else if !found.isEmpty, key.hasPrefix("outcome") || key.hasPrefix("result") {
                 found[found.count - 1].outcome = value
+                found[found.count - 1].evidenceState = classifyOutcome(value)
+            } else if !found.isEmpty, key.hasPrefix("evidence"), let state = BelnapState(rawValue: value.lowercased()) {
+                found[found.count - 1].evidenceState = state
             }
         }
         return found
@@ -235,14 +318,22 @@ extension Hypothesis {
     static func merge(_ new: [Hypothesis], into all: inout [Hypothesis]) {
         for hypothesis in new {
             if let index = all.firstIndex(where: { $0.statement == hypothesis.statement }) {
-                var merged = hypothesis
-                if merged.test.isEmpty { merged.test = all[index].test }
-                if merged.outcome.isEmpty { merged.outcome = all[index].outcome }
-                all[index] = merged
+                all[index] = all[index].infoJoin(hypothesis)
             } else {
                 all.append(hypothesis)
             }
         }
+    }
+
+    private static func joinClauses(_ lhs: String, _ rhs: String) -> String {
+        if lhs.isEmpty { return rhs }
+        if rhs.isEmpty || lhs == rhs { return lhs }
+        let clauses = Set(
+            (lhs.split(separator: ";") + rhs.split(separator: ";"))
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .filter { !$0.isEmpty }
+        )
+        return clauses.sorted().joined(separator: "; ")
     }
 
     private static func field(_ line: Substring) -> (key: String, value: String)? {

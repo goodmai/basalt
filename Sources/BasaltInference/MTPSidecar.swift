@@ -67,6 +67,43 @@ final class GreedyDraftingMTPDrafter: Module, StatefulMTPDrafterModel {
     }
 }
 
+final class ProbingMTPDrafter: Module, StatefulMTPDrafterModel {
+    let inner: any StatefulMTPDrafterModel
+    let probe: ConfidenceProbe
+
+    init(_ inner: any StatefulMTPDrafterModel, probe: ConfidenceProbe) {
+        self.inner = inner
+        self.probe = probe
+        super.init()
+    }
+
+    var maximumBlockSize: Int? { inner.maximumBlockSize }
+    var requiresSharedTargetKV: Bool { inner.requiresSharedTargetKV }
+    var requiresPromptPrefill: Bool { inner.requiresPromptPrefill }
+    var requiresGreedySampling: Bool { inner.requiresGreedySampling }
+
+    func sanitize(weights: [String: MLXArray]) -> [String: MLXArray] { inner.sanitize(weights: weights) }
+
+    func makeState(parameters: GenerateParameters?) -> MTPDrafterState { inner.makeState(parameters: parameters) }
+
+    func prepareDrafterState(target: any LanguageModel, input: MTPPrefillInput, state: inout MTPDrafterState, sampler: any LogitSampler) {
+        inner.prepareDrafterState(target: target, input: input, state: &state, sampler: sampler)
+    }
+
+    func draftBlock(target: any LanguageModel, input: MTPDraftInput, sampler: any LogitSampler) -> MLXArray {
+        inner.draftBlock(target: target, input: input, sampler: sampler)
+    }
+
+    func draftBlock(target: any LanguageModel, input: MTPDraftInput, state: inout MTPDrafterState, sampler: any LogitSampler) -> MLXArray {
+        inner.draftBlock(target: target, input: input, state: &state, sampler: sampler)
+    }
+
+    func commitDrafterState(target: any LanguageModel, input: MTPCommitInput, state: inout MTPDrafterState, sampler: any LogitSampler) {
+        inner.commitDrafterState(target: target, input: input, state: &state, sampler: sampler)
+        ConfidenceProbeRecorder.recordDraftRound(probe: probe, accepted: input.acceptedCount, drafted: input.draftTokens.dim(-1))
+    }
+}
+
 enum MTPSidecarError: LocalizedError, Equatable {
     case malformed(String)
 
@@ -78,6 +115,12 @@ enum MTPSidecarError: LocalizedError, Equatable {
 }
 
 enum MTPSidecar {
+    static func probing(_ drafter: any MTPDrafterModel, processor: (any LogitProcessor)?) -> any MTPDrafterModel {
+        guard let stateful = drafter as? any StatefulMTPDrafterModel,
+              let probe = ConfidenceProbeRecorder.findProbe(in: processor) else { return drafter }
+        return ProbingMTPDrafter(stateful, probe: probe)
+    }
+
     static func file(in directory: URL) -> URL? {
         let config = ModelCache.config(at: directory)
         let declared = (config?["mlx_lm_extra_tensors"] as? [String: Any])?["mtp_file"] as? String

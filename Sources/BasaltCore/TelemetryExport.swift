@@ -56,6 +56,13 @@ public enum TelemetryExport {
             appendMetric("confidence_min_probability", "gauge", "Measured generations per decile of their lowest top-token probability.", bins(confidence.minProbability, "decile"), into: &lines)
             appendMetric("confidence_mean_entropy", "gauge", "Measured generations per half-nat bin of their mean next-token entropy (the last bin is open).", bins(confidence.meanEntropy, "bin"), into: &lines)
             appendMetric("confidence_min_margin", "gauge", "Measured generations per decile of their smallest gap between the top two token probabilities.", bins(confidence.minMargin, "decile"), into: &lines)
+            appendMetric(
+                "confidence_belnap_total",
+                "counter",
+                "Measured generations per four-valued Belnap evidence state.",
+                BelnapState.allCases.map { ("state=\"\($0.rawValue)\"", Double(confidence.belnap[$0])) },
+                into: &lines
+            )
         }
         if let experts = snapshot.experts {
             appendMetric("expert_cache_hits", "counter", "Streamed expert cache hits.", [("", Double(experts.cache.hits))], into: &lines)
