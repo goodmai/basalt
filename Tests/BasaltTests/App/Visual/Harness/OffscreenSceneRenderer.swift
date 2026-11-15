@@ -88,6 +88,8 @@ public enum OffscreenSceneRenderer {
         host.layoutSubtreeIfNeeded()
         window.makeFirstResponder(nil)
         host.layoutSubtreeIfNeeded()
+        host.displayIfNeeded()
+        host.layoutSubtreeIfNeeded()
         NSAnimationContext.endGrouping()
         CATransaction.commit()
         CATransaction.flush()

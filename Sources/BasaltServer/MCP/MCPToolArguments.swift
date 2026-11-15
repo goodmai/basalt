@@ -439,26 +439,6 @@ extension TraceRequest {
     }
 }
 
-extension Intervention {
-    static let kinds = ["steer", "ablate_head", "ablate_expert"]
-
-    init(mcp args: [String: Any]?) throws(MCPFailure) {
-        let layer = try MCPArguments.required("layer", MCPArguments.integer("layer", in: args, ResearchCall.nonNegative))
-        switch try MCPArguments.string("kind", in: args) {
-        case "steer"?:
-            let vector = try MCPArguments.required("vector", MCPArguments.numbers("vector", in: args))
-            self = .steer(layer: layer, vector: vector, scale: try MCPArguments.number("scale", in: args) ?? 1)
-        case "ablate_head"?:
-            self = .ablateHead(layer: layer, head: try MCPArguments.required("head", MCPArguments.integer("head", in: args, ResearchCall.nonNegative)))
-        case "ablate_expert"?:
-            self = .ablateExpert(layer: layer, expert: try MCPArguments.required("expert", MCPArguments.integer("expert", in: args, ResearchCall.nonNegative)))
-        default:
-            throw .invalidParams("kind must be one of: \(Self.kinds.joined(separator: ", "))")
-        }
-        if let when = MCPArguments.present("when", in: args) { self = .conditional(try ConditionalIntervention(self, mcp: when)) }
-    }
-}
-
 extension WeightDelta {
     init(mcp args: [String: Any]?) throws(MCPFailure) {
         self.init(

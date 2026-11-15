@@ -306,7 +306,8 @@ extension ResearchTool {
             "kind": ["type": "string", "enum": Intervention.kinds],
             "layer": ["type": "integer", "minimum": 0],
             "vector": numbers.merging(["description": "steer: vector of the hidden size added after the layer"]) { $1 },
-            "scale": ["type": "number", "description": "steer: factor on the vector (default 1)"],
+            "scale": ["type": "number", "description": "steer: factor on the vector, or rotation angle in radians for geodesic (default 1)"],
+            "geometry": geometryProperty,
             "head": ["type": "integer", "minimum": 0, "description": "ablate_head: head to zero"],
             "expert": ["type": "integer", "minimum": 0, "description": "ablate_expert: expert to zero"],
             "when": whenProperty,
@@ -455,6 +456,7 @@ extension ResearchTool {
             "layers": ["type": "array", "items": ["type": "integer", "minimum": 0], "description": "Layers to search (default: all)"],
             "topHeads": ["type": "integer", "minimum": ContrastRequest.headLimit.lowerBound, "maximum": ContrastRequest.headLimit.upperBound, "description": "Heads reported, ranked by ablation effect (default 8; 0 skips the ablations)"],
             "scales": numbers.merging(["maxItems": ContrastRequest.scaleCount.upperBound, "description": "Steering scales tried on the held-out prompts (default [2, 4, 8])"]) { $1 },
+            "geometry": geometryProperty,
         ]
     }
 

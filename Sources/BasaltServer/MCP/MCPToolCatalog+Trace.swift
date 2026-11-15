@@ -40,6 +40,14 @@ extension ResearchTool {
 }
 
 extension ResearchTool {
+    static var geometryProperty: [String: Any] {
+        [
+            "type": "string",
+            "enum": SteerGeometry.names,
+            "description": "Steering geometry: additive vector addition or norm-preserving geodesic rotation on the residual hypersphere, scale in radians (default additive)",
+        ]
+    }
+
     static var whenProperty: [String: Any] {
         [
             "type": "object", "required": ["kind", "layer"],

@@ -15,7 +15,13 @@ extension ContrastRequest {
         let positive = try Self.prompts("positive", in: args, Self.classPrompts)
         let negative = try Self.prompts("negative", in: args, Self.classPrompts)
         let heldOut = try Self.prompts("heldOut", in: args, Self.heldOutPrompts)
-        self.init(positive: positive, negative: negative, heldOut: heldOut, layers: try MCPArguments.integers("layers", in: args))
+        self.init(
+            positive: positive,
+            negative: negative,
+            heldOut: heldOut,
+            layers: try MCPArguments.integers("layers", in: args),
+            geometry: try SteerGeometry.parse(in: args)
+        )
         topHeads = try MCPArguments.integer("topHeads", in: args, Self.headLimit) ?? topHeads
         if let scales = try MCPArguments.numbers("scales", in: args) {
             guard Self.scaleCount.contains(scales.count) else { throw .invalidParams("scales must hold \(Self.scaleCount) numbers") }

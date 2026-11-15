@@ -28,7 +28,7 @@ public enum InterventionTrigger: Sendable, Codable, Equatable {
 extension Intervention {
     public var layer: Int {
         switch self {
-        case .steer(let layer, _, _), .ablateHead(let layer, _), .ablateExpert(let layer, _): layer
+        case .steer(let layer, _, _, _), .ablateHead(let layer, _), .ablateExpert(let layer, _): layer
         case .conditional(let rule): rule.action.layer
         }
     }

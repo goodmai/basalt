@@ -67,12 +67,14 @@ public struct GateCheck: Sendable, Codable, Equatable {
     public var passed: Bool
     public var value: Float
     public var limit: Float
+    public var satisfaction: Double?
 
-    public init(name: String, passed: Bool, value: Float, limit: Float) {
+    public init(name: String, passed: Bool, value: Float, limit: Float, satisfaction: Double? = nil) {
         self.name = name
         self.passed = passed
         self.value = value
         self.limit = limit
+        self.satisfaction = satisfaction.map(TNorm.clamp)
     }
 }
 
@@ -80,10 +82,28 @@ public struct GateReport: Sendable, Codable {
     public var passed: Bool { checks.allSatisfy(\.passed) }
     public var checks: [GateCheck]
     public var compare: CompareReport?
+    public var fisherRaoDistance: Float?
+    public var tNorm: TNormSummary?
 
-    public init(checks: [GateCheck], compare: CompareReport? = nil) {
+    public init(
+        checks: [GateCheck],
+        compare: CompareReport? = nil,
+        fisherRaoDistance: Float? = nil,
+        tNorm: TNormSummary? = nil
+    ) {
         self.checks = checks
         self.compare = compare
+        if let fisherRaoDistance {
+            self.fisherRaoDistance = fisherRaoDistance
+        } else if let rows = compare?.rows, !rows.isEmpty {
+            self.fisherRaoDistance = rows.map(\.fisherRaoDistance).reduce(0, +) / Float(rows.count)
+        }
+        if let tNorm {
+            self.tNorm = tNorm
+        } else if !checks.isEmpty {
+            let degrees = checks.map { $0.satisfaction ?? ($0.passed ? 1.0 : 0.0) }
+            self.tNorm = TNormSummary(degrees.span)
+        }
     }
 }
 
@@ -141,16 +161,21 @@ public struct ContrastRequest: Sendable, Codable, Equatable {
     public var layers: [Int]?
     public var topHeads = 8
     public var scales: [Float] = [2, 4, 8]
+    public var geometry: SteerGeometry = .additive
 
     public static let classPrompts = 2...32
     public static let heldOutPrompts = 1...16
     public static let scaleCount = 1...8
 
-    public init(positive: [String], negative: [String], heldOut: [String], layers: [Int]? = nil) {
+    public init(
+        positive: [String], negative: [String], heldOut: [String],
+        layers: [Int]? = nil, geometry: SteerGeometry = .additive
+    ) {
         self.positive = positive
         self.negative = negative
         self.heldOut = heldOut
         self.layers = layers
+        self.geometry = geometry
     }
 }
 
@@ -181,11 +206,13 @@ public struct HeadEffect: Sendable, Codable, Equatable {
 public struct SteerTrial: Sendable, Codable, Equatable {
     public var scale: Float
     public var klDivergence: Float
+    public var fisherRaoDistance: Float
     public var projectionShift: Float
 
-    public init(scale: Float, klDivergence: Float, projectionShift: Float) {
+    public init(scale: Float, klDivergence: Float, projectionShift: Float, fisherRaoDistance: Float = 0) {
         self.scale = scale
         self.klDivergence = klDivergence
+        self.fisherRaoDistance = fisherRaoDistance
         self.projectionShift = projectionShift
     }
 }
