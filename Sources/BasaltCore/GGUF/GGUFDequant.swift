@@ -1,7 +1,7 @@
 import Foundation
 
-enum GGUFDequant {
-    static func floats(_ raw: RawSpan, type: GGMLType, count: Int) -> [Float] {
+package enum GGUFDequant {
+    package static func floats(_ raw: RawSpan, type: GGMLType, count: Int) -> [Float] {
         [Float](capacity: count) { out in
             let (elements, bytes) = type.block
             var block = InlineArray<256, Float>(repeating: 0)
@@ -14,11 +14,11 @@ enum GGUFDequant {
         }
     }
 
-    static func floats(_ data: Data, type: GGMLType, count: Int) -> [Float] {
+    package static func floats(_ data: Data, type: GGMLType, count: Int) -> [Float] {
         floats(data.bytes, type: type, count: count)
     }
 
-    static func floats(_ raw: UnsafeRawBufferPointer, type: GGMLType, count: Int) -> [Float] {
+    package static func floats(_ raw: UnsafeRawBufferPointer, type: GGMLType, count: Int) -> [Float] {
         floats(raw.bytes, type: type, count: count)
     }
 
@@ -31,9 +31,11 @@ enum GGUFDequant {
             let d = half(b, 0)
             for j in 0 ..< 32 { y[j] = d * Float(Int8(bitPattern: b[2 + j])) }
         case .q2K: q2K(b, &y)
+        case .q3K: q3K(b, &y)
         case .q4K: q4K(b, &y)
+        case .q5K: q5K(b, &y)
         case .q6K: q6K(b, &y)
-        case .iq4NL, .iq4XS, .iq3S, .iq3XXS, .iq2S, .iq2XS, .iq2XXS, .iq1M: decodeIQ(b, type: type, into: &y)
+        case .iq4NL, .iq4XS, .iq3S, .iq3XXS, .iq2S, .iq2XS, .iq2XXS, .iq1S, .iq1M: decodeIQ(b, type: type, into: &y)
         }
     }
 
@@ -93,6 +95,34 @@ enum GGUFDequant {
                 let q = Int(b[16 + group * 32 + l])
                 y[group * 64 + l] = d * s1 * Float(q & 0xf) - dmin * m1
                 y[group * 64 + 32 + l] = d * s2 * Float(q >> 4) - dmin * m2
+            }
+        }
+    }
+
+    static func q3K(_ b: RawSpan, _ y: inout MutableSpan<Float>) {
+        let d = half(b, 108)
+        for g in 0 ..< 8 {
+            for h in 0 ..< 2 {
+                let s = 2 * g + h
+                let sc = ((Int(b[96 + s % 8]) >> (4 * (s / 8))) & 0xf) | (((Int(b[104 + s % 4]) >> (2 * (s / 4))) & 3) << 4)
+                let dl = d * Float(sc - 32)
+                for l in 0 ..< 16 {
+                    let ql = (Int(b[32 + (g / 4) * 32 + h * 16 + l]) >> (2 * (g % 4))) & 3
+                    let qh = ((Int(b[h * 16 + l]) >> g) & 1) ^ 1
+                    y[g * 32 + h * 16 + l] = dl * Float(ql - (qh << 2))
+                }
+            }
+        }
+    }
+
+    static func q5K(_ b: RawSpan, _ y: inout MutableSpan<Float>) {
+        let (d, dmin) = (half(b, 0), half(b, 2))
+        for g in 0 ..< 8 {
+            let (s, m) = scaleMin(g, b)
+            for l in 0 ..< 32 {
+                let ql = (Int(b[48 + (g / 2) * 32 + l]) >> (4 * (g & 1))) & 0xf
+                let qh = (Int(b[16 + l]) >> g) & 1
+                y[g * 32 + l] = d * s * Float(ql | (qh << 4)) - dmin * m
             }
         }
     }

@@ -67,29 +67,34 @@ public struct CoreAIVisionTower: Sendable {
         let (count, channels) = (rows.dim(0), rows.dim(1))
         let total = channels * length
         let padded = count == length ? rows : concatenated([rows, MLXArray.zeros([length - count, channels], dtype: rows.dtype)], axis: 0)
-        let planar = contiguous(padded.transposed().asType(.float16))
-        eval(planar)
         let shape = perHead ? [1, 1, channels, length] : [1, channels, 1, length]
-        let bytes = planar.asData(access: .noCopyIfContiguous).data
-        defer { withExtendedLifetime(planar) {} }
-        var array = NDArray(shape: shape, scalarType: .float16)
-        do {
-            guard var target = array.mutableView(as: Float16.self).contiguousElements, target.count == total else {
-                throw BasaltError.inferenceError("a Core AI input of \(channels)x\(length) is not row-major")
+        return try UnifiedMemoryBridge.withContiguousSpan(of: padded.transposed(), as: Float16.self) { source in
+            var array = NDArray(shape: shape, scalarType: .float16)
+            do {
+                guard var target = array.mutableView(as: Float16.self).contiguousElements,
+                      target.count == total, source.count == total
+                else {
+                    throw BasaltError.inferenceError("a Core AI input of \(channels)x\(length) is not row-major")
+                }
+                UnifiedMemoryBridge.copyScalars(from: source, into: &target)
             }
-            target.withUnsafeMutableBufferPointer { _ = bytes.copyBytes(to: $0) }
+            return array
         }
-        return array
     }
 
     static func rows(_ planar: NDArray, count: Int) throws -> MLXArray {
         let (channels, length) = (planar.shape[1], planar.shape[3])
         let total = channels * length
-        guard count <= length, let elements = planar.view(as: Float16.self).contiguousElements, elements.count == total else {
+        guard count <= length, planar.view(as: Float16.self).contiguousElements?.count == total else {
             throw BasaltError.inferenceError("the vision tower output is not a row-major (1, C, 1, N) array")
         }
         guard total > 0, count > 0 else { return MLXArray.zeros([count, channels], dtype: .float16) }
-        let values = elements.withUnsafeBufferPointer { MLXArray($0, [channels, length]) }
+        let values = try UnifiedMemoryBridge.makeMLXArray(shape: [channels, length], as: Float16.self) { dst throws(BasaltError) in
+            guard let elements = planar.view(as: Float16.self).contiguousElements, elements.count == total else {
+                throw BasaltError.inferenceError("the vision tower output is not a row-major (1, C, 1, N) array")
+            }
+            UnifiedMemoryBridge.copyScalars(from: elements, into: &dst)
+        }
         return values[0..., ..<count].transposed()
     }
 }

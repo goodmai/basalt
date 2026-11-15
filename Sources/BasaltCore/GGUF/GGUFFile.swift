@@ -1,8 +1,8 @@
 import Foundation
 
 public enum GGMLType: UInt32, Sendable, Equatable, CaseIterable {
-    case f32 = 0, f16 = 1, q8_0 = 8, q2K = 10, q4K = 12, q6K = 14
-    case iq2XXS = 16, iq2XS = 17, iq3XXS = 18, iq4NL = 20, iq3S = 21, iq2S = 22, iq4XS = 23, iq1M = 29, bf16 = 30
+    case f32 = 0, f16 = 1, q8_0 = 8, q2K = 10, q3K = 11, q4K = 12, q5K = 13, q6K = 14
+    case iq2XXS = 16, iq2XS = 17, iq3XXS = 18, iq1S = 19, iq4NL = 20, iq3S = 21, iq2S = 22, iq4XS = 23, iq1M = 29, bf16 = 30
 
     public var block: (elements: Int, bytes: Int) {
         switch self {
@@ -11,8 +11,11 @@ public enum GGMLType: UInt32, Sendable, Equatable, CaseIterable {
         case .q8_0: (32, 34)
         case .iq4NL: (32, 18)
         case .q2K: (256, 84)
+        case .q3K: (256, 110)
         case .q4K: (256, 144)
+        case .q5K: (256, 176)
         case .q6K: (256, 210)
+        case .iq1S: (256, 50)
         case .iq2XXS: (256, 66)
         case .iq2XS: (256, 74)
         case .iq2S: (256, 82)

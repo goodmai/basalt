@@ -13,7 +13,8 @@ struct GGUFKernelTests {
     static func halfOffsets(_ type: GGMLType) -> [Int] {
         switch type {
         case .q2K: [80, 82]
-        case .q4K: [0, 2]
+        case .q3K: [108]
+        case .q4K, .q5K: [0, 2]
         case .q6K: [208]
         case .iq1M, .f32, .f16, .bf16: []
         default: [0]

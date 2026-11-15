@@ -10,8 +10,25 @@ extension GGUFDequant {
         case .iq2S: iq2S(b, &y)
         case .iq2XS: iq2XS(b, &y)
         case .iq2XXS: iq2XXS(b, &y)
+        case .iq1S: iq1S(b, &y)
         case .iq1M: iq1M(b, &y)
-        case .f32, .f16, .bf16, .q8_0, .q2K, .q4K, .q6K: decode(b, type: type, into: &y)
+        case .f32, .f16, .bf16, .q8_0, .q2K, .q3K, .q4K, .q5K, .q6K: decode(b, type: type, into: &y)
+        }
+    }
+
+    static func iq1S(_ b: RawSpan, _ y: inout MutableSpan<Float>) {
+        let d = half(b, 0)
+        for ib in 0 ..< 8 {
+            let qh = u16(b, 34 + 2 * ib)
+            let dl = d * Float(2 * ((qh >> 12) & 7) + 1)
+            let delta = iq1Delta(qh & 0x8000)
+            for l in 0 ..< 4 {
+                let index = Int(b[2 + ib * 4 + l]) | (((qh >> (3 * l)) & 7) << 8)
+                for j in 0 ..< 8 {
+                    let value = Float(Int8(truncatingIfNeeded: gridByte(ggmlIQ1SGrid, index, j)))
+                    y[ib * 32 + l * 8 + j] = dl * (value + delta)
+                }
+            }
         }
     }
 
