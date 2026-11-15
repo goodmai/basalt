@@ -105,7 +105,7 @@ extension MLXInferenceEngine {
         var written: Set<String> = []
         var skipped = 0
         for path in promptCaches.storedPathsByRecency() {
-            guard let lease = promptCaches.lease(path.namespace, for: path.tokens + [0]) else { continue }
+            guard let lease = promptCaches.lease(path.namespace, for: path.tokens + [0], countsAccess: false) else { continue }
             let tokens = Array(path.tokens.prefix(lease.reusedTokens))
             guard !tokens.isEmpty else { continue }
             let alreadyOnDisk = promptCacheDisk?.has(fingerprint: fingerprint, namespace: path.namespace, tokens: tokens) == true

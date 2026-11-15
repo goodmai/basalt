@@ -116,6 +116,8 @@ package struct RESTServer: Sendable {
         let defaultId = config.modelId ?? config.modelPath.split(separator: "/").last.map { String($0) } ?? "basalt"
         let router = Router(context: BasicRequestContext.self)
         addMiddleware(to: router)
+        let orchestrator = orchestrator
+        router.get("/metrics") { _, _ in await Self.metricsResponse(orchestrator) }
         addNativeRoutes(to: router.group("/api/v1"), GenerateController(orchestrator: orchestrator, modelId: defaultId))
         addModelRoutes(
             to: router.group("/v1"),
@@ -139,12 +141,10 @@ package struct RESTServer: Sendable {
     }
 
     private func addNativeRoutes(to v1: RouterGroup<BasicRequestContext>, _ controller: GenerateController) {
+        let orchestrator = orchestrator
         v1.get("/health") { try await controller.health(request: $0, context: $1) }
         v1.get("/stats") { try await controller.stats(request: $0, context: $1) }
-        v1.get("/metrics") { _, _ in
-            let text = TelemetryExport.openMetrics(await orchestrator.telemetrySnapshot())
-            return Response(status: .ok, headers: [.contentType: TelemetryExport.contentType], body: ResponseBody(byteBuffer: ByteBuffer(string: text)))
-        }
+        v1.get("/metrics") { _, _ in await Self.metricsResponse(orchestrator) }
         v1.post("/generate", use: controller.generate)
         v1.post("/generate/stream", use: controller.generateStream)
     }
@@ -198,6 +198,11 @@ package struct RESTServer: Sendable {
 }
 
 extension RESTServer {
+    static func metricsResponse(_ orchestrator: any ModelOrchestrating) async -> Response {
+        let text = TelemetryExport.openMetrics(await orchestrator.telemetrySnapshot())
+        return Response(status: .ok, headers: [.contentType: TelemetryExport.contentType], body: ResponseBody(byteBuffer: ByteBuffer(string: text)))
+    }
+
     static let swaggerHTML = """
     <!DOCTYPE html>
     <html lang="en">
@@ -225,6 +230,7 @@ extension RESTServer {
       "info": { "title": "Basalt REST API", "version": "1.0.0",
                 "description": "Local LLM inference — open on loopback; an API key (Bearer or x-api-key) is required when bound off loopback" },
       "paths": {
+        "/metrics":                { "get":  { "summary": "OpenMetrics text for Prometheus (unprefixed alias of /api/v1/metrics)" } },
         "/api/v1/health":          { "get":  { "summary": "Health check" } },
         "/api/v1/metrics":         { "get":  { "summary": "OpenMetrics text for Prometheus: counters, gauges, trailing-window quantiles of TTFT and tok/s, prompt-cache hit ratio, draft acceptance, per-model decision counts, cost and confidence deciles" } },
         "/api/v1/generate":        { "post": { "summary": "Raw text generation" } },

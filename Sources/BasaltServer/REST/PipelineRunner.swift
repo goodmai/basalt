@@ -67,6 +67,7 @@ struct PipelineRunner: Sendable {
             perception.receipts + [deciding].compactMap { $0 }, replies: replies, answers: answers, ms: Self.elapsed(since: started))
         receipt.swapMs = stages.swap == nil && stages.onDemand.isEmpty ? nil : PipelineCore.milliseconds(perception.swap)
         await chat.sessionLog?.logPipeline(origin: origin, sessionId: sessionId, receipt: receipt)
+        await chat.telemetry.recordPipeline(receipt, questions: request.questions, answers: answers)
         return PipelineResponse(perceived: perceived, answers: answers, system2: system2, receipt: receipt)
     }
 

@@ -31,6 +31,8 @@ public struct ServerTelemetrySnapshot: Codable, Sendable, Equatable {
     public var decisions: [String: DecisionTelemetry]?
     public var experts: ExpertTelemetry?
     public var confidence: ConfidenceTelemetry?
+    public var cache: CacheTelemetry?
+    public var calibration: DecisionCalibrationTelemetry?
 
     public init() {}
 
@@ -71,85 +73,113 @@ public struct MemoryTelemetry: Codable, Sendable, Equatable {
 public actor TelemetryTracker {
     public static let shared = TelemetryTracker()
 
-    private var lastTokensPerSecond: Double = 0.0
-    private var lastTTFT: Double = 0.0
-    private var totalRequests: Int = 0
-    private var totalTokens: Int = 0
-    private var activeRequests: Int = 0
-    private var gpuActiveBytes: Int64 = 0
-    private var gpuPeakBytes: Int64 = 0
-    private var modelRAMMB: Int = 0
-    private var draftTokens = 0
-    private var acceptedDraftTokens = 0
+    private var core = TelemetryCore()
+    private var sinks: [any TelemetrySink]
+    private let clock: @Sendable () -> Date
     private var hardware: SystemProfiler.SystemResources?
-    private var model = ""
-    private var health = HealthTelemetry()
-    private var windows = TelemetryWindows()
-    private var decisions: [String: DecisionTelemetry] = [:]
-    private var confidence = ConfidenceTelemetry()
-    private var confidenceEvery = 0
-    private var confidenceCounter = 0
     private let logger = BasaltLogger(module: "Telemetry")
 
-    public init() {}
-
-    private func recordGeneration(_ response: GenerationResponse) {
-        totalRequests += 1
-        totalTokens += response.completionTokens
-        lastTokensPerSecond = response.tokensPerSecond
-        lastTTFT = response.timeToFirstToken
-        gpuActiveBytes = Int64(response.memory.activeBytes)
-        gpuPeakBytes = Int64(response.memory.peakBytes)
-        draftTokens += response.draftTokens ?? 0
-        acceptedDraftTokens += response.acceptedDraftTokens ?? 0
-        for warning in health.record(response, model: model) { logger.warn(warning) }
-        var sample = TelemetrySample(
-            at: Date(), ttft: response.timeToFirstToken, tokensPerSecond: response.tokensPerSecond, completionTokens: response.completionTokens, promptTokens: response.promptTokens)
-        (sample.cachedPromptTokens, sample.draftTokens, sample.acceptedDraftTokens) = (response.cachedPromptTokens, response.draftTokens ?? 0, response.acceptedDraftTokens ?? 0)
-        windows.record(sample)
-        if let measured = response.confidence { confidence.record(measured) }
+    public init(sinks: [any TelemetrySink] = [], clock: @escaping @Sendable () -> Date = { Date() }) {
+        self.sinks = sinks
+        self.clock = clock
     }
 
-    public func sampleConfidence(every requests: Int) { confidenceEvery = max(0, requests) }
+    public var coreState: TelemetryCore { core }
+
+    public func addSink(_ sink: any TelemetrySink) {
+        sinks.append(sink)
+    }
+
+    public func installDefaultSinkIfEmpty(_ sink: any TelemetrySink) {
+        if sinks.isEmpty { sinks.append(sink) }
+    }
+
+    public func sampleConfidence(every requests: Int) {
+        core.sampleConfidence(every: requests)
+    }
 
     public func sampled(_ request: GenerationRequest) -> GenerationRequest {
-        guard confidenceEvery > 0, !request.recordConfidence else { return request }
-        confidenceCounter += 1
-        return confidenceCounter % confidenceEvery == 0 ? request.withConfidenceRecording() : request
+        core.sampled(request)
     }
 
     public func recordDecision(_ response: SystemOneResponse, latencyMs: Double) {
-        decisions[response.model, default: DecisionTelemetry()].record(response, latencyMs: latencyMs)
+        core.recordDecision(response, latencyMs: latencyMs)
+        for sink in sinks { sink.recordDecision(response, latencyMs: latencyMs) }
     }
 
     public func setModelMemory(mb: Int) {
-        modelRAMMB = mb
+        core.modelRAMMB = mb
     }
 
     public func setModel(_ name: String) {
-        model = name
+        core.model = name
     }
 
     public func recordCanary(passed: Bool, at date: Date = Date()) {
-        var canary = health.canary ?? CanaryTelemetry()
-        canary.record(passed: passed, at: date)
-        health.canary = canary
+        core.recordCanary(passed: passed, at: date)
     }
 
-    public func requestStarted() { activeRequests += 1 }
+    public func requestStarted() {
+        let active = core.requestStarted()
+        for sink in sinks { sink.recordActiveRequests(active) }
+    }
 
     public func requestFinished(with response: GenerationResponse? = nil) {
-        activeRequests = max(0, activeRequests - 1)
-        if let response { recordGeneration(response) }
+        let warnings = core.requestFinished(with: response, at: clock())
+        for warning in warnings { logger.warn(warning) }
+        let active = core.activeRequests
+        let currentModel = core.model
+        let currentCache = core.cache
+        for sink in sinks {
+            sink.recordActiveRequests(active)
+            if let response {
+                sink.recordGeneration(response, model: currentModel)
+                if response.cacheTelemetry != nil { sink.recordCache(currentCache) }
+            }
+        }
     }
 
     public func recordRemote(_ response: GenerationResponse) {
         guard response.finishReason != .error else { return }
-        totalRequests += 1
-        totalTokens += response.completionTokens
-        windows.record(TelemetrySample(
-            at: Date(), ttft: response.timeToFirstToken, tokensPerSecond: response.tokensPerSecond,
-            completionTokens: response.completionTokens, promptTokens: response.promptTokens))
+        core.recordRemote(response, at: clock())
+        let currentModel = core.model
+        for sink in sinks { sink.recordGeneration(response, model: currentModel) }
+    }
+
+    public func recordCache(_ delta: CacheTelemetry) {
+        core.recordCache(delta)
+        let current = core.cache
+        for sink in sinks { sink.recordCache(current) }
+    }
+
+    public func recordCalibration(confidence: Double, agreed: Bool) {
+        core.recordCalibration(confidence: confidence, agreed: agreed)
+        let current = core.calibration
+        for sink in sinks { sink.recordCalibration(confidence: confidence, agreed: agreed, telemetry: current) }
+    }
+
+    public func recordIntervention(_ event: InterventionTelemetryEvent) {
+        core.recordIntervention(event)
+        for sink in sinks { sink.recordIntervention(event) }
+    }
+
+    public func recordStage(_ span: ComposeStageSpan) {
+        for sink in sinks { sink.recordStage(span) }
+    }
+
+    public func recordPipeline(
+        _ receipt: PipelineReceipt, questions: [String: SystemOneQuestion] = [:], answers: [String: PipelineAnswer] = [:]
+    ) {
+        for stage in receipt.stages {
+            recordStage(ComposeStageSpan(
+                stage: stage.stage, model: stage.model, latencyMs: Double(stage.ms), tokens: stage.tokens, escalated: stage.escalated))
+        }
+        for (id, answer) in answers where answer.answeredBy == .answer {
+            guard let question = questions[id], let decision = answer.decision, let confidence = decision.confidence,
+                  let predicted = PipelineCore.label(of: decision, question), let verified = answer.label
+            else { continue }
+            recordCalibration(confidence: confidence, agreed: predicted == verified)
+        }
     }
 
     public func snapshot(profiler: SystemProfiler = SystemProfiler()) async -> ServerTelemetrySnapshot {
@@ -157,35 +187,11 @@ public actor TelemetryTracker {
         if let cached = hardware {
             hw = cached
         } else {
-            hw = await profiler.detectResources()
-            hardware = hw
+            let detected = await profiler.detectResources()
+            hardware = hardware ?? detected
+            hw = hardware ?? detected
         }
-        let availGB = Double(await profiler.currentAvailableRAM()) / 1_073_741_824.0
-
-        var snapshot = ServerTelemetrySnapshot()
-        snapshot.tokensPerSecond = lastTokensPerSecond
-        snapshot.timeToFirstToken = lastTTFT
-        snapshot.totalRequests = totalRequests
-        snapshot.totalTokensGenerated = totalTokens
-        snapshot.activeRequests = activeRequests
-        snapshot.gpuActiveBytes = gpuActiveBytes
-        snapshot.gpuPeakBytes = gpuPeakBytes
-        snapshot.totalRAMGB = hw.totalRAMGB
-        snapshot.availableRAMGB = (availGB * 10).rounded() / 10
-        snapshot.modelRAMMB = modelRAMMB
-        snapshot.chipModel = hw.chipModel
-        snapshot.gpuName = hw.gpuName
-        snapshot.gpuArchitecture = hw.gpuArchitecture
-        snapshot.gpuCores = hw.gpuCores
-        snapshot.neuralAccelerators = hw.neuralAccelerators
-        if draftTokens > 0 {
-            snapshot.draftTokens = draftTokens
-            snapshot.acceptedDraftTokens = acceptedDraftTokens
-        }
-        snapshot.health = health
-        snapshot.windows = windows.windows(now: Date())
-        snapshot.decisions = decisions.isEmpty ? nil : decisions
-        snapshot.confidence = confidence.responses > 0 ? confidence : nil
-        return snapshot
+        let availableBytes = await profiler.currentAvailableRAM()
+        return core.snapshot(now: clock(), hardware: hw, availableRAMBytes: availableBytes)
     }
 }

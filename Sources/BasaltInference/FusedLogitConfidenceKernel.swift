@@ -1,3 +1,4 @@
+import BasaltCore
 import Foundation
 import MLX
 
@@ -99,6 +100,35 @@ public struct FusedLogitConfidence {
         let second = scalars[1].isInfinite ? 0.0 : Foundation::exp(Double(scalars[0] - scalars[1]))
         guard first.isFinite, second.isFinite else { return nil }
         return (min(max(first, 0), 1), Double(scalars[2]), max(0, first - second))
+    }
+
+    public static func summarize(_ logits: MLXArray) -> ResponseConfidence? {
+        let vocab = logits.ndim > 0 ? logits.dim(-1) : 0
+        let rows = vocab > 0 ? logits.size / vocab : 0
+        guard rows > 0, vocab > 0 else { return nil }
+        let out = compute(logits.reshaped(rows, vocab))
+        let table = stacked([out.top1Logprob, out.top2Margin, out.entropy], axis: -1).asArray(Float.self)
+        var probabilities: [Double] = []
+        var entropies: [Double] = []
+        var margins: [Double] = []
+        probabilities.reserveCapacity(rows)
+        entropies.reserveCapacity(rows)
+        margins.reserveCapacity(rows)
+        for row in 0..<rows {
+            let base = row * 3
+            let (logp, gap, ent) = (table[base], table[base + 1], table[base + 2])
+            guard logp.isFinite, ent.isFinite, !gap.isNaN else { continue }
+            let first = Foundation::exp(Double(logp))
+            let second = gap.isInfinite ? 0.0 : Foundation::exp(Double(logp) - Double(gap))
+            guard first.isFinite, second.isFinite else { continue }
+            probabilities.append(min(max(first, 0), 1))
+            entropies.append(Double(ent))
+            margins.append(max(0, first - second))
+        }
+        guard var summary = ResponseConfidence.summarize(probabilities) else { return nil }
+        summary.meanEntropy = entropies.isEmpty ? nil : entropies.reduce(0, +) / Double(entropies.count)
+        summary.minMargin = margins.min()
+        return summary
     }
 }
 

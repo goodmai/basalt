@@ -224,9 +224,11 @@ extension MLXInferenceEngine {
         }
         let forcedTokens = inputs.constraint?.fastForward == true ? inputs.constraint?.session.totalForcedTokens : nil
         let modified = await self.modelModified(since: inputs.leaseID)
+        let cacheTelemetry = await self.drainPromptCacheTelemetry()
         return relay.response(
             generationTime: generationTime, timeToFirstToken: timeToFirstToken,
             memory: GenerationResponse.MemoryUsage(peakBytes: mem.peakMemory, activeBytes: mem.activeMemory, cacheBytes: mem.cacheMemory),
-            reasoningTokens: reasoningTokens, forcedTokens: forcedTokens, modelModified: modified)
+            reasoningTokens: reasoningTokens, forcedTokens: forcedTokens, modelModified: modified
+        ).withCacheTelemetry(cacheTelemetry)
     }
 }

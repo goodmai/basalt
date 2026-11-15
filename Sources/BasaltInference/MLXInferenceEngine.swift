@@ -42,11 +42,17 @@ public actor MLXInferenceEngine: InferenceEngine {
     private(set) var cacheBlend: CacheBlendStore?
     public var kvMemoryBudget: ByteCount? { kvBudget }
     var promptCacheDisk: PromptCacheDiskStore?
+    let telemetry: TelemetryTracker?
     var batchDecoder: BatchedDecoder?
 
-    public init(_ configuration: EngineConfiguration = .standard, promptCacheDisk: PromptCacheDiskStore? = nil) {
+    public init(
+        _ configuration: EngineConfiguration = .standard,
+        promptCacheDisk: PromptCacheDiskStore? = nil,
+        telemetry: TelemetryTracker? = nil
+    ) {
         self.configuration = configuration.normalized
         self.promptCacheDisk = promptCacheDisk
+        self.telemetry = telemetry
         promptCaches = PromptCacheTree(byteBudget: ByteCount(configuration.promptCacheBytes ?? 0), anchorLimit: max(1, configuration.hybridAnchors))
         promptCacheFullBudget = ByteCount(configuration.promptCacheBytes ?? 0)
     }
@@ -140,10 +146,12 @@ extension MLXInferenceEngine {
             logger.info("Memory directive \(appliedMemoryDirective) → \(directive): prompt cache \(promptCaches.byteBudget.rawValue >> 20) MB, \(promptCaches.evictions - evictedBefore) nodes evicted")
             appliedMemoryDirective = directive
         }
-        return MemoryLimits(
+        let limits = MemoryLimits(
             cacheLimitBytes: configuration.gpuCacheLimit.map { Self.cacheLimit($0, under: appliedMemoryDirective) },
             promptCacheBudgetBytes: Int(promptCaches.byteBudget.rawValue), promptCacheBytes: Int(promptCaches.byteCount.rawValue),
             promptCacheEvictions: promptCaches.evictions)
+        if let telemetry, let delta = promptCaches.takeTelemetryDelta() { await telemetry.recordCache(delta) }
+        return limits
     }
 
     public func pace(with pacer: PrefillPacer) async {
@@ -182,6 +190,14 @@ extension MLXInferenceEngine {
     public func releaseCaches() async {
         dropPromptCaches()
         Memory.clearCache()
+        if let telemetry, let delta = promptCaches.takeTelemetryDelta() { await telemetry.recordCache(delta) }
+    }
+
+    func drainPromptCacheTelemetry() async -> CacheTelemetry? {
+        guard let delta = promptCaches.takeTelemetryDelta() else { return nil }
+        guard let telemetry else { return delta }
+        await telemetry.recordCache(delta)
+        return nil
     }
 
     func unloadCurrentModel() async {
@@ -192,6 +208,7 @@ extension MLXInferenceEngine {
         dropPromptCaches()
         cacheBlend = nil
         Memory.clearCache()
+        if let telemetry, let delta = promptCaches.takeTelemetryDelta() { await telemetry.recordCache(delta) }
         logger.info("Previous model unloaded, GPU cache cleared.")
     }
 

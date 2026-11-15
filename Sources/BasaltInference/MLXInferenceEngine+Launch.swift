@@ -58,7 +58,7 @@ extension MLXInferenceEngine {
         ).reporting(
             degenerate: finalResponse.degenerate, draftSource: finalResponse.draftSource,
             modelModified: finalResponse.modelModified, confidence: finalResponse.confidence
-        )
+        ).withCacheTelemetry(finalResponse.cacheTelemetry)
     }
 
     struct GenerationLaunch {

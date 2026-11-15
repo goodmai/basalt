@@ -86,7 +86,10 @@ struct PromptCacheTree {
     private(set) var roots: [String: PromptCacheNode] = [:]
     private(set) var byteCount: ByteCount = 0
     private(set) var leafCount = 0
+    private(set) var hits = 0
+    private(set) var misses = 0
     private(set) var evictions = 0
+    private var reported = (hits: 0, misses: 0, evictions: 0, entries: 0, tokens: 0, bytes: Int64(0))
     private var clock = 0
 
     init(byteBudget: ByteCount, leafLimit: Int = PromptCacheTree.maxLeaves, anchorLimit: Int = 1) {
@@ -112,10 +115,17 @@ struct PromptCacheTree {
         roots[namespace].map { Self.walk(from: $0, along: tokens).reduce(0) { $0 + $1.used } } ?? 0
     }
 
-    mutating func lease(_ namespace: String, for prompt: [Int]) -> PromptCacheLease? {
-        guard let root = roots[namespace] else { return nil }
+    mutating func lease(_ namespace: String, for prompt: [Int], countsAccess: Bool = true) -> PromptCacheLease? {
+        guard let root = roots[namespace] else {
+            if countsAccess { misses += 1 }
+            return nil
+        }
         let path = HybridPrefixSnapshot.restorable(Self.walk(from: root, along: Array(prompt.dropLast())))
-        guard let deepest = path.last?.node else { return nil }
+        guard let deepest = path.last?.node else {
+            if countsAccess { misses += 1 }
+            return nil
+        }
+        if countsAccess { hits += 1 }
         touch(deepest)
         deepest.pins += 1
         let layers = deepest.layers.indices.map { layer -> KVCache in
@@ -165,33 +175,6 @@ struct PromptCacheTree {
         roots.removeAll()
         byteCount = 0
         leafCount = 0
-    }
-
-    func leaves() -> [PromptCacheNode] {
-        var found: [PromptCacheNode] = []
-        var pending = Array(roots.values)
-        while let node = pending.popLast() {
-            if node.children.isEmpty, !node.tokens.isEmpty {
-                found.append(node)
-            }
-            pending.append(contentsOf: node.children.values)
-        }
-        return found
-    }
-
-    func storedPathsByRecency() -> [(namespace: String, tokens: [Int])] {
-        var found: [(namespace: String, tokens: [Int], lastUse: Int)] = []
-        for (namespace, root) in roots {
-            var pending: [(node: PromptCacheNode, prefix: [Int])] = [(root, [])]
-            while let (node, prefix) = pending.popLast() {
-                let tokens = prefix + node.tokens
-                if node.children.isEmpty, !node.tokens.isEmpty {
-                    found.append((namespace, tokens, node.lastUse))
-                }
-                pending.append(contentsOf: node.children.values.map { ($0, tokens) })
-            }
-        }
-        return found.sorted { $0.lastUse > $1.lastUse }.map { ($0.namespace, $0.tokens) }
     }
 
     static func walk(from root: PromptCacheNode, along tokens: [Int]) -> [Step] {
@@ -405,5 +388,73 @@ extension PromptCacheTree {
             pending.append(contentsOf: node.children.values)
         }
         return report
+    }
+}
+
+extension PromptCacheTree {
+    func leaves() -> [PromptCacheNode] {
+        var found: [PromptCacheNode] = []
+        var pending = Array(roots.values)
+        while let node = pending.popLast() {
+            if node.children.isEmpty, !node.tokens.isEmpty {
+                found.append(node)
+            }
+            pending.append(contentsOf: node.children.values)
+        }
+        return found
+    }
+
+    func storedPathsByRecency() -> [(namespace: String, tokens: [Int])] {
+        var found: [(namespace: String, tokens: [Int], lastUse: Int)] = []
+        for (namespace, root) in roots {
+            var pending: [(node: PromptCacheNode, prefix: [Int])] = [(root, [])]
+            while let (node, prefix) = pending.popLast() {
+                let tokens = prefix + node.tokens
+                if node.children.isEmpty, !node.tokens.isEmpty {
+                    found.append((namespace, tokens, node.lastUse))
+                }
+                pending.append(contentsOf: node.children.values.map { ($0, tokens) })
+            }
+        }
+        return found.sorted { $0.lastUse > $1.lastUse }.map { ($0.namespace, $0.tokens) }
+    }
+
+    var cachedTokenCount: Int {
+        var total = 0
+        var pending = Array(roots.values)
+        while let node = pending.popLast() {
+            total += node.tokens.count
+            pending.append(contentsOf: node.children.values)
+        }
+        return total
+    }
+
+    var telemetry: CacheTelemetry {
+        CacheTelemetry(
+            hits: hits, misses: misses, evictions: evictions,
+            cachedEntries: leafCount, cachedTokens: cachedTokenCount, cachedBytes: byteCount.rawValue)
+    }
+
+    mutating func revokeHit() {
+        guard hits > 0 else { return }
+        hits -= 1
+        misses += 1
+    }
+
+    mutating func takeTelemetryDelta() -> CacheTelemetry? {
+        let tokens = cachedTokenCount
+        let bytes = byteCount.rawValue
+        let delta = CacheTelemetry(
+            hits: max(0, hits - reported.hits),
+            misses: max(0, misses - reported.misses),
+            evictions: max(0, evictions - reported.evictions),
+            cachedEntries: leafCount,
+            cachedTokens: tokens,
+            cachedBytes: bytes)
+        let changed = delta.hits > 0 || delta.misses > 0 || delta.evictions > 0
+            || reported.entries != leafCount || reported.tokens != tokens || reported.bytes != bytes
+        guard changed else { return nil }
+        reported = (hits, misses, evictions, leafCount, tokens, bytes)
+        return delta
     }
 }

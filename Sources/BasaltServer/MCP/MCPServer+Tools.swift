@@ -54,7 +54,11 @@ extension MCPServer {
             if case .distill(let request) = call {
                 return .json(try await orchestrator.preemptibly { lab, lease throws(BasaltError) in try await lab.distill(request, lease: lease) })
             }
-            return try await orchestrator.research { model throws(BasaltError) in try await call.run(on: model) }
+            let output = try await orchestrator.research { model throws(BasaltError) in try await call.run(on: model) }
+            if [.intervene, .weightsDelta, .overlayUndo, .adapterApply, .tensorPack, .steerCommit].contains(tool) {
+                await orchestrator.telemetry.recordIntervention(InterventionTelemetryEvent(kind: tool.rawValue))
+            }
+            return output
         } catch {
             throw MCPFailure(error)
         }
