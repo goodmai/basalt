@@ -32,8 +32,8 @@ private final class ReferenceGraphQTIPLinear: Linear {
 
     override func callAsFunction(_ x: MLXArray) -> MLXArray {
         let xRot = source.rhtIn.forwardFloat32(x, signs: inSigns, qMatrix: inQ).asType(x.dtype)
-        let wRot = source.decodedRotatedWeight(dtype: x.dtype)
-        let yRot = matmul(xRot, wRot.T)
+        let wRot = source.decodedRotatedWeight(dtype: .float32)
+        let yRot = matmul(xRot.asType(.float32), wRot.T).asType(x.dtype)
         var y = source.rhtOut.inverseFloat32(yRot, signs: outSigns, qMatrix: outQ).asType(x.dtype)
         if let b = source.bias { y = y + b }
         return y

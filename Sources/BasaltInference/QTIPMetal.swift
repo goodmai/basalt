@@ -248,7 +248,7 @@ private let qtipDecodeSource = """
     """
 
 package enum QTIPMetal {
-    static let dequantTileBytes = 256 << 20
+    static let dequantTileBytes = 64 << 20
     static let maxEncodeTilesPerLaunch = 2048
     static let burnInSteps = 24
 
@@ -418,23 +418,8 @@ package final class QTIPLinear: Linear, Quantized {
     }
 
     package func matmulRotated(_ xRot: MLXArray) -> MLXArray {
-        let tileRows = weight.dim(0)
-        let tileCols = inFeatures / 16
-        let rowsPerChunk = max(1, QTIPMetal.dequantTileBytes / max(1, 16 * inFeatures * xRot.dtype.size))
-        var parts: [MLXArray] = []
-        for start in stride(from: 0, to: tileRows, by: rowsPerChunk) {
-            let end = min(tileRows, start + rowsPerChunk)
-            let wChunk = QTIPMetal.decode(
-                packed: weight[start ..< end],
-                rowScales: rowScales[start ..< end],
-                tlut: tlut,
-                rate: rate,
-                tileCols: tileCols,
-                dtype: xRot.dtype
-            )
-            parts.append(matmul(xRot, wChunk.T))
-        }
-        return parts.count == 1 ? parts[0] : concatenated(parts, axis: -1)
+        QTIPKernels.linear(
+            xRot, packed: weight, rowScales: rowScales, tlut: tlut, rate: rate, inFeatures: inFeatures)
     }
 
     package func callPreRotated(_ xRot: MLXArray) -> MLXArray {
