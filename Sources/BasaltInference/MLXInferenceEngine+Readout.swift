@@ -6,25 +6,20 @@ import BasaltCore
 public struct ReadoutDecisionEngine: DecisionEngine {
     public let modelID: String
     let engine: MLXInferenceEngine
-    let readout: SystemOneReadout
+    public let readout: SystemOneReadout
 
     public init(engine: MLXInferenceEngine, modelID: String, readout: SystemOneReadout) {
         (self.engine, self.modelID, self.readout) = (engine, modelID, readout)
     }
 
     public func decide(_ request: SystemOneRequest) async throws(BasaltError) -> SystemOneResponse {
-        try SystemOneCore.validate(request)
-        guard request.questions.values.allSatisfy({ SystemOneReadout.options($0).count <= SystemOneReadout.letters.count }) else {
-            throw .invalidRequestStructure(details: "systemone: the letter readout takes at most \(SystemOneReadout.letters.count) options per question")
-        }
-        let names = request.questions.keys.sorted()
-        let questions = names.map { request.questions[$0]! }
-        let (logits, usage) = try await engine.letterLogits(state: request.state, questions: questions)
+        let (logits, usage) = try await engine.readoutLogits(request)
         let calibration = request.calibrated == false ? SystemOneReadout.uncalibrated : readout
         var answers: [String: SystemOneAnswer] = [:]
-        for (index, name) in names.enumerated() {
+        for (name, question) in request.questions {
+            guard let scores = logits[name] else { continue }
             answers[name] = SystemOneCore.gated(
-                calibration.answer(questions[index], letterLogits: logits[index]), abstainBelow: request.abstainBelow, minMargin: request.minMargin)
+                calibration.answer(question, letterLogits: scores), abstainBelow: request.abstainBelow, minMargin: request.minMargin)
         }
         return SystemOneResponse(model: modelID, answers: answers, usage: usage, calibrated: request.calibrated != false && calibration != .uncalibrated)
     }
@@ -35,7 +30,34 @@ public struct ReadoutDecisionEngine: DecisionEngine {
 }
 
 extension MLXInferenceEngine {
-    func letterLogits(state: String, questions: [SystemOneQuestion]) async throws(BasaltError) -> ([[Double]], SystemOneUsage) {
+    package func readoutLogits(_ request: SystemOneRequest) async throws(BasaltError) -> (logits: [String: [Double]], usage: SystemOneUsage) {
+        try SystemOneCore.validate(request)
+        guard request.questions.values.allSatisfy({ SystemOneReadout.options($0).count <= SystemOneReadout.letters.count }) else {
+            throw .invalidRequestStructure(details: "systemone: the letter readout takes at most \(SystemOneReadout.letters.count) options per question")
+        }
+        let names = request.questions.keys.sorted()
+        let questions = names.map { request.questions[$0]! }
+        let (rows, usage) = try await letterLogits(state: request.state, questions: questions)
+        return (Dictionary(uniqueKeysWithValues: zip(names, rows)), usage)
+    }
+
+    package func collectCalibrationSamples(
+        state: String,
+        questions: [String: SystemOneQuestion],
+        teacherProbabilities: [String: [Double]] = [:],
+        goldIndices: [String: Int] = [:]
+    ) async throws(BasaltError) -> [CalibrationSample] {
+        let (logits, _) = try await readoutLogits(SystemOneRequest(state: state, questions: questions))
+        let hash = SystemOneCalibrationCore.stateHash(for: state)
+        return questions.keys.sorted().compactMap { id in
+            guard let question = questions[id], let scores = logits[id] else { return nil }
+            return CalibrationSample(
+                stateHash: hash, questionID: id, kind: question.type, rawScores: scores,
+                teacherProbabilities: teacherProbabilities[id] ?? [], goldIndex: goldIndices[id])
+        }
+    }
+
+    package func letterLogits(state: String, questions: [SystemOneQuestion]) async throws(BasaltError) -> ([[Double]], SystemOneUsage) {
         guard let container else { throw .modelNotLoaded }
         do {
             return try await container.perform { context in try Self.letterLogits(state: state, questions: questions, context: context) }

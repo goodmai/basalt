@@ -1,6 +1,6 @@
 import Foundation
 
-public struct SystemOneReadout: Sendable, Equatable {
+public struct SystemOneReadout: Sendable, Codable, Equatable {
     public static let letters = (65 ... 90).map { String(UnicodeScalar($0)!) } + (97 ... 122).map { String(UnicodeScalar($0)!) }
     public static let scoreSuffix = " Rate along the ordered levels below (lowest first)."
 
@@ -8,22 +8,53 @@ public struct SystemOneReadout: Sendable, Equatable {
     public var noulTemperature: Double
     public var noulBias: Double
 
+    enum CodingKeys: String, CodingKey {
+        case temperature
+        case noulTemperature = "noul_temperature"
+        case noulBias = "noul_bias"
+    }
+
     public init(temperature: Double = 1, noulTemperature: Double = 1, noulBias: Double = 0) {
         (self.temperature, self.noulTemperature, self.noulBias) = (temperature, noulTemperature, noulBias)
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let temperature = try container.decode(Double.self, forKey: .temperature)
+        let noul = try container.decodeIfPresent(Double.self, forKey: .noulTemperature) ?? temperature
+        let bias = try container.decodeIfPresent(Double.self, forKey: .noulBias) ?? 0
+        guard temperature > 0, temperature.isFinite, noul > 0, noul.isFinite, bias.isFinite else {
+            throw DecodingError.dataCorrupted(DecodingError.Context(codingPath: decoder.codingPath, debugDescription: "invalid readout calibration"))
+        }
+        self.init(temperature: temperature, noulTemperature: noul, noulBias: bias)
     }
 
     public static let uncalibrated = SystemOneReadout()
 
     public static let bundleFile = "basalt_readout.json"
 
+    public func encode() throws(BasaltError) -> Data {
+        guard temperature > 0, temperature.isFinite, noulTemperature > 0, noulTemperature.isFinite, noulBias.isFinite else {
+            throw .modelConfigurationInvalid(path: Self.bundleFile, reason: "readout calibration parameters must be finite with positive temperatures")
+        }
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        guard let data = try? encoder.encode(self) else {
+            throw .modelConfigurationInvalid(path: Self.bundleFile, reason: "readout calibration JSON could not be encoded")
+        }
+        return data + Data("\n".utf8)
+    }
+
+    public static func decode(_ data: Data) throws(BasaltError) -> SystemOneReadout {
+        guard let readout = try? JSONDecoder().decode(SystemOneReadout.self, from: data) else {
+            throw .modelConfigurationInvalid(path: bundleFile, reason: "invalid readout calibration JSON")
+        }
+        return readout
+    }
+
     public static func bundled(in directory: URL) -> SystemOneReadout? {
-        guard let data = try? Data(contentsOf: directory.appending(path: bundleFile)),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let temperature = (json["temperature"] as? NSNumber)?.doubleValue, temperature > 0, temperature.isFinite else { return nil }
-        let noul = (json["noul_temperature"] as? NSNumber)?.doubleValue ?? temperature
-        let bias = (json["noul_bias"] as? NSNumber)?.doubleValue ?? 0
-        guard noul > 0, noul.isFinite, bias.isFinite else { return nil }
-        return SystemOneReadout(temperature: temperature, noulTemperature: noul, noulBias: bias)
+        guard let data = try? Data(contentsOf: directory.appending(path: bundleFile)) else { return nil }
+        return try? decode(data)
     }
 
     public static func calibration(for model: String, in directory: URL) -> SystemOneReadout {
