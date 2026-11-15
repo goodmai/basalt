@@ -101,7 +101,7 @@ struct PipelineSequentialTests {
         return (transcript, answer)
     }
 
-    static func served(unloadsChat: Bool) async throws -> (chat: ModelOrchestratorActor, chatEngine: ReloadingEngine, speechEngine: ReloadingEngine, stages: PipelineStages) {
+    static func served(unloadsChat: Bool) async throws -> (chat: ModelOrchestratorActor<ReloadingEngine>, chatEngine: ReloadingEngine, speechEngine: ReloadingEngine, stages: PipelineStages) {
         let chatEngine = ReloadingEngine { try TinyModel.container() }
         let chat = ModelOrchestratorActor(engine: chatEngine, telemetry: TelemetryTracker())
         try await chat.loadModel(path: "/tiny/chat")
@@ -163,7 +163,7 @@ struct PipelineSequentialTests {
 
 @Suite("Sequential swap edge cases on stub engines: chat-encoder audio outside the swap, failed loads, stub mode, prompt caches, startup refusals (#402 review)")
 struct PipelineSwapEdgeTests {
-    static func chat(loaded: Bool = true) async throws -> (MockInferenceEngine, ModelOrchestratorActor) {
+    static func chat(loaded: Bool = true) async throws -> (MockInferenceEngine, ModelOrchestratorActor<MockInferenceEngine>) {
         let engine = MockInferenceEngine()
         await engine.setResponder { _ in "left" }
         await engine.setMockTranscription(Transcription(text: "pay it today"))

@@ -4,7 +4,7 @@ import BasaltCore
 import BasaltInference
 
 extension ServeCommand {
-    func load(_ orchestrator: ModelOrchestratorActor, from path: String) async throws {
+    func load(_ orchestrator: some ModelOrchestrating, from path: String) async throws {
         log("Loading model from \(bold(path))…")
         do {
             try await orchestrator.loadModel(path: path)
@@ -24,7 +24,7 @@ extension ServeCommand {
         try await loadAdapters(into: orchestrator)
     }
 
-    func loadAdapters(into orchestrator: ModelOrchestratorActor) async throws {
+    func loadAdapters(into orchestrator: some ModelOrchestrating) async throws {
         guard !adapters.isEmpty else { return }
         do {
             try await orchestrator.loadAdapters(try Self.adapterDirectories(adapters))

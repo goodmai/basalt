@@ -3,7 +3,7 @@ import BasaltCore
 
 extension Introspector {
     init(
-        orchestrator: ModelOrchestratorActor,
+        orchestrator: any ModelOrchestrating,
         interventions: Bool,
         filter: MCPToolFilter = .standard,
         researchTools: Bool = true,

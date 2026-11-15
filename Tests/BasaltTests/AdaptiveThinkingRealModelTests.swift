@@ -67,7 +67,7 @@ struct AdaptiveThinkingRealModelTests {
         #expect(lost.isEmpty, "problems solved without the flag and lost with it: \(lost); see \(log.url.path)")
     }
 
-    static func solve(_ pool: [Problem], on orchestrator: ModelOrchestratorActor, adaptive: Bool, log: ModelRunLog) async throws -> [Outcome] {
+    static func solve(_ pool: [Problem], on orchestrator: some ModelOrchestrating, adaptive: Bool, log: ModelRunLog) async throws -> [Outcome] {
         var outcomes: [Outcome] = []
         for (index, problem) in pool.enumerated() {
             let request = GenerationRequest(

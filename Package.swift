@@ -24,6 +24,7 @@ let package = Package(
         .package(url: "https://github.com/onevcat/Rainbow.git", from: "4.2.2"),
         .package(url: "https://github.com/apple/swift-markdown.git", from: "0.9.0"),
         .package(url: "https://github.com/jpsim/Yams.git", exact: "6.2.2"),
+        .package(url: "https://github.com/ibireme/yyjson.git", exact: "0.13.0"),
     ],
     targets: [
 
@@ -87,6 +88,7 @@ let package = Package(
                 .product(name: "HTTPTypes",     package: "swift-http-types"),
                 .product(name: "Logging",       package: "swift-log"),
                 .product(name: "NIOFoundationEssentialsCompat", package: "swift-nio"),
+                .product(name: "yyjson",        package: "yyjson"),
             ],
             path: "Sources/BasaltServer",
             swiftSettings: swiftSettings

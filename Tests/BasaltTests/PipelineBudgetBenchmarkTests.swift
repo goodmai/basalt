@@ -145,13 +145,13 @@ struct PipelineBudgetBenchmarkTests {
 
     static func milliseconds(since start: ContinuousClock.Instant) -> Int { PipelineCore.milliseconds(ContinuousClock.now - start) }
 
-    static func longAnswer(_ chat: ModelOrchestratorActor) async throws -> GenerationResponse {
+    static func longAnswer(_ chat: some ModelOrchestrating) async throws -> GenerationResponse {
         var request = GenerationRequest(prompt: SystemOneBudgetBenchmarkTests.longPrompt, maxTokens: 1024, temperature: 0)
         request.reasoningEffort = "none"
         return try await chat.generate(request: request)
     }
 
-    static func server(_ path: String, log: ModelRunLog) async throws -> (ModelOrchestratorActor, RESTServer) {
+    static func server(_ path: String, log: ModelRunLog) async throws -> (ModelOrchestratorActor<MLXInferenceEngine>, RESTServer) {
         let engine = MLXInferenceEngine(EngineConfiguration(promptCacheBytes: 0))
         let chat = ModelOrchestratorActor(engine: engine, telemetry: TelemetryTracker())
         try await log.step("load chat") { try await chat.loadModel(path: path) }
@@ -187,7 +187,7 @@ struct PipelineBudgetBenchmarkTests {
         return arms
     }
 
-    static func overlap(_ client: BenchClient, _ chat: ModelOrchestratorActor, _ items: [PipelineWorkItem]) async throws -> (GenerationResponse, PipelineTally) {
+    static func overlap(_ client: BenchClient, _ chat: ModelOrchestratorActor<MLXInferenceEngine>, _ items: [PipelineWorkItem]) async throws -> (GenerationResponse, PipelineTally) {
         async let long = longAnswer(chat)
         let tallies = try await withThrowingTaskGroup(of: PipelineTally.self) { group in
             for item in items {

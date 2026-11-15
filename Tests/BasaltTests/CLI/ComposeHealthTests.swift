@@ -90,7 +90,7 @@ struct ComposeHealthTests {
         ComposeControl(status: { ComposeStatus(name: "ops", pipelines: ["default"], models: models, spentToday: 0) }, apply: { _ throws(BasaltError) in ComposeDiff() })
     }
 
-    static func get(_ path: String, _ chat: ModelOrchestratorActor, compose: ComposeControl?) async throws -> (HTTPResponse.Status, [String]?) {
+    static func get(_ path: String, _ chat: any ModelOrchestrating, compose: ComposeControl?) async throws -> (HTTPResponse.Status, [String]?) {
         let server = RESTServer(orchestrator: chat, config: try ServerConfig(modelPath: "org/mock-model")).withPipelines(nil, compose: compose)
         return try await Application(router: server.makeRouter()).test(.router) { client in
             try await client.execute(uri: path, method: .get) { response in

@@ -21,7 +21,8 @@ public struct JSONNestingLimitMiddleware<Context: RequestContext>: RouterMiddlew
             return try await next(request, context)
         }
         var request = request
-        let bytes = ChatPipeline.data(of: try await request.collectBody(upTo: Self.bodyLimit), zeroCopy: zeroCopyBody)
+        let buffer = try await request.collectBody(upTo: Self.bodyLimit)
+        let bytes = buffer.readableBytesSpan
         guard !JSONNesting.containsZero(bytes) else { return Self.badRequest("the request body is not UTF-8 JSON", path: request.uri.path) }
         guard JSONNesting.depth(of: bytes) <= Self.depthLimit else {
             return Self.badRequest("the request body nests deeper than \(Self.depthLimit) JSON levels", path: request.uri.path)

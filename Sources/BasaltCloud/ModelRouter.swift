@@ -2,7 +2,7 @@ import Foundation
 import BasaltCore
 
 public actor ModelRouter: Sendable {
-    let localOrchestrator: ModelOrchestratorActor
+    let localOrchestrator: any ModelOrchestrating
     let cloudClient: OpenRouterClient?
     private let strategy: RoutingStrategy
     private let mockAvailableRAM: Int64?
@@ -42,7 +42,7 @@ public actor ModelRouter: Sendable {
         }
     }
 
-    public init(localOrchestrator: ModelOrchestratorActor, cloudClient: OpenRouterClient?, options: Options = Options()) {
+    public init(localOrchestrator: any ModelOrchestrating, cloudClient: OpenRouterClient?, options: Options = Options()) {
         self.localOrchestrator = localOrchestrator
         self.cloudClient = cloudClient
         self.strategy = options.strategy

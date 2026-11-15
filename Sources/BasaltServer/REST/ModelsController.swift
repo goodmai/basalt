@@ -43,17 +43,10 @@ import BasaltCore
 
 struct ModelsController: Sendable {
 
-    let orchestrator: ModelOrchestratorActor
+    let orchestrator: any ModelOrchestrating
     let defaultModelId: String
     var embeddingModels: [EmbeddingModelInfo] = []
 
-    // MARK: — GET /v1/models
-
-    /// Returns all locally cached models in OpenAI-compatible list format.
-    ///
-    /// IDs are returned in `claude-local/<hf-id-encoded>` form so Claude Code's
-    /// automatic model discovery adds them to the /model picker.
-    /// `display_name` carries the original HuggingFace repo ID for readability.
     @Sendable
     func listModels(request: Request, context: BasicRequestContext) async throws -> Response {
         let cached   = await orchestrator.cachedModels().filter { model in !embeddingModels.contains { $0.id == model.id } }

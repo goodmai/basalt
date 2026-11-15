@@ -26,7 +26,7 @@ extension ComposeStatus {
 }
 
 struct HealthRoutes: Sendable {
-    let orchestrator: ModelOrchestratorActor
+    let orchestrator: any ModelOrchestrating
     let compose: ComposeControl?
 
     func add(to group: RouterGroup<BasicRequestContext>) {

@@ -85,7 +85,7 @@ struct VisionRealModelTests {
         return blocks.filter { $0["type"] as? String == "text" }.compactMap { $0["text"] as? String }.joined()
     }
 
-    static func mcp(_ orchestrator: ModelOrchestratorActor, _ image: Data) async throws -> String {
+    static func mcp(_ orchestrator: some ModelOrchestrating, _ image: Data) async throws -> String {
         let capturer = OutputCapturer()
         let server = MCPServer(orchestrator: orchestrator) { capturer.capture($0) }
         let arguments: [String: Any] = [

@@ -6,17 +6,16 @@ extension OpenAIController {
     @Sendable
     func chatCompletions(request: Request, context: BasicRequestContext) async throws -> Response {
         let pipeline = self.pipeline(source: "openai-chat", endpoint: "/v1/chat/completions")
-        return try await pipeline.handle(request) { data in
-            let body = try pipeline.decode(ChatPipeline.Body<ChatCompletionRequest>.self, from: data, failure: "Cannot decode request")
-            let dto = body.dto
+        return try await pipeline.handleBuffer(request) { buffer in
+            let parsed = try pipeline.fastRead(from: buffer, failure: "Cannot decode request")
+            let dto = parsed.dto
             try pipeline.require(!dto.messages.isEmpty, "messages must not be empty")
-            let json = ChatPipeline.object(in: data)
-            let tools = try pipeline.tools(in: json)
-            let format = try pipeline.responseFormat(in: json, data: data)
+            let tools = try pipeline.tools(parsed.tools)
+            let format = try pipeline.responseFormat(parsed.responseFormat)
             let stream = dto.stream == true
             let prepared = try pipeline.prepare(ChatPipeline.Input(
                 chat: try pipeline.parsed { () throws(BasaltError) in try Self.chatMessages(dto.messages) }, maxTokens: dto.maxTokens,
-                sampling: dto.sampling(try pipeline.antiRepetition(body.antiRepetition, bodyBytes: data.count)),
+                sampling: dto.sampling(try pipeline.antiRepetition(parsed.antiRepetition, bodyBytes: buffer.readableBytes)),
                 reasoningEffort: dto.reasoningEffort, tools: tools, thinkingBudget: dto.thinkingBudget,
                 responseFormat: format, model: dto.model, stream: stream), headers: request.headers)
             if stream { try await pipeline.admitStream(prepared.request) }

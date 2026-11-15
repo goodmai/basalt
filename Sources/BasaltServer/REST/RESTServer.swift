@@ -6,7 +6,7 @@ import BasaltCore
 
 package struct RESTServer: Sendable {
 
-    let orchestrator: ModelOrchestratorActor
+    let orchestrator: any ModelOrchestrating
     let config: ServerConfig
     let embeddings: (any EmbeddingEngine)?
     private(set) var decisions: (any DecisionEngine)?
@@ -20,7 +20,7 @@ package struct RESTServer: Sendable {
     let rateClock: @Sendable () -> Double
 
     package init(
-        orchestrator: ModelOrchestratorActor,
+        orchestrator: any ModelOrchestrating,
         config: ServerConfig,
         embeddings: (any EmbeddingEngine)? = nil,
         shutdownDeadline: Duration = .seconds(5),

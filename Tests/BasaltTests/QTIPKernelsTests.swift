@@ -410,3 +410,115 @@ struct GGUFEmbeddingLinearTests {
         #expect(QTIPKernelTestOracle.relativeError(y4, y16[0 ..< 4]) < tol)
     }
 }
+
+@Suite("QTIPKernels, FusedKroneckerRHT, and GGUFEmbedding micro-benchmarks (#409, #491)", .serialized)
+struct QTIPAndRHTKernelBenchmarkTests {
+    static var isEnabled: Bool { ProcessInfo.processInfo.environment["BASALT_BENCH"] == "1" }
+
+    private static func timedMs(warmup: Int = 5, runs: Int = 40, _ op: () -> MLXArray) -> Double {
+        for _ in 0 ..< warmup { eval(op()) }
+        let clock = ContinuousClock()
+        let elapsed = clock.measure {
+            for _ in 0 ..< runs { eval(op()) }
+        }
+        let sec = Double(elapsed.components.seconds) + Double(elapsed.components.attoseconds) * 1e-18
+        return (sec / Double(runs)) * 1000.0
+    }
+
+    @Test("FusedKroneckerRHT vs multi-op KroneckerRHT on 2816, 5120, and 17408 widths (16-layer chain)",
+          .enabled(if: Self.isEnabled, "set BASALT_BENCH=1"))
+    func kroneckerRHTSpeedup() throws {
+        let depth = 16
+        for dim in [2_816, 5_120, 17_408] {
+            let rht = try #require(KroneckerRHT(dimension: dim, seed: 42))
+            let bufs = FusedKroneckerRHT.Buffers(rht)
+            let sArr = MLXArray(rht.signsValues)
+            let qArr = rht.qValues.map { MLXArray($0, [rht.outer, rht.outer]) }
+            let x0 = MLXRandom.normal([1, dim], key: MLXRandom.key(7)).asType(.float16)
+            if let qArr { eval(sArr, qArr, x0) } else { eval(sArr, x0) }
+
+            let fusedChainMs = Self.timedMs(warmup: 4, runs: 25) {
+                var cur = x0
+                for _ in 0 ..< depth {
+                    let y = FusedKroneckerRHT.forward(cur, buffers: bufs, outputDType: .float16)
+                    cur = FusedKroneckerRHT.inverse(y, buffers: bufs, outputDType: .float16)
+                }
+                return cur
+            }
+            let legacyChainMs = Self.timedMs(warmup: 4, runs: 25) {
+                var cur = x0
+                for _ in 0 ..< depth {
+                    let y = rht.forwardFloat32(cur, signs: sArr, qMatrix: qArr).asType(.float16)
+                    cur = rht.inverseFloat32(y, signs: sArr, qMatrix: qArr).asType(.float16)
+                }
+                return cur
+            }
+            let fusedUs = (fusedChainMs / Double(depth)) * 1000.0
+            let legacyUs = (legacyChainMs / Double(depth)) * 1000.0
+            let msg = String(
+                format: "BENCH_RHT dim=%d fused_us=%.1f legacy_us=%.1f speedup=%.2fx\n",
+                dim, fusedUs, legacyUs, legacyUs / max(1e-9, fusedUs))
+            FileHandle.standardError.write(Data(msg.utf8))
+            #expect(fusedUs < legacyUs)
+        }
+    }
+
+    @Test("QTIPLinear 17408x5120 M=1/M=4 and GGUFEmbedding.asLinear 65536x2560 M=1 speedups",
+          .enabled(if: Self.isEnabled, "set BASALT_BENCH=1"))
+    func qtipLinearAndGGUFEmbeddingSpeedup() throws {
+        let (outDim, inDim) = (17_408, 5_120)
+        let rhtIn = try #require(KroneckerRHT(dimension: inDim, seed: 101))
+        let rhtOut = try #require(KroneckerRHT(dimension: outDim, seed: 202))
+        let spec = QTIPLayerSpec(rate: .twoHalfBPW, rhtIn: rhtIn, rhtOut: rhtOut)
+        let tRows = outDim / 16
+        let tCols = inDim / 16
+        let packed = MLXArray.zeros([tRows, tCols * QTIPRate.twoHalfBPW.wordsPerTile], dtype: .uint32)
+        let scales = MLXArray.ones([tRows], dtype: .float16) * Float16(0.02)
+        let tlut = MLXArray(QTIPCodebook.baseLUTValues(rate: .twoHalfBPW), [512, 2]).asType(.float16)
+        let layer = QTIPLinear(packedWeight: packed, rowScales: scales, tlut: tlut, bias: nil, spec: spec)
+        let sIn = MLXArray(rhtIn.signsValues)
+        let qIn = rhtIn.qValues.map { MLXArray($0, [rhtIn.outer, rhtIn.outer]) }
+        let sOut = MLXArray(rhtOut.signsValues)
+        let qOut = rhtOut.qValues.map { MLXArray($0, [rhtOut.outer, rhtOut.outer]) }
+        let x4 = MLXRandom.normal([4, inDim], key: MLXRandom.key(19)).asType(.float16)
+        eval(layer, sIn, sOut, x4)
+        if let qIn { eval(qIn) }
+        if let qOut { eval(qOut) }
+
+        for m in [1, 4] {
+            let xm = x4[0 ..< m]
+            eval(xm)
+            let fusedMs = Self.timedMs(warmup: 4, runs: 20) { layer(xm) }
+            let phase0Ms = Self.timedMs(warmup: 2, runs: 8) {
+                let xr = rhtIn.forwardFloat32(xm, signs: sIn, qMatrix: qIn).asType(.float16)
+                let wr = QTIPMetal.decode(
+                    packed: layer.weight, rowScales: layer.rowScales, tlut: layer.tlut,
+                    rate: .twoHalfBPW, tileCols: tCols, dtype: .float16)
+                let yr = matmul(xr, wr.T)
+                return rhtOut.inverseFloat32(yr, signs: sOut, qMatrix: qOut).asType(.float16)
+            }
+            let msg = String(
+                format: "BENCH_QTIP_LINEAR shape=%dx%d rate=2.5bpw M=%d fused_ms=%.3f phase0_ms=%.3f speedup=%.2fx\n",
+                outDim, inDim, m, fusedMs, phase0Ms, phase0Ms / max(1e-9, fusedMs))
+            FileHandle.standardError.write(Data(msg.utf8))
+            #expect(fusedMs < phase0Ms)
+        }
+
+        let (vocab, dim) = (65_536, 2_560)
+        let emb = GGUFEmbedding(type: .q4K, count: vocab, dimensions: dim, dtype: .float16)
+        let rowBytes = (dim / GGMLType.q4K.block.elements) * GGMLType.q4K.block.bytes
+        let rawWeight = MLXArray.zeros([vocab, rowBytes], dtype: .uint8)
+        try emb.update(parameters: ModuleParameters.unflattened(["weight": rawWeight]), verify: .all)
+        let xEmb = MLXRandom.normal([1, dim], key: MLXRandom.key(29)).asType(.float16)
+        eval(emb, xEmb)
+        let matvecMs = Self.timedMs(warmup: 4, runs: 25) { emb.asLinear(xEmb) }
+        let matmulMs = Self.timedMs(warmup: 2, runs: 10) {
+            GGUFKernels.matmul(xEmb, emb.weight, type: .q4K, columns: dim)
+        }
+        let embMsg = String(
+            format: "BENCH_GGUF_ASLINEAR shape=%dx%d q4_K M=1 matvec_ms=%.3f matmul_ms=%.3f speedup=%.2fx\n",
+            vocab, dim, matvecMs, matmulMs, matmulMs / max(1e-9, matvecMs))
+        FileHandle.standardError.write(Data(embMsg.utf8))
+        #expect(matvecMs < matmulMs)
+    }
+}

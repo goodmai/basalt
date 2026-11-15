@@ -3,15 +3,15 @@ import BasaltCore
 import BasaltInference
 import BasaltServer
 
-struct ComposeBoot: Sendable {
+struct ComposeBoot<Orchestrator: ModelOrchestrating>: Sendable {
     let config: ServerConfig
     let engine: MLXInferenceEngine
-    let orchestrator: ModelOrchestratorActor
+    let orchestrator: Orchestrator
     let chatPath: String
 }
 
 extension ServeCommand {
-    func runComposed(_ spec: ComposeSpec, _ boot: ComposeBoot) async throws {
+    func runComposed(_ spec: ComposeSpec, _ boot: ComposeBoot<some ModelOrchestrating>) async throws {
         let launch = try await composedLaunch(spec, boot)
         try await prepare(boot.orchestrator, virtualKeys: boot.config.virtualKeys)
         log("REST → http://\(boot.config.host):\(boot.config.restPort); the models load after the bind, GET /v1/health/ready says when they are ready")
@@ -19,7 +19,7 @@ extension ServeCommand {
         try await Self.runServers(launch, orchestrator: boot.orchestrator)
     }
 
-    func composedLaunch(_ spec: ComposeSpec, _ boot: ComposeBoot) async throws -> ServerLaunch {
+    func composedLaunch(_ spec: ComposeSpec, _ boot: ComposeBoot<some ModelOrchestrating>) async throws -> ServerLaunch {
         let embeddings = try await loadEmbeddings()
         let slot = ComposeSlot(spec: spec, cloudGate: cloudGate(spec)) { [self] model in ProcessInfo.processInfo.environment[model?.apiKeyEnv ?? decision.keyEnvironment] ?? "" }
         let file = pipeline.compose ?? ""
@@ -32,7 +32,7 @@ extension ServeCommand {
             startup: { [self] in try await startComposed(spec, boot, embeddings: embeddings, slot: slot) })
     }
 
-    func startComposed(_ spec: ComposeSpec, _ boot: ComposeBoot, embeddings: (any EmbeddingEngine)?, slot: ComposeSlot) async throws {
+    func startComposed(_ spec: ComposeSpec, _ boot: ComposeBoot<some ModelOrchestrating>, embeddings: (any EmbeddingEngine)?, slot: ComposeSlot) async throws {
         let loadedDecisions = try await loadDecisions(chat: boot.engine)
         let perceivePaths = try await pipelinePerceivePaths()
         let plan = try await admitComputePlan(chatPath: boot.chatPath, embeddings: embeddings, decisions: loadedDecisions, perceive: perceivePaths)
@@ -59,7 +59,7 @@ extension ServeCommand {
         }
     }
 
-    func prepare(_ orchestrator: ModelOrchestratorActor, virtualKeys: [VirtualKey]) async throws {
+    func prepare(_ orchestrator: any ModelOrchestrating, virtualKeys: [VirtualKey]) async throws {
         if !noMemoryCoordinator { await orchestrator.coordinateMemory(with: MemoryCoordinator()) }
         if !noThermalPolicy { await orchestrator.coordinateThermal() }
         await experimental.attachMediaFallbacks(to: orchestrator)

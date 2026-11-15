@@ -32,7 +32,7 @@ struct PreemptibleTrainingRealModelTests {
         return "Request \(seed). Name the most frequent word in this list in one word.\n" + (0 ..< 160).map { "\(words[($0 * 7 + seed) % words.count])\(($0 * 13 + seed) % 997)" }.joined(separator: " ")
     }
 
-    static func ttft(_ orchestrator: ModelOrchestratorActor, _ seed: Int, log: ModelRunLog? = nil) async throws -> Double {
+    static func ttft(_ orchestrator: ModelOrchestratorActor<MLXInferenceEngine>, _ seed: Int, log: ModelRunLog? = nil) async throws -> Double {
         let start = ContinuousClock.now
         var first: Duration?
         var engine: GenerationResponse?
@@ -86,7 +86,7 @@ struct PreemptibleTrainingRealModelTests {
         return request
     }
 
-    static func distill(_ orchestrator: ModelOrchestratorActor, _ engine: MLXInferenceEngine, iterations: Int, sections: Sections) async throws(BasaltError) -> DistillRun {
+    static func distill(_ orchestrator: ModelOrchestratorActor<MLXInferenceEngine>, _ engine: MLXInferenceEngine, iterations: Int, sections: Sections) async throws(BasaltError) -> DistillRun {
         let request = request(iterations: iterations)
         let directory = try await engine.reservedDirectory(request.output)
         return try await orchestrator.preemptibly { _, lease throws(BasaltError) in
@@ -143,7 +143,7 @@ extension PreemptibleTrainingRealModelTests {
     }
 
     func duringTraining(
-        _ orchestrator: ModelOrchestratorActor, _ engine: MLXInferenceEngine, idle: [Double], ratio: Double, base: [String: UInt64], log: ModelRunLog
+        _ orchestrator: ModelOrchestratorActor<MLXInferenceEngine>, _ engine: MLXInferenceEngine, idle: [Double], ratio: Double, base: [String: UInt64], log: ModelRunLog
     ) async throws {
         let container = try #require(await engine.container)
         let sections = Sections()

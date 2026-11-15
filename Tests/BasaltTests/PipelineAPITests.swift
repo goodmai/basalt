@@ -34,7 +34,7 @@ struct PipelineAPITests {
         "hard": ["type": "choice", "instructions": "Which wheel is flat?", "criteria": ["left": "Left.", "right": "Right."]],
     ] }
 
-    static func chat(_ text: @escaping @Sendable (GenerationRequest) -> String = { _ in "left" }, log: SessionLogWriter? = nil) async throws -> (MockInferenceEngine, ModelOrchestratorActor) {
+    static func chat(_ text: @escaping @Sendable (GenerationRequest) -> String = { _ in "left" }, log: SessionLogWriter? = nil) async throws -> (MockInferenceEngine, ModelOrchestratorActor<MockInferenceEngine>) {
         let engine = MockInferenceEngine()
         try await engine.load(modelPath: "org/mock-chat")
         await engine.setResponder(text)
@@ -42,7 +42,7 @@ struct PipelineAPITests {
     }
 
     static func post(
-        _ chat: ModelOrchestratorActor, decisions: (any DecisionEngine)?, stages: PipelineStages = PipelineStages(abstainBelow: 0.5), _ body: [String: Any]
+        _ chat: any ModelOrchestrating, decisions: (any DecisionEngine)?, stages: PipelineStages = PipelineStages(abstainBelow: 0.5), _ body: [String: Any]
     ) async throws -> (status: HTTPResponse.Status, json: [String: Any]) {
         let server = RESTServer(orchestrator: chat, config: try ServerConfig(modelPath: "org/mock-model")).withDecisions(decisions).withPipeline(stages)
         let data = try JSONSerialization.data(withJSONObject: body)

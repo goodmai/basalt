@@ -182,7 +182,7 @@ extension ServeCommand {
 
 extension ServeCommand {
     static func cloudFallbackRouter(
-        _ settings: CloudFallbackSettings, orchestrator: ModelOrchestratorActor, virtualKeys: [VirtualKey] = [],
+        _ settings: CloudFallbackSettings, orchestrator: any ModelOrchestrating, virtualKeys: [VirtualKey] = [],
         costURL: URL = CloudCommand.costURL(), configuration: URLSessionConfiguration = .default,
         probe: FallbackTierProbeConfig = FallbackTierProbeConfig()
     ) async throws -> ModelRouter {
@@ -228,7 +228,7 @@ extension ServeCommand {
             scorer: scorer, outcomeBiasURL: CloudCommand.routerBiasURL(nextTo: costURL))
     }
 
-    func attachCloudFallback(to orchestrator: ModelOrchestratorActor, virtualKeys: [VirtualKey]) async throws {
+    func attachCloudFallback(to orchestrator: any ModelOrchestrating, virtualKeys: [VirtualKey]) async throws {
         guard let fallback = try cloud.settings(configFile: network.configPath) else { return }
         let router = try await Self.cloudFallbackRouter(fallback, orchestrator: orchestrator, virtualKeys: virtualKeys)
         if fallback.usesOpenRouter {

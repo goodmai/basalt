@@ -143,7 +143,7 @@ extension FusedKroneckerRHT {
                 ("T", input.dtype), ("TO", outType), ("TW", DType.float32),
                 ("N", buffers.hadamardWidth), ("P", buffers.outer), ("THREADS", threads), ("HAS_NORM", false)
             ],
-            grid: (threads, rows, 1), threadGroup: (threads, 1, 1),
+            grid: (threads, buffers.outer, rows), threadGroup: (threads, 1, 1),
             outputShapes: [[rows, buffers.dimension]], outputDTypes: [outType]
         )[0]
         return out.reshaped(x.shape)
@@ -169,7 +169,7 @@ extension FusedKroneckerRHT {
                 ("T", input.dtype), ("TO", outType), ("TW", nw.dtype),
                 ("N", buffers.hadamardWidth), ("P", buffers.outer), ("THREADS", threads), ("HAS_NORM", true)
             ],
-            grid: (threads, rows, 1), threadGroup: (threads, 1, 1),
+            grid: (threads, buffers.outer, rows), threadGroup: (threads, 1, 1),
             outputShapes: [[rows, buffers.dimension]], outputDTypes: [outType]
         )[0]
         return out.reshaped(x.shape)
@@ -195,7 +195,7 @@ extension FusedKroneckerRHT {
                 ("T", input.dtype), ("TO", outType), ("TB", biasBuf.dtype),
                 ("N", buffers.hadamardWidth), ("P", buffers.outer), ("THREADS", threads), ("HAS_BIAS", bias != nil)
             ],
-            grid: (threads, rows, 1), threadGroup: (threads, 1, 1),
+            grid: (threads, buffers.outer, rows), threadGroup: (threads, 1, 1),
             outputShapes: [[rows, buffers.dimension]], outputDTypes: [outType]
         )[0]
         return out.reshaped(y.shape)
@@ -377,9 +377,8 @@ private enum FusedKroneckerRHTMetal {
         constexpr int SIMDGROUPS = THREADS / 32;
         constexpr int E = (N > THREADS) ? (N / THREADS) : 1;
         constexpr int TG_M = (N >= 64) ? (N / 32) : 1;
-        constexpr int RAW_TILE = 88 / E;
-        constexpr int TILE_P = (P * E <= 88) ? P : ((RAW_TILE > 1) ? RAW_TILE : 1);
-        const int row = int(threadgroup_position_in_grid.y);
+        const int r_blk = int(threadgroup_position_in_grid.y);
+        const int row = int(threadgroup_position_in_grid.z);
         const int tid = int(thread_position_in_threadgroup.x);
         const int lane = int(thread_index_in_simdgroup);
         const int sg = int(simdgroup_index_in_threadgroup);
@@ -407,13 +406,24 @@ private enum FusedKroneckerRHTMetal {
             }
             inv_rms = metal::precise::rsqrt(sq * (1.0f / float(D)) + float(params[1]));
         }
-        for (int r0 = 0; r0 < P; r0 += TILE_P) {
-            const int r_cnt = ((r0 + TILE_P) <= P) ? TILE_P : (P - r0);
-            float acc[TILE_P * E];
-            for (int i = 0; i < TILE_P * E; ++i) { acc[i] = 0.0f; }
+        float vals[E];
+        if (P == 1) {
+            for (int e = 0; e < E; ++e) {
+                const int col = e * THREADS + tid;
+                if (col < N) {
+                    const uint sw = packed_signs[col >> 5];
+                    const float sgn = (((sw >> uint(col & 31)) & 1u) != 0u) ? -1.0f : 1.0f;
+                    float xv = float(inp[row_base + size_t(col)]);
+                    if (HAS_NORM) { xv = xv * inv_rms * float(norm_w[col]); }
+                    vals[e] = xv * sgn;
+                } else {
+                    vals[e] = 0.0f;
+                }
+            }
+        } else {
+            for (int e = 0; e < E; ++e) { vals[e] = 0.0f; }
             for (int c = 0; c < P; ++c) {
-                if (N >= 64 && (r0 > 0 || c > 0)) { threadgroup_barrier(mem_flags::mem_threadgroup); }
-                float vals[E];
+                const float qrc = float(q_mat[r_blk * P + c]);
                 for (int e = 0; e < E; ++e) {
                     const int col = e * THREADS + tid;
                     if (col < N) {
@@ -422,28 +432,16 @@ private enum FusedKroneckerRHTMetal {
                         const float sgn = (((sw >> uint(d & 31)) & 1u) != 0u) ? -1.0f : 1.0f;
                         float xv = float(inp[row_base + size_t(d)]);
                         if (HAS_NORM) { xv = xv * inv_rms * float(norm_w[d]); }
-                        vals[e] = xv * sgn;
-                    } else {
-                        vals[e] = 0.0f;
-                    }
-                }
-                rht_butterfly<N, THREADS>(vals, tg_buf, lane, sg, scale);
-                if (P == 1) {
-                    for (int u = 0; u < E; ++u) { acc[u] = vals[u]; }
-                } else {
-                    for (int rt = 0; rt < r_cnt; ++rt) {
-                        const float qrc = float(q_mat[(r0 + rt) * P + c]);
-                        for (int u = 0; u < E; ++u) { acc[rt * E + u] = fma(qrc, vals[u], acc[rt * E + u]); }
+                        vals[e] = fma(qrc, xv * sgn, vals[e]);
                     }
                 }
             }
-            for (int u = 0; u < E; ++u) {
-                const int out_col = rht_out_col<N, THREADS>(tid, lane, sg, u);
-                if (out_col < N) {
-                    for (int rt = 0; rt < r_cnt; ++rt) {
-                        out[row_base + size_t((r0 + rt) * N + out_col)] = static_cast<TO>(acc[rt * E + u]);
-                    }
-                }
+        }
+        rht_butterfly<N, THREADS>(vals, tg_buf, lane, sg, scale);
+        for (int u = 0; u < E; ++u) {
+            const int out_col = rht_out_col<N, THREADS>(tid, lane, sg, u);
+            if (out_col < N) {
+                out[row_base + size_t(r_blk * N + out_col)] = static_cast<TO>(vals[u]);
             }
         }
         """
@@ -452,54 +450,41 @@ private enum FusedKroneckerRHTMetal {
         constexpr int D = P * N;
         constexpr int E = (N > THREADS) ? (N / THREADS) : 1;
         constexpr int TG_M = (N >= 64) ? (N / 32) : 1;
-        constexpr int RAW_TILE = 88 / E;
-        constexpr int TILE_P = (P * E <= 88) ? P : ((RAW_TILE > 1) ? RAW_TILE : 1);
-        const int row = int(threadgroup_position_in_grid.y);
+        const int r_blk = int(threadgroup_position_in_grid.y);
+        const int row = int(threadgroup_position_in_grid.z);
         const int tid = int(thread_position_in_threadgroup.x);
         const int lane = int(thread_index_in_simdgroup);
         const int sg = int(simdgroup_index_in_threadgroup);
         const size_t row_base = size_t(row) * size_t(D);
         const float scale = float(params[0]);
         threadgroup float tg_buf[TG_M * 33];
-        for (int r0 = 0; r0 < P; r0 += TILE_P) {
-            const int r_cnt = ((r0 + TILE_P) <= P) ? TILE_P : (P - r0);
-            float acc[TILE_P * E];
-            if (P == 1) {
+        float vals[E];
+        if (P == 1) {
+            for (int e = 0; e < E; ++e) {
+                const int col = e * THREADS + tid;
+                vals[e] = (col < N) ? float(inp[row_base + size_t(col)]) : 0.0f;
+            }
+        } else {
+            for (int e = 0; e < E; ++e) { vals[e] = 0.0f; }
+            for (int c = 0; c < P; ++c) {
+                const float qcr = float(q_mat[c * P + r_blk]);
                 for (int e = 0; e < E; ++e) {
                     const int col = e * THREADS + tid;
-                    acc[e] = (col < N) ? float(inp[row_base + size_t(col)]) : 0.0f;
-                }
-            } else {
-                for (int i = 0; i < TILE_P * E; ++i) { acc[i] = 0.0f; }
-                for (int c = 0; c < P; ++c) {
-                    float yv[E];
-                    for (int e = 0; e < E; ++e) {
-                        const int col = e * THREADS + tid;
-                        yv[e] = (col < N) ? float(inp[row_base + size_t(c * N + col)]) : 0.0f;
-                    }
-                    for (int rt = 0; rt < r_cnt; ++rt) {
-                        const float qcr = float(q_mat[c * P + (r0 + rt)]);
-                        for (int e = 0; e < E; ++e) { acc[rt * E + e] = fma(qcr, yv[e], acc[rt * E + e]); }
-                    }
+                    const float yv = (col < N) ? float(inp[row_base + size_t(c * N + col)]) : 0.0f;
+                    vals[e] = fma(qcr, yv, vals[e]);
                 }
             }
-            for (int rt = 0; rt < r_cnt; ++rt) {
-                if (N >= 64 && (r0 > 0 || rt > 0)) { threadgroup_barrier(mem_flags::mem_threadgroup); }
-                float vals[E];
-                for (int e = 0; e < E; ++e) { vals[e] = acc[rt * E + e]; }
-                rht_butterfly<N, THREADS>(vals, tg_buf, lane, sg, scale);
-                const int r_blk = r0 + rt;
-                for (int u = 0; u < E; ++u) {
-                    const int out_col = rht_out_col<N, THREADS>(tid, lane, sg, u);
-                    if (out_col < N) {
-                        const int d_out = r_blk * N + out_col;
-                        const uint sw = packed_signs[d_out >> 5];
-                        const float sgn = (((sw >> uint(d_out & 31)) & 1u) != 0u) ? -1.0f : 1.0f;
-                        float res = vals[u] * sgn;
-                        if (HAS_BIAS) { res += float(bias_buf[d_out]); }
-                        out[row_base + size_t(d_out)] = static_cast<TO>(res);
-                    }
-                }
+        }
+        rht_butterfly<N, THREADS>(vals, tg_buf, lane, sg, scale);
+        for (int u = 0; u < E; ++u) {
+            const int out_col = rht_out_col<N, THREADS>(tid, lane, sg, u);
+            if (out_col < N) {
+                const int d_out = r_blk * N + out_col;
+                const uint sw = packed_signs[d_out >> 5];
+                const float sgn = (((sw >> uint(d_out & 31)) & 1u) != 0u) ? -1.0f : 1.0f;
+                float res = vals[u] * sgn;
+                if (HAS_BIAS) { res += float(bias_buf[d_out]); }
+                out[row_base + size_t(d_out)] = static_cast<TO>(res);
             }
         }
         """

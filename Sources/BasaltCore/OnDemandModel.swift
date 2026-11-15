@@ -48,7 +48,7 @@ public struct OnDemandCore: Sendable, Equatable {
 }
 
 public actor OnDemandModel {
-    public nonisolated let model: ModelOrchestratorActor
+    public nonisolated let model: any ModelOrchestrating
     public nonisolated let path: String
     public nonisolated let idle: Duration
     public nonisolated let phases: AsyncStream<OnDemandCore.Phase>
@@ -60,7 +60,7 @@ public actor OnDemandModel {
     public private(set) var lastUsed: Date?
 
     public init(
-        model: ModelOrchestratorActor, path: String, idle: Duration,
+        model: any ModelOrchestrating, path: String, idle: Duration,
         sleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
     ) {
         (self.model, self.path, self.idle, self.sleep) = (model, path, idle, sleep)

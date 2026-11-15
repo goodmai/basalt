@@ -127,7 +127,7 @@ struct ComposeExperimentalParsingTests {
 
 @Suite("compose live /v1/compose/apply hot-reloads runtime experimental settings and refuses startup-only changes (#485)", .timeLimit(.minutes(1)))
 struct ComposeExperimentalLiveReloadTests {
-    static func makeLiveHost() async throws -> (MockInferenceEngine, ModelOrchestratorActor, ComposeHost, RESTServer) {
+    static func makeLiveHost() async throws -> (MockInferenceEngine, ModelOrchestratorActor<MockInferenceEngine>, ComposeHost, RESTServer) {
         let spec = try ComposeFile.parse(ComposeExperimentalParsingTests.base, file: "live.yaml")
         let engine = MockInferenceEngine()
         try await engine.load(modelPath: "mlx-community/Qwen3-4B-4bit")

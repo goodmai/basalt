@@ -5,7 +5,7 @@ import Foundation
 
 @Suite("/v1/pipeline perceive stage: the speech model, SpeechAnalyzer and Apple Vision fallbacks, and GPU stages gated between generations (#402 phase 2)", .timeLimit(.minutes(1)))
 struct PipelinePerceiveAPITests {
-    static func speechModel(_ text: String) async throws -> ModelOrchestratorActor {
+    static func speechModel(_ text: String) async throws -> ModelOrchestratorActor<MockInferenceEngine> {
         let engine = MockInferenceEngine()
         await engine.setMockTranscription(Transcription(text: text))
         let orchestrator = ModelOrchestratorActor(engine: engine, telemetry: TelemetryTracker())

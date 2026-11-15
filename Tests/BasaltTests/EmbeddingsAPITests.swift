@@ -51,9 +51,9 @@ struct StubEmbeddingEngine: EmbeddingEngine {
 @Suite("/v1/embeddings and /v1/rerank on a stub engine (#178)")
 struct EmbeddingsAPITests {
 
-    private func app(_ engine: StubEmbeddingEngine? = StubEmbeddingEngine(), orchestrator: ModelOrchestratorActor? = nil) async throws
+    private func app(_ engine: StubEmbeddingEngine? = StubEmbeddingEngine(), orchestrator: (any ModelOrchestrating)? = nil) async throws
         -> Application<RouterResponder<BasicRequestContext>> {
-        let orch = orchestrator ?? ModelOrchestratorActor(engine: MockInferenceEngine(), maxTokens: 65536, telemetry: TelemetryTracker())
+        let orch: any ModelOrchestrating = orchestrator ?? ModelOrchestratorActor(engine: MockInferenceEngine(), maxTokens: 65536, telemetry: TelemetryTracker())
         let config = try ServerConfig(modelPath: "org/mock-model")
         return Application(router: RESTServer(orchestrator: orch, config: config, embeddings: engine).makeRouter())
     }

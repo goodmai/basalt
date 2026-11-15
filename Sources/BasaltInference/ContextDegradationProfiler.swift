@@ -14,9 +14,9 @@ public struct ContextDegradationReport: Codable {
 }
 
 public struct ContextDegradationProfiler {
-    public let orchestrator: ModelOrchestratorActor
+    public let orchestrator: any ModelOrchestrating
     
-    public init(orchestrator: ModelOrchestratorActor) {
+    public init(orchestrator: any ModelOrchestrating) {
         self.orchestrator = orchestrator
     }
     

@@ -37,7 +37,7 @@ struct SidecarDecodeDropBenchmarkTests {
         let finished = Mutex(false)
     }
 
-    static func chat(_ orchestrator: ModelOrchestratorActor) async throws -> Double {
+    static func chat(_ orchestrator: ModelOrchestratorActor<MLXInferenceEngine>) async throws -> Double {
         var request = GenerationRequest(prompt: SystemOneBudgetBenchmarkTests.longPrompt, maxTokens: 512, temperature: 0)
         request.reasoningEffort = "none"
         return try await orchestrator.generate(request: request).tokensPerSecond
@@ -69,7 +69,7 @@ struct SidecarDecodeDropBenchmarkTests {
     }
 
     static func arm(
-        _ name: String, solo: Double, orchestrator: ModelOrchestratorActor, log: ModelRunLog, minimumDone: Int = 0,
+        _ name: String, solo: Double, orchestrator: ModelOrchestratorActor<MLXInferenceEngine>, log: ModelRunLog, minimumDone: Int = 0,
         _ sidecar: @escaping @Sendable (Load) async throws -> Void
     ) async throws {
         let load = Load()
@@ -95,7 +95,7 @@ struct SidecarDecodeDropBenchmarkTests {
             name, decode, rates.count, solo, (decode / solo - 1) * 100, done, wall, Double(done) / wall, busy / wall * 100, log.host()))
     }
 
-    static func solo(_ name: String, orchestrator: ModelOrchestratorActor, log: ModelRunLog) async throws -> Double {
+    static func solo(_ name: String, orchestrator: ModelOrchestratorActor<MLXInferenceEngine>, log: ModelRunLog) async throws -> Double {
         let rates = try await log.step(name) { [try await chat(orchestrator), try await chat(orchestrator)] }
         let mean = rates.reduce(0, +) / 2
         log.record("RESULT", String(format: "SIDECAR %@: decode %.2f tok/s (%.2f, %.2f), %@", name, mean, rates[0], rates[1], log.host()))

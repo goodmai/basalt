@@ -4,7 +4,7 @@ import Testing
 
 @Suite("Pre-prefill KV reservations for concurrent requests (#204)")
 struct KVReservationTests {
-    static func orchestrator(_ engine: MockInferenceEngine) -> ModelOrchestratorActor {
+    static func orchestrator(_ engine: MockInferenceEngine) -> ModelOrchestratorActor<MockInferenceEngine> {
         ModelOrchestratorActor(engine: engine, telemetry: TelemetryTracker(), gate: GenerationGate(maxConcurrent: 2, maxQueue: 4))
     }
 

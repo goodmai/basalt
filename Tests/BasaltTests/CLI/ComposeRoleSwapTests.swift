@@ -86,7 +86,7 @@ struct ComposeRoleSwapTests {
         #expect(try await post() == .notFound)
     }
 
-    static func host(_ yaml: String = base, probe: @escaping @Sendable (ComposeHeld) async -> String? = { _ in nil }) async throws -> (ComposeHost, ModelOrchestratorActor, KeyLog) {
+    static func host(_ yaml: String = base, probe: @escaping @Sendable (ComposeHeld) async -> String? = { _ in nil }) async throws -> (ComposeHost, ModelOrchestratorActor<MockInferenceEngine>, KeyLog) {
         let asked = KeyLog()
         let services = ComposeServices(
             resolve: { "/models/" + ($0.split(separator: "/").last.map(String.init) ?? $0) },

@@ -135,7 +135,7 @@ extension ServeCommand {
         return stages
     }
 
-    func loadPerceiver(_ model: String?, path: String?, role: String, loads: Bool = true, onDemand: Bool = false) async throws -> ModelOrchestratorActor? {
+    func loadPerceiver(_ model: String?, path: String?, role: String, loads: Bool = true, onDemand: Bool = false) async throws -> (any ModelOrchestrating)? {
         guard let model, let path else { return nil }
         var configuration = EngineConfiguration.standard
         configuration.promptCacheBytes = 0
@@ -158,7 +158,7 @@ extension ServeCommand {
 }
 
 extension ServeCommand {
-    func onDemand(_ perceivers: [(PipelineCore.Perceiver, ModelOrchestratorActor?, String?, Int?, String?)]) -> [PipelineCore.Perceiver: OnDemandModel] {
+    func onDemand(_ perceivers: [(PipelineCore.Perceiver, (any ModelOrchestrating)?, String?, Int?, String?)]) -> [PipelineCore.Perceiver: OnDemandModel] {
         var held: [PipelineCore.Perceiver: OnDemandModel] = [:]
         for case let (perceiver, model?, path?, seconds?, name) in perceivers {
             held[perceiver] = OnDemandModel(model: model, path: path, idle: .seconds(seconds))

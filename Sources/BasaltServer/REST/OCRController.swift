@@ -5,7 +5,7 @@ import BasaltCore
 struct OCRController: Sendable {
     static let path = "/v1/ocr"
 
-    let orchestrator: ModelOrchestratorActor
+    let orchestrator: any ModelOrchestrating
 
     struct Body: Decodable {
         let file: String

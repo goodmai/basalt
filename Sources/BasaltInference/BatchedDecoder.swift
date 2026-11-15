@@ -112,6 +112,7 @@ final class BatchCore {
     let decoder: BatchedDecoder
     fileprivate let model: any LanguageModel
     private var rows: [BatchRow] = []
+    private var typedLayers: [BatchedLayer] = []
     private var layers: [KVCache] = []
     private var pending: MLXArray?
     private var steps = 0
@@ -125,6 +126,7 @@ final class BatchCore {
 
     fileprivate func reset() {
         rows = []
+        typedLayers = []
         layers = []
         pending = nil
     }
@@ -138,7 +140,7 @@ final class BatchCore {
         let next = rows.allSatisfy(\.isPlainGreedy)
             ? argMax(logits, axis: -1)
             : concatenated(rows.indices.map { rows[$0].sample(logits[$0 ..< $0 + 1]) })
-        asyncEval([next] + layers.flatMap { $0.innerState() })
+        asyncEval([next] + typedLayers.flatMap { $0.innerState() })
         let tokens = feed.asArray(Int.self)
         pending = next
         steps += 1
@@ -149,33 +151,31 @@ final class BatchCore {
     private func retain(_ kept: [Int]) {
         rows = kept.map { rows[$0] }
         guard !kept.isEmpty else {
+            typedLayers = []
             layers = []
             pending = nil
             return
         }
         let index = MLXArray(kept.map(Int32.init))
-        for layer in layers {
-            (layer as? BatchKVCache)?.filter(rows: kept)
-            (layer as? BatchRotatingKVCache)?.filter(rows: kept)
-            (layer as? ArraysCache)?.filter(batchIndices: index)
+        for layer in typedLayers {
+            layer.filter(rows: kept, batchIndices: index)
         }
-        pending = pending?[MLXArray(kept.map(Int32.init))]
+        pending = pending?[index]
     }
 
     private func admit(_ arrivals: [BatchRow]) {
-        if layers.isEmpty { layers = arrivals[0].layers.map(Self.batchLayer) }
-        for (index, layer) in layers.enumerated() { Self.join(arrivals.map { $0.layers[index] }, into: layer) }
+        if typedLayers.isEmpty {
+            typedLayers = arrivals[0].layers.map(BatchedLayer.make)
+            layers = typedLayers.map(\.raw)
+        }
+        for (index, layer) in typedLayers.enumerated() { layer.join(arrivals.map { $0.layers[index] }) }
         for row in arrivals { row.layers = [] }
         pending = concatenated((pending.map { [$0] } ?? []) + arrivals.map(\.first))
         rows += arrivals
     }
 
     static func batchLayer(_ row: KVCache) -> KVCache {
-        switch row {
-        case is ArraysCache: row
-        case let rotating as RotatingKVCache: BatchRotatingKVCache(window: rotating.maxSize ?? 0)
-        default: BatchKVCache()
-        }
+        BatchedLayer.make(row).raw
     }
 
     static func join(_ joining: [KVCache], into layer: KVCache) {
@@ -185,6 +185,53 @@ final class BatchCore {
         case let rotating as BatchRotatingKVCache: rotating.append(joining.compactMap { $0 as? RotatingKVCache })
         case let batch as BatchKVCache: batch.append(joining.compactMap { $0 as? KVCacheSimple })
         default: break
+        }
+    }
+}
+
+private enum BatchedLayer {
+    case kv(BatchKVCache)
+    case rotating(BatchRotatingKVCache)
+    case recurrent(ArraysCache)
+
+    static func make(_ row: KVCache) -> BatchedLayer {
+        switch row {
+        case let recurrent as ArraysCache: .recurrent(recurrent)
+        case let rotating as RotatingKVCache: .rotating(BatchRotatingKVCache(window: rotating.maxSize ?? 0))
+        default: .kv(BatchKVCache())
+        }
+    }
+
+    var raw: any KVCache {
+        switch self {
+        case .kv(let cache): cache
+        case .rotating(let cache): cache
+        case .recurrent(let cache): cache
+        }
+    }
+
+    func innerState() -> [MLXArray] {
+        switch self {
+        case .kv(let cache): cache.innerState()
+        case .rotating(let cache): cache.innerState()
+        case .recurrent(let cache): cache.innerState()
+        }
+    }
+
+    func filter(rows kept: [Int], batchIndices: MLXArray) {
+        switch self {
+        case .kv(let cache): cache.filter(rows: kept)
+        case .rotating(let cache): cache.filter(rows: kept)
+        case .recurrent(let cache): cache.filter(batchIndices: batchIndices)
+        }
+    }
+
+    func join(_ joining: [KVCache]) {
+        switch self {
+        case .kv(let cache): cache.append(joining.compactMap { $0 as? KVCacheSimple })
+        case .rotating(let cache): cache.append(joining.compactMap { $0 as? RotatingKVCache })
+        case .recurrent(let cache):
+            for case let row as ArraysCache in joining where row !== cache { cache.extend(other: row) }
         }
     }
 }

@@ -50,7 +50,7 @@ actor SwitchProbe {
 struct AdapterServingTests {
     static let prompt = Conversation.firstTurn
 
-    static func served() async throws -> (MLXInferenceEngine, ModelOrchestratorActor, [String: URL]) {
+    static func served() async throws -> (MLXInferenceEngine, ModelOrchestratorActor<MLXInferenceEngine>, [String: URL]) {
         let engine = try await TinyModel.engine(.qwen3)
         let directories = [
             "a": try LabGateTests.adapterDirectory(rank: 2, storedRank: 2, seed: 1),

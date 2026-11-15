@@ -41,7 +41,7 @@ struct EmbeddingInterleaveRealModelTests {
         temperature: 0
     ).with { $0.enableThinking = false }
 
-    static func chat(_ orchestrator: ModelOrchestratorActor) async throws -> Chat {
+    static func chat(_ orchestrator: some ModelOrchestrating) async throws -> Chat {
         let start = ContinuousClock.now
         let response = try await orchestrator.generate(request: chatRequest)
         return Chat(tokens: response.completionTokens, seconds: (ContinuousClock.now - start).inSeconds, decode: response.tokensPerSecond)

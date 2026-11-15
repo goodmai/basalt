@@ -42,14 +42,14 @@ struct MemoryCoordinatorTests {
         MemoryCoordinator(source: source, now: { time.now }, sleep: parked)
     }
 
-    static func orchestrator(_ engine: MockInferenceEngine) async throws -> ModelOrchestratorActor {
+    static func orchestrator(_ engine: MockInferenceEngine) async throws -> ModelOrchestratorActor<MockInferenceEngine> {
         let orchestrator = ModelOrchestratorActor(engine: engine, telemetry: TelemetryTracker())
         try await orchestrator.loadModel(path: "m")
         await engine.setMemory(kvBudget: 1 << 40, promptTokens: 100)
         return orchestrator
     }
 
-    static func refusedForMemory(_ orchestrator: ModelOrchestratorActor, _ request: GenerationRequest) async -> Bool {
+    static func refusedForMemory(_ orchestrator: some ModelOrchestrating, _ request: GenerationRequest) async -> Bool {
         do {
             _ = try await orchestrator.generate(request: request)
             return false

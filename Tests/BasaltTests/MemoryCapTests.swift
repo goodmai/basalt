@@ -27,7 +27,7 @@ struct MemoryCapTests {
         kvBudget: Int64?, promptTokens: Int? = nil, maxTokens: Int = 65_536, weightsBytes: UInt64 = 0,
         free: Int64 = 64 << 30, kvPrecision: KVPrecision? = nil, adaptiveKVPrecision: Bool = false, kvZones: KVZones? = nil,
         modelTakesKVZones: Bool = true, modelTakesKVEviction: Bool = true
-    ) async throws -> (ModelOrchestratorActor, MockInferenceEngine, URL) {
+    ) async throws -> (ModelOrchestratorActor<MockInferenceEngine>, MockInferenceEngine, URL) {
         let engine = MockInferenceEngine()
         await engine.setMemory(kvBudget: kvBudget, promptTokens: promptTokens)
         await engine.setSupportsKVZones(modelTakesKVZones)

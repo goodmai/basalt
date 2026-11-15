@@ -17,7 +17,7 @@ extension ComposeHost {
     }
 
     func stages(_ view: ComposeSpec, held: [String: ComposeHeld], first: Bool) throws -> PipelineStages {
-        func orchestrator(_ name: String?) -> ModelOrchestratorActor? {
+        func orchestrator(_ name: String?) -> (any ModelOrchestrating)? {
             switch name.flatMap({ held[$0] }) {
             case .resident(let model): model
             case .onDemand(let model): model.model

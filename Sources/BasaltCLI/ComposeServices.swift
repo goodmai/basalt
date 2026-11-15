@@ -5,7 +5,7 @@ import BasaltInference
 
 struct ComposeServices: Sendable {
     var resolve: @Sendable (_ source: String) async throws -> String
-    var load: @Sendable (_ source: String, _ path: String, _ role: String, _ onDemand: Bool) async throws -> ModelOrchestratorActor?
+    var load: @Sendable (_ source: String, _ path: String, _ role: String, _ onDemand: Bool) async throws -> (any ModelOrchestrating)?
     var decider: @Sendable (_ model: String) async throws -> any DecisionEngine
     var decisions: @Sendable (_ view: ComposeSpec, _ locals: [String: any DecisionEngine], _ gate: GenerationGate, _ besideDecode: Bool, _ cloudGate: CloudGate) throws -> (any DecisionEngine)?
     var key: @Sendable (_ model: ComposeSpec.Model?) -> String
