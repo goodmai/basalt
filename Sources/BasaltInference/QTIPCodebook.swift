@@ -220,13 +220,19 @@ package enum QTIPReference {
     }
 }
 
-package struct KroneckerRHT: Sendable {
+package struct KroneckerRHT: Sendable, Equatable {
     package let dimension: Int
+    package let seed: UInt64
     package let outer: Int
     package let hadamardWidth: Int
     package let hadamardScale: Float
     package let signsValues: [Float]
+    package let packedSignsValues: [UInt32]
     package let qValues: [Float]?
+
+    package var spec: FusedKroneckerRHT.Spec {
+        FusedKroneckerRHT.Spec(self)
+    }
 
     package static func decompose(_ d: Int) -> (outer: Int, hadamardWidth: Int)? {
         guard d >= 16, d.isMultiple(of: 16) else { return nil }
@@ -242,10 +248,20 @@ package struct KroneckerRHT: Sendable {
 
     package init?(dimension: Int, seed: UInt64) {
         guard let (outer, hadamardWidth) = Self.decompose(dimension) else { return nil }
+        let generated = Self.generateFactors(dimension: dimension, outer: outer, seed: seed)
         self.dimension = dimension
+        self.seed = seed
         self.outer = outer
         self.hadamardWidth = hadamardWidth
         self.hadamardScale = 1.0 / Float(hadamardWidth).squareRoot()
+        self.signsValues = generated.signs
+        self.packedSignsValues = FusedKroneckerRHT.Spec.packSigns(generated.signs)
+        self.qValues = generated.qValues
+    }
+
+    package static func generateFactors(
+        dimension: Int, outer: Int, seed: UInt64
+    ) -> (signs: [Float], qValues: [Float]?) {
         var state = seed ^ (UInt64(dimension) &* 0x9E37_79B9_7F4A_7C15)
         var signs = [Float](repeating: 1.0, count: dimension)
         for idx in 0 ..< dimension {
@@ -256,12 +272,7 @@ package struct KroneckerRHT: Sendable {
             z ^= (z >> 31)
             signs[idx] = (z & 1) == 0 ? 1.0 : -1.0
         }
-        self.signsValues = signs
-        if outer > 1 {
-            self.qValues = Self.orthogonalFactor(size: outer, seed: state)
-        } else {
-            self.qValues = nil
-        }
+        return (signs, outer > 1 ? orthogonalFactor(size: outer, seed: state) : nil)
     }
 
     private static func orthogonalFactor(size: Int, seed: UInt64) -> [Float] {

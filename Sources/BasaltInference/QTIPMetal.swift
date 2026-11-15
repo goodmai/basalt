@@ -344,15 +344,15 @@ package struct QTIPLayerSpec: Sendable {
 }
 
 package final class QTIPLinear: Linear, Quantized {
+    private static let legacyParameterKeys = ["inSigns", "outSigns", "inQ", "outQ"]
+
     package let rate: QTIPRate
     package let outFeatures: Int
     package let inFeatures: Int
     package let rhtIn: KroneckerRHT
     package let rhtOut: KroneckerRHT
-    let inSigns: MLXArray
-    let outSigns: MLXArray
-    let inQ: MLXArray?
-    let outQ: MLXArray?
+    package let inBuffers: FusedKroneckerRHT.Buffers
+    package let outBuffers: FusedKroneckerRHT.Buffers
     @ParameterInfo(key: "row_scales") package var rowScales: MLXArray
     @ParameterInfo(key: "tlut") package var tlut: MLXArray
 
@@ -366,21 +366,35 @@ package final class QTIPLinear: Linear, Quantized {
         rowScales: MLXArray,
         tlut: MLXArray,
         bias: MLXArray?,
-        spec: QTIPLayerSpec
+        spec: QTIPLayerSpec,
+        buffers: FusedKroneckerRHT.Pair? = nil
     ) {
         self.rate = spec.rate
         self.outFeatures = spec.rhtOut.dimension
         self.inFeatures = spec.rhtIn.dimension
         self.rhtIn = spec.rhtIn
         self.rhtOut = spec.rhtOut
-        self.inSigns = MLXArray(spec.rhtIn.signsValues)
-        self.outSigns = MLXArray(spec.rhtOut.signsValues)
-        self.inQ = spec.rhtIn.qValues.map { MLXArray($0, [spec.rhtIn.outer, spec.rhtIn.outer]) }
-        self.outQ = spec.rhtOut.qValues.map { MLXArray($0, [spec.rhtOut.outer, spec.rhtOut.outer]) }
+        self.inBuffers = buffers?.inBuffers ?? FusedKroneckerRHT.Buffers(spec.rhtIn)
+        self.outBuffers = buffers?.outBuffers ?? FusedKroneckerRHT.Buffers(spec.rhtOut)
         self._rowScales.wrappedValue = rowScales
         self._tlut.wrappedValue = tlut
         super.init(weight: packedWeight, bias: bias)
         freeze()
+    }
+
+    @discardableResult
+    public override func update(
+        parameters: ModuleParameters,
+        verify: VerifyUpdate,
+        path: [String] = [],
+        modulePath: [String] = []
+    ) throws -> Self {
+        var cleaned = parameters
+        for key in Self.legacyParameterKeys {
+            cleaned[key] = nil
+        }
+        try super.update(parameters: cleaned, verify: verify, path: path, modulePath: modulePath)
+        return self
     }
 
     package func decodedRotatedWeight(dtype: DType = .float32) -> MLXArray {
@@ -391,15 +405,22 @@ package final class QTIPLinear: Linear, Quantized {
 
     package func decodedWeight(dtype: DType = .float32) -> MLXArray {
         let wRot = decodedRotatedWeight(dtype: .float32)
-        let wUnrotOut = rhtOut.inverseFloat32(wRot.T, signs: outSigns, qMatrix: outQ).T
-        return rhtIn.inverseFloat32(wUnrotOut, signs: inSigns, qMatrix: inQ).asType(dtype)
+        let wUnrotOut = FusedKroneckerRHT.inverse(wRot.T, buffers: outBuffers, outputDType: .float32).T
+        return FusedKroneckerRHT.inverse(wUnrotOut, buffers: inBuffers, outputDType: dtype)
     }
 
-    override package func callAsFunction(_ x: MLXArray) -> MLXArray {
-        let xRot = rhtIn.forwardFloat32(x, signs: inSigns, qMatrix: inQ).asType(x.dtype)
+    package func rotateInput(_ x: MLXArray) -> MLXArray {
+        FusedKroneckerRHT.forward(x, buffers: inBuffers, outputDType: x.dtype)
+    }
+
+    package func rotateNormalizedInput(_ x: MLXArray, normWeight: MLXArray, eps: Float) -> MLXArray {
+        FusedKroneckerRHT.rmsNormForward(x, normWeight: normWeight, eps: eps, buffers: inBuffers, outputDType: x.dtype)
+    }
+
+    package func matmulRotated(_ xRot: MLXArray) -> MLXArray {
         let tileRows = weight.dim(0)
         let tileCols = inFeatures / 16
-        let rowsPerChunk = max(1, QTIPMetal.dequantTileBytes / max(1, 16 * inFeatures * x.dtype.size))
+        let rowsPerChunk = max(1, QTIPMetal.dequantTileBytes / max(1, 16 * inFeatures * xRot.dtype.size))
         var parts: [MLXArray] = []
         for start in stride(from: 0, to: tileRows, by: rowsPerChunk) {
             let end = min(tileRows, start + rowsPerChunk)
@@ -409,13 +430,76 @@ package final class QTIPLinear: Linear, Quantized {
                 tlut: tlut,
                 rate: rate,
                 tileCols: tileCols,
-                dtype: x.dtype
+                dtype: xRot.dtype
             )
             parts.append(matmul(xRot, wChunk.T))
         }
-        let yRot = parts.count == 1 ? parts[0] : concatenated(parts, axis: -1)
-        var y = rhtOut.inverseFloat32(yRot, signs: outSigns, qMatrix: outQ).asType(x.dtype)
-        if let bias { y = y + bias }
-        return y
+        return parts.count == 1 ? parts[0] : concatenated(parts, axis: -1)
+    }
+
+    package func callPreRotated(_ xRot: MLXArray) -> MLXArray {
+        FusedKroneckerRHT.inverse(matmulRotated(xRot), buffers: outBuffers, bias: bias, outputDType: xRot.dtype)
+    }
+
+    override package func callAsFunction(_ x: MLXArray) -> MLXArray {
+        callPreRotated(rotateInput(x))
+    }
+}
+
+extension QTIPLinear {
+    package func sharesInputRotation(with other: QTIPLinear) -> Bool {
+        inFeatures == other.inFeatures && rhtIn.seed == other.rhtIn.seed
+    }
+
+    package func sharesOutputRotation(with other: QTIPLinear) -> Bool {
+        outFeatures == other.outFeatures && rhtOut.seed == other.rhtOut.seed
+    }
+
+    package static func applySiblings(
+        _ x: MLXArray,
+        layers: [QTIPLinear],
+        norm: (weight: MLXArray, eps: Float)? = nil
+    ) -> [MLXArray] {
+        guard !layers.isEmpty else { return [] }
+        var rotatedByKey: [String: MLXArray] = [:]
+        rotatedByKey.reserveCapacity(layers.count)
+        return layers.map { layer in
+            let key = "\(layer.inFeatures):\(layer.rhtIn.seed)"
+            let xRot: MLXArray
+            if let cached = rotatedByKey[key] {
+                xRot = cached
+            } else {
+                let computed = norm.map {
+                    layer.rotateNormalizedInput(x, normWeight: $0.weight, eps: $0.eps)
+                } ?? layer.rotateInput(x)
+                rotatedByKey[key] = computed
+                xRot = computed
+            }
+            return layer.callPreRotated(xRot)
+        }
+    }
+
+    package static func applyMoECollapse(
+        _ expertInputs: [MLXArray],
+        experts: [QTIPLinear],
+        weights: MLXArray
+    ) -> MLXArray {
+        precondition(!experts.isEmpty && expertInputs.count == experts.count, "QTIPLinear.applyMoECollapse count mismatch")
+        let first = experts[0]
+        let outType = expertInputs[0].dtype
+        if experts.allSatisfy({ $0.sharesOutputRotation(with: first) && $0.bias == nil }) {
+            let yRots = zip(expertInputs, experts).map { input, expert in
+                expert.matmulRotated(expert.rotateInput(input))
+            }
+            return FusedKroneckerRHT.weightedInverseCollapse(
+                stacked(yRots, axis: -2),
+                weights: weights,
+                buffers: first.outBuffers,
+                outputDType: outType
+            )
+        }
+        let ys = zip(expertInputs, experts).map { $1($0) }
+        let weighted = stacked(ys, axis: -2).asType(.float32) * expandedDimensions(weights.asType(.float32), axis: -1)
+        return weighted.sum(axis: -2).asType(outType)
     }
 }

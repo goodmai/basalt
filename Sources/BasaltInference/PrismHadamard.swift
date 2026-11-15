@@ -6,24 +6,18 @@ import MLXNN
 
 struct SignedBlockHadamard: Sendable, Equatable {
     let blockSize: Int
-    private let scale: Float
 
     init?(blockSize: Int, width: Int) {
         guard blockSize > 0, blockSize & (blockSize - 1) == 0, width % blockSize == 0 else { return nil }
         self.blockSize = blockSize
-        scale = 1 / Float(blockSize).squareRoot()
     }
 
     func forward(_ x: MLXArray, signs: MLXArray) -> MLXArray {
-        transform(x.asType(.float32) * signs).asType(x.dtype)
+        FusedKroneckerRHT.blockHadamardForward(x, signs: signs, blockSize: blockSize)
     }
 
     func inverse(_ x: MLXArray, signs: MLXArray) -> MLXArray {
-        (transform(x.asType(.float32)) * signs).asType(x.dtype)
-    }
-
-    private func transform(_ x: MLXArray) -> MLXArray {
-        hadamardTransform(x.reshaped(-1, blockSize), scale: scale).reshaped(x.shape)
+        FusedKroneckerRHT.blockHadamardInverse(x, signs: signs, blockSize: blockSize)
     }
 }
 

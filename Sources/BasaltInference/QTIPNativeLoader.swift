@@ -18,6 +18,7 @@ package struct QTIPStagedPlan: Sendable {
     package var seed: UInt64
     package var groups: [[QTIPStagedEntry]]
     package var calibrationTokens: Int
+    package var sharedMoERHT = true
 }
 
 private struct QTIPPreparedLayer {
@@ -92,7 +93,8 @@ extension QTIPQuantizer {
             rate: primaryRate, quantizedLayers: totalLayers, quantizedWeights: totalWeights,
             calibrationTokens: calTokens, wallSeconds: secs)
         let plan = QTIPStagedPlan(
-            directory: stageDirectory, seed: cfg.seed, groups: stagedGroups, calibrationTokens: calTokens)
+            directory: stageDirectory, seed: cfg.seed, groups: stagedGroups,
+            calibrationTokens: calTokens, sharedMoERHT: cfg.sharedMoERHT)
         return (summary, plan)
     }
 
@@ -104,6 +106,7 @@ extension QTIPQuantizer {
         ctx: QTIPMultiRateContext
     ) throws -> (layers: Int, weights: Int, entries: [QTIPStagedEntry]) {
         var factorCache: [String: (rhtIn: KroneckerRHT, cholesky: (u: MLXArray, diagInv: MLXArray)?)] = [:]
+        var bufferCache: [String: FusedKroneckerRHT.Buffers] = [:]
         var remaining = Dictionary(targets.map { ($0.groupKey, 1) }, uniquingKeysWith: +)
         var stagedArrays: [QTIPRate: [String: MLXArray]] = [:]
         for r in ctx.secondaryRates { stagedArrays[r] = [:] }
@@ -116,15 +119,20 @@ extension QTIPQuantizer {
             remaining[entry.groupKey, default: 1] -= 1
             let releaseFactor = remaining[entry.groupKey, default: 0] <= 0
             if releaseFactor { factorCache.removeValue(forKey: entry.groupKey) }
-            let outSeed = hashString(entry.path + ".out", seed: ctx.config.seed)
+            let outKey = sharedOutputKey(path: entry.path, sharedMoERHT: ctx.config.sharedMoERHT)
+            let outSeed = hashString(outKey, seed: ctx.config.seed)
             guard let rhtOut = KroneckerRHT(dimension: entry.outFeatures, seed: outSeed) else { continue }
             let (dense, bias) = extractDenseWeight(entry.module)
             let (wNorm, rowScales) = prepareNormalizedWeight(weight: dense, rhtIn: inEntry.rhtIn, rhtOut: rhtOut)
             let pPrimary = encodeNormalizedWeight(
                 wNorm: wNorm, choleskyFactors: inEntry.cholesky, tlut: primaryTLUT, rate: ctx.primaryRate)
             let primarySpec = QTIPLayerSpec(rate: ctx.primaryRate, rhtIn: inEntry.rhtIn, rhtOut: rhtOut)
+            let inBuf = cachedBuffers(for: inEntry.rhtIn, cache: &bufferCache)
+            let outBuf = cachedBuffers(for: rhtOut, cache: &bufferCache)
+            let pair = FusedKroneckerRHT.Pair(inBuffers: inBuf, outBuffers: outBuf)
             let qLayer = QTIPLinear(
-                packedWeight: pPrimary, rowScales: rowScales, tlut: primaryTLUT, bias: bias, spec: primarySpec)
+                packedWeight: pPrimary, rowScales: rowScales, tlut: primaryTLUT, bias: bias,
+                spec: primarySpec, buffers: pair)
             eval(qLayer)
             try PVTuner.swapModule(entry.path, with: qLayer, in: root)
             let localIdx = entries.count
@@ -181,6 +189,7 @@ extension QTIPQuantizer {
         let tlut = MLXArray(QTIPCodebook.baseLUTValues(rate: rate), [512, 2]).asType(.float16)
         eval(tlut)
         var rhtCache: [String: KroneckerRHT] = [:]
+        var bufferCache: [String: FusedKroneckerRHT.Buffers] = [:]
         var applied = 0
         for (gIdx, entries) in plan.groups.enumerated() where !entries.isEmpty {
             let url = plan.directory.appending(component: "rate-\(rate.label)-group-\(gIdx).safetensors")
@@ -192,11 +201,16 @@ extension QTIPQuantizer {
                 }
                 let bias = item.hasBias ? arrays["t\(item.index).bias"] : nil
                 let inKey = "\(item.inFeatures):\(hashString(item.groupKey, seed: plan.seed))"
-                let outKey = "\(item.outFeatures):\(hashString(item.path + ".out", seed: plan.seed))"
+                let outName = sharedOutputKey(path: item.path, sharedMoERHT: plan.sharedMoERHT)
+                let outKey = "\(item.outFeatures):\(hashString(outName, seed: plan.seed))"
                 let rhtIn = try cachedRHT(dimension: item.inFeatures, seedKey: inKey, cache: &rhtCache)
                 let rhtOut = try cachedRHT(dimension: item.outFeatures, seedKey: outKey, cache: &rhtCache)
                 let spec = QTIPLayerSpec(rate: rate, rhtIn: rhtIn, rhtOut: rhtOut)
-                let layer = QTIPLinear(packedWeight: packed, rowScales: scales, tlut: tlut, bias: bias, spec: spec)
+                let inBuf = cachedBuffers(for: rhtIn, cache: &bufferCache)
+                let outBuf = cachedBuffers(for: rhtOut, cache: &bufferCache)
+                let pair = FusedKroneckerRHT.Pair(inBuffers: inBuf, outBuffers: outBuf)
+                let layer = QTIPLinear(
+                    packedWeight: packed, rowScales: scales, tlut: tlut, bias: bias, spec: spec, buffers: pair)
                 eval(layer)
                 try PVTuner.swapModule(item.path, with: layer, in: root)
                 applied += 1
@@ -236,11 +250,18 @@ package enum QTIPNativeLoader {
         package var bpw: Double
         package var seed: UInt64
         package var layers: [String: LayerEntry]
+        package var sharedMoERHT: Bool?
 
-        package init(bpw: Double, seed: UInt64, layers: [String: LayerEntry]) {
+        enum CodingKeys: String, CodingKey {
+            case bpw, seed, layers
+            case sharedMoERHT = "shared_moe_rht"
+        }
+
+        package init(bpw: Double, seed: UInt64, layers: [String: LayerEntry], sharedMoERHT: Bool? = nil) {
             self.bpw = bpw
             self.seed = seed
             self.layers = layers
+            self.sharedMoERHT = sharedMoERHT
         }
     }
 
@@ -278,23 +299,30 @@ package enum QTIPNativeLoader {
             throw .inferenceError("QTIP native: unsupported rate \(manifest.bpw) bpw")
         }
         let modules = Dictionary(model.namedModules(), uniquingKeysWith: { first, _ in first })
+        let sharedMoE = manifest.sharedMoERHT ?? false
         var rhtCache: [String: KroneckerRHT] = [:]
+        var bufferCache: [String: FusedKroneckerRHT.Buffers] = [:]
         var updates: [(String, Module)] = []
         let zeroTLUT = MLXArray.zeros([512, 2], dtype: .float16)
         for (path, entry) in manifest.layers.sorted(by: { $0.key < $1.key }) {
             guard modules[path] is Linear else {
                 throw .inferenceError("QTIP native: \(path) is not a linear layer of this model")
             }
-            let groupKey = QTIPQuantizer.sharedInputGroupKey(path: path, inFeatures: entry.inFeatures)
+            let groupKey = QTIPQuantizer.sharedInputGroupKey(path: path, inFeatures: entry.inFeatures, sharedMoERHT: sharedMoE)
+            let outName = QTIPQuantizer.sharedOutputKey(path: path, sharedMoERHT: sharedMoE)
             let inKey = "\(entry.inFeatures):\(QTIPQuantizer.hashString(groupKey, seed: manifest.seed))"
-            let outKey = "\(entry.outFeatures):\(QTIPQuantizer.hashString(path + ".out", seed: manifest.seed))"
+            let outKey = "\(entry.outFeatures):\(QTIPQuantizer.hashString(outName, seed: manifest.seed))"
             let rhtIn = try QTIPQuantizer.cachedRHT(dimension: entry.inFeatures, seedKey: inKey, cache: &rhtCache)
             let rhtOut = try QTIPQuantizer.cachedRHT(dimension: entry.outFeatures, seedKey: outKey, cache: &rhtCache)
             let spec = QTIPLayerSpec(rate: rate, rhtIn: rhtIn, rhtOut: rhtOut)
+            let inBuf = QTIPQuantizer.cachedBuffers(for: rhtIn, cache: &bufferCache)
+            let outBuf = QTIPQuantizer.cachedBuffers(for: rhtOut, cache: &bufferCache)
+            let pair = FusedKroneckerRHT.Pair(inBuffers: inBuf, outBuffers: outBuf)
             let packed = MLXArray.zeros([entry.outFeatures / 16, (entry.inFeatures / 16) * rate.wordsPerTile], dtype: .uint32)
             let scales = MLXArray.zeros([entry.outFeatures / 16], dtype: .float16)
             let bias = entry.hasBias ? MLXArray.zeros([entry.outFeatures], dtype: .float16) : nil
-            updates.append((path, QTIPLinear(packedWeight: packed, rowScales: scales, tlut: zeroTLUT, bias: bias, spec: spec)))
+            updates.append((path, QTIPLinear(
+                packedWeight: packed, rowScales: scales, tlut: zeroTLUT, bias: bias, spec: spec, buffers: pair)))
         }
         model.update(modules: ModuleChildren.unflattened(updates))
     }
@@ -333,7 +361,8 @@ extension QTIPNativeLoader {
                 let summary = try QTIPQuantizer.quantizeModel(
                     ctx.model, calibrationTokenBatches: batches, config: finalCfg, onStep: onStep)
                 let written = try writeDirectory(
-                    model: ctx.model as Module, rate: rate, seed: finalCfg.seed, source: source, output: output)
+                    model: ctx.model as Module, rate: rate, seed: finalCfg.seed,
+                    source: source, output: output, sharedMoERHT: finalCfg.sharedMoERHT)
                 return (summary, written.shards, written.bytes)
             }
         } catch {
@@ -354,7 +383,7 @@ extension QTIPNativeLoader {
     }
 
     package static func writeDirectory(
-        model: Module, rate: QTIPRate, seed: UInt64, source: URL, output: URL
+        model: Module, rate: QTIPRate, seed: UInt64, source: URL, output: URL, sharedMoERHT: Bool = true
     ) throws -> (shards: Int, bytes: Int) {
         try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
         var layerMap: [String: LayerEntry] = [:]
@@ -362,7 +391,7 @@ extension QTIPNativeLoader {
             guard let q = mod as? QTIPLinear else { continue }
             layerMap[path] = LayerEntry(outFeatures: q.outFeatures, inFeatures: q.inFeatures, hasBias: q.bias != nil)
         }
-        let manifest = Manifest(bpw: rate.bpw, seed: seed, layers: layerMap)
+        let manifest = Manifest(bpw: rate.bpw, seed: seed, layers: layerMap, sharedMoERHT: sharedMoERHT)
         let shardInfo = try writeShards(from: model, into: output)
         try writeConfigAndAssets(source: source, output: output, manifest: manifest)
         return shardInfo
