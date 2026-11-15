@@ -42,6 +42,7 @@ public actor EngineSupervisor {
     public var endpoint: EngineEndpoint? { state.port.map { .loopback(port: $0, token: token) } }
 
     public func start() async {
+        guard state.isIdle else { return }
         if let record = environment.records.load(), record.version == HealthResponse.version, record.arguments == launch.arguments,
            environment.isAlive(record.pid), await environment.probe(.loopback(port: record.port, token: record.token)) {
             (token, adoptedPID) = (record.token, record.pid)

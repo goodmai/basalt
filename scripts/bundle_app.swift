@@ -111,6 +111,10 @@ func infoPlist(version: String) -> [String: Any] {
             "CFBundleTypeName": "Attachment", "CFBundleTypeRole": "Viewer", "LSHandlerRank": "Alternate",
             "LSItemContentTypes": ["com.adobe.pdf", "public.image", "public.audio"],
         ]],
+        "CFBundleURLTypes": [[
+            "CFBundleURLName": "app.basalt.url", "CFBundleTypeRole": "Viewer",
+            "CFBundleURLSchemes": ["basalt"],
+        ]],
     ]
 }
 

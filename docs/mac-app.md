@@ -63,6 +63,7 @@ From a build folder without bundling, point the app at the engine: `BASALT_HELPE
 ## Shortcuts, Services and the Dock
 - **Shortcuts and Spotlight:** Ask Basalt, Summarize File, Transcribe Audio and Switch Model are App Intents. Shortcuts runs them with the app in the background. Each waits until the engine is ready (up to three minutes), and Switch Model refuses a model that does not fit. `scripts/bundle_app.swift` extracts the intents' metadata into `Contents/Resources/Metadata.appintents` with `appintentsmetadataprocessor`, because SwiftPM does not.
 - **Services:** select text in any app and choose Services → Ask Basalt. A new conversation opens with that text as the question.
+- **One-click `basalt://` launch from Hugging Face:** `Basalt.app` registers the `basalt` URL scheme (`CFBundleURLTypes`). Opening `basalt://run?model=<owner/repo>[&role=chat|mtp|moe-stream|ocr|asr|decide|embed|rerank]` — or clicking **Run with Basalt** on any [`goodmai`](https://huggingface.co/goodmai) model card — validates the Hugging Face repo ID, updates the saved model choice, brings Basalt forward and switches the supervised engine to that model or pipeline role.
 - **Dock:** a PDF, image or audio file dropped on the Dock icon starts a conversation with it attached.
 - **Notifications:** when an answer finishes while Basalt is in the background, a notification shows its first lines. The permission is asked once.
 
