@@ -20,8 +20,8 @@ extension ComposeSpec {
                 Issue(issue.path.hasPrefix("pipeline.") ? prefix + issue.path.dropFirst("pipeline".count) : issue.path, issue.message)
             }
         }
-        issues += pipelineIssues + experimentalIssues + mcpIssues + models.sorted { $0.key < $1.key }.flatMap { modelIssues($0.key, $0.value) }
-        for (name, _) in models.sorted(by: { $0.key < $1.key }) where !roles.keys.contains(name) {
+        issues += pipelineIssues + experimentalIssues + mcpIssues + benchmarkIssues + models.sorted { $0.key < $1.key }.flatMap { modelIssues($0.key, $0.value) }
+        for (name, _) in models.sorted(by: { $0.key < $1.key }) where !roles.keys.contains(name) && !benchmarkModels.contains(name) {
             issues.append(Issue("models.\(name)", "declared but not used by any pipeline's perceive, decide or answer"))
         }
         return issues.reduce(into: [Issue]()) { unique, issue in if !unique.contains(issue) { unique.append(issue) } }
@@ -131,7 +131,7 @@ extension ComposeSpec {
         let path = "models.\(name)"
         let perceiver = views.contains { $0.spec.ocr == name || $0.spec.speech == name }
         let routed = views.contains { $0.spec.answer != name && $0.spec.answerModels.contains(name) }
-        var issues = keepIssues(path, model, perceiver: perceiver, onDemandAllowed: routed || deciderModels.contains(name))
+        var issues = keepIssues(path, model, perceiver: perceiver, onDemandAllowed: routed || deciderModels.contains(name) || benchmarkModels.contains(name))
         issues += roleIssues(name, model, path: path)
         if model.budget != nil, !model.isCloud { issues.append(Issue("\(path).budget", "applies only to cloud models")) }
         if let budget = model.budget, !(budget > 0) { issues.append(Issue("\(path).budget", "usd_per_day must be positive")) }

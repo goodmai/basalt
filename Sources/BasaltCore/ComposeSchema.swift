@@ -8,6 +8,7 @@ public enum ComposeSchema {
         case sections(String)
         case list(String)
         case nameOrSection(String)
+        case suiteMap(item: String, section: String)
         case variables
     }
 
@@ -29,6 +30,7 @@ public enum ComposeSchema {
             Field("budget", .section("budget")), Field("models", .sections("model")), Field("pipeline", .section("pipeline")),
             Field("pipelines", .sections("pipeline")), Field("experimental", .section("experimental")), Field("mcp", .section("mcp")),
             Field("variables", .variables, since: 2), Field("profiles", .sections("profile"), since: 2),
+            Field("benchmarks", .section("benchmarks"), since: 2),
         ],
         "experimental": [
             Field("zero_copy_body", .boolean), Field("smallm_kernel", .boolean), Field("speech_analyzer", .boolean),
@@ -71,6 +73,32 @@ public enum ComposeSchema {
         "profile": [Field("when", .section("machine")), Field("variables", .variables)],
         "machine": [Field("memory_gb", .section("range")), Field("chip", .string)],
         "range": [Field("under", .number), Field("over", .number)],
+        "benchmarks": [
+            Field("defaults", .section("benchmark_defaults"), since: 2),
+            Field("suites", .suiteMap(item: "benchmark_task", section: "benchmark_suite"), since: 2),
+        ],
+        "benchmark_defaults": [
+            Field("seed", .integer), Field("temperature", .number),
+            Field("gpu_lock", .boolean), Field("output_dir", .string),
+        ],
+        "benchmark_suite": [
+            Field("profiles", .names), Field("budget", .section("benchmark_budget")),
+            Field("tasks", .list("benchmark_task")),
+        ],
+        "benchmark_budget": [Field("usd_max", .number), Field("max_minutes", .number)],
+        "benchmark_task": [
+            Field("adapter", .choice(BenchmarkAdapterID.known.sorted())), Field("dataset", .string),
+            Field("target", .string), Field("params", .variables),
+            Field("gates", .section("benchmark_gates")), Field("submit", .section("benchmark_submit")),
+        ],
+        "benchmark_gates": [
+            Field("min_decode_tps", .number), Field("max_peak_gb", .number), Field("min_accuracy", .number),
+            Field("max_p50_ms", .number), Field("max_ppl", .number), Field("max_ece", .number),
+        ],
+        "benchmark_submit": [
+            Field("target", .choice(SubmissionTarget.allCases.map(\.rawValue))), Field("api_key_env", .string),
+            Field("endpoint", .string), Field("subset", .string), Field("split", .string),
+        ],
     ]
 
     public static func keys(_ section: String, version: Int = versions.upperBound) -> Set<String> {
@@ -85,12 +113,22 @@ public enum ComposeSchema {
 
     public static var jsonSchema: String {
         var definitions: [String: Any] = [:]
-        for (name, fields) in sections { definitions[name] = object(fields) }
+        for (name, fields) in sections {
+            var entry = object(fields)
+            if name == "benchmarks" {
+                entry["additionalProperties"] = suiteValueSchema(item: "benchmark_task", section: "benchmark_suite")
+            }
+            definitions[name] = entry
+        }
         let schema: [String: Any] = [
             "$schema": "https://json-schema.org/draft/2020-12/schema", "title": "basalt compose file", "$ref": "#/$defs/root", "$defs": definitions,
         ]
         let data = (try? JSONSerialization.data(withJSONObject: schema, options: [.prettyPrinted, .sortedKeys])) ?? Data()
         return String(decoding: data, as: UTF8.self)
+    }
+
+    static func suiteValueSchema(item: String, section: String) -> [String: Any] {
+        ["oneOf": [["type": "array", "items": ["$ref": "#/$defs/\(item)"]], ["$ref": "#/$defs/\(section)"]]]
     }
 
     static func object(_ fields: [Field]) -> [String: Any] {
@@ -110,6 +148,7 @@ public enum ComposeSchema {
         case .sections(let name): ["type": "object", "additionalProperties": ["$ref": "#/$defs/\(name)"]]
         case .list(let name): ["type": "array", "items": ["$ref": "#/$defs/\(name)"]]
         case .nameOrSection(let name): ["oneOf": [["type": "string"], ["$ref": "#/$defs/\(name)"]]]
+        case .suiteMap(let item, let section): ["type": "object", "additionalProperties": suiteValueSchema(item: item, section: section)]
         case .variables: ["type": "object", "additionalProperties": ["type": ["string", "number", "boolean"]]]
         }
     }
