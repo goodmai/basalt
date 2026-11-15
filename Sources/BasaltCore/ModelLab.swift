@@ -12,6 +12,7 @@ public protocol ModelLab: ModelResearch {
     func score(_ request: ScoreRequest) async throws(BasaltError) -> ScoreReport
     func traceTokens(_ request: TokenTraceRequest) async throws(BasaltError) -> TokenTraceReport
     func activationContrast(_ request: ActivationContrastRequest) async throws(BasaltError) -> ActivationContrastReport
+    func phasorProbe(_ request: PhasorProbeRequest) async throws(BasaltError) -> PhasorProbeSummary
 }
 
 extension ModelLab {
@@ -27,6 +28,9 @@ extension ModelLab {
     public func traceTokens(_ request: TokenTraceRequest) async throws(BasaltError) -> TokenTraceReport { throw Self.unavailable("token tracing") }
     public func activationContrast(_ request: ActivationContrastRequest) async throws(BasaltError) -> ActivationContrastReport {
         throw Self.unavailable("activation contrast")
+    }
+    public func phasorProbe(_ request: PhasorProbeRequest) async throws(BasaltError) -> PhasorProbeSummary {
+        throw Self.unavailable("phasor probe")
     }
 
     static func unavailable(_ mode: String) -> BasaltError {

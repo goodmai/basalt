@@ -6,14 +6,20 @@ extension MCPServer {
     func handleToolsCall(id: JSONRPCId?, params: AnyCodable?) async {
         do throws(MCPFailure) {
             let call = try MCPArguments.toolCall(params)
-            guard let tool = MCPTool(name: call.name) else { throw MCPFailure.methodNotFound("Unknown tool: \(call.name)") }
+            let known = MCPTool(name: call.name)
+            guard known != nil || call.name == "phasor_probe" else { throw MCPFailure.methodNotFound("Unknown tool: \(call.name)") }
             guard toolFilter.allows(call.name, researchTools: researchTools) else {
                 if toolFilter.isExplicitlyDisabled(call.name) {
                     throw MCPFailure.methodNotFound("Tool '\(call.name)' is disabled by server configuration (--mcp-disable)")
                 }
                 throw MCPFailure.methodNotFound("\(call.name) is an experiment tool: start the server with serve --research-tools or --mcp-enable \(call.name) to use it")
             }
-            let output = try await result(of: tool, args: call.arguments)
+            let output: ToolResult
+            if let known {
+                output = try await result(of: known, args: call.arguments)
+            } else {
+                output = try await phasorProbe(call.arguments)
+            }
             writer(MCPWire.result(id: id, output))
         } catch {
             writer(MCPWire.error(id: id, error))
@@ -222,6 +228,17 @@ extension MCPServer {
             orchestrator: orchestrator, interventions: request.allowInterventions, filter: toolFilter, researchTools: researchTools)
         do throws(BasaltError) {
             return .json(try await introspector.introspect(request))
+        } catch {
+            throw MCPFailure(error)
+        }
+    }
+
+    private func phasorProbe(_ args: [String: Any]?) async throws(MCPFailure) -> ToolResult {
+        let request = try PhasorProbeRequest(mcp: args)
+        do throws(BasaltError) {
+            return .json(try await orchestrator.research { model throws(BasaltError) in
+                try await ResearchCall.lab(model).phasorProbe(request)
+            })
         } catch {
             throw MCPFailure(error)
         }
