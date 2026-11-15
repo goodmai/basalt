@@ -170,7 +170,7 @@ struct ServeCommand: AsyncParsableCommand {
         if let spec, !mcp { return try await runComposed(spec, ComposeBoot(config: config, engine: engine, orchestrator: orchestrator, chatPath: resolvedPath)) }
 
         let loadedEmbeddings = try await loadEmbeddings()
-        let loadedDecisions = try await loadDecisions(chat: engine)
+        let loadedDecisions = try await loadDecisions(chat: engine, chatPath: resolvedPath)
         let perceivePaths = try await pipelinePerceivePaths()
         let plan = try await admitComputePlan(chatPath: resolvedPath, embeddings: loadedEmbeddings, decisions: loadedDecisions, perceive: perceivePaths)
         let embeddings = BesideDecodeEmbeddingEngine.serving(loadedEmbeddings, besideDecode: plan.runsBesideDecode("embed"))
@@ -181,7 +181,7 @@ struct ServeCommand: AsyncParsableCommand {
         try await load(orchestrator, from: resolvedPath)
         var stages = try await loadPipelineStages(perceivePaths, plan: plan)
         let start = ComposeStart(chat: orchestrator, decider: loadedDecisions, decisions: decisions, cloudGate: cloudGate, startup: stages, besideDecode: plan.runsBesideDecode("decide"))
-        let host = try await spec.asyncMap { try await composeHost($0, start: start, engine: engine) }
+        let host = try await spec.asyncMap { try await composeHost($0, start: start, engine: engine, chatPath: resolvedPath) }
         if let host, let system = await host.registry.system(ComposeSpec.defaultPipeline) { (stages, decisions) = (system.stages, system.decisions) }
         let record = try spec.flatMap { host == nil ? nil : try ComposeRecord.write(name: $0.name, port: network.port, file: pipeline.compose ?? "") }
         defer { record.map(ComposeRecord.remove) }

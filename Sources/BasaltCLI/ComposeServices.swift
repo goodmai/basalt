@@ -14,11 +14,11 @@ struct ComposeServices: Sendable {
 }
 
 extension ComposeServices {
-    init(serve: ServeCommand, chat: MLXInferenceEngine) {
+    init(serve: ServeCommand, chat: MLXInferenceEngine, chatPath: String? = nil) {
         self.init(
             resolve: { try await serve.resolvedPath($0, quant: nil) },
             load: { source, path, role, onDemand in try await serve.loadPerceiver(source, path: path, role: role, loads: !onDemand, onDemand: onDemand) },
-            decider: { try await serve.loadDecisions($0, chat: chat) },
+            decider: { try await serve.loadDecisions($0, chat: chat, chatPath: chatPath) },
             decisions: { view, locals, gate, besideDecode, cloudGate in
                 try serve.composedDecisions(view, locals: locals, gate: gate, besideDecode: besideDecode, cloudGate: cloudGate)
             },

@@ -33,7 +33,7 @@ extension ServeCommand {
     }
 
     func startComposed(_ spec: ComposeSpec, _ boot: ComposeBoot<some ModelOrchestrating>, embeddings: (any EmbeddingEngine)?, slot: ComposeSlot) async throws {
-        let loadedDecisions = try await loadDecisions(chat: boot.engine)
+        let loadedDecisions = try await loadDecisions(chat: boot.engine, chatPath: boot.chatPath)
         let perceivePaths = try await pipelinePerceivePaths()
         let plan = try await admitComputePlan(chatPath: boot.chatPath, embeddings: embeddings, decisions: loadedDecisions, perceive: perceivePaths)
         let besideDecode = !plan.degraded
@@ -43,7 +43,7 @@ extension ServeCommand {
         let stages = try await loadPipelineStages(perceivePaths, plan: plan)
         var start = ComposeStart(chat: boot.orchestrator, decider: loadedDecisions, decisions: nil, cloudGate: slot.cloudGate, startup: stages, besideDecode: besideDecode)
         (start.registry, start.events) = (slot.registry, slot.events)
-        let host = try await composeHost(spec, start: start, engine: boot.engine)
+        let host = try await composeHost(spec, start: start, engine: boot.engine, chatPath: boot.chatPath)
         await host.probe(spec.models.keys.sorted(), in: spec)
         for (name, failure) in await host.failures.sorted(by: { $0.key < $1.key }) { log("\(red("[error]")) \(name): \(failure)") }
         await slot.started(host)
