@@ -93,6 +93,7 @@ extension ServeCommand {
     }
 
     static func runServers(_ launch: ServerLaunch, orchestrator: any ModelOrchestrating) async throws {
+        await orchestrator.telemetry.installDefaultSinkIfEmpty(SwiftMetricsSink())
         defer {
             await withTaskCancellationShield {
                 await orchestrator.shutdown(deadline: launch.shutdownDeadline)

@@ -82,8 +82,8 @@ final class TokenTraceRecorder: ForwardProbe {
     func routerLogits(layer: Int, _ logits: MLXArray) {
         edits?.routerLogits(layer: layer, logits)
         guard request.experts, traces(layer) else { return }
-        let p = softmax(logits.reshaped(-1, logits.dim(-1)).asType(.float32), axis: -1)
-        record(.routerEntropy, layer, -which(p .> 0, p * log(maximum(p, Float.leastNormalMagnitude)), 0).sum(axis: -1, keepDims: true))
+        let flat = logits.reshaped(-1, logits.dim(-1))
+        record(.routerEntropy, layer, FusedLogitConfidence.compute(flat).entropy.reshaped(-1, 1))
     }
 
     func routerTopK(layer: Int, indices: MLXArray, gates: MLXArray) {

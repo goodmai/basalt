@@ -2,7 +2,7 @@ import Foundation
 import BasaltCore
 
 struct TelemetryQuery: Encodable {
-    static let sections = ["windows", "decisions", "experts", "confidence", "health", "memory"]
+    static let sections = ["windows", "decisions", "experts", "confidence", "cache", "calibration", "health", "memory"]
 
     struct Totals: Encodable {
         let requests: Int
@@ -21,6 +21,8 @@ struct TelemetryQuery: Encodable {
     let decisions: [String: DecisionTelemetry]?
     let experts: ExpertTelemetry?
     let confidence: ConfidenceTelemetry?
+    let cache: CacheTelemetry?
+    let calibration: DecisionCalibrationTelemetry?
     let health: HealthTelemetry?
     let memory: MemoryTelemetry?
 
@@ -30,6 +32,8 @@ struct TelemetryQuery: Encodable {
         decisions = sections.contains("decisions") ? snapshot.decisions : nil
         experts = sections.contains("experts") ? snapshot.experts : nil
         confidence = sections.contains("confidence") ? snapshot.confidence : nil
+        cache = sections.contains("cache") ? snapshot.cache : nil
+        calibration = sections.contains("calibration") ? snapshot.calibration : nil
         health = sections.contains("health") ? snapshot.health : nil
         memory = sections.contains("memory") ? snapshot.memory : nil
     }

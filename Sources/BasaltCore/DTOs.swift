@@ -388,6 +388,7 @@ public struct GenerationResponse: Codable, Sendable {
     public private(set) var draftSource: DraftSource?
     public private(set) var modelModified = false
     public private(set) var confidence: ResponseConfidence?
+    package var cacheTelemetry: CacheTelemetry?
 
     public init(
         generatedText: String,

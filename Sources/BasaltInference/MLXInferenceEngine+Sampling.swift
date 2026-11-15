@@ -150,6 +150,10 @@ struct ConfidenceProbeRecorder: LogitProcessor {
         FusedLogitConfidence.statistics(logits: logits)
     }
 
+    static func summarize(logits: MLXArray) -> ResponseConfidence? {
+        FusedLogitConfidence.summarize(logits)
+    }
+
     func process(logits: MLXArray) -> MLXArray {
         if let stats = Self.statistics(logits: logits) {
             probe.record(stats.probability, entropy: stats.entropy, margin: stats.margin)

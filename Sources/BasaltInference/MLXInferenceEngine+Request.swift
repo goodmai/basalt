@@ -171,12 +171,18 @@ extension MLXInferenceEngine {
         case let held?: held.reusedTokens
         case nil: 0
         }
-        if leased < mediaEnd { lease = nil }
+        if leased < mediaEnd, lease != nil {
+            lease = nil
+            promptCaches.revokeHit()
+        }
         var storedPrefix: MTPPrefix?
         if drafts, let namespace {
             let prefix = Array(tokens.prefix(leased))
             storedPrefix = mtpPrefixes.last { $0.namespace == namespace && $0.tokens == prefix }?.prefix
-            if leased > 0, storedPrefix == nil { lease = nil }
+            if leased > 0, storedPrefix == nil, lease != nil {
+                lease = nil
+                promptCaches.revokeHit()
+            }
         }
         let fork = mediaEnd > 0 ? nil : namespace.map { promptCaches.storedPrefix(of: tokens, in: $0) }
         let reuse: (cache: PromptCache, reusedTokens: Int)? = switch lease {
