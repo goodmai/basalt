@@ -17,6 +17,49 @@ struct AppEngineSystemsTests {
         #expect(EngineChoice.arguments(model: "org/m", compose: "/srv/desk.yaml") == ["serve", "--compose", "/srv/desk.yaml"])
     }
 
+    @Test("A basalt://run deep link resolves verified Hugging Face model roles and rejects invalid repo IDs or flags")
+    func launchURL() throws {
+        func resolve(_ raw: String, fallback: String = EngineChoice.defaultChatModel) throws -> (model: String, arguments: [String])? {
+            let url = try #require(URL(string: raw))
+            return EngineChoice.launchURL(url, fallbackChatModel: fallback)
+        }
+        let chat = try #require(try resolve("basalt://run?model=goodmai/gemma-4-12B-it-qat-4bit"))
+        #expect(chat.model == "goodmai/gemma-4-12B-it-qat-4bit" && chat.arguments == ["serve", "--model", "goodmai/gemma-4-12B-it-qat-4bit"])
+        let mtp = try #require(try resolve("basalt://run?model=goodmai/Ternary-Bonsai-2-27B-MTPLX-Optimized-Speed&role=mtp"))
+        #expect(mtp.arguments == ["serve", "--model", "goodmai/Ternary-Bonsai-2-27B-MTPLX-Optimized-Speed", "--mtp"])
+        let stream = try #require(try resolve("basalt://run?model=goodmai/Qwen3.6-35B-A3B-8bit&role=moe-stream"))
+        #expect(stream.arguments == ["serve", "--model", "goodmai/Qwen3.6-35B-A3B-8bit", "--experimental-expert-streaming"])
+        let ocr = try #require(try resolve("basalt://run?model=goodmai/DeepSeek-OCR-2-8bit&role=ocr", fallback: "goodmai/Qwen3-0.6B-4bit"))
+        #expect(ocr.model == "goodmai/Qwen3-0.6B-4bit" && ocr.arguments == ["serve", "--model", "goodmai/Qwen3-0.6B-4bit", "--pipeline-ocr-model", "goodmai/DeepSeek-OCR-2-8bit"])
+        for (role, flag) in [("rerank", "--rerank-model"), ("embed", "--embedding-model"), ("asr", "--pipeline-audio-model"), ("decide", "--decision-model")] {
+            let sidecar = try #require(try resolve("basalt://run?model=goodmai/laya&role=\(role)", fallback: "bad"))
+            #expect(sidecar.model == EngineChoice.defaultChatModel && sidecar.arguments == ["serve", "--model", EngineChoice.defaultChatModel, flag, "goodmai/laya"])
+        }
+        for bad in [
+            "https://huggingface.co/goodmai/gemma-4-12B-it-qat-4bit",
+            "basalt://exec?model=goodmai/gemma-4-12B-it-qat-4bit",
+            "basalt://run?model=../etc/passwd",
+            "basalt://run?model=goodmai/gemma%20--unsafe",
+            "basalt://run?model=goodmai/gemma-4-12B-it-qat-4bit&role=--unsafe",
+        ] {
+            #expect(try resolve(bad) == nil)
+        }
+    }
+
+    @MainActor
+    @Test("Cold launch with matching basalt:// arguments still starts the engine, and switching models updates configuredModel immediately")
+    func coldLaunchAndSwitchModel() async throws {
+        let fixture = try Fixture()
+        let launch = try fixture.script(EngineSupervisorTests.ready)
+        let app = try AppModel(launch: launch, model: "org/m", storeURL: nil, environment: fixture.environment(), drafts: DraftStore(load: { _ in "" }, save: { _, _ in }))
+        await app.start(arguments: launch.arguments)
+        #expect(await app.readyEndpoint(within: .seconds(5))?.base.port == 4242 && app.model == "org/m")
+        await app.switchEngine(["serve", "--model", "goodmai/Qwen3.6-35B-A3B-8bit", "--experimental-expert-streaming"])
+        #expect(app.configuredModel == "goodmai/Qwen3.6-35B-A3B-8bit" && app.model == "goodmai/Qwen3.6-35B-A3B-8bit")
+        #expect(await app.readyEndpoint(within: .seconds(5))?.base.port == 4242)
+        await app.stop()
+    }
+
     @Test("A live helper started with other arguments is not adopted; relaunch stops the helper and starts it with the new arguments")
     func relaunch() async throws {
         let fixture = try Fixture()

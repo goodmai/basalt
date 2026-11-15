@@ -16,8 +16,21 @@ final class ServiceProvider: NSObject {
         show()
     }
 
+    @discardableResult
+    func applyLaunch(_ urls: [URL], defaults: UserDefaults = .standard) -> [String]? {
+        let fallback = model.model
+        guard let launch = urls.lazy.compactMap({ EngineChoice.launchURL($0, fallbackChatModel: fallback) }).first else { return nil }
+        defaults.set(launch.model, forKey: EngineChoice.modelKey)
+        defaults.set("", forKey: EngineChoice.composeKey)
+        show()
+        return launch.arguments
+    }
+
     func open(_ urls: [URL]) {
-        let attachments = urls.compactMap { url in (try? Data(contentsOf: url)).flatMap { ChatAttachment(name: url.lastPathComponent, data: $0) } }
+        if let arguments = applyLaunch(urls) {
+            Task { await model.switchEngine(arguments) }
+        }
+        let attachments = urls.filter(\.isFileURL).compactMap { url in (try? Data(contentsOf: url)).flatMap { ChatAttachment(name: url.lastPathComponent, data: $0) } }
         guard !attachments.isEmpty else { return }
         model.startConversation(text: "", attachments: attachments)
         show()

@@ -23,7 +23,7 @@ public final class AppModel {
     public let drafts: DraftStore
     @ObservationIgnored let supervisor: EngineSupervisor
     @ObservationIgnored let repository: ConversationRepository
-    @ObservationIgnored let configuredModel: String
+    public private(set) var configuredModel: String
     public var model: String { library.state.models.first(where: \.isLoaded)?.id ?? configuredModel }
     @ObservationIgnored private var listening = false
 
@@ -49,7 +49,7 @@ public final class AppModel {
                 chose: { id in UserDefaults.standard.set(id, forKey: "model") })))
     }
 
-    public func start() async {
+    public func start(arguments: [String]? = nil) async {
         if !listening {
             listening = true
             _ = try? await repository.recoverInterrupted()
@@ -59,7 +59,11 @@ public final class AppModel {
                 for await state in states { await self?.engineChanged(state) }
             }
         }
-        await supervisor.start()
+        if let arguments {
+            await switchEngine(arguments)
+        } else {
+            await supervisor.start()
+        }
     }
 
     public func stop() async { await supervisor.shutdown() }
@@ -91,8 +95,11 @@ public final class AppModel {
     nonisolated static let pendingKey = "pendingDownloads"
 
     public func switchEngine(_ arguments: [String]) async {
+        if let index = arguments.firstIndex(of: "--model"), arguments.indices.contains(index + 1) {
+            configuredModel = arguments[index + 1]
+        }
         let current = await supervisor.launch
-        guard current.arguments != arguments else { return }
+        guard current.arguments != arguments else { return await supervisor.start() }
         await supervisor.relaunch(HelperLaunch(executable: current.executable, arguments: arguments, environment: current.environment))
     }
 

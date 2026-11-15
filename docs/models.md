@@ -2,11 +2,11 @@
 
 ## Verified Models
 
-Models are downloaded from HuggingFace and cached in `~/.cache/huggingface/hub/`.
+Models are downloaded from HuggingFace and cached in `~/.cache/huggingface/hub/`. Over 35 verified chat, MoE, GSQ-RCO, OCR, speech, embedding, rerank and System One decision checkpoints are published with one-click **Run with Basalt** (`basalt://run?model=...`) buttons in the [`goodmai` Hugging Face collection](https://huggingface.co/collections/goodmai/basalt-inference-and-quantization-stack-6af94bed95c64cce97e188fc).
 
 ```bash
-huggingface-cli download mlx-community/Qwen3.5-4B-4bit
-huggingface-cli download mlx-community/gemma-4-e4b-it-4bit
+basalt models download goodmai/gemma-4-12B-it-qat-4bit
+basalt models download goodmai/Qwen3.8-27B-GSQ-RCO-IQ3_S-Basalt-Native
 ```
 
 ### Measured for 0.8
@@ -16,8 +16,10 @@ M4 Pro, 24 GB, on a 68 W adapter, release build, greedy decoding, November 2026.
 | Model | Params | Active memory | Decode, tok/s | Notes |
 |---|---|---|---|---|
 | `mlx-community/Qwen3-4B-4bit` | 4B | ~2.2 GB | 78–89 | dense; prompt lookup and every KV mode apply |
-| `Youssofal/Ternary-Bonsai-2-27B-MTPLX-Optimized-Speed` | 27B ternary | 7.4 GB | 20.9–21.5 plain · 27.1 with `--mtp` on code · 31–38 with `--speculative-lookup` on code | hybrid (Gated DeltaNet); MTP head from Qwen3.8-27B |
-| `lukaskremla/Qwen3.8-27B-3bit-MLX-TextOnly` | 27B | not measured | 15–19 | hybrid |
+| `Youssofal/Ternary-Bonsai-2-27B-MTPLX-Optimized-Speed` | 27B ternary | 7.4 GB | 20.9–21.5 plain · 27.1 with `--mtp` on code · 31–38 with `--speculative-lookup` on code | hybrid (Gated DeltaNet); mirrored at `goodmai/Ternary-Bonsai-2-27B-MTPLX-Optimized-Speed` |
+| `lukaskremla/Qwen3.8-27B-3bit-MLX-TextOnly` | 27B | ~11.8 GB | 15–19 | hybrid; golden-tested; mirrored at `goodmai/Qwen3.8-27B-3bit-MLX-TextOnly` |
+| `goodmai/Qwen3.8-27B-GSQ-RCO-IQ3_S-Basalt-Native` | 27B i-quant | ~12.4 GB | 5.2 | native GSQ-RCO `IQ3_S` import (#433), WikiText-2 PPL 4.169, 300/300 System One |
+| `goodmai/Qwen3.6-35B-A3B-8bit` | 35B MoE (37.7 GB) | ~13.9 GB | 8.77 | `--experimental-expert-streaming` (#478), 0 swap on 24 GB via batched AIO + `LIO_NOWAIT` |
 | `lukaskremla/Qwen3.8-27B-2bit-MLX-TextOnly` | 27B | not measured | 18–22 | loops on some prompts (3 of 8); `RepetitionGuard` stops them |
 
 | Embedding / rerank model | Task | Measured |

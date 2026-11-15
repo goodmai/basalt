@@ -11,6 +11,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var openMain: (@MainActor () -> Void)?
     private var hotKey: HotKey?
     private var services: ServiceProvider?
+    private var pendingURLs: [URL] = []
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         guard let model else { return }
@@ -28,13 +29,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         self.quickAsk = quickAsk
         if UserDefaults.standard.object(forKey: "quickAsk") as? Bool ?? true { hotKey = HotKey { quickAsk.toggle() } }
-        Task { await model.start() }
+        let initial = pendingURLs
+        pendingURLs.removeAll()
+        let override = services.applyLaunch(initial)
+        let files = initial.filter(\.isFileURL)
+        Task {
+            await model.start(arguments: override)
+            if !files.isEmpty { services.open(files) }
+        }
         Task { await model.checkForUpdate() }
     }
 
     func applicationWillTerminate(_ notification: Notification) { hotKey?.unregister() }
 
-    func application(_ application: NSApplication, open urls: [URL]) { services?.open(urls) }
+    func application(_ application: NSApplication, open urls: [URL]) {
+        if let services { services.open(urls) } else { pendingURLs.append(contentsOf: urls) }
+    }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard let model, !model.engine.isIdle else { return .terminateNow }
