@@ -216,21 +216,14 @@ public actor SystemProfiler {
             return "Unknown"
         }
         
-        // Parse machine identifier (e.g., "arm64" or specific model)
-        // Try to get more specific chip info via sysctlbyname
         var size: size_t = 0
         sysctlbyname("machdep.cpu.brand_string", nil, &size, nil, 0)
-        
+
         var cpuBrand = [CChar](repeating: 0, count: size)
         sysctlbyname("machdep.cpu.brand_string", &cpuBrand, &size, nil, 0)
-        
-        // Convert to String, handling null termination
-        let brandString = cpuBrand.withUnsafeBufferPointer { buffer in
-            String(validatingCString: buffer.baseAddress!) ?? "Unknown"
-        }
-        
-        // M-series: keep the tier ("M2 Max", "M4 Pro", "M3 Ultra") — memory bandwidth and the
-        // benchmark calibration both depend on it, and every consumer matches with `contains`.
+
+        let brandString = String(validating: cpuBrand.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self) ?? "Unknown"
+
         if let range = brandString.range(of: #"M\d+( (Pro|Max|Ultra))?"#, options: .regularExpression),
            brandString.contains("Apple M") {
             return String(brandString[range])

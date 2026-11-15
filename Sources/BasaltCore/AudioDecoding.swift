@@ -37,7 +37,11 @@ extension AudioClip {
             return chunk.frameLength > 0 ? chunk : nil
         }
         guard readError == nil else { throw .invalidRequestStructure(details: "the \(fileExtension) audio is truncated or corrupt") }
-        return Array(UnsafeBufferPointer(start: output.floatChannelData?[0], count: Int(output.frameLength)))
+        let count = Int(output.frameLength)
+        return [Float](capacity: count) { out in
+            guard let channel = output.floatChannelData?[0] else { return }
+            for index in 0 ..< count { out.append(channel[index]) }
+        }
     }
 
     public func buffer(in target: AVAudioFormat) throws(BasaltError) -> AVAudioPCMBuffer {
@@ -45,9 +49,8 @@ extension AudioClip {
             throw .inferenceError("cannot allocate an audio buffer of \(samples.count) frames")
         }
         source.frameLength = source.frameCapacity
-        samples.withUnsafeBufferPointer { samples in
-            guard let base = samples.baseAddress else { return }
-            source.floatChannelData?[0].update(from: base, count: samples.count)
+        if let channel = source.floatChannelData?[0] {
+            for index in samples.indices { channel[index] = samples[index] }
         }
         var pending: AVAudioPCMBuffer? = source
         return try Self.convert(from: Self.format, to: target, frames: AVAudioFramePosition(samples.count)) { _ in
