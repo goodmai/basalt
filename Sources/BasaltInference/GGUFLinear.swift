@@ -153,6 +153,8 @@ final class GGUFEmbedding: Embedding {
     }
 
     override func asLinear(_ x: MLXArray) -> MLXArray {
-        GGUFKernels.matmul(x, weight, type: type, columns: dimensions)
+        let rows = x.size / dimensions
+        guard GGUFKernels.matvecRows.contains(rows) else { return GGUFKernels.matmul(x, weight, type: type, columns: dimensions) }
+        return GGUFKernels.matvec(x.reshaped(rows, dimensions), weight, type: type).reshaped(Array(x.shape.dropLast()) + [weight.dim(0)])
     }
 }

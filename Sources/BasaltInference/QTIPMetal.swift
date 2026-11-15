@@ -248,7 +248,7 @@ private let qtipDecodeSource = """
     """
 
 package enum QTIPMetal {
-    static let dequantTileBytes = 256 << 20
+    static let dequantTileBytes = 64 << 20
     static let maxEncodeTilesPerLaunch = 2048
     static let burnInSteps = 24
 
@@ -397,23 +397,8 @@ package final class QTIPLinear: Linear, Quantized {
 
     override package func callAsFunction(_ x: MLXArray) -> MLXArray {
         let xRot = rhtIn.forwardFloat32(x, signs: inSigns, qMatrix: inQ).asType(x.dtype)
-        let tileRows = weight.dim(0)
-        let tileCols = inFeatures / 16
-        let rowsPerChunk = max(1, QTIPMetal.dequantTileBytes / max(1, 16 * inFeatures * x.dtype.size))
-        var parts: [MLXArray] = []
-        for start in stride(from: 0, to: tileRows, by: rowsPerChunk) {
-            let end = min(tileRows, start + rowsPerChunk)
-            let wChunk = QTIPMetal.decode(
-                packed: weight[start ..< end],
-                rowScales: rowScales[start ..< end],
-                tlut: tlut,
-                rate: rate,
-                tileCols: tileCols,
-                dtype: x.dtype
-            )
-            parts.append(matmul(xRot, wChunk.T))
-        }
-        let yRot = parts.count == 1 ? parts[0] : concatenated(parts, axis: -1)
+        let yRot = QTIPKernels.linear(
+            xRot, packed: weight, rowScales: rowScales, tlut: tlut, rate: rate, inFeatures: inFeatures)
         var y = rhtOut.inverseFloat32(yRot, signs: outSigns, qMatrix: outQ).asType(x.dtype)
         if let bias { y = y + bias }
         return y
