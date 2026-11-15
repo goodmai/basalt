@@ -70,11 +70,22 @@ extension ComposeSpec {
         for name in routed {
             workloads.append(Workload(name: name, role: "answer", unit: .gpu, kind: .decode, residentBytes: bytes(name)))
         }
+        workloads += auxWorkloads(sizes, bytes: bytes)
+        return (workloads, unknown)
+    }
+
+    private func auxWorkloads(_ sizes: Sizes, bytes: (String) -> Int64) -> [Workload] {
+        var result: [Workload] = []
         for decider in deciderModels.sorted() {
             guard let source = local(decider) else { continue }
-            workloads.append(Workload(name: decider, role: "decide", unit: sizes.onNeuralEngine(source) ? .ane : .gpu, kind: .encoder, residentBytes: bytes(decider)))
+            result.append(Workload(name: decider, role: "decide", unit: sizes.onNeuralEngine(source) ? .ane : .gpu, kind: .encoder, residentBytes: bytes(decider)))
         }
-        return (workloads, unknown)
+        for speaker in speakerModels.sorted() {
+            guard let source = local(speaker) else { continue }
+            let onANE = sizes.onNeuralEngine(source)
+            result.append(Workload(name: speaker, role: "speak", unit: onANE ? .ane : .gpu, kind: onANE ? .encoder : .decode, residentBytes: bytes(speaker)))
+        }
+        return result
     }
 
     public func plan(_ sizes: Sizes, budgetBytes: Int64, power: PowerState = .desktop) -> (verdict: PlanVerdict, unknown: [String]) {

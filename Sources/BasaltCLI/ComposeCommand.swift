@@ -172,7 +172,9 @@ struct ComposeCommand: AsyncParsableCommand {
             let bytes = ServeCommand.weightBytes(directory.path) + jevBaseBytes(directory)
             return bytes > 0 ? bytes : nil
         },
-        onNeuralEngine: { source in ModelCache.resolve(repoId: source).map(CoreAIDecisionEngine.isBundle) ?? false })
+        onNeuralEngine: { source in
+            ModelCache.resolve(repoId: source).map { CoreAIDecisionEngine.isBundle($0) || CoreAISpeechBundle.isBundle($0) } ?? false
+        })
 
     static func jevBaseBytes(_ directory: URL) -> Int64 {
         ServeCommand.bundleBaseBytes(directory)

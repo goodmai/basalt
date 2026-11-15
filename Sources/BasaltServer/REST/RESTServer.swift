@@ -13,6 +13,7 @@ package struct RESTServer: Sendable {
     private(set) var pipeline = PipelineStages()
     private(set) var pipelines: PipelineRegistry?
     private(set) var compose: ComposeControl?
+    private(set) var speechSynthesizer: (any SpeechSynthesizer)?
     private(set) var onReady: (@Sendable (Int) -> Void)?
 
     let shutdownDeadline: Duration
@@ -169,6 +170,7 @@ package struct RESTServer: Sendable {
         let registry = pipelines ?? PipelineRegistry([ComposeSpec.defaultPipeline: PipelineSystem(decisions: decisions, stages: pipeline)])
         oai.post("/systemone", use: SystemOneController(engine: { await registry.system(ComposeSpec.defaultPipeline)?.decisions }, log: orchestrator.sessionLog, telemetry: orchestrator.telemetry).decide)
         oai.post("/audio/transcriptions", use: TranscriptionsController(orchestrator: orchestrator).transcriptions)
+        AudioSpeechController(synthesizer: speechSynthesizer).add(to: oai)
         oai.post("/ocr", use: OCRController(orchestrator: orchestrator).ocr)
         let pipelineController = PipelineController(registry: registry, chat: orchestrator)
         oai.post("/pipeline", use: pipelineController.pipeline)
@@ -198,6 +200,20 @@ package struct RESTServer: Sendable {
 }
 
 extension RESTServer {
+    package init(
+        orchestrator: any ModelOrchestrating,
+        config: ServerConfig,
+        speechSynthesizer: (any SpeechSynthesizer)?
+    ) {
+        self = RESTServer(orchestrator: orchestrator, config: config).withSpeechSynthesizer(speechSynthesizer)
+    }
+
+    package func withSpeechSynthesizer(_ synthesizer: (any SpeechSynthesizer)?) -> RESTServer {
+        var server = self
+        server.speechSynthesizer = synthesizer
+        return server
+    }
+
     static func metricsResponse(_ orchestrator: any ModelOrchestrating) async -> Response {
         let text = TelemetryExport.openMetrics(await orchestrator.telemetrySnapshot())
         return Response(status: .ok, headers: [.contentType: TelemetryExport.contentType], body: ResponseBody(byteBuffer: ByteBuffer(string: text)))
@@ -250,6 +266,8 @@ extension RESTServer {
         "/v1/systemone":           { "post": { "summary": "Single-pass typed decisions: noul, choice, score (serve --decision-model; with cloud:<model> OpenRouter answers first and questions below --decision-escalate-below go to --decision-escalate, listed per stage in usage.stages)" } },
         "/v1/rerank":              { "post": { "summary": "Cohere/Jina-compatible rerank (serve --rerank-model)" } },
         "/v1/audio/transcriptions": { "post": { "summary": "OpenAI-compatible speech to text (multipart: file, model, language, response_format, temperature)" } },
+        "/v1/audio/speech":        { "post": { "summary": "OpenAI-compatible text to speech (JSON: model, input, voice, response_format wav|pcm|pcm_24k, speed, stream_format audio|sse, language, instruct, exaggeration, prefer_ane)" } },
+        "/v1/audio/voices":        { "get":  { "summary": "List available speech synthesis voices across configured TTS backends" } },
         "/v1/ocr":                 { "post": { "summary": "Document OCR with GLM-OCR, MinerU2.5, PaddleOCR-VL or DeepSeek-OCR (JSON: file as base64 PDF or image, pages such as 1-3, task document|text|table|formula|chart, format markdown|json, model, resolution tiny|small|base|large|gundam for DeepSeek-OCR)" } },
         "/v1/pipeline":            { "post": { "summary": "Perceive (OCR of pdf/image attachments with serve --pipeline-ocr-model or Apple Vision, transcription of audio with serve --pipeline-audio-model, the chat model's audio encoder or SpeechAnalyzer (with --experimental-speech-analyzer)) → decide (System One on typed questions) → answer (the chat model, only for abstained questions and a task); returns perceived text, answers, the System 2 reply and a route receipt (swap_ms when serve --pipeline-memory loads models per stage; --pipeline-preset fills the models)" } },
         "/v1/pipelines/{name}":    { "post": { "summary": "The same request as /v1/pipeline, for a named pipeline of the compose file served with basalt compose up" } },

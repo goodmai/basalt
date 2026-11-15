@@ -16,20 +16,20 @@ extension ComposeSpec {
         if name.trimmingCharacters(in: .whitespaces).isEmpty { issues.append(Issue("name", "a compose file needs a name")) }
         for (pipeline, view) in views {
             let prefix = pipeline == Self.defaultPipeline ? "pipeline" : "pipelines.\(pipeline)"
-            issues += (view.answerIssues + view.perceiveIssues + view.cascadeIssues).map { issue in
+            issues += (view.answerIssues + view.perceiveIssues + view.cascadeIssues + view.speakIssues).map { issue in
                 Issue(issue.path.hasPrefix("pipeline.") ? prefix + issue.path.dropFirst("pipeline".count) : issue.path, issue.message)
             }
         }
         issues += pipelineIssues + experimentalIssues + mcpIssues + benchmarkIssues + models.sorted { $0.key < $1.key }.flatMap { modelIssues($0.key, $0.value) }
         for (name, _) in models.sorted(by: { $0.key < $1.key }) where !roles.keys.contains(name) && !benchmarkModels.contains(name) {
-            issues.append(Issue("models.\(name)", "declared but not used by any pipeline's perceive, decide or answer"))
+            issues.append(Issue("models.\(name)", "declared but not used by any pipeline's perceive, decide, answer or speak"))
         }
         return issues.reduce(into: [Issue]()) { unique, issue in if !unique.contains(issue) { unique.append(issue) } }
     }
 
     var pipelineRoles: [String: Set<String>] {
         var roles: [String: Set<String>] = [:]
-        for (role, names) in [("answer", answerModels), ("documents", documents), ("audio", audio), ("cascade", cascade)] {
+        for (role, names) in [("answer", answerModels), ("documents", documents), ("audio", audio), ("cascade", cascade), ("speak", speak?.chain ?? [])] {
             for name in names where models[name] != nil { roles[name, default: []].insert(role) }
         }
         return roles
@@ -131,7 +131,7 @@ extension ComposeSpec {
         let path = "models.\(name)"
         let perceiver = views.contains { $0.spec.ocr == name || $0.spec.speech == name }
         let routed = views.contains { $0.spec.answer != name && $0.spec.answerModels.contains(name) }
-        var issues = keepIssues(path, model, perceiver: perceiver, onDemandAllowed: routed || deciderModels.contains(name) || benchmarkModels.contains(name))
+        var issues = keepIssues(path, model, perceiver: perceiver, onDemandAllowed: routed || onDemandRoles.contains(name) || benchmarkModels.contains(name))
         issues += roleIssues(name, model, path: path)
         if model.budget != nil, !model.isCloud { issues.append(Issue("\(path).budget", "applies only to cloud models")) }
         if let budget = model.budget, !(budget > 0) { issues.append(Issue("\(path).budget", "usd_per_day must be positive")) }
@@ -178,6 +178,41 @@ extension ComposeSpec {
         if model.apiKeyEnv.map(Self.isEnvName) != true { issues.append(Issue("\(path).api_key_env", "a cloud model names the environment variable that holds its key, such as OPENROUTER_API_KEY")) }
         if let data = model.data, data != Self.noPerceived, !(data == Self.shareMedia && provider == "gemini") {
             issues.append(Issue("\(path).data", "no-perceived keeps OCR text and transcripts on this Mac; media, which sends the attached files themselves, is supported only for cloud:gemini decision models"))
+        }
+        return issues
+    }
+
+    public var speakerModels: Set<String> {
+        Set(views.flatMap { $0.spec.speak?.chain ?? [] }.filter { models[$0]?.isCloud == false })
+    }
+
+    var onDemandRoles: Set<String> { deciderModels.union(speakerModels) }
+
+    var speakIssues: [Issue] {
+        guard let speak else { return [] }
+        var issues = speakChainIssues(speak.chain)
+        if let voice = speak.voice, voice.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            issues.append(Issue("pipeline.speak.voice", "cannot be blank"))
+        }
+        if let exaggeration = speak.exaggeration, !exaggeration.isFinite || !(0 ... 2).contains(exaggeration) {
+            issues.append(Issue("pipeline.speak.exaggeration", "must lie between 0 and 2"))
+        }
+        if let maxTTFAMs = speak.maxTTFAMs, maxTTFAMs <= 0 {
+            issues.append(Issue("pipeline.speak.max_ttfa_ms", "must be positive"))
+        }
+        return issues
+    }
+
+    func speakChainIssues(_ chain: [String]) -> [Issue] {
+        var issues: [Issue] = []
+        if chain.isEmpty { issues.append(Issue("pipeline.speak.chain", "a speak chain names at least one synthesizer or \(Self.appleSpeech)")) }
+        if Set(chain).count != chain.count { issues.append(Issue("pipeline.speak.chain", "a synthesizer appears twice")) }
+        for name in chain where name != Self.appleSpeech {
+            if models[name] == nil {
+                issues.append(Issue("pipeline.speak.chain", "\(name) is neither a declared model nor \(Self.appleSpeech)"))
+            } else if models[name]?.isCloud == true {
+                issues.append(Issue("pipeline.speak.chain", "\(name) is a cloud model; speech synthesis stays local"))
+            }
         }
         return issues
     }

@@ -83,6 +83,7 @@ enum ComposeFile {
             }
             perceive(pipeline["perceive"], into: &spec)
             decide(pipeline["decide"], into: &spec)
+            speak(pipeline["speak"], into: &spec)
             experimental(top["experimental"], into: &spec)
             mcp(top["mcp"], into: &spec)
             benchmarks(top["benchmarks"], into: &spec)
@@ -101,6 +102,7 @@ enum ComposeFile {
             if let routes = field["answer"]?.mapping?["routes"] { view.routes = self.routes(routes) }
             perceive(field["perceive"], into: &view)
             decide(field["decide"], into: &view)
+            speak(field["speak"], into: &view)
             return view.defaultSpec
         }
 

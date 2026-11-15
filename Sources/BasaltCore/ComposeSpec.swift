@@ -41,8 +41,40 @@ public struct ComposeSpec: Sendable, Equatable {
         }
     }
 
+    public struct Speak: Sendable, Codable, Equatable {
+        public var chain: [String]
+        public var voice: String?
+        public var onGPUBusy: SpeechOnGPUBusy?
+        public var sentenceStreaming: Bool?
+        public var format: SpeechAudioFormat?
+        public var exaggeration: Double?
+        public var maxTTFAMs: Int?
+
+        public init(
+            chain: [String],
+            voice: String? = nil,
+            onGPUBusy: SpeechOnGPUBusy? = nil,
+            sentenceStreaming: Bool? = nil,
+            format: SpeechAudioFormat? = nil,
+            maxTTFAMs: Int? = nil
+        ) {
+            (self.chain, self.voice, self.onGPUBusy) = (chain, voice, onGPUBusy)
+            (self.sentenceStreaming, self.format, self.maxTTFAMs) = (sentenceStreaming, format, maxTTFAMs)
+        }
+
+        enum CodingKeys: String, CodingKey {
+            case chain, voice, format, exaggeration
+            case onGPUBusy = "on_gpu_busy"
+            case sentenceStreaming = "sentence_streaming"
+            case maxTTFAMs = "max_ttfa_ms"
+        }
+    }
+
+    public typealias Pipeline = PipelineSpec
+
     public static let appleVision = "apple-vision"
     public static let speechAnalyzer = "speech-analyzer"
+    public static let appleSpeech = "apple-speech"
     public static let defaultIdleUnload = 120
     public static let noPerceived = "no-perceived"
     public static let shareMedia = "media"
@@ -60,6 +92,7 @@ public struct ComposeSpec: Sendable, Equatable {
     public var epistemic: EpistemicGateSpec?
     public var answer: String
     public var routes: [AnswerRoute] = []
+    public var speak: Speak?
     public var budget: Double?
     public var pipelines: [String: PipelineSpec] = [:]
     public var experimental = Experimental()
@@ -97,6 +130,7 @@ public struct PipelineSpec: Sendable, Equatable {
     public var epistemic: EpistemicGateSpec?
     public var answer: String
     public var routes: [AnswerRoute] = []
+    public var speak: ComposeSpec.Speak?
 
     public init(answer: String) { self.answer = answer }
 }
@@ -110,6 +144,7 @@ extension ComposeSpec {
         var spec = PipelineSpec(answer: answer)
         (spec.documents, spec.audio, spec.cascade, spec.routes) = (documents, audio, cascade, routes)
         (spec.escalateBelow, spec.abstainBelow, spec.minMargin, spec.epistemic) = (escalateBelow, abstainBelow, minMargin, epistemic)
+        spec.speak = speak
         return spec
     }
 
@@ -119,6 +154,7 @@ extension ComposeSpec {
         var view = self
         (view.documents, view.audio, view.cascade, view.routes, view.answer) = (pipeline.documents, pipeline.audio, pipeline.cascade, pipeline.routes, pipeline.answer)
         (view.escalateBelow, view.abstainBelow, view.minMargin, view.epistemic, view.pipelines) = (pipeline.escalateBelow, pipeline.abstainBelow, pipeline.minMargin, pipeline.epistemic, [:])
+        view.speak = pipeline.speak
         return view
     }
 
