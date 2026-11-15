@@ -7,15 +7,15 @@ import Testing
 
 @Suite("MCPToolFilter expands groups, enforces deny-overrides precedence, and matches the full MCP catalog (#484)")
 struct MCPToolFilterValueTests {
-    @Test("Group.all covers the exact 40 tools in MCPToolCatalog, partitioned into 23 base and 17 experiment tools")
+    @Test("Group.all covers the exact 41 tools in MCPToolCatalog, partitioned into 23 base and 18 experiment tools")
     func catalogCoverage() {
         let fullCatalog = Set(MCPToolCatalog.catalog(researchTools: true).tools.map(\.name))
         let baseCatalog = Set(MCPToolCatalog.catalog(researchTools: false).tools.map(\.name))
         #expect(fullCatalog == MCPToolFilter.allTools)
-        #expect(fullCatalog.count == 40)
+        #expect(fullCatalog.count == 41)
         #expect(baseCatalog == MCPToolFilter.defaultBaseTools)
         #expect(baseCatalog.count == 23)
-        #expect(MCPToolFilter.experimentTools.count == 17)
+        #expect(MCPToolFilter.experimentTools.count == 18)
         #expect(MCPToolFilter.Group.surgery.tools.isSubset(of: MCPToolFilter.Group.research.tools))
         #expect(MCPToolFilter.Group.surgery.tools.count == 9)
     }

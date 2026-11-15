@@ -64,3 +64,42 @@ extension ResearchTool {
         ]
     }
 }
+
+extension MCPToolCatalog {
+    static var phasorProbeDescriptor: MCPToolDescriptor {
+        let labeledItem: [String: Any] = [
+            "type": "object",
+            "required": ["prompt", "sector"],
+            "properties": [
+                "prompt": ["type": "string", "description": "Prompt text tokenized as is"],
+                "sector": ["type": "integer", "minimum": 0, "description": "Target root-of-unity sector in 0..<sectors"],
+            ],
+        ]
+        let tripleItem: [String: Any] = [
+            "type": "object",
+            "required": ["bound", "role", "filler"],
+            "properties": [
+                "bound": ["type": "string", "description": "Composite prompt encoding role bound with filler"],
+                "role": ["type": "string", "description": "Prompt encoding the role key"],
+                "filler": ["type": "string", "description": "Prompt encoding the expected unbound filler"],
+            ],
+        ]
+        return MCPToolDescriptor(
+            name: "phasor_probe",
+            description: "Experiment: complex-valued Aizenberg multi-valued neuron (MVN) phasor probe and FHRR holographic role-filler binding across transformer layers. Extracts per-layer last-token or mean-pooled residuals on the lab path, fits a derivative-free complex MVN alongside a real multinomial logistic baseline on the same features, and optionally evaluates FHRR conjugate unbinding z-scores on {bound, role, filler} prompt triples; leaves the model unchanged.",
+            inputSchema: ResearchTool.object([
+                "train": ["type": "array", "items": labeledItem, "minItems": PhasorProbeRequest.trainCount.lowerBound, "maxItems": PhasorProbeRequest.trainCount.upperBound, "description": "Labeled training prompts {prompt, sector}"],
+                "heldOut": ["type": "array", "items": labeledItem, "minItems": 1, "maxItems": PhasorProbeRequest.heldOutCount.upperBound, "description": "Optional held-out labeled prompts {prompt, sector}"],
+                "triples": ["type": "array", "items": tripleItem, "minItems": PhasorProbeRequest.tripleCount.lowerBound, "maxItems": PhasorProbeRequest.tripleCount.upperBound, "description": "Optional FHRR {bound, role, filler} prompt triples"],
+                "sectors": ["type": "integer", "minimum": PhasorProbeRequest.sectorRange.lowerBound, "maximum": PhasorProbeRequest.sectorRange.upperBound, "description": "Number of discrete root-of-unity sectors k (default 2)"],
+                "folds": ["type": "integer", "minimum": PhasorProbeRequest.foldRange.lowerBound, "maximum": PhasorProbeRequest.foldRange.upperBound, "description": "Periodic sector folds per class for non-linearly-separable parity/XOR boundaries (default 1)"],
+                "continuous": ["type": "boolean", "description": "Use continuous unit-circle activation z/|z| instead of discrete k-th roots of unity (default false)"],
+                "encoding": ["type": "string", "enum": PhasorInputEncoding.allCases.map(\.rawValue), "description": "Real-to-complex pair encoding: unitPhasors or rawPairs (default unitPhasors)"],
+                "pooling": ["type": "string", "enum": PhasorPooling.allCases.map(\.rawValue), "description": "Token pooling per layer: lastToken or meanPool (default lastToken)"],
+                "layers": ["type": "array", "items": ["type": "integer", "minimum": 0], "description": "Layers to probe (default: all)"],
+                "maxEpochs": ["type": "integer", "minimum": PhasorProbeRequest.epochRange.lowerBound, "maximum": PhasorProbeRequest.epochRange.upperBound, "description": "Maximum Aizenberg error-correction epochs (default 200)"],
+                "learningRate": ["type": "number", "description": "Error-correction step factor (default 1.0)"],
+                "seed": ["type": "integer", "minimum": 0, "description": "Deterministic SplitMix64 seed (default 42)"],
+            ]))
+    }
+}

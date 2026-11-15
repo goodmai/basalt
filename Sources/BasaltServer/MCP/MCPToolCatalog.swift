@@ -208,7 +208,7 @@ enum MCPToolCatalog {
 extension MCPToolCatalog {
     static func catalog(researchTools: Bool, filter: MCPToolFilter = .standard) -> MCPToolsList {
         let research = ResearchTool.allCases.map { MCPToolDescriptor(name: $0.rawValue, description: $0.summary, inputSchema: $0.schema) }
-        let candidates = list.tools + research + [introspectDescriptor]
+        let candidates = list.tools + research + [introspectDescriptor, phasorProbeDescriptor]
         return MCPToolsList(tools: candidates.filter { filter.allows($0.name, researchTools: researchTools) })
     }
 }

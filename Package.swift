@@ -26,6 +26,7 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-markdown.git", from: "0.9.0"),
         .package(url: "https://github.com/jpsim/Yams.git", exact: "6.2.2"),
         .package(url: "https://github.com/ibireme/yyjson.git", exact: "0.13.0"),
+        .package(url: "https://github.com/apple/swift-numerics", from: "1.1.1"),
     ],
     targets: [
 
@@ -33,7 +34,10 @@ let package = Package(
         // Core: DTOs, errors, config, logger, profilers, calculators. No MLX, no UI.
         .target(
             name: "BasaltCore",
-            dependencies: [],
+            dependencies: [
+                .product(name: "ComplexModule", package: "swift-numerics"),
+                .product(name: "RealModule", package: "swift-numerics"),
+            ],
             path: "Sources/BasaltCore",
             swiftSettings: swiftSettings
         ),
@@ -169,6 +173,8 @@ let package = Package(
                 .product(name: "MetricsTestKit", package: "swift-metrics"),
                 .product(name: "MLXGuidedGeneration", package: "mlx-swift-lm"),
                 .product(name: "Jinja", package: "swift-jinja"),
+                .product(name: "ComplexModule", package: "swift-numerics"),
+                .product(name: "RealModule", package: "swift-numerics"),
             ],
             path: "Tests/BasaltTests",
             exclude: ["Fixtures/ReferenceLogits", "Fixtures/golden", "Fixtures/VisualGoldens"],
