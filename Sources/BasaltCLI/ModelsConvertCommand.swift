@@ -64,15 +64,32 @@ struct ConvertSubcommand: AsyncParsableCommand {
     @Option(name: .customLong("pv-teacher"), help: "With --experimental-pv-tune: teacher MLX directory or cached repo ID (default: the conversion source)")
     var pvTeacher: String?
 
-    @Option(name: .customLong("pv-calibration"), help: "With --experimental-pv-tune: UTF-8 text file for teacher log-probability calibration (default: built-in prose/code/JSON corpus)")
+    @Option(name: .customLong("pv-calibration"), help: "With --experimental-pv-tune or --experimental-qtip: UTF-8 text file for calibration (default: built-in prose/code/JSON corpus)")
     var pvCalibration: String?
 
+    @Option(
+        name: .customLong("experimental-qtip"),
+        help: "Experimental (#409): quantize dense linear weights into QTIP bitshift trellis blocks (2.0, 2.5 or 3.0 bpw; L=16, V=2, HYB Q=9) with Kronecker RHT and BlockLDLQ Hessian feedback. Measured on M4 Pro: Qwen3.8-27B 2.0/2.5/3.0 bpw (8.48/10.00/11.52 GB) 16k PPL 5.345/4.621/4.328 vs 2-bit affine 19.15 and 3-bit affine+PV-Tune 4.652; Gemma 4 26B-A4B dense System One 232/294/280 of 300 vs 2-bit affine 80/300; Phase 0 two-stage decode ~0.7 tok/s on 27B pending fused RHT/matvec kernels (#491/#408)"
+    )
+    var experimentalQtip: Double?
+
     func validate() throws {
-        if (pvTeacher != nil || pvCalibration != nil), !experimentalPvTune {
-            throw ValidationError("--pv-teacher and --pv-calibration require --experimental-pv-tune")
+        if pvTeacher != nil, !experimentalPvTune {
+            throw ValidationError("--pv-teacher requires --experimental-pv-tune")
+        }
+        if pvCalibration != nil, !experimentalPvTune, experimentalQtip == nil {
+            throw ValidationError("--pv-calibration requires --experimental-pv-tune or --experimental-qtip")
         }
         if experimentalPvTune, format != .mlx || dequantize != nil || source.lowercased().hasSuffix(".gguf") {
             throw ValidationError("--experimental-pv-tune applies to quantized MLX conversions (--format mlx without --dequantize)")
+        }
+        if let bpw = experimentalQtip {
+            guard QTIPRate(bpw: bpw) != nil else {
+                throw ValidationError("--experimental-qtip takes 2.0, 2.5 or 3.0, got \(bpw)")
+            }
+            if quantize != nil || dequantize != nil || experimentalPvTune || adapter != nil || format != .mlx || source.lowercased().hasSuffix(".gguf") {
+                throw ValidationError("--experimental-qtip converts an MLX source directly without --quantize, --dequantize, --adapter, --experimental-pv-tune or --format hf")
+            }
         }
     }
 
@@ -88,6 +105,7 @@ struct ConvertSubcommand: AsyncParsableCommand {
 
     mutating func run() async throws {
         if source.lowercased().hasSuffix(".gguf") { return try importGGUF() }
+        if let bpw = experimentalQtip { return try await convertQTIP(bpw: bpw) }
         let precision: WeightConverter.Precision
         do {
             precision = try WeightConverter.precision(quantize: quantize, dequantize: dequantize, format: format, budgetGB: budgetGb)
@@ -96,13 +114,7 @@ struct ConvertSubcommand: AsyncParsableCommand {
         }
         let sourceURL = try Self.resolveModelDirectory(source)
         let teacherURL = try pvTeacher.map(Self.resolveModelDirectory) ?? sourceURL
-        let calibrationText = try pvCalibration.map { path throws -> String in
-            let expanded = (path as NSString).expandingTildeInPath
-            guard let text = try? String(contentsOfFile: expanded, encoding: .utf8) else {
-                throw ValidationError("cannot read --pv-calibration file at \(expanded)")
-            }
-            return text
-        }
+        let calibrationText = try readCalibrationText()
         let converter = WeightConverter(
             precision: precision, format: format,
             adapter: adapter.map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath) })
@@ -138,6 +150,39 @@ struct ConvertSubcommand: AsyncParsableCommand {
 }
 
 extension ConvertSubcommand {
+    func readCalibrationText() throws -> String? {
+        try pvCalibration.map { path throws -> String in
+            let expanded = (path as NSString).expandingTildeInPath
+            guard let text = try? String(contentsOfFile: expanded, encoding: .utf8) else {
+                throw ValidationError("cannot read --pv-calibration file at \(expanded)")
+            }
+            return text
+        }
+    }
+
+    func convertQTIP(bpw: Double) async throws {
+        guard let rate = QTIPRate(bpw: bpw) else {
+            throw ValidationError("--experimental-qtip takes 2.0, 2.5 or 3.0, got \(bpw)")
+        }
+        let sourceURL = try Self.resolveModelDirectory(source)
+        let calibrationText = try readCalibrationText()
+        let outURL = URL(fileURLWithPath: (out as NSString).expandingTildeInPath)
+        let start = ContinuousClock.now
+        do {
+            let result = try await QTIPNativeLoader.convertDirectory(
+                source: sourceURL, output: outURL, rate: rate, calibrationText: calibrationText
+            ) { print("  [qtip] \($0)") }
+            let elapsed = ContinuousClock.now - start
+            printSuccess("Converted \(sourceURL.path) → \(outURL.path) (QTIP \(rate.label) bpw)")
+            print("  QTIP:      \(result.summary.quantizedLayers) layer(s) in \(result.shards) shard(s)")
+            print("  Bytes:     \(formatBytes(Int64(result.bytesAfter)))")
+            print("  Time:      \(elapsed.formatted(.units(allowed: [.minutes, .seconds], width: .abbreviated)))")
+        } catch {
+            printError(error.localizedDescription)
+            throw ExitCode.failure
+        }
+    }
+
     func importGGUF() throws {
         guard let template, let templateURL = FileManager.default.fileExists(atPath: (template as NSString).expandingTildeInPath)
             ? URL(fileURLWithPath: (template as NSString).expandingTildeInPath) : ModelCache.resolve(repoId: template) else {
