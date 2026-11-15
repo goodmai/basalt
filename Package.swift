@@ -43,6 +43,12 @@ let package = Package(
             path: "Sources/BasaltHarness",
             swiftSettings: swiftSettings
         ),
+        .target(
+            name: "BasaltBench",
+            dependencies: ["BasaltCore", "BasaltHarness"],
+            path: "Sources/BasaltBench",
+            swiftSettings: swiftSettings
+        ),
         // Inference: the MLX-backed engine.
         .target(
             name: "BasaltInference",
@@ -133,7 +139,7 @@ let package = Package(
         .target(
             name: "BasaltCLI",
             dependencies: [
-                "BasaltCore", "BasaltInference", "BasaltCloud", "BasaltServer", "BasaltUI", "BasaltHarness", "BasaltSpeech",
+                "BasaltCore", "BasaltInference", "BasaltCloud", "BasaltServer", "BasaltUI", "BasaltHarness", "BasaltBench", "BasaltSpeech",
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
                 .product(name: "Yams", package: "Yams"),
             ],
@@ -157,7 +163,7 @@ let package = Package(
             name: "BasaltTests",
             dependencies: [
                 .product(name: "ServiceLifecycle", package: "swift-service-lifecycle"),
-                "BasaltCore", "BasaltInference", "BasaltCloud", "BasaltServer", "BasaltUI", "BasaltCLI", "BasaltApp", "BasaltAppCore", "BasaltHarness", "BasaltSpeech",
+                "BasaltCore", "BasaltInference", "BasaltCloud", "BasaltServer", "BasaltUI", "BasaltCLI", "BasaltApp", "BasaltAppCore", "BasaltHarness", "BasaltBench", "BasaltSpeech",
                 .product(name: "HummingbirdTesting", package: "hummingbird"),
                 .product(name: "CoreMetrics", package: "swift-metrics"),
                 .product(name: "MetricsTestKit", package: "swift-metrics"),

@@ -187,6 +187,43 @@ mcp:
 - **`mcp`:** configures the MCP stdio transport (`enabled`, `rest`, `research_tools`, `enable`, `disable`, `image_dirs`) using the same group and tool selectors as `--mcp-enable` / `--mcp-disable` (`serving`, `gemma`, `media`, `harness`, `xray`, `surgery`, `research`, `all`, or individual tool names; `disable` always wins).
 - **Hot reload vs restart:** `speech_analyzer`, `image_fallback`, `telemetry_confidence_every` and `adaptive_thinking_budget` update live on `compose up` (`POST /v1/compose/apply`, printed under `experimental:`). Engine- and transport-bound flags (`zero_copy_body`, `smallm_kernel`, `ane_vision_tower`, `samplers`, `mtp_draft_head`, `expert_streaming`, `expert_cache_gb`, `kv_head_split`, `quest_top_k` and `mcp`) report `needs a restart` in `compose diff` and are refused on live `apply`.
 
+### Benchmarks and Leaderboard Submissions (version 2, `#492`)
+A `version: 2` compose file may declare a top-level `benchmarks` block with shared `defaults` and named `suites` (either under `suites:` or as shorthand suite keys directly under `benchmarks:`):
+
+```yaml
+benchmarks:
+  defaults:
+    seed: 42
+    temperature: 0.0
+    gpu_lock: true
+    output_dir: ./bench-out
+  suites:
+    smoke:
+      - adapter: basalt:throughput
+        target: model:chat
+        params: { iterations: 2, max_tokens: 64 }
+        gates: { min_decode_tps: 15, max_peak_gb: 20, max_p50_ms: 5000 }
+    frontier:
+      profiles: [big]
+      budget: { usd_max: 5.0, max_minutes: 30 }
+      tasks:
+        - adapter: arc-agi-2
+          dataset: ./arc-eval.json
+          target: pipeline
+          gates: { min_accuracy: 0.25, max_ppl: 12.0, max_ece: 0.08 }
+          submit:
+            target: arc-prize
+            api_key_env: ARC_PRIZE_API_KEY
+            endpoint: https://arcprize.org/api/v1/submissions
+            subset: public-eval
+            split: test
+```
+
+- **`defaults`:** optional `seed`, `temperature`, `gpu_lock` and `output_dir`.
+- **`suites`:** each suite is either a shorthand task list (`smoke: [...]`) or `{ profiles, budget: { usd_max, max_minutes }, tasks: [...] }`.
+- **`tasks`:** each task names an `adapter` (`basalt:throughput`, `basalt:perplexity`, `basalt:system-one`, `basalt:passkey`, `basalt:mom`, `basalt:harness`, `arc-agi`, `arc-agi-2`, `terminal-bench`, `swe-bench`, `lm-eval`, `livecodebench`, `bfcl`, `inspect-ai`, `tau-bench`, `gaia`, `evalplus`), optional `dataset`, `target` (`pipeline`, `pipeline:<name>` or `model:<slot>`), scalar `params`, regression `gates` (`min_decode_tps`, `max_peak_gb`, `min_accuracy`, `max_p50_ms`, `max_ppl`, `max_ece`) and optional `submit` (`target`, `api_key_env`, `endpoint`, `subset`, `split`).
+- **Commands:** `basalt compose plan` prints resolved suites; `basalt compose bench -f basalt.yaml --suite smoke --submit-dry-run` runs the suite and exports verified leaderboard bundles; `basalt bench list|compare|submit` inspects adapters, diffs artifacts, and exports dry-run bundles across all ten targets (`arc-prize`, `terminal-bench`, `swe-bench`, `hf-leaderboard`, `livecodebench`, `bfcl`, `inspect-ai`, `tau-bench`, `gaia`, `weave-otel`).
+
 ### Cloud failures and spend
 - A refused key (HTTP 401/403) disables that cloud model until the server restarts, with one log line saying so.
 - A rate limit (429) pauses it for `Retry-After`, or 60 s if the header is missing.

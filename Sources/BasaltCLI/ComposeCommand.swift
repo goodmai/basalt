@@ -16,7 +16,7 @@ struct ComposeCommand: AsyncParsableCommand {
             never written in the file; a cloud model names the environment variable that holds its key. \
             Bundled files: \(ComposeFile.bundled.keys.sorted().joined(separator: ", ")).
             """,
-        subcommands: [Config.self, Schema.self, Pull.self, Plan.self, Diff.self, Up.self, Ps.self, Down.self])
+        subcommands: [Config.self, Schema.self, Pull.self, Plan.self, Diff.self, Up.self, Ps.self, Down.self, Bench.self])
 
     struct Source: ParsableArguments {
         @Option(name: [.short, .customLong("file")], help: "The compose file")
@@ -179,7 +179,7 @@ struct ComposeCommand: AsyncParsableCommand {
     }
 
     static func lines(_ spec: ComposeSpec, verdict: PlanVerdict, unknown: [String]) -> [String] {
-        ["compose \(spec.name): basalt serve \(spec.serveArguments.joined(separator: " "))"] + ComputePlan.describe(verdict) + spec.onDemandLines + spec.cloudLines
+        ["compose \(spec.name): basalt serve \(spec.serveArguments.joined(separator: " "))"] + ComputePlan.describe(verdict) + spec.onDemandLines + spec.cloudLines + spec.benchmarkLines
             + unknown.map { "  \($0): size unknown — not downloaded, and the Hugging Face API did not say; run compose pull, or pass --assume-size <GB>" }
             + (verdict.refusal.map { ["refused: \($0)"] } ?? [])
     }

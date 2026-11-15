@@ -108,6 +108,19 @@ extension ComposeFile {
         if let tower = spec.experimental.aneVisionTower {
             spec.experimental.aneVisionTower = resolvedPath(tower, base: base)
         }
+        if let outputDir = spec.benchmarks?.defaults?.outputDir {
+            spec.benchmarks?.defaults?.outputDir = resolvedPath(outputDir, base: base)
+        }
+        if let suites = spec.benchmarks?.suites {
+            for (suiteName, var suite) in suites {
+                for index in suite.tasks.indices {
+                    if let dataset = suite.tasks[index].dataset {
+                        suite.tasks[index].dataset = resolvedPath(dataset, base: base)
+                    }
+                }
+                spec.benchmarks?.suites[suiteName] = suite
+            }
+        }
         spec.mcp.imageDirs = spec.mcp.imageDirs.map { resolvedPath($0, base: base) }
         return spec
     }

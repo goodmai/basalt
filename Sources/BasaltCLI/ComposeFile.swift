@@ -85,6 +85,7 @@ enum ComposeFile {
             decide(pipeline["decide"], into: &spec)
             experimental(top["experimental"], into: &spec)
             mcp(top["mcp"], into: &spec)
+            benchmarks(top["benchmarks"], into: &spec)
             for (name, value) in named(top["pipelines"], path: "pipelines") {
                 prefix = "pipelines.\(name)"
                 if let named = self.pipeline(value, models: spec.models) { spec.pipelines[name] = named }
