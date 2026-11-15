@@ -421,7 +421,7 @@ extension ResearchTool {
             "heldOut": ["type": "array", "items": ["type": "string"], "minItems": ResearchCall.comparePrompts.lowerBound, "maxItems": ResearchCall.comparePrompts.upperBound, "description": "General prompts the quality gate checks the adapter on"],
             "maxKL": ["type": "number", "minimum": 0, "description": "Gate: largest mean KL on heldOut (default 0.5)"],
             "maxPerplexityRise": ["type": "number", "minimum": 0, "description": "Gate: largest relative perplexity rise on heldOut (default 0.1)"],
-        ]
+        ].merging(adapterMethodProperties) { $1 }
     }
 
     static var trainProperties: [String: Any] {
@@ -441,7 +441,7 @@ extension ResearchTool {
             "heldOut": ["type": "array", "items": ["type": "string"], "minItems": ResearchCall.comparePrompts.lowerBound, "maxItems": ResearchCall.comparePrompts.upperBound, "description": "General prompts the quality gate checks the adapter on"],
             "maxKL": ["type": "number", "minimum": 0, "description": "Gate: largest mean KL on heldOut (default 0.5)"],
             "maxPerplexityRise": ["type": "number", "minimum": 0, "description": "Gate: largest relative perplexity rise on heldOut (default 0.1)"],
-        ]
+        ].merging(adapterMethodProperties) { $1 }
     }
 
     private static func prompts(_ range: ClosedRange<Int>, _ description: String) -> [String: Any] {

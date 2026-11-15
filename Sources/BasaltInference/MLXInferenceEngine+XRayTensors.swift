@@ -87,8 +87,24 @@ extension MLXInferenceEngine {
             l2: statistics.l2)
         report.percentiles = measured.percentiles
         report.values = values(view, ranges: ranges, limit: min(request.maxValues, tensorValuesCap))
-        if request.spectrum { report.spectrum = try spectrum(view, ranges: ranges) }
+        if request.spectrum {
+            var measuredSpectrum = try spectrum(view, ranges: ranges)
+            if let oftDefect = oftOrthogonalityDefect(for: view.name, in: model) {
+                measuredSpectrum.orthogonalityDefect = oftDefect
+            }
+            report.spectrum = measuredSpectrum
+        }
         return report
+    }
+
+    static func oftOrthogonalityDefect(for tensorName: String, in model: Module) -> Float? {
+        let suffixes = [".weight", ".oft_r"]
+        guard let suffix = suffixes.first(where: { tensorName.hasSuffix($0) }) else { return nil }
+        let modulePath = String(tensorName.dropLast(suffix.count))
+        guard let layer = model.namedModules().first(where: { $0.0 == modulePath })?.1 as? any OFTAdapterLayer else {
+            return nil
+        }
+        return layer.maxOrthogonalityDefect()
     }
 
     static func validated(_ slice: [Range<Int>]?, extent: [Int], name: String) throws(BasaltError) -> [Range<Int>] {

@@ -50,6 +50,9 @@ struct DistillSubcommand: AsyncParsableCommand {
     @Option(name: .long, help: "LoRA rank")
     var rank: Int = 16
 
+    @OptionGroup
+    var adapter: AdapterTrainingOptions
+
     @Option(name: .long, help: "Adapter directory, new unless --resume (default ~/.basalt/adapters/<model fingerprint>/<timestamp>); with --resume, the directory of the interrupted run")
     var output: String?
 
@@ -73,6 +76,7 @@ struct DistillSubcommand: AsyncParsableCommand {
         (teacher.provider, teacher.inputPricePerMillion, teacher.outputPricePerMillion, teacher.reasoningEffort) = (provider, inputPrice, outputPrice, reasoningEffort)
         var request = DistillRequest(prompts: prompts, teacher: teacher, gate: GateRequest(heldOut: Self.generalPrompts))
         (request.filter, request.budgetUSD, request.iterations, request.rank, request.output, request.includeReasoning) = (filter, budgetUsd, iterations, rank, output, includeReasoning)
+        request.method = try adapter.resolveMethod(fallbackRank: rank)
         (request.onPolicy, request.checkpointEvery, request.resume) = (onPolicy, checkpointEvery, resume)
         let engine = MLXInferenceEngine()
         let orchestrator = ModelOrchestratorActor(engine: engine)

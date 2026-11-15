@@ -47,7 +47,8 @@ struct AdapterProgress: Sendable, Codable, Equatable {
         var same = identity
         (same.step, same.losses) = (step, losses)
         guard same == self else {
-            return "the checkpoint was trained with rank \(rank), layers \(layers) of \(layerCount), batch size \(batchSize) and learning rate \(learningRate); resume with the same settings"
+            let methodDesc = method.map { "method \($0)" } ?? "rank \(rank)"
+            return "the checkpoint was trained with \(methodDesc), layers \(layers) of \(layerCount), batch size \(batchSize) and learning rate \(learningRate); resume with the same settings"
         }
         guard step < iterations else { return "the checkpoint is at step \(step); iterations must be larger to resume" }
         return nil

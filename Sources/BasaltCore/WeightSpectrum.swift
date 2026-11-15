@@ -10,6 +10,7 @@ public struct WeightSpectrum: Sendable, Codable, Equatable {
     public var rank: Int
     public var alpha: Double?
     public var tailSize: Int
+    public var orthogonalityDefect: Float?
     public var seconds: Double = 0
 
     public init?(eigenvalues: [Double], rows: Int, columns: Int) {
