@@ -121,6 +121,10 @@ public struct PipelineAnswer: Codable, Sendable, Equatable {
 public struct PipelineSystem2: Codable, Sendable, Equatable {
     public let model: String
     public let text: String
+
+    public init(model: String, text: String) {
+        (self.model, self.text) = (model, text)
+    }
 }
 
 public struct PipelineStageReceipt: Codable, Sendable, Equatable {
@@ -150,13 +154,26 @@ public struct PipelineStageReceipt: Codable, Sendable, Equatable {
 public struct PipelineReceipt: Codable, Sendable, Equatable {
     public let stages: [PipelineStageReceipt]
     public let answeredBy: [String: PipelineStage]
-    public let escalated: Bool
+    public var escalated: Bool
     public let system2Calls: Int
     public let ms: Int
     public var swapMs: Int?
+    public var epistemic: EpistemicGateDecision?
+
+    public init(
+        stages: [PipelineStageReceipt],
+        answeredBy: [String: PipelineStage],
+        escalated: Bool,
+        system2Calls: Int,
+        ms: Int,
+        swapMs: Int? = nil
+    ) {
+        (self.stages, self.answeredBy, self.escalated) = (stages, answeredBy, escalated)
+        (self.system2Calls, self.ms, self.swapMs) = (system2Calls, ms, swapMs)
+    }
 
     enum CodingKeys: String, CodingKey {
-        case stages, escalated, ms
+        case stages, escalated, ms, epistemic
         case answeredBy = "answered_by", system2Calls = "system2_calls", swapMs = "swap_ms"
     }
 }

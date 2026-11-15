@@ -2,7 +2,9 @@ import Foundation
 import BasaltCore
 
 extension PipelineRunner {
-    func situation(_ request: PipelineRequest, decision: SystemOneResponse?, route: PipelineCore.Route) async -> AnswerSituation? {
+    func situation(
+        _ request: PipelineRequest, decision: SystemOneResponse?, route: PipelineCore.Route, epistemic: EpistemicGateDecision? = nil
+    ) async -> AnswerSituation? {
         guard let router = stages.answers else { return nil }
         var modalities: Set<AnswerRoute.Modality> = request.text == nil ? [] : [.text]
         for attachment in request.attachments {
@@ -12,10 +14,11 @@ extension PipelineRunner {
             }
         }
         if modalities.isEmpty { modalities.insert(.text) }
-        let labels = request.questions.reduce(into: [String: String]()) { labels, entry in
+        var labels = request.questions.reduce(into: [String: String]()) { labels, entry in
             if let answer = decision?.answers[entry.key], answer.abstain != true, let label = PipelineCore.label(of: answer, entry.value) { labels[entry.key] = label }
         }
-        let escalated = (decision?.escalate ?? false) || route.calls.contains { $0.question != nil }
+        if let verdict = epistemic?.verdict { labels["epistemic_verdict"] = verdict.rawValue }
+        let escalated = (decision?.escalate ?? false) || epistemic?.action == .escalate || route.calls.contains { $0.question != nil }
         return AnswerSituation(modalities: modalities, labels: labels, promptTokens: 0, escalated: escalated, costLeft: await router.costLeft())
     }
 

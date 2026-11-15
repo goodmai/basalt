@@ -49,7 +49,17 @@ public enum ComposeSchema {
         ],
         "pipeline": [Field("perceive", .section("perceive")), Field("decide", .section("decide")), Field("answer", .nameOrSection("answer")), Field("profiles", .names, since: 2)],
         "perceive": [Field("documents", .names), Field("audio", .names)],
-        "decide": [Field("cascade", .names), Field("escalate_below", .number), Field("abstain_below", .number), Field("min_margin", .number)],
+        "decide": [
+            Field("cascade", .names), Field("escalate_below", .number), Field("abstain_below", .number), Field("min_margin", .number),
+            Field("epistemic", .section("epistemic"), since: 2),
+        ],
+        "epistemic": [
+            Field("enabled", .boolean), Field("support_threshold", .number), Field("refutation_threshold", .number),
+            Field("tool_threshold", .number),
+            Field("on_no_evidence", .choice(EpistemicGateSpec.NoEvidencePolicy.allCases.map(\.rawValue))),
+            Field("on_conflict", .choice(EpistemicGateSpec.ConflictPolicy.allCases.map(\.rawValue))),
+            Field("abstain_message", .string),
+        ],
         "answer": [Field("model", .string), Field("routes", .list("route"))],
         "route": [Field("when", .section("when")), Field("model", .string), Field("fallback", .string)],
         "when": [

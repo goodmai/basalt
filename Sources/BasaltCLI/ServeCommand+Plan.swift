@@ -24,11 +24,40 @@ extension ServeCommand {
         if let decisionModel = decision.localModel, let decisions, decisionModel != "self" {
             let path = try await resolvedPath(decisionModel, quant: nil)
             let ane = decisions is CoreAIDecisionEngine
-            let bytes = ane ? Self.weightBytes(path + "/decision.aimodel") + Self.weightBytes(path + "/token_table.aimodel")
-                : decisions is JevEvaluator ? Self.weightBytes(path) + Self.weightBytes(try await resolvedPath(try JevEvaluator.baseModel(of: URL(fileURLWithPath: path)), quant: nil)) : Self.weightBytes(path)
+            let bytes = try await decisionResidentBytes(decisions, path: path)
             workloads.append(Workload(name: decisionModel, role: "decide", unit: ane ? .ane : .gpu, kind: .encoder, residentBytes: bytes))
         }
         return workloads
+    }
+
+    func decisionResidentBytes(_ decisions: any DecisionEngine, path: String) async throws -> Int64 {
+        if decisions is CoreAIDecisionEngine {
+            return Self.weightBytes(path + "/decision.aimodel") + Self.weightBytes(path + "/token_table.aimodel")
+        }
+        if decisions is JevEvaluator {
+            let base = try await resolvedPath(try JevEvaluator.baseModel(of: URL(fileURLWithPath: path)), quant: nil)
+            return Self.weightBytes(path) + Self.weightBytes(base)
+        }
+        if let bank = decisions as? MultiHeadDecisionEngine {
+            let baseModel = bank.manifest.baseModelID
+            guard baseModel != "self", baseModel != targetModel else { return Self.weightBytes(path) }
+            let base = try await resolvedPath(baseModel, quant: nil)
+            return Self.weightBytes(path) + Self.weightBytes(base)
+        }
+        return Self.weightBytes(path)
+    }
+
+    static func bundleBaseBytes(_ directory: URL) -> Int64 {
+        let base: String?
+        if JevEvaluator.isBundle(directory) {
+            base = try? JevEvaluator.baseModel(of: directory)
+        } else if MultiHeadDecisionEngine.isBundle(directory) {
+            base = try? MultiHeadDecisionEngine.baseModel(of: directory)
+        } else {
+            base = nil
+        }
+        guard let base, base != "self", let path = ModelCache.resolve(repoId: base) else { return 0 }
+        return weightBytes(path.path)
     }
 
     func admitComputePlan(chatPath: String, embeddings: (any EmbeddingEngine)?, decisions: (any DecisionEngine)?, perceive paths: PerceivePaths) async throws -> PlanVerdict {

@@ -40,6 +40,8 @@ enum ComposeProbe {
                 let url = URL(fileURLWithPath: onDemand.path)
                 if CoreAIDecisionEngine.isBundle(url) {
                     try CoreAIDecisionEngine.validateBundle(url)
+                } else if MultiHeadDecisionEngine.isBundle(url) {
+                    _ = try MultiHeadDecisionEngine.baseModel(of: url)
                 } else if JevEvaluator.isBundle(url) {
                     _ = try JevEvaluator.baseModel(of: url)
                 } else {

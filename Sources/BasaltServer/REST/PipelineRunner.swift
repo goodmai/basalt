@@ -12,13 +12,14 @@ package struct PipelineStages: Sendable {
     package var onDemand: [PipelineCore.Perceiver: OnDemandModel] = [:]
     package var answers: AnswerRouter?
     package var shareMedia = false
+    package var epistemic: EpistemicGateSpec?
+    package var hasTools = false
 
     package init(
         ocr: (any ModelOrchestrating)? = nil, audio: (any ModelOrchestrating)? = nil, speech: (any AudioTranscriber)? = nil,
         abstainBelow: Double? = nil, minMargin: Double? = nil, questions: [String: SystemOneQuestion] = [:]
     ) {
-        (self.ocr, self.audio, self.speech, self.abstainBelow, self.minMargin) = (ocr, audio, speech, abstainBelow, minMargin)
-        self.questions = questions
+        (self.ocr, self.audio, self.speech, self.abstainBelow, self.minMargin, self.questions) = (ocr, audio, speech, abstainBelow, minMargin, questions)
     }
 }
 
@@ -34,7 +35,11 @@ struct PipelineRunner: Sendable {
     }
 
     func missingStage(_ request: PipelineRequest) async -> String? {
-        PipelineCore.missingStage(request, perceivers: await perceivers(), hasDecisions: decisions != nil)
+        if let missing = PipelineCore.missingStage(request, perceivers: await perceivers(), hasDecisions: decisions != nil) { return missing }
+        if stages.epistemic?.enabled == true, decisions == nil {
+            return "An epistemic gate needs a decision model; start basalt serve with --decision-model <self|repo|dir>."
+        }
+        return nil
     }
 
     func run(_ request: PipelineRequest, origin: RequestOrigin, sessionId: String?) async throws(BasaltError) -> PipelineResponse {
@@ -49,6 +54,9 @@ struct PipelineRunner: Sendable {
     func runStages(_ request: PipelineRequest, origin: RequestOrigin, sessionId: String?) async throws(BasaltError) -> PipelineResponse {
         let perceivers = await perceivers()
         if let missing = PipelineCore.missingStage(request, perceivers: perceivers, hasDecisions: decisions != nil) { throw .invalidRequestStructure(details: missing) }
+        if stages.epistemic?.enabled == true, decisions == nil {
+            throw .invalidRequestStructure(details: "An epistemic gate needs a decision model; start basalt serve with --decision-model <self|repo|dir>.")
+        }
         let started = ContinuousClock.now
         let perception = try await perceiveStage(request, perceivers: perceivers)
         let perceived = perception.perceived
@@ -56,19 +64,17 @@ struct PipelineRunner: Sendable {
         let typed = perceived.pages == nil && perceived.transcript == nil
         let share = !typed && stages.shareMedia && decisions?.acceptsMedia == true
         let media = share ? request.attachments.compactMap(\.media) : nil
-        let (decision, deciding) = try await decide(request.questions, state: state, media: media, by: typed || share ? decisions : decisions?.onDevice, origin: origin, sessionId: sessionId)
-        let route = PipelineCore.route(questions: request.questions, decision: decision, task: request.task, state: state)
-        var replies: [PipelineCore.System2Reply] = []
-        let answering = typed ? origin : RequestOrigin(source: PipelineCore.perceivedSource, endpoint: origin.endpoint, stream: false)
-        let situation = await situation(request, decision: decision, route: route)
-        for call in route.calls { replies.append(try await answer(call, origin: answering, sessionId: sessionId, situation: situation)) }
-        let (answers, system2) = PipelineCore.answers(route, replies: replies, questions: request.questions, decision: decision)
+        let decided = try await decideWithEpistemic(
+            request, state: state, media: media, by: typed || share ? decisions : decisions?.onDevice, origin: origin, sessionId: sessionId)
+        let executed = try await executeRoute(request, state: state, typed: typed, decided: decided, origin: origin, sessionId: sessionId)
         var receipt = PipelineCore.receipt(
-            perception.receipts + [deciding].compactMap { $0 }, replies: replies, answers: answers, ms: Self.elapsed(since: started))
+            perception.receipts + [decided.receipt].compactMap { $0 }, replies: executed.replies, answers: executed.answers, ms: Self.elapsed(since: started))
         receipt.swapMs = stages.swap == nil && stages.onDemand.isEmpty ? nil : PipelineCore.milliseconds(perception.swap)
+        receipt.epistemic = decided.epistemic
+        if decided.epistemic?.action == .escalate { receipt.escalated = true }
         await chat.sessionLog?.logPipeline(origin: origin, sessionId: sessionId, receipt: receipt)
-        await chat.telemetry.recordPipeline(receipt, questions: request.questions, answers: answers)
-        return PipelineResponse(perceived: perceived, answers: answers, system2: system2, receipt: receipt)
+        await chat.telemetry.recordPipeline(receipt, questions: request.questions, answers: executed.answers)
+        return PipelineResponse(perceived: perceived, answers: executed.answers, system2: executed.system2, receipt: receipt)
     }
 
     struct Perceived: Sendable {

@@ -133,6 +133,7 @@ enum ComposeFile {
             spec.escalateBelow = number(field["escalate_below"], "\(path).escalate_below")
             spec.abstainBelow = number(field["abstain_below"], "\(path).abstain_below")
             spec.minMargin = number(field["min_margin"], "\(path).min_margin")
+            if let epistemic = field["epistemic"] { spec.epistemic = self.epistemic(epistemic, path: "\(path).epistemic") }
         }
 
         mutating func answer(_ node: Node?) -> String? {

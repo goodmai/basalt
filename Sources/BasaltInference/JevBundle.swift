@@ -62,3 +62,90 @@ struct JevBundle: Sendable {
         return merged
     }
 }
+
+public enum SystemOneBankBundle {
+    public static let headFileName = "head.safetensors"
+
+    public static func isBundle(_ directory: URL) -> Bool {
+        [SystemOneBankManifest.fileName, headFileName].allSatisfy {
+            FileManager.default.fileExists(atPath: directory.appending(component: $0).path)
+        }
+    }
+
+    public static func loadManifest(from directory: URL) throws(BasaltError) -> SystemOneBankManifest {
+        let file = directory.appending(component: SystemOneBankManifest.fileName)
+        let manifest: SystemOneBankManifest
+        do {
+            let data = try Data(contentsOf: file)
+            manifest = try JSONDecoder().decode(SystemOneBankManifest.self, from: data)
+        } catch {
+            throw .modelConfigurationInvalid(path: directory.path, reason: "invalid \(SystemOneBankManifest.fileName): \(error.localizedDescription)")
+        }
+        try manifest.validate(path: directory.path)
+        return manifest
+    }
+
+    public static func loadHead(
+        from directory: URL,
+        manifest: SystemOneBankManifest
+    ) throws(BasaltError) -> (weight: [Float], bias: [Float]?) {
+        let arrays: [String: MLXArray]
+        do {
+            arrays = try loadArrays(url: directory.appending(component: headFileName))
+        } catch {
+            throw .modelConfigurationInvalid(path: directory.path, reason: "cannot read \(headFileName): \(error.localizedDescription)")
+        }
+        guard let weight = arrays["weight"] else {
+            throw .modelConfigurationInvalid(path: directory.path, reason: "\(headFileName) has no weight tensor")
+        }
+        let expected = [manifest.totalOutputs, manifest.hiddenSize]
+        guard weight.ndim == 2, weight.shape == expected else {
+            throw .modelConfigurationInvalid(path: directory.path, reason: "bank weight shape \(weight.shape) != \(expected)")
+        }
+        let flatWeight = weight.asType(.float32).reshaped(-1)
+        if let bias = arrays["bias"] {
+            guard bias.ndim == 1, bias.dim(0) == manifest.totalOutputs else {
+                throw .modelConfigurationInvalid(path: directory.path, reason: "bank bias shape \(bias.shape) != [\(manifest.totalOutputs)]")
+            }
+            let flatBias = bias.asType(.float32)
+            eval(flatWeight, flatBias)
+            return (flatWeight.asArray(Float.self), flatBias.asArray(Float.self))
+        }
+        eval(flatWeight)
+        return (flatWeight.asArray(Float.self), nil)
+    }
+
+    public static func save(
+        manifest: SystemOneBankManifest,
+        weight: [Float],
+        bias: [Float]? = nil,
+        to directory: URL
+    ) throws(BasaltError) {
+        try manifest.validate(path: directory.path)
+        let expectedCount = manifest.totalOutputs * manifest.hiddenSize
+        guard weight.count == expectedCount else {
+            throw .modelConfigurationInvalid(path: directory.path, reason: "bank weight count \(weight.count) != \(expectedCount)")
+        }
+        if let bias, bias.count != manifest.totalOutputs {
+            throw .modelConfigurationInvalid(path: directory.path, reason: "bank bias count \(bias.count) != \(manifest.totalOutputs)")
+        }
+        do {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            try encoder.encode(manifest).write(to: directory.appending(component: SystemOneBankManifest.fileName), options: .atomic)
+            var tensors: [String: MLXArray] = [
+                "weight": MLXArray(weight, [manifest.totalOutputs, manifest.hiddenSize]),
+            ]
+            if let bias {
+                tensors["bias"] = MLXArray(bias, [manifest.totalOutputs])
+            }
+            eval(Array(tensors.values))
+            try MLX.save(arrays: tensors, url: directory.appending(component: headFileName))
+        } catch let error as BasaltError {
+            throw error
+        } catch {
+            throw .modelConfigurationInvalid(path: directory.path, reason: error.localizedDescription)
+        }
+    }
+}
