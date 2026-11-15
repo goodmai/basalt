@@ -175,8 +175,7 @@ struct ComposeCommand: AsyncParsableCommand {
         onNeuralEngine: { source in ModelCache.resolve(repoId: source).map(CoreAIDecisionEngine.isBundle) ?? false })
 
     static func jevBaseBytes(_ directory: URL) -> Int64 {
-        guard JevEvaluator.isBundle(directory), let base = try? JevEvaluator.baseModel(of: directory), let path = ModelCache.resolve(repoId: base) else { return 0 }
-        return ServeCommand.weightBytes(path.path)
+        ServeCommand.bundleBaseBytes(directory)
     }
 
     static func lines(_ spec: ComposeSpec, verdict: PlanVerdict, unknown: [String]) -> [String] {

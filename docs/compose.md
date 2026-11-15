@@ -117,6 +117,7 @@ A system that does not fit is refused with the numbers before anything loads. A 
   - Rerun it with `BASALT_E2E=1 BASALT_E2E_BUDGET_CHAT_MODEL=<chat> BASALT_E2E_BUDGET_FLASH=<judge dir> swift test --filter SystemOneBudgetBenchmarkTests`.
 - **What the cloud gets:** requests with documents or audio skip the cloud stages and go only to the local ones, in their order.
 - **Thresholds:** questions whose confidence is below `abstain_below`, or whose top two options are closer than `min_margin`, go to the answer model.
+- **Epistemic gate (version 2):** `epistemic` classifies `(support, refutation, needs_tool)` before decoding a single answer token: `enabled`, `support_threshold`, `refutation_threshold`, `tool_threshold`, `on_no_evidence` (`abstain` or `escalate`), `on_conflict` (`report` or `escalate`), and optional `abstain_message`.
 
 ### Answer routes
 - **Matching:** a rule's `when` matches when every condition holds. Conditions:

@@ -44,6 +44,31 @@ extension ComposeFile.Walk {
         }
         return value
     }
+
+    mutating func epistemic(_ node: Node, path: String) -> EpistemicGateSpec? {
+        guard let field = fields(node, path: path, section: "epistemic") else { return nil }
+        var spec = EpistemicGateSpec()
+        if let enabled = flag(field["enabled"], "\(path).enabled") { spec.enabled = enabled }
+        if let support = number(field["support_threshold"], "\(path).support_threshold") { spec.supportThreshold = support }
+        if let refutation = number(field["refutation_threshold"], "\(path).refutation_threshold") { spec.refutationThreshold = refutation }
+        if let tool = number(field["tool_threshold"], "\(path).tool_threshold") { spec.toolThreshold = tool }
+        if let noEvidence = text(field["on_no_evidence"], "\(path).on_no_evidence") {
+            if let policy = EpistemicGateSpec.NoEvidencePolicy(rawValue: noEvidence) {
+                spec.onNoEvidence = policy
+            } else {
+                issue("\(path).on_no_evidence", field["on_no_evidence"]!, "must be abstain or escalate")
+            }
+        }
+        if let conflict = text(field["on_conflict"], "\(path).on_conflict") {
+            if let policy = EpistemicGateSpec.ConflictPolicy(rawValue: conflict) {
+                spec.onConflict = policy
+            } else {
+                issue("\(path).on_conflict", field["on_conflict"]!, "must be report or escalate")
+            }
+        }
+        spec.abstainMessage = text(field["abstain_message"], "\(path).abstain_message")
+        return spec
+    }
 }
 
 extension ComposeFile {

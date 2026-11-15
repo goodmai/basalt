@@ -94,7 +94,9 @@ extension ComposeSpec {
 
     var cascadeIssues: [Issue] {
         guard !cascade.isEmpty else {
-            return escalateBelow == nil ? [] : [Issue("pipeline.decide.escalate_below", "needs a cascade of a cloud model and a local one")]
+            var missing: [Issue] = escalateBelow == nil ? [] : [Issue("pipeline.decide.escalate_below", "needs a cascade of a cloud model and a local one")]
+            if epistemic?.enabled == true { missing.append(Issue("pipeline.decide.epistemic", "needs a decision model in decide.cascade")) }
+            return missing + epistemicIssues
         }
         var issues: [Issue] = []
         for name in cascade where models[name] == nil { issues.append(Issue("pipeline.decide.cascade", "\(name) is not a declared model")) }
@@ -108,6 +110,19 @@ extension ComposeSpec {
         if escalateBelow != nil, cascade.count < 2 { issues.append(Issue("pipeline.decide.escalate_below", "applies only to a cascade of more than one model")) }
         for (key, value) in [("escalate_below", escalateBelow), ("abstain_below", abstainBelow), ("min_margin", minMargin)] {
             if let value, !(0 ... 1).contains(value) { issues.append(Issue("pipeline.decide.\(key)", "must lie between 0 and 1")) }
+        }
+        return issues + epistemicIssues
+    }
+
+    var epistemicIssues: [Issue] {
+        guard let epistemic else { return [] }
+        var issues: [Issue] = []
+        for (key, value) in [
+            ("support_threshold", epistemic.supportThreshold),
+            ("refutation_threshold", epistemic.refutationThreshold),
+            ("tool_threshold", epistemic.toolThreshold),
+        ] where !(0 ... 1).contains(value) || !value.isFinite {
+            issues.append(Issue("pipeline.decide.epistemic.\(key)", "must lie between 0 and 1"))
         }
         return issues
     }

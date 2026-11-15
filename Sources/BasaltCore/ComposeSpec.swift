@@ -57,6 +57,7 @@ public struct ComposeSpec: Sendable, Equatable {
     public var escalateBelow: Double?
     public var abstainBelow: Double?
     public var minMargin: Double?
+    public var epistemic: EpistemicGateSpec?
     public var answer: String
     public var routes: [AnswerRoute] = []
     public var budget: Double?
@@ -92,6 +93,7 @@ public struct PipelineSpec: Sendable, Equatable {
     public var escalateBelow: Double?
     public var abstainBelow: Double?
     public var minMargin: Double?
+    public var epistemic: EpistemicGateSpec?
     public var answer: String
     public var routes: [AnswerRoute] = []
 
@@ -106,7 +108,7 @@ extension ComposeSpec {
     public var defaultSpec: PipelineSpec {
         var spec = PipelineSpec(answer: answer)
         (spec.documents, spec.audio, spec.cascade, spec.routes) = (documents, audio, cascade, routes)
-        (spec.escalateBelow, spec.abstainBelow, spec.minMargin) = (escalateBelow, abstainBelow, minMargin)
+        (spec.escalateBelow, spec.abstainBelow, spec.minMargin, spec.epistemic) = (escalateBelow, abstainBelow, minMargin, epistemic)
         return spec
     }
 
@@ -115,7 +117,7 @@ extension ComposeSpec {
         guard let pipeline = pipelines[name] else { return nil }
         var view = self
         (view.documents, view.audio, view.cascade, view.routes, view.answer) = (pipeline.documents, pipeline.audio, pipeline.cascade, pipeline.routes, pipeline.answer)
-        (view.escalateBelow, view.abstainBelow, view.minMargin, view.pipelines) = (pipeline.escalateBelow, pipeline.abstainBelow, pipeline.minMargin, [:])
+        (view.escalateBelow, view.abstainBelow, view.minMargin, view.epistemic, view.pipelines) = (pipeline.escalateBelow, pipeline.abstainBelow, pipeline.minMargin, pipeline.epistemic, [:])
         return view
     }
 

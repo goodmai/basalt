@@ -31,6 +31,8 @@ extension ComposeHost {
         }
         if first { stages.swap = startup.swap }
         stages.shareMedia = view.cascade.contains { view.models[$0]?.data == ComposeSpec.shareMedia }
+        stages.epistemic = view.epistemic
+        stages.hasTools = view.routes.contains { $0.when.decide["epistemic_verdict"] == EpistemicVerdict.needsTool.rawValue }
         stages.answers = try router(view, held: held)
         return stages
     }
