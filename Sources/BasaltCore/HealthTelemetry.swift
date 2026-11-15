@@ -83,14 +83,80 @@ public struct CanaryTelemetry: Codable, Sendable, Equatable {
     }
 }
 
+public struct BelnapDistribution: Sendable, Codable, Equatable {
+    public var neither: Int
+    public var trueCount: Int
+    public var falseCount: Int
+    public var both: Int
+
+    public init(neither: Int = 0, trueCount: Int = 0, falseCount: Int = 0, both: Int = 0) {
+        self.neither = max(0, neither)
+        self.trueCount = max(0, trueCount)
+        self.falseCount = max(0, falseCount)
+        self.both = max(0, both)
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        neither = max(0, try container.decodeIfPresent(Int.self, forKey: .neither) ?? 0)
+        trueCount = max(0, try container.decodeIfPresent(Int.self, forKey: .trueCount) ?? 0)
+        falseCount = max(0, try container.decodeIfPresent(Int.self, forKey: .falseCount) ?? 0)
+        both = max(0, try container.decodeIfPresent(Int.self, forKey: .both) ?? 0)
+    }
+
+    public var total: Int { neither + trueCount + falseCount + both }
+    public var isEmpty: Bool { total == 0 }
+
+    public subscript(state: BelnapState) -> Int {
+        switch state {
+        case .neither: neither
+        case .true: trueCount
+        case .false: falseCount
+        case .both: both
+        }
+    }
+
+    public mutating func record(_ state: BelnapState) {
+        switch state {
+        case .neither: neither += 1
+        case .true: trueCount += 1
+        case .false: falseCount += 1
+        case .both: both += 1
+        }
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case neither
+        case trueCount = "true"
+        case falseCount = "false"
+        case both
+    }
+}
+
 public struct HealthTelemetry: Codable, Sendable, Equatable {
     public private(set) var degenerateOutputs: [String: Int] = [:]
     public private(set) var drift: [String: [String: DriftWatch]] = [:]
     public var canary: CanaryTelemetry?
+    public private(set) var belnap = BelnapDistribution()
 
     public init() {}
 
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        degenerateOutputs = try container.decodeIfPresent([String: Int].self, forKey: .degenerateOutputs) ?? [:]
+        drift = try container.decodeIfPresent([String: [String: DriftWatch]].self, forKey: .drift) ?? [:]
+        canary = try container.decodeIfPresent(CanaryTelemetry.self, forKey: .canary)
+        belnap = try container.decodeIfPresent(BelnapDistribution.self, forKey: .belnap) ?? BelnapDistribution()
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case degenerateOutputs, drift, canary, belnap
+    }
+
     public mutating func record(_ response: GenerationResponse, model: String) -> [String] {
+        if let confidence = response.confidence {
+            belnap.record(confidence.belnapState())
+        }
         var warnings: [String] = []
         if let kind = response.degenerate {
             degenerateOutputs[kind.rawValue, default: 0] += 1

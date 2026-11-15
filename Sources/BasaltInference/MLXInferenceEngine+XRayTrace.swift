@@ -135,6 +135,7 @@ final class TraceRecorder: ForwardProbe {
         }
         return TraceReport(
             tokens: ids.map { tokenizer.decode(tokenIds: [$0], skipSpecialTokens: false) },
-            position: position, layers: layerTraces, final: scores(output))
+            position: position, layers: layerTraces, final: scores(output)
+        ).withEvaluatedEvidence(totalLayers: layerCount)
     }
 }

@@ -193,40 +193,6 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
         pendingIndex = 0
     }
 
-    static func draft(after history: [Int], limit: Int) -> [Int] {
-        guard limit > 0 else { return [] }
-        let span = history.span
-        let count = span.count
-        for n in ngramSizes where count > n {
-            let suffixStart = count - n
-            let firstSuffix = span[suffixStart]
-            let lastSuffix = span[count - 1]
-            var match: Int?
-            for start in stride(from: suffixStart - 1, through: 0, by: -1) {
-                if span[start] != firstSuffix || span[start + n - 1] != lastSuffix {
-                    continue
-                }
-                var matched = true
-                for offset in 1 ..< n - 1 {
-                    if span[start + offset] != span[suffixStart + offset] {
-                        matched = false
-                        break
-                    }
-                }
-                if matched {
-                    match = start
-                    if start + n + limit <= count { break }
-                }
-            }
-            if let match {
-                let draftStart = match + n
-                let draftEnd = Swift.min(draftStart + limit, count)
-                return Array(history[draftStart ..< draftEnd])
-            }
-        }
-        return []
-    }
-
     private mutating func advance() {
         let remaining = maxTokens.map { $0 - tokenCount } ?? Int.max
         guard remaining > 0 else { return }
@@ -368,18 +334,10 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
             replayRounds += 1
             verifyCalls += 1
         }
-        if recycled {
-            recycledRounds += 1
-            recycledDraftTokens += draft.count
-            acceptedRecycledDrafts += acceptedDrafts
-        }
-        backoffs.recordRound(recycled: recycled, acceptedDrafts: matchedDrafts, draftCount: draft.count, replayed: replays)
-        rounds += 1
-        drafted += draft.count
-        accepted += acceptedDrafts
-        verifyCalls += 1
-        verified += fed.count
-        accept(emitted)
+        recordSpeculatedRound(
+            draftCount: draft.count, fedCount: fed.count, emitted: emitted,
+            matchedDrafts: matchedDrafts, recycled: recycled, replayed: replays
+        )
     }
 
     mutating func next() -> Int? {
@@ -395,6 +353,59 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
 }
 
 extension PromptLookupTokenIterator {
+    fileprivate mutating func recordSpeculatedRound(
+        draftCount: Int, fedCount: Int, emitted: [Int], matchedDrafts: Int, recycled: Bool, replayed: Bool
+    ) {
+        let acceptedDrafts = emitted.count - 1
+        if recycled {
+            recycledRounds += 1
+            recycledDraftTokens += draftCount
+            acceptedRecycledDrafts += acceptedDrafts
+        }
+        backoffs.recordRound(recycled: recycled, acceptedDrafts: matchedDrafts, draftCount: draftCount, replayed: replayed)
+        ConfidenceProbeRecorder.recordDraftRound(through: processor, accepted: matchedDrafts, drafted: draftCount)
+        rounds += 1
+        drafted += draftCount
+        accepted += acceptedDrafts
+        verifyCalls += 1
+        verified += fedCount
+        accept(emitted)
+    }
+
+    static func draft(after history: [Int], limit: Int) -> [Int] {
+        guard limit > 0 else { return [] }
+        let span = history.span
+        let count = span.count
+        for n in ngramSizes where count > n {
+            let suffixStart = count - n
+            let firstSuffix = span[suffixStart]
+            let lastSuffix = span[count - 1]
+            var match: Int?
+            for start in stride(from: suffixStart - 1, through: 0, by: -1) {
+                if span[start] != firstSuffix || span[start + n - 1] != lastSuffix {
+                    continue
+                }
+                var matched = true
+                for offset in 1 ..< n - 1 {
+                    if span[start + offset] != span[suffixStart + offset] {
+                        matched = false
+                        break
+                    }
+                }
+                if matched {
+                    match = start
+                    if start + n + limit <= count { break }
+                }
+            }
+            if let match {
+                let draftStart = match + n
+                let draftEnd = Swift.min(draftStart + limit, count)
+                return Array(history[draftStart ..< draftEnd])
+            }
+        }
+        return []
+    }
+
     static func supports(_ cache: [KVCache], routesExperts: Bool) -> Bool {
         PromptCache(cache).isSharable || stagesRounds(cache) || (isReplayableHybrid(cache) && !routesExperts)
     }

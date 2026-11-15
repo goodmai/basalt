@@ -140,6 +140,30 @@ struct LogitProbeRecorder: LogitProcessor {
 struct ConfidenceProbeRecorder: LogitProcessor {
     let probe: ConfidenceProbe
 
+    static func findProbe(in processor: (any LogitProcessor)?) -> ConfidenceProbe? {
+        if let recorder = processor as? ConfidenceProbeRecorder { return recorder.probe }
+        if let anchored = processor as? PromptAnchoredProcessor { return findProbe(in: anchored.chain) }
+        if let chain = processor as? LogitProcessorChain {
+            for stage in chain.stages {
+                if case .confidence(let recorder) = stage { return recorder.probe }
+                if case .other(let nested) = stage, let found = findProbe(in: nested) { return found }
+            }
+        }
+        return nil
+    }
+
+    static func recordDraftRound(probe: ConfidenceProbe, accepted: Int, drafted: Int) {
+        guard drafted > 0 else { return }
+        let clamped = Swift.min(drafted, Swift.max(0, accepted))
+        let tested = Swift.min(drafted, clamped + 1)
+        probe.recordHighConfidenceDrafts(rejected: clamped < drafted ? 1 : 0, total: tested)
+    }
+
+    static func recordDraftRound(through processor: (any LogitProcessor)?, accepted: Int, drafted: Int) {
+        guard let probe = findProbe(in: processor) else { return }
+        recordDraftRound(probe: probe, accepted: accepted, drafted: drafted)
+    }
+
     static func maxProbability(logits: MLXArray) -> Double? {
         statistics(logits: logits)?.probability
     }

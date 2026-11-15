@@ -87,6 +87,13 @@ struct GenerationRelay: Sendable {
         reasoningTokens: Int?, forcedTokens: Int?, modelModified: Bool
     ) -> GenerationResponse {
         let telemetry = lastInfo?.speculativeDecodingTelemetry
+        var confidence = setup.confidenceProbe?.summary
+        if var measured = confidence, measured.totalHighConfidenceDrafts == 0,
+           let telemetry, telemetry.draftTokenCount > 0 {
+            measured.totalHighConfidenceDrafts = telemetry.draftTokenCount
+            measured.highConfidenceDraftRejections = Swift.max(0, telemetry.draftTokenCount - telemetry.acceptedDraftTokenCount)
+            confidence = measured
+        }
         return GenerationResponse(
             generatedText: "",
             reasoningText: nil,
@@ -108,7 +115,7 @@ struct GenerationRelay: Sendable {
         ).reporting(
             degenerate: health.verdict(answerExpected: gate.admitted == 0 && finishReason != .length),
             draftSource: setup.draftSource, modelModified: modelModified,
-            confidence: setup.confidenceProbe?.summary
+            confidence: confidence
         )
     }
 
