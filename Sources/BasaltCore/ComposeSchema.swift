@@ -8,6 +8,7 @@ public enum ComposeSchema {
         case sections(String)
         case list(String)
         case nameOrSection(String)
+        case namesOrSection(String)
         case suiteMap(item: String, section: String)
         case variables
     }
@@ -49,7 +50,18 @@ public enum ComposeSchema {
             Field("api_key_env", .string), Field("data", .choice([ComposeSpec.noPerceived])), Field("budget", .section("budget")),
             Field("profiles", .names, since: 2),
         ],
-        "pipeline": [Field("perceive", .section("perceive")), Field("decide", .section("decide")), Field("answer", .nameOrSection("answer")), Field("profiles", .names, since: 2)],
+        "pipeline": [
+            Field("perceive", .section("perceive")), Field("decide", .section("decide")),
+            Field("answer", .nameOrSection("answer")), Field("speak", .namesOrSection("speak")),
+            Field("profiles", .names, since: 2),
+        ],
+        "speak": [
+            Field("chain", .names), Field("voice", .string),
+            Field("on_gpu_busy", .choice(SpeechOnGPUBusy.allCases.map(\.rawValue))),
+            Field("sentence_streaming", .boolean),
+            Field("format", .choice(SpeechAudioFormat.allCases.map(\.rawValue))),
+            Field("exaggeration", .number), Field("max_ttfa_ms", .integer),
+        ],
         "perceive": [Field("documents", .names), Field("audio", .names)],
         "decide": [
             Field("cascade", .names), Field("escalate_below", .number), Field("abstain_below", .number), Field("min_margin", .number),
@@ -148,6 +160,8 @@ public enum ComposeSchema {
         case .sections(let name): ["type": "object", "additionalProperties": ["$ref": "#/$defs/\(name)"]]
         case .list(let name): ["type": "array", "items": ["$ref": "#/$defs/\(name)"]]
         case .nameOrSection(let name): ["oneOf": [["type": "string"], ["$ref": "#/$defs/\(name)"]]]
+        case .namesOrSection(let name):
+            ["oneOf": [["type": "string"], ["type": "array", "items": ["type": "string"]], ["$ref": "#/$defs/\(name)"]]]
         case .suiteMap(let item, let section): ["type": "object", "additionalProperties": suiteValueSchema(item: item, section: section)]
         case .variables: ["type": "object", "additionalProperties": ["type": ["string", "number", "boolean"]]]
         }

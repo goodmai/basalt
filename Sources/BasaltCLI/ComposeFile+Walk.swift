@@ -209,4 +209,43 @@ extension ComposeFile.Walk {
         }
         return value
     }
+
+    mutating func speak(_ node: Node?, into spec: inout ComposeSpec) {
+        let path = "\(prefix).speak"
+        guard let node else { return }
+        if let single = node.scalar?.string, node.mapping == nil, node.sequence == nil {
+            spec.speak = ComposeSpec.Speak(chain: [single])
+            return
+        }
+        if node.sequence != nil {
+            spec.speak = ComposeSpec.Speak(chain: list(node, path))
+            return
+        }
+        guard let field = fields(node, path: path, section: "speak") else { return }
+        var stage = ComposeSpec.Speak(
+            chain: list(field["chain"], "\(path).chain"),
+            voice: text(field["voice"], "\(path).voice"),
+            sentenceStreaming: flag(field["sentence_streaming"], "\(path).sentence_streaming")
+        )
+        stage.exaggeration = number(field["exaggeration"], "\(path).exaggeration")
+        speakOptions(field, path: path, into: &stage)
+        spec.speak = stage
+    }
+
+    private mutating func speakOptions(_ field: [String: Node], path: String, into stage: inout ComposeSpec.Speak) {
+        if let raw = text(field["on_gpu_busy"], "\(path).on_gpu_busy") {
+            stage.onGPUBusy = SpeechOnGPUBusy(rawValue: raw)
+            if stage.onGPUBusy == nil { issue("\(path).on_gpu_busy", field["on_gpu_busy"]!, "must be keep, fallback_ane or fallback_apple_speech") }
+        }
+        if let raw = text(field["format"], "\(path).format") {
+            stage.format = SpeechAudioFormat(rawValue: raw)
+            if stage.format == nil {
+                issue("\(path).format", field["format"]!, "must be one of \(SpeechAudioFormat.allCases.map(\.rawValue).joined(separator: ", "))")
+            }
+        }
+        if let maxNode = field["max_ttfa_ms"] {
+            stage.maxTTFAMs = maxNode.int
+            if stage.maxTTFAMs == nil { issue("\(path).max_ttfa_ms", maxNode, "must be an integer") }
+        }
+    }
 }

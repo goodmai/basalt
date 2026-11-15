@@ -129,6 +129,31 @@ A system that does not fit is refused with the numbers before anything loads. A 
 - **Order of tries:** the rule's `model` first, then its `fallback`, then the pipeline's default local model.
 - **Skips:** a cloud model is skipped for perceived text, without budget, after a refused key, or while rate limited. Each skip is named in the receipt.
 
+### Speak (`#493`)
+A pipeline may declare an optional `speak` stage to synthesize audio with deterministic GPU → Neural Engine → system-voice fallback:
+
+```yaml
+pipeline:
+  answer: chat
+  speak:
+    chain: [tts_qwen, tts_ane, apple-speech]
+    voice: af_heart
+    on_gpu_busy: fallback_ane
+    sentence_streaming: true
+    format: wav
+    exaggeration: 0.5
+    max_ttfa_ms: 80
+```
+
+- **`speak`:** accepts a single name (`speak: apple-speech`), a fallback list (`speak: [tts_qwen, tts_ane, apple-speech]`), or the full mapping.
+- **`chain`:** ordered local TTS models ending optionally with the zero-weight `apple-speech` system synthesizer.
+- **`voice`:** default voice identifier (`alloy`, `af_heart`, or an `AVSpeechSynthesisVoice` identifier).
+- **`on_gpu_busy`:** `keep`, `fallback_ane`, or `fallback_apple_speech` when Metal is busy decoding.
+- **`sentence_streaming`:** streams full-duplex sentence chunks into TTS as tokens arrive.
+- **`format`:** output container or sample encoding (`wav`, `pcm`, `pcm_24k`, `mp3`, `opus`, `aac`, `flac`).
+- **`exaggeration`:** expressive prosody control in `0.0...2.0` where supported.
+- **`max_ttfa_ms`:** maximum first-audio latency budget before routing down the fallback chain.
+
 ### Version 2: variables and profiles
 `version: 2` adds two blocks, so that one file serves several Macs. A version 1 file keeps working; using either block in it is refused with "needs version: 2".
 

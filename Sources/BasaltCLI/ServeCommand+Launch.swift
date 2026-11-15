@@ -20,6 +20,7 @@ struct ServerLaunch: Sendable {
     var announceReady = false
     var onBind: (@Sendable (Int) -> Void)? = nil
     var startup: (@Sendable () async throws -> Void)? = nil
+    var speechSynthesizer: (any SpeechSynthesizer)? = nil
 }
 
 extension ServerLaunch {
@@ -108,7 +109,7 @@ extension ServeCommand {
                     shutdownDeadline: launch.shutdownDeadline,
                     handleSignals: launch.handleSignals
                 ).withDecisions(launch.decisions).withPipeline(launch.pipeline).withPipelines(launch.pipelines, compose: launch.compose)
-                    .withReadyHandler(launch.readyHandler)
+                    .withSpeechSynthesizer(launch.speechSynthesizer).withReadyHandler(launch.readyHandler)
                 group.addTask { try await restServer.run(); return true }
             }
             if let mcpServer = launch.mcpServer {
