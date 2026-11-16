@@ -86,6 +86,8 @@ enum MCPToolCatalog {
         ),
         ocr,
         pipeline,
+        generateImage,
+        editImage,
         MCPToolDescriptor(name: "gemma_generate", description: "Generate text using the locally-running Gemma model via MLX.", inputSchema: generateSchema),
         MCPToolDescriptor(name: "gemma_status", description: statusDescription, inputSchema: emptySchema),
         MCPToolDescriptor(name: "gemma_add_knowledge", description: addKnowledgeDescription, inputSchema: addKnowledgeSchema),
@@ -206,10 +208,19 @@ enum MCPToolCatalog {
 }
 
 extension MCPToolCatalog {
-    static func catalog(researchTools: Bool, filter: MCPToolFilter = .standard) -> MCPToolsList {
+    static func catalog(
+        researchTools: Bool,
+        filter: MCPToolFilter = .standard,
+        includeImageTools: Bool = false
+    ) -> MCPToolsList {
         let research = ResearchTool.allCases.map { MCPToolDescriptor(name: $0.rawValue, description: $0.summary, inputSchema: $0.schema) }
         let candidates = list.tools + research + [introspectDescriptor, phasorProbeDescriptor]
-        return MCPToolsList(tools: candidates.filter { filter.allows($0.name, researchTools: researchTools) })
+        return MCPToolsList(tools: candidates.filter { descriptor in
+            if MCPToolName(rawValue: descriptor.name) != nil {
+                return includeImageTools && MCPToolName.isAllowed(descriptor.name, by: filter)
+            }
+            return filter.allows(descriptor.name, researchTools: researchTools)
+        })
     }
 }
 

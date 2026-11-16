@@ -5,13 +5,15 @@ package struct PipelineSystem: Sendable {
     package var decisions: (any DecisionEngine)?
     package var stages: PipelineStages
     package var speech: (any SpeechSynthesizer)?
+    package var image: (any ImageSynthesizer)?
 
     package init(
         decisions: (any DecisionEngine)?,
         stages: PipelineStages,
-        speech: (any SpeechSynthesizer)? = nil
+        speech: (any SpeechSynthesizer)? = nil,
+        image: (any ImageSynthesizer)? = nil
     ) {
-        (self.decisions, self.stages, self.speech) = (decisions, stages, speech)
+        (self.decisions, self.stages, self.speech, self.image) = (decisions, stages, speech, image)
     }
 }
 

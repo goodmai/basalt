@@ -17,7 +17,7 @@ extension ComposeHost {
     static func probes(_ model: ComposeHeld, answering: Bool) -> Bool {
         switch model {
         case .resident: answering
-        case .decision, .onDemand, .onDemandDecision, .speaker, .onDemandSpeaker: true
+        case .decision, .onDemand, .onDemandDecision, .speaker, .onDemandSpeaker, .imageGenerator, .onDemandImageGenerator: true
         case .cloud: false
         }
     }
@@ -34,35 +34,55 @@ enum ComposeProbe {
             case .decision(let engine):
                 _ = try await engine.decide(request)
             case .onDemand(let onDemand):
-                let report = await ModelInspector().inspect(modelIdOrPath: onDemand.path)
-                if !report.intact { return "its files at \(onDemand.path) are incomplete; run basalt models inspect \(onDemand.path)" }
+                return await inspectIntact(onDemand.path)
             case .onDemandDecision(let onDemand):
-                let url = URL(fileURLWithPath: onDemand.path)
-                if CoreAIDecisionEngine.isBundle(url) {
-                    try CoreAIDecisionEngine.validateBundle(url)
-                } else if MultiHeadDecisionEngine.isBundle(url) {
-                    _ = try MultiHeadDecisionEngine.baseModel(of: url)
-                } else if JevEvaluator.isBundle(url) {
-                    _ = try JevEvaluator.baseModel(of: url)
-                } else {
-                    let report = await ModelInspector().inspect(modelIdOrPath: onDemand.path)
-                    if !report.intact { return "its files at \(onDemand.path) are incomplete; run basalt models inspect \(onDemand.path)" }
-                }
+                return try await probeOnDemandDecision(onDemand.path)
             case .speaker(let loaded):
                 _ = try await SpeechSynthesizerLoader.probeSpeechSynthesizer(loaded.synthesizer)
             case .onDemandSpeaker(let onDemand):
-                let url = URL(fileURLWithPath: onDemand.descriptor.path)
-                guard FileManager.default.fileExists(atPath: url.path) else {
-                    return "its files at \(onDemand.descriptor.path) are incomplete; run basalt models inspect \(onDemand.descriptor.path)"
+                return try probeOnDemandSpeaker(onDemand.descriptor)
+            case .onDemandImageGenerator(let onDemand):
+                if !FileManager.default.fileExists(atPath: onDemand.path) {
+                    return "its files at \(onDemand.path) are incomplete; run basalt models inspect \(onDemand.path)"
                 }
-                _ = try SpeechSynthesizerLoader.inspectOnDemand(identifier: onDemand.descriptor.modelID, directory: url)
-            case .cloud:
+            case .imageGenerator, .cloud:
                 break
             }
             return nil
         } catch {
             return "startup probe failed: \(error.localizedDescription)"
         }
+    }
+
+    private static func inspectIntact(_ path: String) async -> String? {
+        let report = await ModelInspector().inspect(modelIdOrPath: path)
+        return report.intact ? nil : "its files at \(path) are incomplete; run basalt models inspect \(path)"
+    }
+
+    private static func probeOnDemandDecision(_ path: String) async throws -> String? {
+        let url = URL(fileURLWithPath: path)
+        if CoreAIDecisionEngine.isBundle(url) {
+            try CoreAIDecisionEngine.validateBundle(url)
+            return nil
+        }
+        if MultiHeadDecisionEngine.isBundle(url) {
+            _ = try MultiHeadDecisionEngine.baseModel(of: url)
+            return nil
+        }
+        if JevEvaluator.isBundle(url) {
+            _ = try JevEvaluator.baseModel(of: url)
+            return nil
+        }
+        return await inspectIntact(path)
+    }
+
+    private static func probeOnDemandSpeaker(_ descriptor: OnDemandSpeechSynthesizer.Descriptor) throws -> String? {
+        let url = URL(fileURLWithPath: descriptor.path)
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            return "its files at \(descriptor.path) are incomplete; run basalt models inspect \(descriptor.path)"
+        }
+        _ = try SpeechSynthesizerLoader.inspectOnDemand(identifier: descriptor.modelID, directory: url)
+        return nil
     }
 }
 

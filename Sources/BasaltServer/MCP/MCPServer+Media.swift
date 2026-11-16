@@ -2,7 +2,7 @@ import Foundation
 import BasaltCore
 
 enum MediaTool: Sendable, Equatable {
-    case transcribe, ocr, decide, pipeline
+    case transcribe, ocr, decide, pipeline, generateImage, editImage
 }
 
 extension MCPServer {

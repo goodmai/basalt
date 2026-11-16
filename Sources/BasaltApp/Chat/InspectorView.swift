@@ -30,6 +30,9 @@ struct InspectorView: View {
             if let receipt = answer?.receipt {
                 Section("Answer") { ReceiptDetails(receipt: receipt) }
             }
+            if let image = answer?.images.last {
+                Section("Image") { GeneratedImageDetails(image: image) }
+            }
             if let attachments = question?.attachments, !attachments.isEmpty {
                 Section("Attachments") {
                     ForEach(Array(attachments.enumerated()), id: \.offset) { _, attachment in
@@ -58,6 +61,39 @@ struct ReceiptDetails: View {
         if let speed = receipt.tokensPerSecond { LabeledContent("Speed", value: String(format: "%.1f tok/s", speed)) }
         ForEach(Array((receipt.stages ?? []).enumerated()), id: \.offset) { _, stage in
             LabeledContent(stage.stage.capitalized, value: "\(stage.model) · \(stage.ms) ms" + (stage.cost.map { String(format: " · cloud $%.4f", $0) } ?? ""))
+        }
+    }
+}
+
+struct GeneratedImageDetails: View {
+    let image: GeneratedImagePart
+
+    var body: some View {
+        LabeledContent(
+            "Resolution",
+            value: "\(image.width)×\(image.height)" + (image.hasAlpha ? " · RGBA" : "")
+        )
+        LabeledContent(
+            "Steps",
+            value: image.teacacheSkipped > 0
+                ? "\(image.totalSteps) · TeaCache -\(image.teacacheSkipped)"
+                : "\(image.totalSteps)"
+        )
+        if let seed = image.seed {
+            LabeledContent("Seed", value: "\(seed)")
+        }
+        if let license = image.licenseTier, !license.isEmpty {
+            LabeledContent("License", value: license)
+        }
+        if let revised = image.revisedPrompt, !revised.isEmpty {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Revised Prompt")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text(verbatim: revised)
+                    .font(.callout)
+                    .textSelection(.enabled)
+            }
         }
     }
 }

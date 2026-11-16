@@ -19,6 +19,10 @@ public struct EngineClient: Sendable {
     public var deleteModel: @Sendable (String) async throws -> Void = { _ in throw EngineError.notRunning }
     public var transcribeAudio: @Sendable (AudioTranscriptionCall) async throws -> String = { _ in throw EngineError.notRunning }
     public var synthesizeSpeech: @Sendable (SpeechSynthesisCall) async throws -> Data = { _ in throw EngineError.notRunning }
+    public var streamImage: @Sendable (ImageGenerationCall) -> AsyncThrowingStream<ImageStreamEvent, any Error> = { _ in
+        AsyncThrowingStream { $0.finish(throwing: EngineError.notRunning) }
+    }
+    public var fetchImageContent: @Sendable (String) async throws -> Data = { _ in throw EngineError.notRunning }
 
     public init(
         chat: @escaping @Sendable (ChatRequest) -> AsyncThrowingStream<ChatDelta, any Error>,
@@ -83,6 +87,7 @@ extension EngineClient {
             })
         configureCompose(&client, endpoint, session: session)
         configureSpeech(&client, endpoint, session: session)
+        configureImages(&client, endpoint, session: session)
         return client
     }
 

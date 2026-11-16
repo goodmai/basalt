@@ -14,6 +14,8 @@ package struct RESTServer: Sendable {
     private(set) var pipelines: PipelineRegistry?
     private(set) var compose: ComposeControl?
     private(set) var speechSynthesizer: (any SpeechSynthesizer)?
+    private(set) var imageSynthesizer: (any ImageSynthesizer)?
+    private(set) var imageStoreDirectory: URL?
     private(set) var modelHub = ModelHubOperations.live()
     private(set) var onReady: (@Sendable (Int) -> Void)?
 
@@ -173,27 +175,13 @@ package struct RESTServer: Sendable {
         oai.post("/systemone", use: SystemOneController(engine: { await registry.system(ComposeSpec.defaultPipeline)?.decisions }, log: orchestrator.sessionLog, telemetry: orchestrator.telemetry).decide)
         oai.post("/audio/transcriptions", use: TranscriptionsController(orchestrator: orchestrator).transcriptions)
         AudioSpeechController(synthesizer: speechSynthesizer, pipelines: registry).add(to: oai)
+        ImagesController(synthesizer: imageSynthesizer, pipelines: registry, storeDirectory: imageStoreDirectory).add(to: oai)
         oai.post("/ocr", use: OCRController(orchestrator: orchestrator).ocr)
         let pipelineController = PipelineController(registry: registry, chat: orchestrator)
         oai.post("/pipeline", use: pipelineController.pipeline)
         oai.post("/pipelines/{name}", use: pipelineController.pipeline)
         if let compose { ComposeController(control: compose).add(to: oai) }
         HealthRoutes(orchestrator: orchestrator, compose: compose).add(to: oai)
-    }
-
-    private func addDocumentationRoutes(to router: Router<BasicRequestContext>) {
-        let restPort = config.restPort
-        router.get("/swagger") { _, _ in Self.response(Self.swaggerHTML, contentType: "text/html") }
-        router.get("/api/v1/openapi.json") { _, _ in Self.response(Self.openAPISpec, contentType: "application/json") }
-        router.get("/") { _, _ in
-            Self.response("Basalt \(HealthResponse.version) — http://localhost:\(restPort)/swagger", contentType: "text/plain")
-        }
-    }
-
-    private static func response(_ text: String, contentType: String) -> Response {
-        var b = ByteBuffer()
-        b.writeString(text)
-        return Response(status: .ok, headers: [.contentType: contentType], body: ResponseBody(byteBuffer: b))
     }
 
     private func log(_ message: String) {
@@ -210,10 +198,48 @@ extension RESTServer {
         self = RESTServer(orchestrator: orchestrator, config: config).withSpeechSynthesizer(speechSynthesizer)
     }
 
+    package init(
+        orchestrator: any ModelOrchestrating,
+        config: ServerConfig,
+        imageSynthesizer: (any ImageSynthesizer)?,
+        imageStoreDirectory: URL? = nil
+    ) {
+        self = RESTServer(orchestrator: orchestrator, config: config)
+            .withImageSynthesizer(imageSynthesizer, storeDirectory: imageStoreDirectory)
+    }
+
     package func withSpeechSynthesizer(_ synthesizer: (any SpeechSynthesizer)?) -> RESTServer {
         var server = self
         server.speechSynthesizer = synthesizer
         return server
+    }
+
+    package func withImageSynthesizer(_ synthesizer: (any ImageSynthesizer)?, storeDirectory: URL? = nil) -> RESTServer {
+        var server = self
+        server.imageSynthesizer = synthesizer
+        if let storeDirectory { server.imageStoreDirectory = storeDirectory }
+        return server
+    }
+
+    package func withImageStoreDirectory(_ directory: URL?) -> RESTServer {
+        var server = self
+        server.imageStoreDirectory = directory
+        return server
+    }
+
+    private func addDocumentationRoutes(to router: Router<BasicRequestContext>) {
+        let restPort = config.restPort
+        router.get("/swagger") { _, _ in Self.response(Self.swaggerHTML, contentType: "text/html") }
+        router.get("/api/v1/openapi.json") { _, _ in Self.response(Self.openAPISpec, contentType: "application/json") }
+        router.get("/") { _, _ in
+            Self.response("Basalt \(HealthResponse.version) — http://localhost:\(restPort)/swagger", contentType: "text/plain")
+        }
+    }
+
+    private static func response(_ text: String, contentType: String) -> Response {
+        var b = ByteBuffer()
+        b.writeString(text)
+        return Response(status: .ok, headers: [.contentType: contentType], body: ResponseBody(byteBuffer: b))
     }
 
     package func withModelHub(_ operations: ModelHubOperations) -> RESTServer {
@@ -278,6 +304,10 @@ extension RESTServer {
         "/v1/audio/transcriptions": { "post": { "summary": "OpenAI-compatible speech to text (multipart: file, model, language, response_format, temperature)" } },
         "/v1/audio/speech":        { "post": { "summary": "OpenAI-compatible text to speech (JSON: model, input, voice, response_format wav|pcm|pcm_24k, speed, stream_format audio|sse, language, instruct, exaggeration, prefer_ane)" } },
         "/v1/audio/voices":        { "get":  { "summary": "List available speech synthesis voices across configured TTS backends" } },
+        "/v1/images/generations":  { "post": { "summary": "OpenAI-compatible image generation (JSON + SSE stream: true with partial_image and completed events)" } },
+        "/v1/images/edits":        { "post": { "summary": "OpenAI-compatible multi-reference image & audio editing (JSON or multipart/form-data)" } },
+        "/v1/images/content/{id}": { "get":  { "summary": "Fetch persisted generated image artifact by SHA-256 asset id" } },
+        "/v1/images/models":       { "get":  { "summary": "List configured image synthesis model descriptors" } },
         "/v1/ocr":                 { "post": { "summary": "Document OCR with GLM-OCR, MinerU2.5, PaddleOCR-VL or DeepSeek-OCR (JSON: file as base64 PDF or image, pages such as 1-3, task document|text|table|formula|chart, format markdown|json, model, resolution tiny|small|base|large|gundam for DeepSeek-OCR)" } },
         "/v1/pipeline":            { "post": { "summary": "Perceive (OCR of pdf/image attachments with serve --pipeline-ocr-model or Apple Vision, transcription of audio with serve --pipeline-audio-model, the chat model's audio encoder or SpeechAnalyzer (with --experimental-speech-analyzer)) → decide (System One on typed questions) → answer (the chat model, only for abstained questions and a task); returns perceived text, answers, the System 2 reply and a route receipt (swap_ms when serve --pipeline-memory loads models per stage; --pipeline-preset fills the models)" } },
         "/v1/pipelines/{name}":    { "post": { "summary": "The same request as /v1/pipeline, for a named pipeline of the compose file served with basalt compose up" } },

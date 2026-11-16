@@ -35,7 +35,10 @@ enum ComposeFile {
         if let spec, walk.issues.isEmpty {
             walk.issues += spec.issues.map { ServeConfigError.Issue(path: $0.path, line: walk.line($0.path), message: $0.message) }
         }
-        guard let spec, walk.issues.isEmpty else { throw .invalid(file: file, issues: walk.issues.isEmpty ? [.init(path: "", message: "the file is empty")] : walk.issues) }
+        guard let spec, walk.issues.isEmpty else {
+            let fallback = [ServeConfigError.Issue(path: "", message: "the file is empty")]
+            throw .invalid(file: file, issues: walk.issues.isEmpty ? fallback : walk.issues)
+        }
         return spec
     }
 
@@ -84,6 +87,7 @@ enum ComposeFile {
             perceive(pipeline["perceive"], into: &spec)
             decide(pipeline["decide"], into: &spec)
             speak(pipeline["speak"], into: &spec)
+            imagine(pipeline["imagine"], into: &spec)
             experimental(top["experimental"], into: &spec)
             mcp(top["mcp"], into: &spec)
             adapters(top["adapters"], answerNode: pipeline["answer"], into: &spec)
@@ -105,6 +109,7 @@ enum ComposeFile {
             perceive(field["perceive"], into: &view)
             decide(field["decide"], into: &view)
             speak(field["speak"], into: &view)
+            imagine(field["imagine"], into: &view)
             return view.defaultSpec
         }
 

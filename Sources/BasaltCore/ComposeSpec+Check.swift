@@ -16,20 +16,25 @@ extension ComposeSpec {
         if name.trimmingCharacters(in: .whitespaces).isEmpty { issues.append(Issue("name", "a compose file needs a name")) }
         for (pipeline, view) in views {
             let prefix = pipeline == Self.defaultPipeline ? "pipeline" : "pipelines.\(pipeline)"
-            issues += (view.answerIssues + view.perceiveIssues + view.cascadeIssues + view.speakIssues).map { issue in
+            issues += (view.answerIssues + view.perceiveIssues + view.cascadeIssues + view.speakIssues + view.imagineIssues).map { issue in
                 Issue(issue.path.hasPrefix("pipeline.") ? prefix + issue.path.dropFirst("pipeline".count) : issue.path, issue.message)
             }
         }
         issues += pipelineIssues + experimentalIssues + mcpIssues + adapterIssues + benchmarkIssues + models.sorted { $0.key < $1.key }.flatMap { modelIssues($0.key, $0.value) }
         for (name, _) in models.sorted(by: { $0.key < $1.key }) where !roles.keys.contains(name) && !benchmarkModels.contains(name) && !adapterBaseModels.contains(name) {
-            issues.append(Issue("models.\(name)", "declared but not used by any pipeline's perceive, decide, answer or speak"))
+            issues.append(Issue("models.\(name)", "declared but not used by any pipeline's perceive, decide, answer, speak or imagine"))
         }
         return issues.reduce(into: [Issue]()) { unique, issue in if !unique.contains(issue) { unique.append(issue) } }
     }
 
     var pipelineRoles: [String: Set<String>] {
         var roles: [String: Set<String>] = [:]
-        for (role, names) in [("answer", answerModels), ("documents", documents), ("audio", audio), ("cascade", cascade), ("speak", speak?.chain ?? [])] {
+        let pairs: [(String, [String])] = [
+            ("answer", answerModels), ("documents", documents), ("audio", audio),
+            ("cascade", cascade), ("speak", speak?.chain ?? []),
+            ("imagine", imagineRoleNames), ("imagine_aux", imagineAuxRoleNames),
+        ]
+        for (role, names) in pairs {
             for name in names where models[name] != nil { roles[name, default: []].insert(role) }
         }
         return roles
@@ -126,7 +131,9 @@ extension ComposeSpec {
         }
         return issues
     }
+}
 
+extension ComposeSpec {
     func modelIssues(_ name: String, _ model: Model) -> [Issue] {
         let path = "models.\(name)"
         let perceiver = views.contains { $0.spec.ocr == name || $0.spec.speech == name }
@@ -159,9 +166,11 @@ extension ComposeSpec {
     func roleIssues(_ name: String, _ model: Model, path: String) -> [Issue] {
         var issues: [Issue] = []
         let answering = views.contains { $0.spec.answer == name }
+        let routedAnswer = views.contains { $0.spec.answerModels.contains(name) }
+        let extraAllowed: Set<String> = answering ? ["cascade", "imagine_aux"] : (routedAnswer ? ["imagine_aux"] : [])
         if deciderModels.contains(name), roles[name] != ["cascade"] {
             issues.append(Issue(path, "a decision model only decides; the chat model (the default pipeline's answer) may also decide"))
-        } else if !model.isCloud, (roles[name]?.subtracting(answering ? ["cascade"] : []).count ?? 0) > 1 {
+        } else if !model.isCloud, (roles[name]?.subtracting(extraAllowed).count ?? 0) > 1 {
             issues.append(Issue(path, "one model serves one role; the answer model may also decide"))
         }
         if case .cloud("gemini", _) = model.source, roles[name] != ["cascade"] {
@@ -186,7 +195,9 @@ extension ComposeSpec {
         Set(views.flatMap { $0.spec.speak?.chain ?? [] }.filter { models[$0]?.isCloud == false })
     }
 
-    var onDemandRoles: Set<String> { deciderModels.union(speakerModels) }
+    var onDemandRoles: Set<String> {
+        deciderModels.union(speakerModels).union(imageGeneratorModels).union(imagineAuxModels)
+    }
 
     var speakIssues: [Issue] {
         guard let speak else { return [] }

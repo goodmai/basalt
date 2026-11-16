@@ -102,16 +102,20 @@ struct ConversationDetail: View {
     let id: ConversationID
     @State private var store: ChatStore?
 
+    private var activeStore: ChatStore? {
+        model.chats[id] ?? store
+    }
+
     var body: some View {
         Group {
-            if let store {
-                ChatView(store: store, model: model, voice: model.voice)
+            if let activeStore {
+                ChatView(store: activeStore, model: model, voice: model.voice)
             } else {
                 ProgressView().accessibilityLabel("Loading the conversation")
             }
         }
         .task { store = await model.store(for: id) }
-        .onChange(of: store?.state.draft ?? "") { _, draft in model.drafts.save(id, draft) }
+        .onChange(of: activeStore?.state.draft ?? "") { _, draft in model.drafts.save(id, draft) }
     }
 }
 

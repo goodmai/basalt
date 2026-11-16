@@ -14,8 +14,9 @@ struct MultipartForm: Sendable {
     static let maxTextBytes = 4 * 1024
 
     let parts: [String: Part]
+    let allParts: [Part]
 
-    init(_ body: Data, boundary: String) throws(BasaltError) {
+    init(_ body: Data, boundary: String, repeatable: Set<String> = [], limit: Int = Self.maxParts) throws(BasaltError) {
         guard (1 ... 70).contains(boundary.utf8.count), !boundary.contains(where: \.isNewline) else {
             throw Self.malformed("the multipart boundary must be 1 to 70 characters on one line")
         }
@@ -24,6 +25,7 @@ struct MultipartForm: Sendable {
         guard let first = body.range(of: delimiter.dropFirst(2)) else { throw Self.malformed("the body holds no multipart boundary") }
         var cursor = first.upperBound
         var parts: [String: Part] = [:]
+        var ordered: [Part] = []
         while !body[cursor...].starts(with: Data("--".utf8)) {
             guard body[cursor...].starts(with: Data("\r\n".utf8)) else { throw Self.malformed("a multipart boundary is not followed by CRLF") }
             let headerStart = cursor + 2
@@ -36,12 +38,20 @@ struct MultipartForm: Sendable {
             }
             let part = try Self.part(headers: String(decoding: body[headerStart ..< headerEnd.lowerBound], as: UTF8.self),
                                      body: body.subdata(in: headerEnd.upperBound ..< next.lowerBound))
-            guard parts[part.name] == nil else { throw Self.malformed("the form field \(part.name.prefix(32)) appears twice") }
-            parts[part.name] = part
-            guard parts.count <= Self.maxParts else { throw Self.malformed("a form carries at most \(Self.maxParts) fields") }
+            if !repeatable.contains(part.name) {
+                guard parts[part.name] == nil else { throw Self.malformed("the form field \(part.name.prefix(32)) appears twice") }
+            }
+            if parts[part.name] == nil { parts[part.name] = part }
+            ordered.append(part)
+            guard ordered.count <= limit else { throw Self.malformed("a form carries at most \(limit) fields") }
             cursor = next.upperBound
         }
         self.parts = parts
+        self.allParts = ordered
+    }
+
+    func values(_ name: String) -> [Part] {
+        allParts.filter { $0.name == name }
     }
 
     func text(_ name: String) throws(BasaltError) -> String? {

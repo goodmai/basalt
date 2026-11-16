@@ -10,11 +10,17 @@ public struct ChatState: Sendable, Equatable {
     public var conversation: ConversationSnapshot
     public var draft = ""
     public var attachments: [ChatAttachment] = []
+    public var imageMode = false
+    public var beforeFilePath: String?
     public var run = Run.idle
     public var scrollPin = ScrollPinState.pinned
     public var branches = MessageBranches()
 
     public init(conversation: ConversationSnapshot) { self.conversation = conversation }
+
+    public var usesImageComposer: Bool {
+        imageMode || ChatReducer.hasImageCommandPrefix(draft)
+    }
 
     public var canSend: Bool {
         if case .streaming = run { return false }
@@ -47,11 +53,17 @@ public enum ChatAction: Sendable, Equatable {
     case systemPromptChanged(String)
     case scrolled(atBottom: Bool)
     case jumpToBottom
+    case toggleImageMode
+    case imageStage(RunID, StageReceipt)
+    case imagePartial(RunID, step: Int, totalSteps: Int, png: Data, width: Int, height: Int)
+    case imageCompleted(RunID, GeneratedImagePart, StageReceipt)
+    case editGeneratedImage(GeneratedImagePart)
 }
 
 public enum ChatEffect: Sendable, Equatable {
     case start(RunID, ChatRequest)
     case perceive(RunID, PipelineCall)
+    case generateImage(RunID, ImageGenerationCall)
     case cancel(RunID)
     case persist(ConversationSnapshot)
     case answered(ConversationSnapshot)
@@ -69,6 +81,19 @@ public enum ChatReducer {
             return send(&state, message: message, reply: reply, run: run)
         case .regenerate, .regenerateFrom, .selectBranch:
             return branch(&state, action)
+        case .stop, .delta, .finished, .failed:
+            return streamLifecycle(&state, action)
+        case .attach, .detach, .perceived, .systemPromptChanged:
+            return attachments(&state, action)
+        case .scrolled, .jumpToBottom:
+            return scroll(&state, action)
+        case .toggleImageMode, .imageStage, .imagePartial, .imageCompleted, .editGeneratedImage:
+            return reduceImages(&state, action)
+        }
+    }
+
+    static func streamLifecycle(_ state: inout ChatState, _ action: ChatAction) -> [ChatEffect] {
+        switch action {
         case .stop:
             guard let run = currentRun(state) else { return [] }
             close(&state, as: .stopped, run: .idle)
@@ -87,10 +112,8 @@ public enum ChatReducer {
             guard state.run == .streaming(run) else { return [] }
             close(&state, as: .failed, run: .failed(error))
             return [.persist(state.conversation)]
-        case .attach, .detach, .perceived, .systemPromptChanged:
-            return attachments(&state, action)
-        case .scrolled, .jumpToBottom:
-            return scroll(&state, action)
+        default:
+            return []
         }
     }
 
@@ -110,8 +133,13 @@ public enum ChatReducer {
     }
 
     static func regenerateFrom(_ state: inout ChatState, target: MessageID, reply: MessageID, run: RunID) -> [ChatEffect] {
+        let imageCall = imageRegenerationCall(in: state.conversation, target: target)
         guard state.branches.fork(in: &state.conversation, target: target) else { return [] }
-        let effects = begin(&state, reply: reply, run: run)
+        let effects = if let imageCall {
+            beginImage(&state, call: imageCall, reply: reply, run: run)
+        } else {
+            begin(&state, reply: reply, run: run)
+        }
         if let created = state.conversation.messages.last {
             state.branches.recordHead(created, in: state.conversation)
         }
@@ -146,6 +174,9 @@ public enum ChatReducer {
             return []
         case .detach(let id):
             state.attachments.removeAll { $0.id == id }
+            if let before = state.beforeFilePath, !state.attachments.contains(where: { $0.sourcePath == before }) {
+                state.beforeFilePath = nil
+            }
             return []
         case .perceived(let run, let result):
             guard state.run == .streaming(run), state.conversation.messages.count >= 2 else { return [] }
@@ -172,12 +203,15 @@ public enum ChatReducer {
 
     static func send(_ state: inout ChatState, message: MessageID, reply: MessageID, run: RunID) -> [ChatEffect] {
         guard state.canSend else { return [] }
+        if let imageEffects = sendImageIfRequested(&state, message: message, reply: reply, run: run) {
+            return imageEffects
+        }
         let text = state.draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        let attached = state.attachments.map { MessagePart.attachment(AttachmentPart(name: $0.name, kind: $0.kind)) }
+        let attached = state.attachments.map { MessagePart.attachment(AttachmentPart(name: $0.name, kind: $0.kind, filePath: $0.sourcePath)) }
         state.conversation.messages.append(MessageSnapshot(id: message, role: .user, parts: (text.isEmpty ? [] : [.text(text)]) + attached))
         if state.conversation.title.isEmpty { state.conversation.title = String((text.isEmpty ? state.attachments.map(\.name).joined(separator: ", ") : text).prefix(titleLength)) }
         let call = PipelineCall(attachments: state.attachments, task: text.isEmpty ? "Summarize the attached files." : text)
-        (state.draft, state.attachments) = ("", [])
+        (state.draft, state.attachments, state.beforeFilePath) = ("", [], nil)
         let effects = begin(&state, reply: reply, run: run)
         return call.attachments.isEmpty ? effects : effects.map { if case .start = $0 { .perceive(run, call) } else { $0 } }
     }
