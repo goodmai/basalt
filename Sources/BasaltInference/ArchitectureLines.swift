@@ -2,7 +2,11 @@ import Foundation
 
 func architectureLines(config json: [String: Any]) -> [String] {
     let text = json["text_config"] as? [String: Any]
-    let experts = (json["num_experts"] as? Int ?? text?["num_experts"] as? Int ?? 0)
+    let experts = (json["num_experts"] as? Int
+        ?? text?["num_experts"] as? Int
+        ?? json["n_routed_experts"] as? Int
+        ?? text?["n_routed_experts"] as? Int
+        ?? 0)
     let activeExperts = (json["num_experts_per_tok"] as? Int ?? text?["num_experts_per_tok"] as? Int)
     let layerTypes = (json["layer_types"] as? [String] ?? text?["layer_types"] as? [String])
     let slidingCount = layerTypes?.filter { $0.contains("sliding") }.count ?? 0

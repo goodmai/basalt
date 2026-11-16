@@ -76,6 +76,14 @@ extension MLXInferenceEngine {
                 RicursiveModel(try JSONDecoder.json5().decode(RicursiveConfiguration.self, from: data).validated())
             }
         }
+        for type in [NemotronLightningModel.modelType, NemotronLightningModel.aliasModelType] {
+            await registry.registerModelType(type) { data in
+                try NemotronLightningModel(configurationData: data)
+            }
+            await VLMTypeRegistry.shared.registerModelType(type) { data in
+                try NemotronLightningModel(configurationData: data)
+            }
+        }
         await registry.registerModelType(PrismHadamard.modelType) { data in
             try PrismHadamard.model(configuration: data)
         }
@@ -181,7 +189,9 @@ extension MLXInferenceEngine {
             profile: profile, samplingDefaults: samplingDefaults, controlTokens: controlTokens,
             fingerprint: fingerprint, description: modelDescription), epoch: modelEpoch)
     }
+}
 
+extension MLXInferenceEngine {
     static func upstreamTokenizer(at directory: URL) async throws -> any Tokenizers.Tokenizer {
         let configuration = LanguageModelConfigurationFromHub(modelFolder: directory)
         guard let tokenizerConfig = try await configuration.tokenizerConfig else {

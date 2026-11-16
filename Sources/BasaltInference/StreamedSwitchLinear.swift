@@ -128,7 +128,7 @@ struct LayerRouter {
         guard parts.count >= 3 else { return (nil, nil) }
         let moePath = parts.dropLast().joined(separator: ".")
         let layerPath = parts.dropLast(2).joined(separator: ".")
-        let normNames = ["post_attention_layernorm", "ffn_norm", "pre_feedforward_layernorm_2"]
+        let normNames = ["post_attention_layernorm", "ffn_norm", "pre_feedforward_layernorm_2", "norm"]
         let normEntry = normNames.lazy.compactMap { name -> (any UnaryLayer, MLXArray?)? in
             guard let norm = modules["\(layerPath).\(name)"] as? any UnaryLayer else { return nil }
             return (norm, parameters["\(layerPath).\(name).weight"])
@@ -139,6 +139,15 @@ struct LayerRouter {
                 let logits = gate(norm(hidden))
                 guard let expertBias else { return logits }
                 return MLX.sigmoid(logits.asType(.float32)) + expertBias.asType(.float32)
+            }, weight)
+        }
+        if let gateWeight = parameters["\(moePath).gate.weight"], let (norm, weight) = normEntry {
+            let bias = parameters["\(moePath).gate.e_score_correction_bias"]
+            return (LayerRouter { hidden in
+                let normed = norm(hidden)
+                let logits = matmul(normed.asType(gateWeight.dtype), gateWeight.transposed(1, 0))
+                guard let bias else { return logits }
+                return MLX.sigmoid(logits.asType(.float32)) + bias.asType(.float32)
             }, weight)
         }
         if let proj = modules["\(layerPath).router.proj"] as? Linear {
