@@ -117,6 +117,64 @@ public struct GGUFFlintLayout: GGUFTensorLayout, Equatable {
     }
 }
 
+public struct GGUFRicursiveLayout: GGUFTensorLayout, Equatable {
+    public let prefix: String
+
+    public init(prefix: String = "model.") {
+        self.prefix = prefix
+    }
+
+    public var valueHeads: Int { 0 }
+    public var valueHeadDim: Int { 0 }
+    public func tiledToGrouped(_ headDim: Int) -> [Int] { [] }
+
+    static let blockNames: [String: String] = [
+        "attn_norm.weight": "input_layernorm.weight",
+        "attn_post_norm.weight": "post_attention_layernorm.weight",
+        "ffn_norm.weight": "pre_feedforward_layernorm.weight",
+        "ffn_post_norm.weight": "post_feedforward_layernorm.weight",
+        "attn_q.weight": "self_attn.q_proj.weight",
+        "attn_k.weight": "self_attn.k_proj.weight",
+        "attn_v.weight": "self_attn.v_proj.weight",
+        "attn_output.weight": "self_attn.o_proj.weight",
+        "attn_q_norm.weight": "self_attn.q_norm.weight",
+        "attn_k_norm.weight": "self_attn.k_norm.weight",
+        "attn_gate.weight": "self_attn.g_proj.weight",
+        "attn_vres_lambda": "self_attn.value_res_lambda",
+        "attn_vres_lambda.weight": "self_attn.value_res_lambda",
+        "ffn_gate.weight": "mlp.gate_proj.weight",
+        "ffn_up.weight": "mlp.up_proj.weight",
+        "ffn_down.weight": "mlp.down_proj.weight",
+    ]
+
+    public func plan(_ tensor: GGUFTensor) -> GGUFTensorPlan? {
+        let bits = GGUFTensorPlan.bits(for: tensor.type, rank: tensor.dims.count)
+        switch tensor.name {
+        case "token_embd.weight":
+            return GGUFTensorPlan(source: tensor.name, target: prefix + "embed_tokens.weight", transform: .none, bits: bits)
+        case "output_norm.weight":
+            return GGUFTensorPlan(source: tensor.name, target: prefix + "norm.weight", transform: .none, bits: nil)
+        case "output.weight":
+            let headPrefix = prefix.hasSuffix("model.") ? String(prefix.dropLast("model.".count)) : prefix
+            return GGUFTensorPlan(source: tensor.name, target: headPrefix + "lm_head.weight", transform: .none, bits: bits)
+        default:
+            break
+        }
+        let parts = tensor.name.split(separator: ".", maxSplits: 2)
+        guard parts.count == 3, parts[0] == "blk", let block = Int(parts[1]),
+              let targetSuffix = Self.blockNames[String(parts[2])] else {
+            return nil
+        }
+        let unquantized = tensor.dims.count == 1
+        return GGUFTensorPlan(
+            source: tensor.name,
+            target: "\(prefix)layers.\(block).\(targetSuffix)",
+            transform: .none,
+            bits: unquantized ? nil : bits
+        )
+    }
+}
+
 public struct GGUFQwen35Layout: GGUFTensorLayout, Equatable {
     public let keyHeads: Int
     public let valueHeads: Int

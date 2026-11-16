@@ -68,6 +68,14 @@ extension MLXInferenceEngine {
         await VLMTypeRegistry.shared.registerModelType(FlintModel.modelType) { data in
             FlintModel(try JSONDecoder.json5().decode(FlintConfiguration.self, from: data).validated())
         }
+        for type in [RicursiveModel.modelType, RicursiveModel.aliasModelType] {
+            await registry.registerModelType(type) { data in
+                RicursiveModel(try JSONDecoder.json5().decode(RicursiveConfiguration.self, from: data).validated())
+            }
+            await VLMTypeRegistry.shared.registerModelType(type) { data in
+                RicursiveModel(try JSONDecoder.json5().decode(RicursiveConfiguration.self, from: data).validated())
+            }
+        }
         await registry.registerModelType(PrismHadamard.modelType) { data in
             try PrismHadamard.model(configuration: data)
         }

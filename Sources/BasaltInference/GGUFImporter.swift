@@ -33,6 +33,9 @@ package struct GGUFImporter: Sendable {
         if modelType == FlintModel.modelType {
             return GGUFFlintLayout(prefix: config["text_config"] == nil ? "model." : "language_model.model.")
         }
+        if modelType == RicursiveModel.modelType || modelType == RicursiveModel.aliasModelType {
+            return GGUFRicursiveLayout(prefix: config["text_config"] == nil ? "model." : "language_model.model.")
+        }
         guard let keys = text["linear_num_key_heads"] as? Int, let values = text["linear_num_value_heads"] as? Int,
               let keyDim = text["linear_key_head_dim"] as? Int, let valueDim = text["linear_value_head_dim"] as? Int else {
             throw BasaltError.modelConfigurationInvalid(path: template.path, reason: "the template is not a supported qwen3_5 or flint checkpoint")
@@ -96,7 +99,9 @@ package struct GGUFImporter: Sendable {
         case .vHeadColumns: weight = weight.take(MLXArray(layout.tiledToGrouped(layout.valueHeadDim).map(Int32.init)), axis: 1)
         case .convChannels(let from): weight = Self.regroupRows(weight, from: from, order: layout.tiledToGrouped(layout.valueHeadDim)).expandedDimensions(axis: -1)
         }
-        let targetDense: DType = plan.target.hasSuffix(".softmax_offset") || plan.target.hasSuffix(".expert_bias") ? .float32 : dense
+        let targetDense: DType = plan.target.hasSuffix(".softmax_offset")
+            || plan.target.hasSuffix(".expert_bias")
+            || plan.target.hasSuffix(".value_res_lambda") ? .float32 : dense
         guard let bits else { return [plan.target: weight.asType(targetDense)] }
         let (wq, scales, biases) = quantized(weight.asType(.bfloat16), groupSize: groupSize, bits: bits)
         let base = String(plan.target.dropLast(".weight".count))
