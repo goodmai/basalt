@@ -14,18 +14,24 @@ public final class AppModel {
     public private(set) var engine = EngineState()
     public private(set) var engineLog: [String] = []
     public private(set) var summaries: [ConversationSummary] = []
+    public var searchQuery = ""
+    public var isSearching = false
+    public internal(set) var matchedConversationIDs: Set<ConversationID>?
     public var selection: ConversationID?
     public private(set) var chats: [ConversationID: ChatStore] = [:]
     public private(set) var quickAsk: ChatStore?
     public private(set) var update: AvailableUpdate?
+    public internal(set) var latestComposeEvent: ComposeStreamEvent?
     public let monitor: MonitorStore
     public let library: LibraryStore
+    public let voice: AudioSessionController
     public let drafts: DraftStore
     @ObservationIgnored let supervisor: EngineSupervisor
     @ObservationIgnored let repository: ConversationRepository
-    public private(set) var configuredModel: String
+    public internal(set) var configuredModel: String
     public var model: String { library.state.models.first(where: \.isLoaded)?.id ?? configuredModel }
     @ObservationIgnored private var listening = false
+    @ObservationIgnored var composeEventsTask: Task<Void, Never>?
 
     @ObservationIgnored public var answered: @MainActor (ConversationSnapshot) -> Void = { _ in }
 
@@ -47,6 +53,8 @@ public final class AppModel {
                 client: { await supervisor.endpoint.map { LibraryClient.live($0) } },
                 savePending: { UserDefaults.standard.set($0, forKey: AppModel.pendingKey) },
                 chose: { id in UserDefaults.standard.set(id, forKey: "model") })))
+        voice = AudioSessionController(engine: { await supervisor.endpoint.map { EngineClient.http($0) } })
+        voice.onSubmitTranscript = { [weak self] text in self?.submitVoiceTranscript(text) }
     }
 
     public func start(arguments: [String]? = nil) async {
@@ -66,7 +74,11 @@ public final class AppModel {
         }
     }
 
-    public func stop() async { await supervisor.shutdown() }
+    public func stop() async {
+        composeEventsTask?.cancel()
+        composeEventsTask = nil
+        await supervisor.shutdown()
+    }
 
     public func checkForUpdate(defaults: UserDefaults = .standard, now: Date = Date(), fetch: @Sendable () async -> AvailableUpdate? = { await UpdateCheck.latest() }) async {
         guard defaults.object(forKey: UpdateCheck.enabledKey) as? Bool ?? true,
@@ -94,15 +106,6 @@ public final class AppModel {
 
     nonisolated static let pendingKey = "pendingDownloads"
 
-    public func switchEngine(_ arguments: [String]) async {
-        if let index = arguments.firstIndex(of: "--model"), arguments.indices.contains(index + 1) {
-            configuredModel = arguments[index + 1]
-        }
-        let current = await supervisor.launch
-        guard current.arguments != arguments else { return await supervisor.start() }
-        await supervisor.relaunch(HelperLaunch(executable: current.executable, arguments: arguments, environment: current.environment))
-    }
-
     public func restart() async {
         await supervisor.shutdown()
         await supervisor.start()
@@ -111,10 +114,15 @@ public final class AppModel {
     func engineChanged(_ state: EngineState) async {
         engine = state
         engineLog = await supervisor.log
+        watchComposeEvents(for: state)
     }
 
     public func reload() async {
         summaries = (try? await repository.summaries()) ?? []
+        let trimmed = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty {
+            await updateSearch(searchQuery)
+        }
     }
 
     public func newConversation() {
@@ -172,7 +180,7 @@ public final class AppModel {
             },
             answered: { [weak self] snapshot in
                 guard await self?.persists(snapshot.id) == true else { return }
-                await self?.answered(snapshot)
+                await self?.handleAnswered(snapshot)
             })
         let store = Store(ChatState(conversation: conversation), reduce: ChatReducer.reduce, handle: ChatEffects.handler(environment))
         let draft = drafts.load(conversation.id)

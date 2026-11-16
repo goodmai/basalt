@@ -40,6 +40,22 @@ struct BundleAppScriptTests {
         #expect(((plist["CFBundleURLTypes"] as? [[String: Any]])?.first?["CFBundleURLSchemes"] as? [String]) == ["basalt"])
         #expect((plist["CFBundleLocalizations"] as? [String])?.contains("ru") == true && fm.fileExists(atPath: app.appending(path: "Contents/Resources/ru.lproj/Localizable.strings").path))
     }
+
+    @Test("bundle_app.swift generates Contents/Resources/AppIcon.icns and registers CFBundleIconFile")
+    func appIcon() throws {
+        let fm = FileManager.default
+        let folder = fm.temporaryDirectory.appending(path: "bundle-icon-\(UUID().uuidString)")
+        let bin = folder.appending(path: "bin")
+        try fm.createDirectory(at: bin, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: folder) }
+        for name in ["BasaltMac", "Basalt", "mlx.metallib"] { try Data(name.utf8).write(to: bin.appending(path: name)) }
+        let app = folder.appending(path: "Basalt.app")
+        #expect(Self.run("scripts/bundle_app.swift", args: ["--bin", bin.path, "--out", app.path, "--no-sign"]) == 0)
+        let plist = try #require(NSDictionary(contentsOf: app.appending(path: "Contents/Info.plist")) as? [String: Any])
+        #expect(plist["CFBundleIconFile"] as? String == "AppIcon")
+        let icns = try Data(contentsOf: app.appending(path: "Contents/Resources/AppIcon.icns"))
+        #expect(String(decoding: icns.prefix(4), as: UTF8.self) == "icns" && icns.count > 128)
+    }
 }
 
 @Suite("BASALT_METALLIB: the engine takes MLX's kernel library path from the app (#434 phase 1)")

@@ -70,6 +70,7 @@ public struct BasaltCLI: AsyncParsableCommand {
         version: HealthResponse.version,
         subcommands: [
             OnboardCommand.self,
+            AppCommand.self,
             FitCommand.self,
             ServeCommand.self,
             ComposeCommand.self,

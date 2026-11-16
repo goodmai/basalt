@@ -1,9 +1,12 @@
 import BasaltCore
 import Foundation
+import Hummingbird
+import HummingbirdTesting
 import Synchronization
 import Testing
 @testable import BasaltApp
 @testable import BasaltAppCore
+@testable import BasaltServer
 
 @Suite("Mac app model library: fit verdicts gate loading, downloads resume after a relaunch, deletes only unloaded cached models (#434 phase 3)", .timeLimit(.minutes(1)))
 struct AppLibraryTests {
@@ -55,8 +58,8 @@ struct AppLibraryTests {
         #expect(LibraryReducer.reduce(&state, .delete("org/off")) == [.delete("org/off")])
     }
 
-    @Test("The server's model list and preview decode; delete removes the model's cache folder and refuses a path")
-    func client() throws {
+    @Test("The server's model list and preview decode; delete routes over HTTP to remove the cached model and refuses a path")
+    func client() async throws {
         let list = #"{"object":"list","data":[{"id":"claude-local/org--a","display_name":"org/a","size_bytes":123,"is_loaded":true},{"display_name":"/abs/path"}]}"#
         #expect(try LibraryClient.models(Data(list.utf8)) == [LibraryModel(id: "org/a", sizeBytes: 123, isLoaded: true)])
         let preview = #"{"fits":false,"fit_level":"insufficient","required_bytes":40,"available_bytes":20,"warning":"too big"}"#
@@ -66,10 +69,18 @@ struct AppLibraryTests {
         defer { try? FileManager.default.removeItem(at: cache) }
         let folder = cache.appending(path: "models--org--gone/snapshots/main")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        let client = LibraryClient.live(.loopback(port: 1, token: nil), cache: cache)
-        try client.delete("org/gone")
-        #expect(!FileManager.default.fileExists(atPath: cache.appending(path: "models--org--gone").path))
-        #expect(throws: EngineError.self) { try client.delete("../x") }
+        let chat = ModelOrchestratorActor(engine: MockInferenceEngine(), telemetry: TelemetryTracker())
+        try await chat.loadModel(path: "/models/chat")
+        let server = RESTServer(orchestrator: chat, config: try ServerConfig(modelPath: "org/mock-model", apiKey: AppEngineClientTests.token))
+            .withModelHub(ModelHubOperations(cacheRoot: cache) { _, _ in cache })
+        try await Application(router: server.makeRouter()).test(.live) { liveClient in
+            let port = try #require(liveClient.port)
+            let endpoint = EngineEndpoint(base: try #require(URL(string: "http://localhost:\(port)")), token: AppEngineClientTests.token)
+            let client = LibraryClient.live(endpoint, session: .isolated)
+            try await client.delete("org/gone")
+            #expect(!FileManager.default.fileExists(atPath: cache.appending(path: "models--org--gone").path))
+            await #expect(throws: EngineError.self) { try await client.delete("../x") }
+        }
     }
 
     @MainActor

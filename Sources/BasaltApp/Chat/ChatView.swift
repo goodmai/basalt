@@ -3,6 +3,8 @@ import SwiftUI
 
 struct ChatView: View {
     let store: ChatStore
+    var model: AppModel? = nil
+    var voice: AudioSessionController? = nil
     @State private var selected: MessageID?
     @State private var inspecting = false
     @Environment(\.glassSurfacePolicy) private var policy
@@ -12,7 +14,7 @@ struct ChatView: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 18) {
                     ForEach(store.state.conversation.messages) { message in
-                        MessageRow(message: message)
+                        messageView(message)
                             .id(message.id)
                             .onTapGesture {
                                 if message.role == .assistant {
@@ -60,13 +62,35 @@ struct ChatView: View {
             InspectorView(store: store, selected: selected).inspectorColumnWidth(min: 260, ideal: 320)
         }
         .toolbar {
+            if let model {
+                ComposePickerMenu(model: model)
+            }
+            if let voice {
+                VoiceToolbarItems(voice: voice)
+            }
             Button("Inspector", systemImage: "sidebar.trailing") { inspecting.toggle() }
                 .keyboardShortcut("i", modifiers: [.command, .option])
         }
     }
 
+    private func messageView(_ message: MessageSnapshot) -> some View {
+        let branch = store.state.branches.position(for: message.id, in: store.state.conversation)
+        let speaking = voice?.store.state.speakingMessage == message.id || voice?.store.state.synthesizingMessage == message.id
+        return MessageRow(
+            message: message,
+            branch: branch,
+            onSelectBranch: { index in store.send(.selectBranch(message: message.id, index: index)) },
+            onRegenerate: { store.send(.regenerateFrom(message: message.id, reply: MessageID(), run: RunID())) },
+            onReadAloud: voice.map { controller in { controller.store.send(.readAloud(message.id, message.text)) } },
+            isSpeaking: speaking
+        )
+    }
+
     private var bottomChrome: some View {
         VStack(spacing: 8) {
+            if let voice, voice.store.state.isActive {
+                VoiceStatusPill(voice: voice)
+            }
             if store.state.scrollPin.showsJumpControl {
                 JumpToLatestPill(unreadDeltas: store.state.scrollPin.unreadDeltas) {
                     store.send(.jumpToBottom)
@@ -94,13 +118,74 @@ struct ChatView: View {
     }
 }
 
+struct VoiceToolbarItems: View {
+    let voice: AudioSessionController
+
+    var body: some View {
+        Button(voice.store.state.isRecording ? "Finish Recording" : "Record Voice",
+               systemImage: voice.store.state.isRecording ? "record.circle.fill" : "mic") {
+            voice.store.send(voice.store.state.isRecording ? .pushToTalkReleased : .pushToTalkPressed)
+        }
+        Button("Hands-Free Voice",
+               systemImage: voice.store.state.handsFree ? "waveform.circle.fill" : "waveform.circle") {
+            voice.store.send(.setHandsFree(!voice.store.state.handsFree))
+        }
+    }
+}
+
+struct VoiceStatusPill: View {
+    let voice: AudioSessionController
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: voice.store.state.isRecording ? "mic.fill" : "waveform")
+                .foregroundStyle(voice.store.state.isRecording ? .red : .accentColor)
+            Text(statusText)
+                .font(.caption.weight(.medium))
+            if voice.store.state.isSpeaking {
+                Button("Stop Speaking") { voice.store.send(.stopSpeaking) }
+                    .buttonStyle(.plain)
+                    .font(.caption)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .adaptiveGlass(.chromeRegular, in: .capsule)
+    }
+
+    private var statusText: LocalizedStringKey {
+        switch voice.store.state.capture {
+        case .recording: "Listening…"
+        case .transcribing: "Transcribing…"
+        case .idle: voice.store.state.isSpeaking ? "Speaking…" : "Hands-free active"
+        }
+    }
+}
+
 struct MessageRow: View {
     let message: MessageSnapshot
+    var branch: BranchPosition? = nil
+    var onSelectBranch: (Int) -> Void = { _ in }
+    var onRegenerate: () -> Void = {}
+    var onReadAloud: (() -> Void)? = nil
+    var isSpeaking = false
 
     var body: some View {
         content
             .accessibilityElement(children: .combine)
             .accessibilityLabel(message.role == .user ? Text("You: \(summary)") : Text("Basalt: \(summary)"))
+            .contextMenu {
+                if message.role == .assistant {
+                    if let onReadAloud, !message.text.isEmpty {
+                        Button(isSpeaking ? "Stop Speaking" : "Read Aloud",
+                               systemImage: isSpeaking ? "speaker.slash" : "speaker.wave.2",
+                               action: onReadAloud)
+                    }
+                    if message.state != .streaming {
+                        Button("Regenerate", systemImage: "arrow.clockwise", action: onRegenerate)
+                    }
+                }
+            }
     }
 
     var summary: String {
@@ -130,9 +215,39 @@ struct MessageRow: View {
                 if message.state == .streaming, message.parts.isEmpty {
                     ProgressView().controlSize(.small).accessibilityLabel("Answering")
                 }
-                ReceiptLine(message: message)
+                if let branch {
+                    HStack(spacing: 10) {
+                        BranchSwitcherView(branch: branch, onSelect: onSelectBranch)
+                        ReceiptLine(message: message)
+                    }
+                } else {
+                    ReceiptLine(message: message)
+                }
             }
         }
+    }
+}
+
+struct BranchSwitcherView: View {
+    let branch: BranchPosition
+    let onSelect: (Int) -> Void
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Button("Previous Answer", systemImage: "chevron.left") { onSelect(branch.index - 1) }
+                .labelStyle(.iconOnly)
+                .buttonStyle(.plain)
+                .disabled(!branch.hasPrevious)
+            Text(verbatim: branch.counter)
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(.secondary)
+            Button("Next Answer", systemImage: "chevron.right") { onSelect(branch.index + 1) }
+                .labelStyle(.iconOnly)
+                .buttonStyle(.plain)
+                .disabled(!branch.hasNext)
+        }
+        .font(.caption)
+        .foregroundStyle(.secondary)
     }
 }
 
@@ -142,8 +257,12 @@ struct PartView: View {
     var body: some View {
         switch part {
         case .text(let text):
-            Text((try? AttributedString(markdown: text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(text))
-                .textSelection(.enabled)
+            if MarkdownBlockParser.hasStructuredBlocks(text) {
+                MarkdownBlocksView(markdown: text)
+            } else {
+                Text((try? AttributedString(markdown: text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(text))
+                    .textSelection(.enabled)
+            }
         case .reasoning(let text):
             DisclosureGroup("Thinking") {
                 Text(text).foregroundStyle(.secondary).textSelection(.enabled)

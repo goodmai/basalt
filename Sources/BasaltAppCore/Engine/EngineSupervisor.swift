@@ -41,6 +41,13 @@ public actor EngineSupervisor {
 
     public var endpoint: EngineEndpoint? { state.port.map { .loopback(port: $0, token: token) } }
 
+    public func updateLaunchArguments(_ arguments: [String]) {
+        launch.arguments = arguments
+        if case .ready(let port) = state.phase, let pid = process?.processIdentifier ?? adoptedPID {
+            environment.records.save(EngineRecord(pid: pid, port: port, token: token, arguments: arguments))
+        }
+    }
+
     public func start() async {
         guard state.isIdle else { return }
         if let record = environment.records.load(), record.version == HealthResponse.version, record.arguments == launch.arguments,
@@ -61,17 +68,19 @@ public actor EngineSupervisor {
     }
 
     public func shutdown() async {
-        if process == nil, let adopted = adoptedPID { return await stopAdopted(adopted) }
-        guard let process else { return send(.stop) }
-        let pid = process.processIdentifier
-        send(.stop)
-        let sleep = environment.sleep
-        let deadline = Task {
-            guard (try? await sleep(HelperLaunch.stopGrace)) != nil else { return }
-            kill(pid, SIGKILL)
+        await withTaskCancellationShield {
+            if process == nil, let adopted = adoptedPID { return await stopAdopted(adopted) }
+            guard let process else { return send(.stop) }
+            let pid = process.processIdentifier
+            send(.stop)
+            let sleep = environment.sleep
+            let deadline = Task {
+                guard (try? await sleep(HelperLaunch.stopGrace)) != nil else { return }
+                kill(pid, SIGKILL)
+            }
+            await end(of: pid)
+            deadline.cancel()
         }
-        await end(of: pid)
-        deadline.cancel()
     }
 
     func stopAdopted(_ pid: Int32) async {
@@ -149,21 +158,6 @@ public actor EngineSupervisor {
         }
     }
 
-    static func chunks(_ handle: FileHandle) -> AsyncStream<Data> {
-        AsyncStream { continuation in
-            handle.readabilityHandler = { readable in
-                let data = readable.availableData
-                guard !data.isEmpty else {
-                    readable.readabilityHandler = nil
-                    continuation.finish()
-                    return
-                }
-                continuation.yield(data)
-            }
-            continuation.onTermination = { _ in handle.readabilityHandler = nil }
-        }
-    }
-
     func line(_ text: String, epoch: Int, announces: Bool) {
         guard announces, text.hasPrefix(HelperLaunch.readyPrefix) else { return record([text]) }
         let json = (try? JSONSerialization.jsonObject(with: Data(text.dropFirst(HelperLaunch.readyPrefix.count).utf8))) as? [String: Any]
@@ -180,6 +174,23 @@ public actor EngineSupervisor {
         for waiter in endWaiters.removeValue(forKey: pid) ?? [] { waiter.resume() }
         if epoch == state.epoch { process = nil }
         send(.exited(epoch: epoch, at: environment.now(), log: log))
+    }
+}
+
+extension EngineSupervisor {
+    static func chunks(_ handle: FileHandle) -> AsyncStream<Data> {
+        AsyncStream { continuation in
+            handle.readabilityHandler = { readable in
+                let data = readable.availableData
+                guard !data.isEmpty else {
+                    readable.readabilityHandler = nil
+                    continuation.finish()
+                    return
+                }
+                continuation.yield(data)
+            }
+            continuation.onTermination = { _ in handle.readabilityHandler = nil }
+        }
     }
 
     func probe(_ epoch: Int, _ endpoint: EngineEndpoint) {
