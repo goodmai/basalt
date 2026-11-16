@@ -10,13 +10,14 @@ extension MLXInferenceEngine {
             let tower = try await CoreAIVisionTower(directory: URL(fileURLWithPath: path))
             let fits = await loaded.perform { context in (context.model as? PaddleOCRVL).map { tower.fits($0.visual, frames: []) } ?? false }
             guard fits else {
-                logger.warn("--experimental-ane-vision-tower: \(path) does not fit the loaded model (PaddleOCR-VL only); its vision tower stays on the GPU")
+                logger.warn("--ane-vision-tower: \(path) does not fit the loaded model (PaddleOCR-VL only); its vision tower stays on the GPU")
                 return
             }
             record(.learned(epoch) { $0.visionTower = tower })
-            logger.info("Vision tower on the Neural Engine from \(path), buckets of \(tower.bundle.functions.map(\.tokens)) patches")
+            let source = tower.loadedFromCache ? "cached specialization \(tower.cacheKey.prefix(12))" : "specialized \(tower.cacheKey.prefix(12))"
+            logger.info("Vision tower on the Neural Engine from \(path) (\(source)), buckets of \(tower.bundle.functions.map(\.tokens)) patches")
         } catch {
-            logger.warn("--experimental-ane-vision-tower: \(error.localizedDescription); the vision tower stays on the GPU")
+            logger.warn("--ane-vision-tower: \(error.localizedDescription); the vision tower stays on the GPU")
         }
     }
 

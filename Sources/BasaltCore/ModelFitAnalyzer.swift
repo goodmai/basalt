@@ -82,3 +82,123 @@ public struct ModelFitAnalyzer: Sendable {
         }
     }
 }
+
+extension ModelFitAnalyzer {
+    public struct StackedExpertsSummary: Sendable, Equatable {
+        public let totalShardBytes: ByteCount
+        public let expertBytes: ByteCount
+
+        public var residentWeights: ByteCount { max(.zero, totalShardBytes - expertBytes) }
+    }
+
+    public static func hasStackedExperts(in directory: URL) -> Bool {
+        stackedExperts(in: directory) != nil
+    }
+
+    public static func safetensorsShards(in directory: URL) -> [URL] {
+        let index = directory.appending(component: "model.safetensors.index.json")
+        if let data = try? Data(contentsOf: index),
+           let map = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["weight_map"] as? [String: String] {
+            let urls = Set(map.values).sorted().map { directory.appending(component: $0) }
+            if !urls.isEmpty, urls.allSatisfy({ FileManager.default.fileExists(atPath: $0.path) }) { return urls }
+        }
+        let entries = (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? []
+        return entries.filter { $0.pathExtension == "safetensors" }.sorted { $0.lastPathComponent < $1.lastPathComponent }
+    }
+
+    public static func stackedExperts(in directory: URL) -> StackedExpertsSummary? {
+        guard let config = ModelCache.config(at: directory),
+              let modelType = config["model_type"] as? String, !modelType.isEmpty,
+              config["gguf_quantization"] == nil, config["qtip"] == nil else {
+            return nil
+        }
+        let shards = safetensorsShards(in: directory)
+        guard !shards.isEmpty else { return nil }
+        var totalShardBytes: Int64 = 0
+        var expertBytes: Int64 = 0
+        var weightCount = 0
+        for url in shards {
+            guard let parsed = inspectStackedShard(at: url) else { return nil }
+            totalShardBytes += parsed.fileSize
+            expertBytes += parsed.expertBytes
+            weightCount += parsed.weightCount
+        }
+        return weightCount > 0 ? StackedExpertsSummary(totalShardBytes: ByteCount(totalShardBytes), expertBytes: ByteCount(expertBytes)) : nil
+    }
+
+    public static func classifyDirectory(
+        _ directory: URL, workingSetBudget: ByteCount, kvBytes: ByteCount = .zero, streaming: ExpertStreaming = ExpertStreaming()
+    ) -> (fitLevel: FitLevel, streaming: ExpertStreamingFootprint?) {
+        let shards = safetensorsShards(in: directory)
+        let weights = ByteCount(shards.reduce(Int64(0)) { $0 + resolvedFileSize(of: $1) })
+        guard weights > .zero else { return (.tooTight, nil) }
+        let level = MemoryEvaluator.fitLevel(required: weights + kvBytes, budget: workingSetBudget)
+        guard level == .tooTight else { return (level, nil) }
+        guard let summary = stackedExperts(in: directory),
+              let footprint = ExpertStreamingFootprint(
+                  residentWeights: summary.residentWeights, expertBytes: summary.expertBytes, kv: kvBytes, streaming: streaming),
+              footprint.required <= workingSetBudget else {
+            return (.tooTight, nil)
+        }
+        return (.moeTieredStreaming, footprint)
+    }
+
+    public static func autoExpertStreaming(
+        directory: URL, workingSetBudget: ByteCount, kvBytes: ByteCount = .zero, explicit: ExpertStreaming? = nil,
+        disabled: Bool = false, environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> ExpertStreaming? {
+        if let explicit { return disabled ? nil : explicit }
+        guard !disabled, !ExpertStreaming.isDisabledByEnvironment(environment) else { return nil }
+        return classifyDirectory(directory, workingSetBudget: workingSetBudget, kvBytes: kvBytes).fitLevel == .moeTieredStreaming
+            ? ExpertStreaming() : nil
+    }
+
+    private static func resolvedFileSize(of url: URL) -> Int64 {
+        (try? FileManager.default.attributesOfItem(atPath: url.resolvingSymlinksInPath().path)[.size] as? Int64) ?? 0
+    }
+
+    private static func isStackedExpertKey(_ key: String) -> Bool {
+        key.contains(".switch_mlp.") || key.contains(".switch_glu.")
+            || key.contains(".experts.gate_proj.") || key.contains(".experts.up_proj.") || key.contains(".experts.down_proj.")
+    }
+
+    private static func inspectStackedShard(at url: URL) -> (fileSize: Int64, expertBytes: Int64, weightCount: Int)? {
+        let size = resolvedFileSize(of: url)
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
+        defer { try? handle.close() }
+        guard let prefix = try? handle.read(upToCount: 8),
+              let headerLen = ModelInspector.safetensorsHeaderLength(prefix, fileSize: size),
+              let headerData = try? handle.read(upToCount: headerLen), headerData.count == headerLen,
+              let entries = (try? JSONSerialization.jsonObject(with: headerData)) as? [String: Any] else {
+            return nil
+        }
+        var expertBytes: Int64 = 0
+        var weightCount = 0
+        for (key, value) in entries where key != "__metadata__" && isStackedExpertKey(key) {
+            guard let span = stackedTensorBytes(key: key, value: value, headerLength: headerLen, fileSize: size) else { return nil }
+            expertBytes += span.bytes
+            if span.isWeight { weightCount += 1 }
+        }
+        return (size, expertBytes, weightCount)
+    }
+
+    private static func stackedTensorBytes(
+        key: String, value: Any, headerLength: Int, fileSize: Int64
+    ) -> (bytes: Int64, isWeight: Bool)? {
+        guard let entry = value as? [String: Any], let shape = entry["shape"] as? [Int],
+              let offsets = entry["data_offsets"] as? [Int], offsets.count == 2,
+              0 <= offsets[0], offsets[0] < offsets[1], Int64(8 + headerLength + offsets[1]) <= fileSize else {
+            return nil
+        }
+        let spanBytes = offsets[1] - offsets[0]
+        if key.hasSuffix(".weight") {
+            guard shape.count == 3, shape[0] > 1, spanBytes % shape[0] == 0 else { return nil }
+            return (Int64(spanBytes), true)
+        }
+        if key.hasSuffix(".scales") || key.hasSuffix(".biases") || key.hasSuffix(".bias") {
+            guard !shape.isEmpty, shape[0] > 1, spanBytes % shape[0] == 0 else { return nil }
+            return (Int64(spanBytes), false)
+        }
+        return (0, false)
+    }
+}

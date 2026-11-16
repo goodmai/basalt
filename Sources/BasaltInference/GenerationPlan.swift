@@ -92,8 +92,9 @@ struct GenerationPlan: Equatable, Sendable {
     }
 
     private static func batchable(_ plan: GenerationPlan, _ request: GenerationRequest, precision: KVPrecision?, _ facts: Facts) -> Bool {
-        !facts.jumpsForward && !plan.speculativeLookup && !plan.drafts
-            && !plan.blends && precision == nil && !facts.carriesMoreThanTokens
+        let batchableKV = precision == nil || (plan.kvZones == nil && precision?.isUniformAffine == true)
+        return !facts.jumpsForward && !plan.speculativeLookup && !plan.drafts
+            && !plan.blends && batchableKV && !facts.carriesMoreThanTokens
     }
 
     static func cache(precision: KVPrecision?, _ settings: Settings) -> GenerationPlan {

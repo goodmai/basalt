@@ -7,6 +7,18 @@ public struct ExpertStreaming: Sendable, Equatable {
         self.cacheBytes = cacheBytes
     }
 
+    public static func isDisabledByEnvironment(
+        _ environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> Bool {
+        if let raw = environment["BASALT_NO_EXPERT_STREAMING"]?.lowercased(), ["1", "true", "yes"].contains(raw) {
+            return true
+        }
+        if let raw = environment["BASALT_EXPERT_STREAMING"]?.lowercased(), ["0", "false", "no"].contains(raw) {
+            return true
+        }
+        return false
+    }
+
     public func cache(forExperts experts: ByteCount) -> ByteCount {
         cacheBytes ?? ByteCount(Int64(Double(experts.rawValue) * ExpertStreamingFootprint.expertCacheShare))
     }
@@ -35,6 +47,15 @@ public struct ExpertStreamingFootprint: Sendable, Codable, Equatable {
         let resident = ByteCount(Int64(Double(weights.rawValue) * activeParameters / totalParameters))
         residentWeights = resident
         expertCache = streaming.cache(forExperts: weights - resident)
+        self.kv = kv
+    }
+
+    public init?(
+        residentWeights: ByteCount, expertBytes: ByteCount, kv: ByteCount, streaming: ExpertStreaming = ExpertStreaming()
+    ) {
+        guard expertBytes > .zero else { return nil }
+        self.residentWeights = max(.zero, residentWeights)
+        expertCache = streaming.cache(forExperts: expertBytes)
         self.kv = kv
     }
 

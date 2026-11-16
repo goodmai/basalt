@@ -18,8 +18,8 @@ struct ExperimentalServeOptions: ParsableArguments {
     var smallMKernel = false
 
     @Flag(
-        name: .customLong("experimental-speech-analyzer"),
-        help: "Serve /v1/audio/transcriptions, the basalt_transcribe MCP tool and audio in /v1/pipeline through macOS SpeechAnalyzer on the Neural Engine when the loaded model has no audio encoder (and, for /v1/pipeline, no --pipeline-audio-model is set). The first request for a language may install its system speech assets (#222, #230). Off by default until its word error rate is measured"
+        name: [.customLong("speech-analyzer"), .customLong("experimental-speech-analyzer")],
+        help: "Serve /v1/audio/transcriptions, the basalt_transcribe MCP tool and audio in /v1/pipeline through macOS SpeechAnalyzer on the Neural Engine when the loaded model has no audio encoder (and, for /v1/pipeline, no --pipeline-audio-model is set). The first request for a language may install its system speech assets (#222, #226, #230); --experimental-speech-analyzer is kept as an alias"
     )
     var speechAnalyzer = false
 
@@ -30,8 +30,8 @@ struct ExperimentalServeOptions: ParsableArguments {
     var imageFallback: ImageFallback?
 
     @Option(
-        name: .customLong("experimental-ane-vision-tower"),
-        help: "Run PaddleOCR-VL's vision encoder on the Neural Engine from a Core AI tower bundle (metadata.json + tower.aimodel, fixed patch-count buckets), specialized when the model loads (the first load in a process takes about 20 minutes for the 5120 bucket); images whose patch grid fits no bucket stay on the GPU tower. Build the bundle with swift scripts/paddle_tower_export.swift <snapshot> <out> (#224, #400)"
+        name: [.customLong("ane-vision-tower"), .customLong("experimental-ane-vision-tower")],
+        help: "Run PaddleOCR-VL's vision encoder on the Neural Engine from a Core AI tower bundle (metadata.json + tower.aimodel, fixed patch-count buckets), specialized when the model loads and tracked in ~/.basalt/cache/coreai-vision/ (#224, #226, #400); images whose patch grid fits no bucket stay on the GPU tower. Build the bundle with swift scripts/paddle_tower_export.swift <snapshot> <out>; --experimental-ane-vision-tower is kept as an alias"
     )
     var aneVisionTower: String?
 
@@ -44,7 +44,7 @@ struct ExperimentalServeOptions: ParsableArguments {
     func validate() throws {
         if telemetryConfidenceEvery < 0 { throw ValidationError("--telemetry-confidence-every takes 0 or a positive count, got \(telemetryConfidenceEvery)") }
         if let aneVisionTower, !CoreAIVisionTower.isBundle(URL(fileURLWithPath: aneVisionTower)) {
-            throw ValidationError("--experimental-ane-vision-tower \(aneVisionTower) is not a Core AI vision tower bundle (metadata.json and tower.aimodel)")
+            throw ValidationError("--ane-vision-tower \(aneVisionTower) is not a Core AI vision tower bundle (metadata.json and tower.aimodel)")
         }
     }
 

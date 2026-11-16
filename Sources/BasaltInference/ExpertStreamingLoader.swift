@@ -103,7 +103,11 @@ struct ExpertPlan {
     }
 }
 
-enum ExpertStreamingLoader {
+public enum ExpertStreamingLoader {
+    public static func canStream(_ directory: URL) -> Bool {
+        ModelFitAnalyzer.hasStackedExperts(in: directory)
+    }
+
     struct Family {
         let types: ModelTypeRegistry<any LanguageModel>
         let factory: @Sendable (ModelTypeRegistry<any LanguageModel>) -> any ModelFactory

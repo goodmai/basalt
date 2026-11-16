@@ -7,30 +7,88 @@ import BasaltCore
 public struct CoreAIVisionTower: Sendable {
     static let maxInFlight = 2
     let bundle: CoreAIVisionTowerBundle
+    public let cacheKey: String
+    public let loadedFromCache: Bool
     let admission = InFlightLimit(maxInFlight)
     private let functions: [String: InferenceFunction]
 
     public static func isBundle(_ directory: URL) -> Bool { CoreAIVisionTowerBundle.isBundle(directory) }
 
-    public init(directory: URL) async throws(BasaltError) {
-        bundle = try CoreAIVisionTowerBundle(directory: directory)
+    public init(directory: URL, cacheDirectory: URL = CoreAIVisionTowerCache.defaultDirectory) async throws(BasaltError) {
+        let parsedBundle = try CoreAIVisionTowerBundle(directory: directory)
+        let osBuild = CoreAIVisionTowerCache.currentOSBuild()
+        let digest = try CoreAIVisionTowerCache.bundleDigest(bundleDirectory: directory, asset: parsedBundle.asset)
+        let key = CoreAIVisionTowerCache.cacheKey(bundleSHA256: digest, osBuild: osBuild)
+        bundle = parsedBundle
+        cacheKey = key
         let path = directory.path
+        let modelURL = directory.appending(component: "\(parsedBundle.asset).aimodel")
+        let options = SpecializationOptions(preferredComputeUnitKind: .neuralEngine)
+        if let cached = Self.resolveCached(
+            key: key, modelURL: modelURL, options: options, bundle: parsedBundle, path: path, cacheDirectory: cacheDirectory
+        ) {
+            functions = cached.functions
+            loadedFromCache = true
+            Self.persistEntry(
+                key: key, digest: digest, osBuild: osBuild, bundle: parsedBundle,
+                bookmark: cached.bookmark, in: cacheDirectory
+            )
+            return
+        }
         do {
             let model = try await AIModel.specialize(
-                contentsOf: directory.appending(component: "\(bundle.asset).aimodel"), options: SpecializationOptions(preferredComputeUnitKind: .neuralEngine))
-            var functions: [String: InferenceFunction] = [:]
-            for function in bundle.functions {
-                guard let loaded = try model.loadFunction(named: function.name) else {
-                    throw BasaltError.modelConfigurationInvalid(path: path, reason: "the vision tower has no function \(function.name)")
-                }
-                functions[function.name] = loaded
-            }
-            self.functions = functions
+                contentsOf: modelURL, options: options, cache: .default, cachePolicy: .persistent)
+            functions = try Self.loadFunctions(from: model, bundle: parsedBundle, path: path)
+            loadedFromCache = false
+            Self.persistEntry(
+                key: key, digest: digest, osBuild: osBuild, bundle: parsedBundle,
+                bookmark: model.bookmarkData, in: cacheDirectory
+            )
         } catch let error as BasaltError {
             throw error
         } catch {
             throw .modelConfigurationInvalid(path: path, reason: error.localizedDescription)
         }
+    }
+
+    private static func loadFunctions(
+        from model: AIModel, bundle: CoreAIVisionTowerBundle, path: String
+    ) throws -> [String: InferenceFunction] {
+        var loadedFunctions: [String: InferenceFunction] = [:]
+        for function in bundle.functions {
+            guard let loaded = try model.loadFunction(named: function.name) else {
+                throw BasaltError.modelConfigurationInvalid(path: path, reason: "the vision tower has no function \(function.name)")
+            }
+            loadedFunctions[function.name] = loaded
+        }
+        return loadedFunctions
+    }
+
+    private static func resolveCached(
+        key: String, modelURL: URL, options: SpecializationOptions, bundle: CoreAIVisionTowerBundle,
+        path: String, cacheDirectory: URL
+    ) -> (functions: [String: InferenceFunction], bookmark: Data)? {
+        if let entry = CoreAIVisionTowerCache.loadEntry(forKey: key, in: cacheDirectory),
+           let encoded = entry.bookmarkBase64, let data = Data(base64Encoded: encoded),
+           let model = try? AIModel(resolvingBookmark: data),
+           let loaded = try? loadFunctions(from: model, bundle: bundle, path: path) {
+            return (loaded, model.bookmarkData)
+        }
+        if let model = try? AIModelCache.default.model(for: modelURL, options: options),
+           let loaded = try? loadFunctions(from: model, bundle: bundle, path: path) {
+            return (loaded, model.bookmarkData)
+        }
+        return nil
+    }
+
+    private static func persistEntry(
+        key: String, digest: String, osBuild: String, bundle: CoreAIVisionTowerBundle, bookmark: Data, in cacheDirectory: URL
+    ) {
+        let entry = CoreAIVisionTowerCache.Entry(
+            cacheKey: key, bundleSHA256: digest, osBuild: osBuild, asset: bundle.asset,
+            functions: bundle.functions.map(\.name), bookmarkBase64: bookmark.base64EncodedString()
+        )
+        try? CoreAIVisionTowerCache.saveEntry(entry, in: cacheDirectory)
     }
 
     func fits(_ visual: PaddleOCRVLVision.Model, frames: [THW]) -> Bool { bundle.fits(visual, frames: frames) }

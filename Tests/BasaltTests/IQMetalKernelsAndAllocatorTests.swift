@@ -272,14 +272,18 @@ struct UnifiedMemoryBridgeTests {
         #expect(imported.asArray(Float.self) == values.map { $0 * 2.0 })
     }
 
-    @Test("SplitFeedForward and CoreAIVisionTower planar NDArray bridges preserve exact Float16 values")
+    @Test("UnifiedMemoryBridge and CoreAIVisionTower planar NDArray bridges preserve exact Float16 values")
     func coreAIPlanarRoundtrip() throws {
         let ffnValues = (0 ..< (5 * 64)).map { Float16(Float($0 % 29) * 0.25 - 3.5) }
         let ffnInput = MLXArray(ffnValues, [1, 5, 64])
         eval(ffnInput)
-        let ffnPlanar = SplitFeedForward.planar(ffnInput)
+        let ffnPlanar = UnifiedMemoryBridge.exportPlanarNDArray(
+            from: ffnInput.reshaped([5, 64]).transposed(), shape: [1, 64, 1, 5], scalarType: .float16, as: Float16.self
+        )
         #expect(ffnPlanar.shape == [1, 64, 1, 5])
-        let ffnRestored = SplitFeedForward.unplanar(ffnPlanar, tokens: 5, hidden: 64)
+        let ffnRestored = UnifiedMemoryBridge.importPlanarNDArray(
+            ffnPlanar, rows: 64, columns: 5, as: Float16.self
+        ).transposed().reshaped([1, 5, 64])
         eval(ffnRestored)
         #expect(ffnRestored.shape == [1, 5, 64] && ffnRestored.dtype == .float16)
         #expect(ffnRestored.asArray(Float16.self) == ffnValues)

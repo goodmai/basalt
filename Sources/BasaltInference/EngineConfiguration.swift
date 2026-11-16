@@ -25,6 +25,7 @@ public struct EngineConfiguration: Sendable {
     public var batchSlots = 1
     public var wiresWorkingSet = false
     public var expertStreaming: ExpertStreaming? = nil
+    public var disableExpertStreaming = false
     public var probesModel = false
     public var recordConfidence = false
     public var visionTowerBundle: String? = nil

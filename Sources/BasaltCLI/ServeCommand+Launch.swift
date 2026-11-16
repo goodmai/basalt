@@ -66,7 +66,7 @@ extension ServeCommand {
 
     func assessMemory() async {
         log("🔍 Performing dry-run memory assessment for \(bold(targetModel))…")
-        let assessment = await MemoryEvaluator(expertStreaming: expertStreaming.setting).evaluate(
+        let assessment = await MemoryEvaluator(expertStreaming: expertStreaming.setting, disableExpertStreaming: expertStreaming.disabled).evaluate(
             modelId: targetModel, kvPrecision: kvCache.bits?.budgetPrecision, kvZones: kvCache.zones)
         let lines = assessment.reportLines(
             kvZones: kvCache.zoned, kvEvict: kvCache.evict,
@@ -84,6 +84,7 @@ extension ServeCommand {
         configuration.batchSlots = maxConcurrent >= 2 ? batchSlots : 1
         configuration.wiresWorkingSet = wiredLimit
         configuration.expertStreaming = expertStreaming.setting
+        configuration.disableExpertStreaming = expertStreaming.disabled
         configuration.probesModel = modelProbe
         configuration.visionTowerBundle = experimental.aneVisionTower
         return MLXInferenceEngine(configuration, promptCacheDisk: try promptCacheDisk.store())
