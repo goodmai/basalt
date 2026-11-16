@@ -139,6 +139,9 @@ final class GGUFLinear: Linear {
 
     override func callAsFunction(_ x: MLXArray) -> MLXArray {
         let x = inputOrder.map { x.take($0, axis: -1) } ?? x
+        guard inputs > 0, x.size > 0, inputs.isMultiple(of: type.block.elements) else {
+            return GGUFKernels.matmul(x, weight, type: type, columns: inputs)
+        }
         let rows = x.size / inputs
         guard GGUFKernels.matvecRows.contains(rows) else { return GGUFKernels.matmul(x, weight, type: type, columns: inputs) }
         return GGUFKernels.matvec(x.reshaped(rows, inputs), weight, type: type).reshaped(Array(x.shape.dropLast()) + [weight.dim(0)])

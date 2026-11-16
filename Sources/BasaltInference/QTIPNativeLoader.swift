@@ -238,11 +238,37 @@ package enum QTIPNativeLoader {
         package var outFeatures: Int
         package var inFeatures: Int
         package var hasBias: Bool
+        package var bpw: Double?
 
-        package init(outFeatures: Int, inFeatures: Int, hasBias: Bool) {
+        package init(outFeatures: Int, inFeatures: Int, hasBias: Bool, bpw: Double? = nil) {
             self.outFeatures = outFeatures
             self.inFeatures = inFeatures
             self.hasBias = hasBias
+            self.bpw = bpw
+        }
+    }
+
+    package struct AffineLayerEntry: Codable, Sendable, Equatable {
+        package var outFeatures: Int
+        package var inFeatures: Int
+        package var groupSize: Int
+        package var bits: Int
+        package var hasBias: Bool
+        package var dtype: String
+
+        package init(
+            outFeatures: Int, inFeatures: Int, groupSize: Int, bits: Int, hasBias: Bool, dtype: String
+        ) {
+            self.outFeatures = outFeatures
+            self.inFeatures = inFeatures
+            self.groupSize = groupSize
+            self.bits = bits
+            self.hasBias = hasBias
+            self.dtype = dtype
+        }
+
+        var scaleDType: DType {
+            DType.allCases.first { "\($0)" == dtype } ?? .float16
         }
     }
 
@@ -251,17 +277,26 @@ package enum QTIPNativeLoader {
         package var seed: UInt64
         package var layers: [String: LayerEntry]
         package var sharedMoERHT: Bool?
+        package var affineLayers: [String: AffineLayerEntry]?
 
         enum CodingKeys: String, CodingKey {
             case bpw, seed, layers
             case sharedMoERHT = "shared_moe_rht"
+            case affineLayers = "affine_layers"
         }
 
-        package init(bpw: Double, seed: UInt64, layers: [String: LayerEntry], sharedMoERHT: Bool? = nil) {
+        package init(
+            bpw: Double,
+            seed: UInt64,
+            layers: [String: LayerEntry],
+            sharedMoERHT: Bool? = nil,
+            affineLayers: [String: AffineLayerEntry]? = nil
+        ) {
             self.bpw = bpw
             self.seed = seed
             self.layers = layers
             self.sharedMoERHT = sharedMoERHT
+            self.affineLayers = affineLayers
         }
     }
 
@@ -295,7 +330,7 @@ package enum QTIPNativeLoader {
     }
 
     package static func install(_ manifest: Manifest, in model: Module) throws(BasaltError) {
-        guard let rate = QTIPRate(bpw: manifest.bpw) else {
+        if manifest.layers.isEmpty, (manifest.affineLayers ?? [:]).isEmpty, QTIPRate(bpw: manifest.bpw) == nil {
             throw .inferenceError("QTIP native: unsupported rate \(manifest.bpw) bpw")
         }
         let modules = Dictionary(model.namedModules(), uniquingKeysWith: { first, _ in first })
@@ -303,8 +338,11 @@ package enum QTIPNativeLoader {
         var rhtCache: [String: KroneckerRHT] = [:]
         var bufferCache: [String: FusedKroneckerRHT.Buffers] = [:]
         var updates: [(String, Module)] = []
-        let zeroTLUT = MLXArray.zeros([512, 2], dtype: .float16)
         for (path, entry) in manifest.layers.sorted(by: { $0.key < $1.key }) {
+            let layerBPW = entry.bpw ?? manifest.bpw
+            guard let rate = QTIPRate(bpw: layerBPW) else {
+                throw .inferenceError("QTIP native: unsupported rate \(layerBPW) bpw for \(path)")
+            }
             guard modules[path] is Linear else {
                 throw .inferenceError("QTIP native: \(path) is not a linear layer of this model")
             }
@@ -320,11 +358,70 @@ package enum QTIPNativeLoader {
             let pair = FusedKroneckerRHT.Pair(inBuffers: inBuf, outBuffers: outBuf)
             let packed = MLXArray.zeros([entry.outFeatures / 16, (entry.inFeatures / 16) * rate.wordsPerTile], dtype: .uint32)
             let scales = MLXArray.zeros([entry.outFeatures / 16], dtype: .float16)
+            let layerTLUT = MLXArray.zeros([512, 2], dtype: .float16)
             let bias = entry.hasBias ? MLXArray.zeros([entry.outFeatures], dtype: .float16) : nil
             updates.append((path, QTIPLinear(
-                packedWeight: packed, rowScales: scales, tlut: zeroTLUT, bias: bias, spec: spec, buffers: pair)))
+                packedWeight: packed, rowScales: scales, tlut: layerTLUT, bias: bias, spec: spec, buffers: pair)))
         }
+        try appendAffinePlaceholders(manifest.affineLayers ?? [:], modules: modules, into: &updates)
         model.update(modules: ModuleChildren.unflattened(updates))
+    }
+}
+
+extension QTIPNativeLoader {
+    private static func appendAffinePlaceholders(
+        _ affineLayers: [String: AffineLayerEntry],
+        modules: [String: Module],
+        into updates: inout [(String, Module)]
+    ) throws(BasaltError) {
+        for (path, aff) in affineLayers.sorted(by: { $0.key < $1.key }) {
+            guard modules[path] is Linear else {
+                throw .inferenceError("QTIP native: \(path) is not a linear layer of this model")
+            }
+            let dt = aff.scaleDType
+            let packed = MLXArray.zeros([aff.outFeatures, (aff.inFeatures * aff.bits) / 32], dtype: .uint32)
+            let groups = aff.inFeatures / aff.groupSize
+            let scales = MLXArray.zeros([aff.outFeatures, groups], dtype: dt)
+            let biases = MLXArray.zeros([aff.outFeatures, groups], dtype: dt)
+            let bias = aff.hasBias ? MLXArray.zeros([aff.outFeatures], dtype: dt) : nil
+            updates.append((path, QuantizedLinear(
+                weight: packed, bias: bias, scales: scales, biases: biases,
+                groupSize: aff.groupSize, bits: aff.bits, mode: .affine, globalScale: nil)))
+        }
+    }
+
+    package static func writeMixedDirectory(
+        model: Module,
+        achievedBPW: Double,
+        seed: UInt64,
+        source: URL,
+        output: URL,
+        affinePaths: Set<String> = []
+    ) throws -> (shards: Int, bytes: Int) {
+        try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+        var layerMap: [String: LayerEntry] = [:]
+        var affineMap: [String: AffineLayerEntry] = [:]
+        for (path, mod) in model.namedModules() {
+            if let q = mod as? QTIPLinear {
+                layerMap[path] = LayerEntry(
+                    outFeatures: q.outFeatures, inFeatures: q.inFeatures,
+                    hasBias: q.bias != nil, bpw: q.rate.bpw)
+            } else if affinePaths.contains(path), let ql = mod as? QuantizedLinear {
+                affineMap[path] = AffineLayerEntry(
+                    outFeatures: ql.weight.dim(0),
+                    inFeatures: ql.weight.dim(1) * 32 / ql.bits,
+                    groupSize: ql.groupSize,
+                    bits: ql.bits,
+                    hasBias: ql.bias != nil,
+                    dtype: "\(ql.scales.dtype)")
+            }
+        }
+        let manifest = Manifest(
+            bpw: achievedBPW, seed: seed, layers: layerMap,
+            sharedMoERHT: true, affineLayers: affineMap.isEmpty ? nil : affineMap)
+        let shardInfo = try writeShards(from: model, into: output)
+        try writeConfigAndAssets(source: source, output: output, manifest: manifest)
+        return shardInfo
     }
 }
 
@@ -435,6 +532,10 @@ extension QTIPNativeLoader {
     private static func writeConfigAndAssets(source: URL, output: URL, manifest: Manifest) throws {
         let cfgURL = source.appending(component: "config.json")
         var config = try JSONSerialization.jsonObject(with: Data(contentsOf: cfgURL)) as? [String: Any] ?? [:]
+        if manifest.affineLayers != nil {
+            config["quantization"] = nil
+            config["quantization_config"] = nil
+        }
         config["qtip_quantization"] = try JSONSerialization.jsonObject(with: JSONEncoder().encode(manifest))
         let cfgData = try JSONSerialization.data(withJSONObject: config, options: [.prettyPrinted, .sortedKeys])
         try cfgData.write(to: output.appending(component: "config.json"))
