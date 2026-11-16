@@ -18,6 +18,7 @@ struct ModelsCommand: AsyncParsableCommand {
             CheckSubcommand.self,
             InspectSubcommand.self,
             ConvertSubcommand.self,
+            TrainSubcommand.self,
             TrainJepaSubcommand.self,
             DistillSubcommand.self,
             CalibrateDecideSubcommand.self,

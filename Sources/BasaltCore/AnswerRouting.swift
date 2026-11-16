@@ -19,10 +19,11 @@ public struct AnswerRoute: Sendable, Equatable {
 
     public var when: When
     public var model: String
+    public var adapter: String?
     public var fallback: String?
 
-    public init(when: When = When(), model: String, fallback: String? = nil) {
-        (self.when, self.model, self.fallback) = (when, model, fallback)
+    public init(when: When = When(), model: String, adapter: String? = nil, fallback: String? = nil) {
+        (self.when, self.model, self.adapter, self.fallback) = (when, model, adapter, fallback)
     }
 }
 
@@ -45,15 +46,36 @@ public struct AnswerSituation: Sendable, Equatable {
 }
 
 public enum AnswerRouting {
+    public struct Step: Sendable, Equatable {
+        public let model: String
+        public let adapter: String?
+
+        public init(model: String, adapter: String? = nil) {
+            (self.model, self.adapter) = (model, adapter)
+        }
+    }
+
     public struct Choice: Sendable, Equatable {
         public let rule: Int
-        public let chain: [String]
+        public let steps: [Step]
+        public var chain: [String] { steps.map(\.model) }
+
+        public init(rule: Int, steps: [Step]) {
+            (self.rule, self.steps) = (rule, steps)
+        }
+
+        public init(rule: Int, chain: [String]) {
+            self.rule = rule
+            self.steps = chain.map { Step(model: $0) }
+        }
     }
 
     public static func choose(_ routes: [AnswerRoute], _ situation: AnswerSituation) -> Choice? {
         guard let rule = routes.firstIndex(where: { matches($0, situation) }) else { return nil }
         let route = routes[rule]
-        return Choice(rule: rule, chain: [route.model] + (route.fallback.map { [$0] } ?? []))
+        var steps = [Step(model: route.model, adapter: route.adapter)]
+        if let fallback = route.fallback { steps.append(Step(model: fallback, adapter: nil)) }
+        return Choice(rule: rule, steps: steps)
     }
 
     public static func matches(_ route: AnswerRoute, _ situation: AnswerSituation) -> Bool {

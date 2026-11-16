@@ -16,7 +16,7 @@ struct ComposeCommand: AsyncParsableCommand {
             never written in the file; a cloud model names the environment variable that holds its key. \
             Bundled files: \(ComposeFile.bundled.keys.sorted().joined(separator: ", ")).
             """,
-        subcommands: [Config.self, Schema.self, Pull.self, Plan.self, Diff.self, Up.self, Ps.self, Down.self, Bench.self])
+        subcommands: [Config.self, Schema.self, Pull.self, Plan.self, Diff.self, Train.self, Up.self, Ps.self, Down.self, Bench.self])
 
     struct Source: ParsableArguments {
         @Option(name: [.short, .customLong("file")], help: "The compose file")

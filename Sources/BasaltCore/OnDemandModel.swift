@@ -51,6 +51,7 @@ public actor OnDemandModel {
     public nonisolated let model: any ModelOrchestrating
     public nonisolated let path: String
     public nonisolated let idle: Duration
+    public nonisolated let adapters: [String: URL]
     public nonisolated let phases: AsyncStream<OnDemandCore.Phase>
     private let announce: AsyncStream<OnDemandCore.Phase>.Continuation
     private let sleep: @Sendable (Duration) async throws -> Void
@@ -61,9 +62,10 @@ public actor OnDemandModel {
 
     public init(
         model: any ModelOrchestrating, path: String, idle: Duration,
+        adapters: [String: URL] = [:],
         sleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
     ) {
-        (self.model, self.path, self.idle, self.sleep) = (model, path, idle, sleep)
+        (self.model, self.path, self.idle, self.adapters, self.sleep) = (model, path, idle, adapters, sleep)
         (phases, announce) = AsyncStream.makeStream(bufferingPolicy: .bufferingNewest(1))
     }
 
@@ -83,9 +85,10 @@ public actor OnDemandModel {
                 _ = await transition?.value
             case .load:
                 loads = true
-                let task = Task { [model, path] () async -> Result<Void, BasaltError> in
+                let task = Task { [model, path, adapters] () async -> Result<Void, BasaltError> in
                     do throws(BasaltError) {
                         try await model.loadModel(path: path)
+                        if !adapters.isEmpty { try await model.loadAdapters(adapters) }
                         return .success(())
                     } catch {
                         return .failure(error)

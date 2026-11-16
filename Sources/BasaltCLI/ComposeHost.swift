@@ -58,6 +58,7 @@ actor ComposeHost {
     func start(defaultDecisions: (any DecisionEngine)?) async throws {
         held = startupHeld()
         for name in spec.models.keys.sorted() where held[name] == nil { held[name] = try await load(name, in: spec) }
+        try await registerComposeAdapters(for: spec, held: held)
         try await ensureSelfDecider(spec)
         await applyExperimental(spec)
         await registry.replace(try await systems(for: spec, held: held, defaultDecisions: defaultDecisions))
@@ -86,7 +87,7 @@ actor ComposeHost {
             await events.emit(onDemand ? "registered" : "loading", model: name, source)
             guard let orchestrator = try await services.load(source, path, name, onDemand) else { throw ExitCode.failure }
             if !onDemand { await events.emit("ready", model: name, source) }
-            return onDemand ? .onDemand(OnDemandModel(model: orchestrator, path: path, idle: .seconds(model.idleUnload ?? ComposeSpec.defaultIdleUnload))) : .resident(orchestrator)
+            return onDemand ? .onDemand(OnDemandModel(model: orchestrator, path: path, idle: .seconds(model.idleUnload ?? ComposeSpec.defaultIdleUnload), adapters: spec.adapters(forBase: name))) : .resident(orchestrator)
         }
     }
 
@@ -134,6 +135,7 @@ actor ComposeHost {
             try await switchChat(diff, next)
             try await ensureSelfDecider(next)
             let nextHeld = held.filter { diff.kept.contains($0.key) }.merging(fresh) { $1 }.merging([next.answer: .resident(chat)]) { $1 }
+            try await registerComposeAdapters(for: next, held: nextHeld)
             let built = try await systems(for: next, held: nextHeld, defaultDecisions: nil)
             let previous = held
             (held, spec) = (nextHeld, next)

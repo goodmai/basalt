@@ -163,7 +163,11 @@ extension ComposeFile.Walk {
         return items.enumerated().compactMap { index, item in
             let path = "\(prefix).answer.routes[\(index)]"
             guard let field = fields(item, path: path, section: "route") else { return nil }
-            var route = AnswerRoute(model: text(field["model"], "\(path).model") ?? "", fallback: text(field["fallback"], "\(path).fallback"))
+            var route = AnswerRoute(
+                model: text(field["model"], "\(path).model") ?? "",
+                adapter: text(field["adapter"], "\(path).adapter"),
+                fallback: text(field["fallback"], "\(path).fallback")
+            )
             if let when = field["when"] { route.when = self.when(when, path: "\(path).when") }
             return route
         }

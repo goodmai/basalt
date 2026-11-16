@@ -2,7 +2,7 @@ import Foundation
 
 public enum ComposeSchema {
     public enum Kind: Sendable, Equatable {
-        case string, number, integer, boolean, duration, names
+        case string, number, integer, boolean, duration, names, integers
         case choice([String])
         case section(String)
         case sections(String)
@@ -31,6 +31,7 @@ public enum ComposeSchema {
             Field("budget", .section("budget")), Field("models", .sections("model")), Field("pipeline", .section("pipeline")),
             Field("pipelines", .sections("pipeline")), Field("experimental", .section("experimental")), Field("mcp", .section("mcp")),
             Field("variables", .variables, since: 2), Field("profiles", .sections("profile"), since: 2),
+            Field("adapters", .sections("compose_adapter"), since: 2),
             Field("benchmarks", .section("benchmarks"), since: 2),
         ],
         "experimental": [
@@ -74,8 +75,8 @@ public enum ComposeSchema {
             Field("on_conflict", .choice(EpistemicGateSpec.ConflictPolicy.allCases.map(\.rawValue))),
             Field("abstain_message", .string),
         ],
-        "answer": [Field("model", .string), Field("routes", .list("route"))],
-        "route": [Field("when", .section("when")), Field("model", .string), Field("fallback", .string)],
+        "answer": [Field("model", .string), Field("adapter", .string, since: 2), Field("routes", .list("route"))],
+        "route": [Field("when", .section("when")), Field("model", .string), Field("adapter", .string, since: 2), Field("fallback", .string)],
         "when": [
             Field("modality", .choice(AnswerRoute.Modality.allCases.map(\.rawValue))), Field("decide", .variables),
             Field("prompt_tokens", .section("over")), Field("escalated", .boolean), Field("cost_left", .boolean),
@@ -110,6 +111,26 @@ public enum ComposeSchema {
         "benchmark_submit": [
             Field("target", .choice(SubmissionTarget.allCases.map(\.rawValue))), Field("api_key_env", .string),
             Field("endpoint", .string), Field("subset", .string), Field("split", .string),
+        ],
+        "compose_adapter": [
+            Field("base", .string), Field("method", .choice(["lora", "phm", "oft"])),
+            Field("rank", .integer), Field("scale", .number),
+            Field("hypercomplex_dim", .integer), Field("factor_rank", .integer), Field("shared_basis", .boolean),
+            Field("block_size", .integer), Field("parameterization", .choice(OrthogonalParameterization.allCases.map(\.rawValue))),
+            Field("block_shared", .boolean), Field("corpus", .section("adapter_corpus")),
+            Field("output", .string), Field("layers", .integers),
+            Field("iterations", .integer), Field("batch_size", .integer),
+            Field("learning_rate", .number), Field("max_seq_len", .integer),
+            Field("checkpoint_every", .integer), Field("gate", .section("adapter_gate")),
+            Field("profiles", .names),
+        ],
+        "adapter_corpus": [
+            Field("source", .string), Field("subset", .string), Field("split", .string),
+            Field("max_rows", .integer), Field("min_pass_rate", .number),
+            Field("include_reasoning", .boolean), Field("seed", .integer),
+        ],
+        "adapter_gate": [
+            Field("max_kl", .number), Field("max_ppl_rise", .number), Field("held_out", .names),
         ],
     ]
 
@@ -148,6 +169,22 @@ public enum ComposeSchema {
     }
 
     static func json(_ kind: Kind) -> [String: Any] {
+        if let leaf = scalarJson(kind) { return leaf }
+        switch kind {
+        case .choice(let values): return ["enum": values]
+        case .section(let name): return ["$ref": "#/$defs/\(name)"]
+        case .sections(let name): return ["type": "object", "additionalProperties": ["$ref": "#/$defs/\(name)"]]
+        case .list(let name): return ["type": "array", "items": ["$ref": "#/$defs/\(name)"]]
+        case .nameOrSection(let name): return ["oneOf": [["type": "string"], ["$ref": "#/$defs/\(name)"]]]
+        case .namesOrSection(let name):
+            return ["oneOf": [["type": "string"], ["type": "array", "items": ["type": "string"]], ["$ref": "#/$defs/\(name)"]]]
+        case .suiteMap(let item, let section): return ["type": "object", "additionalProperties": suiteValueSchema(item: item, section: section)]
+        case .variables: return ["type": "object", "additionalProperties": ["type": ["string", "number", "boolean"]]]
+        case .string, .number, .integer, .boolean, .duration, .names, .integers: return [:]
+        }
+    }
+
+    private static func scalarJson(_ kind: Kind) -> [String: Any]? {
         switch kind {
         case .string: ["type": "string"]
         case .number: ["type": "number"]
@@ -155,15 +192,8 @@ public enum ComposeSchema {
         case .boolean: ["type": "boolean"]
         case .duration: ["oneOf": [["type": "integer"], ["type": "string", "pattern": "^[0-9]+[smh]$"]]]
         case .names: ["type": "array", "items": ["type": "string"]]
-        case .choice(let values): ["enum": values]
-        case .section(let name): ["$ref": "#/$defs/\(name)"]
-        case .sections(let name): ["type": "object", "additionalProperties": ["$ref": "#/$defs/\(name)"]]
-        case .list(let name): ["type": "array", "items": ["$ref": "#/$defs/\(name)"]]
-        case .nameOrSection(let name): ["oneOf": [["type": "string"], ["$ref": "#/$defs/\(name)"]]]
-        case .namesOrSection(let name):
-            ["oneOf": [["type": "string"], ["type": "array", "items": ["type": "string"]], ["$ref": "#/$defs/\(name)"]]]
-        case .suiteMap(let item, let section): ["type": "object", "additionalProperties": suiteValueSchema(item: item, section: section)]
-        case .variables: ["type": "object", "additionalProperties": ["type": ["string", "number", "boolean"]]]
+        case .integers: ["type": "array", "items": ["type": "integer"]]
+        default: nil
         }
     }
 }

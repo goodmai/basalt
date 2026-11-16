@@ -61,9 +61,10 @@ public struct AnswerRouter: Sendable {
     public let routes: [AnswerRoute]
     public let targets: [String: any AnswerTarget]
     public let fallback: any AnswerTarget
+    public let defaultAdapter: String?
 
-    public init(routes: [AnswerRoute], targets: [String: any AnswerTarget], fallback: any AnswerTarget) {
-        (self.routes, self.targets, self.fallback) = (routes, targets, fallback)
+    public init(routes: [AnswerRoute], targets: [String: any AnswerTarget], fallback: any AnswerTarget, defaultAdapter: String? = nil) {
+        (self.routes, self.targets, self.fallback, self.defaultAdapter) = (routes, targets, fallback, defaultAdapter)
     }
 
     public func costLeft() async -> Set<String> {
@@ -75,7 +76,8 @@ public struct AnswerRouter: Sendable {
     public func answer(_ request: GenerationRequest, situation: AnswerSituation) async throws(BasaltError) -> Routed {
         let choice = AnswerRouting.choose(routes, situation)
         var skipped: [String] = []
-        for name in choice?.chain ?? [] {
+        for step in choice?.steps ?? [] {
+            let name = step.model
             guard let target = targets[name] else { continue }
             if target.isCloud, situation.perceived {
                 skipped.append("\(name): documents and transcripts stay local")
@@ -86,12 +88,14 @@ public struct AnswerRouter: Sendable {
                 continue
             }
             do {
-                return Routed(reply: try await target.answer(request), rule: choice?.rule, skipped: skipped)
+                let adapted = step.adapter != nil ? request.withAdapter(step.adapter) : request
+                return Routed(reply: try await target.answer(adapted), rule: choice?.rule, skipped: skipped)
             } catch {
                 if Task.isCancelled { throw .cancelled }
                 skipped.append("\(name): \(error.localizedDescription)")
             }
         }
-        return Routed(reply: try await fallback.answer(request), rule: choice?.rule, skipped: skipped)
+        let fallbackRequest = defaultAdapter != nil && request.adapter == nil ? request.withAdapter(defaultAdapter) : request
+        return Routed(reply: try await fallback.answer(fallbackRequest), rule: choice?.rule, skipped: skipped)
     }
 }

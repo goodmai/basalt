@@ -38,10 +38,15 @@ extension ComposeHost {
     }
 
     func router(_ view: ComposeSpec, held: [String: ComposeHeld]) throws -> AnswerRouter? {
-        guard !view.routes.isEmpty || view.answer != spec.answer else { return nil }
+        guard !view.routes.isEmpty || view.answer != spec.answer || view.answerAdapter != nil else { return nil }
         var targets: [String: any AnswerTarget] = [:]
         for name in view.answerModels { targets[name] = try target(name, held: held, in: view) }
-        return AnswerRouter(routes: view.routes.isEmpty ? [AnswerRoute(model: view.answer)] : view.routes, targets: targets, fallback: try target(view.answer, held: held, in: view))
+        return AnswerRouter(
+            routes: view.routes.isEmpty ? [AnswerRoute(model: view.answer, adapter: view.answerAdapter)] : view.routes,
+            targets: targets,
+            fallback: try target(view.answer, held: held, in: view),
+            defaultAdapter: view.answerAdapter
+        )
     }
 
     func target(_ name: String, held: [String: ComposeHeld], in spec: ComposeSpec) throws -> any AnswerTarget {

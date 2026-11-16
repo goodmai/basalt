@@ -13,6 +13,7 @@ public protocol ModelLab: ModelResearch {
     func traceTokens(_ request: TokenTraceRequest) async throws(BasaltError) -> TokenTraceReport
     func activationContrast(_ request: ActivationContrastRequest) async throws(BasaltError) -> ActivationContrastReport
     func phasorProbe(_ request: PhasorProbeRequest) async throws(BasaltError) -> PhasorProbeSummary
+    func trainCorpus(_ request: CorpusTrainRequest, lease: StepLease?) async throws(BasaltError) -> CorpusTrainReport
 }
 
 extension ModelLab {
@@ -31,6 +32,9 @@ extension ModelLab {
     }
     public func phasorProbe(_ request: PhasorProbeRequest) async throws(BasaltError) -> PhasorProbeSummary {
         throw Self.unavailable("phasor probe")
+    }
+    public func trainCorpus(_ request: CorpusTrainRequest, lease: StepLease?) async throws(BasaltError) -> CorpusTrainReport {
+        throw Self.unavailable("corpus training")
     }
 
     static func unavailable(_ mode: String) -> BasaltError {
