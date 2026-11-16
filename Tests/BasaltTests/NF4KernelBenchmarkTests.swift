@@ -4,6 +4,7 @@ import Testing
 import MLX
 import MLXLMCommon
 import BasaltCore
+@testable import BasaltInference
 
 @Suite("Native nf4 g32 quantizedMatmul against affine 4-bit g64 at equal 4.5 bpw, verify-window row counts (#357 phase c)", .serialized)
 struct NF4KernelBenchmarkTests {
@@ -11,8 +12,8 @@ struct NF4KernelBenchmarkTests {
 
     static let rows = [1, 2, 4, 8]
 
-    static func denseRun(_ dense: MLXArray, x: MLXArray, mode: QuantizationMode, groupSize: Int) -> () -> Double {
-        let first = quantized(dense, groupSize: groupSize, bits: 4, mode: mode)
+    static func denseAffineRun(_ dense: MLXArray, x: MLXArray, groupSize: Int) -> () -> Double {
+        let first = quantized(dense, groupSize: groupSize, bits: 4, mode: .affine)
         let bytes = first.wq.nbytes + first.scales.nbytes + (first.biases?.nbytes ?? 0)
         let copies = [(first.wq, first.scales, first.biases)] + (1 ..< max(1, Bench.cacheDefeatBytes / bytes)).map { _ in
             (first.wq + 0, first.scales + 0, first.biases.map { $0 + 0 })
@@ -21,7 +22,24 @@ struct NF4KernelBenchmarkTests {
         let rounds = max(1, 16 / copies.count)
         let run = {
             eval((0 ..< rounds).flatMap { _ in
-                copies.map { quantizedMM(x, $0.0, scales: $0.1, biases: $0.2, groupSize: groupSize, bits: 4, mode: mode) }
+                copies.map { quantizedMM(x, $0.0, scales: $0.1, biases: $0.2, groupSize: groupSize, bits: 4, mode: .affine) }
+            })
+        }
+        run()
+        return { Bench.microseconds(run) / Double(rounds * copies.count) }
+    }
+
+    static func denseNF4Run(_ dense: MLXArray, x: MLXArray, groupSize: Int) -> () -> Double {
+        let first = NF4Metal.quantized(dense, groupSize: groupSize)
+        let bytes = first.wq.nbytes + first.scales.nbytes
+        let copies = [(first.wq, first.scales)] + (1 ..< max(1, Bench.cacheDefeatBytes / bytes)).map { _ in
+            (first.wq + 0, first.scales + 0)
+        }
+        eval(copies.flatMap { [$0.0, $0.1] })
+        let rounds = max(1, 16 / copies.count)
+        let run = {
+            eval((0 ..< rounds).flatMap { _ in
+                copies.map { NF4Metal.matmul(x, codes: $0.0, scales: $0.1, groupSize: groupSize) }
             })
         }
         run()
@@ -43,15 +61,30 @@ struct NF4KernelBenchmarkTests {
         Experts(name: "lfm2.5-24b-a2b down", experts: 64, topK: 4, inputs: 1536, outputs: 2048),
     ]
 
-    static func gatherRun(_ shape: Experts, dense: MLXArray, mode: QuantizationMode, groupSize: Int) -> () -> Double {
-        let (wq, scales, biases) = quantized(dense, groupSize: groupSize, bits: 4, mode: mode)
+    static func gatherAffineRun(_ shape: Experts, dense: MLXArray, groupSize: Int) -> () -> Double {
+        let (wq, scales, biases) = quantized(dense, groupSize: groupSize, bits: 4, mode: .affine)
         eval([wq, scales] + (biases.map { [$0] } ?? []))
         let x = MLXRandom.normal([shape.topK, 1, shape.inputs], dtype: .bfloat16)
         let picks = (0 ..< 32).map { call in MLXArray((0 ..< shape.topK).map { UInt32(($0 * 37 + call * 11) % shape.experts) }) }
         eval([x] + picks)
         let run = {
             eval(picks.map {
-                gatherQuantizedMM(x, wq, scales: scales, biases: biases, rhsIndices: $0, groupSize: groupSize, bits: 4, mode: mode)
+                gatherQuantizedMM(x, wq, scales: scales, biases: biases, rhsIndices: $0, groupSize: groupSize, bits: 4, mode: .affine)
+            })
+        }
+        run()
+        return { Bench.microseconds(run) / Double(picks.count) }
+    }
+
+    static func gatherNF4Run(_ shape: Experts, dense: MLXArray, groupSize: Int) -> () -> Double {
+        let (wq, scales) = NF4Metal.quantized(dense, groupSize: groupSize)
+        eval(wq, scales)
+        let x = MLXRandom.normal([shape.topK, 1, shape.inputs], dtype: .bfloat16)
+        let picks = (0 ..< 32).map { call in MLXArray((0 ..< shape.topK).map { UInt32(($0 * 37 + call * 11) % shape.experts) }) }
+        eval([x] + picks)
+        let run = {
+            eval(picks.map {
+                NF4Metal.gatherMatmul(x, codes: wq, scales: scales, rhsIndices: $0, groupSize: groupSize)
             })
         }
         run()
@@ -67,8 +100,8 @@ struct NF4KernelBenchmarkTests {
     }
 
     static func kernelError(x: MLXArray, codes: MLXArray, scales: MLXArray) -> Float {
-        let reference = matmul(x.asType(.float32), dequantized(codes, scales: scales, biases: nil, groupSize: 32, bits: 4, mode: .nf4).asType(.float32).T)
-        let kernel = quantizedMM(x, codes, scales: scales, biases: nil, groupSize: 32, bits: 4, mode: .nf4).asType(.float32)
+        let reference = matmul(x.asType(.float32), NF4Metal.dequantized(codes, scales: scales, groupSize: 32).asType(.float32).T)
+        let kernel = NF4Metal.matmul(x, codes: codes, scales: scales, groupSize: 32).asType(.float32)
         return (abs(kernel - reference).max() / abs(reference).max()).item(Float.self)
     }
 
@@ -87,13 +120,13 @@ struct NF4KernelBenchmarkTests {
         Bench.log("shape | K x N | M | affine g64 us | nf4 g32 us | nf4 / affine | kernel rel max err", to: url)
         for shape in Bench.shapes where shape.name != "lm_head" {
             let dense = MLXRandom.normal([shape.outputs, shape.inputs], dtype: .bfloat16, scale: 0.02)
-            let (codes, scales, _) = quantized(dense, groupSize: 32, bits: 4, mode: .nf4)
+            let (codes, scales) = NF4Metal.quantized(dense, groupSize: 32)
             eval(codes, scales)
             for m in Self.rows {
                 let x = MLXRandom.normal([m, shape.inputs], dtype: .bfloat16)
                 let micros = Self.interleavedMedians([
-                    Self.denseRun(dense, x: x, mode: .affine, groupSize: 64),
-                    Self.denseRun(dense, x: x, mode: .nf4, groupSize: 32),
+                    Self.denseAffineRun(dense, x: x, groupSize: 64),
+                    Self.denseNF4Run(dense, x: x, groupSize: 32),
                 ], rounds: 3)
                 let (affine, nf4) = (micros[0], micros[1])
                 Memory.clearCache()
@@ -121,11 +154,11 @@ struct NF4KernelBenchmarkTests {
         for shape in Self.experts {
             let dense = MLXRandom.normal([shape.experts, shape.outputs, shape.inputs], dtype: .bfloat16, scale: 0.02)
             let micros = Self.interleavedMedians([
-                Self.gatherRun(shape, dense: dense, mode: .affine, groupSize: 64),
-                Self.gatherRun(shape, dense: dense, mode: .nf4, groupSize: 32),
+                Self.gatherAffineRun(shape, dense: dense, groupSize: 64),
+                Self.gatherNF4Run(shape, dense: dense, groupSize: 32),
             ])
             let (affine, nf4) = (micros[0], micros[1])
-            let (codes, scales, _) = quantized(dense, groupSize: 32, bits: 4, mode: .nf4)
+            let (codes, scales) = NF4Metal.quantized(dense, groupSize: 32)
             let picks = (0 ..< shape.topK).map { UInt32(($0 * 37) % shape.experts) }
             let x = MLXRandom.normal([shape.topK, 1, shape.inputs], dtype: .bfloat16)
             let error = NF4KernelParityTests.gatherError(x: x, codes: codes, scales: scales, experts: picks, groupSize: 32)

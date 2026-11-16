@@ -70,7 +70,7 @@ struct ExpertPlan {
         let sanitized = model.sanitize(weights: weights, metadata: metadata)
         for (path, module) in model.namedModules() where module is SwitchLinear {
             let layerQuant = (module as? QuantizedSwitchLinear).map { ($0.groupSize, $0.bits, $0.mode) }
-                ?? layerQuantization(of: path, weights: sanitized, quantization: nil, perLayerQuantization: quantization)
+                ?? (sanitized["\(path).scales"] != nil ? quantization?.quantization(layer: path)?.asTuple : nil)
             try add(path, sanitized: sanitized, sources: sources, shards: shards, quantization: layerQuant)
         }
     }

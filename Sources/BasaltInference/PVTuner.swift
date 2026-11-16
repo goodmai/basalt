@@ -5,15 +5,26 @@ import MLXLMCommon
 import MLXNN
 
 package enum PVCodeGrid {
+    package enum Encoding: Sendable, Equatable {
+        case affine(QuantizationMode)
+        case nf4
+    }
+
     package struct Spec: Sendable {
         package var groupSize: Int
         package var bits: Int
-        package var mode: QuantizationMode
+        package var encoding: Encoding
 
         package init(groupSize: Int, bits: Int, mode: QuantizationMode) {
             self.groupSize = groupSize
             self.bits = bits
-            self.mode = mode
+            self.encoding = .affine(mode)
+        }
+
+        package init(nf4GroupSize: Int) {
+            self.groupSize = nf4GroupSize
+            self.bits = 4
+            self.encoding = .nf4
         }
     }
 
@@ -86,13 +97,13 @@ package enum PVCodeGrid {
     }
 
     package static func dequantizeDifferentiable(
-        codes: MLXArray, scales: MLXArray, biases: MLXArray?, groupSize: Int, mode: QuantizationMode, dtype: DType
+        codes: MLXArray, scales: MLXArray, biases: MLXArray?, groupSize: Int, encoding: Encoding, dtype: DType
     ) -> MLXArray {
         let leading = Array(codes.shape.dropLast())
         let cols = codes.dim(-1)
         let groups = cols / groupSize
         let s = scales.asType(.float32).expandedDimensions(axis: -1)
-        if mode == .nf4 {
+        if encoding == .nf4 {
             let table = MLXArray(nf4TableValues)
             let vals = table.take(codes.asType(.int32)).reshaped(leading + [groups, groupSize])
             return (vals * s).reshaped(leading + [cols]).asType(dtype)
@@ -117,7 +128,7 @@ package enum PVCodeGrid {
         let stepDir = which(gs .> Float(0), MLXArray(Int32(-1)), which(gs .< Float(0), MLXArray(Int32(1)), MLXArray(Int32(0))))
         let candInt = clip(qInt + stepDir, min: 0, max: maxCode)
         let dw: MLXArray
-        if spec.mode == .nf4 {
+        if spec.encoding == .nf4 {
             let table = MLXArray(nf4TableValues)
             dw = (table.take(candInt) - table.take(qInt)) * s
         } else {
@@ -140,7 +151,7 @@ package final class PVScaleLinear: Linear {
     let codes: MLXArray
     let groupSize: Int
     let bits: Int
-    let mode: QuantizationMode
+    let encoding: PVCodeGrid.Encoding
     let computeDType: DType
     @ParameterInfo var scales: MLXArray
     @ParameterInfo var biases: MLXArray?
@@ -149,7 +160,7 @@ package final class PVScaleLinear: Linear {
         self.codes = PVCodeGrid.unpackCodes(quantized.weight, bits: quantized.bits)
         self.groupSize = quantized.groupSize
         self.bits = quantized.bits
-        self.mode = quantized.mode
+        self.encoding = .affine(quantized.mode)
         self.computeDType = quantized.scales.dtype
         self._scales.wrappedValue = quantized.scales
         self._biases.wrappedValue = quantized.biases
@@ -158,18 +169,37 @@ package final class PVScaleLinear: Linear {
         try? self.unfreeze(keys: ["scales", "biases"], strict: false)
     }
 
+    package init(from nf4: NF4Linear) {
+        self.codes = PVCodeGrid.unpackCodes(nf4.weight, bits: 4)
+        self.groupSize = nf4.groupSize
+        self.bits = 4
+        self.encoding = .nf4
+        self.computeDType = nf4.scales.dtype
+        self._scales.wrappedValue = nf4.scales
+        self._biases.wrappedValue = nil
+        super.init(weight: nf4.weight, bias: nf4.bias)
+        self.freeze()
+        try? self.unfreeze(keys: ["scales"], strict: false)
+    }
+
     override package func callAsFunction(_ x: MLXArray) -> MLXArray {
         let w = PVCodeGrid.dequantizeDifferentiable(
-            codes: codes, scales: scales, biases: biases, groupSize: groupSize, mode: mode, dtype: x.dtype)
+            codes: codes, scales: scales, biases: biases, groupSize: groupSize, encoding: encoding, dtype: x.dtype)
         if let bias { return addMM(bias, x, w.T) }
         return matmul(x, w.T)
     }
 
-    package func packedLayer() -> QuantizedLinear {
+    package func packedLayer() -> Module {
         let packed = PVCodeGrid.packCodes(codes, bits: bits)
-        return QuantizedLinear(
-            weight: packed, bias: bias, scales: scales.asType(computeDType), biases: biases?.asType(computeDType),
-            groupSize: groupSize, bits: bits, mode: mode, globalScale: nil)
+        switch encoding {
+        case .nf4:
+            return (try? NF4Linear(weight: packed, bias: bias, scales: scales.asType(computeDType), groupSize: groupSize))
+                ?? Linear(weight: packed, bias: bias)
+        case .affine(let mode):
+            return QuantizedLinear(
+                weight: packed, bias: bias, scales: scales.asType(computeDType), biases: biases?.asType(computeDType),
+                groupSize: groupSize, bits: bits, mode: mode, globalScale: nil)
+        }
     }
 }
 

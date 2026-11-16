@@ -1,6 +1,7 @@
 import Foundation
 import MLX
 import Testing
+@testable import BasaltInference
 
 @Suite("nf4 small-M and gather kernels against the dequantized matmul, relative max error under 1e-2 (#357 phase d)")
 struct NF4KernelParityTests {
@@ -11,16 +12,16 @@ struct NF4KernelParityTests {
     }
 
     static func matmulError(x: MLXArray, codes: MLXArray, scales: MLXArray, groupSize: Int) -> Float {
-        let dense = dequantized(codes, scales: scales, biases: nil, groupSize: groupSize, bits: 4, mode: .nf4).asType(.float32)
-        let kernel = quantizedMM(x, codes, scales: scales, biases: nil, groupSize: groupSize, bits: 4, mode: .nf4)
+        let dense = NF4Metal.dequantized(codes, scales: scales, groupSize: groupSize).asType(.float32)
+        let kernel = NF4Metal.matmul(x, codes: codes, scales: scales, groupSize: groupSize)
         return relativeError(kernel, matmul(x.asType(.float32), dense.T))
     }
 
     static func gatherError(x: MLXArray, codes: MLXArray, scales: MLXArray, experts: [UInt32], groupSize: Int) -> Float {
-        let kernel = gatherQuantizedMM(x, codes, scales: scales, rhsIndices: MLXArray(experts), groupSize: groupSize, bits: 4, mode: .nf4)
+        let kernel = NF4Metal.gatherMatmul(x, codes: codes, scales: scales, rhsIndices: MLXArray(experts), groupSize: groupSize)
         let expected = concatenated(experts.enumerated().map { row, expert in
             let index = Int(expert)
-            let dense = dequantized(codes[index], scales: scales[index], biases: nil, groupSize: groupSize, bits: 4, mode: .nf4).asType(.float32)
+            let dense = NF4Metal.dequantized(codes[index], scales: scales[index], groupSize: groupSize).asType(.float32)
             return matmul(x[row].asType(.float32), dense.T).expandedDimensions(axis: 0)
         }, axis: 0)
         return relativeError(kernel, expected)
@@ -30,7 +31,7 @@ struct NF4KernelParityTests {
           arguments: [(1024, 64, 32), (1056, 72, 32), (1024, 64, 64), (1024, 64, 128)])
     func smallM(inputs: Int, outputs: Int, groupSize: Int) {
         MLXRandom.seed(UInt64(inputs + outputs + groupSize))
-        let (codes, scales, _) = quantized(MLXRandom.normal([outputs, inputs]) * 0.05, groupSize: groupSize, bits: 4, mode: .nf4)
+        let (codes, scales) = NF4Metal.quantized(MLXRandom.normal([outputs, inputs]) * 0.05, groupSize: groupSize)
         for m in [1, 2, 4, 8] {
             let x = MLXRandom.normal([m, inputs]).asType(.bfloat16)
             let error = Self.matmulError(x: x, codes: codes, scales: scales, groupSize: groupSize)
@@ -42,7 +43,7 @@ struct NF4KernelParityTests {
           arguments: [(3840, 15360), (15360, 3840)])
     func modelShapes(inputs: Int, outputs: Int) {
         MLXRandom.seed(UInt64(inputs ^ outputs))
-        let (codes, scales, _) = quantized(MLXRandom.normal([outputs, inputs]) * 0.02, groupSize: 32, bits: 4, mode: .nf4)
+        let (codes, scales) = NF4Metal.quantized(MLXRandom.normal([outputs, inputs]) * 0.02, groupSize: 32)
         for m in [1, 16, 512] {
             let x = MLXRandom.normal([m, inputs]).asType(.bfloat16)
             let error = Self.matmulError(x: x, codes: codes, scales: scales, groupSize: 32)
@@ -53,7 +54,7 @@ struct NF4KernelParityTests {
     @Test("gatherQuantizedMM nf4 on [topK, 1, K] matches each picked expert's dequantized matmul", arguments: [1024, 1056])
     func gather(inputs: Int) {
         MLXRandom.seed(UInt64(inputs))
-        let (codes, scales, _) = quantized(MLXRandom.normal([8, 72, inputs]) * 0.05, groupSize: 32, bits: 4, mode: .nf4)
+        let (codes, scales) = NF4Metal.quantized(MLXRandom.normal([8, 72, inputs]) * 0.05, groupSize: 32)
         let experts: [UInt32] = [5, 0, 3, 7]
         let x = MLXRandom.normal([experts.count, 1, inputs]).asType(.bfloat16)
         let error = Self.gatherError(x: x, codes: codes, scales: scales, experts: experts, groupSize: 32)

@@ -26,16 +26,27 @@ struct PVTuningTests {
         MLXRandom.seed(410)
         for shape in [[12, 64], [4, 8, 64]] {
             let w = MLXRandom.normal(shape).asType(.float32)
-            for (bits, mode) in [(2, QuantizationMode.affine), (3, .affine), (4, .affine), (4, .nf4)] {
-                let (packed, scales, biases) = MLX.quantized(w, groupSize: 32, bits: bits, mode: mode)
+            for (bits, encoding) in [(2, PVCodeGrid.Encoding.affine(.affine)), (3, .affine(.affine)), (4, .affine(.affine)), (4, .nf4)] {
+                let packed: MLXArray
+                let scales: MLXArray
+                let biases: MLXArray?
+                let ref: MLXArray
+                if encoding == .nf4 {
+                    let q = NF4Metal.quantized(w, groupSize: 32)
+                    (packed, scales, biases) = (q.wq, q.scales, nil)
+                    ref = NF4Metal.dequantized(packed, scales: scales, groupSize: 32).asType(.float32)
+                } else {
+                    let q = MLX.quantized(w, groupSize: 32, bits: bits, mode: .affine)
+                    (packed, scales, biases) = (q.wq, q.scales, q.biases)
+                    ref = dequantized(packed, scales: scales, biases: biases, groupSize: 32, bits: bits, mode: .affine).asType(.float32)
+                }
                 let codes = PVCodeGrid.unpackCodes(packed, bits: bits)
                 let repacked = PVCodeGrid.packCodes(codes, bits: bits)
                 eval(packed, repacked)
                 #expect(packed.asArray(UInt32.self) == repacked.asArray(UInt32.self))
 
-                let ref = dequantized(packed, scales: scales, biases: biases, groupSize: 32, bits: bits, mode: mode).asType(.float32)
                 let diff = PVCodeGrid.dequantizeDifferentiable(
-                    codes: codes, scales: scales, biases: biases, groupSize: 32, mode: mode, dtype: scales.dtype).asType(.float32)
+                    codes: codes, scales: scales, biases: biases, groupSize: 32, encoding: encoding, dtype: scales.dtype).asType(.float32)
                 let maxErr = abs(ref - diff).max()
                 eval(maxErr)
                 #expect(maxErr.item(Float.self) < 1e-6)
@@ -45,11 +56,17 @@ struct PVTuningTests {
 
     @Test("PV-Tuning lowers global teacher KL across 2-bit affine, 3-bit affine and nf4 on TinyModel.qwen35")
     func klDescentOnHybridQwen35() throws {
-        for (bits, mode) in [(2, QuantizationMode.affine), (3, .affine), (4, .nf4)] {
+        for (bits, isNF4) in [(2, false), (3, false), (4, true)] {
             let teacher = try TinyModel.make(.qwen35)
             let student = try TinyModel.make(.qwen35)
-            quantize(model: student as Module, groupSize: 32, bits: bits, mode: mode) { path, _ in
-                PVTuner.textBlockIndex(path) != nil
+            if isNF4 {
+                NF4NativeLoader.quantize(model: student as Module, groupSize: 32) { path, _ in
+                    PVTuner.textBlockIndex(path) != nil
+                }
+            } else {
+                quantize(model: student as Module, groupSize: 32, bits: bits, mode: .affine) { path, _ in
+                    PVTuner.textBlockIndex(path) != nil
+                }
             }
             eval(student as Module)
 

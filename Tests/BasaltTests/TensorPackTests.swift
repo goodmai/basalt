@@ -94,7 +94,7 @@ struct TensorPackTests {
         #expect(report.overlay.description.contains("mxfp4"))
     }
 
-    @Test("An nf4 pack swaps in a native nf4 QuantizedLinear with 4.5 (g32), 4.25 (g64) bits per weight and a 4-bit error, and undoes bit for bit", arguments: [32, 64])
+    @Test("An nf4 pack swaps in a native NF4Linear with 4.5 (g32), 4.25 (g64) bits per weight and a 4-bit error, and undoes bit for bit", arguments: [32, 64])
     func nf4(groupSize: Int) async throws {
         let engine = try await Self.engine()
         let container = try #require(await engine.container)
@@ -104,7 +104,7 @@ struct TensorPackTests {
         #expect(report.bytesAfter.rawValue == Int64(weights / 2 + weights / groupSize * 2))
         #expect(report.relativeError > 0.03 && report.relativeError < 0.2)
         #expect(report.overlay.description.contains("nf4 g\(groupSize)"))
-        #expect(await Self.layerType(container) == "QuantizedLinear")
+        #expect(await Self.layerType(container) == "NF4Linear")
         try await engine.undo(report.overlay.id)
         #expect(try await Self.logits(container).map(\.bitPattern) == logits)
     }

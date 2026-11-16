@@ -300,7 +300,7 @@ struct PVTuningRealModelTests {
                           let ql = mod as? QuantizedLinear, ql.globalScale == nil, ql.bits <= 4,
                           (ql.weight.dim(-1) * 32 / ql.bits).isMultiple(of: 64) else { continue }
                     let dense = dequantized(ql.weight, scales: ql.scales, biases: ql.biases, groupSize: ql.groupSize, bits: ql.bits, mode: ql.mode)
-                    let repacked = QuantizedLinear(weight: dense, bias: ql.bias, groupSize: 64, bits: 4, mode: .nf4)
+                    let repacked = NF4Linear(dense: dense, bias: ql.bias, groupSize: 64)
                     eval(repacked)
                     try PVTuner.swapModule(path, with: repacked, in: root)
                     replaced += 1

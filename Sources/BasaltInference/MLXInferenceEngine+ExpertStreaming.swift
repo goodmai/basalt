@@ -24,6 +24,10 @@ extension MLXInferenceEngine {
             logger.info("Experimental QTIP native weights: \(directory.lastPathComponent) runs bitshift trellis blocks on basalt's Metal decode kernel")
             return qtip
         }
+        if let nf4 = try await NF4NativeLoader.loadContainer(from: directory, tokenizerLoader: DefaultTokenizerLoader()) {
+            logger.info("Experimental NF4 native weights: \(directory.lastPathComponent) runs NormalFloat 4-bit blocks on basalt's Metal kernels")
+            return nf4
+        }
         if let native = try await GGUFNativeLoader.loadContainer(from: directory, tokenizerLoader: DefaultTokenizerLoader()) {
             logger.info("Experimental GGUF native weights: \(directory.lastPathComponent) runs its i-quant and k-quant blocks on basalt's Metal kernels")
             return native

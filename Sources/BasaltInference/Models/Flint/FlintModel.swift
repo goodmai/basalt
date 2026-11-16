@@ -271,7 +271,7 @@ extension FlintModel {
             guard totalBits.isMultiple(of: origInCols) else { return nil }
             let bits = totalBits / origInCols
             guard [2, 3, 4, 5, 6, 8].contains(bits) else { return nil }
-            let mode: QuantizationMode = weights["\(path).biases"] != nil ? .affine : .nf4
+            let mode: QuantizationMode = weights["\(path).biases"] != nil ? .affine : .mxfp4
             return (groupSize, bits, mode)
         }
     }

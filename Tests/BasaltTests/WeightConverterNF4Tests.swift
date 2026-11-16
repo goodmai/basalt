@@ -31,7 +31,7 @@ struct WeightConverterNF4Tests {
         #expect(packed[WeightConverterTests.attention + ".biases"] == nil && packed["model.layers.0.mlp.down_proj.scales"] != nil)
         #expect(packed["model.embed_tokens.scales"] == nil && packed["model.norm.scales"] == nil)
         let source = try #require(original[WeightConverterTests.attention + ".weight"])
-        let (expectedCodes, expectedScales, _) = MLX.quantized(source, groupSize: 32, bits: 4, mode: .nf4)
+        let (expectedCodes, expectedScales) = NF4Metal.quantized(source, groupSize: 32)
         #expect(WeightConverterTests.maxDifference(codes, expectedCodes) == 0 && WeightConverterTests.maxDifference(scales, expectedScales) == 0)
         let block = try #require(try WeightConverterTests.config(scratch.url("nf4"))["quantization"] as? [String: Any])
         #expect(block["mode"] as? String == "nf4" && block["quant_method"] == nil && block["bits"] as? Int == 4 && block["group_size"] as? Int == 32)
@@ -70,7 +70,7 @@ struct WeightConverterNF4Tests {
 
     @Test("A tiny model converted to nf4:32 loads as native nf4 QuantizedLinear and QuantizedSwitchLinear, experts included, with the greedy tokens and logits of its decoded weights",
           arguments: [TinyModel.Family.qwen35, .qwen3Moe, .gemma4Moe])
-    func nf4CheckpointLoads(family: TinyModel.Family) throws {
+    func nf4CheckpointLoads(family: TinyModel.Family) async throws {
         let scratch = try WeightConverterTests.Scratch()
         let tiny = scratch.url("tiny")
         try FileManager.default.createDirectory(at: tiny, withIntermediateDirectories: true)
@@ -82,13 +82,12 @@ struct WeightConverterNF4Tests {
         #expect(decoded.contains { $0.0.hasSuffix("self_attn.q_proj.weight") })
         model.update(parameters: ModuleParameters.unflattened(decoded))
         let loaded = try TinyModel.make(family)
-        let configuration = try JSONDecoder.json5().decode(BaseConfiguration.self, from: Data(contentsOf: scratch.url("nf4").appending(component: "config.json")))
-        try loadWeights(modelDirectory: scratch.url("nf4"), model: loaded, perLayerQuantization: configuration.perLayerQuantization)
-        let linears = loaded.namedModules().compactMap { $0.1 as? QuantizedLinear }
-        #expect(!linears.isEmpty && linears.allSatisfy { $0.mode == .nf4 })
+        try NF4NativeLoader.loadWeights(modelDirectory: scratch.url("nf4"), model: loaded)
+        let linears = loaded.namedModules().compactMap { $0.1 as? NF4Linear }
+        #expect(!linears.isEmpty && linears.allSatisfy { $0.groupSize == 32 })
         if family != .qwen35 {
-            let experts = loaded.namedModules().compactMap { $0.1 as? QuantizedSwitchLinear }
-            #expect(!experts.isEmpty && experts.allSatisfy { $0.mode == .nf4 }, "\(family): experts \(experts.map(\.mode))")
+            let experts = loaded.namedModules().compactMap { $0.1 as? NF4SwitchLinear }
+            #expect(!experts.isEmpty && experts.allSatisfy { $0.groupSize == 32 }, "\(family): experts \(experts.map(\.groupSize))")
         }
         let input = MLXArray(TinyModel.tokens("nf4 checkpoint").map(Int32.init)).reshaped(1, -1)
         let expected = model(input, cache: nil).asType(.float32)
@@ -96,5 +95,14 @@ struct WeightConverterNF4Tests {
         #expect(actual.argMax(axis: -1).asArray(Int32.self) == expected.argMax(axis: -1).asArray(Int32.self))
         #expect(WeightConverterTests.maxDifference(actual, expected) <= 1e-3 * abs(expected).max().item(Float.self),
                 "\(family): \(WeightConverterTests.maxDifference(actual, expected)) against max \(abs(expected).max().item(Float.self))")
+
+        try Data("{}".utf8).write(to: scratch.url("nf4").appending(component: "tokenizer_config.json"))
+        let container = try #require(try await NF4NativeLoader.loadContainer(from: scratch.url("nf4"), tokenizerLoader: ByteTokenizerLoader()))
+        let ids = TinyModel.tokens("nf4 checkpoint").map(Int32.init)
+        let containerLogits = await container.perform { ctx in
+            ctx.model(MLXArray(ids).reshaped(1, -1), cache: nil).asType(.float32).asArray(Float.self)
+        }
+        let actualVals = actual.asArray(Float.self)
+        #expect(containerLogits == actualVals)
     }
 }

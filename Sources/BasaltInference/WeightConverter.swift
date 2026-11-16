@@ -152,7 +152,7 @@ package struct WeightConverter: Sendable {
         var weight = Self.dense(tensor, packed)
         if let pair, let lora { weight = try LoRAUpdate.merged(weight, pair, scale: lora.scale, layer: base) }
         if let nf4 {
-            let (codes, scales, _) = MLX.quantized(weight, groupSize: nf4, bits: 4, mode: .nf4)
+            let (codes, scales) = NF4Metal.quantized(weight, groupSize: nf4)
             return [base + ".weight": codes, base + ".scales": scales]
         }
         guard let target else { return [key: cast(weight)] }

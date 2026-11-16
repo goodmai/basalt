@@ -116,7 +116,7 @@ enum TensorPacker {
         case .nf4(let groupSize):
             guard groupSizes.contains(groupSize) else { throw refused("nf4 packs take a group size of 32, 64 or 128; got \(groupSize)") }
             try divisible(columns, by: groupSize)
-            return QuantizedLinear(weight: dense, bias: bias, groupSize: groupSize, bits: 4, mode: .nf4)
+            return NF4Linear(dense: dense, bias: bias, groupSize: groupSize)
         case .ternary:
             try divisible(columns, by: ternaryGroupSize)
             return ternary(dense, bias: bias)
@@ -136,6 +136,9 @@ enum TensorPacker {
     }
 
     static func dense(_ layer: Linear) -> MLXArray {
+        if let nf4 = layer as? NF4Linear {
+            return NF4Metal.dequantized(nf4.weight, scales: nf4.scales, groupSize: nf4.groupSize)
+        }
         guard let layer = layer as? QuantizedLinear else { return layer.weight }
         return dequantized(
             layer.weight, scales: layer.scales, biases: layer.biases, groupSize: layer.groupSize, bits: layer.bits, mode: layer.mode,
@@ -145,7 +148,8 @@ enum TensorPacker {
     static func bytes(_ layer: Module) -> Int { layer.parameters().flattened().reduce(0) { $0 + $1.1.nbytes } }
 
     static func describe(_ layer: Linear) -> String {
-        (layer as? QuantizedLinear).map { "\($0.bits)-bit \($0.mode.rawValue) g\($0.groupSize)" } ?? "\(layer.weight.dtype)"
+        if let nf4 = layer as? NF4Linear { return "4-bit nf4 g\(nf4.groupSize)" }
+        return (layer as? QuantizedLinear).map { "\($0.bits)-bit \($0.mode.rawValue) g\($0.groupSize)" } ?? "\(layer.weight.dtype)"
     }
 
     static func describe(_ format: PackFormat) -> String {
