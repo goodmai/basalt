@@ -45,17 +45,34 @@ public struct PipelineMember: Sendable, Equatable, Codable {
     public var model: String
     public var bytes: Int64
     public var keep: KeepPolicy?
+    public var unit: ComputeUnit?
 
-    public init(_ role: PipelineRole, _ model: String, bytes: Int64 = 0, keep: KeepPolicy? = nil) {
-        (self.role, self.model, self.bytes, self.keep) = (role, model, bytes, keep)
+    public init(_ role: PipelineRole, _ model: String, bytes: Int64 = 0, keep: KeepPolicy? = nil, unit: ComputeUnit? = nil) {
+        self.role = role
+        self.model = model
+        self.bytes = bytes
+        self.keep = keep
+        self.unit = unit
     }
 
-    var workload: Workload? {
+    public var workload: Workload? {
+        let policy = keep ?? .resident
         switch role {
-        case .chat: Workload(name: model, role: "chat", unit: .gpu, kind: .decode, residentBytes: bytes, keep: keep ?? .resident)
-        case .ocr, .audio: Workload(name: model, role: Workload.perceiveRole, unit: .gpu, kind: .encoder, residentBytes: bytes, keep: keep ?? .resident)
-        case .decide: nil
+        case .chat: return Workload(name: model, role: "chat", unit: unit ?? .gpu, kind: .decode, residentBytes: bytes, keep: policy)
+        case .ocr, .audio: return Workload(name: model, role: Workload.perceiveRole, unit: unit ?? .gpu, kind: .encoder, residentBytes: bytes, keep: policy)
+        case .decide:
+            guard model != "self", bytes > 0 else { return nil }
+            return Workload(name: model, role: "decide", unit: inferredDecideUnit, kind: .encoder, residentBytes: bytes, keep: policy)
         }
+    }
+
+    var inferredDecideUnit: ComputeUnit {
+        if let unit { return unit }
+        if FileManager.default.fileExists(atPath: URL(fileURLWithPath: model).appending(component: "laya_decision.json").path) {
+            return .ane
+        }
+        let parts = model.lowercased().split { !$0.isLetter && !$0.isNumber }
+        return parts.contains { $0 == "ane" || $0 == "laya" || $0 == "coreai" } ? .ane : .gpu
     }
 }
 
