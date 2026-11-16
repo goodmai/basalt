@@ -72,8 +72,13 @@ struct GenerationPlanTests {
         Case(testDescription: "a hybrid model does not blend, so it still batches",
              facts: GenerationPlan.Facts(namespace: "chat", promptTokens: 100, blendAvailable: true, modelIsHybrid: true),
              decision: .batchable, expected: true),
-        Case(testDescription: "--kv-bits keeps the request out of the batch",
-             settings: GenerationPlan.Settings(kvPrecision: .q8), decision: .batchable, expected: false),
+        Case(testDescription: "uniform affine --kv-bits joins the batch",
+             settings: GenerationPlan.Settings(kvPrecision: .q8), decision: .batchable, expected: true),
+        Case(testDescription: "TurboQuant --kv-bits keeps the request out of the batch",
+             settings: GenerationPlan.Settings(kvPrecision: .turbo4), decision: .batchable, expected: false),
+        Case(testDescription: "zoned uniform precision keeps the request out of the batch",
+             settings: GenerationPlan.Settings(kvPrecision: .q8, kvZones: .standard, attendsThroughZones: true, prefillsInChunks: true),
+             decision: .batchable, expected: false),
         Case(testDescription: "zoned precision keeps the request out of the batch",
              settings: GenerationPlan.Settings(kvPrecision: .k8v4, kvZones: .standard, attendsThroughZones: true, prefillsInChunks: true),
              decision: .batchable, expected: false),
@@ -219,7 +224,8 @@ extension GenerationPlanTests {
         let both = GenerationPlan.Settings(kvHeadMask: mask, questTopK: 16)
         #expect(GenerationPlan.make(request, both, GenerationPlan.Facts()) == GenerationPlan(kvHeadMask: mask, batchable: true))
         #expect(GenerationPlan.make(request, GenerationPlan.Settings(questTopK: 16), GenerationPlan.Facts()) == GenerationPlan(questTopK: 16, batchable: true))
-        #expect(GenerationPlan.make(request.withKVPrecision(.q8), both, GenerationPlan.Facts()) == GenerationPlan(batchable: false))
+        #expect(GenerationPlan.make(request.withKVPrecision(.q8), both, GenerationPlan.Facts()) == GenerationPlan(batchable: true))
+        #expect(GenerationPlan.make(request.withKVPrecision(.turbo4), both, GenerationPlan.Facts()) == GenerationPlan(batchable: false))
         var zonedBoth = Self.zoned
         zonedBoth.kvHeadMask = mask
         zonedBoth.questTopK = 16

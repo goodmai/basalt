@@ -17,13 +17,13 @@ final class BatchedDecoder: Sendable {
         mailbox.withLock { $0.checkInvariants(slots: slots) }
     }
 
-    func seat(in context: ModelContext) -> BatchSeat? {
-        (context.batch as? BatchCore).flatMap { seat(on: $0) }
+    func seat(in context: ModelContext, kvBits: Int? = nil) -> BatchSeat? {
+        (context.batch as? BatchCore).flatMap { seat(on: $0, kvBits: kvBits) }
     }
 
-    func seat(on core: BatchCore) -> BatchSeat? {
+    func seat(on core: BatchCore, kvBits: Int? = nil) -> BatchSeat? {
         guard core.decoder === self else { return nil }
-        return mailbox.withLock { $0.seat(within: slots) }.map { BatchSeat(core: core, id: $0) }
+        return mailbox.withLock { $0.seat(within: slots, kvBits: kvBits) }.map { BatchSeat(core: core, id: $0) }
     }
 
     fileprivate func leave(_ id: Int, from core: BatchCore) {
@@ -62,10 +62,16 @@ private struct Mailbox {
     var seated = 0
     var admitted = 0
     var issued = 0
+    var activeKVBits: Int??
     var rows: [Int: Mail] = [:]
 
-    mutating func seat(within slots: Int) -> Int? {
+    mutating func seat(within slots: Int, kvBits: Int?) -> Int? {
         guard seated < slots else { return nil }
+        if seated == 0 {
+            activeKVBits = .some(kvBits)
+        } else if activeKVBits != .some(kvBits) {
+            return nil
+        }
         seated += 1
         issued += 1
         return issued
@@ -74,6 +80,7 @@ private struct Mailbox {
     mutating func leave(_ id: Int) -> Bool {
         seated -= 1
         rows[id] = nil
+        if seated == 0 { activeKVBits = nil }
         return seated == 0
     }
 
@@ -183,6 +190,7 @@ final class BatchCore {
         case let recurrent as ArraysCache:
             for case let row as ArraysCache in joining where row !== recurrent { recurrent.extend(other: row) }
         case let rotating as BatchRotatingKVCache: rotating.append(joining.compactMap { $0 as? RotatingKVCache })
+        case let quantized as BatchQuantizedKVCache: quantized.append(joining)
         case let batch as BatchKVCache: batch.append(joining.compactMap { $0 as? KVCacheSimple })
         default: break
         }
@@ -191,6 +199,7 @@ final class BatchCore {
 
 private enum BatchedLayer {
     case kv(BatchKVCache)
+    case quantized(BatchQuantizedKVCache)
     case rotating(BatchRotatingKVCache)
     case recurrent(ArraysCache)
 
@@ -198,6 +207,8 @@ private enum BatchedLayer {
         switch row {
         case let recurrent as ArraysCache: .recurrent(recurrent)
         case let rotating as RotatingKVCache: .rotating(BatchRotatingKVCache(window: rotating.maxSize ?? 0))
+        case let quantized as QuantizedKVCache:
+            .quantized(BatchQuantizedKVCache(groupSize: quantized.groupSize, bits: quantized.bits, mode: quantized.mode))
         default: .kv(BatchKVCache())
         }
     }
@@ -205,6 +216,7 @@ private enum BatchedLayer {
     var raw: any KVCache {
         switch self {
         case .kv(let cache): cache
+        case .quantized(let cache): cache
         case .rotating(let cache): cache
         case .recurrent(let cache): cache
         }
@@ -213,6 +225,7 @@ private enum BatchedLayer {
     func innerState() -> [MLXArray] {
         switch self {
         case .kv(let cache): cache.innerState()
+        case .quantized(let cache): cache.innerState()
         case .rotating(let cache): cache.innerState()
         case .recurrent(let cache): cache.innerState()
         }
@@ -221,6 +234,7 @@ private enum BatchedLayer {
     func filter(rows kept: [Int], batchIndices: MLXArray) {
         switch self {
         case .kv(let cache): cache.filter(rows: kept)
+        case .quantized(let cache): cache.filter(rows: kept)
         case .rotating(let cache): cache.filter(rows: kept)
         case .recurrent(let cache): cache.filter(batchIndices: batchIndices)
         }
@@ -229,6 +243,7 @@ private enum BatchedLayer {
     func join(_ joining: [KVCache]) {
         switch self {
         case .kv(let cache): cache.append(joining.compactMap { $0 as? KVCacheSimple })
+        case .quantized(let cache): cache.append(joining)
         case .rotating(let cache): cache.append(joining.compactMap { $0 as? RotatingKVCache })
         case .recurrent(let cache):
             for case let row as ArraysCache in joining where row !== cache { cache.extend(other: row) }
@@ -289,11 +304,15 @@ struct DecodingSettings {
     let sampler: any LogitSampler
     let prefill: PrefillParameters
     let maxTokens: Int?
+    var kvBits: Int? = nil
+    var kvGroupSize: Int = 64
 }
 
 extension DecodingSettings {
     init(processor: (any LogitProcessor)?, parameters: GenerateParameters) {
-        self.init(processor: processor, sampler: parameters.sampler(), prefill: parameters.prefill, maxTokens: parameters.maxTokens)
+        self.init(
+            processor: processor, sampler: parameters.sampler(), prefill: parameters.prefill,
+            maxTokens: parameters.maxTokens, kvBits: parameters.kvBits, kvGroupSize: parameters.kvGroupSize)
     }
 }
 
@@ -305,8 +324,12 @@ struct BatchedTokenIterator: SelfSerializingTokenIterator {
     let promptPrefillTime: TimeInterval
 
     static func batchableLayers(_ cache: [KVCache]) -> [KVCache]? {
-        let batchable = !cache.isEmpty && cache.contains { type(of: $0) == KVCacheSimple.self }
-            && cache.allSatisfy { type(of: $0) == KVCacheSimple.self || $0 is ArraysCache || BatchRotatingKVCache.admits($0) }
+        let hasAttention = cache.contains { type(of: $0) == KVCacheSimple.self || type(of: $0) == QuantizedKVCache.self }
+        let batchable = !cache.isEmpty && hasAttention
+            && cache.allSatisfy {
+                type(of: $0) == KVCacheSimple.self || type(of: $0) == QuantizedKVCache.self
+                    || $0 is ArraysCache || BatchRotatingKVCache.admits($0)
+            }
         return batchable ? cache : nil
     }
 
@@ -316,6 +339,7 @@ struct BatchedTokenIterator: SelfSerializingTokenIterator {
     ) throws {
         let started = ContinuousClock.now
         var decoding = decoding
+        var layers = layers
         decoding.processor?.prompt(input.text.tokens)
         let first = try seat.core.model.evaluating {
             let logits = switch try model.prepare(input, cache: layers, state: nil, prefill: decoding.prefill) {
@@ -324,6 +348,9 @@ struct BatchedTokenIterator: SelfSerializingTokenIterator {
             }
             let last = logits[0..., -1, 0...]
             let first = decoding.sampler.sample(logits: decoding.processor?.process(logits: last) ?? last)
+            if let kvBits = decoding.kvBits {
+                maybeQuantizeKVCache(cache: &layers, kvBits: kvBits, kvGroupSize: decoding.kvGroupSize, quantizedKVStart: 0)
+            }
             eval([first] + layers.flatMap { $0.innerState() })
             return first
         }

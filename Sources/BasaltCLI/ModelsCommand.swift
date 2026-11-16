@@ -382,7 +382,7 @@ struct CheckSubcommand: AsyncParsableCommand {
         guard let id = modelId else {
             throw ValidationError("Pass a model repo ID, or --system for a hardware check.")
         }
-        let evaluator = MemoryEvaluator(expertStreaming: expertStreaming.setting)
+        let evaluator = MemoryEvaluator(expertStreaming: expertStreaming.setting, disableExpertStreaming: expertStreaming.disabled)
         let assessment = await evaluator.evaluate(modelId: id, kvPrecision: kvBits?.budgetPrecision, kvZones: KVBitsSetting.zones(kvZones, evicting: kvEvict))
         let deepCheck: ModelDeepCheck?
         do {

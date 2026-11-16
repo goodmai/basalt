@@ -61,14 +61,27 @@ extension ServeCommand {
     }
 
     func admitComputePlan(chatPath: String, embeddings: (any EmbeddingEngine)?, decisions: (any DecisionEngine)?, perceive paths: PerceivePaths) async throws -> PlanVerdict {
+        let chatDirectory = URL(fileURLWithPath: chatPath)
         let weights = ByteCount(Self.weightBytes(chatPath))
-        let resident = expertStreaming.setting?.residentBytes(weights: weights, modelId: targetModel) ?? weights
+        let budget = await SystemProfiler().detectResources().gpuMemory
+        let resolvedStreaming = ModelFitAnalyzer.autoExpertStreaming(
+            directory: chatDirectory, workingSetBudget: ByteCount(budget),
+            explicit: expertStreaming.setting, disabled: expertStreaming.disabled)
+        let resident: ByteCount = if let resolvedStreaming {
+            if let stacked = ModelFitAnalyzer.stackedExperts(in: chatDirectory),
+               let footprint = ExpertStreamingFootprint(residentWeights: stacked.residentWeights, expertBytes: stacked.expertBytes, kv: .zero, streaming: resolvedStreaming) {
+                footprint.residentWeights + footprint.expertCache
+            } else {
+                resolvedStreaming.residentBytes(weights: weights, modelId: targetModel)
+            }
+        } else {
+            weights
+        }
         let chat = Workload(name: model ?? chatPath.split(separator: "/").last.map(String.init) ?? chatPath, role: "chat", unit: .gpu, kind: .decode, residentBytes: resident.rawValue)
         let perceive = [(pipeline.ocrModel, paths.ocr), (pipeline.audioModel, paths.audio)].compactMap { model, path in
             path.map { Self.perceiveWorkload(model ?? $0, path: $0) }
         }
         let workloads = [chat] + (try await sidecarWorkloads(embeddings: embeddings, decisions: decisions)) + perceive
-        let budget = await SystemProfiler().detectResources().gpuMemory
         let verdict = ComputePlan.admit(workloads, budgetBytes: budget, power: PowerSource.current(), memory: pipeline.memory)
         for line in ComputePlan.describe(verdict) { log(line) }
         if verdict.degraded { log("\(yellow("[warn]")) running on a weak power source: sidecars wait for decode and speed numbers taken now are not representative") }

@@ -43,6 +43,7 @@ public struct KVPrecision: Sendable, Hashable, CustomStringConvertible {
 
     public var isUniform: Bool { keyBits == valueBits }
     public var isPolar: Bool { polarRotated != nil }
+    public var isUniformAffine: Bool { isUniform && !turbo && !isPolar && !rotatesValues }
 
     public func resolvingPolar(rotated: Int) -> KVPrecision {
         KVPrecision(keyBits: keyBits, valueBits: valueBits, rotatesValues: rotatesValues, turbo: turbo, polarRotated: rotated)

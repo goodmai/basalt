@@ -61,40 +61,41 @@ public func formatRAMBytes(_ bytes: Int64) -> String {
 public actor MemoryEvaluator {
     private let profiler: SystemProfiler
     private let expertStreaming: ExpertStreaming?
+    private let disableExpertStreaming: Bool
 
-    public init(profiler: SystemProfiler = SystemProfiler(), expertStreaming: ExpertStreaming? = nil) {
+    public init(
+        profiler: SystemProfiler = SystemProfiler(),
+        expertStreaming: ExpertStreaming? = nil,
+        disableExpertStreaming: Bool = false
+    ) {
         self.profiler = profiler
         self.expertStreaming = expertStreaming
+        self.disableExpertStreaming = disableExpertStreaming
     }
 
     public func evaluate(
         modelId: String, contextLength: Int = 4096, kvPrecision: KVPrecision? = nil, kvZones: KVZones? = nil
     ) async -> MemoryAssessment {
         let resources = await profiler.detectResources()
-        
-        // 1. Check ModelDatabase
         if let def = ModelDatabase.allModels.first(where: {
             $0.id.lowercased() == modelId.lowercased() ||
             $0.name.lowercased() == modelId.lowercased()
         }) {
             return evaluate(definition: def, resources: resources, contextLength: contextLength, kvPrecision: kvPrecision, kvZones: kvZones)
         }
-
-        // 2. Check local cache directory
+        let directURL = URL(fileURLWithPath: modelId)
+        var isDir: ObjCBool = false
+        if FileManager.default.fileExists(atPath: directURL.path, isDirectory: &isDir), isDir.boolValue {
+            return evaluate(
+                directory: directURL, modelId: modelId, resources: resources,
+                contextLength: contextLength, kvPrecision: kvPrecision, kvZones: kvZones)
+        }
         let localDir = ModelCache.cacheDir(for: modelId)
         if FileManager.default.fileExists(atPath: localDir.path) {
-            let size = directorySize(at: localDir)
-            return evaluateLocal(
-                modelId: modelId,
-                localSize: size,
-                resources: resources,
-                contextLength: contextLength,
-                kvPrecision: kvPrecision,
-                kvZones: kvZones
-            )
+            return evaluate(
+                directory: localDir, modelId: modelId, resources: resources,
+                contextLength: contextLength, kvPrecision: kvPrecision, kvZones: kvZones)
         }
-
-        // 3. Fallback heuristic from repo ID
         return evaluateHeuristic(modelId: modelId, resources: resources, contextLength: contextLength, kvPrecision: kvPrecision, kvZones: kvZones)
     }
 
@@ -206,31 +207,6 @@ public actor MemoryEvaluator {
         return nil
     }
 
-    private func evaluateLocal(
-        modelId: String,
-        localSize: Int64,
-        resources: SystemProfiler.SystemResources,
-        contextLength: Int,
-        kvPrecision: KVPrecision?,
-        kvZones: KVZones?
-    ) -> MemoryAssessment {
-        let modelMB = Int(localSize / (1024 * 1024))
-        let total = ModelDefinition.inferTotalParameters(id: modelId, name: "", ramMB: Int64(modelMB))
-        let kv = KVCacheGeometry.forModel(modelId, parameters: total)
-        let loaded = ByteCount(Int64(Double(localSize) * 1.15))
-        let kvBytes = kv.bytes(tokens: TokenCount(contextLength), kvPrecision: kvPrecision, zones: kvZones)
-        var footprint = Footprint(required: loaded + kvBytes, weights: ByteCount(localSize), kv: kv, kvPrecision: kvPrecision, kvZones: kvZones)
-        footprint.streaming = streaming(
-            weights: loaded, totalParameters: total,
-            activeParameters: ModelDefinition.inferActiveParameters(id: modelId, name: "", total: total), kv: kvBytes)
-        footprint.admitsStreaming = expertStreaming != nil
-        return Self.assessment(
-            id: modelId, name: modelId.components(separatedBy: "/").last ?? modelId,
-            footprint: footprint,
-            resources: resources,
-            subject: "Model files (\(formatRAMBytes(localSize)))", recommendation: nil)
-    }
-
     private func evaluateHeuristic(
         modelId: String,
         resources: SystemProfiler.SystemResources,
@@ -267,8 +243,40 @@ public actor MemoryEvaluator {
             resources: resources, subject: "Model (estimated)",
             recommendation: quantized ? nil : "Consider choosing a 4-bit quantized MLX model variant.")
     }
+}
 
-    private func directorySize(at url: URL) -> Int64 {
-        OrchestratorPolicy.resolvedDirectorySize(at: url)
+extension MemoryEvaluator {
+    public func evaluate(
+        directory: URL,
+        modelId: String? = nil,
+        resources: SystemProfiler.SystemResources,
+        contextLength: Int = 4096,
+        kvPrecision: KVPrecision? = nil,
+        kvZones: KVZones? = nil
+    ) -> MemoryAssessment {
+        let id = modelId ?? directory.lastPathComponent
+        let localSize = OrchestratorPolicy.resolvedDirectorySize(at: directory)
+        let modelMB = Int(localSize / (1024 * 1024))
+        let total = ModelDefinition.inferTotalParameters(id: id, name: "", ramMB: Int64(modelMB))
+        let kv = KVCacheGeometry.load(modelDirectory: directory) ?? KVCacheGeometry.forModel(id, parameters: total)
+        let loaded = ByteCount(Int64(Double(localSize) * 1.15))
+        let kvBytes = kv.bytes(tokens: TokenCount(contextLength), kvPrecision: kvPrecision, zones: kvZones)
+        var footprint = Footprint(required: loaded + kvBytes, weights: ByteCount(localSize), kv: kv, kvPrecision: kvPrecision, kvZones: kvZones)
+        let selectedStreaming = expertStreaming ?? ExpertStreaming()
+        if let stacked = ModelFitAnalyzer.stackedExperts(in: directory) {
+            footprint.streaming = ExpertStreamingFootprint(
+                residentWeights: stacked.residentWeights, expertBytes: stacked.expertBytes, kv: kvBytes, streaming: selectedStreaming)
+            footprint.admitsStreaming = expertStreaming != nil || (!disableExpertStreaming && !ExpertStreaming.isDisabledByEnvironment())
+        } else {
+            footprint.streaming = streaming(
+                weights: loaded, totalParameters: total,
+                activeParameters: ModelDefinition.inferActiveParameters(id: id, name: "", total: total), kv: kvBytes)
+            footprint.admitsStreaming = expertStreaming != nil
+        }
+        return Self.assessment(
+            id: id, name: id.components(separatedBy: "/").last ?? id,
+            footprint: footprint,
+            resources: resources,
+            subject: "Model files (\(formatRAMBytes(localSize)))", recommendation: nil)
     }
 }
