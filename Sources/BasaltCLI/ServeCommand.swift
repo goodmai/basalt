@@ -55,6 +55,12 @@ struct ServeCommand: AsyncParsableCommand {
     )
     var ttsModel: String?
 
+    @Option(
+        name: .customLong("image-model"),
+        help: "Image generation and editing model served on /v1/images/generations and /v1/images/edits: repo ID or local path (FLUX.2/3-klein, Z-Image-Turbo, Iris-3B, SANA-1.5, Bonsai-4B, Step1X-Edit)"
+    )
+    var imageModel: String?
+
     @OptionGroup var sampling: SamplingOptions
 
     @OptionGroup var kvCache: KVCacheOptions
@@ -191,7 +197,8 @@ extension ServeCommand {
         orchestrator: any ModelOrchestrating,
         resolvedPath: String,
         decisions: (any DecisionEngine)?,
-        stages: PipelineStages
+        stages: PipelineStages,
+        imageSynthesizer: (any ImageSynthesizer)? = nil
     ) throws -> MCPServer {
         MCPServer(
             orchestrator: orchestrator,
@@ -203,6 +210,7 @@ extension ServeCommand {
         .withImageDirectories(imageDirs.map { URL(fileURLWithPath: $0) })
         .withDecisions(decisions)
         .withPipeline(stages)
+        .withImageSynthesizer(imageSynthesizer)
     }
 
     private func makeOrchestrator(engine: MLXInferenceEngine, maxTokens: Int) async throws -> ModelOrchestratorActor<MLXInferenceEngine> {

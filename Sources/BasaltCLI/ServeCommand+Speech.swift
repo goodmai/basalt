@@ -46,8 +46,8 @@ extension ServeCommand {
             }
             return RoutedSpeechSynthesizer(
                 tiers: [
-                    .init(candidate: loaded.candidate, synthesizer: loaded.synthesizer),
-                    .init(candidate: .appleSpeech, synthesizer: AppleSpeechSynthesizer()),
+                    RoutedSpeechSynthesizer.Tier(candidate: loaded.candidate, synthesizer: loaded.synthesizer),
+                    RoutedSpeechSynthesizer.Tier(candidate: .appleSpeech, synthesizer: AppleSpeechSynthesizer()),
                 ],
                 onGPUBusy: loaded.candidate.compute == .mlx ? .fallbackAppleSpeech : .keep,
                 gpuBusyProbe: gpuBusyProbe,
@@ -58,8 +58,10 @@ extension ServeCommand {
             throw ExitCode.failure
         }
     }
+}
 
-    func runDirect(_ spec: ComposeSpec?, _ boot: DirectServeBoot<some ModelOrchestrating>) async throws {
+extension ServeCommand {
+    func runDirect<Orchestrator: ModelOrchestrating>(_ spec: ComposeSpec?, _ boot: DirectServeBoot<Orchestrator>) async throws {
         let memory = noMemoryCoordinator ? nil : MemoryCoordinator()
         let loadedEmbeddings = try await loadEmbeddings()
         let loadedDecisions = try await loadDecisions(chat: boot.engine, chatPath: boot.resolvedPath)
@@ -90,9 +92,11 @@ extension ServeCommand {
             try await composeHost($0, start: start, engine: boot.engine, chatPath: boot.resolvedPath, memory: memory)
         }
         var activeSpeech = try await loadSpeechSynthesizer(gate: boot.orchestrator.gate, memory: memory)
+        var activeImage = try await loadImageSynthesizer(gate: boot.orchestrator.gate)
         if let host, let system = await host.registry.system(ComposeSpec.defaultPipeline) {
             (stages, decisions) = (system.stages, system.decisions)
             if activeSpeech == nil { activeSpeech = system.speech }
+            if activeImage == nil { activeImage = system.image }
         }
         let record = try spec.flatMap { host == nil ? nil : try ComposeRecord.write(name: $0.name, port: boot.port, file: pipeline.compose ?? "") }
         defer { record.map(ComposeRecord.remove) }
@@ -101,14 +105,15 @@ extension ServeCommand {
         let (startREST, startMCP) = (!mcp || rest, mcp)
         if startREST { log("REST → http://\(boot.config.host):\(boot.config.restPort)") }
         if startMCP  { log("MCP → JSON-RPC 2.0 on stdin/stdout") }
-        let mcpServer = startMCP ? try makeMCPServer(orchestrator: boot.orchestrator, resolvedPath: boot.resolvedPath, decisions: decisions, stages: stages) : nil
+        let mcpServer = startMCP ? try makeMCPServer(
+            orchestrator: boot.orchestrator, resolvedPath: boot.resolvedPath, decisions: decisions, stages: stages, imageSynthesizer: activeImage) : nil
 
         try await Self.runServers(
             ServerLaunch(
                 config: boot.config, startREST: startREST, mcpServer: mcpServer, embeddings: embeddings, decisions: decisions,
                 pipeline: stages, pipelines: host?.registry, compose: host.map(\.control),
                 statsInterval: stats ? min(max(1, statsInterval), 86_400) : nil, canaryInterval: canaryMinutes.map { .seconds($0 * 60) },
-                announceReady: network.announceReady, speechSynthesizer: activeSpeech
+                announceReady: network.announceReady, speechSynthesizer: activeSpeech, imageSynthesizer: activeImage
             ),
             orchestrator: boot.orchestrator
         )

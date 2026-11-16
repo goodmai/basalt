@@ -13,6 +13,8 @@ enum ComposeHeld: Sendable {
     case onDemandDecision(OnDemandDecision)
     case speaker(SpeechSynthesizerLoader.LoadedSynthesizer)
     case onDemandSpeaker(OnDemandSpeechSynthesizer)
+    case imageGenerator(any ImageSynthesizer)
+    case onDemandImageGenerator(OnDemandImageSynthesizer)
 }
 
 struct ComposeStart: Sendable {
@@ -83,6 +85,9 @@ actor ComposeHost {
         case .local(let source):
             if spec.deciderModels.contains(name) { return try await loadDecider(name, source: source, model: model) }
             if spec.speakerModels.contains(name) { return try await loadSpeaker(name, source: source, model: model) }
+            if spec.imageGeneratorModels.contains(name) {
+                return try await loadImageGenerator(name, source: source, model: model, in: spec)
+            }
             let path = try await services.resolve(source)
             if spec.views.contains(where: { $0.spec.ocr == name }), let refusal = ServeCommand.ocrRefusal(source, path: path) { throw BasaltError.invalidRequestStructure(details: refusal) }
             if spec.views.contains(where: { $0.spec.speech == name }), let refusal = ServeCommand.audioRefusal(source, path: path) { throw BasaltError.invalidRequestStructure(details: refusal) }
@@ -192,7 +197,8 @@ actor ComposeHost {
         case .onDemandDecision(let decider): await decider.unload()
         case .speaker(let loaded): await loaded.synthesizer.unload()
         case .onDemandSpeaker(let speaker): await speaker.unload()
-        case .cloud, nil: break
+        case .onDemandImageGenerator(let generator): await generator.unload()
+        case .imageGenerator, .cloud, nil: break
         }
     }
 }

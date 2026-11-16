@@ -11,6 +11,7 @@ public struct ComposeDiff: Sendable, Equatable, Codable {
     public var experimental: [String] = []
     public var chat: String?
     public var decider: String?
+    public var imagine: String?
     public var restart: String?
     public var refusal: String?
 
@@ -21,6 +22,7 @@ public struct ComposeDiff: Sendable, Equatable, Codable {
         diff.pipelines = new.pipelineNames
         if old.answer != new.answer || reloads(old, new, new.answer) { diff.chat = new.answer }
         if old.decider != new.decider || new.deciderModel.map({ reloads(old, new, $0) }) == true { diff.decider = new.decider ?? "none" }
+        if old.imagine != new.imagine { diff.imagine = new.imagine.map { $0.chain.joined(separator: " → ") } ?? "none" }
         for name in Set(old.models.keys).union(new.models.keys).sorted() { diff.classify(name, old, new) }
         if old.budget != new.budget { diff.budgets.append("total") }
         diff.experimental = old.hotReloadedExperimentalKeys(to: new)
@@ -33,7 +35,10 @@ public struct ComposeDiff: Sendable, Equatable, Codable {
         case (nil, _?): added.append(name)
         case (_?, nil): removed.append(name)
         case (let before?, let after?):
-            Self.needsReload(before, after) || old.deciderModels.contains(name) != new.deciderModels.contains(name) ? reloaded.append(name) : kept.append(name)
+            let roleChanged = old.deciderModels.contains(name) != new.deciderModels.contains(name)
+                || old.speakerModels.contains(name) != new.speakerModels.contains(name)
+                || old.imageGeneratorModels.contains(name) != new.imageGeneratorModels.contains(name)
+            Self.needsReload(before, after) || roleChanged ? reloaded.append(name) : kept.append(name)
             if after.isCloud, before.budget != after.budget { budgets.append(name) }
             if after.isCloud, before.apiKeyEnv != after.apiKeyEnv { rekeyed.append(name) }
         case (nil, nil):
@@ -62,7 +67,7 @@ public struct ComposeDiff: Sendable, Equatable, Codable {
         var lines = [("load", added), ("reload", reloaded), ("unload", removed), ("keep", kept), ("budget", budgets), ("key", rekeyed), ("experimental", experimental)].compactMap { verb, names in
             names.isEmpty ? nil : "  \(verb): \(names.joined(separator: ", "))"
         }
-        lines += [("chat", chat), ("decide", decider)].compactMap { verb, name in name.map { "  \(verb): \($0)" } }
+        lines += [("chat", chat), ("decide", decider), ("imagine", imagine)].compactMap { verb, name in name.map { "  \(verb): \($0)" } }
         lines.append("  pipelines: \(pipelines.joined(separator: ", "))")
         return lines + (restart.map { ["  needs a restart: \($0)"] } ?? []) + (refusal.map { ["  refused: \($0)"] } ?? [])
     }

@@ -94,6 +94,7 @@ public struct ComposeSpec: Sendable, Equatable {
     public var answerAdapter: String?
     public var routes: [AnswerRoute] = []
     public var speak: Speak?
+    public var imagine: Imagine?
     public var budget: Double?
     public var pipelines: [String: PipelineSpec] = [:]
     public var experimental = Experimental()
@@ -134,6 +135,7 @@ public struct PipelineSpec: Sendable, Equatable {
     public var answerAdapter: String?
     public var routes: [AnswerRoute] = []
     public var speak: ComposeSpec.Speak?
+    public var imagine: ComposeSpec.Imagine?
 
     public init(answer: String) { self.answer = answer }
 }
@@ -147,7 +149,7 @@ extension ComposeSpec {
         var spec = PipelineSpec(answer: answer)
         (spec.documents, spec.audio, spec.cascade, spec.routes) = (documents, audio, cascade, routes)
         (spec.escalateBelow, spec.abstainBelow, spec.minMargin, spec.epistemic) = (escalateBelow, abstainBelow, minMargin, epistemic)
-        (spec.answerAdapter, spec.speak) = (answerAdapter, speak)
+        (spec.answerAdapter, spec.speak, spec.imagine) = (answerAdapter, speak, imagine)
         return spec
     }
 
@@ -157,7 +159,7 @@ extension ComposeSpec {
         var view = self
         (view.documents, view.audio, view.cascade, view.routes, view.answer) = (pipeline.documents, pipeline.audio, pipeline.cascade, pipeline.routes, pipeline.answer)
         (view.escalateBelow, view.abstainBelow, view.minMargin, view.epistemic, view.pipelines) = (pipeline.escalateBelow, pipeline.abstainBelow, pipeline.minMargin, pipeline.epistemic, [:])
-        (view.answerAdapter, view.speak) = (pipeline.answerAdapter, pipeline.speak)
+        (view.answerAdapter, view.speak, view.imagine) = (pipeline.answerAdapter, pipeline.speak, pipeline.imagine)
         return view
     }
 

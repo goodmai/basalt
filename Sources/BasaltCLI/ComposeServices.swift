@@ -14,6 +14,18 @@ struct ComposeServices: Sendable {
     var speaker: @Sendable (_ source: String, _ path: String) async throws -> SpeechSynthesizerLoader.LoadedSynthesizer = { source, path in
         try await SpeechSynthesizerLoader.load(identifier: source, directory: URL(fileURLWithPath: path))
     }
+    var imageGenerator: @Sendable (
+        _ source: String,
+        _ path: String,
+        _ sharedTextEmbedder: (@Sendable (String) async throws -> [Float])?
+    ) async throws -> any ImageSynthesizer = { source, path, sharedTextEmbedder in
+        try await ImageSynthesizerLoader.load(
+            identifier: source,
+            directory: URL(fileURLWithPath: path),
+            sharedTextEmbedder: sharedTextEmbedder
+        )
+    }
+    var sharedTextEmbedder: (@Sendable (String) async throws -> [Float])? = nil
     var memoryPressure: @Sendable () async -> Bool = { SystemMemoryPressure().sample().pressure != .normal }
 }
 
@@ -31,6 +43,16 @@ extension ComposeServices {
             probe: ComposeProbe.live,
             speaker: { source, path in
                 try await SpeechSynthesizerLoader.load(identifier: source, directory: URL(fileURLWithPath: path))
+            },
+            imageGenerator: { source, path, sharedTextEmbedder in
+                try await ImageSynthesizerLoader.load(
+                    identifier: source,
+                    directory: URL(fileURLWithPath: path),
+                    sharedTextEmbedder: sharedTextEmbedder
+                )
+            },
+            sharedTextEmbedder: { prompt in
+                try await chat.encodePromptForImage(prompt)
             },
             memoryPressure: {
                 if let memory {

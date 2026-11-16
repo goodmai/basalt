@@ -54,6 +54,7 @@ public enum ComposeSchema {
         "pipeline": [
             Field("perceive", .section("perceive")), Field("decide", .section("decide")),
             Field("answer", .nameOrSection("answer")), Field("speak", .namesOrSection("speak")),
+            Field("imagine", .namesOrSection("imagine")),
             Field("profiles", .names, since: 2),
         ],
         "speak": [
@@ -62,6 +63,14 @@ public enum ComposeSchema {
             Field("sentence_streaming", .boolean),
             Field("format", .choice(SpeechAudioFormat.allCases.map(\.rawValue))),
             Field("exaggeration", .number), Field("max_ttfa_ms", .integer),
+        ],
+        "imagine": [
+            Field("chain", .names), Field("upsample_via", .string), Field("share_encoder", .string),
+            Field("steps", .integer), Field("size", .string),
+            Field("format", .choice(ImageOutputFormat.allCases.map(\.rawValue))),
+            Field("teacache_threshold", .number), Field("preview_every_steps", .integer),
+            Field("candidates", .integer), Field("judge_via", .string),
+            Field("on_gpu_busy", .choice(ImageOnGPUBusy.allCases.map(\.rawValue))),
         ],
         "perceive": [Field("documents", .names), Field("audio", .names)],
         "decide": [
@@ -143,7 +152,9 @@ public enum ComposeSchema {
     }
 
     public static var allKeys: Set<String> { Set(sections.values.flatMap { $0.map(\.name) }) }
+}
 
+extension ComposeSchema {
     public static var jsonSchema: String {
         var definitions: [String: Any] = [:]
         for (name, fields) in sections {
