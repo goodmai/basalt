@@ -35,14 +35,18 @@ public enum MessagePart: Sendable, Equatable, Codable {
     case reasoning(String)
     case toolCall(ToolCallOutput)
     case attachment(AttachmentPart)
+    case image(GeneratedImagePart)
 }
 
 public struct AttachmentPart: Sendable, Equatable, Codable {
     public var name: String
     public var kind: String
     public var perceived: String
+    public var filePath: String?
 
-    public init(name: String, kind: String, perceived: String = "") { (self.name, self.kind, self.perceived) = (name, kind, perceived) }
+    public init(name: String, kind: String, perceived: String = "", filePath: String? = nil) {
+        (self.name, self.kind, self.perceived, self.filePath) = (name, kind, perceived, filePath)
+    }
 }
 
 public struct StageReceipt: Sendable, Equatable, Codable {
@@ -87,6 +91,19 @@ public struct MessageSnapshot: Sendable, Equatable, Identifiable {
 
     public var attachments: [AttachmentPart] {
         parts.compactMap { part in if case .attachment(let attachment) = part { attachment } else { nil } }
+    }
+
+    public var images: [GeneratedImagePart] {
+        parts.compactMap { part in if case .image(let image) = part { image } else { nil } }
+    }
+
+    public var searchableText: String {
+        var pieces = text.isEmpty ? [] : [text]
+        for image in images {
+            if !image.prompt.isEmpty { pieces.append(image.prompt) }
+            if let revised = image.revisedPrompt, !revised.isEmpty { pieces.append(revised) }
+        }
+        return pieces.joined(separator: "\n")
     }
 
     public var prompt: String {

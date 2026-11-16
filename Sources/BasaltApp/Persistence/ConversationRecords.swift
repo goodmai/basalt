@@ -35,12 +35,16 @@ final class MessageRecord {
 
 enum RecordMapping {
     static func fill(_ record: MessageRecord, from message: MessageSnapshot, order: Int) {
+        let persistedParts = message.parts.map { part -> MessagePart in
+            guard case .image(let image) = part else { return part }
+            return .image(image.persisted)
+        }
         record.order = order
         record.role = message.role.rawValue
         record.state = message.state.rawValue
-        record.parts = (try? JSONEncoder().encode(message.parts)) ?? Data()
+        record.parts = (try? JSONEncoder().encode(persistedParts)) ?? Data()
         record.receipt = message.receipt.flatMap { try? JSONEncoder().encode($0) }
-        record.text = message.text
+        record.text = message.searchableText
     }
 
     static func snapshot(_ record: MessageRecord) -> MessageSnapshot {

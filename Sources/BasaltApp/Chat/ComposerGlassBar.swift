@@ -4,6 +4,7 @@ import UniformTypeIdentifiers
 
 struct ComposerGlassBar: View {
     let store: ChatStore
+    var showsImageToggle = false
     @Namespace private var glassNamespace
     @FocusState private var focused: Bool
     @State private var importing = false
@@ -58,7 +59,8 @@ struct ComposerGlassBar: View {
     }
 
     private var inputRow: some View {
-        HStack(alignment: .bottom, spacing: 10) {
+        let imageActive = store.state.usesImageComposer
+        return HStack(alignment: .bottom, spacing: 10) {
             Button("Attach", systemImage: "paperclip") { importing = true }
                 .labelStyle(.iconOnly)
                 .font(.title3)
@@ -66,8 +68,21 @@ struct ComposerGlassBar: View {
                 .adaptiveGlassButton()
                 .glassEffectID(ComposerGlassID.attach, in: glassNamespace)
 
+            if showsImageToggle || imageActive {
+                Button("Image Mode", systemImage: "photo.badge.plus") {
+                    store.send(.toggleImageMode)
+                }
+                .labelStyle(.iconOnly)
+                .font(.title3)
+                .controlSize(.large)
+                .tint(imageActive ? .accentColor : nil)
+                .adaptiveGlassButton(prominent: imageActive)
+                .glassEffectID(ComposerGlassID.imageMode, in: glassNamespace)
+                .glassEffectTransition(morphTransition)
+            }
+
             TextField(
-                "Message",
+                imageActive ? "Describe an image to generate or edit…" : "Message",
                 text: Binding(
                     get: { store.state.draft },
                     set: { store.send(.draftChanged($0)) }
@@ -121,7 +136,7 @@ struct ComposerGlassBar: View {
         let scoped = url.startAccessingSecurityScopedResource()
         defer { if scoped { url.stopAccessingSecurityScopedResource() } }
         if let data = try? Data(contentsOf: url),
-           let attachment = ChatAttachment(name: url.lastPathComponent, data: data) {
+           let attachment = ChatAttachment(name: url.lastPathComponent, data: data, sourcePath: url.path) {
             store.send(.attach(attachment))
         }
     }

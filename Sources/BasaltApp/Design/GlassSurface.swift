@@ -4,6 +4,7 @@ import SwiftUI
 
 public enum ComposerGlassID: Hashable, Sendable {
     case attach
+    case imageMode
     case field
     case submitOrStop
     case attachmentChip(UUID)

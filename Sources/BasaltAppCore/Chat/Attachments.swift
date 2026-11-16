@@ -13,11 +13,12 @@ public struct ChatAttachment: Sendable, Equatable, Identifiable {
     public var kind: String
     public var format: String
     public var data: Data
+    public var sourcePath: String?
 
-    public init?(name: String, data: Data, id: UUID = UUID()) {
+    public init?(name: String, data: Data, id: UUID = UUID(), sourcePath: String? = nil) {
         let format = (name as NSString).pathExtension.lowercased()
         guard let kind = Self.kinds[format], !data.isEmpty, data.count <= Self.byteLimit else { return nil }
-        (self.id, self.name, self.kind, self.format, self.data) = (id, name, kind, format, data)
+        (self.id, self.name, self.kind, self.format, self.data, self.sourcePath) = (id, name, kind, format, data, sourcePath)
     }
 
     public static func accepts(_ name: String) -> Bool { kinds[(name as NSString).pathExtension.lowercased()] != nil }

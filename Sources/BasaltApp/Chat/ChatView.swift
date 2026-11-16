@@ -81,6 +81,7 @@ struct ChatView: View {
             branch: branch,
             onSelectBranch: { index in store.send(.selectBranch(message: message.id, index: index)) },
             onRegenerate: { store.send(.regenerateFrom(message: message.id, reply: MessageID(), run: RunID())) },
+            onEditImage: { part in store.send(.editGeneratedImage(part)) },
             onReadAloud: voice.map { controller in { controller.store.send(.readAloud(message.id, message.text)) } },
             isSpeaking: speaking
         )
@@ -103,7 +104,7 @@ struct ChatView: View {
                     .padding(.horizontal, 14)
                     .padding(.vertical, 6)
             }
-            ComposerGlassBar(store: store)
+            ComposerGlassBar(store: store, showsImageToggle: model != nil || store.state.usesImageComposer)
         }
     }
 
@@ -167,6 +168,7 @@ struct MessageRow: View {
     var branch: BranchPosition? = nil
     var onSelectBranch: (Int) -> Void = { _ in }
     var onRegenerate: () -> Void = {}
+    var onEditImage: (GeneratedImagePart) -> Void = { _ in }
     var onReadAloud: (() -> Void)? = nil
     var isSpeaking = false
 
@@ -189,7 +191,9 @@ struct MessageRow: View {
     }
 
     var summary: String {
-        message.text.isEmpty ? message.attachments.map(\.name).joined(separator: ", ") : message.text
+        if !message.text.isEmpty { return message.text }
+        if let image = message.images.first { return image.prompt }
+        return message.attachments.map(\.name).joined(separator: ", ")
     }
 
     @ViewBuilder var content: some View {
@@ -211,7 +215,9 @@ struct MessageRow: View {
             }
         } else {
             VStack(alignment: .leading, spacing: 8) {
-                ForEach(Array(message.parts.enumerated()), id: \.offset) { _, part in PartView(part: part) }
+                ForEach(Array(message.parts.enumerated()), id: \.offset) { _, part in
+                    PartView(part: part, onEditImage: onEditImage)
+                }
                 if message.state == .streaming, message.parts.isEmpty {
                     ProgressView().controlSize(.small).accessibilityLabel("Answering")
                 }
@@ -253,6 +259,7 @@ struct BranchSwitcherView: View {
 
 struct PartView: View {
     let part: MessagePart
+    var onEditImage: (GeneratedImagePart) -> Void = { _ in }
 
     var body: some View {
         switch part {
@@ -271,6 +278,8 @@ struct PartView: View {
             Label("\(call.name)(\(call.arguments))", systemImage: "wrench.and.screwdriver").font(.callout.monospaced())
         case .attachment(let attachment):
             AttachmentChip(attachment: attachment)
+        case .image(let image):
+            GeneratedImageCard(part: image, onEdit: onEditImage)
         }
     }
 }
