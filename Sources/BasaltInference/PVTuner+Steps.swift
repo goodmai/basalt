@@ -31,33 +31,59 @@ extension PVTuner {
         var targets: [PVQuantTarget] = []
         for (path, mod) in root.namedModules() {
             guard let idx = textBlockIndex(path), blocks.contains(idx), !path.contains("router") else { continue }
-            if let ql = mod as? QuantizedLinear, ql.globalScale == nil, [2, 3, 4].contains(ql.bits),
-               ql.mode == .affine || ql.mode == .nf4 {
-                let elems = ql.weight.dim(0) * (ql.weight.dim(1) * 32 / ql.bits)
-                let wCopy = ql.weight + MLXArray(UInt32(0))
-                let sCopy = ql.scales + MLXArray(0, dtype: ql.scales.dtype)
-                let bCopy = ql.biases.map { $0 + MLXArray(0, dtype: $0.dtype) }
-                eval(wCopy, sCopy)
-                if let bCopy { eval(bCopy) }
-                targets.append(PVQuantTarget(
-                    path: path, module: ql, packedWeight: wCopy, scales: sCopy, biases: bCopy, bias: ql.bias,
-                    spec: .init(groupSize: ql.groupSize, bits: ql.bits, mode: ql.mode), isSwitch: false, elementCount: elems))
-            } else if let qs = mod as? QuantizedSwitchLinear, [2, 3, 4].contains(qs.bits),
-                      qs.mode == .affine || qs.mode == .nf4 {
-                let p = Dictionary(uniqueKeysWithValues: qs.parameters().flattened())
-                guard let w = p["weight"], let s = p["scales"], w.dim(0) <= maxSwitchExperts else { continue }
-                let elems = w.dim(0) * w.dim(1) * (w.dim(2) * 32 / qs.bits)
-                let wCopy = w + MLXArray(UInt32(0))
-                let sCopy = s + MLXArray(0, dtype: s.dtype)
-                let bCopy = p["biases"].map { $0 + MLXArray(0, dtype: $0.dtype) }
-                eval(wCopy, sCopy)
-                if let bCopy { eval(bCopy) }
-                targets.append(PVQuantTarget(
-                    path: path, module: qs, packedWeight: wCopy, scales: sCopy, biases: bCopy, bias: p["bias"],
-                    spec: .init(groupSize: qs.groupSize, bits: qs.bits, mode: qs.mode), isSwitch: true, elementCount: elems))
+            if let item = target(path: path, module: mod, maxSwitchExperts: maxSwitchExperts) {
+                targets.append(item)
             }
         }
         return targets
+    }
+
+    private static func target(path: String, module: Module, maxSwitchExperts: Int) -> PVQuantTarget? {
+        if let nf4 = module as? NF4Linear {
+            let wCopy = nf4.weight + MLXArray(UInt32(0))
+            let sCopy = nf4.scales + MLXArray(0, dtype: nf4.scales.dtype)
+            eval(wCopy, sCopy)
+            return PVQuantTarget(
+                path: path, module: nf4, packedWeight: wCopy, scales: sCopy, biases: nil, bias: nf4.bias,
+                spec: PVCodeGrid.Spec(nf4GroupSize: nf4.groupSize), isSwitch: false,
+                elementCount: nf4.weight.dim(0) * (nf4.weight.dim(1) * 8))
+        }
+        if let ql = module as? QuantizedLinear, ql.globalScale == nil, [2, 3, 4].contains(ql.bits), ql.mode == .affine {
+            let wCopy = ql.weight + MLXArray(UInt32(0))
+            let sCopy = ql.scales + MLXArray(0, dtype: ql.scales.dtype)
+            let bCopy = ql.biases.map { $0 + MLXArray(0, dtype: $0.dtype) }
+            eval(wCopy, sCopy)
+            if let bCopy { eval(bCopy) }
+            return PVQuantTarget(
+                path: path, module: ql, packedWeight: wCopy, scales: sCopy, biases: bCopy, bias: ql.bias,
+                spec: PVCodeGrid.Spec(groupSize: ql.groupSize, bits: ql.bits, mode: ql.mode), isSwitch: false,
+                elementCount: ql.weight.dim(0) * (ql.weight.dim(1) * 32 / ql.bits))
+        }
+        return switchTarget(path: path, module: module, maxSwitchExperts: maxSwitchExperts)
+    }
+
+    private static func switchTarget(path: String, module: Module, maxSwitchExperts: Int) -> PVQuantTarget? {
+        if let nf4s = module as? NF4SwitchLinear {
+            let p = Dictionary(uniqueKeysWithValues: nf4s.parameters().flattened())
+            guard let w = p["weight"], let s = p["scales"], w.dim(0) <= maxSwitchExperts else { return nil }
+            let (wCopy, sCopy) = (w + MLXArray(UInt32(0)), s + MLXArray(0, dtype: s.dtype))
+            eval(wCopy, sCopy)
+            return PVQuantTarget(
+                path: path, module: nf4s, packedWeight: wCopy, scales: sCopy, biases: nil, bias: p["bias"],
+                spec: PVCodeGrid.Spec(nf4GroupSize: nf4s.groupSize), isSwitch: true,
+                elementCount: w.dim(0) * w.dim(1) * (w.dim(2) * 8))
+        }
+        guard let qs = module as? QuantizedSwitchLinear, [2, 3, 4].contains(qs.bits), qs.mode == .affine else { return nil }
+        let p = Dictionary(uniqueKeysWithValues: qs.parameters().flattened())
+        guard let w = p["weight"], let s = p["scales"], w.dim(0) <= maxSwitchExperts else { return nil }
+        let (wCopy, sCopy) = (w + MLXArray(UInt32(0)), s + MLXArray(0, dtype: s.dtype))
+        let bCopy = p["biases"].map { $0 + MLXArray(0, dtype: $0.dtype) }
+        eval(wCopy, sCopy)
+        if let bCopy { eval(bCopy) }
+        return PVQuantTarget(
+            path: path, module: qs, packedWeight: wCopy, scales: sCopy, biases: bCopy, bias: p["bias"],
+            spec: PVCodeGrid.Spec(groupSize: qs.groupSize, bits: qs.bits, mode: qs.mode), isSwitch: true,
+            elementCount: w.dim(0) * w.dim(1) * (w.dim(2) * 32 / qs.bits))
     }
 
     static func chunkTargets(_ targets: [PVQuantTarget], budget: Int) -> [[PVQuantTarget]] {
@@ -95,8 +121,14 @@ extension PVTuner {
             root.train(false)
         }
         for t in chunk {
-            let dense = dequantized(
-                t.packedWeight, scales: t.scales, biases: t.biases, groupSize: t.spec.groupSize, bits: t.spec.bits, mode: t.spec.mode)
+            let dense: MLXArray
+            switch t.spec.encoding {
+            case .nf4:
+                dense = NF4Metal.dequantized(t.packedWeight, scales: t.scales, groupSize: t.spec.groupSize)
+            case .affine(let mode):
+                dense = dequantized(
+                    t.packedWeight, scales: t.scales, biases: t.biases, groupSize: t.spec.groupSize, bits: t.spec.bits, mode: mode)
+            }
             eval(dense)
             let replacement: Module = if t.isSwitch {
                 SwitchLinear(inputDims: dense.dim(-1), outputDims: dense.dim(-2), numExperts: dense.dim(0), weight: dense, bias: t.bias)
@@ -192,9 +224,10 @@ extension PVTuner {
     ) throws {
         if let qt = mod as? QTIPLinear {
             qtipSwaps.append((path, PVQTIPLinear(from: qt)))
-        } else if let ql = mod as? QuantizedLinear, ql.globalScale == nil {
-            if ql.mode == .nf4 { nf4Swaps.append((path, PVScaleLinear(from: ql))) }
-            else if ql.mode == .affine { try ql.unfreeze(keys: ["scales", "biases"], strict: false) }
+        } else if let nf4 = mod as? NF4Linear {
+            nf4Swaps.append((path, PVScaleLinear(from: nf4)))
+        } else if let ql = mod as? QuantizedLinear, ql.globalScale == nil, ql.mode == .affine {
+            try ql.unfreeze(keys: ["scales", "biases"], strict: false)
         } else if let qs = mod as? QuantizedSwitchLinear, qs.mode == .affine {
             let nExp = qs.parameters().flattened().first(where: { $0.0 == "weight" })?.1.dim(0) ?? 0
             if nExp > 0 && nExp <= maxSwitchExperts { try qs.unfreeze(keys: ["scales", "biases"], strict: false) }

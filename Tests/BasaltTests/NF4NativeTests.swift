@@ -25,12 +25,12 @@ struct NF4NativeTests {
     }
 
     static func pack(_ weight: MLXArray, groupSize: Int) -> (MLXArray, MLXArray) {
-        let (codes, scales, _) = quantized(weight, groupSize: groupSize, bits: 4, mode: .nf4)
+        let (codes, scales) = NF4Metal.quantized(weight, groupSize: groupSize)
         return (codes, scales)
     }
 
     static func unpack(_ codes: MLXArray, _ scales: MLXArray, groupSize: Int) -> [Float] {
-        dequantized(codes, scales: scales, biases: nil, groupSize: groupSize, bits: 4, mode: .nf4).asType(.float32).asArray(Float.self)
+        NF4Metal.dequantized(codes, scales: scales, groupSize: groupSize).asType(.float32).asArray(Float.self)
     }
 
     static var codebook: [Float] {
