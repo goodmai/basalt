@@ -307,8 +307,10 @@ struct QTIPNativeLoaderAndCLITests {
         #expect(throws: (any Error).self) {
             _ = try ConvertSubcommand.parse(["src", "--out", "dst", "--experimental-qtip", "2.0", "--dequantize", "bf16"])
         }
+        let withPV = try ConvertSubcommand.parse(["src", "--out", "dst", "--experimental-qtip", "2.0", "--experimental-pv-tune"])
+        #expect(withPV.experimentalQtip == 2.0 && withPV.experimentalPvTune)
         #expect(throws: (any Error).self) {
-            _ = try ConvertSubcommand.parse(["src", "--out", "dst", "--experimental-qtip", "2.0", "--experimental-pv-tune"])
+            _ = try ConvertSubcommand.parse(["src", "--out", "dst", "--experimental-qtip", "2.0", "--adapter", "lora"])
         }
     }
 }

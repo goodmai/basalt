@@ -179,31 +179,45 @@ extension PVTuner {
                 root.invalidateCompiledTraces()
             }
         }
+        totalFlipped += try runQTIPDiscreteGroup(model, blocks: blocks, train: train, val: val, stepSeed: stepSeed, config: config)
         return totalFlipped
+    }
+
+    private static func unfreezeContinuousTarget(
+        path: String,
+        mod: Module,
+        maxSwitchExperts: Int,
+        nf4Swaps: inout [(String, PVScaleLinear)],
+        qtipSwaps: inout [(String, PVQTIPLinear)]
+    ) throws {
+        if let qt = mod as? QTIPLinear {
+            qtipSwaps.append((path, PVQTIPLinear(from: qt)))
+        } else if let ql = mod as? QuantizedLinear, ql.globalScale == nil {
+            if ql.mode == .nf4 { nf4Swaps.append((path, PVScaleLinear(from: ql))) }
+            else if ql.mode == .affine { try ql.unfreeze(keys: ["scales", "biases"], strict: false) }
+        } else if let qs = mod as? QuantizedSwitchLinear, qs.mode == .affine {
+            let nExp = qs.parameters().flattened().first(where: { $0.0 == "weight" })?.1.dim(0) ?? 0
+            if nExp > 0 && nExp <= maxSwitchExperts { try qs.unfreeze(keys: ["scales", "biases"], strict: false) }
+        } else if mod is RMSNorm || mod is LayerNorm || path.hasSuffix("norm") {
+            mod.unfreeze()
+        }
     }
 
     static func prepareContinuousUnfreeze(
         _ root: Module, blocks: Set<Int>, maxSwitchExperts: Int
-    ) throws -> [(String, PVScaleLinear, QuantizedLinear)] {
+    ) throws -> (nf4: [(String, PVScaleLinear)], qtip: [(String, PVQTIPLinear)]) {
         root.freeze()
-        var nf4Swaps: [(String, PVScaleLinear, QuantizedLinear)] = []
+        var nf4Swaps: [(String, PVScaleLinear)] = []
+        var qtipSwaps: [(String, PVQTIPLinear)] = []
         for (path, mod) in root.namedModules() {
             guard let idx = textBlockIndex(path), blocks.contains(idx), !path.contains("router") else { continue }
-            if let ql = mod as? QuantizedLinear, ql.globalScale == nil {
-                if ql.mode == .nf4 {
-                    nf4Swaps.append((path, PVScaleLinear(from: ql), ql))
-                } else if ql.mode == .affine {
-                    try ql.unfreeze(keys: ["scales", "biases"], strict: false)
-                }
-            } else if let qs = mod as? QuantizedSwitchLinear, qs.mode == .affine {
-                let nExp = qs.parameters().flattened().first(where: { $0.0 == "weight" })?.1.dim(0) ?? 0
-                if nExp > 0 && nExp <= maxSwitchExperts { try qs.unfreeze(keys: ["scales", "biases"], strict: false) }
-            } else if mod is RMSNorm || mod is LayerNorm || path.hasSuffix("norm") {
-                mod.unfreeze()
-            }
+            try unfreezeContinuousTarget(
+                path: path, mod: mod, maxSwitchExperts: maxSwitchExperts,
+                nf4Swaps: &nf4Swaps, qtipSwaps: &qtipSwaps)
         }
-        for (path, wrapper, _) in nf4Swaps { try swapModule(path, with: wrapper, in: root) }
-        return nf4Swaps
+        for (path, wrapper) in nf4Swaps { try swapModule(path, with: wrapper, in: root) }
+        for (path, wrapper) in qtipSwaps { try swapModule(path, with: wrapper, in: root) }
+        return (nf4Swaps, qtipSwaps)
     }
 
     static func runContinuousGroup(
@@ -211,9 +225,10 @@ extension PVTuner {
     ) throws {
         guard config.continuousStepsPerGroup > 0, !train.isEmpty else { return }
         let root = model as Module
-        let nf4Swaps = try prepareContinuousUnfreeze(root, blocks: blocks, maxSwitchExperts: config.maxContinuousSwitchExperts)
+        let swaps = try prepareContinuousUnfreeze(root, blocks: blocks, maxSwitchExperts: config.maxContinuousSwitchExperts)
         defer {
-            for (path, wrapper, _) in nf4Swaps { try? swapModule(path, with: wrapper.packedLayer(), in: root) }
+            for (path, wrapper) in swaps.nf4 { try? swapModule(path, with: wrapper.packedLayer(), in: root) }
+            for (path, wrapper) in swaps.qtip { try? swapModule(path, with: wrapper.packedLayer(), in: root) }
             root.freeze()
             root.train(false)
         }

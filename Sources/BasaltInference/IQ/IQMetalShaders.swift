@@ -44,19 +44,31 @@ enum IQMetalShaders {
             const uint tid = thread_index_in_threadgroup;
             const uint lane = thread_index_in_simdgroup;
             const uint row0 = (threadgroup_position_in_grid.y * 2u + simdgroup_index_in_threadgroup) * 4u;
+            threadgroup float4 x_tg[256];
             \(decls)
             \(loadCall)
             float acc[4] = {0.0f, 0.0f, 0.0f, 0.0f};
-            for (uint g = lane; g < GPR; g += 32u) {
-                device const T* xs = x + g * 32u;
-                float4 xr[8];
-                for (uint j = 0u; j < 8u; ++j) {
-                    xr[j] = float4(xs[4u * j], xs[4u * j + 1u], xs[4u * j + 2u], xs[4u * j + 3u]);
+            for (uint gBase = 0u; gBase < GPR; gBase += 32u) {
+                const uint tileG = min(32u, GPR - gBase);
+                const uint vecCount = tileG * 8u;
+                device const T* xBase = x + gBase * 32u;
+                for (uint idx = tid; idx < vecCount; idx += 64u) {
+                    device const T* xs = xBase + idx * 4u;
+                    x_tg[idx] = float4(xs[0], xs[1], xs[2], xs[3]);
                 }
-                uint blkOff = (g / SUB) * uint(BB), sub = g % SUB;
-                for (uint r = 0u; r < 4u; ++r) {
-                    acc[r] += iq_dot32(w + min(row0 + r, N - 1u) * ROW + blkOff, sub, xr\(lutArgs));
+                threadgroup_barrier(mem_flags::mem_threadgroup);
+                if (lane < tileG) {
+                    const uint g = gBase + lane;
+                    float4 xr[8];
+                    for (uint j = 0u; j < 8u; ++j) {
+                        xr[j] = x_tg[lane * 8u + j];
+                    }
+                    uint blkOff = (g / SUB) * uint(BB), sub = g % SUB;
+                    for (uint r = 0u; r < 4u; ++r) {
+                        acc[r] += iq_dot32(w + min(row0 + r, N - 1u) * ROW + blkOff, sub, xr\(lutArgs));
+                    }
                 }
+                threadgroup_barrier(mem_flags::mem_threadgroup);
             }
             for (uint r = 0u; r < 4u && row0 + r < N; ++r) {
                 float s = simd_sum(acc[r]);
@@ -120,9 +132,15 @@ enum IQMetalShaders {
 
         """
 
+    private static func usesThreadgroupLUT(_ type: GGMLType) -> Bool {
+        switch type {
+        case .iq3S, .iq3XXS, .iq2S, .iq2XS, .iq2XXS, .iq1S, .iq1M: true
+        default: false
+        }
+    }
+
     private static func lutDeclarations(for type: GGMLType) -> String {
         switch type {
-        case .iq4NL, .iq4XS: "(void)tid;"
         case .iq3S: "threadgroup uint lut_tg[512];"
         case .iq3XXS: "threadgroup uint lut_tg[256];"
         case .iq2S: "threadgroup ulong lut_tg[1024];"
@@ -134,32 +152,30 @@ enum IQMetalShaders {
     }
 
     private static func lutLoadCall(for type: GGMLType) -> String {
-        switch type {
-        case .iq4NL, .iq4XS: ""
-        default: "iq_load_lut(lut_tg, tid);"
-        }
+        usesThreadgroupLUT(type) ? "iq_load_lut(lut_tg, tid);" : ""
     }
 
     private static func lutExtraArgs(for type: GGMLType) -> String {
-        switch type {
-        case .iq4NL, .iq4XS: ""
-        default: ", lut_tg"
-        }
+        usesThreadgroupLUT(type) ? ", lut_tg" : ""
     }
 
+    private static let shaderMap: [GGMLType: String] = [
+        .iq4NL: iq4NLFunctions,
+        .iq4XS: iq4XSFunctions,
+        .iq3S: iq3SFunctions,
+        .iq3XXS: iq3XXSFunctions,
+        .iq2S: iq2SFunctions,
+        .iq2XS: iq2XSFunctions,
+        .iq2XXS: iq2XXSFunctions,
+        .iq1S: iq1SFunctions,
+        .iq1M: iq1MFunctions,
+        .q2K: q2KFunctions,
+        .q3K: q3KFunctions,
+        .q4K: q4KFunctions,
+    ]
+
     private static func formatFunctions(for type: GGMLType) -> String {
-        switch type {
-        case .iq4NL: iq4NLFunctions
-        case .iq4XS: iq4XSFunctions
-        case .iq3S: iq3SFunctions
-        case .iq3XXS: iq3XXSFunctions
-        case .iq2S: iq2SFunctions
-        case .iq2XS: iq2XSFunctions
-        case .iq2XXS: iq2XXSFunctions
-        case .iq1S: iq1SFunctions
-        case .iq1M: iq1MFunctions
-        default: ""
-        }
+        shaderMap[type] ?? ""
     }
 }
 
