@@ -1,5 +1,7 @@
 #!/usr/bin/env swift
+import CoreGraphics
 import Foundation
+import ImageIO
 
 let usage = """
     Usage:
@@ -10,6 +12,7 @@ let usage = """
       Contents/MacOS/Basalt          the SwiftUI app (BasaltMac)
       Contents/Helpers/basalt        the engine the app supervises (the basalt CLI)
       Contents/Resources/mlx.metallib  MLX's kernels; the app passes the path to the engine in BASALT_METALLIB
+      Contents/Resources/AppIcon.icns  generated volcanic-prism app icon
       Contents/Info.plist
 
     Options:
@@ -99,10 +102,11 @@ func version() -> String {
 func infoPlist(version: String) -> [String: Any] {
     [
         "CFBundleIdentifier": "app.basalt.mac", "CFBundleName": "Basalt", "CFBundleDisplayName": "Basalt",
-        "CFBundleExecutable": "Basalt", "CFBundlePackageType": "APPL", "CFBundleShortVersionString": version,
-        "CFBundleVersion": version, "LSMinimumSystemVersion": "27.0", "NSHighResolutionCapable": true,
-        "LSApplicationCategoryType": "public.app-category.developer-tools", "NSPrincipalClass": "NSApplication",
-        "CFBundleDevelopmentRegion": "en", "CFBundleLocalizations": ["en"] + localizations(),
+        "CFBundleExecutable": "Basalt", "CFBundleIconFile": "AppIcon", "CFBundlePackageType": "APPL",
+        "CFBundleShortVersionString": version, "CFBundleVersion": version, "LSMinimumSystemVersion": "27.0",
+        "NSHighResolutionCapable": true, "LSApplicationCategoryType": "public.app-category.developer-tools",
+        "NSPrincipalClass": "NSApplication", "CFBundleDevelopmentRegion": "en",
+        "CFBundleLocalizations": Array(Set(["en"] + localizations())).sorted(),
         "NSServices": [[
             "NSMenuItem": ["default": "Ask Basalt"], "NSMessage": "askBasalt", "NSPortName": "Basalt",
             "NSSendTypes": ["NSStringPboardType", "public.utf8-plain-text"], "NSRequiredContext": [String: String](),
@@ -116,6 +120,62 @@ func infoPlist(version: String) -> [String: Any] {
             "CFBundleURLSchemes": ["basalt"],
         ]],
     ]
+}
+
+func renderIconPNG(size: Int) -> Data? {
+    guard let space = CGColorSpace(name: CGColorSpace.sRGB),
+          let context = CGContext(
+              data: nil, width: size, height: size, bitsPerComponent: 8, bytesPerRow: size * 4,
+              space: space, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+          ) else { return nil }
+    let side = CGFloat(size)
+    let inset = side * 0.08
+    let rect = CGRect(x: inset, y: inset, width: side - inset * 2, height: side - inset * 2)
+    let corner = side * 0.22
+    let bgPath = CGPath(roundedRect: rect, cornerWidth: corner, cornerHeight: corner, transform: nil)
+    context.addPath(bgPath)
+    context.clip()
+    if let gradient = CGGradient(
+        colorsSpace: space,
+        colors: [CGColor(srgbRed: 0.16, green: 0.20, blue: 0.28, alpha: 1), CGColor(srgbRed: 0.07, green: 0.08, blue: 0.12, alpha: 1)] as CFArray,
+        locations: [0, 1]
+    ) {
+        context.drawLinearGradient(gradient, start: CGPoint(x: 0, y: side), end: CGPoint(x: side, y: 0), options: [])
+    }
+    context.resetClip()
+    let center = CGPoint(x: side * 0.5, y: side * 0.5)
+    let radius = side * 0.26
+    let hex = CGMutablePath()
+    for index in 0 ..< 6 {
+        let angle = CGFloat(index) * (.pi / 3) + (.pi / 6)
+        let point = CGPoint(x: center.x + cos(angle) * radius, y: center.y + sin(angle) * radius)
+        index == 0 ? hex.move(to: point) : hex.addLine(to: point)
+    }
+    hex.closeSubpath()
+    context.addPath(hex)
+    context.setFillColor(CGColor(srgbRed: 0.38, green: 0.70, blue: 0.98, alpha: 0.92))
+    context.fillPath()
+    guard let cgImage = context.makeImage() else { return nil }
+    let data = NSMutableData()
+    guard let destination = CGImageDestinationCreateWithData(data, "public.png" as CFString, 1, nil) else { return nil }
+    CGImageDestinationAddImage(destination, cgImage, nil)
+    return CGImageDestinationFinalize(destination) ? (data as Data) : nil
+}
+
+func makeAppIconICNS() -> Data {
+    var payload = Data()
+    for (ostype, size) in [("ic07", 128), ("ic08", 256), ("ic09", 512)] {
+        guard let png = renderIconPNG(size: size) else { continue }
+        payload.append(Data(ostype.utf8))
+        var chunkLength = UInt32(8 + png.count).bigEndian
+        withUnsafeBytes(of: &chunkLength) { payload.append(contentsOf: $0) }
+        payload.append(png)
+    }
+    var icns = Data("icns".utf8)
+    var totalLength = UInt32(8 + payload.count).bigEndian
+    withUnsafeBytes(of: &totalLength) { icns.append(contentsOf: $0) }
+    icns.append(payload)
+    return icns
 }
 
 func localizations() -> [String] {
@@ -156,13 +216,15 @@ func intentsMetadata(bin: String, resources: URL, dryRun: Bool) {
 func assemble(_ options: Options, bin: String) {
     let fm = FileManager.default
     let contents = URL(fileURLWithPath: options.out).appending(path: "Contents")
+    let resources = contents.appending(path: "Resources")
     let layout = [
         ("\(bin)/BasaltMac", contents.appending(path: "MacOS/Basalt")),
         ("\(bin)/Basalt", contents.appending(path: "Helpers/basalt")),
-        ("\(bin)/mlx.metallib", contents.appending(path: "Resources/mlx.metallib")),
+        ("\(bin)/mlx.metallib", resources.appending(path: "mlx.metallib")),
     ]
     for (source, target) in layout { print("  \(source) → \(target.path)") }
-    if options.dryRun { intentsMetadata(bin: bin, resources: contents.appending(path: "Resources"), dryRun: true) }
+    print("  AppIcon.icns → \(resources.appending(path: "AppIcon.icns").path)")
+    if options.dryRun { intentsMetadata(bin: bin, resources: resources, dryRun: true) }
     guard !options.dryRun else { return }
     try? fm.removeItem(atPath: options.out)
     do {
@@ -170,10 +232,11 @@ func assemble(_ options: Options, bin: String) {
             try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
             try fm.copyItem(atPath: source, toPath: target.path)
         }
+        try makeAppIconICNS().write(to: resources.appending(path: "AppIcon.icns"))
         let plist = try PropertyListSerialization.data(fromPropertyList: infoPlist(version: version()), format: .xml, options: 0)
         try plist.write(to: contents.appending(path: "Info.plist"))
-        try copyLocalizations(to: contents.appending(path: "Resources"))
-        intentsMetadata(bin: bin, resources: contents.appending(path: "Resources"), dryRun: false)
+        try copyLocalizations(to: resources)
+        intentsMetadata(bin: bin, resources: resources, dryRun: false)
     } catch {
         FileHandle.standardError.write(Data("could not assemble \(options.out): \(error.localizedDescription)\n".utf8))
         exit(1)

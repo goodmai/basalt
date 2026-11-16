@@ -1,6 +1,4 @@
-import BasaltCore
 import Foundation
-import Synchronization
 
 public struct LibraryClient: Sendable {
     public typealias Progress = @Sendable (Int64, Int64) -> Void
@@ -10,21 +8,22 @@ public struct LibraryClient: Sendable {
     public var fit: @Sendable (String) async throws -> ModelFit
     public var load: @Sendable (String) async throws -> Void
     public var download: Downloader
-    public var delete: @Sendable (String) throws -> Void
+    public var delete: @Sendable (String) async throws -> Void
 
     public init(
         models: @escaping @Sendable () async throws -> [LibraryModel], fit: @escaping @Sendable (String) async throws -> ModelFit,
         load: @escaping @Sendable (String) async throws -> Void,
         download: @escaping Downloader,
-        delete: @escaping @Sendable (String) throws -> Void
+        delete: @escaping @Sendable (String) async throws -> Void
     ) {
         (self.models, self.fit, self.load, self.download, self.delete) = (models, fit, load, download, delete)
     }
 }
 
 extension LibraryClient {
-    package static func live(_ endpoint: EngineEndpoint, session: URLSession = .engine, hub: HuggingFaceHub = HuggingFaceHub(), cache: URL = ModelCache.root) -> LibraryClient {
-        LibraryClient(
+    public static func live(_ endpoint: EngineEndpoint, session: URLSession = .engine) -> LibraryClient {
+        let engine = EngineClient.http(endpoint, session: session)
+        return LibraryClient(
             models: {
                 let (data, response) = try await session.data(for: endpoint.request("v1/models"))
                 try EngineClient.check(response, data)
@@ -40,25 +39,13 @@ extension LibraryClient {
                 return try Self.fit(data)
             },
             load: { id in
-                let body = try JSONSerialization.data(withJSONObject: ["model": id])
-                var request = endpoint.request("v1/models/load", method: "POST", body: body)
-                request.timeoutInterval = 600
-                let (data, response) = try await session.data(for: request)
-                try EngineClient.check(response, data)
+                _ = try await engine.loadModel(id)
             },
             download: { id, progress in
-                let files = Mutex<[String: (Int64, Int64)]>([:])
-                _ = try await hub.download(repoId: id) { file, done, total in
-                    let sum = files.withLock { files in
-                        files[file] = (done, total)
-                        return files.values.reduce((Int64(0), Int64(0))) { ($0.0 + $1.0, $0.1 + $1.1) }
-                    }
-                    progress(sum.0, sum.1)
-                }
+                try await engine.downloadModel(id, progress)
             },
             delete: { id in
-                guard LibraryReducer.isRepoID(id) else { throw EngineError.malformed("not a repo id: \(id)") }
-                try FileManager.default.removeItem(at: cache.appending(path: "models--" + id.replacingOccurrences(of: "/", with: "--")))
+                try await engine.deleteModel(id)
             })
     }
 
@@ -141,7 +128,7 @@ public enum LibraryEffects {
                 await environment.chose(id)
                 await send(.loaded(id))
             case .delete(let id):
-                try client.delete(id)
+                try await client.delete(id)
                 await send(.listed(try await client.models()))
             default: break
             }

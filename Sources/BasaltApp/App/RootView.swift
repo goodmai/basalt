@@ -9,21 +9,19 @@ public struct RootView: View {
 
     public var body: some View {
         NavigationSplitView {
-            List(selection: $model.selection) {
-                ForEach(model.summaries) { summary in
-                    Text(summary.title.isEmpty ? "New conversation" : summary.title)
-                        .lineLimit(1)
-                        .tag(summary.id)
-                        .contextMenu {
-                            Button("Delete", role: .destructive) { Task { await model.delete(summary.id) } }
+            sidebarContent
+                .navigationSplitViewColumnWidth(min: 200, ideal: 240)
+                .toolbar {
+                    Button("Search", systemImage: "magnifyingglass") {
+                        model.isSearching.toggle()
+                        if !model.isSearching {
+                            Task { await model.updateSearch("") }
                         }
+                    }
+                    .keyboardShortcut("f")
+                    Button("New Conversation", systemImage: "square.and.pencil") { model.newConversation() }
+                        .keyboardShortcut("n")
                 }
-            }
-            .navigationSplitViewColumnWidth(min: 200, ideal: 240)
-            .toolbar {
-                Button("New Conversation", systemImage: "square.and.pencil") { model.newConversation() }
-                    .keyboardShortcut("n")
-            }
         } detail: {
             detailContent
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -37,6 +35,52 @@ public struct RootView: View {
             }
         }
         .onChange(of: model.selection) { _, id in restored = id?.raw.uuidString ?? "" }
+    }
+
+    @ViewBuilder
+    private var sidebarContent: some View {
+        if model.isSearching || !model.searchQuery.isEmpty {
+            conversationList
+                .listStyle(.sidebar)
+                .safeAreaInset(edge: .top, spacing: 0) {
+                    VStack(spacing: 0) {
+                        HStack(spacing: 6) {
+                            Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                            TextField("Search conversations", text: $model.searchQuery)
+                                .textFieldStyle(.plain)
+                            if !model.searchQuery.isEmpty {
+                                Button("Clear", systemImage: "xmark.circle.fill") {
+                                    Task { await model.updateSearch("") }
+                                }
+                                .labelStyle(.iconOnly)
+                                .buttonStyle(.plain)
+                                .foregroundStyle(.secondary)
+                            }
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        Divider()
+                    }
+                }
+                .task(id: model.searchQuery) {
+                    await model.updateSearch(model.searchQuery)
+                }
+        } else {
+            conversationList
+        }
+    }
+
+    private var conversationList: some View {
+        List(selection: $model.selection) {
+            ForEach(model.visibleSummaries) { summary in
+                Text(summary.title.isEmpty ? "New conversation" : summary.title)
+                    .lineLimit(1)
+                    .tag(summary.id)
+                    .contextMenu {
+                        Button("Delete", role: .destructive) { Task { await model.delete(summary.id) } }
+                    }
+            }
+        }
     }
 
     @ViewBuilder
@@ -61,7 +105,7 @@ struct ConversationDetail: View {
     var body: some View {
         Group {
             if let store {
-                ChatView(store: store)
+                ChatView(store: store, model: model, voice: model.voice)
             } else {
                 ProgressView().accessibilityLabel("Loading the conversation")
             }

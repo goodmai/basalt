@@ -14,6 +14,7 @@ package struct RESTServer: Sendable {
     private(set) var pipelines: PipelineRegistry?
     private(set) var compose: ComposeControl?
     private(set) var speechSynthesizer: (any SpeechSynthesizer)?
+    private(set) var modelHub = ModelHubOperations.live()
     private(set) var onReady: (@Sendable (Int) -> Void)?
 
     let shutdownDeadline: Duration
@@ -155,6 +156,7 @@ package struct RESTServer: Sendable {
         oai.get("/models/current") { try await controller.currentModel(request: $0, context: $1) }
         oai.get("/models/preview") { try await controller.previewModel(request: $0, context: $1) }
         oai.post("/models/load", use: controller.loadModel)
+        ModelsHubController(orchestrator: orchestrator, operations: modelHub).add(to: oai)
     }
 
     private func addGenerationRoutes(to oai: RouterGroup<BasicRequestContext>, defaultId: String) {
@@ -214,6 +216,12 @@ extension RESTServer {
         return server
     }
 
+    package func withModelHub(_ operations: ModelHubOperations) -> RESTServer {
+        var server = self
+        server.modelHub = operations
+        return server
+    }
+
     static func metricsResponse(_ orchestrator: any ModelOrchestrating) async -> Response {
         let text = TelemetryExport.openMetrics(await orchestrator.telemetrySnapshot())
         return Response(status: .ok, headers: [.contentType: TelemetryExport.contentType], body: ResponseBody(byteBuffer: ByteBuffer(string: text)))
@@ -256,6 +264,8 @@ extension RESTServer {
         "/v1/models/current":      { "get":  { "summary": "Currently loaded model + status" } },
         "/v1/models/preview":      { "get":  { "summary": "Memory a model would need, without loading it (?model_id=&context=), or the compute plan of a pipeline preset (?pipeline_preset=document-qa|voice-agent|support-triage&pipeline_memory=auto|resident|sequential)" } },
         "/v1/models/load":         { "post": { "summary": "Hot-swap model at runtime" } },
+        "/v1/models/download":     { "post": { "summary": "Download a Hugging Face model into the server's cache, streaming SSE progress events" } },
+        "/v1/models/{id}":         { "delete": { "summary": "Remove an unloaded cached Hugging Face model from the server's cache" } },
         "/v1/chat/completions":    { "post": { "summary": "OpenAI-compatible chat completions" } },
         "/v1/responses":           { "post": { "summary": "OpenAI Responses API (Codex/Cursor)" } },
         "/v1/messages":            { "post": { "summary": "Anthropic-compatible messages API" } },

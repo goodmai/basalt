@@ -89,6 +89,7 @@ struct EngineSettings: View {
     let restart: @MainActor ([String]) async -> Void
     @AppStorage(EngineChoice.modelKey) private var model = AppModel.defaultModel
     @AppStorage(EngineChoice.composeKey) private var compose = ""
+    @AppStorage(AppSettings.keepEngineOnQuitKey) private var keepEngineOnQuit = false
     @State private var choosing = false
 
     var arguments: [String] { EngineChoice.arguments(model: model, compose: compose) }
@@ -105,6 +106,7 @@ struct EngineSettings: View {
                 LabeledContent("Compose file", value: compose)
                 Button("Choose Another…") { choosing = true }
             }
+            Toggle("Keep the engine running on quit", isOn: $keepEngineOnQuit)
             Text("basalt \(arguments.joined(separator: " "))").font(.caption.monospaced()).foregroundStyle(.secondary)
             Button("Restart the Engine with This") { Task { await restart(arguments) } }
         }

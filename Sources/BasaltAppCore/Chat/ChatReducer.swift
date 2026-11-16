@@ -12,6 +12,7 @@ public struct ChatState: Sendable, Equatable {
     public var attachments: [ChatAttachment] = []
     public var run = Run.idle
     public var scrollPin = ScrollPinState.pinned
+    public var branches = MessageBranches()
 
     public init(conversation: ConversationSnapshot) { self.conversation = conversation }
 
@@ -34,6 +35,8 @@ public enum ChatAction: Sendable, Equatable {
     case draftChanged(String)
     case send(message: MessageID, reply: MessageID, run: RunID)
     case regenerate(reply: MessageID, run: RunID)
+    case regenerateFrom(message: MessageID, reply: MessageID, run: RunID)
+    case selectBranch(message: MessageID, index: Int)
     case stop
     case delta(RunID, ChatDelta)
     case finished(RunID, RunTiming)
@@ -64,10 +67,8 @@ public enum ChatReducer {
             return []
         case .send(let message, let reply, let run):
             return send(&state, message: message, reply: reply, run: run)
-        case .regenerate(let reply, let run):
-            guard currentRun(state) == nil, state.conversation.messages.last?.role == .assistant else { return [] }
-            state.conversation.messages.removeLast()
-            return begin(&state, reply: reply, run: run)
+        case .regenerate, .regenerateFrom, .selectBranch:
+            return branch(&state, action)
         case .stop:
             guard let run = currentRun(state) else { return [] }
             close(&state, as: .stopped, run: .idle)
@@ -91,6 +92,30 @@ public enum ChatReducer {
         case .scrolled, .jumpToBottom:
             return scroll(&state, action)
         }
+    }
+
+    static func branch(_ state: inout ChatState, _ action: ChatAction) -> [ChatEffect] {
+        guard currentRun(state) == nil else { return [] }
+        switch action {
+        case .regenerate(let reply, let run):
+            guard let last = state.conversation.messages.last, last.role == .assistant else { return [] }
+            return regenerateFrom(&state, target: last.id, reply: reply, run: run)
+        case .regenerateFrom(let message, let reply, let run):
+            return regenerateFrom(&state, target: message, reply: reply, run: run)
+        case .selectBranch(let message, let index):
+            return state.branches.select(in: &state.conversation, message: message, index: index) ? [.persist(state.conversation)] : []
+        default:
+            return []
+        }
+    }
+
+    static func regenerateFrom(_ state: inout ChatState, target: MessageID, reply: MessageID, run: RunID) -> [ChatEffect] {
+        guard state.branches.fork(in: &state.conversation, target: target) else { return [] }
+        let effects = begin(&state, reply: reply, run: run)
+        if let created = state.conversation.messages.last {
+            state.branches.recordHead(created, in: state.conversation)
+        }
+        return effects
     }
 
     static func scroll(_ state: inout ChatState, _ action: ChatAction) -> [ChatEffect] {
@@ -174,6 +199,7 @@ public enum ChatReducer {
     static func close(_ state: inout ChatState, as final: MessageSnapshot.State, run: ChatState.Run) {
         if let last = state.conversation.messages.indices.last, state.conversation.messages[last].state == .streaming {
             state.conversation.messages[last].state = final
+            state.branches.recordHead(state.conversation.messages[last], in: state.conversation)
         }
         state.run = run
     }

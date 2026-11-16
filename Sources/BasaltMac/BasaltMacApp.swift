@@ -47,7 +47,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        guard let model, !model.engine.isIdle else { return .terminateNow }
+        guard let model, !model.engine.isIdle, !AppSettings.keepEngineOnQuit() else { return .terminateNow }
         Task {
             await model.stop()
             sender.reply(toApplicationShouldTerminate: true)

@@ -7,6 +7,18 @@ public struct EngineClient: Sendable {
     public var stats: @Sendable () async throws -> ServerTelemetrySnapshot
     public var pipeline: @Sendable (PipelineCall) async throws -> PipelineResponse
     public var compose: @Sendable () async throws -> ComposeInfo? = { nil }
+    public var readiness: @Sendable () async throws -> EngineReadiness = { throw EngineError.notRunning }
+    public var composeEvents: @Sendable () -> AsyncThrowingStream<ComposeStreamEvent, any Error> = {
+        AsyncThrowingStream { $0.finish(throwing: EngineError.notRunning) }
+    }
+    public var loadModel: @Sendable (String) async throws -> String = { _ in throw EngineError.notRunning }
+    public var applyCompose: @Sendable (ComposeApplyCall) async throws -> ComposeDiff = { _ in throw EngineError.notRunning }
+    public var downloadModel: @Sendable (String, @escaping @Sendable (Int64, Int64) -> Void) async throws -> Void = { _, _ in
+        throw EngineError.notRunning
+    }
+    public var deleteModel: @Sendable (String) async throws -> Void = { _ in throw EngineError.notRunning }
+    public var transcribeAudio: @Sendable (AudioTranscriptionCall) async throws -> String = { _ in throw EngineError.notRunning }
+    public var synthesizeSpeech: @Sendable (SpeechSynthesisCall) async throws -> Data = { _ in throw EngineError.notRunning }
 
     public init(
         chat: @escaping @Sendable (ChatRequest) -> AsyncThrowingStream<ChatDelta, any Error>,
@@ -28,10 +40,18 @@ public struct EngineEndpoint: Sendable, Equatable {
         EngineEndpoint(base: URL(string: "http://127.0.0.1:\(port)")!, token: token)
     }
 
-    func request(_ path: String, method: String = "GET", body: Data? = nil) -> URLRequest {
+    func request(_ path: String, method: String = "GET", body: Data? = nil, contentType: String = "application/json") -> URLRequest {
         var request = URLRequest(url: base.appending(path: path))
         (request.httpMethod, request.httpBody) = (method, body)
-        if body != nil { request.setValue("application/json", forHTTPHeaderField: "Content-Type") }
+        if body != nil { request.setValue(contentType, forHTTPHeaderField: "Content-Type") }
+        if let token, !token.isEmpty { request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
+        return request
+    }
+
+    func rawRequest(url: URL, method: String = "GET", body: Data? = nil, contentType: String = "application/json") -> URLRequest {
+        var request = URLRequest(url: url)
+        (request.httpMethod, request.httpBody) = (method, body)
+        if body != nil { request.setValue(contentType, forHTTPHeaderField: "Content-Type") }
         if let token, !token.isEmpty { request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
         return request
     }
@@ -61,12 +81,8 @@ extension EngineClient {
                     throw EngineError.malformed("pipeline answer: \(error)")
                 }
             })
-        client.compose = {
-            let (data, response) = try await session.data(for: endpoint.request("v1/compose"))
-            if (response as? HTTPURLResponse)?.statusCode == 404 { return nil }
-            try check(response, data)
-            return try JSONDecoder().decode(ComposeInfo.self, from: data)
-        }
+        configureCompose(&client, endpoint, session: session)
+        configureSpeech(&client, endpoint, session: session)
         return client
     }
 
@@ -113,9 +129,13 @@ extension EngineClient {
 
     static func check(_ response: URLResponse, _ data: Data) throws(EngineError) {
         guard let http = response as? HTTPURLResponse, http.statusCode != 200 else { return }
+        throw refusedError(status: http.statusCode, data: data)
+    }
+
+    static func refusedError(status: Int, data: Data) -> EngineError {
         let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
         let message = ((json?["error"] as? [String: Any])?["message"] as? String) ?? String(decoding: data.prefix(300), as: UTF8.self)
-        throw .refused(status: http.statusCode, message: message)
+        return .refused(status: status, message: message)
     }
 }
 
