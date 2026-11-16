@@ -72,6 +72,7 @@ public struct SpeechRequest: Sendable, Codable, Equatable {
     public var instruct: String?
     public var exaggeration: Double?
     public var preferANE: Bool
+    public var referenceAudio: String?
 
     public init(
         model: String,
@@ -91,6 +92,7 @@ public struct SpeechRequest: Sendable, Codable, Equatable {
         self.instruct = nil
         self.exaggeration = nil
         self.preferANE = false
+        self.referenceAudio = nil
         try validate()
     }
 
@@ -98,12 +100,14 @@ public struct SpeechRequest: Sendable, Codable, Equatable {
         language: String? = nil,
         instruct: String? = nil,
         exaggeration: Double? = nil,
-        preferANE: Bool = false
+        preferANE: Bool = false,
+        referenceAudio: String? = nil
     ) throws(BasaltError) {
         self.language = language
         self.instruct = instruct
         self.exaggeration = exaggeration
         self.preferANE = preferANE
+        self.referenceAudio = referenceAudio
         try validate()
     }
 
@@ -123,11 +127,37 @@ public struct SpeechRequest: Sendable, Codable, Equatable {
         guard speed.isFinite, Self.speedRange.contains(speed) else {
             throw .invalidRequestStructure(details: "speech: speed must lie between 0.25 and 4.0, got \(speed)")
         }
+        try Self.validateConditioning(language: language, exaggeration: exaggeration, referenceAudio: referenceAudio)
+    }
+
+    private static func validateConditioning(
+        language: String?,
+        exaggeration: Double?,
+        referenceAudio: String?
+    ) throws(BasaltError) {
         if let exaggeration, !exaggeration.isFinite || !(0 ... 2).contains(exaggeration) {
             throw .invalidRequestStructure(details: "speech: exaggeration must lie between 0.0 and 2.0")
         }
         if let language, !language.isEmpty, language.wholeMatch(of: /[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})?/) == nil {
             throw .invalidRequestStructure(details: "speech: language must be a BCP-47 / ISO-639 code such as en or ru-RU")
+        }
+        if let referenceAudio {
+            try validateReferenceAudio(referenceAudio)
+        }
+    }
+
+    public static func validateReferenceAudio(_ path: String) throws(BasaltError) {
+        let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed.count <= 1_024, !trimmed.contains("\0"), !trimmed.contains("://") else {
+            throw .invalidRequestStructure(details: "speech: reference_audio must be a valid local file path")
+        }
+        let segments = trimmed.split(omittingEmptySubsequences: false) { $0 == "/" || $0 == "\\" }
+        if segments.contains("..") || trimmed.contains("..") {
+            throw .invalidRequestStructure(details: "speech: reference_audio must not contain '..' path traversal")
+        }
+        let ext = URL(fileURLWithPath: trimmed).pathExtension.lowercased()
+        guard ["wav", "pcm", "flac"].contains(ext) else {
+            throw .invalidRequestStructure(details: "speech: reference_audio must be a local .wav, .pcm or .flac file")
         }
     }
 
@@ -136,6 +166,7 @@ public struct SpeechRequest: Sendable, Codable, Equatable {
         case responseFormat = "response_format"
         case streamFormat = "stream_format"
         case preferANE = "prefer_ane"
+        case referenceAudio = "reference_audio"
     }
 
     public init(from decoder: any Decoder) throws {
@@ -150,6 +181,7 @@ public struct SpeechRequest: Sendable, Codable, Equatable {
         instruct = try container.decodeIfPresent(String.self, forKey: .instruct)
         exaggeration = try container.decodeIfPresent(Double.self, forKey: .exaggeration)
         preferANE = try container.decodeIfPresent(Bool.self, forKey: .preferANE) ?? false
+        referenceAudio = try container.decodeIfPresent(String.self, forKey: .referenceAudio)
         try validate()
     }
 }
@@ -364,6 +396,7 @@ public protocol SpeechSynthesizer: Sendable {
     var voices: [VoiceSpec] { get async }
     func synthesize(_ request: SpeechRequest) async throws(BasaltError) -> AsyncThrowingStream<AudioChunk, any Error>
     func resolveRoute(_ request: SpeechRequest) async -> SpeechRouteDecision
+    func unload() async
 }
 
 extension SpeechSynthesizer {
@@ -374,6 +407,8 @@ extension SpeechSynthesizer {
         let compute = matched?.compute ?? (model == ComposeSpec.appleSpeech ? .appleSpeech : .mlx)
         return SpeechRouteDecision(selected: SpeechCandidate(id: model, model: model, compute: compute))
     }
+
+    public func unload() async {}
 }
 
 public enum SpeechFallbackReason: String, Sendable, Codable, Equatable, CaseIterable {
@@ -493,84 +528,5 @@ public enum SpeechFallbackRouter {
             return .ttfaSLA
         }
         return nil
-    }
-}
-
-public struct RoutedSpeechSynthesizer: SpeechSynthesizer {
-    public struct Tier: Sendable {
-        public var candidate: SpeechCandidate
-        public var synthesizer: (any SpeechSynthesizer)?
-
-        public init(candidate: SpeechCandidate, synthesizer: (any SpeechSynthesizer)?) {
-            self.candidate = SpeechCandidate(
-                id: candidate.id,
-                model: candidate.model,
-                compute: candidate.compute,
-                isAvailable: candidate.isAvailable && synthesizer != nil,
-                estimatedTTFAMs: candidate.estimatedTTFAMs
-            )
-            self.synthesizer = synthesizer
-        }
-    }
-
-    public let tiers: [Tier]
-    public let onGPUBusy: SpeechOnGPUBusy
-    public let maxTTFAMs: Int?
-    private let gpuBusyProbe: @Sendable () async -> Bool
-    private let memoryPressureProbe: @Sendable () async -> Bool
-
-    public init(
-        tiers: [Tier],
-        onGPUBusy: SpeechOnGPUBusy = .fallbackANE,
-        maxTTFAMs: Int? = nil,
-        gpuBusyProbe: @escaping @Sendable () async -> Bool = { false },
-        memoryPressureProbe: @escaping @Sendable () async -> Bool = { false }
-    ) {
-        self.tiers = tiers
-        self.onGPUBusy = onGPUBusy
-        self.maxTTFAMs = maxTTFAMs
-        self.gpuBusyProbe = gpuBusyProbe
-        self.memoryPressureProbe = memoryPressureProbe
-    }
-
-    public var voices: [VoiceSpec] {
-        get async {
-            var collected: [VoiceSpec] = []
-            var seen: Set<String> = []
-            for tier in tiers {
-                guard let synthesizer = tier.synthesizer else { continue }
-                for voice in await synthesizer.voices where seen.insert("\(voice.model):\(voice.id)").inserted {
-                    collected.append(voice)
-                }
-            }
-            return collected
-        }
-    }
-
-    public func resolveRoute(_ request: SpeechRequest) async -> SpeechRouteDecision {
-        let busy = await gpuBusyProbe()
-        let pressured = await memoryPressureProbe()
-        let input = SpeechRouteInput(
-            chain: tiers.map(\.candidate),
-            gpuBusy: busy,
-            onGPUBusy: onGPUBusy,
-            memoryPressure: pressured,
-            preferANE: request.preferANE,
-            maxTTFAMs: maxTTFAMs
-        )
-        return SpeechFallbackRouter.route(input)
-    }
-
-    public func synthesize(_ request: SpeechRequest) async throws(BasaltError) -> AsyncThrowingStream<AudioChunk, any Error> {
-        let decision = await resolveRoute(request)
-        if let matched = tiers.first(where: { $0.candidate.id == decision.selected.id }), let backend = matched.synthesizer {
-            return try await backend.synthesize(request)
-        }
-        for tier in tiers {
-            if let backend = tier.synthesizer {
-                return try await backend.synthesize(request)
-            }
-        }
-        throw .invalidRequestStructure(details: "speech: no available speech synthesizer in fallback chain")
     }
 }

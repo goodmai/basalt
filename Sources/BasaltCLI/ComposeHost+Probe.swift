@@ -17,7 +17,7 @@ extension ComposeHost {
     static func probes(_ model: ComposeHeld, answering: Bool) -> Bool {
         switch model {
         case .resident: answering
-        case .decision, .onDemand, .onDemandDecision: true
+        case .decision, .onDemand, .onDemandDecision, .speaker, .onDemandSpeaker: true
         case .cloud: false
         }
     }
@@ -48,6 +48,14 @@ enum ComposeProbe {
                     let report = await ModelInspector().inspect(modelIdOrPath: onDemand.path)
                     if !report.intact { return "its files at \(onDemand.path) are incomplete; run basalt models inspect \(onDemand.path)" }
                 }
+            case .speaker(let loaded):
+                _ = try await SpeechSynthesizerLoader.probeSpeechSynthesizer(loaded.synthesizer)
+            case .onDemandSpeaker(let onDemand):
+                let url = URL(fileURLWithPath: onDemand.descriptor.path)
+                guard FileManager.default.fileExists(atPath: url.path) else {
+                    return "its files at \(onDemand.descriptor.path) are incomplete; run basalt models inspect \(onDemand.descriptor.path)"
+                }
+                _ = try SpeechSynthesizerLoader.inspectOnDemand(identifier: onDemand.descriptor.modelID, directory: url)
             case .cloud:
                 break
             }

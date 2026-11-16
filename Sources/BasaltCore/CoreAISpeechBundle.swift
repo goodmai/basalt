@@ -2,7 +2,15 @@ import Foundation
 
 public struct CoreAISpeechBundle: Sendable, Codable, Equatable {
     public static let manifest = "basalt_speech.json"
+    public static let kokoroANEManifest = "kokoro_ane.json"
     public static let defaultModelID = "Kokoro-82M-ANE"
+
+    public enum AssetKind: String, Sendable, Codable, Equatable {
+        case coreAI = "core_ai"
+        case coreMLCompiled = "coreml_compiled"
+        case coreMLPackage = "coreml_package"
+        case synthetic
+    }
 
     public struct Function: Sendable, Codable, Equatable {
         public var name: String
@@ -33,23 +41,42 @@ public struct CoreAISpeechBundle: Sendable, Codable, Equatable {
     public var functions: [Function]
     public var vocab: [String: Int]
     public var padToken: Int
+    public var assetKind: AssetKind
 
     public static func isBundle(_ directory: URL) -> Bool {
-        FileManager.default.fileExists(atPath: directory.appending(component: manifest).path)
+        let fm = FileManager.default
+        if fm.fileExists(atPath: directory.appending(component: manifest).path)
+            || fm.fileExists(atPath: directory.appending(component: kokoroANEManifest).path) {
+            return true
+        }
+        let ext = directory.pathExtension.lowercased()
+        return (ext == "mlmodelc" || ext == "mlpackage") && directory.lastPathComponent.lowercased().contains("kokoro")
     }
 
     public init(directory: URL) throws(BasaltError) {
-        let manifestURL = directory.appending(component: Self.manifest)
+        if let directKind = Self.directCoreMLAssetKind(directory) {
+            let name = directory.deletingPathExtension().lastPathComponent
+            try self.init(
+                manifest: ["model_id": name, "asset": directory.lastPathComponent, "voices": TTSVoiceCatalog.kokoroVoiceIDs],
+                path: directory.path
+            )
+            assetKind = directKind
+            return
+        }
+        let (manifestURL, usedKokoroManifest) = Self.resolveManifestURL(in: directory)
         guard let data = try? Data(contentsOf: manifestURL),
               let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            throw .modelConfigurationInvalid(path: directory.path, reason: "\(Self.manifest) is missing or not valid JSON")
+            throw .modelConfigurationInvalid(path: directory.path, reason: "\(manifestURL.lastPathComponent) is missing or not valid JSON")
         }
-        let body = (root["basalt_speech"] as? [String: Any]) ?? root
+        var body = (root["basalt_speech"] as? [String: Any]) ?? root
+        if usedKokoroManifest, body["voices"] == nil {
+            body["voices"] = TTSVoiceCatalog.kokoroVoiceIDs
+        }
+        if usedKokoroManifest, body["asset"] == nil {
+            body["asset"] = "kokoro"
+        }
         try self.init(manifest: body, path: directory.path)
-        let modelPath = directory.appending(component: "\(asset).aimodel").path
-        guard FileManager.default.fileExists(atPath: modelPath) else {
-            throw .modelConfigurationInvalid(path: directory.path, reason: "the Core AI speech bundle has \(Self.manifest) but no \(asset).aimodel")
-        }
+        assetKind = try Self.resolveAssetKind(asset: asset, manifest: body, in: directory)
     }
 
     public init(manifest: [String: Any], path: String) throws(BasaltError) {
@@ -82,7 +109,11 @@ public struct CoreAISpeechBundle: Sendable, Codable, Equatable {
         functions = parsedFunctions
         vocab = manifest["vocab"] as? [String: Int] ?? [:]
         padToken = manifest["pad_token"] as? Int ?? manifest["padToken"] as? Int ?? 0
+        assetKind = (manifest["synthetic"] as? Bool == true) ? .synthetic : .coreAI
     }
+}
+
+extension CoreAISpeechBundle {
 
     public var voiceSpecs: [VoiceSpec] {
         voices.map { VoiceSpec(id: $0.id, name: $0.name, language: $0.language, model: modelID, compute: compute) }
@@ -146,5 +177,60 @@ public struct CoreAISpeechBundle: Sendable, Codable, Equatable {
                   let length = item["length"] as? Int, !name.isEmpty, length > 0 else { return nil }
             return Function(name: name, length: length)
         }.sorted { $0.length < $1.length }
+    }
+
+    public func resolvedAssetURL(in directory: URL) -> URL {
+        switch assetKind {
+        case .coreAI:
+            return asset.hasSuffix(".aimodel") ? directory.appending(component: asset) : directory.appending(component: "\(asset).aimodel")
+        case .coreMLCompiled:
+            if directory.pathExtension.lowercased() == "mlmodelc" { return directory }
+            return asset.hasSuffix(".mlmodelc") ? directory.appending(component: asset) : directory.appending(component: "\(asset).mlmodelc")
+        case .coreMLPackage:
+            if directory.pathExtension.lowercased() == "mlpackage" { return directory }
+            return asset.hasSuffix(".mlpackage") ? directory.appending(component: asset) : directory.appending(component: "\(asset).mlpackage")
+        case .synthetic:
+            return directory
+        }
+    }
+
+    private static func directCoreMLAssetKind(_ directory: URL) -> AssetKind? {
+        guard FileManager.default.fileExists(atPath: directory.path) else { return nil }
+        switch directory.pathExtension.lowercased() {
+        case "mlmodelc": return .coreMLCompiled
+        case "mlpackage": return .coreMLPackage
+        default: return nil
+        }
+    }
+
+    private static func resolveManifestURL(in directory: URL) -> (URL, Bool) {
+        let primary = directory.appending(component: manifest)
+        if FileManager.default.fileExists(atPath: primary.path) {
+            return (primary, false)
+        }
+        let kokoro = directory.appending(component: kokoroANEManifest)
+        if FileManager.default.fileExists(atPath: kokoro.path) {
+            return (kokoro, true)
+        }
+        return (primary, false)
+    }
+
+    private static func resolveAssetKind(asset: String, manifest: [String: Any], in directory: URL) throws(BasaltError) -> AssetKind {
+        if manifest["synthetic"] as? Bool == true {
+            return .synthetic
+        }
+        let fm = FileManager.default
+        let candidates: [(String, AssetKind)] = [
+            (asset.hasSuffix(".aimodel") ? asset : "\(asset).aimodel", .coreAI),
+            (asset.hasSuffix(".mlmodelc") ? asset : "\(asset).mlmodelc", .coreMLCompiled),
+            (asset.hasSuffix(".mlpackage") ? asset : "\(asset).mlpackage", .coreMLPackage),
+        ]
+        for (file, kind) in candidates where fm.fileExists(atPath: directory.appending(component: file).path) {
+            return kind
+        }
+        throw .modelConfigurationInvalid(
+            path: directory.path,
+            reason: "the ANE speech bundle has no \(asset).aimodel, \(asset).mlmodelc or \(asset).mlpackage"
+        )
     }
 }

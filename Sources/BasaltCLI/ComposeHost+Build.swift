@@ -11,7 +11,11 @@ extension ComposeHost {
             let first = name == ComposeSpec.defaultPipeline
             let decisions = try (first ? defaultDecisions : nil)
                 ?? services.decisions(view, localDeciders(view, of: spec, held: held), chat.gate, besideDecode, cloudGate)
-            systems[name] = PipelineSystem(decisions: decisions, stages: try stages(view, held: held, first: first))
+            systems[name] = PipelineSystem(
+                decisions: decisions,
+                stages: try stages(view, held: held, first: first),
+                speech: speechSynthesizer(for: view, held: held)
+            )
         }
         return systems
     }
@@ -21,7 +25,7 @@ extension ComposeHost {
             switch name.flatMap({ held[$0] }) {
             case .resident(let model): model
             case .onDemand(let model): model.model
-            case .cloud, .decision, .onDemandDecision, nil: nil
+            case .cloud, .decision, .onDemandDecision, .speaker, .onDemandSpeaker, nil: nil
             }
         }
         let speech: (any AudioTranscriber)? = view.usesSpeechAnalyzer ? (first ? (startup.speech ?? SpeechAnalyzerTranscriber()) : SpeechAnalyzerTranscriber()) : nil
@@ -56,7 +60,7 @@ extension ComposeHost {
         case .cloud(let id):
             let client = try OpenRouterClient(config: .init(apiKey: services.key(spec.models[name]), baseURL: ServeCommand.openRouterAnswers, timeout: 120, maxRetries: 1))
             return CloudAnswer(client: client, model: id, gate: cloudGate)
-        case .decision, .onDemandDecision, nil: throw BasaltError.invalidRequestStructure(details: "compose: \(name) is not loaded as an answer model")
+        case .decision, .onDemandDecision, .speaker, .onDemandSpeaker, nil: throw BasaltError.invalidRequestStructure(details: "compose: \(name) is not loaded as an answer model")
         }
     }
 
@@ -70,6 +74,10 @@ extension ComposeHost {
                 (entry.state, entry.lastUsed, entry.idleUnload) = (ComposeModelState(await onDemand.phase), await onDemand.lastUsed, model.idleUnload ?? ComposeSpec.defaultIdleUnload)
             case .onDemandDecision(let onDemand):
                 (entry.state, entry.lastUsed, entry.idleUnload) = (ComposeModelState(await onDemand.phase), await onDemand.lastUsed, model.idleUnload ?? ComposeSpec.defaultIdleUnload)
+            case .onDemandSpeaker(let onDemand):
+                (entry.state, entry.lastUsed, entry.idleUnload) = (ComposeModelState(await onDemand.phase), await onDemand.lastUsed, model.idleUnload ?? ComposeSpec.defaultIdleUnload)
+            case .speaker:
+                entry.state = .ready
             case .cloud(let id):
                 let refusal = await cloudGate.refusal(id)
                 (entry.state, entry.spentToday, entry.limit, entry.refusal) = (Self.cloudState(refusal, key: services.key(model)), await cloudGate.spent(id), model.budget, refusal?.reason)

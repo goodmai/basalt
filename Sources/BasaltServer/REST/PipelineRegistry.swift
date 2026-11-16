@@ -4,9 +4,14 @@ import BasaltCore
 package struct PipelineSystem: Sendable {
     package var decisions: (any DecisionEngine)?
     package var stages: PipelineStages
+    package var speech: (any SpeechSynthesizer)?
 
-    package init(decisions: (any DecisionEngine)?, stages: PipelineStages) {
-        (self.decisions, self.stages) = (decisions, stages)
+    package init(
+        decisions: (any DecisionEngine)?,
+        stages: PipelineStages,
+        speech: (any SpeechSynthesizer)? = nil
+    ) {
+        (self.decisions, self.stages, self.speech) = (decisions, stages, speech)
     }
 }
 
