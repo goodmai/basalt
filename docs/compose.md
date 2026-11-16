@@ -282,6 +282,45 @@ benchmarks:
 - **Where state lives:** the running system's pid, port and process start time are in `~/.basalt/compose/<name>.json`. A record whose pid now belongs to another process, because the pid was reused, counts as not running.
 - **API key:** when the server has an API key, set `BASALT_API_KEY` for `ps` and up-as-diff.
 
+## Domain adapters (`version: 2`)
+A `version: 2` file may declare `adapters:` trained on Hugging Face NVIDIA Nemotron presets (`nemotron:post-v2`, `nemotron:post-v1`, `nemotron:code`, `nemotron:math`, `nemotron:crossthink`, `nemotron:personas`), `hf:<org>/<repo>` datasets, or local `.jsonl` files, and route requests across them on a single resident `base` model without reloading weights:
+
+```yaml
+adapters:
+  code_oft:
+    base: chat
+    method: oft              # lora | phm | oft
+    rank: 16
+    scale: 10.0
+    hypercomplex_dim: 8
+    factor_rank: 1
+    shared_basis: true
+    block_size: 16
+    parameterization: cayley # cayley | matrixExp
+    block_shared: false
+    layers: [0, 1, 2, 3]
+    output: ./adapters/code_oft
+    iterations: 200
+    batch_size: 2
+    learning_rate: 0.0001
+    max_seq_len: 2048
+    checkpoint_every: 50
+    corpus:
+      source: nemotron:code
+      subset: default
+      split: split_0
+      max_rows: 512
+      min_pass_rate: 0.9
+      include_reasoning: true
+      seed: 42
+    gate:
+      max_kl: 0.2
+      max_ppl_rise: 0.05
+      held_out: ["Explain what a hash table is in two sentences."]
+```
+
+Run `basalt compose train -f basalt.yaml` (with optional `--adapter`, `--force`, `--resume`) to train declared adapters onto disk, then select an `adapter:` in `pipeline.answer` or any entry of `pipeline.answer.routes`.
+
 ## Receipts
 Each `/v1/pipeline` response, and each session log record, carries a receipt. Per stage it gives the model, milliseconds and tokens. Decide stages also carry their cost and any cloud stages that were skipped. Answer stages carry the rule that fired (`route`), the cost and the skipped models. `swap_ms` is the time spent loading on-demand and sequential models.
 

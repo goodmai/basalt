@@ -91,12 +91,14 @@ public struct ComposeSpec: Sendable, Equatable {
     public var minMargin: Double?
     public var epistemic: EpistemicGateSpec?
     public var answer: String
+    public var answerAdapter: String?
     public var routes: [AnswerRoute] = []
     public var speak: Speak?
     public var budget: Double?
     public var pipelines: [String: PipelineSpec] = [:]
     public var experimental = Experimental()
     public var mcp = MCP()
+    public var adapters: [String: ComposeAdapterSpec] = [:]
     public var benchmarks: ComposeBenchmarksSpec?
 
     public init(name: String, models: [String: Model], answer: String) {
@@ -129,6 +131,7 @@ public struct PipelineSpec: Sendable, Equatable {
     public var minMargin: Double?
     public var epistemic: EpistemicGateSpec?
     public var answer: String
+    public var answerAdapter: String?
     public var routes: [AnswerRoute] = []
     public var speak: ComposeSpec.Speak?
 
@@ -144,7 +147,7 @@ extension ComposeSpec {
         var spec = PipelineSpec(answer: answer)
         (spec.documents, spec.audio, spec.cascade, spec.routes) = (documents, audio, cascade, routes)
         (spec.escalateBelow, spec.abstainBelow, spec.minMargin, spec.epistemic) = (escalateBelow, abstainBelow, minMargin, epistemic)
-        spec.speak = speak
+        (spec.answerAdapter, spec.speak) = (answerAdapter, speak)
         return spec
     }
 
@@ -154,7 +157,7 @@ extension ComposeSpec {
         var view = self
         (view.documents, view.audio, view.cascade, view.routes, view.answer) = (pipeline.documents, pipeline.audio, pipeline.cascade, pipeline.routes, pipeline.answer)
         (view.escalateBelow, view.abstainBelow, view.minMargin, view.epistemic, view.pipelines) = (pipeline.escalateBelow, pipeline.abstainBelow, pipeline.minMargin, pipeline.epistemic, [:])
-        view.speak = pipeline.speak
+        (view.answerAdapter, view.speak) = (pipeline.answerAdapter, pipeline.speak)
         return view
     }
 

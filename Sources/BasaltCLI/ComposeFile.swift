@@ -86,6 +86,7 @@ enum ComposeFile {
             speak(pipeline["speak"], into: &spec)
             experimental(top["experimental"], into: &spec)
             mcp(top["mcp"], into: &spec)
+            adapters(top["adapters"], answerNode: pipeline["answer"], into: &spec)
             benchmarks(top["benchmarks"], into: &spec)
             for (name, value) in named(top["pipelines"], path: "pipelines") {
                 prefix = "pipelines.\(name)"
@@ -99,6 +100,7 @@ enum ComposeFile {
         mutating func pipeline(_ node: Node, models: [String: ComposeSpec.Model]) -> PipelineSpec? {
             guard let field = fields(node, path: prefix, section: "pipeline"), included(field["profiles"], path: "\(prefix).profiles") else { return nil }
             var view = ComposeSpec(name: "", models: models, answer: answer(field["answer"]) ?? "")
+            view.answerAdapter = field["answer"]?.mapping?["adapter"].flatMap { text($0, "\(prefix).answer.adapter") }
             if let routes = field["answer"]?.mapping?["routes"] { view.routes = self.routes(routes) }
             perceive(field["perceive"], into: &view)
             decide(field["decide"], into: &view)
