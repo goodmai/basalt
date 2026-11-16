@@ -185,7 +185,41 @@ public struct LiquidProfile: ModelProfile {
     public var defaultMinP: Float? { nil }
 }
 
-// MARK: — Fallback
+public struct FlintProfile: ModelProfile {
+    public let name = "flint"
+
+    public init() {}
+
+    public func templateContext(for reasoning: ReasoningPolicy) -> [String: any Sendable] { [:] }
+
+    public var thinkingMarkers: ThinkingMarkers {
+        ThinkingMarkers(open: ["<think>"], close: ["</think>"])
+    }
+
+    public var defaultMaxTokens: Int { 32_768 }
+
+    public var defaultMinP: Float? { nil }
+
+    public var writesToolCallsAsText: Bool { false }
+}
+
+public struct RicursiveProfile: ModelProfile {
+    public let name = "ricursive"
+
+    public init() {}
+
+    public func templateContext(for reasoning: ReasoningPolicy) -> [String: any Sendable] { [:] }
+
+    public var thinkingMarkers: ThinkingMarkers {
+        ThinkingMarkers(open: ["<think>"], close: ["</think>"])
+    }
+
+    public var defaultMaxTokens: Int { 32_768 }
+
+    public var defaultMinP: Float? { nil }
+
+    public var writesToolCallsAsText: Bool { false }
+}
 
 public struct GenericProfile: ModelProfile {
     public let name = "generic"
@@ -243,6 +277,8 @@ public enum ModelProfileRegistry {
         if t.hasPrefix("qwen3") { return QwenProfile() }
         if t.hasPrefix("gemma") { return GemmaProfile() }
         if t.hasPrefix("lfm2") { return LiquidProfile() }
+        if t == "flint" { return FlintProfile() }
+        if t == "ricursive" || t == "ripple" { return RicursiveProfile() }
         if t == "nemotron_h" {
             return NemotronProfile(switchesThinkingInConversation: chatTemplate?.contains("/no_think") == true)
         }

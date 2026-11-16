@@ -254,16 +254,24 @@ public struct KVCacheGeometry: Sendable, Equatable {
         }
         return TokenCount(Int(min(tokens, Double(Int32.max))))
     }
+}
 
+extension KVCacheGeometry {
     enum LayerKind { case full, windowed, linear, cacheless }
 
+    static func kind(of block: String) -> LayerKind {
+        if block == "moe" || block == "mlp" { return .cacheless }
+        if block.contains("sliding") { return .windowed }
+        if ["linear", "mamba", "conv"].contains(where: { block.contains($0) }) { return .linear }
+        return .full
+    }
+
     static func layerKinds(_ c: [String: Any], layers: Int) -> [LayerKind] {
+        if let blockTypes = c["layers_block_type"] as? [String], !blockTypes.isEmpty {
+            return blockTypes.map(kind(of:)) + Array(repeating: .cacheless, count: max(0, layers - blockTypes.count))
+        }
         if let types = c["layer_types"] as? [String], types.count == layers {
-            return types.map { type in
-                if type.contains("sliding") { return .windowed }
-                if ["linear", "mamba", "conv"].contains(where: { type.contains($0) }) { return .linear }
-                return .full
-            }
+            return types.map(kind(of:))
         }
         if let interval = c["full_attention_interval"] as? Int, interval > 0 {
             return (0..<layers).map { ($0 + 1) % interval == 0 ? .full : .linear }
@@ -283,6 +291,18 @@ public struct KVCacheGeometry: Sendable, Equatable {
     }
 
     static func linearStateBytes(_ c: [String: Any]) -> Int64 {
+        if let mambaHeads = c["mamba_num_heads"] as? Int,
+           let mambaDim = c["mamba_head_dim"] as? Int,
+           let ssmState = c["ssm_state_size"] as? Int
+        {
+            let groups = max(1, c["n_groups"] as? Int ?? 1)
+            let kernel = c["conv_kernel"] as? Int ?? 4
+            let inner = mambaHeads * mambaDim
+            let convChannels = inner + 2 * groups * ssmState
+            let conv = Double(max(0, kernel - 1) * convChannels) * activationBytes
+            let recurrent = Double(inner * ssmState) * recurrentStateBytes
+            return Int64(conv + recurrent)
+        }
         guard let keyHeads = c["linear_num_key_heads"] as? Int,
               let valueHeads = c["linear_num_value_heads"] as? Int,
               let keyDim = c["linear_key_head_dim"] as? Int,

@@ -7,7 +7,7 @@ import MLXLLM
 
 enum TinyModel {
     enum Family: String, CaseIterable, Sendable {
-        case qwen3Small, qwen3, qwen3HeadDim32, qwen35, qwen35Moe, gemma3, gemma4, gemma4Moe, gemma4Unified, qwen3Moe, sigmoidMoe, nemotronH, lfm2, lfm2Moe, prism, paddleOCR, deepSeekOCR, deepSeekOCR2
+        case qwen3Small, qwen3, qwen3HeadDim32, qwen35, qwen35Moe, gemma3, gemma4, gemma4Moe, gemma4Unified, qwen3Moe, sigmoidMoe, nemotronH, lfm2, lfm2Moe, prism, paddleOCR, deepSeekOCR, deepSeekOCR2, flint, ricursive
 
         func model(_ config: Data) throws -> any LanguageModel {
             let decoder = JSONDecoder.json5()
@@ -16,16 +16,22 @@ enum TinyModel {
             case .qwen35, .qwen35Moe: Qwen35TextModel(try decoder.decode(Qwen35TextConfiguration.self, from: config))
             case .gemma3: Gemma3TextModel(try decoder.decode(Gemma3TextConfiguration.self, from: config))
             case .gemma4, .gemma4Moe: Gemma4TextModel(try decoder.decode(Gemma4TextConfiguration.self, from: config))
-            case .gemma4Unified: try TinyGemma4Unified.model(config)
             case .qwen3Moe: Qwen3MoEModel(try decoder.decode(Qwen3MoEConfiguration.self, from: config))
             case .sigmoidMoe, .nemotronH: NemotronHModel(try decoder.decode(NemotronHConfiguration.self, from: config))
             case .lfm2: LFM2Model(try decoder.decode(LFM2Configuration.self, from: config))
             case .lfm2Moe: LFM2MoEModel(try decoder.decode(LFM2MoEConfiguration.self, from: config))
             case .prism: MLXLLM.Qwen35Model(try decoder.decode(MLXLLM.Qwen35Configuration.self, from: config))
-            case .paddleOCR: PaddleOCRVL(try decoder.decode(PaddleOCRVLConfiguration.self, from: config))
-            case .deepSeekOCR: DeepSeekOCR(try decoder.decode(DeepSeekOCRConfiguration.self, from: config).validated())
-            case .deepSeekOCR2: DeepSeekOCR2(try decoder.decode(DeepSeekOCR2Configuration.self, from: config).validated())
+            case .flint: FlintModel(try decoder.decode(FlintConfiguration.self, from: config).validated())
+            case .ricursive: RicursiveModel(try decoder.decode(RicursiveConfiguration.self, from: config).validated())
+            case .gemma4Unified, .paddleOCR, .deepSeekOCR, .deepSeekOCR2: try multimodalModel(config, decoder: decoder)
             }
+        }
+
+        private func multimodalModel(_ config: Data, decoder: JSONDecoder) throws -> any LanguageModel {
+            if self == .gemma4Unified { return try TinyGemma4Unified.model(config) }
+            if self == .paddleOCR { return PaddleOCRVL(try decoder.decode(PaddleOCRVLConfiguration.self, from: config)) }
+            if self == .deepSeekOCR { return DeepSeekOCR(try decoder.decode(DeepSeekOCRConfiguration.self, from: config).validated()) }
+            return DeepSeekOCR2(try decoder.decode(DeepSeekOCR2Configuration.self, from: config).validated())
         }
 
         var seed: UInt64 {
@@ -43,13 +49,15 @@ enum TinyModel {
             case .paddleOCR: 400
             case .deepSeekOCR: 401
             case .deepSeekOCR2: 413
+            case .flint: 518
+            case .ricursive: 520
             }
         }
 
         var weightScale: Float {
             switch self {
             case .qwen3Small, .gemma3: 4
-            case .qwen3, .qwen3HeadDim32, .gemma4, .gemma4Moe, .gemma4Unified, .qwen35, .qwen35Moe, .qwen3Moe, .sigmoidMoe, .nemotronH, .lfm2, .lfm2Moe, .prism, .paddleOCR, .deepSeekOCR, .deepSeekOCR2: 1
+            case .qwen3, .qwen3HeadDim32, .gemma4, .gemma4Moe, .gemma4Unified, .qwen35, .qwen35Moe, .qwen3Moe, .sigmoidMoe, .nemotronH, .lfm2, .lfm2Moe, .prism, .paddleOCR, .deepSeekOCR, .deepSeekOCR2, .flint, .ricursive: 1
             }
         }
 
@@ -163,6 +171,26 @@ enum TinyModel {
                   "qwen2-0-5b": {"dim": 64, "layers": 2, "heads": 4, "kv_heads": 2, "intermediate_size": 128}}},
                  "projector_config": {"input_dim": 64, "n_embed": 64, "projector_type": "linear"}}
                 """
+            case .flint: """
+                {"model_type": "flint", "hidden_size": 64, "num_hidden_layers": 4, "intermediate_size": 128,
+                 "num_attention_heads": 4, "num_key_value_heads": 2, "head_dim": 16, "vocab_size": 256,
+                 "sliding_window": \(slidingWindow), "use_sliding_window": true,
+                 "layer_types": ["full_attention", "sliding_attention", "sliding_attention", "full_attention"],
+                 "no_rope_layer_indices": [0, 3], "mlp_only_layers": [0, 1],
+                 "num_experts": 8, "num_experts_per_tok": 2, "moe_intermediate_size": 32,
+                 "shared_expert_intermediate_size": 32, "router_score_function": "sigmoid",
+                 "norm_topk_prob": true, "router_expert_bias": true, "softmax_type": "learnable",
+                 "rms_norm_eps": 1e-6, "rope_theta": 10000.0, "tie_word_embeddings": false}
+                """
+            case .ricursive: """
+                {"model_type": "ricursive", "hidden_size": 64, "num_hidden_layers": 5, "intermediate_size": 128,
+                 "num_attention_heads": 4, "num_key_value_heads": 2, "head_dim": 16, "vocab_size": 256,
+                 "sliding_window": \(slidingWindow),
+                 "layer_types": ["sliding_attention", "sliding_attention", "sliding_attention", "sliding_attention", "full_attention"],
+                 "use_gated_attention": true, "gate_full_precision": true, "use_valres": true,
+                 "ffn_clamp_threshold": 20.0, "embed_scale": 8.0, "rms_norm_eps": 1e-6, "rope_theta": 10000.0,
+                 "tie_word_embeddings": false}
+                """
             }
         }
     }
@@ -178,6 +206,14 @@ enum TinyModel {
             if family == .sigmoidMoe {
                 let router = model.parameters().flattened().filter { $0.0.hasSuffix(".gate.weight") || $0.0.hasSuffix(".e_score_correction_bias") }
                 model.update(parameters: ModuleParameters.unflattened(router.map { ($0.0, MLXRandom.normal($0.1.shape)) }))
+            } else if family == .flint {
+                let specialized = model.parameters().flattened().filter {
+                    $0.0.hasSuffix(".gate.weight") || $0.0.hasSuffix(".expert_bias") || $0.0.hasSuffix(".softmax_offset")
+                }
+                model.update(parameters: ModuleParameters.unflattened(specialized.map { ($0.0, MLXRandom.normal($0.1.shape) * 0.25) }))
+            } else if family == .ricursive {
+                let lambdas = model.parameters().flattened().filter { $0.0.hasSuffix(".value_res_lambda") }
+                model.update(parameters: ModuleParameters.unflattened(lambdas.map { ($0.0, MLXRandom.normal($0.1.shape) * 0.5) }))
             }
             return model
         }

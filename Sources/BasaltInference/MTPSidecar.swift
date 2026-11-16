@@ -125,7 +125,7 @@ enum MTPSidecar {
         let config = ModelCache.config(at: directory)
         let declared = (config?["mlx_lm_extra_tensors"] as? [String: Any])?["mtp_file"] as? String
         let root = directory.standardizedFileURL.path + "/"
-        return ([declared].compactMap { $0 } + ["mtp.safetensors", "mtp/weights.safetensors"])
+        return ([declared].compactMap { $0 } + ["mtp.safetensors", "mtp-4bit.safetensors", "mtp-8bit.safetensors", "mtp/weights.safetensors"])
             .map { directory.appending(path: $0).standardizedFileURL }
             .first { $0.path.hasPrefix(root) && FileManager.default.fileExists(atPath: $0.path) }
     }
@@ -149,7 +149,11 @@ enum MTPSidecar {
     }
 
     static func load(directory: URL, target: any LanguageModel, draftHead: Bool = false) throws -> (any MTPDrafterModel)? {
-        guard target is Qwen35Model || target is Qwen35TextModel, let url = file(in: directory) else { return nil }
+        guard let url = file(in: directory) else { return nil }
+        if let nemotron = target as? NemotronLightningModel {
+            return try loadNemotron(url: url, target: nemotron)
+        }
+        guard target is Qwen35Model || target is Qwen35TextModel else { return nil }
         let data = try Data(contentsOf: directory.appending(component: "config.json"))
         let root = try JSONSerialization.jsonObject(with: data) as? [String: Any]
         let textConfig = root?["text_config"] as? [String: Any] ?? root
@@ -170,6 +174,16 @@ enum MTPSidecar {
         if draftHead, !model.useDraftHead(of: target) {
             BasaltLogger(module: "MTPSidecar").warn("--experimental-mtp-draft-head: the target head is already 4-bit or narrower, or its width is not a multiple of 64, so the MTP head drafts through it unchanged")
         }
+        return GreedyDraftingMTPDrafter(model)
+    }
+
+    private static func loadNemotron(url: URL, target: NemotronLightningModel) throws -> any MTPDrafterModel {
+        let model = NemotronHMTPDraftModel(target.configuration, moeLatentSize: target.moeLatentSize)
+        var weights = try loadArrays(url: url)
+        weights = model.sanitize(weights: weights)
+        FlintModel.quantizeModulesMatchingPackedWeights(in: model, weights: weights)
+        try model.update(parameters: ModuleParameters.unflattened(weights), verify: [.all])
+        eval(model)
         return GreedyDraftingMTPDrafter(model)
     }
 }

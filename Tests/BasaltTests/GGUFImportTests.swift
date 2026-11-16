@@ -88,7 +88,7 @@ struct GGUFImportTests {
         try FileManager.default.createDirectory(at: template, withIntermediateDirectories: true)
         try Data(TinyModel.Family.qwen35.config.utf8).write(to: template.appending(path: "config.json"))
         try Data("{}".utf8).write(to: template.appending(path: "tokenizer_config.json"))
-        let layout = try GGUFImporter.layout(template: template)
+        let layout = try #require(try GGUFImporter.layout(template: template) as? GGUFQwen35Layout)
         #expect(layout == GGUFQwen35Layout(keyHeads: 2, valueHeads: 4, keyHeadDim: 16, valueHeadDim: 16, prefix: "model."))
 
         let reference = try TinyModel.make(.qwen35)
