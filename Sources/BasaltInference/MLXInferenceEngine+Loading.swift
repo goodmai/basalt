@@ -213,6 +213,18 @@ extension MLXInferenceEngine {
     }
 }
 
+extension ModelContext {
+    var mtpDrafter: (any MTPDrafterModel)? {
+        get { userInfo["basalt.mtpDrafter"] as? any MTPDrafterModel }
+        set { userInfo["basalt.mtpDrafter"] = newValue }
+    }
+
+    var batch: BatchCore? {
+        get { userInfo["basalt.batch"] as? BatchCore }
+        set { userInfo["basalt.batch"] = newValue }
+    }
+}
+
 extension MLXInferenceEngine {
     static let mtpPromptLimit = 8192
     static let mtpPrefixLimit = 4

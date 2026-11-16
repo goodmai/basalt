@@ -18,7 +18,7 @@ final class BatchedDecoder: Sendable {
     }
 
     func seat(in context: ModelContext, kvBits: Int? = nil) -> BatchSeat? {
-        (context.batch as? BatchCore).flatMap { seat(on: $0, kvBits: kvBits) }
+        context.batch.flatMap { seat(on: $0, kvBits: kvBits) }
     }
 
     func seat(on core: BatchCore, kvBits: Int? = nil) -> BatchSeat? {
