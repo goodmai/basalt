@@ -12,15 +12,21 @@ struct ComposeBoot<Orchestrator: ModelOrchestrating>: Sendable {
 
 extension ServeCommand {
     func runComposed(_ spec: ComposeSpec, _ boot: ComposeBoot<some ModelOrchestrating>) async throws {
-        let launch = try await composedLaunch(spec, boot)
-        try await prepare(boot.orchestrator, virtualKeys: boot.config.virtualKeys)
+        let memory = noMemoryCoordinator ? nil : MemoryCoordinator()
+        let launch = try await composedLaunch(spec, boot, memory: memory)
+        try await prepare(boot.orchestrator, virtualKeys: boot.config.virtualKeys, memory: memory)
         log("REST → http://\(boot.config.host):\(boot.config.restPort); the models load after the bind, GET /v1/health/ready says when they are ready")
         defer { ComposeRecord.remove(spec.name) }
         try await Self.runServers(launch, orchestrator: boot.orchestrator)
     }
 
-    func composedLaunch(_ spec: ComposeSpec, _ boot: ComposeBoot<some ModelOrchestrating>) async throws -> ServerLaunch {
+    func composedLaunch(
+        _ spec: ComposeSpec,
+        _ boot: ComposeBoot<some ModelOrchestrating>,
+        memory: MemoryCoordinator? = nil
+    ) async throws -> ServerLaunch {
         let embeddings = try await loadEmbeddings()
+        let explicitSpeech = try await loadSpeechSynthesizer(gate: boot.orchestrator.gate, memory: memory)
         let slot = ComposeSlot(spec: spec, cloudGate: cloudGate(spec)) { [self] model in ProcessInfo.processInfo.environment[model?.apiKeyEnv ?? decision.keyEnvironment] ?? "" }
         let file = pipeline.compose ?? ""
         return ServerLaunch(
@@ -29,10 +35,17 @@ extension ServeCommand {
             statsInterval: stats ? min(max(1, statsInterval), 86_400) : nil, canaryInterval: canaryMinutes.map { .seconds($0 * 60) },
             announceReady: network.announceReady,
             onBind: { port in Self.recordBind(spec.name, port: port, file: file) },
-            startup: { [self] in try await startComposed(spec, boot, embeddings: embeddings, slot: slot) })
+            startup: { [self] in try await startComposed(spec, boot, embeddings: embeddings, slot: slot, memory: memory) },
+            speechSynthesizer: explicitSpeech)
     }
 
-    func startComposed(_ spec: ComposeSpec, _ boot: ComposeBoot<some ModelOrchestrating>, embeddings: (any EmbeddingEngine)?, slot: ComposeSlot) async throws {
+    func startComposed(
+        _ spec: ComposeSpec,
+        _ boot: ComposeBoot<some ModelOrchestrating>,
+        embeddings: (any EmbeddingEngine)?,
+        slot: ComposeSlot,
+        memory: MemoryCoordinator? = nil
+    ) async throws {
         let loadedDecisions = try await loadDecisions(chat: boot.engine, chatPath: boot.chatPath)
         let perceivePaths = try await pipelinePerceivePaths()
         let plan = try await admitComputePlan(chatPath: boot.chatPath, embeddings: embeddings, decisions: loadedDecisions, perceive: perceivePaths)
@@ -43,7 +56,7 @@ extension ServeCommand {
         let stages = try await loadPipelineStages(perceivePaths, plan: plan)
         var start = ComposeStart(chat: boot.orchestrator, decider: loadedDecisions, decisions: nil, cloudGate: slot.cloudGate, startup: stages, besideDecode: besideDecode)
         (start.registry, start.events) = (slot.registry, slot.events)
-        let host = try await composeHost(spec, start: start, engine: boot.engine, chatPath: boot.chatPath)
+        let host = try await composeHost(spec, start: start, engine: boot.engine, chatPath: boot.chatPath, memory: memory)
         await host.probe(spec.models.keys.sorted(), in: spec)
         for (name, failure) in await host.failures.sorted(by: { $0.key < $1.key }) { log("\(red("[error]")) \(name): \(failure)") }
         await slot.started(host)
@@ -59,8 +72,8 @@ extension ServeCommand {
         }
     }
 
-    func prepare(_ orchestrator: any ModelOrchestrating, virtualKeys: [VirtualKey]) async throws {
-        if !noMemoryCoordinator { await orchestrator.coordinateMemory(with: MemoryCoordinator()) }
+    func prepare(_ orchestrator: any ModelOrchestrating, virtualKeys: [VirtualKey], memory: MemoryCoordinator? = nil) async throws {
+        if !noMemoryCoordinator { await orchestrator.coordinateMemory(with: memory ?? MemoryCoordinator()) }
         if !noThermalPolicy { await orchestrator.coordinateThermal() }
         await experimental.attachMediaFallbacks(to: orchestrator)
         try await attachCloudFallback(to: orchestrator, virtualKeys: virtualKeys)

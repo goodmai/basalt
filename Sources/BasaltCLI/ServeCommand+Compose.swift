@@ -110,8 +110,18 @@ extension ServeCommand {
         }
     }
 
-    func composeHost(_ spec: ComposeSpec, start: ComposeStart, engine: MLXInferenceEngine, chatPath: String? = nil) async throws -> ComposeHost {
-        let host = ComposeHost(services: ComposeServices(serve: self, chat: engine, chatPath: chatPath), spec: spec, start: start)
+    func composeHost(
+        _ spec: ComposeSpec,
+        start: ComposeStart,
+        engine: MLXInferenceEngine,
+        chatPath: String? = nil,
+        memory: MemoryCoordinator? = nil
+    ) async throws -> ComposeHost {
+        let host = ComposeHost(
+            services: ComposeServices(serve: self, chat: engine, chatPath: chatPath, memory: memory),
+            spec: spec,
+            start: start
+        )
         do {
             try await host.start(defaultDecisions: start.decisions)
         } catch {

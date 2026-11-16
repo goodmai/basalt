@@ -11,6 +11,8 @@ enum ComposeHeld: Sendable {
     case cloud(String)
     case decision(any DecisionEngine)
     case onDemandDecision(OnDemandDecision)
+    case speaker(SpeechSynthesizerLoader.LoadedSynthesizer)
+    case onDemandSpeaker(OnDemandSpeechSynthesizer)
 }
 
 struct ComposeStart: Sendable {
@@ -80,6 +82,7 @@ actor ComposeHost {
         case .cloud(_, let id): return .cloud(id)
         case .local(let source):
             if spec.deciderModels.contains(name) { return try await loadDecider(name, source: source, model: model) }
+            if spec.speakerModels.contains(name) { return try await loadSpeaker(name, source: source, model: model) }
             let path = try await services.resolve(source)
             if spec.views.contains(where: { $0.spec.ocr == name }), let refusal = ServeCommand.ocrRefusal(source, path: path) { throw BasaltError.invalidRequestStructure(details: refusal) }
             if spec.views.contains(where: { $0.spec.speech == name }), let refusal = ServeCommand.audioRefusal(source, path: path) { throw BasaltError.invalidRequestStructure(details: refusal) }
@@ -187,6 +190,8 @@ actor ComposeHost {
         case .onDemand(let model): await model.model.unloadModel()
         case .decision(let engine): await engine.unload()
         case .onDemandDecision(let decider): await decider.unload()
+        case .speaker(let loaded): await loaded.synthesizer.unload()
+        case .onDemandSpeaker(let speaker): await speaker.unload()
         case .cloud, nil: break
         }
     }

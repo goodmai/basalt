@@ -14,15 +14,22 @@ struct AudioSpeechController: Sendable {
     private static let sampleRateHeader = HTTPField.Name("X-Basalt-Speech-Sample-Rate")!
 
     let synthesizer: (any SpeechSynthesizer)?
+    var pipelines: PipelineRegistry? = nil
 
     func add(to group: RouterGroup<BasicRequestContext>) {
         group.post("/audio/speech", use: speech)
         group.get("/audio/voices", use: voices)
     }
 
+    private func resolveSynthesizer() async -> (any SpeechSynthesizer)? {
+        if let synthesizer { return synthesizer }
+        return await pipelines?.system(ComposeSpec.defaultPipeline)?.speech
+    }
+
     @Sendable
     func voices(request: Request, context: BasicRequestContext) async throws -> Response {
-        let items = if let synthesizer { await synthesizer.voices } else { [VoiceSpec]() }
+        let active = await resolveSynthesizer()
+        let items = if let active { await active.voices } else { [VoiceSpec]() }
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
         var buffer = ByteBuffer()
@@ -44,12 +51,12 @@ struct AudioSpeechController: Sendable {
         }
         do {
             let speechRequest = try Self.parseRequest(Data(body.readableBytesView))
-            guard let synthesizer else {
+            guard let active = await resolveSynthesizer() else {
                 throw BasaltError.invalidRequestStructure(details: "speech: no speech synthesizer is configured on this server")
             }
             let started = ContinuousClock.now
-            let decision = await synthesizer.resolveRoute(speechRequest)
-            let stream = try await synthesizer.synthesize(speechRequest)
+            let decision = await active.resolveRoute(speechRequest)
+            let stream = try await active.synthesize(speechRequest)
             return try await Self.makeResponse(stream: stream, request: speechRequest, decision: decision, started: started)
         } catch {
             return ProviderErrorResponse.response(for: error, path: Self.speechPath)
@@ -83,12 +90,14 @@ extension AudioSpeechController {
         var instruct: String?
         var exaggeration: Double?
         var preferANE: Bool?
+        var referenceAudio: String?
 
         enum CodingKeys: String, CodingKey {
             case model, input, voice, speed, language, instruct, exaggeration
             case responseFormat = "response_format"
             case streamFormat = "stream_format"
             case preferANE = "prefer_ane"
+            case referenceAudio = "reference_audio"
         }
 
         func toSpeechRequest() throws(BasaltError) -> SpeechRequest {
@@ -109,7 +118,8 @@ extension AudioSpeechController {
                 language: language,
                 instruct: instruct,
                 exaggeration: exaggeration,
-                preferANE: preferANE ?? false
+                preferANE: preferANE ?? false,
+                referenceAudio: referenceAudio
             )
             return request
         }

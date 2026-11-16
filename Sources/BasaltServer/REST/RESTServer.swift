@@ -170,7 +170,7 @@ package struct RESTServer: Sendable {
         let registry = pipelines ?? PipelineRegistry([ComposeSpec.defaultPipeline: PipelineSystem(decisions: decisions, stages: pipeline)])
         oai.post("/systemone", use: SystemOneController(engine: { await registry.system(ComposeSpec.defaultPipeline)?.decisions }, log: orchestrator.sessionLog, telemetry: orchestrator.telemetry).decide)
         oai.post("/audio/transcriptions", use: TranscriptionsController(orchestrator: orchestrator).transcriptions)
-        AudioSpeechController(synthesizer: speechSynthesizer).add(to: oai)
+        AudioSpeechController(synthesizer: speechSynthesizer, pipelines: registry).add(to: oai)
         oai.post("/ocr", use: OCRController(orchestrator: orchestrator).ocr)
         let pipelineController = PipelineController(registry: registry, chat: orchestrator)
         oai.post("/pipeline", use: pipelineController.pipeline)

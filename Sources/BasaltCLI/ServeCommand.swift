@@ -49,6 +49,12 @@ struct ServeCommand: AsyncParsableCommand {
     )
     var rerankModel: String?
 
+    @Option(
+        name: .customLong("tts-model"),
+        help: "Speech synthesis model served on /v1/audio/speech and /v1/audio/voices: repo ID or local path (Kokoro-82M ANE/MLX, Qwen3-TTS, Chatterbox, Fun-CosyVoice3) or apple-speech"
+    )
+    var ttsModel: String?
+
     @OptionGroup var sampling: SamplingOptions
 
     @OptionGroup var kvCache: KVCacheOptions
@@ -168,39 +174,10 @@ struct ServeCommand: AsyncParsableCommand {
         let engine = try makeEngine()
         let orchestrator = try await makeOrchestrator(engine: engine, maxTokens: config.maxTokens)
         if let spec, !mcp { return try await runComposed(spec, ComposeBoot(config: config, engine: engine, orchestrator: orchestrator, chatPath: resolvedPath)) }
-
-        let loadedEmbeddings = try await loadEmbeddings()
-        let loadedDecisions = try await loadDecisions(chat: engine, chatPath: resolvedPath)
-        let perceivePaths = try await pipelinePerceivePaths()
-        let plan = try await admitComputePlan(chatPath: resolvedPath, embeddings: loadedEmbeddings, decisions: loadedDecisions, perceive: perceivePaths)
-        let embeddings = BesideDecodeEmbeddingEngine.serving(loadedEmbeddings, besideDecode: plan.runsBesideDecode("embed"))
-        let cloudGate = cloudGate(spec)
-        var decisions = try spec.map { try composedDecisions($0, local: loadedDecisions, gate: orchestrator.gate, besideDecode: plan.runsBesideDecode("decide"), cloudGate: cloudGate) }
-            ?? servedDecisions(loadedDecisions, gate: orchestrator.gate, besideDecode: plan.runsBesideDecode("decide"))
-
-        try await load(orchestrator, from: resolvedPath)
-        var stages = try await loadPipelineStages(perceivePaths, plan: plan)
-        let start = ComposeStart(chat: orchestrator, decider: loadedDecisions, decisions: decisions, cloudGate: cloudGate, startup: stages, besideDecode: plan.runsBesideDecode("decide"))
-        let host = try await spec.asyncMap { try await composeHost($0, start: start, engine: engine, chatPath: resolvedPath) }
-        if let host, let system = await host.registry.system(ComposeSpec.defaultPipeline) { (stages, decisions) = (system.stages, system.decisions) }
-        let record = try spec.flatMap { host == nil ? nil : try ComposeRecord.write(name: $0.name, port: network.port, file: pipeline.compose ?? "") }
-        defer { record.map(ComposeRecord.remove) }
-        try await prepare(orchestrator, virtualKeys: config.virtualKeys)
-
-        let (startREST, startMCP) = (!mcp || rest, mcp)
-
-        if startREST { log("REST → http://\(config.host):\(config.restPort)") }
-        if startMCP  { log("MCP → JSON-RPC 2.0 on stdin/stdout") }
-
-        let mcpServer = startMCP ? try makeMCPServer(orchestrator: orchestrator, resolvedPath: resolvedPath, decisions: decisions, stages: stages) : nil
-
-        try await Self.runServers(
-            ServerLaunch(
-                config: config, startREST: startREST, mcpServer: mcpServer, embeddings: embeddings, decisions: decisions, pipeline: stages,
-                pipelines: host?.registry, compose: host.map(\.control),
-                statsInterval: stats ? min(max(1, statsInterval), 86_400) : nil, canaryInterval: canaryMinutes.map { .seconds($0 * 60) },
-                announceReady: self.network.announceReady),
-            orchestrator: orchestrator)
+        try await runDirect(
+            spec,
+            DirectServeBoot(config: config, engine: engine, orchestrator: orchestrator, resolvedPath: resolvedPath, port: network.port)
+        )
     }
 }
 
