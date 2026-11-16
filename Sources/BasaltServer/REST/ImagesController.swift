@@ -21,7 +21,6 @@ struct ImagesController: Sendable {
         group.post("/images/generations") { try await self.generations(request: $0, context: $1) }
         group.post("/images/edits") { try await self.edits(request: $0, context: $1) }
         group.get("/images/content/{id}") { try await self.content(request: $0, context: $1) }
-        group.get("/images/content/**") { _, _ in Self.invalidAssetResponse() }
         group.get("/images/models") { try await self.models(request: $0, context: $1) }
     }
 
@@ -67,11 +66,16 @@ struct ImagesController: Sendable {
         ProviderErrorResponse.response(status: .badRequest, message: "invalid image asset id", shape: .openAI)
     }
 
+    private enum CollectedBody {
+        case payload(Data)
+        case early(Response)
+    }
+
     func generations(request: Request, context: BasicRequestContext) async throws -> Response {
         let data: Data
         switch await collectBody(request) {
-        case .success(let payload): data = payload
-        case .failure(let errorResponse): return errorResponse
+        case .payload(let payload): data = payload
+        case .early(let errorResponse): return errorResponse
         }
         do {
             guard let active = await resolveSynthesizer() else {
@@ -91,8 +95,8 @@ struct ImagesController: Sendable {
     func edits(request: Request, context: BasicRequestContext) async throws -> Response {
         let data: Data
         switch await collectBody(request) {
-        case .success(let payload): data = payload
-        case .failure(let errorResponse): return errorResponse
+        case .payload(let payload): data = payload
+        case .early(let errorResponse): return errorResponse
         }
         do {
             guard let active = await resolveSynthesizer() else {
@@ -110,18 +114,18 @@ struct ImagesController: Sendable {
         }
     }
 
-    private func collectBody(_ request: Request) async -> Result<Data, Response> {
+    private func collectBody(_ request: Request) async -> CollectedBody {
         do {
             let buffer = try await request.body.collect(upTo: Self.bodyLimit)
-            return .success(Data(buffer.readableBytesView))
+            return .payload(Data(buffer.readableBytesView))
         } catch let error as any HTTPResponseError where error.status == .contentTooLarge {
-            return .failure(ProviderErrorResponse.response(
+            return .early(ProviderErrorResponse.response(
                 status: .contentTooLarge,
                 message: "an image request is limited to \(Self.bodyLimit >> 20) MB",
                 shape: .openAI
             ))
         } catch {
-            return .failure(ProviderErrorResponse.response(for: error, path: Self.generationsPath))
+            return .early(ProviderErrorResponse.response(for: error, path: Self.generationsPath))
         }
     }
 }

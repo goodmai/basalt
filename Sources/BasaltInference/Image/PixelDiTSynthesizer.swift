@@ -156,7 +156,7 @@ public actor PixelDiTSynthesizer: ImageStepRunner {
     private var nextSessionID = 0
     private var epoch = 0
 
-    public init(
+    package init(
         descriptor: ImageModelDescriptor = .iris3BTurbo(),
         config: ImageDiTConfig = .tiny(modelID: "Speridlabs/Iris-3B-Turbo"),
         sharedTextEmbedder: (@Sendable (String) async throws -> [Float])? = nil

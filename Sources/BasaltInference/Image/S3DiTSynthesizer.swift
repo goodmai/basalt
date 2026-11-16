@@ -55,8 +55,8 @@ final class S3DiTModule: Module {
         self._textEncoder.wrappedValue = TextConditioningEncoder(hiddenDim: d, sharedInputDim: config.textEmbedDim)
         self._reasonAdapter.wrappedValue = Step1XReasonEditAdapter(dimensions: d)
         self._vae.wrappedValue = PatchVAECodec(latentChannels: latCh)
-        self._patchIn.wrappedValue = Conv2d(inputChannels: latCh, outputChannels: d, kernelSize: p, stride: p)
-        self._refPatchIn.wrappedValue = Conv2d(inputChannels: latCh, outputChannels: d, kernelSize: p, stride: p)
+        self._patchIn.wrappedValue = Conv2d(inputChannels: latCh, outputChannels: d, kernelSize: IntOrPair(p), stride: IntOrPair(p))
+        self._refPatchIn.wrappedValue = Conv2d(inputChannels: latCh, outputChannels: d, kernelSize: IntOrPair(p), stride: IntOrPair(p))
         self._probeAdaLN.wrappedValue = AdaLNZeroModulation(dimensions: d)
         self._probeNorm.wrappedValue = LayerNorm(dimensions: d, affine: false)
         self._blocks.wrappedValue = (0 ..< config.numLayers).map { _ in
@@ -137,7 +137,7 @@ public actor S3DiTSynthesizer: ImageStepRunner {
     private var nextSessionID = 0
     private var epoch = 0
 
-    public init(
+    package init(
         descriptor: ImageModelDescriptor = .zImageTurbo(),
         config: ImageDiTConfig = .tiny(modelID: "Tongyi-MAI/Z-Image-Turbo"),
         sharedTextEmbedder: (@Sendable (String) async throws -> [Float])? = nil

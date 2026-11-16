@@ -279,7 +279,12 @@ extension WireImageRequest {
         let imageParts = form.values("image") + form.values("image[]")
         let sizeText = try form.text("size")
         let dims = if let sizeText, !sizeText.isEmpty { try ImageGenerationRequest.parseSize(sizeText) } else { ImageDimensions() }
-        let outFormat = try parseFormat(try form.text("output_format") ?? form.text("format"))
+        let formatField: String? = if let explicit = try form.text("output_format") {
+            explicit
+        } else {
+            try form.text("format")
+        }
+        let outFormat = try parseFormat(formatField)
         let bg = try parseBackground(try form.text("background"))
         let parsedSteps = try parseIntField(form, "steps") ?? defaultSteps
         var config = ImageGenerationConfig(

@@ -11,18 +11,18 @@ import Testing
 @testable import BasaltCore
 @testable import BasaltServer
 
-struct DeterministicTestImageSynthesizer: ImageSynthesizer {
+actor DeterministicTestImageSynthesizer: ImageSynthesizer {
     enum FailureMode: Sendable {
         case none
         case beforeFirstFrame
         case afterPartialFrame
     }
 
-    let modelIdentifier: String
-    let descriptor: ImageModelDescriptor
-    var failureMode: FailureMode = .none
-    var emitsPartials: Bool = false
-    let recorded = Mutex<[ImageGenerationRequest]>([])
+    nonisolated let modelIdentifier: String
+    nonisolated let descriptor: ImageModelDescriptor
+    let failureMode: FailureMode
+    let emitsPartials: Bool
+    private(set) var recorded: [ImageGenerationRequest] = []
 
     init(
         id: String = "Tongyi-MAI/Z-Image-Turbo",
@@ -40,7 +40,7 @@ struct DeterministicTestImageSynthesizer: ImageSynthesizer {
         _ request: ImageGenerationRequest
     ) async throws -> AsyncThrowingStream<ImageGenerationEvent, any Error> {
         try request.validate()
-        recorded.withLock { $0.append(request) }
+        recorded.append(request)
         if failureMode == .beforeFirstFrame {
             throw BasaltError.modelInferenceError(details: "simulated primary failure before frame")
         }
@@ -321,12 +321,6 @@ struct RoutedImageSynthesizerAndComposeHostTests {
     }
 }
 
-extension MockInferenceEngine {
-    fileprivate func setResponder(_ fn: @escaping @Sendable (GenerationRequest) -> String) {
-        responder = fn
-    }
-}
-
 @Suite("OpenAI-compatible /v1/images/* REST, multipart edits, SSE streaming and asset store (#517)")
 struct ImagesControllerRESTTests {
     private func makeTempStore() throws -> URL {
@@ -470,7 +464,7 @@ struct ImagesControllerRESTTests {
             #expect(mpRes == .ok)
         }
 
-        let recorded = synth.recorded.withLock { $0 }
+        let recorded = await synth.recorded
         #expect(recorded.count == 2)
         #expect(recorded[0].config.referenceImages.count == 2 && recorded[0].config.maskImage != nil && recorded[0].isAudioConditioned)
         #expect(recorded[1].config.referenceImages.count == 3 && recorded[1].outputFormat == .jpeg)
@@ -544,9 +538,13 @@ struct MCPImageToolsTests {
         #expect(lines.count == 3)
         #expect(lines[0].contains("basalt_generate_image") && lines[0].contains("basalt_edit_image"))
         #expect(!lines[1].contains("\"error\"") && lines[1].contains("permissive_commercial"))
-        #expect(!lines[2].contains("\"error\"") && lines[2].contains("/v1/images/content/"))
+        let envelope = try #require(try JSONSerialization.jsonObject(with: Data(lines[2].utf8)) as? [String: Any])
+        let content = (envelope["result"] as? [String: Any])?["content"] as? [[String: String]]
+        let payloadText = try #require(content?.first?["text"])
+        let output = try JSONDecoder().decode(MCPImageToolOutput.self, from: Data(payloadText.utf8))
+        #expect(output.url.hasPrefix("/v1/images/content/") && FileManager.default.fileExists(atPath: output.path))
 
-        let recorded = synth.recorded.withLock { $0 }
+        let recorded = await synth.recorded
         #expect(recorded.count == 2)
         #expect(recorded[0].config.seed == 99 && !recorded[0].isEditRequest)
         #expect(recorded[1].isEditRequest && recorded[1].config.referenceImages.count == 1)

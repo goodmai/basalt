@@ -5,7 +5,6 @@ import Foundation
 import Hummingbird
 import HummingbirdTesting
 import SwiftUI
-import Synchronization
 import Testing
 @testable import BasaltApp
 @testable import BasaltAppCore
@@ -207,10 +206,15 @@ struct AppImageCanvasReducerAndStoreTests {
 
 @Suite("Mac app image canvas: live HTTP SSE streaming for generations and edits (#517)", .timeLimit(.minutes(1)))
 struct AppImageEngineSSETests {
+    actor PathRecorder {
+        private(set) var paths: [String] = []
+        func append(_ path: String) { paths.append(path) }
+    }
+
     private static func makeImageRouter(
         partialPNG: Data,
         finalPNG: Data,
-        recordedPaths: Mutex<[String]>
+        recordedPaths: PathRecorder
     ) -> Router<BasicRequestContext> {
         let router = Router()
         let assetID = "\(AppMediaStore.sha256Hex(finalPNG)).png"
@@ -238,7 +242,7 @@ struct AppImageEngineSSETests {
         expectImages: Bool,
         partialPNG: Data,
         finalPNG: Data,
-        recordedPaths: Mutex<[String]>
+        recordedPaths: PathRecorder
     ) async throws -> Response {
         guard request.headers[.authorization] == "Bearer img-token" else {
             return Response(status: .unauthorized)
@@ -249,7 +253,7 @@ struct AppImageEngineSSETests {
         if expectImages && images.isEmpty {
             return Response(status: .badRequest)
         }
-        recordedPaths.withLock { $0.append(path) }
+        await recordedPaths.append(path)
         let assetID = "\(AppMediaStore.sha256Hex(finalPNG)).png"
         let partialFrame = """
         data: {"type":"image_generation.partial_image","step":2,"total_steps":8,"b64_json":"\(partialPNG.base64EncodedString())","width":256,"height":256,"format":"png"}
@@ -301,7 +305,7 @@ struct AppImageEngineSSETests {
     func liveSSEGenerationsAndEdits() async throws {
         let partialPNG = try ImageCanvasTestFixtures.makeBasaltScenePNG(width: 32, height: 32, neonDusk: false)
         let finalPNG = try ImageCanvasTestFixtures.makeBasaltScenePNG(width: 96, height: 96, neonDusk: true)
-        let recordedPaths = Mutex<[String]>([])
+        let recordedPaths = PathRecorder()
         let mediaDir = FileManager.default.temporaryDirectory.appending(path: "sse-media-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: mediaDir) }
         let router = Self.makeImageRouter(partialPNG: partialPNG, finalPNG: finalPNG, recordedPaths: recordedPaths)
@@ -325,7 +329,7 @@ struct AppImageEngineSSETests {
             #expect(fetched == finalPNG)
 
             try await Self.verifyChatStoreImageFlow(client: client, mediaDir: mediaDir, refPNG: partialPNG)
-            #expect(recordedPaths.withLock { $0 } == ["/v1/images/generations", "/v1/images/generations", "/v1/images/edits"])
+            #expect(await recordedPaths.paths == ["/v1/images/generations", "/v1/images/generations", "/v1/images/edits"])
         }
     }
 }
@@ -389,15 +393,16 @@ struct AppImageCanvasVisualShowcaseTests {
         let (store, answerID) = try Self.seedShowcaseStore(in: model, daylightPath: daylightPath, duskPath: duskPath)
         #expect(store.state.conversation.messages.last?.receipt?.stages?.count == 2)
 
-        let inspectorHost = NSHostingView(rootView: InspectorView(store: store, selected: answerID).frame(width: 320, height: 640))
-        inspectorHost.layoutSubtreeIfNeeded()
-        #expect(inspectorHost.fittingSize.width > 0)
-
-        let spec = VisualSceneSpec(id: .chatConversationRich, width: 1120, height: 780)
-        let dark = try OffscreenSceneRenderer.render(RootView(model: model), spec: spec, variant: .darkStandard)
-        let russian = try OffscreenSceneRenderer.render(RootView(model: model), spec: spec, variant: .darkRussian)
-        #expect(dark.width == 2240 && dark.height == 1560 && !dark.png.isEmpty)
-        #expect(russian.width == 2240 && russian.height == 1560 && !russian.png.isEmpty)
+        let showcase = HStack(spacing: 0) {
+            ChatView(store: store)
+            Divider()
+            InspectorView(store: store, selected: answerID).frame(width: 320)
+        }
+        let spec = VisualSceneSpec(id: .chatInspectorOpen, width: 1200, height: 780)
+        let dark = try OffscreenSceneRenderer.render(showcase, spec: spec, variant: .darkStandard)
+        let russian = try OffscreenSceneRenderer.render(showcase, spec: spec, variant: .darkRussian)
+        #expect(dark.width == 2400 && dark.height == 1560 && !dark.png.isEmpty)
+        #expect(russian.width == 2400 && russian.height == 1560 && !russian.png.isEmpty)
 
         if let rawDir = ProcessInfo.processInfo.environment["BASALT_VISUAL_EXPORT_DIR"], !rawDir.isEmpty {
             let outDir = URL(fileURLWithPath: rawDir)

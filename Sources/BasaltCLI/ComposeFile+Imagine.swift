@@ -38,15 +38,6 @@ extension ComposeFile.Walk {
         spec.imagine = stage
     }
 
-    private mutating func integer(_ node: Node?, _ path: String) -> Int? {
-        guard let node else { return nil }
-        guard let value = node.int else {
-            issue(path, node, "must be an integer")
-            return nil
-        }
-        return value
-    }
-
     private mutating func imagineEnums(_ field: [String: Node], path: String, into stage: inout ComposeSpec.Imagine) {
         if let raw = text(field["format"], "\(path).format") {
             stage.format = ImageOutputFormat(rawValue: raw)

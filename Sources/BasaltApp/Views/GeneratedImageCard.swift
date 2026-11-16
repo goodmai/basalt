@@ -101,52 +101,70 @@ public struct GeneratedImageCard: View {
 
     private var actionBar: some View {
         HStack(spacing: 6) {
-            Button("Zoom", systemImage: "arrow.up.left.and.arrow.down.right") {
+            toolbarButton("Zoom", systemImage: "arrow.up.left.and.arrow.down.right") {
                 showingLightbox = true
             }
-            .adaptiveGlassButton()
-
-            Button("Copy Image", systemImage: "doc.on.doc") {
+            toolbarButton("Copy Image", systemImage: "doc.on.doc", iconOnly: true) {
                 GeneratedImageIO.copyToPasteboard(part: part)
             }
-            .adaptiveGlassButton()
-
-            Button("Save…", systemImage: "square.and.arrow.down") {
+            toolbarButton("Save…", systemImage: "square.and.arrow.down") {
                 GeneratedImageIO.saveWithPanel(part: part)
             }
-            .adaptiveGlassButton()
-
-            Button("Edit Image", systemImage: "wand.and.stars") {
+            toolbarButton("Edit Image", systemImage: "wand.and.stars", tint: .accentColor) {
                 onEdit(part)
             }
-            .adaptiveGlassButton(prominent: true)
-
             if part.hasAlpha {
-                Button(
+                toolbarButton(
                     showCheckerboard ? "Checkerboard" : "Solid",
-                    systemImage: showCheckerboard ? "square.grid.2x2" : "square.fill"
+                    systemImage: showCheckerboard ? "square.grid.2x2" : "square.fill",
+                    iconOnly: true
                 ) {
                     showCheckerboard.toggle()
                 }
-                .adaptiveGlassButton()
             }
-
             if !part.boxes.isEmpty {
-                Button("BBox", systemImage: "viewfinder") {
+                toolbarButton("BBox", systemImage: "viewfinder", tint: showBoxes ? .cyan : nil) {
                     showBoxes.toggle()
                 }
-                .tint(showBoxes ? .cyan : nil)
-                .adaptiveGlassButton(prominent: showBoxes)
             }
-
             Spacer(minLength: 4)
-
             Text(verbatim: "\(part.width)×\(part.height)" + (part.hasAlpha ? " · RGBA" : ""))
                 .font(.caption2.monospacedDigit())
                 .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
         }
-        .controlSize(.small)
         .frame(maxWidth: 560)
+    }
+
+    private func toolbarButton(
+        _ title: LocalizedStringKey,
+        systemImage: String,
+        iconOnly: Bool = false,
+        tint: Color? = nil,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Group {
+                if iconOnly {
+                    Label(title, systemImage: systemImage).labelStyle(.iconOnly)
+                } else {
+                    Label(title, systemImage: systemImage).labelStyle(.titleAndIcon)
+                }
+            }
+            .font(.caption.weight(.medium))
+            .foregroundStyle(tint ?? .primary)
+            .lineLimit(1)
+            .padding(.horizontal, iconOnly ? 8 : 10)
+            .padding(.vertical, 5)
+            .background((tint ?? .primary).opacity(tint == nil ? 0.08 : 0.18), in: .capsule)
+            .overlay {
+                Capsule().strokeBorder((tint ?? .primary).opacity(tint == nil ? 0.16 : 0.45), lineWidth: 0.7)
+            }
+        }
+        .buttonStyle(.plain)
+        .fixedSize(horizontal: true, vertical: false)
+        .help(Text(title))
     }
 
     @ViewBuilder

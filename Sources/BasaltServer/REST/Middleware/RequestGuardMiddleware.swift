@@ -78,14 +78,28 @@ public struct RequestGuardMiddleware: RouterMiddleware {
         guard allowsOrigin(request) else {
             return Self.reject(.forbidden, "Forbidden: cross-origin requests are not allowed (see allowed_origins).", path: request.uri.path)
         }
-        if request.method == .post, request.uri.path == TranscriptionsController.path {
-            guard Self.has(.multipartForm, request) else {
-                return Self.reject(.unsupportedMediaType, "Content-Type must be multipart/form-data.", path: request.uri.path)
-            }
-        } else if request.method == .post, !Self.has(.applicationJson, request) {
-            return Self.reject(.unsupportedMediaType, "Content-Type must be application/json.", path: request.uri.path)
+        if let mediaFailure = Self.validatePostMediaType(request) {
+            return mediaFailure
         }
         return try await next(request, context)
+    }
+
+    private static func validatePostMediaType(_ request: Request) -> Response? {
+        guard request.method == .post else { return nil }
+        let path = request.uri.path
+        if path == TranscriptionsController.path {
+            return has(.multipartForm, request)
+                ? nil
+                : reject(.unsupportedMediaType, "Content-Type must be multipart/form-data.", path: path)
+        }
+        if path == ImagesController.editsPath {
+            return (has(.applicationJson, request) || has(.multipartForm, request))
+                ? nil
+                : reject(.unsupportedMediaType, "Content-Type must be application/json or multipart/form-data.", path: path)
+        }
+        return has(.applicationJson, request)
+            ? nil
+            : reject(.unsupportedMediaType, "Content-Type must be application/json.", path: path)
     }
 
     private static func reject(_ status: HTTPResponse.Status, _ message: String, path: String) -> Response {
