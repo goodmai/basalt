@@ -118,7 +118,7 @@ extension MLXInferenceEngine {
         if let batchDecoder { return batchDecoder }
         let slots = configuration.batchSlots
         await container.update { if $0.batch == nil { $0.batch = BatchCore(model: $0.model, slots: slots) } }
-        let made = await container.perform { ($0.batch as? BatchCore)?.decoder }
+        let made = await container.perform { $0.batch?.decoder }
         guard epoch == modelEpoch else { return nil }
         batchDecoder = made
         return made

@@ -90,7 +90,12 @@ extension MLXInferenceEngine {
         case .jsonObject, .jsonSchema:
             return try GrammarConstraint(tokenizer: tokenizer, jsonSchema: source, fastForward: fastForward, hostTokenizer: host)
         case .regex:
-            return try GrammarConstraint(tokenizer: tokenizer, regex: source, fastForward: fastForward, hostTokenizer: host)
+            let tag = try JSONSerialization.data(withJSONObject: [
+                "type": "structural_tag", "format": ["type": "regex", "pattern": source],
+            ])
+            return try GrammarConstraint(
+                tokenizer: tokenizer, structuralTag: String(decoding: tag, as: UTF8.self),
+                fastForward: fastForward, hostTokenizer: host)
         case .grammar:
             return try GrammarConstraint(tokenizer: tokenizer, grammar: source, fastForward: fastForward, hostTokenizer: host)
         case .structuralTag:
