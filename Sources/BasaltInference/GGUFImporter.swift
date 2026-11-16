@@ -16,22 +16,26 @@ package struct GGUFImporter: Sendable {
     }
 
     package let file: GGUFFile
-    package let layout: GGUFQwen35Layout
+    package let layout: any GGUFTensorLayout
     package let grid: Grid
     package let groupSize: Int
     package let minimumBits: Int
 
-    package init(file: GGUFFile, layout: GGUFQwen35Layout, grid: Grid = .native, groupSize: Int = 64, minimumBits: Int = 2) {
+    package init(file: GGUFFile, layout: any GGUFTensorLayout, grid: Grid = .native, groupSize: Int = 64, minimumBits: Int = 2) {
         (self.file, self.layout, self.grid, self.groupSize, self.minimumBits) = (file, layout, grid, groupSize, minimumBits)
     }
 
-    package static func layout(template: URL) throws -> GGUFQwen35Layout {
+    package static func layout(template: URL) throws -> any GGUFTensorLayout {
         let data = try Data(contentsOf: template.appending(component: "config.json"))
         let config = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
         let text = config["text_config"] as? [String: Any] ?? config
+        let modelType = (text["model_type"] as? String ?? config["model_type"] as? String)?.lowercased()
+        if modelType == FlintModel.modelType {
+            return GGUFFlintLayout(prefix: config["text_config"] == nil ? "model." : "language_model.model.")
+        }
         guard let keys = text["linear_num_key_heads"] as? Int, let values = text["linear_num_value_heads"] as? Int,
               let keyDim = text["linear_key_head_dim"] as? Int, let valueDim = text["linear_value_head_dim"] as? Int else {
-            throw BasaltError.modelConfigurationInvalid(path: template.path, reason: "the template is not a qwen3_5 checkpoint with linear attention")
+            throw BasaltError.modelConfigurationInvalid(path: template.path, reason: "the template is not a supported qwen3_5 or flint checkpoint")
         }
         return GGUFQwen35Layout(keyHeads: keys, valueHeads: values, keyHeadDim: keyDim, valueHeadDim: valueDim, prefix: config["text_config"] == nil ? "model." : "language_model.model.")
     }
@@ -45,9 +49,9 @@ package struct GGUFImporter: Sendable {
                 summary.skipped.append(tensor.name)
                 continue
             }
-            let base = String(plan.target.dropLast(".weight".count))
+            let base = plan.target.hasSuffix(".weight") ? String(plan.target.dropLast(".weight".count)) : plan.target
             let arrays: [String: MLXArray]
-            if grid == .native, plan.bits != nil, tensor.type.block.elements > 1 {
+            if grid == .native, plan.bits != nil, tensor.dims.count == 2, tensor.type.block.elements > 1 {
                 arrays = packed(tensor, plan, base: base)
                 natives[base] = GGUFNativeLoader.Entry(type: tensor.type.name, inputOrder: arrays[base + ".input_order"] == nil ? nil : true)
                 summary.types[tensor.type.name, default: 0] += 1
@@ -83,7 +87,8 @@ package struct GGUFImporter: Sendable {
 
     func convert(_ tensor: GGUFTensor, _ plan: GGUFTensorPlan, bits: Int?, dense: DType = .bfloat16) -> [String: MLXArray] {
         let rows = tensor.count / tensor.rowLength
-        var weight = MLXArray(file.floats(tensor), tensor.dims.count == 1 ? [tensor.count] : [rows, tensor.rowLength])
+        let targetShape = tensor.dims.count == 1 ? [tensor.count] : Array(tensor.dims.reversed())
+        var weight = MLXArray(file.floats(tensor), targetShape)
         switch plan.transform {
         case .none: break
         case .logOfNegated: weight = Self.regroupRows(log(-weight), from: 0, order: layout.tiledToGrouped(1))
@@ -91,7 +96,8 @@ package struct GGUFImporter: Sendable {
         case .vHeadColumns: weight = weight.take(MLXArray(layout.tiledToGrouped(layout.valueHeadDim).map(Int32.init)), axis: 1)
         case .convChannels(let from): weight = Self.regroupRows(weight, from: from, order: layout.tiledToGrouped(layout.valueHeadDim)).expandedDimensions(axis: -1)
         }
-        guard let bits else { return [plan.target: weight.asType(dense)] }
+        let targetDense: DType = plan.target.hasSuffix(".softmax_offset") || plan.target.hasSuffix(".expert_bias") ? .float32 : dense
+        guard let bits else { return [plan.target: weight.asType(targetDense)] }
         let (wq, scales, biases) = quantized(weight.asType(.bfloat16), groupSize: groupSize, bits: bits)
         let base = String(plan.target.dropLast(".weight".count))
         var arrays = [plan.target: wq, base + ".scales": scales]

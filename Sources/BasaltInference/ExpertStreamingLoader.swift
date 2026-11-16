@@ -48,6 +48,7 @@ struct SafetensorsShard {
 }
 
 struct ExpertPlan {
+    typealias LayerQuant = (groupSize: Int, bits: Int, mode: QuantizationMode)
     var layouts: [ExpertLayout] = []
     var placeholders: [Int: [String: Int]] = [:]
     var dropped: [Int: Set<String>] = [:]
@@ -68,13 +69,15 @@ struct ExpertPlan {
         }
         let sanitized = model.sanitize(weights: weights, metadata: metadata)
         for (path, module) in model.namedModules() where module is SwitchLinear {
-            try add(path, sanitized: sanitized, sources: sources, shards: shards, quantization: quantization)
+            let layerQuant = (module as? QuantizedSwitchLinear).map { ($0.groupSize, $0.bits, $0.mode) }
+                ?? layerQuantization(of: path, weights: sanitized, quantization: nil, perLayerQuantization: quantization)
+            try add(path, sanitized: sanitized, sources: sources, shards: shards, quantization: layerQuant)
         }
     }
 
     private mutating func add(
         _ path: String, sanitized: [String: MLXArray], sources: [ObjectIdentifier: (shard: Int, key: String)], shards: [SafetensorsShard],
-        quantization: BaseConfiguration.PerLayerQuantization?
+        quantization: LayerQuant?
     ) throws(BasaltError) {
         func tensor(_ suffix: String, experts: Int) throws(BasaltError) -> ExpertTensor? {
             guard let array = sanitized["\(path).\(suffix)"] else { return nil }
@@ -94,7 +97,7 @@ struct ExpertPlan {
         var layout = ExpertLayout(path: path, numExperts: experts, weight: weight)
         (layout.scales, layout.biases, layout.bias) = (try tensor("scales", experts: experts), try tensor("biases", experts: experts), try tensor("bias", experts: experts))
         if layout.scales != nil {
-            guard let config = layerQuantization(of: path, weights: sanitized, quantization: nil, perLayerQuantization: quantization) else {
+            guard let config = quantization else {
                 throw .inferenceError("expert streaming: \(path) is quantized without a quantization config this build can stream")
             }
             layout.quantization = config

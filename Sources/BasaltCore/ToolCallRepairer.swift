@@ -104,8 +104,10 @@ public enum ToolCallRepairer: Sendable {
         return nil
     }
 
-    /// Extract tool call name and arguments dictionary from raw assistant response text
     public static func extractAndRepairToolCall(from raw: String) -> (name: String, arguments: [String: Any])? {
+        if let xmlCall = extractXMLArgKeyToolCall(from: raw) {
+            return xmlCall
+        }
         guard let repaired = repairJSON(raw),
               let data = repaired.data(using: .utf8),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
@@ -139,7 +141,6 @@ public enum ToolCallRepairer: Sendable {
             }
         }
 
-        // Schema C: tool invocation format `{"tool": "...", "args": {...}}`
         if let name = (json["tool"] ?? json["tool_name"]) as? String,
            let args = (json["args"] ?? json["parameters"] ?? json["input"]) as? [String: Any] {
             return (name, args)
@@ -147,10 +148,58 @@ public enum ToolCallRepairer: Sendable {
 
         return nil
     }
+}
 
-    // MARK: — Internal Helpers
+extension ToolCallRepairer {
+    public static func extractXMLArgKeyToolCall(from raw: String) -> (name: String, arguments: [String: Any])? {
+        var body = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let open = body.range(of: "<tool_call>") {
+            body = String(body[open.upperBound...])
+        }
+        if let close = body.range(of: "</tool_call>") {
+            body = String(body[..<close.lowerBound])
+        }
+        guard body.contains("<arg_key>") else { return nil }
+        guard let firstArg = body.range(of: "<arg_key>") else { return nil }
+        let name = body[..<firstArg.lowerBound].trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty, !name.contains("<") else { return nil }
+        var arguments: [String: Any] = [:]
+        var cursor = firstArg.lowerBound
+        while let kOpen = body.range(of: "<arg_key>", range: cursor ..< body.endIndex),
+              let kClose = body.range(of: "</arg_key>", range: kOpen.upperBound ..< body.endIndex),
+              let vOpen = body.range(of: "<arg_value>", range: kClose.upperBound ..< body.endIndex),
+              let vClose = body.range(of: "</arg_value>", range: vOpen.upperBound ..< body.endIndex)
+        {
+            let key = body[kOpen.upperBound ..< kClose.lowerBound].trimmingCharacters(in: .whitespacesAndNewlines)
+            let rawVal = String(body[vOpen.upperBound ..< vClose.lowerBound])
+            if !key.isEmpty {
+                arguments[key] = decodeXMLArgValue(rawVal)
+            }
+            cursor = vClose.upperBound
+        }
+        return arguments.isEmpty ? nil : (name, arguments)
+    }
 
-    private static func stripMarkdownFences(_ text: String) -> String {
+    private static func decodeXMLArgValue(_ rawVal: String) -> Any {
+        let trimmed = rawVal.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let data = trimmed.data(using: .utf8),
+           let parsed = try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed])
+        {
+            return parsed
+        }
+        if (trimmed.hasPrefix("{") || trimmed.hasPrefix("[")),
+           let repaired = repairJSON(trimmed),
+           let data = repaired.data(using: .utf8),
+           let parsed = try? JSONSerialization.jsonObject(with: data)
+        {
+            return parsed
+        }
+        return rawVal
+    }
+}
+
+extension ToolCallRepairer {
+    static func stripMarkdownFences(_ text: String) -> String {
         var str = text.trimmingCharacters(in: .whitespacesAndNewlines)
         if str.hasPrefix("```") {
             if let firstNewline = str.firstIndex(of: "\n") {
@@ -165,7 +214,7 @@ public enum ToolCallRepairer: Sendable {
         return str
     }
 
-    private static func normalizeLiterals(_ text: String) -> String {
+    static func normalizeLiterals(_ text: String) -> String {
         var s = text
         s = s.replacingOccurrences(of: ":\\s*True\\b", with: ": true", options: .regularExpression)
         s = s.replacingOccurrences(of: ":\\s*False\\b", with: ": false", options: .regularExpression)
@@ -173,8 +222,7 @@ public enum ToolCallRepairer: Sendable {
         return s
     }
 
-    private static func convertSingleQuotes(_ text: String) -> String {
-        // If string already contains double quotes and no single quotes, leave untouched
+    static func convertSingleQuotes(_ text: String) -> String {
         if !text.contains("'") { return text }
 
         var result = ""
@@ -207,22 +255,21 @@ public enum ToolCallRepairer: Sendable {
         return result
     }
 
-    private static func quoteUnquotedKeys(_ text: String) -> String {
-        // Matches { key: or , key: where key is alphanumeric/_
+    static func quoteUnquotedKeys(_ text: String) -> String {
         let pattern = "([\\{\\,]\\s*)([a-zA-Z_][a-zA-Z0-9_]*)(\\s*:)"
         guard let regex = try? NSRegularExpression(pattern: pattern) else { return text }
         let range = NSRange(text.startIndex..., in: text)
         return regex.stringByReplacingMatches(in: text, options: [], range: range, withTemplate: "$1\"$2\"$3")
     }
 
-    private static func removeTrailingCommas(_ text: String) -> String {
+    static func removeTrailingCommas(_ text: String) -> String {
         let pattern = ",\\s*([\\}\\]])"
         guard let regex = try? NSRegularExpression(pattern: pattern) else { return text }
         let range = NSRange(text.startIndex..., in: text)
         return regex.stringByReplacingMatches(in: text, options: [], range: range, withTemplate: "$1")
     }
 
-    private static func balanceEnclosures(_ text: String) -> String {
+    static func balanceEnclosures(_ text: String) -> String {
         var stack: [Character] = []
         var inString = false
         var isEscaped = false
