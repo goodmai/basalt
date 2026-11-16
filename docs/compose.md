@@ -154,6 +154,39 @@ pipeline:
 - **`exaggeration`:** expressive prosody control in `0.0...2.0` where supported.
 - **`max_ttfa_ms`:** maximum first-audio latency budget before routing down the fallback chain.
 
+### Imagine (`#517`)
+A pipeline may declare an optional `imagine` stage to synthesize or edit images on Apple Silicon with shared text-encoder reuse, prompt upsampling, TeaCache step skipping, and best-of-N VLM judging:
+
+```yaml
+pipeline:
+  answer: chat
+  imagine:
+    chain: [z_turbo, sana_fast]
+    upsample_via: chat
+    share_encoder: chat
+    steps: 8
+    size: 1024x1024
+    format: png
+    teacache_threshold: 0.15
+    preview_every_steps: 2
+    candidates: 3
+    judge_via: vlm_judge
+    on_gpu_busy: fallback
+```
+
+- **`imagine`:** accepts a single generator name (`imagine: z_turbo`), a fallback list (`imagine: [z_turbo, sana_fast]`), or the full mapping.
+- **`chain`:** ordered local image synthesizers (`FLUX.2/3-klein`, `Z-Image-Turbo`, `Iris-3B`, `SANA-1.5`, `Ming-Image`, `Bonsai-4B`, `Step1X-Edit`, `SonicDiffusion`).
+- **`upsample_via`:** local LLM slot used to expand terse prompts into rich visual descriptions before synthesis.
+- **`share_encoder`:** resident local LLM/VLM slot whose text encoder embeddings are reused instead of loading a duplicate encoder.
+- **`steps`:** default denoising step count in `1...100`.
+- **`size`:** default output resolution `<width>x<height>` (multiples of 16, e.g. `1024x1024` or `2048x2048`).
+- **`format`:** output image format (`png`, `webp`, or `jpeg`).
+- **`teacache_threshold`:** residual L1 threshold (`>= 0`) for TeaCache interior-step skipping.
+- **`preview_every_steps`:** emits intermediate TAEF preview frames every N steps during SSE streaming (`>= 0`).
+- **`candidates`:** number of seeded candidate images (`1...64`) synthesized for best-of-N selection.
+- **`judge_via`:** local VLM/LLM slot that scores `candidates` against the prompt and returns the winning artifact.
+- **`on_gpu_busy`:** `queue` or `fallback` when Metal is busy decoding.
+
 ### Version 2: variables and profiles
 `version: 2` adds two blocks, so that one file serves several Macs. A version 1 file keeps working; using either block in it is refused with "needs version: 2".
 
