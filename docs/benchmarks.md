@@ -33,6 +33,9 @@ Each number on the README's first screen comes from a logged run, and the PR tha
 | Post-quantization `--experimental-pv-tune`: 8.7–29% 2–3-bit perplexity recovery in under 3 minutes | [#486](https://github.com/goodmai/basalt/pull/486) |
 | QTIP bitshift trellis `--experimental-qtip`: `Qwen3.8-27B` 2.5 bpw in 10.00 GB beats 3-bit affine & PV-Tuning (16k PPL 4.621 vs 4.702 / 4.652); 2.0 bpw in 8.48 GB cuts 2-bit PPL by 72.1% (5.345 vs 19.146) | [#494](https://github.com/goodmai/basalt/pull/494) |
 | Native `.gguf` GSQ-RCO / `i-quant` execution on Metal (`IQ4_XS` / `IQ3_S`) | [#433](https://github.com/goodmai/basalt/pull/433) |
+| Recursive `Flint-40B-A2.5B` (`oQ3e`) at 67.02 tok/s decode (273.5 tok/s prefill) in 17.61 GB on M4 Pro 24 GB | [#522](https://github.com/goodmai/basalt/pull/522) |
+| `Zyphra/ZONOS3-Mini-hf` 44.1 kHz neural TTS in 2.24 GB at RTF 0.228–0.263 (3.8–4.4× real time) across EN/DE/RU | [#527](https://github.com/goodmai/basalt/pull/527) |
+| 84 hardware-tiered Compose profiles (`16–256 GB × 12`) with `Basalt.app` RAM tier auto-recommendation | [#528](https://github.com/goodmai/basalt/pull/528) |
 
 The golden-tested models in the README are checked by `scripts/check_readme_models.swift` in CI: a model listed there must link an existing fixture in `Tests/BasaltTests/Fixtures/golden`.
 

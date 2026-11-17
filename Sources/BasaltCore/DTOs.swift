@@ -503,15 +503,13 @@ public struct GenerationResponse: Codable, Sendable {
     }
 }
 
-// MARK: — Health / Info
-
 public struct HealthResponse: Codable, Sendable {
     public let status: String
     public let modelId: String?
     public let isReady: Bool
     public let version: String
 
-    public static let version = "0.10.0"
+    public static let version = "0.11.0"
 
     package init(status: String, modelId: String?, isReady: Bool, version: String) {
         self.status = status
@@ -520,8 +518,6 @@ public struct HealthResponse: Codable, Sendable {
         self.version = version
     }
 }
-
-// MARK: — Error envelope (REST only)
 
 public struct ErrorResponse: Codable, Sendable {
     public let error: String

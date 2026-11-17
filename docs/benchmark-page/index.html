@@ -56,6 +56,9 @@
 <tr><td>Post-quantization <code>--experimental-pv-tune</code>: 8.7–29% 2–3-bit perplexity recovery in under 3 minutes</td><td><a href="https://github.com/goodmai/basalt/pull/486">#486</a></td></tr>
 <tr><td>QTIP bitshift trellis <code>--experimental-qtip</code>: <code>Qwen3.8-27B</code> 2.5 bpw in 10.00 GB beats 3-bit affine &amp; PV-Tuning (16k PPL 4.621 vs 4.702 / 4.652); 2.0 bpw in 8.48 GB cuts 2-bit PPL by 72.1% (5.345 vs 19.146)</td><td><a href="https://github.com/goodmai/basalt/pull/494">#494</a></td></tr>
 <tr><td>Native <code>.gguf</code> GSQ-RCO / <code>i-quant</code> execution on Metal (<code>IQ4_XS</code> / <code>IQ3_S</code>)</td><td><a href="https://github.com/goodmai/basalt/pull/433">#433</a></td></tr>
+<tr><td>Recursive <code>Flint-40B-A2.5B</code> (<code>oQ3e</code>) at 67.02 tok/s decode (273.5 tok/s prefill) in 17.61 GB on M4 Pro 24 GB</td><td><a href="https://github.com/goodmai/basalt/pull/522">#522</a></td></tr>
+<tr><td><code>Zyphra/ZONOS3-Mini-hf</code> 44.1 kHz neural TTS in 2.24 GB at RTF 0.228–0.263 (3.8–4.4× real time) across EN/DE/RU</td><td><a href="https://github.com/goodmai/basalt/pull/527">#527</a></td></tr>
+<tr><td>84 hardware-tiered Compose profiles (<code>16–256 GB × 12</code>) with <code>Basalt.app</code> RAM tier auto-recommendation</td><td><a href="https://github.com/goodmai/basalt/pull/528">#528</a></td></tr>
 </tbody></table>
   <h2>Benchmark Harnesses</h2>
   <table><thead><tr><th>Harness</th><th>Directory</th><th>Tracked Assets</th><th>Verification Scope</th></tr></thead><tbody>
