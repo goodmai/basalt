@@ -221,6 +221,33 @@ public struct RicursiveProfile: ModelProfile {
     public var writesToolCallsAsText: Bool { false }
 }
 
+public struct MuseGlimmerProfile: ModelProfile {
+    public let name = "muse_glimmer"
+
+    public init() {}
+
+    public func templateContext(for reasoning: ReasoningPolicy) -> [String: any Sendable] {
+        switch reasoning {
+        case .modelDefault:
+            return [:]
+        case .disabled:
+            return ["reasoning_strength": "low"]
+        case .effort(let level):
+            let mapped = level == "minimal" ? "low" : level
+            guard ["low", "medium", "high", "xhigh"].contains(mapped) else { return [:] }
+            return ["reasoning_strength": mapped]
+        }
+    }
+
+    public var thinkingMarkers: ThinkingMarkers { .none }
+
+    public var defaultMaxTokens: Int { 16_384 }
+
+    public var defaultMinP: Float? { nil }
+
+    public var writesToolCallsAsText: Bool { false }
+}
+
 public struct GenericProfile: ModelProfile {
     public let name = "generic"
 
@@ -279,6 +306,7 @@ public enum ModelProfileRegistry {
         if t.hasPrefix("lfm2") { return LiquidProfile() }
         if t == "flint" { return FlintProfile() }
         if t == "ricursive" || t == "ripple" { return RicursiveProfile() }
+        if t.hasPrefix("muse_glimmer") || t == "muse-glimmer" { return MuseGlimmerProfile() }
         if t == "nemotron_h" {
             return NemotronProfile(switchesThinkingInConversation: chatTemplate?.contains("/no_think") == true)
         }

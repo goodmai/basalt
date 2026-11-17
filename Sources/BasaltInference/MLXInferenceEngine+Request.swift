@@ -268,7 +268,8 @@ extension MLXInferenceEngine {
             controlTokens: controlTokens.tokens, startsThinking: route.startsThinking,
             scansToolCallText: profile.writesToolCallsAsText && request.tools?.isEmpty == false,
             echoedPrefix: prompt.echoedPrefix, forcedTool: constraint?.toolName, prefixAnswer: prompt.prefixAnswer,
-            guardsRepetition: constraint == nil, draftSource: plan.draftSource, confidenceProbe: route.confidenceProbe))
+            guardsRepetition: constraint == nil, draftSource: plan.draftSource, confidenceProbe: route.confidenceProbe,
+            onyxReasoning: launch.onyxReasoning))
         let inputs = RelayInputs(
             stream: launch.stream, task: launch.task, prefillSeconds: launch.prefillSeconds,
             promptTokens: prompt.tokens, namespace: route.namespace, leaseID: route.leaseID, epoch: route.epoch, constraint: constraint,

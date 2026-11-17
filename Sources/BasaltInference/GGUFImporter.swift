@@ -36,6 +36,11 @@ package struct GGUFImporter: Sendable {
         if modelType == RicursiveModel.modelType || modelType == RicursiveModel.aliasModelType {
             return GGUFRicursiveLayout(prefix: config["text_config"] == nil ? "model." : "language_model.model.")
         }
+        if modelType == MuseGlimmerTextModel.multimodalModelType
+            || modelType == MuseGlimmerTextModel.modelType
+            || modelType == "muse-glimmer" {
+            return GGUFMuseGlimmerLayout(prefix: "model.")
+        }
         guard let keys = text["linear_num_key_heads"] as? Int, let values = text["linear_num_value_heads"] as? Int,
               let keyDim = text["linear_key_head_dim"] as? Int, let valueDim = text["linear_value_head_dim"] as? Int else {
             throw BasaltError.modelConfigurationInvalid(path: template.path, reason: "the template is not a supported qwen3_5 or flint checkpoint")
@@ -82,7 +87,7 @@ package struct GGUFImporter: Sendable {
         switch plan.transform {
         case .vHeadRows(let from): weight = Self.regroupRows(weight, from: from, order: layout.tiledToGrouped(rows == layout.valueHeads ? 1 : layout.valueHeadDim))
         case .vHeadColumns: arrays[base + ".input_order"] = MLXArray(Self.inverse(layout.tiledToGrouped(layout.valueHeadDim)).map(Int32.init))
-        case .none, .logOfNegated, .convChannels: break
+        case .none, .subtractOne, .logOfNegated, .convChannels: break
         }
         arrays[plan.target] = weight
         return arrays
@@ -94,6 +99,7 @@ package struct GGUFImporter: Sendable {
         var weight = MLXArray(file.floats(tensor), targetShape)
         switch plan.transform {
         case .none: break
+        case .subtractOne: weight = weight - 1
         case .logOfNegated: weight = Self.regroupRows(log(-weight), from: 0, order: layout.tiledToGrouped(1))
         case .vHeadRows(let from): weight = Self.regroupRows(weight, from: from, order: layout.tiledToGrouped(tensor.dims.count == 1 || rows == layout.valueHeads ? 1 : layout.valueHeadDim))
         case .vHeadColumns: weight = weight.take(MLXArray(layout.tiledToGrouped(layout.valueHeadDim).map(Int32.init)), axis: 1)
@@ -124,6 +130,14 @@ package struct GGUFImporter: Sendable {
 
     func writeConfig(template: URL, output: URL, layers: [String: Int], natives: [String: GGUFNativeLoader.Entry]) throws {
         var config = try JSONSerialization.jsonObject(with: Data(contentsOf: template.appending(component: "config.json"))) as? [String: Any] ?? [:]
+        if layout is GGUFMuseGlimmerLayout {
+            if let textConfig = config["text_config"] as? [String: Any] {
+                for (key, value) in textConfig where config[key] == nil { config[key] = value }
+                config["text_config"] = nil
+            }
+            config["vision_config"] = nil
+            config["model_type"] = MuseGlimmerTextModel.modelType
+        }
         (config["quantization"], config["quantization_config"]) = (nil, nil)
         if !layers.isEmpty {
             let common = Dictionary(layers.values.map { ($0, 1) }, uniquingKeysWith: +).max { $0.value < $1.value }?.key ?? 4

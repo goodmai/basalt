@@ -18,6 +18,7 @@ struct GenerationRelay: Sendable {
         var guardsRepetition = true
         var draftSource: DraftSource?
         var confidenceProbe: ConfidenceProbe?
+        var onyxReasoning: OnyxReasoningBox?
     }
 
     let setup: Setup
@@ -48,22 +49,26 @@ struct GenerationRelay: Sendable {
 
     mutating func step(_ generation: Generation) -> (chunks: [StreamChunk], stops: Bool) {
         tokenCount += 1
+        let onyxPrefix = drainOnyxReasoning()
         switch generation {
         case .chunk(let text):
-            let chunks = route(splitter.feed(text))
+            let chunks = onyxPrefix + route(splitter.feed(text))
             if gate.isSaturated || setup.alarm.isTripped { return (chunks, true) }
             stoppedOnRepetition = repetition?.shouldStop(after: text) == true
             return (chunks, stoppedOnRepetition)
         case .info(let info):
             lastInfo = info
+            return (onyxPrefix, false)
         case .toolCall(let call):
-            return called(.toolCall(MLXInferenceEngine.toolCallOutput(call)))
+            let res = called(.toolCall(MLXInferenceEngine.toolCallOutput(call)))
+            return (onyxPrefix + res.chunks, res.stops)
         case .rejectedToolCall(let rejection):
-            return called(resolved(rejection))
+            let res = called(resolved(rejection))
+            return (onyxPrefix + res.chunks, res.stops)
         @unknown default:
             break
         }
-        return ([], false)
+        return (onyxPrefix, false)
     }
 
     mutating func drained(_ info: GenerateCompletionInfo?) {
@@ -71,7 +76,12 @@ struct GenerationRelay: Sendable {
     }
 
     mutating func finish() -> [StreamChunk] {
-        let chunks = route(splitter.feed("", final: true)) + gate.admit(scanner?.finish() ?? [])
+        var onyxTail: [StreamChunk] = []
+        if let unemitted = setup.onyxReasoning?.drainUnemittedInitial() {
+            for text in unemitted { onyxTail.append(.reasoning(text)) }
+        }
+        onyxTail += drainOnyxReasoning()
+        let chunks = onyxTail + route(splitter.feed("", final: true)) + gate.admit(scanner?.finish() ?? [])
         guard let forcedTool = setup.forcedTool else { return chunks }
         let arguments = forcedArguments.trimmingCharacters(in: .whitespacesAndNewlines)
         if (try? JSONSerialization.jsonObject(with: Data(arguments.utf8))) is [String: Any] {
@@ -160,6 +170,21 @@ struct GenerationRelay: Sendable {
         return chunks
     }
 
+    private mutating func drainOnyxReasoning() -> [StreamChunk] {
+        guard let drained = setup.onyxReasoning?.drainRelayStep() else { return [] }
+        for text in drained.accountedInitial {
+            health.feed(.reasoning(text))
+            reasoningText += text
+        }
+        var chunks: [StreamChunk] = []
+        for text in drained.additionalChunks {
+            health.feed(.reasoning(text))
+            reasoningText += text
+            chunks.append(.reasoning(text))
+        }
+        return chunks
+    }
+
     private mutating func answered(_ text: String) -> [StreamChunk] {
         guard setup.forcedTool == nil else {
             forcedArguments += text
@@ -167,6 +192,11 @@ struct GenerationRelay: Sendable {
         }
         guard let scanned = scanner?.feed(text) else { return [.text(text)] }
         return gate.admit(scanned)
+    }
+    func attachInitial(into continuation: AsyncStream<StreamChunk>.Continuation, now: ContinuousClock.Instant) -> ContinuousClock.Instant? {
+        if let echoed = setup.echoedPrefix { continuation.yield(.text(echoed)) }
+        guard let box = setup.onyxReasoning else { return nil }
+        return box.attachInitialEmitter { continuation.yield(.reasoning($0)) } ? now : nil
     }
 }
 
@@ -188,10 +218,9 @@ extension MLXInferenceEngine {
         var relay = core
         let clock = ContinuousClock()
         let startTime = clock.now
-        var firstTokenAt: ContinuousClock.Instant?
+        var firstTokenAt = relay.attachInitial(into: continuation, now: startTime)
         var stoppedAfterCall = false
         var generations = inputs.stream.makeAsyncIterator()
-        if let echoed = relay.setup.echoedPrefix { continuation.yield(.text(echoed)) }
         while let generation = await generations.next() {
             if Task.isCancelled { break }
             if firstTokenAt == nil, case .chunk = generation { firstTokenAt = clock.now }

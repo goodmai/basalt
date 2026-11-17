@@ -3,11 +3,12 @@ import MLX
 import MLXLMCommon
 import MLXNN
 import MLXLLM
+import MLXVLM
 @testable import BasaltInference
 
 enum TinyModel {
     enum Family: String, CaseIterable, Sendable {
-        case qwen3Small, qwen3, qwen3HeadDim32, qwen35, qwen35Moe, gemma3, gemma4, gemma4Moe, gemma4Unified, qwen3Moe, sigmoidMoe, nemotronH, lfm2, lfm2Moe, prism, paddleOCR, deepSeekOCR, deepSeekOCR2, flint, ricursive
+        case qwen3Small, qwen3, qwen3HeadDim32, qwen35, qwen35Moe, gemma3, gemma4, gemma4Moe, gemma4Unified, qwen3Moe, sigmoidMoe, nemotronH, lfm2, lfm2Moe, prism, paddleOCR, deepSeekOCR, deepSeekOCR2, flint, ricursive, museGlimmer, museGlimmerText
 
         func model(_ config: Data) throws -> any LanguageModel {
             let decoder = JSONDecoder.json5()
@@ -23,7 +24,8 @@ enum TinyModel {
             case .prism: MLXLLM.Qwen35Model(try decoder.decode(MLXLLM.Qwen35Configuration.self, from: config))
             case .flint: FlintModel(try decoder.decode(FlintConfiguration.self, from: config).validated())
             case .ricursive: RicursiveModel(try decoder.decode(RicursiveConfiguration.self, from: config).validated())
-            case .gemma4Unified, .paddleOCR, .deepSeekOCR, .deepSeekOCR2: try multimodalModel(config, decoder: decoder)
+            case .museGlimmerText: MuseGlimmerTextModel(try MuseGlimmerTextConfiguration.decodeFlexible(from: config))
+            case .gemma4Unified, .paddleOCR, .deepSeekOCR, .deepSeekOCR2, .museGlimmer: try multimodalModel(config, decoder: decoder)
             }
         }
 
@@ -31,6 +33,7 @@ enum TinyModel {
             if self == .gemma4Unified { return try TinyGemma4Unified.model(config) }
             if self == .paddleOCR { return PaddleOCRVL(try decoder.decode(PaddleOCRVLConfiguration.self, from: config)) }
             if self == .deepSeekOCR { return DeepSeekOCR(try decoder.decode(DeepSeekOCRConfiguration.self, from: config).validated()) }
+            if self == .museGlimmer { return MuseGlimmerVLM(try decoder.decode(MuseGlimmerConfiguration.self, from: config)) }
             return DeepSeekOCR2(try decoder.decode(DeepSeekOCR2Configuration.self, from: config).validated())
         }
 
@@ -51,13 +54,14 @@ enum TinyModel {
             case .deepSeekOCR2: 413
             case .flint: 518
             case .ricursive: 520
+            case .museGlimmer, .museGlimmerText: 533
             }
         }
 
         var weightScale: Float {
             switch self {
             case .qwen3Small, .gemma3: 4
-            case .qwen3, .qwen3HeadDim32, .gemma4, .gemma4Moe, .gemma4Unified, .qwen35, .qwen35Moe, .qwen3Moe, .sigmoidMoe, .nemotronH, .lfm2, .lfm2Moe, .prism, .paddleOCR, .deepSeekOCR, .deepSeekOCR2, .flint, .ricursive: 1
+            case .qwen3, .qwen3HeadDim32, .gemma4, .gemma4Moe, .gemma4Unified, .qwen35, .qwen35Moe, .qwen3Moe, .sigmoidMoe, .nemotronH, .lfm2, .lfm2Moe, .prism, .paddleOCR, .deepSeekOCR, .deepSeekOCR2, .flint, .ricursive, .museGlimmer, .museGlimmerText: 1
             }
         }
 
@@ -191,6 +195,23 @@ enum TinyModel {
                  "ffn_clamp_threshold": 20.0, "embed_scale": 8.0, "rms_norm_eps": 1e-6, "rope_theta": 10000.0,
                  "tie_word_embeddings": false}
                 """
+            case .museGlimmerText: """
+                {"model_type": "muse_glimmer_text", "hidden_size": 64, "num_hidden_layers": 4, "intermediate_size": 128,
+                 "num_attention_heads": 4, "num_key_value_heads": 2, "head_dim": 16, "vocab_size": 256,
+                 "sliding_window": \(slidingWindow), "qk_scale_factor": 3.87, "output_multiplier": 0.19611613,
+                 "final_logit_softcapping": 20.0, "rms_norm_eps": 1e-5, "post_norm_eps": 1e-8,
+                 "layer_types": ["sliding_attention", "sliding_attention", "sliding_attention", "full_attention"],
+                 "layer_rope_theta": [500000.0, 500000.0, 500000.0, 0.0], "tie_word_embeddings": false}
+                """
+            case .museGlimmer: """
+                {"model_type": "muse_glimmer", "image_token_id": 254, "video_token_id": 253,
+                 "out_hidden_size": 64, "projector_hidden_size": 64,
+                 "text_config": \(Self.museGlimmerText.config),
+                 "vision_config": {"model_type": "muse_glimmer_vision", "hidden_size": 16, "intermediate_size": 32,
+                  "num_hidden_layers": 2, "num_attention_heads": 2, "patch_size": 14, "patch_temporal": 2, "merge_size": 2,
+                  "max_position_embeddings": 16, "pos_emb_height": 4, "pos_emb_width": 4, "layer_norm_eps": 1e-5,
+                  "layer_types": ["window_attention", "full_attention"]}}
+                """
             }
         }
     }
@@ -214,6 +235,11 @@ enum TinyModel {
             } else if family == .ricursive {
                 let lambdas = model.parameters().flattened().filter { $0.0.hasSuffix(".value_res_lambda") }
                 model.update(parameters: ModuleParameters.unflattened(lambdas.map { ($0.0, MLXRandom.normal($0.1.shape) * 0.5) }))
+            } else if family == .museGlimmer || family == .museGlimmerText {
+                let centered = model.parameters().flattened().filter {
+                    $0.0.hasSuffix("_layernorm.weight")
+                }
+                model.update(parameters: ModuleParameters.unflattened(centered.map { ($0.0, MLXRandom.normal($0.1.shape) * 0.2) }))
             }
             return model
         }

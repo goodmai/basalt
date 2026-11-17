@@ -137,7 +137,11 @@ extension MLXInferenceEngine {
     static func stopTokenIds(_ context: ModelContext) -> Set<Int> {
         var ids = context.configuration.eosTokenIds
         if let eos = context.tokenizer.eosTokenId { ids.insert(eos) }
-        for token in context.configuration.extraEOSTokens {
+        var extra = context.configuration.extraEOSTokens
+        if (context.configuration.toolCallFormat ?? context.model.toolCallFormat) == .atem {
+            extra.formUnion(["<|eot|>", "<|end_of_text|>"])
+        }
+        for token in extra {
             if let id = context.tokenizer.convertTokenToId(token) { ids.insert(id) }
         }
         return ids
