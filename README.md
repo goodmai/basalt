@@ -4,8 +4,9 @@
 
 > Serve, train, quantize, compose and dissect open LLMs, neural speech, OCR and image models on Apple Silicon. One Swift 6.4 binary speaks the **OpenAI API, the Anthropic API and MCP**, and a native macOS 27 Liquid Glass app sits on top. No Python at runtime. No cloud unless you ask for it.
 
-[English](README.md) · [Русский](README.ru.md)
+[English](README.md) · [Русский](README.ru.md) · **[Website — bas-alt.vercel.app](https://bas-alt.vercel.app)**
 
+[![Website](https://img.shields.io/badge/website-bas--alt.vercel.app-FF5E36.svg)](https://bas-alt.vercel.app)
 [![Release v0.11.0](https://img.shields.io/badge/release-v0.11.0-0A84FF.svg)](https://github.com/goodmai/basalt/releases/tag/v0.11.0)
 [![CI Release](https://github.com/goodmai/basalt/actions/workflows/release.yml/badge.svg)](https://github.com/goodmai/basalt/actions/workflows/release.yml)
 [![Security Audit](https://github.com/goodmai/basalt/actions/workflows/security-audit.yml/badge.svg)](https://github.com/goodmai/basalt/actions/workflows/security-audit.yml)
