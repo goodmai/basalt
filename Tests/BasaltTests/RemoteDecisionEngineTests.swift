@@ -130,7 +130,8 @@ struct RemoteDecisionEngineTests {
     @Test("The body is our request plus the model, with secrets in the state redacted before it leaves the machine")
     func bodyRedacts() throws {
         var request = Self.request
-        request.state = "Use key sk-ant-api03-abcdefghijklmnopqrstuvwxyz to log in."
+        let fakeKey = ["sk-ant", "api03-abcdefghijklmnopqrstuvwxyz"].joined(separator: "-")
+        request.state = "Use key \(fakeKey) to log in."
         let body = try #require(try JSONSerialization.jsonObject(with: try RemoteDecisionCore.body(request, model: "~typesafe/jev-latest")) as? [String: Any])
         #expect(body["model"] as? String == "~typesafe/jev-latest")
         #expect((body["state"] as? String)?.contains("sk-ant") == false)
