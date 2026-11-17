@@ -412,3 +412,83 @@ struct MACaQDirectoryCLITests {
             #expect(reloadMaxDiff == 0)
         }
 }
+
+@Suite("MACaQ pre-quantized hybrid and FluxKlein DiT loader round-trip (#538)", .serialized)
+struct MACaQMixedAndDiTLoaderTests {
+    @Test("Pre-quantized 4-bit Qwen3.5 converted to 3-bit MACaQ preserves untouched 4-bit layers and reloads bit-identically")
+    func preQuantizedQwen35RoundTrip() async throws {
+        let dir = FileManager.default.temporaryDirectory.appending(component: "basalt-macaq-538-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let srcDir = dir.appending(component: "src")
+        let outDir = dir.appending(component: "out")
+        try FileManager.default.createDirectory(at: srcDir, withIntermediateDirectories: true)
+        var rawCfg = try JSONSerialization.jsonObject(with: Data(TinyModel.Family.qwen35.config.utf8)) as? [String: Any] ?? [:]
+        rawCfg["quantization"] = ["bits": 4, "group_size": 32, "mode": "affine"]
+        try JSONSerialization.data(withJSONObject: rawCfg, options: [.sortedKeys]).write(to: srcDir.appending(component: "config.json"))
+        try Data("{}".utf8).write(to: srcDir.appending(component: "tokenizer_config.json"))
+
+        let model = try TinyModel.make(.qwen35)
+        quantize(model: model as Module, groupSize: 32, bits: 4, mode: .affine)
+        eval(model as Module)
+
+        var cfg = MACaQConfig()
+        cfg.hadamardBlock = 32
+        cfg.maxFlipIterations = 8
+        let batches: [[Int32]] = [(0 ..< 24).map { Int32(($0 * 7 + 3) % 180) }]
+        let (_, manifest) = try MACaQRefiner.quantizeModel(
+            model, targetMode: .affine(bits: 3, groupSize: 32), calibrationTokenBatches: batches, config: cfg)
+        _ = try MACaQRefiner.writeMACaQDirectory(
+            model: model as Module, manifest: manifest, alpha: cfg.alpha, source: srcDir, output: outDir)
+
+        let report = await ModelInspector().inspect(modelIdOrPath: outDir.path)
+        #expect(report.intact && report.quantizationMode == "macaq")
+
+        let container = try #require(try await MACaQNativeLoader.loadContainer(from: outDir, tokenizerLoader: ByteTokenizerLoader()))
+        let prompt: [Int32] = [3, 19, 44, 81]
+        let direct = model(LMInput.Text(tokens: MLXArray(prompt)[.newAxis]), cache: nil, state: nil).logits[0].asType(.float32)
+        eval(direct)
+        let directArr = direct.asArray(Float.self)
+        let diff = await container.perform { ctx in
+            let rel = ctx.model(LMInput.Text(tokens: MLXArray(prompt)[.newAxis]), cache: nil, state: nil).logits[0].asType(.float32)
+            eval(rel)
+            return zip(directArr, rel.asArray(Float.self)).map { abs($0 - $1) }.max() ?? 1
+        }
+        #expect(diff == 0)
+    }
+
+    @Test("FluxKleinSynthesizer loads MACaQ MXFP4 DiT safetensors checkpoint and synthesizes valid PNG")
+    func fluxKleinLoadsMACaQDiT() async throws {
+        let dir = FileManager.default.temporaryDirectory.appending(component: "basalt-macaq-dit-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+
+        let ditCfg = ImageDiTConfig.tiny(modelID: "black-forest-labs/FLUX.2-klein-4B", hiddenSize: 64)
+        let dit = FluxKleinDiTModule(config: ditCfg, usePerceiver: false)
+        let spec = MACaQLayerSpec(bits: 4, groupSize: 32, mode: .mxfp4, hadamardBlock: 32)
+        let targetPaths = ["dual_blocks.0.img_qkv", "single_blocks.0.qkv"]
+        var manifestModules: [String: MACaQLayerSpec] = [:]
+        for path in targetPaths {
+            manifestModules[path] = spec
+        }
+        try MACaQNativeLoader.install(manifestModules, in: dit)
+        let arrays = Dictionary(uniqueKeysWithValues: dit.parameters().flattened())
+        try save(arrays: arrays, metadata: ["format": "mlx"], url: dir.appending(component: "model.safetensors"))
+
+        let manifestObj = MACaQNativeLoader.Manifest(version: 1, alpha: 0.75, modules: manifestModules)
+        let cfgJSON: [String: Any] = [
+            "model_id": "black-forest-labs/FLUX.2-klein-4B",
+            "hidden_size": 64,
+            "num_attention_heads": 4,
+            "num_hidden_layers": 2,
+            "latent_channels": 16,
+            "patch_size": 2,
+            MACaQNativeLoader.configKey: try JSONSerialization.jsonObject(with: JSONEncoder().encode(manifestObj)),
+        ]
+        try JSONSerialization.data(withJSONObject: cfgJSON, options: [.sortedKeys]).write(to: dir.appending(component: "config.json"))
+
+        let synth = try await ImageSynthesizerLoader.load(identifier: "black-forest-labs/FLUX.2-klein-4B", directory: dir)
+        let artifact = try await ImageSynthesizerLoader.probeImageSynthesizer(synth)
+        #expect(!artifact.imageData.isEmpty)
+        await (synth as? FluxKleinSynthesizer)?.unload()
+    }
+}

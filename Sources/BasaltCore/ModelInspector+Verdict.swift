@@ -83,19 +83,24 @@ extension ModelInspector {
                 mode = "qtip"
                 groupSize = 16
             }
-            if let macaq = json["macaq_quantization"] as? [String: Any],
-               let modules = macaq["modules"] as? [String: Any] {
-                mode = "macaq"
-                for (layer, raw) in modules {
-                    guard let entry = raw as? [String: Any] else { continue }
-                    if let g = entry["group_size"] as? Int {
-                        layerGroupSizes[layer] = g
-                        if groupSize == nil { groupSize = g }
-                    }
-                    if bits == nil, let b = entry["bits"] as? Int { bits = b }
-                }
-            }
+            applyMACaQManifest(json)
             dtype = json["torch_dtype"] as? String
+        }
+
+        private mutating func applyMACaQManifest(_ json: [String: Any]) {
+            guard let macaq = json["macaq_quantization"] as? [String: Any],
+                  let modules = macaq["modules"] as? [String: Any] else { return }
+            mode = "macaq"
+            let hasBaseQuant = json["quantization"] != nil || json["quantization_config"] != nil
+            if hasBaseQuant { bits = nil }
+            for (layer, raw) in modules {
+                guard let entry = raw as? [String: Any] else { continue }
+                if let g = entry["group_size"] as? Int {
+                    layerGroupSizes[layer] = g
+                    if groupSize == nil { groupSize = g }
+                }
+                if !hasBaseQuant, bits == nil, let b = entry["bits"] as? Int { bits = b }
+            }
         }
 
         var defaultGroupSize: Int {

@@ -111,10 +111,10 @@ package final class MACaQQuantizedLinear: QuantizedLinear {
     }
 }
 
-package final class MACaQSwitchLinear: SwitchLinear {
-    package let groupSize: Int
-    package let bits: Int
-    package let mode: QuantizationMode
+package final class MACaQSwitchLinear: SwitchLinear, Quantized {
+    public let groupSize: Int
+    public let bits: Int
+    public let mode: QuantizationMode
     package let hadamardBlock: Int
     @ParameterInfo(key: "scales") package var scales: MLXArray
     @ParameterInfo(key: "biases") package var biases: MLXArray?
@@ -230,27 +230,24 @@ package enum MACaQNativeLoader {
     ) async throws -> ModelContainer? {
         guard let manifest = manifest(in: directory) else { return nil }
         let rawConfig = try Data(contentsOf: directory.appending(component: "config.json"))
-        guard var json = try JSONSerialization.jsonObject(with: rawConfig) as? [String: Any],
+        guard let json = try JSONSerialization.jsonObject(with: rawConfig) as? [String: Any],
               let modelType = (json["model_type"] as? String)
                   ?? ((json["text_config"] as? [String: Any])?["model_type"] as? String)
         else {
             throw BasaltError.inferenceError("MACaQ native: missing model_type in config.json")
         }
-        json["quantization"] = nil
-        json["quantization_config"] = nil
-        json[configKey] = nil
-        let stripped = try JSONSerialization.data(withJSONObject: json, options: [.sortedKeys])
-        let staging = FileManager.default.temporaryDirectory.appending(component: "basalt-macaq-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: staging) }
-        try stageDirectory(source: directory, staging: staging, strippedConfig: stripped)
         var failure: (any Error)?
+        let scaleKeys = safetensorsScaleKeys(in: directory)
+        let perLayer = (try? JSONDecoder.json5().decode(BaseConfiguration.self, from: rawConfig))?.perLayerQuantization
         for family in ExpertStreamingLoader.families where await family.types.contains(modelType) {
             do {
-                let model = try await family.types.createModel(configuration: stripped, modelType: modelType)
+                let model = try await family.types.createModel(configuration: rawConfig, modelType: modelType)
                 try install(manifest.modules, in: model)
+                if let perLayer {
+                    try installUntouchedQuantized(perLayer: perLayer, scaleKeys: scaleKeys, in: model)
+                }
                 let registry = ModelTypeRegistry<any LanguageModel>(creators: [modelType: { _ in model }])
-                return try await family.factory(registry).loadContainer(from: staging, using: tokenizerLoader)
+                return try await family.factory(registry).loadContainer(from: directory, using: tokenizerLoader)
             } catch {
                 failure = error
             }
@@ -260,11 +257,11 @@ package enum MACaQNativeLoader {
 
     package static func install(_ modules: [String: MACaQLayerSpec], in model: Module) throws(BasaltError) {
         let named = Dictionary(model.namedModules(), uniquingKeysWith: { first, _ in first })
-        var updates: [(String, Module)] = []
         for (path, spec) in modules.sorted(by: { $0.key < $1.key }) {
             guard spec.hadamardBlock > 0, (spec.hadamardBlock & (spec.hadamardBlock - 1)) == 0 else {
                 throw .inferenceError("MACaQ native: \(path) has invalid hadamard_block \(spec.hadamardBlock)")
             }
+            let replacement: Module
             switch named[path] {
             case let linear as Linear where !(linear is QuantizedLinear):
                 guard linear.shape.1.isMultiple(of: spec.hadamardBlock),
@@ -272,25 +269,69 @@ package enum MACaQNativeLoader {
                 else {
                     throw .inferenceError("MACaQ native: \(path) width \(linear.shape.1) incompatible with block \(spec.hadamardBlock) / group \(spec.groupSize)")
                 }
-                updates.append((path, MACaQQuantizedLinear(replacing: linear, spec: spec)))
+                replacement = MACaQQuantizedLinear(replacing: linear, spec: spec)
             case let sw as SwitchLinear where !(sw is QuantizedSwitchLinear):
-                updates.append((path, MACaQSwitchLinear(replacing: sw, spec: spec)))
+                replacement = MACaQSwitchLinear(replacing: sw, spec: spec)
             default:
                 throw .inferenceError("MACaQ native: \(path) is not a replaceable Linear or SwitchLinear")
             }
+            try swapChild(path: path, replacement: replacement, named: named, root: model)
         }
-        if !updates.isEmpty {
-            model.update(modules: ModuleChildren.unflattened(updates))
+        model.invalidateCompiledTraces()
+    }
+
+    private static func installUntouchedQuantized(
+        perLayer: BaseConfiguration.PerLayerQuantization,
+        scaleKeys: Set<String>,
+        in model: Module
+    ) throws(BasaltError) {
+        let named = Dictionary(model.namedModules(), uniquingKeysWith: { first, _ in first })
+        for (path, leaf) in model.leafModules().flattened() where !(leaf is Quantized) {
+            guard let quantizable = leaf as? Quantizable else { continue }
+            let stripped = path.hasPrefix("language_model.")
+                ? String(path.dropFirst("language_model.".count)) : path
+            guard scaleKeys.contains("\(path).scales") || scaleKeys.contains("\(stripped).scales"),
+                  let q = perLayer.quantization(layer: path) ?? perLayer.quantization(layer: stripped)
+            else { continue }
+            let replacement = quantizable.toQuantized(groupSize: q.groupSize, bits: q.bits, mode: q.mode)
+            try swapChild(path: path, replacement: replacement, named: named, root: model)
+        }
+        model.invalidateCompiledTraces()
+    }
+
+    private static func swapChild(
+        path: String,
+        replacement: Module,
+        named: [String: Module],
+        root: Module
+    ) throws(BasaltError) {
+        var parts = path.split(separator: ".").map(String.init)
+        guard let leafKey = parts.popLast() else {
+            throw .inferenceError("MACaQ native: empty module path")
+        }
+        let parentPath = parts.joined(separator: ".")
+        let parent = parentPath.isEmpty ? root : named[parentPath]
+        guard let parent else {
+            throw .inferenceError("MACaQ native: missing parent module '\(parentPath)' for \(path)")
+        }
+        do {
+            try parent.update(modules: ModuleChildren.unflattened([(leafKey, replacement)]), verify: .noUnusedKeys)
+        } catch {
+            throw .inferenceError("MACaQ native: failed swapping \(path): \(error.localizedDescription)")
         }
     }
 
-    private static func stageDirectory(source: URL, staging: URL, strippedConfig: Data) throws {
+    private static func safetensorsScaleKeys(in directory: URL) -> Set<String> {
         let fm = FileManager.default
-        try strippedConfig.write(to: staging.appending(component: "config.json"))
-        for name in try fm.contentsOfDirectory(atPath: source.path) where name != "config.json" && !name.hasPrefix(".") {
-            try fm.createSymbolicLink(
-                at: staging.appending(component: name),
-                withDestinationURL: source.appending(component: name).resolvingSymlinksInPath())
+        guard let names = try? fm.contentsOfDirectory(atPath: directory.path) else { return [] }
+        var out: Set<String> = []
+        for name in names where name.lowercased().hasSuffix(".safetensors") {
+            let url = directory.appending(component: name)
+            let size = (try? fm.attributesOfItem(atPath: url.path)[.size] as? Int64) ?? 0
+            if case .success(let hdr) = ModelInspector.readSafetensors(at: url, fileSize: size) {
+                for key in hdr.tensors.keys where key.hasSuffix(".scales") { out.insert(key) }
+            }
         }
+        return out
     }
 }
