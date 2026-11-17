@@ -7,7 +7,8 @@ basalt compose plan -f basalt.yaml        # validate and show the compute plan o
 basalt compose up -f basalt.yaml          # serve it; run it again with a changed file to apply the diff
 basalt compose ps                         # what is loaded, when on-demand models unload, cloud spend
 basalt compose down <name>                # stop it
-basalt compose up document-qa             # bundled files: document-qa, voice-agent
+basalt compose up document-qa             # legacy bundled files: document-qa, voice-agent, zonos-voice
+basalt compose up 24gb-voice-zonos        # 84 hardware-tiered profiles: <tier>-<archetype>
 ```
 
 `compose up` starts `basalt serve` with the flags the file expands to; it prints them at start. It serves the same REST and MCP surfaces. Flags after `--` are passed to serve, for example `basalt compose up -f basalt.yaml -- --port 8090`.
@@ -360,6 +361,27 @@ Run `basalt compose train -f basalt.yaml` (with optional `--adapter`, `--force`,
 
 ## Receipts
 Each `/v1/pipeline` response, and each session log record, carries a receipt. Per stage it gives the model, milliseconds and tokens. Decide stages also carry their cost and any cloud stages that were skipped. Answer stages carry the rule that fired (`route`), the cost and the skipped models. `swap_ms` is the time spent loading on-demand and sequential models.
+
+## Bundled hardware-tiered profiles (`#526`)
+
+`basalt compose` and `Basalt.app` (`Compose Profiles`, `⌥⌘C`, plus **Settings → Engine → Bundled Profile**) ship **84 hardware-calibrated profiles** across 7 Apple Silicon unified-memory tiers (`16gb`, `24gb`, `32-36gb` [aliases `32gb` and `36gb`], `48gb`, `64gb`, `128gb`, `256gb` [aliases `192gb` and `236gb`]) × 12 workload archetypes:
+
+| Archetype | Primary | Focus |
+|---|---|---|
+| `daily-chat` | ★ | Everyday chat, Apple Vision document perception, local speech input |
+| `coding-agent` | ★ | Speculative small-M kernel, code-specialized routing, MCP tools |
+| `voice-zonos` | ★ | Zyphra `ZONOS3-Mini` 44.1 kHz neural TTS + `Kokoro-82M` ANE fallback |
+| `multimodal-desk` | ★ | OCR, audio perception, System One triage, chat, and ZONOS3 voice |
+| `reasoning-lab` | | Adaptive thinking budgets + System One cascade for math and logic |
+| `document-ocr` | | Neural OCR (`PaddleOCR-VL-1.5`) + four-valued Belnap epistemic gate |
+| `voice-duplex` | | Full-duplex transcription and sub-80 ms TTFA streaming synthesis |
+| `creative-studio` | | Native MLX image synthesis (`Z-Image-Turbo` / `FLUX`) with TeaCache |
+| `rag-knowledge` | | Grounded long-context retrieval with conflict and abstention gating |
+| `hybrid-cloud` | | Local privacy-first chat with capped `$1/day` cloud escalation |
+| `moe-frontier` | | Sparse MoE (`Flint 40B-A2.5B`, `Nemotron-3.5`, `Qwen3.8`) + expert streaming |
+| `research-xray` | | Model X-Ray, weight surgery, and `basalt:throughput` smoke benchmarks |
+
+On launch, `Basalt.app` detects physical unified memory (`ComposeMemoryTier.detect`) and pins the 4 starred primary profiles for this Mac under **Recommended for this Mac**, while keeping all 84 profiles searchable and selectable. Any profile runs identically from the CLI (`basalt compose plan 24gb-voice-zonos`, `basalt compose up 36gb-moe-frontier`, `basalt compose up 236gb-multimodal-desk`).
 
 ## Examples
 - `docs/examples/compose/any-mac.yaml`: one version 2 file for 16, 24 and 64 GB Macs. The chat model comes from a profile chosen by memory, and the 64 GB profile adds a 27B model on demand and a `long` pipeline.

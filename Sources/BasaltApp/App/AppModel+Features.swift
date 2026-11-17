@@ -36,7 +36,16 @@ extension AppModel {
             if (try? await hotSwitchModel(id)) != nil { return }
             await supervisor.relaunch(HelperLaunch(executable: current.executable, arguments: arguments, environment: current.environment))
         case .hotApplyCompose(let path):
-            if (try? await applyComposeFile(URL(fileURLWithPath: path))) == true { return }
+            if let bundled = ComposeProfileCatalog.bundledYAML[path] {
+                if (try? await applyComposeYAML(bundled, filePath: path)) == true {
+                    composeProfiles.send(.syncActive(path))
+                    return
+                }
+            } else if (try? await applyComposeFile(URL(fileURLWithPath: path))) == true {
+                composeProfiles.send(.syncActive(path))
+                return
+            }
+            composeProfiles.send(.syncActive(path))
             await supervisor.relaunch(HelperLaunch(executable: current.executable, arguments: arguments, environment: current.environment))
         case .relaunch:
             await supervisor.relaunch(HelperLaunch(executable: current.executable, arguments: arguments, environment: current.environment))

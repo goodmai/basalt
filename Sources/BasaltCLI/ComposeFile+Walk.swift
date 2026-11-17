@@ -115,64 +115,7 @@ extension ComposeFile.Walk {
 }
 
 extension ComposeFile {
-    static let bundled: [String: String] = [
-        "document-qa": """
-            version: 1
-            name: document-qa
-            memory: auto
-            models:
-              chat:
-                source: mlx-community/gemma-4-12B-it-qat-4bit
-              ocr:
-                source: mlx-community/PaddleOCR-VL-1.5-8bit
-                keep: on-demand
-                idle_unload: 120s
-            pipeline:
-              perceive:
-                documents: [ocr, apple-vision]
-              decide:
-                cascade: [chat]
-                abstain_below: 0.75
-                min_margin: 0.1
-              answer: chat
-            """,
-        "voice-agent": """
-            version: 1
-            name: voice-agent
-            memory: sequential
-            models:
-              chat:
-                source: mlx-community/gemma-4-12B-it-qat-4bit
-              asr:
-                source: divergentlabs/Nemotron-3.5-Transcribe-30B-A4B-MLX
-                keep: sequential
-            pipeline:
-              perceive:
-                audio: [asr, speech-analyzer]
-              answer: chat
-            """,
-        "zonos-voice": """
-            version: 1
-            name: zonos-voice
-            models:
-              chat:
-                source: mlx-community/gemma-4-12B-it-qat-4bit
-              tts:
-                source: Zyphra/ZONOS3-Mini-hf
-                keep: on-demand
-                idle_unload: 120s
-            pipeline:
-              perceive:
-                audio: [speech-analyzer]
-              answer: chat
-              speak:
-                chain: [tts, apple-speech]
-                voice: Savannah
-                language: en_us
-                on_gpu_busy: fallback_apple_speech
-                sentence_streaming: true
-            """,
-    ]
+    static var bundled: [String: String] { ComposeProfileCatalog.bundledYAML }
 }
 
 extension ComposeFile.Walk {
