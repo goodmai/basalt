@@ -89,6 +89,10 @@ struct BasaltMacApp: App {
             if let model { LibraryView(store: model.library) }
         }
         .keyboardShortcut("l", modifiers: [.command, .option])
+        Window("Compose Profiles", id: "compose") {
+            if let model { ComposeProfilesView(store: model.composeProfiles) }
+        }
+        .keyboardShortcut("c", modifiers: [.command, .option])
         MenuBarExtra {
             if let model { MenuBarContent(model: model) { delegate.quickAsk?.toggle() } }
         } label: {

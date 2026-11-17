@@ -1,4 +1,5 @@
 import BasaltAppCore
+import BasaltCore
 import ServiceManagement
 import SwiftUI
 
@@ -94,15 +95,45 @@ struct EngineSettings: View {
 
     var arguments: [String] { EngineChoice.arguments(model: model, compose: compose) }
 
+    private var detectedTier: ComposeMemoryTier {
+        ComposeMemoryTier.detect()
+    }
+
     var body: some View {
         Form {
-            Picker("Run", selection: Binding(get: { compose.isEmpty ? 0 : 1 }, set: { if $0 == 0 { compose = "" } else { choosing = true } })) {
+            Picker("Run", selection: Binding(
+                get: { compose.isEmpty ? 0 : 1 },
+                set: {
+                    if $0 == 0 {
+                        compose = ""
+                    } else if compose.isEmpty {
+                        compose = "\(detectedTier.rawValue)-\(ComposeProfileArchetype.dailyChat.rawValue)"
+                    }
+                }
+            )) {
                 Text("One model").tag(0)
                 Text("A compose system").tag(1)
             }
             if compose.isEmpty {
                 LabeledContent("Model", value: model)
             } else {
+                Picker("Bundled Profile", selection: $compose) {
+                    Section("Recommended for this Mac") {
+                        ForEach(ComposeProfileCatalog.profiles(for: detectedTier)) { profile in
+                            Text(verbatim: "\(profile.id) (~" + String(format: "%.1f GB", profile.estimatedResidentGB) + ")").tag(profile.id)
+                        }
+                    }
+                    ForEach(ComposeMemoryTier.allCases.filter { $0 != detectedTier }) { tier in
+                        Section(LocalizedStringKey(tier.displayTitle)) {
+                            ForEach(ComposeProfileCatalog.profiles(for: tier)) { profile in
+                                Text(verbatim: profile.id).tag(profile.id)
+                            }
+                        }
+                    }
+                    if ComposeProfileCatalog.resolve(id: compose) == nil && !compose.isEmpty {
+                        Text(verbatim: compose).tag(compose)
+                    }
+                }
                 LabeledContent("Compose file", value: compose)
                 Button("Choose Another…") { choosing = true }
             }

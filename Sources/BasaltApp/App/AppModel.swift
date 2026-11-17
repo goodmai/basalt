@@ -18,12 +18,13 @@ public final class AppModel {
     public var isSearching = false
     public internal(set) var matchedConversationIDs: Set<ConversationID>?
     public var selection: ConversationID?
-    public private(set) var chats: [ConversationID: ChatStore] = [:]
-    public private(set) var quickAsk: ChatStore?
+    public internal(set) var chats: [ConversationID: ChatStore] = [:]
+    public internal(set) var quickAsk: ChatStore?
     public private(set) var update: AvailableUpdate?
     public internal(set) var latestComposeEvent: ComposeStreamEvent?
     public let monitor: MonitorStore
     public let library: LibraryStore
+    public let composeProfiles: ComposeProfilesStore
     public let voice: AudioSessionController
     public let drafts: DraftStore
     @ObservationIgnored let supervisor: EngineSupervisor
@@ -53,6 +54,8 @@ public final class AppModel {
                 client: { await supervisor.endpoint.map { LibraryClient.live($0) } },
                 savePending: { UserDefaults.standard.set($0, forKey: AppModel.pendingKey) },
                 chose: { id in UserDefaults.standard.set(id, forKey: "model") })))
+        let initialCompose = UserDefaults.standard.string(forKey: EngineChoice.composeKey) ?? ""
+        composeProfiles = Self.makeComposeProfilesStore(initialCompose: initialCompose, supervisor: supervisor)
         voice = AudioSessionController(engine: { await supervisor.endpoint.map { EngineClient.http($0) } })
         voice.onSubmitTranscript = { [weak self] text in self?.submitVoiceTranscript(text) }
     }
@@ -146,28 +149,6 @@ public final class AppModel {
         try? await repository.delete(id)
         await reload()
     }
-
-    public func openQuickAsk() -> ChatStore {
-        if let quickAsk { return quickAsk }
-        let store = makeStore(ConversationSnapshot(id: ConversationID(), model: model))
-        quickAsk = store
-        return store
-    }
-
-    public func dismissQuickAsk() {
-        quickAsk?.send(.stop)
-        quickAsk = nil
-    }
-
-    public func promoteQuickAsk() async {
-        guard let store = quickAsk, !store.state.conversation.messages.isEmpty else { return }
-        let id = store.state.conversation.id
-        (quickAsk, chats[id], selection) = (nil, store, id)
-        try? await repository.save(store.state.conversation)
-        await reload()
-    }
-
-    func persists(_ id: ConversationID) -> Bool { quickAsk?.state.conversation.id != id }
 
     func makeStore(_ conversation: ConversationSnapshot) -> ChatStore {
         let (supervisor, repository) = (supervisor, repository)
