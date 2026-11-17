@@ -20,6 +20,7 @@ public struct RoutedSpeechSynthesizer: SpeechSynthesizer {
     public let tiers: [Tier]
     public let onGPUBusy: SpeechOnGPUBusy
     public let maxTTFAMs: Int?
+    public let defaults: ComposeSpec.Speak?
     private let gpuBusyProbe: @Sendable () async -> Bool
     private let memoryPressureProbe: @Sendable () async -> Bool
 
@@ -27,12 +28,14 @@ public struct RoutedSpeechSynthesizer: SpeechSynthesizer {
         tiers: [Tier],
         onGPUBusy: SpeechOnGPUBusy = .fallbackANE,
         maxTTFAMs: Int? = nil,
+        defaults: ComposeSpec.Speak? = nil,
         gpuBusyProbe: @escaping @Sendable () async -> Bool = { false },
         memoryPressureProbe: @escaping @Sendable () async -> Bool = { false }
     ) {
         self.tiers = tiers
         self.onGPUBusy = onGPUBusy
         self.maxTTFAMs = maxTTFAMs
+        self.defaults = defaults
         self.gpuBusyProbe = gpuBusyProbe
         self.memoryPressureProbe = memoryPressureProbe
     }
@@ -66,16 +69,29 @@ public struct RoutedSpeechSynthesizer: SpeechSynthesizer {
     }
 
     public func synthesize(_ request: SpeechRequest) async throws(BasaltError) -> AsyncThrowingStream<AudioChunk, any Error> {
-        let decision = await resolveRoute(request)
+        let effective = applyingDefaults(to: request)
+        let decision = await resolveRoute(effective)
         if let matched = tiers.first(where: { $0.candidate.id == decision.selected.id }), let backend = matched.synthesizer {
-            return try await backend.synthesize(request)
+            return try await backend.synthesize(effective)
         }
         for tier in tiers {
             if let backend = tier.synthesizer {
-                return try await backend.synthesize(request)
+                return try await backend.synthesize(effective)
             }
         }
         throw .invalidRequestStructure(details: "speech: no available speech synthesizer in fallback chain")
+    }
+
+    private func applyingDefaults(to request: SpeechRequest) -> SpeechRequest {
+        guard let defaults else { return request }
+        var merged = request
+        if merged.voice == "alloy", let voice = defaults.voice, !voice.isEmpty {
+            merged.voice = voice
+        }
+        if merged.language == nil { merged.language = defaults.language }
+        if merged.exaggeration == nil { merged.exaggeration = defaults.exaggeration }
+        if merged.referenceAudio == nil { merged.referenceAudio = defaults.referenceAudio }
+        return merged
     }
 
     public func unload() async {

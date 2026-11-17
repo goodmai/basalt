@@ -151,6 +151,27 @@ extension ComposeFile {
                 audio: [asr, speech-analyzer]
               answer: chat
             """,
+        "zonos-voice": """
+            version: 1
+            name: zonos-voice
+            models:
+              chat:
+                source: mlx-community/gemma-4-12B-it-qat-4bit
+              tts:
+                source: Zyphra/ZONOS3-Mini-hf
+                keep: on-demand
+                idle_unload: 120s
+            pipeline:
+              perceive:
+                audio: [speech-analyzer]
+              answer: chat
+              speak:
+                chain: [tts, apple-speech]
+                voice: Savannah
+                language: en_us
+                on_gpu_busy: fallback_apple_speech
+                sentence_streaming: true
+            """,
     ]
 }
 
@@ -231,6 +252,8 @@ extension ComposeFile.Walk {
             voice: text(field["voice"], "\(path).voice"),
             sentenceStreaming: flag(field["sentence_streaming"], "\(path).sentence_streaming")
         )
+        stage.language = text(field["language"], "\(path).language")
+        stage.referenceAudio = text(field["reference_audio"], "\(path).reference_audio")
         stage.exaggeration = number(field["exaggeration"], "\(path).exaggeration")
         speakOptions(field, path: path, into: &stage)
         spec.speak = stage

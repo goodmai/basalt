@@ -138,8 +138,8 @@ public struct SpeechRequest: Sendable, Codable, Equatable {
         if let exaggeration, !exaggeration.isFinite || !(0 ... 2).contains(exaggeration) {
             throw .invalidRequestStructure(details: "speech: exaggeration must lie between 0.0 and 2.0")
         }
-        if let language, !language.isEmpty, language.wholeMatch(of: /[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})?/) == nil {
-            throw .invalidRequestStructure(details: "speech: language must be a BCP-47 / ISO-639 code such as en or ru-RU")
+        if let language, !language.isEmpty, language.wholeMatch(of: /[A-Za-z]{2,3}([-_][A-Za-z0-9]{2,8})?/) == nil {
+            throw .invalidRequestStructure(details: "speech: language must be a BCP-47 / ISO-639 code such as en, en_us or ru-RU")
         }
         if let referenceAudio {
             try validateReferenceAudio(referenceAudio)
@@ -193,6 +193,25 @@ public struct AudioChunk: Sendable, Codable, Equatable {
 
     public init(samples: [Float], sampleRate: Int = SpeechRequest.defaultSampleRate, isFinal: Bool = false) {
         (self.samples, self.sampleRate, self.isFinal) = (samples, sampleRate, isFinal)
+    }
+
+    public func resampled(to targetRate: Int) -> AudioChunk {
+        guard !samples.isEmpty, sampleRate > 0, targetRate > 0, sampleRate != targetRate else {
+            return AudioChunk(samples: samples, sampleRate: targetRate > 0 ? targetRate : sampleRate, isFinal: isFinal)
+        }
+        let outCount = max(1, Int((Double(samples.count) * Double(targetRate) / Double(sampleRate)).rounded()))
+        if samples.count == 1 {
+            return AudioChunk(samples: Array(repeating: samples[0], count: outCount), sampleRate: targetRate, isFinal: isFinal)
+        }
+        let ratio = Double(samples.count - 1) / Double(max(1, outCount - 1))
+        let out = (0 ..< outCount).map { idx in
+            let pos = Double(idx) * ratio
+            let lo = min(samples.count - 1, Int(pos))
+            let hi = min(samples.count - 1, lo + 1)
+            let frac = Float(pos - Double(lo))
+            return samples[lo] * (1 - frac) + samples[hi] * frac
+        }
+        return AudioChunk(samples: out, sampleRate: targetRate, isFinal: isFinal)
     }
 
     public func encodePCM16LE() -> Data {
