@@ -99,7 +99,8 @@ extension ImageModelDescriptor {
     }
 
     private static let detectionRules: [DetectionRule] = [
-        DetectionRule(allOf: [], anyOf: ["flux-3", "flux.3", "flux3"], build: flux3Klein(id:)),
+        DetectionRule(allOf: ["base"], anyOf: ["flux-3", "flux.3", "flux3", "flux3transformer"], build: flux3KleinBase(id:)),
+        DetectionRule(allOf: [], anyOf: ["flux-3", "flux.3", "flux3", "flux3transformer"], build: flux3Klein(id:)),
         DetectionRule(allOf: ["klein", "9b"], anyOf: [], build: flux2Klein9BNonCommercial(id:)),
         DetectionRule(allOf: [], anyOf: ["klein", "flux.2", "flux2"], build: flux2Klein4B(id:)),
         DetectionRule(allOf: [], anyOf: ["iris-3b", "iris_3b", "pixel_dit"], build: iris3BTurbo(id:)),
@@ -117,7 +118,8 @@ extension ImageModelDescriptor {
 
     public static func detect(identifier: String, configJSON: [String: Any]? = nil) -> ImageModelDescriptor {
         let arch = (configJSON?["model_type"] as? String)?.lowercased() ?? ""
-        let key = "\(identifier.lowercased()) \(arch)"
+        let cls = (configJSON?["_class_name"] as? String)?.lowercased() ?? ""
+        let key = "\(identifier.lowercased()) \(arch) \(cls)"
         for rule in detectionRules {
             let matchesAll = rule.allOf.allSatisfy { key.contains($0) }
             let matchesAny = rule.anyOf.isEmpty || rule.anyOf.contains { key.contains($0) }
@@ -185,7 +187,14 @@ extension ImageModelDescriptor {
         d.maxReferences = 10
         d.supportsBBoxLayout = true
         d.defaultSteps = 16
-        d.minimumRecommendedBits = 8
+        let lower = id.lowercased()
+        d.minimumRecommendedBits = (lower.contains("macaq") || lower.contains("mxfp4")) ? 4 : 8
+        return d
+    }
+
+    public static func flux3KleinBase(id: String = "black-forest-labs/flux-3-image-klein-base") -> ImageModelDescriptor {
+        var d = flux3Klein(id: id)
+        d.defaultSteps = 50
         return d
     }
 

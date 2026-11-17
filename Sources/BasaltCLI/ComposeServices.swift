@@ -25,6 +25,19 @@ struct ComposeServices: Sendable {
             sharedTextEmbedder: sharedTextEmbedder
         )
     }
+    var imageGeneratorWithDecoder: @Sendable (
+        _ source: String,
+        _ path: String,
+        _ decoderPath: String?,
+        _ sharedTextEmbedder: (@Sendable (String) async throws -> [Float])?
+    ) async throws -> any ImageSynthesizer = { source, path, decoderPath, sharedTextEmbedder in
+        try await ImageSynthesizerLoader.load(
+            identifier: source,
+            directory: URL(fileURLWithPath: path),
+            sharedTextEmbedder: sharedTextEmbedder,
+            externalDecoderDirectory: decoderPath.map { URL(fileURLWithPath: $0) }
+        )
+    }
     var sharedTextEmbedder: (@Sendable (String) async throws -> [Float])? = nil
     var memoryPressure: @Sendable () async -> Bool = { SystemMemoryPressure().sample().pressure != .normal }
 }

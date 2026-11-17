@@ -38,6 +38,7 @@ public struct ComposeDiff: Sendable, Equatable, Codable {
             let roleChanged = old.deciderModels.contains(name) != new.deciderModels.contains(name)
                 || old.speakerModels.contains(name) != new.speakerModels.contains(name)
                 || old.imageGeneratorModels.contains(name) != new.imageGeneratorModels.contains(name)
+                || old.imagineDecoderModels.contains(name) != new.imagineDecoderModels.contains(name)
             Self.needsReload(before, after) || roleChanged ? reloaded.append(name) : kept.append(name)
             if after.isCloud, before.budget != after.budget { budgets.append(name) }
             if after.isCloud, before.apiKeyEnv != after.apiKeyEnv { rekeyed.append(name) }

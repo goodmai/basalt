@@ -90,8 +90,11 @@ extension ComposeSpec {
             let onANE = sizes.onNeuralEngine(source)
             result.append(Workload(name: generator, role: "imagine", unit: onANE ? .ane : .gpu, kind: .decode, residentBytes: bytes(generator)))
         }
+        for decoder in imagineDecoderModels.sorted() where local(decoder) != nil {
+            result.append(Workload(name: decoder, role: "imagine_decoder", unit: .gpu, kind: .decode, residentBytes: bytes(decoder)))
+        }
         let existing = Set([answer] + [ocr, speech].compactMap { $0 })
-            .union(deciderModels).union(speakerModels).union(imageGeneratorModels)
+            .union(deciderModels).union(speakerModels).union(imageGeneratorModels).union(imagineDecoderModels)
             .union(views.flatMap(\.spec.answerModels))
         for aux in imagineAuxModels.subtracting(existing).sorted() where local(aux) != nil {
             result.append(Workload(name: aux, role: "imagine_aux", unit: .gpu, kind: .decode, residentBytes: bytes(aux)))

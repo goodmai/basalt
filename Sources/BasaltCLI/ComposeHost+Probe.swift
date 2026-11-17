@@ -17,7 +17,7 @@ extension ComposeHost {
     static func probes(_ model: ComposeHeld, answering: Bool) -> Bool {
         switch model {
         case .resident: answering
-        case .decision, .onDemand, .onDemandDecision, .speaker, .onDemandSpeaker, .imageGenerator, .onDemandImageGenerator: true
+        case .decision, .onDemand, .onDemandDecision, .speaker, .onDemandSpeaker, .imageGenerator, .onDemandImageGenerator, .imageDecoder: true
         case .cloud: false
         }
     }
@@ -44,6 +44,10 @@ enum ComposeProbe {
             case .onDemandImageGenerator(let onDemand):
                 if !FileManager.default.fileExists(atPath: onDemand.path) {
                     return "its files at \(onDemand.path) are incomplete; run basalt models inspect \(onDemand.path)"
+                }
+            case .imageDecoder(_, let path):
+                if !FileManager.default.fileExists(atPath: path) {
+                    return "its files at \(path) are incomplete; run basalt models inspect \(path)"
                 }
             case .imageGenerator, .cloud:
                 break

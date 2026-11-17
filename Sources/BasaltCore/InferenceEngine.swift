@@ -25,6 +25,7 @@ public protocol InferenceEngine: AudioTranscriber {
     func useAdapter(_ name: String?) async throws(BasaltError)
     var transcribesAudio: Bool { get async }
     var takesImages: Bool { get async }
+    func sharedImagePromptEmbedding(_ prompt: String, dimension: Int) async throws -> [Float]?
 }
 
 extension InferenceEngine {
@@ -47,6 +48,7 @@ extension InferenceEngine {
     public func useAdapter(_ name: String?) async throws(BasaltError) {}
     public var transcribesAudio: Bool { get async { false } }
     public var takesImages: Bool { get async { true } }
+    public func sharedImagePromptEmbedding(_ prompt: String, dimension: Int) async throws -> [Float]? { nil }
 
     public func transcribe(_ request: TranscriptionRequest) async throws(BasaltError) -> Transcription {
         throw .noAudioEncoder("")

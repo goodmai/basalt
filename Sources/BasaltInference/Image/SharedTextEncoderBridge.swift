@@ -5,6 +5,10 @@ import MLXNN
 import BasaltCore
 
 extension MLXInferenceEngine {
+    public func sharedImagePromptEmbedding(_ prompt: String, dimension: Int) async throws -> [Float]? {
+        try await encodePromptForImage(prompt, dimension: dimension)
+    }
+
     public func encodePromptForImage(_ prompt: String, dimension: Int = 256) async throws -> [Float] {
         let targetDim = max(16, dimension)
         try Task.checkCancellation()

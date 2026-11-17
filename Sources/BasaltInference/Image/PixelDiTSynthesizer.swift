@@ -48,7 +48,7 @@ final class PixelDiTPipelineModule: Module {
         self._finalNorm.wrappedValue = LayerNorm(dimensions: d)
         self._latentVelHead.wrappedValue = Linear(d, 4 * latCh)
         self._ternaryVelHead.wrappedValue = TernaryBitNetLinear(d, 4 * latCh)
-        self._vae.wrappedValue = PatchVAECodec(latentChannels: latCh)
+        self._vae.wrappedValue = PatchVAECodec(latentChannels: latCh, decoderChannels: config.decoderBaseChannels)
         self._dcae.wrappedValue = DCAE32xCodec(latentChannels: latCh)
         self._motDecoder.wrappedValue = UnifiedMoTPixelShuffleDecoder(inChannels: latCh)
         self._audioProjector.wrappedValue = AudioFlowEditProjector(featureDim: config.textEmbedDim, hiddenDim: d, outChannels: latCh)
@@ -175,11 +175,13 @@ public actor PixelDiTSynthesizer: ImageStepRunner {
     public init(
         directory: URL,
         identifier: String,
-        sharedTextEmbedder: (@Sendable (String) async throws -> [Float])? = nil
+        sharedTextEmbedder: (@Sendable (String) async throws -> [Float])? = nil,
+        externalDecoderDirectory: URL? = nil
     ) throws(BasaltError) {
         let (resolvedDesc, resolvedCfg) = try ImageRunnerCore.parseDirectoryConfig(
             directory: directory,
-            identifier: identifier
+            identifier: identifier,
+            externalDecoderDirectory: externalDecoderDirectory
         )
         self.modelIdentifier = identifier
         self.descriptor = resolvedDesc
@@ -189,6 +191,9 @@ public actor PixelDiTSynthesizer: ImageStepRunner {
             PixelDiTPipelineModule(config: resolvedCfg, family: resolvedDesc.family)
         }
         try ImageRunnerCore.loadSafetensorsIfPresent(in: directory, into: built)
+        if let externalDecoderDirectory {
+            try ImageRunnerCore.loadSafetensorsIfPresent(in: externalDecoderDirectory, into: built.vae)
+        }
         eval(built)
         self.module = built
     }
