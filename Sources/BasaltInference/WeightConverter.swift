@@ -11,6 +11,7 @@ package struct WeightConverter: Sendable {
         case affine(bits: Int, groupSize: Int)
         case mixed(MixedBits)
         case nf4(groupSize: Int)
+        case mxfp4
         case dense(DType?)
     }
 
@@ -71,6 +72,8 @@ package struct WeightConverter: Sendable {
         let numbers = parts.dropFirst().compactMap { Int($0) }
         let bitsValid = numbers.dropLast().allSatisfy { [2, 3, 4, 5, 6, 8].contains($0) } && [32, 64, 128].contains(numbers.last ?? 0)
         switch parts.first.map(String.init) {
+        case "mxfp4" where parts.count == 1:
+            return .mxfp4
         case "nf4" where parts.count == 2 && numbers.count == 1 && [32, 64, 128].contains(numbers[0]):
             return .nf4(groupSize: numbers[0])
         case "affine" where parts.count == 3 && numbers.count == 2 && bitsValid:
@@ -80,7 +83,7 @@ package struct WeightConverter: Sendable {
             return .mixed(MixedBits(low: numbers[0], high: numbers[1], groupSize: numbers[2], budgetBytes: Int(budgetGB * 1e9)))
         default:
             throw .options(
-                "--quantize takes affine:<bits>:<group> or mixed:<low>:<high>:<group> (bits 2-6 or 8, low below high, group 32, 64 or 128) or nf4:<group> (group 32, 64 or 128), got '\(spec)'")
+                "--quantize takes affine:<bits>:<group>, mixed:<low>:<high>:<group> (bits 2-6 or 8, low below high, group 32, 64 or 128), nf4:<group> (group 32, 64 or 128) or mxfp4, got '\(spec)'")
         }
     }
 
@@ -144,16 +147,21 @@ package struct WeightConverter: Sendable {
         let pair = isWeight ? lora?.pairs[base] : nil
         let nf4: Int? = if case .nf4(let groupSize) = precision,
             Self.takesNF4(key, tensor, packed: packed, sourceQuantized: sourceQuantized, groupSize: groupSize) { groupSize } else { nil }
+        let useMXFP4 = precision == .mxfp4 && Self.quantizable(key, tensor, packed: packed, sourceQuantized: sourceQuantized, groupSize: 32)
         let target = targetQuantization(key, tensor, packed: packed, sourceQuantized: sourceQuantized)
-        if nf4 == nil, pair == nil, let packed, let target, packed.quantization.asTuple == target.asTuple {
+        if nf4 == nil, !useMXFP4, pair == nil, let packed, let target, packed.quantization.asTuple == target.asTuple {
             return packed.arrays(base, weight: tensor)
         }
-        if nf4 == nil, pair == nil, packed == nil, target == nil { return [key: cast(tensor)] }
+        if nf4 == nil, !useMXFP4, pair == nil, packed == nil, target == nil { return [key: cast(tensor)] }
         var weight = Self.dense(tensor, packed)
         if let pair, let lora { weight = try LoRAUpdate.merged(weight, pair, scale: lora.scale, layer: base) }
         if let nf4 {
             let (codes, scales) = NF4Metal.quantized(weight, groupSize: nf4)
             return [base + ".weight": codes, base + ".scales": scales]
+        }
+        if useMXFP4 {
+            let (wq, scales, _) = MLX.quantized(weight, groupSize: 32, bits: 4, mode: .mxfp4)
+            return [base + ".weight": wq, base + ".scales": scales]
         }
         guard let target else { return [key: cast(weight)] }
         let (wq, scales, biases) = MLX.quantized(weight, groupSize: target.groupSize, bits: target.bits, mode: target.mode)
@@ -166,7 +174,7 @@ package struct WeightConverter: Sendable {
         switch precision {
         case .dense:
             return nil
-        case .source, .nf4:
+        case .source, .nf4, .mxfp4:
             return packed?.quantization
         case .affine(let bits, let groupSize):
             guard Self.quantizable(key, tensor, packed: packed, sourceQuantized: sourceQuantized, groupSize: groupSize) else { return nil }
@@ -269,6 +277,10 @@ extension WeightConverter {
             var block = config["quantization"] as? [String: Any] ?? ["bits": 4, "group_size": groupSize, "mode": "affine"]
             block["mode"] = "nf4"
             block["quant_method"] = nil
+            config["quantization"] = block
+            config["quantization_config"] = block
+        case .mxfp4:
+            let block: [String: Any] = ["bits": 4, "group_size": 32, "mode": "mxfp4"]
             config["quantization"] = block
             config["quantization_config"] = block
         }
