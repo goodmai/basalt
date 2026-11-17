@@ -4,8 +4,9 @@
 
 > Запускайте, обучайте, квантуйте, собирайте в системы и вскрывайте открытые LLM, нейросетевую речь, OCR и модели генерации изображений на Apple Silicon. Один бинарник на Swift 6.4 говорит на **OpenAI API, Anthropic API и MCP**, а сверху — нативное приложение для macOS 27 Liquid Glass. Никакого Python в рантайме. Никакого облака, пока вы сами о нём не попросите.
 
-[English](README.md) · [Русский](README.ru.md)
+[English](README.md) · [Русский](README.ru.md) · **[Сайт — bas-alt.vercel.app](https://bas-alt.vercel.app)**
 
+[![Сайт](https://img.shields.io/badge/%D1%81%D0%B0%D0%B9%D1%82-bas--alt.vercel.app-FF5E36.svg)](https://bas-alt.vercel.app)
 [![Release v0.11.0](https://img.shields.io/badge/release-v0.11.0-0A84FF.svg)](https://github.com/goodmai/basalt/releases/tag/v0.11.0)
 [![CI Release](https://github.com/goodmai/basalt/actions/workflows/release.yml/badge.svg)](https://github.com/goodmai/basalt/actions/workflows/release.yml)
 [![Security Audit](https://github.com/goodmai/basalt/actions/workflows/security-audit.yml/badge.svg)](https://github.com/goodmai/basalt/actions/workflows/security-audit.yml)
